@@ -49,7 +49,6 @@ from loguru import logger
 
 # Timeouts aligned with the LibreOffice paths they substitute for
 # (legacy.py: 120s per file; office.py PDF export: 600s).
-LEGACY_TIMEOUT = 120
 PDF_TIMEOUT = 600
 
 _OFFICE_GROUP_CONTAINER = (
@@ -66,11 +65,6 @@ _ERR_NOT_AUTHORIZED = "-1743"
 # Script result marking that the mid-poll plain-open fallback ran
 # (see _wrap_office_script); surfaced on stdout for logging only.
 _FALLBACK_MARKER = "markitai:fallback-open-used"
-
-APP_BY_SUFFIX: dict[str, str] = {
-    ".doc": "Microsoft Word",
-    ".ppt": "Microsoft PowerPoint",
-}
 
 # Office apps are single-instance and expose process-global automation
 # settings. Serialize per app within this process; _office_app_lock adds the
@@ -106,12 +100,6 @@ def find_ms_office_app(app_name: str) -> bool:
             return True
     logger.debug(f"{app_name} not found")
     return False
-
-
-def legacy_app_available(suffix: str) -> bool:
-    """Check whether the Office app handling *suffix* is installed."""
-    app = APP_BY_SUFFIX.get(suffix.lower())
-    return find_ms_office_app(app) if app else False
 
 
 def powerpoint_available() -> bool:
@@ -309,42 +297,6 @@ def _wrap_office_script(
 #   PPT   "save as Open XML presentation"  == ppSaveAsOpenXMLPresentation (24)
 # Word takes a text path ("POSIX file ... as string" -> HFS text);
 # PowerPoint takes the file object directly (verified live).
-def _build_legacy_script(app: str, staged_in: Path, staged_out: Path) -> str:
-    inp = _as_quote(staged_in)
-    out = _as_quote(staged_out)
-    if app == "Microsoft Word":
-        return _wrap_office_script(
-            app,
-            open_lines=[
-                f'open (POSIX file "{inp}") read only true add to recent files false'
-            ],
-            action_lines=[
-                f'set outPath to (POSIX file "{out}") as string',
-                "save as openedItem file name outPath "
-                "file format format document default",
-            ],
-            in_name=staged_in.name,
-            out_name=staged_out.name,
-            # Word otherwise updates embedded OLE links while opening.
-            extra_setting=("update links at open of settings", "false"),
-            # Word's post-update first launch drops the parametered open
-            # above; a plain open penetrates that state (verified live).
-            fallback_open_line=f'open (POSIX file "{inp}")',
-        )
-    if app == "Microsoft PowerPoint":
-        return _wrap_office_script(
-            app,
-            open_lines=[f'open (POSIX file "{inp}")'],
-            action_lines=[
-                f'save openedItem in (POSIX file "{out}") '
-                "as save as Open XML presentation"
-            ],
-            in_name=staged_in.name,
-            out_name=staged_out.name,
-        )
-    raise ValueError(f"Unsupported Office app: {app}")
-
-
 def _build_pdf_script(staged_in: Path, staged_out: Path) -> str:
     inp = _as_quote(staged_in)
     out = _as_quote(staged_out)
@@ -542,34 +494,6 @@ def _convert_via_staging(
         return output_file
     finally:
         _cleanup_staging_dir(work)
-
-
-def convert_legacy(input_path: Path, target_format: str, output_dir: Path) -> Path:
-    """Convert a legacy Office file (.doc/.ppt) to its modern format.
-
-    Args:
-        input_path: Path to the legacy file.
-        target_format: Target extension without dot (docx, pptx).
-        output_dir: Directory for the converted file.
-
-    Returns:
-        Path to the converted file.
-
-    Raises:
-        RuntimeError: If the app is unavailable or conversion fails.
-    """
-    suffix = input_path.suffix.lower()
-    app = APP_BY_SUFFIX.get(suffix)
-    if not app or not find_ms_office_app(app):
-        raise RuntimeError(f"No Microsoft Office app available for {suffix} files.")
-
-    return _convert_via_staging(
-        input_path,
-        output_dir / f"{input_path.stem}.{target_format}",
-        app=app,
-        build_script=lambda i, o: _build_legacy_script(app, i, o),
-        timeout=LEGACY_TIMEOUT,
-    )
 
 
 def pptx_to_pdf(input_path: Path, output_dir: Path) -> Path:

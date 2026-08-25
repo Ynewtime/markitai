@@ -536,7 +536,7 @@ markitai doctor --suggest-extras   # 输出适合 `uv tool install "markitai[...
 - **可选：RapidOCR**，用于对扫描件和图片执行 `--ocr`。它随 `ocr` extra 提供，不在核心安装内，因此这里显示「未安装」只表示 OCR 未开启，而不是安装损坏
 - **可选：VLM OCR**，用于对扫描件执行 `--ocr --llm`：由视觉模型读取页面图像，替代 RapidOCR。配置了视觉模型即可用；设置 `MARKITAI_NO_VLM_OCR=1` 可强制走本地 RapidOCR
 - **未配置时可选：Playwright**，用于动态 URL 抓取（SPA 渲染）；当 `fetch.strategy` 为 `playwright` 或 `screenshot.enabled` 为 true 时，它会成为阻断检查
-- **可选：LibreOffice**，用于旧版 Office 转换和幻灯片渲染（macOS 上未安装时会回退到已装的 MS Office）
+- **可选：LibreOffice**，用于 PPTX 幻灯片渲染（macOS 上未安装时会回退到已装的 Microsoft PowerPoint）
 - **LLM API**：配置和模型状态
 - **Vision Model**：用于图像分析（从 litellm 自动检测）
 - **本地 Provider 认证**：Claude Agent、GitHub Copilot 和 ChatGPT 的认证状态（如果已配置）

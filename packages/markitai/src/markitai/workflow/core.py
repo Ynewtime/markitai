@@ -59,7 +59,6 @@ class ConversionContext:
     config: MarkitaiConfig
 
     # Optional inputs
-    actual_file: Path | None = None  # For pre-converted files (batch COM)
     shared_processor: LLMProcessor | None = None
     output_name: str | None = None  # Pre-planned output filename (batch collision)
 
@@ -87,16 +86,6 @@ class ConversionContext:
 
     # Optional callback for stage completion (stage_name, duration)
     on_stage_complete: Callable[[str, float], None] | None = None
-
-    @property
-    def effective_input(self) -> Path:
-        """Return actual file to process (handles pre-conversion)."""
-        return self.actual_file if self.actual_file else self.input_path
-
-    @property
-    def is_preconverted(self) -> bool:
-        """Check if this is a pre-converted file."""
-        return self.actual_file is not None and self.actual_file != self.input_path
 
 
 @dataclass
@@ -136,7 +125,7 @@ def validate_and_detect_format(
     except ValueError as e:
         return ConversionStepResult(success=False, error=str(e))
 
-    fmt = detect_format(ctx.effective_input)
+    fmt = detect_format(ctx.input_path)
     ctx.detected_format = fmt
     if fmt == FileFormat.UNKNOWN:
         return ConversionStepResult(
@@ -157,7 +146,7 @@ def validate_and_detect_format(
         from markitai.converter.kreuzberg import KreuzbergConverter
 
         # Warn if overriding a native converter
-        local_converter = get_converter(ctx.effective_input, config=ctx.config)
+        local_converter = get_converter(ctx.input_path, config=ctx.config)
         if local_converter is not None:
             logger.warning(
                 f"Using kreuzberg for {fmt.value} "
@@ -184,7 +173,7 @@ def validate_and_detect_format(
             account_id = cf_config.get_resolved_account_id()
             if api_token and account_id:
                 # Warn if a higher-quality local converter exists
-                local_converter = get_converter(ctx.effective_input, config=ctx.config)
+                local_converter = get_converter(ctx.input_path, config=ctx.config)
                 if local_converter is not None:
                     logger.warning(
                         f"Using Cloudflare toMarkdown for {fmt.value} "
@@ -206,7 +195,7 @@ def validate_and_detect_format(
 
     # Fall back to local converter if CF not used
     if ctx.converter is None:
-        ctx.converter = get_converter(ctx.effective_input, config=ctx.config)
+        ctx.converter = get_converter(ctx.input_path, config=ctx.config)
 
     if ctx.converter is None:
         return ConversionStepResult(
@@ -277,25 +266,25 @@ async def convert_document(ctx: ConversionContext) -> ConversionStepResult:
 
         if isinstance(ctx.converter, CloudflareConverter):
             ctx.conversion_result = await ctx.converter.convert_async(
-                ctx.effective_input,
+                ctx.input_path,
                 output_dir=ctx.output_dir,
             )
         elif ext in lightweight_text_extensions:
             ctx.conversion_result = ctx.converter.convert(
-                ctx.effective_input,
+                ctx.input_path,
                 output_dir=ctx.output_dir,
             )
         elif is_heavy:
             async with get_heavy_task_semaphore(ctx.config.batch.heavy_task_limit):
                 ctx.conversion_result = await run_in_converter_thread(
                     ctx.converter.convert,
-                    ctx.effective_input,
+                    ctx.input_path,
                     output_dir=ctx.output_dir,
                 )
         else:
             ctx.conversion_result = await run_in_converter_thread(
                 ctx.converter.convert,
-                ctx.effective_input,
+                ctx.input_path,
                 output_dir=ctx.output_dir,
             )
         return ConversionStepResult(success=True)

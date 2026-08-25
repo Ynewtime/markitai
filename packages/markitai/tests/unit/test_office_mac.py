@@ -12,7 +12,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from markitai.config import MarkitaiConfig, OfficeConfig
-from markitai.converter.legacy import LegacyOfficeConverter
 from markitai.converter.office import PptxConverter
 from markitai.utils import office_mac
 
@@ -50,96 +49,18 @@ class TestDetection:
         with patch("markitai.utils.office_mac.platform.system", return_value="Darwin"):
             assert office_mac.find_ms_office_app("Microsoft Word") is False
 
-    def test_legacy_app_available_unknown_suffix(self) -> None:
-        assert office_mac.legacy_app_available(".txt") is False
-
-    def test_xls_is_not_an_automation_format(self) -> None:
-        # .xls converts in pure Python (xlrd via markitdown); Excel
-        # automation was removed and must not come back silently.
-        assert ".xls" not in office_mac.APP_BY_SUFFIX
-        assert office_mac.legacy_app_available(".xls") is False
-
 
 class TestScriptBuilding:
-    def test_legacy_scripts_use_verified_enums(self) -> None:
-        cases = {
-            "Microsoft Word": "format document default",
-            "Microsoft PowerPoint": "save as Open XML presentation",
-        }
-        for app, enum in cases.items():
-            script = office_mac._build_legacy_script(
-                app, Path("/tmp/in.doc"), Path("/tmp/out.docx")
-            )
-            assert enum in script
-            assert 'tell application "' + app + '"' in script
-            assert "close" in script and "saving no" in script
-            assert "msoAutomationSecurityForceDisable" in script
-            # Regression lock (openedItem-not-defined cascade): Word's and
-            # PowerPoint's `open` returns nothing, so the script must never
-            # bind from open's return value — it binds by staged name after
-            # an existence poll, and cleanup never references the variable.
-            assert "set openedItem to open" not in script
-            assert 'set openedItem to document "' in script or (
-                'set openedItem to presentation "' in script
-            )
-            assert "repeat until (exists" in script
-            assert "active document" not in script
-            assert "active presentation" not in script
-            assert "on error errorMessage number errorNumber" in script
-            assert "if openedItem is not missing value then" not in script
-            # ForceDisable must never survive a cold-launch missing value read
-            assert "msoAutomationSecurityByUI" in script
-
-    def test_word_opens_without_links_or_recent_file_side_effects(self) -> None:
-        script = office_mac._build_legacy_script(
-            "Microsoft Word", Path("/tmp/in.doc"), Path("/tmp/out.docx")
-        )
-        assert "read only true" in script
-        assert "add to recent files false" in script
-        assert "set update links at open of settings to false" in script
-        assert "set update links at open of settings to previousExtraSetting" in script
-
-    def test_word_poll_stall_falls_back_to_plain_open(self) -> None:
-        # Regression lock (post-update first-launch state, verified live
-        # 2026-07-12): Word silently drops the parametered open on its first
-        # scripted launch after an Office update, while a plain open goes
-        # through. The script must retry mid-poll with a plain open and
-        # report the recovery through the marker.
-        script = office_mac._build_legacy_script(
-            "Microsoft Word", Path("/tmp/in.doc"), Path("/tmp/out.docx")
-        )
-        assert script.count("open (POSIX file") == 2
-        assert 'open (POSIX file "/tmp/in.doc")\n' in script + "\n"
-        assert "if waitCount = 25 then" in script
-        assert "set usedFallbackOpen to true" in script
-        assert office_mac._FALLBACK_MARKER in script
-        # The fallback must run before the stall error can fire.
-        assert script.index("if waitCount = 25 then") < script.index("number 6001")
-
-    def test_powerpoint_scripts_have_no_fallback_open(self) -> None:
+    def test_pdf_script_has_no_fallback_open(self) -> None:
         # PowerPoint's open is already parameterless and fails the
         # first-launch state with -9074 instead of a silent drop; a retry
         # cannot help (state persists), so its scripts stay fallback-free.
-        for script in (
-            office_mac._build_legacy_script(
-                "Microsoft PowerPoint", Path("/tmp/in.ppt"), Path("/tmp/out.pptx")
-            ),
-            office_mac._build_pdf_script(Path("/tmp/in.pptx"), Path("/tmp/out.pdf")),
-        ):
-            assert script.count("open (POSIX file") == 1
-            assert "usedFallbackOpen to true" not in script
-            assert office_mac._FALLBACK_MARKER not in script
-
-    def test_stall_error_guides_manual_launch(self) -> None:
-        # The stalled-open state is not "stuck or overloaded" (main thread
-        # idles) and quit-and-retry does not clear it; the only verified
-        # remedy is opening the app manually once.
-        for app in ("Microsoft Word", "Microsoft PowerPoint"):
-            script = office_mac._build_legacy_script(
-                app, Path("/tmp/in.doc"), Path("/tmp/out.docx")
-            )
-            assert f"open {app} manually once" in script
-            assert "stuck or overloaded" not in script
+        script = office_mac._build_pdf_script(
+            Path("/tmp/in.pptx"), Path("/tmp/out.pdf")
+        )
+        assert script.count("open (POSIX file") == 1
+        assert "usedFallbackOpen to true" not in script
+        assert office_mac._FALLBACK_MARKER not in script
 
     def test_security_is_restored_before_save(self) -> None:
         script = office_mac._build_pdf_script(
@@ -161,16 +82,6 @@ class TestScriptBuilding:
         assert "save as PDF" in script
         assert "msoAutomationSecurityForceDisable" in script
         assert "active presentation" not in script
-
-    def test_unsupported_app_raises(self) -> None:
-        with pytest.raises(ValueError):
-            office_mac._build_legacy_script("Microsoft Outlook", Path("/a"), Path("/b"))
-
-    def test_paths_are_escaped(self) -> None:
-        script = office_mac._build_legacy_script(
-            "Microsoft Word", Path('/tmp/we"ird.doc'), Path("/tmp/out.docx")
-        )
-        assert 'we\\"ird' in script
 
 
 class TestRunAppleScript:
@@ -242,58 +153,6 @@ class TestRunAppleScript:
         ):
             office_mac._run_applescript("s", timeout=10, app="Microsoft Word")
         info_mock.assert_not_called()
-
-
-class TestConvertLegacy:
-    def test_happy_path_moves_output_and_cleans_staging(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
-        staging = tmp_path / "staging"
-        staging.mkdir()
-        monkeypatch.setattr(office_mac, "_make_staging_dir", lambda: staging)
-        monkeypatch.setattr(office_mac, "find_ms_office_app", lambda _app: True)
-
-        def fake_run(script: str, *, timeout: int, app: str) -> None:
-            staged_inputs = list(staging.glob("*.doc"))
-            assert len(staged_inputs) == 1
-            assert staged_inputs[0].name == f"{staging.name}.doc"
-            assert staged_inputs[0].stat().st_mode & 0o777 == 0o400
-            (staging / f"{staging.name}.docx").write_bytes(b"PK")
-
-        monkeypatch.setattr(office_mac, "_run_applescript", fake_run)
-
-        src = tmp_path / "sample.doc"
-        src.write_bytes(b"legacy")
-        output_dir = tmp_path / "out"
-
-        result = office_mac.convert_legacy(src, "docx", output_dir)
-
-        assert result == output_dir / "sample.docx"
-        assert result.read_bytes() == b"PK"
-        assert not staging.exists()
-
-    def test_no_output_raises_and_cleans_staging(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
-        staging = tmp_path / "staging"
-        staging.mkdir()
-        monkeypatch.setattr(office_mac, "_make_staging_dir", lambda: staging)
-        monkeypatch.setattr(office_mac, "find_ms_office_app", lambda _app: True)
-        monkeypatch.setattr(
-            office_mac, "_run_applescript", lambda *_args, **_kwargs: None
-        )
-
-        src = tmp_path / "sample.doc"
-        src.write_bytes(b"legacy")
-
-        with pytest.raises(RuntimeError, match="did not produce"):
-            office_mac.convert_legacy(src, "docx", tmp_path / "out")
-        assert not staging.exists()
-
-    def test_app_unavailable_raises(self, monkeypatch) -> None:
-        monkeypatch.setattr(office_mac, "find_ms_office_app", lambda _app: False)
-        with pytest.raises(RuntimeError, match="No Microsoft Office app"):
-            office_mac.convert_legacy(Path("x.doc"), "docx", Path("."))
 
 
 class TestPptxToPdf:
@@ -390,68 +249,6 @@ class TestOfficeAppLock:
         assert flock_mock.call_args_list[0].args[1] == fcntl.LOCK_EX
         assert flock_mock.call_args_list[-1].args[1] == fcntl.LOCK_UN
         assert (tmp_path / ".locks" / "word.lock").stat().st_mode & 0o777 == 0o600
-
-
-class TestLegacyChainWiring:
-    """_convert_legacy_format falls back to office_mac on macOS."""
-
-    def _converter(self, config: MarkitaiConfig | None = None) -> LegacyOfficeConverter:
-        converter = LegacyOfficeConverter(config)
-        converter._soffice_path = None  # simulate LibreOffice absent
-        return converter
-
-    def test_darwin_uses_office_mac(self, tmp_path: Path) -> None:
-        converter = self._converter()
-        sentinel = tmp_path / "sample.docx"
-        with (
-            patch("platform.system", return_value="Darwin"),
-            patch.object(office_mac, "legacy_app_available", return_value=True),
-            patch.object(
-                office_mac, "convert_legacy", return_value=sentinel
-            ) as convert_mock,
-        ):
-            result = converter._convert_legacy_format(
-                tmp_path / "sample.doc", "docx", tmp_path
-            )
-        assert result == sentinel
-        convert_mock.assert_called_once()
-
-    def test_darwin_office_missing_raises_with_both_options(
-        self, tmp_path: Path
-    ) -> None:
-        converter = self._converter()
-        with (
-            patch("platform.system", return_value="Darwin"),
-            patch.object(office_mac, "legacy_app_available", return_value=False),
-            pytest.raises(
-                RuntimeError, match="Install LibreOffice or Microsoft Office"
-            ),
-        ):
-            converter._convert_legacy_format(tmp_path / "sample.doc", "docx", tmp_path)
-
-    def test_darwin_fallback_disabled_by_config(self, tmp_path: Path) -> None:
-        config = MarkitaiConfig(office=OfficeConfig(macos_fallback=False))
-        converter = self._converter(config)
-        with (
-            patch("platform.system", return_value="Darwin"),
-            patch.object(
-                office_mac, "legacy_app_available", return_value=True
-            ) as available_mock,
-            pytest.raises(
-                RuntimeError,
-                match=r"enable office\.macos_fallback to use Microsoft Office",
-            ),
-        ):
-            converter._convert_legacy_format(tmp_path / "sample.doc", "docx", tmp_path)
-        available_mock.assert_not_called()
-
-    def test_linux_error_unchanged(self, tmp_path: Path) -> None:
-        converter = self._converter()
-        with (
-            patch("platform.system", return_value="Linux"),
-            pytest.raises(RuntimeError, match="Install LibreOffice."),
-        ):
-            converter._convert_legacy_format(tmp_path / "sample.doc", "docx", tmp_path)
 
 
 class TestPptxRenderWiring:
@@ -551,14 +348,12 @@ class TestDoctorFallbackMessage:
         with (
             patch("sys.platform", "darwin"),
             patch("markitai.utils.office.find_libreoffice", return_value=None),
-            patch("markitai.utils.office_mac.find_ms_office_app", return_value=True),
+            patch("markitai.utils.office_mac.powerpoint_available", return_value=True),
         ):
             result = _check_libreoffice()
 
         assert result["status"] == "warning"
-        assert "MS Office fallback available" in result["message"]
-        assert "Word, PowerPoint" in result["message"]
-        assert "Excel" not in result["message"]
+        assert "PowerPoint fallback available" in result["message"]
 
     def test_darwin_without_office_stays_missing(self) -> None:
         from markitai.cli.commands.doctor import _check_libreoffice
@@ -566,7 +361,7 @@ class TestDoctorFallbackMessage:
         with (
             patch("sys.platform", "darwin"),
             patch("markitai.utils.office.find_libreoffice", return_value=None),
-            patch("markitai.utils.office_mac.find_ms_office_app", return_value=False),
+            patch("markitai.utils.office_mac.powerpoint_available", return_value=False),
         ):
             result = _check_libreoffice()
 
@@ -580,7 +375,7 @@ class TestDoctorFallbackMessage:
             patch("sys.platform", "darwin"),
             patch("markitai.utils.office.find_libreoffice", return_value=None),
             patch(
-                "markitai.utils.office_mac.find_ms_office_app", return_value=True
+                "markitai.utils.office_mac.powerpoint_available", return_value=True
             ) as office_probe,
         ):
             result = _check_libreoffice(False)

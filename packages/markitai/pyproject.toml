@@ -65,6 +65,10 @@ extra-fetch = ["curl-cffi>=0.14.0"]
 kreuzberg = ["kreuzberg>=4.9.6"]
 svg = ["cairosvg>=2.9.0"]
 heif = ["pillow-heif>=1.0"]
+# Rust anydoc backend for legacy Office formats (.doc/.ppt, Office 97-2003).
+# Optional since 0.24: replaces the retired Office-automation path (Windows
+# COM / macOS AppleScript / LibreOffice CLI) — ~7MB, no Office install needed.
+legacy = ["firecrawl-anydoc>=0.2.3"]
 # Official MCP Python SDK for the bundled markitai-mcp server. The extra
 # name `mcp` is a public contract — docs and install hints print
 # `markitai[mcp]` verbatim; renaming it breaks both.
@@ -88,6 +92,7 @@ all = [
     "kreuzberg>=4.9.6",
     "cairosvg>=2.9.0",
     "pillow-heif>=1.0",
+    "firecrawl-anydoc>=0.2.3",
     "mcp>=2.0.0",
     "rapidocr>=3.7.0",
     "fastapi>=0.115",

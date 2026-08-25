@@ -419,41 +419,74 @@ def _check_libreoffice(macos_fallback: bool = True) -> dict[str, Any]:
         # Running soffice --version can hang on Windows in non-interactive mode
         return {
             "name": "LibreOffice",
-            "description": "Legacy Office conversion (doc, ppt) and PPTX slide rendering",
+            "description": "PPTX slide rendering",
             "status": "ok",
             "message": "installed",
             "path": soffice_path,
             "install_hint": "",
         }
     else:
-        # macOS: installed MS Office apps take over legacy conversion and
-        # PPTX PDF export via AppleScript (see utils/office_mac.py)
+        # macOS: an installed Microsoft PowerPoint takes over PPTX PDF export
+        # via AppleScript (see utils/office_mac.py)
         if sys.platform == "darwin" and macos_fallback:
             from markitai.utils import office_mac
 
-            office_apps = [
-                app.removeprefix("Microsoft ")
-                for app in ("Microsoft Word", "Microsoft PowerPoint")
-                if office_mac.find_ms_office_app(app)
-            ]
-            if office_apps:
+            if office_mac.powerpoint_available():
                 return {
                     "name": "LibreOffice",
-                    "description": "Legacy Office conversion (doc, ppt) and PPTX slide rendering",
+                    "description": "PPTX slide rendering",
                     "status": "warning",
                     "message": (
-                        "not found; MS Office fallback available "
-                        f"({', '.join(office_apps)} via AppleScript, "
-                        "needs one-time Automation permission)"
+                        "not found; PowerPoint fallback available "
+                        "(via AppleScript, needs one-time Automation permission)"
                     ),
                     "install_hint": get_install_hint("libreoffice"),
                 }
         return {
             "name": "LibreOffice",
-            "description": "Legacy Office conversion (doc, ppt) and PPTX slide rendering",
+            "description": "PPTX slide rendering",
             "status": "missing",
             "message": "soffice/libreoffice command not found",
             "install_hint": get_install_hint("libreoffice"),
+        }
+
+
+def _check_anydoc() -> dict[str, Any]:
+    """Check the optional legacy Office backend (``legacy`` extra).
+
+    anydoc moved legacy .doc/.ppt conversion out of Office automation into
+    the ``legacy`` extra, so "missing" means "capability not enabled",
+    never "installation broken". Probed via metadata only.
+
+    Returns:
+        Result dict with name, description, status, optional, message,
+        install_hint.
+    """
+    try:
+        from importlib.metadata import PackageNotFoundError
+        from importlib.metadata import version as get_version
+
+        try:
+            anydoc_version = get_version("firecrawl-anydoc")
+        except PackageNotFoundError:
+            raise ImportError("firecrawl-anydoc not installed") from None
+
+        return {
+            "name": "anydoc",
+            "description": "Legacy Office conversion (.doc/.ppt)",
+            "status": "ok",
+            "optional": True,
+            "message": f"v{anydoc_version}",
+            "install_hint": "",
+        }
+    except ImportError:
+        return {
+            "name": "anydoc",
+            "description": "Legacy Office conversion (.doc/.ppt)",
+            "status": "missing",
+            "optional": True,
+            "message": "not installed",
+            "install_hint": 'pip install "markitai[legacy]"',
         }
 
 
@@ -578,11 +611,13 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             _check_libreoffice, cfg.office.macos_fallback
         )
         future_rapidocr = executor.submit(_check_rapidocr, cfg)
+        future_anydoc = executor.submit(_check_anydoc)
 
     # Collect results in deterministic order
     results["playwright"] = future_playwright.result()
     results["libreoffice"] = future_libreoffice.result()
     results["rapidocr"] = future_rapidocr.result()
+    results["anydoc"] = future_anydoc.result()
     results["serve"] = _check_serve()
 
     # 5. Check LLM API configuration (check model_list for configured models)

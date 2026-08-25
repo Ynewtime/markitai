@@ -295,7 +295,7 @@ output/
 
 | 功能 | 支持 | 说明 |
 |------|------|------|
-| 旧版 Office（`.doc`、`.ppt`） | ✅ 完全支持 | 使用 COM 自动化 |
+| 旧版 Office（`.doc`、`.ppt`） | ✅ 完全支持 | 需要 `markitai[legacy]` extra（anydoc Rust 后端，无需安装 Office；PPT 表格会展开为纯文本行） |
 | 旧版 Excel（`.xls`） | ✅ 完全支持 | 内置支持（纯 Python，无需 Office） |
 | PPTX 幻灯片渲染 | ✅ 完全支持 | 优先使用 MS Office，LibreOffice 备选 |
 | EMF/WMF 图片 | ✅ 完全支持 | 原生支持 |
@@ -305,7 +305,7 @@ output/
 
 | 功能 | 支持 | 说明 |
 |------|------|------|
-| 旧版 Office（`.doc`、`.ppt`） | ✅ 完全支持 | 需要 LibreOffice（Windows 使用 COM，LibreOffice 作为备选） |
+| 旧版 Office（`.doc`、`.ppt`） | ✅ 完全支持 | 需要 `markitai[legacy]` extra（anydoc Rust 后端，无需 LibreOffice；PPT 表格会展开为纯文本行） |
 | 旧版 Excel（`.xls`） | ✅ 完全支持 | 内置支持（纯 Python，无需 LibreOffice） |
 | PPTX 幻灯片渲染 | ✅ 完全支持 | 需要 LibreOffice |
 | EMF/WMF 图片 | ❌ 不支持 | Windows 专有格式 |
@@ -331,7 +331,7 @@ markitai doctor --fix
 
 | 功能 | 支持 | 说明 |
 |------|------|------|
-| 旧版 Office（`.doc`、`.ppt`） | ✅ 完全支持 | 优先 LibreOffice；未安装时回退到已装的 MS Office |
+| 旧版 Office（`.doc`、`.ppt`） | ✅ 完全支持 | 需要 `markitai[legacy]` extra（anydoc Rust 后端，无需安装 Office；PPT 表格会展开为纯文本行） |
 | 旧版 Excel（`.xls`） | ✅ 完全支持 | 内置支持（纯 Python，无需 Office） |
 | PPTX 幻灯片渲染 | ✅ 完全支持 | 优先 LibreOffice；未安装时回退到已装的 MS PowerPoint |
 | EMF/WMF 图片 | ❌ 不支持 | Windows 专有格式 |

@@ -536,7 +536,7 @@ Every check is a capability report, and a capability you have not enabled never 
 - **Optional: RapidOCR** for `--ocr` on scanned PDFs and images. It ships in the `ocr` extra rather than the core install, so "not installed" here means "OCR is off", not "something is broken"
 - **Optional: VLM OCR** for `--ocr --llm` on scanned documents: the vision model reads page images instead of RapidOCR. Available when a vision-capable model is configured; `MARKITAI_NO_VLM_OCR=1` forces the local RapidOCR path
 - **Optional until configured: Playwright** for dynamic URL fetching (SPA rendering). It becomes a blocking check when `fetch.strategy` is `playwright` or `screenshot.enabled` is true
-- **Optional: LibreOffice** for legacy Office conversion and slide rendering (on macOS, installed MS Office apps are used as a fallback)
+- **Optional: LibreOffice** for PPTX slide rendering (on macOS, an installed Microsoft PowerPoint is used as a fallback)
 - **LLM API**: Configuration and model status
 - **Vision Model**: For image analysis (auto-detected from litellm)
 - **Local Provider Auth**: Authentication status for Claude Agent, GitHub Copilot, and ChatGPT (if configured)

@@ -1,665 +1,103 @@
-"""Legacy Office format converters (DOC, PPT - Office 97-2003).
+"""Legacy Office format converters (DOC, PPT - Office 97-2003) via anydoc.
 
-These formats require conversion to modern formats first.
-Conversion priority:
-1. MS Office COM (Windows) - faster and more accurate
-2. LibreOffice CLI (cross-platform) - fallback
-3. MS Office AppleScript (macOS) - fallback when LibreOffice is absent
+Since 0.24 these formats are handled by the bundled-Rust anydoc backend
+(``firecrawl-anydoc``, opt in via the ``markitai[legacy]`` extra) instead
+of driving Microsoft Office / LibreOffice: no Office installation is
+required on any platform, and conversion is millisecond-scale.
 
-Legacy XLS is not handled here: it converts directly through MarkItDown's
-xlrd path (converter/office.py), with no Office application involved.
+Two behavior notes versus the retired Office-automation path:
+
+- Embedded images are not extracted (anydoc's markdown carries no image
+  anchors), and PPT tables arrive as plain text lines.
+- Encrypted files raise a clear error; the old path could sometimes open
+  them through a locally installed Office suite.
 """
 
 from __future__ import annotations
 
-import platform
-import subprocess
-import tempfile
-from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from markitai.constants import ASSETS_REL_PATH, SCREENSHOTS_REL_PATH
 from markitai.converter.base import (
     BaseConverter,
     ConvertResult,
     FileFormat,
     register_converter,
 )
-from markitai.converter.office import OfficeConverter, PptxConverter
-from markitai.utils import office_mac
-from markitai.utils.office import (
-    check_ms_powerpoint_available,
-    check_ms_word_available,
-    find_libreoffice,
-)
+from markitai.utils.errors import ConversionError, MissingDependencyError
 
 if TYPE_CHECKING:
-    from markitai.config import MarkitaiConfig
+    pass
 
 
-# =============================================================================
-# COM Application Configuration
-# =============================================================================
-
-
-@dataclass
-class COMAppConfig:
-    """Configuration for a COM Office application."""
-
-    name: str  # Display name (Word, PowerPoint, Excel)
-    com_class: str  # COM ProgID (Word.Application, etc.)
-    input_ext: str  # Source extension (.doc, .ppt, .xls)
-    output_ext: str  # Target extension (.docx, .pptx, .xlsx)
-    save_format: int  # SaveAs format code
-    init_script: str  # PowerShell initialization lines
-    open_script: str  # PowerShell document open command (uses {input})
-    save_script: str  # PowerShell save command (uses {output}, {format})
-    close_script: str  # PowerShell close command
-    cleanup_script: str  # PowerShell cleanup lines
-    availability_check: Callable[[], bool]  # Function to check if app is available
-
-
-# PowerPoint configuration
-POWERPOINT_CONFIG = COMAppConfig(
-    name="PowerPoint",
-    com_class="PowerPoint.Application",
-    input_ext=".ppt",
-    output_ext=".pptx",
-    save_format=24,  # ppSaveAsOpenXMLPresentation
-    init_script="$app.Visible = [Microsoft.Office.Core.MsoTriState]::msoFalse",
-    open_script="$doc = $app.Presentations.Open('{input}', $true, $false, $false)",
-    save_script="$doc.SaveAs('{output}', {format})",
-    close_script="$doc.Close()",
-    cleanup_script="",
-    availability_check=check_ms_powerpoint_available,
-)
-
-# Word configuration
-WORD_CONFIG = COMAppConfig(
-    name="Word",
-    com_class="Word.Application",
-    input_ext=".doc",
-    output_ext=".docx",
-    save_format=16,  # wdFormatDocumentDefault
-    init_script="$app.Visible = $false",
-    open_script="$doc = $app.Documents.Open('{input}')",
-    save_script="$doc.SaveAs2('{output}', {format})",
-    close_script="$doc.Close()",
-    cleanup_script="",
-    availability_check=check_ms_word_available,
-)
-
-# Map extension to config
-COM_CONFIGS: dict[str, COMAppConfig] = {
-    ".ppt": POWERPOINT_CONFIG,
-    ".doc": WORD_CONFIG,
-}
-
-
-# =============================================================================
-# Single File COM Conversion
-# =============================================================================
-
-
-def _build_single_file_script(
-    config: COMAppConfig, input_path: str, output_path: str
-) -> str:
-    """Build PowerShell script for single file conversion.
-
-    Args:
-        config: COM application configuration
-        input_path: Escaped input file path
-        output_path: Escaped output file path
-
-    Returns:
-        PowerShell script string
-    """
-    open_cmd = config.open_script.format(input=input_path)
-    save_cmd = config.save_script.format(output=output_path, format=config.save_format)
-
-    return f"""
-$app = New-Object -ComObject {config.com_class}
-{config.init_script}
-try {{
-    {open_cmd}
-    {save_cmd}
-    {config.close_script}
-    Write-Host "SUCCESS"
-}} catch {{
-    Write-Host "FAILED: $_"
-}} finally {{
-    $app.Quit()
-    [System.Runtime.Interopservices.Marshal]::ReleaseComObject($app) | Out-Null
-}}
-"""
-
-
-def _convert_with_com(
-    input_file: Path,
-    output_dir: Path,
-    config: COMAppConfig,
-) -> Path | None:
-    """Convert a file using MS Office COM (Windows only).
-
-    Uses PowerShell subprocess for COM access, which provides:
-    - Process isolation (safe for concurrent execution)
-    - No pywin32 dependency required
-    - Automatic COM object cleanup
-
-    Args:
-        input_file: Path to the source file
-        output_dir: Directory for the converted file
-        config: COM application configuration
-
-    Returns:
-        Path to the converted file, or None if conversion failed
-    """
-    if platform.system() != "Windows":
-        return None
-
-    output_file = output_dir / (input_file.stem + config.output_ext)
-
-    # Escape single quotes for PowerShell string
-    input_path = str(input_file.resolve()).replace("'", "''")
-    output_path = str(output_file.resolve()).replace("'", "''")
-
-    ps_script = _build_single_file_script(config, input_path, output_path)
-
+def _load_anydoc() -> Any:
+    """Import the anydoc backend or raise an actionable error."""
     try:
-        result = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", ps_script],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-
-        if "SUCCESS" in result.stdout and output_file.exists():
-            logger.debug(f"MS {config.name} conversion succeeded: {output_file}")
-            return output_file
-        else:
-            logger.warning(f"MS {config.name} conversion failed: {result.stdout}")
-            return None
-
-    except subprocess.TimeoutExpired:
-        logger.warning(f"MS {config.name} conversion timed out")
-        return None
-    except Exception as e:
-        logger.warning(f"MS {config.name} conversion error: {e}")
-        return None
-
-
-# =============================================================================
-# Batch COM Conversion
-# =============================================================================
-
-
-def _build_batch_script(config: COMAppConfig, files_array: str) -> str:
-    """Build PowerShell script for batch file conversion.
-
-    Args:
-        config: COM application configuration
-        files_array: PowerShell array string of file entries
-
-    Returns:
-        PowerShell script string
-    """
-    # Build the loop body with proper variable substitution
-    open_cmd = config.open_script.replace("'{input}'", "$file.Input")
-    save_cmd = config.save_script.replace("'{output}'", "$file.Output").replace(
-        "{format}", str(config.save_format)
-    )
-
-    return f"""
-$files = {files_array}
-$app = New-Object -ComObject {config.com_class}
-{config.init_script}
-$results = @()
-try {{
-    foreach ($file in $files) {{
-        try {{
-            {open_cmd}
-            {save_cmd}
-            {config.close_script}
-            $results += "OK:" + $file.Input
-        }} catch {{
-            $results += "FAIL:" + $file.Input + ":" + $_
-        }}
-    }}
-}} finally {{
-    $app.Quit()
-    [System.Runtime.Interopservices.Marshal]::ReleaseComObject($app) | Out-Null
-}}
-$results -join "`n"
-"""
-
-
-def _run_batch_conversion(
-    ps_script: str,
-    files: list[Path],
-    output_dir: Path,
-    new_ext: str,
-    app_name: str,
-) -> dict[Path, Path]:
-    """Execute batch conversion PowerShell script and parse results.
-
-    Args:
-        ps_script: PowerShell script to execute
-        files: List of input files
-        output_dir: Output directory for converted files
-        new_ext: New file extension
-        app_name: Application name for logging
-
-    Returns:
-        Dict mapping original file path to converted file path
-    """
-    results: dict[Path, Path] = {}
-
-    try:
-        logger.info(f"Batch converting {len(files)} files with MS {app_name}...")
-        proc_result = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", ps_script],
-            capture_output=True,
-            text=True,
-            timeout=120 * len(files),  # Scale timeout with file count
-        )
-
-        # Parse results
-        for line in proc_result.stdout.strip().split("\n"):
-            if line.startswith("OK:"):
-                input_path = Path(line[3:].strip())
-                output_path = output_dir / (input_path.stem + new_ext)
-                if output_path.exists():
-                    # Find original file in list (case-insensitive match)
-                    for f in files:
-                        if (
-                            f.resolve() == input_path
-                            or str(f.resolve()).lower() == line[3:].strip().lower()
-                        ):
-                            results[f] = output_path
-                            break
-            elif line.startswith("FAIL:"):
-                parts = line[5:].split(":", 1)
-                logger.warning(
-                    f"MS {app_name} failed for {parts[0]}: {parts[1] if len(parts) > 1 else 'unknown'}"
-                )
-
-        logger.info(
-            f"MS {app_name} batch conversion: {len(results)}/{len(files)} succeeded"
-        )
-
-    except subprocess.TimeoutExpired:
-        logger.warning(f"MS {app_name} batch conversion timed out")
-    except Exception as e:
-        logger.warning(f"MS {app_name} batch conversion error: {e}")
-
-    return results
-
-
-def _batch_convert_with_com(
-    files: list[Path],
-    output_dir: Path,
-    config: COMAppConfig,
-) -> dict[Path, Path]:
-    """Batch convert files using a single COM session.
-
-    Args:
-        files: List of files to convert
-        output_dir: Output directory
-        config: COM application configuration
-
-    Returns:
-        Dict mapping original file path to converted file path
-    """
-    if not files:
-        return {}
-
-    # Build file list for PowerShell
-    file_entries = []
-    for f in files:
-        input_path = str(f.resolve()).replace("'", "''")
-        output_path = str(
-            (output_dir / (f.stem + config.output_ext)).resolve()
-        ).replace("'", "''")
-        file_entries.append(f"@{{Input='{input_path}'; Output='{output_path}'}}")
-
-    files_array = "@(" + ", ".join(file_entries) + ")"
-    ps_script = _build_batch_script(config, files_array)
-
-    return _run_batch_conversion(
-        ps_script, files, output_dir, config.output_ext, config.name
-    )
-
-
-def batch_convert_legacy_files(
-    files: list[Path],
-    output_dir: Path,
-) -> dict[Path, Path]:
-    """Batch convert legacy Office files using a single COM session per app.
-
-    This significantly reduces overhead by:
-    - Starting each Office application only once
-    - Processing all files of the same type in one session
-    - Running Word and PowerPoint conversions in parallel
-    - Reducing PowerShell process spawn overhead
-
-    Args:
-        files: List of legacy format files (.doc, .ppt)
-        output_dir: Directory for converted files
-
-    Returns:
-        Dict mapping original file path to converted file path.
-        Files that failed conversion are not included.
-    """
-    if platform.system() != "Windows":
-        return {}
-
-    import concurrent.futures
-
-    # Group files by type
-    files_by_ext: dict[str, list[Path]] = {}
-    for f in files:
-        ext = f.suffix.lower()
-        if ext in COM_CONFIGS:
-            if ext not in files_by_ext:
-                files_by_ext[ext] = []
-            files_by_ext[ext].append(f)
-
-    results: dict[Path, Path] = {}
-
-    # Run conversions for different Office apps in parallel
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        futures = []
-
-        for ext, file_list in files_by_ext.items():
-            config = COM_CONFIGS[ext]
-            if file_list and config.availability_check():
-                futures.append(
-                    executor.submit(
-                        _batch_convert_with_com, file_list, output_dir, config
-                    )
-                )
-
-        # Collect results
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                converted = future.result()
-                results.update(converted)
-            except Exception as e:
-                logger.warning(f"Batch conversion failed: {e}")
-
-    return results
-
-
-# =============================================================================
-# Legacy Office Converter Class
-# =============================================================================
-
-
-class LegacyOfficeConverter(BaseConverter):
-    """Base converter for legacy Office documents (DOC, PPT).
-
-    Conversion priority:
-    1. MS Office COM (Windows) - faster and more accurate
-    2. LibreOffice CLI (cross-platform) - fallback
-    3. MS Office AppleScript (macOS) - fallback when LibreOffice is absent
-    """
-
-    # Mapping of legacy format to target format
-    TARGET_FORMAT: dict[str, str] = {
-        ".doc": "docx",
-        ".ppt": "pptx",
-    }
-
-    def __init__(self, config: MarkitaiConfig | None = None) -> None:
-        super().__init__(config)
-        self._office_converter = OfficeConverter(config)
-        self._pptx_converter = PptxConverter(config)
-        self._soffice_path = find_libreoffice()
-
-    @staticmethod
-    def _rewrite_converted_artifact_names(
-        result: ConvertResult,
-        converted_name: str,
-        original_name: str,
-    ) -> ConvertResult:
-        """Rewrite derived asset names back to the original legacy filename."""
-        if converted_name == original_name:
-            return result
-
-        def rename_path(path: Path) -> Path:
-            new_name = path.name.replace(converted_name, original_name, 1)
-            if new_name == path.name:
-                return path
-            new_path = path.with_name(new_name)
-            if path.exists():
-                path.replace(new_path)
-            return new_path
-
-        for image in result.images:
-            image.path = rename_path(image.path)
-            image.original_name = image.original_name.replace(
-                converted_name, original_name, 1
-            )
-
-        page_images = result.metadata.get("page_images")
-        if isinstance(page_images, list):
-            for page_image in page_images:
-                if not isinstance(page_image, dict):
-                    continue
-
-                name = page_image.get("name")
-                if isinstance(name, str):
-                    page_image["name"] = name.replace(converted_name, original_name, 1)
-
-                path_str = page_image.get("path")
-                if isinstance(path_str, str):
-                    new_path = rename_path(Path(path_str))
-                    page_image["path"] = str(new_path)
-                    page_image["name"] = new_path.name
-
-        result.markdown = result.markdown.replace(
-            f"({ASSETS_REL_PATH}/{converted_name}",
-            f"({ASSETS_REL_PATH}/{original_name}",
-        )
-        result.markdown = result.markdown.replace(
-            f"({SCREENSHOTS_REL_PATH}/{converted_name}",
-            f"({SCREENSHOTS_REL_PATH}/{original_name}",
-        )
-        return result
-
-    def _convert_legacy_format(
-        self,
-        input_path: Path,
-        target_format: str,
-        output_dir: Path,
-    ) -> Path:
-        """Convert legacy format to modern format.
-
-        Tries MS Office COM first (Windows), falls back to LibreOffice,
-        then to MS Office via AppleScript (macOS, when LibreOffice is absent).
-
-        Args:
-            input_path: Path to the legacy format file
-            target_format: Target format (docx, pptx, xlsx)
-            output_dir: Directory for converted file
-
-        Returns:
-            Path to the converted file
-
-        Raises:
-            RuntimeError: If conversion fails with all methods
-        """
-        suffix = input_path.suffix.lower()
-        converted_path: Path | None = None
-
-        # Try MS Office COM first (Windows only)
-        config = COM_CONFIGS.get(suffix)
-        if config and config.availability_check():
-            logger.info(f"Converting {input_path.name} with MS {config.name}...")
-            converted_path = _convert_with_com(input_path, output_dir, config)
-            if converted_path:
-                return converted_path
-            logger.warning(f"MS {config.name} conversion failed, trying LibreOffice...")
-
-        # Fallback to LibreOffice
-        if self._soffice_path:
-            logger.info(f"Converting {input_path.name} with LibreOffice...")
-            return self._convert_with_libreoffice(input_path, target_format, output_dir)
-
-        # macOS fallback: no LibreOffice, drive installed MS Office via AppleScript
-        if (
-            platform.system() == "Darwin"
-            and (self.config is None or self.config.office.macos_fallback)
-            and office_mac.legacy_app_available(suffix)
-        ):
-            app = office_mac.APP_BY_SUFFIX[suffix]
-            logger.info(f"Converting {input_path.name} with {app} (AppleScript)...")
-            return office_mac.convert_legacy(input_path, target_format, output_dir)
-
-        # No conversion method available
-        if platform.system() == "Windows":
-            raise RuntimeError(
-                f"Cannot convert {suffix} files. "
-                "Install Microsoft Office (recommended) or LibreOffice."
-            )
-        elif platform.system() == "Darwin":
-            if self.config is not None and not self.config.office.macos_fallback:
-                raise RuntimeError(
-                    f"Cannot convert {suffix} files. Install LibreOffice, or "
-                    "enable office.macos_fallback to use Microsoft Office."
-                )
-            raise RuntimeError(
-                f"Cannot convert {suffix} files. "
-                "Install LibreOffice or Microsoft Office."
-            )
-        else:
-            raise RuntimeError(f"Cannot convert {suffix} files. Install LibreOffice.")
-
-    def _convert_with_libreoffice(
-        self,
-        input_path: Path,
-        target_format: str,
-        output_dir: Path,
-    ) -> Path:
-        """Convert legacy format using LibreOffice CLI.
-
-        Uses isolated user profile to support concurrent LibreOffice processes.
-        """
-        if not self._soffice_path:
-            raise RuntimeError(
-                "LibreOffice not found. Install LibreOffice to convert "
-                f"{input_path.suffix} files."
-            )
-
-        # Create isolated user profile for concurrent execution
-        # LibreOffice uses a shared user config directory by default,
-        # which causes conflicts when multiple processes run simultaneously
-        with tempfile.TemporaryDirectory(prefix="lo_profile_") as profile_dir:
-            profile_url = Path(profile_dir).as_uri()
-
-            # Run LibreOffice conversion with isolated profile
-            cmd = [
-                self._soffice_path,
-                "--headless",
-                f"-env:UserInstallation={profile_url}",
-                "--convert-to",
-                target_format,
-                "--outdir",
-                str(output_dir),
-                str(input_path),
-            ]
-
-            logger.debug(f"Running LibreOffice: {' '.join(cmd)}")
-
-            try:
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=120,
-                )
-
-                if result.returncode != 0:
-                    raise RuntimeError(
-                        f"LibreOffice conversion failed: {result.stderr}"
-                    )
-
-            except subprocess.TimeoutExpired as e:
-                raise RuntimeError("LibreOffice conversion timed out") from e
-
-        # Find converted file
-        converted_name = input_path.stem + "." + target_format
-        converted_path = output_dir / converted_name
-
-        if not converted_path.exists():
-            raise RuntimeError(f"Converted file not found: {converted_path}")
-
-        return converted_path
+        import anydoc
+    except ImportError:
+        raise MissingDependencyError(
+            "Legacy Office formats (.doc, .ppt) need the anydoc backend. "
+            'Install it with: pip install "markitai[legacy]"'
+        ) from None
+    return anydoc
+
+
+class _AnyDocLegacyConverter(BaseConverter):
+    """Convert a legacy Office file directly with anydoc (sync, local)."""
 
     def convert(
         self, input_path: Path, output_dir: Path | None = None
     ) -> ConvertResult:
-        """Convert legacy Office document to Markdown.
+        """Convert a .doc/.ppt file to Markdown.
 
         Args:
-            input_path: Path to the input file
-            output_dir: Optional output directory for extracted images
+            input_path: Path to the input file.
+            output_dir: Unused (anydoc's markdown carries no extractable
+                image assets); accepted for interface compatibility.
 
         Returns:
-            ConvertResult containing markdown and extracted images
+            ConvertResult with the converted markdown.
+
+        Raises:
+            MissingDependencyError: ``markitai[legacy]`` extra not installed.
+            ConversionError: The file is encrypted, malformed, or otherwise
+                rejected by anydoc.
         """
+        anydoc = _load_anydoc()
         input_path = Path(input_path)
         suffix = input_path.suffix.lower()
 
-        target_format = self.TARGET_FORMAT.get(suffix)
-        if not target_format:
-            raise ValueError(f"Unsupported format: {suffix}")
+        try:
+            markdown = anydoc.to_markdown(str(input_path))
+        except anydoc.EncryptedError:
+            raise ConversionError(
+                f"{input_path.name} is password-protected; decrypt it before converting"
+            ) from None
+        except anydoc.ConvertError as e:
+            raise ConversionError(f"Failed to convert {input_path.name}: {e}") from None
 
-        # Create temp directory for conversion
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-
-            # Convert to modern format (COM first, LibreOffice fallback)
-            converted_path = self._convert_legacy_format(
-                input_path, target_format, temp_path
-            )
-
-            # Process with appropriate converter based on target format
-            if target_format == "pptx":
-                result = self._pptx_converter.convert(converted_path, output_dir)
-                result = self._rewrite_converted_artifact_names(
-                    result,
-                    converted_path.name,
-                    input_path.name,
-                )
-            else:
-                result = self._office_converter.convert(converted_path, output_dir)
-
-            # Update metadata
-            result.metadata["original_format"] = suffix.lstrip(".").upper()
-            result.metadata["source"] = str(input_path)
-
-            return result
-
-
-# =============================================================================
-# Registered Converters
-# =============================================================================
+        logger.debug(f"[Legacy] Converted {input_path.name} via anydoc")
+        return ConvertResult(
+            markdown=markdown,
+            metadata={
+                "original_format": suffix.lstrip(".").upper(),
+                "source": str(input_path),
+                "backend": "anydoc",
+            },
+        )
 
 
 @register_converter(FileFormat.DOC)
-class DocConverter(LegacyOfficeConverter):
+class DocConverter(_AnyDocLegacyConverter):
     """Converter for legacy DOC (Word 97-2003) documents."""
 
     supported_formats = [FileFormat.DOC]
 
 
 @register_converter(FileFormat.PPT)
-class PptConverter(LegacyOfficeConverter):
+class PptConverter(_AnyDocLegacyConverter):
     """Converter for legacy PPT (PowerPoint 97-2003) documents."""
 
     supported_formats = [FileFormat.PPT]

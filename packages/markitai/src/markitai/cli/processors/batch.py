@@ -6,7 +6,6 @@ This module contains functions for batch processing of files and URLs.
 from __future__ import annotations
 
 import asyncio
-import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -107,7 +106,6 @@ def create_process_file(
     cfg: MarkitaiConfig,
     input_dir: Path,
     output_dir: Path,
-    preconverted_map: dict[Path, Path],
     shared_processor: LLMProcessor | None,
 ) -> Callable:
     """Create a process_file function using workflow/core pipeline.
@@ -119,7 +117,6 @@ def create_process_file(
         cfg: Markitai configuration
         input_dir: Input directory for relative path calculation
         output_dir: Output directory
-        preconverted_map: Map of pre-converted legacy Office files
         shared_processor: Shared LLM processor for batch mode
 
     Returns:
@@ -146,7 +143,6 @@ def create_process_file(
                 input_path=file_path,
                 output_dir=file_output_dir,
                 config=cfg,
-                actual_file=preconverted_map.get(file_path),
                 shared_processor=shared_processor,
                 use_multiprocess_images=True,
                 input_base_dir=input_dir,
@@ -894,33 +890,6 @@ async def process_batch(
             total_urls=len(url_entries_to_process),
         )
 
-    # Pre-convert legacy Office files using batch COM (Windows only)
-    # This reduces overhead by starting each Office app only once
-    # (.xls converts in pure Python via xlrd and needs no pre-conversion)
-    legacy_suffixes = {".doc", ".ppt"}
-    legacy_files = [f for f in files_to_process if f.suffix.lower() in legacy_suffixes]
-    preconverted_map: dict[Path, Path] = {}
-    preconvert_temp_dir: tempfile.TemporaryDirectory | None = None
-
-    if legacy_files:
-        import platform
-
-        if platform.system() == "Windows":
-            from markitai.converter.legacy import batch_convert_legacy_files
-
-            # Create temp directory for pre-converted files
-            preconvert_temp_dir = tempfile.TemporaryDirectory(
-                prefix="markitai_preconv_"
-            )
-            preconvert_path = Path(preconvert_temp_dir.name)
-
-            logger.debug(f"Pre-converting {len(legacy_files)} legacy files...")
-            preconverted_map = batch_convert_legacy_files(legacy_files, preconvert_path)
-            if preconverted_map:
-                logger.debug(
-                    f"Pre-converted {len(preconverted_map)}/{len(legacy_files)} files with MS Office COM"
-                )
-
     # Create shared LLM runtime and processor for batch mode
     shared_processor = None
     if cfg.llm.enabled:
@@ -950,7 +919,6 @@ async def process_batch(
         cfg=cfg,
         input_dir=input_dir,
         output_dir=output_dir,
-        preconverted_map=preconverted_map,
         shared_processor=shared_processor,
     )
     logger.debug("Using workflow/core implementation for batch processing")
@@ -1178,10 +1146,6 @@ async def process_batch(
         # Stop Live display and restore console handler
         # This must be done before printing summary
         batch.stop_live_display()
-
-        # Clean up pre-conversion temp directory
-        if preconvert_temp_dir is not None:
-            preconvert_temp_dir.cleanup()
 
     if state:
         # Update state timestamp

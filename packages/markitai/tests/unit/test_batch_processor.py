@@ -101,7 +101,6 @@ class TestCreateProcessFile:
             cfg=default_config,
             input_dir=sample_input_dir,
             output_dir=sample_output_dir,
-            preconverted_map={},
             shared_processor=None,
         )
 
@@ -125,7 +124,6 @@ class TestCreateProcessFile:
             cfg=default_config,
             input_dir=sample_input_dir,
             output_dir=sample_output_dir,
-            preconverted_map={},
             shared_processor=None,
         )
 
@@ -134,36 +132,6 @@ class TestCreateProcessFile:
         assert result.success is True
         assert result.output_path is not None
         assert result.error is None
-
-    @pytest.mark.asyncio
-    async def test_process_file_with_preconverted_map(
-        self,
-        default_config: MarkitaiConfig,
-        sample_input_dir: Path,
-        sample_output_dir: Path,
-    ) -> None:
-        """Test file processing with preconverted file map."""
-        from markitai.cli.processors.batch import create_process_file
-
-        # Create original and preconverted files
-        original_file = sample_input_dir / "test.doc"
-        original_file.touch()
-
-        preconverted = sample_input_dir / "test_converted.md"
-        preconverted.write_text("# Pre-converted Content")
-
-        process_file = create_process_file(
-            cfg=default_config,
-            input_dir=sample_input_dir,
-            output_dir=sample_output_dir,
-            preconverted_map={original_file: preconverted},
-            shared_processor=None,
-        )
-
-        result = await process_file(original_file)
-
-        assert result.success is True
-        assert result.output_path is not None
 
     @pytest.mark.asyncio
     async def test_process_file_preserves_directory_structure(
@@ -185,7 +153,6 @@ class TestCreateProcessFile:
             cfg=default_config,
             input_dir=sample_input_dir,
             output_dir=sample_output_dir,
-            preconverted_map={},
             shared_processor=None,
         )
 
@@ -214,7 +181,6 @@ class TestCreateProcessFile:
             cfg=default_config,
             input_dir=sample_input_dir,
             output_dir=sample_output_dir,
-            preconverted_map={},
             shared_processor=None,
         )
 
@@ -249,7 +215,6 @@ class TestCreateProcessFile:
             cfg=default_config,
             input_dir=sample_input_dir,
             output_dir=sample_output_dir,
-            preconverted_map={},
             shared_processor=failing_processor,
         )
 
@@ -285,7 +250,6 @@ class TestCreateProcessFile:
             cfg=default_config,
             input_dir=sample_input_dir,
             output_dir=sample_output_dir,
-            preconverted_map={},
             shared_processor=None,
         )
 
@@ -313,7 +277,6 @@ class TestCreateProcessFile:
                     cfg=MarkitaiConfig(),
                     input_dir=Path({str(sample_input_dir)!r}),
                     output_dir=Path({str(sample_output_dir)!r}),
-                    preconverted_map={{}},
                     shared_processor=None,
                 )
                 result = await process_file(Path({str(sample_input_dir / "doc3.txt")!r}))
@@ -367,7 +330,6 @@ class TestCreateProcessFile:
             cfg=default_config,
             input_dir=sample_input_dir,
             output_dir=sample_output_dir,
-            preconverted_map={},
             shared_processor=mock_llm_processor,
         )
 
@@ -397,7 +359,6 @@ class TestCreateProcessFile:
             cfg=default_config,
             input_dir=sample_input_dir,
             output_dir=sample_output_dir,
-            preconverted_map={},
             shared_processor=None,
         )
 
@@ -1350,7 +1311,6 @@ class TestErrorHandling:
             cfg=default_config,
             input_dir=sample_input_dir,
             output_dir=sample_output_dir,
-            preconverted_map={},
             shared_processor=None,
         )
 

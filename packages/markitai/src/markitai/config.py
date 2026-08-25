@@ -402,8 +402,8 @@ class OfficeConfig(BaseModel):
     macos_fallback: bool = Field(
         default=True,
         description=(
-            "On macOS without LibreOffice, drive installed MS Office apps "
-            "via AppleScript for legacy conversion and PPTX PDF export. "
+            "On macOS without LibreOffice, drive an installed Microsoft "
+            "PowerPoint via AppleScript for PPTX PDF export. "
             "Disable in headless sessions where macOS permission dialogs "
             "cannot be answered."
         ),

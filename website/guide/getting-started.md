@@ -299,7 +299,7 @@ Some features have platform-specific behavior or limitations:
 
 | Feature | Support | Notes |
 |---------|---------|-------|
-| Legacy Office (`.doc`, `.ppt`) | ✅ Full | Uses COM automation |
+| Legacy Office (`.doc`, `.ppt`) | ✅ Full | Needs the `markitai[legacy]` extra (anydoc Rust backend, no Office install; PPT tables flatten to text) |
 | Legacy Excel (`.xls`) | ✅ Full | Built-in (pure Python, no Office needed) |
 | PPTX Slide Rendering | ✅ Full | MS Office preferred, LibreOffice fallback |
 | EMF/WMF Images | ✅ Full | Native support |
@@ -309,7 +309,7 @@ Some features have platform-specific behavior or limitations:
 
 | Feature | Support | Notes |
 |---------|---------|-------|
-| Legacy Office (`.doc`, `.ppt`) | ✅ Full | Requires LibreOffice (Windows uses COM, LibreOffice as fallback) |
+| Legacy Office (`.doc`, `.ppt`) | ✅ Full | Needs the `markitai[legacy]` extra (anydoc Rust backend, no LibreOffice needed; PPT tables flatten to text) |
 | Legacy Excel (`.xls`) | ✅ Full | Built-in (pure Python, no LibreOffice needed) |
 | PPTX Slide Rendering | ✅ Full | Requires LibreOffice |
 | EMF/WMF Images | ❌ No | Windows-only format |
@@ -335,7 +335,7 @@ markitai doctor --fix
 
 | Feature | Support | Notes |
 |---------|---------|-------|
-| Legacy Office (`.doc`, `.ppt`) | ✅ Full | LibreOffice preferred; falls back to installed MS Office |
+| Legacy Office (`.doc`, `.ppt`) | ✅ Full | Needs the `markitai[legacy]` extra (anydoc Rust backend, no Office install; PPT tables flatten to text) |
 | Legacy Excel (`.xls`) | ✅ Full | Built-in (pure Python, no Office needed) |
 | PPTX Slide Rendering | ✅ Full | LibreOffice preferred; falls back to installed MS PowerPoint |
 | EMF/WMF Images | ❌ No | Windows-only format |

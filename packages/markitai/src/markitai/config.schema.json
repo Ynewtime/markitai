@@ -983,7 +983,7 @@
       "properties": {
         "macos_fallback": {
           "default": true,
-          "description": "On macOS without LibreOffice, drive installed MS Office apps via AppleScript for legacy conversion and PPTX PDF export. Disable in headless sessions where macOS permission dialogs cannot be answered.",
+          "description": "On macOS without LibreOffice, drive an installed Microsoft PowerPoint via AppleScript for PPTX PDF export. Disable in headless sessions where macOS permission dialogs cannot be answered.",
           "title": "Macos Fallback",
           "type": "boolean"
         }

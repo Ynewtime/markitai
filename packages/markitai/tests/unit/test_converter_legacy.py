@@ -1,90 +1,96 @@
+"""Tests for the anydoc-backed legacy converters (converter/legacy.py).
+
+.doc/.ppt conversion went from three-platform Office automation (Windows
+COM / macOS AppleScript / LibreOffice CLI) to the bundled-Rust anydoc
+backend (markitai[legacy] extra). These tests lock the routing, the real
+fixture conversions, and the error mapping.
+"""
+
 from __future__ import annotations
 
+import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-from markitai.converter.base import ConvertResult, ExtractedImage
-from markitai.converter.legacy import PptConverter
+import pytest
+
+from markitai.converter import get_converter
+from markitai.converter.legacy import DocConverter, PptConverter, _load_anydoc
+from markitai.utils.errors import ConversionError, MissingDependencyError
 
 
-class TestLegacyPptArtifacts:
-    """Tests for legacy PPT artifact naming."""
+class TestLegacyRouting:
+    def test_doc_routes_to_anydoc_converter(self) -> None:
+        assert type(get_converter("letter.doc")) is DocConverter
 
-    def test_convert_rewrites_pptx_artifacts_to_original_ppt_name(
-        self, tmp_path: Path
-    ) -> None:
-        """Legacy PPT outputs should not leak temporary .pptx filenames."""
-        output_dir = tmp_path / "output"
-        assets_dir = output_dir / ".markitai" / "assets"
-        screenshots_dir = output_dir / ".markitai" / "screenshots"
-        assets_dir.mkdir(parents=True)
-        screenshots_dir.mkdir(parents=True)
+    def test_ppt_routes_to_anydoc_converter(self) -> None:
+        assert type(get_converter("deck.ppt")) is PptConverter
 
-        old_asset = assets_dir / "sample.pptx.0001.jpg"
-        old_asset.write_bytes(b"asset")
-        old_screenshot = screenshots_dir / "sample.pptx.slide0001.jpg"
-        old_screenshot.write_bytes(b"screenshot")
 
-        result = ConvertResult(
-            markdown=(
-                "![Embedded](.markitai/assets/sample.pptx.0001.jpg)\n"
-                "<!-- ![Page 1](.markitai/screenshots/sample.pptx.slide0001.jpg) -->"
-            ),
-            images=[
-                ExtractedImage(
-                    path=old_asset,
-                    index=1,
-                    original_name=old_asset.name,
-                    mime_type="image/jpeg",
-                    width=10,
-                    height=10,
-                ),
-                ExtractedImage(
-                    path=old_screenshot,
-                    index=1,
-                    original_name=old_screenshot.name,
-                    mime_type="image/jpeg",
-                    width=10,
-                    height=10,
-                ),
-            ],
-            metadata={
-                "page_images": [
-                    {
-                        "page": 1,
-                        "path": str(old_screenshot),
-                        "name": old_screenshot.name,
-                    }
-                ]
-            },
-        )
+class TestAnyDocConversion:
+    """Real fixture conversions through the anydoc Rust backend."""
 
-        converter = PptConverter()
-        converter._pptx_converter = MagicMock()  # type: ignore[reportAttributeAccessIssue]
-        converter._pptx_converter.convert.return_value = result  # type: ignore[reportAttributeAccessIssue]
+    def test_doc_fixture_structure(self, fixtures_dir: Path) -> None:
+        result = DocConverter().convert(fixtures_dir / "legacy" / "sample.doc")
 
-        input_path = tmp_path / "sample.ppt"
-        input_path.write_bytes(b"ppt")
-        converted_path = tmp_path / "sample.pptx"
+        assert result.metadata["original_format"] == "DOC"
+        assert result.metadata["backend"] == "anydoc"
+        # Headings survive as markdown headings (the Office-automation chain
+        # flattened them), and the table keeps GFM structure.
+        assert "# Lorem ipsum dolor sit amet" in result.markdown
+        assert "| --- | --- | --- |" in result.markdown
+        assert "HYPERLINK" not in result.markdown  # no field-code leakage
 
-        with patch.object(
-            converter,
-            "_convert_legacy_format",
-            return_value=converted_path,
+    def test_ppt_fixture_text(self, fixtures_dir: Path) -> None:
+        result = PptConverter().convert(fixtures_dir / "legacy" / "sample.ppt")
+
+        assert result.metadata["original_format"] == "PPT"
+        assert "Lorem ipsum" in result.markdown
+
+
+class TestAnyDocErrors:
+    def test_missing_extra_raises_actionable_error(self) -> None:
+        with (
+            patch.dict(sys.modules, {"anydoc": None}),
+            pytest.raises(MissingDependencyError, match=r"markitai\[legacy\]"),
         ):
-            converted = converter.convert(input_path, output_dir)
+            _load_anydoc()
 
-        new_asset = assets_dir / "sample.ppt.0001.jpg"
-        new_screenshot = screenshots_dir / "sample.ppt.slide0001.jpg"
+    def test_convert_without_extra_raises(self, tmp_path: Path) -> None:
+        doc = tmp_path / "x.doc"
+        doc.write_bytes(b"not a real doc")
+        with (
+            patch.dict(sys.modules, {"anydoc": None}),
+            pytest.raises(MissingDependencyError),
+        ):
+            DocConverter().convert(doc)
 
-        assert ".markitai/assets/sample.ppt.0001.jpg" in converted.markdown
-        assert ".markitai/screenshots/sample.ppt.slide0001.jpg" in converted.markdown
-        assert new_asset.exists()
-        assert new_screenshot.exists()
-        assert not old_asset.exists()
-        assert not old_screenshot.exists()
-        assert converted.images[0].path == new_asset
-        assert converted.images[0].original_name == new_asset.name
-        assert converted.images[1].path == new_screenshot
-        assert converted.metadata["page_images"][0]["name"] == new_screenshot.name
-        assert converted.metadata["page_images"][0]["path"] == str(new_screenshot)
+    def test_encrypted_maps_to_clear_message(self, tmp_path: Path) -> None:
+        import anydoc
+
+        doc = tmp_path / "secret.doc"
+        doc.write_bytes(b"encrypted")
+        with (
+            patch.object(
+                sys.modules["anydoc"],
+                "to_markdown",
+                side_effect=anydoc.EncryptedError("encrypted"),
+            ),
+            pytest.raises(ConversionError, match="password-protected"),
+        ):
+            DocConverter().convert(doc)
+
+    def test_malformed_maps_to_conversion_error(self, tmp_path: Path) -> None:
+        import anydoc
+
+        doc = tmp_path / "broken.doc"
+        doc.write_bytes(b"junk")
+        with (
+            patch.object(
+                sys.modules["anydoc"],
+                "to_markdown",
+                side_effect=anydoc.MalformedError("bad ole"),
+            ),
+            pytest.raises(ConversionError, match="Failed to convert broken.doc"),
+        ):
+            DocConverter().convert(doc)

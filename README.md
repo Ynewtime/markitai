@@ -66,6 +66,7 @@ have a different `mkai` on your PATH, use the full `markitai` to avoid ambiguity
 | `extra-fetch` | curl-cffi HTTP client (better anti-bot compatibility) |
 | `heif` | HEIC/HEIF/AVIF image input |
 | `kreuzberg` | Kreuzberg extraction backend |
+| `legacy` | Legacy Office conversion (`.doc`/`.ppt`) via the anydoc Rust backend |
 | `mcp` | Bundled `markitai-mcp` server for AI agents (Model Context Protocol) |
 | `ocr` | Local OCR for scanned PDFs and images (`--ocr`) |
 | `serve` | Local web workspace and REST API |

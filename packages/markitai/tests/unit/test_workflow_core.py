@@ -82,37 +82,6 @@ def sample_context(
 class TestConversionContext:
     """Tests for ConversionContext dataclass."""
 
-    def test_effective_input_default(self, sample_context: ConversionContext) -> None:
-        """Test effective_input returns input_path when no actual_file."""
-        assert sample_context.effective_input == sample_context.input_path
-
-    def test_effective_input_with_actual_file(
-        self, sample_context: ConversionContext, tmp_path: Path
-    ) -> None:
-        """Test effective_input returns actual_file when set."""
-        actual = tmp_path / "converted.md"
-        actual.touch()
-        sample_context.actual_file = actual
-        assert sample_context.effective_input == actual
-
-    def test_is_preconverted_false(self, sample_context: ConversionContext) -> None:
-        """Test is_preconverted returns False when no actual_file."""
-        assert sample_context.is_preconverted is False
-
-    def test_is_preconverted_true(
-        self, sample_context: ConversionContext, tmp_path: Path
-    ) -> None:
-        """Test is_preconverted returns True when actual_file differs."""
-        actual = tmp_path / "converted.md"
-        actual.touch()
-        sample_context.actual_file = actual
-        assert sample_context.is_preconverted is True
-
-    def test_is_preconverted_same_file(self, sample_context: ConversionContext) -> None:
-        """Test is_preconverted returns False when actual_file same as input."""
-        sample_context.actual_file = sample_context.input_path
-        assert sample_context.is_preconverted is False
-
     def test_default_values(self, sample_context: ConversionContext) -> None:
         """Test default values are set correctly."""
         assert sample_context.use_multiprocess_images is False
@@ -226,29 +195,6 @@ class TestValidateAndDetectFormat:
         assert result.success is False
         assert result.error is not None
         assert "unsupported" in result.error.lower()
-
-    def test_uses_effective_input_for_format_detection(
-        self, sample_context: ConversionContext, tmp_path: Path
-    ) -> None:
-        """Test that format detection uses effective_input (actual_file if set)."""
-        # Create a markdown file as the actual (pre-converted) file
-        md_file = tmp_path / "converted.md"
-        md_file.write_text("# Converted content")
-        sample_context.actual_file = md_file
-
-        max_size = 100 * 1024 * 1024
-        result = validate_and_detect_format(sample_context, max_size)
-
-        assert result.success is True
-        # Converter should be for markdown, not txt
-        from markitai.converter.text import MarkdownConverter
-
-        assert isinstance(sample_context.converter, MarkdownConverter)
-
-
-# =============================================================================
-# prepare_output_directory Tests
-# =============================================================================
 
 
 class TestPrepareOutputDirectory:
@@ -2248,40 +2194,6 @@ class TestConvertDocumentCore:
         assert result.success is False
         assert result.error is not None
         assert "too large" in result.error.lower()
-
-    @pytest.mark.asyncio
-    async def test_uses_preconverted_file(
-        self, tmp_path: Path, default_config: MarkitaiConfig
-    ) -> None:
-        """Test pipeline uses preconverted file when provided."""
-        from markitai.workflow.core import ConversionContext, convert_document_core
-
-        # Original file (docx - would need real converter)
-        original_file = tmp_path / "test.docx"
-        original_file.touch()
-
-        # Pre-converted markdown file
-        preconverted = tmp_path / "test_converted.md"
-        preconverted.write_text("# Pre-converted Content\n\nAlready converted.")
-
-        output_dir = tmp_path / "output"
-        ctx = ConversionContext(
-            input_path=original_file,
-            output_dir=output_dir,
-            config=default_config,
-            actual_file=preconverted,
-        )
-
-        max_size = 100 * 1024 * 1024
-        result = await convert_document_core(ctx, max_size)
-
-        assert result.success is True
-        assert ctx.output_file is not None
-        assert ctx.output_file.exists()
-
-        # Content should come from pre-converted file
-        output_content = ctx.output_file.read_text()
-        assert "Pre-converted Content" in output_content
 
     @pytest.mark.asyncio
     async def test_llm_disabled_by_default(

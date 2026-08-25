@@ -11,7 +11,6 @@ from pathlib import Path
 
 from markitai.converter import get_converter
 from markitai.converter.base import FileFormat
-from markitai.converter.legacy import COM_CONFIGS, LegacyOfficeConverter
 from markitai.converter.office import OfficeConverter, XlsConverter
 
 
@@ -20,14 +19,15 @@ class TestXlsRouting:
         converter = get_converter("sheet.xls")
         assert type(converter) is XlsConverter
         assert isinstance(converter, OfficeConverter)
-        assert not isinstance(converter, LegacyOfficeConverter)
         assert converter.supported_formats == [FileFormat.XLS]
 
-    def test_xls_left_the_upgrade_chain(self) -> None:
-        # Regression lock: neither Windows COM nor the LegacyOfficeConverter
-        # target map may quietly re-adopt .xls.
-        assert ".xls" not in COM_CONFIGS
-        assert ".xls" not in LegacyOfficeConverter.TARGET_FORMAT
+    def test_xls_is_not_claimed_by_legacy_converters(self) -> None:
+        # Regression lock: .xls must never route back into the legacy
+        # upgrade chain (now the anydoc-backed .doc/.ppt converters).
+        converter = get_converter("sheet.xls")
+        from markitai.converter.legacy import DocConverter, PptConverter
+
+        assert not isinstance(converter, (DocConverter, PptConverter))
 
 
 class TestXlsConversion:
