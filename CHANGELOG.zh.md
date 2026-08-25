@@ -11,6 +11,7 @@
 
 - **markitai 现在既是库也是 CLI**：`markitai.convert("report.pdf")` 与异步孪生 `aconvert` 返回类型化的 `ConversionOutput`——base 与 LLM 增强两版 markdown、解析后的 frontmatter、资产与截图路径、逐图分析与用量汇总——复用 CLI 的配置层级与 flag 语义，而非另造一套配置。解析器噪声抑制下沉到 CLI 之下，库调用保持 stdout 干净（subprocess 回归测试锁定）；`aconvert` 将 CPU 密集转换放入工作线程、不阻塞事件循环。0.x 阶段标记为暂定
 - **`markitai-mcp` 把转换带给 MCP agent**：独立包经 stdio 暴露 `convert_document`、`convert_url`、`batch_convert`、`job_status` 四个工具——上架 PyPI 后，`claude mcp add markitai -- uvx markitai-mcp` 一条命令即完成接入。结果写盘并附截断的内联预览，大文档不会灌爆 agent 的上下文；LLM 增强默认关闭、调用方按需开启
+- **`--profile rag|obsidian|okf` 按消费方塑形输出**：`rag` 把图片从隐藏的 `.markitai/` 目录移到可见的 `assets/`（LlamaIndex `SimpleDirectoryReader` 等常见摄取器默认跳过隐藏路径）、把 PDF 页标记改写为 `<!-- page: N -->`、对行列数不齐的管道表告警；`obsidian` 增加可选的 `![[wikilink]]` 图片引用；`okf` 把 frontmatter 映射到 Open Knowledge Format v0.2 字段名。profile 与 preset 正交——preset 决定跑什么，profile 决定文件长什么样——不带 profile 时输出与之前字节级一致。`images.json` 边车文件的 schema 现已冻结、写入文档并由测试守护
 - **官网提供 `/llms.txt`，README 增加诚实对比表**：索引以双语列出文档供 LLM 消费；对比表将 markitai 与 markitdown、docling、anydoc 并列——写明对方强项，而非只说自己
 - **serve API 契约进入机器校验**：所有 JSON 路由声明 pydantic 响应模型，`scripts/export_openapi.py` 导出注入了 SSE 事件体的 OpenAPI schema（它们不出现在路由签名里，恰是前端镜像漂移最重的地方），契约测试逐字段比对该 schema 与 webapp 手写类型镜像。先写测试就抓出四处真实漂移——镜像缺 `ItemPayload.output_name`、自持一份任务条目上限、把服务端恒发的 `api_base_placeholder` 标成可选、引用一份不存在的契约文档——全部修复；上限现经 `capabilities.limits` 下发并在运行时读取。CI 新增 webapp lint 与类型检查 job，镜像不能再无声腐烂
 - **defuddle 移植有了清单与上游哨兵**：`PORT_MANIFEST.md` 记录 `webextract` 各模块追踪的上游源文件与 parity 语料 pin 的 commit——单元测试保证两处 pin 相等，同步脚本联动改写——每周 workflow 在上游发布领先于 pin 时自动开 issue。此前该移植既无归属映射也无任何上游信号
@@ -23,6 +24,8 @@
 ### 修复
 
 - **对齐 defuddle 0.19.3 的六个抽取缺口**：可关闭的 `aria-hidden` 浮层内的正文被保留（上游 issue 232）；CodeMirror 渲染的代码块保住内容与语言；文中图片行不再被当作相关文章卡片删除；Substack Notes 获得专用 extractor、不再携带页面装饰；SVG 图形保留内容并解析外部 CSS 的回退样式；行内相关文章块不再连带删掉周围正文。resync 顺带修复了它新暴露的问题：Hugo admonition、lightbox 图片去重、LaTeX 图片服务、`<noscript>` 图片回退与带行号的代码布局
+
+- **嵌入式 PDF 图片在符号链接与树外输出目录下不再丢失**：pymupdf4llm 写出的图片路径可能是符号链接解析形（macOS `/tmp` → `/private/tmp`）或相对进程工作目录的形式，单一拼写的引用改写会漏掉它们——markdown 里留下绝对路径，alt 文本、引用校验、资产发现全部匹配不上。现在三种拼写全部改写
 
 ### 安全
 
