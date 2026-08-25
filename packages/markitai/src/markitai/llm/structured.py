@@ -51,6 +51,13 @@ _INSTRUCTOR_MODES: dict[str, instructor.Mode] = {
 _model_mode_cache: dict[str, str] = {}
 
 
+def instructor_mode_for_model(model_id: str) -> instructor.Mode:
+    """Static instructor mode for one model — the batch/offline counterpart
+    of the interactive ladder: preselects the best rung the model's
+    metadata claims, with no in-flight fallback possible."""
+    return _INSTRUCTOR_MODES[model_structured_mode(model_id)]
+
+
 def model_structured_mode(model_id: str) -> str:
     """Resolve the best structured-output mode one model supports.
 
