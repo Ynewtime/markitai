@@ -79,6 +79,12 @@ class ChatGPTProvider(CustomLLM):  # type: ignore[misc]
     built-in Authenticator for Device Code Flow authentication.
     """
 
+    # Self-described structured-output capability (see
+    # markitai.llm.structured): this handler builds a plain Responses API
+    # payload and ignores ``response_format``/``tools``, so structured
+    # output can only be requested in the prompt.
+    STRUCTURED_OUTPUT_MODE = "md_json"
+
     # Parameters not supported by ChatGPT Responses API
     _UNSUPPORTED_PARAMS = UNSUPPORTED_PARAMS
 

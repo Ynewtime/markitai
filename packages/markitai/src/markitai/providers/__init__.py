@@ -562,6 +562,44 @@ def is_local_provider_available(model: str) -> bool:
     return True
 
 
+# Local provider prefix -> the handler class that declares its
+# structured-output capability. Resolved from the class (not a registered
+# instance) so the capability is readable without the optional SDK installed.
+_STRUCTURED_MODE_HANDLERS: dict[str, tuple[str, str]] = {
+    "claude-agent/": ("markitai.providers.claude_agent", "ClaudeAgentProvider"),
+    "copilot/": ("markitai.providers.copilot", "CopilotProvider"),
+    "chatgpt/": ("markitai.providers.chatgpt", "ChatGPTProvider"),
+}
+
+
+def local_provider_structured_mode(model: str) -> str | None:
+    """Read a local provider's self-declared structured-output capability.
+
+    The value is metadata (a class attribute), never the result of a probe
+    request. See ``markitai.llm.structured`` for the mode vocabulary and how
+    a pool's mode is derived from it.
+
+    Args:
+        model: Model identifier (e.g. ``"claude-agent/sonnet"``).
+
+    Returns:
+        The declared mode string, ``"md_json"`` when a local provider
+        declares nothing, or None when the model is not a local provider
+        model (the caller then uses LiteLLM's capability table).
+    """
+    for prefix, (module_name, class_name) in _STRUCTURED_MODE_HANDLERS.items():
+        if not model.startswith(prefix):
+            continue
+        try:
+            handler = getattr(importlib.import_module(module_name), class_name)
+            declared = getattr(handler, "STRUCTURED_OUTPUT_MODE", None)
+        except Exception as e:
+            logger.debug(f"[Providers] No structured-output mode for {model}: {e}")
+            return "md_json"
+        return declared if isinstance(declared, str) else "md_json"
+    return None
+
+
 # Cache for dynamic Claude model lookup to avoid repeated LiteLLM database scans
 _claude_model_cache: dict[str, str] = {}
 
@@ -792,6 +830,7 @@ __all__ = [
     "is_local_provider_model",
     "is_local_provider_available",
     "get_local_provider_model_info",
+    "local_provider_structured_mode",
     "count_tokens",
     "estimate_model_cost",
     "ProviderCostResult",

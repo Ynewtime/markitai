@@ -87,6 +87,13 @@ class ClaudeAgentProvider(CustomLLM):  # type: ignore[misc]
     Supports multimodal input (text and images) via streaming input.
     """
 
+    # Self-described structured-output capability (see
+    # markitai.llm.structured): the SDK enforces a JSON Schema natively via
+    # ClaudeAgentOptions.output_format, so ``response_format`` passthrough
+    # is honored end to end. Tool calling is not exposed (allowed_tools is
+    # empty for these one-shot extraction calls).
+    STRUCTURED_OUTPUT_MODE = "json_schema"
+
     # Threshold for enabling prompt caching (~1024 tokens ≈ 4096 chars)
     _CACHE_THRESHOLD_CHARS: int = 4096
 

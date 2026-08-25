@@ -8,10 +8,17 @@ entry points:
   usage accounting.
 - ``complete_structured``: structured (instructor-based) calls with
   two-layer cache lookup, transport retries, instructor validation retries,
-  JSON repair, length checking, usage accounting, and cache write-back.
+  the structured-mode staircase, length checking, usage accounting, and
+  cache write-back.
 
 Both entry points share one retry loop (``_acompletion_with_retries``);
 ``LLMProcessor._call_llm_with_retry`` delegates here since Phase 2.3.
+
+Structured calls run a capability-tiered staircase (``run_structured_ladder``)
+whose rungs come from ``markitai.llm.structured``: the most native mode the
+model pool supports first, one rung down per failure, ending at ``MD_JSON``.
+JSON repair exists only on that last rung — every rung above it has the
+provider, not the model, producing the JSON.
 
 This module must not import ``markitai.llm.processor`` (circular import:
 processor -> document -> engine).
@@ -20,12 +27,13 @@ processor -> document -> engine).
 from __future__ import annotations
 
 import asyncio
+import copy
 import threading
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
-from typing import Any, cast, get_origin
+from typing import Any, cast
 
 import instructor
 from litellm.exceptions import (
@@ -54,6 +62,7 @@ from markitai.llm.router import (
 from markitai.llm.router import (
     POOL_EXHAUSTED_PATTERN,
 )
+from markitai.llm.structured import router_structured_ladder
 from markitai.llm.types import LLMResponse
 from markitai.providers.errors import ProviderError
 from markitai.utils.text import format_error_message, repair_json_string
@@ -173,9 +182,16 @@ def try_repair_instructor_response(
 ) -> tuple[Any, Any] | None:
     """Try to repair JSON from a failed instructor response.
 
+    Only ever called on the last rung of the structured staircase
+    (``MD_JSON``), the one tier where the model hand-writes JSON into the
+    answer text. Above it the provider constrains the output, so a failure
+    there means something a text fixer cannot fix.
+
     When instructor's retry mechanism fails (all retries exhausted), the
     last LLM completion is still available. This function extracts the raw
-    text, attempts JSON repair, and constructs the Pydantic model manually.
+    text, repairs it with the single JSON repair primitive
+    (``markitai.utils.text.repair_json_string``), and constructs the
+    Pydantic model manually.
 
     Args:
         exc: The InstructorRetryException (or compatible exception)
@@ -196,101 +212,150 @@ def try_repair_instructor_response(
     except (AttributeError, IndexError):
         return None
 
-    # Attempt JSON repair
     repaired = repair_json_string(content)
-    if repaired is None:
-        return None
-
-    import json
-
-    try:
-        data = json.loads(repaired)
-    except Exception:
-        logger.debug(
-            f"[JSON repair] Repair attempt failed for {response_model.__name__}"
-        )
-        return None
-
-    # Valid JSON may still have the wrong shape: small models return the
-    # bare payload without the wrapper object (e.g. one image result
-    # instead of {"images": [...]}). Try the wrapped form as well.
-    candidates: list[Any] = [data]
-    wrapped = _wrap_bare_payload_for_model(data, response_model)
-    if wrapped is not None:
-        candidates.append(wrapped)
-
-    for candidate in candidates:
+    if repaired is not None:
         try:
-            result = response_model.model_validate(candidate)
+            result = response_model.model_validate_json(repaired)
         except Exception:
-            continue
-        logger.info(
-            f"[JSON repair] Successfully repaired malformed JSON "
-            f"for {response_model.__name__}"
-        )
-        return result, last
+            pass
+        else:
+            logger.info(
+                f"[JSON repair] Successfully repaired malformed JSON "
+                f"for {response_model.__name__}"
+            )
+            return result, last
 
     logger.debug(f"[JSON repair] Repair attempt failed for {response_model.__name__}")
     return None
 
 
-def _wrap_bare_payload_for_model(
-    data: Any, response_model: type
-) -> dict[str, Any] | None:
-    """Wrap a bare item/list into the model's single required list field.
+def _iter_exception_chain(exc: BaseException) -> Iterator[BaseException]:
+    """Walk an exception and everything nested inside it, once each.
 
-    Only applies to wrapper models like BatchImageAnalysisResult, whose sole
-    required field is a list; returns None for anything else.
+    Covers explicit and implicit chaining plus instructor's
+    ``failed_attempts``, which holds the per-retry exceptions that would
+    otherwise be invisible behind an ``InstructorRetryException``.
     """
-    fields = getattr(response_model, "model_fields", None)
-    if not fields:
-        return None
-    required = [(name, f) for name, f in fields.items() if f.is_required()]
-    if len(required) != 1:
-        return None
-    field_name, field = required[0]
-    if get_origin(field.annotation) is not list:
-        return None
-    if isinstance(data, list):
-        return {field_name: data}
-    if isinstance(data, dict) and field_name not in data:
-        return {field_name: [data]}
-    return None
+    seen: set[int] = set()
+    stack: list[BaseException] = [exc]
+    while stack:
+        current = stack.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        yield current
 
+        for attr_name in ("__cause__", "__context__"):
+            nested = getattr(current, attr_name, None)
+            if isinstance(nested, BaseException):
+                stack.append(nested)
 
-def find_non_retryable_provider_error(
-    exc: BaseException,
-    seen: set[int] | None = None,
-) -> ProviderError | None:
-    """Find a wrapped non-retryable ProviderError inside nested exceptions."""
-    if seen is None:
-        seen = set()
-
-    exc_id = id(exc)
-    if exc_id in seen:
-        return None
-    seen.add(exc_id)
-
-    if isinstance(exc, ProviderError) and not exc.retryable:
-        return exc
-
-    for attr_name in ("__cause__", "__context__"):
-        nested = getattr(exc, attr_name, None)
-        if isinstance(nested, BaseException):
-            found = find_non_retryable_provider_error(nested, seen)
-            if found is not None:
-                return found
-
-    failed_attempts = getattr(exc, "failed_attempts", None)
-    if failed_attempts:
-        for attempt in failed_attempts:
+        for attempt in getattr(current, "failed_attempts", None) or ():
             attempt_exc = getattr(attempt, "exception", None)
             if isinstance(attempt_exc, BaseException):
-                found = find_non_retryable_provider_error(attempt_exc, seen)
-                if found is not None:
-                    return found
+                stack.append(attempt_exc)
 
+
+def find_non_retryable_provider_error(exc: BaseException) -> ProviderError | None:
+    """Find a wrapped non-retryable ProviderError inside nested exceptions."""
+    for nested in _iter_exception_chain(exc):
+        if isinstance(nested, ProviderError) and not nested.retryable:
+            return nested
     return None
+
+
+def find_budget_exceeded_error(
+    exc: BaseException,
+) -> LLMRequestBudgetExceededError | None:
+    """Find a wrapped request-budget refusal inside nested exceptions.
+
+    Instructor wraps whatever the adapter raised, so the circuit breaker
+    would otherwise look like an ordinary structured-call failure and earn
+    a pointless retry on the next staircase rung.
+    """
+    for nested in _iter_exception_chain(exc):
+        if isinstance(nested, LLMRequestBudgetExceededError):
+            return nested
+    return None
+
+
+async def run_structured_ladder(
+    *,
+    acompletion: Callable[..., Awaitable[Any]],
+    messages: list[dict[str, Any]],
+    response_model: type[BaseModel],
+    ladder: Sequence[instructor.Mode],
+    call_id: str,
+    max_tokens: int | None = None,
+    model: str = "default",
+) -> tuple[Any, Any]:
+    """Run one structured call down the capability staircase.
+
+    Rungs come from ``markitai.llm.structured`` (most native mode the pool
+    supports first). A rung that fails drops to the next one; only the last
+    rung — always ``MD_JSON`` — gets JSON repair, because it is the only
+    tier where the model writes the JSON itself.
+
+    Non-final rungs get a single instructor attempt (``max_retries=0``):
+    re-asking the same model in the same rejected mode is worth less than
+    changing mode, and every attempt spends from the document's request
+    budget. The final rung keeps the full ``DEFAULT_INSTRUCTOR_MAX_RETRIES``
+    validation retries, where instructor feeds the validation error back to
+    the model.
+
+    Two failures skip the rest of the staircase instead of descending it:
+    a non-retryable ProviderError (deterministic for this process) and a
+    request-budget refusal (descending would only re-trip the breaker).
+
+    Args:
+        acompletion: litellm-compatible callable handed to instructor
+            (the caller decides whether it retries transport errors).
+        messages: Chat messages; deep-copied per rung because instructor's
+            MD_JSON mode appends its schema to the system message in place.
+        response_model: Pydantic model to parse into.
+        ladder: Instructor modes, most native first.
+        call_id: Log tag.
+        max_tokens: Explicit output cap, or None.
+        model: Logical model name passed to the router.
+
+    Returns:
+        Tuple of (parsed_result, raw_response).
+    """
+    rungs = tuple(ladder) or (instructor.Mode.MD_JSON,)
+
+    for index, mode in enumerate(rungs):
+        is_last = index == len(rungs) - 1
+        client = instructor.from_litellm(acompletion, mode=mode)
+        try:
+            return await cast(
+                Awaitable[tuple[Any, Any]],
+                client.chat.completions.create_with_completion(
+                    model=model,
+                    messages=cast(list[Any], copy.deepcopy(messages)),
+                    response_model=response_model,
+                    max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES if is_last else 0,
+                    max_tokens=max_tokens,
+                ),
+            )
+        except Exception as e:
+            fatal_provider_error = find_non_retryable_provider_error(e)
+            if fatal_provider_error is not None:
+                raise fatal_provider_error
+            budget_error = find_budget_exceeded_error(e)
+            if budget_error is not None:
+                raise budget_error
+            if is_last:
+                repaired = try_repair_instructor_response(e, response_model)
+                if repaired is None:
+                    raise
+                return repaired
+            logger.warning(
+                f"[LLM:{call_id}] Structured mode {mode.value} failed "
+                f"({format_error_message(e)}); falling back to "
+                f"{rungs[index + 1].value}"
+            )
+
+    raise RuntimeError(f"[LLM:{call_id}] Unexpected state in structured ladder")
 
 
 @dataclass(frozen=True)
@@ -537,36 +602,17 @@ class LLMEngine:
 
             # Instructor gets the retrying adapter instead of the router's
             # bare acompletion, so its validation retries and the transport
-            # retries compose. MD_JSON mode handles LLMs that wrap JSON in
-            # ```json code blocks.
-            client = instructor.from_litellm(
-                self._make_retrying_acompletion(
+            # retries compose.
+            result, raw_response = await run_structured_ladder(
+                acompletion=self._make_retrying_acompletion(
                     active_router, call_id, budget_context=call.context
                 ),
-                mode=instructor.Mode.MD_JSON,
+                messages=call.messages,
+                response_model=call.response_model,
+                ladder=router_structured_ladder(active_router),
+                call_id=call_id,
+                max_tokens=max_tokens,
             )
-
-            try:
-                result, raw_response = await cast(
-                    Awaitable[tuple[Any, Any]],
-                    client.chat.completions.create_with_completion(
-                        model="default",
-                        # Copy: instructor mutates the messages list in place
-                        # (call sites previously built a fresh list per call)
-                        messages=cast(list[Any], list(call.messages)),
-                        response_model=call.response_model,
-                        max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
-                        max_tokens=max_tokens,
-                    ),
-                )
-            except Exception as e:
-                fatal_provider_error = find_non_retryable_provider_error(e)
-                if fatal_provider_error is not None:
-                    raise fatal_provider_error
-                repaired = try_repair_instructor_response(e, call.response_model)
-                if repaired is None:
-                    raise
-                result, raw_response = repaired
 
             elapsed_ms = (time.perf_counter() - start_time) * 1000
 

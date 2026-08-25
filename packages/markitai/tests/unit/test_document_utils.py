@@ -744,12 +744,13 @@ class TestSocialPostVerbatimBody:
 
 
 class TestTryRepairInstructorResponse:
-    """Repair of wrong-shape (but syntactically valid) LLM JSON responses.
+    """Syntax repair of the MD_JSON rung's hand-written JSON.
 
-    Regression: on single-image batches, small models return the bare item
-    `{"image_index": 1, "caption": ...}` instead of `{"images": [...]}`.
-    The repair helper only fixed JSON syntax, so the batch failed and fell
-    back to per-image analysis (wasted calls + ERROR noise).
+    The helper fixes *syntax* only. Shape guessing (wrapping a bare item or
+    list into a model's single list field) was retired with the structured
+    staircase: on the tiers above MD_JSON the provider enforces the schema,
+    and on MD_JSON instructor re-asks with the validation error. A repair
+    step that invents structure hides real prompt/schema problems instead.
     """
 
     @staticmethod
@@ -762,48 +763,12 @@ class TestTryRepairInstructorResponse:
         )
         return exc
 
-    def test_wraps_bare_item_into_single_list_field(self) -> None:
-        from markitai.llm.engine import (
-            try_repair_instructor_response as _try_repair_instructor_response,
-        )
-        from markitai.llm.types import BatchImageAnalysisResult
-
-        content = '{"image_index": 1, "caption": "cap", "description": "desc"}'
-        repaired = _try_repair_instructor_response(
-            self._make_exc(content), BatchImageAnalysisResult
-        )
-
-        assert repaired is not None
-        model, _ = repaired
-        assert len(model.images) == 1
-        assert model.images[0].caption == "cap"
-
-    def test_wraps_bare_list_into_single_list_field(self) -> None:
-        from markitai.llm.engine import (
-            try_repair_instructor_response as _try_repair_instructor_response,
-        )
-        from markitai.llm.types import BatchImageAnalysisResult
-
-        content = (
-            '[{"image_index": 1, "caption": "a", "description": "da"},'
-            ' {"image_index": 2, "caption": "b", "description": "db"}]'
-        )
-        repaired = _try_repair_instructor_response(
-            self._make_exc(content), BatchImageAnalysisResult
-        )
-
-        assert repaired is not None
-        model, _ = repaired
-        assert [img.caption for img in model.images] == ["a", "b"]
-
     def test_correct_shape_still_parses(self) -> None:
-        from markitai.llm.engine import (
-            try_repair_instructor_response as _try_repair_instructor_response,
-        )
+        from markitai.llm.engine import try_repair_instructor_response
         from markitai.llm.types import BatchImageAnalysisResult
 
         content = '{"images": [{"image_index": 1, "caption": "c", "description": "d"}]}'
-        repaired = _try_repair_instructor_response(
+        repaired = try_repair_instructor_response(
             self._make_exc(content), BatchImageAnalysisResult
         )
 
@@ -811,16 +776,57 @@ class TestTryRepairInstructorResponse:
         model, _ = repaired
         assert model.images[0].caption == "c"
 
-    def test_multi_field_model_is_not_coerced(self) -> None:
-        """Wrapping only applies to single-required-list-field models."""
-        from markitai.llm.engine import (
-            try_repair_instructor_response as _try_repair_instructor_response,
-        )
-        from markitai.llm.types import DocumentProcessResult
+    def test_fenced_and_trailing_comma_json_is_repaired(self) -> None:
+        """The syntax errors MD_JSON output actually makes are still fixed."""
+        from markitai.llm.engine import try_repair_instructor_response
+        from markitai.llm.types import BatchImageAnalysisResult
 
-        content = '{"image_index": 1, "caption": "c", "description": "d"}'
-        repaired = _try_repair_instructor_response(
-            self._make_exc(content), DocumentProcessResult
+        content = (
+            "Sure, here you go:\n```json\n"
+            '{"images": [{"image_index": 1, "caption": "c", "description": "d"},]}'
+            "\n```"
+        )
+        repaired = try_repair_instructor_response(
+            self._make_exc(content), BatchImageAnalysisResult
+        )
+
+        assert repaired is not None
+        model, _ = repaired
+        assert model.images[0].caption == "c"
+
+    def test_truncated_json_is_closed(self) -> None:
+        from markitai.llm.engine import try_repair_instructor_response
+        from markitai.llm.types import BatchImageAnalysisResult
+
+        content = '{"images": [{"image_index": 1, "caption": "c", "description": "d"}'
+        repaired = try_repair_instructor_response(
+            self._make_exc(content), BatchImageAnalysisResult
+        )
+
+        assert repaired is not None
+        model, _ = repaired
+        assert model.images[0].caption == "c"
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            pytest.param(
+                '{"image_index": 1, "caption": "cap", "description": "desc"}',
+                id="bare-item",
+            ),
+            pytest.param(
+                '[{"image_index": 1, "caption": "a", "description": "da"}]',
+                id="bare-list",
+            ),
+        ],
+    )
+    def test_wrong_shape_is_not_coerced(self, content: str) -> None:
+        """Retired: valid JSON of the wrong shape is a failure, not a fixup."""
+        from markitai.llm.engine import try_repair_instructor_response
+        from markitai.llm.types import BatchImageAnalysisResult
+
+        repaired = try_repair_instructor_response(
+            self._make_exc(content), BatchImageAnalysisResult
         )
 
         assert repaired is None

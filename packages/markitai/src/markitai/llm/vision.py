@@ -12,26 +12,20 @@ import copy
 import hashlib
 import json
 import re
-from collections.abc import Awaitable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-import instructor
 from litellm.types.llms.openai import AllMessageValues
 from litellm.types.utils import Choices
 from loguru import logger
-from openai.types.chat import ChatCompletionMessageParam
 
 from markitai.constants import (
-    DEFAULT_INSTRUCTOR_MAX_RETRIES,
     DEFAULT_MAX_IMAGES_PER_BATCH,
 )
 from markitai.llm.degeneration import truncate_degenerate_tail
-from markitai.llm.engine import LLMCall
-from markitai.llm.engine import (
-    try_repair_instructor_response as _try_repair_instructor_response,
-)
+from markitai.llm.engine import LLMCall, run_structured_ladder
 from markitai.llm.models import context_display_name, get_response_cost
+from markitai.llm.structured import router_structured_ladder
 from markitai.llm.types import (
     BatchImageAnalysisResult,
     ImageAnalysis,
@@ -746,36 +740,22 @@ class VisionAnalyzer:
                     router=vision_router,
                 )
 
-                # Use MD_JSON mode to handle LLMs that wrap JSON in ```json code blocks
+                # Same capability staircase as every other structured call
                 # (budget-guarded: instructor calls the router directly here,
                 # so each attempt must still spend the document's request budget)
-                client = instructor.from_litellm(
-                    self._engine.guard_acompletion(vision_router.acompletion, context),
-                    mode=instructor.Mode.MD_JSON,
-                )
-                # max_retries allows Instructor to retry with validation error
-                # feedback, which helps LLM fix JSON escaping issues
-                try:
-                    response, raw_response = await cast(
-                        Awaitable[tuple[BatchImageAnalysisResult, Any]],
-                        client.chat.completions.create_with_completion(
-                            model="default",
-                            messages=cast(
-                                list[ChatCompletionMessageParam],
-                                messages,
-                            ),
-                            response_model=BatchImageAnalysisResult,
-                            max_retries=DEFAULT_INSTRUCTOR_MAX_RETRIES,
-                            max_tokens=max_tokens,
+                response, raw_response = cast(
+                    tuple[BatchImageAnalysisResult, Any],
+                    await run_structured_ladder(
+                        acompletion=self._engine.guard_acompletion(
+                            vision_router.acompletion, context
                         ),
-                    )
-                except Exception as e:
-                    repaired = _try_repair_instructor_response(
-                        e, BatchImageAnalysisResult
-                    )
-                    if repaired is None:
-                        raise
-                    response, raw_response = repaired
+                        messages=messages,
+                        response_model=BatchImageAnalysisResult,
+                        ladder=router_structured_ladder(vision_router),
+                        call_id=f"image_batch:{context}",
+                        max_tokens=max_tokens,
+                    ),
+                )
 
                 # Track usage first: a truncated batch was billed like any
                 # other call, and truncation hits the largest (priciest)

@@ -715,10 +715,9 @@ class TestAnalyzeBatch:
         mock_processor._persistent_cache.get.side_effect = mock_get
 
         # Mock instructor for new images
-        with patch("markitai.llm.vision.instructor") as mock_instructor:
+        with patch("markitai.llm.engine.instructor") as mock_instructor:
             mock_client = MagicMock()
             mock_instructor.from_litellm.return_value = mock_client
-            mock_instructor.Mode.MD_JSON = "MD_JSON"
 
             # Create mock response
             mock_response = BatchImageAnalysisResult(
@@ -755,10 +754,9 @@ class TestAnalyzeBatch:
         self, mock_processor: MockVisionProcessor, multiple_png_files: list[Path]
     ):
         """Instructor failure triggers individual fallback."""
-        with patch("markitai.llm.vision.instructor") as mock_instructor:
+        with patch("markitai.llm.engine.instructor") as mock_instructor:
             mock_client = MagicMock()
             mock_instructor.from_litellm.return_value = mock_client
-            mock_instructor.Mode.MD_JSON = "MD_JSON"
 
             async def mock_fail(*args, **kwargs):
                 raise ValueError("Instructor failed")
@@ -784,10 +782,9 @@ class TestAnalyzeBatch:
         self, mock_processor: MockVisionProcessor, sample_png_file: Path
     ):
         """Truncated output (finish_reason=length) triggers fallback."""
-        with patch("markitai.llm.vision.instructor") as mock_instructor:
+        with patch("markitai.llm.engine.instructor") as mock_instructor:
             mock_client = MagicMock()
             mock_instructor.from_litellm.return_value = mock_client
-            mock_instructor.Mode.MD_JSON = "MD_JSON"
 
             mock_response = BatchImageAnalysisResult(
                 images=[
@@ -827,10 +824,9 @@ class TestAnalyzeBatch:
         self, mock_processor: MockVisionProcessor, sample_png_file: Path
     ):
         """A truncated batch call was paid for: bill it before raising."""
-        with patch("markitai.llm.vision.instructor") as mock_instructor:
+        with patch("markitai.llm.engine.instructor") as mock_instructor:
             mock_client = MagicMock()
             mock_instructor.from_litellm.return_value = mock_client
-            mock_instructor.Mode.MD_JSON = "MD_JSON"
 
             mock_response = BatchImageAnalysisResult(
                 images=[
@@ -876,7 +872,6 @@ class TestAnalyzeBatch:
         """Configure a patched instructor module to return the given results."""
         mock_client = MagicMock()
         mock_instructor.from_litellm.return_value = mock_client
-        mock_instructor.Mode.MD_JSON = "MD_JSON"
 
         mock_response = BatchImageAnalysisResult(images=images)
         mock_raw = MagicMock()
@@ -914,7 +909,7 @@ class TestAnalyzeBatch:
         """Results are aligned by image_index, not position, when reordered."""
         files = self._make_distinct_pngs(tmp_path, 2)
 
-        with patch("markitai.llm.vision.instructor") as mock_instructor:
+        with patch("markitai.llm.engine.instructor") as mock_instructor:
             # Model returns results out of order
             self._patch_instructor_batch(
                 mock_instructor,
@@ -958,7 +953,7 @@ class TestAnalyzeBatch:
         """A skipped image gets a placeholder and no poisoned cache entry."""
         files = self._make_distinct_pngs(tmp_path, 3)
 
-        with patch("markitai.llm.vision.instructor") as mock_instructor:
+        with patch("markitai.llm.engine.instructor") as mock_instructor:
             # Model skipped image 2 but echoed valid indices for the rest
             self._patch_instructor_batch(
                 mock_instructor,
@@ -999,7 +994,7 @@ class TestAnalyzeBatch:
         """Invalid indices + count mismatch: results kept, cache skipped."""
         files = self._make_distinct_pngs(tmp_path, 3)
 
-        with patch("markitai.llm.vision.instructor") as mock_instructor:
+        with patch("markitai.llm.engine.instructor") as mock_instructor:
             # Two results for three images, with useless indices
             self._patch_instructor_batch(
                 mock_instructor,
@@ -1058,7 +1053,7 @@ class TestAnalyzeBatch:
 
         processor._call_llm = semaphore_call_llm  # type: ignore[method-assign]
 
-        with patch("markitai.llm.vision.instructor") as mock_instructor:
+        with patch("markitai.llm.engine.instructor") as mock_instructor:
             # English-only result for a Chinese document triggers the rewrite
             TestAnalyzeBatch._patch_instructor_batch(
                 mock_instructor,
@@ -1274,7 +1269,6 @@ class TestAnalyzeWithInstructor:
         with patch("markitai.llm.engine.instructor") as mock_instructor:
             mock_client = MagicMock()
             mock_instructor.from_litellm.return_value = mock_client
-            mock_instructor.Mode.MD_JSON = "MD_JSON"
 
             mock_response = ImageAnalysisResult(
                 caption="Test caption  ",  # with trailing spaces
@@ -1312,7 +1306,6 @@ class TestAnalyzeWithInstructor:
         with patch("markitai.llm.engine.instructor") as mock_instructor:
             mock_client = MagicMock()
             mock_instructor.from_litellm.return_value = mock_client
-            mock_instructor.Mode.MD_JSON = "MD_JSON"
 
             mock_response = ImageAnalysisResult(
                 caption="Truncated",
@@ -1345,7 +1338,6 @@ class TestAnalyzeWithInstructor:
         with patch("markitai.llm.engine.instructor") as mock_instructor:
             mock_client = MagicMock()
             mock_instructor.from_litellm.return_value = mock_client
-            mock_instructor.Mode.MD_JSON = "MD_JSON"
 
             mock_response = ImageAnalysisResult(
                 caption="Test",
@@ -1932,10 +1924,9 @@ class TestBatchResultPadding:
         self, mock_processor: MockVisionProcessor, multiple_png_files: list[Path]
     ):
         """Missing results are padded with placeholders."""
-        with patch("markitai.llm.vision.instructor") as mock_instructor:
+        with patch("markitai.llm.engine.instructor") as mock_instructor:
             mock_client = MagicMock()
             mock_instructor.from_litellm.return_value = mock_client
-            mock_instructor.Mode.MD_JSON = "MD_JSON"
 
             # Return fewer results than images
             mock_response = BatchImageAnalysisResult(
@@ -1978,10 +1969,9 @@ class TestUsageTracking:
         self, mock_processor: MockVisionProcessor, sample_png_file: Path
     ):
         """Usage is tracked on successful batch analysis."""
-        with patch("markitai.llm.vision.instructor") as mock_instructor:
+        with patch("markitai.llm.engine.instructor") as mock_instructor:
             mock_client = MagicMock()
             mock_instructor.from_litellm.return_value = mock_client
-            mock_instructor.Mode.MD_JSON = "MD_JSON"
 
             mock_response = BatchImageAnalysisResult(
                 images=[
@@ -2017,10 +2007,9 @@ class TestUsageTracking:
         self, mock_processor: MockVisionProcessor, multiple_png_files: list[Path]
     ):
         """Per-image usage is calculated correctly for batch."""
-        with patch("markitai.llm.vision.instructor") as mock_instructor:
+        with patch("markitai.llm.engine.instructor") as mock_instructor:
             mock_client = MagicMock()
             mock_instructor.from_litellm.return_value = mock_client
-            mock_instructor.Mode.MD_JSON = "MD_JSON"
 
             # 3 images processed
             mock_response = BatchImageAnalysisResult(

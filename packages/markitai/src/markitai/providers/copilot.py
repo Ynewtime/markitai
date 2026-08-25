@@ -183,6 +183,12 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
     Supports multimodal input (text and images) via attachments.
     """
 
+    # Self-described structured-output capability (see
+    # markitai.llm.structured): the Copilot SDK has neither tool calling nor
+    # a native JSON mode, so structured output can only be requested in the
+    # prompt and read back out of the answer text.
+    STRUCTURED_OUTPUT_MODE = "md_json"
+
     # Copilot view tool has a pixel size limit for images (~2000x2000)
     # Images larger than this will fail to be processed
     MAX_IMAGE_DIMENSION = 2000
