@@ -57,6 +57,36 @@ deliberately with `--update-baseline` when a quality change is intentional.
 The full-corpus run is manual/CI-cron only — a fast smoke test
 (`tests/unit/test_webextract_quality_benchmark.py`) covers the scorer math.
 
+## Document conversion snapshot guardrail
+
+`packages/markitai/benchmarks/docs_snapshot.py` freezes markitai's default
+(no LLM, no OCR, no screenshot) conversion output for a small, stable fixture
+set — one PDF/DOCX/PPTX/XLSX fixture per pure-Python converter path under
+`tests/fixtures/` — and fails when a later change shifts it. Unlike the
+webextract quality benchmark (a continuous fuzzy score, because HTML
+extraction has no single "correct" answer), document conversion for a fixed
+input is deterministic, so this is a plain normalize-then-exact-match
+snapshot against `benchmarks/docs_snapshots/expected/*.md`. Normalization
+strips environment noise (timestamps, version strings, absolute paths) so
+the comparison survives running on a different machine or day; see the
+module docstring for the exact patterns.
+
+```bash
+uv run python packages/markitai/benchmarks/docs_snapshot.py            # compare
+uv run python packages/markitai/benchmarks/docs_snapshot.py --update   # regenerate
+```
+
+`tests/unit/test_docs_snapshot_guardrail.py` runs the same comparison as a
+fast (~seconds), network-free pytest check, so it is part of the default
+suite and therefore CI with no extra workflow wiring. When a change
+intentionally shifts conversion output, regenerate deliberately with
+`--update` and review the diff like any other code change — the same
+discipline `webextract_quality.py --update-baseline` uses for its baseline.
+Legacy `.doc`/`.ppt`/`.xls` fixtures (LibreOffice/MS Office CLI conversion)
+and OCR/screenshot paths are deliberately out of scope: their output can
+vary by installed tool version across CI runners, a bad fit for an
+exact-match snapshot.
+
 ## Syncing the defuddle fixture corpus
 
 `scripts/sync_defuddle_fixtures.sh /path/to/defuddle` refreshes the defuddle
