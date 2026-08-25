@@ -102,6 +102,20 @@ markitai init                            # interactive configuration setup
 
 See the [Getting Started guide](https://markitai.dev/guide/getting-started) for LLM configuration, presets, caching, and batch options.
 
+## MCP server
+
+The separate [`markitai-mcp`](https://pypi.org/project/markitai-mcp/) package exposes conversion to AI agents over the Model Context Protocol: `convert_document`, `convert_url`, `batch_convert`, `job_status`. Zero install via `uvx`; large outputs land on disk instead of in the model context. For Claude Code, `claude mcp add markitai -- uvx markitai-mcp`; for other clients:
+
+```json
+{
+  "mcpServers": {
+    "markitai": { "command": "uvx", "args": ["markitai-mcp"] }
+  }
+}
+```
+
+See the [MCP guide](https://markitai.dev/guide/mcp) for LLM enhancement and batch jobs.
+
 ## Comparison
 
 How markitai compares to three tools people mention in the same breath. No star or download counts — those go stale immediately.
