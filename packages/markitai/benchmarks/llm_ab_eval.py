@@ -1008,6 +1008,7 @@ async def _main_async(args: argparse.Namespace) -> int:
     summary = aggregate_by_format(judgements)
     print(json.dumps(summary, indent=2))
     print(f"\nCheckpoint: {args.output}")
+    await _close_shared_llm_clients()
     return 0
 
 
@@ -1015,6 +1016,39 @@ def main(argv: list[str] | None = None) -> int:
     """CLI entry point. Returns a process exit code."""
     args = _build_arg_parser().parse_args(argv)
     return asyncio.run(_main_async(args))
+
+
+async def _close_shared_llm_clients() -> None:
+    """Close clients the run opened before ``asyncio.run`` tears down the loop.
+
+    ``markitai.aconvert`` lazily opens shared fetch clients on the current
+    event loop, and litellm caches its async SDK clients (TTL ~600s, closed
+    only on eviction). Without closing them here, loop teardown at process
+    exit closes live asyncio resources and can abort with
+    ``recursive_mutex lock failed: Invalid argument`` after the results were
+    already written. Best-effort: never let cleanup failure mask results.
+    """
+    import contextlib
+    import inspect
+
+    # 1. litellm's cached async SDK clients (litellm-owned -> safe to close).
+    import litellm
+
+    cache = getattr(litellm, "in_memory_llm_clients_cache", None)
+    for client in list(getattr(cache, "cache_dict", {}).values()):
+        with contextlib.suppress(Exception):
+            close = getattr(client, "close", None) or getattr(client, "aclose", None)
+            if close is not None:
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
+    # 2. markitai's shared fetch clients (httpx / Playwright-less URL fetch).
+    try:
+        import markitai.fetch
+
+        await markitai.fetch.close_shared_clients()
+    except Exception as exc:  # noqa: BLE001 - best-effort cleanup
+        print(f"(shared client cleanup warning: {exc})", file=sys.stderr)
 
 
 if __name__ == "__main__":
