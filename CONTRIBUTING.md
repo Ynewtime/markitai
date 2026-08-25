@@ -120,6 +120,25 @@ uv run python scripts/olmocr_bench_subset.py --split old_scans --limit 5
 Never run in CI or the default test suite; `tests/unit/test_olmocr_bench_subset.py`
 covers the scoring math offline.
 
+## LLM enhancement A/B evaluation
+
+`packages/markitai/benchmarks/llm_ab_eval.py` measures what markitai's LLM
+enhancement (`llm=True` / `--llm`) actually buys: a blind, position-debiased
+A/B judge compares base vs. enhanced conversions of the same documents (see
+the module docstring for the full methodology — position-swap x2 debiasing,
+per-format aggregation, jsonl resume/checkpointing, and an optional Batches
+API path at 50% of list price on OpenAI and Anthropic). It costs real money
+once you supply `--judge-model` with live credentials — run `--dry-run`
+first for a cost estimate; nothing in this repository ever calls a real
+judge model:
+
+```bash
+uv run python packages/markitai/benchmarks/llm_ab_eval.py \
+  --docs report.pdf memo.docx --output /tmp/ab.jsonl --dry-run
+```
+
+`tests/unit/test_llm_ab_eval.py` covers the harness with a stubbed judge.
+
 ## Conventions
 
 - Match surrounding code style; ruff (`E,W,F,I,B,C4,UP,ARG,SIM`) and pyright
