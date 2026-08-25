@@ -577,6 +577,113 @@ class TestMarkitaiRouterLocal:
 # =============================================================================
 
 
+class TestAnthropicCacheBreakpoint:
+    """Anthropic prompt-caching injection at the router's unified exits."""
+
+    long_system = "You are a document processing assistant. " * 200  # >4096 chars
+
+    def test_breakpoint_marks_long_system_only(self):
+        from markitai.llm.router import _anthropic_cache_breakpoint
+
+        messages = [
+            {"role": "system", "content": self.long_system},
+            {"role": "system", "content": "short"},
+            {"role": "user", "content": "x" * 9000},
+        ]
+        out = _anthropic_cache_breakpoint(messages)
+
+        assert out[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+        assert out[0]["content"][0]["text"] == self.long_system
+        assert out[1] is messages[1]  # short system untouched
+        assert out[2] is messages[2]  # user messages never marked
+
+    def test_breakpoint_leaves_block_form_alone(self):
+        from markitai.llm.router import _anthropic_cache_breakpoint
+
+        block_msg = {
+            "role": "system",
+            "content": [{"type": "text", "text": self.long_system}],
+        }
+        assert _anthropic_cache_breakpoint([block_msg])[0] is block_msg
+
+    @pytest.mark.asyncio
+    async def test_standard_pool_all_anthropic_injects(self):
+        router = MarkitaiRouter([_standard_entry("anthropic/claude-sonnet-4")])
+        assert router._standard_pool_all_anthropic is True
+        assert router._standard_router is not None
+        router._standard_router.acompletion = AsyncMock(return_value=MagicMock())
+
+        messages = [
+            {"role": "system", "content": self.long_system},
+            {"role": "user", "content": "doc"},
+        ]
+        await router._standard_acompletion("default", messages)
+
+        sent = router._standard_router.acompletion.call_args.args[1]
+        assert sent[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+        assert sent[1] is messages[1]
+
+    @pytest.mark.asyncio
+    async def test_mixed_standard_pool_does_not_inject(self):
+        router = MarkitaiRouter(
+            [
+                _standard_entry("anthropic/claude-sonnet-4"),
+                _standard_entry("openai/gpt-5"),
+            ]
+        )
+        assert router._standard_pool_all_anthropic is False
+        assert router._standard_router is not None
+        router._standard_router.acompletion = AsyncMock(return_value=MagicMock())
+
+        messages = [{"role": "system", "content": self.long_system}]
+        await router._standard_acompletion("default", messages)
+
+        sent = router._standard_router.acompletion.call_args.args[1]
+        assert sent[0] is messages[0]
+
+    @pytest.mark.asyncio
+    async def test_local_bare_litellm_anthropic_injects(self):
+        with (
+            patch("markitai.providers.get_provider", return_value=None),
+            patch("markitai.llm.router.litellm") as mock_litellm,
+        ):
+            mock_litellm.acompletion = AsyncMock(return_value=MagicMock())
+            router = MarkitaiRouter([])
+            messages = [{"role": "system", "content": self.long_system}]
+            await router._local_acompletion("anthropic/claude-haiku", messages)
+
+        sent = mock_litellm.acompletion.call_args.kwargs["messages"]
+        assert sent[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+    @pytest.mark.asyncio
+    async def test_local_bare_litellm_non_anthropic_skips(self):
+        with (
+            patch("markitai.providers.get_provider", return_value=None),
+            patch("markitai.llm.router.litellm") as mock_litellm,
+        ):
+            mock_litellm.acompletion = AsyncMock(return_value=MagicMock())
+            router = MarkitaiRouter([])
+            messages = [{"role": "system", "content": self.long_system}]
+            await router._local_acompletion("openai/gpt-5", messages)
+
+        sent = mock_litellm.acompletion.call_args.kwargs["messages"]
+        assert sent[0] is messages[0]
+
+    @pytest.mark.asyncio
+    async def test_local_handler_path_not_touched(self):
+        """claude-agent providers own their cache_control (provider-side)."""
+        mock_handler = AsyncMock()
+        mock_handler.acompletion.return_value = MagicMock()
+        router = MarkitaiRouter([_local_entry("claude-agent/sonnet")])
+        messages = [{"role": "system", "content": self.long_system}]
+
+        with patch("markitai.providers.get_provider", return_value=mock_handler):
+            await router.acompletion("default", messages)
+
+        sent = mock_handler.acompletion.call_args.kwargs["messages"]
+        assert sent[0] is messages[0]
+
+
 class TestMarkitaiRouterMixed:
     """Tests for MarkitaiRouter with local and standard models."""
 

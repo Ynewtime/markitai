@@ -42,6 +42,45 @@ from loguru import logger
 from markitai.providers.common import has_images
 from markitai.utils.text import format_error_message
 
+# Minimum system-message length worth an Anthropic cache breakpoint
+# (Anthropic's smallest cacheable prefix is 1024 tokens ~= 4k chars).
+_ANTHROPIC_CACHE_MIN_CHARS = 4096
+
+
+def _anthropic_cache_breakpoint(messages: list[Any]) -> list[Any]:
+    """Mark long system strings with Anthropic's ephemeral cache breakpoint.
+
+    Eligible ``system`` messages convert to content-block form carrying
+    ``cache_control``; everything else passes through untouched. Only valid
+    for requests that will reach the Anthropic Messages API — callers gate
+    on the target deployment. Idempotent: block-form content is left alone.
+    """
+    result: list[Any] = []
+    for msg in messages:
+        content = msg.get("content") if isinstance(msg, dict) else None
+        if (
+            isinstance(msg, dict)
+            and msg.get("role") == "system"
+            and isinstance(content, str)
+            and len(content) >= _ANTHROPIC_CACHE_MIN_CHARS
+        ):
+            result.append(
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": content,
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                }
+            )
+        else:
+            result.append(msg)
+    return result
+
+
 # =============================================================================
 # Error classification (single copy; engine imports these for retryability)
 # =============================================================================
@@ -284,6 +323,14 @@ class MarkitaiRouter:
                 model_list=self._standard_entries, **settings
             )
 
+        # Anthropic prompt caching is only wired when every standard
+        # deployment hits the Anthropic Messages API — a mixed pool must not
+        # send cache_control blocks to providers that would reject them.
+        self._standard_pool_all_anthropic = bool(self._standard_entries) and all(
+            str(e.get("litellm_params", {}).get("model", "")).startswith("anthropic/")
+            for e in self._standard_entries
+        )
+
         # Selection groups: group name -> local candidates + one pool
         # candidate for the group's standard models.
         self._groups: dict[str, list[RouterCandidate]] = {}
@@ -422,6 +469,8 @@ class MarkitaiRouter:
         reports that every deployment in the group is cooling down.
         """
         assert self._standard_router is not None
+        if self._standard_pool_all_anthropic:
+            messages = _anthropic_cache_breakpoint(messages)
         try:
             return await self._standard_router.acompletion(model, messages, **kwargs)
         except Exception as e:
@@ -462,6 +511,8 @@ class MarkitaiRouter:
                     )
 
             # Models without a registered handler fall back to litellm
+            if model_id.startswith("anthropic/"):
+                messages = _anthropic_cache_breakpoint(messages)
             return await litellm.acompletion(
                 model=model_id,
                 messages=messages,
