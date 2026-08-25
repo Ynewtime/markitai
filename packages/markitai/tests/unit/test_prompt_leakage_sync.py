@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import re
 
-import markitai.llm.content as content_module
 from markitai.llm.document import (
     PAGE_LABEL_TEMPLATE,
     PROMPT_LEAKAGE_MARKERS,
@@ -74,20 +73,6 @@ class TestCorpusHarness:
 
 class TestLeakageDetectorsMatchLivePrompts:
     """Every retained detector must have something to detect."""
-
-    def test_every_frontmatter_leakage_pattern_matches_prompt_text(self) -> None:
-        lines = prompt_corpus_lines()
-        dead = [
-            pattern.pattern
-            for pattern in content_module._PROMPT_LEAKAGE_PATTERNS
-            if not any(pattern.match(line) for line in lines)
-        ]
-
-        assert not dead, (
-            "These frontmatter leakage patterns match no line of any current "
-            f"prompt, so they can never fire: {dead}. Either delete them or "
-            "update them to the reworded prompt."
-        )
 
     def test_every_frontmatter_key_pattern_matches_prompt_text(self) -> None:
         """``normalize_frontmatter`` filters hallucinated YAML *keys*.

@@ -38,7 +38,7 @@ from markitai.utils.mime import (
     get_llm_effective_mime,
     is_llm_supported_image,
 )
-from markitai.utils.text import clean_control_characters, format_error_message
+from markitai.utils.text import format_error_message, repair_json_string
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1071,10 +1071,15 @@ class VisionAnalyzer:
                 actual_model, input_tokens, output_tokens, cost, context
             )
 
-            # Clean control characters before JSON parsing to avoid errors
-            cleaned_content = clean_control_characters(content or "{}")
-            # Parse JSON
-            data = json.loads(cleaned_content)
+            # This strategy also has the model hand-writing JSON into its
+            # answer (json_object mode constrains nothing), so it uses the
+            # same single repair primitive as the staircase's bottom rung.
+            # Unparsable output must raise: the caller's next fallback
+            # (_analyze_with_two_calls) is a better answer than a blank one.
+            repaired = repair_json_string(content or "")
+            if repaired is None:
+                raise ValueError("JSON mode response contained no parsable JSON")
+            data = json.loads(repaired)
 
             # Build llm_usage dict for this analysis
             llm_usage: LLMUsageByModel = {

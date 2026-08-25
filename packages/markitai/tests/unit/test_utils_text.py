@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
+
 from markitai.utils.text import (
     clean_control_characters,
     extract_asset_image_names,
     format_error_message,
     markdown_image_reference,
     preview_items_for_log,
+    repair_json_string,
 )
 
 
@@ -402,3 +405,52 @@ class TestExtractAssetImageNames:
     def test_empty_markdown(self) -> None:
         """No refs means an empty list."""
         assert extract_asset_image_names("") == []
+
+
+class TestRepairJsonString:
+    """The single JSON repair primitive.
+
+    It serves the bottom rung of the structured-output staircase (the one
+    tier where a model hand-writes JSON) and the Copilot provider, which
+    always sits on that rung. The provider-local extractor that used to
+    duplicate the fence/prose handling was retired into this function, so
+    these cases are its inherited contract.
+    """
+
+    def test_valid_json_passes_through(self) -> None:
+        assert json.loads(repair_json_string('{"a": 1}') or "") == {"a": 1}
+
+    def test_extracts_from_markdown_code_block(self) -> None:
+        repaired = repair_json_string('```json\n{"a": 1}\n```')
+
+        assert json.loads(repaired or "") == {"a": 1}
+
+    def test_trims_surrounding_prose(self) -> None:
+        repaired = repair_json_string('Here you go: {"a": 1} hope that helps')
+
+        assert json.loads(repaired or "") == {"a": 1}
+
+    def test_handles_bare_arrays(self) -> None:
+        """A model asked for a list often answers with a bare one."""
+        repaired = repair_json_string('Sure:\n[{"a": 1}]\n')
+
+        assert json.loads(repaired or "") == [{"a": 1}]
+
+    def test_removes_trailing_commas(self) -> None:
+        repaired = repair_json_string('{"a": 1, "b": [2,],}')
+
+        assert json.loads(repaired or "") == {"a": 1, "b": [2]}
+
+    def test_closes_truncated_output(self) -> None:
+        repaired = repair_json_string('{"a": [{"b": 1}')
+
+        assert json.loads(repaired or "") == {"a": [{"b": 1}]}
+
+    def test_strips_control_characters(self) -> None:
+        """Raw control bytes inside a string break json.loads outright."""
+        repaired = repair_json_string('{"a": "x\x07y"}')
+
+        assert json.loads(repaired or "") == {"a": "xy"}
+
+    def test_returns_none_when_there_is_no_json(self) -> None:
+        assert repair_json_string("no json here at all") is None

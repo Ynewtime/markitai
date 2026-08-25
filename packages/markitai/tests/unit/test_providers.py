@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from typing import Any
 from unittest.mock import patch
 
 import httpx
@@ -1150,89 +1152,57 @@ class TestClaudeAgentAdaptiveTimeout:
 
 
 class TestCopilotJsonExtraction:
-    """Tests for CopilotProvider JSON extraction using StructuredOutputHandler."""
+    """CopilotProvider's response side of the MD_JSON rung.
+
+    Copilot's SDK has neither tools nor a JSON mode, so it always sits on
+    the bottom rung of the structured staircase and its answers are the one
+    place a model hand-writes JSON. Extraction goes through the single
+    repair primitive (``markitai.utils.text.repair_json_string``) — the
+    provider no longer carries a second hand-written extractor.
+    """
+
+    @staticmethod
+    def _extract(text: str) -> Any:
+        from markitai.providers.copilot import CopilotProvider
+
+        return CopilotProvider()._extract_json_from_response(text)
 
     def test_extract_json_from_markdown_code_block(self) -> None:
-        """Test extracting JSON from markdown code blocks."""
-        from markitai.providers.copilot import CopilotProvider
+        result = self._extract('```json\n{"name": "test", "value": 123}\n```')
 
-        provider = CopilotProvider()
-
-        text = '```json\n{"name": "test", "value": 123}\n```'
-        result = provider._extract_json_from_response(text)
-
-        assert isinstance(result, dict)
-        assert result["name"] == "test"
-        assert result["value"] == 123
+        assert json.loads(result) == {"name": "test", "value": 123}
 
     def test_extract_json_from_plain_text(self) -> None:
-        """Test extracting JSON from plain text response."""
-        from markitai.providers.copilot import CopilotProvider
+        result = self._extract('{"name": "test"}')
 
-        provider = CopilotProvider()
-
-        text = '{"name": "test"}'
-        result = provider._extract_json_from_response(text)
-
-        assert isinstance(result, dict)
-        assert result["name"] == "test"
+        assert json.loads(result) == {"name": "test"}
 
     def test_extract_json_array(self) -> None:
-        """Test extracting JSON array from response."""
-        from markitai.providers.copilot import CopilotProvider
+        result = self._extract('[1, 2, 3, "four"]')
 
-        provider = CopilotProvider()
-
-        text = '[1, 2, 3, "four"]'
-        result = provider._extract_json_from_response(text)
-
-        assert isinstance(result, list)
-        assert result == [1, 2, 3, "four"]
+        assert json.loads(result) == [1, 2, 3, "four"]
 
     def test_extract_json_cleans_control_characters(self) -> None:
-        """Test that control characters are cleaned before JSON parsing."""
-        from markitai.providers.copilot import CopilotProvider
+        """Control characters an LLM emits mid-string break json.loads."""
+        result = self._extract('{"name": "test\x07value"}')
 
-        provider = CopilotProvider()
-
-        # Text with control character (bell character \x07)
-        text = '{"name": "test\x07value"}'
-        result = provider._extract_json_from_response(text)
-
-        assert isinstance(result, dict)
-        assert result["name"] == "testvalue"  # Control char removed
+        assert json.loads(result) == {"name": "testvalue"}
 
     def test_extract_json_returns_original_on_failure(self) -> None:
-        """Test that original text is returned when no JSON found."""
-        from markitai.providers.copilot import CopilotProvider
-
-        provider = CopilotProvider()
-
         text = "This is just plain text without JSON."
-        result = provider._extract_json_from_response(text)
 
-        assert result == text
+        assert self._extract(text) == text
 
     def test_extract_json_with_surrounding_text(self) -> None:
-        """Test extracting JSON embedded in surrounding text."""
-        from markitai.providers.copilot import CopilotProvider
+        result = self._extract('Here is the data: {"key": "value"} That was it.')
 
-        provider = CopilotProvider()
+        assert json.loads(result) == {"key": "value"}
 
-        text = 'Here is the data: {"key": "value"} That was it.'
-        result = provider._extract_json_from_response(text)
+    def test_extract_json_repairs_trailing_comma(self) -> None:
+        """Syntax repair the old provider-local extractor could not do."""
+        result = self._extract('{"key": "value", "tags": ["a",],}')
 
-        assert isinstance(result, dict)
-        assert result["key"] == "value"
-
-    def test_json_handler_instance_exists(self) -> None:
-        """Test that _json_handler is initialized as StructuredOutputHandler."""
-        from markitai.providers.copilot import CopilotProvider
-        from markitai.providers.json_mode import StructuredOutputHandler
-
-        provider = CopilotProvider()
-        assert hasattr(provider, "_json_handler")
-        assert isinstance(provider._json_handler, StructuredOutputHandler)
+        assert json.loads(result) == {"key": "value", "tags": ["a"]}
 
 
 class TestCopilotAdaptiveTimeout:

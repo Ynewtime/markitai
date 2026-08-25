@@ -55,13 +55,6 @@ You are an expert at extracting content from screenshots. Your task is to extrac
 - **DO NOT wrap output in code blocks** - output pure Markdown
 - **DO NOT fabricate URLs** - only include URLs if clearly visible
 
-## JSON Output Requirements (CRITICAL)
-
-When outputting JSON:
-- Chinese curly quotes ("" U+201C/U+201D) must be replaced with standard ASCII quotes or escaped
-- Example: `"生产者"` → `\"生产者\"` or use standard quotes
-- This prevents JSON parsing errors
-
 ## Task 2: Metadata Generation
 
 Generate the following fields based on extracted content:

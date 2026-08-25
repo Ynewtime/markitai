@@ -1521,7 +1521,7 @@ class TestAnalyzeWithJsonMode:
 
     @pytest.mark.asyncio
     async def test_invalid_json_raises(self, mock_processor: MockVisionProcessor):
-        """Invalid JSON raises JSONDecodeError."""
+        """Unparsable output raises, so the two-call fallback still runs."""
         messages = [
             {"role": "system", "content": "Analyze"},
             {
@@ -1543,8 +1543,43 @@ class TestAnalyzeWithJsonMode:
 
         mock_processor.vision_router.acompletion.return_value = mock_response  # type: ignore[reportAttributeAccessIssue]
 
-        with pytest.raises(json.JSONDecodeError):
+        with pytest.raises(ValueError):
             await mock_processor._analyze_with_json_mode(messages, "default")
+
+    @pytest.mark.asyncio
+    async def test_fenced_json_is_repaired(self, mock_processor: MockVisionProcessor):
+        """The shared repair primitive covers this rung too."""
+        messages = [
+            {"role": "system", "content": "Analyze"},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,x"},
+                    },
+                ],
+            },
+        ]
+
+        mock_response = MagicMock()
+        mock_response.choices = [
+            MagicMock(
+                message=MagicMock(
+                    content='```json\n{"caption": "c", "description": "d",}\n```'
+                )
+            )
+        ]
+        mock_response.model = "test/model"
+        mock_response.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
+
+        mock_processor.vision_router.acompletion.return_value = mock_response  # type: ignore[reportAttributeAccessIssue]
+
+        result = await mock_processor._analyze_with_json_mode(messages, "default")
+
+        assert result.caption == "c"
+        assert result.description == "d"
 
 
 # =============================================================================

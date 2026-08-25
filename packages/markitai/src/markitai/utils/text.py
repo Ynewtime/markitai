@@ -56,10 +56,16 @@ _TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
 def repair_json_string(text: str) -> str | None:
     """Attempt to repair common JSON syntax errors from LLM output.
 
+    The single JSON repair primitive in the codebase. It belongs to the
+    bottom rung of the structured-output staircase
+    (``markitai.llm.structured``) — the one tier where a model hand-writes
+    JSON into its answer text. Everything above that tier has the provider
+    producing the JSON, so nothing there needs repairing.
+
     Tries multiple repair strategies in sequence:
     1. Parse as-is
     2. Extract from markdown code blocks
-    3. Trim to JSON object boundaries
+    3. Trim to JSON object/array boundaries
     4. Remove trailing commas
     5. Close unclosed brackets/braces (truncated output)
 
@@ -70,6 +76,9 @@ def repair_json_string(text: str) -> str | None:
         Repaired JSON string, or None if repair is not possible
     """
     import json
+
+    # Control characters an LLM emits mid-string break every strategy below
+    text = clean_control_characters(text)
 
     # Strategy 1: Try as-is
     try:
@@ -88,11 +97,20 @@ def repair_json_string(text: str) -> str | None:
         except (json.JSONDecodeError, ValueError):
             text = candidate
 
-    # Strategy 3: Find JSON object start
-    start = text.find("{")
-    if start < 0:
+    # Strategy 3: Trim surrounding prose to the outermost JSON boundaries.
+    # Arrays count: a model asked for a list often answers with a bare one.
+    starts = [i for i in (text.find("{"), text.find("[")) if i >= 0]
+    if not starts:
         return None
-    text = text[start:]
+    text = text[min(starts) :]
+    end = max(text.rfind("}"), text.rfind("]"))
+    if end >= 0:
+        candidate = text[: end + 1]
+        try:
+            json.loads(candidate)
+            return candidate
+        except (json.JSONDecodeError, ValueError):
+            text = candidate
 
     # Strategy 4: Remove trailing commas before } or ]
     repaired = _TRAILING_COMMA_RE.sub(r"\1", text)

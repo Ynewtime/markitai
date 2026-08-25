@@ -70,8 +70,8 @@ from markitai.providers.errors import (
     ProviderError,
     classify_and_raise_provider_error,
 )
-from markitai.providers.json_mode import StructuredOutputHandler
 from markitai.providers.timeout import calculate_timeout_from_messages
+from markitai.utils.text import repair_json_string
 
 # PIL for image resizing (optional, graceful fallback)
 try:
@@ -218,7 +218,6 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
         self.timeout = timeout
         self._client: Any = None
         self._fatal_error: ProviderError | None = None
-        self._json_handler = StructuredOutputHandler()
 
     def _resize_image_if_needed(self, image_path: str, temp_files: list[str]) -> str:
         """Resize image if it exceeds Copilot's dimension limit.
@@ -422,23 +421,22 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
 
         return None
 
-    def _extract_json_from_response(
-        self, text: str
-    ) -> dict[str, Any] | list[Any] | str:
-        """Extract JSON from response text using unified handler.
+    def _extract_json_from_response(self, text: str) -> str:
+        """Extract JSON from response text with the shared repair primitive.
 
-        Handles cases where the model wraps JSON in markdown code blocks
-        or includes extra text. Also cleans control characters that break
-        JSON parsing.
+        Copilot always sits on the MD_JSON rung of the structured staircase
+        (its SDK has neither tools nor a JSON mode), so its answers are the
+        one place a model hand-writes JSON — code fences, surrounding prose,
+        trailing commas and all. ``repair_json_string`` is the single place
+        that gets fixed.
 
         Args:
             text: Raw response text
 
         Returns:
-            Parsed JSON (dict or list) or original text if extraction fails
+            Repaired JSON text, or the original text if repair is not possible
         """
-        result = self._json_handler.extract_json(text)
-        return result if result is not None else text
+        return repair_json_string(text) or text
 
     def _build_fatal_provider_error(self, error_msg: str) -> ProviderError | None:
         """Classify non-retryable Copilot runtime failures.
@@ -730,11 +728,7 @@ class CopilotProvider(CustomLLM):  # type: ignore[misc]
         response_content: str = result_text
         if is_json_mode:
             extracted = self._extract_json_from_response(result_text)
-            if isinstance(extracted, (dict, list)):
-                # Convert back to string for LiteLLM response
-                response_content = json.dumps(extracted, ensure_ascii=False)
-                logger.debug("[Copilot] Extracted JSON from response")
-            elif extracted != result_text:
+            if extracted != result_text:
                 response_content = extracted
                 logger.debug("[Copilot] Extracted JSON from response")
 

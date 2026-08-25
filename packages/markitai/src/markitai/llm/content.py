@@ -40,13 +40,6 @@ _CODE_BLOCK_RE = re.compile(
 # (still present in old cached results); the __MARKITAI_ mention
 # distinguishes them from legitimate document content.
 _ECHOED_REMINDER_RE = re.compile(r"^\s*REMINDER:.*__MARKITAI_")
-# Frontmatter lines that echo prompt instructions. Empty on purpose: the
-# five patterns that used to live here were written for the pre-English
-# prompts ("^根据.*生成.*frontmatter", "^以下是.*:", ...) and matched no line
-# of any current template, so they only ever ran for nothing. Every pattern
-# added here must match live prompt text — test_prompt_leakage_sync.py
-# fails on a pattern that cannot fire.
-_PROMPT_LEAKAGE_PATTERNS: list[re.Pattern[str]] = []
 
 
 def smart_truncate(text: str, max_chars: int, preserve_end: bool = False) -> str:
@@ -547,7 +540,13 @@ def restore_image_positions(text: str, mapping: dict[str, str]) -> str:
 
 
 def clean_frontmatter(frontmatter: str) -> str:
-    """Clean frontmatter by removing code block markers, --- markers, and prompt leakage.
+    """Clean frontmatter by removing code block markers and ``---`` markers.
+
+    Line-level prompt-leakage filtering used to live here too, against a
+    pattern list that had been emptied when the prompt corpus was
+    translated to English. Hallucinated frontmatter *keys* are still
+    filtered, by ``markitai.workflow.helpers`` — the guard that
+    ``test_prompt_leakage_sync.py`` keeps tied to the live prompt text.
 
     Args:
         frontmatter: Raw frontmatter from LLM
@@ -555,8 +554,6 @@ def clean_frontmatter(frontmatter: str) -> str:
     Returns:
         Clean YAML frontmatter
     """
-    from loguru import logger
-
     frontmatter = frontmatter.strip()
 
     # Remove code block markers (```yaml, ```yml, ```)
@@ -570,27 +567,6 @@ def clean_frontmatter(frontmatter: str) -> str:
         frontmatter = frontmatter[3:].strip()
     if frontmatter.endswith("---"):
         frontmatter = frontmatter[:-3].strip()
-
-    # Detect and remove prompt leakage lines: LLM hallucinations where the
-    # prompt text is echoed into the frontmatter. Only patterns tied to live
-    # prompt wording belong in _PROMPT_LEAKAGE_PATTERNS (see its comment).
-    lines = frontmatter.split("\n")
-    cleaned_lines = []
-    removed_count = 0
-
-    for line in lines:
-        is_leakage = False
-        for pattern in _PROMPT_LEAKAGE_PATTERNS:
-            if pattern.match(line.strip()):
-                is_leakage = True
-                removed_count += 1
-                break
-        if not is_leakage:
-            cleaned_lines.append(line)
-
-    if removed_count > 0:
-        logger.debug(f"Removed {removed_count} prompt leakage line(s) from frontmatter")
-        frontmatter = "\n".join(cleaned_lines).strip()
 
     return frontmatter
 
