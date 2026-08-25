@@ -124,7 +124,10 @@ class TestParseOutput:
             [
                 {
                     "custom_id": "doc1::main",
-                    "response": {"status_code": 200, "body": self._completion_body(payload)},
+                    "response": {
+                        "status_code": 200,
+                        "body": self._completion_body(payload),
+                    },
                     "error": None,
                 }
             ],
@@ -151,7 +154,7 @@ class TestParseOutput:
         )
         (line,) = list(read_openai_batch_output(path))
         assert line.body is None
-        assert "rate limited" in line.error
+        assert line.error is not None and "rate limited" in line.error
 
     def test_write_jsonl(self, tmp_path: Path) -> None:
         reqs = [

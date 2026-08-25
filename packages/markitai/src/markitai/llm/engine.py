@@ -560,6 +560,55 @@ class LLMEngine:
             "persistent": self.persistent_cache.stats(),
         }
 
+    def try_cached(self, call: LLMCall) -> Any | None:
+        """Return the cached result for a call without invoking the model.
+
+        Offline/batch callers use this to skip collecting requests whose
+        answer is already cached. Hit/miss counters are NOT touched here —
+        the batch collector reports its own aggregates.
+        """
+        if call.cache_key is None:
+            return None
+        cached = self.memory_cache.get(call.cache_key, call.cache_content)
+        if cached is None:
+            cached = self.persistent_cache.get(
+                call.cache_key,
+                call.cache_content,
+                context=call.context,
+                model=call.cache_model,
+            )
+            if cached is not None:
+                self.memory_cache.set(call.cache_key, call.cache_content, cached)
+        if cached is None:
+            return None
+        if call.deserialize is not None:
+            return call.deserialize(cached)
+        return call.response_model.model_construct(**cached)
+
+    def write_cache(self, call: LLMCall, result: Any) -> None:
+        """Persist a batch-produced result under the call's cache key.
+
+        The caller must apply ``call.validate`` first (its corrections feed
+        the final output too); this method only enforces the ``cache_if``
+        veto, so a degenerate batch result never poisons the caches.
+        """
+        if call.cache_key is None:
+            return
+        if call.cache_if is not None and not call.cache_if(result):
+            return
+        cache_value = (
+            call.serialize(result)
+            if call.serialize is not None
+            else result.model_dump()
+        )
+        self.memory_cache.set(call.cache_key, call.cache_content, cache_value)
+        self.persistent_cache.set(
+            call.cache_key,
+            call.cache_content,
+            cache_value,
+            model=call.cache_model,
+        )
+
     async def complete_structured(self, call: LLMCall) -> tuple[Any, Any]:
         """Run one structured LLM call through the full pipeline.
 

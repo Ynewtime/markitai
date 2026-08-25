@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -224,6 +225,29 @@ def _strip_leaked_markdown_boundaries(content: str) -> str:
     stripped = _RULE_BEFORE_REF_SECTION_RE.sub("\n", stripped)
     stripped = _TRAILING_RULES_RE.sub("", stripped.rstrip())
     return stripped.strip()
+
+
+@dataclass
+class DocumentPlan:
+    """One document's structured LLM call plus its post-processing state.
+
+    Built by ``DocumentEnhancer._prepare_document_plan`` — deterministic in
+    (markdown, source, config), so a batch collector can rebuild the
+    identical plan when results come back. The live path runs the call
+    immediately; the offline path collects ``call`` into a Batch API job
+    and applies ``finalize_document_plan`` hours later.
+    """
+
+    call: LLMCall
+    source: str
+    original_markdown: str
+    body_verbatim: bool
+    mapping: Any
+    protected: Any
+    image_mapping: Any
+    original_title: str
+    fetch_strategy: str | None
+    extra_meta: dict[str, Any] | None
 
 
 class DocumentEnhancer:
@@ -1619,6 +1643,86 @@ class DocumentEnhancer:
         Returns:
             Tuple of (cleaned_markdown, frontmatter_yaml)
         """
+        plan = self._prepare_document_plan(
+            markdown,
+            source,
+            fetch_strategy=fetch_strategy,
+            extra_meta=extra_meta,
+            title=title,
+        )
+
+        # Try combined approach with Instructor first
+        try:
+            result = await self._run_document_call(
+                plan.call, plan.original_markdown, source
+            )
+            return self.finalize_document_plan(plan, result)
+        except Exception as e:
+            fatal_provider_error = _find_non_retryable_provider_error(e)
+            if fatal_provider_error is not None:
+                logger.warning(
+                    f"[LLM:{source}] Structured document processing failed with "
+                    f"non-retryable provider error, skipping cleaner fallback: "
+                    f"{format_error_message(fatal_provider_error)}"
+                )
+                frontmatter = self._build_fallback_frontmatter(
+                    source,
+                    markdown,
+                    plan.original_title,
+                    fetch_strategy,
+                    extra_meta,
+                )
+                return markdown, frontmatter
+
+            logger.warning(
+                f"[LLM:{source}] Structured document processing failed, "
+                f"falling back to cleaner: {format_error_message(e)}"
+            )
+
+        # Fallback: Run cleaning only (no longer use generate_frontmatter)
+        # Use clean_markdown which has its own protection mechanism
+        if plan.body_verbatim:
+            cleaned = markdown
+        else:
+            try:
+                cleaned = await self.clean_markdown(markdown, context=source)
+            except Exception as clean_err:
+                logger.warning(
+                    f"Markdown cleaning failed: {format_error_message(clean_err)}"
+                )
+                cleaned = markdown
+
+        # Build fallback frontmatter — prefer title from cleaned content so it
+        # stays consistent with any heading corrections made by the cleaner.
+        from markitai.utils.frontmatter import extract_title_from_content
+
+        cleaned_title = extract_title_from_content(cleaned)
+        fallback_title = cleaned_title if cleaned_title else plan.original_title
+        frontmatter = self._build_fallback_frontmatter(
+            source,
+            cleaned,
+            fallback_title,
+            fetch_strategy,
+            extra_meta,
+        )
+
+        return cleaned, frontmatter
+
+    def _prepare_document_plan(
+        self,
+        markdown: str,
+        source: str,
+        fetch_strategy: str | None = None,
+        extra_meta: dict[str, Any] | None = None,
+        title: str | None = None,
+    ) -> DocumentPlan:
+        """Build one document's structured call plus its post-processing state.
+
+        Deterministic in (markdown, source, config): a batch collector can
+        rebuild the identical plan at collect time. The LLM call itself is
+        NOT issued here — the caller decides live (engine.complete_structured)
+        or offline (batch_api).
+        """
         from markitai.utils.frontmatter import (
             extract_frontmatter_title,
             resolve_document_title,
@@ -1647,110 +1751,80 @@ class DocumentEnhancer:
         protected = content_utils.extract_protected_content(image_protected)
         protected_content, mapping = content_utils.protect_content(image_protected)
 
-        # Try combined approach with Instructor first
-        try:
-            result = await self._process_document_combined(protected_content, source)
-
-            if body_verbatim:
-                logger.info(
-                    f"[LLM:{source}] social_post profile: body kept verbatim, "
-                    "LLM result used for metadata only"
-                )
-                cleaned = markdown
-            else:
-                fallback = self._fallback_if_boundary_placeholders_missing(
-                    result.cleaned_markdown,
-                    markdown,
-                    mapping,
-                    source,
-                    "document_process",
-                )
-                if fallback is not None:
-                    cleaned = fallback
-                else:
-                    # Restore protected content from placeholders, with fallback
-                    # Disable "append missing images at end" — image positions are
-                    # managed by image_mapping, not by unprotect_content fallback
-                    cleaned = content_utils.unprotect_content(
-                        result.cleaned_markdown,
-                        mapping,
-                        protected,
-                        restore_missing_images_at_end=False,
-                    )
-                cleaned = content_utils.fix_malformed_image_refs(cleaned)
-                cleaned = self._stabilize_paged_markdown(markdown, cleaned, source)
-                # Restore image positions (or fall back to original if placeholders were lost)
-                cleaned = self._restore_images_or_fallback(
-                    cleaned, markdown, image_mapping, source, "document_process"
-                )
-
-            # Convert Frontmatter to YAML string using utility function
-            from markitai.utils.frontmatter import (
-                build_frontmatter_dict,
-                frontmatter_to_yaml,
-            )
-
-            frontmatter_dict = build_frontmatter_dict(
-                source=source,
-                description=result.frontmatter.description,
-                tags=result.frontmatter.tags,
-                title=original_title,  # Preserve original title
-                content=cleaned,
-                fetch_strategy=fetch_strategy,
-                extra_meta=extra_meta,
-            )
-            frontmatter_yaml = frontmatter_to_yaml(frontmatter_dict).strip()
-            return cleaned, frontmatter_yaml
-        except Exception as e:
-            fatal_provider_error = _find_non_retryable_provider_error(e)
-            if fatal_provider_error is not None:
-                logger.warning(
-                    f"[LLM:{source}] Structured document processing failed with "
-                    f"non-retryable provider error, skipping cleaner fallback: "
-                    f"{format_error_message(fatal_provider_error)}"
-                )
-                frontmatter = self._build_fallback_frontmatter(
-                    source,
-                    markdown,
-                    original_title,
-                    fetch_strategy=fetch_strategy,
-                    extra_meta=extra_meta,
-                )
-                return markdown, frontmatter
-
-            logger.warning(
-                f"[LLM:{source}] Structured document processing failed, "
-                f"falling back to cleaner: {format_error_message(e)}"
-            )
-
-        # Fallback: Run cleaning only (no longer use generate_frontmatter)
-        # Use clean_markdown which has its own protection mechanism
-        if body_verbatim:
-            cleaned = markdown
-        else:
-            try:
-                cleaned = await self.clean_markdown(markdown, context=source)
-            except Exception as clean_err:
-                logger.warning(
-                    f"Markdown cleaning failed: {format_error_message(clean_err)}"
-                )
-                cleaned = markdown
-
-        # Build fallback frontmatter — prefer title from cleaned content so it
-        # stays consistent with any heading corrections made by the cleaner.
-        from markitai.utils.frontmatter import extract_title_from_content
-
-        cleaned_title = extract_title_from_content(cleaned)
-        fallback_title = cleaned_title if cleaned_title else original_title
-        frontmatter = self._build_fallback_frontmatter(
-            source,
-            cleaned,
-            fallback_title,
+        call = self._build_document_call(protected_content, source)
+        return DocumentPlan(
+            call=call,
+            source=source,
+            original_markdown=markdown,
+            body_verbatim=body_verbatim,
+            mapping=mapping,
+            protected=protected,
+            image_mapping=image_mapping,
+            original_title=original_title,
             fetch_strategy=fetch_strategy,
             extra_meta=extra_meta,
         )
 
-        return cleaned, frontmatter
+    def finalize_document_plan(
+        self, plan: DocumentPlan, result: DocumentProcessResult
+    ) -> tuple[str, str]:
+        """Post-process a structured result into (cleaned, frontmatter_yaml).
+
+        Pure local work — the same code runs on the live path and when a
+        batch result comes back hours later.
+        """
+        markdown = plan.original_markdown
+        source = plan.source
+        if plan.body_verbatim:
+            logger.info(
+                f"[LLM:{source}] social_post profile: body kept verbatim, "
+                "LLM result used for metadata only"
+            )
+            cleaned = markdown
+        else:
+            fallback = self._fallback_if_boundary_placeholders_missing(
+                result.cleaned_markdown,
+                markdown,
+                plan.mapping,
+                source,
+                "document_process",
+            )
+            if fallback is not None:
+                cleaned = fallback
+            else:
+                # Restore protected content from placeholders, with fallback
+                # Disable "append missing images at end" — image positions are
+                # managed by image_mapping, not by unprotect_content fallback
+                cleaned = content_utils.unprotect_content(
+                    result.cleaned_markdown,
+                    plan.mapping,
+                    plan.protected,
+                    restore_missing_images_at_end=False,
+                )
+            cleaned = content_utils.fix_malformed_image_refs(cleaned)
+            cleaned = self._stabilize_paged_markdown(markdown, cleaned, source)
+            # Restore image positions (or fall back to original if placeholders were lost)
+            cleaned = self._restore_images_or_fallback(
+                cleaned, markdown, plan.image_mapping, source, "document_process"
+            )
+
+        # Convert Frontmatter to YAML string using utility function
+        from markitai.utils.frontmatter import (
+            build_frontmatter_dict,
+            frontmatter_to_yaml,
+        )
+
+        frontmatter_dict = build_frontmatter_dict(
+            source=source,
+            description=result.frontmatter.description,
+            tags=result.frontmatter.tags,
+            title=plan.original_title,  # Preserve original title
+            content=cleaned,
+            fetch_strategy=plan.fetch_strategy,
+            extra_meta=plan.extra_meta,
+        )
+        frontmatter_yaml = frontmatter_to_yaml(frontmatter_dict).strip()
+        return cleaned, frontmatter_yaml
 
     async def clean_document_pure(self, markdown: str, source: str) -> str:
         """Pure cleaning: send raw markdown to LLM, return response as-is.
@@ -1793,30 +1867,14 @@ class DocumentEnhancer:
             return markdown
         return response.content
 
-    async def _process_document_combined(
-        self,
-        markdown: str,
-        source: str,
-    ) -> DocumentProcessResult:
+    def _build_document_call(self, markdown: str, source: str) -> LLMCall:
+        """Build the combined cleaner+frontmatter structured call.
+
+        Content-addressed: cache_content is the full markdown, so the
+        source file name is deliberately NOT part of the key (a renamed
+        file with identical content must still hit). The prompt digest is,
+        so a reworded prompt re-runs instead of replaying stale output.
         """
-        Process document with combined cleaner + frontmatter using Instructor.
-
-        Cache lookup order:
-        1. In-memory cache (session-level, fast)
-        2. Persistent cache (cross-session, SQLite)
-        3. LLM API call
-
-        Args:
-            markdown: Raw markdown content
-            source: Source file name
-
-        Returns:
-            DocumentProcessResult with cleaned markdown and frontmatter
-        """
-        # Content-addressed: cache_content is the full markdown, so the
-        # source file name is deliberately NOT part of the key (a renamed
-        # file with identical content must still hit). The prompt digest is,
-        # so a reworded prompt re-runs instead of replaying stale output.
         extra_rules = self._extra_cleaning_rules
         cache_key = self._prompt_scoped_key(
             "document_process",
@@ -1871,7 +1929,7 @@ class DocumentEnhancer:
 
         # router=None: this is the only structured call on the main router
         # (cache hit/miss counting happens inside engine.complete_structured)
-        call = LLMCall(
+        return LLMCall(
             purpose="document_process",
             messages=messages,
             response_model=DocumentProcessResult,
@@ -1883,8 +1941,27 @@ class DocumentEnhancer:
             serialize=_document_result_to_cache_value,
             deserialize=_document_result_from_cache_value,
         )
+
+    async def _run_document_call(
+        self, call: LLMCall, markdown: str, source: str
+    ) -> DocumentProcessResult:
+        """Run a prepared document call live (cache lookup, then the model).
+
+        Cache lookup order:
+        1. In-memory cache (session-level, fast)
+        2. Persistent cache (cross-session, SQLite)
+        3. LLM API call
+        """
         response, _raw_response = await self._engine.complete_structured(call)
         return response
+
+    async def _process_document_combined(
+        self, markdown: str, source: str
+    ) -> DocumentProcessResult:
+        """Build the combined call and run it live (compat wrapper)."""
+        return await self._run_document_call(
+            self._build_document_call(markdown, source), markdown, source
+        )
 
     def _validate_no_prompt_leakage(self, cleaned: str, source: str) -> str:
         """Detect and handle prompt leakage.
