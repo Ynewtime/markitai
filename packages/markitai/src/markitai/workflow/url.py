@@ -14,6 +14,7 @@ to the caller, whose handling differs per surface.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -21,7 +22,16 @@ from typing import TYPE_CHECKING, Any, Literal
 if TYPE_CHECKING:
     from markitai.config import MarkitaiConfig
     from markitai.fetch_cache import FetchCache
+    from markitai.fetch_types import FetchResult
     from markitai.llm.processor import LLMProcessor
+
+# Replaceable LLM stage: (markdown, url, cfg, output_file, fetch_result,
+# processor) -> (llm_output_path, cost, usage, error_message). The CLI
+# plugs its process_with_llm-based variant in; serve/api use the default.
+LlmStageFn = Callable[
+    [str, str, "MarkitaiConfig", Path, "FetchResult", "LLMProcessor | None"],
+    Awaitable[tuple[Path | None, float, dict[str, dict[str, Any]], str | None]],
+]
 
 
 @dataclass
@@ -38,6 +48,10 @@ class UrlCascadeResult:
     llm_output_path: Path | None
     skipped: bool = False
     skip_target: Path | None = None
+    #: Resolved base-.md target path (post on_conflict), set unless skipped.
+    #: Differs from ``output_path`` when keep_base is off and LLM succeeded
+    #: (the base file was never written but .llm.md derives from it).
+    target_file: Path | None = None
     llm_error: str | None = None
     cost_usd: float = 0.0
     llm_usage: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -59,6 +73,10 @@ async def convert_url_cascade(
     screenshot_dir: Path | None = None,
     output_name: str | None = None,
     llm_error_policy: Literal["raise", "fallback"] = "fallback",
+    fetch_result: FetchResult | None = None,
+    markdown_override: str | None = None,
+    base_from_localized: bool = True,
+    llm_stage: LlmStageFn | None = None,
 ) -> UrlCascadeResult:
     """Convert one URL to markdown file(s) under ``workdir``.
 
@@ -82,6 +100,17 @@ async def convert_url_cascade(
         llm_error_policy: ``"fallback"`` records the error on the result
             and still writes the base file; ``"raise"`` additionally raises
             ``ConversionError`` after the base file is on disk.
+        fetch_result: Pre-fetched result (callers that branch on fetch
+            metadata — the CLI's vision/screenshot-only paths — fetch
+            themselves); skips the fetch stage when given.
+        markdown_override: Caller-localized markdown; skips the image
+            download stage and becomes the LLM input when given.
+        base_from_localized: Base ``.md`` source — the image-localized
+            markdown (serve/api behavior, default) or the original fetched
+            content (CLI single-URL behavior).
+        llm_stage: Replacement LLM stage; the default runs
+            ``process_document``/``clean_document_pure`` and writes
+            ``.llm.md`` itself.
 
     Returns:
         Cascade outcome; ``skipped`` is set when the output already exists
@@ -101,22 +130,23 @@ async def convert_url_cascade(
     from markitai.utils.paths import ensure_screenshots_dir
     from markitai.workflow.helpers import add_basic_frontmatter, create_llm_processor
 
-    if cache is None and cfg.cache.enabled:
-        cache_dir = Path(cfg.cache.global_dir).expanduser()
-        cache = fetch_module.get_fetch_cache(cache_dir, cfg.cache.max_size_bytes)
-    if screenshot_dir is None and cfg.screenshot.enabled:
-        screenshot_dir = ensure_screenshots_dir(workdir)
+    if fetch_result is None:
+        if cache is None and cfg.cache.enabled:
+            cache_dir = Path(cfg.cache.global_dir).expanduser()
+            cache = fetch_module.get_fetch_cache(cache_dir, cfg.cache.max_size_bytes)
+        if screenshot_dir is None and cfg.screenshot.enabled:
+            screenshot_dir = ensure_screenshots_dir(workdir)
 
-    fetch_result = await fetch_module.fetch_url(
-        url,
-        FetchStrategy(cfg.fetch.strategy),
-        cfg.fetch,
-        cache=cache,
-        skip_read_cache=cfg.cache.no_cache,
-        screenshot=cfg.screenshot.enabled,
-        screenshot_dir=screenshot_dir,
-        screenshot_config=cfg.screenshot if cfg.screenshot.enabled else None,
-    )
+        fetch_result = await fetch_module.fetch_url(
+            url,
+            FetchStrategy(cfg.fetch.strategy),
+            cfg.fetch,
+            cache=cache,
+            skip_read_cache=cfg.cache.no_cache,
+            screenshot=cfg.screenshot.enabled,
+            screenshot_dir=screenshot_dir,
+            screenshot_config=cfg.screenshot if cfg.screenshot.enabled else None,
+        )
 
     markdown = fetch_result.content
     if not markdown.strip():
@@ -126,7 +156,9 @@ async def convert_url_cascade(
 
     # Remote images are inputs to LLM image analysis; without LLM there is
     # nothing to analyze, so skip the downloads entirely.
-    if cfg.llm.enabled and (cfg.image.alt_enabled or cfg.image.desc_enabled):
+    if markdown_override is not None:
+        markdown = markdown_override
+    elif cfg.llm.enabled and (cfg.image.alt_enabled or cfg.image.desc_enabled):
         from markitai.image import download_url_images
 
         download_result = await download_url_images(
@@ -166,35 +198,50 @@ async def convert_url_cascade(
 
         proc = processor if processor is not None else create_llm_processor(cfg)
         try:
-            if cfg.llm.pure:
-                content = await proc.clean_document_pure(markdown, url)
+            if llm_stage is not None:
+                (
+                    llm_output_path,
+                    stage_cost,
+                    stage_usage,
+                    stage_error,
+                ) = await llm_stage(markdown, url, cfg, output_file, fetch_result, proc)
+                cost_usd = stage_cost
+                llm_usage = stage_usage
+                llm_error = stage_error
+                if llm_output_path is not None:
+                    _apply_profile(llm_output_path, workdir, cfg)
             else:
-                cleaned, llm_frontmatter = await proc.process_document(
-                    markdown,
-                    url,
-                    fetch_strategy=fetch_result.strategy_used,
-                    extra_meta=extra_meta,
-                    title=title,
-                )
-                content = proc.format_llm_output(cleaned, llm_frontmatter)
-            llm_target = output_file.with_suffix(".llm.md")
-            atomic_write_text(llm_target, content)
-            _apply_profile(llm_target, workdir, cfg)
-            llm_output_path = llm_target
+                if cfg.llm.pure:
+                    content = await proc.clean_document_pure(markdown, url)
+                else:
+                    cleaned, llm_frontmatter = await proc.process_document(
+                        markdown,
+                        url,
+                        fetch_strategy=fetch_result.strategy_used,
+                        extra_meta=extra_meta,
+                        title=title,
+                    )
+                    content = proc.format_llm_output(cleaned, llm_frontmatter)
+                llm_target = output_file.with_suffix(".llm.md")
+                atomic_write_text(llm_target, content)
+                _apply_profile(llm_target, workdir, cfg)
+                llm_output_path = llm_target
         except Exception as e:
             # Same policy as the file pipeline: write the base .md as a
             # fallback below, then surface the failure per the policy.
             llm_error = format_error_message(e)
         finally:
-            cost_usd = proc.get_context_cost(url)
-            llm_usage = proc.get_context_usage(url)
+            if llm_stage is None:
+                cost_usd = proc.get_context_cost(url)
+                llm_usage = proc.get_context_usage(url)
             proc.clear_context_usage(url)
 
     # Base .md: always without LLM; with LLM for keep_base or as fallback.
     output_path: Path | None = None
     if llm_output_path is None or cfg.llm.keep_base:
+        base_markdown = markdown if base_from_localized else fetch_result.content
         base_content = add_basic_frontmatter(
-            markdown,
+            base_markdown,
             url,
             fetch_strategy=fetch_result.strategy_used,
             screenshot_path=fetch_result.screenshot_path,
@@ -214,6 +261,7 @@ async def convert_url_cascade(
         markdown=markdown,
         output_path=output_path,
         llm_output_path=llm_output_path,
+        target_file=output_file,
         llm_error=llm_error,
         cost_usd=cost_usd,
         llm_usage=llm_usage,

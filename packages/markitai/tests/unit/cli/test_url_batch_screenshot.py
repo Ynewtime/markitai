@@ -229,12 +229,13 @@ class TestBatchScreenshotFrontmatter:
         async def mock_fetch(url, strategy, fetch_cfg, **kwargs):
             return _make_fetch_result(url, screenshot_path=fake_screenshot)
 
-        # We patch _add_basic_frontmatter to capture the screenshot_path arg
-        # (the batch worker delegates to create_url_processor in processors/batch)
+        # We patch add_basic_frontmatter to capture the screenshot_path arg.
+        # The batch worker's standard path now delegates to the shared
+        # workflow cascade, which calls it from workflow.helpers.
         with (
             patch("markitai.fetch.fetch_url", side_effect=mock_fetch),
             patch(
-                "markitai.cli.processors.batch._add_basic_frontmatter",
+                "markitai.workflow.helpers.add_basic_frontmatter",
                 return_value="---\nsource: test\n---\n\n# Content",
             ) as mock_frontmatter,
         ):
@@ -250,7 +251,7 @@ class TestBatchScreenshotFrontmatter:
             assert mock_frontmatter.called
             call_kwargs = mock_frontmatter.call_args
             assert call_kwargs[1].get("screenshot_path") == fake_screenshot, (
-                "batch worker should pass screenshot_path to _add_basic_frontmatter"
+                "batch worker should pass screenshot_path to add_basic_frontmatter"
             )
 
 

@@ -421,185 +421,253 @@ async def process_url(
                 )
             return
 
-        # Write base .md file (respect --llm, --pure, --keep-base)
-        should_write_base = not cfg.llm.enabled or cfg.llm.keep_base
-        if should_write_base:
-            # For --llm --screenshot-only: .md contains just screenshot reference
-            # Otherwise: .md contains original markdown content
-            if (
-                cfg.screenshot.screenshot_only
-                and cfg.llm.enabled
-                and has_screenshot
-                and screenshot_path is not None
-            ):
-                # .md file just references the screenshot(s), not as HTML
-                # comments. A long page becomes one image reference per tile.
-                ref_files = screenshot_tiles or [screenshot_path]
-                screenshot_ref = "\n\n".join(
-                    markdown_image_reference(
-                        f"Screenshot {i + 1}" if len(ref_files) > 1 else "Screenshot",
-                        f"{SCREENSHOTS_REL_PATH}/{t.name}",
-                    )
-                    for i, t in enumerate(ref_files)
-                )
-                base_content = _add_basic_frontmatter(
-                    screenshot_ref,
-                    url,
-                    fetch_strategy=used_strategy,
-                    screenshot_path=None,  # Don't add screenshot again
-                    output_dir=effective_output_dir,
-                    title=fetch_result.title,
-                    extra_meta=source_extra_meta,
-                )
-            elif cfg.llm.pure and not cfg.llm.enabled:
-                # Pure mode without LLM: write raw markdown, no frontmatter
-                base_content = original_markdown
-            else:
-                base_content = _add_basic_frontmatter(
-                    original_markdown,
-                    url,
-                    fetch_strategy=used_strategy,
-                    screenshot_path=screenshot_path,
-                    screenshot_tiles=screenshot_tiles or None,
-                    output_dir=effective_output_dir,
-                    title=fetch_result.title,
-                    extra_meta=source_extra_meta,
-                )
-            atomic_write_text(output_file, base_content)
-            logger.info(f"Written output: {output_file}")
-
-        # LLM processing (if enabled) uses markdown with local image paths
-        if not should_write_base:
-            # When base .md wasn't written, use original markdown as starting point
-            base_content = original_markdown
-        final_content = base_content
-        if cfg.llm.enabled:
-            # Pin the LLM stage BEFORE the first [LLM] log: the loguru
-            # bridge would otherwise advance to an unpinned bridge stage
-            # that the next explicit advance finalizes, leaving a spurious
-            # ~0s "Enhancing with LLM" done line. Branches refine the text
-            # via update_text (same stage; the timer keeps running).
-            stages.advance("llm", "Enhancing with LLM...", pin=True)
-            logger.info(f"[LLM] Processing URL content: {_safe_url_for_display(url)}")
-
-            # Check if image analysis should run
-            should_analyze_images = (
-                cfg.image.alt_enabled or cfg.image.desc_enabled
-            ) and downloaded_images
-
-            # Check for screenshot-only mode (extract purely from screenshot)
-            # has_screenshot is already defined above
-            use_screenshot_only = (
-                cfg.screenshot.screenshot_only and has_screenshot and not cfg.llm.pure
+        # Standard path — no screenshot-only, no vision enhancement, no
+        # image analysis, no raw pure base: delegate base+LLM to the shared
+        # workflow cascade (the same code serve/api run). The CLI-only
+        # branches stay in the else block below.
+        if not _use_cli_llm_branches(
+            cfg, fetch_result, has_screenshot, downloaded_images
+        ) and not _use_raw_pure_base(cfg):
+            if cfg.llm.enabled:
+                # Pin the LLM stage BEFORE the first [LLM] log (same reason
+                # as the branch matrix below: the loguru bridge would
+                # otherwise finalize a spurious bridge stage line).
+                stages.advance("llm", "Enhancing with LLM...", pin=True)
+            (
+                output_file,
+                base_content,
+                final_content,
+                doc_cost,
+                doc_usage,
+            ) = await _run_standard_url_cascade(
+                url,
+                cfg,
+                effective_output_dir,
+                fetch_result,
+                markdown_for_llm,
+                original_markdown,
+                filename,
             )
-
-            if use_screenshot_only and screenshot_path:
-                # Screenshot-only mode: extract content purely from screenshot
-                stages.update_text("Extracting content from screenshot...")
-
-                doc_cost, doc_usage, img_analysis = await run_url_screenshot_only_llm(
-                    screenshot_path,
-                    url,
-                    cfg,
-                    output_file,
-                    fetch_result,
-                    screenshot_tiles=screenshot_tiles or None,
-                    downloaded_images=downloaded_images,
-                    image_context="",  # No source content in screenshot-only mode
-                )
-                llm_cost += doc_cost
-                _merge_llm_usage(llm_usage, doc_usage)
-                stages.finalize("LLM enhanced (screenshot-only)")
-
-            # Check for multi-source content (static + browser + screenshot)
-            elif has_screenshot:
-                has_multi_source = (
-                    fetch_result.static_content is not None
-                    or fetch_result.browser_content is not None
-                )
-                use_vision_enhancement = has_multi_source and not cfg.llm.pure
-
-                if use_vision_enhancement and screenshot_path:
-                    # Multi-source URL with screenshot: use vision LLM
-                    stages.update_text("Processing with Vision LLM...")
-                    multi_source_content = build_multi_source_content(
-                        fetch_result.static_content,
-                        fetch_result.browser_content,
-                        markdown_for_llm,
+            llm_cost += doc_cost
+            _merge_llm_usage(llm_usage, doc_usage)
+            if cfg.llm.enabled:
+                stages.finalize("LLM enhanced")
+        else:
+            # Write base .md file (respect --llm, --pure, --keep-base)
+            should_write_base = not cfg.llm.enabled or cfg.llm.keep_base
+            if should_write_base:
+                # For --llm --screenshot-only: .md contains just screenshot reference
+                # Otherwise: .md contains original markdown content
+                if (
+                    cfg.screenshot.screenshot_only
+                    and cfg.llm.enabled
+                    and has_screenshot
+                    and screenshot_path is not None
+                ):
+                    # .md file just references the screenshot(s), not as HTML
+                    # comments. A long page becomes one image reference per tile.
+                    ref_files = screenshot_tiles or [screenshot_path]
+                    screenshot_ref = "\n\n".join(
+                        markdown_image_reference(
+                            f"Screenshot {i + 1}"
+                            if len(ref_files) > 1
+                            else "Screenshot",
+                            f"{SCREENSHOTS_REL_PATH}/{t.name}",
+                        )
+                        for i, t in enumerate(ref_files)
                     )
+                    base_content = _add_basic_frontmatter(
+                        screenshot_ref,
+                        url,
+                        fetch_strategy=used_strategy,
+                        screenshot_path=None,  # Don't add screenshot again
+                        output_dir=effective_output_dir,
+                        title=fetch_result.title,
+                        extra_meta=source_extra_meta,
+                    )
+                elif cfg.llm.pure and not cfg.llm.enabled:
+                    # Pure mode without LLM: write raw markdown, no frontmatter
+                    base_content = original_markdown
+                else:
+                    base_content = _add_basic_frontmatter(
+                        original_markdown,
+                        url,
+                        fetch_strategy=used_strategy,
+                        screenshot_path=screenshot_path,
+                        screenshot_tiles=screenshot_tiles or None,
+                        output_dir=effective_output_dir,
+                        title=fetch_result.title,
+                        extra_meta=source_extra_meta,
+                    )
+                atomic_write_text(output_file, base_content)
+                logger.info(f"Written output: {output_file}")
 
-                    _, doc_cost, doc_usage = await process_url_with_vision(
-                        multi_source_content,
+            # LLM processing (if enabled) uses markdown with local image paths
+            if not should_write_base:
+                # When base .md wasn't written, use original markdown as starting point
+                base_content = original_markdown
+            final_content = base_content
+            if cfg.llm.enabled:
+                # Pin the LLM stage BEFORE the first [LLM] log: the loguru
+                # bridge would otherwise advance to an unpinned bridge stage
+                # that the next explicit advance finalizes, leaving a spurious
+                # ~0s "Enhancing with LLM" done line. Branches refine the text
+                # via update_text (same stage; the timer keeps running).
+                stages.advance("llm", "Enhancing with LLM...", pin=True)
+                logger.info(
+                    f"[LLM] Processing URL content: {_safe_url_for_display(url)}"
+                )
+
+                # Check if image analysis should run
+                should_analyze_images = (
+                    cfg.image.alt_enabled or cfg.image.desc_enabled
+                ) and downloaded_images
+
+                # Check for screenshot-only mode (extract purely from screenshot)
+                # has_screenshot is already defined above
+                use_screenshot_only = (
+                    cfg.screenshot.screenshot_only
+                    and has_screenshot
+                    and not cfg.llm.pure
+                )
+
+                if use_screenshot_only and screenshot_path:
+                    # Screenshot-only mode: extract content purely from screenshot
+                    stages.update_text("Extracting content from screenshot...")
+
+                    (
+                        doc_cost,
+                        doc_usage,
+                        img_analysis,
+                    ) = await run_url_screenshot_only_llm(
                         screenshot_path,
                         url,
                         cfg,
                         output_file,
-                        original_title=fetch_result.title,
-                        fetch_strategy=used_strategy,
-                        extra_meta=source_extra_meta,
+                        fetch_result,
+                        screenshot_tiles=screenshot_tiles or None,
+                        downloaded_images=downloaded_images,
+                        image_context="",  # No source content in screenshot-only mode
                     )
                     llm_cost += doc_cost
                     _merge_llm_usage(llm_usage, doc_usage)
+                    stages.finalize("LLM enhanced (screenshot-only)")
 
-                    # Run image analysis if needed
-                    if should_analyze_images:
-                        (
-                            _,
-                            image_cost,
-                            image_usage,
-                            img_analysis,
-                        ) = await analyze_images_with_llm(
-                            downloaded_images,
-                            multi_source_content,
-                            output_file,
-                            cfg,
-                            Path(url),
+                # Check for multi-source content (static + browser + screenshot)
+                elif has_screenshot:
+                    has_multi_source = (
+                        fetch_result.static_content is not None
+                        or fetch_result.browser_content is not None
+                    )
+                    use_vision_enhancement = has_multi_source and not cfg.llm.pure
+
+                    if use_vision_enhancement and screenshot_path:
+                        # Multi-source URL with screenshot: use vision LLM
+                        stages.update_text("Processing with Vision LLM...")
+                        multi_source_content = build_multi_source_content(
+                            fetch_result.static_content,
+                            fetch_result.browser_content,
+                            markdown_for_llm,
                         )
-                        llm_cost += image_cost
-                        _merge_llm_usage(llm_usage, image_usage)
-                    stages.finalize("LLM enhanced (vision)")
+
+                        _, doc_cost, doc_usage = await process_url_with_vision(
+                            multi_source_content,
+                            screenshot_path,
+                            url,
+                            cfg,
+                            output_file,
+                            original_title=fetch_result.title,
+                            fetch_strategy=used_strategy,
+                            extra_meta=source_extra_meta,
+                        )
+                        llm_cost += doc_cost
+                        _merge_llm_usage(llm_usage, doc_usage)
+
+                        # Run image analysis if needed
+                        if should_analyze_images:
+                            (
+                                _,
+                                image_cost,
+                                image_usage,
+                                img_analysis,
+                            ) = await analyze_images_with_llm(
+                                downloaded_images,
+                                multi_source_content,
+                                output_file,
+                                cfg,
+                                Path(url),
+                            )
+                            llm_cost += image_cost
+                            _merge_llm_usage(llm_usage, image_usage)
+                        stages.finalize("LLM enhanced (vision)")
+                    else:
+                        # Has screenshot but vision skipped (no multi-source
+                        # content, e.g. site-extractor results, or pure mode).
+                        # Fall through to standard text-only LLM processing
+                        # (hoisted stage text already reads "Enhancing with LLM...")
+                        _, doc_cost, doc_usage = await run_url_document_llm(
+                            markdown_for_llm,
+                            url,
+                            cfg,
+                            output_file,
+                            fetch_result,
+                            screenshot_path=screenshot_path,
+                            extra_meta=source_extra_meta,
+                        )
+                        llm_cost += doc_cost
+                        _merge_llm_usage(llm_usage, doc_usage)
+
+                        # Analyze downloaded images (alt/desc) — this branch used
+                        # to skip analysis entirely, leaving empty alt text
+                        if should_analyze_images:
+                            (
+                                _,
+                                image_cost,
+                                image_usage,
+                                img_analysis,
+                            ) = await analyze_images_with_llm(
+                                downloaded_images,
+                                markdown_for_llm,
+                                output_file,
+                                cfg,
+                                Path(url),
+                            )
+                            llm_cost += image_cost
+                            _merge_llm_usage(llm_usage, image_usage)
+                        stages.finalize("LLM enhanced")
+
+                elif should_analyze_images:
+                    # Standard processing with image analysis (no screenshot/vision)
+                    stages.update_text("Enhancing with LLM (document + images)...")
+
+                    async def _doc_task() -> tuple[
+                        str, float, dict[str, dict[str, Any]]
+                    ]:
+                        return await run_url_document_llm(
+                            markdown_for_llm,
+                            url,  # Use URL as source identifier
+                            cfg,
+                            output_file,
+                            fetch_result,
+                            screenshot_path=screenshot_path,
+                            extra_meta=source_extra_meta,
+                        )
+
+                    doc_cost, doc_usage, img_analysis = await run_url_llm_with_images(
+                        _doc_task,
+                        downloaded_images=downloaded_images,
+                        image_context=markdown_for_llm,
+                        output_file=output_file,
+                        cfg=cfg,
+                        url=url,
+                    )
+                    llm_cost += doc_cost
+                    _merge_llm_usage(llm_usage, doc_usage)
+                    stages.finalize("LLM enhanced (document + images)")
                 else:
-                    # Has screenshot but vision skipped (no multi-source
-                    # content, e.g. site-extractor results, or pure mode).
-                    # Fall through to standard text-only LLM processing
+                    # Only document processing, no images to analyze, no screenshot
                     # (hoisted stage text already reads "Enhancing with LLM...")
                     _, doc_cost, doc_usage = await run_url_document_llm(
-                        markdown_for_llm,
-                        url,
-                        cfg,
-                        output_file,
-                        fetch_result,
-                        screenshot_path=screenshot_path,
-                        extra_meta=source_extra_meta,
-                    )
-                    llm_cost += doc_cost
-                    _merge_llm_usage(llm_usage, doc_usage)
-
-                    # Analyze downloaded images (alt/desc) — this branch used
-                    # to skip analysis entirely, leaving empty alt text
-                    if should_analyze_images:
-                        (
-                            _,
-                            image_cost,
-                            image_usage,
-                            img_analysis,
-                        ) = await analyze_images_with_llm(
-                            downloaded_images,
-                            markdown_for_llm,
-                            output_file,
-                            cfg,
-                            Path(url),
-                        )
-                        llm_cost += image_cost
-                        _merge_llm_usage(llm_usage, image_usage)
-                    stages.finalize("LLM enhanced")
-
-            elif should_analyze_images:
-                # Standard processing with image analysis (no screenshot/vision)
-                stages.update_text("Enhancing with LLM (document + images)...")
-
-                async def _doc_task() -> tuple[str, float, dict[str, dict[str, Any]]]:
-                    return await run_url_document_llm(
                         markdown_for_llm,
                         url,  # Use URL as source identifier
                         cfg,
@@ -608,38 +676,14 @@ async def process_url(
                         screenshot_path=screenshot_path,
                         extra_meta=source_extra_meta,
                     )
+                    llm_cost += doc_cost
+                    _merge_llm_usage(llm_usage, doc_usage)
+                    stages.finalize("LLM enhanced")
 
-                doc_cost, doc_usage, img_analysis = await run_url_llm_with_images(
-                    _doc_task,
-                    downloaded_images=downloaded_images,
-                    image_context=markdown_for_llm,
-                    output_file=output_file,
-                    cfg=cfg,
-                    url=url,
-                )
-                llm_cost += doc_cost
-                _merge_llm_usage(llm_usage, doc_usage)
-                stages.finalize("LLM enhanced (document + images)")
-            else:
-                # Only document processing, no images to analyze, no screenshot
-                # (hoisted stage text already reads "Enhancing with LLM...")
-                _, doc_cost, doc_usage = await run_url_document_llm(
-                    markdown_for_llm,
-                    url,  # Use URL as source identifier
-                    cfg,
-                    output_file,
-                    fetch_result,
-                    screenshot_path=screenshot_path,
-                    extra_meta=source_extra_meta,
-                )
-                llm_cost += doc_cost
-                _merge_llm_usage(llm_usage, doc_usage)
-                stages.finalize("LLM enhanced")
-
-            # Read the LLM-processed content for stdout output
-            llm_output_file = output_file.with_suffix(".llm.md")
-            if llm_output_file.exists():
-                final_content = llm_output_file.read_text(encoding="utf-8")
+                # Read the LLM-processed content for stdout output
+                llm_output_file = output_file.with_suffix(".llm.md")
+                if llm_output_file.exists():
+                    final_content = llm_output_file.read_text(encoding="utf-8")
 
         # Output profile post-processing (no-op without a profile)
         if cfg.output.profile is not None:
@@ -1453,6 +1497,127 @@ async def run_url_document_llm(
         extra_meta=extra_meta,
         title=fetch_result.title,
     )
+
+
+def _use_cli_llm_branches(
+    cfg: MarkitaiConfig,
+    fetch_result: FetchResult,
+    has_screenshot: bool,
+    downloaded_images: list[Path],
+) -> bool:
+    """Whether the URL needs a CLI-only LLM branch (not the shared cascade).
+
+    True for screenshot-only extraction, multi-source vision enhancement,
+    and document+images concurrent analysis — the three branches whose
+    stages the workflow cascade does not model.
+    """
+    if not cfg.llm.enabled:
+        return False
+    if not cfg.llm.pure:
+        has_multi_source = (
+            fetch_result.static_content is not None
+            or fetch_result.browser_content is not None
+        )
+        if cfg.screenshot.screenshot_only and has_screenshot:
+            return True
+        if has_screenshot and has_multi_source:
+            return True
+    return bool((cfg.image.alt_enabled or cfg.image.desc_enabled) and downloaded_images)
+
+
+def _use_raw_pure_base(cfg: MarkitaiConfig) -> bool:
+    """Pure mode without LLM: base .md is raw markdown, no frontmatter."""
+    return cfg.llm.pure and not cfg.llm.enabled
+
+
+async def _run_standard_url_cascade(
+    url: str,
+    cfg: MarkitaiConfig,
+    workdir: Path,
+    fetch_result: FetchResult,
+    markdown_for_llm: str,
+    original_markdown: str,
+    filename: str,
+) -> tuple[Path, str, str, float, dict[str, dict[str, Any]]]:
+    """Run the shared URL cascade for the CLI's standard document path.
+
+    Extracted from ``process_url`` to keep the function under pyright's
+    complexity budget. LLM failures raise ``ConversionError`` after the
+    base file is on disk; the caller's outer handler turns it into the
+    usual exit path.
+
+    Returns:
+        (output_file, base_content, final_content, cost, llm_usage).
+    """
+    from markitai.workflow.url import convert_url_cascade
+
+    cascade = await convert_url_cascade(
+        url,
+        cfg,
+        workdir,
+        fetch_result=fetch_result,
+        markdown_override=(
+            markdown_for_llm
+            if cfg.llm.enabled and (cfg.image.alt_enabled or cfg.image.desc_enabled)
+            else None
+        ),
+        base_from_localized=False,
+        output_name=filename,
+        llm_error_policy="raise",
+        llm_stage=cli_document_llm_stage,
+    )
+
+    assert cascade.target_file is not None  # skip was handled by the caller
+    output_file = cascade.target_file
+    if cascade.llm_output_path is not None and cascade.llm_output_path.exists():
+        final_content = cascade.llm_output_path.read_text(encoding="utf-8")
+        base_content = (
+            cascade.output_path.read_text(encoding="utf-8")
+            if cascade.output_path is not None and cascade.output_path.exists()
+            else original_markdown
+        )
+    elif cascade.output_path is not None and cascade.output_path.exists():
+        base_content = cascade.output_path.read_text(encoding="utf-8")
+        final_content = base_content
+    else:
+        base_content = original_markdown
+        final_content = base_content
+    return output_file, base_content, final_content, cascade.cost_usd, cascade.llm_usage
+
+
+async def cli_document_llm_stage(
+    markdown: str,
+    url: str,
+    cfg: MarkitaiConfig,
+    output_file: Path,
+    fetch_result: FetchResult,
+    processor: LLMProcessor | None,
+) -> tuple[Path | None, float, dict[str, dict[str, Any]], str | None]:
+    """``workflow.url`` LLM-stage adapter over ``run_url_document_llm``.
+
+    Lets the CLI's standard document path reuse the shared cascade while
+    keeping its own ``process_with_llm`` invocation (hallucinated-image
+    guard, screenshot reference comments). Errors come back as the fourth
+    tuple element instead of propagating, per the stage contract.
+    """
+    from markitai.utils.text import format_error_message
+
+    try:
+        _, cost, usage = await run_url_document_llm(
+            markdown,
+            url,
+            cfg,
+            output_file,
+            fetch_result,
+            screenshot_path=fetch_result.screenshot_path,
+            extra_meta=fetch_result.metadata.get("source_frontmatter"),
+            processor=processor,
+        )
+    except Exception as e:
+        return None, 0.0, {}, format_error_message(e)
+    # Success means the stage owns the .llm.md path (mirrors the legacy
+    # branch behavior, which never re-checked the file's existence).
+    return output_file.with_suffix(".llm.md"), cost, usage, None
 
 
 async def run_url_llm_with_images(

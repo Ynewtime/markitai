@@ -475,130 +475,209 @@ def create_url_processor(
                     error="skipped (exists)",
                 ), extra_info
 
-            # Write base .md file (respect --llm, --pure, --keep-base).
-            # localized_base_md: URL-list batch writes the base .md from the
-            # image-localized markdown; directory batch keeps the original.
-            base_source = markdown_for_llm if localized_base_md else original_markdown
-            should_write_base = not cfg.llm.enabled or cfg.llm.keep_base
-            if should_write_base:
-                if cfg.llm.pure and not cfg.llm.enabled:
-                    # Pure mode without LLM: write raw markdown, no frontmatter
-                    atomic_write_text(output_file, base_source)
-                else:
-                    base_content = _add_basic_frontmatter(
-                        base_source,
-                        url,
-                        fetch_strategy=fetch_result.strategy_used
-                        if fetch_result
-                        else None,
-                        screenshot_path=screenshot_path,
-                        screenshot_tiles=screenshot_tiles or None,
-                        output_dir=output_dir,
-                        title=fetch_result.title if fetch_result else None,
-                        extra_meta=source_extra_meta,
-                    )
-                    atomic_write_text(output_file, base_content)
-
-            # LLM processing uses markdown with local image paths
+            # Standard path — no screenshot-only, no vision enhancement,
+            # no image analysis, no raw pure base: delegate base+LLM to the
+            # shared workflow cascade (the same code serve/api/CLI run).
             url_llm_usage: dict[str, dict[str, Any]] = {}
             llm_cost = 0.0
             img_analysis = None
+            should_analyze_images = bool(
+                (cfg.image.alt_enabled or cfg.image.desc_enabled) and downloaded_images
+            )
+            use_vision_enhancement = bool(
+                has_multi_source and has_screenshot and screenshot_path
+            )
+            use_screenshot_only_llm = bool(
+                honor_screenshot_only
+                and cfg.screenshot.screenshot_only
+                and has_screenshot
+                and screenshot_path is not None
+                and not cfg.llm.pure
+            )
+            use_cli_llm_branches = cfg.llm.enabled and (
+                use_screenshot_only_llm
+                or use_vision_enhancement
+                or should_analyze_images
+            )
+            use_raw_pure_base = cfg.llm.pure and not cfg.llm.enabled
 
-            if cfg.llm.enabled:
-                # Check if image analysis should run
-                should_analyze_images = (
-                    cfg.image.alt_enabled or cfg.image.desc_enabled
-                ) and downloaded_images
+            if not use_cli_llm_branches and not use_raw_pure_base:
+                from markitai.cli.processors.url import cli_document_llm_stage
+                from markitai.workflow.url import convert_url_cascade
 
-                # Check if we should use vision enhancement (multi-source + screenshot)
-                use_vision_enhancement = (
-                    has_multi_source and has_screenshot and screenshot_path
+                # LLM failures raise ConversionError after the base file is
+                # on disk; the outer catch-all maps it to a failed result.
+                cascade = await convert_url_cascade(
+                    url,
+                    cfg,
+                    output_dir,
+                    processor=shared_processor,
+                    fetch_result=fetch_result,
+                    markdown_override=(
+                        markdown_for_llm
+                        if cfg.llm.enabled
+                        and (cfg.image.alt_enabled or cfg.image.desc_enabled)
+                        else None
+                    ),
+                    base_from_localized=localized_base_md,
+                    output_name=filename,
+                    llm_error_policy="raise",
+                    llm_stage=cli_document_llm_stage,
                 )
+                assert cascade.target_file is not None  # skip handled above
+                output_file = cascade.target_file
+                llm_cost = cascade.cost_usd
+                url_llm_usage = cascade.llm_usage
+            else:
+                # Write base .md file (respect --llm, --pure, --keep-base).
+                # localized_base_md: URL-list batch writes the base .md from the
+                # image-localized markdown; directory batch keeps the original.
+                base_source = (
+                    markdown_for_llm if localized_base_md else original_markdown
+                )
+                should_write_base = not cfg.llm.enabled or cfg.llm.keep_base
+                if should_write_base:
+                    if cfg.llm.pure and not cfg.llm.enabled:
+                        # Pure mode without LLM: write raw markdown, no frontmatter
+                        atomic_write_text(output_file, base_source)
+                    else:
+                        base_content = _add_basic_frontmatter(
+                            base_source,
+                            url,
+                            fetch_strategy=fetch_result.strategy_used
+                            if fetch_result
+                            else None,
+                            screenshot_path=screenshot_path,
+                            screenshot_tiles=screenshot_tiles or None,
+                            output_dir=output_dir,
+                            title=fetch_result.title if fetch_result else None,
+                            extra_meta=source_extra_meta,
+                        )
+                        atomic_write_text(output_file, base_content)
 
-                # --screenshot-only with LLM (single-URL parity, opt-in):
-                # extract content purely from the screenshot
-                if (
-                    honor_screenshot_only
-                    and cfg.screenshot.screenshot_only
-                    and has_screenshot
-                    and screenshot_path is not None
-                    and not cfg.llm.pure
-                ):
-                    (
-                        llm_cost,
-                        url_llm_usage,
-                        img_analysis,
-                    ) = await run_url_screenshot_only_llm(
-                        screenshot_path,
-                        url,
-                        cfg,
-                        output_file,
-                        fetch_result,
-                        screenshot_tiles=screenshot_tiles or None,
-                        downloaded_images=downloaded_images,
-                        image_context=markdown_for_llm,
-                        processor=shared_processor,
+                if cfg.llm.enabled:
+                    # Check if image analysis should run
+                    should_analyze_images = (
+                        cfg.image.alt_enabled or cfg.image.desc_enabled
+                    ) and downloaded_images
+
+                    # Check if we should use vision enhancement (multi-source + screenshot)
+                    use_vision_enhancement = (
+                        has_multi_source and has_screenshot and screenshot_path
                     )
-                elif use_vision_enhancement:
-                    # Multi-source URL with screenshot: use vision LLM for better content extraction
-                    # Build multi-source markdown content for LLM
-                    multi_source_content = build_multi_source_content(
-                        fetch_result.static_content,
-                        fetch_result.browser_content,
-                        markdown_for_llm,  # Fallback primary content
-                    )
 
-                    logger.debug(
-                        "[URL] Using vision enhancement for multi-source URL: "
-                        f"{redact_url(url)}"
-                    )
-
-                    # Use vision enhancement with screenshot
-                    assert (
-                        screenshot_path is not None
-                    )  # Guaranteed by use_vision_enhancement check
-
-                    async def _vision_task() -> tuple[
-                        str, float, dict[str, dict[str, Any]]
-                    ]:
-                        return await process_url_with_vision(
-                            multi_source_content,
+                    # --screenshot-only with LLM (single-URL parity, opt-in):
+                    # extract content purely from the screenshot
+                    if (
+                        honor_screenshot_only
+                        and cfg.screenshot.screenshot_only
+                        and has_screenshot
+                        and screenshot_path is not None
+                        and not cfg.llm.pure
+                    ):
+                        (
+                            llm_cost,
+                            url_llm_usage,
+                            img_analysis,
+                        ) = await run_url_screenshot_only_llm(
                             screenshot_path,
                             url,
                             cfg,
                             output_file,
+                            fetch_result,
+                            screenshot_tiles=screenshot_tiles or None,
+                            downloaded_images=downloaded_images,
+                            image_context=markdown_for_llm,
                             processor=shared_processor,
-                            original_title=fetch_result.title if fetch_result else None,
-                            fetch_strategy=fetch_result.strategy_used
-                            if fetch_result
-                            else None,
-                            extra_meta=source_extra_meta,
+                        )
+                    elif use_vision_enhancement:
+                        # Multi-source URL with screenshot: use vision LLM for better content extraction
+                        # Build multi-source markdown content for LLM
+                        multi_source_content = build_multi_source_content(
+                            fetch_result.static_content,
+                            fetch_result.browser_content,
+                            markdown_for_llm,  # Fallback primary content
                         )
 
-                    if should_analyze_images:
-                        # Run vision enhancement and image analysis in parallel
+                        logger.debug(
+                            "[URL] Using vision enhancement for multi-source URL: "
+                            f"{redact_url(url)}"
+                        )
+
+                        # Use vision enhancement with screenshot
+                        assert (
+                            screenshot_path is not None
+                        )  # Guaranteed by use_vision_enhancement check
+
+                        async def _vision_task() -> tuple[
+                            str, float, dict[str, dict[str, Any]]
+                        ]:
+                            return await process_url_with_vision(
+                                multi_source_content,
+                                screenshot_path,
+                                url,
+                                cfg,
+                                output_file,
+                                processor=shared_processor,
+                                original_title=fetch_result.title
+                                if fetch_result
+                                else None,
+                                fetch_strategy=fetch_result.strategy_used
+                                if fetch_result
+                                else None,
+                                extra_meta=source_extra_meta,
+                            )
+
+                        if should_analyze_images:
+                            # Run vision enhancement and image analysis in parallel
+                            (
+                                llm_cost,
+                                url_llm_usage,
+                                img_analysis,
+                            ) = await run_url_llm_with_images(
+                                _vision_task,
+                                downloaded_images=downloaded_images,
+                                image_context=multi_source_content,
+                                output_file=output_file,
+                                cfg=cfg,
+                                url=url,
+                                processor=shared_processor,
+                            )
+                        else:
+                            _, llm_cost, url_llm_usage = await _vision_task()
+                    elif should_analyze_images:
+                        # Standard processing with image analysis, in parallel
+
+                        async def _doc_task() -> tuple[
+                            str, float, dict[str, dict[str, Any]]
+                        ]:
+                            return await run_url_document_llm(
+                                markdown_for_llm,
+                                url,
+                                cfg,
+                                output_file,
+                                fetch_result,
+                                screenshot_path=screenshot_path,
+                                extra_meta=source_extra_meta,
+                                processor=shared_processor,
+                            )
+
                         (
                             llm_cost,
                             url_llm_usage,
                             img_analysis,
                         ) = await run_url_llm_with_images(
-                            _vision_task,
+                            _doc_task,
                             downloaded_images=downloaded_images,
-                            image_context=multi_source_content,
+                            image_context=markdown_for_llm,
                             output_file=output_file,
                             cfg=cfg,
                             url=url,
                             processor=shared_processor,
                         )
                     else:
-                        _, llm_cost, url_llm_usage = await _vision_task()
-                elif should_analyze_images:
-                    # Standard processing with image analysis, in parallel
-
-                    async def _doc_task() -> tuple[
-                        str, float, dict[str, dict[str, Any]]
-                    ]:
-                        return await run_url_document_llm(
+                        # Only document processing
+                        _, llm_cost, url_llm_usage = await run_url_document_llm(
                             markdown_for_llm,
                             url,
                             cfg,
@@ -608,32 +687,6 @@ def create_url_processor(
                             extra_meta=source_extra_meta,
                             processor=shared_processor,
                         )
-
-                    (
-                        llm_cost,
-                        url_llm_usage,
-                        img_analysis,
-                    ) = await run_url_llm_with_images(
-                        _doc_task,
-                        downloaded_images=downloaded_images,
-                        image_context=markdown_for_llm,
-                        output_file=output_file,
-                        cfg=cfg,
-                        url=url,
-                        processor=shared_processor,
-                    )
-                else:
-                    # Only document processing
-                    _, llm_cost, url_llm_usage = await run_url_document_llm(
-                        markdown_for_llm,
-                        url,
-                        cfg,
-                        output_file,
-                        fetch_result,
-                        screenshot_path=screenshot_path,
-                        extra_meta=source_extra_meta,
-                        processor=shared_processor,
-                    )
 
             # Output profile post-processing (no-op without a profile)
             if cfg.output.profile is not None:
