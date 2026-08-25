@@ -815,6 +815,37 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             "install_hint": "Use vision-capable models like gemini-*, gpt-5.4, claude-*",
         }
 
+    # 6b. VLM OCR (--ocr --llm): the OCR path that sends page images to the
+    # vision model instead of RapidOCR. Distinct from "vision-model" above
+    # (which powers alt text / descriptions): this row is specifically about
+    # the OCR capability behind `--ocr --llm`, and it is optional — no vision
+    # model means that path is unavailable, not that the install is broken.
+    if vision_models:
+        vlm_names = [m.litellm_params.model for m in vision_models]
+        vlm_display = ", ".join(vlm_names[:2])
+        if len(vlm_names) > 2:
+            vlm_display += f" (+{len(vlm_names) - 2} more)"
+        results["vlm-ocr"] = {
+            "name": "VLM OCR",
+            "description": "OCR for scanned documents (--ocr --llm)",
+            "status": "ok",
+            "optional": True,
+            "message": (
+                f"available — {vlm_display} reads page images "
+                "(MARKITAI_NO_VLM_OCR=1 forces local RapidOCR)"
+            ),
+            "install_hint": "",
+        }
+    else:
+        results["vlm-ocr"] = {
+            "name": "VLM OCR",
+            "description": "OCR for scanned documents (--ocr --llm)",
+            "status": "warning",
+            "optional": True,
+            "message": "unavailable — no vision model configured",
+            "install_hint": "Use vision-capable models like gemini-*, gpt-5.4, claude-*",
+        }
+
     # Define dependency groups.
     # Nothing is unconditionally required any more: OCR moved into the `ocr`
     # extra, so a bare install with no OCR backend is a healthy install, not a
@@ -867,7 +898,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
 
     # Unified UI output
     ui.title(t("doctor.title"))
-    optional_deps = ["rapidocr", "playwright", "libreoffice", "serve"]
+    optional_deps = ["rapidocr", "playwright", "libreoffice", "serve", "vlm-ocr"]
     llm_keys = ["llm-api", "vision-model", "claude-agent-sdk", "copilot-sdk"]
     auth_keys = ["claude-agent-auth", "copilot-auth", "chatgpt-auth"]
 

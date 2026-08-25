@@ -72,6 +72,14 @@ class TestCLIOptions:
             assert lines[idx - 1] == "", f"expected blank line before {header}"
             assert lines[idx - 2] != "", f"expected single blank before {header}"
 
+    def test_ocr_help_mentions_vlm_path(self, cli_runner: CliRunner) -> None:
+        """--ocr help must name both OCR paths (C5 naming)."""
+        result = cli_runner.invoke(app, ["--help"])
+        assert result.exit_code == 0
+        text = _strip_ansi(result.output)
+        assert "VLM OCR" in text
+        assert "RapidOCR" in text
+
     def test_no_input_shows_help(self, cli_runner: CliRunner) -> None:
         """Test that invoking without input shows help."""
         result = cli_runner.invoke(app, [])

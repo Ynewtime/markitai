@@ -8,9 +8,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from PIL import Image
 
-from markitai.config import MarkitaiConfig
+from markitai.config import LLMConfig, MarkitaiConfig, OCRConfig
 from markitai.converter.base import FileFormat
 from markitai.converter.image import ImageConverter
+from markitai.ocr import OCRBackendMissing
 
 
 @pytest.fixture
@@ -493,3 +494,59 @@ class TestOcrBackendMissingIsNotSilent:
 
         result = converter.convert(self._png(tmp_path), output_dir=tmp_path / "out")
         assert "scan" in result.markdown
+
+
+class TestOcrLlmVlmPath:
+    """VLM-OCR gate on the image path (C5): --ocr --llm routes to vision,
+    MARKITAI_NO_VLM_OCR degrades to local RapidOCR or fails clearly."""
+
+    def _vlm_config(self) -> MarkitaiConfig:
+        return MarkitaiConfig(ocr=OCRConfig(enabled=True), llm=LLMConfig(enabled=True))
+
+    def test_ocr_llm_marks_vlm_and_discloses_once(
+        self, sample_image: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from markitai.vision_consent import (
+            reset_vlm_ocr_disclosure,
+            vlm_ocr_disclosure_emitted,
+        )
+
+        monkeypatch.delenv("MARKITAI_NO_VLM_OCR", raising=False)
+        reset_vlm_ocr_disclosure()
+        converter = ImageConverter(self._vlm_config())
+        with patch("markitai.vision_consent.get_interaction") as mock_get:
+            mock_port = mock_get.return_value
+            result = converter.convert(sample_image)
+        assert result.metadata["ocr_path"] == "vlm"
+        assert vlm_ocr_disclosure_emitted() is True
+        mock_port.notify.assert_called_once()
+        assert "1 page image(s)" in mock_port.notify.call_args.args[0]
+
+    def test_no_vlm_ocr_falls_back_to_rapidocr(
+        self, sample_image: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MARKITAI_NO_VLM_OCR", "1")
+        converter = ImageConverter(self._vlm_config())
+        with (
+            patch("markitai.converter.image.is_ocr_available", return_value=True),
+            patch("markitai.ocr.OCRProcessor") as mock_ocr_cls,
+        ):
+            mock_processor = MagicMock()
+            mock_processor.recognize_to_markdown.return_value = "Extracted text"
+            mock_ocr_cls.return_value = mock_processor
+            result = converter.convert(sample_image)
+        assert result.metadata["ocr_path"] == "rapidocr"
+        assert "Extracted text" in result.markdown
+
+    def test_no_vlm_ocr_raises_when_rapidocr_missing(
+        self, sample_image: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MARKITAI_NO_VLM_OCR", "1")
+        converter = ImageConverter(self._vlm_config())
+        with (
+            patch("markitai.converter.image.is_ocr_available", return_value=False),
+            pytest.raises(OCRBackendMissing) as excinfo,
+        ):
+            converter.convert(sample_image)
+        assert "MARKITAI_NO_VLM_OCR" in str(excinfo.value)
+        assert "RapidOCR" in str(excinfo.value)

@@ -16,8 +16,14 @@ from markitai.converter.base import (
     register_converter,
 )
 from markitai.converter.heif import HEIF_SUFFIXES, decode_to_png, ensure_heif_ready
+from markitai.ocr import (
+    OCR_INSTALL_HINT,
+    OCRBackendMissing,
+    is_ocr_available,
+)
 from markitai.utils.paths import ensure_assets_dir
 from markitai.utils.text import markdown_image_reference
+from markitai.vision_consent import ensure_vlm_ocr_disclosed, vlm_ocr_allowed
 
 
 class ImageConverter(BaseConverter):
@@ -75,8 +81,12 @@ class ImageConverter(BaseConverter):
         image_ref_path = self._copy_to_assets(input_path, output_dir)
 
         if use_ocr and use_llm:
-            # --ocr --llm: Skip OCR, let LLM Vision analyze the image later
-            # Just return a placeholder - LLM will process it in cli.py
+            # --ocr --llm: Skip OCR, let LLM Vision analyze the image later.
+            # The image goes to the vision model for OCR reading — disclose
+            # once per process, and honor the MARKITAI_NO_VLM_OCR opt-out.
+            if not vlm_ocr_allowed():
+                return self._degrade_vlm_ocr(input_path, image_ref_path, output_dir)
+            ensure_vlm_ocr_disclosed(self.config, page_count=1)
             markdown = self._create_image_placeholder(input_path, image_ref_path)
             return ConvertResult(
                 markdown=markdown,
@@ -84,6 +94,7 @@ class ImageConverter(BaseConverter):
                 metadata={
                     "format": input_path.suffix.lstrip(".").upper(),
                     "source": str(input_path),
+                    "ocr_path": "vlm",
                     "asset_path": image_ref_path,
                 },
             )
@@ -105,8 +116,51 @@ class ImageConverter(BaseConverter):
                 "format": input_path.suffix.lstrip(".").upper(),
                 "source": str(input_path),
                 "ocr_used": use_ocr and not use_llm,
+                "ocr_path": "rapidocr" if use_ocr else "none",
                 "asset_path": image_ref_path,
             },
+        )
+
+    def _degrade_vlm_ocr(
+        self,
+        input_path: Path,
+        image_ref_path: str,
+        output_dir: Path | None,
+    ) -> ConvertResult:
+        """Fall back to local OCR when MARKITAI_NO_VLM_OCR blocks the VLM path.
+
+        Privacy-preserving degrade: never send the image to a remote model.
+        Uses RapidOCR when installed, otherwise fails with an actionable
+        error that names both ways out (unset the env var, or install
+        RapidOCR).
+        """
+        if is_ocr_available():
+            logger.warning(
+                "[VLM OCR] Disabled by MARKITAI_NO_VLM_OCR; "
+                "falling back to local RapidOCR for {}",
+                input_path.name,
+            )
+            markdown = self._convert_with_ocr(
+                input_path,
+                image_ref_path,
+                ocr_source=self._ocr_source(input_path, output_dir),
+            )
+            return ConvertResult(
+                markdown=markdown,
+                images=[],
+                metadata={
+                    "format": input_path.suffix.lstrip(".").upper(),
+                    "source": str(input_path),
+                    "ocr_used": True,
+                    "ocr_path": "rapidocr",
+                    "asset_path": image_ref_path,
+                },
+            )
+        raise OCRBackendMissing(
+            "VLM OCR is disabled by MARKITAI_NO_VLM_OCR=1 and the local "
+            "RapidOCR backend is not installed. Either unset "
+            "MARKITAI_NO_VLM_OCR to use the vision LLM, or install "
+            f"RapidOCR ({OCR_INSTALL_HINT})."
         )
 
     def _copy_to_assets(self, input_path: Path, output_dir: Path | None) -> str:

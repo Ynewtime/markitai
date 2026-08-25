@@ -127,6 +127,9 @@ Enable OCR for scanned documents.
 markitai scanned.pdf --ocr
 ```
 
+- Without `--llm`: `--ocr` uses local RapidOCR.
+- With `--llm`: the vision model reads page images directly (VLM OCR) instead of RapidOCR. No OCR backend needed, but page images go to the remote model; `MARKITAI_NO_VLM_OCR=1` forces the local RapidOCR path.
+
 For a single image input, enable `--ocr` to extract text or `--llm` to analyze the image. If neither feature is enabled, Markitai exits with status 1 instead of reporting a successful conversion with no output.
 
 ### `--pure`
@@ -531,6 +534,7 @@ markitai doctor --suggest-extras   # Comma-separated pip extras for `uv tool ins
 Every check is a capability report, and a capability you have not enabled never fails the run:
 
 - **Optional: RapidOCR** for `--ocr` on scanned PDFs and images. It ships in the `ocr` extra rather than the core install, so "not installed" here means "OCR is off", not "something is broken"
+- **Optional: VLM OCR** for `--ocr --llm` on scanned documents: the vision model reads page images instead of RapidOCR. Available when a vision-capable model is configured; `MARKITAI_NO_VLM_OCR=1` forces the local RapidOCR path
 - **Optional until configured: Playwright** for dynamic URL fetching (SPA rendering). It becomes a blocking check when `fetch.strategy` is `playwright` or `screenshot.enabled` is true
 - **Optional: LibreOffice** for legacy Office conversion and slide rendering (on macOS, installed MS Office apps are used as a fallback)
 - **LLM API**: Configuration and model status

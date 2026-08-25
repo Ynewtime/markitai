@@ -141,6 +141,7 @@ source_modules = [
     "markitai.types",
     "markitai.urls",
     "markitai.utils",
+    "markitai.vision_consent",
     "markitai.webextract",
     "markitai.workflow",
 ]
@@ -199,6 +200,7 @@ source_modules = [
     "markitai.ocr",
     "markitai.output_profiles",
     "markitai.providers",
+    "markitai.vision_consent",
     "markitai.webextract",
 ]
 forbidden_modules = [

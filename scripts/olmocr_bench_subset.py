@@ -85,6 +85,10 @@ subset's approximation::
     uv run python scripts/olmocr_bench_subset.py --split headers_footers --limit 5 --no-ocr
     uv run python scripts/olmocr_bench_subset.py --split old_scans --limit 5 --output report.json
 
+    # VLM mode: the --ocr --llm path (vision model reads page images) instead
+    # of local RapidOCR — paid, manual-only, refused in CI.
+    uv run python scripts/olmocr_bench_subset.py --split old_scans --limit 5 --vlm
+
 PDFs and rule files are cached under ``--cache-dir`` (default: a directory
 under the system temp dir) so repeat runs do not re-download. Nothing this
 script downloads is ever committed to the repository.
@@ -168,14 +172,31 @@ def fetch_pdf(pdf_rel_path: str, cache_dir: Path, client: httpx.Client) -> Path:
     return _download(url, dest, client)
 
 
-def convert_pdf(pdf_path: Path, *, ocr: bool) -> str:
-    """Convert one PDF with markitai's public API (no LLM)."""
+def _ci_active() -> bool:
+    """Return True when running under a CI automation environment."""
+    import os
+
+    return os.environ.get(
+        "GITHUB_ACTIONS", ""
+    ).strip().lower() == "true" or os.environ.get("CI", "").strip().lower() in (
+        "1",
+        "true",
+    )
+
+
+def convert_pdf(pdf_path: Path, *, ocr: bool, vlm: bool = False) -> str:
+    """Convert one PDF with markitai's public API.
+
+    ``vlm=True`` runs the ``--ocr --llm`` path: page images go to the
+    configured vision model (paid, remote, opt-in). ``vlm=False`` (default)
+    runs the local RapidOCR path (``llm=False``) — no network.
+    """
     import markitai
 
     output = markitai.convert(
         pdf_path,
         output_dir=None,
-        llm=False,
+        llm=vlm,
         ocr=ocr,
         screenshot=False,
         alt=False,
@@ -335,12 +356,35 @@ def main(argv: list[str] | None = None) -> int:
         help="enable markitai's OCR path (default: on; these are scanned docs)",
     )
     parser.add_argument(
+        "--vlm",
+        action="store_true",
+        default=False,
+        help="use the --ocr --llm VLM path (vision model reads page images) "
+        "instead of local RapidOCR. Requires a configured vision model, costs "
+        "money, and refuses to run in a CI environment.",
+    )
+    parser.add_argument(
         "--output", type=Path, default=None, help="write a JSON report here"
     )
     args = parser.parse_args(argv)
 
+    if args.vlm and _ci_active():
+        print(
+            "--vlm is a paid, manual-only mode and refuses to run in a CI "
+            "environment (GITHUB_ACTIONS/CI set). Run it locally with a "
+            "configured vision model.",
+            file=sys.stderr,
+        )
+        return 2
+
     args.cache_dir.mkdir(parents=True, exist_ok=True)
     print(f"Cache directory: {args.cache_dir}")
+    if args.vlm:
+        print(
+            "VLM mode: page images will be sent to your configured vision "
+            "model (paid). This is the --ocr --llm path.",
+            file=sys.stderr,
+        )
 
     with httpx.Client(timeout=60.0, follow_redirects=True) as client:
         rules = fetch_split_rules(args.split, args.cache_dir, client)
@@ -357,7 +401,7 @@ def main(argv: list[str] | None = None) -> int:
             pdf_rules = [r for r in rules if r["pdf"] == pdf_rel]
             started = time.monotonic()
             try:
-                content = convert_pdf(pdf_path, ocr=args.ocr)
+                content = convert_pdf(pdf_path, ocr=args.ocr, vlm=args.vlm)
             except Exception as exc:  # noqa: BLE001 - one PDF's failure must not abort the batch
                 print(
                     f"  FAILED {pdf_rel}: {type(exc).__name__}: {exc}", file=sys.stderr
@@ -394,6 +438,7 @@ def main(argv: list[str] | None = None) -> int:
             "split": args.split,
             "sampled_pdfs": pdfs,
             "ocr": args.ocr,
+            "ocr_mode": "vlm" if args.vlm else "rapidocr",
             "summary": summary,
             "outcomes": [asdict(o) for o in outcomes],
         }

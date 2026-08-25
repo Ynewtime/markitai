@@ -19,6 +19,7 @@ from markitai.config import (
 )
 from markitai.converter.base import ConvertResult, ExtractedImage, FileFormat
 from markitai.converter.pdf import PdfConverter
+from markitai.ocr import OCRBackendMissing
 
 if TYPE_CHECKING:
     pass
@@ -1922,3 +1923,107 @@ class TestOcrPerPageRouting:
         assert "OCR RECOGNIZED TEXT" in result.markdown
         # Both pages still rendered as screenshots
         assert mock_img_processor.save_screenshot.call_count == 2
+
+
+class TestOcrLlmVlmPath:
+    """VLM-OCR gate on the PDF path (C5): --ocr --llm routes to the vision
+    path; MARKITAI_NO_VLM_OCR degrades to local RapidOCR or fails clearly."""
+
+    def _pdf(self, tmp_path: Path) -> Path:
+        pdf_file = tmp_path / "scanned.pdf"
+        pdf_file.write_bytes(b"%PDF-1.4 dummy content")
+        return pdf_file
+
+    def _vlm_config(self) -> MarkitaiConfig:
+        return MarkitaiConfig(
+            ocr=OCRConfig(enabled=True),
+            llm=LLMConfig(enabled=True),
+            screenshot=ScreenshotConfig(enabled=False),
+        )
+
+    def test_ocr_llm_routes_to_vlm_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from markitai.vision_consent import reset_vlm_ocr_disclosure
+
+        monkeypatch.delenv("MARKITAI_NO_VLM_OCR", raising=False)
+        reset_vlm_ocr_disclosure()
+        converter = PdfConverter(self._vlm_config())
+        vlm_stub = MagicMock(
+            return_value=ConvertResult(markdown="x", images=[], metadata={})
+        )
+        with (
+            patch.object(converter, "_render_pages_for_llm", vlm_stub),
+            patch.object(converter, "_convert_with_ocr") as mock_ocr,
+        ):
+            converter.convert(self._pdf(tmp_path))
+        vlm_stub.assert_called_once()
+        mock_ocr.assert_not_called()
+
+    def test_no_vlm_ocr_falls_back_to_rapidocr(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MARKITAI_NO_VLM_OCR", "1")
+        converter = PdfConverter(self._vlm_config())
+        vlm_stub = MagicMock(
+            return_value=ConvertResult(markdown="x", images=[], metadata={})
+        )
+        with (
+            patch.object(converter, "_render_pages_for_llm", vlm_stub),
+            patch.object(converter, "_convert_with_ocr") as mock_ocr,
+            patch("markitai.converter.pdf.is_ocr_available", return_value=True),
+        ):
+            converter.convert(self._pdf(tmp_path))
+        mock_ocr.assert_called_once()
+        vlm_stub.assert_not_called()
+
+    def test_no_vlm_ocr_raises_when_rapidocr_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MARKITAI_NO_VLM_OCR", "1")
+        converter = PdfConverter(self._vlm_config())
+        with (
+            patch("markitai.converter.pdf.is_ocr_available", return_value=False),
+            pytest.raises(OCRBackendMissing) as excinfo,
+        ):
+            converter.convert(self._pdf(tmp_path))
+        msg = str(excinfo.value)
+        assert "MARKITAI_NO_VLM_OCR" in msg
+        assert "RapidOCR" in msg
+
+    def test_render_pages_for_llm_discloses_once_and_marks_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from markitai.vision_consent import (
+            reset_vlm_ocr_disclosure,
+            vlm_ocr_disclosure_emitted,
+        )
+
+        monkeypatch.delenv("MARKITAI_NO_VLM_OCR", raising=False)
+        reset_vlm_ocr_disclosure()
+        converter = PdfConverter(self._vlm_config())
+        pdf_file = self._pdf(tmp_path)
+        out = tmp_path / "out"
+        with (
+            patch(
+                "markitai.converter.pdf.pymupdf4llm.to_markdown", return_value="# doc"
+            ),
+            patch.object(
+                converter, "_fix_image_paths", side_effect=lambda text, _d: text
+            ),
+            patch.object(converter, "_collect_embedded_images", return_value=[]),
+            patch.object(
+                converter,
+                "_render_pages_parallel",
+                return_value=[
+                    (MagicMock(), {"page": 1}),
+                    (MagicMock(), {"page": 2}),
+                ],
+            ),
+            patch("markitai.vision_consent.get_interaction") as mock_get,
+        ):
+            mock_port = mock_get.return_value
+            result = converter._render_pages_for_llm(pdf_file, out)
+        assert result.metadata["ocr_path"] == "vlm"
+        assert vlm_ocr_disclosure_emitted() is True
+        assert "2 page image(s)" in mock_port.notify.call_args.args[0]

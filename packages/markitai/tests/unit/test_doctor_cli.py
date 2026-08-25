@@ -86,6 +86,62 @@ class TestDoctorCommand:
             assert "rapidocr" in data
             assert "llm-api" in data
 
+    def test_doctor_json_includes_vlm_ocr_row(
+        self, runner: CliRunner, mock_config: MagicMock
+    ) -> None:
+        """--json surfaces the VLM OCR (--ocr --llm) capability row (C5)."""
+        from markitai.cli.commands.doctor import doctor
+
+        vision_model = MagicMock()
+        vision_model.litellm_params.model = "claude-agent/sonnet"
+        vision_model.model_info = None
+        mock_config.llm.model_list = [vision_model]
+
+        with (
+            patch("markitai.cli.commands.doctor.ConfigManager") as MockConfigManager,
+            patch("markitai.fetch_playwright.is_playwright_available") as mock_pw,
+            patch(
+                "markitai.fetch_playwright.is_playwright_browser_installed"
+            ) as mock_browser,
+            patch("markitai.fetch_playwright.clear_browser_cache"),
+            patch("markitai.cli.commands.doctor.shutil.which", return_value=None),
+            patch("markitai.utils.office.find_libreoffice", return_value=None),
+        ):
+            MockConfigManager.return_value.load.return_value = mock_config
+            mock_pw.return_value = False
+            mock_browser.return_value = False
+
+            result = runner.invoke(doctor, ["--json"])
+            assert result.exit_code in (0, 1)
+            vlm = json.loads(result.output)["vlm-ocr"]
+            assert vlm["status"] == "ok"
+            assert "claude-agent/sonnet" in vlm["message"]
+
+    def test_doctor_json_vlm_ocr_missing_without_vision_model(
+        self, runner: CliRunner, mock_config: MagicMock
+    ) -> None:
+        """No vision model → the VLM OCR row is optional/unavailable, not fatal."""
+        from markitai.cli.commands.doctor import doctor
+
+        mock_config.llm.model_list = []
+        with (
+            patch("markitai.cli.commands.doctor.ConfigManager") as MockConfigManager,
+            patch("markitai.fetch_playwright.is_playwright_available") as mock_pw,
+            patch(
+                "markitai.fetch_playwright.is_playwright_browser_installed"
+            ) as mock_browser,
+            patch("markitai.fetch_playwright.clear_browser_cache"),
+            patch("markitai.cli.commands.doctor.shutil.which", return_value=None),
+            patch("markitai.utils.office.find_libreoffice", return_value=None),
+        ):
+            MockConfigManager.return_value.load.return_value = mock_config
+            mock_pw.return_value = False
+            mock_browser.return_value = False
+
+            result = runner.invoke(doctor, ["--json"])
+            assert result.exit_code == 0
+            assert json.loads(result.output)["vlm-ocr"]["status"] == "warning"
+
 
 class TestAuthenticationChecks:
     """Tests for authentication status checking in doctor command."""

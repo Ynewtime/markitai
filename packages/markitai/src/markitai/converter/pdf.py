@@ -23,7 +23,12 @@ from markitai.converter.base import (
     register_converter,
 )
 from markitai.image import ImageProcessor
-from markitai.ocr import is_likely_garbled
+from markitai.ocr import (
+    OCR_INSTALL_HINT,
+    OCRBackendMissing,
+    is_likely_garbled,
+    is_ocr_available,
+)
 from markitai.security import escape_glob_pattern
 from markitai.utils.errors import MissingDependencyError
 from markitai.utils.mime import get_mime_type, normalize_image_extension
@@ -33,6 +38,7 @@ from markitai.utils.paths import (
     ensure_screenshots_dir,
 )
 from markitai.utils.text import extract_asset_image_names
+from markitai.vision_consent import ensure_vlm_ocr_disclosed, vlm_ocr_allowed
 
 if TYPE_CHECKING:
     from markitai.config import MarkitaiConfig
@@ -465,7 +471,12 @@ class PdfConverter(BaseConverter):
 
         if use_ocr:
             if use_llm:
-                # --ocr --llm: Render pages as images for LLM Vision analysis
+                # --ocr --llm: Render pages as images for LLM Vision analysis.
+                # With MARKITAI_NO_VLM_OCR set, never send page images to a
+                # remote model — degrade to local OCR or fail with a clear
+                # message instead.
+                if not vlm_ocr_allowed():
+                    return self._degrade_vlm_ocr(input_path, output_dir)
                 return self._render_pages_for_llm(input_path, output_dir)
             # --ocr only: Use RapidOCR for text extraction
             return self._convert_with_ocr(input_path, output_dir)
@@ -1253,10 +1264,34 @@ class PdfConverter(BaseConverter):
                 "source": str(input_path),
                 "format": "PDF",
                 "ocr_used": True,
+                "ocr_path": "rapidocr",
                 "pages": len(markdown_parts),
                 "extracted_text": extracted_text,
                 "page_images": page_images,
             },
+        )
+
+    def _degrade_vlm_ocr(
+        self, input_path: Path, output_dir: Path | None
+    ) -> ConvertResult:
+        """Fall back to local OCR when MARKITAI_NO_VLM_OCR blocks the VLM path.
+
+        Privacy-preserving degrade: never send page images to a remote model.
+        Uses RapidOCR when installed, otherwise fails with an actionable error
+        that names both ways out (unset the env var, or install RapidOCR).
+        """
+        if is_ocr_available():
+            logger.warning(
+                "[VLM OCR] Disabled by MARKITAI_NO_VLM_OCR; "
+                "falling back to local RapidOCR for {}",
+                input_path.name,
+            )
+            return self._convert_with_ocr(input_path, output_dir)
+        raise OCRBackendMissing(
+            "VLM OCR is disabled by MARKITAI_NO_VLM_OCR=1 and the local "
+            "RapidOCR backend is not installed. Either unset "
+            "MARKITAI_NO_VLM_OCR to use the vision LLM, or install "
+            f"RapidOCR ({OCR_INSTALL_HINT})."
         )
 
     def _render_pages_for_llm(
@@ -1336,6 +1371,12 @@ class PdfConverter(BaseConverter):
         if temp_assets or temp_screenshots:
             images = [img for img in images if img.path and img.path.exists()]
 
+        # One-time privacy disclosure: the rendered page images are about to
+        # be handed to the vision LLM for OCR reading.
+        ensure_vlm_ocr_disclosed(
+            self.config, page_count=len(page_images) if page_images else None
+        )
+
         return ConvertResult(
             markdown=extracted_text,
             images=images,
@@ -1343,6 +1384,7 @@ class PdfConverter(BaseConverter):
                 "source": str(input_path),
                 "format": "PDF",
                 "pages": len(page_images) if page_images else 0,
+                "ocr_path": "vlm",
                 "extracted_text": extracted_text,
                 "page_images": page_images,
             },

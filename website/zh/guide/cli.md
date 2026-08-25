@@ -127,6 +127,9 @@ markitai https://example.com --llm --screenshot-only
 markitai scanned.pdf --ocr
 ```
 
+- 不带 `--llm`：`--ocr` 使用本地 RapidOCR。
+- 带 `--llm`（`--ocr --llm`）：由视觉模型直接读取页面图像（VLM OCR），不再走 RapidOCR——无需本地 OCR 后端，但页面图像会发送给远端模型；设置 `MARKITAI_NO_VLM_OCR=1` 可强制走本地 RapidOCR。
+
 处理单张图片时，请使用 `--ocr` 提取文字，或使用 `--llm` 分析图片。如果两者都未启用，Markitai 会以状态码 1 退出，不会在没有任何输出时仍报告转换成功。
 
 ### `--pure`
@@ -531,6 +534,7 @@ markitai doctor --suggest-extras   # 输出适合 `uv tool install "markitai[...
 每一项都是能力报告，没有启用的能力不会让整次检查失败：
 
 - **可选：RapidOCR**，用于对扫描件和图片执行 `--ocr`。它随 `ocr` extra 提供，不在核心安装内，因此这里显示「未安装」只表示 OCR 未开启，而不是安装损坏
+- **可选：VLM OCR**，用于对扫描件执行 `--ocr --llm`：由视觉模型读取页面图像，替代 RapidOCR。配置了视觉模型即可用；设置 `MARKITAI_NO_VLM_OCR=1` 可强制走本地 RapidOCR
 - **未配置时可选：Playwright**，用于动态 URL 抓取（SPA 渲染）；当 `fetch.strategy` 为 `playwright` 或 `screenshot.enabled` 为 true 时，它会成为阻断检查
 - **可选：LibreOffice**，用于旧版 Office 转换和幻灯片渲染（macOS 上未安装时会回退到已装的 MS Office）
 - **LLM API**：配置和模型状态

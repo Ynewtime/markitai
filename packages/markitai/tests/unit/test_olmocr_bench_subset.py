@@ -226,3 +226,37 @@ class TestCacheDir:
     def test_default_cache_dir_is_outside_the_repository(self, mod: ModuleType) -> None:
         cache_dir = mod.default_cache_dir()
         assert _REPO_ROOT not in cache_dir.parents
+
+
+class TestCIVlMGuard:
+    """The paid --vlm mode must never run in a CI automation environment."""
+
+    def test_ci_active_false_by_default(
+        self, mod: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        monkeypatch.delenv("CI", raising=False)
+        assert mod._ci_active() is False
+
+    @pytest.mark.parametrize("var", ["GITHUB_ACTIONS", "CI"])
+    def test_ci_active_true_under_common_ci_envs(
+        self, mod: ModuleType, monkeypatch: pytest.MonkeyPatch, var: str
+    ) -> None:
+        monkeypatch.setenv(var, "true")
+        assert mod._ci_active() is True
+
+    def test_vlm_refused_in_ci(
+        self, mod: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """--vlm exits non-zero before any network/paid work when CI is set."""
+        monkeypatch.setenv("CI", "true")
+        assert mod.main(["--split", "old_scans", "--limit", "1", "--vlm"]) == 2
+
+    def test_vlm_param_on_convert_pdf(
+        self, mod: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """convert_pdf exposes the vlm switch (signature only; no conversion)."""
+        import inspect
+
+        sig = inspect.signature(mod.convert_pdf)
+        assert sig.parameters["vlm"].default is False

@@ -240,7 +240,9 @@ def run_interactive_mode(ctx: click.Context) -> None:
 @click.option(
     "--ocr/--no-ocr",
     default=None,
-    help="Enable/disable OCR for scanned documents (uses RapidOCR).",
+    help="Enable OCR for scanned documents. Without --llm: uses RapidOCR. "
+    "With --llm: the vision model reads page images directly (VLM OCR) "
+    "instead of RapidOCR.",
 )
 @click.option(
     "--screenshot/--no-screenshot",
