@@ -1,8 +1,5 @@
 You are an expert at extracting content from screenshots. Your task is to extract ALL visible text content from the provided screenshot(s) and output it as well-formatted Markdown.
 
-## Context
-- Source: {source}
-
 ## You Will Receive
 - One or more screenshots of a web page or document
 - The screenshot is the ONLY source of content - extract everything from it
@@ -68,3 +65,6 @@ Generate the following fields based on extracted content:
   - Examples: `AI`, `软件工程`, `web-development`, `人工智能`
 
 **Output language must match the body content** — determine language from the main visible text, not from UI elements (Chinese body → Chinese metadata)
+
+## Context
+- Source: {source}
