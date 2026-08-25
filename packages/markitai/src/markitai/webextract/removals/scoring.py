@@ -46,6 +46,8 @@ def score_and_remove(root: Tag) -> int:
     return len(to_remove)
 
 
+# Intentional subset of BLOCK_LEVEL_ELEMENTS: only containers whose whole
+# subtree is worth scoring as one unit (p/table children score separately).
 _BLOCK_TAGS = frozenset(
     {
         "div",

@@ -5,6 +5,28 @@ import re
 ADAPTIVE_RETRY_MIN_WORDS = 20
 SCHEMA_FALLBACK_MIN_GAIN = 3
 
+# ─── Block-element tables (single source of truth) ────────────────────
+# Mirrors defuddle constants.ts: BLOCK_ELEMENTS (structural containers)
+# and BLOCK_LEVEL_ELEMENTS (containers + semantic content blocks).
+# Every other block table in webextract derives from these two.
+CONTAINER_BLOCK_ELEMENTS: tuple[str, ...] = (
+    "div", "section", "article", "main", "aside",
+    "header", "footer", "nav", "content",
+)  # fmt: skip
+
+_SEMANTIC_BLOCK_ELEMENTS: tuple[str, ...] = (
+    "p", "h1", "h2", "h3", "h4", "h5", "h6",
+    "ul", "ol", "li", "dl", "dt", "dd",
+    "pre", "blockquote", "figure", "figcaption",
+    "table", "thead", "tbody", "tfoot", "tr", "td", "th",
+    "details", "summary", "address", "hr",
+    "form", "fieldset",
+)  # fmt: skip
+
+BLOCK_LEVEL_ELEMENTS: frozenset[str] = frozenset(
+    CONTAINER_BLOCK_ELEMENTS + _SEMANTIC_BLOCK_ELEMENTS
+)
+
 # ─── Removal constants (ported from defuddle) ────────────────────────
 
 MIN_IMAGE_SIZE = 33

@@ -25,6 +25,7 @@ from bs4 import BeautifulSoup, Tag
 from bs4.element import NavigableString, PageElement
 
 from markitai.webextract.constants import (
+    BLOCK_LEVEL_ELEMENTS,
     FOOTNOTE_INLINE_REFERENCES,
     FOOTNOTE_LIST_SELECTORS,
 )
@@ -47,18 +48,7 @@ _FOOTNOTE_MARKER_RE = re.compile(r"^\[?\(?(\d{1,4})\)?\]?$")
 _HEADING_NAMES = ("h1", "h2", "h3", "h4", "h5", "h6")
 
 # All block-level HTML elements (defuddle constants.ts BLOCK_LEVEL_ELEMENTS)
-_BLOCK_LEVEL_ELEMENTS = frozenset(
-    {
-        "div", "section", "article", "main", "aside", "header", "footer",
-        "nav", "content",
-        "p", "h1", "h2", "h3", "h4", "h5", "h6",
-        "ul", "ol", "li", "dl", "dt", "dd",
-        "pre", "blockquote", "figure", "figcaption",
-        "table", "thead", "tbody", "tfoot", "tr", "td", "th",
-        "details", "summary", "address", "hr",
-        "form", "fieldset",
-    }
-)  # fmt: skip
+_BLOCK_LEVEL_ELEMENTS = BLOCK_LEVEL_ELEMENTS
 
 
 # ---------------------------------------------------------------------------

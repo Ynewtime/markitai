@@ -130,6 +130,9 @@ def _collapse_code_layout_tables(root: Tag) -> None:
             table.replace_with(code_pre.extract())
 
 
+# Intentional subset of constants.BLOCK_LEVEL_ELEMENTS: block types whose
+# text is rescued into rebuilt <pre> blocks (headings/list items excluded
+# from rescue are handled by their own normalizers).
 _RESCUE_BLOCK_TAGS = ("p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "blockquote")
 
 

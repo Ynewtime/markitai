@@ -16,6 +16,7 @@ import re
 from bs4 import BeautifulSoup, Tag
 
 from markitai.webextract.constants import (
+    CONTAINER_BLOCK_ELEMENTS,
     FOOTNOTE_INLINE_REFERENCES,
     FOOTNOTE_LIST_SELECTORS,
 )
@@ -46,16 +47,9 @@ ENTRY_POINT_SELECTORS: tuple[str, ...] = (
     "body",
 )
 
-_BLOCK_ELEMENTS = (
-    "div",
-    "section",
-    "article",
-    "main",
-    "aside",
-    "header",
-    "footer",
-    "nav",
-)
+# Structural containers scored for content: defuddle's BLOCK_ELEMENTS minus
+# the <content> element, which never appears in born-digital pages we score.
+_BLOCK_ELEMENTS = tuple(t for t in CONTAINER_BLOCK_ELEMENTS if t != "content")
 
 # No leading \b — text can concatenate adjacent elements without whitespace.
 _DATE_RE = re.compile(

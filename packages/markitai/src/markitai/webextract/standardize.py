@@ -8,6 +8,7 @@ from bs4.element import NavigableString
 
 from markitai.webextract.constants import (
     ALLOWED_EMPTY_ELEMENTS,
+    BLOCK_LEVEL_ELEMENTS,
     TAILWIND_COLORS,
     TAILWIND_SPECIAL,
 )
@@ -44,46 +45,9 @@ _PRESERVE_ELEMENTS = frozenset(
     }
 )
 
-_BLOCK_LEVEL = frozenset(
-    {
-        "div",
-        "section",
-        "article",
-        "main",
-        "aside",
-        "header",
-        "footer",
-        "nav",
-        "p",
-        "h1",
-        "h2",
-        "h3",
-        "h4",
-        "h5",
-        "h6",
-        "ul",
-        "ol",
-        "li",
-        "dl",
-        "dt",
-        "dd",
-        "pre",
-        "blockquote",
-        "figure",
-        "figcaption",
-        "table",
-        "thead",
-        "tbody",
-        "tfoot",
-        "tr",
-        "td",
-        "th",
-        "details",
-        "summary",
-        "address",
-        "hr",
-    }
-)
+# standardize's view of block elements: BLOCK_LEVEL_ELEMENTS minus the three
+# members defuddle's standardize.ts also excludes here (content/form/fieldset).
+_BLOCK_LEVEL = BLOCK_LEVEL_ELEMENTS - {"content", "form", "fieldset"}
 
 
 def standardize_content(root: Tag, title: str | None, base_url: str) -> None:
