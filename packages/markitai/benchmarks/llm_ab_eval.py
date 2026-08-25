@@ -307,21 +307,42 @@ async def litellm_judge(
     This is the default ``JudgeFn`` implementation, bound to a model via
     ``make_litellm_judge``. Never invoked by this module's own tests or by
     importing this module -- tests inject a stub ``JudgeFn`` instead.
+
+    Uses ``temperature=0`` for a deterministic verdict, but retries once
+    without ``temperature`` if the judge model rejects it (reasoning models
+    such as gpt-5.x only accept the default temperature) so one model quirk
+    cannot abort a whole run.
     """
     import litellm
 
     prompt = build_judge_user_prompt(doc_a, doc_b, max_chars=max_chars)
-    response = await litellm.acompletion(
-        model=model,
-        messages=[
+    base_kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": [
             {"role": "system", "content": _JUDGE_SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ],
-        temperature=0,
-        response_format={"type": "json_object"},
-        stream=False,
+        "response_format": {"type": "json_object"},
+        "stream": False,
         **litellm_kwargs,
-    )
+    }
+
+    async def _call(temperature: float | None) -> Any:
+        kwargs = dict(base_kwargs)
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        return await litellm.acompletion(**kwargs)
+
+    try:
+        response = await _call(0)
+    except litellm.exceptions.BadRequestError as exc:
+        # Some reasoning models (gpt-5.x) only accept the default
+        # temperature and reject temperature=0. Retry once without it
+        # rather than failing the whole A/B run.
+        if "temperature" in str(exc).lower():
+            response = await _call(None)
+        else:
+            raise
     # Non-streaming call always returns ModelResponse; litellm's return type
     # is a broader union because **litellm_kwargs could in principle carry
     # stream=True, which the type checker can't rule out statically.

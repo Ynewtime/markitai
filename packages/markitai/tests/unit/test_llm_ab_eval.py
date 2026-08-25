@@ -639,6 +639,59 @@ class TestLitellmJudgeWiring:
         await judge_fn("a", "b")
         assert captured_models == ["anthropic/claude-haiku-4-5"]
 
+    async def test_retries_without_temperature_when_rejected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Reasoning models that reject temperature=0 get a no-temperature retry."""
+        import litellm
+
+        calls: list[dict[str, Any]] = []
+
+        class _FakeMessage:
+            content = '{"winner": "A", "reason": "clearer"}'
+
+        class _FakeChoice:
+            message = _FakeMessage()
+
+        class _FakeResponse:
+            choices = [_FakeChoice()]
+
+        async def fake_acompletion(**kwargs: Any) -> Any:
+            calls.append(kwargs)
+            if calls.__len__() == 1:
+                raise litellm.exceptions.BadRequestError(
+                    message="Unsupported value: 'temperature' does not support 0",
+                    model="openai/gpt-5.6-luna",
+                    llm_provider="openai",
+                )
+            return _FakeResponse()
+
+        monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+
+        verdict = await mod.litellm_judge("DOC A", "DOC B", model="openai/gpt-5.6-luna")
+
+        assert verdict.winner == "A"
+        assert len(calls) == 2
+        assert "temperature" in calls[0]
+        assert "temperature" not in calls[1]
+
+    async def test_non_temperature_error_not_swallowed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A non-temperature BadRequestError still propagates."""
+        import litellm
+
+        async def fake_acompletion(**kwargs: Any) -> Any:
+            raise litellm.exceptions.BadRequestError(
+                message="bad JSON body",
+                model="openai/gpt-5.6-luna",
+                llm_provider="openai",
+            )
+
+        monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+        with pytest.raises(litellm.exceptions.BadRequestError):
+            await mod.litellm_judge("a", "b", model="openai/gpt-5.6-luna")
+
 
 class TestBatchSubmitPollWiring:
     """Monkeypatches litellm's batch functions -- proves submit/poll
