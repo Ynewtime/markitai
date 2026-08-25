@@ -7,6 +7,41 @@ from bs4 import BeautifulSoup, Tag
 from markitai.webextract.preprocess import preprocess_html
 
 
+def default_parser() -> str:
+    """Best available BeautifulSoup parser (lxml when installed)."""
+    return "lxml" if find_spec("lxml") is not None else "html.parser"
+
+
+def parse_fragment(html: str) -> BeautifulSoup:
+    """Parse an HTML fragment, preferring lxml for speed.
+
+    Unlike :func:`parse_html` this applies no preprocessing — callers are
+    mid-pipeline over already-cleaned HTML. lxml wraps fragments in
+    ``<html><body>`` and relocates head-only tags into ``<head>``; the
+    body's children are hoisted into a bare tree so the result serializes
+    exactly like an ``html.parser`` fragment parse. If lxml did route
+    content into ``<head>`` (shouldn't happen for extracted article HTML),
+    fall back to ``html.parser`` rather than drop it.
+
+    Args:
+        html: HTML fragment (no ``<html>``/``<body>`` wrapper expected).
+
+    Returns:
+        Parsed BeautifulSoup fragment tree.
+    """
+    parser = default_parser()
+    if parser == "html.parser":
+        return BeautifulSoup(html, "html.parser")
+    soup = BeautifulSoup(html, "lxml")
+    head = soup.head
+    if soup.body is None or (head is not None and head.contents):
+        return BeautifulSoup(html, "html.parser")
+    fragment = BeautifulSoup("", "html.parser")
+    for child in list(soup.body.contents):
+        fragment.append(child)
+    return fragment
+
+
 def parse_html(html: str) -> BeautifulSoup:
     """Parse HTML using the best available parser.
 
@@ -23,8 +58,7 @@ def parse_html(html: str) -> BeautifulSoup:
         Parsed BeautifulSoup document.
     """
     html = preprocess_html(html)
-    parser = "lxml" if find_spec("lxml") is not None else "html.parser"
-    soup = BeautifulSoup(html, parser)
+    soup = BeautifulSoup(html, default_parser())
     resolve_noscript_images(soup)
     return soup
 

@@ -20,6 +20,8 @@ from urllib.parse import parse_qs, urlparse, urlunparse
 
 from bs4 import BeautifulSoup, Tag
 
+from markitai.webextract.dom import parse_fragment
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -66,7 +68,7 @@ def _preprocess_for_markdown(html: str) -> str:
     Returns:
         Mutated HTML string ready for MarkItDown.
     """
-    soup = BeautifulSoup(html, "html.parser")
+    soup = parse_fragment(html)
     resolve_srcset(soup)
     canonicalize_embeds(soup)
     preserve_figure_captions(soup)

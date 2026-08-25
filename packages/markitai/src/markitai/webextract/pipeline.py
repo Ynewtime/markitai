@@ -7,7 +7,7 @@ from dataclasses import asdict
 from bs4 import BeautifulSoup, Tag
 
 from markitai.webextract.constants import HIDDEN_EXACT_SKIP_SELECTOR
-from markitai.webextract.dom import parse_html
+from markitai.webextract.dom import parse_fragment, parse_html
 from markitai.webextract.elements.footnotes import (
     adopt_external_footnotes,
     standardize_footnotes,
@@ -118,7 +118,7 @@ def _build_from_resolved(
 
     # Apply the same standardization and sanitization as the generic path
     # so that clean_html is truly canonical (no unsanitized tags, resolved links)
-    content_soup = BeautifulSoup(content_html, "html.parser")
+    content_soup = parse_fragment(content_html)
     standardize_footnotes(content_soup)
     canonicalize_embeds(content_soup)
     standardize_content(content_soup, title=metadata.title, base_url=url)

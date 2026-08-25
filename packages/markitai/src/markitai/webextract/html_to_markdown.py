@@ -497,8 +497,10 @@ class WebExtractHtmlConverter(HtmlConverter):
     ) -> DocumentConverterResult:
         from bs4 import BeautifulSoup
 
+        from markitai.webextract.dom import default_parser
+
         encoding = "utf-8" if stream_info.charset is None else stream_info.charset
-        soup = BeautifulSoup(file_stream, "html.parser", from_encoding=encoding)
+        soup = BeautifulSoup(file_stream, default_parser(), from_encoding=encoding)
 
         for script in soup(["script", "style"]):
             script.extract()
