@@ -54,6 +54,12 @@ DEFAULT_MAX_PAGES_PER_BATCH = 10  # Pages per LLM call for document processing
 # Router settings
 DEFAULT_ROUTER_NUM_RETRIES = 2
 DEFAULT_ROUTER_TIMEOUT = 120  # seconds
+# Per-document LLM request circuit breaker. 50 covers a ~400-page document
+# (40 vision batches of 10 pages + frontmatter) plus a healthy retry
+# allowance; anything beyond that is far more often a retry storm
+# (transport retries x instructor retries x business fallbacks) than a
+# legitimate workload. Raise via llm.max_requests_per_document (0 disables).
+DEFAULT_MAX_REQUESTS_PER_DOCUMENT = 50
 DEFAULT_SQLITE_TIMEOUT = 30.0  # seconds — SQLite connection timeout
 DEFAULT_MAX_OUTPUT_TOKENS_HARD_CAP = 128000  # Absolute ceiling for max_tokens
 DEFAULT_SUBPROCESS_TIMEOUT = 30  # seconds — LibreOffice/external tool timeout

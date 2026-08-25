@@ -78,6 +78,7 @@ markitai config validate ./markitai.json    # 验证指定文件
       "timeout": 120
     },
     "concurrency": 10,
+    "max_requests_per_document": 50,
     "pure": false,
     "keep_base": false
   },
@@ -490,7 +491,8 @@ ChatGPT 支持的模型：
       "timeout": 120,
       "fallbacks": []
     },
-    "concurrency": 10
+    "concurrency": 10,
+    "max_requests_per_document": 50
   }
 }
 ```
@@ -502,6 +504,7 @@ ChatGPT 支持的模型：
 | `timeout` | 秒 | 120 | 请求超时时间（自适应计算的基础值） |
 | `fallbacks` | list | `[]` | LiteLLM 模型组回退，如 `[{"default": ["backup"]}]`。请求从 `default` 组进入，其他组名的模型只经回退获得流量（仅标准模型）。留空 = 全部模型合并进 `default` 组 |
 | `concurrency` | ≥1 | 10 | 最大并发 LLM 请求数 |
+| `max_requests_per_document` | ≥0 | 50 | 断路器：单文档 LLM 请求数上限（重试全部计入）。触发后跳过该文档剩余增强，保留未增强产物。超大文档请调高；`0` 关闭 |
 
 #### 模型权重
 

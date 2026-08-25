@@ -36,6 +36,7 @@ from markitai.constants import (
     DEFAULT_LOG_LEVEL,
     DEFAULT_LOG_RETENTION,
     DEFAULT_LOG_ROTATION,
+    DEFAULT_MAX_REQUESTS_PER_DOCUMENT,
     DEFAULT_MODEL_WEIGHT,
     DEFAULT_OCR_LANG,
     DEFAULT_ON_CONFLICT,
@@ -316,6 +317,11 @@ class LLMConfig(BaseModel):
     router_settings: RouterSettings = Field(default_factory=RouterSettings)
     concurrency: int = Field(
         default=DEFAULT_LLM_CONCURRENCY, ge=1, description="Max parallel LLM requests"
+    )
+    max_requests_per_document: int = Field(
+        default=DEFAULT_MAX_REQUESTS_PER_DOCUMENT,
+        ge=0,
+        description="Circuit breaker: max LLM requests per document context, counting every attempt (retries included). When exceeded, remaining enhancement for that document is skipped and the unenhanced output is kept (logged + marked in the usage report). The default covers a ~400-page document plus a healthy retry allowance; raise it for larger documents. 0 disables the cap.",
     )
 
 

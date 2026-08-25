@@ -78,6 +78,7 @@ markitai config validate ./markitai.json    # Validate specific file
       "timeout": 120
     },
     "concurrency": 10,
+    "max_requests_per_document": 50,
     "pure": false,
     "keep_base": false
   },
@@ -490,7 +491,8 @@ Configure how Markitai routes requests across multiple models:
       "timeout": 120,
       "fallbacks": []
     },
-    "concurrency": 10
+    "concurrency": 10,
+    "max_requests_per_document": 50
   }
 }
 ```
@@ -502,6 +504,7 @@ Configure how Markitai routes requests across multiple models:
 | `timeout` | seconds | 120 | Request timeout (base value for adaptive calculation) |
 | `fallbacks` | list | `[]` | LiteLLM group fallbacks, e.g. `[{"default": ["backup"]}]`. Requests enter at group `default`; models named otherwise only get traffic via fallback (standard models only). Empty = all models pooled into `default` |
 | `concurrency` | ≥1 | 10 | Max concurrent LLM requests |
+| `max_requests_per_document` | ≥0 | 50 | Circuit breaker: max LLM requests per document (all retries counted). On trip, remaining enhancement is skipped and unenhanced output kept. Raise for very large documents; `0` disables |
 
 #### Model Weight
 

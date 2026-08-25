@@ -747,8 +747,10 @@ class VisionAnalyzer:
                 )
 
                 # Use MD_JSON mode to handle LLMs that wrap JSON in ```json code blocks
+                # (budget-guarded: instructor calls the router directly here,
+                # so each attempt must still spend the document's request budget)
                 client = instructor.from_litellm(
-                    vision_router.acompletion,
+                    self._engine.guard_acompletion(vision_router.acompletion, context),
                     mode=instructor.Mode.MD_JSON,
                 )
                 # max_retries allows Instructor to retry with validation error
@@ -1065,7 +1067,9 @@ class VisionAnalyzer:
                 router=vision_router,
             )
 
-            # Use vision_router for image analysis (not main router)
+            # Use vision_router for image analysis (not main router).
+            # Direct router call: spend the document's request budget first.
+            self._engine.spend_request_budget(context)
             response = await vision_router.acompletion(
                 model=model,
                 messages=cast(list[AllMessageValues], json_messages),

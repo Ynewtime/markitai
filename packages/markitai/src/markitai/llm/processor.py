@@ -49,7 +49,7 @@ from markitai.llm.document import DocumentEnhancer
 from markitai.llm.engine import (
     RETRYABLE_ERRORS as RETRYABLE_ERRORS,
 )
-from markitai.llm.engine import LLMEngine
+from markitai.llm.engine import LLMEngine, RequestBudget
 from markitai.llm.models import (
     MarkitaiLLMLogger,
     get_model_info_cached,
@@ -74,6 +74,11 @@ litellm.modify_params = True
 
 # Global callback instance (uses MarkitaiLLMLogger from models.py)
 _markitai_llm_logger = MarkitaiLLMLogger()
+
+# Pseudo-model key marking a tripped request budget in the per-context usage
+# report. All-zero numbers: totals are unaffected, only the marker shows up
+# under the document's llm_usage models.
+REQUEST_BUDGET_EXCEEDED_MARKER = "markitai:request-budget-exceeded"
 
 
 class LLMProcessor:
@@ -170,6 +175,14 @@ class LLMProcessor:
         # 2. Works in both sync and async contexts
         # The lock hold time is minimal (only simple dict updates)
         self._usage_lock = threading.Lock()
+
+        # Per-document circuit breaker: bounds the total LLM requests one
+        # document context may issue (retry storms included). Shared with
+        # the engine; cleared per context by clear_context_usage.
+        self._request_budget = RequestBudget(
+            limit=config.max_requests_per_document,
+            on_exceeded=self._record_budget_exceeded,
+        )
 
         # In-memory content cache for session-level deduplication (fast, no I/O)
         # (hit/miss counters live on the LLMEngine since Phase 2.3)
@@ -292,6 +305,7 @@ class LLMProcessor:
                 calculate_max_tokens=self._calculate_dynamic_max_tokens,
                 get_primary_model=self._get_router_primary_model,
                 max_retries=self.config.router_settings.num_retries,
+                request_budget=self._request_budget,
             )
         return self._engine
 
@@ -1098,7 +1112,7 @@ class LLMProcessor:
             return sum(u["cost_usd"] for u in context_usage.values())
 
     def clear_context_usage(self, context: str) -> None:
-        """Clear usage tracking for a specific context.
+        """Clear usage tracking (and request budget) for a specific context.
 
         Thread-safe: uses lock for safe modification.
 
@@ -1108,6 +1122,17 @@ class LLMProcessor:
         with self._usage_lock:
             self._context_usage.pop(context, None)
             self._call_counter.pop(context, None)
+        self._request_budget.clear(context)
+
+    def _record_budget_exceeded(self, context: str) -> None:
+        """Mark a tripped request budget in the context's usage report.
+
+        Creates an all-zero pseudo-model entry so the per-file
+        ``llm_usage.models`` shows the trip without touching any totals.
+        """
+        with self._usage_lock:
+            # Touching the defaultdict creates the all-zero entry
+            _ = self._context_usage[context][REQUEST_BUDGET_EXCEEDED_MARKER]
 
     def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics (delegates to the engine's counters).

@@ -20,6 +20,7 @@ processor -> document -> engine).
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import nullcontext
@@ -66,6 +67,94 @@ class EmptyLLMResponseError(RuntimeError):
     treat it as a failed call: never cache the outcome, and fall back to the
     unprocessed input instead of persisting an empty document.
     """
+
+
+class LLMRequestBudgetExceededError(RuntimeError):
+    """A document context hit its LLM request budget (circuit breaker).
+
+    Raised *before* issuing the request that would exceed the limit, so a
+    tripped context makes no further API calls. Call sites treat it like
+    any other LLM failure: their existing fallbacks keep the unenhanced
+    output for the remaining work.
+    """
+
+
+class RequestBudget:
+    """Per-context LLM request circuit breaker.
+
+    Counts every request attempt (retries included) per usage-tracking
+    context and refuses further requests once the limit is reached. This
+    bounds the retry multiplication of one document: transport retries x
+    instructor validation retries x business-level fallback chains.
+
+    A budget is kept per tracking context: a document's main enhancement
+    (including its per-batch calls) shares one context, while a separate
+    image-analysis stage tracks under its own ``...:images`` context and
+    gets its own budget — each stage is bounded independently.
+    """
+
+    def __init__(
+        self,
+        limit: int,
+        on_exceeded: Callable[[str], None] | None = None,
+    ) -> None:
+        """Initialize the budget.
+
+        Args:
+            limit: Max requests per context; ``<= 0`` disables the breaker.
+            on_exceeded: Called once per context on the first refusal
+                (e.g. to mark the trip in the usage report).
+        """
+        self._limit = limit
+        self._on_exceeded = on_exceeded
+        self._counts: dict[str, int] = {}
+        self._tripped: set[str] = set()
+        self._lock = threading.Lock()
+
+    def spend(self, context: str) -> None:
+        """Account one request attempt for a context, or refuse it.
+
+        No-op for empty contexts (untracked calls) or a disabled limit.
+
+        Raises:
+            LLMRequestBudgetExceededError: When the context already used up
+                its budget. The refused attempt is not counted, so at most
+                ``limit`` requests are ever issued per context.
+        """
+        if not context or self._limit <= 0:
+            return
+        with self._lock:
+            count = self._counts.get(context, 0)
+            if count < self._limit:
+                self._counts[context] = count + 1
+                return
+            first_trip = context not in self._tripped
+            if first_trip:
+                self._tripped.add(context)
+        if first_trip:
+            logger.warning(
+                f"[LLM:{context}] Request budget exceeded "
+                f"({self._limit} requests): skipping further LLM enhancement "
+                f"for this document, keeping unenhanced output. Raise "
+                f"llm.max_requests_per_document (0 disables) if this "
+                f"document legitimately needs more requests."
+            )
+            if self._on_exceeded is not None:
+                self._on_exceeded(context)
+        raise LLMRequestBudgetExceededError(
+            f"[LLM:{context}] request budget of {self._limit} exhausted"
+        )
+
+    def exceeded(self, context: str) -> bool:
+        """Whether the context has tripped the breaker."""
+        with self._lock:
+            return context in self._tripped
+
+    def clear(self, context: str) -> None:
+        """Reset the budget for a context (called between documents)."""
+        with self._lock:
+            self._counts.pop(context, None)
+            self._tripped.discard(context)
 
 
 # Retryable transport exceptions (canonical definition; markitai.llm.processor
@@ -283,6 +372,7 @@ class LLMEngine:
         calculate_max_tokens: Callable[..., int | None],
         get_primary_model: Callable[[Any], str | None],
         max_retries: int = DEFAULT_MAX_RETRIES,
+        request_budget: RequestBudget | None = None,
     ) -> None:
         """Exactly one of ``router`` / ``get_router`` must be provided.
 
@@ -296,6 +386,9 @@ class LLMEngine:
         processor passes ``router_settings.num_retries``), used by every
         call that does not override it explicitly. The engine owns ALL
         transport retries: the router layer performs none.
+
+        ``request_budget`` is the per-document circuit breaker; every
+        request attempt spends from it (None disables budgeting).
         """
         if (router is None) == (get_router is None):
             raise ValueError("LLMEngine requires exactly one of router/get_router")
@@ -308,6 +401,7 @@ class LLMEngine:
         self.calculate_max_tokens = calculate_max_tokens
         self._get_primary_model = get_primary_model
         self.max_retries = max_retries
+        self.request_budget = request_budget
         # Content-cache hit/miss counters (moved here from LLMProcessor in
         # Phase 2.3). Plain int increments, same as the previous processor
         # attributes (GIL-safe enough for counters).
@@ -321,6 +415,37 @@ class LLMEngine:
             return self._router
         assert self._get_router is not None
         return self._get_router()
+
+    def spend_request_budget(self, context: str) -> None:
+        """Spend one request from the context's budget (no-op if unbudgeted).
+
+        For call sites that issue router calls directly instead of going
+        through the engine's retry loop.
+
+        Raises:
+            LLMRequestBudgetExceededError: When the context's budget is
+                exhausted.
+        """
+        if self.request_budget is not None:
+            self.request_budget.spend(context)
+
+    def guard_acompletion(
+        self,
+        acompletion: Callable[..., Awaitable[Any]],
+        context: str,
+    ) -> Callable[..., Awaitable[Any]]:
+        """Wrap an acompletion callable with the request budget check.
+
+        Used where a router's ``acompletion`` is handed to instructor
+        directly (bypassing the engine loop), so those requests still
+        count against — and are stopped by — the document's budget.
+        """
+
+        async def guarded(*args: Any, **kwargs: Any) -> Any:
+            self.spend_request_budget(context)
+            return await acompletion(*args, **kwargs)
+
+        return guarded
 
     def record_cache_hit(self) -> None:
         """Count one content-cache hit (for call-site managed caches)."""
@@ -415,7 +540,9 @@ class LLMEngine:
             # retries compose. MD_JSON mode handles LLMs that wrap JSON in
             # ```json code blocks.
             client = instructor.from_litellm(
-                self._make_retrying_acompletion(active_router, call_id),
+                self._make_retrying_acompletion(
+                    active_router, call_id, budget_context=call.context
+                ),
                 mode=instructor.Mode.MD_JSON,
             )
 
@@ -581,6 +708,7 @@ class LLMEngine:
                 max_retries=max_retries,
                 own_semaphore=True,
                 usage_context=context,
+                budget_context=context,
                 finalize=build_llm_response,
             ),
         )
@@ -600,6 +728,7 @@ class LLMEngine:
         active_router: Any,
         call_id: str,
         max_retries: int | None = None,
+        budget_context: str | None = None,
     ) -> Callable[..., Awaitable[Any]]:
         """Build an acompletion adapter with the full transport retry loop.
 
@@ -615,7 +744,9 @@ class LLMEngine:
           ("one structured call = one concurrency slot").
         - It does NOT call ``track_usage``: usage is tracked once per
           structured call from the final raw response, which instructor
-          accumulates across its own retries.
+          accumulates across its own retries. The request *budget* is
+          still spent per attempt (``budget_context``), so instructor
+          retries cannot escape the per-document breaker.
         """
 
         async def retrying_acompletion(*args: Any, **kwargs: Any) -> Any:
@@ -627,6 +758,7 @@ class LLMEngine:
                 max_retries=max_retries,
                 own_semaphore=False,
                 usage_context=None,
+                budget_context=budget_context,
             )
 
         return retrying_acompletion
@@ -641,6 +773,7 @@ class LLMEngine:
         max_retries: int | None = None,
         own_semaphore: bool,
         usage_context: str | None = None,
+        budget_context: str | None = None,
         finalize: Callable[[Any, str, int, int, float], Any] | None = None,
     ) -> Any:
         """Shared transport retry loop behind ``complete_text`` and
@@ -662,6 +795,11 @@ class LLMEngine:
         - ``finalize``: maps the successful raw response (plus derived
           model/tokens/cost) to the return value; None returns the raw
           ModelResponse (instructor needs the raw object).
+
+        ``budget_context`` names the document context whose request budget
+        every attempt spends from; the budget check runs before each
+        attempt, so a tripped context stops retrying without issuing more
+        requests.
         """
         if max_retries is None:
             max_retries = self.max_retries
@@ -678,6 +816,12 @@ class LLMEngine:
             if retry_delay > 0:
                 await asyncio.sleep(retry_delay)
                 retry_delay = 0.0
+
+            # Per-document circuit breaker: refuse the attempt (outside the
+            # try, so the refusal is not mistaken for a transport error)
+            if budget_context is not None and self.request_budget is not None:
+                self.request_budget.spend(budget_context)
+
             start_time = time.perf_counter()
 
             async with semaphore_ctx:

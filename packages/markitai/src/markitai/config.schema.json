@@ -690,6 +690,13 @@
           "minimum": 1,
           "title": "Concurrency",
           "type": "integer"
+        },
+        "max_requests_per_document": {
+          "default": 50,
+          "description": "Circuit breaker: max LLM requests per document context, counting every attempt (retries included). When exceeded, remaining enhancement for that document is skipped and the unenhanced output is kept (logged + marked in the usage report). The default covers a ~400-page document plus a healthy retry allowance; raise it for larger documents. 0 disables the cap.",
+          "minimum": 0,
+          "title": "Max Requests Per Document",
+          "type": "integer"
         }
       },
       "title": "LLMConfig",
