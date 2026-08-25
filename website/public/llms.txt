@@ -8,6 +8,7 @@ Command-line tool (`markitai`, alias `mkai`) and Python package, MIT licensed. S
 
 - [Getting Started](https://markitai.dev/guide/getting-started): Install (guided script, uv, pipx), prerequisites, first conversion, output structure, supported formats
 - [CLI Reference](https://markitai.dev/guide/cli): Every command and flag
+- [Python API](https://markitai.dev/guide/python-api): Programmatic `convert`/`aconvert` with typed results (provisional)
 - [Configuration](https://markitai.dev/guide/configuration): Config file and env vars, LLM providers, image/screenshot/OCR/office settings, cache, security
 - [Fetch Policy](https://markitai.dev/guide/fetch-policy): URL fetch strategy cascade (static/Playwright/Defuddle/Jina/Cloudflare), domain profiles, remote-fetch consent
 - [Web Workspace](https://markitai.dev/guide/serve): `markitai serve` local UI, job history, REST + SSE API
@@ -17,6 +18,7 @@ Command-line tool (`markitai`, alias `mkai`) and Python package, MIT licensed. S
 
 - [快速开始](https://markitai.dev/zh/guide/getting-started): 安装、前置依赖、首次转换、输出结构、支持格式
 - [CLI 命令](https://markitai.dev/zh/guide/cli): 完整命令与参数参考
+- [Python API](https://markitai.dev/zh/guide/python-api): 程序化调用 `convert`/`aconvert` 与类型化结果（暂定阶段）
 - [配置说明](https://markitai.dev/zh/guide/configuration): 配置文件与环境变量、LLM 提供商、缓存、安全设置
 - [抓取策略](https://markitai.dev/zh/guide/fetch-policy): URL 抓取策略级联、域名配置、远程抓取同意
 - [网页工作台](https://markitai.dev/zh/guide/serve): `markitai serve` 本地界面、历史记录、REST + SSE API

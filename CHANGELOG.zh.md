@@ -9,6 +9,8 @@
 
 ### 新增
 
+- **markitai 现在既是库也是 CLI**：`markitai.convert("report.pdf")` 与异步孪生 `aconvert` 返回类型化的 `ConversionOutput`——base 与 LLM 增强两版 markdown、解析后的 frontmatter、资产与截图路径、逐图分析与用量汇总——复用 CLI 的配置层级与 flag 语义，而非另造一套配置。解析器噪声抑制下沉到 CLI 之下，库调用保持 stdout 干净（subprocess 回归测试锁定）；`aconvert` 将 CPU 密集转换放入工作线程、不阻塞事件循环。0.x 阶段标记为暂定
+- **官网提供 `/llms.txt`，README 增加诚实对比表**：索引以双语列出文档供 LLM 消费；对比表将 markitai 与 markitdown、docling、anydoc 并列——写明对方强项，而非只说自己
 - **serve API 契约进入机器校验**：所有 JSON 路由声明 pydantic 响应模型，`scripts/export_openapi.py` 导出注入了 SSE 事件体的 OpenAPI schema（它们不出现在路由签名里，恰是前端镜像漂移最重的地方），契约测试逐字段比对该 schema 与 webapp 手写类型镜像。先写测试就抓出四处真实漂移——镜像缺 `ItemPayload.output_name`、自持一份任务条目上限、把服务端恒发的 `api_base_placeholder` 标成可选、引用一份不存在的契约文档——全部修复；上限现经 `capabilities.limits` 下发并在运行时读取。CI 新增 webapp lint 与类型检查 job，镜像不能再无声腐烂
 - **defuddle 移植有了清单与上游哨兵**：`PORT_MANIFEST.md` 记录 `webextract` 各模块追踪的上游源文件与 parity 语料 pin 的 commit——单元测试保证两处 pin 相等，同步脚本联动改写——每周 workflow 在上游发布领先于 pin 时自动开 issue。此前该移植既无归属映射也无任何上游信号
 
