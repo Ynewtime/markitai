@@ -173,6 +173,25 @@ class OutputConfig(BaseModel):
         default=None,
         description="Write JSON report (default: batch/URL-batch runs only)",
     )
+    profile: Literal["rag", "obsidian", "okf"] | None = Field(
+        default=None,
+        description=(
+            "Output profile shaping results for a downstream consumer. "
+            "Orthogonal to presets (presets pick features, profiles pick the "
+            "output shape). None keeps the default output byte-identical. "
+            "rag: visible assets/ dir, <!-- page: N --> markers for PDFs, "
+            "pipe-table column checks; obsidian: visible assets/ dir, "
+            "optional wikilinks; okf: frontmatter aligned with the Open "
+            "Knowledge Format spec."
+        ),
+    )
+    wikilinks: bool = Field(
+        default=False,
+        description=(
+            "With the obsidian profile, rewrite local image references to "
+            "wikilink form (![[assets/x.png]]). Ignored by other profiles."
+        ),
+    )
 
 
 class LiteLLMParams(BaseModel):

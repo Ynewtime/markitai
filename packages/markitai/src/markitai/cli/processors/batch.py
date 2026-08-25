@@ -636,6 +636,13 @@ def create_url_processor(
                         processor=shared_processor,
                     )
 
+            # Output profile post-processing (no-op without a profile)
+            if cfg.output.profile is not None:
+                from markitai.output_profiles import apply_profile_to_file
+
+                for candidate in (output_file, output_file.with_suffix(".llm.md")):
+                    apply_profile_to_file(candidate, output_dir, cfg)
+
             # Track cache hit: LLM enabled but no usage means cache hit
             is_cache_hit = cfg.llm.enabled and not url_llm_usage
 
@@ -1193,7 +1200,13 @@ async def process_batch(
 
         # Write aggregated image analysis JSON (if any)
         if batch.image_analysis_results and cfg.image.desc_enabled:
-            write_images_json(output_dir, batch.image_analysis_results)
+            from markitai.output_profiles import assets_visible
+
+            write_images_json(
+                output_dir,
+                batch.image_analysis_results,
+                visible_assets=assets_visible(cfg),
+            )
 
         # Save report (default ON for batch runs; output.report=false opts out)
         if cfg.output.report is not False:

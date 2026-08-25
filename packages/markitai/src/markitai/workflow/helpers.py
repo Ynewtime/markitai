@@ -382,6 +382,8 @@ def merge_llm_usage(
 def write_images_json(
     output_dir: Path,
     analysis_results: list[ImageAnalysisResult],
+    *,
+    visible_assets: bool = False,
 ) -> list[Path]:
     """Write or merge image descriptions to JSON files in each assets directory.
 
@@ -391,6 +393,10 @@ def write_images_json(
     Args:
         output_dir: Output directory
         analysis_results: List of ImageAnalysisResult objects
+        visible_assets: When an asset-visible output profile relocated the
+            images, remap analysis paths recorded before relocation from
+            ``.markitai/assets/`` to ``assets/`` so entries land next to
+            the moved files.
 
     Returns:
         List of paths to created/updated JSON files
@@ -409,9 +415,20 @@ def write_images_json(
         for asset in result.assets:
             # Determine assets directory from the image path
             # Note: asset dict uses "asset" key internally, will be renamed to "path" in output
+            if visible_assets and "asset" in asset:
+                from markitai.output_profiles import relocate_analysis_asset_path
+
+                asset = {
+                    **asset,
+                    "asset": relocate_analysis_asset_path(str(asset["asset"])),
+                }
             image_path = Path(asset.get("asset", ""))
             if image_path.parent.name == "assets":
                 assets_dir = image_path.parent
+            elif visible_assets:
+                from markitai.constants import VISIBLE_ASSETS_REL_PATH
+
+                assets_dir = output_dir / VISIBLE_ASSETS_REL_PATH
             else:
                 # Fallback to default assets directory
                 assets_dir = output_dir / MARKITAI_META_DIR / "assets"
@@ -570,6 +587,7 @@ def create_llm_processor(
         >>> result = await processor.process_document(content)
     """
     from markitai.llm import LLMProcessor
+    from markitai.output_profiles import extra_cleaning_rules
 
     return LLMProcessor(
         config.llm,
@@ -578,4 +596,5 @@ def create_llm_processor(
         no_cache=config.cache.no_cache,
         no_cache_patterns=config.cache.no_cache_patterns,
         cache_global_dir=config.cache.global_dir,
+        extra_cleaning_rules=extra_cleaning_rules(config),
     )

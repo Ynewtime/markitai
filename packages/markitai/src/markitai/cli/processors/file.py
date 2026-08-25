@@ -238,7 +238,13 @@ async def process_single_file(
 
         # Write image descriptions (single file)
         if ctx.image_analysis and cfg.image.desc_enabled:
-            write_images_json(effective_output_dir, [ctx.image_analysis])
+            from markitai.output_profiles import assets_visible
+
+            write_images_json(
+                effective_output_dir,
+                [ctx.image_analysis],
+                visible_assets=assets_visible(cfg),
+            )
 
         # Calculate duration
         duration = time.time() - start_time

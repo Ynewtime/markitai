@@ -270,6 +270,7 @@ class DocumentEnhancer:
         get_vision_router: Callable[[], Any],
         get_cached_image: Callable[[Path], tuple[bytes, str]],
         get_next_call_index: Callable[[str], int],
+        extra_cleaning_rules: str = "",
     ) -> None:
         self._engine = engine
         self._prompt_manager = prompt_manager
@@ -279,6 +280,9 @@ class DocumentEnhancer:
         self._get_vision_router = get_vision_router
         self._get_cached_image = get_cached_image
         self._get_next_call_index = get_next_call_index
+        # Appended to the text-cleaning prompts (empty by default, so the
+        # rendered prompts and their cache keys stay byte-identical)
+        self._extra_cleaning_rules = extra_cleaning_rules
 
     def _prompt_scoped_key(
         self,
@@ -357,11 +361,12 @@ class DocumentEnhancer:
         Returns:
             Cleaned markdown content
         """
+        mode_rules = STANDARD_MODE_RULES + self._extra_cleaning_rules
         cache_key = self._prompt_scoped_key(
             "cleaner",
             "cleaner_system",
             "cleaner_user",
-            extra=(STANDARD_MODE_RULES,),
+            extra=(mode_rules,),
         )
 
         # 1. Check in-memory cache first (fastest)
@@ -391,7 +396,7 @@ class DocumentEnhancer:
 
         # Use separated system/user prompts to prevent prompt leakage
         system_prompt = self._prompt_manager.get_prompt(
-            "cleaner_system", mode_rules=STANDARD_MODE_RULES
+            "cleaner_system", mode_rules=mode_rules
         )
         user_prompt = self._prompt_manager.get_prompt(
             "cleaner_user", content=protected_content
@@ -1814,10 +1819,12 @@ class DocumentEnhancer:
         # source file name is deliberately NOT part of the key (a renamed
         # file with identical content must still hit). The prompt digest is,
         # so a reworded prompt re-runs instead of replaying stale output.
+        extra_rules = self._extra_cleaning_rules
         cache_key = self._prompt_scoped_key(
             "document_process",
             "document_process_system",
             "document_process_user",
+            extra=(extra_rules,) if extra_rules else (),
         )
 
         # Truncate content if needed (with warning)
@@ -1836,6 +1843,8 @@ class DocumentEnhancer:
             "document_process_system",
             source=source,
         )
+        if extra_rules:
+            system_prompt += extra_rules
         user_prompt = self._prompt_manager.get_prompt(
             "document_process_user",
             content=truncated_content,

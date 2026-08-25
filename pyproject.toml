@@ -131,6 +131,7 @@ source_modules = [
     "markitai.json_order",
     "markitai.llm",
     "markitai.ocr",
+    "markitai.output_profiles",
     "markitai.ports",
     "markitai.prompts",
     "markitai.providers",
@@ -196,6 +197,7 @@ source_modules = [
     "markitai.image",
     "markitai.llm",
     "markitai.ocr",
+    "markitai.output_profiles",
     "markitai.providers",
     "markitai.webextract",
 ]

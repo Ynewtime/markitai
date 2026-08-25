@@ -544,9 +544,12 @@ async def process_file_item(
             return ProcessResult(success=True, error="skipped (image_only)")
 
         if cfg.image.desc_enabled and ctx.image_analysis is not None:
+            from markitai.output_profiles import assets_visible
             from markitai.workflow.helpers import write_images_json
 
-            write_images_json(out_dir, [ctx.image_analysis])
+            write_images_json(
+                out_dir, [ctx.image_analysis], visible_assets=assets_visible(cfg)
+            )
 
         output_file = ctx.output_file
         if cfg.llm.enabled and output_file is not None:
@@ -709,6 +712,13 @@ async def process_url_item(
             extra_meta=extra_meta,
         )
         atomic_write_text(output_file, base_content)
+
+    # Output profile post-processing (no-op without a profile)
+    if cfg.output.profile is not None:
+        from markitai.output_profiles import apply_profile_to_file
+
+        for candidate in (output_file, output_file.with_suffix(".llm.md")):
+            apply_profile_to_file(candidate, out_dir, cfg)
 
     final_output = output_file.with_suffix(".llm.md") if llm_written else output_file
     return ProcessResult(

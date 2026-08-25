@@ -32,7 +32,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from loguru import logger
 
@@ -50,6 +50,9 @@ __all__ = [
     "aconvert",
     "convert",
 ]
+
+# Output profile names accepted by the ``profile`` keyword
+OutputProfileName = Literal["rag", "obsidian", "okf"]
 
 
 @dataclass
@@ -102,7 +105,9 @@ class ConversionOutput:
             ``llm.keep_base``).
         llm_output_path: Path to the written ``.llm.md`` file, or None.
         assets: Image files extracted for this conversion (under
-            ``<output_dir>/.markitai/assets``). Empty in in-memory mode.
+            ``<output_dir>/.markitai/assets``, or ``<output_dir>/assets``
+            when a rag/obsidian output profile is active). Empty in
+            in-memory mode.
         screenshots: Page/slide screenshot files rendered for this
             conversion. Empty in in-memory mode.
         images: Per-image LLM analysis entries (the ``images.json`` payload)
@@ -141,6 +146,7 @@ def _resolve_config(
     screenshot: bool | None,
     alt: bool | None,
     desc: bool | None,
+    profile: OutputProfileName | None = None,
 ) -> MarkitaiConfig:
     """Resolve the effective config for one conversion.
 
@@ -157,6 +163,7 @@ def _resolve_config(
         screenshot: Override for ``screenshot.enabled``.
         alt: Override for ``image.alt_enabled``.
         desc: Override for ``image.desc_enabled``.
+        profile: Override for ``output.profile``.
 
     Returns:
         A private config copy; the caller's object is never mutated.
@@ -181,6 +188,8 @@ def _resolve_config(
         cfg.image.alt_enabled = alt
     if desc is not None:
         cfg.image.desc_enabled = desc
+    if profile is not None:
+        cfg.output.profile = profile
 
     # Mirror the CLI's MODEL env var fallback for an empty model list
     if cfg.llm.enabled and not cfg.llm.model_list:
@@ -223,15 +232,30 @@ def _parse_output_file(path: Path) -> tuple[dict[str, Any], str]:
     return (data if isinstance(data, dict) else {}), body
 
 
-def _referenced_assets(markdown: str, workdir: Path) -> list[Path]:
-    """Resolve ``.markitai/assets`` refs in markdown to existing files."""
-    from markitai.constants import ASSETS_REL_PATH
-    from markitai.utils.text import extract_asset_image_names
+def _referenced_assets(
+    markdown: str, workdir: Path, *, visible: bool = False
+) -> list[Path]:
+    """Resolve asset image refs in markdown to existing files.
 
-    assets_dir = workdir / ASSETS_REL_PATH
+    Args:
+        markdown: Markdown content to scan for asset references.
+        workdir: Output directory the assets live under.
+        visible: Look in the profile-visible ``assets/`` directory instead
+            of the default hidden ``.markitai/assets/`` one.
+    """
+    from markitai.constants import ASSETS_REL_PATH, VISIBLE_ASSETS_REL_PATH
+
+    if visible:
+        from markitai.output_profiles import visible_asset_names as extract_names
+
+        assets_dir = workdir / VISIBLE_ASSETS_REL_PATH
+    else:
+        from markitai.utils.text import extract_asset_image_names as extract_names
+
+        assets_dir = workdir / ASSETS_REL_PATH
     return [
         assets_dir / name
-        for name in extract_asset_image_names(markdown)
+        for name in extract_names(markdown)
         if (assets_dir / name).is_file()
     ]
 
@@ -266,7 +290,14 @@ def _build_file_output(
             if not frontmatter:
                 frontmatter = base_frontmatter
 
-    assets = get_saved_images(ctx)
+    from markitai.output_profiles import assets_visible
+
+    if assets_visible(ctx.config):
+        # An asset-visible profile moved images to assets/ and rewrote refs
+        combined = "\n".join(part for part in (markdown, llm_markdown) if part)
+        assets = _referenced_assets(combined, workdir, visible=True)
+    else:
+        assets = get_saved_images(ctx)
     screenshots_dir = workdir / SCREENSHOTS_REL_PATH
     page_images = ctx.conversion_result.metadata.get("page_images", [])
     screenshots = [
@@ -326,9 +357,12 @@ async def _aconvert_file(
         return _skipped_output(str(path), existing)
 
     if cfg.image.desc_enabled and ctx.image_analysis is not None:
+        from markitai.output_profiles import assets_visible
         from markitai.workflow.helpers import write_images_json
 
-        write_images_json(workdir, [ctx.image_analysis])
+        write_images_json(
+            workdir, [ctx.image_analysis], visible_assets=assets_visible(cfg)
+        )
 
     return _build_file_output(ctx, str(path), workdir, in_memory=in_memory)
 
@@ -444,6 +478,10 @@ async def _aconvert_url(
                 content = processor.format_llm_output(cleaned, llm_frontmatter)
             target = output_file.with_suffix(".llm.md")
             atomic_write_text(target, content)
+            if cfg.output.profile is not None:
+                from markitai.output_profiles import apply_profile_to_file
+
+                apply_profile_to_file(target, workdir, cfg)
             llm_output_path = target
             frontmatter, llm_markdown = _parse_output_file(target)
         except Exception as e:
@@ -468,14 +506,26 @@ async def _aconvert_url(
             extra_meta=extra_meta,
         )
         atomic_write_text(output_file, base_content)
+        if cfg.output.profile is not None:
+            from markitai.output_profiles import apply_profile_to_file
+
+            apply_profile_to_file(output_file, workdir, cfg)
         output_path = output_file
         if not frontmatter:
             frontmatter, markdown = _parse_output_file(output_file)
+        elif cfg.output.profile is not None:
+            _, markdown = _parse_output_file(output_file)
 
     if llm_error is not None:
         raise ConversionError(f"LLM processing failed: {llm_error}")
 
-    assets = _referenced_assets(markdown, workdir)
+    from markitai.output_profiles import assets_visible
+
+    if assets_visible(cfg):
+        combined = "\n".join(part for part in (markdown, llm_markdown) if part)
+        assets = _referenced_assets(combined, workdir, visible=True)
+    else:
+        assets = _referenced_assets(markdown, workdir)
     screenshots = [fetch_result.screenshot_path] if fetch_result.screenshot_path else []
 
     if in_memory:
@@ -507,6 +557,7 @@ async def aconvert(
     screenshot: bool | None = None,
     alt: bool | None = None,
     desc: bool | None = None,
+    profile: OutputProfileName | None = None,
 ) -> ConversionOutput:
     """Convert one local file or URL to Markdown (async, provisional).
 
@@ -526,6 +577,10 @@ async def aconvert(
         screenshot: Enable page screenshots (PDF/Office/URLs).
         alt: Enable LLM alt-text generation for images.
         desc: Enable LLM image descriptions (writes ``images.json``).
+        profile: Output profile ("rag", "obsidian", or "okf"; None keeps
+            the config value). Shapes the written output for a downstream
+            consumer — with "rag"/"obsidian", assets land in a visible
+            ``assets/`` directory instead of ``.markitai/assets/``.
 
     Returns:
         A ``ConversionOutput`` with the converted markdown and metadata.
@@ -544,7 +599,13 @@ async def aconvert(
     await asyncio.to_thread(suppress_parser_noise)
 
     cfg = _resolve_config(
-        config, llm=llm, ocr=ocr, screenshot=screenshot, alt=alt, desc=desc
+        config,
+        llm=llm,
+        ocr=ocr,
+        screenshot=screenshot,
+        alt=alt,
+        desc=desc,
+        profile=profile,
     )
 
     from markitai.utils.cli_helpers import is_url
@@ -594,6 +655,7 @@ def convert(
     screenshot: bool | None = None,
     alt: bool | None = None,
     desc: bool | None = None,
+    profile: OutputProfileName | None = None,
 ) -> ConversionOutput:
     """Convert one local file or URL to Markdown (sync, provisional).
 
@@ -628,6 +690,7 @@ def convert(
                 screenshot=screenshot,
                 alt=alt,
                 desc=desc,
+                profile=profile,
             )
         finally:
             await _close_loop_bound_resources()

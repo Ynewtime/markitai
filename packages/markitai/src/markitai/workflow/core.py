@@ -628,6 +628,25 @@ def apply_alt_text_updates(
     return False
 
 
+def apply_output_profile(ctx: ConversionContext) -> None:
+    """Apply the configured output profile to this conversion's written files.
+
+    Runs as the final pipeline step so every earlier stage (conversion,
+    image extraction, LLM enhancement, alt-text updates) operates on the
+    default layout. No-op when no profile is configured.
+
+    Args:
+        ctx: Completed conversion context.
+    """
+    if ctx.config.output.profile is None or ctx.output_file is None:
+        return
+
+    from markitai.output_profiles import apply_profile_to_file
+
+    for candidate in (ctx.output_file, ctx.output_file.with_suffix(".llm.md")):
+        apply_profile_to_file(candidate, ctx.output_dir, ctx.config)
+
+
 def _split_frontmatter_and_body(content: str) -> tuple[str | None, str]:
     """Split markdown content into a frontmatter block and body."""
     if content.startswith("---\n"):
@@ -1132,6 +1151,7 @@ async def convert_document_core(
        - Vision mode (with page screenshots)
        - Standard mode (no screenshots)
        - Embedded image analysis
+    8. Output profile post-processing (only when ``output.profile`` is set)
 
     Args:
         ctx: Conversion context with all inputs and state
@@ -1275,5 +1295,8 @@ async def convert_document_core(
                 if not result.success:
                     _write_base_md_fallback(ctx)
                     return result
+
+    # Step 8: output profile post-processing (no-op without a profile)
+    apply_output_profile(ctx)
 
     return ConversionStepResult(success=True)

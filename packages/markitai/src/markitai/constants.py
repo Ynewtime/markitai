@@ -364,3 +364,8 @@ ASSETS_REL_PATH = f"{MARKITAI_META_DIR}/assets"
 SCREENSHOTS_REL_PATH = f"{MARKITAI_META_DIR}/screenshots"
 REPORTS_REL_PATH = f"{MARKITAI_META_DIR}/reports"
 STATES_REL_PATH = f"{MARKITAI_META_DIR}/states"
+
+# Visible assets directory used by output profiles that relocate images out of
+# the hidden metadata namespace (rag/obsidian) so ingestors that skip hidden
+# paths (e.g. LlamaIndex SimpleDirectoryReader) still see them.
+VISIBLE_ASSETS_REL_PATH = "assets"

@@ -52,6 +52,7 @@ click.rich_click.OPTION_GROUPS = {
                 "--config",
                 "--config-json",
                 "--preset",
+                "--profile",
                 "--interactive",
                 "--dry-run",
                 "--record-history",
@@ -212,6 +213,14 @@ def run_interactive_mode(ctx: click.Context) -> None:
     type=str,
     default=None,
     help="Use a preset configuration (rich/standard/minimal).",
+)
+@click.option(
+    "--profile",
+    type=click.Choice(["rag", "obsidian", "okf"], case_sensitive=False),
+    default=None,
+    help="Shape the output for a downstream consumer (visible assets/ dir, "
+    "page markers, wikilinks, OKF frontmatter). Orthogonal to --preset; "
+    "without it the output is unchanged.",
 )
 @click.option(
     "--llm/--no-llm",
@@ -385,6 +394,7 @@ def app(
     config_path: Path | None,
     config_json: str | None,
     preset: str | None,
+    profile: str | None,
     llm: bool | None,
     alt: bool | None,
     desc: bool | None,
@@ -603,6 +613,16 @@ def app(
                 f"[red]Error: Unknown preset '{preset}'. Available: {available}[/red]"
             )
             raise SystemExit(1)
+
+    # Apply output profile (orthogonal to presets: presets pick features,
+    # the profile picks the output shape)
+    if profile:
+        from typing import cast
+
+        from markitai.api import OutputProfileName
+
+        cfg.output.profile = cast(OutputProfileName, profile.lower())
+        logger.debug(f"Applied output profile: {profile.lower()}")
 
     # Override with explicit CLI options (--flag or --no-flag)
     # None means not specified, so we don't override

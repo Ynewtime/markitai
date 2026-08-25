@@ -88,6 +88,7 @@ class MarkitaiGroup(click.RichGroup):
         "--config-json",
         "-p",
         "--preset",
+        "--profile",
         "--no-cache-for",
         "--llm-concurrency",
         "-j",

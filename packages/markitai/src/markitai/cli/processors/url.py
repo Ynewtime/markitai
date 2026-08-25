@@ -618,9 +618,25 @@ async def process_url(
             if llm_output_file.exists():
                 final_content = llm_output_file.read_text(encoding="utf-8")
 
+        # Output profile post-processing (no-op without a profile)
+        if cfg.output.profile is not None:
+            from markitai.output_profiles import apply_profile_to_file
+
+            llm_output_file = output_file.with_suffix(".llm.md")
+            for candidate in (output_file, llm_output_file):
+                apply_profile_to_file(candidate, effective_output_dir, cfg)
+            if llm_output_file.exists():
+                final_content = llm_output_file.read_text(encoding="utf-8")
+            elif output_file.exists():
+                final_content = output_file.read_text(encoding="utf-8")
+
         # Write image descriptions (if enabled and images were analyzed)
         if img_analysis and cfg.image.desc_enabled:
-            write_images_json(effective_output_dir, [img_analysis])
+            from markitai.output_profiles import assets_visible
+
+            write_images_json(
+                effective_output_dir, [img_analysis], visible_assets=assets_visible(cfg)
+            )
 
         # Stop the live stage list before printing the final result
         # (transient in stdout mode; rich erases its frame)
@@ -1073,7 +1089,11 @@ async def process_url_batch(
 
     # Write image descriptions collected across URLs (if enabled)
     if image_analyses and cfg.image.desc_enabled:
-        write_images_json(output_dir, image_analyses)
+        from markitai.output_profiles import assets_visible
+
+        write_images_json(
+            output_dir, image_analyses, visible_assets=assets_visible(cfg)
+        )
 
     # Generate report (default ON for URL-batch runs; output.report=false opts out)
     finished_at = datetime.now()

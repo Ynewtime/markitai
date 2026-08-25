@@ -622,6 +622,7 @@ class LLMProcessor:
         no_cache: bool = False,
         no_cache_patterns: list[str] | None = None,
         cache_global_dir: Path | str | None = None,
+        extra_cleaning_rules: str = "",
     ) -> None:
         """
         Initialize LLM processor.
@@ -638,9 +639,14 @@ class LLMProcessor:
                               E.g., ["*.pdf", "reports/**", "file.docx"]
             cache_global_dir: Global cache directory. If provided, overrides the default
                               ~/.markitai directory. Should be passed from config.cache.global_dir.
+            extra_cleaning_rules: Extra rules appended to the text-cleaning
+                              prompts (e.g. the rag profile's table-consistency
+                              constraint). Empty keeps prompts and cache keys
+                              byte-identical to the default.
         """
         self.config = config
         self._runtime = runtime
+        self._extra_cleaning_rules = extra_cleaning_rules
         self._router: Router | LocalProviderWrapper | HybridRouter | None = None
         self._vision_router: Router | LocalProviderWrapper | HybridRouter | None = None
         self._semaphore: asyncio.Semaphore | None = None
@@ -853,6 +859,7 @@ class LLMProcessor:
                 get_vision_router=lambda: self.vision_router,
                 get_cached_image=lambda image_path: self._get_cached_image(image_path),
                 get_next_call_index=lambda context: self._get_next_call_index(context),
+                extra_cleaning_rules=self._extra_cleaning_rules,
             )
         return self._documents
 
