@@ -93,6 +93,47 @@ def _isolate_global_cache_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _isolate_user_config_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Point ``Path.home()`` at a temp dir so no test reads the developer's
+    real ``~/.markitai``.
+
+    ``cli/main.py`` and ``serve/app.py`` load ``~/.markitai/.env`` (into
+    ``os.environ``) at import/startup and ``ConfigManager`` reads
+    ``~/.markitai/config.json``. A developer with real LLM keys and a model
+    config configured would otherwise pollute provider-detection,
+    capabilities, and doctor tests that assume a clean environment — the
+    app re-loads the keys after a test deletes them, so deleting env vars
+    alone is not enough. Redirecting home makes the whole suite hermetic.
+
+    Tests that intentionally probe config resolution set ``MARKITAI_CONFIG``
+    or a config path themselves and are unaffected (their own monkeypatch
+    runs after this fixture).
+    """
+    fake_home = tmp_path / "fake-home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
+    monkeypatch.setenv("HOME", str(fake_home))  # expanduser("~") follows too
+    # DEFAULT_USER_CONFIG_DIR is computed at import time from Path.home();
+    # re-point it so ConfigManager/auth/init never see the developer's real
+    # ~/.markitai/config.json either.
+    monkeypatch.setattr(
+        "markitai.config.ConfigManager.DEFAULT_USER_CONFIG_DIR",
+        fake_home / ".markitai",
+    )
+    # Scrub any keys the module-level load_dotenv already placed in os.environ.
+    for key in (
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "OPENROUTER_API_KEY",
+        "MISTRAL_API_KEY",
+        "CLOUDFLARE_API_TOKEN",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+
 # =============================================================================
 # Fetch Fixtures
 # =============================================================================
