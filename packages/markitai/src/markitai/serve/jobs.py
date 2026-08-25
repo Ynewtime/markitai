@@ -602,34 +602,30 @@ async def process_url_item(
     url_ctx: UrlJobContext,
     output_name: str | None = None,
 ) -> ProcessResult:
-    """Convert one URL: fetch -> localize images -> base .md -> LLM .llm.md.
+    """Convert one URL via the shared cascade, mapping to a ProcessResult.
 
-    Minimal serve-side cascade following the documented programmatic recipe
-    (``fetch_url`` + ``add_basic_frontmatter`` + ``LLMProcessor``). The CLI's
-    vision/screenshot-only URL branches are intentionally not replicated.
-    ``output_name`` is the per-job pre-assigned unique output filename (URLs
-    whose derived filenames collide would otherwise clobber each other's
-    ``.llm.md`` in LLM mode); falls back to ``url_to_filename(url)``.
+    Thin serve wrapper over ``workflow.url.convert_url_cascade`` — the
+    cascade owns fetch/images/LLM/frontmatter/profile; this wrapper owns
+    job-facing concerns: error mapping, screenshot counting, and the
+    LLM-failure log line. ``output_name`` is the per-job pre-assigned
+    unique output filename (URLs whose derived filenames collide would
+    otherwise clobber each other's ``.llm.md`` in LLM mode).
     """
-    from markitai import fetch as fetch_module
     from markitai.batch import ProcessResult
     from markitai.fetch import FetchError, JinaRateLimitError
-    from markitai.security import atomic_write_text
-    from markitai.utils.cli_helpers import url_to_filename
-    from markitai.utils.output import resolve_output_path
     from markitai.utils.text import format_error_message
-    from markitai.workflow.helpers import add_basic_frontmatter
+    from markitai.workflow.url import convert_url_cascade
 
     try:
-        fetch_result = await fetch_module.fetch_url(
+        result = await convert_url_cascade(
             url,
-            url_ctx.strategy,
-            cfg.fetch,
+            cfg,
+            out_dir,
+            processor=shared_processor,
             cache=url_ctx.cache,
-            skip_read_cache=cfg.cache.no_cache,
-            screenshot=cfg.screenshot.enabled,
             screenshot_dir=url_ctx.screenshot_dir,
-            screenshot_config=cfg.screenshot if cfg.screenshot.enabled else None,
+            output_name=output_name,
+            llm_error_policy="fallback",
         )
     except JinaRateLimitError:
         return ProcessResult(
@@ -637,101 +633,36 @@ async def process_url_item(
         )
     except FetchError as e:
         return ProcessResult(success=False, error=format_error_message(e))
+    except Exception as e:
+        # ConversionError (no content) and anything unexpected.
+        return ProcessResult(success=False, error=format_error_message(e))
 
-    markdown = fetch_result.content
-    if not markdown.strip():
-        return ProcessResult(success=False, error="No content extracted")
-
-    filename = output_name or url_to_filename(url)
-
-    # Remote images are inputs to LLM image analysis. Preset image flags can
-    # remain set after an explicit --no-llm override; downloading in that case
-    # adds no analysis value and can turn a fast fetch into minutes of waits.
-    if cfg.llm.enabled and (cfg.image.alt_enabled or cfg.image.desc_enabled):
-        from markitai.image import download_url_images
-
-        download_result = await download_url_images(
-            markdown=markdown,
-            output_dir=out_dir,
-            base_url=url,
-            config=cfg.image,
-            source_name=filename.removesuffix(".md"),
+    if result.llm_error is not None:
+        logger.error(
+            "[Serve] URL LLM processing failed for {}: {}",
+            url,
+            result.llm_error,
         )
-        markdown = download_result.updated_markdown
 
-    output_file = resolve_output_path(out_dir / filename, cfg.output.on_conflict)
-    if output_file is None:
+    if result.skipped:
         return ProcessResult(
             success=True,
-            output_path=str(out_dir / filename),
+            output_path=str(result.skip_target),
             error="skipped (exists)",
         )
 
-    title = fetch_result.title
-    extra_meta = fetch_result.metadata.get("source_frontmatter")
     screenshots = (
-        len(fetch_result.screenshot_tiles)
-        if fetch_result.screenshot_tiles
-        else (1 if fetch_result.screenshot_path else 0)
+        len(result.screenshot_tiles)
+        if result.screenshot_tiles
+        else (1 if result.screenshot_path else 0)
     )
-
-    cost_usd = 0.0
-    llm_usage: dict[str, dict[str, Any]] = {}
-    llm_written = False
-    if cfg.llm.enabled and shared_processor is not None:
-        try:
-            if cfg.llm.pure:
-                content = await shared_processor.clean_document_pure(markdown, url)
-            else:
-                cleaned, frontmatter = await shared_processor.process_document(
-                    markdown,
-                    url,
-                    fetch_strategy=fetch_result.strategy_used,
-                    extra_meta=extra_meta,
-                    title=title,
-                )
-                content = shared_processor.format_llm_output(cleaned, frontmatter)
-            atomic_write_text(output_file.with_suffix(".llm.md"), content)
-            llm_written = True
-        except Exception as e:
-            logger.error(
-                "[Serve] URL LLM processing failed for {}: {}",
-                url,
-                format_error_message(e),
-            )
-        finally:
-            cost_usd = shared_processor.get_context_cost(url)
-            llm_usage = shared_processor.get_context_usage(url)
-            shared_processor.clear_context_usage(url)
-
-    # Base .md: always without LLM; with LLM only for keep_base or as fallback.
-    if not llm_written or cfg.llm.keep_base:
-        base_content = add_basic_frontmatter(
-            markdown,
-            url,
-            fetch_strategy=fetch_result.strategy_used,
-            screenshot_path=fetch_result.screenshot_path,
-            screenshot_tiles=fetch_result.screenshot_tiles,
-            output_dir=out_dir,
-            title=title,
-            extra_meta=extra_meta,
-        )
-        atomic_write_text(output_file, base_content)
-
-    # Output profile post-processing (no-op without a profile)
-    if cfg.output.profile is not None:
-        from markitai.output_profiles import apply_profile_to_file
-
-        for candidate in (output_file, output_file.with_suffix(".llm.md")):
-            apply_profile_to_file(candidate, out_dir, cfg)
-
-    final_output = output_file.with_suffix(".llm.md") if llm_written else output_file
+    final_output = result.llm_output_path or result.output_path
     return ProcessResult(
         success=True,
-        output_path=str(final_output),
+        output_path=str(final_output) if final_output is not None else None,
         screenshots=screenshots,
-        cost_usd=cost_usd,
-        llm_usage=llm_usage,
+        cost_usd=result.cost_usd,
+        llm_usage=result.llm_usage,
     )
 
 

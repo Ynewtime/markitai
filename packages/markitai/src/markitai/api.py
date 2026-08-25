@@ -397,136 +397,49 @@ def _skipped_output(source: str, existing: Path) -> ConversionOutput:
 async def _aconvert_url(
     url: str, cfg: MarkitaiConfig, workdir: Path, *, in_memory: bool
 ) -> ConversionOutput:
-    """Convert one URL: fetch -> localize images -> base .md -> LLM .llm.md.
+    """Convert one URL via the shared cascade, shaping a ConversionOutput.
 
-    Follows the same UI-free cascade as ``serve.jobs.process_url_item``
-    (the CLI's vision/screenshot-only URL branches are not replicated).
+    Thin API wrapper over ``workflow.url.convert_url_cascade`` — the
+    cascade owns fetch/images/LLM/frontmatter/profile; this wrapper owns
+    API-facing concerns: frontmatter/asset extraction from the written
+    files, in-memory mode, and the raise-on-LLM-failure policy. The CLI's
+    vision/screenshot-only URL branches are not replicated.
     """
-    from markitai import fetch as fetch_module
-    from markitai.fetch import FetchStrategy
-    from markitai.security import atomic_write_text
-    from markitai.utils.cli_helpers import url_to_filename
-    from markitai.utils.output import resolve_output_path
-    from markitai.utils.paths import ensure_screenshots_dir
-    from markitai.workflow.helpers import add_basic_frontmatter, create_llm_processor
+    from markitai.output_profiles import assets_visible
+    from markitai.workflow.url import convert_url_cascade
 
-    cache = None
-    if cfg.cache.enabled:
-        cache_dir = Path(cfg.cache.global_dir).expanduser()
-        cache = fetch_module.get_fetch_cache(cache_dir, cfg.cache.max_size_bytes)
-    screenshot_dir = ensure_screenshots_dir(workdir) if cfg.screenshot.enabled else None
-
-    fetch_result = await fetch_module.fetch_url(
+    result = await convert_url_cascade(
         url,
-        FetchStrategy(cfg.fetch.strategy),
-        cfg.fetch,
-        cache=cache,
-        skip_read_cache=cfg.cache.no_cache,
-        screenshot=cfg.screenshot.enabled,
-        screenshot_dir=screenshot_dir,
-        screenshot_config=cfg.screenshot if cfg.screenshot.enabled else None,
+        cfg,
+        workdir,
+        llm_error_policy="raise",
     )
 
-    markdown = fetch_result.content
-    if not markdown.strip():
-        raise ConversionError(f"No content extracted from {url}")
+    if result.skipped:
+        assert result.skip_target is not None
+        return _skipped_output(url, result.skip_target)
 
-    filename = url_to_filename(url)
-
-    # Remote images are inputs to LLM image analysis; without LLM there is
-    # nothing to analyze, so skip the downloads (same policy as serve)
-    if cfg.llm.enabled and (cfg.image.alt_enabled or cfg.image.desc_enabled):
-        from markitai.image import download_url_images
-
-        download_result = await download_url_images(
-            markdown=markdown,
-            output_dir=workdir,
-            base_url=url,
-            config=cfg.image,
-            source_name=filename.removesuffix(".md"),
-        )
-        markdown = download_result.updated_markdown
-
-    output_file = resolve_output_path(workdir / filename, cfg.output.on_conflict)
-    if output_file is None:
-        return _skipped_output(url, workdir / filename)
-
-    title = fetch_result.title
-    extra_meta = fetch_result.metadata.get("source_frontmatter")
-
-    cost_usd = 0.0
-    by_model: dict[str, dict[str, Any]] = {}
-    llm_markdown: str | None = None
+    # Read back frontmatter/body from the written files (post-profile, so
+    # the returned markdown matches what is on disk).
     frontmatter: dict[str, Any] = {}
-    llm_output_path: Path | None = None
-    llm_error: str | None = None
-    if cfg.llm.enabled:
-        from markitai.utils.text import format_error_message
-
-        processor = create_llm_processor(cfg)
-        try:
-            if cfg.llm.pure:
-                content = await processor.clean_document_pure(markdown, url)
-            else:
-                cleaned, llm_frontmatter = await processor.process_document(
-                    markdown,
-                    url,
-                    fetch_strategy=fetch_result.strategy_used,
-                    extra_meta=extra_meta,
-                    title=title,
-                )
-                content = processor.format_llm_output(cleaned, llm_frontmatter)
-            target = output_file.with_suffix(".llm.md")
-            atomic_write_text(target, content)
-            if cfg.output.profile is not None:
-                from markitai.output_profiles import apply_profile_to_file
-
-                apply_profile_to_file(target, workdir, cfg)
-            llm_output_path = target
-            frontmatter, llm_markdown = _parse_output_file(target)
-        except Exception as e:
-            # Same policy as the file pipeline: write the base .md as a
-            # fallback below, then surface the failure to the caller
-            llm_error = format_error_message(e)
-        finally:
-            cost_usd = processor.get_context_cost(url)
-            by_model = processor.get_context_usage(url)
-            processor.clear_context_usage(url)
-
-    # Base .md: always without LLM; with LLM for keep_base or as fallback
-    output_path: Path | None = None
-    if llm_output_path is None or cfg.llm.keep_base:
-        base_content = add_basic_frontmatter(
-            markdown,
-            url,
-            fetch_strategy=fetch_result.strategy_used,
-            screenshot_path=fetch_result.screenshot_path,
-            output_dir=workdir,
-            title=title,
-            extra_meta=extra_meta,
-        )
-        atomic_write_text(output_file, base_content)
-        if cfg.output.profile is not None:
-            from markitai.output_profiles import apply_profile_to_file
-
-            apply_profile_to_file(output_file, workdir, cfg)
-        output_path = output_file
+    markdown = result.markdown
+    llm_markdown: str | None = None
+    if result.llm_output_path is not None:
+        frontmatter, llm_markdown = _parse_output_file(result.llm_output_path)
+    if result.output_path is not None:
         if not frontmatter:
-            frontmatter, markdown = _parse_output_file(output_file)
+            frontmatter, markdown = _parse_output_file(result.output_path)
         elif cfg.output.profile is not None:
-            _, markdown = _parse_output_file(output_file)
+            _, markdown = _parse_output_file(result.output_path)
 
-    if llm_error is not None:
-        raise ConversionError(f"LLM processing failed: {llm_error}")
-
-    from markitai.output_profiles import assets_visible
-
+    output_path = result.output_path
+    llm_output_path = result.llm_output_path
     if assets_visible(cfg):
         combined = "\n".join(part for part in (markdown, llm_markdown) if part)
         assets = _referenced_assets(combined, workdir, visible=True)
     else:
         assets = _referenced_assets(markdown, workdir)
-    screenshots = [fetch_result.screenshot_path] if fetch_result.screenshot_path else []
+    screenshots = [result.screenshot_path] if result.screenshot_path else []
 
     if in_memory:
         output_path = None
@@ -543,7 +456,7 @@ async def _aconvert_url(
         llm_output_path=llm_output_path,
         assets=assets,
         screenshots=screenshots,
-        usage=ConversionUsage.from_usage_dict(cost_usd, by_model),
+        usage=ConversionUsage.from_usage_dict(result.cost_usd, result.llm_usage),
     )
 
 
