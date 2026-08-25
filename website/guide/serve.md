@@ -20,20 +20,25 @@ It listens on `http://127.0.0.1:3600` and opens your browser automatically once 
 | `--host` | `127.0.0.1` | Host interface to bind |
 | `--port` | `3600` | Port to listen on |
 | `--no-open` | off | Do not open the browser after startup |
+| `--no-auth` | off | Disable the access token (restores the pre-token remote policy) |
 | `--allowed-host <hostname>` | — | Additional hostname to accept in the `Host`/`Origin` headers (repeatable) |
+
+## Access Token
+
+At startup the server generates a random access token and prints a ready-to-open URL like `http://192.168.1.50:3600/?token=mk_…`. Requests from this machine never need the token; requests from any other machine must carry it — the web UI picks it up from that URL automatically (and scrubs it from the address bar), scripts send `Authorization: Bearer <token>` (or `?token=` on download/SSE URLs). Set `MARKITAI_SERVE_TOKEN` to pin a fixed token across restarts; pass `--no-auth` to disable the token entirely, which limits other machines to public-URL conversions and blocks their access to LLM settings.
 
 ## Accessing from Other Devices
 
-To use the workspace from another machine or a phone on the same network, bind all interfaces and allow the hostname you will browse to:
+To use the workspace from another machine or a phone on the same network, bind all interfaces and open the printed token URL on that device:
 
 ```bash
-markitai serve --host 0.0.0.0 --allowed-host my-box.lan
+markitai serve --host 0.0.0.0
 ```
 
-For safety, the server only accepts requests whose `Host`/`Origin` is localhost, an IP literal, or a hostname passed via `--allowed-host`. Any other DNS name is rejected, which blocks DNS-rebinding attacks where a malicious web page tries to reach the API from your browser.
+Add `--allowed-host my-box.lan` if you browse to a DNS name instead of an IP: the server only accepts requests whose `Host`/`Origin` is localhost, an IP literal, or an allow-listed hostname. Any other DNS name is rejected, which blocks DNS-rebinding attacks where a malicious web page tries to reach the API from your browser.
 
 ::: warning
-The server has no authentication. Anyone who can reach it can run conversions with your configured LLM providers, view history, and read LLM settings. Keep the default loopback bind unless you trust every device on the network.
+The token URL is a credential — anyone holding it gets full access: conversions with your configured LLM providers (including intranet URLs), history, downloads, deletion, and LLM settings. Share it only with devices you trust, and prefer the default loopback bind when you don't need LAN access.
 :::
 
 ## The Workspace
