@@ -939,11 +939,28 @@ class PdfConverter(BaseConverter):
         outputs deterministic `](path/filename)` format, and str.replace is
         immune to special characters in filenames (parentheses, $, etc.).
 
+        pymupdf4llm does not echo ``image_path`` verbatim: it may write the
+        symlink-resolved form (e.g. macOS ``/tmp`` -> ``/private/tmp``) or a
+        path relative to the process CWD. All three spellings are replaced,
+        otherwise the refs stay absolute/CWD-relative and every downstream
+        consumer (alt text, ref validation, asset discovery) misses them.
+
         Note: pymupdf4llm always uses forward slashes in markdown, even on Windows.
         We must use as_posix() to ensure consistent path matching.
         """
-        posix_path = image_path.as_posix()
-        return markdown.replace(f"]({posix_path}/", f"]({ASSETS_REL_PATH}/")
+        import os
+
+        candidates = [image_path.as_posix()]
+        resolved = image_path.resolve().as_posix()
+        if resolved not in candidates:
+            candidates.append(resolved)
+        cwd_relative = Path(os.path.relpath(resolved, Path.cwd())).as_posix()
+        if cwd_relative not in candidates:
+            candidates.append(cwd_relative)
+
+        for candidate in candidates:
+            markdown = markdown.replace(f"]({candidate}/", f"]({ASSETS_REL_PATH}/")
+        return markdown
 
     def _collect_embedded_images(
         self, assets_dir: Path, input_name: str, markdown: str = ""
