@@ -406,7 +406,18 @@ def _extract_with_retry(
     # Level 3b: Target the largest hidden subtree directly to avoid
     # body-level leftovers when hidden content is the real article
     # (defuddle issue 232). Runs whenever Level 3 ran, like upstream.
-    hidden_root = _find_largest_hidden_content_root(copy.deepcopy(ctx.original_soup))
+    # Read-only scan on the original tree first: most pages have no hidden
+    # content root, and a whole-tree copy would be wasted on them. Only a
+    # hit pays for a deep copy, then re-locates the match by index — bs4's
+    # deepcopy preserves structure 1:1, so document-order indices are stable.
+    hidden_root: Tag | None = None
+    hidden_idx = _find_largest_hidden_content_index(ctx.original_soup)
+    if hidden_idx is not None:
+        body3b = copy.deepcopy(ctx.original_soup).body
+        if body3b is not None:
+            matches = body3b.select(HIDDEN_EXACT_SKIP_SELECTOR)
+            if hidden_idx < len(matches):
+                hidden_root = matches[hidden_idx]
     if hidden_root is not None:
         clean3b, md3b, _ = _extract_once(
             hidden_root,
@@ -447,13 +458,13 @@ def _extract_with_retry(
         diagnostics["adaptive_retry_used"] = True
         diagnostics["retry_level"] = 4
 
-    # Fallback: broaden to <body> (deep-copy to avoid mutated state).
-    # Trigger when Levels 2-4 could not push content above the sparse
-    # threshold — the candidate root is likely too narrow.
+    # Fallback: broaden to <body> (copy just the body subtree — a body root
+    # makes adopt_external_footnotes a no-op, so the parents chain a
+    # whole-tree copy would preserve is never consulted here).
     if word_count < _RETRY_SPARSE_THRESHOLD:
-        soup_body = copy.deepcopy(ctx.original_soup)
-        body = soup_body.body
+        body = ctx.original_soup.body
         if body is not None:
+            body = copy.copy(body)
             body_html, body_md, _ = _extract_once(
                 body,
                 ctx.metadata,
@@ -473,38 +484,39 @@ def _extract_with_retry(
     return clean_html, markdown
 
 
-def _find_largest_hidden_content_root(soup: BeautifulSoup) -> Tag | None:
-    """Find the largest hidden subtree that plausibly holds the article.
+def _find_largest_hidden_content_index(soup: BeautifulSoup) -> int | None:
+    """Index of the largest hidden subtree that plausibly holds the article.
 
-    Mirrors defuddle ``findLargestHiddenContentSelector``: scan hidden
-    elements (``[hidden]``, ``aria-hidden``, ``.hidden``, ``.invisible``)
-    outside math markup and return the wordiest one when it carries at
-    least 30 words. The caller re-runs extraction with it as the root.
+    Read-only scan mirroring defuddle ``findLargestHiddenContentSelector``:
+    scan hidden elements (``[hidden]``, ``aria-hidden``, ``.hidden``,
+    ``.invisible``) outside math markup and return the index (within the
+    body's ``HIDDEN_EXACT_SKIP_SELECTOR`` matches, in document order) of the
+    wordiest one carrying at least 30 words. The caller copies the tree and
+    re-locates the match by this index before mutating it.
 
     Args:
-        soup: A fresh parse/copy of the original document (the returned
-            tag is mutated by the retry pipeline).
+        soup: The original parsed document (never mutated).
 
     Returns:
-        The hidden element with the most words, or ``None``.
+        Index of the hidden element with the most words, or ``None``.
     """
     body = soup.body
     if body is None:
         return None
-    best: Tag | None = None
+    best_idx: int | None = None
     best_words = 0
-    for el in body.select(HIDDEN_EXACT_SKIP_SELECTOR):
+    for idx, el in enumerate(body.select(HIDDEN_EXACT_SKIP_SELECTOR)):
         classes = el.get("class")
         class_str = " ".join(classes) if isinstance(classes, list) else ""
         if "math" in class_str:
             continue
         words = count_words(el.get_text(" ", strip=True))
         if words > best_words:
-            best = el
+            best_idx = idx
             best_words = words
-    if best is None or best_words < 30:
+    if best_idx is None or best_words < 30:
         return None
-    return best
+    return best_idx
 
 
 def _pick_root(soup: BeautifulSoup, extractor: object | None) -> Tag | BeautifulSoup:
