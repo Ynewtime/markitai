@@ -7,6 +7,7 @@ from markitai.webextract.extractors.github_thread import GitHubThreadExtractor
 from markitai.webextract.extractors.hackernews_thread import HackerNewsThreadExtractor
 from markitai.webextract.extractors.reddit_post import RedditPostExtractor
 from markitai.webextract.extractors.steam_news import SteamNewsExtractor
+from markitai.webextract.extractors.substack_note import SubstackNoteExtractor
 from markitai.webextract.extractors.x_article import XArticleExtractor
 from markitai.webextract.extractors.x_tweet import XTweetExtractor
 from markitai.webextract.extractors.youtube_page import YouTubePageExtractor
@@ -17,6 +18,7 @@ _EXTRACTORS: tuple[BaseSiteExtractor, ...] = (
     RedditPostExtractor(),
     HackerNewsThreadExtractor(),
     SteamNewsExtractor(),  # store.steampowered.com/news (BBCode announcements)
+    SubstackNoteExtractor(),  # substack.com/@user/note/ (note permalinks)
     XArticleExtractor(),  # x.com/i/articles/ (long-form articles)
     XTweetExtractor(),  # x.com/user/status/ (regular tweets)
     YouTubePageExtractor(),  # youtube.com/watch and youtu.be (video pages)
