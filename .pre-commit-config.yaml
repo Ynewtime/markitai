@@ -18,7 +18,7 @@ repos:
       - id: pyright
         name: pyright
         entry: uv run pyright
-        args: [packages/markitai/src]
+        args: [packages/markitai/src, packages/markitai-mcp/src]
         language: system
         types: [python]
         pass_filenames: false
