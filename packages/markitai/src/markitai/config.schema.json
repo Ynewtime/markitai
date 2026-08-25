@@ -1432,11 +1432,11 @@
       "type": "object"
     },
     "RouterSettings": {
-      "description": "LiteLLM Router settings.",
+      "description": "LLM routing settings (LiteLLM Router options plus markitai's retry loop).",
       "properties": {
         "routing_strategy": {
           "default": "simple-shuffle",
-          "description": "LLM router load balancing strategy",
+          "description": "Load balancing strategy for standard models (passed to the LiteLLM Router). Local provider models (claude-agent/, copilot/, ...) always use weighted random selection.",
           "enum": [
             "simple-shuffle",
             "least-busy",
@@ -1448,7 +1448,7 @@
         },
         "num_retries": {
           "default": 2,
-          "description": "Max retries on LLM failure",
+          "description": "Transport retries per LLM request, executed by markitai's own retry loop (exponential backoff, quota short-circuit). Not forwarded to the LiteLLM Router: litellm-internal retries stay disabled so the two loops cannot multiply.",
           "minimum": 0,
           "title": "Num Retries",
           "type": "integer"
@@ -1461,6 +1461,7 @@
           "type": "integer"
         },
         "fallbacks": {
+          "description": "LiteLLM Router fallbacks between model groups, e.g. [{\"default\": [\"backup\"]}]. Requests enter at model_name group \"default\"; standard models in other groups only receive traffic via fallback. When empty (the default), all models are pooled into one \"default\" group. Local provider models cannot be fallback targets, and the vision pool always balances over all vision-capable models.",
           "items": {
             "additionalProperties": true,
             "type": "object"

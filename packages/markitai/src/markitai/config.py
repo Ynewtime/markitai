@@ -266,25 +266,28 @@ class ModelConfig(BaseModel):
 
 
 class RouterSettings(BaseModel):
-    """LiteLLM Router settings."""
+    """LLM routing settings (LiteLLM Router options plus markitai's retry loop)."""
 
     routing_strategy: Literal[
         "simple-shuffle", "least-busy", "usage-based-routing", "latency-based-routing"
     ] = Field(
         default=DEFAULT_ROUTING_STRATEGY,
-        description="LLM router load balancing strategy",
+        description="Load balancing strategy for standard models (passed to the LiteLLM Router). Local provider models (claude-agent/, copilot/, ...) always use weighted random selection.",
     )
     num_retries: int = Field(
         default=DEFAULT_ROUTER_NUM_RETRIES,
         ge=0,
-        description="Max retries on LLM failure",
+        description="Transport retries per LLM request, executed by markitai's own retry loop (exponential backoff, quota short-circuit). Not forwarded to the LiteLLM Router: litellm-internal retries stay disabled so the two loops cannot multiply.",
     )
     timeout: int = Field(
         default=DEFAULT_ROUTER_TIMEOUT,
         ge=1,
         description="LLM request timeout in seconds",
     )
-    fallbacks: list[dict[str, Any]] = Field(default_factory=list)
+    fallbacks: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description='LiteLLM Router fallbacks between model groups, e.g. [{"default": ["backup"]}]. Requests enter at model_name group "default"; standard models in other groups only receive traffic via fallback. When empty (the default), all models are pooled into one "default" group. Local provider models cannot be fallback targets, and the vision pool always balances over all vision-capable models.',
+    )
 
 
 class LLMProviderConfig(BaseModel):

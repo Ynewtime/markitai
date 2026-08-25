@@ -497,10 +497,10 @@ ChatGPT 支持的模型：
 
 | 设置 | 选项 | 默认值 | 说明 |
 |------|------|--------|------|
-| `routing_strategy` | `simple-shuffle`, `least-busy`, `usage-based-routing`, `latency-based-routing` | `simple-shuffle` | 模型选择策略 |
-| `num_retries` | ≥0 | 2 | 失败重试次数 |
+| `routing_strategy` | `simple-shuffle`, `least-busy`, `usage-based-routing`, `latency-based-routing` | `simple-shuffle` | 标准模型的选择策略；本地 provider（`claude-agent/`、`copilot/` 等）始终按权重随机 |
+| `num_retries` | ≥0 | 2 | 每个请求的传输层重试次数，由 markitai 自己的重试循环执行（LiteLLM 内部重试保持关闭） |
 | `timeout` | 秒 | 120 | 请求超时时间（自适应计算的基础值） |
-| `fallbacks` | list | `[]` | LiteLLM Router 的模型回退组 |
+| `fallbacks` | list | `[]` | LiteLLM 模型组回退，如 `[{"default": ["backup"]}]`。请求从 `default` 组进入，其他组名的模型只经回退获得流量（仅标准模型）。留空 = 全部模型合并进 `default` 组 |
 | `concurrency` | ≥1 | 10 | 最大并发 LLM 请求数 |
 
 #### 模型权重

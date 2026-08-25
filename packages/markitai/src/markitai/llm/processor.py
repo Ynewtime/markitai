@@ -38,7 +38,6 @@ from markitai.constants import (
     DEFAULT_MAX_IMAGES_PER_BATCH,
     DEFAULT_MAX_OUTPUT_TOKENS_HARD_CAP,
     DEFAULT_MAX_PAGES_PER_BATCH,
-    DEFAULT_MAX_RETRIES,
     DEFAULT_VISION_MAX_DIMENSION,
 )
 from markitai.llm import content
@@ -292,6 +291,7 @@ class LLMProcessor:
                 track_usage=self._track_usage,
                 calculate_max_tokens=self._calculate_dynamic_max_tokens,
                 get_primary_model=self._get_router_primary_model,
+                max_retries=self.config.router_settings.num_retries,
             )
         return self._engine
 
@@ -525,6 +525,12 @@ class LLMProcessor:
     def _create_router(self, models: list[ModelConfig] | None = None) -> MarkitaiRouter:
         """Create a MarkitaiRouter from model configurations.
 
+        The main router (``models is None``) honors configured
+        ``router_settings.fallbacks`` by preserving model groups. Subset
+        routers (the vision pool) always balance over all their models:
+        fallbacks are stripped and groups normalized, so a vision pool
+        missing the "default" entry group keeps working.
+
         Args:
             models: Optional subset of ``self.config.model_list`` (used by
                 the vision router). Defaults to the full configured list.
@@ -541,7 +547,14 @@ class LLMProcessor:
         if not source_models:
             raise ValueError("No models configured in llm.model_list")
 
-        model_list = self._build_router_entries(source_models)
+        settings = self.config.router_settings.model_dump()
+        honor_fallbacks = models is None and bool(settings.get("fallbacks"))
+        if not honor_fallbacks:
+            settings["fallbacks"] = []
+
+        model_list = self._build_router_entries(
+            source_models, preserve_groups=honor_fallbacks
+        )
 
         model_names = [e["litellm_params"]["model"].split("/")[-1] for e in model_list]
         logger.info(
@@ -549,21 +562,25 @@ class LLMProcessor:
             f"{preview_items_for_log(model_names)}"
         )
 
-        return MarkitaiRouter(
-            model_list=model_list,
-            router_settings=self.config.router_settings.model_dump(),
-        )
+        return MarkitaiRouter(model_list=model_list, router_settings=settings)
 
-    def _build_router_entries(self, models: list[ModelConfig]) -> list[dict[str, Any]]:
+    def _build_router_entries(
+        self, models: list[ModelConfig], *, preserve_groups: bool = False
+    ) -> list[dict[str, Any]]:
         """Build LiteLLM-Router-format entries from model configurations.
 
         Resolves ``env:`` API keys/bases and filters out unusable models
         (SDK unavailable, ``weight <= 0``, missing environment variables).
-        All entries are normalized into the single ``"default"`` balancing
-        pool.
+        By default all entries are normalized into the single ``"default"``
+        balancing pool; with ``preserve_groups`` (fallbacks configured),
+        standard models keep their configured ``model_name`` so LiteLLM
+        group fallbacks can route between them. Local provider models are
+        always pooled into "default" (they cannot be LiteLLM fallback
+        targets).
 
         Args:
             models: ModelConfig objects (full list or a subset).
+            preserve_groups: Keep standard models' configured group names.
 
         Returns:
             Non-empty list of model entry dicts.
@@ -670,11 +687,42 @@ class LLMProcessor:
                 "Check that required SDKs are installed for configured models."
             )
 
-        # Normalize all model_name to "default" for unified load balancing pool
-        for entry in model_list:
-            entry["model_name"] = "default"
+        if preserve_groups:
+            self._normalize_fallback_groups(model_list)
+        else:
+            # Normalize all model_name to "default" for unified load balancing pool
+            for entry in model_list:
+                entry["model_name"] = "default"
 
         return model_list
+
+    @staticmethod
+    def _normalize_fallback_groups(model_list: list[dict[str, Any]]) -> None:
+        """Adjust entry groups for fallback routing (in place).
+
+        Standard models keep their configured groups; local provider models
+        are pooled into "default" (LiteLLM fallbacks cannot target them).
+        Requests always enter at group "default", so that group must exist.
+
+        Raises:
+            ValueError: If no entry belongs to the "default" group.
+        """
+        from markitai.providers import is_local_provider_model
+
+        for entry in model_list:
+            model_id = entry["litellm_params"]["model"]
+            if is_local_provider_model(model_id) and entry["model_name"] != "default":
+                logger.warning(
+                    f"[Router] Local provider model {model_id} cannot be a "
+                    f"fallback target; pooling it into the 'default' group"
+                )
+                entry["model_name"] = "default"
+
+        if not any(e["model_name"] == "default" for e in model_list):
+            raise ValueError(
+                "router_settings.fallbacks requires a 'default' model group as "
+                "the entry point. Name at least one model_list entry 'default'."
+            )
 
     def _is_vision_model(self, model_config: Any) -> bool:
         """Check if a model supports vision.
@@ -779,13 +827,11 @@ class LLMProcessor:
         requires_vision = has_images(messages)
         router = self.vision_router if requires_vision else self.router
 
-        max_retries = self.config.router_settings.num_retries
         return await self._call_llm_with_retry(
             model=model,
             messages=messages,
             call_id=call_id,
             context=context,
-            max_retries=max_retries,
             router=router,
         )
 
@@ -940,7 +986,7 @@ class LLMProcessor:
         messages: list[dict[str, Any]],
         call_id: str,
         context: str = "",
-        max_retries: int = DEFAULT_MAX_RETRIES,
+        max_retries: int | None = None,
         router: MarkitaiRouter | None = None,
     ) -> LLMResponse:
         """
@@ -955,7 +1001,8 @@ class LLMProcessor:
             messages: Chat messages
             call_id: Unique identifier for this call (for logging)
             context: Context identifier for usage tracking (e.g., filename)
-            max_retries: Maximum number of retry attempts
+            max_retries: Retry-attempt override (None -> the engine-wide
+                default from ``router_settings.num_retries``)
             router: Router to use (defaults to self.router)
 
         Returns:

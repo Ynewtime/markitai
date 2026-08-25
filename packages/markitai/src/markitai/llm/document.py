@@ -333,7 +333,6 @@ class DocumentEnhancer:
             messages=messages,
             call_id=call_id,
             context=context,
-            max_retries=self._config.router_settings.num_retries,
             router=router,
             require_content=require_content,
         )
@@ -1106,7 +1105,6 @@ class DocumentEnhancer:
                 ],
                 call_id=call_id,
                 context=context,
-                max_retries=self._config.router_settings.num_retries,
                 router=self._get_vision_router(),
                 require_content=True,
             )

@@ -282,6 +282,7 @@ class LLMEngine:
         track_usage: Callable[[str, int, int, float, str], None],
         calculate_max_tokens: Callable[..., int | None],
         get_primary_model: Callable[[Any], str | None],
+        max_retries: int = DEFAULT_MAX_RETRIES,
     ) -> None:
         """Exactly one of ``router`` / ``get_router`` must be provided.
 
@@ -290,6 +291,11 @@ class LLMEngine:
         that error must surface inside the callers' fallback handling (as
         it did when the engine itself was created lazily at call time),
         not at engine/service construction time.
+
+        ``max_retries`` is the engine-wide transport retry count (the
+        processor passes ``router_settings.num_retries``), used by every
+        call that does not override it explicitly. The engine owns ALL
+        transport retries: the router layer performs none.
         """
         if (router is None) == (get_router is None):
             raise ValueError("LLMEngine requires exactly one of router/get_router")
@@ -301,6 +307,7 @@ class LLMEngine:
         self.track_usage = track_usage
         self.calculate_max_tokens = calculate_max_tokens
         self._get_primary_model = get_primary_model
+        self.max_retries = max_retries
         # Content-cache hit/miss counters (moved here from LLMProcessor in
         # Phase 2.3). Plain int increments, same as the previous processor
         # attributes (GIL-safe enough for counters).
@@ -497,7 +504,7 @@ class LLMEngine:
         messages: list[dict[str, Any]],
         call_id: str,
         context: str = "",
-        max_retries: int = DEFAULT_MAX_RETRIES,
+        max_retries: int | None = None,
         router: Any | None = None,
         require_content: bool = False,
     ) -> LLMResponse:
@@ -514,7 +521,8 @@ class LLMEngine:
             messages: Chat messages
             call_id: Unique identifier for this call (for logging)
             context: Context identifier for usage tracking (e.g., filename)
-            max_retries: Maximum number of retry attempts
+            max_retries: Retry-attempt override (None -> the engine-wide
+                ``max_retries`` from ``router_settings.num_retries``)
             router: Router override (None -> engine default router)
             require_content: Raise ``EmptyLLMResponseError`` instead of
                 returning blank content once the retries are exhausted.
@@ -530,6 +538,9 @@ class LLMEngine:
             EmptyLLMResponseError: If ``require_content`` is set and the
                 model returned empty/whitespace-only content.
         """
+        if max_retries is None:
+            max_retries = self.max_retries
+
         # Use provided router or default to main router
         active_router = router or self.router
 
@@ -588,7 +599,7 @@ class LLMEngine:
         self,
         active_router: Any,
         call_id: str,
-        max_retries: int = DEFAULT_MAX_RETRIES,
+        max_retries: int | None = None,
     ) -> Callable[..., Awaitable[Any]]:
         """Build an acompletion adapter with the full transport retry loop.
 
@@ -627,7 +638,7 @@ class LLMEngine:
         call_id: str,
         args: tuple[Any, ...] = (),
         kwargs: dict[str, Any],
-        max_retries: int = DEFAULT_MAX_RETRIES,
+        max_retries: int | None = None,
         own_semaphore: bool,
         usage_context: str | None = None,
         finalize: Callable[[Any, str, int, int, float], Any] | None = None,
@@ -652,6 +663,9 @@ class LLMEngine:
           model/tokens/cost) to the return value; None returns the raw
           ModelResponse (instructor needs the raw object).
         """
+        if max_retries is None:
+            max_retries = self.max_retries
+
         model = kwargs.get("model", "default")
         last_exception: Exception | None = None
 

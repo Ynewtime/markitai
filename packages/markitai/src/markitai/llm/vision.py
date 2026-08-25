@@ -349,7 +349,6 @@ class VisionAnalyzer:
             messages=messages,
             call_id=call_id,
             context=context,
-            max_retries=self._config.router_settings.num_retries,
             router=router,
         )
 

@@ -497,10 +497,10 @@ Configure how Markitai routes requests across multiple models:
 
 | Setting | Options | Default | Description |
 |---------|---------|---------|-------------|
-| `routing_strategy` | `simple-shuffle`, `least-busy`, `usage-based-routing`, `latency-based-routing` | `simple-shuffle` | How to select models |
-| `num_retries` | ≥0 | 2 | Retry count on failure |
+| `routing_strategy` | `simple-shuffle`, `least-busy`, `usage-based-routing`, `latency-based-routing` | `simple-shuffle` | How to select standard models; local providers (`claude-agent/`, `copilot/`, ...) always use weighted random |
+| `num_retries` | ≥0 | 2 | Transport retries per request, run by markitai's own retry loop (LiteLLM-internal retries stay disabled) |
 | `timeout` | seconds | 120 | Request timeout (base value for adaptive calculation) |
-| `fallbacks` | list | `[]` | LiteLLM Router fallback model groups |
+| `fallbacks` | list | `[]` | LiteLLM group fallbacks, e.g. `[{"default": ["backup"]}]`. Requests enter at group `default`; models named otherwise only get traffic via fallback (standard models only). Empty = all models pooled into `default` |
 | `concurrency` | ≥1 | 10 | Max concurrent LLM requests |
 
 #### Model Weight

@@ -747,6 +747,160 @@ class TestMarkitaiRouterMixed:
 
 
 # =============================================================================
+# Test router_settings.fallbacks actually taking effect
+# =============================================================================
+
+
+class TestRouterFallbacks:
+    """Configured fallbacks must switch groups when the primary fails.
+
+    Uses litellm's ``mock_response`` deployment param: the magic string
+    "litellm.RateLimitError" makes the deployment raise, and any other
+    string is returned as the completion content — so the real LiteLLM
+    Router fallback path runs without network access.
+    """
+
+    @staticmethod
+    def _fallback_router() -> MarkitaiRouter:
+        return MarkitaiRouter(
+            [
+                {
+                    "model_name": "default",
+                    "litellm_params": {
+                        "model": "openai/gpt-4o-mini",
+                        "api_key": "test-key",
+                        "mock_response": "litellm.RateLimitError",
+                    },
+                },
+                {
+                    "model_name": "backup",
+                    "litellm_params": {
+                        "model": "openai/gpt-4o",
+                        "api_key": "test-key",
+                        "mock_response": "backup response",
+                    },
+                },
+            ],
+            router_settings={"fallbacks": [{"default": ["backup"]}]},
+        )
+
+    @pytest.mark.asyncio
+    async def test_fallback_group_serves_when_primary_fails(self):
+        """The backup group answers when every default-group model fails."""
+        router = self._fallback_router()
+        response = await router.acompletion(
+            "default", [{"role": "user", "content": "Hi"}], max_tokens=10
+        )
+        assert response.choices[0].message.content == "backup response"
+
+    @pytest.mark.asyncio
+    async def test_engine_call_reaches_fallback_group(self):
+        """A full engine text call is served by the fallback group."""
+        import asyncio
+
+        from markitai.llm.engine import LLMEngine
+
+        router = self._fallback_router()
+        engine = LLMEngine(
+            router=router,
+            semaphore=asyncio.Semaphore(1),
+            memory_cache=MagicMock(),
+            persistent_cache=MagicMock(),
+            track_usage=MagicMock(),
+            calculate_max_tokens=MagicMock(return_value=64),
+            get_primary_model=MagicMock(return_value=None),
+            max_retries=0,
+        )
+        response = await engine.complete_text(
+            model="default",
+            messages=[{"role": "user", "content": "Hi"}],
+            call_id="fallback-test",
+        )
+        assert response.content == "backup response"
+
+    def test_create_router_preserves_groups_when_fallbacks_configured(
+        self, prompts_config: PromptsConfig
+    ):
+        """With fallbacks configured, standard model groups survive into LiteLLM."""
+        from markitai.config import RouterSettings
+
+        config = LLMConfig(
+            enabled=True,
+            model_list=[
+                ModelConfig(
+                    model_name="default",
+                    litellm_params=LiteLLMParams(
+                        model="openai/gpt-4o-mini", api_key="test-key"
+                    ),
+                ),
+                ModelConfig(
+                    model_name="backup",
+                    litellm_params=LiteLLMParams(
+                        model="openai/gpt-4o", api_key="test-key"
+                    ),
+                ),
+            ],
+            router_settings=RouterSettings(fallbacks=[{"default": ["backup"]}]),
+        )
+        processor = LLMProcessor(config, prompts_config)
+        router = processor.router
+        assert isinstance(router, MarkitaiRouter)
+        assert router._standard_router is not None
+        groups = {e["model_name"] for e in router._standard_router.model_list}
+        assert groups == {"default", "backup"}
+        assert router._standard_router.fallbacks == [{"default": ["backup"]}]
+
+    def test_create_router_pools_groups_when_no_fallbacks(
+        self, prompts_config: PromptsConfig
+    ):
+        """Without fallbacks, all model groups normalize into "default"."""
+        config = LLMConfig(
+            enabled=True,
+            model_list=[
+                ModelConfig(
+                    model_name="primary",
+                    litellm_params=LiteLLMParams(
+                        model="openai/gpt-4o-mini", api_key="test-key"
+                    ),
+                ),
+                ModelConfig(
+                    model_name="secondary",
+                    litellm_params=LiteLLMParams(
+                        model="openai/gpt-4o", api_key="test-key"
+                    ),
+                ),
+            ],
+        )
+        processor = LLMProcessor(config, prompts_config)
+        router = processor.router
+        assert router._standard_router is not None
+        groups = {e["model_name"] for e in router._standard_router.model_list}
+        assert groups == {"default"}
+
+    def test_fallbacks_without_default_group_raises(
+        self, prompts_config: PromptsConfig
+    ):
+        """Fallback routing needs the "default" entry group."""
+        from markitai.config import RouterSettings
+
+        config = LLMConfig(
+            enabled=True,
+            model_list=[
+                ModelConfig(
+                    model_name="primary",
+                    litellm_params=LiteLLMParams(
+                        model="openai/gpt-4o-mini", api_key="test-key"
+                    ),
+                ),
+            ],
+            router_settings=RouterSettings(fallbacks=[{"primary": ["backup"]}]),
+        )
+        processor = LLMProcessor(config, prompts_config)
+        with pytest.raises(ValueError, match="'default' model group"):
+            _ = processor.router
+
+
+# =============================================================================
 # Test SQLiteCache
 # =============================================================================
 
