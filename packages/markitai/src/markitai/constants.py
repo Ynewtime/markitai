@@ -305,7 +305,7 @@ COPILOT_MODEL_PRICING: dict[str, tuple[float, float]] = {
     "claude-opus-4.5": (5.0, 25.0),
     "claude-opus-4.6": (5.0, 25.0),
     # Google models
-    "gemini-3.1-pro-preview": (2.5, 10.0),
+    "gemini-3.7-flash": (0.75, 3.75),
 }
 
 # Default model info when LiteLLM lookup fails

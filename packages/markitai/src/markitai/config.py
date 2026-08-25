@@ -1072,7 +1072,7 @@ class ConfigManager:
                     {
                         "model_name": "default",
                         "litellm_params": {
-                            "model": "gemini/gemini-3.1-flash-lite-preview",
+                            "model": "gemini/gemini-flash-latest",
                             "api_key": "env:GEMINI_API_KEY",
                         },
                     }
