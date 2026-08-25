@@ -4,6 +4,7 @@ version = "0.24.0"  # workspace identity only (unpublished); keep in sync with p
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "markitai",
+    "markitai-mcp",
 ]
 
 [project.optional-dependencies]
@@ -31,6 +32,7 @@ members = ["packages/*"]
 
 [tool.uv.sources]
 markitai = { workspace = true }
+markitai-mcp = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -48,7 +50,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/markitai/tests"]
+testpaths = ["packages/markitai/tests", "packages/markitai-mcp/tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-v --tb=short -n auto -m 'not slow and not network'"
@@ -249,7 +251,7 @@ forbidden_modules = ["markitai.fetch"]
 [tool.pyright]
 pythonVersion = "3.13"
 typeCheckingMode = "basic"
-include = ["packages/markitai/src"]
+include = ["packages/markitai/src", "packages/markitai-mcp/src"]
 exclude = ["**/__pycache__"]
 venvPath = "."
 venv = ".venv"
