@@ -40,7 +40,7 @@ Library calls keep `stdout` clean — parser noise from PyMuPDF/ONNX is suppress
 import os
 import markitai
 
-os.environ["MODEL"] = "openai/gpt-4o-mini"  # or configure llm.model_list
+os.environ["MODEL"] = "openai/gpt-5.4-nano"  # or configure llm.model_list
 
 out = markitai.convert("report.pdf", output_dir="out/", llm=True)
 print(out.llm_markdown)  # enhanced body

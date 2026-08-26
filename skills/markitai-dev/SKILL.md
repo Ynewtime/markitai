@@ -15,15 +15,17 @@ uv run pre-commit install                         # ruff on commit
 uv run pre-commit install --hook-type pre-push    # pyright + tests on push
 ```
 
-## Gates — a change is done only when all four pass
+## Gates — a change is done only when every one passes
 
 ```bash
-uv run pytest -q                          # default selection: parallel, excludes slow/network
-uv run ruff check && uv run ruff format   # lint + format (rules: E,W,F,I,B,C4,UP,ARG,SIM)
-uv run pyright packages/markitai/src      # 0 errors required
-uv run lint-imports                       # architecture layering contracts, 0 broken required
+uv run pytest -q                                 # default selection: parallel, excludes slow/network
+uv run ruff check && uv run ruff format          # lint + format (rules: E,W,F,I,B,C4,UP,ARG,SIM)
+uv run pyright                                   # src + tests, 0 errors required
+uv run lint-imports                              # architecture layering contracts, 0 broken required
 uv run bandit -c pyproject.toml -r packages/markitai/src -q   # security lint
 ```
+
+CI runs the same five over `packages/markitai/src` and `packages/markitai/tests`.
 
 Opt-in markers: `uv run pytest -m "slow or network"`; `parity` marks defuddle-parity tests. CI runs the default selection plus an isolated built-wheel install smoke test on Linux/macOS/Windows × Python 3.11–3.13 — platform-only failures are real failures.
 

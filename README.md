@@ -7,10 +7,10 @@
 
 Opinionated Markdown converter with native LLM enhancement support.
 
-- **Multi-format**: DOCX, PPTX, XLSX, PDF, TXT, MD, images (JPG/PNG/WebP), and URLs → clean Markdown
+- **Multi-format**: DOCX, PPTX, XLSX, PDF, EPUB, EML, TXT, MD, images (JPG/PNG/WebP), and URLs → clean Markdown; legacy `.doc`/`.ppt` via the `legacy` extra
 - **LLM enhancement**: AI-powered format cleaning, frontmatter metadata, and vision analysis of embedded images via [litellm](https://github.com/BerriAI/litellm), so any provider works (OpenAI, Anthropic, Gemini, local CLIs, and more)
 - **Batch processing**: concurrent conversion with progress display and `--resume` for interrupted jobs
-- **OCR**: scanned PDFs and images via RapidOCR (optional extra, see below)
+- **OCR**: scanned PDFs and images via local RapidOCR (optional extra, see below), or `--ocr --llm` to have the vision model read the page images directly (VLM-OCR)
 - **Web fetching**: static HTTP with cache revalidation, or Playwright rendering for JS-heavy pages
 - **Local web workspace**: upload files or folders, submit URLs, configure LLM providers, compare results, retry failures, and revisit conversion history — CLI runs can opt in too, via `--record-history`
 

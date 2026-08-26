@@ -48,7 +48,7 @@ LLM enhancement is **off by default** on every tool and enabled per call with `l
       "command": "uvx",
       "args": ["--from", "markitai[mcp]", "markitai-mcp"],
       "env": {
-        "MODEL": "openai/gpt-4o-mini",
+        "MODEL": "openai/gpt-5.4-nano",
         "OPENAI_API_KEY": "sk-..."
       }
     }

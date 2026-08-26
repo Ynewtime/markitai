@@ -17,7 +17,7 @@ features:
   - icon: |
       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>
     title: Multi-format Support
-    details: Convert DOCX, PPTX, XLSX, PDF, TXT, MD, images (JPG/PNG/WebP) and URLs to Markdown.
+    details: Convert DOCX, PPTX, XLSX, PDF, EPUB, EML, TXT, MD, images (JPG/PNG/WebP) and URLs to Markdown. Legacy .doc/.ppt via the legacy extra.
   - icon: |
       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
     title: LLM Enhancement
@@ -29,7 +29,7 @@ features:
   - icon: |
       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M15 3v4a2 2 0 0 0 2 2h4"/><path d="M12 17v-6"/><path d="M9.5 14.5 12 17l2.5-2.5"/><path d="M20 17.5a9 9 0 1 1-18 0V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"/></svg>
     title: OCR Recognition
-    details: Extract text from scanned PDFs and images using RapidOCR, via the optional markitai[ocr] extra.
+    details: Extract text from scanned PDFs and images with local RapidOCR (markitai[ocr]), or let a vision model read the pages directly with --ocr --llm.
 ---
 
 <section class="home-quickstart" aria-labelledby="quickstart-title">
