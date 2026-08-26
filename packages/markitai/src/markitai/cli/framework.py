@@ -91,6 +91,8 @@ class MarkitaiGroup(click.RichGroup):
         "--profile",
         "--no-cache-for",
         "--llm-concurrency",
+        "--llm-batch-timeout",
+        "--llm-batch-collect",
         "-j",
         "--batch-concurrency",
         "--url-concurrency",

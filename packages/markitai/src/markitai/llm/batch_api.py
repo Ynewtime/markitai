@@ -22,12 +22,63 @@ import asyncio
 import copy
 import json
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
 import instructor
 from loguru import logger
+
+# ---------------------------------------------------------------------------
+# Pending-run state (survives process exit for two-phase collect)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class BatchDocItem:
+    """One document's slot in a pending batch run."""
+
+    custom_id: str
+    source: str  # document name (LLM context identifier)
+    input_md: str  # LLM-input markdown file, relative to the state dir
+    base_md: str  # base .md path, relative to output_dir (.llm.md derives)
+
+
+@dataclass
+class BatchRunState:
+    """Everything needed to collect a submitted batch hours later.
+
+    Written to ``<output_dir>/.markitai/batch-<batch_id>/state.json`` next to
+    the request jsonl and the per-document LLM-input markdown files, so
+    collection never depends on the original input directory.
+    """
+
+    batch_id: str
+    model: str
+    mode: str  # instructor mode value (tools / json_schema / md_json)
+    provider: str  # litellm custom_llm_provider
+    created_at: str
+    items: list[BatchDocItem] = field(default_factory=list)
+
+    def save(self, state_dir: Path) -> Path:
+        state_dir.mkdir(parents=True, exist_ok=True)
+        path = state_dir / "state.json"
+        path.write_text(
+            json.dumps(asdict(self), indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        return path
+
+    @classmethod
+    def load(cls, state_dir: Path) -> BatchRunState:
+        data = json.loads((state_dir / "state.json").read_text(encoding="utf-8"))
+        items = [BatchDocItem(**item) for item in data.pop("items")]
+        return cls(items=items, **data)
+
+    @staticmethod
+    def state_dir_for(output_dir: Path, batch_id: str) -> Path:
+        return output_dir / ".markitai" / f"batch-{batch_id}"
+
 
 # ---------------------------------------------------------------------------
 # Request building (pure, no network)

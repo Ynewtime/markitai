@@ -286,6 +286,30 @@ def run_interactive_mode(ctx: click.Context) -> None:
     help="Number of concurrent LLM requests (default from config).",
 )
 @click.option(
+    "--llm-batch",
+    is_flag=True,
+    help="Directory batches only: run LLM enhancement through the provider's "
+    "Batch API at half the list price. Waits up to --llm-batch-timeout, then "
+    "hands off to a later --llm-batch-collect. Requires an OpenAI pool.",
+)
+@click.option(
+    "--llm-batch-timeout",
+    type=click.IntRange(min=60),
+    default=3600,
+    show_default=True,
+    help="Seconds to wait for a Batch API job before switching to two-phase "
+    "collection (--llm-batch-collect).",
+)
+@click.option(
+    "--llm-batch-collect",
+    "llm_batch_collect",
+    type=str,
+    default=None,
+    metavar="BATCH_ID",
+    help="Collect a previously submitted Batch API job (needs -o pointing at "
+    "the original output directory). No input argument required.",
+)
+@click.option(
     "--batch-concurrency",
     "-j",
     type=click.IntRange(min=1),
@@ -410,6 +434,9 @@ def app(
     batch_concurrency: int | None,
     url_concurrency: int | None,
     llm_concurrency: int | None,
+    llm_batch: bool,
+    llm_batch_timeout: int,
+    llm_batch_collect: str | None,
     glob_patterns: tuple[str, ...],
     max_depth: int | None,
     fetch_strategy_name: str | None,
@@ -451,9 +478,30 @@ def app(
     ctx.ensure_object(dict)
     input_path_str = ctx.obj.get("_input_path")
 
-    if not input_path_str:
+    if not input_path_str and llm_batch_collect is None:
         click.echo(ctx.get_help())
         ctx.exit(0)
+
+    # Batch-API collection runs without an input argument
+    if llm_batch_collect is not None:
+        from markitai.cli.processors.batch_llm import collect_batch_llm
+        from markitai.utils.errors import ConversionError
+
+        if output is None:
+            stderr_console.print(
+                "[red]Error: --llm-batch-collect needs -o pointing at the "
+                "original batch output directory.[/red]"
+            )
+            ctx.exit(1)
+        collect_cfg = ConfigManager().load(config_path=config_path)
+        try:
+            code = asyncio.run(
+                collect_batch_llm(collect_cfg, output, llm_batch_collect, quiet=quiet)
+            )
+        except ConversionError as e:
+            stderr_console.print(f"[red]Error: {e}[/red]")
+            ctx.exit(1)
+        ctx.exit(code)
 
     # Check if input is a URL
     is_url_input = is_url(input_path_str)
@@ -932,6 +980,65 @@ def app(
         if input_path.is_dir():
             assert effective_output is not None  # Validated in Phase 1
             from markitai.cli.processors.batch import process_batch
+
+            if llm_batch:
+                # Batch-API mode: convert with LLM disabled, then enhance
+                # the whole directory through one Batch API job.
+                from markitai.cli.processors.batch_llm import (
+                    run_batch_llm_enhancement,
+                )
+                from markitai.utils.errors import ConversionError
+
+                if not cfg.llm.enabled:
+                    stderr_console.print(
+                        "[red]Error: --llm-batch requires --llm.[/red]"
+                    )
+                    raise SystemExit(1)
+                if cfg.image.alt_enabled or cfg.image.desc_enabled:
+                    stderr_console.print(
+                        "[red]Error: --llm-batch does not support --alt/--desc "
+                        "yet — run without --llm-batch for image analysis.[/red]"
+                    )
+                    raise SystemExit(1)
+                if cfg.screenshot.enabled or cfg.ocr.enabled:
+                    stderr_console.print(
+                        "[red]Error: --llm-batch does not support "
+                        "--screenshot/--ocr (vision paths) yet.[/red]"
+                    )
+                    raise SystemExit(1)
+
+                cfg_no_llm = cfg.model_copy(deep=True)
+                cfg_no_llm.llm.enabled = False
+                await process_batch(
+                    input_path,
+                    effective_output,
+                    cfg_no_llm,
+                    resume,
+                    dry_run,
+                    verbose=verbose,
+                    console_handler_id=console_handler_id,
+                    log_file_path=log_file_path,
+                    fetch_strategy=fetch_strategy,
+                    explicit_fetch_strategy=explicit_fetch_strategy,
+                    glob_patterns=glob_patterns,
+                    quiet=quiet,
+                    history=history_items,
+                )
+                if dry_run:
+                    return
+                try:
+                    code = await run_batch_llm_enhancement(
+                        cfg,
+                        effective_output,
+                        timeout_s=float(llm_batch_timeout),
+                        quiet=quiet,
+                    )
+                except ConversionError as e:
+                    stderr_console.print(f"[red]Error: {e}[/red]")
+                    raise SystemExit(1) from None
+                if code != 0:
+                    raise SystemExit(code)
+                return
 
             await process_batch(
                 input_path,
