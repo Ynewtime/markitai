@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 from markitai.constants import ALL_FETCH_STRATEGIES, LOCAL_STRATEGIES
+from markitai.utils.text import normalize_identifier_key
 
 ALL_STRATEGIES = list(ALL_FETCH_STRATEGIES)
 LOCAL_ONLY_STRATEGIES = list(LOCAL_STRATEGIES)
@@ -107,14 +108,8 @@ def is_private_or_local_domain(domain: str) -> bool:
     return _is_non_public_ip(address)
 
 
-def _normalize_query_key(key: str) -> str:
-    snake_key = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", key)
-    snake_key = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", snake_key)
-    return re.sub(r"[^a-z0-9]+", "_", snake_key.lower()).strip("_")
-
-
 def _is_sensitive_query_key(key: str) -> bool:
-    normalized = _normalize_query_key(key)
+    normalized = normalize_identifier_key(key)
     parts = set(normalized.split("_"))
     if normalized in {
         "apikey",
@@ -255,7 +250,7 @@ def sensitive_path_segment_indexes(path: str) -> frozenset[int]:
 
         if index == 0:
             continue
-        context = _normalize_query_key(decoded_segments[index - 1])
+        context = normalize_identifier_key(decoded_segments[index - 1])
         if (
             context in _SENSITIVE_PATH_CONTEXTS
             or _is_sensitive_query_key(decoded_segments[index - 1])

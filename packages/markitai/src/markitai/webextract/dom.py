@@ -12,6 +12,21 @@ def default_parser() -> str:
     return "lxml" if find_spec("lxml") is not None else "html.parser"
 
 
+def attr_str(el: Tag, name: str) -> str:
+    """One attribute as a string, whether BeautifulSoup returns one or a list.
+
+    Class-like attributes come back as a list, everything else as a string,
+    and a missing attribute as None. Three modules each grew their own copy
+    of this before it lived anywhere shared.
+    """
+    value = el.get(name)
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return " ".join(value)
+
+
 def parse_fragment(html: str) -> BeautifulSoup:
     """Parse an HTML fragment, preferring lxml for speed.
 

@@ -18,6 +18,7 @@ from markitai.webextract.content_boundary import (
     find_content_start,
     is_above_content_start,
 )
+from markitai.webextract.dom import attr_str
 from markitai.webextract.utils import count_words, normalize_text
 
 _DATE_RE = re.compile(
@@ -154,15 +155,6 @@ _HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 
 def _text(el: Tag) -> str:
     return el.get_text().strip()
-
-
-def _attr(el: Tag, name: str) -> str:
-    value = el.get(name)
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value
-    return " ".join(value)
 
 
 def _gone(el: Tag) -> bool:
@@ -373,7 +365,7 @@ def _is_breadcrumb_list(list_el: Tag) -> bool:
 
     has_breadcrumb_link = False
     for a in list_links:
-        href = _attr(a, "href")
+        href = attr_str(a, "href")
         if href.startswith("http") or href.startswith("//"):
             return False
         if href == "/" or re.fullmatch(r"/[a-zA-Z0-9_-]+/?", href):
@@ -556,7 +548,7 @@ def _remove_toc(root: Tag, content_text: str, url: str) -> int:
 
         anchor_count = 0
         for link in links:
-            href = _attr(link, "href")
+            href = attr_str(link, "href")
             if href.startswith("#"):
                 anchor_count += 1
             elif parsed_url is not None and "#" in href:
@@ -906,7 +898,7 @@ def _remove_section_breadcrumbs(root: Tag, url: str) -> int:
         if link is None:
             continue
         try:
-            link_path = urlparse(urljoin(url, _attr(link, "href"))).path or "/"
+            link_path = urlparse(urljoin(url, attr_str(link, "href"))).path or "/"
         except ValueError:
             continue
         # Also catch index.html links to a parent directory (../index.html)
@@ -975,7 +967,7 @@ def _remove_trailing_external_link_lists(root: Tag, url: str) -> int:
                 link_text_len += len(_text(link))
                 try:
                     link_host = (
-                        urlparse(urljoin(url, _attr(link, "href"))).hostname or ""
+                        urlparse(urljoin(url, attr_str(link, "href"))).hostname or ""
                     ).removeprefix("www.")
                 except ValueError:
                     continue

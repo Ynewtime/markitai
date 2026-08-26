@@ -23,6 +23,7 @@ from markitai.cli import ui
 from markitai.cli.console import get_console
 from markitai.cli.i18n import t
 from markitai.config import ConfigManager, MarkitaiConfig
+from markitai.utils.text import normalize_identifier_key
 
 console = get_console()
 
@@ -32,16 +33,9 @@ _MISSING = object()
 _REDACTED = "[REDACTED]"
 
 
-def _normalize_config_key(key: str) -> str:
-    """Normalize snake/camel/header-style keys for policy matching."""
-    snake_key = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", key)
-    snake_key = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", snake_key)
-    return re.sub(r"[^a-z0-9]+", "_", snake_key.lower()).strip("_")
-
-
 def _is_sensitive_config_key(key: str) -> bool:
     """Return whether a config key conventionally contains secret material."""
-    normalized = _normalize_config_key(key)
+    normalized = normalize_identifier_key(key)
     parts = set(normalized.split("_"))
 
     if normalized == "apikey" or normalized.endswith("_apikey"):
@@ -100,7 +94,7 @@ def _redact_config_secrets(value: Any) -> Any:
     if isinstance(value, dict):
         redacted: dict[str, Any] = {}
         for key, item in value.items():
-            normalized = _normalize_config_key(str(key))
+            normalized = normalize_identifier_key(str(key))
             if normalized == "extra_http_headers":
                 redacted[key] = _redact_header_values(item)
             elif normalized == "api_base":
@@ -124,7 +118,6 @@ def _resolve_field_type(key: str) -> Any:
     Returns None when the key cannot be resolved (unknown field, dict/list
     containers, non-list indexing, etc.).
     """
-    import re
     import types
     from typing import Union, get_args, get_origin
 

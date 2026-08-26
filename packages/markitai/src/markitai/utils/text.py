@@ -19,6 +19,19 @@ def markdown_image_reference(alt: str, path: str) -> str:
     return f"![{escaped_alt}]({encoded_path})"
 
 
+def normalize_identifier_key(key: str) -> str:
+    """Fold snake_case, camelCase and header-style spellings onto one form.
+
+    ``apiKey``, ``api-key`` and ``API_KEY`` all become ``api_key``, so a
+    secret-name rule can be written once and still match however the key
+    was spelled. Used by config redaction and URL query redaction, which
+    had grown identical private copies.
+    """
+    snake_key = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", key)
+    snake_key = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", snake_key)
+    return re.sub(r"[^a-z0-9]+", "_", snake_key.lower()).strip("_")
+
+
 def image_ref_pattern(name: str) -> str:
     """Regex matching an image reference to *name*, encoded or raw.
 

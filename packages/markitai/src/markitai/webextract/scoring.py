@@ -20,6 +20,7 @@ from markitai.webextract.constants import (
     FOOTNOTE_INLINE_REFERENCES,
     FOOTNOTE_LIST_SELECTORS,
 )
+from markitai.webextract.dom import attr_str
 from markitai.webextract.utils import count_words
 
 # Ordered entry-point selectors (defuddle ENTRY_POINT_ELEMENTS). Earlier
@@ -72,22 +73,13 @@ def _class_str(el: Tag) -> str:
     return " ".join(raw)
 
 
-def _attr_str(el: Tag, name: str) -> str:
-    value = el.get(name)
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value
-    return " ".join(value)
-
-
 def _is_table_layout(table: Tag) -> bool:
     """Old-style content-layout table: wide, centered, or content-classed."""
     try:
-        width = int(_attr_str(table, "width") or "0")
+        width = int(attr_str(table, "width") or "0")
     except ValueError:
         width = 0
-    style = _attr_str(table, "style")
+    style = attr_str(table, "style")
     style_width = 0
     match = re.search(r"width\s*:\s*(\d+)px", style)
     if match:
@@ -96,7 +88,7 @@ def _is_table_layout(table: Tag) -> bool:
     if (
         width > 400
         or style_width > 400
-        or _attr_str(table, "align") == "center"
+        or attr_str(table, "align") == "center"
         or "content" in table_class
         or "article" in table_class
     ):
@@ -133,8 +125,8 @@ def score_candidate(node: Tag) -> float:
     score -= image_density * 3
 
     # Position bonus (center/right elements)
-    style = _attr_str(node, "style")
-    align = _attr_str(node, "align")
+    style = attr_str(node, "style")
+    align = attr_str(node, "align")
     if "float: right" in style or "text-align: right" in style or align == "right":
         score += 5
 

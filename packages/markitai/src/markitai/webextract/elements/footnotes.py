@@ -29,6 +29,7 @@ from markitai.webextract.constants import (
     FOOTNOTE_INLINE_REFERENCES,
     FOOTNOTE_LIST_SELECTORS,
 )
+from markitai.webextract.dom import attr_str
 
 # Matches heading text for loose footnote section delimiters
 FOOTNOTE_SECTION_RE = re.compile(
@@ -107,15 +108,8 @@ def _parent_element(el: Tag) -> Tag | None:
     return None
 
 
-def _get_attr(el: Tag, name: str) -> str:
-    value = el.get(name)
-    if isinstance(value, list):
-        return " ".join(value)
-    return str(value) if value is not None else ""
-
-
 def _get_id(el: Tag) -> str:
-    return _get_attr(el, "id")
+    return attr_str(el, "id")
 
 
 def _class_list(el: Tag) -> list[str]:
@@ -150,7 +144,7 @@ def _get_href_fragment(anchor: Tag | None) -> str:
     """Lowercase fragment id from an anchor's href (after the last ``#``)."""
     if anchor is None:
         return ""
-    href = _get_attr(anchor, "href")
+    href = attr_str(anchor, "href")
     return href.split("#")[-1].lower() if href else ""
 
 
@@ -173,10 +167,10 @@ def _extract_footnoteref(el: Tag) -> str:
 
 
 def _extract_science_org(el: Tag) -> str:
-    xml_rid = _get_attr(el, "data-xml-rid")
+    xml_rid = attr_str(el, "data-xml-rid")
     if xml_rid:
         return xml_rid
-    href = _get_attr(el, "href")
+    href = attr_str(el, "href")
     if href.startswith("#core-R"):
         return href.replace("#core-", "", 1)
     return ""
@@ -185,7 +179,7 @@ def _extract_science_org(el: Tag) -> str:
 def _extract_mediawiki(el: Tag) -> str:
     ref_id = ""
     for link in el.select("a"):
-        href = _get_attr(link, "href")
+        href = attr_str(link, "href")
         segment = href.split("/")[-1] if href else ""
         m = re.search(r"(?:cite_note|cite_ref)-(.+)", segment)
         if m:
@@ -194,7 +188,7 @@ def _extract_mediawiki(el: Tag) -> str:
 
 
 def _extract_lesswrong_span(el: Tag) -> str:
-    attr_id = _get_attr(el, "data-footnote-id")
+    attr_id = attr_str(el, "data-footnote-id")
     if attr_id:
         return attr_id
     el_id = _get_id(el)
@@ -230,7 +224,7 @@ _INLINE_REF_EXTRACTORS: list[tuple[str, Callable[[Tag], str]]] = [
     ),
     # LessWrong uses id="fnrefXXX" on the span when data-footnote-id is missing.
     ("span.footnote-reference", _extract_lesswrong_span),
-    ("span.footnote-link", lambda el: _get_attr(el, "data-footnote-id")),
+    ("span.footnote-link", lambda el: attr_str(el, "data-footnote-id")),
     ("a.citation", lambda el: _text_content(el).strip()),
     ('a[id^="fnref"]', lambda el: _get_id(el).replace("fnref", "", 1).lower()),
     # O'Reilly/HTMLBook: <a data-type="noteref" href="chNN.html#chMMfnK">
@@ -609,7 +603,7 @@ class _FootnoteHandler:
             named_anchor = clone.select_one("a[name]")
             if (
                 named_anchor is not None
-                and _get_attr(named_anchor, "name").lower() == frag_id
+                and attr_str(named_anchor, "name").lower() == frag_id
             ):
                 named_anchor.decompose()
 
@@ -977,7 +971,7 @@ class _FootnoteHandler:
         if _BACKREF_SYMBOLS_RE.match(text) or "footnote-backref" in _class_list(el):
             return True
         # MediaWiki multi-ref backrefs: <a href="#cite_ref-...">3.0</a>
-        return bool(_CITE_REF_RE.match(_get_attr(el, "href")))
+        return bool(_CITE_REF_RE.match(attr_str(el, "href")))
 
     def remove_backrefs(self, el: Tag) -> None:
         for a in el.select("a"):
@@ -1013,7 +1007,7 @@ class _FootnoteHandler:
         anchor = el.select_one("a[id], a[name]")
         if anchor is None:
             return ""
-        return (_get_id(anchor) or _get_attr(anchor, "name")).lower()
+        return (_get_id(anchor) or attr_str(anchor, "name")).lower()
 
     @staticmethod
     def _extract_list_item_id_and_content(li: Tag) -> tuple[str, Tag | None]:
@@ -1035,7 +1029,7 @@ class _FootnoteHandler:
             if raw_id.startswith(prefix):
                 return raw_id[len(prefix) :], li
         if li.has_attr("data-counter"):
-            counter = re.sub(r"\.$", "", _get_attr(li, "data-counter")).lower()
+            counter = re.sub(r"\.$", "", attr_str(li, "data-counter")).lower()
             return counter, li
         segment = raw_id.split("/")[-1]
         m = re.search(r"cite_note-(.+)", segment)
@@ -1275,7 +1269,7 @@ class _FootnoteHandler:
 
         for ol in ols:
             aside = _parent_element(ol)
-            start = _get_attr(ol, "start")
+            start = attr_str(ol, "start")
             if not start.isdigit():
                 continue
             footnote_number = int(start)
@@ -1323,7 +1317,7 @@ class _FootnoteHandler:
 
         footnote_count = 1
         for ref in refs:
-            def_id = _get_attr(ref, "data-definition")
+            def_id = attr_str(ref, "data-definition")
             if not def_id:
                 continue
 
@@ -1377,7 +1371,7 @@ class _FootnoteHandler:
             if _matches(el, "cite.ltx_cite"):
                 refs: list[Tag] = []
                 for link in el.select("a"):
-                    href = _get_attr(link, "href")
+                    href = attr_str(link, "href")
                     if not href:
                         continue
                     m = re.search(r"bib\.bib(\d+)", href.split("/")[-1])
