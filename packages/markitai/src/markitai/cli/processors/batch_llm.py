@@ -89,13 +89,16 @@ def _prepare_pending(
     pending: list[tuple[BatchDocItem, Any]] = []
     cached = 0
     for base_md in base_files:
-        source = base_md.name
-        markdown = base_md.read_text(encoding="utf-8")
+        # Live runs name the LLM context after the input file (note1.md),
+        # not the written base (note1.md.md) — keep the naming identical.
+        # The base's frontmatter is stripped so the LLM never sees it.
+        source = base_md.name.removesuffix(".md")
+        markdown = _strip_frontmatter(base_md.read_text(encoding="utf-8"))
         plan = processor.documents._prepare_document_plan(markdown, source)
         hit = processor._engine.try_cached(plan.call)
         if hit is not None:
             cleaned, frontmatter = processor.documents.finalize_document_plan(plan, hit)
-            _write_llm_md(base_md, frontmatter, cleaned)
+            _write_llm_md(processor, base_md, frontmatter, cleaned)
             cached += 1
             continue
         item = BatchDocItem(
@@ -108,12 +111,28 @@ def _prepare_pending(
     return pending, cached
 
 
-def _write_llm_md(base_md: Path, frontmatter: str, cleaned: str) -> Path:
-    """Write the enhanced .llm.md next to its base file."""
+def _strip_frontmatter(text: str) -> str:
+    """Drop a leading YAML frontmatter block, returning the body."""
+    if not text.startswith("---"):
+        return text
+    end = text.find("\n---", 3)
+    if end == -1:
+        return text
+    return text[end + 4 :].lstrip("\n")
+
+
+def _write_llm_md(
+    processor: Any, base_md: Path, frontmatter: str, cleaned: str
+) -> Path:
+    """Write the enhanced .llm.md next to its base file.
+
+    Assembled through ``format_llm_output`` so the frontmatter fences and
+    body spacing are byte-identical to the live path.
+    """
     from markitai.security import atomic_write_text
 
     target = base_md.with_suffix(".llm.md")
-    atomic_write_text(target, f"{frontmatter}\n\n{cleaned}\n")
+    atomic_write_text(target, processor.format_llm_output(cleaned, frontmatter))
     return target
 
 
@@ -270,7 +289,7 @@ async def _finish_batch(
                 * BATCH_COST_FACTOR,
                 item.source,
             )
-            _write_llm_md(base_md, frontmatter, cleaned)
+            _write_llm_md(processor, base_md, frontmatter, cleaned)
             done += 1
         except Exception as e:
             logger.warning(
@@ -280,14 +299,18 @@ async def _finish_batch(
             cleaned, frontmatter = await processor.documents.process_document(
                 markdown, item.source
             )
-            _write_llm_md(base_md, frontmatter, cleaned)
+            _write_llm_md(processor, base_md, frontmatter, cleaned)
             reran += 1
 
     if not quiet:
         print(
             f"Batch enhancement done: {done} via batch"
             + (f", {reran} re-ran live" if reran else "")
-            + f" (billed at {int(BATCH_COST_FACTOR * 100)}% of list price)"
+            + (
+                f" (billed at {int(BATCH_COST_FACTOR * 100)}% of list price)"
+                if done
+                else ""
+            )
         )
     return 0
 

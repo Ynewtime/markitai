@@ -276,7 +276,13 @@ async def poll_openai_batch(
 async def download_openai_batch_output(
     batch_id: str, output_path: Path, *, custom_llm_provider: str = "openai"
 ) -> Path:
-    """Download a completed batch's output file. NETWORK CALL."""
+    """Download a completed batch's output file. NETWORK CALL.
+
+    A completed batch whose requests all failed has no ``output_file_id`` —
+    its error file has the same line shape (custom_id + non-200 response),
+    so it is downloaded as the output instead: per-line errors then flow
+    into the caller's live re-run fallback instead of aborting the collect.
+    """
     import litellm
 
     batch = await litellm.aretrieve_batch(
@@ -284,10 +290,18 @@ async def download_openai_batch_output(
     )
     if batch.status != "completed":
         raise RuntimeError(f"batch {batch_id} is {batch.status!r}, not completed")
+    file_id = batch.output_file_id or batch.error_file_id
+    if not file_id:
+        raise RuntimeError(
+            f"batch {batch_id} completed with no output_file_id or error_file_id"
+        )
     if not batch.output_file_id:
-        raise RuntimeError(f"batch {batch_id} completed with no output_file_id")
+        logger.warning(
+            f"[Batch] {batch_id} has only an error file — all requests will "
+            "fall back to live re-runs"
+        )
     content = await litellm.afile_content(
-        batch.output_file_id, custom_llm_provider=cast("Any", custom_llm_provider)
+        file_id, custom_llm_provider=cast("Any", custom_llm_provider)
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(cast("Any", content).content)

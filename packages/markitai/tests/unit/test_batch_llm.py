@@ -123,6 +123,9 @@ class TestPreparePending:
         (out / "a.md").write_text("# Doc A\n\nbody", encoding="utf-8")
 
         processor = MagicMock()
+        processor.format_llm_output.side_effect = lambda cleaned, fm: (
+            f"{fm}\n\n{cleaned}\n"
+        )
         hit_result = MagicMock()
         processor._engine.try_cached.return_value = hit_result
         processor.documents.finalize_document_plan.return_value = (
@@ -203,6 +206,9 @@ class TestFinishBatch:
         }
 
         processor = MagicMock()
+        processor.format_llm_output.side_effect = lambda cleaned, fm: (
+            f"{fm}\n\n{cleaned}\n"
+        )
         plan = MagicMock()
         plan.call.validate = None
         processor.documents._prepare_document_plan.return_value = plan
@@ -279,6 +285,9 @@ class TestFinishBatch:
         state.save(state_dir)
 
         processor = MagicMock()
+        processor.format_llm_output.side_effect = lambda cleaned, fm: (
+            f"{fm}\n\n{cleaned}\n"
+        )
         processor.documents._prepare_document_plan.return_value = MagicMock()
         processor.documents.process_document = AsyncMock(
             return_value=("# Live A", "---\ntitle: Doc A\n---")
