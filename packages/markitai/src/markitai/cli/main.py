@@ -141,6 +141,32 @@ stderr_console = get_stderr_console()
 # =============================================================================
 
 
+def main() -> None:
+    """Console-script entry point: run the CLI, then exit deterministically.
+
+    ``app()`` is click's own callable and stays usable on its own (tests and
+    embedders invoke it directly). This wrapper adds the one thing a process
+    markitai owns should do: once the conversion is finished and its status
+    is known, leave through ``finalize_process`` instead of unwinding the
+    interpreter, whose native static destructors can abort an already
+    successful run with exit code 134. See ``markitai.utils.shutdown``.
+    """
+    from markitai.utils.shutdown import finalize_process
+
+    try:
+        app()
+    except SystemExit as exc:
+        code = exc.code
+    else:  # pragma: no cover - click's standalone mode always raises SystemExit
+        code = 0
+    if code is None:
+        code = 0
+    elif not isinstance(code, int):
+        print(code, file=sys.stderr)
+        code = 1
+    finalize_process(code)
+
+
 def run_interactive_mode(ctx: click.Context) -> None:
     """Run interactive mode and execute with gathered options."""
     from markitai.cli.interactive import run_interactive, session_to_cli_args

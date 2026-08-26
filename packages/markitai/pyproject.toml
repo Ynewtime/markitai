@@ -53,9 +53,9 @@ Repository = "https://github.com/Ynewtime/markitai"
 Changelog = "https://github.com/Ynewtime/markitai/blob/main/CHANGELOG.md"
 
 [project.scripts]
-markitai = "markitai.cli:app"
+markitai = "markitai.cli:main"
 markitai-mcp = "markitai.mcp.server:main"
-mkai = "markitai.cli:app"  # short alias (checked: no PyPI/homebrew/system conflict)
+mkai = "markitai.cli:main"  # short alias (checked: no PyPI/homebrew/system conflict)
 
 [project.optional-dependencies]
 claude-agent = ["claude-agent-sdk>=0.1.50"]

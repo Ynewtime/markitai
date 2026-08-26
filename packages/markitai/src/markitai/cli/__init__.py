@@ -16,7 +16,7 @@ from typing import Any
 from markitai.cli import i18n, ui
 
 # Re-export CLI app
-from markitai.cli.main import app
+from markitai.cli.main import app, main
 
 # Re-export utilities from refactored modules (lightweight)
 from markitai.utils.cli_helpers import (
@@ -36,6 +36,7 @@ __all__ = [
     "get_report_file_path",
     "i18n",
     "is_url",
+    "main",
     "resolve_output_path",
     "sanitize_filename",
     "ui",

@@ -83,6 +83,10 @@ asyncio.run(main())
 
 Calling the sync `convert()` from a running loop raises `RuntimeError`. In long-lived apps, call `await markitai.fetch.close_shared_clients()` on shutdown to release shared HTTP clients (the sync `convert()` does this automatically).
 
+::: tip Short-lived host processes
+markitdown pulls Magika, and Magika pulls onnxruntime, into every markitai process — even one that only converts a `.txt`. Under load onnxruntime's teardown can abort at interpreter shutdown, turning a conversion that already wrote its output into exit code 134. A one-shot script can end with `from markitai.utils.shutdown import finalize_process; finalize_process(0)`, which cleans up markitai's temp directories, flushes both streams and leaves without that teardown. The `markitai` CLI already exits this way. A long-lived host should not use it — it takes the whole process down.
+:::
+
 ## ConversionOutput
 
 | Field | Type | Description |

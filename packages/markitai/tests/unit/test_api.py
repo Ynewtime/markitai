@@ -432,12 +432,17 @@ _STDOUT_PROBE = """
 import sys
 
 import markitai
+from markitai.utils.shutdown import finalize_process
 
 out = markitai.convert(
     sys.argv[1], output_dir=sys.argv[2], config=markitai.MarkitaiConfig()
 )
 assert out.markdown, "conversion produced no markdown"
 assert out.output_path is not None
+# End the way a short-lived host should (see markitai.utils.shutdown): an
+# assertion above still fails loudly, but interpreter shutdown — where a
+# native dependency of markitdown can abort — is skipped.
+finalize_process(0)
 """
 
 

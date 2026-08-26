@@ -83,6 +83,10 @@ asyncio.run(main())
 
 在运行中的事件循环里调用同步的 `convert()` 会抛出 `RuntimeError`。长驻应用退出时可调用 `await markitai.fetch.close_shared_clients()` 释放共享 HTTP 客户端（同步 `convert()` 会自动完成这一步）。
 
+::: tip 一次性短生命周期进程
+markitdown 会拉入 Magika，Magika 又会拉入 onnxruntime——任何 markitai 进程都会加载它，哪怕只是转一个 `.txt`。高负载下 onnxruntime 的析构会在解释器退出阶段崩溃，让一次已经写出结果的转换以退出码 134 收场。一次性脚本可以用 `from markitai.utils.shutdown import finalize_process; finalize_process(0)` 结尾：它会清理 markitai 的临时目录、刷新两个输出流，然后跳过那段析构直接退出。`markitai` CLI 已经这样退出。长驻宿主进程不要用——它会把整个进程带走。
+:::
+
 ## ConversionOutput
 
 | 字段 | 类型 | 说明 |

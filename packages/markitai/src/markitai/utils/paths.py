@@ -16,9 +16,14 @@ from markitai.constants import MARKITAI_META_DIR
 _tracked_temp_dirs: list[Path] = []
 
 
-def _cleanup_tracked_temp_dirs() -> None:
-    for temp_dir in _tracked_temp_dirs:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+def cleanup_tracked_temp_dirs() -> None:
+    """Remove every tracked temp directory. Idempotent.
+
+    Registered with ``atexit``, and called directly by the CLI's
+    ``finalize_process``, which never reaches interpreter shutdown.
+    """
+    while _tracked_temp_dirs:
+        shutil.rmtree(_tracked_temp_dirs.pop(), ignore_errors=True)
 
 
 def create_tracked_temp_dir(prefix: str = "markitai-") -> Path:
@@ -29,7 +34,7 @@ def create_tracked_temp_dir(prefix: str = "markitai-") -> Path:
     conversion, so cleanup is deferred to interpreter shutdown.
     """
     if not _tracked_temp_dirs:
-        atexit.register(_cleanup_tracked_temp_dirs)
+        atexit.register(cleanup_tracked_temp_dirs)
     temp_dir = Path(tempfile.mkdtemp(prefix=prefix))
     _tracked_temp_dirs.append(temp_dir)
     return temp_dir

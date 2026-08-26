@@ -271,6 +271,7 @@ class TestCreateProcessFile:
 
             from markitai.cli.processors.batch import create_process_file
             from markitai.config import MarkitaiConfig
+            from markitai.utils.shutdown import finalize_process
 
             async def main():
                 process_file = create_process_file(
@@ -284,6 +285,12 @@ class TestCreateProcessFile:
 
             asyncio.run(main())
             print("script_exit", flush=True)
+            # How a short-lived host is meant to end (see utils/shutdown):
+            # every markitai process loads onnxruntime through markitdown,
+            # and its C++ teardown can abort at interpreter shutdown under
+            # load. Without this the script's status is that library's to
+            # decide, not markitai's.
+            finalize_process(0)
             """
         )
 
