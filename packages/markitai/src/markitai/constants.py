@@ -315,26 +315,6 @@ PROVIDER_DEFAULT_MODELS: dict[str, str] = {
 }
 
 
-# Copilot model pricing (USD per 1M tokens)
-# Note: These are estimated prices based on public API pricing.
-# Actual costs through Copilot subscription may differ.
-# Format: {"model_prefix": (input_price, output_price)}
-COPILOT_MODEL_PRICING: dict[str, tuple[float, float]] = {
-    # OpenAI models
-    "gpt-5.6-luna": (1.0, 6.0),
-    "gpt-5.4": (2.5, 10.0),
-    "gpt-5.4-mini": (0.15, 0.60),
-    "gpt-5.4-codex": (7.5, 22.5),
-    # Anthropic models (via Copilot)
-    "claude-haiku-4.5": (0.80, 4.0),
-    "claude-sonnet-4": (3.0, 15.0),
-    "claude-sonnet-4.6": (3.0, 15.0),
-    "claude-opus-4.5": (5.0, 25.0),
-    "claude-opus-4.6": (5.0, 25.0),
-    # Google models
-    "gemini-3.7-flash": (0.75, 3.75),
-}
-
 # Default model info when LiteLLM lookup fails
 # Used for local providers (claude-agent/, copilot/) as fallback
 # Note: Conservative defaults. Latest models (Opus 4.6, Sonnet 4.6) support

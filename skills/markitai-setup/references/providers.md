@@ -41,7 +41,7 @@ Multiple entries with the same `model_name` load-balance through the litellm rou
 
 Gemini has no CLI/subscription route — direct API key or OpenRouter only.
 
-Retired 2025-02-13 (rejected upstream): `gpt-4o`, `gpt-4.1`, `gpt-4.1-mini`, `o4-mini`, `gpt-5`, `gpt-5.1`, `gpt-5.2` — use `gpt-5.4`.
+Retired upstream (rejected on request): `gpt-4o`, `gpt-4.1`, `gpt-4.1-mini`, `o4-mini`, `gpt-5`, `gpt-5.1`, `gpt-5.2`. markitai warns at startup and names the default for the provider in use; it never rewrites the configured model.
 
 ## Custom endpoints (`api_base`)
 

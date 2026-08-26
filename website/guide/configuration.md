@@ -315,11 +315,11 @@ GitHub Copilot SDK supported models:
 ChatGPT supported models:
 - `gpt-5.4`, `gpt-5.4-codex`, `codex-mini`, etc.
 
-::: warning Deprecated Models
-The following models were **retired on February 13, 2025** and are no longer available:
+::: warning Retired Models
+These have been retired by their provider and no longer answer:
 - `gpt-4o`, `gpt-4.1`, `gpt-4.1-mini`, `o4-mini`, `gpt-5`, `gpt-5.1`, `gpt-5.2`
 
-Please use `gpt-5.4` or other currently supported models.
+Configuring one only produces a startup warning — markitai never rewrites your model. The warning names the default for the provider you are on (see [Defaults markitai picks for you](#defaults-markitai-picks-for-you)) and carries a retirement date only when litellm records one.
 :::
 
 ::: tip Local Providers Support Vision

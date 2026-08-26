@@ -47,7 +47,6 @@ from loguru import logger
 
 from markitai.constants import (
     CLAUDE_CODE_ALIASES,
-    COPILOT_MODEL_PRICING,
     LOCAL_PROVIDER_DEFAULT_MODEL_INFO,
 )
 
@@ -167,7 +166,9 @@ def _find_litellm_model_fuzzy(model: str) -> str | None:
 
     Uses component-based matching to find models with similar naming patterns.
     For example, 'claude-haiku-4.5' will match 'claude-haiku-4-5' because they
-    share the same components: ['claude', 'haiku', '4', '5'].
+    share the same components: ['claude', 'haiku', '4', '5']. A candidate must
+    carry *every* component of the query, so a suffix that selects the tier
+    (``-codex``, ``-mini``) can never be dropped on the way to a price.
 
     Args:
         model: Model name to search for (e.g., "claude-haiku-4.5")
@@ -190,7 +191,6 @@ def _find_litellm_model_fuzzy(model: str) -> str | None:
             return None
 
         best_match: str | None = None
-        best_score = 0
 
         for litellm_model in litellm.model_cost:
             # Skip models with provider prefixes (azure/, bedrock/, etc.)
@@ -201,20 +201,19 @@ def _find_litellm_model_fuzzy(model: str) -> str | None:
             model_lower = litellm_model.lower()
             model_components = re.split(r"[-.]", model_lower)
 
-            # Calculate component match score
-            score = sum(1 for c in components if c in model_components)
+            # Every component must be present. A "half the components"
+            # threshold silently drops the part that picks the tier:
+            # gpt-5.4-codex matched plain gpt-5.4 and was priced at the
+            # cheaper non-codex rate.
+            if not all(c in model_components for c in components):
+                continue
 
-            # Prefer higher scores, and shorter names for ties (more generic)
-            if score > best_score or (
-                score == best_score
-                and best_match
-                and len(litellm_model) < len(best_match)
-            ):
-                best_score = score
+            # Shortest surviving name is the base model, not a dated or
+            # region-prefixed variant of it.
+            if best_match is None or len(litellm_model) < len(best_match):
                 best_match = litellm_model
 
-        # Require at least half of the components to match
-        result = best_match if best_score >= len(components) / 2 else None
+        result = best_match
 
         # Cache the result
         _litellm_model_match_cache[model] = result
@@ -247,6 +246,33 @@ class ProviderCostResult:
         self.matched_model = matched_model
 
 
+def _litellm_prices(model: str) -> tuple[float, float] | None:
+    """Per-token prices litellm actually knows, or None.
+
+    ``get_model_info`` answers for names it has never seen by inferring a
+    provider from the name and returning zero costs. That reads as "this
+    model is free" and hides the entry a fuzzy match would have found: bare
+    ``claude-sonnet-4`` / ``claude-haiku-4.5`` priced every Copilot and
+    ClaudeCode run at $0. Only a name the cost table carries, or a non-zero
+    price, counts as an answer.
+    """
+    import litellm
+
+    try:
+        info = litellm.get_model_info(model)
+    except Exception as e:
+        logger.debug("[Providers] Cost lookup failed for {}: {}", model, e)
+        return None
+
+    input_cost = info.get("input_cost_per_token")
+    output_cost = info.get("output_cost_per_token")
+    if input_cost is None or output_cost is None:
+        return None
+    if not input_cost and not output_cost and model not in litellm.model_cost:
+        return None
+    return float(input_cost), float(output_cost)
+
+
 def estimate_model_cost(
     model: str, input_tokens: int, output_tokens: int
 ) -> ProviderCostResult:
@@ -255,7 +281,11 @@ def estimate_model_cost(
     Attempts to find pricing in the following order:
     1. Exact match in LiteLLM's model pricing database
     2. Fuzzy match in LiteLLM's database (for naming convention differences)
-    3. Fallback to COPILOT_MODEL_PRICING constants
+
+    A model neither step can price is reported as ``source="none"`` and $0
+    rather than guessed at: these callers are subscription-billed
+    (Copilot, ChatGPT), so the number is an equivalent-API-cost estimate,
+    and an honest "unknown" beats a hand-maintained figure that drifts.
 
     Args:
         model: Model name (e.g., "gpt-4.1", "claude-sonnet-4.6")
@@ -265,64 +295,28 @@ def estimate_model_cost(
     Returns:
         ProviderCostResult with cost_usd and estimation metadata
     """
-    import litellm
-
-    # 1. Try exact match in LiteLLM
-    try:
-        info = litellm.get_model_info(model)
-        input_cost = info.get("input_cost_per_token")
-        output_cost = info.get("output_cost_per_token")
-
-        if input_cost is not None and output_cost is not None:
-            cost = input_tokens * input_cost + output_tokens * output_cost
-            return ProviderCostResult(
-                cost_usd=cost,
-                is_estimated=True,
-                source="litellm",
-                matched_model=model,
-            )
-    except Exception as e:
-        logger.debug("[Providers] Cost lookup failed for {}: {}", model, e)
-
-    # 2. Try fuzzy match in LiteLLM
-    fuzzy_match = _find_litellm_model_fuzzy(model)
-    if fuzzy_match:
-        try:
-            info = litellm.get_model_info(fuzzy_match)
-            input_cost = info.get("input_cost_per_token")
-            output_cost = info.get("output_cost_per_token")
-
-            if input_cost is not None and output_cost is not None:
-                cost = input_tokens * input_cost + output_tokens * output_cost
-                return ProviderCostResult(
-                    cost_usd=cost,
-                    is_estimated=True,
-                    source="litellm_fuzzy",
-                    matched_model=fuzzy_match,
-                )
-        except Exception as e:
-            logger.debug("[Providers] Fuzzy cost lookup failed for {}: {}", model, e)
-
-    # 3. Fallback to hardcoded pricing table
-    pricing = COPILOT_MODEL_PRICING.get(model)
-    if pricing is None:
-        # Try prefix matching for versioned models like "gpt-5.1-codex-mini"
-        for prefix in sorted(COPILOT_MODEL_PRICING, key=len, reverse=True):
-            if model.startswith(prefix):
-                pricing = COPILOT_MODEL_PRICING[prefix]
-                break
-
-    if pricing is not None:
-        input_price, output_price = pricing
-        cost = (input_tokens * input_price + output_tokens * output_price) / 1_000_000
+    prices = _litellm_prices(model)
+    if prices is not None:
+        input_cost, output_cost = prices
         return ProviderCostResult(
-            cost_usd=cost,
+            cost_usd=input_tokens * input_cost + output_tokens * output_cost,
             is_estimated=True,
-            source="fallback",
-            matched_model=None,
+            source="litellm",
+            matched_model=model,
         )
 
-    # 4. No pricing found
+    fuzzy_match = _find_litellm_model_fuzzy(model)
+    if fuzzy_match:
+        prices = _litellm_prices(fuzzy_match)
+        if prices is not None:
+            input_cost, output_cost = prices
+            return ProviderCostResult(
+                cost_usd=input_tokens * input_cost + output_tokens * output_cost,
+                is_estimated=True,
+                source="litellm_fuzzy",
+                matched_model=fuzzy_match,
+            )
+
     return ProviderCostResult(
         cost_usd=0.0,
         is_estimated=True,
@@ -331,46 +325,75 @@ def estimate_model_cost(
     )
 
 
-# Models deprecated on 2025-02-13
-# Key: deprecated model name, Value: recommended replacement
-DEPRECATED_MODELS: dict[str, str] = {
-    "gpt-4o": "gpt-5.4",
-    "gpt-4.1": "gpt-5.4",
-    "gpt-4.1-mini": "gpt-5.4",
-    "o4-mini": "gpt-5.4",
-    "gpt-5": "gpt-5.4",
-    "gpt-5.1": "gpt-5.4",
-    "gpt-5.2": "gpt-5.4",
+# Models their provider has retired. markitai only warns — it never rewrites
+# a configured model.
+#
+# Only the *names* live here, deliberately: the two facts that used to rot
+# beside them are now derived. The replacement comes from
+# constants.PROVIDER_DEFAULT_MODELS, so refreshing the defaults refreshes
+# this advice too (the old table still said "migrate to gpt-5.4" well after
+# that stopped being what markitai picks), and the retirement date comes
+# from litellm's own ``deprecation_date`` where it has one — markitai keeps
+# no second calendar, which is how one hardcoded "February 13, 2025" came to
+# be printed for models retired years apart.
+#
+# Value: the provider whose default to recommend when the configured id
+# carries no usable prefix of its own.
+RETIRED_MODELS: dict[str, str] = {
+    "gpt-4o": "openai",
+    "gpt-4.1": "openai",
+    "gpt-4.1-mini": "openai",
+    "o4-mini": "openai",
+    "gpt-5": "openai",
+    "gpt-5.1": "openai",
+    "gpt-5.2": "openai",
 }
 
 
+def _retirement_date(model_name: str) -> str | None:
+    """The provider's own retirement date, if litellm records one."""
+    try:
+        import litellm
+
+        date = litellm.model_cost.get(model_name, {}).get("deprecation_date")
+    except Exception:
+        return None
+    return date if isinstance(date, str) and date else None
+
+
 def check_deprecated_models(models: list[str]) -> list[str]:
-    """Check for deprecated models and return warning messages.
+    """Check for retired models and return warning messages.
 
     Args:
         models: List of model identifiers (e.g., ["copilot/gpt-4o", "openai/gpt-4.1"])
 
     Returns:
-        List of deprecation warning messages
+        List of retirement warning messages
     """
+    from markitai.constants import PROVIDER_DEFAULT_MODELS
+
     warnings: list[str] = []
     seen: set[str] = set()
 
     for model in models:
         # Extract the actual model name (strip provider prefix)
-        if "/" in model:
-            model_name = model.split("/", 1)[1]
-        else:
-            model_name = model
+        prefix, _, suffix = model.partition("/")
+        model_name = suffix or model
 
-        # Check if model is deprecated
-        if model_name in DEPRECATED_MODELS and model_name not in seen:
-            seen.add(model_name)
-            replacement = DEPRECATED_MODELS[model_name]
-            warnings.append(
-                f"⚠️  Model '{model_name}' was retired on February 13, 2025."
-                f"\n   Please migrate to: {replacement}"
-            )
+        if model_name not in RETIRED_MODELS or model_name in seen:
+            continue
+        seen.add(model_name)
+
+        # Recommend the default for the provider the reader is actually on,
+        # falling back to the one this model belonged to.
+        provider = prefix if prefix in PROVIDER_DEFAULT_MODELS else None
+        replacement = PROVIDER_DEFAULT_MODELS[provider or RETIRED_MODELS[model_name]]
+        date = _retirement_date(model_name)
+        retired = f" (retired {date})" if date else ""
+        warnings.append(
+            f"⚠️  Model '{model_name}' has been retired by its provider"
+            f"{retired}.\n   markitai now defaults to: {replacement}"
+        )
 
     return warnings
 
@@ -819,7 +842,7 @@ __all__ = [
     "register_providers",
     "validate_local_provider_deps",
     "check_deprecated_models",
-    "DEPRECATED_MODELS",
+    "RETIRED_MODELS",
     "get_provider",
     "is_local_provider_model",
     "is_local_provider_available",

@@ -15,13 +15,28 @@ class TestCheckDeprecatedModels:
 
     def test_detects_deprecated_model(self) -> None:
         """Test that deprecated models are detected."""
+        from markitai.constants import PROVIDER_DEFAULT_MODELS
         from markitai.providers import check_deprecated_models
 
         warnings = check_deprecated_models(["gpt-4o"])
         assert len(warnings) == 1
         assert "gpt-4o" in warnings[0]
-        assert "gpt-5.4" in warnings[0]
-        assert "February 13, 2025" in warnings[0]
+        assert PROVIDER_DEFAULT_MODELS["openai"] in warnings[0]
+
+    def test_replacement_follows_the_configured_provider(self) -> None:
+        """A Copilot user is not told to migrate to an OpenAI API model."""
+        from markitai.constants import PROVIDER_DEFAULT_MODELS
+        from markitai.providers import check_deprecated_models
+
+        (warning,) = check_deprecated_models(["copilot/gpt-4o"])
+        assert PROVIDER_DEFAULT_MODELS["copilot"] in warning
+
+    def test_no_retirement_date_is_invented(self) -> None:
+        """Only litellm's own deprecation_date may appear in the message."""
+        from markitai.providers import check_deprecated_models
+
+        for warning in check_deprecated_models(sorted(_RETIRED())):
+            assert "February 13, 2025" not in warning
 
     def test_detects_multiple_deprecated_models(self) -> None:
         """Test that multiple deprecated models are detected."""
@@ -65,26 +80,36 @@ class TestCheckDeprecatedModels:
         assert len(warnings) == 0
 
 
-class TestDeprecatedModelsConstant:
-    """Tests for DEPRECATED_MODELS constant."""
+def _RETIRED() -> dict[str, str]:
+    from markitai.providers import RETIRED_MODELS
 
-    def test_deprecated_models_defined(self) -> None:
-        """Test that DEPRECATED_MODELS constant is defined."""
-        from markitai.providers import DEPRECATED_MODELS
+    return RETIRED_MODELS
 
-        assert isinstance(DEPRECATED_MODELS, dict)
-        assert "gpt-4o" in DEPRECATED_MODELS
-        assert "gpt-4.1" in DEPRECATED_MODELS
-        assert "gpt-4.1-mini" in DEPRECATED_MODELS
-        assert "o4-mini" in DEPRECATED_MODELS
-        assert "gpt-5" in DEPRECATED_MODELS
 
-    def test_all_replacements_are_gpt_5_2(self) -> None:
-        """Test that all deprecated models recommend gpt-5.4."""
-        from markitai.providers import DEPRECATED_MODELS
+class TestRetiredModelsConstant:
+    """Tests for the RETIRED_MODELS constant."""
 
-        for replacement in DEPRECATED_MODELS.values():
-            assert replacement == "gpt-5.4"
+    def test_retired_models_defined(self) -> None:
+        retired = _RETIRED()
+
+        assert isinstance(retired, dict)
+        for name in ("gpt-4o", "gpt-4.1", "gpt-4.1-mini", "o4-mini", "gpt-5"):
+            assert name in retired
+
+    def test_every_entry_names_a_provider_with_a_default(self) -> None:
+        """The warning reads its replacement out of that table."""
+        from markitai.constants import PROVIDER_DEFAULT_MODELS
+
+        for provider in _RETIRED().values():
+            assert provider in PROVIDER_DEFAULT_MODELS
+
+    def test_no_default_is_itself_retired(self) -> None:
+        """markitai must never pick a model it warns other people off."""
+        from markitai.constants import PROVIDER_DEFAULT_MODELS
+
+        retired = _RETIRED()
+        for model in PROVIDER_DEFAULT_MODELS.values():
+            assert model.partition("/")[2] not in retired
 
 
 class TestIsLocalProviderModel:
@@ -241,7 +266,7 @@ class TestRegisterProviders:
     def test_register_providers_logs_single_summary(self) -> None:
         """Provider registration should log one compact summary line."""
         import sys
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import MagicMock
 
         import markitai.providers as providers_module
         from markitai.providers import register_providers
@@ -339,7 +364,7 @@ class TestEstimateModelCost:
     Note: estimate_model_cost returns ProviderCostResult with:
     - cost_usd: The estimated cost
     - is_estimated: Always True (estimated from LiteLLM pricing)
-    - source: "litellm", "litellm_fuzzy", "fallback", or "none"
+    - source: "litellm", "litellm_fuzzy", or "none"
     - matched_model: The model name used for pricing lookup
     """
 
@@ -366,34 +391,35 @@ class TestEstimateModelCost:
         assert result.source == "litellm"
         assert result.matched_model == model
 
-    def test_calculate_cost_fallback_to_hardcoded(self) -> None:
-        """Test cost calculation falls back to hardcoded pricing when LiteLLM fails."""
+    def test_unpriceable_model_reports_none_rather_than_guessing(self) -> None:
+        """No hand-maintained fallback table: unknown means unknown."""
         from markitai.providers import estimate_model_cost
 
-        # Use a model that definitely won't exist in LiteLLM (neither exact nor fuzzy)
-        # but exists in our hardcoded COPILOT_MODEL_PRICING
-        # Note: With fuzzy matching, many models will match LiteLLM entries,
-        # so we need a truly unique model name from our fallback table
-        model = "completely-unknown-xyz-999"
-        result = estimate_model_cost(model, 10000, 5000)
+        result = estimate_model_cost("completely-unknown-xyz-999", 10000, 5000)
 
-        # Should return 0 cost with "none" source for truly unknown models
         assert result.is_estimated is True
         assert result.source == "none"
         assert result.cost_usd == 0.0
 
-    def test_luna_pricing_is_available_without_selecting_it_by_default(self) -> None:
-        """The preview model may be priced when explicitly configured."""
+    def test_synthesized_zero_price_does_not_read_as_free(self) -> None:
+        """litellm invents a $0 entry for names it does not carry.
+
+        Bare Copilot/ClaudeCode ids land there, which priced every such run
+        at $0 and hid the real dashed entry a fuzzy match finds.
+        """
         from markitai.providers import estimate_model_cost
 
-        with (
-            patch("litellm.get_model_info", side_effect=ValueError("not indexed")),
-            patch("markitai.providers._find_litellm_model_fuzzy", return_value=None),
-        ):
-            result = estimate_model_cost("gpt-5.6-luna", 1_000_000, 1_000_000)
+        result = estimate_model_cost("claude-sonnet-4.6", 1_000_000, 1_000_000)
 
-        assert result.source == "fallback"
-        assert result.cost_usd == 7.0
+        assert result.source == "litellm_fuzzy"
+        assert result.matched_model == "claude-sonnet-4-6"
+        assert result.cost_usd > 0
+
+    def test_tier_suffix_is_never_dropped_on_the_way_to_a_price(self) -> None:
+        """gpt-5.4-codex used to be priced as plain gpt-5.4."""
+        from markitai.providers import _find_litellm_model_fuzzy
+
+        assert _find_litellm_model_fuzzy("gpt-5.4-codex") != "gpt-5.4"
 
     def test_calculate_cost_unknown_model(self) -> None:
         """Test cost calculation for unknown model returns 0 with 'none' source."""
@@ -900,7 +926,6 @@ class TestCopilotAuthCheck:
         """Context manager that injects a fake 'copilot' module with CopilotClient."""
         import sys
         import types
-        from unittest.mock import patch
 
         mod = types.ModuleType("copilot")
         mod.CopilotClient = mock_cls  # type: ignore[attr-defined]
@@ -988,7 +1013,7 @@ class TestCopilotAuthCheck:
         self,
     ) -> None:
         """Model listing failures should fail fast after the first fatal error."""
-        from unittest.mock import AsyncMock, MagicMock, patch
+        from unittest.mock import AsyncMock, MagicMock
 
         import pytest
 
