@@ -23,7 +23,11 @@ from markitai.constants import (
 )
 from markitai.image import ImageProcessor
 from markitai.security import atomic_write_text
-from markitai.utils.text import format_error_message, markdown_image_reference
+from markitai.utils.text import (
+    format_error_message,
+    image_ref_pattern,
+    markdown_image_reference,
+)
 from markitai.workflow.helpers import (
     create_llm_processor,
     extract_document_context,
@@ -32,17 +36,6 @@ from markitai.workflow.single import ImageAnalysisResult
 
 if TYPE_CHECKING:
     from markitai.llm import ImageAnalysis, LLMProcessor
-
-
-def _image_ref_pattern(name: str) -> str:
-    """Regex matching an image reference to *name*, encoded or raw.
-
-    Re-export of ``utils.text.image_ref_pattern`` (kept for callers that
-    imported it from here).
-    """
-    from markitai.utils.text import image_ref_pattern
-
-    return image_ref_pattern(name)
 
 
 async def process_with_llm(
@@ -304,7 +297,7 @@ async def analyze_images_with_llm(
 
             # Update alt text in markdown (if alt_enabled)
             if alt_enabled and not is_standalone_image:
-                old_pattern = _image_ref_pattern(image_path.name)
+                old_pattern = image_ref_pattern(image_path.name)
                 new_ref = markdown_image_reference(
                     analysis.caption, f"{ASSETS_REL_PATH}/{image_path.name}"
                 )
@@ -355,7 +348,7 @@ async def analyze_images_with_llm(
                 for image_path, analysis, _ in results:
                     if analysis is None:
                         continue
-                    old_pattern = _image_ref_pattern(image_path.name)
+                    old_pattern = image_ref_pattern(image_path.name)
                     new_ref = markdown_image_reference(
                         analysis.caption, f"{ASSETS_REL_PATH}/{image_path.name}"
                     )

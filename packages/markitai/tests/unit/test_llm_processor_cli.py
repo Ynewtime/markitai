@@ -1515,7 +1515,7 @@ class TestImageRefPattern:
     def test_matches_percent_encoded_and_raw_destinations(self) -> None:
         import re
 
-        from markitai.cli.processors.llm import _image_ref_pattern
+        from markitai.utils.text import image_ref_pattern as _image_ref_pattern
         from markitai.utils.text import markdown_image_reference
 
         name = "文 档.0001.jpg"
@@ -1533,7 +1533,7 @@ class TestImageRefPattern:
     def test_ascii_name_unchanged(self) -> None:
         import re
 
-        from markitai.cli.processors.llm import _image_ref_pattern
+        from markitai.utils.text import image_ref_pattern as _image_ref_pattern
 
         raw = "![x](.markitai/assets/plain.0001.png)"
         out = re.sub(_image_ref_pattern("plain.0001.png"), "![y](z)", raw)
