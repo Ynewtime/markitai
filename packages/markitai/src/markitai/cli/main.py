@@ -1175,6 +1175,7 @@ def app(
                 "[cyan]--resume[/cyan] to continue from here."
             )
         raise
+    except SystemExit:
         # Processors signal (partial) failure via SystemExit; record the
         # collected per-item results first so failed runs also show up.
         record_run_history()
