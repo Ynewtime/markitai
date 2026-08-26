@@ -1,64 +1,8 @@
 # Getting Started
 
-## Your First Conversion in 60 Seconds
+## One-Click Setup (Recommended)
 
-Install the core package. Optional browser rendering, extra format support, and LLM providers can wait until you need them:
-
-```bash
-uv tool install markitai
-```
-
-Convert a real page — this very guide:
-
-```bash
-mkai https://markitai.dev/guide/getting-started --pure
-```
-
-`mkai` is the short alias installed alongside `markitai`. With `--pure`, the Markdown body goes to stdout without frontmatter:
-
-```text
-# Getting Started
-...
-```
-
-Add `-o output/` when you want a file instead. Continue below for the guided installer, documents and URLs, LLM enhancement, and optional format support.
-
-## Prerequisites
-
-### Required
-
-- **Python 3.11-3.13** - Required runtime
-- **[uv](https://docs.astral.sh/uv/)** - Package manager (recommended)
-
-### Optional Dependencies
-
-These are required for specific features:
-
-| Dependency | Required For | Installation |
-|------------|--------------|--------------|
-| **Playwright** | `-s playwright` (SPA rendering) | Recommended uv-tool path: `uv tool install 'markitai[browser]' --force`, then `markitai doctor --fix`. See [Manual Installation](#manual-installation) for pipx and virtual environments. |
-| **RapidOCR** | `--ocr` (text recognition in scanned PDFs and images) | `uv tool install 'markitai[ocr]' --force` |
-| **Jina API Key** | `-s jina` (URL conversion) | Set `JINA_API_KEY` env var |
-| **LLM authentication** | `--llm` (AI enhancement) | Use a provider API key, or sign in through a subscription provider (`chatgpt/`, `claude-agent/`, `copilot/`) with OAuth or its CLI |
-| **Cloudflare** | `-s cloudflare` (cloud rendering & conversion) | Set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` env vars |
-| **CairoSVG** | High-quality SVG rendering | `uv pip install markitai[svg]` |
-| **pillow-heif** | HEIC/HEIF/AVIF image input | `uv pip install markitai[heif]` |
-| **kreuzberg** | `.xml`, `.tsv`, `.rtf`, `.rst`, `.org`, `.tex`, `.odt`, `.ods` conversion | `uv pip install markitai[kreuzberg]` (included in `[all]`) |
-
-::: tip Browser Automation
-For SPA websites (Twitter, React apps, etc.), Playwright is used automatically. The commands below assume the recommended uv-tool installation. If you installed Markitai with pipx or into a virtual environment, use the matching browser-extra command under [Manual Installation](#manual-installation).
-```bash
-uv tool install 'markitai[browser]' --force
-markitai doctor --fix
-```
-Then use `-s playwright` to force browser rendering.
-:::
-
-## Installation
-
-### One-Click Setup (Recommended)
-
-Run the setup script to automatically install Python, UV, and markitai:
+The setup script installs Python (if needed), uv, and markitai in one step:
 
 ::: code-group
 ```bash [Linux/macOS]
@@ -72,19 +16,12 @@ powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 
 ::: warning Security Notice
 - The script checks for root/Administrator and asks before continuing
-- In an interactive terminal, optional components prompt before installing. The Playwright browser, the Web UI extra, and OCR default to Yes; LibreOffice and the Claude/Copilot CLIs default to No
-- Without a usable terminal, only uv, Python, and Markitai are installed. Set `MARKITAI_INSTALL_OPTIONAL=1` to explicitly enable the optional steps in automation
+- In an interactive terminal, optional components prompt before installing: the Playwright browser, Web UI, and OCR default to Yes; LibreOffice and the Claude/Copilot CLIs default to No
+- Without a usable terminal, only uv, Python, and markitai are installed. Set `MARKITAI_INSTALL_OPTIONAL=1` to enable the optional steps in automation
+- The default package index is used unless it measures as slow or unreachable from your machine. `MARKITAI_USE_MIRROR=1` always offers a mirror; `=0` never asks
 :::
 
-The script will:
-- Check for / auto-install Python 3.11-3.13 (no prompt)
-- Install [uv](https://docs.astral.sh/uv/) package manager (confirmation, defaults to Yes)
-- Ask whether to include the Web UI (`serve`) and OCR (`ocr`) extras, then install markitai together with its remaining pip-only extras (browser automation, `extra-fetch`, `kreuzberg`, `svg`, `heif`) with no further prompts; LibreOffice and the Claude/Copilot CLIs are offered afterward with their own confirmation (defaults to No)
-- Use the default package index. It only offers a mirror after measuring that index as slow or unreachable from your machine — set `MARKITAI_USE_MIRROR=1` to pick one regardless, or `MARKITAI_USE_MIRROR=0` to never be asked
-
-#### Version Pinning
-
-Pin specific versions using environment variables. Replace the placeholders with the exact versions you want — these examples deliberately carry no literal, so there is nothing here to go stale:
+Pin exact versions via environment variables (omit both for the latest stable release, the recommended default):
 
 ::: code-group
 ```bash [Linux/macOS]
@@ -100,161 +37,74 @@ powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 ```
 :::
 
-Omit both variables to get the latest stable release of each, which is the recommended default. Pin only when you need to reproduce an exact environment; `markitai --version` reports what you currently have.
+## Your First Conversion
 
-### Manual Installation
-
-If you already have Python 3.11-3.13 and prefer a minimal install:
+Convert a real page — this very guide:
 
 ```bash
-# Using uv (recommended, isolated environment)
-uv tool install markitai
-
-# Or using uv pip (into a virtual environment)
-uv pip install markitai
+mkai https://markitai.dev/guide/getting-started --pure
 ```
 
-Add only the extras required by your workflow later, for example `markitai[browser]` for Playwright or `markitai[heif]` for HEIC/HEIF/AVIF input. See [Optional Dependencies](#optional-dependencies) for the full list.
-
-The default install carries no OCR runtime. RapidOCR's models and their image stack are about a quarter of what the install used to weigh, and nothing that converts born-digital documents ever loads them. Add them when you actually need `--ocr` on scans or photos:
+Every install provides both the `markitai` command and the shorter `mkai` alias (identical; use the full name if another `mkai` exists on your `PATH`). With `--pure`, the Markdown body goes to stdout without frontmatter. Add `-o output/` to write a file instead:
 
 ```bash
-uv tool install 'markitai[ocr]' --force
+markitai document.docx -o output/          # document
+markitai https://example.com/article -o output/   # web page
+markitai ./docs -o ./output                # whole directory
 ```
 
-Unlike the one-click setup, a manual install does **not** set up optional
-components or config for you. Do the remaining steps yourself:
+Then set up an LLM provider if you want AI enhancement (`--llm`):
 
 ```bash
-markitai doctor           # see core and optional capabilities
-markitai init             # create a config and set up an LLM provider
+markitai init                # guided setup (or: markitai -I interactive mode)
+markitai doctor              # check core and optional capabilities
 ```
 
-For Playwright browser rendering, choose the browser-extra command that matches how you installed Markitai:
+## Optional Capabilities
 
-::: code-group
-```bash [uv tool]
-uv tool install 'markitai[browser]' --force
-```
+Add extras only when you need them (`uv tool install 'markitai[<extra>]' --force`):
 
-```bash [pipx]
-pipx install 'markitai[browser]' --force
-```
+| Extra / Dependency | Enables |
+|--------------------|---------|
+| `markitai[browser]` (Playwright) | `-s playwright` browser rendering for SPA/JS-heavy pages |
+| `markitai[ocr]` (RapidOCR) | `--ocr` local OCR for scanned PDFs/images |
+| `markitai[legacy]` (anydoc) | Legacy Office `.doc`/`.ppt` conversion |
+| `markitai[heif]` | HEIC/HEIF/AVIF image input |
+| `markitai[svg]` | High-quality SVG rendering |
+| `markitai[kreuzberg]` | `.xml`, `.tsv`, `.rtf`, `.rst`, `.org`, `.tex`, `.odt`, `.ods` via Kreuzberg |
+| `markitai[serve]` | Local web workspace and REST API |
+| Jina API key | `-s jina` remote reader (`JINA_API_KEY` env var) |
+| Cloudflare | `-s cloudflare` cloud rendering (`CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`) |
 
-```bash [Active virtual environment]
-uv pip install 'markitai[browser]'
-```
-:::
-
-Then let `doctor` install Chromium into that environment:
+After adding the browser extra, install Chromium once:
 
 ```bash
 markitai doctor --fix
 ```
 
-`doctor --fix` installs Chromium only when the Playwright package is already present. With a core-only install, it exits safely and tells you which extra to add.
+(`doctor --fix` installs Chromium only when the Playwright package is present; with a core-only install it exits safely and names the extra to add.)
 
-::: tip Both `markitai` and `mkai` work
-Every install provides the `markitai` command **and the shorter `mkai` alias**.
-They are the exact same command (`mkai --help` == `markitai --help`). If a
-different `mkai` already exists on your `PATH`, use the full `markitai` to avoid
-ambiguity.
-:::
+## Manual Installation
 
-## Quick Start
-
-### First Run
-
-For new users, the interactive mode guides you through initial setup:
+If you already have Python 3.11–3.13 and prefer a minimal install:
 
 ```bash
-markitai -I
+uv tool install markitai        # recommended: isolated tool environment
+uv pip install markitai         # or into the active virtual environment
+pipx install markitai           # or pipx
 ```
 
-Or initialize configuration with the setup wizard:
+A manual install sets up nothing optional: run `markitai doctor` to see what's available and `markitai init` for config and LLM provider setup. For browser rendering, add the browser extra matching your install method (`uv tool install 'markitai[browser]' --force`, `pipx install 'markitai[browser]' --force`, or `uv pip install 'markitai[browser]'`), then `markitai doctor --fix`.
 
-```bash
-# Interactive setup wizard
-markitai init
+## Feature Notes
 
-# Quick mode (generate default config)
-markitai init --yes
-```
+**URLs**: for public URLs, local methods run first, then `auto` may try Defuddle, Jina, or Cloudflare without asking (the first remote attempt in a process is disclosed on stderr). Private, local, intranet, and credential-bearing URLs stay local-only. `MARKITAI_NO_REMOTE_FETCH=1` forces everything local.
 
-### Basic Conversion
+**LLM enhancement** (`--llm`): clean formatting and generate frontmatter. Configure a provider API key or a subscription provider (`chatgpt/` OAuth; `claude-agent/`, `copilot/` CLI sign-in) — see [Configuration](/guide/configuration#supported-providers).
 
-Convert a single document to Markdown:
+**Presets** bundle common flags: `rich` (LLM + alt + desc + screenshot), `standard` (LLM + alt + desc), `minimal` (plain conversion). Any preset flag can be overridden with `--no-*`, e.g. `--preset rich --no-desc`.
 
-```bash
-markitai document.docx
-```
-
-Without `-o`, this prints the output to stdout. With `-o`, it saves to the specified directory:
-
-```bash
-markitai document.docx -o output/
-```
-
-### URL Conversion
-
-Convert web pages directly:
-
-```bash
-markitai https://example.com/article -o output/
-```
-
-For public URLs, local methods run first on standard sites, then `auto` may try Defuddle, Jina, or Cloudflare without asking. The first remote attempt in a process is disclosed on stderr. Private, local, intranet, and credential-bearing URLs remain local-only. Set `MARKITAI_NO_REMOTE_FETCH=1` if every URL must stay local.
-
-### LLM Enhancement
-
-Enable AI-powered format cleaning and optimization:
-
-```bash
-markitai document.docx --llm
-```
-
-Configure either a provider API key or a subscription provider. ChatGPT uses OAuth; Claude Agent and GitHub Copilot use their CLI authentication. See [Configuration](/guide/configuration#supported-providers).
-
-### Using Presets
-
-Markitai provides three presets for common use cases:
-
-```bash
-# Rich: LLM + alt text + descriptions + screenshots
-markitai document.pdf --preset rich
-
-# Standard: LLM + alt text + descriptions
-markitai document.pdf --preset standard
-
-# Minimal: Basic conversion only
-markitai document.pdf --preset minimal
-```
-
-### Batch Processing
-
-Convert multiple files in a directory:
-
-```bash
-markitai ./docs -o ./output
-```
-
-Resume interrupted batch processing:
-
-```bash
-markitai ./docs -o ./output --resume
-```
-
-### System Check
-
-Check the core requirement and see which optional capabilities are available. Missing optional tools do not fail the core health check:
-
-```bash
-# Check system health
-markitai doctor
-
-# If the Playwright package is present, install and re-check Chromium
-markitai doctor --fix
-```
+**Batch runs** write a JSON report and support `--resume` after interruption. See [CLI Reference](/guide/cli) for `--llm-batch` (Batch API, half price) and more.
 
 ## Output Structure
 
@@ -272,13 +122,7 @@ output/
 │   └── states/                # Batch state files (for --resume)
 ```
 
-::: tip
-The output filename appends `.md` to the full input filename: `document.docx` → `document.docx.md` (`document.docx.llm.md` with `--llm`). The source format stays visible and distinct inputs (e.g. `report.pdf` and `report.docx`) never collide.
-:::
-
-::: tip
-In `--llm` mode, only `.llm.md` is written by default. Use `--keep-base` to also write the base `.md` file.
-:::
+The output filename appends `.md` to the full input filename: `document.docx` → `document.docx.md` (`document.docx.llm.md` with `--llm`), so distinct inputs (`report.pdf`, `report.docx`) never collide.
 
 ## Supported Formats
 
@@ -293,14 +137,12 @@ In `--llm` mode, only `.llm.md` is written by default. Use `--keep-base` to also
 
 ## Platform-Specific Features
 
-Some features have platform-specific behavior or limitations:
-
 ### Windows
 
 | Feature | Support | Notes |
 |---------|---------|-------|
-| Legacy Office (`.doc`, `.ppt`) | ✅ Full | Needs the `markitai[legacy]` extra (anydoc Rust backend, no Office install; PPT tables flatten to text) |
-| Legacy Excel (`.xls`) | ✅ Full | Built-in (pure Python, no Office needed) |
+| Legacy Office (`.doc`, `.ppt`) | ✅ Full | Needs `markitai[legacy]` (anydoc Rust backend, no Office install; PPT tables flatten to text) |
+| Legacy Excel (`.xls`) | ✅ Full | Built-in (pure Python) |
 | PPTX Slide Rendering | ✅ Full | MS Office preferred, LibreOffice fallback |
 | EMF/WMF Images | ✅ Full | Native support |
 | Browser Automation | ✅ Full | Hidden window mode |
@@ -309,51 +151,25 @@ Some features have platform-specific behavior or limitations:
 
 | Feature | Support | Notes |
 |---------|---------|-------|
-| Legacy Office (`.doc`, `.ppt`) | ✅ Full | Needs the `markitai[legacy]` extra (anydoc Rust backend, no LibreOffice needed; PPT tables flatten to text) |
-| Legacy Excel (`.xls`) | ✅ Full | Built-in (pure Python, no LibreOffice needed) |
-| PPTX Slide Rendering | ✅ Full | Requires LibreOffice |
+| Legacy Office (`.doc`, `.ppt`) | ✅ Full | Needs `markitai[legacy]` (no LibreOffice needed) |
+| Legacy Excel (`.xls`) | ✅ Full | Built-in (pure Python) |
+| PPTX Slide Rendering | ✅ Full | Requires LibreOffice (`apt-get install libreoffice` / `dnf install libreoffice`) |
 | EMF/WMF Images | ❌ No | Windows-only format |
 | Browser Automation | ✅ Full | Requires system dependencies |
-
-**Install LibreOffice:**
-```bash
-# Ubuntu/Debian
-sudo apt-get install libreoffice
-
-# Fedora/RHEL
-sudo dnf install libreoffice
-```
-
-**Install Playwright browsers:**
-Use the browser-extra command matching your environment under [Manual Installation](#manual-installation), then run:
-
-```bash
-markitai doctor --fix
-```
 
 ### macOS
 
 | Feature | Support | Notes |
 |---------|---------|-------|
-| Legacy Office (`.doc`, `.ppt`) | ✅ Full | Needs the `markitai[legacy]` extra (anydoc Rust backend, no Office install; PPT tables flatten to text) |
-| Legacy Excel (`.xls`) | ✅ Full | Built-in (pure Python, no Office needed) |
-| PPTX Slide Rendering | ✅ Full | LibreOffice preferred; falls back to installed MS PowerPoint |
+| Legacy Office (`.doc`, `.ppt`) | ✅ Full | Needs `markitai[legacy]` (no Office install) |
+| Legacy Excel (`.xls`) | ✅ Full | Built-in (pure Python) |
+| PPTX Slide Rendering | ✅ Full | LibreOffice preferred (`brew install --cask libreoffice`); falls back to installed MS PowerPoint |
 | EMF/WMF Images | ❌ No | Windows-only format |
 | Browser Automation | ✅ Full | - |
 
-**Install LibreOffice:**
-```bash
-brew install --cask libreoffice
-```
-
-**MS Office fallback (no LibreOffice):** if Word/PowerPoint/Excel are
-installed, markitai drives them via AppleScript instead. The first
-conversion triggers a one-time macOS consent dialog ("Terminal wants to
-control Microsoft Word"). Approve it once per app. This fallback opens
-the app window briefly and needs a GUI session; disable it with
-`"office": { "macos_fallback": false }` in config for headless use.
+The macOS PowerPoint fallback drives PowerPoint via AppleScript: the first render triggers a one-time consent dialog ("Terminal wants to control Microsoft PowerPoint"), opens the app briefly, and needs a GUI session. Disable it with `"office": { "macos_fallback": false }` in config for headless use.
 
 ## Next Steps
 
-- [Configuration](/guide/configuration) - Configure LLM providers and other settings
+- [Configuration](/guide/configuration) - LLM providers and all settings
 - [CLI Reference](/guide/cli) - Full command reference

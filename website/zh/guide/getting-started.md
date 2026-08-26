@@ -1,64 +1,8 @@
 # 快速开始
 
-## 60 秒完成第一次转换
+## 一键安装（推荐）
 
-先安装核心包。浏览器渲染、额外格式支持和 LLM 提供商等可选能力，可以等到实际需要时再配置：
-
-```bash
-uv tool install markitai
-```
-
-转换一个真实网页——就是你正在读的这一篇：
-
-```bash
-mkai https://markitai.dev/zh/guide/getting-started --pure
-```
-
-`mkai` 是与 `markitai` 一同安装的短别名。加上 `--pure` 后，不含 frontmatter 的 Markdown 正文会直接打印到 stdout：
-
-```text
-# 快速开始
-...
-```
-
-如需保存到文件，请加上 `-o output/`。下文包含引导式安装、文档与 URL 转换、LLM 增强及可选格式支持。
-
-## 环境要求
-
-### 必需依赖
-
-- **Python 3.11-3.13** - 运行时环境
-- **[uv](https://docs.astral.sh/uv/)** - 包管理器（推荐）
-
-### 可选依赖
-
-以下依赖用于特定功能：
-
-| 依赖 | 用途 | 安装方式 |
-|------|------|----------|
-| **Playwright** | `-s playwright`（SPA 渲染） | 推荐的 uv tool 方案：`uv tool install 'markitai[browser]' --force`，然后运行 `markitai doctor --fix`。pipx 和虚拟环境请见[手动安装](#手动安装)。 |
-| **RapidOCR** | `--ocr`（识别扫描件和图片中的文字） | `uv tool install 'markitai[ocr]' --force` |
-| **Jina API 密钥** | `-s jina`（URL 转换） | 设置 `JINA_API_KEY` 环境变量 |
-| **LLM 认证** | `--llm`（AI 增强） | 使用提供商 API 密钥，或通过 OAuth/CLI 登录订阅制提供商（`chatgpt/`、`claude-agent/`、`copilot/`） |
-| **Cloudflare** | `-s cloudflare`（云端渲染与转换） | 设置 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID` 环境变量 |
-| **CairoSVG** | 高质量 SVG 渲染 | `uv pip install markitai[svg]` |
-| **pillow-heif** | HEIC/HEIF/AVIF 图片输入 | `uv pip install markitai[heif]` |
-| **kreuzberg** | `.xml`、`.tsv`、`.rtf`、`.rst`、`.org`、`.tex`、`.odt`、`.ods` 转换 | `uv pip install markitai[kreuzberg]`（已包含在 `[all]` 中） |
-
-::: tip 浏览器自动化
-对于 SPA 网站（Twitter、React 应用等），会自动使用 Playwright。以下命令适用于推荐的 uv tool 安装方式。若你通过 pipx 或虚拟环境安装 Markitai，请使用[手动安装](#手动安装)中对应的 browser extra 命令。
-```bash
-uv tool install 'markitai[browser]' --force
-markitai doctor --fix
-```
-然后使用 `-s playwright` 强制启用浏览器渲染。
-:::
-
-## 安装
-
-### 一键安装（推荐）
-
-运行安装脚本，自动安装 Python、UV 和 markitai：
+安装脚本一步装好 Python（如需要）、uv 和 markitai：
 
 ::: code-group
 ```bash [Linux/macOS]
@@ -71,20 +15,13 @@ powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 :::
 
 ::: warning 安全提示
-- 以 root/管理员 身份运行时，脚本会先检测并询问是否继续
-- 在交互式终端中，可选组件会在安装前询问确认。Playwright 浏览器、Web UI extra 和 OCR 默认 Yes；LibreOffice 和 Claude/Copilot CLI 默认 No
-- 没有可用终端时只安装 uv、Python 和 Markitai；自动化场景只有显式设置 `MARKITAI_INSTALL_OPTIONAL=1` 才会执行可选安装步骤
+- 脚本会检查 root/管理员权限，并在继续前询问
+- 在交互终端中，可选组件会逐项询问：Playwright 浏览器、Web UI、OCR 默认为是；LibreOffice 和 Claude/Copilot CLI 默认为否
+- 没有可用终端时，只安装 uv、Python 和 markitai。自动化场景设 `MARKITAI_INSTALL_OPTIONAL=1` 启用可选步骤
+- 默认使用官方包索引，除非实测它在你的网络下缓慢或不可达。`MARKITAI_USE_MIRROR=1` 总是提供镜像选择；`=0` 从不询问
 :::
 
-脚本会：
-- 检测 / 自动安装 Python 3.11-3.13（无需确认）
-- 安装 [uv](https://docs.astral.sh/uv/) 包管理器（需确认，默认 Yes）
-- 询问是否包含 Web UI（`serve`）和 OCR（`ocr`）两个 extra，然后连同其余纯 pip 依赖的可选组件（浏览器自动化、`extra-fetch`、`kreuzberg`、`svg`、`heif`）一次装好，无需额外确认；LibreOffice 和 Claude/Copilot CLI 会在随后单独询问确认（默认 No）
-- 默认使用官方源。只有在实测到默认源缓慢或不可达时，才会询问是否改用镜像；设置 `MARKITAI_USE_MIRROR=1` 可直接启用镜像，设置 `MARKITAI_USE_MIRROR=0` 可彻底关闭询问
-
-#### 版本固定
-
-使用环境变量固定特定版本。把占位符换成你要固定的确切版本号——示例中刻意不写死任何版本，因此不会随发布而过期：
+通过环境变量固定精确版本（两个变量都不设则取各自最新稳定版，即推荐默认）：
 
 ::: code-group
 ```bash [Linux/macOS]
@@ -100,204 +37,113 @@ powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 ```
 :::
 
-两个变量都省略即安装各自的最新稳定版，这也是推荐做法。只有在需要复现某个确切环境时才固定版本；`markitai --version` 会告诉你当前装的是哪一版。
+## 第一次转换
 
-### 手动安装
-
-如果你已有 Python 3.11-3.13，只想要最小安装：
+转换一个真实网页——就是你正在读的这一篇：
 
 ```bash
-# 使用 uv（推荐，隔离环境）
-uv tool install markitai
-
-# 或使用 uv pip（安装到虚拟环境）
-uv pip install markitai
+mkai https://markitai.dev/zh/guide/getting-started --pure
 ```
 
-后续只需添加工作流所需的额外依赖，例如 Playwright 使用 `markitai[browser]`，HEIC/HEIF/AVIF 图片输入使用 `markitai[heif]`。完整列表见[可选依赖](#可选依赖)。
-
-默认安装不含 OCR 运行时。RapidOCR 的模型和配套图像栈约占原先安装体积的四分之一，而转换电子版文档的流程从不加载它们。确实需要对扫描件或照片使用 `--ocr` 时再装：
+每次安装都会同时提供 `markitai` 命令和更短的 `mkai` 别名（两者完全相同；若 `PATH` 上已有其他 `mkai`，请用全名）。`--pure` 会把不含 frontmatter 的 Markdown 正文直接打印到 stdout。要写入文件就加 `-o output/`：
 
 ```bash
-uv tool install 'markitai[ocr]' --force
+markitai document.docx -o output/          # 文档
+markitai https://example.com/article -o output/   # 网页
+markitai ./docs -o ./output                # 整个目录
 ```
 
-与一键安装不同，手动安装**不会**帮你配置可选组件和配置文件，剩余步骤需自行完成：
+如需 AI 增强（`--llm`），再配置 LLM 提供商：
 
 ```bash
-markitai doctor           # 查看核心与可选能力
-markitai init             # 创建配置并设置 LLM 提供方
+markitai init                # 引导式配置（或用 markitai -I 交互模式）
+markitai doctor              # 查看核心与可选能力状态
 ```
 
-如需 Playwright 浏览器渲染，请根据 Markitai 的安装方式选择对应的 browser extra 命令：
+## 可选能力
 
-::: code-group
-```bash [uv tool]
-uv tool install 'markitai[browser]' --force
-```
+需要时才装对应 extra（`uv tool install 'markitai[<extra>]' --force`）：
 
-```bash [pipx]
-pipx install 'markitai[browser]' --force
-```
+| Extra / 依赖 | 启用能力 |
+|--------------------|---------|
+| `markitai[browser]`（Playwright） | `-s playwright` 浏览器渲染（SPA/重 JS 页面） |
+| `markitai[ocr]`（RapidOCR） | `--ocr` 扫描件 PDF/图片的本地 OCR |
+| `markitai[legacy]`（anydoc） | 旧版 Office `.doc`/`.ppt` 转换 |
+| `markitai[heif]` | HEIC/HEIF/AVIF 图片输入 |
+| `markitai[svg]` | 高质量 SVG 渲染 |
+| `markitai[kreuzberg]` | 经 Kreuzberg 转换 `.xml`、`.tsv`、`.rtf`、`.rst`、`.org`、`.tex`、`.odt`、`.ods` |
+| `markitai[serve]` | 本地 Web 工作区与 REST API |
+| Jina API key | `-s jina` 远程阅读器（环境变量 `JINA_API_KEY`） |
+| Cloudflare | `-s cloudflare` 云端渲染（`CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`） |
 
-```bash [已激活的虚拟环境]
-uv pip install 'markitai[browser]'
-```
-:::
-
-然后让 `doctor` 在该环境中安装 Chromium：
+装了 browser extra 后，装一次 Chromium：
 
 ```bash
 markitai doctor --fix
 ```
 
-只有 Playwright 包已经存在时，`doctor --fix` 才会安装 Chromium。仅安装核心包时，该命令会安全退出，并提示需要添加哪个 extra。
+（`doctor --fix` 只在已安装 Playwright 包时才安装 Chromium；纯核心安装下它会安全退出并告知该装哪个 extra。）
 
-::: tip markitai 和 mkai 都可用
-每次安装都会同时提供 `markitai` 命令**和更短的 `mkai` 别名**。两者是完全相同的命令（`mkai --help` 等同 `markitai --help`）。若你的 `PATH` 上已存在别的 `mkai`，请使用完整的 `markitai` 以避免歧义。
-:::
+## 手动安装
 
-## 快速上手
-
-### 首次运行
-
-新用户推荐使用交互模式，引导完成初始设置：
+已有 Python 3.11–3.13、想最小化安装时：
 
 ```bash
-markitai -I
+uv tool install markitai        # 推荐：隔离的工具环境
+uv pip install markitai         # 或装进当前虚拟环境
+pipx install markitai           # 或 pipx
 ```
 
-或使用配置向导初始化：
+手动安装不会配置任何可选组件：用 `markitai doctor` 查看可用能力，用 `markitai init` 配置 LLM。浏览器渲染需按安装方式补 browser extra（`uv tool install 'markitai[browser]' --force`、`pipx install 'markitai[browser]' --force` 或 `uv pip install 'markitai[browser]'`），然后 `markitai doctor --fix`。
 
-```bash
-# 交互式配置向导
-markitai init
+## 功能说明
 
-# 快速模式（生成默认配置）
-markitai init --yes
-```
+**URL**：公开 URL 先走本地方法，之后 `auto` 可能不经询问尝试 Defuddle、Jina 或 Cloudflare（进程内首次远程尝试会在 stderr 披露）。私有、本地、内网及带凭据的 URL 始终只走本地。`MARKITAI_NO_REMOTE_FETCH=1` 强制全部本地。
 
-### 基础转换
+**LLM 增强**（`--llm`）：清洗格式并生成 frontmatter。配置提供商 API key 或订阅制提供商（`chatgpt/` 走 OAuth；`claude-agent/`、`copilot/` 用各自 CLI 登录）——见[配置](/zh/guide/configuration#supported-providers)。
 
-将单个文档转换为 Markdown：
+**预设**打包常用参数：`rich`（LLM + alt + desc + 截图）、`standard`（LLM + alt + desc）、`minimal`（仅基础转换）。预设里的任何特性都可用 `--no-*` 覆盖，如 `--preset rich --no-desc`。
 
-```bash
-markitai document.docx
-```
-
-不指定 `-o` 时，输出打印到 stdout。使用 `-o` 可指定输出目录：
-
-```bash
-markitai document.docx -o output/
-```
-
-### URL 转换
-
-直接转换网页：
-
-```bash
-markitai https://example.com/article -o output/
-```
-
-对于公网 URL，标准站点会先尝试本地方法，随后 `auto` 可以无需确认地尝试 Defuddle、Jina 或 Cloudflare。每个进程第一次准备使用远程服务时，会在 stderr 输出说明。私网、本机、内网及自带认证信息的 URL 始终只在本机处理。如需让所有 URL 都留在本机，请设置 `MARKITAI_NO_REMOTE_FETCH=1`。
-
-### LLM 增强
-
-启用 AI 驱动的格式清洗和优化：
-
-```bash
-markitai document.docx --llm
-```
-
-请配置提供商 API 密钥或订阅制提供商。ChatGPT 使用 OAuth，Claude Agent 和 GitHub Copilot 使用各自的 CLI 认证。详见[配置说明](/zh/guide/configuration#支持的提供商)。
-
-### 使用预设
-
-Markitai 提供三种预设，适用于常见场景：
-
-```bash
-# Rich: LLM + alt 文本 + 描述 + 截图
-markitai document.pdf --preset rich
-
-# Standard: LLM + alt 文本 + 描述
-markitai document.pdf --preset standard
-
-# Minimal: 仅基础转换
-markitai document.pdf --preset minimal
-```
-
-### 批量处理
-
-转换目录中的多个文件：
-
-```bash
-markitai ./docs -o ./output
-```
-
-恢复中断的批量处理：
-
-```bash
-markitai ./docs -o ./output --resume
-```
-
-### 系统检查
-
-检查核心要求，并查看当前可用的可选能力。缺少可选工具不会让核心健康检查失败：
-
-```bash
-# 检查系统状态
-markitai doctor
-
-# Playwright 包存在时，安装并重新检查 Chromium
-markitai doctor --fix
-```
+**批量运行**会写出 JSON 报告，中断后支持 `--resume`。`--llm-batch`（Batch API，半价）等见 [CLI 参考](/zh/guide/cli)。
 
 ## 输出结构
 
 ```
 output/
-├── document.pdf.md           # 基础 Markdown（--llm 模式下默认跳过，除非加 --keep-base）
-├── document.pdf.llm.md       # LLM 增强版本（使用 --llm 时）
-├── .markitai/                  # 元数据命名空间
+├── document.pdf.md          # 基础 Markdown（--llm 模式下默认跳过，除非 --keep-base）
+├── document.pdf.llm.md      # LLM 增强版（使用 --llm 时）
+├── .markitai/                 # 元数据命名空间
 │   ├── assets/
 │   │   ├── document.docx.0001.jpg   # 源文档内嵌的图片
-│   │   └── images.json       # 图片描述
-│   ├── screenshots/           # 页面/幻灯片截图（仅 PDF/PPTX；URL 为整页截图；--screenshot）
+│   │   └── images.json      # 图片描述
+│   ├── screenshots/          # 页面/幻灯片截图（仅 PDF/PPTX；URL 为整页；--screenshot）
 │   │   └── document.pdf.page0001.jpg
-│   ├── reports/                # 转换报告（JSON）——批量/URL 批量任务默认生成，或 output.report = true 时生成
-│   └── states/                 # 批处理状态文件（用于 --resume）
+│   ├── reports/               # 转换报告（JSON）——批量/URL 批量默认生成，或 output.report = true 时
+│   └── states/                # 批量状态文件（供 --resume）
 ```
 
-::: tip
-输出文件名在完整输入文件名后追加 `.md`：`document.docx` → `document.docx.md`（`--llm` 模式下为 `document.docx.llm.md`）。源文件格式在输出名中保持可见，不同输入（例如 `report.pdf` 和 `report.docx`）永远不会命名冲突。
-:::
-
-::: tip
-在 `--llm` 模式下，默认只写入 `.llm.md`。使用 `--keep-base` 可以同时写入基础 `.md` 文件。
-:::
+输出文件名是在完整输入文件名后追加 `.md`：`document.docx` → `document.docx.md`（`--llm` 时为 `document.docx.llm.md`），因此不同的输入（`report.pdf`、`report.docx`）不会互相覆盖。
 
 ## 支持的格式
 
 | 格式 | 扩展名 |
-|------|--------|
-| Office 文档 | `.docx`, `.doc`, `.pptx`, `.ppt`, `.xlsx`, `.xls`, `.odt`, `.ods`, `.numbers` |
+|--------|------------|
+| Office 文档 | `.docx`、`.doc`、`.pptx`、`.ppt`、`.xlsx`、`.xls`、`.odt`、`.ods`、`.numbers` |
 | PDF | `.pdf` |
-| 文本 / 标记 / 结构化数据 | `.txt`, `.md`, `.markdown`, `.html`, `.htm`, `.xhtml`, `.xml`, `.csv`, `.tsv`, `.rtf`, `.rst`, `.org`, `.tex` |
-| 图片 | `.jpg`, `.jpeg`, `.png`, `.webp`, `.svg`, `.gif`, `.bmp`, `.tiff`, `.tif`, `.heic`, `.heif`, `.avif`（后三种需要 `markitai[heif]`） |
-| 其他文档 | `.epub`, `.eml`, `.msg`, `.ipynb` |
-| URL | `http://`, `https://` |
+| 文本 / 标记 / 结构化数据 | `.txt`、`.md`、`.markdown`、`.html`、`.htm`、`.xhtml`、`.xml`、`.csv`、`.tsv`、`.rtf`、`.rst`、`.org`、`.tex` |
+| 图片 | `.jpg`、`.jpeg`、`.png`、`.webp`、`.svg`、`.gif`、`.bmp`、`.tiff`、`.tif`、`.heic`、`.heif`、`.avif`（后三者需要 `markitai[heif]`） |
+| 其他文档 | `.epub`、`.eml`、`.msg`、`.ipynb` |
+| URL | `http://`、`https://` |
 
 ## 平台特定功能
-
-部分功能在不同平台上有差异：
 
 ### Windows
 
 | 功能 | 支持 | 说明 |
 |------|------|------|
-| 旧版 Office（`.doc`、`.ppt`） | ✅ 完全支持 | 需要 `markitai[legacy]` extra（anydoc Rust 后端，无需安装 Office；PPT 表格会展开为纯文本行） |
-| 旧版 Excel（`.xls`） | ✅ 完全支持 | 内置支持（纯 Python，无需 Office） |
-| PPTX 幻灯片渲染 | ✅ 完全支持 | 优先使用 MS Office，LibreOffice 备选 |
+| 旧版 Office（`.doc`、`.ppt`） | ✅ 完全支持 | 需要 `markitai[legacy]`（anydoc Rust 后端，无需安装 Office；PPT 表格会展开为纯文本行） |
+| 旧版 Excel（`.xls`） | ✅ 完全支持 | 内置（纯 Python） |
+| PPTX 幻灯片渲染 | ✅ 完全支持 | 优先 MS Office，LibreOffice 备选 |
 | EMF/WMF 图片 | ✅ 完全支持 | 原生支持 |
 | 浏览器自动化 | ✅ 完全支持 | 隐藏窗口模式 |
 
@@ -305,50 +151,25 @@ output/
 
 | 功能 | 支持 | 说明 |
 |------|------|------|
-| 旧版 Office（`.doc`、`.ppt`） | ✅ 完全支持 | 需要 `markitai[legacy]` extra（anydoc Rust 后端，无需 LibreOffice；PPT 表格会展开为纯文本行） |
-| 旧版 Excel（`.xls`） | ✅ 完全支持 | 内置支持（纯 Python，无需 LibreOffice） |
-| PPTX 幻灯片渲染 | ✅ 完全支持 | 需要 LibreOffice |
+| 旧版 Office（`.doc`、`.ppt`） | ✅ 完全支持 | 需要 `markitai[legacy]`（无需 LibreOffice） |
+| 旧版 Excel（`.xls`） | ✅ 完全支持 | 内置（纯 Python） |
+| PPTX 幻灯片渲染 | ✅ 完全支持 | 需要 LibreOffice（`apt-get install libreoffice` / `dnf install libreoffice`） |
 | EMF/WMF 图片 | ❌ 不支持 | Windows 专有格式 |
 | 浏览器自动化 | ✅ 完全支持 | 需要系统依赖 |
-
-**安装 LibreOffice：**
-```bash
-# Ubuntu/Debian
-sudo apt-get install libreoffice
-
-# Fedora/RHEL
-sudo dnf install libreoffice
-```
-
-**安装 Playwright 浏览器：**
-请先在[手动安装](#手动安装)中选择与当前环境匹配的 browser extra 命令，然后运行：
-
-```bash
-markitai doctor --fix
-```
 
 ### macOS
 
 | 功能 | 支持 | 说明 |
 |------|------|------|
-| 旧版 Office（`.doc`、`.ppt`） | ✅ 完全支持 | 需要 `markitai[legacy]` extra（anydoc Rust 后端，无需安装 Office；PPT 表格会展开为纯文本行） |
-| 旧版 Excel（`.xls`） | ✅ 完全支持 | 内置支持（纯 Python，无需 Office） |
-| PPTX 幻灯片渲染 | ✅ 完全支持 | 优先 LibreOffice；未安装时回退到已装的 MS PowerPoint |
+| 旧版 Office（`.doc`、`.ppt`） | ✅ 完全支持 | 需要 `markitai[legacy]`（无需安装 Office） |
+| 旧版 Excel（`.xls`） | ✅ 完全支持 | 内置（纯 Python） |
+| PPTX 幻灯片渲染 | ✅ 完全支持 | 优先 LibreOffice（`brew install --cask libreoffice`）；未安装时回退到已装的 MS PowerPoint |
 | EMF/WMF 图片 | ❌ 不支持 | Windows 专有格式 |
 | 浏览器自动化 | ✅ 完全支持 | - |
 
-**安装 LibreOffice：**
-```bash
-brew install --cask libreoffice
-```
-
-**MS Office 备选（未安装 LibreOffice 时）：** 如果已安装 Word/PowerPoint/Excel，
-markitai 会改用 AppleScript 驱动它们完成转换。首次转换会触发一次性的 macOS
-授权弹窗（"终端想要控制 Microsoft Word"），每个应用批准一次即可。该备选方案
-会短暂打开应用窗口，且需要图形界面会话；无头环境可在配置中通过
-`"office": { "macos_fallback": false }` 关闭。
+macOS 的 PowerPoint 回退通过 AppleScript 驱动 PowerPoint：首次渲染会触发一次性的授权弹窗（“Terminal 想要控制 Microsoft PowerPoint”），会短暂打开应用窗口，且需要图形界面会话。无头环境请在配置里设 `"office": { "macos_fallback": false }` 关闭。
 
 ## 下一步
 
-- [配置说明](/zh/guide/configuration) - 配置 LLM 提供商和其他设置
-- [CLI 命令](/zh/guide/cli) - 完整命令参考
+- [配置](/zh/guide/configuration) - LLM 提供商与全部设置
+- [CLI 参考](/zh/guide/cli) - 完整命令参考
