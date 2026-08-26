@@ -6,7 +6,6 @@ Tests cover:
 - analyze_batch() - Internal batch processing
 - _analyze_image_with_fallback() - Fallback strategies
 - _analyze_with_instructor() - Instructor-based analysis
-- _analyze_with_json_mode() - JSON mode fallback
 - _analyze_with_two_calls() - Two-call fallback
 - extract_page_content() - Page content extraction
 """
@@ -16,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
-import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1188,10 +1186,10 @@ class TestAnalyzeImageWithFallback:
             mock_inst.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_instructor_fails_json_mode_succeeds(
+    async def test_ladder_failure_uses_two_calls(
         self, mock_processor: MockVisionProcessor
     ):
-        """Instructor failure falls back to JSON mode."""
+        """The ladder descends internally; failing it means the two-call path."""
         messages = [
             {"role": "system", "content": "Analyze"},
             {"role": "user", "content": [{"type": "text", "text": "Describe"}]},
@@ -1203,52 +1201,19 @@ class TestAnalyzeImageWithFallback:
             mock_inst.side_effect = ValueError("Instructor failed")
 
             with patch.object(
-                mock_processor, "_analyze_with_json_mode", new_callable=AsyncMock
-            ) as mock_json:
-                mock_json.return_value = ImageAnalysis(
-                    caption="JSON mode",
-                    description="JSON worked",
+                mock_processor, "_analyze_with_two_calls", new_callable=AsyncMock
+            ) as mock_two:
+                mock_two.return_value = ImageAnalysis(
+                    caption="Two calls",
+                    description="Two calls worked",
                 )
 
                 result = await mock_processor._analyze_image_with_fallback(
                     messages, "default", "test.png"
                 )
 
-                assert result.caption == "JSON mode"
-                mock_json.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_all_fail_uses_two_calls(self, mock_processor: MockVisionProcessor):
-        """All methods fail, falls back to two-call method."""
-        messages = [
-            {"role": "system", "content": "Analyze"},
-            {"role": "user", "content": [{"type": "text", "text": "Describe"}]},
-        ]
-
-        with patch.object(
-            mock_processor, "_analyze_with_instructor", new_callable=AsyncMock
-        ) as mock_inst:
-            mock_inst.side_effect = ValueError("Instructor failed")
-
-            with patch.object(
-                mock_processor, "_analyze_with_json_mode", new_callable=AsyncMock
-            ) as mock_json:
-                mock_json.side_effect = ValueError("JSON mode failed")
-
-                with patch.object(
-                    mock_processor, "_analyze_with_two_calls", new_callable=AsyncMock
-                ) as mock_two:
-                    mock_two.return_value = ImageAnalysis(
-                        caption="Two calls",
-                        description="Two calls worked",
-                    )
-
-                    result = await mock_processor._analyze_image_with_fallback(
-                        messages, "default", "test.png"
-                    )
-
-                    assert result.caption == "Two calls"
-                    mock_two.assert_called_once()
+                assert result.caption == "Two calls"
+                mock_two.assert_called_once()
 
 
 # =============================================================================
@@ -1363,224 +1328,6 @@ class TestAnalyzeWithInstructor:
             # Check usage was tracked
             assert "test/vision-model" in mock_processor._usage
             assert mock_processor._usage["test/vision-model"]["requests"] == 1
-
-
-# =============================================================================
-# Test _analyze_with_json_mode
-# =============================================================================
-
-
-class TestAnalyzeWithJsonMode:
-    """Tests for _analyze_with_json_mode method."""
-
-    @pytest.mark.asyncio
-    async def test_successful_json_mode(self, mock_processor: MockVisionProcessor):
-        """Successful JSON mode returns ImageAnalysis."""
-        messages = [
-            {"role": "system", "content": "Analyze"},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "Describe"},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": "data:image/png;base64,x"},
-                    },
-                ],
-            },
-        ]
-
-        mock_response = MagicMock()
-        mock_response.choices = [
-            MagicMock(
-                message=MagicMock(
-                    content=json.dumps(
-                        {
-                            "caption": "JSON caption  ",
-                            "description": "JSON description",
-                            "extracted_text": "JSON text",
-                        }
-                    )
-                )
-            )
-        ]
-        mock_response.model = "test/model"
-        mock_response.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
-        mock_response._hidden_params = {"total_cost_usd": 0.001}
-
-        mock_processor.vision_router.acompletion.return_value = mock_response  # type: ignore[reportAttributeAccessIssue]
-
-        result = await mock_processor._analyze_with_json_mode(
-            messages, "default", context="test"
-        )
-
-        assert result.caption == "JSON caption"  # stripped
-        assert result.description == "JSON description"
-        assert result.llm_usage is not None
-
-    @pytest.mark.asyncio
-    async def test_handles_control_characters(
-        self, mock_processor: MockVisionProcessor
-    ):
-        """Control characters in JSON are cleaned."""
-        messages = [
-            {"role": "system", "content": "Analyze"},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "Describe"},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": "data:image/png;base64,x"},
-                    },
-                ],
-            },
-        ]
-
-        # JSON with control characters
-        dirty_json = (
-            '{"caption": "Test\\u0000caption", "description": "Test\\u0001desc"}'
-        )
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock(message=MagicMock(content=dirty_json))]
-        mock_response.model = "test/model"
-        mock_response.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
-        mock_response._hidden_params = {}
-
-        mock_processor.vision_router.acompletion.return_value = mock_response  # type: ignore[reportAttributeAccessIssue]
-
-        # Should not raise, control chars are cleaned
-        result = await mock_processor._analyze_with_json_mode(
-            messages, "default", context="test"
-        )
-
-        assert "caption" in result.caption.lower() or result.caption == "Testcaption"
-
-    @pytest.mark.asyncio
-    async def test_correct_message_index_with_real_format(
-        self, mock_processor: MockVisionProcessor
-    ):
-        """_analyze_with_json_mode modifies messages[1] (user), not messages[0] (system).
-
-        The real message format from analyze_image() is:
-          messages[0] = {"role": "system", "content": "string"}
-          messages[1] = {"role": "user", "content": [text_part, image_part]}
-
-        The bug was indexing messages[0]["content"][0]["text"] which fails
-        on a plain string with TypeError.
-        """
-        messages = [
-            {"role": "system", "content": "Analyze image in English"},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "Describe this image"},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": "data:image/png;base64,abc123"},
-                    },
-                ],
-            },
-        ]
-
-        mock_response = MagicMock()
-        mock_response.choices = [
-            MagicMock(
-                message=MagicMock(
-                    content=json.dumps(
-                        {
-                            "caption": "Test caption",
-                            "description": "Test description",
-                        }
-                    )
-                )
-            )
-        ]
-        mock_response.model = "test/model"
-        mock_response.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
-        mock_response._hidden_params = {"total_cost_usd": 0.001}
-
-        mock_processor.vision_router.acompletion.return_value = mock_response  # type: ignore[reportAttributeAccessIssue]
-
-        result = await mock_processor._analyze_with_json_mode(
-            messages, "default", context="test"
-        )
-
-        assert result.caption == "Test caption"
-        assert result.description == "Test description"
-
-        # Verify the actual messages sent to the LLM have JSON instruction
-        # appended to the USER message (index 1), not the system message
-        call_args = mock_processor.vision_router.acompletion.call_args  # type: ignore[reportAttributeAccessIssue]
-        sent_messages = call_args.kwargs["messages"]
-        # System message should remain a plain string
-        assert isinstance(sent_messages[0]["content"], str)
-        # User message text should have the JSON instruction appended
-        user_text = sent_messages[1]["content"][0]["text"]
-        assert "Return a JSON object" in user_text
-        assert "Describe this image" in user_text
-
-    @pytest.mark.asyncio
-    async def test_invalid_json_raises(self, mock_processor: MockVisionProcessor):
-        """Unparsable output raises, so the two-call fallback still runs."""
-        messages = [
-            {"role": "system", "content": "Analyze"},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "Describe"},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": "data:image/png;base64,x"},
-                    },
-                ],
-            },
-        ]
-
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock(message=MagicMock(content="not valid json"))]
-        mock_response.model = "test/model"
-        mock_response.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
-
-        mock_processor.vision_router.acompletion.return_value = mock_response  # type: ignore[reportAttributeAccessIssue]
-
-        with pytest.raises(ValueError):
-            await mock_processor._analyze_with_json_mode(messages, "default")
-
-    @pytest.mark.asyncio
-    async def test_fenced_json_is_repaired(self, mock_processor: MockVisionProcessor):
-        """The shared repair primitive covers this rung too."""
-        messages = [
-            {"role": "system", "content": "Analyze"},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "Describe"},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": "data:image/png;base64,x"},
-                    },
-                ],
-            },
-        ]
-
-        mock_response = MagicMock()
-        mock_response.choices = [
-            MagicMock(
-                message=MagicMock(
-                    content='```json\n{"caption": "c", "description": "d",}\n```'
-                )
-            )
-        ]
-        mock_response.model = "test/model"
-        mock_response.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
-
-        mock_processor.vision_router.acompletion.return_value = mock_response  # type: ignore[reportAttributeAccessIssue]
-
-        result = await mock_processor._analyze_with_json_mode(messages, "default")
-
-        assert result.caption == "c"
-        assert result.description == "d"
 
 
 # =============================================================================

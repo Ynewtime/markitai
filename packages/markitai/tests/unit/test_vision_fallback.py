@@ -24,11 +24,10 @@ class TestVisionFallbackStrategies:
         return m
 
     @pytest.mark.asyncio
-    async def test_instructor_success_skips_other_strategies(self, mixin):
-        """When Instructor succeeds, JSON mode and two-call are not tried."""
+    async def test_ladder_success_skips_the_two_call_path(self, mixin):
+        """When the structured ladder succeeds, two-call is not tried."""
         expected = ImageAnalysis(caption="instructor", description="desc")
         mixin._analyze_with_instructor = AsyncMock(return_value=expected)
-        mixin._analyze_with_json_mode = AsyncMock()
         mixin._analyze_with_two_calls = AsyncMock()
 
         result = await mixin._analyze_image_with_fallback(
@@ -37,36 +36,14 @@ class TestVisionFallbackStrategies:
 
         assert result.caption == "instructor"
         mixin._analyze_with_instructor.assert_awaited_once()
-        mixin._analyze_with_json_mode.assert_not_awaited()
         mixin._analyze_with_two_calls.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_instructor_failure_falls_back_to_json_mode(self, mixin):
-        """When Instructor fails, JSON mode is tried."""
-        expected = ImageAnalysis(caption="json_mode", description="desc")
-        mixin._analyze_with_instructor = AsyncMock(
-            side_effect=Exception("Instructor failed")
-        )
-        mixin._analyze_with_json_mode = AsyncMock(return_value=expected)
-        mixin._analyze_with_two_calls = AsyncMock()
-
-        result = await mixin._analyze_image_with_fallback(
-            [{"role": "user", "content": "test"}], "default", "img.jpg"
-        )
-
-        assert result.caption == "json_mode"
-        mixin._analyze_with_json_mode.assert_awaited_once()
-        mixin._analyze_with_two_calls.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_all_structured_fail_falls_back_to_two_calls(self, mixin):
-        """When Instructor and JSON mode both fail, two-call method is used."""
+    async def test_ladder_failure_falls_back_to_two_calls(self, mixin):
+        """The ladder already descends internally; failing it means two-call."""
         expected = ImageAnalysis(caption="two_call", description="desc")
         mixin._analyze_with_instructor = AsyncMock(
             side_effect=Exception("Instructor failed")
-        )
-        mixin._analyze_with_json_mode = AsyncMock(
-            side_effect=Exception("JSON mode failed")
         )
         mixin._analyze_with_two_calls = AsyncMock(return_value=expected)
 

@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import instructor
 import litellm
@@ -536,53 +536,12 @@ class TestVisionBatchCallSite:
 
 
 # =============================================================================
-# Call site: json_mode users (vision JSON fallback, Copilot)
+# Call site: the provider that emulates JSON mode
 # =============================================================================
 
 
 class TestJsonModeCallSite:
-    """The non-instructor JSON fallback and the provider that emulates it."""
-
-    @pytest.mark.asyncio
-    async def test_vision_json_mode_is_tier_independent(self):
-        """Strategy 2 always asks for json_object; no schema is involved.
-
-        It sits *below* the instructor staircase in
-        ``_analyze_image_with_fallback``, so it deliberately does not carry
-        a tier: it is the "just give me any JSON" attempt before the
-        two-call text fallback.
-        """
-        from tests.unit.test_vision_mixin import MockVisionProcessor
-
-        processor = MockVisionProcessor()
-        processor.vision_router.acompletion = AsyncMock(
-            return_value=_content_response(
-                TOOLS_MODEL, json.dumps({"caption": "c", "description": "d"})
-            )
-        )
-        processor.vision_router.model_list = [
-            {"litellm_params": {"model": TOOLS_MODEL, "weight": 1}}
-        ]
-
-        result = await processor._analyze_with_json_mode(
-            [
-                {"role": "system", "content": "sys"},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "describe"},
-                        {"type": "image_url", "image_url": {"url": "data:,"}},
-                    ],
-                },
-            ],
-            "default",
-            "doc.pdf",
-        )
-
-        assert result.caption == "c"
-        kwargs = processor.vision_router.acompletion.await_args.kwargs
-        assert kwargs["response_format"] == {"type": "json_object"}
-        assert "tools" not in kwargs
+    """The provider whose SDK can only be asked for JSON in prose."""
 
     def test_copilot_declares_the_md_json_tier(self):
         """Copilot's SDK has no tools and no JSON mode: floor tier."""

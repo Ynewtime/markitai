@@ -10,13 +10,10 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
-import json
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from litellm.types.llms.openai import AllMessageValues
-from litellm.types.utils import Choices
 from loguru import logger
 
 from markitai.constants import (
@@ -38,7 +35,7 @@ from markitai.utils.mime import (
     get_llm_effective_mime,
     is_llm_supported_image,
 )
-from markitai.utils.text import format_error_message, repair_json_string
+from markitai.utils.text import format_error_message
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -66,9 +63,6 @@ LANGUAGE_RETRY_INSTRUCTION_TEMPLATE = (
     "\n\nCRITICAL: This image appears to contain no readable text. "
     "Return the caption and description in {language}. "
     "Do not answer in another language."
-)
-JSON_MODE_INSTRUCTION = (
-    "\n\nReturn a JSON object with 'caption' and 'description' fields."
 )
 LANGUAGE_REWRITE_SYSTEM_TEMPLATE = (
     "Rewrite the following {field_name} into {language}."
@@ -101,7 +95,6 @@ VISION_PROMPT_FRAGMENTS = (
     BATCH_FOOTER,
     IMAGE_LABEL_TEMPLATE,
     LANGUAGE_RETRY_INSTRUCTION_TEMPLATE,
-    JSON_MODE_INSTRUCTION,
     LANGUAGE_REWRITE_SYSTEM_TEMPLATE,
     LANGUAGE_REWRITE_PRESERVE_STRUCTURE,
     LANGUAGE_REWRITE_USER_TEMPLATE,
@@ -358,10 +351,9 @@ class VisionAnalyzer:
         """
         Analyze an image using vision model.
 
-        Uses Instructor for structured output with fallback mechanisms:
-        1. Try Instructor with structured output
-        2. Fallback to JSON mode + manual parsing
-        3. Fallback to original two-call method
+        Uses the structured ladder for the answer, with one fallback:
+        1. Try the structured ladder (TOOLS -> JSON_SCHEMA -> MD_JSON)
+        2. Fallback to the original two-call method
 
         Args:
             image_path: Path to the image file
@@ -932,9 +924,10 @@ class VisionAnalyzer:
         """
         Analyze image with multiple fallback strategies.
 
-        Strategy 1: Instructor structured output (most precise)
-        Strategy 2: JSON mode + manual parsing
-        Strategy 3: Original two-call method (most compatible)
+        Strategy 1: the structured ladder (engine.complete_structured, which
+            descends TOOLS -> JSON_SCHEMA -> MD_JSON on its own and repairs
+            the JSON the model hand-writes on the bottom rung)
+        Strategy 2: original two-call method (most compatible)
 
         Args:
             messages: LLM messages with image
@@ -943,7 +936,7 @@ class VisionAnalyzer:
             context: Context identifier for usage tracking
             document_context: Short text snippet for language hinting.
         """
-        # Strategy 1: Try Instructor
+        # Strategy 1: the structured ladder
         try:
             # Deep copy to prevent Instructor from modifying original messages
             result = await self._analyze_with_instructor(
@@ -951,21 +944,11 @@ class VisionAnalyzer:
             )
             return result
         except Exception as e:
-            logger.debug(f"[{image_name}] Instructor failed: {e}, trying JSON mode")
-
-        # Strategy 2: Try JSON mode
-        try:
-            result = await self._analyze_with_json_mode(
-                copy.deepcopy(messages), model, context
-            )
-            logger.debug(f"[{image_name}] Used JSON mode fallback")
-            return result
-        except Exception as e:
             logger.debug(
-                f"[{image_name}] JSON mode failed: {e}, using two-call fallback"
+                f"[{image_name}] Structured ladder failed: {e}, using two-call fallback"
             )
 
-        # Strategy 3: Original two-call method
+        # Strategy 2: Original two-call method
         return await self._analyze_with_two_calls(
             copy.deepcopy(messages),
             context=context or image_name,
@@ -985,7 +968,7 @@ class VisionAnalyzer:
 
         Any exception (ProviderError, InstructorRetryException, truncation
         ValueError) must propagate: _analyze_image_with_fallback catches all
-        and moves on to the json_mode / two_calls fallback strategies.
+        and moves on to the two-call fallback.
         """
         call = LLMCall(
             purpose="image_analysis",
@@ -1026,93 +1009,6 @@ class VisionAnalyzer:
             extracted_text=response.extracted_text,
             llm_usage=llm_usage,
         )
-
-    async def _analyze_with_json_mode(
-        self,
-        messages: list[dict[str, Any]],
-        model: str,
-        context: str = "",
-    ) -> ImageAnalysis:
-        """Analyze using JSON mode with manual parsing."""
-        # Add JSON instruction to the prompt
-        json_messages = messages.copy()
-        json_messages[1] = {
-            **messages[1],
-            "content": [
-                {
-                    "type": "text",
-                    "text": messages[1]["content"][0]["text"] + JSON_MODE_INSTRUCTION,
-                },
-                messages[1]["content"][1],  # image
-            ],
-        }
-
-        vision_router = self._get_vision_router()
-        async with self._engine.semaphore:
-            # Calculate dynamic max_tokens using minimum across all vision router models
-            max_tokens = self._engine.calculate_max_tokens(
-                json_messages,
-                router=vision_router,
-            )
-
-            # Use vision_router for image analysis (not main router).
-            # Direct router call: spend the document's request budget first.
-            self._engine.spend_request_budget(context)
-            response = await vision_router.acompletion(
-                model=model,
-                messages=cast(list[AllMessageValues], json_messages),
-                max_tokens=max_tokens,
-                response_format={"type": "json_object"},
-            )
-
-            # litellm returns Choices (not StreamingChoices) for non-streaming
-            choice = cast(Choices, response.choices[0])
-            content = choice.message.content if choice.message else "{}"
-            actual_model = response.model or model
-
-            # Track usage
-            usage = getattr(response, "usage", None)
-            input_tokens = usage.prompt_tokens if usage else 0
-            output_tokens = usage.completion_tokens if usage else 0
-            cost = get_response_cost(response)
-            self._engine.track_usage(
-                actual_model,
-                input_tokens,
-                output_tokens,
-                cost,
-                context,
-                extract_cached_tokens(response),
-            )
-
-            # This strategy also has the model hand-writing JSON into its
-            # answer (json_object mode constrains nothing), so it uses the
-            # same single repair primitive as the staircase's bottom rung.
-            # Unparsable output must raise: the caller's next fallback
-            # (_analyze_with_two_calls) is a better answer than a blank one.
-            repaired = repair_json_string(content or "")
-            if repaired is None:
-                raise ValueError("JSON mode response contained no parsable JSON")
-            data = json.loads(repaired)
-
-            # Build llm_usage dict for this analysis
-            llm_usage: LLMUsageByModel = {
-                actual_model: cast(
-                    "ModelUsageStats",
-                    {
-                        "requests": 1,
-                        "input_tokens": input_tokens,
-                        "output_tokens": output_tokens,
-                        "cost_usd": cost,
-                    },
-                )
-            }
-
-            return ImageAnalysis(
-                caption=data.get("caption", "").strip(),
-                description=data.get("description", ""),
-                extracted_text=data.get("extracted_text"),
-                llm_usage=llm_usage,
-            )
 
     async def _analyze_with_two_calls(
         self,
