@@ -566,6 +566,16 @@ class PlaywrightRenderer:
 
         # Build context options from advanced config
         ctx_options: dict[str, Any] = {}
+        if needs_screenshot and screenshot_config is not None:
+            # screenshot.viewport_width/height described the render window
+            # but nothing read them, so every capture used Playwright's own
+            # 1280x720 default and setting them did nothing. Only the
+            # screenshot path takes them: a plain HTML fetch keeps whatever
+            # viewport it has always used.
+            ctx_options["viewport"] = {
+                "width": screenshot_config.viewport_width,
+                "height": screenshot_config.viewport_height,
+            }
         if extra_http_headers:
             ctx_options["extra_http_headers"] = extra_http_headers
         if user_agent:
