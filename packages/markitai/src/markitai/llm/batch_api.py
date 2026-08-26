@@ -12,8 +12,10 @@ request is byte-identical in shape to what the live ladder would send.
 
 Submit/poll/download go through litellm's batch helpers (OpenAI and
 OpenAI-compatible providers). Anthropic's Message Batches API is a
-different shape and intentionally not wired here yet — callers should
-refuse non-OpenAI pools with an actionable message.
+different request shape and is still missing here — not by design, only
+because there was no Anthropic key to build it against or verify it with.
+Until it lands, callers refuse non-OpenAI pools with an actionable
+message.
 """
 
 from __future__ import annotations
