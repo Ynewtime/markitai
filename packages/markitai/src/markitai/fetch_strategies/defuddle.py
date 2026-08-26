@@ -4,9 +4,11 @@ Returns clean Markdown with YAML frontmatter from any URL.
 
 NOTE: Rate limit is undocumented — using same conservative limiter as Jina.
 NOTE: JS rendering capability is unconfirmed. SPA sites may need playwright.
-TODO: Migrate defuddle's core content extraction logic to markitai native.
-      Defuddle is open-source (https://github.com/kepano/defuddle) and its
-      HTML cleaning/article extraction could replace the external API dependency.
+
+This is not the only way to get defuddle's extraction: ``markitai.webextract``
+is a port of it (webextract/PORT_MANIFEST.md pins the upstream commit) and
+backs the default ``auto``/``static`` strategies with no network call of its
+own. Choosing ``-s defuddle`` is an explicit request for the hosted API.
 """
 
 from __future__ import annotations

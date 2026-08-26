@@ -235,9 +235,10 @@ DEFAULT_JINA_BASE_URL = "https://r.jina.ai"
 # Defuddle: free content extraction API (https://defuddle.md)
 # Returns clean Markdown with YAML frontmatter (title, author, published, etc.)
 # NOTE: Rate limit is undocumented — using conservative default. Adjust if needed.
-# TODO: Migrate defuddle's core content extraction to markitai native (defuddle is
-# open-source: https://github.com/kepano/defuddle). This would eliminate the
-# external API dependency and allow offline/high-throughput use.
+# The offline path this used to be a TODO for exists: markitai.webextract is a
+# port of defuddle (see webextract/PORT_MANIFEST.md) and backs the default
+# `auto`/`static` strategies. `-s defuddle` stays as an explicit opt-in to the
+# hosted API for pages the local pipeline handles poorly.
 DEFAULT_DEFUDDLE_TIMEOUT = 30  # seconds
 DEFAULT_DEFUDDLE_RPM = 20  # Conservative default (actual limit undocumented)
 DEFAULT_DEFUDDLE_BASE_URL = "https://defuddle.md"
