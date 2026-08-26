@@ -280,7 +280,7 @@ provider/model-name
 - `openai/gpt-5.4`
 - `anthropic/claude-sonnet-4-6`
 - `gemini/gemini-3.1-flash-lite-preview`
-- `deepseek/deepseek-chat`
+- `deepseek/deepseek-v4-flash`
 - `ollama/llama3.2`
 - `claude-agent/sonnet`（本地，需要 Claude Code CLI）
 - `copilot/gpt-5.4`（本地，需要 Copilot CLI）
@@ -363,7 +363,7 @@ ChatGPT 支持的模型：
 
 // DeepSeek
 {
-  "model": "deepseek/deepseek-chat",
+  "model": "deepseek/deepseek-v4-flash",
   "api_key": "env:DEEPSEEK_API_KEY",
   "api_base": "https://api.deepseek.com/v1"
 }
@@ -1165,7 +1165,7 @@ $env:NPM_CONFIG_REGISTRY = "https://registry.npmmirror.com"
 
 | 提供商 | 可用性 | 说明 |
 |--------|--------|------|
-| **DeepSeek** | 直连可用 | 无需代理，直接使用 `deepseek/deepseek-chat` |
+| **DeepSeek** | 直连可用 | 无需代理，直接使用 `deepseek/deepseek-v4-flash` |
 | **Ollama** | 完全离线 | 本地模型，使用 `ollama/llama3.2` |
 | **API 代理服务** | 通过中转 | 通过 `api_base` 指向第三方中转服务 |
 | **OpenAI / Claude / Gemini** | 需代理 | 需代理或 `api_base` 中转 |

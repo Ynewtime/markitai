@@ -32,7 +32,7 @@ Multiple entries with the same `model_name` load-balance through the litellm rou
 | Google Gemini | `gemini/gemini-3.1-flash-lite-preview` | `GEMINI_API_KEY` |
 | OpenAI | `openai/gpt-5.4` | `OPENAI_API_KEY` |
 | Anthropic | `anthropic/claude-sonnet-4-6` | `ANTHROPIC_API_KEY` |
-| DeepSeek | `deepseek/deepseek-chat` | `DEEPSEEK_API_KEY` |
+| DeepSeek | `deepseek/deepseek-v4-flash` | `DEEPSEEK_API_KEY` |
 | OpenRouter | `openrouter/google/gemini-3.1-pro` | `OPENROUTER_API_KEY` |
 | Ollama (local server) | `ollama/llama3.2` + `"api_base": "http://localhost:11434"` | none |
 | Claude subscription | `claude-agent/sonnet` (aliases: `sonnet` `opus` `haiku` `inherit`, or full model strings) | Claude Code CLI login; extra: `claude-agent` |

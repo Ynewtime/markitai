@@ -280,7 +280,7 @@ Examples:
 - `openai/gpt-5.4`
 - `anthropic/claude-sonnet-4-6`
 - `gemini/gemini-3.1-flash-lite-preview`
-- `deepseek/deepseek-chat`
+- `deepseek/deepseek-v4-flash`
 - `ollama/llama3.2`
 - `claude-agent/sonnet` (local, requires Claude Code CLI)
 - `copilot/gpt-5.4` (local, requires Copilot CLI)
@@ -363,7 +363,7 @@ Examples:
 
 // DeepSeek
 {
-  "model": "deepseek/deepseek-chat",
+  "model": "deepseek/deepseek-v4-flash",
   "api_key": "env:DEEPSEEK_API_KEY",
   "api_base": "https://api.deepseek.com/v1"
 }
