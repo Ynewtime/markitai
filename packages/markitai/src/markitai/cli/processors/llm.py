@@ -37,16 +37,12 @@ if TYPE_CHECKING:
 def _image_ref_pattern(name: str) -> str:
     """Regex matching an image reference to *name*, encoded or raw.
 
-    markdown_image_reference writes asset destinations percent-encoded
-    (spaces/CJK → %XX), so matching only the raw filename silently dropped
-    alt-text updates for those names; match either form.
+    Re-export of ``utils.text.image_ref_pattern`` (kept for callers that
+    imported it from here).
     """
-    from urllib.parse import quote
+    from markitai.utils.text import image_ref_pattern
 
-    raw = re.escape(name)
-    encoded = re.escape(quote(name, safe="/._~-"))
-    alt = raw if raw == encoded else f"(?:{encoded}|{raw})"
-    return rf"!\[[^\]]*\]\([^)]*{alt}\)"
+    return image_ref_pattern(name)
 
 
 async def process_with_llm(

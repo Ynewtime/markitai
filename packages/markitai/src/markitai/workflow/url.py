@@ -14,6 +14,7 @@ to the caller, whose handling differs per surface.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -158,6 +159,7 @@ async def convert_url_cascade(
 
     # Remote images are inputs to LLM image analysis; without LLM there is
     # nothing to analyze, so skip the downloads entirely.
+    downloaded_images: list[Path] = []
     if markdown_override is not None:
         markdown = markdown_override
     elif cfg.llm.enabled and (cfg.image.alt_enabled or cfg.image.desc_enabled):
@@ -171,6 +173,7 @@ async def convert_url_cascade(
             source_name=filename.removesuffix(".md"),
         )
         markdown = download_result.updated_markdown
+        downloaded_images = download_result.downloaded_paths
 
     output_file = resolve_output_path(workdir / filename, cfg.output.on_conflict)
     if output_file is None:
@@ -297,6 +300,24 @@ async def convert_url_cascade(
         atomic_write_text(output_file, base_content)
         _apply_profile(output_file, workdir, cfg)
         output_path = output_file
+
+    # Image analysis (alt/desc) on the written .llm.md — previously a CLI
+    # only capability; the cascade runs it serially after the LLM stage.
+    if (
+        llm_output_path is not None
+        and llm_output_path.exists()
+        and (cfg.image.alt_enabled or cfg.image.desc_enabled)
+        and downloaded_images
+        and llm_error is None
+    ):
+        try:
+            await _analyze_url_images_stage(
+                cfg, workdir, llm_output_path, downloaded_images, proc, url
+            )
+        except Exception as e:
+            logger.warning(
+                f"[URL] Image analysis failed for {url}: {format_error_message(e)}"
+            )
 
     if llm_error is not None and llm_error_policy == "raise":
         raise ConversionError(f"LLM processing failed: {llm_error}")
@@ -494,3 +515,74 @@ async def _screenshot_only_llm_stage(
         proc.get_context_usage(url),
         None,
     )
+
+
+async def _analyze_url_images_stage(
+    cfg: MarkitaiConfig,
+    workdir: Path,
+    llm_md: Path,
+    image_paths: list[Path],
+    proc: LLMProcessor,
+    url: str,
+) -> None:
+    """Analyze downloaded images: update alt text in the .llm.md and write
+    ``images.json`` when descriptions are enabled.
+
+    Serial counterpart of the CLI's concurrent image-analysis branches —
+    correct first, fast enough for the serve/API surfaces that reach it.
+    """
+    from datetime import datetime
+
+    from markitai.constants import ASSETS_REL_PATH
+    from markitai.utils.text import image_ref_pattern, markdown_image_reference
+    from markitai.workflow.helpers import (
+        extract_document_context,
+        write_images_json,
+    )
+
+    context = f"{llm_md.resolve()}:images"
+    analyses = await proc.analyze_images_batch(
+        image_paths,
+        context=context,
+        document_context=extract_document_context(llm_md.read_text(encoding="utf-8")),
+    )
+    timestamp = datetime.now().astimezone().isoformat()
+
+    asset_descriptions: list[dict[str, Any]] = []
+    llm_content = llm_md.read_text(encoding="utf-8")
+    for image_path, analysis in zip(image_paths, analyses):
+        if analysis is None:
+            continue
+        if cfg.image.desc_enabled:
+            asset_descriptions.append(
+                {
+                    "asset": str(image_path.resolve()),
+                    "alt": analysis.caption,
+                    "desc": analysis.description,
+                    "text": analysis.extracted_text or "",
+                    "llm_usage": analysis.llm_usage or {},
+                    "created": timestamp,
+                }
+            )
+        if cfg.image.alt_enabled:
+            old_pattern = image_ref_pattern(image_path.name)
+            new_ref = markdown_image_reference(
+                analysis.caption, f"{ASSETS_REL_PATH}/{image_path.name}"
+            )
+            llm_content = re.sub(old_pattern, new_ref, llm_content)
+
+    if cfg.image.alt_enabled and llm_content != llm_md.read_text(encoding="utf-8"):
+        from markitai.security import atomic_write_text
+
+        atomic_write_text(llm_md, llm_content)
+
+    if cfg.image.desc_enabled and asset_descriptions:
+        from markitai.workflow.single import ImageAnalysisResult
+
+        result = ImageAnalysisResult(
+            source_file=llm_md.stem,
+            assets=asset_descriptions,
+        )
+        write_images_json(workdir, [result])
+
+    proc.clear_context_usage(context)

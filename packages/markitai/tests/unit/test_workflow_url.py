@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from markitai.config import MarkitaiConfig
 from markitai.fetch_types import FetchResult
 from markitai.workflow.url import (
@@ -132,3 +134,55 @@ class TestCascadeBranches:
         assert result.output_path is not None
         base = result.output_path.read_text(encoding="utf-8")
         assert "Screenshot" in base and ".markitai/screenshots/shot.png" in base
+
+
+class TestCascadeImageAnalysis:
+    async def test_alt_and_desc_run_after_llm(self, tmp_path: Path) -> None:
+        from markitai.llm.types import ImageAnalysis
+
+        cfg = _cfg()
+        cfg.image.alt_enabled = True
+        cfg.image.desc_enabled = True
+        proc = _processor()
+        img = tmp_path / "out" / ".markitai" / "assets" / "pic.jpg"
+        img.parent.mkdir(parents=True)
+        img.write_bytes(b"jpg")
+        # 让 fetch 的 markdown 里引用这张图（模拟已下载）
+        fetch = _fetch_result(tmp_path, multi_source=False)
+        fetch.content = "# Page\n\n![old alt](.markitai/assets/pic.jpg)"
+        analysis = ImageAnalysis(
+            caption="A nice picture", description="d", llm_usage={}, extracted_text=""
+        )
+        proc.analyze_images_batch = AsyncMock(return_value=[analysis])
+        # 标准 document stage 保留图片引用，供 alt 更新
+        proc.process_document = AsyncMock(
+            return_value=(
+                "# Std\n\n![old alt](.markitai/assets/pic.jpg)",
+                "---\ntitle: Page",
+            )
+        )
+        with pytest.MonkeyPatch.context() as mp:
+            # patch markitai.image.download_url_images so cascade 不真下载
+            mp.setattr(
+                "markitai.image.download_url_images",
+                AsyncMock(
+                    return_value=MagicMock(
+                        downloaded_paths=[img], updated_markdown=fetch.content
+                    )
+                ),
+                raising=False,
+            )
+            result = await convert_url_cascade(
+                "https://example.com/x",
+                cfg,
+                tmp_path / "out",
+                fetch_result=fetch,
+                processor=proc,
+            )
+        assert result.llm_output_path is not None
+        text = result.llm_output_path.read_text(encoding="utf-8")
+        assert "A nice picture" in text  # alt updated in .llm.md
+        # images.json written for desc
+        images_json = tmp_path / "out" / ".markitai" / "assets" / "images.json"
+        assert images_json.exists()
+        assert "A nice picture" in images_json.read_text(encoding="utf-8")

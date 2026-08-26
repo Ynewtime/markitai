@@ -19,6 +19,19 @@ def markdown_image_reference(alt: str, path: str) -> str:
     return f"![{escaped_alt}]({encoded_path})"
 
 
+def image_ref_pattern(name: str) -> str:
+    """Regex matching an image reference to *name*, encoded or raw.
+
+    ``markdown_image_reference`` writes asset destinations percent-encoded
+    (spaces/CJK → %XX), so matching only the raw filename silently dropped
+    alt-text updates for those names; match either form.
+    """
+    raw = re.escape(name)
+    encoded = re.escape(quote(name, safe="/._~-"))
+    alt = raw if raw == encoded else f"(?:{encoded}|{raw})"
+    return rf"!\[[^\]]*\]\([^)]*{alt}\)"
+
+
 def clean_control_characters(text: str, preserve_whitespace: bool = True) -> str:
     """Remove control characters from string.
 
