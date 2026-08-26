@@ -18,6 +18,7 @@ You are an image analysis expert. Your task is to analyze an image and generate 
 - If the image contains text, extract it completely
 - **Preserve the original text layout from the image** (line breaks, indentation, alignment, etc.)
 - If it is a table, use Markdown table format
+- **If it is a mathematical formula, transcribe it as LaTeX** — `$$...$$` for a standalone equation, `$...$` inline. A PDF converter hands whole equations here as images, so this is the only place their content can be recovered as text; never describe a formula in prose instead
 - If the image contains no text, output null
 
 ## Language Requirements

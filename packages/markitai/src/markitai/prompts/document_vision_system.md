@@ -43,6 +43,7 @@ If the extracted text is **clearly incomplete** (missing substantial content com
 - Reference page images to correct heading levels (##, ###, etc.)
 - Correct list formatting (indentation, symbols)
 - Correct table structure
+- **Repair mathematics into LaTeX**: extraction mangles formulas into markdown noise that can swallow the prose around it (`_~~√~~_ <u>1</u> _dk_<sup>.Next sentence...</sup>` for what the page shows as `1/√dk`). Read the formula off the page image and write it as `$...$` inline, or `$$...$$` on its own lines for a display equation, restoring any prose the noise absorbed. Only where the page image actually shows a formula — never invent one, and never turn ordinary text into math
 - **Preserve original image alt text unchanged** — the alt text (content inside brackets) in image references `![...](.markitai/assets/...)` must be kept as-is; do not modify, add, or remove it
 - Fix broken link formatting: merge `[text\n\ndescription](url)` into `[text](url)`
 

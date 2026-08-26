@@ -141,6 +141,18 @@ markitai scanned.pdf --ocr
 
 For a single image input, enable `--ocr` to extract text or `--llm` to analyze the image. If neither feature is enabled, Markitai exits with status 1 instead of reporting a successful conversion with no output.
 
+#### Mathematics in PDFs
+
+PDF text extraction has no notion of a formula, so how much of one survives depends on how much of the page a model gets to look at:
+
+| Run | What happens to a formula |
+|-----|---------------------------|
+| `--ocr --llm` | Inline math is written as `$...$` LaTeX, and any prose the broken extraction had swallowed comes back |
+| `--alt` / `--desc` | A display equation reaches markitai as an image; its LaTeX is recovered into `images.json` (`text`), with the alt text summarising it |
+| Neither | A display equation is kept as an image reference — nothing is lost, but nothing is text either. Inline math stays as extraction noise |
+
+Web pages are different: MathJax and MathML are converted to `$...$` / `$$...$$` with no model involved.
+
 ### `--pure`
 
 Transparent pass-through mode: LLM only does text cleaning, no frontmatter generation or post-processing.
