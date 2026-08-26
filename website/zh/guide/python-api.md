@@ -58,7 +58,7 @@ cfg.llm.pure = True  # 原样 LLM 清理，不加 frontmatter
 out = markitai.convert("notes.docx", config=cfg, llm=True)
 ```
 
-关键字开关（`llm`、`ocr`、`screenshot`、`alt`、`desc`）覆盖配置值，与 CLI 开关一一对应；`None` 表示沿用配置。`profile="rag" | "obsidian" | "okf"` 对应 `--profile`，为下游消费者塑形输出——LlamaIndex 摄取示例见[输出 Profile](./output-profiles.md)。
+关键字开关（`llm`、`ocr`、`screenshot`、`alt`、`desc`）覆盖配置值，与 CLI 开关一一对应；`None` 表示沿用配置。带截图和多源内容的 URL 转换会自动启用 vision 增强（截图作为 LLM 的视觉参照），`screenshot.screenshot_only` 则直接让模型读页面截图——与 CLI 行为一致。`profile="rag" | "obsidian" | "okf"` 对应 `--profile`，为下游消费者塑形输出——LlamaIndex 摄取示例见[输出 Profile](./output-profiles.md)。
 
 ## 异步用法
 
