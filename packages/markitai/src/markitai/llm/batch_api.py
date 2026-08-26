@@ -85,6 +85,20 @@ class BatchRunState:
 # ---------------------------------------------------------------------------
 
 
+def _supports_reasoning(model: str) -> bool:
+    """Whether litellm's capability table marks the model as reasoning-capable.
+
+    An unknown model must not be assumed capable (same rule as the live
+    structured ladder), so any lookup failure reads as ``False``.
+    """
+    import litellm
+
+    try:
+        return bool(litellm.supports_reasoning(model))
+    except Exception:
+        return False
+
+
 def build_openai_batch_request(
     custom_id: str,
     *,
@@ -99,7 +113,9 @@ def build_openai_batch_request(
     The body is produced by instructor's own ``handle_response_model``, so
     TOOLS/JSON_SCHEMA/MD_JSON requests are shaped exactly as the live
     ladder would shape them (including MD_JSON's system-message schema
-    append).
+    append), with one batch-only addition: a TOOLS request to a reasoning
+    model carries ``reasoning_effort="none"``, which the batch deployments
+    require of function-tool calls.
 
     Args:
         custom_id: Caller-chosen id echoed back in the output file.
@@ -123,6 +139,13 @@ def build_openai_batch_request(
     body: dict[str, Any] = {"model": model, **mode_kwargs}
     if max_tokens is not None:
         body["max_tokens"] = max_tokens
+    if "tools" in body and _supports_reasoning(model):
+        # OpenAI's batch deployments refuse function tools while reasoning is
+        # on: "Function tools with reasoning_effort are not supported for
+        # <model>-batch in /v1/chat/completions. To use function tools, use
+        # /v1/responses or set reasoning_effort to 'none'." Live calls keep
+        # the deployment's default effort; a batched TOOLS request cannot.
+        body["reasoning_effort"] = "none"
     return {
         "custom_id": custom_id,
         "method": "POST",

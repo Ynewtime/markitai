@@ -73,6 +73,37 @@ class TestBuildRequest:
         assert "cleaned_markdown" in system  # schema was appended
         assert "tools" not in req["body"]
 
+    def test_tools_mode_turns_reasoning_off(self) -> None:
+        """Batch deployments reject function tools unless reasoning is off."""
+        req = build_openai_batch_request(
+            "doc1",
+            messages=MESSAGES,
+            response_model=_Doc,
+            model="gpt-5.6-luna",
+            mode=instructor.Mode.TOOLS,
+        )
+        assert req["body"]["reasoning_effort"] == "none"
+
+    def test_reasoning_untouched_without_tools(self) -> None:
+        req = build_openai_batch_request(
+            "doc1",
+            messages=MESSAGES,
+            response_model=_Doc,
+            model="gpt-5.6-luna",
+            mode=instructor.Mode.JSON_SCHEMA,
+        )
+        assert "reasoning_effort" not in req["body"]
+
+    def test_reasoning_untouched_for_non_reasoning_model(self) -> None:
+        req = build_openai_batch_request(
+            "doc1",
+            messages=MESSAGES,
+            response_model=_Doc,
+            model="gpt-4o",
+            mode=instructor.Mode.TOOLS,
+        )
+        assert "reasoning_effort" not in req["body"]
+
     def test_max_tokens_forwarded(self) -> None:
         req = build_openai_batch_request(
             "d",
