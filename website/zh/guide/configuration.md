@@ -254,48 +254,15 @@ Markitai 按以下顺序自动加载 `.env` 文件（先加载的值优先）：
 
 ### 支持的提供商
 
-Markitai 通过 [LiteLLM](https://docs.litellm.ai/) 支持多个 LLM 提供商：
+任何 [LiteLLM](https://docs.litellm.ai/) 提供商均可使用——OpenAI、Anthropic、Google、DeepSeek、OpenRouter、Ollama（本地）等。基于订阅的本地提供商通过各自的 CLI 认证，无需 API key：
 
-- OpenAI (GPT-5.4)
-- Anthropic (Claude Sonnet 4.6)
-- Google (Gemini 3.1)
-- DeepSeek
-- OpenRouter
-- Ollama（本地模型）
+| 提供商 | 前缀 | 认证方式 | 额外依赖 |
+|----------|--------|------|-------|
+| Claude Agent | `claude-agent/` | [Claude Code CLI](https://github.com/anthropics/claude-code) 登录 | `markitai[claude-agent]` |
+| GitHub Copilot | `copilot/` | [Copilot CLI](https://github.com/github/copilot-sdk) 登录 | `markitai[copilot]` |
+| ChatGPT | `chatgpt/` | 首次使用时 OAuth 设备码授权（无需 CLI） | — |
 
-#### 本地提供商（基于订阅）
-
-Markitai 还支持使用 CLI 认证和订阅额度的本地提供商：
-
-- **Claude Agent**（`claude-agent/`）：使用 [Claude Agent SDK](https://github.com/anthropics/claude-code) 通过 Claude Code CLI 认证
-- **GitHub Copilot**（`copilot/`）：使用 [GitHub Copilot SDK](https://github.com/github/copilot-sdk) 通过 Copilot CLI 认证
-- **ChatGPT**（`chatgpt/`）：使用 ChatGPT 订阅，通过 OAuth Device Code Flow 和 Responses API 认证，无需额外 SDK
-
-这些提供商需要：
-1. 安装并认证对应的 CLI 工具（或使用环境变量认证，见下文）
-2. 可选 SDK 包：`uv add markitai[claude-agent]` 或 `uv add markitai[copilot]`
-
-**安装 Claude Code CLI：**
-```bash
-# macOS/Linux/WSL
-curl -fsSL https://claude.ai/install.sh | bash
-
-# Windows PowerShell
-irm https://claude.ai/install.ps1 | iex
-```
-
-**安装 GitHub Copilot CLI：**
-```bash
-# macOS/Linux/WSL
-curl -fsSL https://gh.io/copilot-install | bash
-
-# Windows
-winget install GitHub.Copilot
-```
-
-**ChatGPT（无需安装 CLI）：**
-
-ChatGPT 提供商首次使用时通过 OAuth Device Code Flow 认证，只需配置模型并按照浏览器提示操作即可。
+CLI 安装：`curl -fsSL https://claude.ai/install.sh | bash`（Claude Code；Windows：`irm https://claude.ai/install.ps1 | iex`），`curl -fsSL https://gh.io/copilot-install | bash`（Copilot；Windows：`winget install GitHub.Copilot`）。
 
 ::: tip Gemini 接入方式
 Gemini：使用直连 API 密钥（`gemini/`，见下方“模型命名”）或通过 OpenRouter 接入（`openrouter/google/...`）。

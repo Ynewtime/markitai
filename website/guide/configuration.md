@@ -254,48 +254,15 @@ Project-level `.env` takes priority, allowing per-project overrides of global se
 
 ### Supported Providers
 
-Markitai supports multiple LLM providers through [LiteLLM](https://docs.litellm.ai/):
+Any [LiteLLM](https://docs.litellm.ai/) provider works — OpenAI, Anthropic, Google, DeepSeek, OpenRouter, Ollama (local), and more. Subscription-based local providers authenticate through their CLI instead of an API key:
 
-- OpenAI (GPT-5.4)
-- Anthropic (Claude Sonnet 4.6)
-- Google (Gemini 3.1)
-- DeepSeek
-- OpenRouter
-- Ollama (local models)
+| Provider | Prefix | Auth | Extra |
+|----------|--------|------|-------|
+| Claude Agent | `claude-agent/` | [Claude Code CLI](https://github.com/anthropics/claude-code) sign-in | `markitai[claude-agent]` |
+| GitHub Copilot | `copilot/` | [Copilot CLI](https://github.com/github/copilot-sdk) sign-in | `markitai[copilot]` |
+| ChatGPT | `chatgpt/` | OAuth Device Code Flow on first use (no CLI needed) | — |
 
-#### Local Providers (Subscription-based)
-
-Markitai also supports local providers that use CLI authentication and subscription credits:
-
-- **Claude Agent** (`claude-agent/`): Uses [Claude Agent SDK](https://github.com/anthropics/claude-code) with Claude Code CLI authentication
-- **GitHub Copilot** (`copilot/`): Uses [GitHub Copilot SDK](https://github.com/github/copilot-sdk) with Copilot CLI authentication
-- **ChatGPT** (`chatgpt/`): Uses ChatGPT subscription via OAuth Device Code Flow and Responses API. No extra SDK required.
-
-These providers require:
-1. The respective CLI tool installed and authenticated (or environment variable auth; see below)
-2. Optional SDK package: `uv add markitai[claude-agent]` or `uv add markitai[copilot]`
-
-**Install Claude Code CLI:**
-```bash
-# macOS/Linux/WSL
-curl -fsSL https://claude.ai/install.sh | bash
-
-# Windows PowerShell
-irm https://claude.ai/install.ps1 | iex
-```
-
-**Install GitHub Copilot CLI:**
-```bash
-# macOS/Linux/WSL
-curl -fsSL https://gh.io/copilot-install | bash
-
-# Windows
-winget install GitHub.Copilot
-```
-
-**ChatGPT (no CLI needed):**
-
-ChatGPT provider authenticates via OAuth Device Code Flow on first use. Just configure the model and follow the browser prompt.
+CLI installs: `curl -fsSL https://claude.ai/install.sh | bash` (Claude Code; Windows: `irm https://claude.ai/install.ps1 | iex`), `curl -fsSL https://gh.io/copilot-install | bash` (Copilot; Windows: `winget install GitHub.Copilot`).
 
 ::: tip Gemini Access
 Gemini is not a local/CLI provider. Use a direct API key (`gemini/`, see [Model Naming](#model-naming)) or route through OpenRouter (`openrouter/google/...`).
