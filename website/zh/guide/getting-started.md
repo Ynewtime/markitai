@@ -53,7 +53,18 @@ markitai https://example.com/article -o output/   # 网页
 markitai ./docs -o ./output                # 整个目录
 ```
 
-如需 AI 增强（`--llm`），再配置 LLM 提供商：
+### 开启 LLM 增强
+
+导出任意一家受支持提供商的 key，`--llm` 立刻可用——markitai 会从环境里认出模型，
+起步阶段不需要任何配置文件：
+
+```bash
+export GEMINI_API_KEY=...    # 或 OPENAI_/ANTHROPIC_/DEEPSEEK_/OPENROUTER_API_KEY
+markitai report.pdf -o output/ --llm
+```
+
+想固定用某一个模型，设 `MODEL=gemini/gemini-flash-lite-latest` 即可。需要配置文件、
+订阅制提供商，或多模型带 fallback 时：
 
 ```bash
 markitai init                # 引导式配置（或用 markitai -I 交互模式）

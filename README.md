@@ -96,10 +96,18 @@ markitai serve
 ```bash
 markitai document.pdf -o out/            # convert a file
 markitai https://example.com -o out/     # convert a URL
-markitai ./docs -o out/ --llm            # batch convert with LLM enhancement
-markitai document.pdf --preset rich      # LLM + alt text + descriptions + screenshots
+markitai ./docs -o out/                  # batch convert a directory
 markitai doctor                          # check dependencies and configuration
-markitai init                            # interactive configuration setup
+```
+
+For LLM enhancement, export any supported provider key — markitai picks the
+model up from the environment, no config file needed:
+
+```bash
+export GEMINI_API_KEY=...                # or OPENAI_/ANTHROPIC_/DEEPSEEK_/OPENROUTER_API_KEY
+markitai document.pdf -o out/ --llm      # clean formatting + generated frontmatter
+markitai document.pdf --preset rich      # LLM + alt text + descriptions + screenshots
+markitai init                            # or configure it interactively, once
 ```
 
 See the [Getting Started guide](https://markitai.dev/guide/getting-started) for LLM configuration, presets, caching, and batch options.

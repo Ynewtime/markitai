@@ -53,7 +53,18 @@ markitai https://example.com/article -o output/   # web page
 markitai ./docs -o ./output                # whole directory
 ```
 
-Then set up an LLM provider if you want AI enhancement (`--llm`):
+### Turning on LLM enhancement
+
+Export a key for any supported provider and `--llm` works immediately — markitai
+reads the model from your environment, so no config file is needed to start:
+
+```bash
+export GEMINI_API_KEY=...    # or OPENAI_/ANTHROPIC_/DEEPSEEK_/OPENROUTER_API_KEY
+markitai report.pdf -o output/ --llm
+```
+
+To pin one model instead, set `MODEL=gemini/gemini-flash-lite-latest`. For a
+config file, a subscription provider, or several models with fallback:
 
 ```bash
 markitai init                # guided setup (or: markitai -I interactive mode)
