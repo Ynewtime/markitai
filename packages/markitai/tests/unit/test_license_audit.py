@@ -128,6 +128,36 @@ class TestNoticeFile:
         assert "Apache" in notice
         assert "benchmarks/scorer.py" in notice
 
+    def test_every_extra_is_accounted_for(self, notice: str) -> None:
+        """A new extra must say which licence it brings in.
+
+        NOTICE closes by naming each extra's package and its licence family.
+        Two extras added in 0.24.0 (`legacy`, `mcp`) were never added to that
+        list — the paragraph read as exhaustive while it was not.
+        """
+        import re
+        import tomllib
+
+        metadata = tomllib.loads(
+            (_REPO_ROOT / "packages" / "markitai" / "pyproject.toml").read_text(
+                encoding="utf-8"
+            )
+        )
+        extras = metadata["project"]["optional-dependencies"]
+        missing = sorted(
+            {
+                re.split(r"[<>=!\[; ]", requirement, maxsplit=1)[0]
+                for name, requirements in extras.items()
+                if name != "all"  # aggregates the others, brings nothing new
+                for requirement in requirements
+            }
+            - set(re.findall(r"[A-Za-z0-9_.-]+", notice))
+        )
+        assert not missing, (
+            f"extras whose package NOTICE never names: {missing}. Add it to "
+            "the licence list so the closing paragraph stays exhaustive."
+        )
+
 
 class TestReadmeLicenceSection:
     def test_readme_discloses_agpl_pdf_engine(self) -> None:

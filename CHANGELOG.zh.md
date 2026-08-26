@@ -7,16 +7,26 @@
 
 ## [未发布]
 
+## [0.24.0] - 2026-08-26
+
 ### 新增
 
 - **markitai 现在既是库也是 CLI**：`markitai.convert("report.pdf")` 与异步孪生 `aconvert` 返回类型化的 `ConversionOutput`——base 与 LLM 增强两版 markdown、解析后的 frontmatter、资产与截图路径、逐图分析与用量汇总——复用 CLI 的配置层级与 flag 语义，而非另造一套配置。解析器噪声抑制下沉到 CLI 之下，库调用保持 stdout 干净（subprocess 回归测试锁定）；`aconvert` 将 CPU 密集转换放入工作线程、不阻塞事件循环。0.x 阶段标记为暂定
-- **`markitai-mcp` 把转换带给 MCP agent**：独立包经 stdio 暴露 `convert_document`、`convert_url`、`batch_convert`、`job_status` 四个工具——上架 PyPI 后，`claude mcp add markitai -- uvx markitai-mcp` 一条命令即完成接入。结果写盘并附截断的内联预览，大文档不会灌爆 agent 的上下文；LLM 增强默认关闭、调用方按需开启
+- **MCP agent 通过 `mcp` extra 接入 markitai**：`markitai.mcp` 随主 wheel 一起发布，经 stdio 暴露 `convert_document`、`convert_url`、`batch_convert`、`job_status` 四个工具——`claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp` 一条命令即完成接入，不再有第二个包要发布和对版本。结果写盘并附截断的内联预览，大文档不会灌爆 agent 的上下文；LLM 增强默认关闭、调用方按需开启
 - **`--profile rag|obsidian|okf` 按消费方塑形输出**：`rag` 把图片从隐藏的 `.markitai/` 目录移到可见的 `assets/`（LlamaIndex `SimpleDirectoryReader` 等常见摄取器默认跳过隐藏路径）、把 PDF 页标记改写为 `<!-- page: N -->`、对行列数不齐的管道表告警；`obsidian` 增加可选的 `![[wikilink]]` 图片引用；`okf` 把 frontmatter 映射到 Open Knowledge Format v0.2 字段名。profile 与 preset 正交——preset 决定跑什么，profile 决定文件长什么样——不带 profile 时输出与之前字节级一致。`images.json` 边车文件的 schema 现已冻结、写入文档并由测试守护
 - **转换质量有了三套度量**：快照护栏冻结 PDF/DOCX/PPTX/XLSX fixture 集的默认转换输出（时间戳/版本/绝对路径归一化后精确比对，仅显式 `--update` 可再生）；opt-in 的 olmOCR-bench 脚本给 `--ocr` 路径对公开基准打分——首跑就为两个真实缺口给出诚实数字（手写扫描件 15.6%、缺页眉页脚抑制处 23.1%）；盲评 A/B 框架以位置交换去偏、按格式聚合、jsonl 断点续跑与半价 Batches 请求构建器比较 base 与 LLM 增强两版输出。没有显式凭据不会调用任何付费裁判；主流裁判模型下评 20 个文档约 $0.08–$0.42
 - **单文档 LLM 请求断路器**（`llm.max_requests_per_document`，默认 50，`0` 关闭）：传输重试 × 校验重试 × fallback 不再能无界相乘。文档触顶后跳过其剩余增强、保留未增强产物，usage 报告以零成本标记条目如实记录
 - **官网提供 `/llms.txt`，README 增加诚实对比表**：索引以双语列出文档供 LLM 消费；对比表将 markitai 与 markitdown、docling、anydoc 并列——写明对方强项，而非只说自己
 - **serve API 契约进入机器校验**：所有 JSON 路由声明 pydantic 响应模型，`scripts/export_openapi.py` 导出注入了 SSE 事件体的 OpenAPI schema（它们不出现在路由签名里，恰是前端镜像漂移最重的地方），契约测试逐字段比对该 schema 与 webapp 手写类型镜像。先写测试就抓出四处真实漂移——镜像缺 `ItemPayload.output_name`、自持一份任务条目上限、把服务端恒发的 `api_base_placeholder` 标成可选、引用一份不存在的契约文档——全部修复；上限现经 `capabilities.limits` 下发并在运行时读取。CI 新增 webapp lint 与类型检查 job，镜像不能再无声腐烂
 - **defuddle 移植有了清单与上游哨兵**：`PORT_MANIFEST.md` 记录 `webextract` 各模块追踪的上游源文件与 parity 语料 pin 的 commit——单元测试保证两处 pin 相等，同步脚本联动改写——每周 workflow 在上游发布领先于 pin 时自动开 issue。此前该移植既无归属映射也无任何上游信号
+- **`--llm-batch` 让目录批量的 LLM 阶段按半价跑**：目录批量转换可以把增强提交给服务商的 Batch API，而不是逐个实时调用，支持单模型的 OpenAI 或 Anthropic 池。默认挂等到 `--llm-batch-timeout`（1 小时）后转交——batch 在服务端继续跑，稍后用 `--llm-batch-collect <id> -o <目录>` 收取，状态文件就写在输出目录旁，不需要原始输入目录还在。命中缓存的文档根本不会被提交；batch 没能完成的文档逐个实时重跑，不会丢。暂不能与 `--alt`/`--desc`/`--screenshot`/`--ocr` 组合——会明确报错而不是静默失败
+- **旧版 `.doc`/`.ppt` 通过 `markitai[legacy]` 转换**：Office 97-2003 格式改由内置 Rust 的 anydoc 后端处理——毫秒级，且在任何平台都不需要装 Microsoft Office 或 LibreOffice。`doctor` 把它作为可选能力上报。相对被替换掉的自动化方案有两个如实记录的限制：嵌入图片不再提取，PPT 表格会压平成纯文本
+- **`--ocr --llm` 现在有名字、有度量、有同意门**：这个组合一直是把页面图像交给视觉模型而不是跑 RapidOCR，但此前没有任何地方说明。现在 `--ocr` 帮助、`doctor` 和中英 CLI 指南都称它为 VLM-OCR；转换器元数据带上 `ocr_path`（`vlm`/`rapidocr`/`none`），报告能区分两条 OCR 路径；olmOCR-bench 脚本新增 `--vlm` 模式，可与本地 OCR 正面对比；页面图像离开本机前会有一次性披露，`MARKITAI_NO_VLM_OCR=1` 可强制走本地路径
+- **超长页面截图改为切片而非缩放**：过去整页会被压成一张很长的 JPEG——细节不可逆地丢失，而且高得视觉模型读不动。超过 `screenshot.tile_height`（2000px）的页面现在切成全宽的竖直切片，screenshot-only 路径逐片读取
+- **数学公式还原为 LaTeX**：PDF 抽取本身不认识「公式」——pymupdf 把独立成行的公式当图片交出来，把行内公式打散成 markdown 噪声、还会把旁边的正文一起吞掉。现在每一层看得到页面的 prompt 都要求输出 `$...$` / `$$...$$`：`--ocr --llm` 对照页面图像修复行内公式，`--alt`/`--desc` 把独立公式图的 LaTeX 还原进 `images.json`——那是它的内容唯一能变回文本的地方。不带 LLM 时独立公式仍保留为图片引用：不丢，但也不是文本。网页本来就没问题，MathJax 和 MathML 无需模型参与即可转换
+- **CLI 转换可选记录到网页界面历史**：通过 `--record-history`（或 `MARKITAI_RECORD_HISTORY` 环境变量，或配置项 `history.record`；优先级：参数 > 环境变量 > 配置，默认关闭）可将完成的 CLI 运行记录为 `~/.markitai/serve/jobs/` 下的任务，复制输出及引用的资源，使其无需重启服务即可实时出现在 `markitai serve` 的历史页面中。CLI 记录的条目带有 `origin: "cli"`，网页界面会显示「CLI」徽标，并与网页创建的任务共享七天 TTL 清理、删除与归档下载。stdout/管道模式下跳过记录；记录完全容错，绝不会导致转换失败，完成后在 stderr 打印一行暗色确认信息（可被 `--quiet` 抑制）
+- **新增 `NOTICE`，记录 markitai 自身的 MIT 许可无法独自覆盖的第三方义务**：AGPL-3.0 的 PyMuPDF 栈及其对再分发与网络服务的含义、`webextract/` 所基于的 defuddle 移植（MIT © kepano）、以及基准打分器所基于的 marker 移植（Apache-2.0）。前两项此前在整个仓库中没有任何归属声明
+- **CI 会因禁商用或意料之外的 copyleft 依赖而失败**：`scripts/check_licenses.py` 在「不带任何 extra」的安装形态下读取许可证元数据，拒绝一切禁商用与专有许可，以及任何不在显式允许清单内的 AGPL/GPL 包（当前清单恰好是三个 PyMuPDF 包）
 
 ### 变更
 
@@ -24,29 +34,12 @@
 - **结构化 LLM 调用按模型真实能力选最强模式**：原生 tool calling 优先，其次 `response_format` JSON schema——顺带接通了 claude-agent provider 一直闲置的原生路径——「求模型在 markdown 里给 JSON」降为仅最后一级。阶梯逐调用自动降级，能力表夸口的代价至多是多一次请求而非失败。五处 JSON 修复层退役其四：修复只存在一处、只在最后一级运行；能力健全的模型上一次干净调用从三次潜在重试变为一次原生请求
 - **自解释错误不再泄漏异常类名**：因缺 OCR 后端、文件超限或格式不支持而失败的转换，只打印可操作的消息本身，不再前缀内部类名。意外错误保留类名——在那里它是诊断信息而非噪声——且完整 traceback 现在进入 debug 日志，此前是被整个丢弃的
 - **parity 语料与算法 pin 同源**：语料自 2026 年 3 月快照 resync 至 defuddle 0.19.3（83 → 208 个），此前先补齐了新语料暴露的六项未移植行为。共享的 83 个 fixture 上质量基准 92.73 → 94.07 且无一回归；全 208 个的新基线 95.59，逐 fixture 护栏楼层重新立定
-
-### 修复
-
-- **对齐 defuddle 0.19.3 的六个抽取缺口**：可关闭的 `aria-hidden` 浮层内的正文被保留（上游 issue 232）；CodeMirror 渲染的代码块保住内容与语言；文中图片行不再被当作相关文章卡片删除；Substack Notes 获得专用 extractor、不再携带页面装饰；SVG 图形保留内容并解析外部 CSS 的回退样式；行内相关文章块不再连带删掉周围正文。resync 顺带修复了它新暴露的问题：Hugo admonition、lightbox 图片去重、LaTeX 图片服务、`<noscript>` 图片回退与带行号的代码布局
-
-- **嵌入式 PDF 图片在符号链接与树外输出目录下不再丢失**：pymupdf4llm 写出的图片路径可能是符号链接解析形（macOS `/tmp` → `/private/tmp`）或相对进程工作目录的形式，单一拼写的引用改写会漏掉它们——markdown 里留下绝对路径，alt 文本、引用校验、资产发现全部匹配不上。现在三种拼写全部改写
-
-- **`router_settings.fallbacks` 真实生效**：配置的回退组现在会在主组 deployment 失败时接管。该设置此前有文档但被整体绕过——请求直接按 deployment id 寻址，litellm 的回退机制根本看不到可回退的组。未命名 `default` 组的配置现在启动即报错，而不是静默绕过设置
-
-### 安全
-
-- **`markitai serve` 现在签发访问 token**：启动横幅打印登录 URL；来自其他机器的请求必须携带 token——否则一律 401，取代旧的无认证半开放面。通过认证的远端与本机同权，内网 URL 与历史记录全部可用——这才让 LAN 绑定真正可用。回环请求依旧免 token；`MARKITAI_SERVE_TOKEN` 可跨重启固定 token；`--no-auth` 恢复旧行为
-
-## [0.24.0] - 2026-08-21
-
-### 新增
-
-- **CLI 转换可选记录到网页界面历史**：通过 `--record-history`（或 `MARKITAI_RECORD_HISTORY` 环境变量，或配置项 `history.record`；优先级：参数 > 环境变量 > 配置，默认关闭）可将完成的 CLI 运行记录为 `~/.markitai/serve/jobs/` 下的任务，复制输出及引用的资源，使其无需重启服务即可实时出现在 `markitai serve` 的历史页面中。CLI 记录的条目带有 `origin: "cli"`，网页界面会显示「CLI」徽标，并与网页创建的任务共享七天 TTL 清理、删除与归档下载。stdout/管道模式下跳过记录；记录完全容错，绝不会导致转换失败，完成后在 stderr 打印一行暗色确认信息（可被 `--quiet` 抑制）
-- **新增 `NOTICE`，记录 markitai 自身的 MIT 许可无法独自覆盖的第三方义务**：AGPL-3.0 的 PyMuPDF 栈及其对再分发与网络服务的含义、`webextract/` 所基于的 defuddle 移植（MIT © kepano）、以及基准打分器所基于的 marker 移植（Apache-2.0）。前两项此前在整个仓库中没有任何归属声明
-- **CI 会因禁商用或意料之外的 copyleft 依赖而失败**：`scripts/check_licenses.py` 在「不带任何 extra」的安装形态下读取许可证元数据，拒绝一切禁商用与专有许可，以及任何不在显式允许清单内的 AGPL/GPL 包（当前清单恰好是三个 PyMuPDF 包）
-
-### 变更
-
+- **四个入口共用同一条 URL 流水线**：`serve`、Python API、`markitai <url>` 和 URL 批量各自维护着近乎一致的「抓取 → 本地化图片 → 增强 → 写出」副本。它们现在都包装 `workflow/url.py` 里的同一条 cascade——顺带让 `serve` 和库调用零改动获得了 vision 增强、screenshot-only 读取和逐图 alt/描述分析
+- **prompt 缓存真正生效了**：5 个 system 模板把每次请求都变化的变量放在靠前位置，导致稳定前缀只有几行，任何服务商的前缀缓存都匹配不上。变量段移到模板末尾（指令文本一字未改），usage 现在会报告 `cached_input_tokens`，router 在出口处附加 Anthropic 的 `cache_control`
+- **转一个 `.txt` 不再加载 PDF 和 Office 工具链**：过去所有转换器模块都会被导入，只为让注册装饰器执行——每个进程要付约 430ms，而且无论什么格式都会拉进 markitdown、Magika 和 onnxruntime。现在一种格式只导入处理它的那一个模块：`import markitai.converter` 降到约 9ms，文本转换完全不碰那套栈
+- **一个提供商只描述一次**：每家的默认模型、以及 API key 从哪个环境变量读，此前被手抄进凭据探测、设置向导、`serve` 启动候选和 `init` 四处——而且已经漂移（三处停在上一代模型，向导那份漏了 OpenRouter）。两项事实现在都收进 `constants`，并有守护测试在出现第二份副本时报错。默认模型也写进了文档，「markitai 会替我选哪个」变成可核对的事
+- **下线告警与成本估算改为派生**：退役模型的告警此前推荐一个写死的替代模型（它自己也早已过时），并给所有型号打上同一个硬编码的下线日期。现在替代模型读自默认模型表（且跟随用户实际配置的提供商），日期读自 litellm——litellm 没有记录就不打日期
+- **webextract 少解析、少拷贝**：fragment 与 document 解析统一到 lxml 一条路径，五份 block 标签表收敛到 constants，重试流水线不再每次整树 deepcopy，`srcset` 选取只存在一份实现。parity 与质量下限不变
 - **默认安装体积减少 155 MB**——从 633 MB 降到 477 MB（干净环境实测）。`opencv-python` 完全移出核心，RapidOCR 移到新的 `ocr` extra 之后。**扫描件与图片 OCR 现在需要 `uv tool install "markitai[ocr]" --force`**：`doctor` 将 OCR 归类为可选能力而非缺失的必需项，未安装时使用 `--ocr` 会直接给出这条命令，「此 PDF 疑似扫描件」的提示也会附带它——不会再让你绕「提示 → 加参数 → 报错 → 重装」那一圈
 - **去掉 OpenCV 之后图片质量反而更好**：在所有实测样本上，纯 Pillow 压缩都胜过 OpenCV——PSNR 与 SSIM 更高、文件还小 7.7%。原因是 OpenCV 的 `INTER_LANCZOS4` 降采样不做抗锯齿预滤波，把混叠噪声一起编进了 JPEG。也就是说默认安装此前产出的图片，**比它自己的回退路径更差**。在真实转换路径上吞吐代价最多 14%，因为每篇文档的进程池本来就要重新导入，而 `import cv2` 要 63.7 毫秒，Pillow 只要 23.2 毫秒
 - **全量依赖升级到当前版本**，56 项更新中包括 `litellm` 1.91.1 → 1.97.0 与 `markitdown` 0.1.6 → 0.1.7；许可证审计已在升级后的依赖树上重跑，PyMuPDF 版本下限与允许清单依旧成立
@@ -54,11 +47,21 @@
 
 ### 移除
 
+- **三平台 Office 自动化整体退役**——约 1.3k 行的 Windows COM、macOS AppleScript 和 LibreOffice CLI 驱动代码，连同围绕它建立的批量预转换机制一并删除。它服务的格式改由 `markitai[legacy]` 覆盖；LibreOffice 和 Microsoft Office 的相关文案收窄到仍在使用它们的 PPTX 幻灯片渲染
+- **LLM 路径里两层多余的防御**：图片分析在结构化阶梯之下还挂着一个手写的 JSON 模式策略，而阶梯自己的底层 rung 做的正是同一件修复；另有一份手抄的 Copilot 价格表，实际流量早已不再走到它。两者都在验证过替代路径的真实调用之后才删除
 - **FFmpeg 不再被检查、宣传或安装**：markitai 从来不支持音视频——格式表里没有任何相关条目，依赖注释也一直写着 markitdown 的 audio extras 未被使用——然而 `doctor` 却把 FFmpeg 呈现为「音视频文件处理」能力，`init` 会检查它，两个安装脚本还会主动询问是否安装
 - **六个已弃用的抓取/后端别名参数被删除**（`--playwright`、`--defuddle`、`--static`、`--jina`、`--cloudflare`、`--kreuzberg`），统一使用自 0.15.0 起就是正式写法的 `-s <策略>` 与 `-b <后端>`。传入已删除的名字会得到一条**指明替代写法**的用法错误，而不是干巴巴的「没有这个选项」，因此旧命令行会直接告诉你该改成什么。`markitai --help` 的选项从 36 个减到 30 个，抓取/后端面板从 8 个减到 2 个
 
 ### 修复
 
+- **对齐 defuddle 0.19.3 的六个抽取缺口**：可关闭的 `aria-hidden` 浮层内的正文被保留（上游 issue 232）；CodeMirror 渲染的代码块保住内容与语言；文中图片行不再被当作相关文章卡片删除；Substack Notes 获得专用 extractor、不再携带页面装饰；SVG 图形保留内容并解析外部 CSS 的回退样式；行内相关文章块不再连带删掉周围正文。resync 顺带修复了它新暴露的问题：Hugo admonition、lightbox 图片去重、LaTeX 图片服务、`<noscript>` 图片回退与带行号的代码布局
+- **嵌入式 PDF 图片在符号链接与树外输出目录下不再丢失**：pymupdf4llm 写出的图片路径可能是符号链接解析形（macOS `/tmp` → `/private/tmp`）或相对进程工作目录的形式，单一拼写的引用改写会漏掉它们——markdown 里留下绝对路径，alt 文本、引用校验、资产发现全部匹配不上。现在三种拼写全部改写
+- **`router_settings.fallbacks` 真实生效**：配置的回退组现在会在主组 deployment 失败时接管。该设置此前有文档但被整体绕过——请求直接按 deployment id 寻址，litellm 的回退机制根本看不到可回退的组。未命名 `default` 组的配置现在启动即报错，而不是静默绕过设置
+- **发往推理模型的批处理请求不再整批失败**：OpenAI 的 batch 部署在推理开启时拒绝 function tools，于是批次里每个文档都返回 400、退化成实时重跑——批处理等于白做。现在当模型支持推理且请求带 tools 时，请求会携带 `reasoning_effort="none"`，这正是服务商自己的报错信息所要求的
+- **Claude 系模型的成本不再恒为 $0**：对于成本表里没有的名字，litellm 会推断出提供商并返回零价格——这读起来像「免费」，还挡住了模糊匹配本可以找到的真实条目。经由 Copilot 和 Claude CLI 运行的 5 个 Claude 型号一直被计为零成本。相关地，`gpt-5.4-codex` 被按普通 `gpt-5.4` 计价，因为模糊匹配接受了缺少档位后缀的候选
+- **已完成的转换不会再报告失败**：markitdown 会拉入 Magika，Magika 会拉入 onnxruntime，而 onnxruntime 在解释器退出阶段的析构偶尔会让进程崩溃——一次已经写出结果的转换因此以退出码 134 收场，临时目录的清理也被跳过。CLI 现在在工作完成后按自己的方式退出
+- **`--llm-batch-collect` 会遵守 `--config-json`**：它构造配置时漏掉了内联覆盖，导致 collect 运行时的实时重跑兜底用的是配置文件里恰好写着的模型池
+- **测试套件不再受开发者本机配置影响**：此前只要 `~/.markitai/config.json` 或 `.env` 里有真实配置，套件的一部分就会在真正使用 markitai 的人机器上失败
 - **安装提示指向了错误的包**：CLI 打印的每一条消息都被插进了启用 markup 的渲染里，于是 Rich 把 extra 名字中的 `[ocr]`、`[serve]`、`[browser]` 当作样式标签吃掉了，终端上打印出的补救命令变成 `uv tool install "markitai" --force`——重装一遍你已经有的东西，缺失的能力一点没补上。现在调用方文本在共享的消息辅助函数里统一转义，标题、警告与错误详情里的方括号也一并保住
 - **未安装 OCR extra 时 `--ocr` 不再报告成功**：转换图片时明明要求了文字识别，后端缺失却静默回退成一张图片占位符并以 0 退出——文件"转换完成"了，却什么都没读出来。后端缺失现在是硬失败并附带安装命令；而真正的 OCR 失败（引擎在、但报错或没识别到文字）依旧照原样降级为占位符
 - **wheel 现在带上了 `LICENSE` 与 `NOTICE`**：`license-files` 指向的路径在包目录内并不存在，hatchling 静默地什么都没匹配到，于是**历来发布的每一个 wheel 都不含任何许可证文件**。（向上逃逸不是解法——那样能构建成功，但会往 wheel 里写入 `../../` 路径穿越条目；改为在包内保留副本，并用测试防止其与根目录副本漂移。）
@@ -76,6 +79,7 @@
 
 ### 安全
 
+- **`markitai serve` 现在签发访问 token**：启动横幅打印登录 URL；来自其他机器的请求必须携带 token——否则一律 401，取代旧的无认证半开放面。通过认证的远端与本机同权，内网 URL 与历史记录全部可用——这才让 LAN 绑定真正可用。回环请求依旧免 token；`MARKITAI_SERVE_TOKEN` 可跨重启固定 token；`--no-auth` 恢复旧行为
 - **`markitai serve` 不会再被当作打入自身所在网络的跳板**：使用 `--host 0.0.0.0` 时，局域网内任何机器都可以提交一个 URL 让服务器去抓取——包括内网地址与云元数据端点。0.23.0 加入的 Host/Origin 校验拦得住恶意网页，拦不住直连 API 的请求。来自其他机器的请求现在只允许指向公网 URL，而运行服务器的本机保留完整权限，因此在本机上转换自己的内网页面依然可用
 - **绑定到非回环地址时会明确说明后果**：`markitai serve --host 0.0.0.0` 会警告服务**没有任何认证**，能访问到它的人都可以转换文件、读取、下载乃至删除整个转换历史。默认的回环绑定保持静默
 - **`fetch.remote_consent=ask` 现在对 X/Twitter 富化也会先询问**：这条路径此前不经询问就发起远程调用，仅尊重此前已作出的决定，于是在一个承诺「先问你」的设置下，链接仍可能被发往第三方服务。它现在与其他所有远程服务共享同一个进程级同意决策——一次回答依旧覆盖全部
