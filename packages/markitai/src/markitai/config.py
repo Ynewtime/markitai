@@ -57,6 +57,7 @@ from markitai.constants import (
     DEFAULT_SCREENSHOT_VIEWPORT_WIDTH,
     DEFAULT_STATE_FLUSH_INTERVAL_SECONDS,
     DEFAULT_URL_CONCURRENCY,
+    PROVIDER_DEFAULT_MODELS,
 )
 
 # Environment variable descriptions for user-friendly error messages
@@ -1072,7 +1073,7 @@ class ConfigManager:
                     {
                         "model_name": "default",
                         "litellm_params": {
-                            "model": "gemini/gemini-flash-latest",
+                            "model": PROVIDER_DEFAULT_MODELS["gemini"],
                             "api_key": "env:GEMINI_API_KEY",
                         },
                     }

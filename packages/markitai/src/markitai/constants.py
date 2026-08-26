@@ -288,6 +288,33 @@ LOCAL_STRATEGIES: tuple[str, ...] = ("static", "playwright")
 # Source: https://code.claude.com/docs/en/model-config
 CLAUDE_CODE_ALIASES: tuple[str, ...] = ("haiku", "sonnet", "opus", "inherit")
 
+# The model each provider defaults to when markitai picks one for the user:
+# credential auto-detection, the `init` wizard, `serve`'s startup candidates
+# and the sample config all read this table. It is deliberately the only
+# copy — four hand-written copies existed until 2026-08 and had already
+# drifted apart (three still named the previous generation).
+#
+# Picks follow three rules:
+#   - the cheap/fast tier (markitai converts in bulk, and the LLM stage is
+#     mostly metadata),
+#   - a provider-managed alias over a dated id wherever one exists, so a
+#     vendor's next release does not strand this table,
+#   - nothing an ordinary account cannot reach: limited-preview deployments
+#     (gpt-5.6-luna) may be configured by hand but are never chosen here.
+PROVIDER_DEFAULT_MODELS: dict[str, str] = {
+    # Subscription / CLI providers (aliases; the CLI resolves the generation)
+    "claude-agent": "claude-agent/sonnet",
+    "copilot": "copilot/claude-haiku-4.5",
+    "chatgpt": "chatgpt/gpt-5.4-mini",
+    # API-key providers
+    "anthropic": "anthropic/claude-haiku-4-5",
+    "openai": "openai/gpt-5.4-nano",
+    "gemini": "gemini/gemini-flash-lite-latest",
+    "deepseek": "deepseek/deepseek-v4-flash",
+    "openrouter": "openrouter/google/gemini-3.1-flash-lite",
+}
+
+
 # Copilot model pricing (USD per 1M tokens)
 # Note: These are estimated prices based on public API pricing.
 # Actual costs through Copilot subscription may differ.

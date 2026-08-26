@@ -12,7 +12,7 @@ Long-form docs: <https://markitai.dev/guide/configuration>. Models follow the Li
       {
         "model_name": "default",
         "litellm_params": {
-          "model": "gemini/gemini-3.1-flash-lite-preview",
+          "model": "gemini/gemini-flash-lite-latest",
           "api_key": "env:GEMINI_API_KEY"
         }
       }
@@ -29,7 +29,7 @@ Multiple entries with the same `model_name` load-balance through the litellm rou
 
 | Provider | Model string | Auth |
 |---|---|---|
-| Google Gemini | `gemini/gemini-3.1-flash-lite-preview` | `GEMINI_API_KEY` |
+| Google Gemini | `gemini/gemini-flash-lite-latest` | `GEMINI_API_KEY` |
 | OpenAI | `openai/gpt-5.4` | `OPENAI_API_KEY` |
 | Anthropic | `anthropic/claude-sonnet-4-6` | `ANTHROPIC_API_KEY` |
 | DeepSeek | `deepseek/deepseek-v4-flash` | `DEEPSEEK_API_KEY` |

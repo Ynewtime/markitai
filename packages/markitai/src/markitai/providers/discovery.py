@@ -20,6 +20,8 @@ from urllib.parse import urljoin
 
 import httpx
 
+from markitai.constants import PROVIDER_DEFAULT_MODELS
+
 if TYPE_CHECKING:
     from markitai.config import ModelConfig
 
@@ -213,14 +215,22 @@ async def detect_provider_connections(
             "kind": "oauth",
             "status": "ready",
             "source": "oauth",
-            "default_model": "chatgpt/gpt-5.4-mini",
+            "default_model": PROVIDER_DEFAULT_MODELS["chatgpt"],
             "supports_discovery": True,
         }
 
     detected_cards = await asyncio.gather(
-        local_card("claude", "claude-agent", "Claude Code CLI", "claude-agent/sonnet"),
         local_card(
-            "copilot", "copilot", "GitHub Copilot CLI", "copilot/claude-haiku-4.5"
+            "claude",
+            "claude-agent",
+            "Claude Code CLI",
+            PROVIDER_DEFAULT_MODELS["claude-agent"],
+        ),
+        local_card(
+            "copilot",
+            "copilot",
+            "GitHub Copilot CLI",
+            PROVIDER_DEFAULT_MODELS["copilot"],
         ),
         chatgpt_card(),
     )
@@ -311,18 +321,11 @@ async def detect_provider_connections(
 def startup_model_candidates(connections: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Map ready connection cards to conservative startup defaults."""
     result: list[dict[str, Any]] = []
-    defaults = {
-        "anthropic": "anthropic/claude-haiku-4-5",
-        "openai": "openai/gpt-5.4-nano",
-        "gemini": "gemini/gemini-3.1-flash-lite-preview",
-        "deepseek": "deepseek/deepseek-v4-flash",
-        "openrouter": "openrouter/google/gemini-3.1-flash-lite",
-    }
     for card in connections:
         if card.get("status") != "ready":
             continue
         provider = str(card.get("provider", ""))
-        model = card.get("default_model") or defaults.get(provider)
+        model = card.get("default_model") or PROVIDER_DEFAULT_MODELS.get(provider)
         if not isinstance(model, str) or not model:
             continue
         label = card.get("label", provider)

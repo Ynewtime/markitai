@@ -11,6 +11,7 @@ from markitai.cli.interactive import (
     detect_all_llm_providers,
     detect_llm_provider,
 )
+from markitai.constants import PROVIDER_DEFAULT_MODELS
 
 
 class TestProviderDetection:
@@ -36,7 +37,7 @@ class TestProviderDetection:
             result = detect_llm_provider()
             assert result is not None
             assert result.provider == "claude-agent"
-            assert result.model == "claude-agent/sonnet"
+            assert result.model == PROVIDER_DEFAULT_MODELS["claude-agent"]
             assert result.authenticated is True
 
     def test_detect_copilot_cli_authenticated(self) -> None:
@@ -59,7 +60,7 @@ class TestProviderDetection:
             result = detect_llm_provider()
             assert result is not None
             assert result.provider == "copilot"
-            assert result.model == "copilot/claude-haiku-4.5"
+            assert result.model == PROVIDER_DEFAULT_MODELS["copilot"]
 
     def test_detect_anthropic_api_key(self) -> None:
         """Should detect ANTHROPIC_API_KEY environment variable."""
@@ -74,7 +75,7 @@ class TestProviderDetection:
             result = detect_llm_provider()
             assert result is not None
             assert result.provider == "anthropic"
-            assert result.model == "anthropic/claude-haiku-4-5"
+            assert result.model == PROVIDER_DEFAULT_MODELS["anthropic"]
 
     def test_detect_openai_api_key(self) -> None:
         """Should detect OPENAI_API_KEY when no other provider available."""
@@ -89,7 +90,7 @@ class TestProviderDetection:
             result = detect_llm_provider()
             assert result is not None
             assert result.provider == "openai"
-            assert result.model == "openai/gpt-5.4-nano"
+            assert result.model == PROVIDER_DEFAULT_MODELS["openai"]
 
     def test_detect_gemini_api_key(self) -> None:
         """Should detect GEMINI_API_KEY when no other provider available."""
@@ -104,7 +105,7 @@ class TestProviderDetection:
             result = detect_llm_provider()
             assert result is not None
             assert result.provider == "gemini"
-            assert result.model == "gemini/gemini-3.1-flash-lite-preview"
+            assert result.model == PROVIDER_DEFAULT_MODELS["gemini"]
 
     def test_detect_deepseek_api_key(self) -> None:
         """Should detect DEEPSEEK_API_KEY when no higher-priority provider available."""
@@ -119,7 +120,7 @@ class TestProviderDetection:
             result = detect_llm_provider()
             assert result is not None
             assert result.provider == "deepseek"
-            assert result.model == "deepseek/deepseek-v4-flash"
+            assert result.model == PROVIDER_DEFAULT_MODELS["deepseek"]
 
     def test_detect_openrouter_api_key(self) -> None:
         """Should detect OPENROUTER_API_KEY when no higher-priority provider available."""
@@ -134,7 +135,7 @@ class TestProviderDetection:
             result = detect_llm_provider()
             assert result is not None
             assert result.provider == "openrouter"
-            assert result.model == "openrouter/google/gemini-3.1-flash-lite"
+            assert result.model == PROVIDER_DEFAULT_MODELS["openrouter"]
 
     def test_detect_no_provider(self) -> None:
         """Should return None when no provider detected."""
@@ -188,7 +189,7 @@ class TestProviderDetection:
             result = detect_llm_provider()
             assert result is not None
             assert result.provider == "chatgpt"
-            assert result.model == "chatgpt/gpt-5.4-mini"
+            assert result.model == PROVIDER_DEFAULT_MODELS["chatgpt"]
 
 
 class TestInteractiveSession:

@@ -67,7 +67,7 @@ markitai config validate ./markitai.json    # Validate specific file
       {
         "model_name": "default",
         "litellm_params": {
-          "model": "gemini/gemini-3.1-flash-lite-preview",
+          "model": "gemini/gemini-flash-lite-latest",
           "api_key": "env:GEMINI_API_KEY"
         }
       }
@@ -279,12 +279,29 @@ provider/model-name
 Examples:
 - `openai/gpt-5.4`
 - `anthropic/claude-sonnet-4-6`
-- `gemini/gemini-3.1-flash-lite-preview`
+- `gemini/gemini-flash-lite-latest`
 - `deepseek/deepseek-v4-flash`
 - `ollama/llama3.2`
 - `claude-agent/sonnet` (local, requires Claude Code CLI)
 - `copilot/gpt-5.4` (local, requires Copilot CLI)
 - `chatgpt/gpt-5.4` (local, requires ChatGPT subscription)
+
+#### Defaults markitai picks for you
+
+`markitai init`, the setup wizard and credential auto-detection all pick the cheap/fast tier of whichever provider they find, preferring a provider-managed alias so a vendor's next release does not strand the setting. Limited-preview deployments are never picked automatically.
+
+| Provider | Default model |
+|---|---|
+| Claude Code CLI | `claude-agent/sonnet` |
+| GitHub Copilot | `copilot/claude-haiku-4.5` |
+| ChatGPT | `chatgpt/gpt-5.4-mini` |
+| Anthropic | `anthropic/claude-haiku-4-5` |
+| OpenAI | `openai/gpt-5.4-nano` |
+| Gemini | `gemini/gemini-flash-lite-latest` |
+| DeepSeek | `deepseek/deepseek-v4-flash` |
+| OpenRouter | `openrouter/google/gemini-3.1-flash-lite` |
+
+Set `model_list` to override any of them.
 
 Claude Agent SDK supported models:
 - Aliases (recommended): `sonnet`, `opus`, `haiku`, `inherit`
@@ -408,7 +425,7 @@ To explicitly override auto-detection, set `supports_vision`:
       {
         "model_name": "default",
         "litellm_params": {
-          "model": "gemini/gemini-3.1-flash-lite-preview",
+          "model": "gemini/gemini-flash-lite-latest",
           "api_key": "env:GEMINI_API_KEY"
         },
         "model_info": {
@@ -428,7 +445,7 @@ Both `litellm_params` and `model_info` accept optional token-limit overrides:
 {
   "model_name": "default",
   "litellm_params": {
-    "model": "gemini/gemini-3.1-flash-lite-preview",
+    "model": "gemini/gemini-flash-lite-latest",
     "api_key": "env:GEMINI_API_KEY",
     "max_tokens": 8192
   },
@@ -481,7 +498,7 @@ Each model in `model_list` accepts a `weight` parameter in `litellm_params` to c
 {
   "model_name": "default",
   "litellm_params": {
-    "model": "gemini/gemini-3.1-flash-lite-preview",
+    "model": "gemini/gemini-flash-lite-latest",
     "api_key": "env:GEMINI_API_KEY",
     "weight": 10
   }

@@ -15,6 +15,7 @@ from markitai.cli import ui
 from markitai.cli.console import get_console
 from markitai.cli.hints import get_env_set_command
 from markitai.config import ConfigManager
+from markitai.constants import PROVIDER_DEFAULT_MODELS
 from markitai.security import atomic_write_json, atomic_write_text
 
 console = get_console()
@@ -391,16 +392,17 @@ def _build_config(
     """
     model_list = []
 
-    # Map provider display names to model configs (order = priority)
-    provider_models = {
-        "Claude": ("default", "claude-agent/sonnet"),
-        "ChatGPT": ("default", "chatgpt/gpt-5.4-mini"),
-        "Copilot": ("default", "copilot/claude-haiku-4.5"),
-        "DeepSeek": ("default", "deepseek/deepseek-v4-flash"),
-        "Gemini": ("default", "gemini/gemini-3.1-flash-lite-preview"),
-        "OpenAI": ("default", "openai/gpt-5.4-nano"),
-        "Anthropic": ("default", "anthropic/claude-haiku-4-5"),
-        "OpenRouter": ("default", "openrouter/google/gemini-3.1-flash-lite"),
+    # Display name -> provider id, in priority order; the model each one
+    # defaults to comes from the single PROVIDER_DEFAULT_MODELS table.
+    provider_ids = {
+        "Claude": "claude-agent",
+        "ChatGPT": "chatgpt",
+        "Copilot": "copilot",
+        "DeepSeek": "deepseek",
+        "Gemini": "gemini",
+        "OpenAI": "openai",
+        "Anthropic": "anthropic",
+        "OpenRouter": "openrouter",
     }
 
     if providers:
@@ -408,7 +410,7 @@ def _build_config(
         for name, available in providers:
             if not available:
                 continue
-            for key in provider_models:
+            for key in provider_ids:
                 if key in name:
                     available_keys.add(key)
                     break
@@ -419,13 +421,15 @@ def _build_config(
         if "Gemini" in available_keys and "OpenRouter" in available_keys:
             available_keys.discard("OpenRouter")
 
-        # Build model_list preserving provider_models order
-        for key, (model_name, model_id) in provider_models.items():
+        # Build model_list preserving provider_ids order
+        for key, provider_id in provider_ids.items():
             if key in available_keys:
                 model_list.append(
                     {
-                        "model_name": model_name,
-                        "litellm_params": {"model": model_id},
+                        "model_name": "default",
+                        "litellm_params": {
+                            "model": PROVIDER_DEFAULT_MODELS[provider_id]
+                        },
                     }
                 )
 

@@ -67,7 +67,7 @@ markitai config validate ./markitai.json    # 验证指定文件
       {
         "model_name": "default",
         "litellm_params": {
-          "model": "gemini/gemini-3.1-flash-lite-preview",
+          "model": "gemini/gemini-flash-lite-latest",
           "api_key": "env:GEMINI_API_KEY"
         }
       }
@@ -279,12 +279,29 @@ provider/model-name
 示例：
 - `openai/gpt-5.4`
 - `anthropic/claude-sonnet-4-6`
-- `gemini/gemini-3.1-flash-lite-preview`
+- `gemini/gemini-flash-lite-latest`
 - `deepseek/deepseek-v4-flash`
 - `ollama/llama3.2`
 - `claude-agent/sonnet`（本地，需要 Claude Code CLI）
 - `copilot/gpt-5.4`（本地，需要 Copilot CLI）
 - `chatgpt/gpt-5.4`（本地，需要 ChatGPT 订阅）
+
+#### markitai 自动选用的默认模型
+
+`markitai init`、设置向导和凭据自动探测都会选各家的便宜快速档；能用厂商维护的别名就用别名，这样厂商发新版不会让配置失效。受限预览版模型不会被自动选中。
+
+| 提供商 | 默认模型 |
+|---|---|
+| Claude Code CLI | `claude-agent/sonnet` |
+| GitHub Copilot | `copilot/claude-haiku-4.5` |
+| ChatGPT | `chatgpt/gpt-5.4-mini` |
+| Anthropic | `anthropic/claude-haiku-4-5` |
+| OpenAI | `openai/gpt-5.4-nano` |
+| Gemini | `gemini/gemini-flash-lite-latest` |
+| DeepSeek | `deepseek/deepseek-v4-flash` |
+| OpenRouter | `openrouter/google/gemini-3.1-flash-lite` |
+
+配置 `model_list` 即可覆盖。
 
 Claude Agent SDK 支持的模型：
 - 别名（推荐）：`sonnet`、`opus`、`haiku`、`inherit`
@@ -408,7 +425,7 @@ ChatGPT 支持的模型：
       {
         "model_name": "default",
         "litellm_params": {
-          "model": "gemini/gemini-3.1-flash-lite-preview",
+          "model": "gemini/gemini-flash-lite-latest",
           "api_key": "env:GEMINI_API_KEY"
         },
         "model_info": {
@@ -428,7 +445,7 @@ ChatGPT 支持的模型：
 {
   "model_name": "default",
   "litellm_params": {
-    "model": "gemini/gemini-3.1-flash-lite-preview",
+    "model": "gemini/gemini-flash-lite-latest",
     "api_key": "env:GEMINI_API_KEY",
     "max_tokens": 8192
   },
@@ -481,7 +498,7 @@ ChatGPT 支持的模型：
 {
   "model_name": "default",
   "litellm_params": {
-    "model": "gemini/gemini-3.1-flash-lite-preview",
+    "model": "gemini/gemini-flash-lite-latest",
     "api_key": "env:GEMINI_API_KEY",
     "weight": 10
   }

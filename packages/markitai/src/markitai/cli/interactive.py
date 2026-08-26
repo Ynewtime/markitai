@@ -315,13 +315,6 @@ def _prompt_manual_api_key(session: InteractiveSession) -> bool:
         )
     )
 
-    model_map = {
-        "anthropic": "anthropic/claude-haiku-4.5",
-        "openai": "openai/gpt-5.6-luna",
-        "gemini": "gemini/gemini-flash-latest",
-        "deepseek": "deepseek/deepseek-v4-flash",
-    }
-
     env_var_map = {
         "anthropic": "ANTHROPIC_API_KEY",
         "openai": "OPENAI_API_KEY",
@@ -337,6 +330,7 @@ def _prompt_manual_api_key(session: InteractiveSession) -> bool:
 
     # Save config with env: reference (no plaintext key)
     from markitai.config import ConfigManager, LiteLLMParams, ModelConfig
+    from markitai.constants import PROVIDER_DEFAULT_MODELS
 
     manager = ConfigManager()
     cfg = manager.load()
@@ -344,7 +338,7 @@ def _prompt_manual_api_key(session: InteractiveSession) -> bool:
         ModelConfig(
             model_name="default",
             litellm_params=LiteLLMParams(
-                model=model_map[provider], api_key=f"env:{env_var}"
+                model=PROVIDER_DEFAULT_MODELS[provider], api_key=f"env:{env_var}"
             ),
         )
     ]
@@ -352,7 +346,7 @@ def _prompt_manual_api_key(session: InteractiveSession) -> bool:
 
     session.provider_result = ProviderDetectionResult(
         provider=provider,
-        model=model_map[provider],
+        model=PROVIDER_DEFAULT_MODELS[provider],
         authenticated=True,
         source="manual",
     )

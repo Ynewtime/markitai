@@ -13,7 +13,7 @@ import shutil
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from markitai.constants import DEFAULT_MODEL_WEIGHT
+from markitai.constants import DEFAULT_MODEL_WEIGHT, PROVIDER_DEFAULT_MODELS
 
 if TYPE_CHECKING:
     from markitai.config import ModelConfig
@@ -137,7 +137,7 @@ def detect_all_providers() -> list[ProviderDetectionResult]:
             results.append(
                 ProviderDetectionResult(
                     provider="claude-agent",
-                    model="claude-agent/sonnet",
+                    model=PROVIDER_DEFAULT_MODELS["claude-agent"],
                     authenticated=True,
                     source="cli",
                 )
@@ -149,7 +149,7 @@ def detect_all_providers() -> list[ProviderDetectionResult]:
             results.append(
                 ProviderDetectionResult(
                     provider="copilot",
-                    model="copilot/claude-haiku-4.5",
+                    model=PROVIDER_DEFAULT_MODELS["copilot"],
                     authenticated=True,
                     source="cli",
                 )
@@ -160,7 +160,7 @@ def detect_all_providers() -> list[ProviderDetectionResult]:
         results.append(
             ProviderDetectionResult(
                 provider="chatgpt",
-                model="chatgpt/gpt-5.4-mini",
+                model=PROVIDER_DEFAULT_MODELS["chatgpt"],
                 authenticated=True,
                 source="cli",
             )
@@ -168,17 +168,14 @@ def detect_all_providers() -> list[ProviderDetectionResult]:
 
     # 4-8. Check environment variables
     env_providers = [
-        ("ANTHROPIC_API_KEY", "anthropic", "anthropic/claude-haiku-4-5"),
-        ("OPENAI_API_KEY", "openai", "openai/gpt-5.4-nano"),
-        ("GEMINI_API_KEY", "gemini", "gemini/gemini-3.1-flash-lite-preview"),
-        ("DEEPSEEK_API_KEY", "deepseek", "deepseek/deepseek-v4-flash"),
-        (
-            "OPENROUTER_API_KEY",
-            "openrouter",
-            "openrouter/google/gemini-3.1-flash-lite",
-        ),
+        ("ANTHROPIC_API_KEY", "anthropic"),
+        ("OPENAI_API_KEY", "openai"),
+        ("GEMINI_API_KEY", "gemini"),
+        ("DEEPSEEK_API_KEY", "deepseek"),
+        ("OPENROUTER_API_KEY", "openrouter"),
     ]
-    for env_var, provider, model in env_providers:
+    for env_var, provider in env_providers:
+        model = PROVIDER_DEFAULT_MODELS[provider]
         if os.environ.get(env_var):
             results.append(
                 ProviderDetectionResult(

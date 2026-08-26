@@ -41,7 +41,7 @@ Target state: `markitai doctor` exits 0 and shows ✓ on every capability the us
    - `--json` gives a machine-readable snapshot (mutually exclusive with `--fix`).
 
 5. **Wire an LLM provider** (needed for `--llm`, `--alt`, `--desc`, presets `rich`/`standard`). Two routes:
-   - **API key**: set the provider env var (e.g. `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`) and configure a model named `provider/model`, e.g. `gemini/gemini-3.1-flash-lite-preview`. Reference env vars in config as `"api_key": "env:GEMINI_API_KEY"`.
+   - **API key**: set the provider env var (e.g. `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`) and configure a model named `provider/model`, e.g. `gemini/gemini-flash-lite-latest`. Reference env vars in config as `"api_key": "env:GEMINI_API_KEY"`.
    - **Subscription (no API key)**: `claude-agent/sonnet` (Claude Code CLI login), `copilot/gpt-5.4` (Copilot CLI login), `chatgpt/gpt-5.4` (OAuth on first use). Check and repair auth with `markitai auth` (overview) and `markitai auth copilot|claude|chatgpt status|login`.
    - Model lists, `api_base`/Azure/Ollama examples, vision requirements, and provider error table: [references/providers.md](references/providers.md).
 

@@ -20,6 +20,7 @@ pytest.importorskip("fastapi")
 import httpx
 
 from markitai.config import LiteLLMParams, MarkitaiConfig, ModelConfig
+from markitai.constants import PROVIDER_DEFAULT_MODELS
 from markitai.serve import create_app
 
 if TYPE_CHECKING:
@@ -1007,7 +1008,7 @@ class TestDetectedProviders:
         assert resp.json() == [
             {
                 "provider": "gemini",
-                "model": "gemini/gemini-3.1-flash-lite-preview",
+                "model": PROVIDER_DEFAULT_MODELS["gemini"],
                 "label": "GEMINI_API_KEY (environment)",
                 "requires_api_key": False,
             }
