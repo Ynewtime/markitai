@@ -213,8 +213,47 @@ class BaseConverter(ABC):
         return fmt in self.supported_formats
 
 
-# Registry of converters by format
+# Registry of converters by format, filled by @register_converter as each
+# converter module is imported.
 _converter_registry: dict[FileFormat, type[BaseConverter]] = {}
+
+
+# Which module defines the converter for each format, so that importing one
+# converter never drags in the rest. The cost of getting this wrong is not
+# just startup time: markitdown imports Magika, Magika imports onnxruntime,
+# and onnxruntime's static destructors can abort an already-finished process
+# (see markitai.utils.shutdown). Converting a .txt must not load any of it.
+_CONVERTER_MODULES: dict[FileFormat, str] = {
+    FileFormat.PDF: "markitai.converter.pdf",
+    FileFormat.TXT: "markitai.converter.text",
+    FileFormat.MD: "markitai.converter.text",
+    FileFormat.DOCX: "markitai.converter.office",
+    FileFormat.PPTX: "markitai.converter.office",
+    FileFormat.XLSX: "markitai.converter.office",
+    FileFormat.XLS: "markitai.converter.office",
+    FileFormat.DOC: "markitai.converter.legacy",
+    FileFormat.PPT: "markitai.converter.legacy",
+    FileFormat.EML: "markitai.converter.eml",
+    FileFormat.JPEG: "markitai.converter.image",
+    FileFormat.JPG: "markitai.converter.image",
+    FileFormat.PNG: "markitai.converter.image",
+    FileFormat.WEBP: "markitai.converter.image",
+    FileFormat.SVG: "markitai.converter.image",
+    FileFormat.GIF: "markitai.converter.image",
+    FileFormat.BMP: "markitai.converter.image",
+    FileFormat.TIFF: "markitai.converter.image",
+    FileFormat.HEIC: "markitai.converter.image",
+    FileFormat.HEIF: "markitai.converter.image",
+    FileFormat.AVIF: "markitai.converter.image",
+    FileFormat.HTML: "markitai.converter.markitdown_ext",
+    FileFormat.HTM: "markitai.converter.markitdown_ext",
+    FileFormat.XHTML: "markitai.converter.markitdown_ext",
+    FileFormat.CSV: "markitai.converter.markitdown_ext",
+    FileFormat.EPUB: "markitai.converter.markitdown_ext",
+    FileFormat.MSG: "markitai.converter.markitdown_ext",
+    FileFormat.IPYNB: "markitai.converter.markitdown_ext",
+    FileFormat.NUMBERS: "markitai.converter.markitdown_ext",
+}
 
 
 def register_converter(fmt: FileFormat):
@@ -225,6 +264,30 @@ def register_converter(fmt: FileFormat):
         return cls
 
     return decorator
+
+
+def load_converter_class(fmt: FileFormat) -> type[BaseConverter] | None:
+    """Return the converter class for one format, importing it if needed.
+
+    A format with no native module falls through to kreuzberg, which
+    registers itself for the formats markitai does not cover natively (and
+    only when the optional dependency is installed).
+    """
+    import importlib
+
+    registered = _converter_registry.get(fmt)
+    if registered is not None:
+        return registered
+
+    module = _CONVERTER_MODULES.get(fmt)
+    if module is not None:
+        importlib.import_module(module)
+        return _converter_registry.get(fmt)
+
+    from markitai.converter.kreuzberg import register_kreuzberg_converters
+
+    register_kreuzberg_converters()
+    return _converter_registry.get(fmt)
 
 
 def get_converter(
@@ -242,7 +305,7 @@ def get_converter(
         A converter instance or None if no converter found
     """
     fmt = detect_format(path)
-    converter_cls = _converter_registry.get(fmt)
+    converter_cls = load_converter_class(fmt)
 
     if converter_cls is None:
         return None

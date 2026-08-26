@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from markitai.constants import DEFAULT_RENDER_DPI, SCREENSHOTS_REL_PATH
+from markitai.converter._patches import apply_all_patches
 from markitai.converter.base import (
     BaseConverter,
     ConvertResult,
@@ -21,6 +22,11 @@ from markitai.utils import office_mac
 from markitai.utils.mime import get_mime_type, normalize_image_extension
 from markitai.utils.office import find_libreoffice, has_ms_office
 from markitai.utils.paths import create_tracked_temp_dir, ensure_screenshots_dir
+
+# openpyxl and python-pptx read the files this module converts, so the
+# compatibility patches must be in place before the first conversion. This
+# module is only imported when one is about to happen.
+apply_all_patches()
 
 if TYPE_CHECKING:
     from markitai.config import MarkitaiConfig

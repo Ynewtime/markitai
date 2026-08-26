@@ -11,12 +11,18 @@ from pathlib import Path
 from loguru import logger
 from markitdown import MarkItDown
 
+from markitai.converter._patches import apply_all_patches
 from markitai.converter.base import (
     BaseConverter,
     ConvertResult,
     FileFormat,
     register_converter,
 )
+
+# markitdown reads Office files through openpyxl/python-pptx; the
+# compatibility patches must be in place before the first conversion, and
+# this module is only imported when one is about to happen.
+apply_all_patches()
 
 _markitdown: MarkItDown | None = None
 
