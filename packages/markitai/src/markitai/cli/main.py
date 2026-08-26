@@ -621,7 +621,10 @@ def app(
     if config_manager.config_path:
         logger.debug(f"[Config] Loaded from: {config_manager.config_path}")
     else:
-        logger.warning("[Config] No config file found, using defaults")
+        # Not a warning: converting with no config file is the documented
+        # zero-setup path, and telling the user off for it on every run
+        # trains them to ignore real warnings.
+        logger.debug("[Config] No config file found, using defaults")
 
     # Store handler ID, log file path and verbose in context for batch processing
     ctx.obj["_console_handler_id"] = console_handler_id
@@ -1161,7 +1164,17 @@ def app(
 
     try:
         asyncio.run(run_workflow_with_cleanup())
-    except SystemExit:
+    except KeyboardInterrupt:
+        # Whatever finished is already on disk, and a directory batch also
+        # wrote its state. click's bare "Aborted." leaves the reader to guess
+        # whether stopping cost them the run — and the guess decides whether
+        # they re-convert (and re-pay for) work that is already done.
+        if input_path is not None and input_path.is_dir() and not quiet:
+            stderr_console.print(
+                "\n[yellow]Interrupted.[/yellow] Re-run the same command with "
+                "[cyan]--resume[/cyan] to continue from here."
+            )
+        raise
         # Processors signal (partial) failure via SystemExit; record the
         # collected per-item results first so failed runs also show up.
         record_run_history()
