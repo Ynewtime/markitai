@@ -1505,24 +1505,17 @@ def _use_cli_llm_branches(
     has_screenshot: bool,
     downloaded_images: list[Path],
 ) -> bool:
-    """Whether the URL needs a CLI-only LLM branch (not the shared cascade).
+    """Whether the URL needs the CLI's image-analysis LLM branches.
 
-    True for screenshot-only extraction, multi-source vision enhancement,
-    and document+images concurrent analysis — the three branches whose
-    stages the workflow cascade does not model.
+    Vision enhancement and screenshot-only extraction now run inside the
+    shared workflow cascade; the CLI keeps only the branches that
+    interleave alt/desc image analysis (concurrent with the document call).
     """
-    if not cfg.llm.enabled:
-        return False
-    if not cfg.llm.pure:
-        has_multi_source = (
-            fetch_result.static_content is not None
-            or fetch_result.browser_content is not None
-        )
-        if cfg.screenshot.screenshot_only and has_screenshot:
-            return True
-        if has_screenshot and has_multi_source:
-            return True
-    return bool((cfg.image.alt_enabled or cfg.image.desc_enabled) and downloaded_images)
+    return bool(
+        cfg.llm.enabled
+        and downloaded_images
+        and (cfg.image.alt_enabled or cfg.image.desc_enabled)
+    )
 
 
 def _use_raw_pure_base(cfg: MarkitaiConfig) -> bool:
@@ -1549,7 +1542,17 @@ async def _run_standard_url_cascade(
     Returns:
         (output_file, base_content, final_content, cost, llm_usage).
     """
-    from markitai.workflow.url import convert_url_cascade
+    from markitai.workflow.url import (
+        convert_url_cascade,
+        uses_screenshot_only,
+        uses_vision_enhancement,
+    )
+
+    # Vision/screenshot-only fetches take the cascade's automatic branches
+    # (llm_stage=None); only the plain document path pins the CLI's stage.
+    special_llm_branch = uses_screenshot_only(
+        cfg, fetch_result
+    ) or uses_vision_enhancement(cfg, fetch_result)
 
     cascade = await convert_url_cascade(
         url,
@@ -1564,7 +1567,7 @@ async def _run_standard_url_cascade(
         base_from_localized=False,
         output_name=filename,
         llm_error_policy="raise",
-        llm_stage=cli_document_llm_stage,
+        llm_stage=None if special_llm_branch else cli_document_llm_stage,
     )
 
     assert cascade.target_file is not None  # skip was handled by the caller

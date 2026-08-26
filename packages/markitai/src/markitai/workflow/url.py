@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from loguru import logger
+
 if TYPE_CHECKING:
     from markitai.config import MarkitaiConfig
     from markitai.fetch_cache import FetchCache
@@ -193,6 +195,7 @@ async def convert_url_cascade(
     llm_usage: dict[str, dict[str, Any]] = {}
     llm_output_path: Path | None = None
     llm_error: str | None = None
+    screenshot_only_mode = uses_screenshot_only(cfg, fetch_result)
     if cfg.llm.enabled:
         from markitai.utils.text import format_error_message
 
@@ -210,46 +213,87 @@ async def convert_url_cascade(
                 llm_error = stage_error
                 if llm_output_path is not None:
                     _apply_profile(llm_output_path, workdir, cfg)
+            elif screenshot_only_mode:
+                (
+                    llm_output_path,
+                    cost_usd,
+                    llm_usage,
+                    llm_error,
+                ) = await _screenshot_only_llm_stage(
+                    markdown, url, cfg, output_file, fetch_result, proc
+                )
+            elif uses_vision_enhancement(cfg, fetch_result):
+                (
+                    llm_output_path,
+                    cost_usd,
+                    llm_usage,
+                    llm_error,
+                ) = await _vision_llm_stage(
+                    markdown, url, cfg, output_file, fetch_result, proc
+                )
             else:
-                if cfg.llm.pure:
-                    content = await proc.clean_document_pure(markdown, url)
-                else:
-                    cleaned, llm_frontmatter = await proc.process_document(
-                        markdown,
-                        url,
-                        fetch_strategy=fetch_result.strategy_used,
-                        extra_meta=extra_meta,
-                        title=title,
-                    )
-                    content = proc.format_llm_output(cleaned, llm_frontmatter)
-                llm_target = output_file.with_suffix(".llm.md")
-                atomic_write_text(llm_target, content)
-                _apply_profile(llm_target, workdir, cfg)
-                llm_output_path = llm_target
+                (
+                    llm_output_path,
+                    cost_usd,
+                    llm_usage,
+                    llm_error,
+                ) = await _default_document_stage(
+                    markdown,
+                    url,
+                    cfg,
+                    output_file,
+                    fetch_result,
+                    proc,
+                    extra_meta=extra_meta,
+                    title=title,
+                )
+            if llm_output_path is not None and llm_stage is None:
+                _apply_profile(llm_output_path, workdir, cfg)
         except Exception as e:
             # Same policy as the file pipeline: write the base .md as a
             # fallback below, then surface the failure per the policy.
             llm_error = format_error_message(e)
         finally:
-            if llm_stage is None:
-                cost_usd = proc.get_context_cost(url)
-                llm_usage = proc.get_context_usage(url)
             proc.clear_context_usage(url)
 
     # Base .md: always without LLM; with LLM for keep_base or as fallback.
+    # Screenshot-only mode writes a screenshot-reference base instead of
+    # the (empty) extracted text.
     output_path: Path | None = None
     if llm_output_path is None or cfg.llm.keep_base:
-        base_markdown = markdown if base_from_localized else fetch_result.content
-        base_content = add_basic_frontmatter(
-            base_markdown,
-            url,
-            fetch_strategy=fetch_result.strategy_used,
-            screenshot_path=fetch_result.screenshot_path,
-            screenshot_tiles=list(fetch_result.screenshot_tiles or []),
-            output_dir=workdir,
-            title=title,
-            extra_meta=extra_meta,
-        )
+        if screenshot_only_mode and fetch_result.screenshot_path is not None:
+            from markitai.constants import SCREENSHOTS_REL_PATH
+            from markitai.utils.text import markdown_image_reference
+
+            ref_files = fetch_result.screenshot_tiles or [fetch_result.screenshot_path]
+            screenshot_ref = "\n\n".join(
+                markdown_image_reference(
+                    f"Screenshot {i + 1}" if len(ref_files) > 1 else "Screenshot",
+                    f"{SCREENSHOTS_REL_PATH}/{t.name}",
+                )
+                for i, t in enumerate(ref_files)
+            )
+            base_content = add_basic_frontmatter(
+                screenshot_ref,
+                url,
+                fetch_strategy=fetch_result.strategy_used,
+                screenshot_path=None,  # referenced above, not twice
+                output_dir=workdir,
+                title=title,
+                extra_meta=extra_meta,
+            )
+        else:
+            base_markdown = markdown if base_from_localized else fetch_result.content
+            base_content = add_basic_frontmatter(
+                base_markdown,
+                url,
+                fetch_strategy=fetch_result.strategy_used,
+                screenshot_path=fetch_result.screenshot_path,
+                screenshot_tiles=list(fetch_result.screenshot_tiles or []),
+                output_dir=workdir,
+                title=title,
+                extra_meta=extra_meta,
+            )
         atomic_write_text(output_file, base_content)
         _apply_profile(output_file, workdir, cfg)
         output_path = output_file
@@ -280,3 +324,173 @@ def _apply_profile(md_file: Path, workdir: Path, cfg: MarkitaiConfig) -> None:
         from markitai.output_profiles import apply_profile_to_file
 
         apply_profile_to_file(md_file, workdir, cfg)
+
+
+def uses_vision_enhancement(cfg: MarkitaiConfig, fetch_result: FetchResult) -> bool:
+    """Multi-source vision enhancement: screenshot plus static/browser text.
+
+    Shared by the cascade and by callers (the CLI) that pre-check which
+    branch a fetch result will take.
+    """
+    return bool(
+        cfg.llm.enabled
+        and not cfg.llm.pure
+        and fetch_result.screenshot_path
+        and (
+            fetch_result.static_content is not None
+            or fetch_result.browser_content is not None
+        )
+    )
+
+
+def uses_screenshot_only(cfg: MarkitaiConfig, fetch_result: FetchResult) -> bool:
+    """Screenshot-only extraction: the vision model reads the page image(s).
+
+    Shared by the cascade and by callers (the CLI) that pre-check which
+    branch a fetch result will take.
+    """
+    return bool(
+        cfg.llm.enabled
+        and not cfg.llm.pure
+        and cfg.screenshot.screenshot_only
+        and fetch_result.screenshot_path
+    )
+
+
+_StageResult = tuple[Path | None, float, dict[str, dict[str, Any]], str | None]
+
+
+async def _default_document_stage(
+    markdown: str,
+    url: str,
+    cfg: MarkitaiConfig,
+    output_file: Path,
+    fetch_result: FetchResult,
+    proc: LLMProcessor,
+    *,
+    extra_meta: dict[str, Any] | None,
+    title: str | None,
+) -> _StageResult:
+    """Standard text LLM stage: process_document/pure -> .llm.md."""
+    from markitai.security import atomic_write_text
+
+    if cfg.llm.pure:
+        content = await proc.clean_document_pure(markdown, url)
+    else:
+        cleaned, llm_frontmatter = await proc.process_document(
+            markdown,
+            url,
+            fetch_strategy=fetch_result.strategy_used,
+            extra_meta=extra_meta,
+            title=title,
+        )
+        content = proc.format_llm_output(cleaned, llm_frontmatter)
+    target = output_file.with_suffix(".llm.md")
+    atomic_write_text(target, content)
+    return (
+        target,
+        proc.get_context_cost(url),
+        proc.get_context_usage(url),
+        None,
+    )
+
+
+async def _vision_llm_stage(
+    markdown: str,
+    url: str,
+    cfg: MarkitaiConfig,
+    output_file: Path,
+    fetch_result: FetchResult,
+    proc: LLMProcessor,
+) -> _StageResult:
+    """Vision enhancement: screenshot as visual reference for the text.
+
+    Falls back to the standard document stage when the vision call fails.
+    """
+    from markitai.constants import SCREENSHOTS_REL_PATH
+    from markitai.security import atomic_write_text
+
+    screenshot_path = fetch_result.screenshot_path
+    assert screenshot_path is not None  # guaranteed by uses_vision_enhancement
+    try:
+        cleaned, frontmatter = await proc.enhance_url_with_vision(
+            markdown,
+            screenshot_path,
+            context=url,
+            original_title=fetch_result.title,
+            fetch_strategy=fetch_result.strategy_used,
+            extra_meta=fetch_result.metadata.get("source_frontmatter"),
+        )
+    except Exception as e:
+        from markitai.utils.text import format_error_message
+
+        logger.warning(
+            f"[URL] Vision enhancement failed ({format_error_message(e)}); "
+            "falling back to standard processing"
+        )
+        return await _default_document_stage(
+            markdown,
+            url,
+            cfg,
+            output_file,
+            fetch_result,
+            proc,
+            extra_meta=fetch_result.metadata.get("source_frontmatter"),
+            title=fetch_result.title,
+        )
+
+    content = proc.format_llm_output(cleaned, frontmatter)
+    content += (
+        f"\n\n<!-- Screenshot for reference -->\n"
+        f"<!-- ![Screenshot]({SCREENSHOTS_REL_PATH}/{screenshot_path.name}) -->"
+    )
+    target = output_file.with_suffix(".llm.md")
+    atomic_write_text(target, content)
+    return (
+        target,
+        proc.get_context_cost(url),
+        proc.get_context_usage(url),
+        None,
+    )
+
+
+async def _screenshot_only_llm_stage(
+    markdown: str,
+    url: str,
+    cfg: MarkitaiConfig,
+    output_file: Path,
+    fetch_result: FetchResult,
+    proc: LLMProcessor,
+) -> _StageResult:
+    """Screenshot-only extraction: the vision model reads the page tiles."""
+    from markitai.security import atomic_write_text
+
+    screenshot_path = fetch_result.screenshot_path
+    assert screenshot_path is not None  # guaranteed by uses_screenshot_only
+    tiles = list(fetch_result.screenshot_tiles or [screenshot_path])
+    cleaned_parts: list[str] = []
+    frontmatter = ""
+    for i, tile in enumerate(tiles):
+        cleaned, fm = await proc.extract_from_screenshot(
+            tile,
+            context=url,
+            original_title=fetch_result.title if i == 0 else None,
+        )
+        if i == 0:
+            frontmatter = fm
+        if cleaned.strip():
+            if len(tiles) > 1:
+                cleaned_parts.append(f"<!-- Tile {i + 1} -->\n\n{cleaned}")
+            else:
+                cleaned_parts.append(cleaned)
+
+    cleaned_content = "\n\n".join(cleaned_parts)
+    content = proc.format_llm_output(cleaned_content, frontmatter)
+    target = output_file.with_suffix(".llm.md")
+    atomic_write_text(target, content)
+    return (
+        target,
+        proc.get_context_cost(url),
+        proc.get_context_usage(url),
+        None,
+    )
