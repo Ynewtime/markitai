@@ -998,6 +998,15 @@ async def process_batch(
                 status=FileStatus.PENDING,
             )
 
+        # Write the base state before any work starts. Runs after this only
+        # append their deltas to a .jsonl sidecar, and load_state() gives up
+        # the moment the base file is missing — so without this line an
+        # interrupted batch left a sidecar nothing could replay, and --resume
+        # silently restarted from zero, re-paying for every LLM call already
+        # made. BatchProcessor.process_batch has always done this; the CLI
+        # path, which is the one people use, did not.
+        batch.save_state(force=True)
+
     # Create URL processor function
     url_processor = None
     if url_entries_to_process:

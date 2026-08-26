@@ -17,6 +17,7 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 import rich_click as click
+from rich.markup import escape
 
 # Cross-platform installation hints
 INSTALL_HINTS: dict[str, dict[str, str]] = {
@@ -101,10 +102,7 @@ def _compact_runtime_error(detail: str, *, limit: int = 1200) -> str:
 
 def _playwright_package_install_hint() -> str:
     """Return install commands that preserve tool-environment isolation."""
-    return (
-        "uv tool install 'markitai[browser]' --force\n"
-        "# Or: pipx install 'markitai[browser]' --force"
-    )
+    return extra_install_command("browser")
 
 
 def _smoke_test_playwright_browser() -> tuple[bool, str]:
@@ -182,7 +180,10 @@ def _install_component(component: str, *, package_missing: bool = False) -> bool
                 console.print(
                     f"[red]\u2717[/red] {t('doctor.playwright_package_manual')}"
                 )
-                console.print(_playwright_package_install_hint())
+                # escape(): rich reads the `[browser]` in an extras name
+                # as a style tag and drops it, leaving the user a command
+                # that reinstalls exactly what they already have.
+                console.print(escape(_playwright_package_install_hint()))
                 return False
 
             # Use the same interpreter that imports Markitai/Playwright, and
@@ -218,6 +219,7 @@ from markitai.cli.console import get_console
 from markitai.cli.i18n import t
 from markitai.config import ConfigManager
 from markitai.providers.auth import AuthManager, get_auth_resolution_hint
+from markitai.utils.errors import extra_install_command
 
 console = get_console()
 
@@ -486,7 +488,7 @@ def _check_anydoc() -> dict[str, Any]:
             "status": "missing",
             "optional": True,
             "message": "not installed",
-            "install_hint": 'pip install "markitai[legacy]"',
+            "install_hint": extra_install_command("legacy"),
         }
 
 
@@ -1054,8 +1056,6 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         and info.get("install_hint")
     ]
     if hints:
-        from rich.markup import escape
-
         console.print()
         console.print(f"[yellow]{t('doctor.fix_hint')}[/yellow]")
         for name, hint in hints:

@@ -90,6 +90,9 @@ click.rich_click.OPTION_GROUPS = {
                 "--url-concurrency",
                 "--glob",
                 "--max-depth",
+                "--llm-batch",
+                "--llm-batch-timeout",
+                "--llm-batch-collect",
             ],
         },
         {
@@ -489,7 +492,6 @@ def app(
         markitai document.docx                      # Convert single file
         markitai https://example.com/page           # Convert web page
         markitai urls.urls -o ./output/             # Batch URL processing
-        markitai https://youtube.com/watch?v=abc    # Convert YouTube video
         markitai document.pdf --preset rich         # Use rich preset
         markitai document.pdf --preset rich --ocr   # Rich + OCR for scans
         markitai document.pdf --preset rich --no-desc  # Rich without desc
@@ -621,48 +623,6 @@ def app(
     else:
         logger.warning("[Config] No config file found, using defaults")
 
-    # Auto-populate model_list when LLM enabled but no models configured
-    if cfg.llm.enabled and not cfg.llm.model_list:
-        # Priority 1: MODEL env var (explicit single-model override)
-        model_env = os.environ.get("MODEL")
-        if model_env:
-            from markitai.config import LiteLLMParams, ModelConfig
-
-            cfg.llm.model_list = [
-                ModelConfig(
-                    model_name="default",
-                    litellm_params=LiteLLMParams(model=model_env),
-                )
-            ]
-            logger.info(f"[Config] Using MODEL env var: {model_env}")
-        else:
-            # Priority 2: Auto-detect from env keys and authenticated CLI providers
-            from markitai.cli.providers_detect import (
-                detect_all_providers,
-                providers_to_model_configs,
-            )
-
-            detected = detect_all_providers()
-            if detected:
-                cfg.llm.model_list = providers_to_model_configs(detected)
-                names = [d.model for d in detected]
-                logger.info(
-                    f"[Config] Auto-detected {len(detected)} provider(s): "
-                    + ", ".join(names)
-                )
-            else:
-                logger.warning(
-                    "[Config] LLM enabled but no models configured. "
-                    "Set MODEL env var or add models to llm.model_list in config file."
-                )
-    elif cfg.llm.enabled and cfg.llm.model_list:
-        model_names = [m.litellm_params.model for m in cfg.llm.model_list]
-        unique_models = set(model_names)
-        logger.debug(
-            f"[Config] LLM models configured: {len(model_names)} entries, "
-            f"{len(unique_models)} unique models"
-        )
-
     # Store handler ID, log file path and verbose in context for batch processing
     ctx.obj["_console_handler_id"] = console_handler_id
     ctx.obj["_log_file_path"] = log_file_path
@@ -747,6 +707,53 @@ def app(
 
     if keep_base:
         cfg.llm.keep_base = True
+
+    # Auto-populate model_list when LLM ends up enabled with no models.
+    # This has to run *after* the preset and --llm/--no-llm overrides
+    # above: gated on the config file's value alone it never fired for
+    # anyone enabling LLM from the command line, which is every user who
+    # has not written a config file yet — `--llm` with a provider key in
+    # the environment silently produced no enhancement at all.
+    if cfg.llm.enabled and not cfg.llm.model_list:
+        # Priority 1: MODEL env var (explicit single-model override)
+        model_env = os.environ.get("MODEL")
+        if model_env:
+            from markitai.config import LiteLLMParams, ModelConfig
+
+            cfg.llm.model_list = [
+                ModelConfig(
+                    model_name="default",
+                    litellm_params=LiteLLMParams(model=model_env),
+                )
+            ]
+            logger.info(f"[Config] Using MODEL env var: {model_env}")
+        else:
+            # Priority 2: Auto-detect from env keys and authenticated CLI providers
+            from markitai.cli.providers_detect import (
+                detect_all_providers,
+                providers_to_model_configs,
+            )
+
+            detected = detect_all_providers()
+            if detected:
+                cfg.llm.model_list = providers_to_model_configs(detected)
+                names = [d.model for d in detected]
+                logger.info(
+                    f"[Config] Auto-detected {len(detected)} provider(s): "
+                    + ", ".join(names)
+                )
+            else:
+                logger.warning(
+                    "[Config] LLM enabled but no models configured. "
+                    "Set MODEL env var or add models to llm.model_list in config file."
+                )
+    elif cfg.llm.enabled and cfg.llm.model_list:
+        model_names = [m.litellm_params.model for m in cfg.llm.model_list]
+        unique_models = set(model_names)
+        logger.debug(
+            f"[Config] LLM models configured: {len(model_names)} entries, "
+            f"{len(unique_models)} unique models"
+        )
 
     # Env var support for pure mode
     if not pure and os.environ.get("MARKITAI_PURE", "").strip() in ("1", "true", "yes"):

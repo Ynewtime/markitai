@@ -27,6 +27,7 @@ from markitai.fetch import (
     _extract_jina_error_message,
     fetch_url,
 )
+from markitai.utils.errors import extra_install_command
 
 JINA_451_BODY = (
     '{"code":451,"name":"UnavailableForLegalReasonsError","status":45102,'
@@ -321,8 +322,7 @@ class TestPlaywrightActionableErrors:
 
         message = str(exc_info.value)
         assert "'playwright' package" in message
-        assert "pip install 'markitai[browser]'" in message
-        assert "uv tool install --force 'markitai[all]'" in message
+        assert extra_install_command("browser") in message
 
     @pytest.mark.asyncio
     async def test_auto_chain_skips_playwright_when_browser_missing(

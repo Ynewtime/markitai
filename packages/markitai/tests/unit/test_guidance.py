@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from markitai.utils.errors import extra_install_command
 from markitai.utils.guidance import (
     cloudflare_credentials_error,
     config_location_hint,
@@ -128,9 +129,11 @@ class TestJinaApiKeyHint:
 class TestPlaywrightErrors:
     def test_package_missing_lists_install_paths(self) -> None:
         block = playwright_package_missing_error()
-        assert "pip install 'markitai[browser]'" in block
-        assert "uv add playwright" in block
-        assert "uv tool install --force 'markitai[all]'" in block
+        # One command for the install markitai is actually running from,
+        # not a menu of three the reader has to choose between (two of
+        # which acted on their project rather than the tool).
+        assert extra_install_command("browser") in block
+        assert "uv add playwright" not in block
         assert "markitai doctor --fix" in block
 
     def test_browser_missing_explains_two_part_install(self) -> None:

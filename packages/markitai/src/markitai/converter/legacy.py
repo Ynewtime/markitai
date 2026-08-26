@@ -26,7 +26,11 @@ from markitai.converter.base import (
     FileFormat,
     register_converter,
 )
-from markitai.utils.errors import ConversionError, MissingDependencyError
+from markitai.utils.errors import (
+    ConversionError,
+    MissingDependencyError,
+    extra_install_command,
+)
 
 if TYPE_CHECKING:
     pass
@@ -39,7 +43,7 @@ def _load_anydoc() -> Any:
     except ImportError:
         raise MissingDependencyError(
             "Legacy Office formats (.doc, .ppt) need the anydoc backend. "
-            'Install it with: pip install "markitai[legacy]"'
+            f"Install it with: {extra_install_command('legacy')}"
         ) from None
     return anydoc
 

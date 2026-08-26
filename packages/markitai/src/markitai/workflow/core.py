@@ -30,6 +30,7 @@ from markitai.security import (
     escape_glob_pattern,
     validate_file_size,
 )
+from markitai.utils.errors import extra_install_command
 from markitai.utils.paths import ensure_dir
 from markitai.utils.text import format_error_message, markdown_image_reference
 from markitai.workflow.helpers import (
@@ -141,7 +142,7 @@ def validate_and_detect_format(
             return ConversionStepResult(
                 success=False,
                 error="-b kreuzberg requires kreuzberg to be installed. "
-                'Install with: uv tool install "markitai[kreuzberg]" --force',
+                f"Install with: {extra_install_command('kreuzberg')}",
             )
         from markitai.converter.kreuzberg import KreuzbergConverter
 

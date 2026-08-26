@@ -142,14 +142,88 @@ class TestModelEnvVarDetection:
         with patch(
             "markitai.cli.providers_detect.detect_all_providers",
             return_value=detected,
-        ):
+        ) as detect:
             result = cli_runner.invoke(
                 app,
                 [str(test_file), "-o", str(output_dir), "--llm", "--dry-run"],
             )
         assert result.exit_code == 0
-        # Should NOT show "no models configured" warning
+        # Assert the positive. "no models configured" is also absent when the
+        # whole block is skipped, which is exactly how the --llm ordering bug
+        # (see TestEnableSourceOrdering) went unnoticed here.
+        assert detect.called, "auto-detection never ran for --llm"
         assert "no models configured" not in result.output.lower()
+
+
+class TestEnableSourceOrdering:
+    """Populating the pool must not depend on *how* LLM got enabled.
+
+    The auto-populate block was gated on ``cfg.llm.enabled`` while sitting
+    above the code that applies ``--preset`` and ``--llm``, so it only ever
+    saw the config file's value. Every user without a config file — which is
+    every new user — got a silent no-op from the documented quick path:
+    export a provider key, run with ``--llm``, receive unenhanced output and
+    a green checkmark.
+    """
+
+    @pytest.fixture
+    def _no_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("MODEL", raising=False)
+
+    @pytest.mark.parametrize("enable_args", [["--llm"], ["--preset", "standard"]])
+    def test_command_line_enable_reaches_auto_detection(
+        self,
+        enable_args: list[str],
+        tmp_path: Path,
+        cli_runner: CliRunner,
+        _no_config: None,
+    ) -> None:
+        from markitai.cli.providers_detect import ProviderDetectionResult
+
+        source = tmp_path / "doc.txt"
+        source.write_text("content")
+        detected = [
+            ProviderDetectionResult(
+                provider="gemini",
+                model="gemini/gemini-flash-lite-latest",
+                authenticated=True,
+                source="env",
+            )
+        ]
+
+        with patch(
+            "markitai.cli.providers_detect.detect_all_providers",
+            return_value=detected,
+        ) as detect:
+            result = cli_runner.invoke(
+                app,
+                [str(source), "-o", str(tmp_path / "out"), *enable_args, "--dry-run"],
+            )
+
+        assert result.exit_code == 0
+        assert detect.called, f"{enable_args} never reached provider detection"
+
+    def test_command_line_enable_reaches_the_model_env_var(
+        self,
+        tmp_path: Path,
+        cli_runner: CliRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        source = tmp_path / "doc.txt"
+        source.write_text("content")
+        monkeypatch.setenv("MODEL", "gemini/gemini-flash-lite-latest")
+
+        with patch(
+            "markitai.cli.providers_detect.detect_all_providers", return_value=[]
+        ) as detect:
+            result = cli_runner.invoke(
+                app,
+                [str(source), "-o", str(tmp_path / "out"), "--llm", "--dry-run"],
+            )
+
+        assert result.exit_code == 0
+        # MODEL wins outright; detection is the fallback behind it.
+        assert not detect.called
 
     def test_model_env_creates_correct_model_config(
         self, monkeypatch: pytest.MonkeyPatch

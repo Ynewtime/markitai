@@ -219,9 +219,15 @@ def _check_playwright_dep() -> tuple[str, str, bool]:
                 hint = get_install_hint("playwright")
                 return ("Playwright", f"browser missing ({hint})", False)
         else:
-            return ("Playwright", "not installed (uv add playwright)", False)
+            return ("Playwright", f"not installed ({_browser_hint()})", False)
     except Exception:
-        return ("Playwright", "not installed (uv add playwright)", False)
+        return ("Playwright", f"not installed ({_browser_hint()})", False)
+
+
+def _browser_hint() -> str:
+    from markitai.utils.errors import extra_install_command
+
+    return extra_install_command("browser")
 
 
 def _check_libreoffice_dep() -> tuple[str, str, bool]:

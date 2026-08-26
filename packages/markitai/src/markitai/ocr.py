@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from markitai.constants import DEFAULT_OCR_SAMPLE_PAGES, DEFAULT_RENDER_DPI
-from markitai.utils.errors import MissingDependencyError
+from markitai.utils.errors import MissingDependencyError, extra_install_command
 
 if TYPE_CHECKING:
     from markitai.config import OCRConfig
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 #: The single actionable command for enabling OCR. Deliberately not
 #: "uv add rapidocr": markitai is normally installed as an isolated tool, where
 #: `uv add` would put the wheel in a project venv the tool cannot import from.
-OCR_INSTALL_HINT = 'Install with: uv tool install "markitai[ocr]" --force'
+OCR_INSTALL_HINT = extra_install_command("ocr")
 
 
 class OCRBackendMissing(MissingDependencyError):

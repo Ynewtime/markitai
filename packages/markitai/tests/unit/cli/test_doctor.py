@@ -879,8 +879,12 @@ class TestDoctorCapabilityContract:
 
         assert result.exit_code == 1
         mock_run.assert_not_called()
-        assert "uv tool install" in result.output
-        assert "pipx install" in result.output
+        # One command, matching how markitai was installed — a pipx user is
+        # no better off holding a uv command than holding none. Matched in
+        # fragments: rich wraps the panel at terminal width.
+        assert "install" in result.output
+        assert "browser" in result.output
+        assert "--force" in result.output
 
     def test_json_and_fix_are_explicitly_mutually_exclusive(
         self, cli_runner: CliRunner, mock_config: object

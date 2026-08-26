@@ -13,6 +13,7 @@ from loguru import logger
 
 from markitai.cli import ui
 from markitai.cli.console import get_console, get_stderr_console
+from markitai.utils.errors import extra_install_command
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -202,12 +203,7 @@ def check_playwright_for_urls(cfg: Any, console: Console) -> None:
         "  markitai doctor --fix   (installs Chromium automatically)", console=console
     )
     ui.step(
-        "  or: uv add playwright && uv run playwright install chromium", console=console
-    )
-    ui.step(
-        escape(
-            "  (uv tool installs: uv tool run --from 'markitai[all]' playwright install chromium)"
-        ),
+        escape(f"  or: {extra_install_command('browser')}"),
         console=console,
     )
     ui.step(

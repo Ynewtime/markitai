@@ -28,6 +28,29 @@ class SelfExplanatoryError(Exception):
     """
 
 
+def extra_install_command(extra: str) -> str:
+    """The one command that adds an extra to *this* markitai install.
+
+    Every message that tells a user how to unblock themselves goes through
+    here. Left to themselves the call sites drifted into five spellings of
+    the same instruction, two of which did not work: `pip install
+    "markitai[legacy]"` and `uv add playwright` both act on the current
+    project, not on the isolated environment the tool actually lives in, so
+    following them changed nothing and the next run failed identically.
+
+    The installer is read off ``sys.prefix`` rather than guessed, because a
+    pipx user handed a ``uv tool`` command is in the same position as before:
+    holding a command that does not apply to them. uv is the fallback when
+    the layout says nothing (a plain virtualenv, a checkout, an editable
+    install), matching what the docs recommend.
+    """
+    import sys
+    from pathlib import Path
+
+    installer = "pipx" if "pipx" in Path(sys.prefix).parts else "uv tool"
+    return f'{installer} install "markitai[{extra}]" --force'
+
+
 class MissingDependencyError(SelfExplanatoryError, ImportError):
     """A dependency needed for this operation is not installed.
 

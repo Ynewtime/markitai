@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import sys
 
+from markitai.utils.errors import extra_install_command
+
 
 def config_location_hint() -> str:
     """Return a one-line hint pointing at the config file markitai reads.
@@ -107,10 +109,7 @@ def playwright_package_missing_error() -> str:
         "The playwright fetch strategy requires the 'playwright' package, "
         "which is not installed.",
         [
-            "Install the package:\n"
-            "pip:      pip install 'markitai[browser]'\n"
-            "uv proj:  uv add playwright\n"
-            "uv tool:  uv tool install --force 'markitai[all]'",
+            f"Install the package:\n{extra_install_command('browser')}",
             "Then download the browser (a separate one-time step):\n"
             "markitai doctor --fix\n"
             "(or: playwright install chromium; "
