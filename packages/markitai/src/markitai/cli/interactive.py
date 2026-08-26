@@ -315,22 +315,16 @@ def _prompt_manual_api_key(session: InteractiveSession) -> bool:
         )
     )
 
-    env_var_map = {
-        "anthropic": "ANTHROPIC_API_KEY",
-        "openai": "OPENAI_API_KEY",
-        "gemini": "GEMINI_API_KEY",
-        "deepseek": "DEEPSEEK_API_KEY",
-    }
+    from markitai.constants import PROVIDER_API_KEY_ENV, PROVIDER_DEFAULT_MODELS
 
     # Save API key to .env file (project-local in dev mode, global otherwise)
-    env_var = env_var_map[provider]
+    env_var = PROVIDER_API_KEY_ENV[provider]
     env_path = _get_default_env_path()
     env_path.parent.mkdir(parents=True, exist_ok=True)
     _append_env_var(env_path, env_var, api_key)
 
     # Save config with env: reference (no plaintext key)
     from markitai.config import ConfigManager, LiteLLMParams, ModelConfig
-    from markitai.constants import PROVIDER_DEFAULT_MODELS
 
     manager = ConfigManager()
     cfg = manager.load()

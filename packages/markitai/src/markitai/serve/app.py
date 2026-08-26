@@ -32,6 +32,7 @@ from starlette.background import BackgroundTask
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from markitai import __version__
+from markitai.constants import PROVIDER_API_KEY_ENV
 from markitai.providers.discovery import provider_default_api_base
 from markitai.runs.history import DEFAULT_SERVE_JOBS_ROOT
 from markitai.serve.jobs import (
@@ -842,14 +843,7 @@ def _is_deployment_routable(model: ModelConfig) -> bool:
         return True
     if model.litellm_params.get_resolved_api_key(strict=False):
         return True
-    env_keys = {
-        "anthropic": "ANTHROPIC_API_KEY",
-        "openai": "OPENAI_API_KEY",
-        "gemini": "GEMINI_API_KEY",
-        "deepseek": "DEEPSEEK_API_KEY",
-        "openrouter": "OPENROUTER_API_KEY",
-    }
-    env_key = env_keys.get(provider)
+    env_key = PROVIDER_API_KEY_ENV.get(provider)
     return env_key is not None and bool(os.environ.get(env_key))
 
 

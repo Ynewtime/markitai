@@ -1,4 +1,4 @@
-"""Keep "which model does markitai pick for me" answerable from one place.
+"""Keep the per-provider tables answerable from one place.
 
 The rot this module exists to prevent: the model each provider defaults to
 was hand-copied into four tables (credential detection, the `init` wizard,
@@ -8,7 +8,11 @@ updated the wizard to the current generation and left the other three on the
 previous one, and the docs still advertised a DeepSeek model that had been
 retired.
 
-Two guards, matching the two directions the copies drifted:
+The same happened to provider -> API-key env var: four copies (credential
+detection, the setup wizard, serve's key check, discovery's card list), and
+the wizard's had lost OpenRouter.
+
+Three guards, matching the directions the copies drifted:
 
 * **No second copy in the source.** A ``provider/model`` string literal
   outside ``constants.PROVIDER_DEFAULT_MODELS`` is either a routing prefix
@@ -16,6 +20,8 @@ Two guards, matching the two directions the copies drifted:
 * **The docs name what the code picks.** Every default must be written down
   somewhere a reader can find it; a default the docs never mention is one
   nobody can verify went stale.
+* **No second copy of the credential env vars.** A ``*_API_KEY`` literal
+  outside the table is a new hand copy.
 
 What this cannot catch: a default that is simply a bad choice, or docs that
 name the right id while describing it wrongly.
@@ -28,7 +34,7 @@ from pathlib import Path
 
 import pytest
 
-from markitai.constants import PROVIDER_DEFAULT_MODELS
+from markitai.constants import PROVIDER_API_KEY_ENV, PROVIDER_DEFAULT_MODELS
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _SRC = Path(__file__).resolve().parents[2] / "src" / "markitai"
@@ -98,6 +104,32 @@ def test_provider_defaults_have_no_second_copy_in_the_source() -> None:
         "provider/model literals outside constants.PROVIDER_DEFAULT_MODELS "
         "(read it from there, or add the string to _NOT_A_DEFAULT_PICK with "
         "the reason it is not a default):\n" + "\n".join(offenders)
+    )
+
+
+def test_api_key_env_vars_have_no_second_copy_in_the_source() -> None:
+    """A provider's key name belongs to PROVIDER_API_KEY_ENV, nowhere else."""
+    known = set(PROVIDER_API_KEY_ENV.values())
+    offenders: list[str] = []
+    for path in sorted(_SRC.rglob("*.py")):
+        if path.name == "constants.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        docstrings = _module_docstrings(tree)
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and node.value in known
+                and node.value not in docstrings
+            ):
+                offenders.append(
+                    f"{path.relative_to(_SRC)}:{node.lineno}: {node.value}"
+                )
+
+    assert not offenders, (
+        "API-key env names outside constants.PROVIDER_API_KEY_ENV (read them "
+        "from there so a provider is added in one place):\n" + "\n".join(offenders)
     )
 
 

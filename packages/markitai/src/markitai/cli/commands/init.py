@@ -15,7 +15,7 @@ from markitai.cli import ui
 from markitai.cli.console import get_console
 from markitai.cli.hints import get_env_set_command
 from markitai.config import ConfigManager
-from markitai.constants import PROVIDER_DEFAULT_MODELS
+from markitai.constants import PROVIDER_API_KEY_ENV, PROVIDER_DEFAULT_MODELS
 from markitai.security import atomic_write_json, atomic_write_text
 
 console = get_console()
@@ -329,7 +329,7 @@ def _wizard_init(target: Path, *, prompt_path: bool = False) -> None:
                 f"  [dim]•[/dim] API Key:     edit [cyan]{env_template}[/cyan]"
             )
         else:
-            env_cmd = get_env_set_command("GEMINI_API_KEY")
+            env_cmd = get_env_set_command(PROVIDER_API_KEY_ENV["gemini"])
             console.print(f"  [dim]•[/dim] API Key:     [cyan]{env_cmd}[/cyan]")
         console.print()
 

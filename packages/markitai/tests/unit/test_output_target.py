@@ -1,10 +1,10 @@
-"""Tests for cli/processors split_output_file_target (-o file-target handling)."""
+"""Tests for runs.output split_output_file_target (-o file-target handling)."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from markitai.cli.processors import split_output_file_target
+from markitai.runs.output import split_output_file_target
 
 
 class TestSplitOutputFileTarget:

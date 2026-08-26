@@ -289,6 +289,22 @@ LOCAL_STRATEGIES: tuple[str, ...] = ("static", "playwright")
 # Source: https://code.claude.com/docs/en/model-config
 CLAUDE_CODE_ALIASES: tuple[str, ...] = ("haiku", "sonnet", "opus", "inherit")
 
+# Where each API-key provider's credential is read from. Four copies of this
+# lived in the codebase (credential detection, the setup wizard, serve's
+# key check, and discovery's card list) and had already drifted — the
+# wizard's copy was missing OpenRouter entirely.
+#
+# Subscription providers (claude-agent, copilot, chatgpt) are absent on
+# purpose: they authenticate through their CLI or OAuth, not an env var.
+PROVIDER_API_KEY_ENV: dict[str, str] = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+}
+
+
 # The model each provider defaults to when markitai picks one for the user:
 # credential auto-detection, the `init` wizard, `serve`'s startup candidates
 # and the sample config all read this table. It is deliberately the only

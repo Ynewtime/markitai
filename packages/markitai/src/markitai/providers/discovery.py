@@ -20,7 +20,7 @@ from urllib.parse import urljoin
 
 import httpx
 
-from markitai.constants import PROVIDER_DEFAULT_MODELS
+from markitai.constants import PROVIDER_API_KEY_ENV, PROVIDER_DEFAULT_MODELS
 
 if TYPE_CHECKING:
     from markitai.config import ModelConfig
@@ -146,17 +146,7 @@ async def detect_provider_connections(
         )
         for model in configured or []
     ]
-    env_key = [
-        name
-        for name in (
-            "ANTHROPIC_API_KEY",
-            "OPENAI_API_KEY",
-            "GEMINI_API_KEY",
-            "DEEPSEEK_API_KEY",
-            "OPENROUTER_API_KEY",
-        )
-        if os.environ.get(name)
-    ]
+    env_key = [name for name in PROVIDER_API_KEY_ENV.values() if os.environ.get(name)]
     key = hashlib.sha256(repr((configured_key, env_key)).encode()).hexdigest()
     cached = _connection_cache.get(key)
     if (
@@ -236,20 +226,13 @@ async def detect_provider_connections(
     )
     cards.extend(card for card in detected_cards if card is not None)
 
-    env_providers = (
-        ("ANTHROPIC_API_KEY", "anthropic", "Anthropic"),
-        ("OPENAI_API_KEY", "openai", "OpenAI"),
-        ("GEMINI_API_KEY", "gemini", "Gemini"),
-        ("DEEPSEEK_API_KEY", "deepseek", "DeepSeek"),
-        ("OPENROUTER_API_KEY", "openrouter", "OpenRouter"),
-    )
-    for env_var, provider, label in env_providers:
+    for provider, env_var in PROVIDER_API_KEY_ENV.items():
         if os.environ.get(env_var):
             cards.append(
                 {
                     "id": f"env:{provider}",
                     "provider": provider,
-                    "label": label,
+                    "label": provider_label(provider),
                     "kind": "environment",
                     "status": "ready",
                     "source": env_var,

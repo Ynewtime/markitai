@@ -13,10 +13,6 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-# Moved to the runs layer (Phase 4B); re-exported here so existing
-# importers keep working.
-from markitai.runs.output import split_output_file_target
-
 
 async def run_parallel_llm_tasks(
     document_coro: Any,
@@ -49,7 +45,6 @@ async def run_parallel_llm_tasks(
 
 __all__ = [
     # Output target helpers
-    "split_output_file_target",
     # File processing
     "process_single_file",
     # URL processing

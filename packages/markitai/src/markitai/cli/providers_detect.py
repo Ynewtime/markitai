@@ -13,7 +13,11 @@ import shutil
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from markitai.constants import DEFAULT_MODEL_WEIGHT, PROVIDER_DEFAULT_MODELS
+from markitai.constants import (
+    DEFAULT_MODEL_WEIGHT,
+    PROVIDER_API_KEY_ENV,
+    PROVIDER_DEFAULT_MODELS,
+)
 
 if TYPE_CHECKING:
     from markitai.config import ModelConfig
@@ -167,14 +171,7 @@ def detect_all_providers() -> list[ProviderDetectionResult]:
         )
 
     # 4-8. Check environment variables
-    env_providers = [
-        ("ANTHROPIC_API_KEY", "anthropic"),
-        ("OPENAI_API_KEY", "openai"),
-        ("GEMINI_API_KEY", "gemini"),
-        ("DEEPSEEK_API_KEY", "deepseek"),
-        ("OPENROUTER_API_KEY", "openrouter"),
-    ]
-    for env_var, provider in env_providers:
+    for provider, env_var in PROVIDER_API_KEY_ENV.items():
         model = PROVIDER_DEFAULT_MODELS[provider]
         if os.environ.get(env_var):
             results.append(

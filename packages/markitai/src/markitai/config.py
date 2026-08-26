@@ -57,16 +57,18 @@ from markitai.constants import (
     DEFAULT_SCREENSHOT_VIEWPORT_WIDTH,
     DEFAULT_STATE_FLUSH_INTERVAL_SECONDS,
     DEFAULT_URL_CONCURRENCY,
+    PROVIDER_API_KEY_ENV,
     PROVIDER_DEFAULT_MODELS,
 )
 
-# Environment variable descriptions for user-friendly error messages
+# Environment variable descriptions for user-friendly error messages. The
+# provider rows are derived so a new provider needs no second edit here, and
+# so no description can name a model generation that has since retired.
 ENV_VAR_DESCRIPTIONS: dict[str, str] = {
-    "OPENAI_API_KEY": "OpenAI API (GPT-4o, GPT-4o-mini)",
-    "ANTHROPIC_API_KEY": "Anthropic API (Claude models)",
-    "GEMINI_API_KEY": "Google Gemini API (Gemini 2.x)",
-    "DEEPSEEK_API_KEY": "DeepSeek API",
-    "OPENROUTER_API_KEY": "OpenRouter API (multi-provider gateway)",
+    **{
+        env_var: f"API key for the {provider} LLM provider"
+        for provider, env_var in PROVIDER_API_KEY_ENV.items()
+    },
     "JINA_API_KEY": "Jina Reader API (URL conversion)",
     "MARKITAI_CONFIG": "Markitai configuration file path",
     "MARKITAI_LOG_DIR": "Markitai log directory",
