@@ -23,6 +23,15 @@ markitai document.docx --llm
 
 Social posts (extractor-curated content marked `content_profile: social_post`, e.g. X/Twitter posts) keep their body verbatim. The LLM only generates frontmatter metadata, so post structure and wording are never altered.
 
+For **directory batches**, `--llm-batch` runs the enhancement through the provider's Batch API at half the list price:
+
+```bash
+markitai docs/ --llm --llm-batch -o out/       # waits up to 1h, then hands off
+markitai --llm-batch-collect <batch-id> -o out/  # finish a handed-off batch later
+```
+
+Requires a single-model OpenAI pool. Cache hits are served instantly; documents whose batch request fails are re-run live, so a partial batch never loses output. Not yet combinable with `--alt`/`--desc`/`--screenshot`/`--ocr` (run without `--llm-batch` for those).
+
 ::: tip
 `--llm`, `--alt`, `--desc`, `--ocr`, and `--screenshot` all have `--no-*` counterparts (`--no-llm`, `--no-alt`, `--no-desc`, `--no-ocr`, `--no-screenshot`) to explicitly disable a feature a preset would otherwise enable, for example `--preset rich --no-desc`.
 :::

@@ -23,6 +23,15 @@ markitai document.docx --llm
 
 社媒帖（由站点提取器整理、标记为 `content_profile: social_post` 的内容，如 X/Twitter 帖子）的正文会原样直通。LLM 仅生成 frontmatter 元数据，帖子结构和原文措辞不会被改动。
 
+**目录批量转换**可用 `--llm-batch` 走服务商的 Batch API，价格为实时调用的一半：
+
+```bash
+markitai docs/ --llm --llm-batch -o out/       # 默认挂等 1 小时，超时转两段式
+markitai --llm-batch-collect <batch-id> -o out/  # 稍后收取已转交的 batch
+```
+
+需要单模型的 OpenAI 池。命中缓存的文档立即完成；batch 中失败的文档会逐个实时重跑，部分失败不会丢输出。暂不能与 `--alt`/`--desc`/`--screenshot`/`--ocr` 组合（这些场景请去掉 `--llm-batch`）。
+
 ::: tip
 `--llm`、`--alt`、`--desc`、`--ocr`、`--screenshot` 都有对应的 `--no-*` 反义参数（`--no-llm`、`--no-alt`、`--no-desc`、`--no-ocr`、`--no-screenshot`），可用来显式关闭某个预设本会启用的特性，例如 `--preset rich --no-desc`。
 :::
