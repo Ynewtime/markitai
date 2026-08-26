@@ -18,6 +18,7 @@ live one by one, so a partial batch never loses output.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -27,31 +28,39 @@ from loguru import logger
 from markitai.llm.batch_api import (
     BatchDocItem,
     BatchRunState,
+    build_anthropic_batch_request,
     build_openai_batch_request,
+    download_anthropic_batch_output,
     download_openai_batch_output,
     parse_batch_result,
+    poll_anthropic_batch,
     poll_openai_batch,
     read_openai_batch_output,
+    submit_anthropic_batch,
     submit_openai_batch,
     write_batch_jsonl,
 )
 from markitai.llm.structured import instructor_mode_for_model
 from markitai.utils.errors import ConversionError
 
-BATCH_COST_FACTOR = 0.5  # OpenAI Batch API list-price discount
+BATCH_COST_FACTOR = 0.5  # both providers bill batches at half of list price
 
 
-def _single_openai_model(cfg: Any) -> tuple[str, str]:
-    """Resolve the pool to exactly one OpenAI-family model.
+_BATCH_PROVIDERS = ("openai", "anthropic")
+
+
+def _single_batch_model(cfg: Any) -> tuple[str, str]:
+    """Resolve the pool to exactly one model on a provider with a batch API.
 
     Batches are per-provider; a mixed or multi-model pool is refused with
     guidance instead of guessing.
 
     Returns:
-        (model_id, litellm custom_llm_provider)
+        (model_id without its provider prefix, provider name)
 
     Raises:
-        ConversionError: Pool is empty, multi-model, or not OpenAI-family.
+        ConversionError: Pool is empty, multi-model, or on a provider whose
+            batch API markitai does not speak.
     """
     models = [m.litellm_params.model for m in (cfg.llm.model_list or [])]
     if not models:
@@ -64,12 +73,42 @@ def _single_openai_model(cfg: Any) -> tuple[str, str]:
             f"--llm-batch currently needs a single-model pool; got {', '.join(unique)}"
         )
     model = unique[0]
-    if model.startswith("openai/"):
-        return model.removeprefix("openai/"), "openai"
+    for provider in _BATCH_PROVIDERS:
+        if model.startswith(f"{provider}/"):
+            return model.removeprefix(f"{provider}/"), provider
     raise ConversionError(
-        f"--llm-batch currently supports OpenAI pools only (got {model!r}). "
-        "Run without --llm-batch for real-time processing on this pool."
+        f"--llm-batch supports {' and '.join(_BATCH_PROVIDERS)} pools "
+        f"(got {model!r}). Run without --llm-batch for real-time processing "
+        "on this pool."
     )
+
+
+def _batch_custom_id(index: int, source: str) -> str:
+    """An id both batch APIs accept, still readable in a log.
+
+    Anthropic validates ``custom_id`` against ``^[a-zA-Z0-9_-]{1,64}$``,
+    which the obvious ``doc::0::note1.md`` fails on both the colons and the
+    dot. The index leads so the id stays unique after the name is squashed
+    and truncated.
+    """
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", source)
+    return f"doc_{index}_{safe}"[:64]
+
+
+def _anthropic_max_tokens(model: str) -> int:
+    """The output cap Anthropic requires on every batched request.
+
+    The live path lets litellm supply a default; the Messages API has none,
+    so read the model's own ceiling and fall back to a value large enough
+    for a cleaned document if litellm has never heard of the model.
+    """
+    from markitai.llm.models import get_model_max_output_tokens
+
+    try:
+        return int(get_model_max_output_tokens(f"anthropic/{model}"))
+    except Exception:
+        logger.debug("[Batch] no max_output_tokens for {}; using 8192", model)
+        return 8192
 
 
 def _prepare_pending(
@@ -102,7 +141,7 @@ def _prepare_pending(
             cached += 1
             continue
         item = BatchDocItem(
-            custom_id=f"doc::{len(pending)}::{source}",
+            custom_id=_batch_custom_id(len(pending), source),
             source=source,
             input_md=f"inputs/{len(pending)}.md",
             base_md=str(base_md.relative_to(output_dir)),
@@ -156,8 +195,8 @@ async def run_batch_llm_enhancement(
     """
     from markitai.workflow.helpers import create_llm_processor
 
-    model, provider = _single_openai_model(cfg)
-    mode = instructor_mode_for_model(f"openai/{model}")
+    model, provider = _single_batch_model(cfg)
+    mode = instructor_mode_for_model(f"{provider}/{model}")
     processor = create_llm_processor(cfg)
 
     pending, cached = _prepare_pending(processor, output_dir)
@@ -174,15 +213,28 @@ async def run_batch_llm_enhancement(
     requests = []
     for item, plan in pending:
         (state_dir / item.input_md).write_text(plan.original_markdown, encoding="utf-8")
-        requests.append(
-            build_openai_batch_request(
-                item.custom_id,
-                messages=plan.call.messages,
-                response_model=plan.call.response_model,
-                model=model,
-                mode=mode,
+        if provider == "anthropic":
+            requests.append(
+                build_anthropic_batch_request(
+                    item.custom_id,
+                    messages=plan.call.messages,
+                    response_model=plan.call.response_model,
+                    model=model,
+                    max_tokens=_anthropic_max_tokens(model),
+                )
             )
-        )
+        else:
+            requests.append(
+                build_openai_batch_request(
+                    item.custom_id,
+                    messages=plan.call.messages,
+                    response_model=plan.call.response_model,
+                    model=model,
+                    mode=mode,
+                )
+            )
+    # Written either way: it is the record of what was submitted, and the
+    # OpenAI path uploads this exact file.
     jsonl_path = state_dir / "requests.jsonl"
     write_batch_jsonl(requests, jsonl_path)
 
@@ -191,7 +243,10 @@ async def run_batch_llm_enhancement(
             f"Submitting {len(pending)} document(s) to the Batch API "
             f"({model}, 50% of list price)..."
         )
-    batch_id = await submit_openai_batch(jsonl_path, custom_llm_provider=provider)
+    if provider == "anthropic":
+        batch_id = await submit_anthropic_batch(requests)
+    else:
+        batch_id = await submit_openai_batch(jsonl_path, custom_llm_provider=provider)
 
     # Persist under the real batch id (move the pending dir into place)
     final_state_dir = BatchRunState.state_dir_for(output_dir, batch_id)
@@ -211,12 +266,17 @@ async def run_batch_llm_enhancement(
             print(f"\rBatch {batch_id}: {status} ({done}/{total})", end="", flush=True)
 
     try:
-        status = await poll_openai_batch(
-            batch_id,
-            custom_llm_provider=provider,
-            timeout_s=timeout_s,
-            on_progress=_progress,
-        )
+        if provider == "anthropic":
+            status = await poll_anthropic_batch(
+                batch_id, timeout_s=timeout_s, on_progress=_progress
+            )
+        else:
+            status = await poll_openai_batch(
+                batch_id,
+                custom_llm_provider=provider,
+                timeout_s=timeout_s,
+                on_progress=_progress,
+            )
     except TimeoutError as e:
         if not quiet:
             print()
@@ -233,6 +293,36 @@ async def run_batch_llm_enhancement(
     return await _finish_batch(cfg, processor, output_dir, state, quiet=quiet)
 
 
+def _batch_usage(
+    body: dict[str, Any], model: str, provider: str
+) -> tuple[int, int, float]:
+    """Token counts and list-price cost for one batch result.
+
+    The two providers report usage under different names, and only the
+    OpenAI-shaped body can be handed to litellm's cost calculator; an
+    Anthropic result is priced from the same table the rest of markitai
+    estimates with. Caller applies the batch discount.
+    """
+    usage = body.get("usage") or {}
+    if provider == "anthropic":
+        from markitai.providers import estimate_model_cost
+
+        input_tokens = int(usage.get("input_tokens", 0) or 0)
+        output_tokens = int(usage.get("output_tokens", 0) or 0)
+        cost = estimate_model_cost(model, input_tokens, output_tokens).cost_usd
+        return input_tokens, output_tokens, cost
+
+    import litellm
+
+    from markitai.llm.models import get_response_cost
+
+    return (
+        int(usage.get("prompt_tokens", 0) or 0),
+        int(usage.get("completion_tokens", 0) or 0),
+        get_response_cost(litellm.ModelResponse(**body)),
+    )
+
+
 async def _finish_batch(
     cfg: Any,
     processor: Any,
@@ -243,15 +333,15 @@ async def _finish_batch(
 ) -> int:
     """Download results and finalize each document (live re-run on failure)."""
     import instructor
-    import litellm
-
-    from markitai.llm.models import get_response_cost
 
     state_dir = BatchRunState.state_dir_for(output_dir, state.batch_id)
     out_path = state_dir / "output.jsonl"
-    await download_openai_batch_output(
-        state.batch_id, out_path, custom_llm_provider=state.provider
-    )
+    if state.provider == "anthropic":
+        await download_anthropic_batch_output(state.batch_id, out_path)
+    else:
+        await download_openai_batch_output(
+            state.batch_id, out_path, custom_llm_provider=state.provider
+        )
 
     mode = instructor.Mode(state.mode)
     lines = {line.custom_id: line for line in read_openai_batch_output(out_path)}
@@ -271,7 +361,10 @@ async def _finish_batch(
                 raise ConversionError(line.error)
             assert line.body is not None
             result = parse_batch_result(
-                line.body, response_model=plan.call.response_model, mode=mode
+                line.body,
+                response_model=plan.call.response_model,
+                mode=mode,
+                provider=state.provider,
             )
             if plan.call.validate is not None:
                 result = plan.call.validate(result)
@@ -280,13 +373,14 @@ async def _finish_batch(
             )
             processor._engine.write_cache(plan.call, result)
             # Account batch usage at the discounted rate.
-            usage = line.body.get("usage") or {}
+            input_tokens, output_tokens, cost = _batch_usage(
+                line.body, state.model, state.provider
+            )
             processor._track_usage(
                 state.model,
-                int(usage.get("prompt_tokens", 0) or 0),
-                int(usage.get("completion_tokens", 0) or 0),
-                get_response_cost(litellm.ModelResponse(**line.body))
-                * BATCH_COST_FACTOR,
+                input_tokens,
+                output_tokens,
+                cost * BATCH_COST_FACTOR,
                 item.source,
             )
             _write_llm_md(processor, base_md, frontmatter, cleaned)
@@ -339,12 +433,16 @@ async def collect_batch_llm(
     state = BatchRunState.load(state_dir)
 
     try:
-        status = await poll_openai_batch(
-            batch_id,
-            custom_llm_provider=state.provider,
-            timeout_s=5,  # collect is a status check, not a wait
-            interval_s=2,
-        )
+        # A status check, not a wait — the caller is asking "is it done yet?"
+        if state.provider == "anthropic":
+            status = await poll_anthropic_batch(batch_id, timeout_s=5, interval_s=2)
+        else:
+            status = await poll_openai_batch(
+                batch_id,
+                custom_llm_provider=state.provider,
+                timeout_s=5,
+                interval_s=2,
+            )
     except TimeoutError:
         status = "in_progress"
     if status != "completed":

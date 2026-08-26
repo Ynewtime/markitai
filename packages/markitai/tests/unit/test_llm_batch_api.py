@@ -9,6 +9,7 @@ import instructor
 from pydantic import BaseModel
 
 from markitai.llm.batch_api import (
+    build_anthropic_batch_request,
     build_openai_batch_request,
     parse_batch_result,
     read_openai_batch_output,
@@ -114,6 +115,78 @@ class TestBuildRequest:
             max_tokens=4096,
         )
         assert req["body"]["max_tokens"] == 4096
+
+
+ANTHROPIC_BODY = {
+    "id": "msg_01",
+    "type": "message",
+    "role": "assistant",
+    "model": "claude-haiku-4-5",
+    "content": [
+        {
+            "type": "tool_use",
+            "id": "toolu_01",
+            "name": "_Doc",
+            "input": {"cleaned_markdown": "clean", "summary": "short"},
+        }
+    ],
+    "stop_reason": "tool_use",
+    "stop_sequence": None,
+    "usage": {"input_tokens": 1979, "output_tokens": 96},
+}
+
+
+class TestParseAnthropicResult:
+    def test_a_message_body_parses_through_the_anthropic_mode(self) -> None:
+        """The OpenAI envelope cannot hold an Anthropic Message."""
+        result = parse_batch_result(
+            ANTHROPIC_BODY,
+            response_model=_Doc,
+            mode=instructor.Mode.TOOLS,  # what the live ladder picked
+            provider="anthropic",
+        )
+
+        assert result.cleaned_markdown == "clean"
+        assert result.summary == "short"
+
+
+class TestBuildAnthropicRequest:
+    """Anthropic's Messages API is not the OpenAI shape."""
+
+    def _request(self) -> dict:
+        return build_anthropic_batch_request(
+            "doc_0_note_md",
+            messages=MESSAGES,
+            response_model=_Doc,
+            model="claude-haiku-4-5",
+            max_tokens=8192,
+        )
+
+    def test_system_prompt_leaves_the_message_list(self) -> None:
+        params = self._request()["params"]
+
+        assert params["system"] == [{"type": "text", "text": MESSAGES[0]["content"]}]
+        assert [m["role"] for m in params["messages"]] == ["user"]
+        # Instructor must not mutate the caller's messages
+        assert MESSAGES[0]["role"] == "system"
+
+    def test_tools_use_anthropic_spelling(self) -> None:
+        params = self._request()["params"]
+
+        (tool,) = params["tools"]
+        assert "input_schema" in tool  # not OpenAI's function.parameters
+        assert "cleaned_markdown" in tool["input_schema"]["properties"]
+        assert params["tool_choice"] == {"type": "tool", "name": "_Doc"}
+
+    def test_max_tokens_is_always_sent(self) -> None:
+        """The Messages API has no server-side default to fall back on."""
+        assert self._request()["params"]["max_tokens"] == 8192
+
+    def test_custom_id_is_carried_beside_the_params(self) -> None:
+        request = self._request()
+
+        assert request["custom_id"] == "doc_0_note_md"
+        assert set(request) == {"custom_id", "params"}
 
 
 class TestParseOutput:

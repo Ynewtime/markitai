@@ -316,7 +316,8 @@ def run_interactive_mode(ctx: click.Context) -> None:
     is_flag=True,
     help="Directory batches only: run LLM enhancement through the provider's "
     "Batch API at half the list price. Waits up to --llm-batch-timeout, then "
-    "hands off to a later --llm-batch-collect. Requires an OpenAI pool.",
+    "hands off to a later --llm-batch-collect. Requires a single-model "
+    "OpenAI or Anthropic pool.",
 )
 @click.option(
     "--llm-batch-timeout",
@@ -509,6 +510,25 @@ def app(
         ctx.exit(0)
 
     # Batch-API collection runs without an input argument
+    # Parse --config-json overrides (merged over the file config below,
+    # but still under explicit CLI flags, which are applied later)
+    config_overrides: dict | None = None
+    if config_json:
+        try:
+            parsed_overrides = json.loads(config_json)
+        except json.JSONDecodeError as e:
+            raise click.BadParameter(
+                f"invalid JSON at line {e.lineno} column {e.colno}: {e.msg}",
+                param_hint="'--config-json'",
+            ) from e
+        if not isinstance(parsed_overrides, dict):
+            raise click.BadParameter(
+                "expected a JSON object of config overrides, "
+                f"got {type(parsed_overrides).__name__}",
+                param_hint="'--config-json'",
+            )
+        config_overrides = parsed_overrides
+
     if llm_batch_collect is not None:
         from markitai.cli.processors.batch_llm import collect_batch_llm
         from markitai.utils.errors import ConversionError
@@ -519,7 +539,9 @@ def app(
                 "original batch output directory.[/red]"
             )
             ctx.exit(1)
-        collect_cfg = ConfigManager().load(config_path=config_path)
+        collect_cfg = ConfigManager().load(
+            config_path=config_path, overrides=config_overrides
+        )
         try:
             code = asyncio.run(
                 collect_batch_llm(collect_cfg, output, llm_batch_collect, quiet=quiet)
@@ -564,25 +586,6 @@ def app(
 
             is_url_list_mode = True
             input_path = None  # Clear input_path for URL list mode
-
-    # Parse --config-json overrides (merged over the file config below,
-    # but still under explicit CLI flags, which are applied later)
-    config_overrides: dict | None = None
-    if config_json:
-        try:
-            parsed_overrides = json.loads(config_json)
-        except json.JSONDecodeError as e:
-            raise click.BadParameter(
-                f"invalid JSON at line {e.lineno} column {e.colno}: {e.msg}",
-                param_hint="'--config-json'",
-            ) from e
-        if not isinstance(parsed_overrides, dict):
-            raise click.BadParameter(
-                "expected a JSON object of config overrides, "
-                f"got {type(parsed_overrides).__name__}",
-                param_hint="'--config-json'",
-            )
-        config_overrides = parsed_overrides
 
     # Load configuration first
     config_manager = ConfigManager()

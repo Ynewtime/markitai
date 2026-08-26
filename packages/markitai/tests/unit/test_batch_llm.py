@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,8 +11,11 @@ import pytest
 
 from markitai.cli.processors.batch_llm import (
     BATCH_COST_FACTOR,
+    _anthropic_max_tokens,
+    _batch_custom_id,
+    _batch_usage,
     _prepare_pending,
-    _single_openai_model,
+    _single_batch_model,
 )
 from markitai.config import LiteLLMParams, MarkitaiConfig, ModelConfig
 from markitai.llm.batch_api import BatchDocItem, BatchRunState
@@ -31,16 +35,22 @@ def _cfg_with_model(model: str | None, *, llm_enabled: bool = True) -> MarkitaiC
     return cfg
 
 
-class TestSingleOpenaiModel:
+class TestSingleBatchModel:
     def test_openai_pool_resolves(self) -> None:
-        assert _single_openai_model(_cfg_with_model("openai/gpt-5.6-luna")) == (
+        assert _single_batch_model(_cfg_with_model("openai/gpt-5.6-luna")) == (
             "gpt-5.6-luna",
             "openai",
         )
 
+    def test_anthropic_pool_resolves(self) -> None:
+        assert _single_batch_model(_cfg_with_model("anthropic/claude-haiku-4-5")) == (
+            "claude-haiku-4-5",
+            "anthropic",
+        )
+
     def test_empty_pool_refused(self) -> None:
         with pytest.raises(ConversionError, match="needs a configured model"):
-            _single_openai_model(_cfg_with_model(None))
+            _single_batch_model(_cfg_with_model(None))
 
     def test_multi_model_pool_refused(self) -> None:
         cfg = _cfg_with_model("openai/gpt-5.6-luna")
@@ -53,15 +63,66 @@ class TestSingleOpenaiModel:
             )
         )
         with pytest.raises(ConversionError, match="single-model pool"):
-            _single_openai_model(cfg)
+            _single_batch_model(cfg)
 
-    def test_non_openai_pool_refused_with_guidance(self) -> None:
-        with pytest.raises(ConversionError, match="OpenAI pools only"):
-            _single_openai_model(_cfg_with_model("gemini/gemini-flash-latest"))
+    def test_provider_without_a_batch_api_refused_with_guidance(self) -> None:
+        with pytest.raises(ConversionError, match="openai and anthropic pools"):
+            _single_batch_model(_cfg_with_model("gemini/gemini-flash-latest"))
 
     def test_local_provider_pool_refused(self) -> None:
-        with pytest.raises(ConversionError, match="OpenAI pools only"):
-            _single_openai_model(_cfg_with_model("claude-agent/sonnet"))
+        """claude-agent is a CLI subscription, not the Anthropic API."""
+        with pytest.raises(ConversionError, match="openai and anthropic pools"):
+            _single_batch_model(_cfg_with_model("claude-agent/sonnet"))
+
+
+class TestBatchCustomId:
+    """Anthropic validates custom_id against ^[a-zA-Z0-9_-]{1,64}$."""
+
+    @pytest.mark.parametrize(
+        "source",
+        ["note1.md", "A Report (final).pdf", "报告.docx", "x" * 200, "a::b::c"],
+    )
+    def test_is_accepted_by_the_stricter_provider(self, source: str) -> None:
+        assert re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", _batch_custom_id(0, source))
+
+    def test_index_keeps_squashed_names_distinct(self) -> None:
+        """Two sources can flatten to the same characters."""
+        assert _batch_custom_id(0, "a b") != _batch_custom_id(1, "a.b")
+
+
+class TestAnthropicMaxTokens:
+    def test_reads_the_model_ceiling(self) -> None:
+        assert _anthropic_max_tokens("claude-haiku-4-5") > 8192
+
+    def test_unknown_model_falls_back_to_a_usable_cap(self) -> None:
+        assert _anthropic_max_tokens("claude-not-a-model") == 8192
+
+
+class TestBatchUsage:
+    def test_anthropic_usage_keys_are_read_and_priced(self) -> None:
+        """Anthropic reports input_tokens/output_tokens, not prompt/completion."""
+        body = {"usage": {"input_tokens": 1_000_000, "output_tokens": 1_000_000}}
+
+        tokens_in, tokens_out, cost = _batch_usage(
+            body, "claude-haiku-4-5", "anthropic"
+        )
+
+        assert (tokens_in, tokens_out) == (1_000_000, 1_000_000)
+        assert cost > 0
+
+    def test_openai_usage_keys_are_read(self) -> None:
+        body = {
+            "id": "chatcmpl-1",
+            "object": "chat.completion",
+            "created": 0,
+            "model": "gpt-5.4-nano",
+            "choices": [],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        }
+
+        tokens_in, tokens_out, _ = _batch_usage(body, "gpt-5.4-nano", "openai")
+
+        assert (tokens_in, tokens_out) == (10, 5)
 
 
 class TestRunState:
@@ -115,7 +176,7 @@ class TestPreparePending:
         assert len(pending) == 2
         assert pending[0][0].base_md == "a.md"
         assert pending[1][0].base_md == "b.md"
-        assert pending[0][0].custom_id.startswith("doc::0::")
+        assert pending[0][0].custom_id == "doc_0_a"
 
     def test_cache_hit_finalizes_immediately(self, tmp_path: Path) -> None:
         out = tmp_path / "out"

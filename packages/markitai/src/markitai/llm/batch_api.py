@@ -10,12 +10,18 @@ Both request building and result parsing reuse instructor's own pure
 functions (``handle_response_model`` / ``process_response``), so an offline
 request is byte-identical in shape to what the live ladder would send.
 
-Submit/poll/download go through litellm's batch helpers (OpenAI and
-OpenAI-compatible providers). Anthropic's Message Batches API is a
-different request shape and is still missing here — not by design, only
-because there was no Anthropic key to build it against or verify it with.
-Until it lands, callers refuse non-OpenAI pools with an actionable
-message.
+Two providers, two transports. OpenAI-compatible batches go through
+litellm's helpers (upload a jsonl of ``/v1/chat/completions`` requests,
+then poll a batch id). Anthropic's Message Batches API takes the requests
+inline and streams results back, and litellm only implements the retrieve
+half of it (``transform_create_batch_request`` raises NotImplementedError),
+so that side talks to the official ``anthropic`` SDK directly.
+
+What both paths share is everything above the transport: instructor
+shapes the request (``ANTHROPIC_TOOLS`` for Anthropic, the live ladder's
+own rung otherwise) and parses the answer, results are keyed by
+``custom_id``, and a request the batch could not satisfy falls through to
+a live re-run of that one document.
 """
 
 from __future__ import annotations
@@ -156,6 +162,49 @@ def build_openai_batch_request(
     }
 
 
+def build_anthropic_batch_request(
+    custom_id: str,
+    *,
+    messages: list[dict[str, Any]],
+    response_model: type,
+    model: str,
+    max_tokens: int,
+) -> dict[str, Any]:
+    """Build one Message Batches request from a structured call's parts.
+
+    Anthropic's Messages API is not the OpenAI shape: the system prompt is
+    a top-level field rather than the first message, tools carry
+    ``input_schema``, and ``tool_choice`` names the tool directly. Rather
+    than translate by hand, this asks instructor for its ``ANTHROPIC_TOOLS``
+    rendering — the same function the OpenAI path uses, in the mode that
+    speaks Anthropic — so request and reply stay each other's inverse.
+
+    Args:
+        custom_id: Caller-chosen id echoed back with the result.
+        messages: Chat messages (deep-copied; instructor mutates its input).
+        response_model: Pydantic model the answer is validated against.
+        model: Concrete model id (e.g. ``"claude-haiku-4-5"``).
+        max_tokens: Output cap. Required by the API — unlike OpenAI, there
+            is no server-side default to fall back on.
+
+    Returns:
+        One ``{"custom_id", "params"}`` request dict.
+    """
+    from instructor.v2.core.response import handle_response_model
+
+    _, mode_kwargs = handle_response_model(
+        response_model=response_model,
+        mode=instructor.Mode.ANTHROPIC_TOOLS,
+        messages=copy.deepcopy(messages),
+    )
+    params: dict[str, Any] = {
+        "model": model,
+        "max_tokens": max_tokens,
+        **mode_kwargs,
+    }
+    return {"custom_id": custom_id, "params": params}
+
+
 def write_batch_jsonl(requests: list[dict[str, Any]], path: Path) -> None:
     """Write batch requests as jsonl (one request per line)."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -203,20 +252,35 @@ def parse_batch_result(
     *,
     response_model: type,
     mode: instructor.Mode,
+    provider: str = "openai",
 ) -> Any:
     """Validate a batch output body into the response model.
 
     Reuses instructor's ``process_response`` — the same parser the live
-    ladder uses — so tool-call and JSON payloads are read identically.
+    ladder uses — so tool-call and JSON payloads are read identically. The
+    provider decides which envelope the body is wrapped in first: an
+    Anthropic result is a ``Message``, everything else a litellm
+    ``ModelResponse``.
+
     Raises (ValidationError, JSONDecodeError, ...) on unparseable output;
     callers route those documents to a live re-run.
     """
-    import litellm
     from instructor.v2.core.response import process_response
 
-    response = litellm.ModelResponse(**body)
+    if provider == "anthropic":
+        from anthropic.types import Message
+
+        return process_response(
+            Message.model_validate(body),
+            response_model=response_model,
+            stream=False,
+            mode=instructor.Mode.ANTHROPIC_TOOLS,
+        )
+
+    import litellm
+
     return process_response(
-        response,
+        litellm.ModelResponse(**body),
         response_model=response_model,
         stream=False,
         mode=mode,
@@ -330,4 +394,107 @@ async def download_openai_batch_output(
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(cast("Any", content).content)
+    return output_path
+
+
+# ---------------------------------------------------------------------------
+# Anthropic Message Batches (NETWORK CALLS — they cost money and time)
+# ---------------------------------------------------------------------------
+
+
+def _anthropic_client() -> Any:
+    """An async Anthropic client, or a readable error about the missing key."""
+    import anthropic
+
+    try:
+        return anthropic.AsyncAnthropic()
+    except Exception as e:  # anthropic raises when it finds no credential
+        raise RuntimeError(
+            "--llm-batch on an Anthropic pool needs ANTHROPIC_API_KEY "
+            f"(set it in the environment or ~/.markitai/.env): {e}"
+        ) from e
+
+
+async def submit_anthropic_batch(requests: list[dict[str, Any]]) -> str:
+    """Create a Message Batch from inline requests. Returns the batch id.
+
+    Unlike the OpenAI path there is no file to upload: the requests travel
+    in the create call itself.
+    """
+    client = _anthropic_client()
+    batch = await client.messages.batches.create(requests=cast("Any", requests))
+    logger.info(f"[Batch] Submitted {len(requests)} request(s) as {batch.id}")
+    return batch.id
+
+
+async def poll_anthropic_batch(
+    batch_id: str,
+    *,
+    timeout_s: float = 3600.0,
+    interval_s: float = 30.0,
+    on_progress: Callable[[str, int, int], None] | None = None,
+) -> str:
+    """Poll a Message Batch to a terminal status. NETWORK CALL.
+
+    Returns:
+        ``"completed"`` once ``processing_status`` reaches ``"ended"``, so
+        callers can treat it exactly like the OpenAI terminal status. A
+        batch that ended with every request failed still returns
+        "completed" — the per-request outcome is in the results.
+
+    Raises:
+        TimeoutError: Still in flight after ``timeout_s``. The batch keeps
+            running server-side; collect it later by id.
+    """
+    client = _anthropic_client()
+    elapsed = 0.0
+    while True:
+        batch = await client.messages.batches.retrieve(batch_id)
+        status = batch.processing_status
+        counts = batch.request_counts
+        done = counts.succeeded + counts.errored + counts.canceled + counts.expired
+        total = done + counts.processing
+        if on_progress is not None:
+            on_progress(status, done, total)
+        if status == "ended":
+            return "completed"
+        if elapsed >= timeout_s:
+            raise TimeoutError(
+                f"batch {batch_id} still {status!r} after {timeout_s:.0f}s "
+                f"({done}/{total} done)"
+            )
+        await asyncio.sleep(interval_s)
+        elapsed += interval_s
+
+
+async def download_anthropic_batch_output(batch_id: str, output_path: Path) -> Path:
+    """Stream a Message Batch's results into the OpenAI output-file shape.
+
+    Writing the same jsonl envelope both paths already read
+    (``{"custom_id", "response": {"status_code", "body"}}`` on success,
+    ``{"custom_id", "error"}`` otherwise) keeps collection provider-blind:
+    ``read_openai_batch_output`` parses either, and only
+    ``parse_batch_result`` needs to know whose body it is holding.
+    """
+    client = _anthropic_client()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as f:
+        async for entry in await client.messages.batches.results(batch_id):
+            result = entry.result
+            if result.type == "succeeded":
+                line = {
+                    "custom_id": entry.custom_id,
+                    "response": {
+                        "status_code": 200,
+                        "body": result.message.model_dump(mode="json"),
+                    },
+                }
+            elif result.type == "errored":
+                line = {
+                    "custom_id": entry.custom_id,
+                    "error": str(result.error.model_dump(mode="json")),
+                }
+            else:  # canceled / expired
+                line = {"custom_id": entry.custom_id, "error": result.type}
+            f.write(json.dumps(line, ensure_ascii=False) + "\n")
     return output_path
