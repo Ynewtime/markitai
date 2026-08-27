@@ -1338,30 +1338,6 @@
           "default": null,
           "title": "Image Analysis User"
         },
-        "page_content_system": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Page Content System"
-        },
-        "page_content_user": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Page Content User"
-        },
         "document_process_system": {
           "anyOf": [
             {

@@ -38,8 +38,6 @@ class PromptManager:
         "image_analysis_system",
         "image_analysis_user",
         # Page content prompts
-        "page_content_system",
-        "page_content_user",
         # Document prompts
         "document_process_system",
         "document_process_user",

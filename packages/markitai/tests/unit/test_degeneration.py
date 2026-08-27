@@ -344,28 +344,3 @@ class TestVisionAnalysisDegeneration:
 
         assert result.extracted_text == "Quarterly revenue: 10, 20, 30"
         processor._persistent_cache.set.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_extract_page_content_degenerate_truncated(
-        self,
-        llm_config: LLMConfig,
-        prompts_config: PromptsConfig,
-        sample_test_image: Path,
-    ) -> None:
-        from markitai.llm import LLMProcessor, LLMResponse
-
-        processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
-        processor.vision._call_llm = AsyncMock(  # type: ignore[method-assign]
-            return_value=LLMResponse(
-                content=DEGENERATE_MARKDOWN,
-                model="vision-model",
-                input_tokens=100,
-                output_tokens=50,
-                cost_usd=0.001,
-            )
-        )
-
-        result = await processor.extract_page_content(sample_test_image)
-
-        assert result.count(DEGENERATE_LINE) == 1
-        assert "Real content here." in result

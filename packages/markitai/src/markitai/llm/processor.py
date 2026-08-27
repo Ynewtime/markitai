@@ -533,10 +533,6 @@ class LLMProcessor:
             image_paths, context=context, document_context=document_context
         )
 
-    async def extract_page_content(self, image_path: Path, context: str = "") -> str:
-        """Extract text content from a document page image (see VisionAnalyzer)."""
-        return await self.vision.extract_page_content(image_path, context=context)
-
     def _create_router(self, models: list[ModelConfig] | None = None) -> MarkitaiRouter:
         """Create a MarkitaiRouter from model configurations.
 

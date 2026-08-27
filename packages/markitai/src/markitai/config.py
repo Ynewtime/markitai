@@ -474,8 +474,6 @@ class PromptsConfig(BaseModel):
     image_analysis_system: str | None = None
     image_analysis_user: str | None = None
     # Page content prompts
-    page_content_system: str | None = None
-    page_content_user: str | None = None
     # Document prompts
     document_process_system: str | None = None
     document_process_user: str | None = None

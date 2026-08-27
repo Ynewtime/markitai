@@ -7,7 +7,6 @@ Tests cover:
 - _analyze_image_with_fallback() - Fallback strategies
 - _analyze_with_instructor() - Instructor-based analysis
 - _analyze_with_two_calls() - Two-call fallback
-- extract_page_content() - Page content extraction
 """
 
 from __future__ import annotations
@@ -159,8 +158,6 @@ class MockVisionProcessor(VisionAnalyzer):
             "image_caption_user": "What is this image?{document_context}",
             "image_description_system": f"Describe in {kwargs.get('language', 'English')}",
             "image_description_user": "Describe the image in detail{document_context}",
-            "page_content_system": f"Extract content in {kwargs.get('language', 'English')}",
-            "page_content_user": "Extract all text from this page",
         }
         template = prompts.get(prompt_name, f"Mock prompt: {prompt_name}")
         for key, value in kwargs.items():
@@ -1494,85 +1491,6 @@ class TestAnalyzeWithTwoCalls:
             "Generate caption in Chinese",
             "Describe in Chinese",
         ]
-
-
-# =============================================================================
-# Test extract_page_content
-# =============================================================================
-
-
-class TestExtractPageContent:
-    """Tests for extract_page_content method."""
-
-    @pytest.mark.asyncio
-    async def test_extracts_content(
-        self, mock_processor: MockVisionProcessor, sample_png_file: Path
-    ):
-        """Content is extracted from page image."""
-
-        async def mock_call_llm(model, messages, context=""):
-            return LLMResponse(
-                content="# Page Title\n\nExtracted content here.",
-                model="test/model",
-                input_tokens=500,
-                output_tokens=100,
-                cost_usd=0.005,
-            )
-
-        mock_processor._call_llm = mock_call_llm
-
-        result = await mock_processor.extract_page_content(sample_png_file)
-
-        assert "# Page Title" in result
-        assert "Extracted content" in result
-
-    @pytest.mark.asyncio
-    async def test_uses_context_for_logging(
-        self, mock_processor: MockVisionProcessor, sample_png_file: Path
-    ):
-        """Context is passed to LLM call for logging."""
-        call_contexts = []
-
-        async def mock_call_llm(model, messages, context=""):
-            call_contexts.append(context)
-            return LLMResponse(
-                content="Content",
-                model="test/model",
-                input_tokens=100,
-                output_tokens=50,
-                cost_usd=0.001,
-            )
-
-        mock_processor._call_llm = mock_call_llm
-
-        await mock_processor.extract_page_content(
-            sample_png_file, context="document.pdf"
-        )
-
-        assert "document.pdf" in call_contexts
-
-    @pytest.mark.asyncio
-    async def test_uses_filename_as_default_context(
-        self, mock_processor: MockVisionProcessor, sample_png_file: Path
-    ):
-        """Filename is used as context when not provided."""
-        call_contexts = []
-
-        async def mock_call_llm(model, messages, context=""):
-            call_contexts.append(context)
-            return LLMResponse(
-                content="Content",
-                model="test/model",
-                input_tokens=100,
-                output_tokens=50,
-                cost_usd=0.001,
-            )
-
-        mock_processor._call_llm = mock_call_llm
-
-        await mock_processor.extract_page_content(sample_png_file)
-
-        assert sample_png_file.name in call_contexts[0]
 
 
 # =============================================================================

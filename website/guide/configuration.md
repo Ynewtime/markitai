@@ -1104,8 +1104,6 @@ Customize LLM prompts for different tasks. Each prompt is split into **system** 
     "image_description_user": null,
     "image_analysis_system": null,
     "image_analysis_user": null,
-    "page_content_system": null,
-    "page_content_user": null,
     "document_process_system": null,
     "document_process_user": null,
     "document_vision_system": null,

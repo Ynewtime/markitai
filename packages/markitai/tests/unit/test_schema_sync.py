@@ -119,8 +119,6 @@ class TestSchemaSync:
         # Check key system/user pairs exist
         assert "image_analysis_system" in prompts_config
         assert "image_analysis_user" in prompts_config
-        assert "page_content_system" in prompts_config
-        assert "page_content_user" in prompts_config
         assert "document_vision_system" in prompts_config
         assert "document_vision_user" in prompts_config
         assert "cleaner_system" in prompts_config
