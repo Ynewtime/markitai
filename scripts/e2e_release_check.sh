@@ -14,17 +14,20 @@
 #
 #   scripts/e2e_release_check.sh
 #
+# It writes a report you can open — WORKDIR/report.html — with one numbered
+# directory per step beside it holding that step's inputs, outputs and logs.
+#
 # Configuration — every variable can be overridden from the environment:
 #
 #   CLEANUP_ON_SUCCESS=1   remove WORKDIR when every check passed
-#                          (default 0: artifacts are kept for inspection,
-#                          which is the point of running this by hand)
-#   WORKDIR=/tmp/...       where the fake home, the wheel and every output
-#                          go (default /tmp/markitai-e2e)
+#                          (default 0: the artifacts and the report are the
+#                          point of running this by hand)
+#   WORKDIR=/tmp/...       where the report, the artifacts and the throwaway
+#                          home go (default /tmp/markitai-e2e)
 #   ENV_FILE=~/.markitai/.env    where provider keys are read from
 #   E2E_MODEL=provider/model     pinned model for the deterministic checks
-#   BATCH_DOCS=40          documents generated for the batch/interrupt checks
-#   HTTP_PORT=8899         port for the local page used by the URL check
+#   BATCH_DOCS=40          documents generated for the batch/interrupt steps
+#   HTTP_PORT=8899         port for the local page used by the URL step
 #   INTERRUPT_AFTER=6      seconds to let the batch run before interrupting it
 #                          (the step shortens the state flush interval so this
 #                          does not have to outlast the 10s default)
@@ -40,14 +43,16 @@ ENV_FILE=${ENV_FILE:-$HOME/.markitai/.env}
 E2E_MODEL=${E2E_MODEL:-gemini/gemini-flash-lite-latest}
 BATCH_DOCS=${BATCH_DOCS:-40}
 HTTP_PORT=${HTTP_PORT:-8899}
-SKIP_INTERRUPT=${SKIP_INTERRUPT:-0}
 INTERRUPT_AFTER=${INTERRUPT_AFTER:-6}
+SKIP_INTERRUPT=${SKIP_INTERRUPT:-0}
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REAL_HOME=$HOME
+STARTED_EPOCH=$(date +%s)
 PASS=0
 FAIL=0
 SERVER_PID=""
+STEP_ID=""
 
 if [ -t 1 ]; then
   B=$(printf '\033[1m'); G=$(printf '\033[32m'); R=$(printf '\033[31m')
@@ -56,23 +61,30 @@ else
   B=""; G=""; R=""; Y=""; D=""; N=""
 fi
 
-step()  { printf '\n%s── %s %s\n' "$B" "$*" "$N"; }
-ok()    { PASS=$((PASS + 1)); printf '  %s✓%s %s\n' "$G" "$N" "$*"; }
-bad()   { FAIL=$((FAIL + 1)); printf '  %s✗%s %s\n' "$R" "$N" "$*"; }
-skip()  { printf '  %s—%s %s\n' "$Y" "$N" "$*"; }
-note()  { printf '  %s%s%s\n' "$D" "$*" "$N"; }
+# Terminal output and the report are fed by the same calls: a check that
+# appears in only one of the two is a check someone will stop trusting.
+log() { printf '%s\n' "$(printf '%s\t' "$@" | sed 's/\t$//')" >>"$RESULTS"; }
 
-# check <description> <condition-command...>
+step() {
+  STEP_ID=$1
+  printf '\n%s── %s%s\n' "$B" "$2" "$N"
+  mkdir -p "$WORKDIR/$1"
+  log STEP "$1" "$2" "$3"
+}
+ok()   { PASS=$((PASS + 1)); printf '  %s✓%s %s\n' "$G" "$N" "$1"; log CHECK "$STEP_ID" ok "$1"; }
+bad()  { FAIL=$((FAIL + 1)); printf '  %s✗%s %s\n' "$R" "$N" "$1"; log CHECK "$STEP_ID" fail "$1"; }
+skip() { printf '  %s—%s %s\n' "$Y" "$N" "$1"; log CHECK "$STEP_ID" skip "$1"; }
+note() { printf '  %s%s%s\n' "$D" "$1" "$N"; log NOTE "$STEP_ID" "$1"; }
+show() { log EVIDENCE "$STEP_ID" "$1" "$2" inline; }   # rendered into the report
+file() { log EVIDENCE "$STEP_ID" "$1" "$2"; }          # linked from the report
+
 check() { if "${@:2}"; then ok "$1"; else bad "$1"; fi; }
 
-cleanup() {
-  [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null
-  return 0
-}
+cleanup() { [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null; return 0; }
 trap cleanup EXIT
 
 # ── Setup ────────────────────────────────────────────────────────────────────
-step "Setup"
+printf '%s── Setup%s\n' "$B" "$N"
 
 if [ ! -f "$ENV_FILE" ]; then
   printf '%sNo provider keys at %s.%s\n' "$R" "$ENV_FILE" "$N"
@@ -84,90 +96,114 @@ set -a
 # shellcheck disable=SC1090
 . "$ENV_FILE"
 set +a
-note "keys read from $ENV_FILE"
 
 rm -rf "$WORKDIR"
-mkdir -p "$WORKDIR"/{home,work,site}
+mkdir -p "$WORKDIR"/00-inputs "$WORKDIR"/_internal
+RESULTS="$WORKDIR/_internal/results.tsv"
+: >"$RESULTS"
+printf '  %skeys read from %s%s\n' "$D" "$ENV_FILE" "$N"
 
-(cd "$REPO_ROOT" && uv build --package markitai -o "$WORKDIR/dist") >/dev/null 2>&1 \
-  || { printf '%swheel build failed%s\n' "$R" "$N"; exit 1; }
-WHEEL=$(ls "$WORKDIR"/dist/markitai-*-py3-none-any.whl | head -1)
-note "built $(basename "$WHEEL")"
+(cd "$REPO_ROOT" && uv build --package markitai -o "$WORKDIR/_internal/dist") \
+  >"$WORKDIR/_internal/build.log" 2>&1 \
+  || { printf '%swheel build failed — see %s/_internal/build.log%s\n' "$R" "$WORKDIR" "$N"; exit 1; }
+WHEEL=$(ls "$WORKDIR"/_internal/dist/markitai-*-py3-none-any.whl | head -1)
+VERSION=$(basename "$WHEEL" | sed -E 's/^markitai-(.+)-py3-none-any\.whl$/\1/')
+printf '  %sbuilt markitai %s%s\n' "$D" "$VERSION" "$N"
 
 # A machine that has never seen markitai: empty home, isolated tool dir.
 # Exported here only — the caller's shell is untouched.
-export HOME="$WORKDIR/home"
-export UV_TOOL_DIR="$WORKDIR/home/.uvtools"
-export UV_TOOL_BIN_DIR="$WORKDIR/home/bin"
-export PATH="$WORKDIR/home/bin:$PATH"
-uv tool install "$WHEEL" >/dev/null 2>&1 \
-  || { printf '%stool install failed%s\n' "$R" "$N"; exit 1; }
-note "installed into a fresh HOME ($HOME)"
+export HOME="$WORKDIR/_internal/home"
+export UV_TOOL_DIR="$HOME/.uvtools"
+export UV_TOOL_BIN_DIR="$HOME/bin"
+export PATH="$HOME/bin:$PATH"
+mkdir -p "$HOME"
+uv tool install "$WHEEL" >"$WORKDIR/_internal/install.log" 2>&1 \
+  || { printf '%stool install failed — see %s/_internal/install.log%s\n' "$R" "$WORKDIR" "$N"; exit 1; }
+printf '  %sinstalled into an empty home%s\n' "$D" "$N"
 
-cd "$WORKDIR/work" || exit 1
-cp "$REPO_ROOT/packages/markitai/tests/fixtures/sample.docx" . 2>/dev/null
-cp "$REPO_ROOT/packages/markitai/tests/fixtures/sample.pdf" . 2>/dev/null
+cd "$WORKDIR" || exit 1
+cp "$REPO_ROOT/packages/markitai/tests/fixtures/sample.docx" 00-inputs/ 2>/dev/null
+cp "$REPO_ROOT/packages/markitai/tests/fixtures/sample.pdf" 00-inputs/ 2>/dev/null
 
-# ── 1. First screen ──────────────────────────────────────────────────────────
-step "1. First screen — what a new user reads before anything else"
-markitai --help >help.txt 2>&1
-FIRST_PANEL=$(grep -m1 '^╭─' help.txt | sed 's/[╭─ ]*//; s/ *─*╮*$//')
-note "first panel: $FIRST_PANEL"
-check "help opens on a curated panel, not ungrouped options" \
+# ── 1 ────────────────────────────────────────────────────────────────────────
+step 01-first-screen "First screen" \
+  "What someone reads in the first ten seconds, before deciding whether to keep going."
+markitai --help >01-first-screen/help.txt 2>&1
+FIRST_PANEL=$(grep -m1 '^╭─' 01-first-screen/help.txt | sed 's/[╭─ ]*//; s/ *─*╮*$//')
+note "first panel shown: $FIRST_PANEL"
+check "the help opens on a curated panel, not on ungrouped leftovers" \
   test "$FIRST_PANEL" != "Options"
-check "help promises nothing the CLI cannot do (no video conversion)" \
-  test "$(grep -ci youtube help.txt)" -eq 0
+check "the examples promise nothing the tool cannot do" \
+  test "$(grep -ci youtube 01-first-screen/help.txt)" -eq 0
+file "full help output" 01-first-screen/help.txt
 
-# ── 2. doctor on a bare machine ──────────────────────────────────────────────
-step "2. doctor — the first command the docs tell you to run"
-markitai doctor >doctor.txt 2>&1
+# ── 2 ────────────────────────────────────────────────────────────────────────
+step 02-doctor "Diagnostics on a bare machine" \
+  "The first command the docs send you to. Its advice has to be copy-pasteable and correct."
+markitai doctor >02-doctor/doctor.txt 2>&1
 DOCTOR_RC=$?
-check "doctor exits 0 with no config and no extras" test "$DOCTOR_RC" -eq 0
-check "every repair hint is one runnable install command" \
-  test "$(grep -cE 'pip install "markitai|uv add ' doctor.txt)" -eq 0
-note "$(grep -c '•' doctor.txt) hint line(s); read doctor.txt and try one by hand"
+check "doctor exits cleanly with no config and no optional extras" \
+  test "$DOCTOR_RC" -eq 0
+check "every repair hint is a single command that works for this install" \
+  test "$(grep -cE 'pip install "markitai|uv add ' 02-doctor/doctor.txt)" -eq 0
+show "what a new user is told is missing, and how to fix it" 02-doctor/doctor.txt
 
-# ── 3. Zero-config conversion ────────────────────────────────────────────────
-step "3. Convert with no configuration at all"
-markitai sample.docx >stdout.md 2>stdout.err
-check "stdout is markdown a pipe can consume" \
-  test "$(head -c 3 stdout.md)" = "---"
-check "converting without a config file is not warned about" \
-  test "$(grep -ci 'no config file found' stdout.err)" -eq 0
-markitai sample.pdf -o out/ >/dev/null 2>&1
-check "writes <name>.md next to its assets" test -f out/sample.pdf.md
+# ── 3 ────────────────────────────────────────────────────────────────────────
+step 03-zero-config "Conversion with no setup" \
+  "The promise on the front page: no API key, no config file, no optional dependency."
+markitai 00-inputs/sample.docx >03-zero-config/stdout.md 2>03-zero-config/stderr.txt
+check "piping to stdout yields markdown and nothing else" \
+  test "$(head -c 3 03-zero-config/stdout.md)" = "---"
+check "running without a config file is not treated as a problem" \
+  test "$(grep -ci 'no config file found' 03-zero-config/stderr.txt)" -eq 0
+markitai 00-inputs/sample.pdf -o 03-zero-config/output/ >03-zero-config/convert.log 2>&1
+check "a PDF converts and lands where it was asked to" \
+  test -f 03-zero-config/output/sample.pdf.md
+show "the markdown a plain conversion produces" 03-zero-config/output/sample.pdf.md
 
-# ── 4. LLM: the documented quick path, with a real model ─────────────────────
-step "4. LLM enhancement — a real call, billed to your key"
-note "auto-detection route: a provider key in the environment, nothing else"
-markitai sample.docx -o llm_auto/ --llm >llm_auto.log 2>&1
-check "auto-detected provider produced an enhanced file" \
-  test -f llm_auto/sample.docx.llm.md
-check "the model actually ran (frontmatter carries generated metadata)" \
-  grep -q '^description:' llm_auto/sample.docx.llm.md
+# ── 4 ────────────────────────────────────────────────────────────────────────
+step 04-llm-enhancement "LLM enhancement, billed to a real key" \
+  "Three routes onto a model, and the line between cleaning text and looking at pictures."
+note "route 1 — a provider key in the environment and nothing else"
+markitai 00-inputs/sample.docx -o 04-llm-enhancement/auto-detected/ --llm \
+  >04-llm-enhancement/auto-detected.log 2>&1
+check "a key alone is enough to enable enhancement" \
+  test -f 04-llm-enhancement/auto-detected/sample.docx.llm.md
+check "the model really ran (frontmatter carries generated metadata)" \
+  grep -q '^description:' 04-llm-enhancement/auto-detected/sample.docx.llm.md
 
-note "pinned route: MODEL=$E2E_MODEL"
-MODEL="$E2E_MODEL" markitai sample.pdf -o llm_pinned/ --llm >llm_pinned.log 2>&1
-check "MODEL env var is honoured" grep -q '^description:' llm_pinned/sample.pdf.llm.md
-check "--llm alone leaves images alone (alt text is --alt's job)" \
-  grep -q '!\[\](' llm_pinned/sample.pdf.llm.md
+note "route 2 — MODEL=$E2E_MODEL pins one model"
+MODEL="$E2E_MODEL" markitai 00-inputs/sample.pdf -o 04-llm-enhancement/pinned-model/ \
+  --llm >04-llm-enhancement/pinned-model.log 2>&1
+check "MODEL is honoured" \
+  grep -q '^description:' 04-llm-enhancement/pinned-model/sample.pdf.llm.md
+check "--llm on its own leaves images untouched — alt text is --alt's job" \
+  grep -q '!\[\](' 04-llm-enhancement/pinned-model/sample.pdf.llm.md
 
-note "vision route: --alt --desc against a PDF with embedded images"
-MODEL="$E2E_MODEL" markitai sample.pdf -o vision/ --llm --alt --desc \
-  >vision.log 2>&1
-check "--alt writes alt text into the image references" \
-  grep -qE '!\[[^]]+\]\(\.markitai/assets/' vision/sample.pdf.llm.md
+note "route 3 — --alt --desc adds vision analysis of the embedded images"
+MODEL="$E2E_MODEL" markitai 00-inputs/sample.pdf -o 04-llm-enhancement/vision-alt-desc/ \
+  --llm --alt --desc >04-llm-enhancement/vision.log 2>&1
+check "--alt writes alt text into every image reference" \
+  grep -qE '!\[[^]]+\]\(\.markitai/assets/' 04-llm-enhancement/vision-alt-desc/sample.pdf.llm.md
 check "--desc writes the descriptions sidecar" \
-  test -s vision/.markitai/assets/images.json
-note "$(grep -oE '!\[[^]]{0,60}' vision/sample.pdf.llm.md | head -1)]"
-note "cost so far is printed by the batch runs below; single files do not total it"
+  test -s 04-llm-enhancement/vision-alt-desc/.markitai/assets/images.json
+ALT=$(grep -oE '!\[[^]]{1,90}\]' 04-llm-enhancement/vision-alt-desc/sample.pdf.llm.md | head -1)
+[ -n "$ALT" ] && note "alt text the model produced: $ALT"
+show "enhanced output, with alt text" \
+  04-llm-enhancement/vision-alt-desc/sample.pdf.llm.md
+file "plain --llm output, for comparison" \
+  04-llm-enhancement/pinned-model/sample.pdf.llm.md
+file "image descriptions" \
+  04-llm-enhancement/vision-alt-desc/.markitai/assets/images.json
 
-# ── 5. URL ───────────────────────────────────────────────────────────────────
-step "5. URL conversion — main content only"
+# ── 5 ────────────────────────────────────────────────────────────────────────
+step 05-url "A web page, reduced to its article" \
+  "Fetching is the easy half; the value is in what gets thrown away."
 # Long enough to look like a real article: markitai's quality gate reads a
 # two-sentence page as an empty shell and escalates to browser rendering,
 # which is the correct call on the web and the wrong one for a fixture.
-cat >"$WORKDIR/site/index.html" <<'HTML'
+mkdir -p 00-inputs/site
+cat >00-inputs/site/index.html <<'HTML'
 <!doctype html><html><head><title>Quarterly Report</title>
 <meta name="author" content="Ops Team"></head><body>
 <nav>Home About Contact Careers Press</nav>
@@ -185,7 +221,7 @@ period.</p>
 <li>Region B: +22%, ahead of plan on expansion</li>
 <li>Region C: +3%, behind plan on a delayed launch</li></ul>
 <table><tr><th>Region</th><th>Growth</th><th>Plan</th></tr>
-<tr><td>A</td><td>9%</td><td>9%</td></tr>
+<tr><td>A</td><td>9%</td><td>15%</td></tr>
 <tr><td>B</td><td>22%</td><td>15%</td></tr></table>
 <h2>What we are watching</h2>
 <p>Two risks carry into next quarter. The delayed launch in Region C moves
@@ -199,10 +235,10 @@ HTML
 # server survives as its orphan, and the *next* run of this script finds the
 # port held by the previous one — serving a directory that has since been
 # deleted, which reads as "markitai cannot fetch a local page".
-(cd "$WORKDIR/site" && exec python3 -m http.server "$HTTP_PORT" >/dev/null 2>&1) &
+(cd 00-inputs/site && exec python3 -m http.server "$HTTP_PORT" >/dev/null 2>&1) &
 SERVER_PID=$!
 
-# Confirm the page being served is ours before believing anything the check
+# Confirm the page being served is ours before believing anything this step
 # says: an unrelated process already holding the port answers happily, and a
 # check that quietly grades someone else's server is worse than no check.
 SERVED=""
@@ -212,72 +248,74 @@ for _ in 1 2 3 4 5; do
   case "$SERVED" in *"Quarterly Report"*) break ;; esac
 done
 
+URL_MD=""
 case "$SERVED" in
-  *"Quarterly Report"*) : ;;
+  *"Quarterly Report"*)
+    # A local page keeps this honest on machines whose VPN or DNS rewrites
+    # public addresses — markitai correctly refuses those as non-public.
+    markitai "http://127.0.0.1:$HTTP_PORT/" -o 05-url/output/ >05-url/fetch.log 2>&1
+    URL_MD=$(ls 05-url/output/*.md 2>/dev/null | head -1)
+    ;;
   *)
-    bad "port $HTTP_PORT is not serving this check's page — another process is \
-holding it, or python3 -m http.server did not start (set HTTP_PORT=<free port>)"
-    SERVED=""
+    bad "port $HTTP_PORT is not serving this step's page — another process holds it (set HTTP_PORT=<free port>)"
     ;;
 esac
 
-# A local page keeps the check honest on machines whose VPN or DNS rewrites
-# public addresses — markitai correctly refuses those as non-public.
-URL_MD=""
-if [ -n "$SERVED" ]; then
-  markitai "http://127.0.0.1:$HTTP_PORT/" -o url/ >url.log 2>&1
-  URL_MD=$(ls url/*.md 2>/dev/null | head -1)
-fi
 if [ -n "$URL_MD" ]; then
-  ok "fetched and converted a live page"
-  check "page chrome is stripped (no nav, no footer)" \
+  ok "the page was fetched and converted"
+  check "navigation and footer are gone" \
     test "$(grep -cE 'Home About Contact|Example Corp' "$URL_MD")" -eq 0
-  check "metadata lands in frontmatter" grep -q '^author: Ops Team' "$URL_MD"
-  check "tables survive" grep -q '| Region' "$URL_MD"
+  check "author and title survive as metadata" grep -q '^author: Ops Team' "$URL_MD"
+  check "the table survives as a table" grep -q '| Region' "$URL_MD"
+  show "what came back" "$URL_MD"
+  file "the page that was served" 00-inputs/site/index.html
 elif [ -n "$SERVED" ]; then
-  bad "URL conversion produced no markdown (see url.log)"
+  bad "the fetch produced no markdown"
+  file "fetch log" 05-url/fetch.log
 fi
 kill "$SERVER_PID" 2>/dev/null; SERVER_PID=""
 
-# ── 6. Batch ─────────────────────────────────────────────────────────────────
-step "6. Batch — $BATCH_DOCS documents with LLM enhancement"
-mkdir -p docs
+# ── 6 ────────────────────────────────────────────────────────────────────────
+step 06-batch "A directory of $BATCH_DOCS documents" \
+  "Throughput, concurrency, and the number a manager asks about first: what it cost."
+mkdir -p 00-inputs/batch-docs
 i=1
 while [ "$i" -le "$BATCH_DOCS" ]; do
   {
-    echo "# Doc $i"
-    echo
+    echo "# Doc $i"; echo
     j=1
     while [ "$j" -le 40 ]; do
-      echo "Paragraph $j of document $i, with   messy   spacing to clean up."
-      echo
+      echo "Paragraph $j of document $i, with   messy   spacing to clean up."; echo
       j=$((j + 1))
     done
-  } >"docs/doc$i.md"
+  } >"00-inputs/batch-docs/doc$i.md"
   i=$((i + 1))
 done
-MODEL="$E2E_MODEL" markitai docs/ -o batch/ --llm --no-cache >batch.log 2>&1
-DONE=$(ls batch/*.llm.md 2>/dev/null | wc -l | tr -d ' ')
-check "every document was enhanced ($DONE/$BATCH_DOCS)" test "$DONE" -eq "$BATCH_DOCS"
-check "the run reports what it spent" grep -qE '\$[0-9]' batch.log
-note "$(grep -oE '✓ Done:.*' batch.log | head -1)"
+MODEL="$E2E_MODEL" markitai 00-inputs/batch-docs/ -o 06-batch/output/ --llm --no-cache \
+  >06-batch/batch.log 2>&1
+DONE=$(ls 06-batch/output/*.llm.md 2>/dev/null | wc -l | tr -d ' ')
+check "every document was enhanced ($DONE of $BATCH_DOCS)" test "$DONE" -eq "$BATCH_DOCS"
+check "the run reports what it spent" grep -qE '\$[0-9]' 06-batch/batch.log
+SUMMARY_LINE=$(grep -oE 'Done:.*' 06-batch/batch.log | head -1)
+[ -n "$SUMMARY_LINE" ] && note "$SUMMARY_LINE"
+file "run log" 06-batch/batch.log
 
-# ── 7. Interrupt and resume ──────────────────────────────────────────────────
-step "7. Interrupt and resume"
+# ── 7 ────────────────────────────────────────────────────────────────────────
+step 07-interrupt-resume "Stopping half way, and picking up again" \
+  "The question behind it: does an interrupted run cost you the work already paid for?"
 if [ "$SKIP_INTERRUPT" = "1" ]; then
-  skip "SKIP_INTERRUPT=1"
+  skip "skipped (SKIP_INTERRUPT=1)"
 else
-  # The script sends the interrupt rather than asking you to press Ctrl-C.
-  # Ctrl-C goes to the whole foreground process group, so it would take this
-  # script down with markitai and the resume half would never run. What is
-  # being checked is markitai's behaviour on SIGINT, which is the same either
-  # way.
+  # The script sends the interrupt rather than asking for Ctrl-C. Ctrl-C goes
+  # to the whole foreground process group, so it would take this script down
+  # with markitai and the resume half would never run. What is checked is
+  # markitai's behaviour on SIGINT, which is the same either way.
   #
   # The launcher exists because a shell that is not interactive starts its
   # background children with SIGINT already ignored, and Python keeps an
   # inherited SIG_IGN — signal markitai without this and it runs to
   # completion, which reads convincingly like "Ctrl-C does nothing".
-  cat >"$WORKDIR/interrupt_launcher.py" <<'PYEOF'
+  cat >_internal/interrupt_launcher.py <<'PYEOF'
 import os
 import signal
 import sys
@@ -287,102 +325,126 @@ os.execvp(sys.argv[1], sys.argv[1:])
 PYEOF
 
   # Completions reach the state file on an interval (10s by default), so a
-  # batch that finishes in under ~20s can only ever be interrupted inside
-  # that window, with nothing recorded to resume from. Shorten the interval
-  # for these two runs instead of generating enough documents to outlast it:
-  # same machinery, a fraction of the LLM spend. Both runs pass the same
-  # override so they agree on the state file.
+  # batch finishing in under ~20s can only be interrupted inside that window,
+  # with nothing recorded to resume from. Shorten the interval for these two
+  # runs instead of generating enough documents to outlast it: same
+  # machinery, a fraction of the spend. Both runs pass the same override so
+  # they agree on the state file.
   FLUSH_OVERRIDE='{"batch":{"state_flush_interval_seconds":2}}'
 
-  MODEL="$E2E_MODEL" python3 "$WORKDIR/interrupt_launcher.py" \
-    markitai docs/ -o resume/ --llm --no-cache \
-    --config-json "$FLUSH_OVERRIDE" >interrupt.log 2>&1 &
+  MODEL="$E2E_MODEL" python3 _internal/interrupt_launcher.py \
+    markitai 00-inputs/batch-docs/ -o 07-interrupt-resume/output/ --llm --no-cache \
+    --config-json "$FLUSH_OVERRIDE" >07-interrupt-resume/interrupted.log 2>&1 &
   RUN_PID=$!
   sleep "$INTERRUPT_AFTER"
   kill -INT "$RUN_PID" 2>/dev/null
   wait "$RUN_PID" 2>/dev/null
   RUN_RC=$?
 
-  PARTIAL=$(ls resume/*.llm.md 2>/dev/null | wc -l | tr -d ' ')
+  PARTIAL=$(ls 07-interrupt-resume/output/*.llm.md 2>/dev/null | wc -l | tr -d ' ')
   if [ "$PARTIAL" -ge "$BATCH_DOCS" ]; then
     skip "the batch finished inside ${INTERRUPT_AFTER}s — raise BATCH_DOCS or lower INTERRUPT_AFTER"
   elif [ "$PARTIAL" -eq 0 ]; then
     skip "nothing had finished at ${INTERRUPT_AFTER}s — raise INTERRUPT_AFTER"
   else
-    note "interrupted with $PARTIAL/$BATCH_DOCS written"
-    check "an interrupt stops the run" test "$RUN_RC" -ne 0
-    check "an interrupted batch says how to continue" \
-      grep -q -- '--resume' interrupt.log
-    check "resumable state survived the interrupt" \
-      test -n "$(ls resume/.markitai/states/*.state.json 2>/dev/null)"
+    note "interrupted after ${INTERRUPT_AFTER}s with $PARTIAL of $BATCH_DOCS written"
+    check "the interrupt stops the run" test "$RUN_RC" -ne 0
+    check "it says how to continue instead of leaving you guessing" \
+      grep -q -- '--resume' 07-interrupt-resume/interrupted.log
+    check "the progress it had made survived on disk" \
+      test -n "$(ls 07-interrupt-resume/output/.markitai/states/*.state.json 2>/dev/null)"
 
-    MODEL="$E2E_MODEL" markitai docs/ -o resume/ --llm --no-cache --resume \
-      --config-json "$FLUSH_OVERRIDE" >resume.log 2>&1
-    check "resume reads the previous run's state" grep -q 'Resuming batch' resume.log
-    note "$(grep -oE 'Resuming batch.*' resume.log | head -1)"
+    MODEL="$E2E_MODEL" markitai 00-inputs/batch-docs/ -o 07-interrupt-resume/output/ \
+      --llm --no-cache --resume --config-json "$FLUSH_OVERRIDE" \
+      >07-interrupt-resume/resumed.log 2>&1
+    check "resume reads the interrupted run's state" \
+      grep -q 'Resuming batch' 07-interrupt-resume/resumed.log
+    RESUME_LINE=$(grep -oE 'Resuming batch.*' 07-interrupt-resume/resumed.log | head -1)
+    [ -n "$RESUME_LINE" ] && note "$RESUME_LINE"
 
-    # The line alone is not the point — a resume that reports 0 completed has
-    # restarted, and the user pays for the whole batch again. Completions are
-    # flushed on an interval (batch.state_flush_interval_seconds, 10s by
-    # default), so an interrupt inside that window genuinely has nothing to
-    # skip; say which of the two happened instead of scoring it as a pass.
-    CARRIED=$(grep -oE 'Resuming batch: [0-9]+' resume.log | grep -oE '[0-9]+' | head -1)
+    # The line alone is not the point — a resume reporting 0 completed has
+    # restarted, and the user pays for the whole batch again.
+    CARRIED=$(grep -oE 'Resuming batch: [0-9]+' 07-interrupt-resume/resumed.log \
+      | grep -oE '[0-9]+' | head -1)
     CARRIED=${CARRIED:-0}
     if [ "$CARRIED" -gt 0 ]; then
-      ok "resume skipped $CARRIED document(s) instead of redoing them"
+      ok "work already paid for is skipped, not redone ($CARRIED documents)"
     else
-      skip "resume carried nothing over: nothing had been flushed when the interrupt landed — raise INTERRUPT_AFTER and re-run"
+      skip "resume carried nothing over: nothing had been flushed when the interrupt landed — raise INTERRUPT_AFTER"
     fi
-
-    check "resume completes the batch" \
-      test "$(ls resume/*.llm.md 2>/dev/null | wc -l | tr -d ' ')" -eq "$BATCH_DOCS"
+    check "and the batch finishes" \
+      test "$(ls 07-interrupt-resume/output/*.llm.md 2>/dev/null | wc -l | tr -d ' ')" -eq "$BATCH_DOCS"
+    file "the interrupted run" 07-interrupt-resume/interrupted.log
+    file "the resumed run" 07-interrupt-resume/resumed.log
   fi
 fi
 
-# ── 8. Cache ─────────────────────────────────────────────────────────────────
-step "8. Cache — the same work must not be paid for twice"
-MODEL="$E2E_MODEL" markitai docs/ -o cache1/ --llm >cache1.log 2>&1
+# ── 8 ────────────────────────────────────────────────────────────────────────
+step 08-cache "Paying once" \
+  "Re-running the same work should cost nothing: the difference between a tool you can iterate with and one you cannot."
+MODEL="$E2E_MODEL" markitai 00-inputs/batch-docs/ -o 08-cache/first-run/ --llm \
+  >08-cache/first-run.log 2>&1
 START=$(date +%s)
-MODEL="$E2E_MODEL" markitai docs/ -o cache2/ --llm >cache2.log 2>&1
+MODEL="$E2E_MODEL" markitai 00-inputs/batch-docs/ -o 08-cache/second-run/ --llm \
+  >08-cache/second-run.log 2>&1
 ELAPSED=$(( $(date +%s) - START ))
-check "a repeat run is served from cache" grep -qE 'Cache: [0-9]+' cache2.log
-check "and is fast (${ELAPSED}s)" test "$ELAPSED" -le 10
+check "the repeat run is served from cache" grep -qE 'Cache: [0-9]+' 08-cache/second-run.log
+check "and returns in ${ELAPSED}s" test "$ELAPSED" -le 10
+file "second run log" 08-cache/second-run.log
 
-# ── 9. Failure paths ─────────────────────────────────────────────────────────
-step "9. Failures — the messages you meet on a bad day"
-markitai /definitely/not/here.txt >missing.log 2>&1
-check "a missing file exits non-zero" test $? -ne 0
+# ── 9 ────────────────────────────────────────────────────────────────────────
+step 09-failure-messages "The messages you meet on a bad day" \
+  "A tool is judged on its errors more than its successes: they arrive when someone is already stuck."
+markitai /definitely/not/here.txt >09-failure-messages/missing-file.txt 2>&1
+check "a missing file exits non-zero rather than pretending" test $? -ne 0
+note "$(head -1 09-failure-messages/missing-file.txt)"
+
 # An image, not the PDF fixture: a born-digital PDF has a text layer, so --ocr
 # on it is a no-op that succeeds and never reaches the missing backend.
 python3 - <<'PNG'
 import base64, pathlib
-pathlib.Path("probe.png").write_bytes(base64.b64decode(
+pathlib.Path("00-inputs/probe.png").write_bytes(base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAFklEQVR4nGP8//8/AzGAiShVowZS"
     "z0AAQFgBBSBqfMcAAAAASUVORK5CYII="))
 PNG
-markitai probe.png --ocr -o ocr/ >ocr.log 2>&1
-if grep -qE '(uv tool|pipx|pip) install' ocr.log; then
-  ok "a missing extra fails loudly and names the command that fixes it"
-  note "$(grep -oE '(uv tool|pipx|pip) install [^ ]*[^ ]*( --force)?' ocr.log | head -1)"
-elif grep -qi 'rapidocr' ocr.log; then
-  skip "the ocr extra is installed in this environment; nothing to report"
+markitai 00-inputs/probe.png --ocr -o 09-failure-messages/ocr/ \
+  >09-failure-messages/missing-extra.txt 2>&1
+if grep -qE '(uv tool|pipx|pip) install' 09-failure-messages/missing-extra.txt; then
+  ok "asking for a capability that is not installed names the command that installs it"
+  note "$(grep -oE '(uv tool|pipx|pip) install [^ ]*( --force)?' 09-failure-messages/missing-extra.txt | head -1)"
+elif grep -qi 'rapidocr' 09-failure-messages/missing-extra.txt; then
+  skip "the ocr extra is present in this environment; nothing to report"
 else
-  bad "--ocr without the backend did not explain itself (see ocr.log)"
+  bad "--ocr without its backend did not explain itself"
 fi
+show "the message when a capability is missing" 09-failure-messages/missing-extra.txt
 
-# ── Summary ──────────────────────────────────────────────────────────────────
-step "Summary"
-printf '  %s%d passed%s, %s%d failed%s\n' "$G" "$PASS" "$N" \
-  "$([ "$FAIL" -gt 0 ] && printf '%s' "$R")" "$FAIL" "$N"
+# ── Report ───────────────────────────────────────────────────────────────────
+DURATION=$(( $(date +%s) - STARTED_EPOCH ))
+COST=$(grep -rhoE '\$[0-9]+\.[0-9]+' --include='*.log' . 2>/dev/null \
+  | tr -d '$' | awk '{t += $1} END {printf "$%.3f", t + 0}')
+log META version "$VERSION"
+log META started "$(date '+%Y-%m-%d %H:%M')"
+log META duration "${DURATION}s"
+log META model "$E2E_MODEL"
+log META cost "${COST:-—}"
+log META command "scripts/e2e_release_check.sh"
+
+python3 "$REPO_ROOT/scripts/e2e_report.py" "$RESULTS" "$WORKDIR/report.html" \
+  || printf '%sreport rendering failed%s\n' "$Y" "$N"
+
+printf '\n%s── Summary%s\n' "$B" "$N"
+printf '  %s%d passed%s, %s%d failed%s · %ss · %s spent\n' \
+  "$G" "$PASS" "$N" "$([ "$FAIL" -gt 0 ] && printf '%s' "$R")" "$FAIL" "$N" \
+  "$DURATION" "${COST:-\$0}"
 
 if [ "$FAIL" -eq 0 ] && [ "$CLEANUP_ON_SUCCESS" = "1" ]; then
   cd "$REAL_HOME" || cd /
   rm -rf "$WORKDIR"
-  printf '  %scleaned up %s (CLEANUP_ON_SUCCESS=1)%s\n' "$D" "$WORKDIR" "$N"
+  printf '  %severything passed; artifacts removed (CLEANUP_ON_SUCCESS=1)%s\n' "$D" "$N"
 else
-  printf '  artifacts kept in %s%s%s\n' "$B" "$WORKDIR" "$N"
-  printf '  %sread work/*.log and work/*/ to judge quality by eye;%s\n' "$D" "$N"
-  printf '  %sre-run with CLEANUP_ON_SUCCESS=1 to remove them on a clean pass%s\n' "$D" "$N"
+  printf '\n  %sReport:%s %s/report.html\n' "$B" "$N" "$WORKDIR"
+  printf '  %sone numbered directory per step beside it, with that step'"'"'s inputs, outputs and logs%s\n' "$D" "$N"
 fi
 
 [ "$FAIL" -eq 0 ]
