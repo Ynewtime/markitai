@@ -31,7 +31,9 @@ def _declared_long_options() -> set[str]:
 
 def _grouped_options() -> set[str]:
     groups = rich_click.rich_click.OPTION_GROUPS["markitai"]
-    return {option for group in groups for option in group["options"]}
+    # "options" is NotRequired: a panel declared for its help text alone has
+    # no key here, and indexing it would raise rather than report.
+    return {option for group in groups for option in group.get("options", [])}
 
 
 def test_every_option_belongs_to_a_named_panel() -> None:
