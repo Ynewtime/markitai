@@ -25,9 +25,9 @@
 #   E2E_MODEL=provider/model     pinned model for the deterministic checks
 #   BATCH_DOCS=40          documents generated for the batch/interrupt checks
 #   HTTP_PORT=8899         port for the local page used by the URL check
-#   INTERRUPT_AFTER=15     seconds to let the batch run before interrupting it
-#                          (must exceed batch.state_flush_interval_seconds, 10s,
-#                          or the interrupt has no recorded progress to resume)
+#   INTERRUPT_AFTER=6      seconds to let the batch run before interrupting it
+#                          (the step shortens the state flush interval so this
+#                          does not have to outlast the 10s default)
 #   SKIP_INTERRUPT=1       skip the interrupt/resume step entirely
 #
 # Exit status: 0 when every check passed, 1 otherwise.
@@ -41,7 +41,7 @@ E2E_MODEL=${E2E_MODEL:-gemini/gemini-flash-lite-latest}
 BATCH_DOCS=${BATCH_DOCS:-40}
 HTTP_PORT=${HTTP_PORT:-8899}
 SKIP_INTERRUPT=${SKIP_INTERRUPT:-0}
-INTERRUPT_AFTER=${INTERRUPT_AFTER:-15}
+INTERRUPT_AFTER=${INTERRUPT_AFTER:-6}
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REAL_HOME=$HOME
@@ -149,6 +149,17 @@ check "the model actually ran (frontmatter carries generated metadata)" \
 note "pinned route: MODEL=$E2E_MODEL"
 MODEL="$E2E_MODEL" markitai sample.pdf -o llm_pinned/ --llm >llm_pinned.log 2>&1
 check "MODEL env var is honoured" grep -q '^description:' llm_pinned/sample.pdf.llm.md
+check "--llm alone leaves images alone (alt text is --alt's job)" \
+  grep -q '!\[\](' llm_pinned/sample.pdf.llm.md
+
+note "vision route: --alt --desc against a PDF with embedded images"
+MODEL="$E2E_MODEL" markitai sample.pdf -o vision/ --llm --alt --desc \
+  >vision.log 2>&1
+check "--alt writes alt text into the image references" \
+  grep -qE '!\[[^]]+\]\(\.markitai/assets/' vision/sample.pdf.llm.md
+check "--desc writes the descriptions sidecar" \
+  test -s vision/.markitai/assets/images.json
+note "$(grep -oE '!\[[^]]{0,60}' vision/sample.pdf.llm.md | head -1)]"
 note "cost so far is printed by the batch runs below; single files do not total it"
 
 # ── 5. URL ───────────────────────────────────────────────────────────────────
@@ -184,7 +195,11 @@ little room to recover a miss.</p>
 </article>
 <footer>© 2026 Example Corp — all rights reserved</footer></body></html>
 HTML
-(cd "$WORKDIR/site" && python3 -m http.server "$HTTP_PORT" >/dev/null 2>&1) &
+# exec, so $! is the server itself. Without it $! names the subshell, the
+# server survives as its orphan, and the *next* run of this script finds the
+# port held by the previous one — serving a directory that has since been
+# deleted, which reads as "markitai cannot fetch a local page".
+(cd "$WORKDIR/site" && exec python3 -m http.server "$HTTP_PORT" >/dev/null 2>&1) &
 SERVER_PID=$!
 
 # Confirm the page being served is ours before believing anything the check
@@ -271,8 +286,17 @@ signal.signal(signal.SIGINT, signal.SIG_DFL)
 os.execvp(sys.argv[1], sys.argv[1:])
 PYEOF
 
+  # Completions reach the state file on an interval (10s by default), so a
+  # batch that finishes in under ~20s can only ever be interrupted inside
+  # that window, with nothing recorded to resume from. Shorten the interval
+  # for these two runs instead of generating enough documents to outlast it:
+  # same machinery, a fraction of the LLM spend. Both runs pass the same
+  # override so they agree on the state file.
+  FLUSH_OVERRIDE='{"batch":{"state_flush_interval_seconds":2}}'
+
   MODEL="$E2E_MODEL" python3 "$WORKDIR/interrupt_launcher.py" \
-    markitai docs/ -o resume/ --llm --no-cache >interrupt.log 2>&1 &
+    markitai docs/ -o resume/ --llm --no-cache \
+    --config-json "$FLUSH_OVERRIDE" >interrupt.log 2>&1 &
   RUN_PID=$!
   sleep "$INTERRUPT_AFTER"
   kill -INT "$RUN_PID" 2>/dev/null
@@ -293,7 +317,7 @@ PYEOF
       test -n "$(ls resume/.markitai/states/*.state.json 2>/dev/null)"
 
     MODEL="$E2E_MODEL" markitai docs/ -o resume/ --llm --no-cache --resume \
-      >resume.log 2>&1
+      --config-json "$FLUSH_OVERRIDE" >resume.log 2>&1
     check "resume reads the previous run's state" grep -q 'Resuming batch' resume.log
     note "$(grep -oE 'Resuming batch.*' resume.log | head -1)"
 
@@ -307,7 +331,7 @@ PYEOF
     if [ "$CARRIED" -gt 0 ]; then
       ok "resume skipped $CARRIED document(s) instead of redoing them"
     else
-      skip "resume carried nothing over: the interrupt landed inside the state flush window — raise INTERRUPT_AFTER above batch.state_flush_interval_seconds (10s) and re-run"
+      skip "resume carried nothing over: nothing had been flushed when the interrupt landed — raise INTERRUPT_AFTER and re-run"
     fi
 
     check "resume completes the batch" \
