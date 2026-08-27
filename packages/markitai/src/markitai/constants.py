@@ -9,6 +9,8 @@ Grouping them here makes it easier to:
 
 from __future__ import annotations
 
+import re
+
 # =============================================================================
 # File Size Limits
 # =============================================================================
@@ -68,6 +70,24 @@ DEFAULT_VISION_MAX_DIMENSION = 2048  # pixels — max dimension for vision input
 
 # Note: RETRYABLE_ERRORS tuple is defined in markitai.llm.engine as it
 # contains actual exception classes from litellm that cannot be imported here
+
+# =============================================================================
+# Page markers
+# =============================================================================
+
+# Every path that splits a document into pages writes this marker, and every
+# later stage — LLM enhancement, page/image alignment, output profiles — finds
+# pages by reading it back. Both halves live here because they drifted apart
+# once already: screenshot-only mode emitted "<!-- Page 3 -->", which no
+# reader matched, so those pages were invisible to all of them.
+
+PAGE_MARKER_RE = re.compile(r"<!--\s*Page number:\s*(\d+)\s*-->")
+
+
+def page_marker(page_number: int) -> str:
+    """The marker introducing page ``page_number``'s content."""
+    return f"<!-- Page number: {page_number} -->"
+
 
 # =============================================================================
 # Image Processing

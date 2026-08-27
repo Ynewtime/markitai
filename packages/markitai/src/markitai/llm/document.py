@@ -20,6 +20,7 @@ from loguru import logger
 from markitai.constants import (
     DEFAULT_MAX_CONTENT_CHARS,
     DEFAULT_MAX_PAGES_PER_BATCH,
+    PAGE_MARKER_RE,
     SCREENSHOTS_REL_PATH,
 )
 
@@ -135,7 +136,6 @@ _PAGE_SECTION_RE = re.compile(
     r"((?:\s*<!-- !\[Page \d+\]\([^)]+\) -->)+)"
 )
 _PAGE_COMMENT_RE = re.compile(r"<!-- !\[Page \d+\]\([^)]+\) -->")
-_PAGE_MARKER_CAPTURE_RE = re.compile(r"<!--\s*Page number:\s*(\d+)\s*-->")
 _STRUCTURED_MARKER_CAPTURE_RE = re.compile(r"<!--\s*(Page|Slide) number:\s*(\d+)\s*-->")
 _BOUNDARY_MARKER_EXTRACT_RE = re.compile(r"(?:Page|Slide)\s+number:\s*(\d+)")
 _LEADING_RULES_RE = re.compile(r"\A(?:[ \t]*---[ \t]*\n+)+")
@@ -655,7 +655,7 @@ class DocumentEnhancer:
     ) -> str:
         """Protect page-marked documents from LLM structural drift."""
         if (
-            "<!-- Page number:" not in original_markdown
+            not PAGE_MARKER_RE.search(original_markdown)
             and "<!-- Slide number:" not in original_markdown
         ):
             return _strip_leaked_markdown_boundaries(cleaned_markdown)

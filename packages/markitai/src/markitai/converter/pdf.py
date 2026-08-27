@@ -14,7 +14,12 @@ from typing import TYPE_CHECKING, Any, cast
 import pymupdf4llm
 from loguru import logger
 
-from markitai.constants import ASSETS_REL_PATH, DEFAULT_RENDER_DPI, SCREENSHOTS_REL_PATH
+from markitai.constants import (
+    ASSETS_REL_PATH,
+    DEFAULT_RENDER_DPI,
+    SCREENSHOTS_REL_PATH,
+    page_marker,
+)
 from markitai.converter.base import (
     BaseConverter,
     ConvertResult,
@@ -325,6 +330,24 @@ def collect_hidden_text(doc: Any) -> dict[int, list[str]]:
     return hidden
 
 
+def _chunk_text(chunk: Any) -> str:
+    """The markdown of one ``page_chunks=True`` result."""
+    return chunk.get("text", "") if isinstance(chunk, dict) else str(chunk)
+
+
+def _chunk_page_number(chunk: Any, index: int) -> int:
+    """The page a chunk came from.
+
+    pymupdf4llm reports it in the chunk's metadata; position in the list is
+    the fallback for a chunk that carries none.
+    """
+    if isinstance(chunk, dict):
+        number = chunk.get("metadata", {}).get("page_number")
+        if isinstance(number, int) and number > 0:
+            return number
+    return index + 1
+
+
 @register_converter(FileFormat.PDF)
 class PdfConverter(BaseConverter):
     """Converter for PDF documents using pymupdf4llm.
@@ -519,14 +542,9 @@ class PdfConverter(BaseConverter):
             page_texts: list[str] = []
             reference_images: list[dict[str, Any]] = []
             for i, chunk in enumerate(page_results):
-                page_num = i + 1
-                page_text = (
-                    chunk.get("text", "") if isinstance(chunk, dict) else str(chunk)
-                )
+                page_num = _chunk_page_number(chunk, i)
+                page_text = _chunk_text(chunk)
                 if isinstance(chunk, dict):
-                    chunk_page_num = chunk.get("metadata", {}).get("page_number")
-                    if isinstance(chunk_page_num, int) and chunk_page_num > 0:
-                        page_num = chunk_page_num
                     page_text, page_references = self._demote_reference_picture_blocks(
                         chunk, page_num
                     )
@@ -549,7 +567,7 @@ class PdfConverter(BaseConverter):
             )
 
             markdown_parts = [
-                f"<!-- Page number: {page_num} -->\n\n{page_text}"
+                f"{page_marker(page_num)}\n\n{page_text}"
                 for page_num, page_text in zip(page_numbers, page_texts)
             ]
 
@@ -1255,7 +1273,14 @@ class PdfConverter(BaseConverter):
             for i in range(total_pages):
                 markdown_parts.append(results[i]["markdown"])
 
-        extracted_text = f"# {input_path.stem}\n\n" + "\n\n".join(markdown_parts)
+        # Mark the page boundaries the loop above already knows. Without
+        # them an OCR'd PDF reaches every later stage as one undivided run
+        # of text: page/image alignment cannot line up, and output profiles
+        # have nothing to rewrite.
+        extracted_text = f"# {input_path.stem}\n\n" + "\n\n".join(
+            f"{page_marker(number)}\n\n{part}"
+            for number, part in enumerate(markdown_parts, 1)
+        )
 
         return ConvertResult(
             markdown=extracted_text,
@@ -1325,10 +1350,14 @@ class PdfConverter(BaseConverter):
         if self.config:
             image_format = normalize_image_extension(self.config.image.format)
 
-        # Step 1: Extract text using pymupdf4llm (fast, preserves structure)
+        # Step 1: Extract text using pymupdf4llm (fast, preserves structure).
+        # page_chunks=True so the text carries the same page markers the
+        # standard path writes: the vision prompt asks the model to keep each
+        # page's content under its own marker and aligned with that page's
+        # image, which it cannot do for text that arrives as one long run.
         logger.debug("Extracting text with pymupdf4llm...")
-        extracted_text = cast(
-            str,
+        page_chunks = cast(
+            list[Any],
             pymupdf4llm.to_markdown(
                 str(input_path),
                 write_images=True,
@@ -1336,8 +1365,17 @@ class PdfConverter(BaseConverter):
                 image_format=image_format,
                 dpi=DEFAULT_RENDER_DPI,
                 force_text=True,
+                page_chunks=True,
                 use_ocr=False,  # Markitai handles OCR separately; suppress Tesseract probing
             ),
+        )
+        # page_chunks=True returns a list; anything else is one whole page.
+        # Iterating a bare string here would mark up every character as its
+        # own page rather than fail, so the shape is checked, not assumed.
+        chunks = page_chunks if isinstance(page_chunks, list) else [page_chunks]
+        extracted_text = "\n\n".join(
+            f"{page_marker(_chunk_page_number(chunk, index))}\n\n{_chunk_text(chunk)}"
+            for index, chunk in enumerate(chunks)
         )
         extracted_text = self._fix_image_paths(extracted_text, assets_dir)
 

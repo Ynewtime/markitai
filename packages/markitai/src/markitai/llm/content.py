@@ -12,18 +12,16 @@ from __future__ import annotations
 
 import re
 
-from markitai.constants import SCREENSHOTS_REL_PATH
+from markitai.constants import PAGE_MARKER_RE, SCREENSHOTS_REL_PATH
 
 # Pre-compiled regex patterns for hot path functions
 _IMAGE_LINK_RE = re.compile(r"!\[[^\]]*\]\([^)]+\)")
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _SLIDE_COMMENT_RE = re.compile(r"<!--\s*Slide\s+(?:number:\s*)?\d+\s*-->")
-_PAGE_NUMBER_COMMENT_RE = re.compile(r"<!--\s*Page number:\s*\d+\s*-->")
 _PAGE_HEADER_COMMENT_RE = re.compile(r"<!--\s*Page images for reference\s*-->")
 _PAGE_IMG_COMMENT_RE = re.compile(r"<!--\s*!\[Page\s+\d+\]\([^)]*\)\s*-->")
 _SCREENSHOT_HEADER_COMMENT_RE = re.compile(r"<!--\s*Screenshot for reference\s*-->")
 _SCREENSHOT_IMG_COMMENT_RE = re.compile(r"<!--\s*!\[Screenshot\]\([^)]*\)\s*-->")
-_PAGE_NUM_MARKER_RE = re.compile(r"<!--\s*Page number:\s*\d+\s*-->")
 _SLIDE_NUM_MARKER_RE = re.compile(r"<!--\s*Slide number:\s*\d+\s*-->")
 _HALLUCINATED_SLIDE_RE = re.compile(r"<!--\s*Slide\s+number:\s*\d+\s*-->\s*\n?")
 _HALLUCINATED_PAGE_RE = re.compile(r"<!--\s*Page\s+number:\s*\d+\s*-->\s*\n?")
@@ -122,7 +120,7 @@ def extract_protected_content(content: str) -> dict[str, list[str]]:
     protected["slides"] = _SLIDE_COMMENT_RE.findall(content)
 
     # Extract page number comments: <!-- Page number: X -->
-    protected["page_numbers"] = _PAGE_NUMBER_COMMENT_RE.findall(content)
+    protected["page_numbers"] = [m.group(0) for m in PAGE_MARKER_RE.finditer(content)]
 
     # Extract page image comments
     # Pattern 1: <!-- Page images for reference -->
@@ -161,7 +159,7 @@ def protect_content(content: str) -> tuple[str, dict[str, str]]:
 
     # 1. Protect Page number markers (PDF): <!-- Page number: X -->
     # These must stay at the beginning of each page's content
-    for page_num_idx, match in enumerate(_PAGE_NUM_MARKER_RE.finditer(result)):
+    for page_num_idx, match in enumerate(PAGE_MARKER_RE.finditer(result)):
         placeholder = f"__MARKITAI_PAGENUM_{page_num_idx}__"
         mapping[placeholder] = match.group(0)
         result = result.replace(match.group(0), placeholder, 1)
@@ -613,8 +611,7 @@ def split_text_by_pages(text: str, num_pages: int) -> list[str]:
         return chunks
 
     # Step 3: Try page markers (PDF)
-    page_pattern = r"<!-- Page number: (\d+) -->"
-    page_markers = list(re.finditer(page_pattern, main_content))
+    page_markers = list(PAGE_MARKER_RE.finditer(main_content))
 
     if len(page_markers) >= num_pages:
         # Use page markers to split - each chunk starts with its page marker

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from markitai.constants import ASSETS_REL_PATH, SCREENSHOTS_REL_PATH
+from markitai.constants import ASSETS_REL_PATH, SCREENSHOTS_REL_PATH, page_marker
 from markitai.security import atomic_write_text
 from markitai.utils.frontmatter import build_frontmatter_dict, frontmatter_to_yaml
 from markitai.utils.text import format_error_message
@@ -479,7 +479,7 @@ class SingleFileWorkflow:
                     original_title=original_title,
                 )
                 if cleaned.strip():
-                    return f"<!-- Page {i} -->\n\n{cleaned}"
+                    return f"{page_marker(i)}\n\n{cleaned}"
                 return ""
 
             page_results = await asyncio.gather(

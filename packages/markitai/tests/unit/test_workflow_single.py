@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from markitai.constants import page_marker
 from markitai.workflow.single import ImageAnalysisResult, SingleFileWorkflow
 
 
@@ -704,7 +705,9 @@ class TestSingleFileWorkflowExtractFromScreenshots:
         )
 
         assert mock_processor.extract_from_screenshot.called
-        assert "Page 1" in markdown
+        # The canonical marker, not merely "Page 1": this path used to emit
+        # "<!-- Page 1 -->", which no downstream reader matched.
+        assert page_marker(1) in markdown
         assert "Page content" in markdown
 
     @pytest.mark.asyncio
@@ -768,10 +771,12 @@ class TestSingleFileWorkflowExtractFromScreenshots:
             source="doc.pdf",
         )
 
-        # Should contain all page markers (sorted order)
-        assert "Page 1" in markdown
-        assert "Page 2" in markdown
-        assert "Page 3" in markdown
+        # Should contain all page markers (sorted order), in the one spelling
+        # every reader downstream matches
+        assert page_marker(1) in markdown
+        assert page_marker(2) in markdown
+        assert page_marker(3) in markdown
+        assert markdown.index(page_marker(1)) < markdown.index(page_marker(2))
 
     @pytest.mark.asyncio
     async def test_extract_from_screenshots_handles_error(

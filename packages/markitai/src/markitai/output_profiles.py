@@ -38,6 +38,7 @@ from loguru import logger
 from markitai.constants import (
     ASSETS_REL_PATH,
     MARKITAI_META_DIR,
+    PAGE_MARKER_RE,
     VISIBLE_ASSETS_REL_PATH,
 )
 from markitai.security import atomic_write_text
@@ -72,7 +73,6 @@ RAG_TABLE_PROMPT_RULES = (
 
 # <!-- Page number: N --> markers written by the PDF converter at pymupdf
 # page boundaries (converter/pdf.py joins page_chunks with these markers)
-_PAGE_NUMBER_MARKER_RE = re.compile(r"<!--\s*Page number:\s*(\d+)\s*-->")
 
 # ![alt](assets/name) references after asset relocation
 _VISIBLE_IMAGE_REF_RE = re.compile(
@@ -299,7 +299,7 @@ def _rewrite_page_markers(body: str) -> str:
     boundaries, so the rewritten markers stay exactly aligned with the
     original pagination — no positions are guessed.
     """
-    return _PAGE_NUMBER_MARKER_RE.sub(lambda m: f"<!-- page: {m.group(1)} -->", body)
+    return PAGE_MARKER_RE.sub(lambda m: f"<!-- page: {m.group(1)} -->", body)
 
 
 def visible_asset_names(markdown: str) -> list[str]:
