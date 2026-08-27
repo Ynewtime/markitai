@@ -406,32 +406,47 @@ SCRIPT = """
     });
   });
 
-  // which step is on screen
+  // which step is on screen — layout arithmetic rather than
+  // IntersectionObserver, because the scroll position itself is what some
+  // embedded viewers fail to report
   var dots = all('.dots a');
-  var byId = {};
-  dots.forEach(function (a) { byId[a.hash.slice(1)] = a; });
-  if ('IntersectionObserver' in window) {
-    var spy = new IntersectionObserver(function (entries) {
-      entries.forEach(function (en) {
-        if (!en.isIntersecting) return;
-        dots.forEach(function (a) { a.classList.remove('here'); });
-        var dot = byId[en.target.id];
-        if (dot) dot.classList.add('here');
-      });
-    }, { rootMargin: '-20% 0px -70% 0px' });
-    Object.keys(byId).forEach(function (id) {
-      var s = document.getElementById(id);
-      if (s) spy.observe(s);
-    });
-  }
-  // a short final step can end above the spy band; the bottom of the page
-  // still belongs to it
-  window.addEventListener('scroll', function () {
-    if (window.innerHeight + window.scrollY >= document.body.scrollHeight - 24) {
-      dots.forEach(function (a) { a.classList.remove('here'); });
-      if (dots.length) dots[dots.length - 1].classList.add('here');
+  var secs = dots.map(function (a) {
+    return document.getElementById(a.hash.slice(1));
+  });
+  var strip = document.querySelector('.dots');
+  var lastIdx = -1;
+  var setHere = function (idx) {
+    if (idx === lastIdx || idx < 0) return;
+    lastIdx = idx;
+    dots.forEach(function (a, i) { a.classList.toggle('here', i === idx); });
+    var dot = dots[idx];
+    if (dot && strip) {
+      strip.scrollLeft = Math.max(
+        0, dot.offsetLeft - (strip.clientWidth - dot.offsetWidth) / 2
+      );
     }
-  }, { passive: true });
+  };
+  var update = function () {
+    var sc = document.scrollingElement || document.documentElement;
+    var line = sc.clientHeight * 0.3;
+    var idx = 0;
+    for (var i = 0; i < secs.length; i++) {
+      if (secs[i] && secs[i].getBoundingClientRect().top <= line) idx = i;
+    }
+    if (sc.clientHeight + sc.scrollTop >= sc.scrollHeight - 24) {
+      idx = secs.length - 1;  // a short final step ends above the band
+    }
+    setHere(idx);
+  };
+  if (dots.length) {
+    var queued = false;
+    window.addEventListener('scroll', function () {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(function () { queued = false; update(); });
+    }, { passive: true });
+    update();
+  }
 
   // evidence folds
   var folds = all('details.fold');
