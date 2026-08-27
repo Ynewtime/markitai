@@ -2184,8 +2184,15 @@ class TestProcessUrlStdoutMode:
         assert captured.err == ""
 
     @pytest.mark.asyncio
-    async def test_url_stdout_mode_prints_content(self) -> None:
-        """URL with output_dir=None should print markdown to console, not write file."""
+    async def test_url_stdout_mode_prints_content(
+        self, capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        """`markitai <url>` with no -o must put the markdown on stdout.
+
+        This asserted nothing for a long time — it called process_url,
+        swallowed SystemExit and returned, so it passed just as happily if
+        stdout stayed empty or the run exited non-zero.
+        """
         cfg = MarkitaiConfig()
         cfg.llm.enabled = False
         cfg.cache.enabled = False
@@ -2213,8 +2220,14 @@ class TestProcessUrlStdoutMode:
                     dry_run=False,
                     verbose=False,
                 )
-            except SystemExit:
-                pass
+            except SystemExit as exit_signal:
+                assert exit_signal.code in (None, 0), (
+                    f"stdout conversion exited {exit_signal.code}"
+                )
+
+        out = capfd.readouterr().out
+        assert "# Test Page" in out
+        assert "Some content here." in out
 
     @pytest.mark.asyncio
     async def test_url_stdout_mode_no_files_created(self, tmp_path: Path) -> None:
@@ -2264,6 +2277,7 @@ class TestProcessUrlStdoutMode:
                 pass
 
         # Temp dirs should be cleaned up
+        assert created_temps, "no temp dir was made; the cleanup loop proves nothing"
         for d in created_temps:
             assert not Path(d).exists(), f"Temp dir was not cleaned up: {d}"
 

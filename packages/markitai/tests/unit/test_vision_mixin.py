@@ -1611,8 +1611,15 @@ class TestEdgeCases:
         assert max_concurrent <= mock_processor.config.concurrency
 
     @pytest.mark.asyncio
-    async def test_empty_cache_value(self, mock_processor: MockVisionProcessor):
-        """Empty cache values are handled."""
+    async def test_empty_cache_value(
+        self, mock_processor: MockVisionProcessor, sample_png_file: Path
+    ):
+        """A cached analysis whose fields are empty is still a hit.
+
+        The image genuinely had nothing to say about it; treating that as a
+        miss re-sends the image to the model on every later run and never
+        settles, because the answer is empty again each time.
+        """
         mock_processor._persistent_cache.get.return_value = {
             "caption": "",
             "description": "",
@@ -1621,9 +1628,13 @@ class TestEdgeCases:
 
         with patch.object(
             mock_processor, "_analyze_image_with_fallback", new_callable=AsyncMock
-        ) as _:
-            # Should still return the empty cached result (it's a cache hit)
-            pass  # The real test is that it returns the cached empty values
+        ) as mock_fallback:
+            result = await mock_processor.analyze_image(sample_png_file)
+
+        assert result.caption == ""
+        assert result.description == ""
+        assert result.extracted_text is None
+        mock_fallback.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_bmp_format_converted_to_png(
