@@ -157,6 +157,19 @@ def resolve_document_title(
     return fallback_title_from_source(source)
 
 
+def split_frontmatter(content: str) -> tuple[str | None, str]:
+    """Split markdown into its frontmatter block (unfenced) and its body.
+
+    Returns ``(None, content)`` for content that has no frontmatter, which
+    is not an error: plain markdown is a normal input.
+    """
+    if content.startswith("---\n"):
+        closing = content.find("\n---\n", 4)
+        if closing != -1:
+            return content[4:closing], content[closing + 5 :].lstrip("\n")
+    return None, content
+
+
 def _strip_frontmatter(content: str) -> str:
     """Remove YAML frontmatter from content.
 

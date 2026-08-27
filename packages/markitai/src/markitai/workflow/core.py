@@ -31,6 +31,7 @@ from markitai.security import (
     validate_file_size,
 )
 from markitai.utils.errors import extra_install_command
+from markitai.utils.frontmatter import split_frontmatter
 from markitai.utils.paths import ensure_dir
 from markitai.utils.text import format_error_message, markdown_image_reference
 from markitai.workflow.helpers import (
@@ -637,15 +638,6 @@ def apply_output_profile(ctx: ConversionContext) -> None:
         apply_profile_to_file(candidate, ctx.output_dir, ctx.config)
 
 
-def _split_frontmatter_and_body(content: str) -> tuple[str | None, str]:
-    """Split markdown content into a frontmatter block and body."""
-    if content.startswith("---\n"):
-        closing = content.find("\n---\n", 4)
-        if closing != -1:
-            return content[4:closing], content[closing + 5 :].lstrip("\n")
-    return None, content
-
-
 def stabilize_written_llm_output(
     ctx: ConversionContext,
     processor: Any,
@@ -668,7 +660,7 @@ def stabilize_written_llm_output(
         ctx.conversion_result.markdown,
     )
     llm_content = llm_output.read_text(encoding="utf-8")
-    frontmatter, llm_body = _split_frontmatter_and_body(llm_content)
+    frontmatter, llm_body = split_frontmatter(llm_content)
     stabilized = maybe_stabilize_markdown(
         processor, baseline_markdown, llm_body, ctx.input_path.name
     )

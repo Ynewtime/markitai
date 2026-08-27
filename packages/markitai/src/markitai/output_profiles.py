@@ -42,6 +42,7 @@ from markitai.constants import (
     VISIBLE_ASSETS_REL_PATH,
 )
 from markitai.security import atomic_write_text
+from markitai.utils.frontmatter import split_frontmatter
 
 if TYPE_CHECKING:
     from markitai.config import MarkitaiConfig
@@ -82,15 +83,6 @@ _VISIBLE_IMAGE_REF_RE = re.compile(
 _FENCE_RE = re.compile(r"^(`{3,}|~{3,})")
 
 _DELIMITER_CELL_RE = re.compile(r"^:?-+:?$")
-
-
-def _split_frontmatter(content: str) -> tuple[str | None, str]:
-    """Split markdown into a frontmatter block (without fences) and body."""
-    if content.startswith("---\n"):
-        closing = content.find("\n---\n", 4)
-        if closing != -1:
-            return content[4:closing], content[closing + 5 :].lstrip("\n")
-    return None, content
 
 
 def _dump_frontmatter(data: dict[str, Any]) -> str:
@@ -380,7 +372,7 @@ def apply_profile_to_file(
         return
 
     content = md_file.read_text(encoding="utf-8")
-    frontmatter_text, body = _split_frontmatter(content)
+    frontmatter_text, body = split_frontmatter(content)
 
     if profile in ASSET_VISIBLE_PROFILES:
         body = _relocate_referenced_assets(body, output_dir)

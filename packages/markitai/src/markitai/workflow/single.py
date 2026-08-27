@@ -13,7 +13,11 @@ from loguru import logger
 
 from markitai.constants import ASSETS_REL_PATH, SCREENSHOTS_REL_PATH, page_marker
 from markitai.security import atomic_write_text
-from markitai.utils.frontmatter import build_frontmatter_dict, frontmatter_to_yaml
+from markitai.utils.frontmatter import (
+    build_frontmatter_dict,
+    frontmatter_to_yaml,
+    split_frontmatter,
+)
 from markitai.utils.text import format_error_message
 
 if TYPE_CHECKING:
@@ -34,12 +38,8 @@ def _read_markdown_body(output_file: Path, fallback: str) -> str:
     if not output_file.exists():
         return fallback
 
-    content = output_file.read_text(encoding="utf-8")
-    if content.startswith("---\n"):
-        closing = content.find("\n---\n", 4)
-        if closing != -1:
-            return content[closing + 5 :].lstrip("\n")
-    return content
+    _frontmatter, body = split_frontmatter(output_file.read_text(encoding="utf-8"))
+    return body
 
 
 def _fallback_frontmatter(source: str, title: str | None) -> str:

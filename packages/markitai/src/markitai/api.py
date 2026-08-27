@@ -217,9 +217,9 @@ def _resolve_config(
 
 def _parse_output_file(path: Path) -> tuple[dict[str, Any], str]:
     """Read a written output file into (frontmatter dict, markdown body)."""
-    from markitai.workflow.core import _split_frontmatter_and_body
+    from markitai.utils.frontmatter import split_frontmatter
 
-    raw, body = _split_frontmatter_and_body(path.read_text(encoding="utf-8"))
+    raw, body = split_frontmatter(path.read_text(encoding="utf-8"))
     if raw is None:
         return {}, body
 
