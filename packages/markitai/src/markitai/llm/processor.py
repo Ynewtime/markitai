@@ -656,6 +656,13 @@ class LLMProcessor:
             if api_base:
                 model_entry["litellm_params"]["api_base"] = api_base
 
+            # Azure deployments are addressed by version; without it the
+            # request goes out against whatever default litellm infers.
+            if model_config.litellm_params.api_version:
+                model_entry["litellm_params"]["api_version"] = (
+                    model_config.litellm_params.api_version
+                )
+
             if model_config.litellm_params.weight != 1:
                 model_entry["litellm_params"]["weight"] = (
                     model_config.litellm_params.weight

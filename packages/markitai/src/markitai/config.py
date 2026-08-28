@@ -219,6 +219,10 @@ class LiteLLMParams(BaseModel):
         ge=0,
         description="Routing weight for load balancing. 0 = disabled (model excluded from routing). Higher values get more traffic.",
     )
+    api_version: str | None = Field(
+        default=None,
+        description="API version string, required by Azure OpenAI deployments and ignored by providers that do not use one. Passed through to LiteLLM.",
+    )
     max_tokens: int | None = None  # Override max_output_tokens for this model
 
     def get_resolved_api_key(self, strict: bool = True) -> str | None:

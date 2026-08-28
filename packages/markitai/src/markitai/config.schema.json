@@ -798,6 +798,19 @@
           "title": "Weight",
           "type": "integer"
         },
+        "api_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "API version string, required by Azure OpenAI deployments and ignored by providers that do not use one. Passed through to LiteLLM.",
+          "title": "Api Version"
+        },
         "max_tokens": {
           "anyOf": [
             {
