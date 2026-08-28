@@ -4,125 +4,60 @@ import { dicts } from "../i18n";
 import { ADVANCED_DEFAULTS } from "../lib/advanced";
 import { OptionsBar } from "./OptionsBar";
 
+const t = dicts.en;
 const baseProps = {
-  t: dicts.en,
+  t,
   preset: "minimal" as const,
   urls: [],
+  llm: false,
   ocr: false,
+  profile: null,
+  advanced: ADVANCED_DEFAULTS,
+  llmConfigured: false,
   announce: vi.fn(),
   onPreset: vi.fn(),
   onLlm: vi.fn(),
   onOcr: vi.fn(),
-  profile: null,
   onProfile: vi.fn(),
-  advanced: ADVANCED_DEFAULTS,
   onAdvanced: vi.fn(),
 };
 
+/** The row itself only composes: the options live in OptionsPanel and are
+ * tested there. What matters here is that the default screen asks nothing,
+ * and that the two disclosures do not collide. */
 describe("OptionsBar", () => {
-  it("offers the output profile with no LLM configured", () => {
-    // A profile shapes the output, so a plain local conversion can carry
-    // one. Hiding it with the LLM controls would put it out of reach of
-    // exactly the users who convert without a model.
-    const onProfile = vi.fn();
-    render(
-      <OptionsBar
-        {...baseProps}
-        llm={false}
-        llmConfigured={false}
-        onProfile={onProfile}
-      />,
-    );
+  it("asks nothing on the default screen", () => {
+    render(<OptionsBar {...baseProps} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "rag" }));
-    expect(onProfile).toHaveBeenCalledWith("rag");
+    // The product's promise is drop-a-file-get-markdown; every switch and
+    // selector is one click away rather than in the way.
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t.options })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t.cliToggle })).toBeInTheDocument();
   });
 
-  it("returns to the default output when 'default' is chosen", () => {
-    const onProfile = vi.fn();
-    render(
-      <OptionsBar
-        {...baseProps}
-        llm
-        llmConfigured
-        profile="rag"
-        onProfile={onProfile}
-      />,
-    );
+  it("opens the options without disturbing the CLI disclosure", () => {
+    render(<OptionsBar {...baseProps} llm llmConfigured />);
 
-    fireEvent.click(screen.getByRole("button", { name: "default" }));
-    expect(onProfile).toHaveBeenCalledWith(null);
+    fireEvent.click(screen.getByRole("button", { name: t.options }));
+
+    expect(screen.getByRole("switch", { name: t.llmEnhance })).toBeVisible();
+    expect(screen.queryByText(/^\$/)).not.toBeInTheDocument();
   });
 
-  it("keeps OCR available when no LLM is configured", () => {
-    const onOcr = vi.fn();
-    render(
-      <OptionsBar
-        {...baseProps}
-        llm={false}
-        llmConfigured={false}
-        onOcr={onOcr}
-      />,
-    );
+  it("shows the command without disturbing the options", () => {
+    render(<OptionsBar {...baseProps} />);
 
-    expect(screen.getByRole("switch", { name: "OCR" })).toBeVisible();
-    fireEvent.click(screen.getByRole("switch", { name: "OCR" }));
-    expect(onOcr).toHaveBeenCalledWith(true);
-    expect(
-      screen.queryByRole("switch", { name: "LLM enhancement" }),
-    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: t.cliToggle }));
+
+    expect(screen.getByText(/markitai/)).toBeVisible();
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
   });
 
-  it("shows presets only after LLM enhancement is enabled", () => {
-    const onLlm = vi.fn();
-    const { rerender } = render(
-      <OptionsBar
-        {...baseProps}
-        llm={false}
-        llmConfigured
-        onLlm={onLlm}
-      />,
-    );
+  it("renders the trailing slot after both disclosures", () => {
+    render(<OptionsBar {...baseProps} trailing={<button>archive</button>} />);
 
-    expect(screen.getByRole("switch", { name: "LLM enhancement" })).toBeVisible();
-    expect(screen.queryByRole("group", { name: "Preset" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("switch", { name: "LLM enhancement" }));
-    expect(onLlm).toHaveBeenCalledWith(true);
-
-    rerender(
-      <OptionsBar {...baseProps} llm llmConfigured onLlm={onLlm} />,
-    );
-    const llmSwitch = screen.getByRole("switch", { name: "LLM enhancement" });
-    const presets = screen.getByRole("group", { name: "Preset" });
-    expect(presets).toBeVisible();
-    expect(
-      llmSwitch.compareDocumentPosition(presets) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(screen.getByRole("button", { name: "minimal" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-  });
-
-  it("shortens the LLM label on the phone tier but keeps the full accessible name", () => {
-    // The setup-file matchMedia stub always reports false; report true for
-    // the phone query so the component takes its narrow branch.
-    const original = window.matchMedia;
-    window.matchMedia = ((query: string) => ({
-      ...original(query),
-      matches: query === "(max-width: 780px)",
-    })) as typeof window.matchMedia;
-    try {
-      render(<OptionsBar {...baseProps} llm llmConfigured />);
-
-      expect(screen.getByText("LLM")).toBeVisible();
-      expect(screen.queryByText("LLM enhancement")).not.toBeInTheDocument();
-      // aria-label keeps the full wording even while the visible label is short
-      expect(screen.getByRole("switch", { name: "LLM enhancement" })).toBeVisible();
-      // the visually hidden #preset-lbl still names the segment group
-      expect(screen.getByRole("group", { name: "Preset" })).toBeInTheDocument();
-    } finally {
-      window.matchMedia = original;
-    }
+    expect(screen.getByRole("button", { name: "archive" })).toBeInTheDocument();
   });
 });

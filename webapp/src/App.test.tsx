@@ -161,7 +161,14 @@ describe("App workspace", () => {
         name: "Drop files. Paste URLs. Get Markdown.",
       }),
     ).toBeVisible();
-    const llmSwitch = await screen.findByRole("switch", { name: "LLM enhancement" });
+    // Every conversion option lives behind the Options disclosure now, and
+    // the LLM row only appears once /api/capabilities reports a routable
+    // deployment — so wait for the session link, which lands with it.
+    await screen.findByRole("button", { name: /item in session/ });
+    fireEvent.click(screen.getByRole("button", { name: "Options" }));
+    const llmSwitch = await screen.findByRole("switch", {
+      name: "LLM enhancement",
+    });
     expect(llmSwitch).toHaveAttribute("aria-checked", "false");
     expect(screen.queryByRole("button", { name: "minimal" })).not.toBeInTheDocument();
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
@@ -182,6 +189,8 @@ describe("App workspace", () => {
       name: "Enhance result.md with LLM",
     });
     expect(enhance).toBeDisabled();
+    // The workspace has its own options row, so its panel starts collapsed.
+    fireEvent.click(screen.getByRole("button", { name: "Options" }));
     fireEvent.click(screen.getByRole("switch", { name: "LLM enhancement" }));
     expect(enhance).toBeEnabled();
     expect(currentRow.querySelector(".c-status.archive-actions")).not.toBeNull();
@@ -263,7 +272,10 @@ describe("App workspace", () => {
     render(<App />);
 
     await screen.findByRole("listbox");
-    fireEvent.click(await screen.findByRole("switch", { name: "LLM enhancement" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Options" }));
+    fireEvent.click(
+      await screen.findByRole("switch", { name: "LLM enhancement" }),
+    );
     const wand = screen.getByRole("button", {
       name: "Enhance archived.pdf with LLM",
     });

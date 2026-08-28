@@ -681,11 +681,22 @@
   }
   /* A setting made once and forgotten would otherwise shape every later
      conversion invisibly, since the panel is collapsed by default. */
-  .advdot {
-    width: 5px;
-    height: 5px;
-    border-radius: 999px;
-    background: var(--accent);
+  .advchips {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--text-3);
+    padding-left: 6px;
+    border-left: 1px solid var(--hairline);
+  }
+  /* The switches inside the panel sit on a text baseline, not a label row. */
+  .advcheck .switch {
+    flex: none;
+  }
+  .advselect .seg {
+    height: 28px;
+  }
+  .advselect .seg button {
+    font-size: 12px;
   }
 
   .switch {
@@ -962,18 +973,21 @@
     border-color: var(--hairline-strong);
     background: var(--surface);
   }
-  /* the expanded strip wraps onto its own full-width line of the flex row */
+  /* Its own full-width line of the flex row. flex-basis alone was not
+     enough: the max-width below capped the hypothetical size, so the strip
+     fitted beside its own toggle and the pair read as one lopsided widget. */
   .cliwrap {
     flex-basis: 100%;
+    width: 100%;
     min-width: 0;
+    margin-top: 4px;
   }
-  .drop-main .cliwrap {
-    max-width: min(600px, 100%);
-  }
+
   /* one-line always-dark mini terminal — same constants as the Source card */
   .clicmd {
     display: flex;
-    align-items: center;
+    /* Copy stays at the first line's height once the command wraps. */
+    align-items: flex-start;
     gap: 12px;
     padding: 7px 8px 7px 14px;
     background: var(--t-bg);
@@ -988,13 +1002,13 @@
     font-size: 12.5px;
     line-height: 20px;
     color: var(--t-text);
-    white-space: pre;
-    overflow-x: auto;
+    /* Wrap rather than scroll: this is something you copy, and a command with
+       four flags used to end in a cut-off word with no sign there was more. */
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
     text-align: left;
     padding: 4px 0;
     font-variant-numeric: tabular-nums;
-    scrollbar-width: thin;
-    scrollbar-color: var(--t-border) transparent;
   }
   .clitext:focus-visible {
     outline: 2px solid var(--t-focus);
@@ -1006,6 +1020,7 @@
   }
   .clicmd .badge {
     flex: none;
+    margin-top: 3px;
   }
   .clicmd .badge:focus-visible {
     outline-color: var(--t-focus);
