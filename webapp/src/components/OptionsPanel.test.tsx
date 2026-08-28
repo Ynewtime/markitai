@@ -13,6 +13,8 @@ const base = {
   ocr: false,
   profile: null,
   llmConfigured: true,
+  urls: [] as string[],
+  announce: vi.fn(),
   onChange: vi.fn(),
   onPreset: vi.fn(),
   onLlm: vi.fn(),
@@ -118,6 +120,14 @@ describe("OptionsPanel", () => {
     const box = screen.getByLabelText(t.advScreenshot);
     expect(box).toBeChecked();
     expect(box).toBeDisabled();
+  });
+
+  it("shows the command those settings produce, in the panel", () => {
+    // It is the settings spelled out, not a sibling of them — a second
+    // disclosure made it look like an unrelated feature.
+    open({ llm: true, ocr: false });
+    expect(screen.getByLabelText(t.cliAria)).toHaveTextContent("--llm");
+    expect(screen.getByRole("button", { name: t.copy })).toBeInTheDocument();
   });
 
   it("offers every fetch strategy and backend the CLI accepts", () => {

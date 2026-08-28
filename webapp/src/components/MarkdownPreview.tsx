@@ -21,7 +21,7 @@ import type { SessionItem } from "../hooks/useJobs";
 import type { Dict } from "../i18n";
 import { diffLines, MAX_DIFF_LINES, type DiffLine } from "../lib/diff";
 import { countWords, fmtBytes, fmtDate, utf8Bytes } from "../lib/format";
-import { copyTextToClipboard, type CopyState } from "./CliCommand";
+import { copyTextToClipboard, type CopyState } from "../lib/clipboard";
 import { DownloadIcon, LogoMark, PdfIcon, SettingsIcon, XIcon } from "./icons";
 
 type Tab = "rendered" | "source" | "diff";

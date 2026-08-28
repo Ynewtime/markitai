@@ -620,83 +620,132 @@
     cursor: not-allowed;
   }
 
-  /* Advanced options: a full-width row under the options bar, so opening it
-     pushes nothing sideways and the main row keeps its single-line layout. */
+  /* One column, one width. The panel used to be twice as wide as the
+     composer it configures, with two orphaned buttons floating between three
+     boxes of different sizes; now it is the same surface, the same width,
+     directly under the input it belongs to. */
+  /* Two elements, two jobs: the wrapper only claims its own flex line, the
+     card carries the width and the border. Doing both on one element let
+     flex-basis and width fight, and the panel came out wider than the
+     composer it configures. */
   .advwrap {
     flex-basis: 100%;
+    width: 100%;
     display: flex;
-    flex-direction: column;
-    gap: 10px;
-    margin-top: 4px;
-    padding: 14px 16px;
+    justify-content: center;
+    margin-top: 2px;
+  }
+  .advcard {
+    width: min(600px, 100%);
     border: 1px solid var(--hairline);
     border-radius: var(--r-sm);
     background: var(--surface);
+    overflow: hidden;
+    text-align: left;
+  }
+  .advrows {
+    display: grid;
+    gap: 10px;
+    padding: 14px 16px;
   }
   .advrow {
-    display: flex;
+    display: grid;
+    grid-template-columns: 62px minmax(0, 1fr);
     align-items: center;
-    flex-wrap: wrap;
-    gap: 8px 18px;
+    gap: 10px;
   }
   .advlbl {
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-3);
-    min-width: 68px;
   }
-  .advcheck {
-    display: inline-flex;
+  .advfield {
+    display: flex;
     align-items: center;
-    gap: 7px;
-    font-size: 13px;
-    color: var(--text-2);
-    cursor: pointer;
+    flex-wrap: wrap;
+    gap: 6px;
   }
-  .advcheck.off {
+  /* One shape for every boolean modifier, so a row reads as a set of things
+     you can turn on rather than four different kinds of widget. */
+  .chip {
+    height: 26px;
+    padding: 0 10px;
+    border: 1px solid var(--hairline-strong);
+    border-radius: 999px;
+    background: var(--strip);
+    color: var(--text-2);
+    font-size: 12px;
+    cursor: pointer;
+    transition: background-color 120ms ease, color 120ms ease,
+      border-color 120ms ease, transform 140ms var(--ease-out);
+  }
+  .chip:not(:disabled):active {
+    transform: scale(0.97);
+  }
+  .chip[aria-checked="true"] {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-contrast);
+  }
+  .chip:disabled {
     color: var(--text-4);
+    opacity: 0.55;
     cursor: not-allowed;
   }
-  .advcheck input {
-    accent-color: var(--accent);
-    cursor: inherit;
+  .advfield .seg {
+    height: 26px;
   }
-  .advselect {
+  .advfield .seg button {
+    padding: 0 10px;
+    font-size: 12px;
+  }
+  .advpick {
     display: inline-flex;
     align-items: center;
-    gap: 7px;
-    font-size: 13px;
-    color: var(--text-2);
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-3);
   }
-  .advselect select {
-    height: 28px;
-    padding: 0 6px;
+  .advpick select {
+    height: 26px;
+    padding: 0 22px 0 8px;
     font-family: var(--font-mono);
     font-size: 12px;
     color: var(--text-1);
-    background: var(--surface);
+    background: var(--strip)
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none' stroke='%23888' stroke-width='1.4'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E")
+      no-repeat right 8px center;
     border: 1px solid var(--hairline-strong);
-    border-radius: var(--r-sm);
+    border-radius: 999px;
+    appearance: none;
     cursor: pointer;
   }
-  /* A setting made once and forgotten would otherwise shape every later
-     conversion invisibly, since the panel is collapsed by default. */
+  /* The command is the settings above it, spelled out — so it is the panel's
+     footer rather than a second disclosure with a button of its own. */
+  .advcli {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+    border-top: 1px solid var(--hairline);
+    background: var(--t-bg);
+    color-scheme: dark;
+  }
+  .advcli .clitext {
+    padding: 0;
+  }
+  .advcli .badge {
+    flex: none;
+  }
+  .advcli .badge:focus-visible {
+    outline-color: var(--t-focus);
+  }
   .advchips {
     font-family: var(--font-mono);
     font-size: 10.5px;
     color: var(--text-3);
     padding-left: 6px;
     border-left: 1px solid var(--hairline);
-  }
-  /* The switches inside the panel sit on a text baseline, not a label row. */
-  .advcheck .switch {
-    flex: none;
-  }
-  .advselect .seg {
-    height: 28px;
-  }
-  .advselect .seg button {
-    font-size: 12px;
   }
 
   .switch {

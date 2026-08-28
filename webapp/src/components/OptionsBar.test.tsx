@@ -23,39 +23,29 @@ const baseProps = {
 };
 
 /** The row itself only composes: the options live in OptionsPanel and are
- * tested there. What matters here is that the default screen asks nothing,
- * and that the two disclosures do not collide. */
+ * tested there. What matters here is that the default screen asks nothing. */
 describe("OptionsBar", () => {
   it("asks nothing on the default screen", () => {
     render(<OptionsBar {...baseProps} />);
 
-    // The product's promise is drop-a-file-get-markdown; every switch and
-    // selector is one click away rather than in the way.
+    // The product's promise is drop-a-file-get-markdown; every switch,
+    // selector and the CLI command are one click away rather than in the way.
     expect(screen.queryByRole("switch")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.queryByText(/markitai/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: t.options })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: t.cliToggle })).toBeInTheDocument();
   });
 
-  it("opens the options without disturbing the CLI disclosure", () => {
+  it("opens every option and the command they produce at once", () => {
     render(<OptionsBar {...baseProps} llm llmConfigured />);
 
     fireEvent.click(screen.getByRole("button", { name: t.options }));
 
     expect(screen.getByRole("switch", { name: t.llmEnhance })).toBeVisible();
-    expect(screen.queryByText(/^\$/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(t.cliAria)).toBeVisible();
   });
 
-  it("shows the command without disturbing the options", () => {
-    render(<OptionsBar {...baseProps} />);
-
-    fireEvent.click(screen.getByRole("button", { name: t.cliToggle }));
-
-    expect(screen.getByText(/markitai/)).toBeVisible();
-    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
-  });
-
-  it("renders the trailing slot after both disclosures", () => {
+  it("renders the trailing slot after the disclosure", () => {
     render(<OptionsBar {...baseProps} trailing={<button>archive</button>} />);
 
     expect(screen.getByRole("button", { name: "archive" })).toBeInTheDocument();
