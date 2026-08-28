@@ -87,6 +87,7 @@ function i18n {
 
             # Info messages
             "info_libreoffice_purpose"  { return "LibreOffice 用于把 PPTX 幻灯片渲染为截图。旧版 .doc/.ppt 转换改由 markitai[legacy] extra 提供" }
+            "info_chatgpt_route"        { return "ChatGPT 订阅: 无需安装任何东西 - 安装完成后执行 'markitai auth chatgpt login'" }
             "info_playwright_purpose"   { return "Playwright 用于获取 JavaScript 渲染的网页内容" }
             "info_project_dir"          { return "项目目录" }
             "info_docs"                 { return "文档" }
@@ -209,6 +210,7 @@ function i18n {
 
             # Info messages
             "info_libreoffice_purpose"  { return "LibreOffice renders PPTX slides as screenshots. Legacy .doc/.ppt conversion uses the markitai[legacy] extra instead" }
+            "info_chatgpt_route"        { return "ChatGPT subscription: nothing to install - run 'markitai auth chatgpt login' after setup" }
             "info_playwright_purpose"   { return "Playwright fetches JavaScript-rendered web pages" }
             "info_project_dir"          { return "Project directory" }
             "info_docs"                 { return "Documentation" }
@@ -1701,11 +1703,22 @@ function Install-OptionalClaudeCLI {
         }
     }
 
-    # Fallback: npm/pnpm
+    # Fallback: bun/pnpm/npm
+    $bunCmd = Get-Command bun -ErrorAction SilentlyContinue
     $pnpmCmd = Get-Command pnpm -ErrorAction SilentlyContinue
     $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
 
-    if ($pnpmCmd) {
+    if ($bunCmd) {
+        $lastResult = Invoke-NativeQuietly { & bun add -g @anthropic-ai/claude-code }
+        $lastDetail = $lastResult.Output
+        if ($lastResult.Success) {
+            Clack-Success "$(i18n 'claude_cli') $(i18n 'installed')"
+            Install-MarkitaiExtra -ExtraName "claude-agent" | Out-Null
+            Track-Install -Component "claude_cli" -Status "installed"
+            return $true
+        }
+    }
+    elseif ($pnpmCmd) {
         $lastResult = Invoke-NativeQuietly { & pnpm add -g @anthropic-ai/claude-code }
         $lastDetail = $lastResult.Output
         if ($lastResult.Success) {
@@ -1765,11 +1778,22 @@ function Install-OptionalCopilotCLI {
         }
     }
 
-    # Fallback: npm/pnpm
+    # Fallback: bun/pnpm/npm
+    $bunCmd = Get-Command bun -ErrorAction SilentlyContinue
     $pnpmCmd = Get-Command pnpm -ErrorAction SilentlyContinue
     $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
 
-    if ($pnpmCmd) {
+    if ($bunCmd) {
+        $lastResult = Invoke-NativeQuietly { & bun add -g @github/copilot }
+        $lastDetail = $lastResult.Output
+        if ($lastResult.Success) {
+            Clack-Success "$(i18n 'copilot_cli') $(i18n 'installed')"
+            Install-MarkitaiExtra -ExtraName "copilot" | Out-Null
+            Track-Install -Component "copilot_cli" -Status "installed"
+            return $true
+        }
+    }
+    elseif ($pnpmCmd) {
         $lastResult = Invoke-NativeQuietly { & pnpm add -g @github/copilot }
         if ($lastResult.Success) {
             Clack-Success "$(i18n 'copilot_cli') $(i18n 'installed')"
@@ -1952,6 +1976,9 @@ function Run-UserSetup {
     Clack-Section (i18n "section_llm_cli")
     Invoke-OptionalStep -Component "claude_cli" -Action { Install-OptionalClaudeCLI }
     Invoke-OptionalStep -Component "copilot_cli" -Action { Install-OptionalCopilotCLI }
+    # ChatGPT needs no CLI and no extra; without this line the section never
+    # mentions markitai's third subscription route.
+    Clack-Info (i18n "info_chatgpt_route")
 
     Invoke-BestEffortStep `
         -FailureMessage "$(i18n 'markitai') extras update $(i18n 'failed')" `
@@ -1992,6 +2019,9 @@ function Run-DevSetup {
     Clack-Section (i18n "section_llm_cli")
     Invoke-OptionalStep -Component "claude_cli" -Action { Install-OptionalClaudeCLI }
     Invoke-OptionalStep -Component "copilot_cli" -Action { Install-OptionalCopilotCLI }
+    # ChatGPT needs no CLI and no extra; without this line the section never
+    # mentions markitai's third subscription route.
+    Clack-Info (i18n "info_chatgpt_route")
 
     Print-Summary
     Print-DevCompletion

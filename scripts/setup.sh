@@ -92,6 +92,7 @@ i18n() {
 
             # Info messages
             info_libreoffice_purpose)   echo "LibreOffice 用于把 PPTX 幻灯片渲染为截图。旧版 .doc/.ppt 转换改由 markitai[legacy] extra 提供" ;;
+            info_chatgpt_route)         echo "ChatGPT 订阅: 无需安装任何东西 — 安装完成后执行 'markitai auth chatgpt login'" ;;
             info_playwright_purpose)    echo "Playwright 用于获取 JavaScript 渲染的网页内容" ;;
             info_project_dir)           echo "项目目录" ;;
             info_docs)                  echo "文档" ;;
@@ -212,6 +213,7 @@ i18n() {
 
             # Info messages
             info_libreoffice_purpose)   echo "LibreOffice renders PPTX slides as screenshots. Legacy .doc/.ppt conversion uses the markitai[legacy] extra instead" ;;
+            info_chatgpt_route)         echo "ChatGPT subscription: nothing to install — run 'markitai auth chatgpt login' after setup" ;;
             info_playwright_purpose)    echo "Playwright fetches JavaScript-rendered web pages" ;;
             info_project_dir)           echo "Project directory" ;;
             info_docs)                  echo "Documentation" ;;
@@ -1696,8 +1698,15 @@ install_optional_claude_cli() {
         fi
     fi
 
-    # Fallback: npm/pnpm
-    if command -v pnpm >/dev/null 2>&1; then
+    # Fallback: bun/pnpm/npm
+    if command -v bun >/dev/null 2>&1; then
+        if clack_run_quiet "$(i18n installing) $(i18n claude_cli)" bun add -g @anthropic-ai/claude-code; then
+            clack_success "$(i18n claude_cli) $(i18n installed)"
+            install_markitai_extra "claude-agent" || true
+            track_install "claude_cli" "installed"
+            return 0
+        fi
+    elif command -v pnpm >/dev/null 2>&1; then
         if clack_run_quiet "$(i18n installing) $(i18n claude_cli)" pnpm add -g @anthropic-ai/claude-code; then
             clack_success "$(i18n claude_cli) $(i18n installed)"
             install_markitai_extra "claude-agent" || true
@@ -1716,6 +1725,13 @@ install_optional_claude_cli() {
     clack_error "$(i18n claude_cli) $(i18n failed)"
     track_install "claude_cli" "failed"
     return 1
+}
+
+# ChatGPT subscriptions need no CLI and no extra — they authenticate over
+# OAuth on first use — so this section, which is about installing things,
+# would otherwise never mention markitai's third subscription route.
+note_chatgpt_route() {
+    clack_info "$(i18n info_chatgpt_route)"
 }
 
 # Install Copilot CLI (Optional)
@@ -1749,8 +1765,15 @@ install_optional_copilot_cli() {
         fi
     fi
 
-    # Fallback: npm/pnpm
-    if command -v pnpm >/dev/null 2>&1; then
+    # Fallback: bun/pnpm/npm
+    if command -v bun >/dev/null 2>&1; then
+        if clack_run_quiet "$(i18n installing) $(i18n copilot_cli)" bun add -g @github/copilot; then
+            clack_success "$(i18n copilot_cli) $(i18n installed)"
+            install_markitai_extra "copilot" || true
+            track_install "copilot_cli" "installed"
+            return 0
+        fi
+    elif command -v pnpm >/dev/null 2>&1; then
         if clack_run_quiet "$(i18n installing) $(i18n copilot_cli)" pnpm add -g @github/copilot; then
             clack_success "$(i18n copilot_cli) $(i18n installed)"
             install_markitai_extra "copilot" || true
@@ -1945,6 +1968,7 @@ run_user_setup() {
     clack_section "$(i18n section_llm_cli)"
     install_optional_claude_cli || true
     install_optional_copilot_cli || true
+    note_chatgpt_route
 
     finalize_markitai_extras || true
 
@@ -1981,6 +2005,7 @@ run_dev_setup() {
     clack_section "$(i18n section_llm_cli)"
     install_optional_claude_cli || true
     install_optional_copilot_cli || true
+    note_chatgpt_route
 
     print_summary
     print_dev_completion
