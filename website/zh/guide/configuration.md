@@ -279,14 +279,14 @@ provider/model-name
 ```
 
 示例：
-- `openai/gpt-5.4`
+- `openai/gpt-5.6`
 - `anthropic/claude-sonnet-4-6`
 - `gemini/gemini-flash-lite-latest`
 - `deepseek/deepseek-v4-flash`
 - `ollama/llama3.2`
 - `claude-agent/sonnet`（本地，需要 Claude Code CLI）
-- `copilot/gpt-5.4`（本地，需要 Copilot CLI）
-- `chatgpt/gpt-5.4`（本地，需要 ChatGPT 订阅）
+- `copilot/gpt-5.6`（本地，需要 Copilot CLI）
+- `chatgpt/gpt-5.6`（本地，需要 ChatGPT 订阅）
 
 #### markitai 自动选用的默认模型
 
@@ -295,10 +295,10 @@ provider/model-name
 | 提供商 | 默认模型 |
 |---|---|
 | Claude Code CLI | `claude-agent/sonnet` |
-| GitHub Copilot | `copilot/claude-haiku-4.5` |
-| ChatGPT | `chatgpt/gpt-5.4-mini` |
-| Anthropic | `anthropic/claude-haiku-4-5` |
-| OpenAI | `openai/gpt-5.4-nano` |
+| GitHub Copilot | `copilot/claude-sonnet-4.6` |
+| ChatGPT | `chatgpt/gpt-5.6` |
+| Anthropic | `anthropic/claude-sonnet-5` |
+| OpenAI | `openai/gpt-5.6-luna` |
 | Gemini | `gemini/gemini-flash-lite-latest` |
 | DeepSeek | `deepseek/deepseek-v4-flash` |
 | OpenRouter | `openrouter/google/gemini-3.1-flash-lite` |
@@ -311,11 +311,11 @@ Claude Agent SDK 支持的模型：
 
 GitHub Copilot SDK 支持的模型：
 - 支持 Copilot 订阅可用的所有模型（o1/o3 推理模型除外）
-- 例如：`gpt-5.4`、`claude-sonnet-4.6`、`gemini-3.1-pro-preview` 等
+- 例如：`gpt-5.6`、`claude-sonnet-4.6`、`gemini-3.1-pro-preview` 等
 - 可用性取决于您的 Copilot 订阅计划
 
 ChatGPT 支持的模型：
-- `gpt-5.4`、`gpt-5.4-codex`、`codex-mini` 等
+- `gpt-5.6`、`gpt-5.6-codex`、`codex-mini` 等
 
 ::: warning 已下线模型
 以下模型已被厂商下线，不再响应请求：
@@ -325,7 +325,7 @@ ChatGPT 支持的模型：
 :::
 
 ::: tip 本地提供商支持 Vision
-本地提供商（`claude-agent/`、`copilot/`、`chatgpt/`）通过文件附件支持图片分析（`--alt`、`--desc`）。请确保使用支持 vision 的模型（如 `copilot/gpt-5.4`、`chatgpt/gpt-5.4`）。
+本地提供商（`claude-agent/`、`copilot/`、`chatgpt/`）通过文件附件支持图片分析（`--alt`、`--desc`）。请确保使用支持 vision 的模型（如 `copilot/gpt-5.6`、`chatgpt/gpt-5.6`）。
 :::
 
 ::: tip 本地提供商故障排除
@@ -1200,7 +1200,7 @@ $env:NPM_CONFIG_REGISTRY = "https://registry.npmmirror.com"
       {
         "model_name": "default",
         "litellm_params": {
-          "model": "openai/gpt-5.4",
+          "model": "openai/gpt-5.6",
           "api_key": "env:OPENAI_API_KEY",
           "api_base": "https://your-api-proxy.com/v1"
         }

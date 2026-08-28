@@ -30,14 +30,14 @@ Multiple entries with the same `model_name` load-balance through the litellm rou
 | Provider | Model string | Auth |
 |---|---|---|
 | Google Gemini | `gemini/gemini-flash-lite-latest` | `GEMINI_API_KEY` |
-| OpenAI | `openai/gpt-5.4` | `OPENAI_API_KEY` |
+| OpenAI | `openai/gpt-5.6` | `OPENAI_API_KEY` |
 | Anthropic | `anthropic/claude-sonnet-4-6` | `ANTHROPIC_API_KEY` |
 | DeepSeek | `deepseek/deepseek-v4-flash` | `DEEPSEEK_API_KEY` |
 | OpenRouter | `openrouter/google/gemini-3.1-pro` | `OPENROUTER_API_KEY` |
 | Ollama (local server) | `ollama/llama3.2` + `"api_base": "http://localhost:11434"` | none |
 | Claude subscription | `claude-agent/sonnet` (aliases: `sonnet` `opus` `haiku` `inherit`, or full model strings) | Claude Code CLI login; extra: `claude-agent` |
-| Copilot subscription | `copilot/gpt-5.4`, `copilot/claude-sonnet-4.6`, … (plan-dependent; no o1/o3) | Copilot CLI login; extra: `copilot` |
-| ChatGPT subscription | `chatgpt/gpt-5.4`, `chatgpt/gpt-5.4-codex`, `chatgpt/codex-mini` | OAuth device flow on first use; no SDK needed |
+| Copilot subscription | `copilot/gpt-5.6`, `copilot/claude-sonnet-4.6`, … (plan-dependent; no o1/o3) | Copilot CLI login; extra: `copilot` |
+| ChatGPT subscription | `chatgpt/gpt-5.6`, `chatgpt/gpt-5.6-codex`, `chatgpt/codex-mini` | OAuth device flow on first use; no SDK needed |
 
 Gemini has no CLI/subscription route — direct API key or OpenRouter only.
 
@@ -57,7 +57,7 @@ Retired upstream (rejected on request): `gpt-4o`, `gpt-4.1`, `gpt-4.1-mini`, `o4
 
 ## Vision (`--alt` / `--desc`)
 
-Image analysis needs a vision-capable model. Remote API models are auto-detected via litellm; local providers pass images as file attachments, so pick a vision-capable model there too (e.g. `copilot/gpt-5.4`, `chatgpt/gpt-5.4`, `claude-agent/sonnet`). `markitai doctor` reports which vision model it detected.
+Image analysis needs a vision-capable model. Remote API models are auto-detected via litellm; local providers pass images as file attachments, so pick a vision-capable model there too (e.g. `copilot/gpt-5.6`, `chatgpt/gpt-5.6`, `claude-agent/sonnet`). `markitai doctor` reports which vision model it detected.
 
 ## Local provider errors
 

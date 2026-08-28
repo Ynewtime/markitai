@@ -41,6 +41,10 @@ _SRC = Path(__file__).resolve().parents[2] / "src" / "markitai"
 _DOC_ROOTS = (_REPO_ROOT / "website", _REPO_ROOT / "skills")
 _README = _REPO_ROOT / "README.md"
 
+# How far ahead a default must stay usable. A release cut today should
+# still hand out a working model well into its life.
+_RETIREMENT_HORIZON_DAYS = 120
+
 # Literals that name a provider but are not a default pick. Each one is a
 # prefix or path fragment the code matches against, not a model to send.
 _NOT_A_DEFAULT_PICK = frozenset(
@@ -154,4 +158,50 @@ def test_docs_name_every_model_the_code_defaults_to() -> None:
         "defaults the docs never name (a reader cannot tell what markitai "
         "will pick, and nobody notices when the pick goes stale):\n"
         + "\n".join(missing)
+    )
+
+
+def _deprecation_date(model: str) -> str | None:
+    """litellm's own retirement date for a default, however it spells it."""
+    import litellm
+
+    bare = model.split("/", 1)[1] if "/" in model else model
+    for candidate in (bare, model, bare.replace(".", "-")):
+        info = litellm.model_cost.get(candidate)
+        if info is not None:
+            return info.get("deprecation_date")
+    return None
+
+
+def test_no_default_is_near_its_retirement() -> None:
+    """A default must not be a model that is about to stop answering.
+
+    This is how the table went stale unseen. Two of the eight defaults were
+    scheduled for retirement seven weeks out, and two more were a full
+    generation behind a cheaper successor — nothing looked, because a
+    default only fails once the model starts refusing, which is long after
+    the point where it should have been changed.
+
+    The horizon is deliberately generous: a release cut today should still
+    be handing out a working default months from now.
+    """
+    from datetime import date, timedelta
+
+    horizon = date.today() + timedelta(days=_RETIREMENT_HORIZON_DAYS)
+    expiring: list[str] = []
+    for provider, model in PROVIDER_DEFAULT_MODELS.items():
+        raw = _deprecation_date(model)
+        if not raw:
+            continue
+        try:
+            when = date.fromisoformat(str(raw)[:10])
+        except ValueError:
+            continue
+        if when <= horizon:
+            expiring.append(f"{provider} -> {model} (retires {when})")
+
+    assert not expiring, (
+        f"defaults retiring within {_RETIREMENT_HORIZON_DAYS} days — pick a "
+        "current-generation replacement in constants.PROVIDER_DEFAULT_MODELS "
+        "and refresh the docs that name it:\n" + "\n".join(expiring)
     )

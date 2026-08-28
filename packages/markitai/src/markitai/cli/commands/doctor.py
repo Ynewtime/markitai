@@ -849,7 +849,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             "status": "warning",
             "message": "No vision model detected (auto-detect or set model_info.supports_vision)",
             "models": [],  # Empty list for JSON output
-            "install_hint": "Use vision-capable models like gemini-*, gpt-5.4, claude-*",
+            "install_hint": "Use vision-capable models like gemini-*, gpt-5.6*, claude-*",
         }
 
     # 6b. VLM OCR (--ocr --llm): the OCR path that sends page images to the
@@ -880,7 +880,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
             "status": "warning",
             "optional": True,
             "message": "unavailable — no vision model configured",
-            "install_hint": "Use vision-capable models like gemini-*, gpt-5.4, claude-*",
+            "install_hint": "Use vision-capable models like gemini-*, gpt-5.6*, claude-*",
         }
 
     # Define dependency groups.

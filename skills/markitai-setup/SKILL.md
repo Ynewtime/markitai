@@ -42,7 +42,7 @@ Target state: `markitai doctor` exits 0 and shows ✓ on every capability the us
 
 5. **Wire an LLM provider** (needed for `--llm`, `--alt`, `--desc`, presets `rich`/`standard`). Two routes:
    - **API key**: setting the provider env var (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`) is enough on its own — markitai detects the key and picks that provider's default model, no config file required. Pin one model with `MODEL=provider/model` (e.g. `gemini/gemini-flash-lite-latest`), or write it into `llm.model_list` when the run needs several models or per-model settings; reference keys there as `"api_key": "env:GEMINI_API_KEY"`.
-   - **Subscription (no API key)**: `claude-agent/sonnet` (Claude Code CLI login), `copilot/gpt-5.4` (Copilot CLI login), `chatgpt/gpt-5.4` (OAuth on first use). Check and repair auth with `markitai auth` (overview) and `markitai auth copilot|claude|chatgpt status|login`.
+   - **Subscription (no API key)**: `claude-agent/sonnet` (Claude Code CLI login), `copilot/gpt-5.6` (Copilot CLI login), `chatgpt/gpt-5.6` (OAuth on first use). Check and repair auth with `markitai auth` (overview) and `markitai auth copilot|claude|chatgpt status|login`.
    - Model lists, `api_base`/Azure/Ollama examples, vision requirements, and provider error table: [references/providers.md](references/providers.md).
 
 6. **Verify end-to-end** — the setup is done only when both hold:

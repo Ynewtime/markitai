@@ -48,7 +48,7 @@ claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp
       "command": "uvx",
       "args": ["--from", "markitai[mcp]", "markitai-mcp"],
       "env": {
-        "MODEL": "openai/gpt-5.4-nano",
+        "MODEL": "openai/gpt-5.6-luna",
         "OPENAI_API_KEY": "sk-..."
       }
     }

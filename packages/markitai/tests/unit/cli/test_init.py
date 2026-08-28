@@ -7,21 +7,35 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from markitai.cli.main import app
+from markitai.constants import PROVIDER_DEFAULT_MODELS
 
 # Detected providers used across merge tests; _build_config() maps these to
-# claude-agent/sonnet and chatgpt/gpt-5.4-mini model entries.
+# the claude-agent and chatgpt default model entries.
 _DETECTED = [("Claude CLI", True), ("ChatGPT", True)]
 
 
-def test_limited_preview_models_are_not_selected_by_onboarding() -> None:
-    """Automatic setup must use models available to ordinary accounts."""
+def test_onboarding_only_ever_picks_the_declared_defaults() -> None:
+    """Automatic setup must use models available to ordinary accounts.
+
+    It used to say that by excluding the string "gpt-5.6", which was a
+    limited preview when the check was written (2026-07). That spelling
+    aged into the opposite of its intent: gpt-5.6 is the current generation
+    and gpt-5.6-luna is now the cheapest OpenAI model markitai can pick.
+
+    The durable form of the rule is that onboarding picks from
+    ``PROVIDER_DEFAULT_MODELS`` and nowhere else — vetting a model then
+    happens once, in the table, where the retirement guard also looks.
+    """
     from markitai.cli.commands.init import _build_config
 
     config = _build_config([("ChatGPT", True), ("OpenAI API", True)])
     models = [entry["litellm_params"]["model"] for entry in config["llm"]["model_list"]]
 
-    assert models == ["chatgpt/gpt-5.4-mini", "openai/gpt-5.4-nano"]
-    assert all("gpt-5.6" not in model for model in models)
+    assert models == [
+        PROVIDER_DEFAULT_MODELS["chatgpt"],
+        PROVIDER_DEFAULT_MODELS["openai"],
+    ]
+    assert set(models) <= set(PROVIDER_DEFAULT_MODELS.values())
 
 
 class TestInitAtomicWrites:
@@ -95,14 +109,14 @@ class TestMergeNewModels:
 
         added = _merge_new_models(existing, _build_config(_DETECTED))
 
-        assert added == ["chatgpt/gpt-5.4-mini"]
+        assert added == [PROVIDER_DEFAULT_MODELS["chatgpt"]]
         assert existing["output"] == {"dir": "./custom"}
         assert existing["llm"]["enabled"] is True
         # Existing entry is honored (custom name and weight preserved)
         assert existing["llm"]["model_list"][0]["model_name"] == "primary"
         assert existing["llm"]["model_list"][0]["litellm_params"]["weight"] == 2
         models = [e["litellm_params"]["model"] for e in existing["llm"]["model_list"]]
-        assert models == ["claude-agent/sonnet", "chatgpt/gpt-5.4-mini"]
+        assert models == ["claude-agent/sonnet", PROVIDER_DEFAULT_MODELS["chatgpt"]]
 
     def test_already_up_to_date_returns_empty_and_keeps_config(self) -> None:
         """No additions when every detected provider is already configured."""
@@ -120,7 +134,7 @@ class TestMergeNewModels:
                     },
                     {
                         "model_name": "default",
-                        "litellm_params": {"model": "chatgpt/gpt-5.4-mini"},
+                        "litellm_params": {"model": PROVIDER_DEFAULT_MODELS["chatgpt"]},
                     },
                 ],
             }
@@ -140,7 +154,7 @@ class TestMergeNewModels:
 
         added = _merge_new_models(existing, _build_config(_DETECTED))
 
-        assert added == ["claude-agent/sonnet", "chatgpt/gpt-5.4-mini"]
+        assert added == ["claude-agent/sonnet", PROVIDER_DEFAULT_MODELS["chatgpt"]]
         assert existing["llm"]["enabled"] is False
 
 
@@ -188,12 +202,12 @@ class TestInitYesWithExistingConfig:
 
         assert result.exit_code == 0
         assert "updated" in result.output.lower()
-        assert "chatgpt/gpt-5.4-mini" in result.output
+        assert PROVIDER_DEFAULT_MODELS["chatgpt"] in result.output
         data = json.loads(target.read_text(encoding="utf-8"))
         assert data["output"] == {"dir": "./custom"}
         assert data["llm"]["enabled"] is True
         models = [e["litellm_params"]["model"] for e in data["llm"]["model_list"]]
-        assert models == ["claude-agent/sonnet", "chatgpt/gpt-5.4-mini"]
+        assert models == ["claude-agent/sonnet", PROVIDER_DEFAULT_MODELS["chatgpt"]]
 
     def test_yes_is_idempotent_and_reports_up_to_date(self, tmp_path: Path) -> None:
         target = tmp_path / "config.json"
@@ -265,7 +279,7 @@ class TestWizardExistingConfig:
         data = json.loads(target.read_text(encoding="utf-8"))
         assert data["output"] == {"dir": "./custom"}
         models = [e["litellm_params"]["model"] for e in data["llm"]["model_list"]]
-        assert models == ["claude-agent/sonnet", "chatgpt/gpt-5.4-mini"]
+        assert models == ["claude-agent/sonnet", PROVIDER_DEFAULT_MODELS["chatgpt"]]
 
     def test_keep_is_default_choice(self, tmp_path: Path) -> None:
         target = tmp_path / "config.json"
@@ -301,4 +315,4 @@ class TestWizardExistingConfig:
         assert data["output"] == {"dir": "./output"}
         assert data["llm"]["enabled"] is False
         models = [e["litellm_params"]["model"] for e in data["llm"]["model_list"]]
-        assert models == ["claude-agent/sonnet", "chatgpt/gpt-5.4-mini"]
+        assert models == ["claude-agent/sonnet", PROVIDER_DEFAULT_MODELS["chatgpt"]]

@@ -13,6 +13,7 @@ from markitai.cli.providers_detect import (
     format_model_list,
     get_active_models_from_config,
 )
+from markitai.constants import PROVIDER_DEFAULT_MODELS
 
 
 @pytest.fixture(autouse=True)
@@ -72,7 +73,7 @@ class TestDetectAllProviders:
             results = detect_all_providers()
             assert len(results) == 1
             assert results[0].provider == "copilot"
-            assert results[0].model == "copilot/claude-haiku-4.5"
+            assert results[0].model == PROVIDER_DEFAULT_MODELS["copilot"]
 
     def test_installed_but_signed_out_cli_is_not_detected(self) -> None:
         with (
@@ -186,7 +187,7 @@ class TestDetectAllProviders:
             results = detect_all_providers()
             assert len(results) == 1
             assert results[0].provider == "chatgpt"
-            assert results[0].model == "chatgpt/gpt-5.4-mini"
+            assert results[0].model == PROVIDER_DEFAULT_MODELS["chatgpt"]
 
 
 class TestDetectFirstProvider:
@@ -246,13 +247,16 @@ class TestGetActiveModelsFromConfig:
             },
             {
                 "model_name": "default",
-                "litellm_params": {"model": "copilot/claude-haiku-4.5", "weight": 5},
+                "litellm_params": {
+                    "model": PROVIDER_DEFAULT_MODELS["copilot"],
+                    "weight": 5,
+                },
             },
         ]
         result = get_active_models_from_config(model_list)
         assert result == [
             "gemini/gemini-3.1-flash-lite-preview",
-            "copilot/claude-haiku-4.5",
+            PROVIDER_DEFAULT_MODELS["copilot"],
         ]
 
     def test_returns_empty_when_all_weight_zero(self) -> None:

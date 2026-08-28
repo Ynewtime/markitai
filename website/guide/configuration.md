@@ -279,14 +279,14 @@ provider/model-name
 ```
 
 Examples:
-- `openai/gpt-5.4`
+- `openai/gpt-5.6`
 - `anthropic/claude-sonnet-4-6`
 - `gemini/gemini-flash-lite-latest`
 - `deepseek/deepseek-v4-flash`
 - `ollama/llama3.2`
 - `claude-agent/sonnet` (local, requires Claude Code CLI)
-- `copilot/gpt-5.4` (local, requires Copilot CLI)
-- `chatgpt/gpt-5.4` (local, requires ChatGPT subscription)
+- `copilot/gpt-5.6` (local, requires Copilot CLI)
+- `chatgpt/gpt-5.6` (local, requires ChatGPT subscription)
 
 #### Defaults markitai picks for you
 
@@ -295,10 +295,10 @@ Examples:
 | Provider | Default model |
 |---|---|
 | Claude Code CLI | `claude-agent/sonnet` |
-| GitHub Copilot | `copilot/claude-haiku-4.5` |
-| ChatGPT | `chatgpt/gpt-5.4-mini` |
-| Anthropic | `anthropic/claude-haiku-4-5` |
-| OpenAI | `openai/gpt-5.4-nano` |
+| GitHub Copilot | `copilot/claude-sonnet-4.6` |
+| ChatGPT | `chatgpt/gpt-5.6` |
+| Anthropic | `anthropic/claude-sonnet-5` |
+| OpenAI | `openai/gpt-5.6-luna` |
 | Gemini | `gemini/gemini-flash-lite-latest` |
 | DeepSeek | `deepseek/deepseek-v4-flash` |
 | OpenRouter | `openrouter/google/gemini-3.1-flash-lite` |
@@ -311,11 +311,11 @@ Claude Agent SDK supported models:
 
 GitHub Copilot SDK supported models:
 - Supports all models available to your Copilot subscription (except o1/o3 reasoning models)
-- Examples: `gpt-5.4`, `claude-sonnet-4.6`, `gemini-3.1-pro-preview`, etc.
+- Examples: `gpt-5.6`, `claude-sonnet-4.6`, `gemini-3.1-pro-preview`, etc.
 - Availability depends on your Copilot subscription plan
 
 ChatGPT supported models:
-- `gpt-5.4`, `gpt-5.4-codex`, `codex-mini`, etc.
+- `gpt-5.6`, `gpt-5.6-codex`, `codex-mini`, etc.
 
 ::: warning Retired Models
 These have been retired by their provider and no longer answer:
@@ -325,7 +325,7 @@ Configuring one only produces a startup warning — markitai never rewrites your
 :::
 
 ::: tip Local Providers Support Vision
-Local providers (`claude-agent/`, `copilot/`, `chatgpt/`) support image analysis (`--alt`, `--desc`) via file attachments. Make sure to use a vision-capable model (e.g., `copilot/gpt-5.4`, `chatgpt/gpt-5.4`).
+Local providers (`claude-agent/`, `copilot/`, `chatgpt/`) support image analysis (`--alt`, `--desc`) via file attachments. Make sure to use a vision-capable model (e.g., `copilot/gpt-5.6`, `chatgpt/gpt-5.6`).
 :::
 
 ::: tip Troubleshooting Local Providers
