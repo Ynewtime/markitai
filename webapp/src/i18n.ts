@@ -39,6 +39,8 @@ const en = {
   urlPlaceholderShort: "Paste URLs or drop files",
   convert: "Convert",
   preset: "Preset",
+  profile: "Output profile",
+  profileNone: "default",
   llmEnhance: "LLM enhancement",
   // ≤780px the full label pushes the options row past one line — the switch
   // keeps the full name in its aria-label (same split as urlPlaceholderShort)
@@ -277,6 +279,8 @@ const zh: Dict = {
   urlPlaceholderShort: "粘贴 URL，或拖入文件",
   convert: "转换",
   preset: "预设",
+  profile: "输出格式",
+  profileNone: "默认",
   llmEnhance: "LLM 增强",
   llmEnhanceShort: "LLM",
   llmEnhancedLabel: "LLM 增强",

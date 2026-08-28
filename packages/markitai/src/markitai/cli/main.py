@@ -111,6 +111,8 @@ click.rich_click.OPTION_GROUPS = {
 load_dotenv(Path.cwd() / ".env")
 load_dotenv(Path.home() / ".markitai" / ".env")
 
+from typing import get_args
+
 from click import Context
 from loguru import logger
 
@@ -123,7 +125,12 @@ from markitai.cli.logging_config import (
 from markitai.cli.processors.validators import (
     check_vision_model_config as _check_vision_model_config,
 )
-from markitai.config import ConfigFileError, ConfigManager, EnvVarNotFoundError
+from markitai.config import (
+    ConfigFileError,
+    ConfigManager,
+    EnvVarNotFoundError,
+    OutputProfile,
+)
 from markitai.runs import Outcome
 
 # Import utilities from refactored modules
@@ -245,7 +252,7 @@ def run_interactive_mode(ctx: click.Context) -> None:
 )
 @click.option(
     "--profile",
-    type=click.Choice(["rag", "obsidian", "okf"], case_sensitive=False),
+    type=click.Choice(list(get_args(OutputProfile)), case_sensitive=False),
     default=None,
     help="Shape the output for a downstream consumer (visible assets/ dir, "
     "page markers, wikilinks, OKF frontmatter). Orthogonal to --preset; "

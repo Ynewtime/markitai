@@ -20,6 +20,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from markitai.config import OutputProfile
+
 
 class JobOptions(BaseModel):
     """Options accepted by ``POST /api/jobs``."""
@@ -29,6 +31,7 @@ class JobOptions(BaseModel):
     preset: str | None = None
     llm: bool | None = None
     ocr: bool | None = None
+    profile: OutputProfile | None = None
 
 
 class JobRetryBody(BaseModel):

@@ -150,7 +150,12 @@ class TestJobMeta:
         assert meta["created_at"] == data["created_at"]
         assert meta["finished_at"] == data["finished_at"]
         assert meta["status"] == "done"
-        assert meta["options"] == {"preset": None, "llm": None, "ocr": None}
+        assert meta["options"] == {
+            "preset": None,
+            "llm": None,
+            "ocr": None,
+            "profile": None,
+        }
         assert meta["items"] == data["items"]  # full item snapshot
         item = meta["items"][0]
         assert item["output"] == "doc.txt.md"

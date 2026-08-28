@@ -1,4 +1,4 @@
-import type { Preset } from "../api/types";
+import type { OutputProfile, Preset } from "../api/types";
 
 /** Safe-bare shell charset; anything else (?, &, spaces, quotes) is wrapped
  * in single quotes so pasted commands survive a real shell. A leading "~"
@@ -22,6 +22,7 @@ export function buildCliCommand(
   preset: Preset,
   llm: boolean,
   ocr: boolean,
+  profile: OutputProfile | null,
 ): string {
   const inputs = urls.length > 0 ? urls.map(shellQuote) : ["<your-files>"];
   return [
@@ -33,5 +34,6 @@ export function buildCliCommand(
     preset,
     llm ? "--llm" : "--no-llm",
     ocr ? "--ocr" : "--no-ocr",
+    ...(profile === null ? [] : ["--profile", profile]),
   ].join(" ");
 }

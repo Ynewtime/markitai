@@ -45,7 +45,7 @@ function snapshot(jobId: string): JobSnapshot {
     total: 1,
     created_at: "2026-07-16T10:00:00Z",
     finished_at: "2026-07-16T10:00:05Z",
-    options: { preset: "minimal", llm: false, ocr: false },
+    options: { preset: "minimal", llm: false, ocr: false , profile: null},
     items: [],
   };
 }

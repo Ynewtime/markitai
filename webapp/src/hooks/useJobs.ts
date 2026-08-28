@@ -562,6 +562,7 @@ export function useJobs() {
           preset: snapshot.options.preset ?? null,
           llm: snapshot.options.llm ?? null,
           ocr: snapshot.options.ocr ?? null,
+          profile: snapshot.options.profile ?? null,
         };
         notifiedRef.current.delete(snapshot.job_id);
         setJobs((previous) => ({
@@ -756,7 +757,7 @@ export function useJobs() {
           jobId: j.jobId,
           status: "running",
           createdAt: null,
-          options: { preset: null, llm: null, ocr: null },
+          options: { preset: null, llm: null, ocr: null, profile: null },
         };
       }
       return next;

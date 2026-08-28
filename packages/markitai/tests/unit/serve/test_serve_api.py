@@ -306,6 +306,26 @@ class TestJobConfigMapping:
         ]
         return cfg
 
+    def test_profile_reaches_the_config(self) -> None:
+        cfg = self._build(MarkitaiConfig(), profile="rag")
+        assert cfg.output.profile == "rag"
+
+    def test_profile_survives_a_conversion_with_no_llm(self) -> None:
+        """A profile shapes the output, so it is not an LLM feature.
+
+        Gating it on the LLM would put it out of reach of exactly the users
+        who convert locally, which is who the visible assets/ layout helps
+        most.
+        """
+        cfg = self._build(MarkitaiConfig(), llm=False, profile="obsidian")
+        assert cfg.llm.enabled is False
+        assert cfg.output.profile == "obsidian"
+
+    def test_omitting_the_profile_leaves_the_base_config_alone(self) -> None:
+        base = MarkitaiConfig()
+        base.output.profile = "okf"
+        assert self._build(base, preset="minimal").output.profile == "okf"
+
     def test_preset_rich_maps_all_five_booleans(self) -> None:
         cfg = self._build(self._base_with_model(), preset="rich")
         assert cfg.llm.enabled is True
@@ -651,7 +671,12 @@ class TestJobLifecycle:
         item = data["items"][0]
         assert item["status"] == "error"
         assert "converter exploded" in item["error"]
-        assert data["options"] == {"preset": None, "llm": None, "ocr": None}
+        assert data["options"] == {
+            "preset": None,
+            "llm": None,
+            "ocr": None,
+            "profile": None,
+        }
 
     async def test_result_files_archive_and_cjk_roundtrip(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1400,6 +1425,7 @@ class TestRetry:
                 "preset": "minimal",
                 "llm": None,
                 "ocr": None,
+                "profile": None,
             }
 
             # Body options replace the inherited ones as a whole.
@@ -1415,6 +1441,7 @@ class TestRetry:
                 "preset": "standard",
                 "llm": False,
                 "ocr": None,
+                "profile": None,
             }
 
             # Same validation as POST /api/jobs.

@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchCapabilities, historyArchiveUrl } from "./api/client";
-import type { Capabilities, JobOptions, Preset } from "./api/types";
+import type {
+  Capabilities,
+  JobOptions,
+  OutputProfile,
+  Preset,
+} from "./api/types";
 import type { SessionItem } from "./hooks/useJobs";
 import { AppFooter, AppHeader } from "./components/AppHeader";
 import { CapabilityHint } from "./components/CapabilityHint";
@@ -55,6 +60,7 @@ function readStoredOptions(): {
   preset: Preset | null;
   llm: boolean | null;
   ocr: boolean | null;
+  profile: OutputProfile | null;
 } {
   try {
     const raw = localStorage.getItem(OPTIONS_KEY);
@@ -66,6 +72,7 @@ function readStoredOptions(): {
           preset?: unknown;
           llm?: unknown;
           ocr?: unknown;
+          profile?: unknown;
         };
         const preset =
           stored.preset === "minimal" ||
@@ -75,6 +82,12 @@ function readStoredOptions(): {
             : null;
         const llm = typeof stored.llm === "boolean" ? stored.llm : null;
         const ocr = typeof stored.ocr === "boolean" ? stored.ocr : false;
+        const profile =
+          stored.profile === "rag" ||
+          stored.profile === "obsidian" ||
+          stored.profile === "okf"
+            ? stored.profile
+            : null;
 
         // Before v2, standard + no-LLM was the implicit default. It leaves
         // image-analysis flags enabled and made URL jobs download every image
@@ -84,15 +97,15 @@ function readStoredOptions(): {
           llm === false &&
           preset === "standard"
         ) {
-          return { preset: "minimal", llm: false, ocr };
+          return { preset: "minimal", llm: false, ocr, profile };
         }
-        return { preset, llm, ocr };
+        return { preset, llm, ocr, profile };
       }
     }
   } catch {
     /* localStorage unavailable / corrupt */
   }
-  return { preset: null, llm: null, ocr: null };
+  return { preset: null, llm: null, ocr: null, profile: null };
 }
 
 export default function App() {
@@ -127,16 +140,19 @@ export default function App() {
   const [preset, setPreset] = useState<Preset>(() => readStoredOptions().preset ?? "minimal");
   const [llm, setLlm] = useState<boolean>(() => readStoredOptions().llm ?? false); // opt-in, never the default
   const [ocr, setOcr] = useState<boolean>(() => readStoredOptions().ocr ?? false);
+  const [profile, setProfile] = useState<OutputProfile | null>(
+    () => readStoredOptions().profile,
+  );
   useEffect(() => {
     try {
       localStorage.setItem(
         OPTIONS_KEY,
-        JSON.stringify({ version: OPTIONS_VERSION, preset, llm, ocr }),
+        JSON.stringify({ version: OPTIONS_VERSION, preset, llm, ocr, profile }),
       );
     } catch {
       /* localStorage unavailable */
     }
-  }, [preset, llm, ocr]);
+  }, [preset, llm, ocr, profile]);
   useEffect(() => {
     if (caps !== null && !caps.llm.routable) {
       setPreset("minimal");
@@ -294,10 +310,10 @@ export default function App() {
 
   // Drops always use the options as currently set; any new conversion
   // brings the workspace forward.
-  const optionsRef = useRef<JobOptions>({ preset, llm, ocr });
+  const optionsRef = useRef<JobOptions>({ preset, llm, ocr, profile });
   useEffect(() => {
-    optionsRef.current = { preset, llm, ocr };
-  }, [preset, llm, ocr]);
+    optionsRef.current = { preset, llm, ocr, profile };
+  }, [preset, llm, ocr, profile]);
   const submitFiles = useCallback(
     (files: File[], fromFolder = false) => {
       let notice: string | null = null;
@@ -718,12 +734,14 @@ export default function App() {
             preset={preset}
             llm={llm}
             ocr={ocr}
+            profile={profile}
             llmConfigured={llmConfigured}
             urls={urlList}
             announce={announce}
             onPreset={setPreset}
             onLlm={setLlm}
             onOcr={setOcr}
+            onProfile={setProfile}
           />
           {capHint}
         </main>
@@ -772,12 +790,14 @@ export default function App() {
                     preset={preset}
                     llm={llm}
                     ocr={ocr}
+                    profile={profile}
                     llmConfigured={llmConfigured}
                     urls={urlList}
                     announce={announce}
                     onPreset={setPreset}
                     onLlm={setLlm}
                     onOcr={setOcr}
+                    onProfile={setProfile}
                     trailing={archiveDownload}
                   />
                   {capHint}

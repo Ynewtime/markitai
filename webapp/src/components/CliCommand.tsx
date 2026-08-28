@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from "react";
-import type { Preset } from "../api/types";
+import type { OutputProfile, Preset } from "../api/types";
 import type { Dict } from "../i18n";
 import { buildCliCommand } from "../lib/cli";
 import { TerminalIcon } from "./icons";
@@ -55,6 +55,7 @@ export function CliCommand({
   preset,
   llm,
   ocr,
+  profile,
   announce,
 }: {
   t: Dict;
@@ -62,6 +63,7 @@ export function CliCommand({
   preset: Preset;
   llm: boolean;
   ocr: boolean;
+  profile: OutputProfile | null;
   announce: (msg: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -74,7 +76,7 @@ export function CliCommand({
     return () => window.clearTimeout(h);
   }, [copyState]);
 
-  const cmd = buildCliCommand(urls, preset, llm, ocr);
+  const cmd = buildCliCommand(urls, preset, llm, ocr, profile);
   const placeholder = urls.length === 0;
 
   const copy = () => {

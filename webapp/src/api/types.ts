@@ -4,11 +4,14 @@ export type ItemKind = "file" | "url";
 export type ItemStatus = "queued" | "running" | "done" | "error";
 export type JobStatus = "running" | "done";
 export type Preset = "minimal" | "standard" | "rich";
+/** Output shape for a downstream consumer; null keeps the default. */
+export type OutputProfile = "rag" | "obsidian" | "okf";
 
 export interface JobOptions {
   preset: Preset | null;
   llm: boolean | null;
   ocr: boolean | null;
+  profile: OutputProfile | null;
 }
 
 export interface CreatedItem {

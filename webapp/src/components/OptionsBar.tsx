@@ -1,10 +1,12 @@
 import type { ReactNode } from "react";
-import type { Preset } from "../api/types";
+import type { OutputProfile, Preset } from "../api/types";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import type { Dict } from "../i18n";
 import { CliCommand } from "./CliCommand";
 
 const PRESETS: Preset[] = ["minimal", "standard", "rich"];
+/** null first: no profile is the default and keeps output byte-identical. */
+const PROFILES: (OutputProfile | null)[] = [null, "rag", "obsidian", "okf"];
 
 /** App's mobile breakpoint (app.css ≤780px tier) — there the options row must
  * hold every toggle on one line at 360px, so the LLM label drops to its short
@@ -18,24 +20,28 @@ export function OptionsBar({
   preset,
   llm,
   ocr,
+  profile,
   llmConfigured,
   urls,
   announce,
   onPreset,
   onLlm,
   onOcr,
+  onProfile,
   trailing,
 }: {
   t: Dict;
   preset: Preset;
   llm: boolean;
   ocr: boolean;
+  profile: OutputProfile | null;
   llmConfigured: boolean;
   urls: string[];
   announce: (msg: string) => void;
   onPreset: (p: Preset) => void;
   onLlm: (v: boolean) => void;
   onOcr: (v: boolean) => void;
+  onProfile: (p: OutputProfile | null) => void;
   /** Extra row member after the CLI disclosure — the workspace composer parks
    * its archive download at the row's right edge; home passes nothing. */
   trailing?: ReactNode;
@@ -87,12 +93,31 @@ export function OptionsBar({
           </div>
         </div>
       )}
+      <div className="opt">
+        <span className="lbl" id="profile-lbl">
+          {t.profile}
+        </span>
+        <div className="seg" role="group" aria-labelledby="profile-lbl">
+          {PROFILES.map((p) => (
+            <button
+              key={p ?? "default"}
+              type="button"
+              className={p === profile ? "on" : undefined}
+              aria-pressed={p === profile}
+              onClick={() => onProfile(p)}
+            >
+              {p ?? t.profileNone}
+            </button>
+          ))}
+        </div>
+      </div>
       <CliCommand
         t={t}
         urls={urls}
         preset={preset}
         llm={llm}
         ocr={ocr}
+        profile={profile}
         announce={announce}
       />
       {trailing}

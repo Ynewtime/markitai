@@ -162,7 +162,7 @@ function jobSnapshot(
     total: items.length,
     created_at: "2026-07-16T10:00:00Z",
     finished_at: status === "running" ? null : "2026-07-16T10:00:05Z",
-    options: { preset: "minimal", llm: false, ocr: false },
+    options: { preset: "minimal", llm: false, ocr: false , profile: null},
     items,
   };
 }
@@ -173,6 +173,7 @@ async function submitJob(result: { current: ReturnType<typeof useJobs> }) {
       preset: "minimal",
       llm: false,
       ocr: false,
+      profile: null,
     });
   });
 }
@@ -205,7 +206,7 @@ describe("useJobs retry identity", () => {
   it("queues explicit LLM enhancement with the original row identity", async () => {
     const { result, unmount } = renderHook(() => useJobs());
     const value = sessionItem("job-1", "i1", "doc.pdf");
-    const options = { preset: "minimal" as const, llm: true, ocr: false };
+    const options = { preset: "minimal" as const, llm: true, ocr: false , profile: null};
 
     let error: string | null | undefined;
     await act(async () => {
@@ -229,7 +230,7 @@ describe("useJobs retry identity", () => {
           total: 1,
           created_at: "2026-07-15T10:00:00Z",
           finished_at: "2026-07-15T10:00:01Z",
-          options: { preset: "minimal", llm: false, ocr: false },
+          options: { preset: "minimal", llm: false, ocr: false , profile: null},
           items: [
             {
               item_id: "i1",
@@ -250,7 +251,7 @@ describe("useJobs retry identity", () => {
           ],
         },
         "i1",
-        { preset: "minimal", llm: false, ocr: true },
+        { preset: "minimal", llm: false, ocr: true , profile: null},
       );
     });
 
@@ -262,12 +263,13 @@ describe("useJobs retry identity", () => {
     });
     expect(result.current.jobs["archived-job"]).toMatchObject({
       status: "running",
-      options: { preset: "minimal", llm: false, ocr: true },
+      options: { preset: "minimal", llm: false, ocr: true , profile: null},
     });
     expect(api.retryJobItem).toHaveBeenCalledWith("archived-job", "i1", {
       preset: "minimal",
       llm: false,
       ocr: true,
+      profile: null,
     });
     unmount();
   });
@@ -291,7 +293,7 @@ describe("useJobs retry identity", () => {
       await result.current.submit(
         [new File(["old"], "old.pdf")],
         [],
-        { preset: "minimal", llm: false, ocr: false },
+        { preset: "minimal", llm: false, ocr: false , profile: null},
       );
       await result.current.submit(
         [
@@ -299,7 +301,7 @@ describe("useJobs retry identity", () => {
           new File(["second"], "second.pdf"),
         ],
         [],
-        { preset: "minimal", llm: false, ocr: false },
+        { preset: "minimal", llm: false, ocr: false , profile: null},
       );
     });
 
@@ -312,7 +314,7 @@ describe("useJobs retry identity", () => {
   });
 
   it("sorts Python microsecond timestamps consistently across browsers", () => {
-    const options = { preset: "minimal", llm: false, ocr: false } as const;
+    const options = { preset: "minimal", llm: false, ocr: false , profile: null} as const;
     const jobs: Record<string, SessionJob> = {
       old: {
         jobId: "old",
@@ -349,7 +351,7 @@ describe("useJobs retry identity", () => {
       await result.current.submit(
         [new File(["pdf"], "doc.pdf")],
         [],
-        { preset: "minimal", llm: false, ocr: false },
+        { preset: "minimal", llm: false, ocr: false , profile: null},
       );
     });
     const original = result.current.items[0];

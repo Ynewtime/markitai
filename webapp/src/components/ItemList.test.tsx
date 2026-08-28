@@ -41,7 +41,7 @@ function Harness() {
           jobId: "job-1",
           status: "done",
           createdAt: "2026-07-16T03:52:00.000+08:00",
-          options: { preset: "minimal", llm: false, ocr: false },
+          options: { preset: "minimal", llm: false, ocr: false , profile: null},
         },
       }}
       showCost={false}
@@ -113,7 +113,7 @@ describe("merged task ordering", () => {
         jobId: "target",
         status: "running",
         createdAt: "2026-07-16T11:00:00.000+08:00",
-        options: { preset: "minimal", llm: false, ocr: false },
+        options: { preset: "minimal", llm: false, ocr: false , profile: null},
       },
     };
     expect(mergeLedgerRows([adopted], jobs, entries).map((row) => row.key)).toEqual([
@@ -144,7 +144,7 @@ describe("merged task ordering", () => {
         jobId: "batch",
         status: "done",
         createdAt: "2026-07-16T11:00:00.000+08:00",
-        options: { preset: "minimal", llm: false, ocr: false },
+        options: { preset: "minimal", llm: false, ocr: false , profile: null},
       },
     };
     expect(

@@ -136,7 +136,7 @@ describe("404 semantics", () => {
 });
 
 describe("job-creation request bodies", () => {
-  const options: JobOptions = { preset: "standard", llm: true, ocr: null };
+  const options: JobOptions = { preset: "standard", llm: true, ocr: null , profile: null};
   const created = { job_id: "job-1", items: [] };
 
   it("createJob posts multipart form data with files, urls, and options", async () => {
@@ -218,7 +218,7 @@ describe("access token transport", () => {
     sessionStorage.setItem("markitai.serve.token", "mk_secret");
     const mock = stubFetch(jsonResponse({ job_id: "j1", items: [] }, 200));
 
-    await enhanceJobItem("j1", "i1", { preset: null, llm: true, ocr: null });
+    await enhanceJobItem("j1", "i1", { preset: null, llm: true, ocr: null , profile: null});
 
     const { init } = sentRequest(mock);
     expect(init.headers).toEqual({

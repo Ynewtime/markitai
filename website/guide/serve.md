@@ -43,7 +43,7 @@ The token URL is a credential — anyone holding it gets full access: conversion
 
 ## The Workspace
 
-- **Composer**: drag in files or folders, or paste URLs. Options mirror the CLI presets — `minimal`, `standard`, `rich` — plus individual LLM and OCR toggles.
+- **Composer**: drag in files or folders, or paste URLs. Options mirror the CLI presets — `minimal`, `standard`, `rich` — plus individual LLM and OCR toggles and the output profile (`rag`, `obsidian`, `okf`). The profile is available with or without LLM.
 - **Live progress**: each item streams its status as it converts; a notification fires when a job finishes in a background tab.
 - **Per-item actions**: retry a failed item in place, or LLM-enhance a finished one without reconverting its siblings; filter large result sets to find an item quickly.
 - **Preview**: rendered Markdown preview with a base vs LLM-enhanced comparison, and a PDF settings menu that prints the preview to a clean A4 document (optional custom header/footer).

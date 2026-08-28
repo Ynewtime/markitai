@@ -161,6 +161,12 @@ def _validate_local_only_pattern(pattern: str) -> None:
             raise ValueError(f"invalid CIDR in local_only_patterns: '{p}' — {e}") from e
 
 
+# The profiles a user can ask for, named once: the config field, the CLI's
+# --profile choices and serve's JobOptions all read this, so adding one is a
+# single edit and none of them can drift.
+OutputProfile = Literal["rag", "obsidian", "okf"]
+
+
 class OutputConfig(BaseModel):
     """Output configuration."""
 
@@ -178,7 +184,7 @@ class OutputConfig(BaseModel):
         default=None,
         description="Write JSON report (default: batch/URL-batch runs only)",
     )
-    profile: Literal["rag", "obsidian", "okf"] | None = Field(
+    profile: OutputProfile | None = Field(
         default=None,
         description=(
             "Output profile shaping results for a downstream consumer. "

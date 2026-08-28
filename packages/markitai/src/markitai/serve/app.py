@@ -648,6 +648,10 @@ def _build_job_config(base: MarkitaiConfig, opts: JobOptions) -> MarkitaiConfig:
         cfg.llm.enabled = opts.llm
     if opts.ocr is not None:
         cfg.ocr.enabled = opts.ocr
+    # Orthogonal to the preset and to LLM: a profile shapes the output, so a
+    # plain local conversion can carry one too.
+    if opts.profile is not None:
+        cfg.output.profile = opts.profile
     if cfg.llm.enabled and not cfg.llm.model_list:
         logger.warning(
             "[Serve] LLM requested but no models are configured; "

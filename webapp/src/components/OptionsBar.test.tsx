@@ -12,9 +12,45 @@ const baseProps = {
   onPreset: vi.fn(),
   onLlm: vi.fn(),
   onOcr: vi.fn(),
+  profile: null,
+  onProfile: vi.fn(),
 };
 
 describe("OptionsBar", () => {
+  it("offers the output profile with no LLM configured", () => {
+    // A profile shapes the output, so a plain local conversion can carry
+    // one. Hiding it with the LLM controls would put it out of reach of
+    // exactly the users who convert without a model.
+    const onProfile = vi.fn();
+    render(
+      <OptionsBar
+        {...baseProps}
+        llm={false}
+        llmConfigured={false}
+        onProfile={onProfile}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "rag" }));
+    expect(onProfile).toHaveBeenCalledWith("rag");
+  });
+
+  it("returns to the default output when 'default' is chosen", () => {
+    const onProfile = vi.fn();
+    render(
+      <OptionsBar
+        {...baseProps}
+        llm
+        llmConfigured
+        profile="rag"
+        onProfile={onProfile}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "default" }));
+    expect(onProfile).toHaveBeenCalledWith(null);
+  });
+
   it("keeps OCR available when no LLM is configured", () => {
     const onOcr = vi.fn();
     render(
