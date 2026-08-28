@@ -46,9 +46,10 @@ e.g. local RapidOCR — no LLM cost), and scores the output against a
     carry ``math`` rules. So this script's honest coverage is roughly
     4 of 7 splits, not the whole benchmark.
 - **Conclusion**: acquiring and scoring a small slice with
-  present/absent/order rules is feasible today with markitai's existing
-  dependencies (httpx + rapidfuzz, both already installed) — see the run
-  this script performs. Reproducing the *authoritative* full-benchmark
+  present/absent/order rules is feasible today with what a dev checkout
+  already has (httpx is a markitai dependency; rapidfuzz comes from the
+  dev group, which ``uv run`` installs) — see the run this script
+  performs. Reproducing the *authoritative* full-benchmark
   score requires installing AI2's own `olmocr[bench]` toolkit (its own
   dependency tree plus Playwright/Chromium for the math scorer) and
   writing a markitai runner for it; see "Manual steps" below. That is

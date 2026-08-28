@@ -1102,44 +1102,47 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
         raise SystemExit(1)
 
 
+# Extras whose SDK may not be installable, so they are offered only when the
+# matching CLI is already on PATH. Everything else markitai declares is a
+# plain PyPI package and is always offered.
+_SDK_EXTRA_BINARIES = {"claude-agent": "claude", "copilot": "copilot"}
+
+
 def suggest_extras() -> list[str]:
     """Return recommended pip extras for installation.
 
-    Always includes all extras whose dependencies are standard PyPI
-    packages.  Only conditionally includes extras that depend on SDKs
-    which may not be publicly available on PyPI.
+    Read from the package's own declared extras rather than a hand-kept
+    list: that list had gone stale, silently offering neither ``legacy``
+    (legacy Office conversion) nor ``mcp`` (the MCP server) nor ``serve``
+    (the Web UI) long after they existed, so the guided installer promised
+    a batteries-included setup and did not deliver one.
 
-    The result is a *stable* list (alphabetical) that the install
-    scripts can feed directly into
-    ``uv tool install markitai[browser,extra-fetch,...]``.
+    Everything markitai declares is offered, except extras whose SDK may
+    not be on PyPI — those are added only when their CLI is already
+    installed.
+
+    The result is a *stable* list (alphabetical) that the install scripts
+    can feed directly into ``uv tool install markitai[browser,...]``.
 
     This is the **single source of truth** — install scripts should call
     ``markitai doctor --suggest-extras`` instead of reimplementing
     detection logic in shell.
     """
-    extras: set[str] = set()
+    import importlib.metadata
 
-    # --- Always-include extras (pure Python packages from PyPI) ---
-    extras.add("browser")  # playwright
-    extras.add("extra-fetch")  # curl-cffi
-    extras.add("kreuzberg")  # kreuzberg
-    extras.add("svg")  # cairosvg (pip install succeeds; runtime detects missing lib)
-    extras.add("heif")  # pillow-heif (HEIC/HEIF/AVIF input decoding)
-    # rapidocr: optional since 0.24, but the guided installer's whole promise
-    # is a batteries-included setup — suggesting it keeps those users at the
-    # capability level they had when OCR was a core dependency. Users who ran
-    # a bare `pip install markitai` deliberately stay minimal.
-    extras.add("ocr")
-
-    # --- Conditional extras (SDK may not be on PyPI) ---
-    # claude-agent — requires claude-agent-sdk
-    if shutil.which("claude"):
-        extras.add("claude-agent")
-
-    # copilot — requires github-copilot-sdk
-    if shutil.which("copilot"):
-        extras.add("copilot")
-
+    try:
+        declared = set(
+            importlib.metadata.metadata("markitai").get_all("Provides-Extra") or []
+        )
+    except importlib.metadata.PackageNotFoundError:  # pragma: no cover
+        declared = set()
+    # "all" is the union, not something to install alongside its own members.
+    extras = {name for name in declared - {"all"} if name not in _SDK_EXTRA_BINARIES}
+    extras |= {
+        name
+        for name, binary in _SDK_EXTRA_BINARIES.items()
+        if name in declared and shutil.which(binary)
+    }
     return sorted(extras)
 
 

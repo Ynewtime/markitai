@@ -84,14 +84,14 @@ i18n() {
             confirm_serve)              echo "安装 Web UI 依赖? (启用 markitai serve)" ;;
             confirm_ocr)                echo "安装 OCR 支持? (识别扫描件和图片中的文字, 约 150MB)" ;;
             confirm_playwright)         echo "安装 Playwright 浏览器? (用于 JS 渲染页面)" ;;
-            confirm_libreoffice)        echo "安装 LibreOffice? (用于 Office 文档转换)" ;;
+            confirm_libreoffice)        echo "安装 LibreOffice? (用于 PPTX 幻灯片截图)" ;;
             confirm_claude_cli)         echo "安装 Claude Code CLI? (使用 Claude 订阅)" ;;
             confirm_copilot_cli)        echo "安装 Copilot CLI? (使用 GitHub Copilot 订阅)" ;;
             confirm_uv)                 echo "安装 uv 包管理器?" ;;
             confirm_continue_as_root)   echo "以 root 身份继续?" ;;
 
             # Info messages
-            info_libreoffice_purpose)   echo "LibreOffice 用于转换旧版 Office 文档 (.doc/.ppt) 并渲染幻灯片截图" ;;
+            info_libreoffice_purpose)   echo "LibreOffice 用于把 PPTX 幻灯片渲染为截图。旧版 .doc/.ppt 转换改由 markitai[legacy] extra 提供" ;;
             info_playwright_purpose)    echo "Playwright 用于获取 JavaScript 渲染的网页内容" ;;
             info_project_dir)           echo "项目目录" ;;
             info_docs)                  echo "文档" ;;
@@ -204,14 +204,14 @@ i18n() {
             confirm_serve)              echo "Install Web UI dependencies? (enables markitai serve)" ;;
             confirm_ocr)                echo "Install OCR support? (text recognition in scanned PDFs and images, ~150MB)" ;;
             confirm_playwright)         echo "Install Playwright browser? (for JS-rendered pages)" ;;
-            confirm_libreoffice)        echo "Install LibreOffice? (for Office document conversion)" ;;
+            confirm_libreoffice)        echo "Install LibreOffice? (for PPTX slide screenshots)" ;;
             confirm_claude_cli)         echo "Install Claude Code CLI? (use your Claude subscription)" ;;
             confirm_copilot_cli)        echo "Install Copilot CLI? (use your GitHub Copilot subscription)" ;;
             confirm_uv)                 echo "Install uv package manager?" ;;
             confirm_continue_as_root)   echo "Continue as root?" ;;
 
             # Info messages
-            info_libreoffice_purpose)   echo "LibreOffice converts legacy Office files (.doc/.ppt) and renders slide screenshots" ;;
+            info_libreoffice_purpose)   echo "LibreOffice renders PPTX slides as screenshots. Legacy .doc/.ppt conversion uses the markitai[legacy] extra instead" ;;
             info_playwright_purpose)    echo "Playwright fetches JavaScript-rendered web pages" ;;
             info_project_dir)           echo "Project directory" ;;
             info_docs)                  echo "Documentation" ;;
@@ -1253,7 +1253,7 @@ install_markitai() {
 # an interactive session keeps the guided browser-extra default.
 MARKITAI_EXTRAS=""
 MARKITAI_RECEIPT_EXTRAS=""
-MARKITAI_ALL_FALLBACK_EXTRAS="browser,extra-fetch,kreuzberg,svg,heif,ocr,serve"
+MARKITAI_ALL_FALLBACK_EXTRAS="browser,extra-fetch,kreuzberg,svg,heif,legacy,mcp,ocr,serve"
 # Extras the user explicitly turned down. `markitai doctor --suggest-extras`
 # recommends `ocr` unconditionally, so without this list the finalize pass
 # would reinstall exactly what was just declined and make the prompt a lie.

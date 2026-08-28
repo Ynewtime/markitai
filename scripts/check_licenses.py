@@ -47,13 +47,12 @@ ALLOWED_COPYLEFT: frozenset[str] = frozenset(
 )
 
 #: Distributions whose source-available or weak-copyleft licence is a
-#: reviewed, disclosed choice. Values are the reason, quoted back in ``--list``.
-#: Every entry here is an *optional extra*, never part of a default install.
+#: reviewed, disclosed choice. The value records why, for the reader of this
+#: file; only the keys are read. Every entry here is an *optional extra*,
+#: never part of a default install. A package that relicenses out of this
+#: list should be removed from it, so a relicense back fails the audit and
+#: gets reviewed again — kreuzberg left when it moved to MIT.
 ALLOWED_RESTRICTED: dict[str, str] = {
-    "kreuzberg": (
-        "Elastic-2.0, opt-in via markitai[kreuzberg]; forbids offering it to "
-        "others as a hosted service — see NOTICE section 4"
-    ),
     "cairosvg": (
         "LGPL-3.0-or-later, opt-in via markitai[svg]; used as an unmodified "
         "library, which carries no obligation on our sources"

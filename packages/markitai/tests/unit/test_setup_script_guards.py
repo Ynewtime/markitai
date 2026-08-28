@@ -302,6 +302,17 @@ def test_extra_accumulators_treat_all_as_a_superset() -> None:
     assert "Test-MarkitaiExtraEnabled" in ps_body
 
 
+# Extras the fallback deliberately omits: both need an SDK the installer
+# cannot assume, and a failed install of one would take the whole set down.
+_SDK_DEPENDENT_EXTRAS = frozenset({"claude-agent", "copilot"})
+
+
+def _fallback_extras(text: str) -> set[str]:
+    match = re.search(r'MARKITAI_ALL_FALLBACK_EXTRAS\s*=\s*"([^"]*)"', text)
+    assert match is not None, "the installer no longer defines a fallback extras set"
+    return {name for name in match.group(1).split(",") if name}
+
+
 def test_all_extra_and_its_fallback_include_serve() -> None:
     """The public `all` contract and installer fallback both include Web UI."""
     metadata = tomllib.loads(_MARKITAI_PYPROJECT.read_text(encoding="utf-8"))
@@ -313,17 +324,30 @@ def test_all_extra_and_its_fallback_include_serve() -> None:
     serve_packages = {package_name(requirement) for requirement in extras["serve"]}
     all_packages = {package_name(requirement) for requirement in extras["all"]}
     assert serve_packages <= all_packages
+    assert "serve" in _fallback_extras(_SETUP_SH.read_text(encoding="utf-8"))
+    assert "serve" in _fallback_extras(_SETUP_PS1.read_text(encoding="utf-8"))
 
-    shell_text = _SETUP_SH.read_text(encoding="utf-8")
-    ps_text = _SETUP_PS1.read_text(encoding="utf-8")
-    assert (
-        'MARKITAI_ALL_FALLBACK_EXTRAS="browser,extra-fetch,kreuzberg,svg,heif,ocr,serve"'
-        in shell_text
-    )
-    assert (
-        '$script:MARKITAI_ALL_FALLBACK_EXTRAS = "browser,extra-fetch,kreuzberg,svg,heif,ocr,serve"'
-        in ps_text
-    )
+
+def test_the_fallback_offers_everything_all_would_have() -> None:
+    """The fallback is `all` minus the two SDK-dependent extras.
+
+    It used to be checked by asserting the literal string, so when `legacy`
+    and `mcp` were added to `all` the fallback silently stopped offering
+    them: a user whose `markitai[all]` install failed lost legacy Office
+    conversion and the MCP server without being told. Computing the
+    expected set from pyproject means the next extra cannot slip through.
+    """
+    metadata = tomllib.loads(_MARKITAI_PYPROJECT.read_text(encoding="utf-8"))
+    declared = set(metadata["project"]["optional-dependencies"]) - {"all"}
+    expected = declared - _SDK_DEPENDENT_EXTRAS
+
+    for path in (_SETUP_SH, _SETUP_PS1):
+        actual = _fallback_extras(path.read_text(encoding="utf-8"))
+        assert actual == expected, (
+            f"{path.name} fallback extras drifted from pyproject: "
+            f"missing {sorted(expected - actual)}, "
+            f"unknown {sorted(actual - expected)}"
+        )
 
 
 def test_setup_sh_bounds_and_sanitizes_failed_command_output(tmp_path: Path) -> None:

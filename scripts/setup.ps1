@@ -79,14 +79,14 @@ function i18n {
             "confirm_serve"             { return "安装 Web UI 依赖? (启用 markitai serve)" }
             "confirm_ocr"               { return "安装 OCR 支持? (识别扫描件和图片中的文字, 约 150MB)" }
             "confirm_playwright"        { return "安装 Playwright 浏览器? (用于 JS 渲染页面)" }
-            "confirm_libreoffice"       { return "安装 LibreOffice? (用于 Office 文档转换)" }
+            "confirm_libreoffice"       { return "安装 LibreOffice? (用于 PPTX 幻灯片截图)" }
             "confirm_claude_cli"        { return "安装 Claude Code CLI? (使用 Claude 订阅)" }
             "confirm_copilot_cli"       { return "安装 Copilot CLI? (使用 GitHub Copilot 订阅)" }
             "confirm_uv"                { return "安装 uv 包管理器?" }
             "confirm_continue_as_admin" { return "以管理员身份继续?" }
 
             # Info messages
-            "info_libreoffice_purpose"  { return "LibreOffice 用于转换旧版 Office 文档 (.doc/.ppt) 并渲染幻灯片截图" }
+            "info_libreoffice_purpose"  { return "LibreOffice 用于把 PPTX 幻灯片渲染为截图。旧版 .doc/.ppt 转换改由 markitai[legacy] extra 提供" }
             "info_playwright_purpose"   { return "Playwright 用于获取 JavaScript 渲染的网页内容" }
             "info_project_dir"          { return "项目目录" }
             "info_docs"                 { return "文档" }
@@ -201,14 +201,14 @@ function i18n {
             "confirm_serve"             { return "Install Web UI dependencies? (enables markitai serve)" }
             "confirm_ocr"               { return "Install OCR support? (text recognition in scanned PDFs and images, ~150MB)" }
             "confirm_playwright"        { return "Install Playwright browser? (for JS-rendered pages)" }
-            "confirm_libreoffice"       { return "Install LibreOffice? (for Office document conversion)" }
+            "confirm_libreoffice"       { return "Install LibreOffice? (for PPTX slide screenshots)" }
             "confirm_claude_cli"        { return "Install Claude Code CLI? (use your Claude subscription)" }
             "confirm_copilot_cli"       { return "Install Copilot CLI? (use your GitHub Copilot subscription)" }
             "confirm_uv"                { return "Install uv package manager?" }
             "confirm_continue_as_admin" { return "Continue as administrator?" }
 
             # Info messages
-            "info_libreoffice_purpose"  { return "LibreOffice converts legacy Office files (.doc/.ppt) and renders slide screenshots" }
+            "info_libreoffice_purpose"  { return "LibreOffice renders PPTX slides as screenshots. Legacy .doc/.ppt conversion uses the markitai[legacy] extra instead" }
             "info_playwright_purpose"   { return "Playwright fetches JavaScript-rendered web pages" }
             "info_project_dir"          { return "Project directory" }
             "info_docs"                 { return "Documentation" }
@@ -1178,6 +1178,9 @@ function Install-Markitai {
     $lastOutput = @()
 
     if (Test-Path $markitaiToolDir) {
+        # Say something before a step that can take a minute: the sh script
+        # spins here, and this branch was the only silent one.
+        Clack-Info "$(i18n 'installing') $(i18n 'markitai')..."
         # Only an unpinned PyPI install can use the receipt-based upgrade path.
         # Explicit versions and local sources must apply the exact spec below.
         if (
@@ -1239,7 +1242,7 @@ function Install-Markitai {
 # non-interactive install starts with core only unless explicitly opted in.
 $script:MARKITAI_EXTRAS = ""
 $script:MARKITAI_RECEIPT_EXTRAS = @()
-$script:MARKITAI_ALL_FALLBACK_EXTRAS = "browser,extra-fetch,kreuzberg,svg,heif,ocr,serve"
+$script:MARKITAI_ALL_FALLBACK_EXTRAS = "browser,extra-fetch,kreuzberg,svg,heif,legacy,mcp,ocr,serve"
 # Extras the user explicitly turned down. `markitai doctor --suggest-extras`
 # recommends `ocr` unconditionally, so without this list the finalize pass
 # would reinstall exactly what was just declined and make the prompt a lie.

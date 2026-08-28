@@ -364,11 +364,12 @@ class TestCiWiring:
 class TestSourceAvailableLicences:
     """Source-available licences must be declared, not classified as permissive.
 
-    Elastic-2.0 (kreuzberg) forbids offering the software to others as a
-    hosted service — a live concern for a project that ships ``markitai
-    serve``. It contains none of the forbidden markers and no GPL spelling,
-    so it used to fall through to ``permissive`` by accident rather than by
-    decision.
+    Elastic-2.0 and its relatives forbid offering the software to others as
+    a hosted service — a live concern for a project that ships ``markitai
+    serve``. They contain none of the forbidden markers and no GPL
+    spelling, so they used to fall through to ``permissive`` by accident
+    rather than by decision. (kreuzberg was the dependency that prompted
+    this; it has since relicensed to MIT and left the allowlist.)
     """
 
     @pytest.mark.parametrize(
@@ -397,9 +398,26 @@ class TestSourceAvailableLicences:
 
     def test_allowlisted_restricted_dependency_passes(self, audit: ModuleType) -> None:
         assert (
-            audit.audit([audit.PackageLicense(name="kreuzberg", license="Elastic-2.0")])
+            audit.audit(
+                [audit.PackageLicense(name="cairosvg", license="LGPL-3.0-or-later")]
+            )
             == []
         )
+
+    def test_a_relicensed_package_must_be_reviewed_again(
+        self, audit: ModuleType
+    ) -> None:
+        """Leaving the allowlist is what makes a relicense visible.
+
+        kreuzberg shipped under Elastic-2.0, was allowlisted for it, and has
+        since moved to MIT. Keeping the stale entry would have silently
+        waved through a move back.
+        """
+        violations = audit.audit(
+            [audit.PackageLicense(name="kreuzberg", license="Elastic-2.0")]
+        )
+        assert violations
+        assert "ALLOWED_RESTRICTED" in violations[0]
 
     def test_lgpl_is_restricted_but_allowlisted(self, audit: ModuleType) -> None:
         assert audit.classify("LGPL-3.0-or-later") == audit.RESTRICTED

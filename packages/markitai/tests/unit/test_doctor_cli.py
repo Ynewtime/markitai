@@ -388,6 +388,39 @@ class TestSuggestExtras:
         assert "kreuzberg" in result
         assert "svg" in result
 
+    def test_it_offers_every_declared_extra(self) -> None:
+        """The list is derived, not kept by hand.
+
+        It used to be hand-kept, and went stale: `legacy`, `mcp` and
+        `serve` were never offered, so the guided installer promised a
+        batteries-included setup and left out legacy Office conversion,
+        the MCP server and the Web UI.
+        """
+        import importlib.metadata
+
+        from markitai.cli.commands.doctor import suggest_extras
+
+        declared = set(
+            importlib.metadata.metadata("markitai").get_all("Provides-Extra") or []
+        )
+        # The SDK-gated pair is offered only when its CLI is present; "all"
+        # is the union of the rest, not a member.
+        expected = declared - {"all", "claude-agent", "copilot"}
+
+        with patch("markitai.cli.commands.doctor.shutil.which", return_value=None):
+            result = set(suggest_extras())
+
+        assert result == expected, (
+            f"missing {sorted(expected - result)}, unknown {sorted(result - expected)}"
+        )
+
+    def test_all_is_never_offered_alongside_its_members(self) -> None:
+        """`markitai[all,browser,...]` is a contradiction, not a request."""
+        from markitai.cli.commands.doctor import suggest_extras
+
+        with patch("markitai.cli.commands.doctor.shutil.which", return_value=None):
+            assert "all" not in suggest_extras()
+
     def test_claude_agent_included_when_cli_found(self) -> None:
         """claude-agent extra included when claude CLI is in PATH."""
         from markitai.cli.commands.doctor import suggest_extras

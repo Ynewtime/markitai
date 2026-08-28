@@ -129,17 +129,6 @@ Nothing in this section is installed by `pip install markitai`. It applies
 only if you opt into the extra that pulls the package in — including by way
 of `markitai[all]`, which installs every extra at once.
 
-    kreuzberg              markitai[kreuzberg], markitai[all]
-    https://github.com/Goldziher/kreuzberg
-    Licensed under the Elastic License 2.0.
-
-Elastic-2.0 is source-available rather than open source. It permits use,
-copying and modification, but forbids providing the software to others as a
-hosted or managed service, and forbids removing or obscuring its licensing
-functionality. Running `markitai serve` for yourself is unaffected; offering
-a kreuzberg-backed markitai to other people as a service is the case to check
-against the licence text.
-
     cairosvg               markitai[svg], markitai[all]
     https://github.com/Kozea/CairoSVG
     Licensed under LGPL-3.0-or-later.
@@ -149,6 +138,6 @@ all markitai does — carries no obligation to release your own code. Modifying
 cairosvg itself, or shipping it in a form your users cannot replace, does.
 
 Every other extra ships under a permissive licence: claude-agent-sdk,
-github-copilot-sdk, curl-cffi, fastapi, python-multipart, firecrawl-anydoc
-and mcp under MIT or Apache-2.0, playwright and rapidocr under Apache-2.0,
-and pillow-heif and uvicorn under BSD-3-Clause.
+github-copilot-sdk, curl-cffi, fastapi, python-multipart, firecrawl-anydoc,
+kreuzberg and mcp under MIT or Apache-2.0, playwright and rapidocr under
+Apache-2.0, and pillow-heif and uvicorn under BSD-3-Clause.
