@@ -12,6 +12,7 @@ Key features:
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import os
@@ -45,6 +46,13 @@ def _get_console() -> Console:
 
     return get_console()
 
+
+# The server's own loggers. Unlike the list below these are kept at INFO,
+# because for `markitai serve` those lines *are* the output a user reads —
+# the startup banner and the request log. Left alone, uvicorn prints them in
+# its own format, so the same terminal showed two kinds of line and only
+# markitai's carried a timestamp.
+SERVER_LOGGERS = ["uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"]
 
 # Third-party loggers to intercept and route to loguru
 INTERCEPTED_LOGGERS = [
@@ -181,14 +189,21 @@ class InterceptHandler(logging.Handler):
         except ValueError:
             level = record.levelno
 
-        # Use record's built-in location info instead of frame tracing
-        # This is more reliable for intercepted logs
+        # Walk out of the logging machinery so loguru attributes the line to
+        # whoever logged it. Binding the record's own fields is not enough:
+        # loguru's default format reads its native name/function/line, so
+        # every intercepted line used to be stamped with this very method.
+        frame, depth = inspect.currentframe(), 0
+        while frame and (depth == 0 or frame.f_code.co_filename == logging.__file__):
+            frame = frame.f_back
+            depth += 1
+
         logger.bind(
             name=record.name,
             module=record.module,
             function=record.funcName,
             line=record.lineno,
-        ).opt(exception=record.exc_info).log(level, record.getMessage())
+        ).opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
 
 
 def _console_sink(message: Any) -> None:
@@ -380,6 +395,13 @@ def _setup_log_interception() -> None:
         stdlib_logger.propagate = False  # Don't propagate to root logger
         # Only capture WARNING+ from third-party libs to reduce noise
         stdlib_logger.setLevel(logging.WARNING)
+
+    for logger_name in SERVER_LOGGERS:
+        stdlib_logger = logging.getLogger(logger_name)
+        stdlib_logger.handlers.clear()
+        stdlib_logger.addHandler(intercept_handler)
+        stdlib_logger.propagate = False
+        stdlib_logger.setLevel(logging.INFO)
 
 
 def _is_third_party_log(name: str, module: str) -> bool:

@@ -292,7 +292,11 @@ def serve(
         browser_thread.start()
 
     try:
-        uvicorn.run(app, host=host, port=port, log_level="info")
+        # log_config=None keeps uvicorn from reconfiguring the logging it
+        # inherited: its default config replaces the handlers markitai
+        # installed, which is why its lines used to print in uvicorn's own
+        # format while markitai's carried a timestamp.
+        uvicorn.run(app, host=host, port=port, log_level="info", log_config=None)
     finally:
         browser_stop.set()
         if browser_thread is not None:
