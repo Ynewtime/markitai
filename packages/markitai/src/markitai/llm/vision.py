@@ -11,6 +11,7 @@ import asyncio
 import copy
 import hashlib
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -260,6 +261,28 @@ def _guard_degenerate_extracted_text(analysis: ImageAnalysis, context: str) -> b
     return degenerated
 
 
+@dataclass
+class ImagePlan:
+    """One image's analysis request plus what it takes to finish it.
+
+    The live path builds a plan, calls, and finalizes in one breath. The
+    offline path collects ``messages`` into a Batch API job and applies
+    ``finalize_image_plan`` when the answer comes back.
+
+    ``answer`` short-circuits both: an unsupported format or a cache hit is
+    already the final result, and no request should be sent for it.
+    """
+
+    image_path: Path
+    context: str
+    document_context: str
+    language: str
+    cache_key: str
+    cache_content_key: str
+    messages: list[dict[str, Any]]
+    answer: ImageAnalysis | None = None
+
+
 class VisionAnalyzer:
     """Vision analysis service used by LLMProcessor via composition.
 
@@ -342,6 +365,126 @@ class VisionAnalyzer:
             router=router,
         )
 
+    def prepare_image_plan(
+        self,
+        image_path: Path,
+        context: str = "",
+        document_context: str = "",
+    ) -> ImagePlan:
+        """Everything decided before the model is asked about one image.
+
+        Deterministic in (image bytes, document_context, config), so a batch
+        collector can rebuild the identical plan when the answer comes back
+        hours later. ``plan.answer`` is already filled for an image that
+        needs no call at all — an unsupported format, or a cache hit.
+        """
+        if not is_llm_supported_image(image_path.suffix):
+            logger.debug(
+                f"[{image_path.name}] Skipping unsupported format: {image_path.suffix}"
+            )
+            return ImagePlan(
+                image_path=image_path,
+                context=context,
+                document_context=document_context,
+                language="",
+                cache_key="",
+                cache_content_key="",
+                messages=[],
+                answer=ImageAnalysis(
+                    caption=image_path.stem,
+                    description=(
+                        f"Image format {image_path.suffix} not supported for analysis"
+                    ),
+                ),
+            )
+
+        # SHA256 of the base64 as the fingerprint: JPEG files share a header,
+        # so a prefix would collide.
+        _, base64_image = self._get_cached_image(image_path)
+        cache_key = self._image_analysis_cache_key()
+        cache_content_key = _vision_cache_content_key(
+            hashlib.sha256(base64_image.encode()).hexdigest(), document_context
+        )
+        cached = self._engine.persistent_cache.get(
+            cache_key,
+            cache_content_key,
+            context=context,
+            model=self._vision_cache_model_scope,
+        )
+        if cached is not None:
+            logger.debug(f"[{image_path.name}] Persistent cache hit for analyze_image")
+            return ImagePlan(
+                image_path=image_path,
+                context=context,
+                document_context=document_context,
+                language="",
+                cache_key=cache_key,
+                cache_content_key=cache_content_key,
+                messages=[],
+                answer=ImageAnalysis(
+                    caption=cached.get("caption", ""),
+                    description=cached.get("description", ""),
+                    extracted_text=cached.get("extracted_text"),
+                ),
+            )
+
+        language = _detect_document_language(document_context)
+        system_prompt = self._prompt_manager.get_prompt(
+            "image_analysis_system",
+            language=language,
+        )
+        user_prompt = self._prompt_manager.get_prompt(
+            "image_analysis_user",
+            document_context=_document_context_suffix(document_context),
+            language=language,
+        )
+        mime_type = get_llm_effective_mime(image_path.suffix)
+        return ImagePlan(
+            image_path=image_path,
+            context=context,
+            document_context=document_context,
+            language=language,
+            cache_key=cache_key,
+            cache_content_key=cache_content_key,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": user_prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{mime_type};base64,{base64_image}"
+                            },
+                        },
+                    ],
+                },
+            ],
+        )
+
+    def finalize_image_plan(
+        self, plan: ImagePlan, result: ImageAnalysis
+    ) -> ImageAnalysis:
+        """Guard the answer and persist it. Pure local work.
+
+        Runs identically on the live path and on a batch result collected
+        hours later. A degenerate answer is returned but never cached, so
+        the next run asks again instead of serving the damage forever.
+        """
+        if not _guard_degenerate_extracted_text(result, plan.image_path.name):
+            self._engine.persistent_cache.set(
+                plan.cache_key,
+                plan.cache_content_key,
+                {
+                    "caption": result.caption,
+                    "description": result.description,
+                    "extracted_text": result.extracted_text,
+                },
+                model=self._vision_cache_model_scope,
+            )
+        return result
+
     async def analyze_image(
         self,
         image_path: Path,
@@ -364,134 +507,66 @@ class VisionAnalyzer:
         Returns:
             ImageAnalysis with caption and description
         """
-        # Filter unsupported image formats (SVG, BMP, ICO etc.)
-        if not is_llm_supported_image(image_path.suffix):
-            logger.debug(
-                f"[{image_path.name}] Skipping unsupported format: {image_path.suffix}"
-            )
-            return ImageAnalysis(
-                caption=image_path.stem,
-                description=f"Image format {image_path.suffix} not supported for analysis",
-            )
-
-        # Get cached image data and base64 encoding
-        _, base64_image = self._get_cached_image(image_path)
-
-        # Check persistent cache using image hash as key
-        # Use SHA256 hash of base64 as image fingerprint to avoid collisions
-        # (JPEG files share the same header, so first N chars are identical)
-        cache_key = self._image_analysis_cache_key()
-        image_fingerprint = hashlib.sha256(base64_image.encode()).hexdigest()
-        cache_content_key = _vision_cache_content_key(
-            image_fingerprint, document_context
+        plan = self.prepare_image_plan(
+            image_path, context=context, document_context=document_context
         )
-        cached = self._engine.persistent_cache.get(
-            cache_key,
-            cache_content_key,
-            context=context,
-            model=self._vision_cache_model_scope,
-        )
-        if cached is not None:
-            logger.debug(f"[{image_path.name}] Persistent cache hit for analyze_image")
-            # Reconstruct ImageAnalysis from cached dict
-            return ImageAnalysis(
-                caption=cached.get("caption", ""),
-                description=cached.get("description", ""),
-                extracted_text=cached.get("extracted_text"),
-            )
+        if plan.answer is not None:
+            return plan.answer
 
-        # Determine MIME type (converts BMP/TIFF → image/png)
-        mime_type = get_llm_effective_mime(image_path.suffix)
-
-        # Use separated system/user prompts to improve instruction following
-        language = _detect_document_language(document_context)
-        system_prompt = self._prompt_manager.get_prompt(
-            "image_analysis_system",
-            language=language,
-        )
-        doc_ctx = _document_context_suffix(document_context)
-        user_prompt = self._prompt_manager.get_prompt(
-            "image_analysis_user",
-            document_context=doc_ctx,
-            language=language,
-        )
-
-        # Build message with system role and user role with image
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": user_prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
-                    },
-                ],
-            },
-        ]
-
-        # Use "default" model name - smart router will auto-select vision-capable model
-        # since the message contains image content
-        vision_model = "default"
-
-        # Try structured output methods with fallbacks
+        # "default" lets the router pick a vision-capable deployment: the
+        # messages carry image content.
         result = await self._analyze_image_with_fallback(
-            messages,
-            vision_model,
+            plan.messages,
+            "default",
             image_path.name,
             context,
             document_context=document_context,
         )
+        result = await self._retry_until_language_holds(plan, result)
+        return self.finalize_image_plan(plan, result)
 
-        if _should_retry_for_language(result, language):
-            logger.debug(
-                f"[{image_path.name}] Retrying image analysis with stronger "
-                f"{language} language constraint"
-            )
-            retry_messages = copy.deepcopy(messages)
-            retry_instruction = LANGUAGE_RETRY_INSTRUCTION_TEMPLATE.format(
-                language=language
-            )
-            retry_messages[0]["content"] += retry_instruction
-            retry_messages[1]["content"][0]["text"] += retry_instruction
-            result = await self._analyze_image_with_fallback(
-                retry_messages,
-                vision_model,
-                image_path.name,
-                context,
-                document_context=document_context,
-            )
+    async def _retry_until_language_holds(
+        self, plan: ImagePlan, result: ImageAnalysis
+    ) -> ImageAnalysis:
+        """Two more rounds when the model answered in the wrong language.
 
-        if _should_retry_for_language(result, language):
+        First re-ask multimodally with the constraint spelled out, then, if
+        it still drifts, rewrite the text it produced. Both need to see an
+        answer before deciding, which is why the offline path cannot run
+        this half and calls it at collect time instead.
+        """
+        if not _should_retry_for_language(result, plan.language):
+            return result
+
+        logger.debug(
+            f"[{plan.image_path.name}] Retrying image analysis with stronger "
+            f"{plan.language} language constraint"
+        )
+        retry_messages = copy.deepcopy(plan.messages)
+        retry_instruction = LANGUAGE_RETRY_INSTRUCTION_TEMPLATE.format(
+            language=plan.language
+        )
+        retry_messages[0]["content"] += retry_instruction
+        retry_messages[1]["content"][0]["text"] += retry_instruction
+        result = await self._analyze_image_with_fallback(
+            retry_messages,
+            "default",
+            plan.image_path.name,
+            plan.context,
+            document_context=plan.document_context,
+        )
+
+        if _should_retry_for_language(result, plan.language):
             logger.debug(
-                f"[{image_path.name}] Rewriting image analysis into {language} "
-                "after multimodal retries"
+                f"[{plan.image_path.name}] Rewriting image analysis into "
+                f"{plan.language} after multimodal retries"
             )
             result = await self._rewrite_analysis_language(
                 result,
-                language=language,
-                context=context or image_path.name,
-                document_context=document_context,
+                language=plan.language,
+                context=plan.context or plan.image_path.name,
+                document_context=plan.document_context,
             )
-
-        # Guard against VLM degeneration; skip cache persist when truncated
-        degenerated = _guard_degenerate_extracted_text(result, image_path.name)
-
-        # Store in persistent cache
-        if not degenerated:
-            cache_value = {
-                "caption": result.caption,
-                "description": result.description,
-                "extracted_text": result.extracted_text,
-            }
-            self._engine.persistent_cache.set(
-                cache_key,
-                cache_content_key,
-                cache_value,
-                model=self._vision_cache_model_scope,
-            )
-
         return result
 
     async def analyze_images_batch(
