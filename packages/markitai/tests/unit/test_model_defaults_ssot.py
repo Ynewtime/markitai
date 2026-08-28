@@ -45,6 +45,20 @@ _README = _REPO_ROOT / "README.md"
 # still hand out a working model well into its life.
 _RETIREMENT_HORIZON_DAYS = 120
 
+# Defaults whose recorded date is judged to be litellm's error rather than
+# the provider's plan. Each entry needs the evidence, because waiving a
+# retirement warning is exactly the mistake this guard exists to prevent.
+_DISPUTED_RETIREMENT_DATES = {
+    # litellm carries 2026-10-15 on 5 of the 19 spellings of this model
+    # (direct API, Vertex, Azure AI, EU Bedrock) and None on the other 14,
+    # including plain Bedrock, Databricks, Snowflake and DeepInfra. No
+    # Anthropic announcement backs it, and haiku has no 5-generation
+    # successor, so the alternative costs twice as much for no known
+    # reason. Reviewed 2026-08-28; drop this entry if Anthropic confirms.
+    "claude-haiku-4-5",
+    "claude-haiku-4.5",
+}
+
 # Literals that name a provider but are not a default pick. Each one is a
 # prefix or path fragment the code matches against, not a model to send.
 _NOT_A_DEFAULT_PICK = frozenset(
@@ -190,6 +204,9 @@ def test_no_default_is_near_its_retirement() -> None:
     horizon = date.today() + timedelta(days=_RETIREMENT_HORIZON_DAYS)
     expiring: list[str] = []
     for provider, model in PROVIDER_DEFAULT_MODELS.items():
+        bare = model.split("/", 1)[1] if "/" in model else model
+        if bare in _DISPUTED_RETIREMENT_DATES:
+            continue
         raw = _deprecation_date(model)
         if not raw:
             continue

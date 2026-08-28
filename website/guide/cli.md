@@ -579,7 +579,7 @@ Optional Capabilities
 
 LLM
   ✓ LLM API: 1 active model(s) configured
-  ✓ Vision Model: 1 detected: copilot/claude-sonnet-4.6
+  ✓ Vision Model: 1 detected: copilot/claude-haiku-4.5
   ✓ GitHub Copilot SDK: SDK + CLI installed
 
 Authentication

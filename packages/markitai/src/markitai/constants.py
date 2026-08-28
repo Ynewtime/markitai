@@ -341,10 +341,10 @@ PROVIDER_API_KEY_ENV: dict[str, str] = {
 PROVIDER_DEFAULT_MODELS: dict[str, str] = {
     # Subscription / CLI providers (aliases; the CLI resolves the generation)
     "claude-agent": "claude-agent/sonnet",
-    "copilot": "copilot/claude-sonnet-4.6",
+    "copilot": "copilot/claude-haiku-4.5",
     "chatgpt": "chatgpt/gpt-5.6",
     # API-key providers
-    "anthropic": "anthropic/claude-sonnet-5",
+    "anthropic": "anthropic/claude-haiku-4-5",
     "openai": "openai/gpt-5.6-luna",
     "gemini": "gemini/gemini-flash-lite-latest",
     "deepseek": "deepseek/deepseek-v4-flash",

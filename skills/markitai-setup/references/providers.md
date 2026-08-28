@@ -36,7 +36,7 @@ Multiple entries with the same `model_name` load-balance through the litellm rou
 | OpenRouter | `openrouter/google/gemini-3.1-pro` | `OPENROUTER_API_KEY` |
 | Ollama (local server) | `ollama/llama3.2` + `"api_base": "http://localhost:11434"` | none |
 | Claude subscription | `claude-agent/sonnet` (aliases: `sonnet` `opus` `haiku` `inherit`, or full model strings) | Claude Code CLI login; extra: `claude-agent` |
-| Copilot subscription | `copilot/gpt-5.6`, `copilot/claude-sonnet-4.6`, … (plan-dependent; no o1/o3) | Copilot CLI login; extra: `copilot` |
+| Copilot subscription | `copilot/gpt-5.6`, `copilot/claude-haiku-4.5`, … (plan-dependent; no o1/o3) | Copilot CLI login; extra: `copilot` |
 | ChatGPT subscription | `chatgpt/gpt-5.6`, `chatgpt/gpt-5.6-codex`, `chatgpt/codex-mini` | OAuth device flow on first use; no SDK needed |
 
 Gemini has no CLI/subscription route — direct API key or OpenRouter only.

@@ -295,9 +295,9 @@ Examples:
 | Provider | Default model |
 |---|---|
 | Claude Code CLI | `claude-agent/sonnet` |
-| GitHub Copilot | `copilot/claude-sonnet-4.6` |
+| GitHub Copilot | `copilot/claude-haiku-4.5` |
 | ChatGPT | `chatgpt/gpt-5.6` |
-| Anthropic | `anthropic/claude-sonnet-5` |
+| Anthropic | `anthropic/claude-haiku-4-5` |
 | OpenAI | `openai/gpt-5.6-luna` |
 | Gemini | `gemini/gemini-flash-lite-latest` |
 | DeepSeek | `deepseek/deepseek-v4-flash` |
