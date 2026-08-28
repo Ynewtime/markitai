@@ -41,6 +41,8 @@ out/
 
 ::: warning Limitations
 Page screenshots (`--screenshot`) stay under `.markitai/screenshots/` — they are referenced from HTML comments only and are not part of the ingestible corpus.
+
+A profile applies to what the run converts, and never rewrites files it did not produce. Adding `--profile` to a directory that was converted without one leaves the earlier output in its original shape; re-run those inputs to convert them under the profile.
 :::
 
 ## `obsidian` — vault imports

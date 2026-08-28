@@ -41,6 +41,8 @@ out/
 
 ::: warning 限制
 页面截图（`--screenshot`）仍在 `.markitai/screenshots/` 下——它们只被 HTML 注释引用，不属于可摄取语料。
+
+profile 只作用于本次转换的产物，绝不改写它没有生成的文件。对一个此前未带 profile 转换过的目录加上 `--profile`，早先的产物保持原样；需要的话重新转换那批输入。
 :::
 
 ## `obsidian` — 导入 vault
