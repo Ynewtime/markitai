@@ -87,7 +87,7 @@ function i18n {
 
             # Info messages
             "info_libreoffice_purpose"  { return "LibreOffice 用于把 PPTX 幻灯片渲染为截图。旧版 .doc/.ppt 转换改由 markitai[legacy] extra 提供" }
-            "info_chatgpt_route"        { return "ChatGPT 订阅: 无需安装任何东西 - 安装完成后执行 'markitai auth chatgpt login'" }
+            "info_chatgpt_route"        { return "ChatGPT 订阅无需 CLI，也无需 extra（首次使用时登录）" }
             "info_playwright_purpose"   { return "Playwright 用于获取 JavaScript 渲染的网页内容" }
             "info_project_dir"          { return "项目目录" }
             "info_docs"                 { return "文档" }
@@ -210,7 +210,7 @@ function i18n {
 
             # Info messages
             "info_libreoffice_purpose"  { return "LibreOffice renders PPTX slides as screenshots. Legacy .doc/.ppt conversion uses the markitai[legacy] extra instead" }
-            "info_chatgpt_route"        { return "ChatGPT subscription: nothing to install - run 'markitai auth chatgpt login' after setup" }
+            "info_chatgpt_route"        { return "ChatGPT subscription needs no CLI and no extra (it signs in on first use)" }
             "info_playwright_purpose"   { return "Playwright fetches JavaScript-rendered web pages" }
             "info_project_dir"          { return "Project directory" }
             "info_docs"                 { return "Documentation" }
@@ -1976,8 +1976,8 @@ function Run-UserSetup {
     Clack-Section (i18n "section_llm_cli")
     Invoke-OptionalStep -Component "claude_cli" -Action { Install-OptionalClaudeCLI }
     Invoke-OptionalStep -Component "copilot_cli" -Action { Install-OptionalCopilotCLI }
-    # ChatGPT needs no CLI and no extra; without this line the section never
-    # mentions markitai's third subscription route.
+    # This section reports what is installed; ChatGPT installs nothing, so
+    # without this line it looks absent rather than already satisfied.
     Clack-Info (i18n "info_chatgpt_route")
 
     Invoke-BestEffortStep `
@@ -2019,8 +2019,8 @@ function Run-DevSetup {
     Clack-Section (i18n "section_llm_cli")
     Invoke-OptionalStep -Component "claude_cli" -Action { Install-OptionalClaudeCLI }
     Invoke-OptionalStep -Component "copilot_cli" -Action { Install-OptionalCopilotCLI }
-    # ChatGPT needs no CLI and no extra; without this line the section never
-    # mentions markitai's third subscription route.
+    # This section reports what is installed; ChatGPT installs nothing, so
+    # without this line it looks absent rather than already satisfied.
     Clack-Info (i18n "info_chatgpt_route")
 
     Print-Summary
