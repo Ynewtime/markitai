@@ -30,24 +30,17 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          package_json_file: website/package.json
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: website/pnpm-lock.yaml
+          bun-version: latest
 
       - name: Install dependencies
-        run: pnpm install
+        run: bun install
         working-directory: website
 
       - name: Build website
-        run: pnpm docs:build
+        run: bun run docs:build
         working-directory: website
 
       - name: Upload artifact

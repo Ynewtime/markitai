@@ -40,23 +40,16 @@ jobs:
         with:
           ref: ${{ github.event.inputs.tag || github.ref_name }}
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          version: 10.34.5
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: pnpm
-          cache-dependency-path: webapp/pnpm-lock.yaml
+          bun-version: latest
 
       - name: Install dependencies
-        run: pnpm --dir webapp install --frozen-lockfile
+        run: bun install --cwd webapp
 
       - name: Run tests
-        run: pnpm --dir webapp test
+        run: bun run --cwd webapp test
 
       - name: Build webapp and verify packaged assets are in sync
         run: scripts/sync_webapp_static.sh --check
