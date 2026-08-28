@@ -30,6 +30,7 @@ from typing import Any
 
 from loguru import logger
 
+from markitai.constants import DEFAULT_MAX_PAGES_PER_BATCH
 from markitai.llm.batch_api import (
     BatchDocItem,
     BatchRunState,
@@ -132,12 +133,40 @@ def _document_images(base_md: Path, markdown: str, output_dir: Path) -> list[Pat
     return [path for path in found if path.is_file()]
 
 
+def _finalize_doc(
+    processor: Any, plan: Any, result: Any, vision: bool
+) -> tuple[str, str]:
+    """Finish a document plan with the half that built it."""
+    if vision:
+        return processor.documents.finalize_vision_plan(plan, result)
+    return processor.documents.finalize_document_plan(plan, result)
+
+
+def _document_pages(base_md: Path, output_dir: Path) -> list[Path]:
+    """The page screenshots rendered for one document, in page order.
+
+    Unlike assets, these are named by markitai itself —
+    ``f"{input_path.name}.page{n:04d}.{ext}"`` — from the same string that
+    becomes the base ``.md`` name, so the mapping is exact rather than a
+    guess at what an extractor did to the filename.
+    """
+    from markitai.constants import SCREENSHOTS_REL_PATH
+
+    source = base_md.name.removesuffix(".md")
+    shots = base_md.parent / SCREENSHOTS_REL_PATH
+    if not shots.is_dir():
+        return []
+    return sorted(shots.glob(f"{source}.page[0-9][0-9][0-9][0-9].*"))
+
+
 def _prepare_pending(
     processor: Any,
     output_dir: Path,
     *,
     analyze_images: bool = False,
-) -> tuple[list[tuple[BatchDocItem, Any]], int]:
+    analyze_pages: bool = False,
+    max_pages: int = DEFAULT_MAX_PAGES_PER_BATCH,
+) -> tuple[list[tuple[BatchDocItem, Any]], int, list[tuple[Path, str, list[Path]]]]:
     """Build the batch's requests, serving anything already cached.
 
     One request per base .md for the text enhancement, plus — when image
@@ -154,6 +183,7 @@ def _prepare_pending(
         if not p.name.endswith(".llm.md") and ".markitai" not in p.parts
     )
     pending: list[tuple[BatchDocItem, Any]] = []
+    oversized: list[tuple[Path, str, list[Path]]] = []
     cached = 0
     for base_md in base_files:
         # Live runs name the LLM context after the input file (note1.md),
@@ -163,10 +193,22 @@ def _prepare_pending(
         markdown = _strip_frontmatter(base_md.read_text(encoding="utf-8"))
         relative_base = str(base_md.relative_to(output_dir))
 
-        plan = processor.documents._prepare_document_plan(markdown, source)
+        pages = _document_pages(base_md, output_dir) if analyze_pages else []
+        if len(pages) > max_pages:
+            # The live path splits a long document into ordered rounds, and
+            # each batch round is a separate 24-hour wait. Sending every page
+            # in one request instead would be one enormous upload. This
+            # document is enhanced live below; the rest still get the
+            # discount.
+            oversized.append((base_md, source, pages))
+            continue
+        if pages:
+            plan = processor.documents.prepare_vision_plan(markdown, pages, source)
+        else:
+            plan = processor.documents._prepare_document_plan(markdown, source)
         hit = processor._engine.try_cached(plan.call)
         if hit is not None:
-            cleaned, frontmatter = processor.documents.finalize_document_plan(plan, hit)
+            cleaned, frontmatter = _finalize_doc(processor, plan, hit, bool(pages))
             _write_llm_md(processor, base_md, frontmatter, cleaned)
             cached += 1
         else:
@@ -177,6 +219,7 @@ def _prepare_pending(
                         source=source,
                         input_md=f"inputs/{len(pending)}.md",
                         base_md=relative_base,
+                        kind="vision" if pages else "doc",
                     ),
                     plan,
                 )
@@ -206,7 +249,7 @@ def _prepare_pending(
                     image_plan,
                 )
             )
-    return pending, cached
+    return pending, cached, oversized
 
 
 def _strip_frontmatter(text: str) -> str:
@@ -259,9 +302,23 @@ async def run_batch_llm_enhancement(
     processor = create_llm_processor(cfg)
 
     analyze_images = bool(cfg.image.alt_enabled or cfg.image.desc_enabled)
-    pending, cached = _prepare_pending(
-        processor, output_dir, analyze_images=analyze_images
+    pending, cached, oversized = _prepare_pending(
+        processor,
+        output_dir,
+        analyze_images=analyze_images,
+        analyze_pages=bool(cfg.screenshot.enabled),
     )
+    for base_md, source, pages in oversized:
+        logger.info(
+            f"[Batch] {source}: {len(pages)} pages exceed the {DEFAULT_MAX_PAGES_PER_BATCH}-page "
+            "single-call limit; enhancing live at full price — "
+            "batching it would mean one round trip per round, each up to 24h"
+        )
+        markdown = _strip_frontmatter(base_md.read_text(encoding="utf-8"))
+        cleaned, frontmatter = await processor.documents.enhance_document_complete(
+            markdown, pages, source=source
+        )
+        _write_llm_md(processor, base_md, frontmatter, cleaned)
     if cached:
         logger.info(f"[Batch] {cached} request(s) served from cache")
     if not pending:
@@ -540,10 +597,17 @@ async def _finish_batch(
             done += 1
             continue
 
-        plan = processor.documents._prepare_document_plan(
-            (state_dir / item.input_md).read_text(encoding="utf-8"),
-            item.source,
-        )
+        markdown = (state_dir / item.input_md).read_text(encoding="utf-8")
+        vision = item.kind == "vision"
+        if vision:
+            # The screenshots are still where the conversion left them, and
+            # their names derive from the same source string, so the plan
+            # rebuilds identically hours later.
+            plan = processor.documents.prepare_vision_plan(
+                markdown, _document_pages(base_md, output_dir), item.source
+            )
+        else:
+            plan = processor.documents._prepare_document_plan(markdown, item.source)
         try:
             if line is None:
                 raise ConversionError(f"no output line for {item.custom_id}")
@@ -558,9 +622,7 @@ async def _finish_batch(
             )
             if plan.call.validate is not None:
                 result = plan.call.validate(result)
-            cleaned, frontmatter = processor.documents.finalize_document_plan(
-                plan, result
-            )
+            cleaned, frontmatter = _finalize_doc(processor, plan, result, vision)
             processor._engine.write_cache(plan.call, result)
             _account_batch_usage(processor, state, line, item.source)
             _write_llm_md(processor, base_md, frontmatter, cleaned)
@@ -569,10 +631,19 @@ async def _finish_batch(
             logger.warning(
                 f"[Batch] {item.source} failed in batch ({e}); re-running live"
             )
-            markdown = (state_dir / item.input_md).read_text(encoding="utf-8")
-            cleaned, frontmatter = await processor.documents.process_document(
-                markdown, item.source
-            )
+            if vision:
+                (
+                    cleaned,
+                    frontmatter,
+                ) = await processor.documents.enhance_document_complete(
+                    markdown,
+                    _document_pages(base_md, output_dir),
+                    source=item.source,
+                )
+            else:
+                cleaned, frontmatter = await processor.documents.process_document(
+                    markdown, item.source
+                )
             _write_llm_md(processor, base_md, frontmatter, cleaned)
             reran += 1
 

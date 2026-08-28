@@ -170,7 +170,7 @@ class TestPreparePending:
         plan_b = MagicMock()
         processor.documents._prepare_document_plan.side_effect = [plan_a, plan_b]
 
-        pending, cached = _prepare_pending(processor, out)
+        pending, cached, _oversized = _prepare_pending(processor, out)
 
         assert cached == 0
         assert len(pending) == 2
@@ -194,7 +194,7 @@ class TestPreparePending:
             "---\ntitle: Doc A\n---",
         )
 
-        pending, cached = _prepare_pending(processor, out)
+        pending, cached, _oversized = _prepare_pending(processor, out)
 
         assert cached == 1
         assert pending == []

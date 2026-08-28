@@ -1,4 +1,4 @@
-"""`--llm-batch` covers image analysis too.
+"""`--llm-batch` covers image analysis and page screenshots too.
 
 The Batch API bills at half price, and `--alt/--desc` were refused with it —
 a user who wanted image descriptions had to give up the discount on the
@@ -83,7 +83,9 @@ class TestPreparePendingWithImages:
         out.mkdir()
         _write_doc_with_image(out, "a", "a-0001.png")
 
-        pending, cached = _prepare_pending(_processor(), out, analyze_images=True)
+        pending, cached, _oversized = _prepare_pending(
+            _processor(), out, analyze_images=True
+        )
 
         kinds = [item.kind for item, _ in pending]
         assert kinds == ["doc", "image"], kinds
@@ -98,7 +100,9 @@ class TestPreparePendingWithImages:
         out.mkdir()
         _write_doc_with_image(out, "a", "a-0001.png")
 
-        pending, _ = _prepare_pending(_processor(), out, analyze_images=False)
+        pending, _cached, _oversized = _prepare_pending(
+            _processor(), out, analyze_images=False
+        )
 
         assert [item.kind for item, _ in pending] == ["doc"]
 
@@ -110,7 +114,7 @@ class TestPreparePendingWithImages:
         _write_doc_with_image(out, "a", "a-0001.png")
         cached_answer = ImageAnalysis(caption="known", description="from cache")
 
-        pending, cached = _prepare_pending(
+        pending, cached, _oversized = _prepare_pending(
             _processor(plan_answer=cached_answer), out, analyze_images=True
         )
 
@@ -124,7 +128,9 @@ class TestPreparePendingWithImages:
         _write_doc_with_image(out, "a", "a-0001.png")
         _write_doc_with_image(out, "b", "b-0001.png")
 
-        pending, _ = _prepare_pending(_processor(), out, analyze_images=True)
+        pending, _cached, _oversized = _prepare_pending(
+            _processor(), out, analyze_images=True
+        )
 
         ids = [item.custom_id for item, _ in pending]
         assert len(set(ids)) == len(ids), ids
@@ -258,3 +264,85 @@ class TestApplyImageAnswers:
         _apply_image_answers(self._config(alt=True, desc=True), out, {})
 
         assert list(out.iterdir()) == []
+
+
+class TestPreparePendingWithPages:
+    """`--screenshot` documents batch as one vision request each."""
+
+    def _write_pages(self, out: Path, source: str, count: int) -> None:
+        from markitai.constants import SCREENSHOTS_REL_PATH
+
+        shots = out / SCREENSHOTS_REL_PATH
+        shots.mkdir(parents=True, exist_ok=True)
+        for n in range(1, count + 1):
+            (shots / f"{source}.page{n:04d}.jpg").write_bytes(b"\xff\xd8\xff")
+
+    def test_pages_are_found_by_their_exact_name(self, tmp_path: Path) -> None:
+        """Screenshots are named by markitai from the same string that names
+        the base .md, so the mapping is exact — not a guess at what an
+        extractor did to the filename."""
+        from markitai.cli.processors.batch_llm import _document_pages
+
+        out = tmp_path / "out"
+        out.mkdir()
+        (out / "a.pdf.md").write_text("# a", encoding="utf-8")
+        self._write_pages(out, "a.pdf", 3)
+        # A neighbour's pages must not be picked up
+        self._write_pages(out, "b.pdf", 2)
+
+        found = _document_pages(out / "a.pdf.md", out)
+
+        assert [p.name for p in found] == [
+            "a.pdf.page0001.jpg",
+            "a.pdf.page0002.jpg",
+            "a.pdf.page0003.jpg",
+        ]
+
+    def test_a_screenshot_document_becomes_one_vision_request(
+        self, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "out"
+        out.mkdir()
+        (out / "a.pdf.md").write_text("# a\n\nbody", encoding="utf-8")
+        self._write_pages(out, "a.pdf", 3)
+
+        processor = _processor()
+        pending, _cached, oversized = _prepare_pending(
+            processor, out, analyze_pages=True
+        )
+
+        assert [item.kind for item, _ in pending] == ["vision"]
+        assert oversized == []
+        processor.documents.prepare_vision_plan.assert_called_once()
+
+    def test_without_screenshots_it_stays_a_text_request(self, tmp_path: Path) -> None:
+        out = tmp_path / "out"
+        out.mkdir()
+        (out / "a.pdf.md").write_text("# a\n\nbody", encoding="utf-8")
+        self._write_pages(out, "a.pdf", 3)
+
+        pending, _cached, _oversized = _prepare_pending(
+            _processor(), out, analyze_pages=False
+        )
+
+        assert [item.kind for item, _ in pending] == ["doc"]
+
+    def test_a_long_document_is_kept_out_of_the_batch(self, tmp_path: Path) -> None:
+        """One request carrying every page of a 40-page PDF is an enormous
+        upload, and the live path's answer — ordered rounds — costs a
+        separate 24-hour wait per round in a batch."""
+        out = tmp_path / "out"
+        out.mkdir()
+        (out / "a.pdf.md").write_text("# a\n\nbody", encoding="utf-8")
+        self._write_pages(out, "a.pdf", 40)
+
+        pending, _cached, oversized = _prepare_pending(
+            _processor(), out, analyze_pages=True, max_pages=10
+        )
+
+        assert pending == []
+        assert len(oversized) == 1
+        base_md, source, pages = oversized[0]
+        assert base_md.name == "a.pdf.md"
+        assert source == "a.pdf"
+        assert len(pages) == 40

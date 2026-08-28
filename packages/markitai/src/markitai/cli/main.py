@@ -1040,21 +1040,19 @@ def app(
                         "[red]Error: --llm-batch requires --llm.[/red]"
                     )
                     raise SystemExit(1)
-                if cfg.screenshot.enabled or cfg.ocr.enabled:
-                    # These send page images inside the document request. The
-                    # batch's first phase converts with the LLM off, which is
-                    # also the branch that decides not to render those pages —
-                    # so by submission time there is nothing to attach.
-                    flag = "--screenshot" if cfg.screenshot.enabled else "--ocr"
+                if cfg.ocr.enabled:
+                    # --ocr with the LLM off takes the RapidOCR route, which
+                    # renders no page images at all — so by submission time
+                    # there is nothing for the vision request to attach.
+                    # --screenshot does render them, and is supported.
                     stderr_console.print(
-                        f"[red]Error: --llm-batch cannot run {flag} yet.[/red]\n"
-                        "Page images travel inside the document's own request, "
-                        "and the batch converts with the LLM off first, so they "
-                        "are never rendered.\n"
-                        f"[dim]Run without --llm-batch to use {flag} at full "
-                        "price, or without "
-                        f"{flag} to keep the batch discount. --alt/--desc do "
-                        "work with --llm-batch.[/dim]"
+                        "[red]Error: --llm-batch cannot run --ocr yet.[/red]\n"
+                        "The batch converts with the LLM off first, and that "
+                        "is the branch which reads scanned pages with local "
+                        "OCR instead of rendering them for a vision model.\n"
+                        "[dim]Run without --llm-batch to use --ocr at full "
+                        "price. --alt/--desc and --screenshot do work with "
+                        "--llm-batch.[/dim]"
                     )
                     raise SystemExit(1)
 
