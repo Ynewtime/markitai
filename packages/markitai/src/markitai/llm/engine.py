@@ -105,20 +105,60 @@ class RequestBudget:
     def __init__(
         self,
         limit: int,
+        cost_limit: float = 0.0,
         on_exceeded: Callable[[str], None] | None = None,
     ) -> None:
         """Initialize the budget.
 
         Args:
             limit: Max requests per context; ``<= 0`` disables the breaker.
+            cost_limit: Max USD per context; ``<= 0`` disables it. Charged
+                after each answer, because a call's price is not knowable
+                before it is made — so the limit bounds what a document goes
+                on to spend, not the single call that crosses it.
             on_exceeded: Called once per context on the first refusal
                 (e.g. to mark the trip in the usage report).
         """
         self._limit = limit
+        self._cost_limit = cost_limit
         self._on_exceeded = on_exceeded
         self._counts: dict[str, int] = {}
+        self._spent: dict[str, float] = {}
         self._tripped: set[str] = set()
         self._lock = threading.Lock()
+
+    def _trip(self, context: str, reason: str) -> None:
+        """Mark a context tripped, reporting it once however often it refuses."""
+        with self._lock:
+            first = context not in self._tripped
+            if first:
+                self._tripped.add(context)
+        if first:
+            logger.warning(
+                f"[LLM:{context}] {reason}: skipping further LLM enhancement "
+                f"for this document, keeping unenhanced output."
+            )
+            if self._on_exceeded is not None:
+                self._on_exceeded(context)
+
+    def charge(self, context: str, cost: float) -> None:
+        """Account one answer's cost, tripping the breaker once over budget.
+
+        Never raises: the call being charged has already happened and its
+        answer is worth keeping. The next :meth:`spend` for this context is
+        the one that refuses.
+        """
+        if not context or self._cost_limit <= 0:
+            return
+        with self._lock:
+            spent = self._spent.get(context, 0.0) + cost
+            self._spent[context] = spent
+            over = spent > self._cost_limit and context not in self._tripped
+        if over:
+            self._trip(
+                context,
+                f"cost budget exceeded (${spent:.4f} of ${self._cost_limit:.2f})",
+            )
 
     def spend(self, context: str) -> None:
         """Account one request attempt for a context, or refuse it.
@@ -130,29 +170,27 @@ class RequestBudget:
                 its budget. The refused attempt is not counted, so at most
                 ``limit`` requests are ever issued per context.
         """
-        if not context or self._limit <= 0:
+        if not context:
             return
         with self._lock:
-            count = self._counts.get(context, 0)
-            if count < self._limit:
-                self._counts[context] = count + 1
-                return
-            first_trip = context not in self._tripped
-            if first_trip:
-                self._tripped.add(context)
-        if first_trip:
-            logger.warning(
-                f"[LLM:{context}] Request budget exceeded "
-                f"({self._limit} requests): skipping further LLM enhancement "
-                f"for this document, keeping unenhanced output. Raise "
-                f"llm.max_requests_per_document (0 disables) if this "
-                f"document legitimately needs more requests."
+            if context in self._tripped:
+                already_tripped = True
+            else:
+                already_tripped = False
+                if self._limit <= 0:
+                    return
+                count = self._counts.get(context, 0)
+                if count < self._limit:
+                    self._counts[context] = count + 1
+                    return
+        if not already_tripped:
+            self._trip(
+                context,
+                f"request budget exceeded ({self._limit} requests). Raise "
+                f"llm.max_requests_per_document (0 disables) if this document "
+                f"legitimately needs more requests",
             )
-            if self._on_exceeded is not None:
-                self._on_exceeded(context)
-        raise LLMRequestBudgetExceededError(
-            f"[LLM:{context}] request budget of {self._limit} exhausted"
-        )
+        raise LLMRequestBudgetExceededError(f"[LLM:{context}] budget exhausted")
 
     def exceeded(self, context: str) -> bool:
         """Whether the context has tripped the breaker."""
@@ -163,6 +201,7 @@ class RequestBudget:
         """Reset the budget for a context (called between documents)."""
         with self._lock:
             self._counts.pop(context, None)
+            self._spent.pop(context, None)
             self._tripped.discard(context)
 
 

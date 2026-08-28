@@ -182,6 +182,7 @@ class LLMProcessor:
         # the engine; cleared per context by clear_context_usage.
         self._request_budget = RequestBudget(
             limit=config.max_requests_per_document,
+            cost_limit=config.max_cost_per_document_usd,
             on_exceeded=self._record_budget_exceeded,
         )
 
@@ -1071,6 +1072,11 @@ class LLMProcessor:
                     ctx.get("cached_input_tokens", 0) + cached_tokens
                 )
                 ctx["cost_usd"] += cost
+
+        # Outside the usage lock: the breaker keeps its own, and this is the
+        # one place every answer's price passes through.
+        if context:
+            self._request_budget.charge(context, cost)
 
     def get_usage(self) -> dict[str, dict[str, Any]]:
         """Get global usage statistics.

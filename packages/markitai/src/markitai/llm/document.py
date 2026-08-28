@@ -1209,6 +1209,23 @@ class DocumentEnhancer:
                 title=resolved_title,
             )
 
+        # Pre-flight cost guard. Page count is the one thing known before
+        # anything is sent, so an oversized document costs nothing at all —
+        # it drops to text-only enhancement rather than being refused.
+        page_cap = self._config.max_vision_pages_per_document
+        if page_cap > 0 and len(page_images) > page_cap:
+            logger.warning(
+                f"[{source}] {len(page_images)} page images exceed "
+                f"llm.max_vision_pages_per_document ({page_cap}): enhancing "
+                "the text without them. Raise the cap (0 disables) to send "
+                "every page to the vision model."
+            )
+            return await self.process_document(
+                extracted_text,
+                source,
+                title=resolved_title,
+            )
+
         # Single batch: use combined Instructor call (saves one API call)
         if len(page_images) <= max_pages_per_batch:
             logger.info(

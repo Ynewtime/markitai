@@ -79,6 +79,8 @@ markitai config validate ./markitai.json    # 验证指定文件
     },
     "concurrency": 10,
     "max_requests_per_document": 50,
+    "max_cost_per_document_usd": 0,
+    "max_vision_pages_per_document": 0,
     "pure": false,
     "keep_base": false
   },
@@ -476,7 +478,9 @@ ChatGPT 支持的模型：
       "fallbacks": []
     },
     "concurrency": 10,
-    "max_requests_per_document": 50
+    "max_requests_per_document": 50,
+    "max_cost_per_document_usd": 0,
+    "max_vision_pages_per_document": 0
   }
 }
 ```
@@ -489,6 +493,8 @@ ChatGPT 支持的模型：
 | `fallbacks` | list | `[]` | LiteLLM 模型组回退，如 `[{"default": ["backup"]}]`。请求从 `default` 组进入，其他组名的模型只经回退获得流量（仅标准模型）。留空 = 全部模型合并进 `default` 组 |
 | `concurrency` | ≥1 | 10 | 最大并发 LLM 请求数 |
 | `max_requests_per_document` | ≥0 | 50 | 断路器：单文档 LLM 请求数上限（重试全部计入）。触发后跳过该文档剩余增强，保留未增强产物。超大文档请调高；`0` 关闭 |
+| `max_cost_per_document_usd` | ≥0 | `0` | 断路器：单文档花费上限（美元）。每次拿到回答后计费——调用前无法预知价格——所以它约束的是该文档**后续**还能花多少，而非跨过阈值的那一次。触发后跳过剩余增强，保留未增强产物。`0` 关闭 |
+| `max_vision_pages_per_document` | ≥0 | `0` | 断路器：单文档发给视觉模型的页图数上限。**发送前**检查，超限的文档一分钱不花，改为不带视觉增强地转换。`0` 关闭 |
 
 #### 模型权重
 

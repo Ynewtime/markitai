@@ -697,6 +697,20 @@
           "minimum": 0,
           "title": "Max Requests Per Document",
           "type": "integer"
+        },
+        "max_cost_per_document_usd": {
+          "default": 0.0,
+          "description": "Circuit breaker: max USD one document context may spend. Charged after each answer (a call's price is not knowable before making it), so the cap bounds what a document goes on to spend rather than the single call that crosses it. On trip, the rest of that document's enhancement is skipped and the unenhanced output is kept. 0 (default) disables the cap — a limit guessed for someone else's workload turns a large legitimate run into a silent downgrade.",
+          "minimum": 0.0,
+          "title": "Max Cost Per Document Usd",
+          "type": "number"
+        },
+        "max_vision_pages_per_document": {
+          "default": 0,
+          "description": "Circuit breaker: max page images one document may send to a vision model. Checked before anything is sent, so an oversized document costs nothing at all; it converts without vision enhancement instead. This is the deterministic half of the cost guard — page count is known in advance, price is not. 0 (default) disables the cap.",
+          "minimum": 0,
+          "title": "Max Vision Pages Per Document",
+          "type": "integer"
         }
       },
       "title": "LLMConfig",

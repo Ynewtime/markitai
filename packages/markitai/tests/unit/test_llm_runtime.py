@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from markitai.config import LLMConfig
 from markitai.llm import LLMRuntime
 
 
@@ -92,16 +93,12 @@ class TestLLMProcessorContextUsage:
     """Tests for per-context usage tracking in LLMProcessor."""
 
     @pytest.fixture
-    def mock_config(self) -> MagicMock:
-        """Create a mock LLM config."""
-        config = MagicMock()
-        config.concurrency = 10
-        config.model_list = []
-        config.router_settings = MagicMock()
-        config.router_settings.num_retries = 2
-        return config
+    def mock_config(self) -> LLMConfig:
+        """A real config: a stub has to be taught every numeric field the
+        processor reads, and silently breaks when one is added."""
+        return LLMConfig(concurrency=10, model_list=[])
 
-    def test_context_usage_tracking(self, mock_config: MagicMock) -> None:
+    def test_context_usage_tracking(self, mock_config: LLMConfig) -> None:
         """Test that usage is tracked per context."""
         from markitai.llm import LLMProcessor
 
@@ -128,7 +125,7 @@ class TestLLMProcessorContextUsage:
         assert file2_usage["model-b"]["requests"] == 1
         assert "model-a" not in file2_usage
 
-    def test_get_context_cost(self, mock_config: MagicMock) -> None:
+    def test_get_context_cost(self, mock_config: LLMConfig) -> None:
         """Test getting cost for specific context."""
         from markitai.llm import LLMProcessor
 
@@ -142,7 +139,7 @@ class TestLLMProcessorContextUsage:
         assert processor.get_context_cost("file2.pdf") == pytest.approx(0.05)
         assert processor.get_context_cost("nonexistent.pdf") == 0.0
 
-    def test_clear_context_usage(self, mock_config: MagicMock) -> None:
+    def test_clear_context_usage(self, mock_config: LLMConfig) -> None:
         """Test clearing usage for specific context."""
         from markitai.llm import LLMProcessor
 
