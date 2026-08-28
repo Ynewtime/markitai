@@ -32,6 +32,13 @@ features:
     details: 通过可选的 markitai[ocr] extra 使用本地 RapidOCR，或用 --ocr --llm 让视觉模型直接读取页面图像（VLM-OCR）。
 ---
 
+<section class="home-shot" aria-labelledby="shot-title">
+  <h2 id="shot-title">不想敲命令时，有个工作台</h2>
+  <p><code>markitai serve</code> 用同一套转换内核提供本地网页界面——拖入文件、粘贴 URL、实时查看进度、下载结果。</p>
+  <img src="/workbench.zh.png" alt="markitai 网页工作台：文件与 URL 的拖放区，下方是「选项」与 CLI 两个折叠入口。" width="1440" height="760" loading="lazy" />
+  <p class="home-shot-link"><a href="/zh/guide/serve">了解网页工作台 <span aria-hidden="true">→</span></a></p>
+</section>
+
 <section class="home-quickstart" aria-labelledby="quickstart-title">
   <div class="home-quickstart-intro">
     <p class="eyebrow">第一次成功</p>

@@ -32,6 +32,13 @@ features:
     details: Extract text from scanned PDFs and images with local RapidOCR (markitai[ocr]), or let a vision model read the pages directly with --ocr --llm.
 ---
 
+<section class="home-shot" aria-labelledby="shot-title">
+  <h2 id="shot-title">A workbench, when you would rather not type</h2>
+  <p><code>markitai serve</code> runs the same conversion core behind a local web UI — drop files in, paste URLs, watch progress, and download results.</p>
+  <img src="/workbench.png" alt="The markitai web workspace: a drop area for files and URLs, with Options and CLI disclosures beneath it." width="1440" height="760" loading="lazy" />
+  <p class="home-shot-link"><a href="/guide/serve">Read about the web workspace <span aria-hidden="true">→</span></a></p>
+</section>
+
 <section class="home-quickstart" aria-labelledby="quickstart-title">
   <div class="home-quickstart-intro">
     <p class="eyebrow">FIRST SUCCESS</p>

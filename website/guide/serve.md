@@ -4,6 +4,10 @@
 
 Everything runs on your machine: jobs and history live on disk, and nothing leaves the host except the fetch strategies and LLM providers you configure.
 
+![The markitai web workspace: a drop area for files and URLs, with Options and CLI disclosures beneath it.](/workbench.png)
+
+Every conversion option lives behind **Options** — LLM enhancement, OCR, preset, output profile, image analysis, content source, fetch strategy and backend — so the default screen asks nothing. The button carries a summary of what is on, and **CLI** shows the equivalent command for the current settings.
+
 ## Starting the Server
 
 The server requires the `serve` extra (FastAPI + uvicorn):

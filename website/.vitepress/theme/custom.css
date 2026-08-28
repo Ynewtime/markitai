@@ -86,6 +86,34 @@
 }
 
 /* Homepage: show the shortest path to a useful result. */
+/* Home: one look at the workbench, so the web UI is not a surprise buried
+   in the guide. Sized from the capture so the reserved box matches. */
+.home-shot {
+  max-width: 1152px;
+  margin: 64px auto 0;
+  padding: 0 24px;
+  text-align: center;
+}
+.home-shot h2 {
+  font-size: 28px;
+  letter-spacing: -0.02em;
+  margin: 0 0 8px;
+}
+.home-shot > p {
+  color: var(--vp-c-text-2);
+  margin: 0 auto 24px;
+  max-width: 62ch;
+}
+.home-shot img {
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 12px;
+}
+.home-shot-link {
+  margin-top: 16px;
+}
+
 .home-quickstart {
   display: grid;
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
