@@ -1,4 +1,5 @@
 import { act, renderHook } from "@testing-library/react";
+import { jobOptions } from "../lib/jobOptions";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { HistoryEntry, JobSnapshot } from "../api/types";
 
@@ -45,7 +46,7 @@ function snapshot(jobId: string): JobSnapshot {
     total: 1,
     created_at: "2026-07-16T10:00:00Z",
     finished_at: "2026-07-16T10:00:05Z",
-    options: { preset: "minimal", llm: false, ocr: false , profile: null},
+    options: jobOptions({ preset: "minimal", llm: false, ocr: false }),
     items: [],
   };
 }

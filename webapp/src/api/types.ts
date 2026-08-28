@@ -6,12 +6,30 @@ export type JobStatus = "running" | "done";
 export type Preset = "minimal" | "standard" | "rich";
 /** Output shape for a downstream consumer; null keeps the default. */
 export type OutputProfile = "rag" | "obsidian" | "okf";
+export type FetchStrategy =
+  | "auto"
+  | "static"
+  | "playwright"
+  | "defuddle"
+  | "jina"
+  | "cloudflare";
+export type ConversionBackend = "native" | "kreuzberg" | "cloudflare";
 
 export interface JobOptions {
   preset: Preset | null;
   llm: boolean | null;
   ocr: boolean | null;
   profile: OutputProfile | null;
+  /** Individually settable; null leaves whatever the preset decided. */
+  alt: boolean | null;
+  desc: boolean | null;
+  screenshot: boolean | null;
+  screenshot_only: boolean | null;
+  pure: boolean | null;
+  no_cache: boolean | null;
+  no_compress: boolean | null;
+  strategy: FetchStrategy | null;
+  backend: ConversionBackend | null;
 }
 
 export interface CreatedItem {

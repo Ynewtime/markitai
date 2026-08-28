@@ -1,6 +1,7 @@
 import {
   ArrowCounterClockwise,
   ArrowRight,
+  ArrowSquareOut,
   CaretRight,
   Check,
   ClockCounterClockwise,
@@ -12,9 +13,9 @@ import {
   FileText,
   Gear,
   Globe,
-  ArrowSquareOut,
   MagicWand,
   Moon,
+  Sliders,
   Sun,
   TerminalWindow,
   Trash,
@@ -107,6 +108,10 @@ export function XIcon({ size = 16 }: IconProps) {
 
 export function TerminalIcon({ size = 15 }: IconProps) {
   return <TerminalWindow size={size} {...iconProps} />;
+}
+
+export function SlidersIcon({ size = 14 }: IconProps) {
+  return <Sliders size={size} {...iconProps} />;
 }
 
 export function RotateCcwIcon({ size = 13 }: IconProps) {

@@ -17,6 +17,8 @@ import { JobStats } from "./components/JobStats";
 import { LogoMark } from "./components/icons";
 import { PreviewModal } from "./components/PreviewModal";
 import { OptionsBar } from "./components/OptionsBar";
+import type { Advanced } from "./lib/advanced";
+import { ADVANCED_DEFAULTS } from "./lib/advanced";
 import { SettingsModal } from "./components/SettingsModal";
 import { UrlInput } from "./components/UrlInput";
 import {
@@ -143,6 +145,10 @@ export default function App() {
   const [profile, setProfile] = useState<OutputProfile | null>(
     () => readStoredOptions().profile,
   );
+  // Not persisted: these shape one conversion, and a forgotten `--pure` or
+  // `jina` restored on a later visit would be a surprise the collapsed panel
+  // never shows.
+  const [advanced, setAdvanced] = useState<Advanced>(ADVANCED_DEFAULTS);
   useEffect(() => {
     try {
       localStorage.setItem(
@@ -310,10 +316,30 @@ export default function App() {
 
   // Drops always use the options as currently set; any new conversion
   // brings the workspace forward.
-  const optionsRef = useRef<JobOptions>({ preset, llm, ocr, profile });
+  const jobOptions = useCallback(
+    (): JobOptions => ({
+      preset,
+      llm,
+      ocr,
+      profile,
+      // Image analysis is LLM work, so those two only travel when LLM is on
+      // — the server rejects the combination the CLI rejects.
+      alt: llm ? advanced.alt : null,
+      desc: llm ? advanced.desc : null,
+      screenshot: advanced.screenshot || advanced.screenshotOnly,
+      screenshot_only: advanced.screenshotOnly,
+      pure: advanced.pure,
+      no_cache: advanced.noCache,
+      no_compress: advanced.noCompress,
+      strategy: advanced.strategy,
+      backend: advanced.backend,
+    }),
+    [preset, llm, ocr, profile, advanced],
+  );
+  const optionsRef = useRef<JobOptions>(jobOptions());
   useEffect(() => {
-    optionsRef.current = { preset, llm, ocr, profile };
-  }, [preset, llm, ocr, profile]);
+    optionsRef.current = jobOptions();
+  }, [jobOptions]);
   const submitFiles = useCallback(
     (files: File[], fromFolder = false) => {
       let notice: string | null = null;
@@ -735,6 +761,7 @@ export default function App() {
             llm={llm}
             ocr={ocr}
             profile={profile}
+            advanced={advanced}
             llmConfigured={llmConfigured}
             urls={urlList}
             announce={announce}
@@ -742,6 +769,7 @@ export default function App() {
             onLlm={setLlm}
             onOcr={setOcr}
             onProfile={setProfile}
+            onAdvanced={setAdvanced}
           />
           {capHint}
         </main>
@@ -791,6 +819,7 @@ export default function App() {
                     llm={llm}
                     ocr={ocr}
                     profile={profile}
+                    advanced={advanced}
                     llmConfigured={llmConfigured}
                     urls={urlList}
                     announce={announce}
@@ -798,6 +827,7 @@ export default function App() {
                     onLlm={setLlm}
                     onOcr={setOcr}
                     onProfile={setProfile}
+                    onAdvanced={setAdvanced}
                     trailing={archiveDownload}
                   />
                   {capHint}

@@ -652,6 +652,33 @@ def _build_job_config(base: MarkitaiConfig, opts: JobOptions) -> MarkitaiConfig:
     # plain local conversion can carry one too.
     if opts.profile is not None:
         cfg.output.profile = opts.profile
+    # Individual overrides, applied after the preset so an explicit choice
+    # always wins over the bundle. None means "not asked for", which stays
+    # distinct from asked-for-and-off.
+    if opts.alt is not None:
+        cfg.image.alt_enabled = opts.alt
+    if opts.desc is not None:
+        cfg.image.desc_enabled = opts.desc
+    if opts.screenshot is not None:
+        cfg.screenshot.enabled = opts.screenshot
+    if opts.screenshot_only is not None:
+        cfg.screenshot.screenshot_only = opts.screenshot_only
+        if opts.screenshot_only:
+            cfg.screenshot.enabled = True  # as --screenshot-only implies on the CLI
+    if opts.pure is not None:
+        cfg.llm.pure = opts.pure
+    if opts.no_cache is not None:
+        cfg.cache.enabled = not opts.no_cache
+    if opts.no_compress is not None:
+        cfg.image.compress = not opts.no_compress
+    if opts.strategy is not None:
+        cfg.fetch.strategy = opts.strategy
+    # -b/--backend selects a file-conversion path, which lives in two
+    # different flags rather than one setting (see cli/main.py).
+    if opts.backend == "kreuzberg":
+        cfg.fetch.kreuzberg_convert_enabled = True
+    elif opts.backend == "cloudflare":
+        cfg.fetch.cloudflare.convert_enabled = True
     if cfg.llm.enabled and not cfg.llm.model_list:
         logger.warning(
             "[Serve] LLM requested but no models are configured; "

@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { dicts } from "../i18n";
+import { ADVANCED_DEFAULTS } from "../lib/advanced";
 import { OptionsBar } from "./OptionsBar";
 
 const baseProps = {
@@ -14,6 +15,8 @@ const baseProps = {
   onOcr: vi.fn(),
   profile: null,
   onProfile: vi.fn(),
+  advanced: ADVANCED_DEFAULTS,
+  onAdvanced: vi.fn(),
 };
 
 describe("OptionsBar", () => {

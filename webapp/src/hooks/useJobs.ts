@@ -19,6 +19,7 @@ import type {
 } from "../api/types";
 import { detectLocale, dicts } from "../i18n";
 import { serverTimestampMs } from "../lib/format";
+import { emptyJobOptions } from "../lib/jobOptions";
 import { notifyJobDone, requestNotifyPermission } from "../lib/notify";
 
 export { serverTimestampMs } from "../lib/format";
@@ -558,12 +559,10 @@ export function useJobs() {
               }
             : item;
         });
-        const options: JobOptions = retryOptions ?? {
-          preset: snapshot.options.preset ?? null,
-          llm: snapshot.options.llm ?? null,
-          ocr: snapshot.options.ocr ?? null,
-          profile: snapshot.options.profile ?? null,
-        };
+        // Inherit the whole snapshot rather than naming fields: the list
+        // went stale every time an option was added, silently dropping it
+        // from a retry.
+        const options: JobOptions = retryOptions ?? snapshot.options;
         notifiedRef.current.delete(snapshot.job_id);
         setJobs((previous) => ({
           ...previous,
@@ -757,7 +756,7 @@ export function useJobs() {
           jobId: j.jobId,
           status: "running",
           createdAt: null,
-          options: { preset: null, llm: null, ocr: null, profile: null },
+          options: emptyJobOptions(),
         };
       }
       return next;

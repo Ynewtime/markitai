@@ -23,6 +23,19 @@ pytest.importorskip("fastapi")
 
 import httpx
 
+
+def _all_job_options(**set_values: object) -> dict[str, object]:
+    """Every JobOptions field, defaulting to None.
+
+    Written from the model rather than by hand: the snapshot echoes the
+    options back in full, so a hand-listed expectation goes stale the next
+    time an option is added.
+    """
+    from markitai.serve.schemas import JobOptions
+
+    return {name: set_values.get(name) for name in JobOptions.model_fields}
+
+
 from markitai.config import MarkitaiConfig
 from markitai.serve import create_app
 
@@ -150,12 +163,7 @@ class TestJobMeta:
         assert meta["created_at"] == data["created_at"]
         assert meta["finished_at"] == data["finished_at"]
         assert meta["status"] == "done"
-        assert meta["options"] == {
-            "preset": None,
-            "llm": None,
-            "ocr": None,
-            "profile": None,
-        }
+        assert meta["options"] == _all_job_options()
         assert meta["items"] == data["items"]  # full item snapshot
         item = meta["items"][0]
         assert item["output"] == "doc.txt.md"

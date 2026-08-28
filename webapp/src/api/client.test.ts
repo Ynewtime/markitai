@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { jobOptions } from "../lib/jobOptions";
 import {
   ApiError,
   createJob,
@@ -136,7 +137,7 @@ describe("404 semantics", () => {
 });
 
 describe("job-creation request bodies", () => {
-  const options: JobOptions = { preset: "standard", llm: true, ocr: null , profile: null};
+  const options: JobOptions = jobOptions({ preset: "standard", llm: true, ocr: null });
   const created = { job_id: "job-1", items: [] };
 
   it("createJob posts multipart form data with files, urls, and options", async () => {
@@ -218,7 +219,7 @@ describe("access token transport", () => {
     sessionStorage.setItem("markitai.serve.token", "mk_secret");
     const mock = stubFetch(jsonResponse({ job_id: "j1", items: [] }, 200));
 
-    await enhanceJobItem("j1", "i1", { preset: null, llm: true, ocr: null , profile: null});
+    await enhanceJobItem("j1", "i1", jobOptions({ preset: null, llm: true, ocr: null }));
 
     const { init } = sentRequest(mock);
     expect(init.headers).toEqual({

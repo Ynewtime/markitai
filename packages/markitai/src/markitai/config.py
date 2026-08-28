@@ -166,6 +166,13 @@ def _validate_local_only_pattern(pattern: str) -> None:
 # single edit and none of them can drift.
 OutputProfile = Literal["rag", "obsidian", "okf"]
 
+# The fetch strategies and conversion backends a user can ask for, named once
+# so the CLI's choices, the config fields and serve's JobOptions cannot drift.
+FetchStrategy = Literal[
+    "auto", "static", "playwright", "defuddle", "jina", "cloudflare"
+]
+ConversionBackend = Literal["native", "kreuzberg", "cloudflare"]
+
 
 class OutputConfig(BaseModel):
     """Output configuration."""
@@ -787,9 +794,9 @@ class CloudflareConfig(BaseModel):
 class FetchConfig(BaseModel):
     """URL fetch configuration for handling static and JS-rendered pages."""
 
-    strategy: Literal[
-        "auto", "static", "defuddle", "playwright", "jina", "cloudflare"
-    ] = Field(default=DEFAULT_FETCH_STRATEGY, description="Default URL fetch strategy")
+    strategy: FetchStrategy = Field(
+        default=DEFAULT_FETCH_STRATEGY, description="Default URL fetch strategy"
+    )
     remote_consent: Literal["ask", "always", "never"] = Field(
         default="always",
         description=(

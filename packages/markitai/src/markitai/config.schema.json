@@ -353,8 +353,8 @@
           "enum": [
             "auto",
             "static",
-            "defuddle",
             "playwright",
+            "defuddle",
             "jina",
             "cloudflare"
           ],

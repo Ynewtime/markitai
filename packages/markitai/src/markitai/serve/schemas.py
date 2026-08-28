@@ -20,7 +20,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from markitai.config import OutputProfile
+from markitai.config import ConversionBackend, FetchStrategy, OutputProfile
 
 
 class JobOptions(BaseModel):
@@ -32,6 +32,18 @@ class JobOptions(BaseModel):
     llm: bool | None = None
     ocr: bool | None = None
     profile: OutputProfile | None = None
+    # Individually settable rather than only as part of a preset. Each is
+    # tri-state: None leaves whatever the preset (or the server config)
+    # decided, so "not sent" and "explicitly off" stay different answers.
+    alt: bool | None = None
+    desc: bool | None = None
+    screenshot: bool | None = None
+    screenshot_only: bool | None = None
+    pure: bool | None = None
+    no_cache: bool | None = None
+    no_compress: bool | None = None
+    strategy: FetchStrategy | None = None
+    backend: ConversionBackend | None = None
 
 
 class JobRetryBody(BaseModel):

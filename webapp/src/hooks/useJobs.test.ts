@@ -1,4 +1,5 @@
 import { act, renderHook } from "@testing-library/react";
+import { jobOptions } from "../lib/jobOptions";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   ItemPayload,
@@ -162,19 +163,14 @@ function jobSnapshot(
     total: items.length,
     created_at: "2026-07-16T10:00:00Z",
     finished_at: status === "running" ? null : "2026-07-16T10:00:05Z",
-    options: { preset: "minimal", llm: false, ocr: false , profile: null},
+    options: jobOptions({ preset: "minimal", llm: false, ocr: false }),
     items,
   };
 }
 
 async function submitJob(result: { current: ReturnType<typeof useJobs> }) {
   await act(async () => {
-    await result.current.submit([new File(["pdf"], "doc.pdf")], [], {
-      preset: "minimal",
-      llm: false,
-      ocr: false,
-      profile: null,
-    });
+    await result.current.submit([new File(["pdf"], "doc.pdf")], [], jobOptions({ preset: "minimal", llm: false, ocr: false }));
   });
 }
 
@@ -206,7 +202,7 @@ describe("useJobs retry identity", () => {
   it("queues explicit LLM enhancement with the original row identity", async () => {
     const { result, unmount } = renderHook(() => useJobs());
     const value = sessionItem("job-1", "i1", "doc.pdf");
-    const options = { preset: "minimal" as const, llm: true, ocr: false , profile: null};
+    const options = jobOptions({ preset: "minimal" as const, llm: true, ocr: false });
 
     let error: string | null | undefined;
     await act(async () => {
@@ -230,7 +226,7 @@ describe("useJobs retry identity", () => {
           total: 1,
           created_at: "2026-07-15T10:00:00Z",
           finished_at: "2026-07-15T10:00:01Z",
-          options: { preset: "minimal", llm: false, ocr: false , profile: null},
+          options: jobOptions({ preset: "minimal", llm: false, ocr: false }),
           items: [
             {
               item_id: "i1",
@@ -251,7 +247,7 @@ describe("useJobs retry identity", () => {
           ],
         },
         "i1",
-        { preset: "minimal", llm: false, ocr: true , profile: null},
+        jobOptions({ preset: "minimal", llm: false, ocr: true }),
       );
     });
 
@@ -263,14 +259,9 @@ describe("useJobs retry identity", () => {
     });
     expect(result.current.jobs["archived-job"]).toMatchObject({
       status: "running",
-      options: { preset: "minimal", llm: false, ocr: true , profile: null},
+      options: jobOptions({ preset: "minimal", llm: false, ocr: true }),
     });
-    expect(api.retryJobItem).toHaveBeenCalledWith("archived-job", "i1", {
-      preset: "minimal",
-      llm: false,
-      ocr: true,
-      profile: null,
-    });
+    expect(api.retryJobItem).toHaveBeenCalledWith("archived-job", "i1", jobOptions({ preset: "minimal", llm: false, ocr: true }));
     unmount();
   });
 
@@ -293,7 +284,7 @@ describe("useJobs retry identity", () => {
       await result.current.submit(
         [new File(["old"], "old.pdf")],
         [],
-        { preset: "minimal", llm: false, ocr: false , profile: null},
+        jobOptions({ preset: "minimal", llm: false, ocr: false }),
       );
       await result.current.submit(
         [
@@ -301,7 +292,7 @@ describe("useJobs retry identity", () => {
           new File(["second"], "second.pdf"),
         ],
         [],
-        { preset: "minimal", llm: false, ocr: false , profile: null},
+        jobOptions({ preset: "minimal", llm: false, ocr: false }),
       );
     });
 
@@ -314,7 +305,7 @@ describe("useJobs retry identity", () => {
   });
 
   it("sorts Python microsecond timestamps consistently across browsers", () => {
-    const options = { preset: "minimal", llm: false, ocr: false , profile: null} as const;
+    const options = jobOptions({ preset: "minimal", llm: false, ocr: false });
     const jobs: Record<string, SessionJob> = {
       old: {
         jobId: "old",
@@ -351,7 +342,7 @@ describe("useJobs retry identity", () => {
       await result.current.submit(
         [new File(["pdf"], "doc.pdf")],
         [],
-        { preset: "minimal", llm: false, ocr: false , profile: null},
+        jobOptions({ preset: "minimal", llm: false, ocr: false }),
       );
     });
     const original = result.current.items[0];

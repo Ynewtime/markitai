@@ -128,7 +128,9 @@ from markitai.cli.processors.validators import (
 from markitai.config import (
     ConfigFileError,
     ConfigManager,
+    ConversionBackend,
     EnvVarNotFoundError,
+    FetchStrategy,
     OutputProfile,
 )
 from markitai.runs import Outcome
@@ -376,9 +378,7 @@ def run_interactive_mode(ctx: click.Context) -> None:
     "-s",
     "--strategy",
     "fetch_strategy_name",
-    type=click.Choice(
-        ["auto", "static", "playwright", "defuddle", "jina", "cloudflare"]
-    ),
+    type=click.Choice(list(get_args(FetchStrategy))),
     default=None,
     help="URL fetch strategy. auto (default) tries a fallback chain; "
     "static/playwright fetch locally; defuddle/jina/cloudflare use remote "
@@ -388,7 +388,7 @@ def run_interactive_mode(ctx: click.Context) -> None:
     "-b",
     "--backend",
     "file_backend",
-    type=click.Choice(["native", "kreuzberg", "cloudflare"]),
+    type=click.Choice(list(get_args(ConversionBackend))),
     default=None,
     help="File conversion backend. native (default) uses the built-in "
     "converters; kreuzberg needs 'markitai[kreuzberg]'; cloudflare needs "

@@ -23,6 +23,19 @@ pytest.importorskip("fastapi")
 
 import httpx
 
+
+def _all_job_options(**set_values: object) -> dict[str, object]:
+    """Every JobOptions field, defaulting to None.
+
+    Written from the model rather than by hand: the snapshot echoes the
+    options back in full, so a hand-listed expectation goes stale the next
+    time an option is added.
+    """
+    from markitai.serve.schemas import JobOptions
+
+    return {name: set_values.get(name) for name in JobOptions.model_fields}
+
+
 from markitai.config import MarkitaiConfig
 from markitai.serve import create_app
 
@@ -671,12 +684,7 @@ class TestJobLifecycle:
         item = data["items"][0]
         assert item["status"] == "error"
         assert "converter exploded" in item["error"]
-        assert data["options"] == {
-            "preset": None,
-            "llm": None,
-            "ocr": None,
-            "profile": None,
-        }
+        assert data["options"] == _all_job_options()
 
     async def test_result_files_archive_and_cjk_roundtrip(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1421,12 +1429,9 @@ class TestRetry:
             assert inherited.json()["job_id"] == job_id
             await _wait_job_done(client, job_id)
             snap = (await client.get(f"/api/jobs/{job_id}")).json()
-            assert snap["options"] == {
-                "preset": "minimal",
-                "llm": None,
-                "ocr": None,
-                "profile": None,
-            }
+            assert snap["options"] == _all_job_options(
+                preset="minimal", llm=None, ocr=None
+            )
 
             # Body options replace the inherited ones as a whole.
             overridden = await client.post(
@@ -1437,12 +1442,9 @@ class TestRetry:
             assert overridden.json()["job_id"] == job_id
             await _wait_job_done(client, job_id)
             snap = (await client.get(f"/api/jobs/{job_id}")).json()
-            assert snap["options"] == {
-                "preset": "standard",
-                "llm": False,
-                "ocr": None,
-                "profile": None,
-            }
+            assert snap["options"] == _all_job_options(
+                preset="standard", llm=False, ocr=None
+            )
 
             # Same validation as POST /api/jobs.
             bad_key = await client.post(

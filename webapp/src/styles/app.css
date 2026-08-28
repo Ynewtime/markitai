@@ -620,6 +620,74 @@
     cursor: not-allowed;
   }
 
+  /* Advanced options: a full-width row under the options bar, so opening it
+     pushes nothing sideways and the main row keeps its single-line layout. */
+  .advwrap {
+    flex-basis: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 4px;
+    padding: 14px 16px;
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-sm);
+    background: var(--surface);
+  }
+  .advrow {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+  }
+  .advlbl {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-3);
+    min-width: 68px;
+  }
+  .advcheck {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 13px;
+    color: var(--text-2);
+    cursor: pointer;
+  }
+  .advcheck.off {
+    color: var(--text-4);
+    cursor: not-allowed;
+  }
+  .advcheck input {
+    accent-color: var(--accent);
+    cursor: inherit;
+  }
+  .advselect {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 13px;
+    color: var(--text-2);
+  }
+  .advselect select {
+    height: 28px;
+    padding: 0 6px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-1);
+    background: var(--surface);
+    border: 1px solid var(--hairline-strong);
+    border-radius: var(--r-sm);
+    cursor: pointer;
+  }
+  /* A setting made once and forgotten would otherwise shape every later
+     conversion invisibly, since the panel is collapsed by default. */
+  .advdot {
+    width: 5px;
+    height: 5px;
+    border-radius: 999px;
+    background: var(--accent);
+  }
+
   .switch {
     width: 34px;
     height: 20px;

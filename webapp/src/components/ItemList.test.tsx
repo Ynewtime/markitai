@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import { jobOptions } from "../lib/jobOptions";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -41,7 +42,7 @@ function Harness() {
           jobId: "job-1",
           status: "done",
           createdAt: "2026-07-16T03:52:00.000+08:00",
-          options: { preset: "minimal", llm: false, ocr: false , profile: null},
+          options: jobOptions({ preset: "minimal", llm: false, ocr: false }),
         },
       }}
       showCost={false}
@@ -113,7 +114,7 @@ describe("merged task ordering", () => {
         jobId: "target",
         status: "running",
         createdAt: "2026-07-16T11:00:00.000+08:00",
-        options: { preset: "minimal", llm: false, ocr: false , profile: null},
+        options: jobOptions({ preset: "minimal", llm: false, ocr: false }),
       },
     };
     expect(mergeLedgerRows([adopted], jobs, entries).map((row) => row.key)).toEqual([
@@ -144,7 +145,7 @@ describe("merged task ordering", () => {
         jobId: "batch",
         status: "done",
         createdAt: "2026-07-16T11:00:00.000+08:00",
-        options: { preset: "minimal", llm: false, ocr: false , profile: null},
+        options: jobOptions({ preset: "minimal", llm: false, ocr: false }),
       },
     };
     expect(

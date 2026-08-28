@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import type { OutputProfile, Preset } from "../api/types";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import type { Dict } from "../i18n";
+import type { Advanced } from "../lib/advanced";
+import { AdvancedOptions } from "./AdvancedOptions";
 import { CliCommand } from "./CliCommand";
 
 const PRESETS: Preset[] = ["minimal", "standard", "rich"];
@@ -21,6 +23,7 @@ export function OptionsBar({
   llm,
   ocr,
   profile,
+  advanced,
   llmConfigured,
   urls,
   announce,
@@ -28,6 +31,7 @@ export function OptionsBar({
   onLlm,
   onOcr,
   onProfile,
+  onAdvanced,
   trailing,
 }: {
   t: Dict;
@@ -35,6 +39,7 @@ export function OptionsBar({
   llm: boolean;
   ocr: boolean;
   profile: OutputProfile | null;
+  advanced: Advanced;
   llmConfigured: boolean;
   urls: string[];
   announce: (msg: string) => void;
@@ -42,6 +47,7 @@ export function OptionsBar({
   onLlm: (v: boolean) => void;
   onOcr: (v: boolean) => void;
   onProfile: (p: OutputProfile | null) => void;
+  onAdvanced: (a: Advanced) => void;
   /** Extra row member after the CLI disclosure — the workspace composer parks
    * its archive download at the row's right edge; home passes nothing. */
   trailing?: ReactNode;
@@ -111,6 +117,7 @@ export function OptionsBar({
           ))}
         </div>
       </div>
+      <AdvancedOptions t={t} value={advanced} llm={llm} onChange={onAdvanced} />
       <CliCommand
         t={t}
         urls={urls}
