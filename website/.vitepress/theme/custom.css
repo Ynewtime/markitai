@@ -88,9 +88,34 @@
 /* Homepage: show the shortest path to a useful result. */
 /* Home: one look at the workbench, so the web UI is not a surprise buried
    in the guide. Sized from the capture so the reserved box matches. */
+/* The hero and its four feature cards are the pitch: they should land as one
+   screen, not as a block the reader has to scroll to finish. The nav is 64px;
+   the rest is the hero plus the features, centered in what remains. */
+@media (min-width: 960px) and (min-height: 760px) {
+  .VPHome .VPHero + .VPFeatures {
+    padding-bottom: 0;
+  }
+  /* The nav is fixed and overlays the hero, so the offset has to include it:
+     a flat value put the title underneath the nav bar. */
+  .VPHome > .VPHero {
+    padding-top: calc(var(--vp-nav-height) + 40px);
+  }
+  .VPHome .VPHero .container {
+    padding-bottom: 8px;
+  }
+}
+
+/* Below the fold the page was cramped: the workbench section started right
+   under the feature cards with a hairline between and little else. Give both
+   sides of that divider room, without touching the screen above it. */
+.VPHome .VPFeatures {
+  padding-bottom: 96px;
+  border-bottom: 1px solid var(--vp-c-divider);
+}
+
 .home-shot {
   max-width: 1152px;
-  margin: 64px auto 0;
+  margin: 96px auto 0;
   padding: 0 24px;
   text-align: center;
 }
