@@ -479,22 +479,28 @@ def _write_base_md_fallback(ctx: ConversionContext) -> None:
     """
     if ctx.conversion_result is None or ctx.output_file is None:
         return
-    if ctx.output_file.exists():
-        return  # Already written (e.g., --keep-base was set)
-    title = ctx.conversion_result.metadata.get("title")
-    base_markdown = append_reference_image_comments(
-        ctx.conversion_result.markdown,
-        ctx.conversion_result.metadata.get("reference_images"),
-    )
-    base_md_content = add_basic_frontmatter(
-        base_markdown,
-        ctx.input_path.name,
-        title=title if isinstance(title, str) else None,
-    )
-    atomic_write_text(ctx.output_file, base_md_content)
-    logger.warning(
-        f"[Core] LLM processing failed, wrote base .md as fallback: {ctx.output_file}"
-    )
+    if not ctx.output_file.exists():  # may already exist under --keep-base
+        title = ctx.conversion_result.metadata.get("title")
+        base_markdown = append_reference_image_comments(
+            ctx.conversion_result.markdown,
+            ctx.conversion_result.metadata.get("reference_images"),
+        )
+        base_md_content = add_basic_frontmatter(
+            base_markdown,
+            ctx.input_path.name,
+            title=title if isinstance(title, str) else None,
+        )
+        atomic_write_text(ctx.output_file, base_md_content)
+        logger.warning(
+            f"[Core] LLM processing failed, wrote base .md as fallback: "
+            f"{ctx.output_file}"
+        )
+
+    # Every failure path returns before the pipeline's profile step, so
+    # without this the one document whose LLM call failed keeps the default
+    # layout while the rest of the batch gets the profile's — a reader
+    # consuming the directory by profile then trips on that one file.
+    apply_output_profile(ctx)
 
 
 def get_saved_images(ctx: ConversionContext) -> list[Path]:
