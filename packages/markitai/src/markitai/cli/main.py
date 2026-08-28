@@ -1041,9 +1041,20 @@ def app(
                     )
                     raise SystemExit(1)
                 if cfg.screenshot.enabled or cfg.ocr.enabled:
+                    # These send page images inside the document request. The
+                    # batch's first phase converts with the LLM off, which is
+                    # also the branch that decides not to render those pages —
+                    # so by submission time there is nothing to attach.
+                    flag = "--screenshot" if cfg.screenshot.enabled else "--ocr"
                     stderr_console.print(
-                        "[red]Error: --llm-batch does not support "
-                        "--screenshot/--ocr (vision paths) yet.[/red]"
+                        f"[red]Error: --llm-batch cannot run {flag} yet.[/red]\n"
+                        "Page images travel inside the document's own request, "
+                        "and the batch converts with the LLM off first, so they "
+                        "are never rendered.\n"
+                        f"[dim]Run without --llm-batch to use {flag} at full "
+                        "price, or without "
+                        f"{flag} to keep the batch discount. --alt/--desc do "
+                        "work with --llm-batch.[/dim]"
                     )
                     raise SystemExit(1)
 
