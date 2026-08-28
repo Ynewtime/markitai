@@ -17,14 +17,8 @@ _DETECTED = [("Claude CLI", True), ("ChatGPT", True)]
 def test_onboarding_only_ever_picks_the_declared_defaults() -> None:
     """Automatic setup must use models available to ordinary accounts.
 
-    It used to say that by excluding the string "gpt-5.6", which was a
-    limited preview when the check was written (2026-07). That spelling
-    aged into the opposite of its intent: gpt-5.6 is the current generation
-    and gpt-5.6-luna is now the cheapest OpenAI model markitai can pick.
-
-    The durable form of the rule is that onboarding picks from
-    ``PROVIDER_DEFAULT_MODELS`` and nowhere else — vetting a model then
-    happens once, in the table, where the retirement guard also looks.
+    It picks from ``PROVIDER_DEFAULT_MODELS`` and nowhere else, so a model
+    is vetted once, in the table, where the retirement guard also looks.
     """
     from markitai.cli.commands.init import _build_config
 
@@ -35,7 +29,6 @@ def test_onboarding_only_ever_picks_the_declared_defaults() -> None:
         PROVIDER_DEFAULT_MODELS["chatgpt"],
         PROVIDER_DEFAULT_MODELS["openai"],
     ]
-    assert set(models) <= set(PROVIDER_DEFAULT_MODELS.values())
 
 
 class TestInitAtomicWrites:
