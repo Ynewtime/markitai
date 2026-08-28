@@ -29,7 +29,7 @@ Authoritative long-form docs: <https://markitai.dev/guide/cli>. This file keeps 
 | `-j, --batch-concurrency <n>` | Concurrent file tasks (default 10) |
 | `--url-concurrency <n>` | Concurrent URL fetches (default 5), separate so slow URLs don't block files |
 | `--llm-concurrency <n>` | Concurrent LLM requests (default 10) |
-| `--llm-batch` | Directory batches only: run the LLM stage through the provider's Batch API at half price. Needs a single-model OpenAI or Anthropic pool. Waits up to `--llm-batch-timeout` (default 1h), then hands off |
+| `--llm-batch` | Directory batches only: run the LLM stage through the provider's Batch API at half price. Needs a single-model OpenAI or Anthropic pool. Covers `--alt`/`--desc`; refuses `--screenshot`/`--ocr`, whose page images cannot be assembled while the batch's first phase runs with the LLM off. Waits up to `--llm-batch-timeout` (default 1h), then hands off |
 | `--llm-batch-collect <id>` | Finish a handed-off batch later; needs `-o` pointing at the original output directory, no input argument |
 | `--record-history` / `--no-record-history` | Record this run in `markitai serve`'s history (env `MARKITAI_RECORD_HISTORY`, config `history.record`); skipped in stdout mode |
 

@@ -28,7 +28,7 @@ out = markitai.convert("document.pdf", output_dir="out/", profile="rag")
 Default output keeps images in a hidden `.markitai/assets/` directory. Most ingestors skip hidden paths (LlamaIndex `SimpleDirectoryReader` does by default), so images silently disappear from the corpus. The `rag` profile makes the output ingestor-friendly:
 
 - **Visible assets**: images move to `assets/` and markdown references are rewritten to match. Emptied hidden directories are removed.
-- **Page markers**: PDF outputs carry `<!-- page: N -->` comments. They are rewritten from the converter's own `<!-- Page number: N -->` markers, which are placed at pymupdf page boundaries — positions are never guessed.
+- **Page markers**: PDF outputs carry `<!-- page: N -->` comments. They are rewritten from the converter's own `<!-- Page number: N -->` markers, which every path that splits a document into pages writes at a real page boundary — text extraction, `--ocr`, and screenshot-only alike. Positions are never guessed.
 - **Table checks**: the LLM cleaning prompts gain a hard column-consistency constraint, and after writing, pipe tables whose rows disagree with the header column count are reported as warnings (detection only, content is never rewritten).
 
 ```text
@@ -40,7 +40,7 @@ out/
 ```
 
 ::: warning Limitations
-Page markers exist only on the standard PDF text-extraction path. `--ocr` and screenshot-only outputs have no page markers to rewrite. Page screenshots (`--screenshot`) stay under `.markitai/screenshots/` — they are referenced from HTML comments only and are not part of the ingestible corpus.
+Page screenshots (`--screenshot`) stay under `.markitai/screenshots/` — they are referenced from HTML comments only and are not part of the ingestible corpus.
 :::
 
 ## `obsidian` — vault imports

@@ -9,6 +9,10 @@
 
 ### 新增
 
+- **`--llm-batch` 现在覆盖图片分析**：过去它与 `--alt`/`--desc` 互斥，想要图片描述的用户只能在「整轮放弃 Batch API 半价」和「放弃描述」之间二选一。两类请求现在同批提交——它们本就互不依赖，因为 alt 文本是回填进已写好的 `.llm.md`，而不是喂给文档调用。批处理真正做不到的是语言重试（必须先看到答案才能决定要不要再问），这一次改在 collect 时实时补一个调用，而不是再等一轮 24 小时。`--screenshot`/`--ocr` 仍然拒绝，但现在会说清原因
+- **网页端可以选输出格式（output profile）**：`--profile` 在 CLI 和配置文件里一直有效，浏览器里却完全没有对应控件。新控件与 Preset 并列，并且**刻意不随 LLM 开关隐藏**——profile 塑造的是输出形状而非增强，纯本地转换同样能带，而那批用户恰恰最需要可见的 `assets/` 布局
+- **两个限制单文档花费的断路器**：`llm.max_vision_pages_per_document` 在发送前检查，超限的文档一分钱不花，改为不带视觉增强地转换；`llm.max_cost_per_document_usd` 在每次拿到回答后计费——调用前无法预知价格——因此它约束的是该文档**后续**还能花多少，而非跨过阈值的那一次。两者都扩展自既有的单文档断路器，触发后的降级行为完全一致：跳过该文档剩余增强、保留未增强产出，一个失控文件不会拖垮整批。两者默认关闭：按别人的工作量猜出来的阈值，只会把一次正当的大批量运行变成静默降级
+
 - **markitai 现在既是库也是 CLI**：`markitai.convert("report.pdf")` 与异步孪生 `aconvert` 返回类型化的 `ConversionOutput`——base 与 LLM 增强两版 markdown、解析后的 frontmatter、资产与截图路径、逐图分析与用量汇总——复用 CLI 的配置层级与 flag 语义，而非另造一套配置。解析器噪声抑制下沉到 CLI 之下，库调用保持 stdout 干净（subprocess 回归测试锁定）；`aconvert` 将 CPU 密集转换放入工作线程、不阻塞事件循环。0.x 阶段标记为暂定
 - **MCP agent 通过 `mcp` extra 接入 markitai**：`markitai.mcp` 随主 wheel 一起发布，经 stdio 暴露 `convert_document`、`convert_url`、`batch_convert`、`job_status` 四个工具——`claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp` 一条命令即完成接入，不再有第二个包要发布和对版本。结果写盘并附截断的内联预览，大文档不会灌爆 agent 的上下文；LLM 增强默认关闭、调用方按需开启
 - **`--profile rag|obsidian|okf` 按消费方塑形输出**：`rag` 把图片从隐藏的 `.markitai/` 目录移到可见的 `assets/`（LlamaIndex `SimpleDirectoryReader` 等常见摄取器默认跳过隐藏路径）、把 PDF 页标记改写为 `<!-- page: N -->`、对行列数不齐的管道表告警；`obsidian` 增加可选的 `![[wikilink]]` 图片引用；`okf` 把 frontmatter 映射到 Open Knowledge Format v0.2 字段名。profile 与 preset 正交——preset 决定跑什么，profile 决定文件长什么样——不带 profile 时输出与之前字节级一致。`images.json` 边车文件的 schema 现已冻结、写入文档并由测试守护
@@ -45,6 +49,7 @@
 
 ### 移除
 
+- **`llm.prompts.page_content_system` 与 `llm.prompts.page_content_user` 两个配置项**，连同它们配置的那条代码路径。其 docstring 声称 OCR+LLM 和 PPTX+LLM 模式在用它，实际两条早已改道，留下一对 prompt、两个配置字段和一段 schema 为一条任何文档都到不了的路径续命——而这两个旋钮就印在公开的示例配置里，设了没有任何效果
 - **三平台 Office 自动化整体退役**——约 1.3k 行的 Windows COM、macOS AppleScript 和 LibreOffice CLI 驱动代码，连同围绕它建立的批量预转换机制一并删除。它服务的格式改由 `markitai[legacy]` 覆盖；LibreOffice 和 Microsoft Office 的相关文案收窄到仍在使用它们的 PPTX 幻灯片渲染
 - **LLM 路径里两层多余的防御**：图片分析在结构化阶梯之下还挂着一个手写的 JSON 模式策略，而阶梯自己的底层 rung 做的正是同一件修复；另有一份手抄的 Copilot 价格表，实际流量早已不再走到它。两者都在验证过替代路径的真实调用之后才删除
 - **FFmpeg 不再被检查、宣传或安装**：markitai 从来不支持音视频——格式表里没有任何相关条目，依赖注释也一直写着 markitdown 的 audio extras 未被使用——然而 `doctor` 却把 FFmpeg 呈现为「音视频文件处理」能力，`init` 会检查它，两个安装脚本还会主动询问是否安装
@@ -52,6 +57,10 @@
 
 ### 修复
 
+- **Azure OpenAI 部署终于用上配置里写的 `api_version`**：文档给出的 Azure 示例带着这个字段，但 `litellm_params` 从未声明它，而 pydantic 默认忽略未知键——于是它被无声接受、解析时丢弃，从未到达 litellm。照文档一字不差抄来的配置，实际是用 litellm 推断出的某个版本发出去的，且没有任何提示
+- **`--ocr` 转出来的 PDF 重新按页划分**：两条 OCR 路径都用空行直接拼接各页，screenshot-only 则写成 `<!-- Page 3 -->`——一种没有任何读取方能匹配的写法。下游全靠这个标记找页：LLM 分批按它切分、结构漂移保护以它为准、输出 profile 靠它改写以供发布——所以 OCR 产出到达它们时是一整段没有页边界的文本。这一切都不会报错，因为「确实没有页的文档」看起来一模一样。标记的写法现已收敛到一处，并有守护测试防止出现第二份拷贝
+- **LLM 调用失败的那篇文档，布局与其余保持一致**：五条失败路径全都在管线的 profile 步骤之前返回，于是 `--profile` 运行中失败的那一篇保留了默认资源布局，而其余全部换成了 profile 的布局——单看各自都合法，但按 profile 消费这批文件的下游会在这一篇上踩空
+- **`--llm-batch` 拒绝 `--screenshot`/`--ocr` 时会说清原因**：原提示既没讲原因也没给出路。页图走在文档请求内部，而 batch 第一阶段是关掉 LLM 转换的——那正是决定不渲染页图的分支。现在提示会指出你传的是哪个开关、一句话讲清约束，并给出两条出路
 - **对齐 defuddle 0.19.3 的六个抽取缺口**：可关闭的 `aria-hidden` 浮层内的正文被保留（上游 issue 232）；CodeMirror 渲染的代码块保住内容与语言；文中图片行不再被当作相关文章卡片删除；Substack Notes 获得专用 extractor、不再携带页面装饰；SVG 图形保留内容并解析外部 CSS 的回退样式；行内相关文章块不再连带删掉周围正文。resync 顺带修复了它新暴露的问题：Hugo admonition、lightbox 图片去重、LaTeX 图片服务、`<noscript>` 图片回退与带行号的代码布局
 - **嵌入式 PDF 图片在符号链接与树外输出目录下不再丢失**：pymupdf4llm 写出的图片路径可能是符号链接解析形（macOS `/tmp` → `/private/tmp`）或相对进程工作目录的形式，单一拼写的引用改写会漏掉它们——markdown 里留下绝对路径，alt 文本、引用校验、资产发现全部匹配不上。现在三种拼写全部改写
 - **`router_settings.fallbacks` 真实生效**：配置的回退组现在会在主组 deployment 失败时接管。该设置此前有文档但被整体绕过——请求直接按 deployment id 寻址，litellm 的回退机制根本看不到可回退的组。未命名 `default` 组的配置现在启动即报错，而不是静默绕过设置

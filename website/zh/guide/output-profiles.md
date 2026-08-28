@@ -28,7 +28,7 @@ out = markitai.convert("document.pdf", output_dir="out/", profile="rag")
 默认输出把图片放在隐藏的 `.markitai/assets/` 目录里。多数摄取器会跳过隐藏路径（LlamaIndex 的 `SimpleDirectoryReader` 默认如此），图片会从语料中静默消失。`rag` profile 让输出对摄取器友好：
 
 - **可见资产**：图片移到 `assets/`，markdown 中的引用同步改写。清空后的隐藏目录会被删除。
-- **页标记**：PDF 输出带有 `<!-- page: N -->` 注释。它由转换器自身的 `<!-- Page number: N -->` 标记改写而来，后者落在 pymupdf 的页边界上——位置从不靠猜测。
+- **页标记**：PDF 输出带有 `<!-- page: N -->` 注释。它由转换器自身的 `<!-- Page number: N -->` 标记改写而来——文本抽取、`--ocr`、纯截图，每条按页切分文档的路径都会把它写在真实的页边界上，位置从不靠猜测。
 - **表格校验**：LLM 清洗 prompt 增加列数一致性硬约束；写出后，行与表头列数不一致的管道表会以 warning 报告（仅检测，不改写内容）。
 
 ```text
@@ -40,7 +40,7 @@ out/
 ```
 
 ::: warning 限制
-页标记仅存在于标准 PDF 文本提取路径。`--ocr` 与纯截图输出没有可改写的页标记。页面截图（`--screenshot`）仍在 `.markitai/screenshots/` 下——它们只被 HTML 注释引用，不属于可摄取语料。
+页面截图（`--screenshot`）仍在 `.markitai/screenshots/` 下——它们只被 HTML 注释引用，不属于可摄取语料。
 :::
 
 ## `obsidian` — 导入 vault
