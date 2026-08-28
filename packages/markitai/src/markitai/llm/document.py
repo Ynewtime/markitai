@@ -228,6 +228,22 @@ def _strip_leaked_markdown_boundaries(content: str) -> str:
 
 
 @dataclass
+class VisionDocumentPlan:
+    """One document's vision-enhanced call plus what finishing it needs.
+
+    The sibling of :class:`DocumentPlan` for the path that sends page
+    images alongside the text. Deterministic in (text, page images, source,
+    config), so a batch collector rebuilds the identical plan when the
+    answer comes back; ``call.validate`` carries the placeholder repair, so
+    a batched result is post-processed exactly as a live one is.
+    """
+
+    call: LLMCall
+    source: str
+    resolved_title: str | None
+
+
+@dataclass
 class DocumentPlan:
     """One document's structured LLM call plus its post-processing state.
 
@@ -1346,16 +1362,14 @@ class DocumentEnhancer:
 
         return cleaned, frontmatter
 
-    async def _enhance_with_frontmatter(
+    def prepare_vision_plan(
         self,
         extracted_text: str,
         page_images: list[Path],
         source: str,
         original_title: str | None = None,
-    ) -> tuple[str, str]:
-        """Enhance document with vision and generate frontmatter in one call.
-
-        Uses Instructor for structured output.
+    ) -> VisionDocumentPlan:
+        """Build the vision-enhanced call for one document, without issuing it.
 
         Args:
             extracted_text: Text to clean
@@ -1364,7 +1378,9 @@ class DocumentEnhancer:
             original_title: Optional explicit title from converter metadata
 
         Returns:
-            Tuple of (cleaned_markdown, frontmatter_yaml)
+            The plan: a structured call plus what finalizing it needs. The
+            live path issues it immediately; the offline path collects it
+            into a Batch API job and finalizes hours later.
         """
         from markitai.utils.frontmatter import resolve_document_title
 
@@ -1456,42 +1472,62 @@ class DocumentEnhancer:
                 cleaned_markdown=cleaned, frontmatter=result.frontmatter
             )
 
-        call = LLMCall(
-            purpose="enhance_frontmatter",
-            messages=messages,
-            response_model=EnhancedDocumentResult,
-            context=source,
-            cache_key=cache_key,
-            cache_content=cache_content,
-            cache_model=self._vision_cache_model_scope,
-            validate=_postprocess,
-            serialize=_document_result_to_cache_value,
-            deserialize=_document_result_from_cache_value,
-            router=self._get_vision_router(),
+        return VisionDocumentPlan(
+            call=LLMCall(
+                purpose="enhance_frontmatter",
+                messages=messages,
+                response_model=EnhancedDocumentResult,
+                context=source,
+                cache_key=cache_key,
+                cache_content=cache_content,
+                cache_model=self._vision_cache_model_scope,
+                validate=_postprocess,
+                serialize=_document_result_to_cache_value,
+                deserialize=_document_result_from_cache_value,
+                router=self._get_vision_router(),
+            ),
+            source=source,
+            resolved_title=resolved_title,
         )
-        response, _raw_response = await self._engine.complete_structured(call)
 
-        # No hit-path repair: the key is prompt-scoped, so every reachable
-        # cache entry was written by _postprocess with the echo strip and
-        # the image-ref fix already applied.
-        cleaned_markdown = response.cleaned_markdown
+    def finalize_vision_plan(
+        self, plan: VisionDocumentPlan, result: EnhancedDocumentResult
+    ) -> tuple[str, str]:
+        """Turn a vision result into (cleaned markdown, frontmatter YAML).
 
-        # Build frontmatter YAML using utility function for consistent structure
+        Pure local work, identical live or hours later on a batch result.
+        No hit-path repair: the cache key is prompt-scoped, so every
+        reachable entry was written after ``call.validate`` already stripped
+        the prompt echo and fixed image refs.
+        """
         from markitai.utils.frontmatter import (
             build_frontmatter_dict,
             frontmatter_to_yaml,
         )
 
+        cleaned_markdown = result.cleaned_markdown
         frontmatter_dict = build_frontmatter_dict(
-            source=source,
-            description=response.frontmatter.description,
-            tags=response.frontmatter.tags,
-            title=resolved_title,
+            source=plan.source,
+            description=result.frontmatter.description,
+            tags=result.frontmatter.tags,
+            title=plan.resolved_title,
             content=cleaned_markdown,
         )
-        frontmatter_yaml = frontmatter_to_yaml(frontmatter_dict).strip()
+        return cleaned_markdown, frontmatter_to_yaml(frontmatter_dict).strip()
 
-        return cleaned_markdown, frontmatter_yaml
+    async def _enhance_with_frontmatter(
+        self,
+        extracted_text: str,
+        page_images: list[Path],
+        source: str,
+        original_title: str | None = None,
+    ) -> tuple[str, str]:
+        """Enhance with vision and generate frontmatter in one call."""
+        plan = self.prepare_vision_plan(
+            extracted_text, page_images, source, original_title=original_title
+        )
+        response, _raw = await self._engine.complete_structured(plan.call)
+        return self.finalize_vision_plan(plan, response)
 
     def _build_fallback_frontmatter(
         self,
