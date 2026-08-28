@@ -10,10 +10,15 @@ Two-phase flow:
 2. On timeout the run state is persisted and the process exits with a
    recovery hint; :func:`collect_batch_llm` finishes the job later.
 
-Only OpenAI-compatible pools are supported (litellm's batch helpers); other
-pools are refused with an actionable message rather than silently falling
-back to real-time pricing. Documents whose batch request fails are re-run
-live one by one, so a partial batch never loses output.
+Only pools on a provider with a batch API (OpenAI-compatible or Anthropic)
+are supported; others are refused with an actionable message rather than
+silently falling back to real-time pricing. Documents whose batch request
+fails are re-run live one by one, so a partial batch never loses output.
+
+Image analysis rides the same job when --alt/--desc are on: alt text is
+applied to the written .llm.md rather than fed to the document call, so
+the two kinds of request are independent and need no ordering between
+them.
 """
 
 from __future__ import annotations
@@ -41,6 +46,7 @@ from markitai.llm.batch_api import (
     write_batch_jsonl,
 )
 from markitai.llm.structured import instructor_mode_for_model
+from markitai.llm.types import ImageAnalysis, ImageAnalysisResult
 from markitai.utils.errors import ConversionError
 
 BATCH_COST_FACTOR = 0.5  # both providers bill batches at half of list price
@@ -83,7 +89,7 @@ def _single_batch_model(cfg: Any) -> tuple[str, str]:
     )
 
 
-def _batch_custom_id(index: int, source: str) -> str:
+def _batch_custom_id(index: int, source: str, kind: str = "doc") -> str:
     """An id both batch APIs accept, still readable in a log.
 
     Anthropic validates ``custom_id`` against ``^[a-zA-Z0-9_-]{1,64}$``,
@@ -92,7 +98,7 @@ def _batch_custom_id(index: int, source: str) -> str:
     and truncated.
     """
     safe = re.sub(r"[^A-Za-z0-9_-]", "_", source)
-    return f"doc_{index}_{safe}"[:64]
+    return f"{kind}_{index}_{safe}"[:64]
 
 
 def _anthropic_max_tokens(model: str) -> int:
@@ -111,14 +117,36 @@ def _anthropic_max_tokens(model: str) -> int:
         return 8192
 
 
+def _document_images(base_md: Path, markdown: str, output_dir: Path) -> list[Path]:
+    """The asset files one document's markdown refers to, in document order.
+
+    Read from the refs the converter itself wrote, not from a glob on the
+    source name: extractors sanitize filenames, so a prefix glob misses
+    them (see ``extract_asset_image_names``).
+    """
+    from markitai.constants import ASSETS_REL_PATH
+    from markitai.utils.text import extract_asset_image_names
+
+    assets_dir = base_md.parent / ASSETS_REL_PATH
+    found = [assets_dir / name for name in extract_asset_image_names(markdown)]
+    return [path for path in found if path.is_file()]
+
+
 def _prepare_pending(
     processor: Any,
     output_dir: Path,
+    *,
+    analyze_images: bool = False,
 ) -> tuple[list[tuple[BatchDocItem, Any]], int]:
-    """Build a plan per base .md, serving cache hits immediately.
+    """Build the batch's requests, serving anything already cached.
+
+    One request per base .md for the text enhancement, plus — when image
+    analysis is on — one per image that document refers to. Both kinds ride
+    the same job: they are independent of each other, because alt text is
+    applied to the written ``.llm.md`` rather than fed to the document call.
 
     Returns:
-        (uncached (item, plan) pairs, number of cache-served documents)
+        (uncached (item, plan) pairs, number of cache-served requests)
     """
     base_files = sorted(
         p
@@ -133,20 +161,51 @@ def _prepare_pending(
         # The base's frontmatter is stripped so the LLM never sees it.
         source = base_md.name.removesuffix(".md")
         markdown = _strip_frontmatter(base_md.read_text(encoding="utf-8"))
+        relative_base = str(base_md.relative_to(output_dir))
+
         plan = processor.documents._prepare_document_plan(markdown, source)
         hit = processor._engine.try_cached(plan.call)
         if hit is not None:
             cleaned, frontmatter = processor.documents.finalize_document_plan(plan, hit)
             _write_llm_md(processor, base_md, frontmatter, cleaned)
             cached += 1
+        else:
+            pending.append(
+                (
+                    BatchDocItem(
+                        custom_id=_batch_custom_id(len(pending), source),
+                        source=source,
+                        input_md=f"inputs/{len(pending)}.md",
+                        base_md=relative_base,
+                    ),
+                    plan,
+                )
+            )
+
+        if not analyze_images:
             continue
-        item = BatchDocItem(
-            custom_id=_batch_custom_id(len(pending), source),
-            source=source,
-            input_md=f"inputs/{len(pending)}.md",
-            base_md=str(base_md.relative_to(output_dir)),
-        )
-        pending.append((item, plan))
+        for image in _document_images(base_md, markdown, output_dir):
+            image_plan = processor.vision.prepare_image_plan(
+                image, context=source, document_context=markdown[:500]
+            )
+            # An unsupported format or a cache hit is already the answer;
+            # it is collected from the plan rather than asked for again.
+            if image_plan.answer is not None:
+                cached += 1
+                continue
+            pending.append(
+                (
+                    BatchDocItem(
+                        custom_id=_batch_custom_id(len(pending), image.stem, "img"),
+                        source=source,
+                        input_md="",
+                        base_md=relative_base,
+                        kind="image",
+                        image=str(image.relative_to(output_dir)),
+                    ),
+                    image_plan,
+                )
+            )
     return pending, cached
 
 
@@ -199,9 +258,12 @@ async def run_batch_llm_enhancement(
     mode = instructor_mode_for_model(f"{provider}/{model}")
     processor = create_llm_processor(cfg)
 
-    pending, cached = _prepare_pending(processor, output_dir)
+    analyze_images = bool(cfg.image.alt_enabled or cfg.image.desc_enabled)
+    pending, cached = _prepare_pending(
+        processor, output_dir, analyze_images=analyze_images
+    )
     if cached:
-        logger.info(f"[Batch] {cached} document(s) served from cache")
+        logger.info(f"[Batch] {cached} request(s) served from cache")
     if not pending:
         if not quiet:
             print("All documents already cached — nothing to submit.")
@@ -212,13 +274,22 @@ async def run_batch_llm_enhancement(
     inputs_dir.mkdir(parents=True, exist_ok=True)
     requests = []
     for item, plan in pending:
-        (state_dir / item.input_md).write_text(plan.original_markdown, encoding="utf-8")
+        if item.kind == "image":
+            messages, response_model = plan.messages, ImageAnalysisResult
+        else:
+            messages, response_model = plan.call.messages, plan.call.response_model
+            # The document's input is saved so the collector can rebuild the
+            # identical plan; an image's input is the file itself, still on
+            # disk under output_dir.
+            (state_dir / item.input_md).write_text(
+                plan.original_markdown, encoding="utf-8"
+            )
         if provider == "anthropic":
             requests.append(
                 build_anthropic_batch_request(
                     item.custom_id,
-                    messages=plan.call.messages,
-                    response_model=plan.call.response_model,
+                    messages=messages,
+                    response_model=response_model,
                     model=model,
                     max_tokens=_anthropic_max_tokens(model),
                 )
@@ -227,8 +298,8 @@ async def run_batch_llm_enhancement(
             requests.append(
                 build_openai_batch_request(
                     item.custom_id,
-                    messages=plan.call.messages,
-                    response_model=plan.call.response_model,
+                    messages=messages,
+                    response_model=response_model,
                     model=model,
                     mode=mode,
                 )
@@ -240,7 +311,7 @@ async def run_batch_llm_enhancement(
 
     if not quiet:
         print(
-            f"Submitting {len(pending)} document(s) to the Batch API "
+            f"Submitting {len(pending)} request(s) to the Batch API "
             f"({model}, 50% of list price)..."
         )
     if provider == "anthropic":
@@ -323,6 +394,111 @@ def _batch_usage(
     )
 
 
+def _account_batch_usage(
+    processor: Any, state: BatchRunState, line: Any, source: str
+) -> None:
+    """Record one batched answer's usage at the discounted rate."""
+    input_tokens, output_tokens, cost = _batch_usage(
+        line.body, state.model, state.provider
+    )
+    processor._track_usage(
+        state.model,
+        input_tokens,
+        output_tokens,
+        cost * BATCH_COST_FACTOR,
+        source,
+    )
+
+
+async def _collect_image(
+    processor: Any,
+    state: BatchRunState,
+    output_dir: Path,
+    item: BatchDocItem,
+    line: Any,
+    mode: Any,
+) -> dict[str, Any]:
+    """Turn one batched image answer into an images.json / alt-text entry.
+
+    A failed image degrades rather than raising: the live path treats image
+    analysis as non-critical (the document keeps its alt-less markdown), and
+    a batch must not be stricter than the path it replaces.
+
+    The offline path cannot run the live path's language retries — each
+    needs to see an answer before deciding whether to ask again — so a
+    drifting answer is rewritten here, live, at collect time. That is one
+    cheap text call, not another 24-hour round trip.
+    """
+    from markitai.llm.vision import _should_retry_for_language
+
+    image = output_dir / item.image
+    plan = processor.vision.prepare_image_plan(image, context=item.source)
+    if plan.answer is not None:
+        analysis = plan.answer
+    else:
+        try:
+            if line is None:
+                raise ConversionError(f"no output line for {item.custom_id}")
+            if line.error is not None:
+                raise ConversionError(line.error)
+            assert line.body is not None
+            result = parse_batch_result(
+                line.body,
+                response_model=ImageAnalysisResult,
+                mode=mode,
+                provider=state.provider,
+            )
+            _account_batch_usage(processor, state, line, item.source)
+            if _should_retry_for_language(result, plan.language):
+                result = await processor.vision._rewrite_analysis_language(
+                    result,
+                    language=plan.language,
+                    context=item.source,
+                    document_context=plan.document_context,
+                )
+            analysis = processor.vision.finalize_image_plan(plan, result)
+        except Exception as e:
+            logger.warning(f"[Batch] image {image.name} failed in batch ({e})")
+            analysis = ImageAnalysis(
+                caption="Image", description="Image analysis failed"
+            )
+
+    return {
+        "asset": str(image.resolve()),
+        "alt": analysis.caption or "Image",
+        "desc": analysis.description,
+        "text": analysis.extracted_text or "",
+        "llm_usage": analysis.llm_usage or {},
+        "created": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def _apply_image_answers(
+    cfg: Any, output_dir: Path, images_by_base: dict[str, list[dict[str, Any]]]
+) -> None:
+    """Write the collected image answers into each document's output.
+
+    Mirrors the live path's split: alt text is substituted into the written
+    ``.llm.md``, descriptions go to images.json.
+    """
+    if not images_by_base:
+        return
+    from markitai.output_profiles import assets_visible
+    from markitai.workflow.core import apply_alt_text_updates
+    from markitai.workflow.helpers import write_images_json
+    from markitai.workflow.single import ImageAnalysisResult as AnalysisForSource
+
+    results = []
+    for relative_base, assets in sorted(images_by_base.items()):
+        base_md = output_dir / relative_base
+        result = AnalysisForSource(source_file=str(base_md.resolve()), assets=assets)
+        results.append(result)
+        if cfg.image.alt_enabled:
+            apply_alt_text_updates(base_md.with_suffix(".llm.md"), result)
+    if cfg.image.desc_enabled:
+        write_images_json(output_dir, results, visible_assets=assets_visible(cfg))
+
+
 async def _finish_batch(
     cfg: Any,
     processor: Any,
@@ -347,13 +523,27 @@ async def _finish_batch(
     lines = {line.custom_id: line for line in read_openai_batch_output(out_path)}
     done = 0
     reran = 0
+    # Image answers, gathered per owning document: alt text goes into the
+    # .llm.md the document's own result writes, so it can only be applied
+    # once every request for that document has been read.
+    images_by_base: dict[str, list[dict[str, Any]]] = {}
+
     for item in state.items:
+        base_md = output_dir / item.base_md
+        line = lines.get(item.custom_id)
+
+        if item.kind == "image":
+            analysis = await _collect_image(
+                processor, state, output_dir, item, line, mode
+            )
+            images_by_base.setdefault(item.base_md, []).append(analysis)
+            done += 1
+            continue
+
         plan = processor.documents._prepare_document_plan(
             (state_dir / item.input_md).read_text(encoding="utf-8"),
             item.source,
         )
-        base_md = output_dir / item.base_md
-        line = lines.get(item.custom_id)
         try:
             if line is None:
                 raise ConversionError(f"no output line for {item.custom_id}")
@@ -372,17 +562,7 @@ async def _finish_batch(
                 plan, result
             )
             processor._engine.write_cache(plan.call, result)
-            # Account batch usage at the discounted rate.
-            input_tokens, output_tokens, cost = _batch_usage(
-                line.body, state.model, state.provider
-            )
-            processor._track_usage(
-                state.model,
-                input_tokens,
-                output_tokens,
-                cost * BATCH_COST_FACTOR,
-                item.source,
-            )
+            _account_batch_usage(processor, state, line, item.source)
             _write_llm_md(processor, base_md, frontmatter, cleaned)
             done += 1
         except Exception as e:
@@ -395,6 +575,8 @@ async def _finish_batch(
             )
             _write_llm_md(processor, base_md, frontmatter, cleaned)
             reran += 1
+
+    _apply_image_answers(cfg, output_dir, images_by_base)
 
     if not quiet:
         print(

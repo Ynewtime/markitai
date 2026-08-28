@@ -44,12 +44,20 @@ from loguru import logger
 
 @dataclass
 class BatchDocItem:
-    """One document's slot in a pending batch run."""
+    """One request's slot in a pending batch run.
+
+    Two kinds share the list because they share a batch: a document's text
+    enhancement, and the analysis of one image belonging to a document.
+    ``base_md`` identifies the owning document either way, so an image
+    result knows which ``.llm.md`` its alt text belongs in.
+    """
 
     custom_id: str
     source: str  # document name (LLM context identifier)
     input_md: str  # LLM-input markdown file, relative to the state dir
     base_md: str  # base .md path, relative to output_dir (.llm.md derives)
+    kind: str = "doc"  # "doc" | "image"; absent in states written before images
+    image: str = ""  # kind="image": image path relative to output_dir
 
 
 @dataclass

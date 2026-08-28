@@ -30,7 +30,7 @@ markitai docs/ --llm --llm-batch -o out/       # 挂等到 --llm-batch-timeout�
 markitai --llm-batch-collect <batch-id> -o out/  # 稍后收取已转交的 batch
 ```
 
-需要单模型的 OpenAI 或 Anthropic 池。命中缓存的文档立即完成；batch 中失败的文档会逐个实时重跑，部分失败不会丢输出。OpenAI 侧的推理模型在 batch 中以关闭推理运行——batch 部署对 function tools 的硬性要求。暂不能与 `--alt`/`--desc`/`--screenshot`/`--ocr` 组合（这些场景请去掉 `--llm-batch`）。
+需要单模型的 OpenAI 或 Anthropic 池。命中缓存的文档立即完成；batch 中失败的文档会逐个实时重跑，部分失败不会丢输出。OpenAI 侧的推理模型在 batch 中以关闭推理运行——batch 部署对 function tools 的硬性要求。`--alt`/`--desc` 与文档增强同批提交，图片分析同样享受折扣。暂不能与 `--screenshot`/`--ocr` 组合（这些场景请去掉 `--llm-batch`）。
 
 ::: tip
 `--llm`、`--alt`、`--desc`、`--ocr`、`--screenshot` 都有对应的 `--no-*` 反义参数（`--no-llm`、`--no-alt`、`--no-desc`、`--no-ocr`、`--no-screenshot`），可用来显式关闭某个预设本会启用的特性，例如 `--preset rich --no-desc`。

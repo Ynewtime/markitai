@@ -30,7 +30,7 @@ markitai docs/ --llm --llm-batch -o out/       # waits up to --llm-batch-timeout
 markitai --llm-batch-collect <batch-id> -o out/  # finish a handed-off batch later
 ```
 
-Requires a single-model OpenAI or Anthropic pool. Cache hits are served instantly; documents whose batch request fails are re-run live, so a partial batch never loses output. On OpenAI, reasoning models run with reasoning off inside a batch — the batch deployments require that of function-tool calls. Not yet combinable with `--alt`/`--desc`/`--screenshot`/`--ocr` (run without `--llm-batch` for those).
+Requires a single-model OpenAI or Anthropic pool. Cache hits are served instantly; documents whose batch request fails are re-run live, so a partial batch never loses output. On OpenAI, reasoning models run with reasoning off inside a batch — the batch deployments require that of function-tool calls. `--alt`/`--desc` ride the same job, so image analysis is batched at the same discount. Not yet combinable with `--screenshot`/`--ocr` (run without `--llm-batch` for those).
 
 ::: tip
 `--llm`, `--alt`, `--desc`, `--ocr`, and `--screenshot` all have `--no-*` counterparts (`--no-llm`, `--no-alt`, `--no-desc`, `--no-ocr`, `--no-screenshot`) to explicitly disable a feature a preset would otherwise enable, for example `--preset rich --no-desc`.

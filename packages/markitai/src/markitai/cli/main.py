@@ -1040,12 +1040,6 @@ def app(
                         "[red]Error: --llm-batch requires --llm.[/red]"
                     )
                     raise SystemExit(1)
-                if cfg.image.alt_enabled or cfg.image.desc_enabled:
-                    stderr_console.print(
-                        "[red]Error: --llm-batch does not support --alt/--desc "
-                        "yet — run without --llm-batch for image analysis.[/red]"
-                    )
-                    raise SystemExit(1)
                 if cfg.screenshot.enabled or cfg.ocr.enabled:
                     stderr_console.print(
                         "[red]Error: --llm-batch does not support "
