@@ -2472,3 +2472,19 @@ class TestEnricherConsentRunsOffTheEventLoop:
             )
 
         assert bool(enrich_calls) is expect_enriched
+
+
+def test_browser_lookup_honours_playwright_browsers_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PLAYWRIGHT_BROWSERS_PATH is Playwright's own override; doctor must agree."""
+    from markitai.fetch_playwright import is_playwright_browser_installed
+
+    browsers = tmp_path / "browsers"
+    (browsers / "chromium-9999").mkdir(parents=True)
+    (browsers / "chromium-9999" / "INSTALLATION_COMPLETE").write_text("")
+    monkeypatch.setenv("HOME", str(tmp_path / "empty-home"))
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(browsers))
+    assert is_playwright_browser_installed(use_cache=False) is True
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "nowhere"))
+    assert is_playwright_browser_installed(use_cache=False) is False

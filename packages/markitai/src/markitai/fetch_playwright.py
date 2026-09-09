@@ -100,8 +100,13 @@ def _check_chromium_paths() -> bool:
     import os
     import sys
 
-    # Playwright stores browsers in these locations
-    if sys.platform == "win32":
+    # Playwright stores browsers in these locations. PLAYWRIGHT_BROWSERS_PATH
+    # is Playwright's own override and wins when set, so doctor and the
+    # fetcher agree on where to look.
+    override = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "").strip()
+    if override and override != "0":
+        base_paths = [Path(override).expanduser()]
+    elif sys.platform == "win32":
         base_paths = [
             Path(os.environ.get("LOCALAPPDATA", "")) / "ms-playwright",
             Path.home() / "AppData" / "Local" / "ms-playwright",

@@ -23,7 +23,12 @@
 # pool), a .urls list, the three configuration layers plus the cache
 # commands, the Python API, then — with the serve/mcp/legacy extras added to
 # the same install — doctor again, legacy Office formats, the serve API the
-# browser UI talks to, and markitai-mcp over stdio.
+# browser UI talks to, and markitai-mcp over stdio; then, with browser,
+# kreuzberg and extra-fetch added too, Chromium via doctor --fix, Playwright
+# rendering, URL screenshots and screenshot-only reading, the kreuzberg
+# formats, the Cloudflare file backend, the remote extraction strategies on
+# a public page (skipped with the reason when the resolver is a fake-IP
+# VPN), and a real Batch API job through submit, hand-off and collect.
 #
 # It writes a report you can open — WORKDIR/report.html — with one numbered
 # directory per step beside it holding that step's inputs, outputs and logs.
@@ -42,6 +47,13 @@
 #   BATCH_DOCS=40          documents generated for the batch/interrupt steps
 #   HTTP_PORT=8899         port for the local page used by the URL steps
 #   SERVE_PORT=8900        port for the web workspace step
+#   E2E_PUBLIC_URL=https://...   public page for the remote-strategy step
+#   E2E_BATCH_MODEL=openai/...   single-model pool for the Batch API step
+#   BATCH_WAIT=600         seconds to keep collecting a Batch API job that
+#                          outlasted its 120s submit wait
+#   PLAYWRIGHT_BROWSERS_PATH=...  where Chromium lives (default: the real
+#                          home's Playwright cache, so runs share one download;
+#                          point it at an empty dir to test the cold path)
 #   INTERRUPT_AFTER=6      seconds to let the batch run before interrupting it
 #                          (the step shortens the state flush interval so this
 #                          does not have to outlast the 10s default)
@@ -58,6 +70,9 @@ E2E_MODEL=${E2E_MODEL:-gemini/gemini-flash-lite-latest}
 BATCH_DOCS=${BATCH_DOCS:-40}
 HTTP_PORT=${HTTP_PORT:-8899}
 SERVE_PORT=${SERVE_PORT:-8900}
+E2E_PUBLIC_URL=${E2E_PUBLIC_URL:-https://github.com/Ynewtime/markitai}
+E2E_BATCH_MODEL=${E2E_BATCH_MODEL:-openai/gpt-5.6-luna}
+BATCH_WAIT=${BATCH_WAIT:-600}
 INTERRUPT_AFTER=${INTERRUPT_AFTER:-6}
 SKIP_INTERRUPT=${SKIP_INTERRUPT:-0}
 
@@ -150,6 +165,11 @@ export UV_CACHE_DIR="${UV_CACHE_DIR:-$(uv cache dir 2>/dev/null || printf '%s' "
 # picks whatever python is first on the machine (here a 3.14 the package
 # does not support), and none of the cached cp312 wheels apply.
 E2E_PYTHON="${E2E_PYTHON:-$(uv python find --project "$REPO_ROOT")}"
+case "$(uname -s)" in
+  Darwin) _PW_DEFAULT="$HOME/Library/Caches/ms-playwright" ;;
+  *) _PW_DEFAULT="$HOME/.cache/ms-playwright" ;;
+esac
+export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$_PW_DEFAULT}"
 export HOME="$WORKDIR/_internal/home"
 export UV_TOOL_DIR="$HOME/.uvtools"
 export UV_TOOL_BIN_DIR="$HOME/bin"
@@ -626,7 +646,10 @@ markitai 00-inputs/sample.docx -o 15-config/override/ --dry-run \
   --config-json '{"llm":{"enabled":false}}' >15-config/override.txt 2>&1
 check "--config-json overrides the file the user just wrote" \
   test "$(grep -c 'Features: none' 15-config/override.txt)" -eq 1
-markitai config set llm.enabled false >/dev/null 2>&1   # leave later steps unaffected
+# init --yes wrote a model pool from the detected keys, and MODEL only pins a
+# model when no pool is configured — so the file goes away again here, and
+# later steps run on the bare home they expect.
+rm -f "$HOME/.markitai/config.json"
 markitai cache stats >15-config/cache-stats.txt 2>&1
 check "cache stats reports what the earlier runs left behind" grep -qE 'entries' 15-config/cache-stats.txt
 markitai cache clear -y >15-config/cache-clear.txt 2>&1
@@ -818,6 +841,170 @@ check "it exposes exactly the four documented tools" \
 check "convert_document converts through the protocol" grep -q '^is_error=False' 19-mcp/probe.txt
 check "and the file it names exists" test -s "$(grep -oE '^markdown_file=.*' 19-mcp/probe.txt | cut -d= -f2-)"
 show "what the agent host saw" 19-mcp/probe.txt
+
+# ── 20 ───────────────────────────────────────────────────────────────────────
+step 20-all-extras "Every installable extra, and the browser" \
+  "browser, kreuzberg and extra-fetch join the install; doctor --fix fetches Chromium the way the docs say."
+uv tool install --force --python "$E2E_PYTHON" \
+  "markitai[serve,mcp,legacy,browser,kreuzberg,extra-fetch]@$WHEEL" >20-all-extras/install.log 2>&1
+check "the remaining extras install on top of the existing tool" test $? -eq 0
+"$TOOL_PY" -c "import curl_cffi, kreuzberg, playwright" >20-all-extras/imports.txt 2>&1
+check "curl_cffi, kreuzberg and playwright import from the tool environment" test $? -eq 0
+note "browsers live in $PLAYWRIGHT_BROWSERS_PATH (set it to an empty dir to exercise the cold download)"
+markitai doctor --fix >20-all-extras/doctor-fix.txt 2>&1
+markitai doctor --json >20-all-extras/doctor.json 2>/dev/null
+python3 - <<'PYEOF' >20-all-extras/doctor-playwright.txt
+import json
+d = json.load(open("20-all-extras/doctor.json"))
+print("playwright", d.get("playwright", {}).get("status"), "-", d.get("playwright", {}).get("message", ""))
+PYEOF
+check "doctor --fix leaves a working Chromium behind" grep -q '^playwright ok' 20-all-extras/doctor-playwright.txt
+show "doctor --fix, as the user sees it" 20-all-extras/doctor-fix.txt
+file "tool install log" 20-all-extras/install.log
+
+# ── 21 ───────────────────────────────────────────────────────────────────────
+step 21-kreuzberg "The formats the kreuzberg extra unlocks" \
+  "The eight formats that failed with an install hint in step 10 now convert."
+mkdir -p 00-inputs/kreuzberg
+for f in $KREUZBERG_FORMATS; do cp "00-inputs/formats/sample.$f" 00-inputs/kreuzberg/; done
+markitai 00-inputs/kreuzberg/ -o 21-kreuzberg/output/ >21-kreuzberg/batch.log 2>&1
+KZ_OUT=$(ls 21-kreuzberg/output/*.md 2>/dev/null | wc -l | tr -d ' ')
+check "all eight convert once the extra is present ($KZ_OUT of 8)" test "$KZ_OUT" -eq 8
+check "an RTF keeps its text" test -s 21-kreuzberg/output/sample.rtf.md
+check "a TSV becomes a table" grep -q '^|' 21-kreuzberg/output/sample.tsv.md
+show "the batch summary" 21-kreuzberg/batch.log
+
+# ── 22 ───────────────────────────────────────────────────────────────────────
+step 22-browser "Fetching with a real browser" \
+  "Playwright rendering, a full-page screenshot, and reading a page from its screenshot alone."
+(cd 00-inputs/site && exec python3 -m http.server "$HTTP_PORT" >/dev/null 2>&1) &
+SERVER_PID=$!
+for _ in 1 2 3 4 5; do
+  sleep 1
+  curl -fsS --max-time 2 "http://127.0.0.1:$HTTP_PORT/" 2>/dev/null | grep -q 'Quarterly Report' && break
+done
+markitai "http://127.0.0.1:$HTTP_PORT/" -s playwright -o 22-browser/playwright/ >22-browser/playwright.log 2>&1
+PW_MD=$(ls 22-browser/playwright/*.md 2>/dev/null | head -1)
+check "-s playwright renders the page in Chromium" test -n "$PW_MD"
+check "and says so in the frontmatter" grep -q '^fetch_strategy: playwright' "${PW_MD:-/dev/null}"
+check "the article survives the browser route too" grep -q '| Region' "${PW_MD:-/dev/null}"
+markitai "http://127.0.0.1:$HTTP_PORT/" --screenshot -o 22-browser/screenshot/ >22-browser/screenshot.log 2>&1
+check "--screenshot on a URL saves a full-page capture" \
+  test -n "$(ls 22-browser/screenshot/.markitai/screenshots/*.full.jpg 2>/dev/null)"
+MODEL="$E2E_MODEL" markitai "http://127.0.0.1:$HTTP_PORT/" --screenshot-only --llm \
+  -o 22-browser/screenshot-only/ >22-browser/screenshot-only.log 2>&1
+SO_MD=$(ls 22-browser/screenshot-only/*.llm.md 2>/dev/null | head -1)
+check "--screenshot-only --llm has the vision model read the page from its screenshot" \
+  grep -q '^description:' "${SO_MD:-/dev/null}"
+check "and the output points back at the screenshot it was read from" \
+  grep -q 'Screenshot for reference' "${SO_MD:-/dev/null}"
+check "what it read matches the page" grep -qi 'Region B' "${SO_MD:-/dev/null}"
+kill "$SERVER_PID" 2>/dev/null; SERVER_PID=""
+show "the page as the vision model read it" "${SO_MD:-22-browser/screenshot-only.log}"
+file "playwright route output" "${PW_MD:-22-browser/playwright.log}"
+
+# ── 23 ───────────────────────────────────────────────────────────────────────
+step 23-cloudflare-backend "File conversion through Cloudflare" \
+  "-b cloudflare sends the file to Workers AI toMarkdown; the API host is reached even where URL targets cannot be."
+if [ -n "${CLOUDFLARE_API_TOKEN:-}" ] && [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+  markitai 00-inputs/sample.docx -b cloudflare -o 23-cloudflare-backend/output/ -v \
+    >23-cloudflare-backend/convert.log 2>&1
+  check "the document converts through Cloudflare" test -s 23-cloudflare-backend/output/sample.docx.md
+  check "and the run says which converter it used" grep -qi 'Cloudflare toMarkdown' 23-cloudflare-backend/convert.log
+  file "conversion log" 23-cloudflare-backend/convert.log
+else
+  skip "CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID not in $ENV_FILE"
+fi
+
+# ── 24 ───────────────────────────────────────────────────────────────────────
+step 24-remote-strategies "Remote extraction services" \
+  "jina, defuddle and Cloudflare Browser Rendering on a public page — each needs its key, and a resolver that tells public from private."
+RESOLVED=$(python3 - "$E2E_PUBLIC_URL" <<'PYEOF'
+import ipaddress, socket, sys
+from urllib.parse import urlsplit
+host = urlsplit(sys.argv[1]).hostname or ""
+try:
+    ip = ipaddress.ip_address(socket.gethostbyname(host))
+except OSError as e:
+    print(f"unresolvable ({e})"); raise SystemExit
+fake = ipaddress.ip_network("198.18.0.0/15")
+print("public" if ip.is_global and ip not in fake else f"non-public ({ip})")
+PYEOF
+)
+note "$E2E_PUBLIC_URL resolves as: $RESOLVED"
+if [ "$RESOLVED" != "public" ]; then
+  skip "this machine's resolver maps public hosts to a non-public address (a fake-IP VPN, typically); markitai correctly refuses to hand such URLs to remote services — run with the VPN's TUN mode off to exercise them"
+else
+  for STRATEGY in jina defuddle cloudflare; do
+    case "$STRATEGY" in
+      jina) [ -n "${JINA_API_KEY:-}" ] || { skip "-s jina: JINA_API_KEY not in $ENV_FILE"; continue; } ;;
+      cloudflare) [ -n "${CLOUDFLARE_API_TOKEN:-}" ] || { skip "-s cloudflare: CLOUDFLARE_API_TOKEN not in $ENV_FILE"; continue; } ;;
+    esac
+    markitai "$E2E_PUBLIC_URL" -s "$STRATEGY" -o "24-remote-strategies/$STRATEGY/" \
+      >"24-remote-strategies/$STRATEGY.log" 2>&1
+    R_MD=$(ls "24-remote-strategies/$STRATEGY"/*.md 2>/dev/null | head -1)
+    check "-s $STRATEGY fetches the page through the service" test -n "$R_MD"
+    check "and the frontmatter records that route" grep -q "^fetch_strategy: $STRATEGY" "${R_MD:-/dev/null}"
+    check "with a real article body behind it" test "$(wc -c <"${R_MD:-/dev/null}" | tr -d ' ')" -gt 500
+    file "-s $STRATEGY output" "${R_MD:-24-remote-strategies/$STRATEGY.log}"
+  done
+fi
+
+# ── 25 ───────────────────────────────────────────────────────────────────────
+step 25-batch-api "The Batch API, at half price" \
+  "A real --llm-batch job: submitted, waited for, and collected later if it outlasts the wait."
+BATCH_PROVIDER=${E2E_BATCH_MODEL%%/*}
+case "$BATCH_PROVIDER" in
+  openai) BATCH_KEY=${OPENAI_API_KEY:-} ;;
+  anthropic) BATCH_KEY=${ANTHROPIC_API_KEY:-} ;;
+  *) BATCH_KEY="" ;;
+esac
+if [ -z "$BATCH_KEY" ]; then
+  skip "E2E_BATCH_MODEL=$E2E_BATCH_MODEL has no key in $ENV_FILE"
+else
+  mkdir -p 00-inputs/batch-api
+  for i in 1 2 3; do
+    printf '# Note %s\n\nSome   messy   text  to clean, paragraph one.\n\nParagraph two of note %s.\n' "$i" "$i" \
+      >"00-inputs/batch-api/note$i.md"
+  done
+  MODEL="$E2E_BATCH_MODEL" markitai 00-inputs/batch-api/ -o 25-batch-api/output/ --llm --no-cache \
+    --llm-batch --llm-batch-timeout 120 >25-batch-api/submit.log 2>&1
+  BATCH_RC=$?
+  if [ "$BATCH_RC" -eq 0 ]; then
+    ok "the batch completed inside the wait"
+  elif [ "$BATCH_RC" -eq 2 ]; then
+    ok "past the wait, the run hands off instead of blocking"
+    check "and names the exact collect command" grep -q -- '--llm-batch-collect' 25-batch-api/submit.log
+    BATCH_ID=$(grep -oE -- '--llm-batch-collect [A-Za-z0-9_-]+' 25-batch-api/submit.log | head -1 | awk '{print $2}')
+    note "batch id $BATCH_ID; collecting for up to ${BATCH_WAIT}s"
+    DEADLINE=$(( $(date +%s) + BATCH_WAIT ))
+    BATCH_RC=2
+    while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+      MODEL="$E2E_BATCH_MODEL" markitai --llm-batch-collect "$BATCH_ID" -o 25-batch-api/output/ \
+        >25-batch-api/collect.log 2>&1
+      BATCH_RC=$?
+      [ "$BATCH_RC" -ne 2 ] && break
+      sleep 30
+    done
+    if [ "$BATCH_RC" -eq 0 ]; then
+      ok "--llm-batch-collect finished the job later"
+    elif [ "$BATCH_RC" -eq 2 ]; then
+      skip "the provider had not finished the batch within ${BATCH_WAIT}s (raise BATCH_WAIT); the collect command still works later"
+    else
+      bad "--llm-batch-collect failed (see collect.log)"
+    fi
+  else
+    bad "--llm-batch failed (see submit.log)"
+  fi
+  if [ "$BATCH_RC" -eq 0 ]; then
+    BATCH_DONE=$(ls 25-batch-api/output/*.llm.md 2>/dev/null | wc -l | tr -d ' ')
+    check "every document came back enhanced ($BATCH_DONE of 3)" test "$BATCH_DONE" -eq 3
+    check "and the run says the work was billed at half price" \
+      grep -qE '50%' 25-batch-api/submit.log 25-batch-api/collect.log
+  fi
+  file "submission" 25-batch-api/submit.log
+  [ -f 25-batch-api/collect.log ] && file "collection" 25-batch-api/collect.log
+fi
 
 # ── Report ───────────────────────────────────────────────────────────────────
 DURATION=$(( $(date +%s) - STARTED_EPOCH ))
