@@ -352,7 +352,7 @@ class LLMConfig(BaseModel):
     max_vision_pages_per_document: int = Field(
         default=0,
         ge=0,
-        description="Circuit breaker: max page images one document may send to a vision model. Checked before anything is sent, so an oversized document costs nothing at all; it converts without vision enhancement instead. This is the deterministic half of the cost guard — page count is known in advance, price is not. 0 (default) disables the cap.",
+        description="Circuit breaker: max page images one document may send to a vision model. Checked before anything is sent, so an oversized document costs nothing at all; it converts without vision enhancement instead. This is the deterministic half of the cost guard — page count is known in advance, price is not. Also caps the screenshot tiles a screenshot-only URL conversion reads. 0 (default) disables the cap.",
     )
 
 

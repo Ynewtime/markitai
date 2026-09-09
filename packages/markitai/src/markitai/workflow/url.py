@@ -527,6 +527,17 @@ async def _screenshot_only_llm_stage(
     screenshot_path = fetch_result.screenshot_path
     assert screenshot_path is not None  # guaranteed by uses_screenshot_only
     tiles = list(fetch_result.screenshot_tiles or [screenshot_path])
+    # Every tile is one vision request, and a long page can tile into dozens.
+    # The same page cap that guards PDF page images guards tiles here; there
+    # is no text layer to fall back to, so the page is read up to the cap.
+    tile_cap = cfg.llm.max_vision_pages_per_document
+    if tile_cap > 0 and len(tiles) > tile_cap:
+        logger.warning(
+            f"[URL] {len(tiles)} screenshot tiles exceed "
+            f"llm.max_vision_pages_per_document ({tile_cap}) for {url}: reading "
+            "the first tiles only. Raise the cap (0 disables) to read every tile."
+        )
+        tiles = tiles[:tile_cap]
     cleaned_parts: list[str] = []
     frontmatter = ""
     for i, tile in enumerate(tiles):

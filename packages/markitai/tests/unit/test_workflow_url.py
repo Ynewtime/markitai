@@ -137,6 +137,34 @@ class TestCascadeBranches:
 
 
 class TestCascadeImageAnalysis:
+    async def test_screenshot_only_honours_the_vision_page_cap(
+        self, tmp_path: Path
+    ) -> None:
+        """A long page tiles into many vision requests; the page cap bounds them."""
+        cfg = _cfg()
+        cfg.screenshot.screenshot_only = True
+        cfg.llm.keep_base = True
+        cfg.llm.max_vision_pages_per_document = 2
+        fetch_result = _fetch_result(tmp_path)
+        tiles = []
+        for i in range(5):
+            tile = tmp_path / f"tile{i}.png"
+            tile.write_bytes(b"png")
+            tiles.append(tile)
+        fetch_result.screenshot_tiles = tiles
+        proc = _processor()
+        result = await convert_url_cascade(
+            "https://example.com/x",
+            cfg,
+            tmp_path / "out",
+            fetch_result=fetch_result,
+            processor=proc,
+        )
+        assert proc.extract_from_screenshot.await_count == 2
+        assert result.llm_output_path is not None
+        text = result.llm_output_path.read_text(encoding="utf-8")
+        assert "<!-- Tile 2 -->" in text and "<!-- Tile 3 -->" not in text
+
     async def test_alt_and_desc_run_after_llm(self, tmp_path: Path) -> None:
         from markitai.llm.types import ImageAnalysis
 

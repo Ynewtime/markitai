@@ -494,7 +494,7 @@ Configure how Markitai routes requests across multiple models:
 | `concurrency` | ≥1 | 10 | Max concurrent LLM requests |
 | `max_requests_per_document` | ≥0 | 50 | Circuit breaker: max LLM requests per document (all retries counted). On trip, remaining enhancement is skipped and unenhanced output kept. Raise for very large documents; `0` disables |
 | `max_cost_per_document_usd` | ≥0 | `0` | Circuit breaker: max USD one document may spend. Charged after each answer — a call's price is not knowable before making it — so it bounds what the document goes on to spend, not the call that crosses the line. On trip, remaining enhancement is skipped and unenhanced output kept. `0` disables |
-| `max_vision_pages_per_document` | ≥0 | `0` | Circuit breaker: max page images sent to a vision model for one document. Checked before anything is sent, so an oversized document costs nothing and converts without vision enhancement instead. `0` disables |
+| `max_vision_pages_per_document` | ≥0 | `0` | Circuit breaker: max page images sent to a vision model for one document. Checked before anything is sent, so an oversized document costs nothing and converts without vision enhancement instead. Also caps the screenshot tiles a screenshot-only URL conversion reads (the first tiles up to the cap). `0` disables |
 
 #### Model Weight
 
