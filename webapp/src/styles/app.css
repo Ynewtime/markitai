@@ -518,10 +518,6 @@
   .btn:not(:disabled):active {
     transform: scale(0.97);
   }
-  .btn.lg {
-    height: 40px;
-    padding: 0 20px;
-  }
   .btn.sm {
     height: 28px;
     padding: 0 12px;
@@ -569,7 +565,6 @@
   .tablewrap:focus-visible,
   .homelink:focus-visible,
   .sesslink:focus-visible,
-  .rowact:focus-visible,
   .rowicon:focus-visible,
   .notification-close:focus-visible,
   .notification-action:focus-visible,
@@ -1304,11 +1299,6 @@
   .tooltip:focus-visible::after {
     opacity: 1;
     transform: translateY(0);
-  }
-  /* left-anchored variant for marks that sit at a row's start */
-  .tooltip.tip-start::after {
-    right: auto;
-    left: 0;
   }
   .tooltip:focus-visible {
     outline: 2px solid var(--accent);
@@ -2862,25 +2852,6 @@
     }
   }
 
-  /* mini text actions inside rows (test / edit, history open) */
-  .rowact {
-    height: 24px;
-    padding: 0 8px;
-    border-radius: var(--r-sm);
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--text-2);
-    cursor: pointer;
-    white-space: nowrap;
-    transition: background-color 120ms ease, color 120ms ease,
-      transform 140ms var(--ease-out);
-  }
-  .rowact:not(:disabled):active {
-    transform: scale(0.97);
-  }
-  .rowact.warn {
-    color: var(--err);
-  }
   .model-test {
     display: inline-flex;
     align-items: center;
@@ -2929,10 +2900,6 @@
       opacity: 0;
       transform: scale(0.88);
     }
-  }
-  .rowact:disabled {
-    opacity: 0.55;
-    cursor: not-allowed;
   }
 
   /* neutral mini badge: `local` key stand-in, `archived` ledger rows */
@@ -3046,10 +3013,6 @@
     align-items: center;
     gap: 6px;
   }
-  .archive-actions .rowact {
-    min-width: 0;
-    padding-inline: 4px;
-  }
   .history-result {
     max-width: 112px;
     height: 24px;
@@ -3135,7 +3098,6 @@
     .sesslink:hover {
       color: var(--text-1);
     }
-    .rowact:not(:disabled):hover,
     .rowicon:not(:disabled):hover,
     .notification-close:hover {
       background: var(--strip);
@@ -3150,7 +3112,6 @@
     .provider-card:hover {
       background: var(--strip);
     }
-    .rowact.warn:not(:disabled):hover,
     .rowicon.danger:not(:disabled):hover {
       color: var(--err);
     }
@@ -3368,10 +3329,6 @@
     .work-list {
       gap: 32px;
     }
-    .archive-actions .rowact {
-      min-height: 44px;
-      padding-inline: 8px;
-    }
     .archive-actions .rowicon {
       width: 44px;
       height: 44px;
@@ -3458,9 +3415,6 @@
     }
     .badge,
     .notification-close,
-    .settings-modal .rowact {
-      position: relative;
-    }
     .file-picker::before,
     .badge::before,
     .secret-reveal::before,
@@ -3468,12 +3422,6 @@
       content: "";
       position: absolute;
       inset: -8px;
-    }
-    /* rowacts sit 2px apart — grow the hit area vertically only */
-    .settings-modal .rowact::before {
-      content: "";
-      position: absolute;
-      inset: -10px 0;
     }
     .fin {
       width: 100%;

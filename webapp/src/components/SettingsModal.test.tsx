@@ -138,8 +138,6 @@ describe("SettingsModal", () => {
     render(
       <SettingsModal
         t={dicts.en}
-        locale="en"
-        onLocale={() => undefined}
         onClose={() => undefined}
         onSaved={onSaved}
         announce={() => undefined}
@@ -222,8 +220,6 @@ describe("SettingsModal", () => {
     render(
       <SettingsModal
         t={dicts.en}
-        locale="en"
-        onLocale={() => undefined}
         onClose={() => undefined}
         onSaved={() => undefined}
         announce={() => undefined}
@@ -285,8 +281,6 @@ describe("SettingsModal", () => {
     render(
       <SettingsModal
         t={dicts.en}
-        locale="en"
-        onLocale={() => undefined}
         onClose={() => undefined}
         onSaved={() => undefined}
         announce={() => undefined}
@@ -331,8 +325,6 @@ describe("SettingsModal", () => {
     render(
       <SettingsModal
         t={dicts.en}
-        locale="en"
-        onLocale={() => undefined}
         onClose={() => undefined}
         onSaved={() => undefined}
         announce={() => undefined}
@@ -382,8 +374,6 @@ describe("SettingsModal", () => {
     render(
       <SettingsModal
         t={dicts.en}
-        locale="en"
-        onLocale={() => undefined}
         onClose={() => undefined}
         onSaved={() => undefined}
         announce={() => undefined}
@@ -476,8 +466,6 @@ describe("SettingsModal", () => {
     render(
       <SettingsModal
         t={dicts.en}
-        locale="en"
-        onLocale={() => undefined}
         onClose={() => undefined}
         onSaved={() => undefined}
         announce={() => undefined}
@@ -513,8 +501,6 @@ describe("SettingsModal", () => {
     render(
       <SettingsModal
         t={dicts.en}
-        locale="en"
-        onLocale={() => undefined}
         onClose={onClose}
         onSaved={() => undefined}
         announce={() => undefined}
@@ -568,8 +554,6 @@ describe("SettingsModal", () => {
     render(
       <SettingsModal
         t={dicts.en}
-        locale="en"
-        onLocale={() => undefined}
         onClose={onClose}
         onSaved={() => undefined}
         announce={() => undefined}
@@ -616,8 +600,6 @@ describe("SettingsModal", () => {
     render(
       <SettingsModal
         t={dicts.en}
-        locale="en"
-        onLocale={() => undefined}
         onClose={() => undefined}
         onSaved={() => undefined}
         announce={() => undefined}
@@ -657,8 +639,6 @@ describe("SettingsModal", () => {
     render(
       <SettingsModal
         t={dicts.en}
-        locale="en"
-        onLocale={() => undefined}
         onClose={() => undefined}
         onSaved={() => undefined}
         announce={() => undefined}
@@ -685,8 +665,6 @@ describe("SettingsModal", () => {
     render(
       <SettingsModal
         t={dicts.en}
-        locale="en"
-        onLocale={() => undefined}
         onClose={() => undefined}
         onSaved={() => undefined}
         announce={() => undefined}
@@ -731,8 +709,6 @@ describe("SettingsModal", () => {
     render(
       <SettingsModal
         t={dicts.en}
-        locale="en"
-        onLocale={() => undefined}
         onClose={() => undefined}
         onSaved={() => undefined}
         announce={() => undefined}
@@ -762,7 +738,7 @@ describe("SettingsModal", () => {
   it("leaves appearance controls in the header instead of duplicating them", async () => {
     api.fetchSettings.mockResolvedValue(emptySettings);
     api.fetchProviders.mockResolvedValue([]);
-    render(<SettingsModal t={dicts.en} locale="en" onLocale={vi.fn()}
+    render(<SettingsModal t={dicts.en}
       onClose={vi.fn()} onSaved={vi.fn()} announce={vi.fn()} />);
     await screen.findByRole("button", { name: dicts.en.addModels });
     expect(screen.queryByRole("group", { name: dicts.en.langAria })).not.toBeInTheDocument();
@@ -787,8 +763,6 @@ describe("SettingsModal", () => {
     render(
       <SettingsModal
         t={dicts.en}
-        locale="en"
-        onLocale={() => undefined}
         onClose={() => undefined}
         onSaved={() => undefined}
         announce={() => undefined}

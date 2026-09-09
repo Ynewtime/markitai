@@ -15,7 +15,7 @@ import { ErrorInline } from "./components/ErrorInline";
 import { ItemList } from "./components/ItemList";
 import { JobStats } from "./components/JobStats";
 import { PreviewModal } from "./components/PreviewModal";
-import { OptionsBar } from "./components/OptionsBar";
+import { OptionsPanel } from "./components/OptionsPanel";
 import type { Advanced } from "./lib/advanced";
 import { ADVANCED_DEFAULTS } from "./lib/advanced";
 import { applyPreset, BUILTIN_PRESET_OPTIONS, resolveOptions } from "./lib/conversionOptions";
@@ -148,18 +148,14 @@ export default function App() {
 
   // Options remembered across visits (restored before caps arrive; the
   // downgrade effect below still applies when llm turns out unconfigured).
-  const [preset, setPreset] = useState<Preset>(() => readStoredOptions().preset ?? "minimal");
-  const [llm, setLlm] = useState<boolean>(() => readStoredOptions().llm ?? false); // opt-in, never the default
-  const [ocr, setOcr] = useState<boolean>(() => readStoredOptions().ocr ?? false);
-  const [profile, setProfile] = useState<OutputProfile | null>(
-    () => readStoredOptions().profile,
-  );
+  const [stored] = useState(readStoredOptions);
+  const [preset, setPreset] = useState<Preset>(stored.preset ?? "minimal");
+  const [llm, setLlm] = useState<boolean>(stored.llm ?? false); // opt-in, never the default
+  const [ocr, setOcr] = useState<boolean>(stored.ocr ?? false);
+  const [profile, setProfile] = useState<OutputProfile | null>(stored.profile);
   // Persist preset overrides with the bundle; source/remote/cache choices
   // remain session-only so revisiting cannot silently restore an external service.
-  const [advanced, setAdvanced] = useState<Advanced>(() => ({
-    ...ADVANCED_DEFAULTS,
-    ...readStoredOptions().imageOverrides,
-  }));
+  const [advanced, setAdvanced] = useState<Advanced>({ ...ADVANCED_DEFAULTS, ...stored.imageOverrides });
   const presetOptions = caps?.preset_options ?? BUILTIN_PRESET_OPTIONS;
   const selectPreset = (selected: Preset) => {
     const next = applyPreset({ preset, llm, ocr, profile, advanced }, selected, presetOptions);
@@ -712,8 +708,6 @@ export default function App() {
       {settingsOpen && (
         <SettingsModal
           t={t}
-          locale={locale}
-          onLocale={handleLocale}
           onClose={closeSettings}
           onSaved={refreshCaps}
           announce={announce}
@@ -740,13 +734,13 @@ export default function App() {
               {activeCount > 0 ? t.sessProgress(activeCount) : t.sessResults(items.length)}
             </button>
           )}
-          <OptionsBar
+          <OptionsPanel
             t={t}
             preset={preset}
             llm={llm}
             ocr={ocr}
             profile={profile}
-            advanced={advanced}
+            value={advanced}
             llmConfigured={llmConfigured}
             urls={urlList}
             announce={announce}
@@ -764,7 +758,7 @@ export default function App() {
             onLlm={setLlm}
             onOcr={setOcr}
             onProfile={setProfile}
-            onAdvanced={setAdvanced}
+            onChange={setAdvanced}
           />
           {submitError !== null && (
             <ErrorInline text={`${t.createJobFailed}: ${submitError}`} />
@@ -784,7 +778,7 @@ export default function App() {
             <div className="work-grid">
               <div className="work-list">
                 <div className="composer">
-                  <OptionsBar
+                  <OptionsPanel
                     heading={<JobStats t={t} running={running} stats={stats} />}
                     headingActions={items.length > 0 && (
                       <ClearJobsButton
@@ -799,7 +793,7 @@ export default function App() {
                     llm={llm}
                     ocr={ocr}
                     profile={profile}
-                    advanced={advanced}
+                    value={advanced}
                     llmConfigured={llmConfigured}
                     urls={urlList}
                     announce={announce}
@@ -818,7 +812,7 @@ export default function App() {
                     onLlm={setLlm}
                     onOcr={setOcr}
                     onProfile={setProfile}
-                    onAdvanced={setAdvanced}
+                    onChange={setAdvanced}
                   />
                   {submitError !== null && (
                     <ErrorInline text={`${t.createJobFailed}: ${submitError}`} />

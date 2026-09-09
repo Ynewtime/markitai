@@ -78,7 +78,8 @@ describe("AppHeader", () => {
     const trigger = screen.getByRole("button", { name: dicts.en.appearanceTitle });
     await user.click(trigger);
     fireEvent.pointerDown(document.body, { pointerType: "touch" });
-    expect(trigger).toHaveFocus();
+    // A tap elsewhere closes the menu but must not yank focus back to the trigger.
+    expect(trigger).not.toHaveFocus();
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     await user.click(trigger);
     await user.click(trigger);

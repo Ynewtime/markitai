@@ -19,7 +19,7 @@ import type {
   ModelDiscoveryResult,
   ProviderConnection,
 } from "../api/types";
-import type { Dict, Locale } from "../i18n";
+import type { Dict } from "../i18n";
 import {
   ConfirmDeletePopover,
   openDeletePopoverCard,
@@ -119,8 +119,6 @@ export function SettingsModal({
   announce,
 }: {
   t: Dict;
-  locale: Locale;
-  onLocale: (l: Locale) => void;
   onClose: () => void;
   onSaved: () => void;
   announce: (message: string) => void;

@@ -12,7 +12,7 @@ import {
   type PresetOptions,
 } from "../lib/conversionOptions";
 import { buildCliCommand } from "../lib/cli";
-import { copyTextToClipboard } from "../lib/clipboard";
+import { copyTextToClipboard, type CopyState } from "../lib/clipboard";
 import { FilePicker } from "./DropZone";
 import { HelpTooltip } from "./HelpTooltip";
 import { CaretRightIcon, InfoIcon, SlidersIcon, UploadIcon } from "./icons";
@@ -21,7 +21,6 @@ const STRATEGIES: FetchStrategy[] = ["auto", "static", "playwright", "defuddle",
 const BACKENDS: ConversionBackend[] = ["native", "kreuzberg", "cloudflare"];
 const PRESETS: Preset[] = ["minimal", "standard", "rich"];
 const PROFILES: (OutputProfile | null)[] = [null, "rag", "obsidian", "okf"];
-type CopyState = "idle" | "copied" | "failed";
 
 function Chip({ label, checked, disabled, hint, onChange }: {
   label: string;
@@ -38,9 +37,8 @@ function Chip({ label, checked, disabled, hint, onChange }: {
   );
 }
 
-function Segments<T extends string | null>({ label, labelledBy, value, options, render, hint, disabled, onChange }: {
-  label?: string;
-  labelledBy?: string;
+function Segments<T extends string | null>({ labelledBy, value, options, render, hint, disabled, onChange }: {
+  labelledBy: string;
   value: T | null;
   options: readonly T[];
   render: (v: T) => string;
@@ -49,7 +47,7 @@ function Segments<T extends string | null>({ label, labelledBy, value, options, 
   onChange: (v: T) => void;
 }) {
   return (
-    <span className="seg" role="group" aria-label={label} aria-labelledby={labelledBy}>
+    <span className="seg" role="group" aria-labelledby={labelledBy}>
       {options.map((option) => (
         <HelpTooltip key={option ?? "default"} text={hint(option)}><button type="button"
           className={option === value ? "on" : undefined}
@@ -62,12 +60,13 @@ function Segments<T extends string | null>({ label, labelledBy, value, options, 
   );
 }
 
-function RowLabel({ id, text, hint }: { id: string; text: string; hint?: string }) {
+function RowLabel({ id, text, hint, helpLabel }: { id: string; text: string; hint?: string; helpLabel: string }) {
   return (
     <span className="optlbl">
       <span id={id}>{text}</span>
       {hint !== undefined && (
-        <HelpTooltip text={hint}><button type="button" className="opthelp" aria-label={hint}>
+        // The tooltip wires the hint in through aria-describedby; the name stays short.
+        <HelpTooltip text={hint}><button type="button" className="opthelp" aria-label={helpLabel}>
           <InfoIcon size={13} />
         </button></HelpTooltip>
       )}
@@ -108,8 +107,11 @@ export function OptionsPanel({
   const id = useId();
   const state = { preset, llm, ocr, profile, advanced: value };
   const effective = resolveOptions(state, presetOptions);
+  // An exact five-feature match highlights that bundle; otherwise the chosen
+  // name stays pressed and the Custom badge says the bundle was adjusted.
   const matchedPreset = matchingPreset(state, presetOptions);
   const customized = matchedPreset === null;
+  const shownPreset = matchedPreset ?? preset;
   const analysisDisabled = !llm || value.pure;
   const analysisHint = value.pure ? t.advPlainImages : t.advNeedsLlm;
   const forcedBackend = value.strategy === "cloudflare";
@@ -129,7 +131,7 @@ export function OptionsPanel({
   };
   const set = <K extends keyof Advanced>(key: K, v: Advanced[K]) =>
     onChange(changeAdvanced(value, key, v));
-  const command = buildCliCommand(urls, effective, presetOptions);
+  const command = buildCliCommand(urls, { ...effective, preset: shownPreset }, presetOptions);
   useEffect(() => {
     if (copyState === "idle") return;
     const handle = window.setTimeout(() => setCopyState("idle"), 1500);
@@ -171,16 +173,16 @@ export function OptionsPanel({
           <div className="optpanel" id={id}>
             <div className="optrows">
               <div className="optrow">
-                <RowLabel id={`${id}-preset`} text={t.preset} hint={t.presetHint} />
+                <RowLabel helpLabel={t.helpLabel} id={`${id}-preset`} text={t.preset} hint={t.presetHint} />
                 <div className="optfield">
-                  <Segments labelledBy={`${id}-preset`} value={matchedPreset} options={PRESETS} render={(p) => p} hint={bundleHint}
+                  <Segments labelledBy={`${id}-preset`} value={shownPreset} options={PRESETS} render={(p) => p} hint={bundleHint}
                     disabled={(p) => !llmConfigured && presetFeatures(p, presetOptions).llm}
                     onChange={onPreset} />
                   {customized && <span className="optcustom" role="status">{t.presetCustomized}</span>}
                 </div>
               </div>
               <div className="optrow" role="group" aria-labelledby={`${id}-enhance`}>
-                <RowLabel id={`${id}-enhance`} text={t.advEnhance}
+                <RowLabel helpLabel={t.helpLabel} id={`${id}-enhance`} text={t.advEnhance}
                   hint={llmConfigured ? t.helpEnhance : t.advNeedsModel} />
                 <div className="optfield">
                   <Chip label={t.llmEnhance} checked={llm} disabled={!llmConfigured}
@@ -190,7 +192,7 @@ export function OptionsPanel({
                 </div>
               </div>
               <div className="optrow" role="group" aria-labelledby={`${id}-images`}>
-                <RowLabel id={`${id}-images`} text={t.advImages}
+                <RowLabel helpLabel={t.helpLabel} id={`${id}-images`} text={t.advImages}
                   hint={t.helpImages} />
                 <div className="optfield">
                   <Chip label={t.advAlt} checked={effective.alt} disabled={analysisDisabled}
@@ -203,7 +205,7 @@ export function OptionsPanel({
                 </div>
               </div>
               <div className="optrow">
-                <RowLabel id={`${id}-output`} text={t.advOutput} hint={t.helpOutput} />
+                <RowLabel helpLabel={t.helpLabel} id={`${id}-output`} text={t.advOutput} hint={t.helpOutput} />
                 <div className="optfield">
                   <Segments labelledBy={`${id}-output`} value={profile} options={PROFILES}
                     hint={(p) => ({ default: t.helpDefault, rag: t.helpRag, obsidian: t.helpObsidian, okf: t.helpOkf })[p ?? "default"]}
@@ -221,7 +223,7 @@ export function OptionsPanel({
               {advOpen && (
                 <div className="optadv-body" id={`${id}-adv`}>
                   <div className="optrow">
-                    <RowLabel id={`${id}-strategy`} text={t.advStrategy} hint={t.helpStrategy} />
+                    <RowLabel helpLabel={t.helpLabel} id={`${id}-strategy`} text={t.advStrategy} hint={t.helpStrategy} />
                     <div className="optfield">
                       <Segments labelledBy={`${id}-strategy`} value={value.strategy} options={STRATEGIES}
                         render={(v) => v} hint={(v) => strategyHints[v]} onChange={(v) => set("strategy", v)} />
@@ -229,7 +231,7 @@ export function OptionsPanel({
                     </div>
                   </div>
                   <div className="optrow">
-                    <RowLabel id={`${id}-backend`} text={t.advBackend}
+                    <RowLabel helpLabel={t.helpLabel} id={`${id}-backend`} text={t.advBackend}
                       hint={forcedBackend ? t.advCloudflareBackend : t.helpBackend} />
                     <div className="optfield">
                       <Segments labelledBy={`${id}-backend`} value={effective.backend} options={BACKENDS}
@@ -239,7 +241,7 @@ export function OptionsPanel({
                     </div>
                   </div>
                   <div className="optrow" role="group" aria-labelledby={`${id}-other`}>
-                    <RowLabel id={`${id}-other`} text={t.advOther} hint={t.helpOther} />
+                    <RowLabel helpLabel={t.helpLabel} id={`${id}-other`} text={t.advOther} hint={t.helpOther} />
                     <div className="optfield">
                       <Chip label={t.advScreenshotOnly} checked={effective.screenshot_only}
                         hint={t.helpSource} onChange={(v) => set("screenshotOnly", v)} />
@@ -260,7 +262,7 @@ export function OptionsPanel({
         )}
         <div className="optcli">
           <div className="clibody">
-            <HelpTooltip text={t.helpCli}><code className="clitext" tabIndex={0} aria-label={t.cliAria}>
+            <HelpTooltip text={t.helpCli}><code className="clitext" role="group" tabIndex={0} aria-label={t.cliAria}>
               <span className="clidollar" aria-hidden="true">${" "}</span>{command}
             </code></HelpTooltip>
           </div>

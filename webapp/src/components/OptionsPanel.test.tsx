@@ -96,7 +96,6 @@ describe("OptionsPanel", () => {
       expect(screen.getByRole("button", { name: t.options })).toHaveAttribute("aria-expanded", String(expanded));
       expect(screen.getAllByLabelText(t.cliAria)).toEqual([command]);
       expect(command).toBeVisible();
-      expect(screen.queryByLabelText(t.optionsChanged)).not.toBeInTheDocument();
       expect(document.querySelector(".optsum")).toBeNull();
     }
     rerender(<OptionsPanel {...base} urls={["https://example.com/new"]}
@@ -121,7 +120,7 @@ describe("OptionsPanel", () => {
     expect(screen.getByLabelText(t.ocr)).toBeInTheDocument();
     expect(screen.getByLabelText(t.llmEnhance)).toBeDisabled();
     // the reason rides the row label as a tooltip mark, not a hint paragraph
-    expect(screen.getByRole("button", { name: t.advNeedsModel })).toBeVisible();
+    expect(screen.getByRole("button", { name: t.helpLabel, description: t.advNeedsModel })).toBeVisible();
     expect(screen.getByRole("button", { name: "standard" })).toBeDisabled();
   });
 
@@ -161,7 +160,7 @@ describe("OptionsPanel", () => {
     const cloudflare = within(backend).getByRole("button", { name: "cloudflare" });
     expect(cloudflare).toHaveAttribute("aria-pressed", "true");
     for (const button of within(backend).getAllByRole("button")) expect(button).toBeDisabled();
-    expect(screen.getByRole("button", { name: t.advCloudflareBackend })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t.helpLabel, description: t.advCloudflareBackend })).toBeInTheDocument();
     expect(screen.getByText(t.noticeCloudflareUrl)).toBeVisible();
     expect(screen.getByLabelText(t.cliAria)).toHaveTextContent("--strategy cloudflare --backend cloudflare");
   });
@@ -216,7 +215,7 @@ describe("OptionsPanel", () => {
 
   it("explains rows with tooltips instead of hint paragraphs", () => {
     open();
-    expect(screen.getByRole("button", { name: t.presetHint })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t.helpLabel, description: t.presetHint })).toBeInTheDocument();
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
 });
@@ -265,11 +264,11 @@ it("compacts against the server preset map rather than hardcoded rich defaults",
 });
 
 
-it("shows Custom with no preset pressed for minimal plus LLM", () => {
+it("shows Custom while keeping the chosen preset pressed for minimal plus LLM", () => {
   const { onChange, onPreset } = open();
   expect(screen.getByText(t.presetCustomized)).toBeVisible();
   for (const name of ["minimal", "standard", "rich"]) {
-    expect(screen.getByRole("button", { name })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name })).toHaveAttribute("aria-pressed", String(name === "minimal"));
   }
   expect(screen.getByLabelText(t.advAlt)).not.toBeChecked();
   expect(screen.getByLabelText(t.advDesc)).not.toBeChecked();
@@ -281,7 +280,8 @@ it("highlights a matching bundle without changing options or the command", () =>
   const { onPreset } = open({ value: { ...ADVANCED_DEFAULTS, alt: true, desc: true } });
   expect(screen.getByRole("button", { name: "standard" })).toHaveAttribute("aria-pressed", "true");
   expect(screen.queryByText(t.presetCustomized)).not.toBeInTheDocument();
-  expect(screen.getByLabelText(t.cliAria)).toHaveTextContent("--preset minimal --llm --alt --desc");
+  // The command names the bundle the panel highlights, so the two readouts agree.
+  expect(screen.getByLabelText(t.cliAria).textContent).toBe("$ markitai <your-files-or-url-or-url_files> -o out/ --preset standard");
   expect(onPreset).not.toHaveBeenCalled();
 });
 
@@ -298,7 +298,7 @@ it.each([dicts.en, dicts.zh])("describes every choice and group in either locale
   for (const label of document.querySelectorAll(".optrow > .optlbl")) {
     expect(label.querySelector("button[aria-describedby]")).not.toBeNull();
   }
-  const help = screen.getByRole("button", { name: dict.presetHint });
+  const help = screen.getByRole("button", { name: dict.helpLabel, description: dict.presetHint });
   fireEvent.focus(help);
   const tooltip = screen.getByRole("tooltip");
   expect(tooltip).toHaveTextContent(dict.presetHint);

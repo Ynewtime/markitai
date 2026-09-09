@@ -72,7 +72,8 @@ export function AppHeader({
       triggerRef.current?.focus();
     };
     const onPointerDown = (event: PointerEvent) => {
-      if (event.target instanceof Node && !appearanceRef.current?.contains(event.target)) dismiss();
+      // Clicking elsewhere closes the menu but leaves focus where the click landed.
+      if (event.target instanceof Node && !appearanceRef.current?.contains(event.target)) setAppearanceOpen(false);
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {

@@ -53,7 +53,7 @@ export function resolveOptions(
     alt: analysis && (a.alt ?? features.alt),
     desc: analysis && (a.desc ?? features.desc),
     screenshot: a.screenshotOnly || (a.screenshot ?? features.screenshot),
-    screenshot_only: a.screenshotOnly && !a.pure,
+    screenshot_only: a.screenshotOnly,
     pure: a.pure,
     no_cache: a.noCache,
     no_compress: a.noCompress,
@@ -76,16 +76,6 @@ export function matchingPreset(
   }) ?? null;
 }
 
-export function presetIsCustomized(
-  options: ComposerOptions,
-  presets: PresetOptions = BUILTIN_PRESET_OPTIONS,
-): boolean {
-  const effective = resolveOptions(options, presets);
-  const features = presetFeatures(options.preset, presets);
-  return (["llm", "ocr", "alt", "desc", "screenshot"] as const).some(
-    (key) => effective[key] !== features[key],
-  );
-}
 
 export function changeAdvanced<K extends keyof Advanced>(
   previous: Advanced,

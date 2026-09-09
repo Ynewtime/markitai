@@ -30,7 +30,7 @@ export function initToken(): void {
 
 export function getToken(): string | null {
   try {
-    return sessionStorage.getItem(STORAGE_KEY);
+    return sessionStorage.getItem(STORAGE_KEY) ?? memoryToken;
   } catch {
     return memoryToken;
   }

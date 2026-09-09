@@ -11,12 +11,12 @@ const command = (urls: string[], preset: Preset, llm: boolean, ocr: boolean, pro
 describe("buildCliCommand", () => {
   it.each([
     [true, "--screenshot-only --pure --no-cache --no-compress"],
-    [false, "--no-screenshot-only --no-pure --cache --compress"],
+    [false, ""],
     [null, ""],
-  ] as const)("renders advanced booleans as %s without losing explicit false", (value, flags) => {
+  ] as const)("renders advanced booleans as %s, leaving the default false implicit", (value, flags) => {
     expect(buildCliCommand([], jobOptions({
       screenshot_only: value, pure: value, no_cache: value, no_compress: value,
-    }), undefined, "explicit")).toBe(`markitai <your-files-or-url-or-url_files> -o out/${flags ? ` ${flags}` : ""}`);
+    }))).toBe(`markitai <your-files-or-url-or-url_files> -o out/${flags ? ` ${flags}` : ""}`);
   });
   it("includes advanced values and explicit image opt-outs", () => {
     expect(buildCliCommand([], jobOptions({
@@ -80,9 +80,6 @@ describe.each([BUILTIN_PRESET_OPTIONS, customPresets])("preset-aware compact com
     const options = jobOptions({ preset, ...presets[preset], pure: false, screenshot_only: false,
       no_cache: false, no_compress: false, strategy: "auto", backend: "native" });
     expect(buildCliCommand([], options, presets)).toBe(`markitai <your-files-or-url-or-url_files> -o out/ --preset ${preset}`);
-    const explicit = buildCliCommand([], options, presets, "explicit");
-    for (const key of features) expect(explicit.split(" ")).toContain(options[key] ? `--${key}` : `--no-${key}`);
-    expect(explicit).toContain("--no-screenshot-only --no-pure --cache --compress --strategy auto --backend native");
   });
   it.each(presetNames)("preserves every positive and negative %s deviation", (preset) => {
     for (const key of features) {

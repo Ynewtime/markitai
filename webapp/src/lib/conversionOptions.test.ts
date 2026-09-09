@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ADVANCED_DEFAULTS } from "./advanced";
-import { applyPreset, BUILTIN_PRESET_OPTIONS, changeAdvanced, matchingPreset, presetIsCustomized, resolveOptions, type ComposerOptions } from "./conversionOptions";
+import { applyPreset, BUILTIN_PRESET_OPTIONS, changeAdvanced, matchingPreset, resolveOptions, type ComposerOptions } from "./conversionOptions";
 import { buildCliCommand } from "./cli";
 
 const initial: ComposerOptions = {
@@ -11,7 +11,6 @@ describe("conversion option dependencies", () => {
   it.each(["minimal", "standard", "rich"] as const)("applies all five %s features", (preset) => {
     const selected = applyPreset(initial, preset);
     expect(resolveOptions(selected)).toMatchObject(BUILTIN_PRESET_OPTIONS[preset]);
-    expect(presetIsCustomized(selected)).toBe(false);
   });
 
   it("resets bundle overrides, including OCR, but retains independent choices", () => {
@@ -31,14 +30,12 @@ describe("conversion option dependencies", () => {
     const presets = { rich: { llm: true, ocr: true, alt: false, desc: true, screenshot: false } };
     const rich = applyPreset(initial, "rich", presets);
     expect(resolveOptions(rich, presets)).toMatchObject(presets.rich);
-    expect(presetIsCustomized(rich, presets)).toBe(false);
   });
 
   it("honors explicit false, reports customization, and allows restoring the same preset", () => {
     const rich = applyPreset(initial, "rich");
     const changed = { ...rich, advanced: changeAdvanced(rich.advanced, "alt", false) };
     expect(resolveOptions(changed)).toMatchObject({ alt: false, desc: true, screenshot: true });
-    expect(presetIsCustomized(changed)).toBe(true);
     expect(resolveOptions(applyPreset(changed, "rich")).alt).toBe(true);
   });
 
