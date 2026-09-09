@@ -617,7 +617,7 @@ export function MarkdownPreview({
     <div className="pdf-print-header" aria-hidden="true">
       <span className="pdf-print-brand">
         <LogoMark size={20} />
-        <strong>markitai</strong>
+        <strong>Markitai</strong>
       </span>
       <span className="pdf-print-title">{documentBase}</span>
     </div>

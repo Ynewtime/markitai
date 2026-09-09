@@ -36,7 +36,8 @@ features:
   <p class="eyebrow">Web workspace</p>
   <h2 id="shot-title">A workbench, when you would rather not type</h2>
   <p><code>markitai serve</code> runs the same conversion core behind a local web UI — drop files in, paste URLs, watch progress, and download results.</p>
-  <img src="/workbench.png" alt="The markitai web workspace: a composer card with an Options toggle, URL field, file picker, and Convert button." width="1440" height="700" loading="lazy" />
+  <img class="light-only" src="/workbench.png" alt="The markitai web workspace: a composer card with an Options toggle, URL field, file picker, and Convert button." width="1440" height="700" loading="lazy" />
+  <img class="dark-only" src="/workbench.dark.png" alt="The markitai web workspace: a composer card with an Options toggle, URL field, file picker, and Convert button." width="1440" height="700" loading="lazy" />
   <p class="home-shot-link"><a href="/guide/serve">Read about the web workspace <span aria-hidden="true">→</span></a></p>
 </section>
 

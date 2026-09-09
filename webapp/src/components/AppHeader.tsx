@@ -103,7 +103,7 @@ export function AppHeader({
             }}
           >
             <LogoMark size={24} />
-            <span className="wordmark">markitai</span>
+            <span className="wordmark">Markitai</span>
           </a>
           {version !== null && <span className="ver mono">v{version}</span>}
         </div>

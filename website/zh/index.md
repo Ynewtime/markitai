@@ -36,7 +36,8 @@ features:
   <p class="eyebrow">网页工作台</p>
   <h2 id="shot-title">不想敲命令时，有个工作台</h2>
   <p><code>markitai serve</code> 用同一套转换内核提供本地网页界面——拖入文件、粘贴 URL、实时查看进度、下载结果。</p>
-  <img src="/workbench.zh.png" alt="markitai 网页工作台：一张转换输入卡片，含「选项」开关、URL 输入框、文件选择与「转换」按钮。" width="1440" height="700" loading="lazy" />
+  <img class="light-only" src="/workbench.zh.png" alt="markitai 网页工作台：一张转换输入卡片，含「选项」开关、URL 输入框、文件选择与「转换」按钮。" width="1440" height="700" loading="lazy" />
+  <img class="dark-only" src="/workbench.zh.dark.png" alt="markitai 网页工作台：一张转换输入卡片，含「选项」开关、URL 输入框、文件选择与「转换」按钮。" width="1440" height="700" loading="lazy" />
   <p class="home-shot-link"><a href="/zh/guide/serve">了解网页工作台 <span aria-hidden="true">→</span></a></p>
 </section>
 

@@ -4,7 +4,8 @@
 
 Everything runs on your machine: jobs and history live on disk, and nothing leaves the host except the fetch strategies, remote file backends and LLM providers you configure.
 
-![The markitai web workspace: a composer card with an Options toggle, URL field, file picker, and Convert button, and an always-visible CLI command.](/workbench.png)
+![The markitai web workspace: a composer card with an Options toggle, URL field, file picker, and Convert button, and an always-visible CLI command.](/workbench.png){.light-only}
+![The markitai web workspace: a composer card with an Options toggle, URL field, file picker, and Convert button, and an always-visible CLI command.](/workbench.dark.png){.dark-only}
 
 Every conversion option lives behind **Options** — so the default screen asks nothing. The composer is one card: the URL field, and an action row with Options, file upload and Convert (inline on desktop; on phones the URL area sits above the row). The equivalent CLI command stays visible whether Options is open or closed. Language and theme share the Appearance menu in the header.
 

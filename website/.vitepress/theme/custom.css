@@ -139,6 +139,12 @@
   margin: 0 auto 24px;
   max-width: 62ch;
 }
+/* Screenshots ship in both themes; show the one matching the site theme. */
+.dark .light-only,
+html:not(.dark) .dark-only {
+  display: none;
+}
+
 .home-shot img {
   width: 100%;
   height: auto;

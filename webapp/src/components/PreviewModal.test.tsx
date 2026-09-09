@@ -89,7 +89,7 @@ describe("PreviewModal", () => {
     // custom header/footer now defaults ON: the furniture is in the DOM
     // up front (screen CSS hides it; print CSS shows it)
     expect(document.querySelector(".pdf-print-header")).toHaveTextContent(
-      "markitairesult",
+      "Markitairesult",
     );
     expect(document.querySelector(".pdf-print-footer")).toHaveTextContent(
       `${dicts.en.pdfPreparedBy}${dicts.en.pdfSource}: result.md`,
