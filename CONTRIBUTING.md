@@ -13,7 +13,7 @@ uv run pre-commit install --hook-type pre-push   # pyright + tests on push
 ```
 
 This is a uv workspace: the published package lives in `packages/markitai`,
-the docs site in `website/` (VitePress + pnpm), install scripts in `scripts/`.
+the docs site in `website/` (VitePress + bun), install scripts in `scripts/`.
 
 ## Everyday commands
 

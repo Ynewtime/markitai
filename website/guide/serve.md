@@ -4,9 +4,11 @@
 
 Everything runs on your machine: jobs and history live on disk, and nothing leaves the host except the fetch strategies, remote file backends and LLM providers you configure.
 
-![The markitai web workspace with Options and Upload above the URL input, and an always-visible CLI command.](/workbench.png)
+![The markitai web workspace: a composer card with an Options toggle, URL field, file picker, and Convert button, and an always-visible CLI command.](/workbench.png)
 
-Every conversion option lives behind **Options** — LLM enhancement, OCR, preset, output profile, image analysis, content source, fetch strategy and backend — so the default screen asks nothing. Options and Upload sit above the input, while the equivalent CLI command stays visible whether Options is open or closed. Language and theme share the Appearance menu in the header.
+Every conversion option lives behind **Options** — so the default screen asks nothing. The composer is one card: the URL field, and an action row with Options, file upload and Convert (inline on desktop; on phones the URL area sits above the row). The equivalent CLI command stays visible whether Options is open or closed. Language and theme share the Appearance menu in the header.
+
+The panel is grouped rather than listed: the preset leads, **Enhance** collects LLM, OCR and image analysis, **Output** holds the profile, and an **Advanced** section folds in the content source, URL/file fetch selectors and the cache and compression toggles — it opens by itself when one of them is already non-default.
 
 ## Starting the Server
 

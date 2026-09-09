@@ -7,7 +7,7 @@ metadata:
 
 # Working in the markitai codebase
 
-A uv workspace: the published package lives in `packages/markitai` (source in `packages/markitai/src/markitai/`), the VitePress docs site in `website/` (pnpm), install scripts in `scripts/`. Python 3.11–3.13.
+A uv workspace: the published package lives in `packages/markitai` (source in `packages/markitai/src/markitai/`), the VitePress docs site in `website/` (bun), install scripts in `scripts/`. Python 3.11–3.13.
 
 ```bash
 uv sync --all-extras                              # install workspace + extras
@@ -47,7 +47,7 @@ Run the CLI from source with `uv run markitai <input>`.
 uv run python packages/markitai/benchmarks/webextract_quality.py
 ```
 
-It prints per-fixture deltas against the committed `benchmarks/results/baseline.json` and writes `benchmarks/results/latest.json` (gitignored). A quality change that is intentional gets a deliberate `--update-baseline`; an unintentional delta is a regression to fix. The full-corpus run is manual/CI-cron only; `tests/unit/test_webextract_quality_benchmark.py` smoke-tests the scorer math.
+It prints per-fixture deltas against the committed `benchmarks/results/baseline.json` and writes `benchmarks/results/latest.json` (gitignored). A quality change that is intentional gets a deliberate `--update-baseline`; an unintentional delta is a regression to fix. The full-corpus run is manual/CI-cron only; `tests/unit/test_webextract_quality_benchmark.py` smoke-tests the scorer math. `scorer.score_with_llm_judge` is an opt-in LiteLLM judge (content/structure/noise, 0–100): a cache miss needs an explicit `model` and `allow_network=True`, there are no retries or heuristic fallbacks, and the default runner never calls it.
 
 ## Syncing the defuddle fixture corpus
 

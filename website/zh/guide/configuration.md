@@ -982,6 +982,10 @@ Markitai 内置了 `x.com`/`twitter.com` 和 `github.com` 的域名配置。为�
 }
 ```
 
+### 代理
+
+抓取时优先使用 `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`（`NO_PROXY` 为绕过列表）。都未设置时读取系统代理：Windows 的 Internet 设置、macOS 的网络设置，以及 Linux 上当前 GNOME/Unity 或 KDE 桌面的手动 HTTP 代理（含绕过列表）。PAC/WPAD、仅 SOCKS 和带认证的桌面设置不会导入——这类情况和无桌面的机器一样，请设置环境变量。
+
 ## 缓存配置
 
 Markitai 使用全局缓存，存储在 `~/.markitai/cache.db`。

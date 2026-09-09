@@ -982,6 +982,10 @@ Sites matching these patterns are treated as SPA/JS-heavy, promoting browser ren
 }
 ```
 
+### Proxies
+
+Fetching honours `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` first (with `NO_PROXY` as the bypass list). When none is set, the OS proxy is read: Windows internet settings, macOS network settings, and on Linux the manual HTTP proxy of the active GNOME/Unity or KDE desktop, including its bypass list. PAC/WPAD, SOCKS-only and authenticated desktop settings are not imported — set the environment variables instead, as on headless machines.
+
 ## Cache Configuration
 
 Markitai uses a global cache stored at `~/.markitai/cache.db`.
