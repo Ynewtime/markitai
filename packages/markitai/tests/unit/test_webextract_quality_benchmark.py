@@ -66,8 +66,8 @@ class TestHeuristicScorer:
     def test_empty_expected_is_trivial_pass(self) -> None:
         assert score_markdown("", "anything").score == 100.0
 
-    def test_llm_judge_is_a_stub(self) -> None:
-        with pytest.raises(NotImplementedError):
+    def test_llm_judge_requires_explicit_model(self) -> None:
+        with pytest.raises(ValueError, match="explicit judge model"):
             score_with_llm_judge("expected", "produced")
 
 
