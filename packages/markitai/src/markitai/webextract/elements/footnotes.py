@@ -30,6 +30,7 @@ from markitai.webextract.constants import (
     FOOTNOTE_LIST_SELECTORS,
 )
 from markitai.webextract.dom import attr_str
+from markitai.webextract.utils import tag_children
 
 # Matches heading text for loose footnote section delimiters
 FOOTNOTE_SECTION_RE = re.compile(
@@ -80,10 +81,6 @@ def _transfer_content(source: Tag, target: Tag) -> None:
     target.clear()
     for child in list(source.contents):
         target.append(child.extract())
-
-
-def _tag_children(el: Tag) -> list[Tag]:
-    return [c for c in el.contents if isinstance(c, Tag)]
 
 
 def _first_element_child(el: Tag) -> Tag | None:
@@ -314,7 +311,7 @@ class _FootnoteHandler:
                 paragraph.append(node.extract())
             new_item.append(paragraph)
         else:
-            children = _tag_children(content)
+            children = tag_children(content)
             has_paragraphs = any(c.name == "p" for c in children)
             has_block_children = any(c.name in _BLOCK_LEVEL_ELEMENTS for c in children)
             if not has_paragraphs and not has_block_children:
@@ -705,7 +702,7 @@ class _FootnoteHandler:
                 parent is not None
                 and parent is not element
                 and parent.name == "div"
-                and len(_tag_children(parent)) == 1
+                and len(tag_children(parent)) == 1
             ):
                 self._pending_removals.append(parent)
 
@@ -897,7 +894,7 @@ class _FootnoteHandler:
         if all_ps:
             last_parent = _parent_element(all_ps[-1])
             container = last_parent if last_parent is not None else element
-        children = _tag_children(container)
+        children = tag_children(container)
 
         # Strategy 1: forward-scan after the last <hr>
         for i in range(len(children) - 1, -1, -1):
@@ -981,7 +978,7 @@ class _FootnoteHandler:
                 if (
                     parent is not None
                     and parent.name == "sup"
-                    and len(_tag_children(parent)) == 1
+                    and len(tag_children(parent)) == 1
                 ):
                     parent.decompose()
                 else:
@@ -1529,7 +1526,7 @@ class _FootnoteHandler:
 
         _remove_orphaned_dividers(element)
 
-        if _tag_children(ordered_list):
+        if tag_children(ordered_list):
             new_list.append(ordered_list)
             element.append(new_list)
 

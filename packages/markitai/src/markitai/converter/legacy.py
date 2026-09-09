@@ -16,7 +16,7 @@ Two behavior notes versus the retired Office-automation path:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from loguru import logger
 
@@ -31,9 +31,6 @@ from markitai.utils.errors import (
     MissingDependencyError,
     extra_install_command,
 )
-
-if TYPE_CHECKING:
-    pass
 
 
 def _load_anydoc() -> Any:

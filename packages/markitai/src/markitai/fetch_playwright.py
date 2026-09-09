@@ -49,7 +49,7 @@ except ImportError:  # pragma: no cover - optional during staged implementation
     is_native_extraction_acceptable = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
-    from markitai.config import FetchConfig, ScreenshotConfig
+    from markitai.config import ScreenshotConfig
 
 
 def is_playwright_available() -> bool:
@@ -321,18 +321,6 @@ def _build_dom_cleanup_script(url: str | None = None) -> str:
         }});
     }}
     """
-
-
-def _consent_config(remote_consent: str) -> FetchConfig:
-    """Wrap a consent mode in the FetchConfig the shared resolver expects.
-
-    The renderer is handed the mode as a plain string (it never sees the
-    user's FetchConfig); anything unrecognized falls back to ``ask``, the
-    conservative mode.
-    """
-    from markitai.config import FetchConfig
-
-    return FetchConfig(remote_consent="always" if remote_consent == "always" else "ask")
 
 
 def _is_x_article_url(url: str) -> bool:
@@ -856,8 +844,9 @@ class PlaywrightRenderer:
             return "", None, ""
         if not (await assess_url_for_remote(url)).allowed:
             return "", None, ""
+        # Anything but an explicit "always" is treated as the conservative "ask".
         if not resolve_remote_consent(
-            _consent_config(remote_consent),
+            "always" if remote_consent == "always" else "ask",
             services=["fxtwitter", "twitter-oembed"],
         ):
             return "", None, ""

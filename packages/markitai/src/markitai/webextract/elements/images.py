@@ -97,12 +97,15 @@ def pick_best_srcset(srcset: str) -> str | None:
     best_url: str | None = None
     best_value = 0.0
     best_type = ""  # "w" or "x"
+    first_url: str | None = None
 
     # Split by comma, parse each entry
     for entry in srcset.split(","):
         entry = entry.strip()
         if not entry:
             continue
+        if first_url is None:
+            first_url = entry.split()[0]
 
         # Match "url descriptor" pattern
         match = _SRCSET_WIDTH_RE.fullmatch(entry)
@@ -126,4 +129,5 @@ def pick_best_srcset(srcset: str) -> str | None:
                 best_value = value
                 best_type = "x"
 
-    return best_url
+    # A bare ``srcset="real.jpg"`` has no descriptor but is still the image.
+    return best_url or first_url

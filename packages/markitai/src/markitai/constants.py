@@ -16,8 +16,6 @@ import re
 # =============================================================================
 
 MAX_STATE_FILE_SIZE = 10 * 1024 * 1024  # 10 MB - batch state file
-MAX_IMAGE_SIZE = 100 * 1024 * 1024  # 100 MB - single image
-MAX_TOTAL_IMAGES_SIZE = 500 * 1024 * 1024  # 500 MB - all images combined
 MAX_DOCUMENT_SIZE = 500 * 1024 * 1024  # 500 MB - input document
 
 # =============================================================================

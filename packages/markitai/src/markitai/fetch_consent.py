@@ -216,7 +216,7 @@ def disclose_remote_use(services: list[str] | None = None) -> None:
 
 
 def resolve_remote_consent(
-    config: FetchConfig, services: list[str] | None = None
+    config: FetchConfig | str, services: list[str] | None = None
 ) -> bool:
     """Return True if remote extraction services may receive URLs.
 
@@ -249,7 +249,12 @@ def resolve_remote_consent(
     if state.decision is not None:
         return state.decision
 
-    consent = getattr(config, "remote_consent", "always")
+    # The Playwright renderer only holds the mode string, never a FetchConfig.
+    consent = (
+        config
+        if isinstance(config, str)
+        else getattr(config, "remote_consent", "always")
+    )
     if consent == "always":
         disclose_remote_use(services)
         state.decision = True

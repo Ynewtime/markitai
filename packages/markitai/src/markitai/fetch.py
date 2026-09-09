@@ -96,19 +96,10 @@ from markitai.fetch_http import (
     get_static_http_client as get_static_http_client,  # noqa: F401
 )
 from markitai.fetch_screenshot import (
-    _compress_screenshot as _compress_screenshot,  # noqa: F401
-)
-from markitai.fetch_screenshot import (
     _url_to_screenshot_filename as _url_to_screenshot_filename,  # noqa: F401
 )
 from markitai.fetch_session import (
     FetchSession as FetchSession,  # noqa: F401
-)
-from markitai.fetch_session import (
-    _get_system_proxy as _get_system_proxy,  # noqa: F401
-)
-from markitai.fetch_session import (
-    _SlidingWindowRateLimiter as _SlidingWindowRateLimiter,  # noqa: F401
 )
 from markitai.fetch_session import (
     get_default_session as get_default_session,

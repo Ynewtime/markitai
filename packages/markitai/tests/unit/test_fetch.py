@@ -1074,7 +1074,7 @@ class TestCompressScreenshot:
 
     def test_compress_screenshot_skips_when_not_needed(self, tmp_path: Path) -> None:
         """Test that compression is skipped for RGB JPEG within height limits."""
-        from markitai.fetch import _compress_screenshot
+        from markitai.fetch_screenshot import _compress_screenshot
 
         try:
             from PIL import Image
@@ -1098,7 +1098,7 @@ class TestCompressScreenshot:
 
     def test_compress_screenshot_compresses_tall_image(self, tmp_path: Path) -> None:
         """Legacy cap (no tile_height): a tall image is tiled, not downscaled."""
-        from markitai.fetch import _compress_screenshot
+        from markitai.fetch_screenshot import _compress_screenshot
 
         try:
             from PIL import Image
@@ -1121,7 +1121,7 @@ class TestCompressScreenshot:
 
     def test_compress_screenshot_tiles_long_page(self, tmp_path: Path) -> None:
         """tile_height splits a long page into full-width VLM-readable tiles."""
-        from markitai.fetch import _compress_screenshot
+        from markitai.fetch_screenshot import _compress_screenshot
 
         try:
             from PIL import Image
@@ -1149,7 +1149,7 @@ class TestCompressScreenshot:
         self, tmp_path: Path
     ) -> None:
         """A page within tile_height keeps a single unchanged file."""
-        from markitai.fetch import _compress_screenshot
+        from markitai.fetch_screenshot import _compress_screenshot
 
         try:
             from PIL import Image
@@ -1169,7 +1169,7 @@ class TestCompressScreenshot:
 
     def test_compress_screenshot_rgba_conversion(self, tmp_path: Path) -> None:
         """Test RGBA to RGB conversion during compression."""
-        from markitai.fetch import _compress_screenshot
+        from markitai.fetch_screenshot import _compress_screenshot
 
         try:
             from PIL import Image
@@ -1193,7 +1193,7 @@ class TestCompressScreenshot:
         self, tmp_path: Path
     ) -> None:
         """Very tall pages are tiled by default, never whole-page downscaled."""
-        from markitai.fetch import _compress_screenshot
+        from markitai.fetch_screenshot import _compress_screenshot
 
         try:
             from PIL import Image
@@ -1215,7 +1215,7 @@ class TestCompressScreenshot:
 
     def test_compress_screenshot_missing_pillow(self, tmp_path: Path) -> None:
         """Test handling when Pillow is not installed."""
-        from markitai.fetch import _compress_screenshot
+        from markitai.fetch_screenshot import _compress_screenshot
 
         # Create a dummy file
         screenshot_path = tmp_path / "test.jpg"
@@ -3407,7 +3407,7 @@ class TestGetSystemProxy:
 
     def test_get_system_proxy_linux(self) -> None:
         """Linux delegates to desktop discovery without reading host settings."""
-        from markitai.fetch import _get_system_proxy
+        from markitai.fetch_session import _get_system_proxy
 
         with (
             patch("platform.system", return_value="Linux"),
@@ -3421,7 +3421,7 @@ class TestGetSystemProxy:
 
     def test_get_system_proxy_unknown_platform(self) -> None:
         """Test system proxy detection on unknown platform."""
-        from markitai.fetch import _get_system_proxy
+        from markitai.fetch_session import _get_system_proxy
 
         with patch("platform.system", return_value="UnknownOS"):
             proxy, bypass = _get_system_proxy()
@@ -4840,7 +4840,7 @@ class TestSlidingWindowRateLimiter:
     @pytest.mark.asyncio
     async def test_acquire_within_limit(self):
         """Should not block when within RPM limit."""
-        from markitai.fetch import _SlidingWindowRateLimiter
+        from markitai.fetch_session import _SlidingWindowRateLimiter
 
         limiter = _SlidingWindowRateLimiter(rpm=5)
         # Should complete immediately for 5 requests
@@ -4853,7 +4853,7 @@ class TestSlidingWindowRateLimiter:
         """Should remove timestamps older than 60s."""
         import time
 
-        from markitai.fetch import _SlidingWindowRateLimiter
+        from markitai.fetch_session import _SlidingWindowRateLimiter
 
         limiter = _SlidingWindowRateLimiter(rpm=2)
         # Add an old timestamp
@@ -4867,7 +4867,7 @@ class TestSlidingWindowRateLimiter:
         """Should wait when RPM limit is exhausted."""
         import time
 
-        from markitai.fetch import _SlidingWindowRateLimiter
+        from markitai.fetch_session import _SlidingWindowRateLimiter
 
         limiter = _SlidingWindowRateLimiter(rpm=2)
         # Fill up the window
@@ -4890,7 +4890,7 @@ class TestSlidingWindowRateLimiter:
         import asyncio
         import time
 
-        from markitai.fetch import _SlidingWindowRateLimiter
+        from markitai.fetch_session import _SlidingWindowRateLimiter
 
         limiter = _SlidingWindowRateLimiter(rpm=2)
         # Fill up with timestamps that expire in 0.15s

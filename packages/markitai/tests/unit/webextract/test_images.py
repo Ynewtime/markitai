@@ -45,3 +45,11 @@ def test_normalize_images_keeps_captioned_figure_in_original_order() -> None:
 
     html = str(article)
     assert html.index("Before") < html.index("<figure") < html.index("After")
+
+
+def test_srcset_without_descriptors_keeps_its_only_candidate() -> None:
+    from markitai.webextract.elements.images import pick_best_srcset
+
+    assert pick_best_srcset("real.jpg") == "real.jpg"
+    assert pick_best_srcset("a.jpg 1x, b.jpg 2x") == "b.jpg"
+    assert pick_best_srcset("   ") is None

@@ -45,6 +45,22 @@ class TestRemoveSmallImages:
         removed = remove_small_images(root)
         assert removed == 1
 
+    def test_keeps_svg_whose_viewbox_is_small_but_rendered_large(self):
+        """viewBox units are not pixels; an explicit size wins over them."""
+        soup = _make_soup(
+            '<div><svg viewBox="0 0 24 24" width="200" height="200"></svg></div>'
+        )
+        root = soup.find("div")
+        assert root is not None
+        assert remove_small_images(root) == 0
+        assert root.find("svg") is not None
+
+    def test_removes_svg_icon_declaring_only_a_viewbox(self):
+        soup = _make_soup('<div><svg viewBox="0 0 16 16"></svg></div>')
+        root = soup.find("div")
+        assert root is not None
+        assert remove_small_images(root) == 1
+
     def test_keeps_image_without_dimensions(self):
         """Images without known dimensions should be kept (conservative)."""
         soup = _make_soup('<div><img src="unknown.jpg"></div>')

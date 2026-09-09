@@ -19,7 +19,7 @@ from markitai.webextract.content_boundary import (
     is_above_content_start,
 )
 from markitai.webextract.dom import attr_str
-from markitai.webextract.utils import count_words, normalize_text
+from markitai.webextract.utils import count_words, normalize_text, tag_children
 
 _DATE_RE = re.compile(
     r"(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}"
@@ -159,10 +159,6 @@ def _text(el: Tag) -> str:
 
 def _gone(el: Tag) -> bool:
     return bool(getattr(el, "decomposed", False)) or el.parent is None
-
-
-def _tag_children(el: Tag) -> list[Tag]:
-    return [c for c in el.children if isinstance(c, Tag)]
 
 
 def _next_tag_sibling(el: Tag) -> Tag | None:
@@ -427,7 +423,7 @@ def _remove_breadcrumb_list(root: Tag) -> int:
     while (
         isinstance(target.parent, Tag)
         and target.parent is not root
-        and len(_tag_children(target.parent)) == 1
+        and len(tag_children(target.parent)) == 1
     ):
         target = target.parent
     target.decompose()
@@ -569,7 +565,7 @@ def _remove_toc(root: Tag, content_text: str, url: str) -> int:
         while (
             isinstance(target.parent, Tag)
             and target.parent is not root
-            and len(_tag_children(target.parent)) == 1
+            and len(tag_children(target.parent)) == 1
         ):
             target = target.parent
 
@@ -821,7 +817,7 @@ def _remove_metadata_lists(root: Tag, content_text: str) -> int:
             continue
         is_dl = list_el.name == "dl"
         items = [
-            c for c in _tag_children(list_el) if c.name == ("dd" if is_dl else "li")
+            c for c in tag_children(list_el) if c.name == ("dd" if is_dl else "li")
         ]
         min_items = 1 if is_dl else 2
         if len(items) < min_items or len(items) > 8:
@@ -934,7 +930,7 @@ def _remove_trailing_external_link_lists(root: Tag, url: str) -> int:
         list_el = _next_tag_sibling(heading)
         if list_el is None or list_el.name not in ("ul", "ol"):
             continue
-        items = [c for c in _tag_children(list_el) if c.name == "li"]
+        items = [c for c in tag_children(list_el) if c.name == "li"]
         if len(items) < 2:
             continue
 
@@ -990,7 +986,7 @@ def _remove_trailing_external_link_lists(root: Tag, url: str) -> int:
 
 def _remove_trailing_related_posts(root: Tag) -> int:
     """Remove a trailing container of short, link-dense paragraphs."""
-    children = _tag_children(root)
+    children = tag_children(root)
     last_child = children[-1] if children else None
     while last_child is not None and last_child.name in ("hr", "br"):
         last_child = _prev_tag_sibling(last_child)
@@ -999,7 +995,7 @@ def _remove_trailing_related_posts(root: Tag) -> int:
 
     paras: list[Tag] = []
     has_non_para = False
-    for child in _tag_children(last_child):
+    for child in tag_children(last_child):
         if not _text(child):
             continue
         if child.name == "p":
@@ -1042,7 +1038,7 @@ def _remove_trailing_thin_sections(root: Tag) -> int:
 
     trailing_els: list[Tag] = []
     trailing_words = 0
-    children = _tag_children(root)
+    children = tag_children(root)
     for child in reversed(children):
         # Skip the standardized footnotes container
         if child.get("id") == "footnotes":
@@ -1173,7 +1169,7 @@ def _remove_related_card_grids(root: Tag, content_text: str) -> int:
     for el in root.find_all(["div", "ul", "ol"]):
         if _gone(el):
             continue
-        children = _tag_children(el)
+        children = tag_children(el)
         if len(children) < 2:
             continue
 

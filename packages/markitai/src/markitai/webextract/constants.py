@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 
-ADAPTIVE_RETRY_MIN_WORDS = 20
 SCHEMA_FALLBACK_MIN_GAIN = 3
 
 # ─── Block-element tables (single source of truth) ────────────────────
@@ -28,8 +27,6 @@ BLOCK_LEVEL_ELEMENTS: frozenset[str] = frozenset(
 )
 
 # ─── Removal constants (ported from defuddle) ────────────────────────
-
-MIN_IMAGE_SIZE = 33
 
 # Tailwind default palette, used to resolve CSS variables and utility
 # classes on inline SVGs once the page's stylesheets are gone.

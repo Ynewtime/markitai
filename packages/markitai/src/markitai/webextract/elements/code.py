@@ -94,8 +94,29 @@ def _strip_inline_numeric_gutters(root: Tag) -> None:
         children = el.find_all(True, recursive=False)
         if len(children) != 2:
             continue
-        if children[0].get_text(strip=True).isdigit():
+        if not children[0].get_text(strip=True).isdigit():
+            continue
+        # A plain numeric literal also sits first in a two-token span
+        # (``<span class="mi">42</span><span> + x</span>``); only rows that
+        # announce themselves as line rows lose their first child.
+        if _looks_like_line_row(el, children[0]):
             children[0].decompose()
+
+
+_LINE_ROW_CLASS_RE = re.compile(
+    r"(?:^|[-_:])(?:ln|line|lineno|linenumber|number|gutter)(?:$|[-_:])"
+)
+
+
+def _looks_like_line_row(row: Tag, gutter: Tag) -> bool:
+    style = str(row.get("style") or "")
+    if "flex" in style or "table-row" in style:
+        return True
+    for el in (row, gutter):
+        classes = " ".join(str(c) for c in (el.get("class") or []))
+        if _LINE_ROW_CLASS_RE.search(classes):
+            return True
+    return False
 
 
 def _collapse_code_layout_tables(root: Tag) -> None:

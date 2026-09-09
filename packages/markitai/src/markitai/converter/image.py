@@ -256,7 +256,7 @@ class ImageConverter(BaseConverter):
         Returns:
             Markdown with OCR extracted text
         """
-        from markitai.ocr import OCRBackendMissing, OCRProcessor
+        from markitai.ocr import OCRProcessor
 
         try:
             processor = OCRProcessor(self.config.ocr if self.config else None)

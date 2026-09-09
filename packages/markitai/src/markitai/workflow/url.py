@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from loguru import logger
 
+from markitai.constants import SCREENSHOTS_REL_PATH
+
 if TYPE_CHECKING:
     from markitai.config import MarkitaiConfig
     from markitai.fetch_cache import FetchCache
@@ -131,7 +133,11 @@ async def convert_url_cascade(
     from markitai.utils.errors import ConversionError
     from markitai.utils.output import resolve_output_path
     from markitai.utils.paths import ensure_screenshots_dir
-    from markitai.workflow.helpers import add_basic_frontmatter, create_llm_processor
+    from markitai.workflow.helpers import (
+        add_basic_frontmatter,
+        create_llm_processor,
+        merge_llm_usage,
+    )
 
     if fetch_result is None:
         if cache is None and cfg.cache.enabled:
@@ -223,8 +229,6 @@ async def convert_url_cascade(
                 cost_usd = stage_cost
                 llm_usage = stage_usage
                 llm_error = stage_error
-                if llm_output_path is not None:
-                    _apply_profile(llm_output_path, workdir, cfg)
             elif screenshot_only_mode:
                 (
                     llm_output_path,
@@ -259,8 +263,6 @@ async def convert_url_cascade(
                     extra_meta=extra_meta,
                     title=title,
                 )
-            if llm_output_path is not None and llm_stage is None:
-                _apply_profile(llm_output_path, workdir, cfg)
         except Exception as e:
             # Same policy as the file pipeline: write the base .md as a
             # fallback below, then surface the failure per the policy.
@@ -276,7 +278,6 @@ async def convert_url_cascade(
         if (
             screenshot_only_mode or capture_only
         ) and fetch_result.screenshot_path is not None:
-            from markitai.constants import SCREENSHOTS_REL_PATH
             from markitai.utils.text import markdown_image_reference
 
             ref_files = fetch_result.screenshot_tiles or [fetch_result.screenshot_path]
@@ -326,13 +327,22 @@ async def convert_url_cascade(
         and llm_error is None
     ):
         try:
-            await _analyze_url_images_stage(
+            image_cost, image_usage = await _analyze_url_images_stage(
                 cfg, workdir, llm_output_path, downloaded_images, proc, url
             )
+            cost_usd += image_cost
+            merge_llm_usage(llm_usage, image_usage)
         except Exception as e:
             logger.warning(
                 f"[URL] Image analysis failed for {url}: {format_error_message(e)}"
             )
+
+    # The profile moves assets and rewrites their references, so it runs
+    # after every stage that writes image links. Profile failures are not
+    # LLM failures: they surface as their own exception rather than through
+    # llm_error_policy.
+    if llm_output_path is not None and llm_output_path.exists():
+        _apply_profile(llm_output_path, workdir, cfg)
 
     if llm_error is not None and llm_error_policy == "raise":
         raise ConversionError(f"LLM processing failed: {llm_error}")
@@ -443,7 +453,6 @@ async def _vision_llm_stage(
 
     Falls back to the standard document stage when the vision call fails.
     """
-    from markitai.constants import SCREENSHOTS_REL_PATH
     from markitai.security import atomic_write_text
 
     screenshot_path = fetch_result.screenshot_path
@@ -476,10 +485,7 @@ async def _vision_llm_stage(
         )
 
     content = proc.format_llm_output(cleaned, frontmatter)
-    content += (
-        f"\n\n<!-- Screenshot for reference -->\n"
-        f"<!-- ![Screenshot]({SCREENSHOTS_REL_PATH}/{screenshot_path.name}) -->"
-    )
+    content += screenshot_reference_comment([screenshot_path])
     target = output_file.with_suffix(".llm.md")
     atomic_write_text(target, content)
     return (
@@ -487,6 +493,23 @@ async def _vision_llm_stage(
         proc.get_context_cost(url),
         proc.get_context_usage(url),
         None,
+    )
+
+
+def screenshot_reference_comment(tiles: list[Path]) -> str:
+    """HTML comment(s) pointing at the screenshot(s) an LLM output was read from.
+
+    Downstream stages (page splitting, reference-image handling) look for
+    this marker, so every vision stage appends it in the same shape.
+    """
+    if len(tiles) == 1:
+        return (
+            "\n\n<!-- Screenshot for reference -->\n"
+            f"<!-- ![Screenshot]({SCREENSHOTS_REL_PATH}/{tiles[0].name}) -->"
+        )
+    return "\n\n<!-- Screenshots for reference (tiles) -->\n" + "\n".join(
+        f"<!-- ![Screenshot {i + 1}]({SCREENSHOTS_REL_PATH}/{t.name}) -->"
+        for i, t in enumerate(tiles)
     )
 
 
@@ -522,6 +545,7 @@ async def _screenshot_only_llm_stage(
 
     cleaned_content = "\n\n".join(cleaned_parts)
     content = proc.format_llm_output(cleaned_content, frontmatter)
+    content += screenshot_reference_comment(tiles)
     target = output_file.with_suffix(".llm.md")
     atomic_write_text(target, content)
     return (
@@ -539,7 +563,7 @@ async def _analyze_url_images_stage(
     image_paths: list[Path],
     proc: LLMProcessor,
     url: str,
-) -> None:
+) -> tuple[float, dict[str, dict[str, Any]]]:
     """Analyze downloaded images: update alt text in the .llm.md and write
     ``images.json`` when descriptions are enabled.
 
@@ -549,6 +573,7 @@ async def _analyze_url_images_stage(
     from datetime import datetime
 
     from markitai.constants import ASSETS_REL_PATH
+    from markitai.output_profiles import assets_visible
     from markitai.utils.text import image_ref_pattern, markdown_image_reference
     from markitai.workflow.helpers import (
         extract_document_context,
@@ -598,6 +623,9 @@ async def _analyze_url_images_stage(
             source_file=llm_md.stem,
             assets=asset_descriptions,
         )
-        write_images_json(workdir, [result])
+        write_images_json(workdir, [result], visible_assets=assets_visible(cfg))
 
+    cost = proc.get_context_cost(context)
+    usage = proc.get_context_usage(context)
     proc.clear_context_usage(context)
+    return cost, usage

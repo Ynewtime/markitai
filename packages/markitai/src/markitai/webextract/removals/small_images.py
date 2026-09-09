@@ -69,8 +69,10 @@ def _collect_dimensions(el: Tag) -> tuple[list[float], list[float]]:
                 bucket.append(float(match.group(1)))
 
     # For SVGs, viewBox dimensions count as a size hint (icon sprites
-    # often declare only a viewBox).
-    if el.name == "svg":
+    # often declare only a viewBox). They describe user units, not pixels,
+    # so an explicit width/height/style wins: a chart drawn on a 24x24
+    # viewBox and rendered at 200px is not an icon.
+    if el.name == "svg" and not widths and not heights:
         view_box = str(el.get("viewbox") or el.get("viewBox") or "")
         parts = re.split(r"[\s,]+", view_box.strip())
         if len(parts) == 4:

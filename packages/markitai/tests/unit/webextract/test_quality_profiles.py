@@ -93,7 +93,7 @@ def test_empty_social_post_fails_quality() -> None:
     assert assessment.accepted is False
 
 
-# --- conversation_thread profile ---
+# --- discussion_thread profile ---
 
 _CLEAN_THREAD_MARKDOWN = """\
 # Discussion
@@ -122,14 +122,14 @@ Trends for you
 
 def test_clean_thread_markdown_passes_quality() -> None:
     assessment = assess_native_markdown(
-        _CLEAN_THREAD_MARKDOWN, profile="conversation_thread"
+        _CLEAN_THREAD_MARKDOWN, profile="discussion_thread"
     )
     assert assessment.accepted is True
 
 
 def test_thread_with_discover_more_fails_quality() -> None:
     assessment = assess_native_markdown(
-        _BAD_THREAD_WITH_DISCOVER, profile="conversation_thread"
+        _BAD_THREAD_WITH_DISCOVER, profile="discussion_thread"
     )
     assert assessment.accepted is False
     assert "recommendation_noise" in assessment.reasons
@@ -137,14 +137,14 @@ def test_thread_with_discover_more_fails_quality() -> None:
 
 def test_thread_with_trends_fails_quality() -> None:
     assessment = assess_native_markdown(
-        _BAD_THREAD_WITH_TRENDS, profile="conversation_thread"
+        _BAD_THREAD_WITH_TRENDS, profile="discussion_thread"
     )
     assert assessment.accepted is False
     assert "sidebar_leakage" in assessment.reasons
 
 
 def test_thread_too_short_fails_quality() -> None:
-    assessment = assess_native_markdown("hi", profile="conversation_thread")
+    assessment = assess_native_markdown("hi", profile="discussion_thread")
     assert assessment.accepted is False
 
 
@@ -254,7 +254,7 @@ def test_empty_string_fails_all_profiles() -> None:
     for profile in (
         "generic_article",
         "social_post",
-        "conversation_thread",
+        "discussion_thread",
         "discussion_issue",
     ):
         assessment = assess_native_markdown("", profile=profile)
@@ -306,19 +306,6 @@ def test_discussion_thread_profile_rejects_too_short_content() -> None:
     )
     assert assessment.accepted is False
     assert "too_short" in assessment.reasons
-
-
-def test_legacy_conversation_thread_alias_maps_to_thread_profile() -> None:
-    """The historical ``conversation_thread`` name stays a working alias."""
-    alias = assess_native_markdown(
-        _BAD_THREAD_WITH_DISCOVER, profile="conversation_thread"
-    )
-    canonical = assess_native_markdown(
-        _BAD_THREAD_WITH_DISCOVER,
-        profile=ContentProfile.DISCUSSION_THREAD.value,
-    )
-    assert alias == canonical
-    assert alias.accepted is False
 
 
 # --- rich_media_page profile ---

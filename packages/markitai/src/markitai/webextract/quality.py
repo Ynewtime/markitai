@@ -273,12 +273,6 @@ _PROFILE_MAP: dict[ContentProfile, ProfileAssessor] = {
     ContentProfile.RICH_MEDIA_PAGE: _assess_generic_article,
 }
 
-# Historical profile names kept working for external callers of
-# assess_native_markdown(); no extractor emits these.
-_PROFILE_ALIASES: dict[str, ContentProfile] = {
-    "conversation_thread": ContentProfile.DISCUSSION_THREAD,
-}
-
 
 def assess_native_markdown(
     markdown: str,
@@ -295,20 +289,17 @@ def assess_native_markdown(
         profile: Quality profile name — a
             :class:`~markitai.webextract.types.ContentProfile` value such as
             ``"generic_article"``, ``"social_post"``, ``"discussion_issue"``,
-            ``"discussion_thread"`` or ``"rich_media_page"``. The legacy alias
-            ``"conversation_thread"`` maps to ``"discussion_thread"``; any
-            other unknown value falls back to ``"generic_article"``.
+            ``"discussion_thread"`` or ``"rich_media_page"``. An unknown value
+            falls back to ``"generic_article"``.
 
     Returns:
         A :class:`~markitai.webextract.types.QualityAssessment` describing
         whether the extraction was accepted and why.
     """
-    content_profile = _PROFILE_ALIASES.get(profile)
-    if content_profile is None:
-        try:
-            content_profile = ContentProfile(profile)
-        except ValueError:
-            content_profile = ContentProfile.GENERIC_ARTICLE
+    try:
+        content_profile = ContentProfile(profile)
+    except ValueError:
+        content_profile = ContentProfile.GENERIC_ARTICLE
 
     assessor = _PROFILE_MAP.get(content_profile, _assess_generic_article)
     return assessor(markdown)

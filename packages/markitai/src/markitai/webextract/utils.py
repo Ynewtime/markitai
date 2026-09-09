@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from bs4 import Tag
+
 # CJK character ranges (each character counts as one word)
 _CJK_RE = re.compile(
     "["
@@ -83,7 +85,7 @@ def count_words(text: str) -> int:
 # a "hidden" class. Ported from defuddle ``utils/dom.ts``
 # ``hasResponsiveShowClass``.
 _RESPONSIVE_SHOW_RE = re.compile(
-    r"^(?:sm|md|lg|xl|2xl|min-\[|max-\[):(?:block|flex|grid|inline|table|contents)"
+    r"^(?:sm|md|lg|xl|2xl|(?:min|max)-\[[^\]]*\]):(?:block|flex|grid|inline|table|contents)"
 )
 
 
@@ -97,3 +99,8 @@ def has_responsive_show_class(class_name: str) -> bool:
         True if any token is a responsive show utility.
     """
     return any(_RESPONSIVE_SHOW_RE.match(t) for t in class_name.split())
+
+
+def tag_children(el: Tag) -> list[Tag]:
+    """Element children of *el*, skipping text and comment nodes."""
+    return [c for c in el.children if isinstance(c, Tag)]

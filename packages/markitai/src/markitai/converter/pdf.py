@@ -834,8 +834,6 @@ class PdfConverter(BaseConverter):
         # have the backend costs them a second round trip (run --ocr, hit the
         # ImportError, install, run again), so the install command goes in the
         # very first message instead.
-        from markitai.ocr import OCR_INSTALL_HINT, is_ocr_available
-
         remedy = (
             "consider re-running with --ocr"
             if is_ocr_available()
@@ -983,8 +981,13 @@ class PdfConverter(BaseConverter):
         resolved = image_path.resolve().as_posix()
         if resolved not in candidates:
             candidates.append(resolved)
-        cwd_relative = Path(os.path.relpath(resolved, Path.cwd())).as_posix()
-        if cwd_relative not in candidates:
+        try:
+            cwd_relative = Path(os.path.relpath(resolved, Path.cwd())).as_posix()
+        except (ValueError, OSError):
+            # Different Windows drive, or the cwd no longer exists: there is
+            # no relative spelling to rewrite, and that is not an error.
+            cwd_relative = None
+        if cwd_relative is not None and cwd_relative not in candidates:
             candidates.append(cwd_relative)
 
         for candidate in candidates:
