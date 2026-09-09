@@ -96,6 +96,8 @@ class _Job:
 
 
 _JOBS: dict[str, _Job] = {}
+# Finished jobs stay queryable until this many newer ones have finished.
+_MAX_FINISHED_JOBS = 100
 
 server = MCPServer(
     name="markitai",
@@ -307,6 +309,35 @@ async def _run_batch(
 ) -> None:
     """Convert sources sequentially, recording one result entry per item."""
     workdir = Path(job.output_dir)
+    try:
+        await _convert_all(
+            job,
+            sources,
+            workdir,
+            llm=llm,
+            ocr=ocr,
+            screenshot=screenshot,
+            alt=alt,
+            desc=desc,
+        )
+    finally:
+        # Cancellation must not leave the job "running" forever.
+        job.status = "completed"
+        job.task = None
+        _forget_finished_jobs()
+
+
+async def _convert_all(
+    job: _Job,
+    sources: list[str],
+    workdir: Path,
+    *,
+    llm: bool,
+    ocr: bool | None,
+    screenshot: bool | None,
+    alt: bool | None,
+    desc: bool | None,
+) -> None:
     for source in sources:
         try:
             result = await _convert_source(
@@ -329,7 +360,13 @@ async def _run_batch(
         except Exception as e:
             job.results.append({"source": source, "status": "error", "error": str(e)})
         job.done += 1
-    job.status = "completed"
+
+
+def _forget_finished_jobs(keep: int = _MAX_FINISHED_JOBS) -> None:
+    """Drop the oldest finished jobs so a long-lived server stays bounded."""
+    finished = [job_id for job_id, job in _JOBS.items() if job.status == "completed"]
+    for job_id in finished[:-keep] if keep else finished:
+        del _JOBS[job_id]
 
 
 @server.tool()

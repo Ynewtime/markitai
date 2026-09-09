@@ -34,6 +34,7 @@ from loguru import logger
 from markitai.constants import ASSETS_REL_PATH, SCREENSHOTS_REL_PATH
 from markitai.runs.types import Outcome
 from markitai.security import atomic_write_json
+from markitai.utils.clock import now_iso
 
 # Single source of truth for the serve jobs root; ``markitai.serve.app``
 # re-exports this as DEFAULT_JOBS_ROOT so the CLI writes where the server
@@ -42,11 +43,6 @@ DEFAULT_SERVE_JOBS_ROOT = Path.home() / ".markitai" / "serve" / "jobs"
 
 _META_FILENAME = "meta.json"
 _JOB_ID_LENGTH = 12  # matches serve's uuid4().hex[:12] job ids
-
-
-def _now_iso() -> str:
-    """Browser-portable RFC 3339 timestamp (same format serve persists)."""
-    return datetime.now().astimezone().isoformat(timespec="milliseconds")
 
 
 def _dir_size_bytes(path: Path) -> int:
@@ -210,7 +206,7 @@ def _record_cli_job(
     out_dir = tmp_dir / "out"
     out_dir.mkdir(parents=True)
     try:
-        finished_at = _now_iso()
+        finished_at = now_iso()
         created_at = (
             started_at.astimezone().isoformat(timespec="milliseconds")
             if started_at is not None

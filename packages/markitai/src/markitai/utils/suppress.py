@@ -16,7 +16,7 @@ import os
 _APPLIED = False
 
 
-def suppress_onnx_runtime_logs() -> None:
+def _suppress_onnx_runtime_logs() -> None:
     """Suppress ONNX Runtime C++ logs via environment variables.
 
     ONNX Runtime logs directly to stderr in C++, bypassing Python logging.
@@ -27,7 +27,7 @@ def suppress_onnx_runtime_logs() -> None:
     os.environ.setdefault("ORT_CPP_LOG_SEVERITY_LEVEL", "3")
 
 
-def suppress_mupdf_logs() -> None:
+def _suppress_mupdf_logs() -> None:
     """Suppress MuPDF C-level logs that bypass Python logging.
 
     MuPDF (via PyMuPDF) logs directly to stderr, which can clutter output
@@ -57,6 +57,6 @@ def suppress_parser_noise() -> None:
     global _APPLIED
     if _APPLIED:
         return
-    suppress_onnx_runtime_logs()
-    suppress_mupdf_logs()
+    _suppress_onnx_runtime_logs()
+    _suppress_mupdf_logs()
     _APPLIED = True

@@ -179,7 +179,6 @@ class TestTextsCompleteness:
             "missing",
             "total",
             "doctor.title",
-            "doctor.required",
             "doctor.optional",
             "doctor.auth",
             "doctor.summary",

@@ -59,7 +59,7 @@ def remove_by_selectors(
                 continue
             to_remove.append(el)
             seen_ids.add(eid)
-    except Exception:  # noqa: BLE001
+    except Exception:
         # Fallback: query individually if joined selector fails
         for selector in EXACT_SELECTORS:
             try:
@@ -73,7 +73,7 @@ def remove_by_selectors(
                         continue
                     to_remove.append(el)
                     seen_ids.add(eid)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 continue
 
     # Phase 2: Partial attribute matching
@@ -117,7 +117,7 @@ def _skip_hidden_match(el: Tag, skip_hidden_exact: bool) -> bool:
     """
     try:
         is_hidden_match = el.css.match(HIDDEN_EXACT_SELECTOR)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
     classes = el.get("class")
     class_str = " ".join(classes) if isinstance(classes, list) else str(classes or "")
@@ -140,7 +140,7 @@ def _matches_hidden_skip(el: Tag) -> bool:
     """Check if element matches the unguarded hidden selectors."""
     try:
         return el.css.match(HIDDEN_EXACT_SKIP_SELECTOR)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
 
 
@@ -180,7 +180,7 @@ def _should_protect(el: Tag, main_content: Tag | None) -> bool:
             and el.find_parent(id="footnotes") is not None
         ):
             return True
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
 
     # Protect <header> elements that are direct children of article/main/section.

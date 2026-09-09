@@ -1030,6 +1030,14 @@ def app(
         # File/directory mode
         assert input_path is not None  # Already validated above
 
+        if llm_batch and not input_path.is_dir():
+            # The flag is documented as directory-only; silently running a
+            # single file at full price would contradict the help text.
+            stderr_console.print(
+                "[red]Error: --llm-batch applies to directory batches only.[/red]"
+            )
+            raise SystemExit(1)
+
         # Directory batch mode
         if input_path.is_dir():
             assert effective_output is not None  # Validated in Phase 1

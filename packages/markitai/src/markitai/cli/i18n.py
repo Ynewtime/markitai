@@ -35,7 +35,6 @@ TEXTS: dict[str, dict[str, str]] = {
     "total": {"en": "Total", "zh": "总计"},
     # Doctor command
     "doctor.title": {"en": "System Check", "zh": "系统检查"},
-    "doctor.required": {"en": "Required Dependencies", "zh": "必需依赖"},
     "doctor.optional": {"en": "Optional Capabilities", "zh": "可选能力"},
     "doctor.auth": {"en": "Authentication", "zh": "认证状态"},
     "doctor.summary": {

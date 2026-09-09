@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from markitai.utils.errors import MissingDependencyError
+from markitai.utils.errors import MissingDependencyError, extra_install_command
 
 # Extensions handled by this module (dispatch is extension-based; the ftyp
 # sniff below confirms the container before requiring pillow-heif).
@@ -38,8 +38,7 @@ _HEIF_BRANDS = frozenset(
 
 _HEIF_INSTALL_HINT = (
     "pillow-heif is required to decode HEIC/HEIF/AVIF images but is not "
-    'installed. Install it with: uv tool install "markitai[heif]" '
-    '(or: pip install "markitai[heif]")'
+    f"installed. Install it with: {extra_install_command('heif')}"
 )
 
 _opener_registered = False

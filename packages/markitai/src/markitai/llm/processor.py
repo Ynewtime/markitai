@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 try:
     import cairosvg
 except (ImportError, OSError):
-    cairosvg = None  # type: ignore[assignment]
+    cairosvg = None
 
 from markitai.constants import (
     DEFAULT_IO_CONCURRENCY,

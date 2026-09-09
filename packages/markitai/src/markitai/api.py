@@ -530,7 +530,7 @@ async def aconvert(
     if in_memory:
         workdir = Path(tempfile.mkdtemp(prefix="markitai_"))
     else:
-        workdir = Path(output_dir).expanduser()  # type: ignore[arg-type]
+        workdir = Path(output_dir).expanduser()
 
     try:
         if is_url(src):

@@ -48,11 +48,11 @@ def finalize_process(code: int = 0) -> NoReturn:
 
     try:
         cleanup_tracked_temp_dirs()
-    except Exception:  # noqa: BLE001 - cleanup must not change the exit status
+    except Exception:
         pass
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.flush()
-        except Exception:  # noqa: BLE001 - a closed pipe is not a failure here
+        except Exception:
             pass
     os._exit(code)

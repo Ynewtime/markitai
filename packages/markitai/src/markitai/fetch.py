@@ -46,8 +46,8 @@ if TYPE_CHECKING:
     )
 
 
-from markitai.fetch_cache import FetchCache as FetchCache  # noqa: F401
-from markitai.fetch_cache import SPADomainCache as SPADomainCache  # noqa: F401
+from markitai.fetch_cache import FetchCache as FetchCache
+from markitai.fetch_cache import SPADomainCache as SPADomainCache
 
 # Shared mutable fetch state (clients, caches, proxy, consent) lives on the
 # process-wide FetchSession (markitai.fetch_session); consent logic lives in
@@ -57,13 +57,13 @@ from markitai.fetch_cache import SPADomainCache as SPADomainCache  # noqa: F401
 # markitai.fetch_support. They are re-exported here so the public
 # markitai.fetch API (and its non-patch import surface) stays stable.
 from markitai.fetch_consent import (
-    _REMOTE_SERVICE_LABELS as _REMOTE_SERVICE_LABELS,  # noqa: F401
+    _REMOTE_SERVICE_LABELS as _REMOTE_SERVICE_LABELS,
 )
 from markitai.fetch_consent import (
     _env_no_remote_fetch as _env_no_remote_fetch,
 )
 from markitai.fetch_consent import (
-    _remote_service_names as _remote_service_names,  # noqa: F401
+    _remote_service_names as _remote_service_names,
 )
 from markitai.fetch_consent import (
     _should_fallback_after_refusal as _should_fallback_after_refusal,
@@ -72,124 +72,124 @@ from markitai.fetch_consent import (
     disclose_remote_use as disclose_remote_use,
 )
 from markitai.fetch_consent import (
-    peek_cached_remote_consent as peek_cached_remote_consent,  # noqa: F401
+    peek_cached_remote_consent as peek_cached_remote_consent,
 )
 from markitai.fetch_consent import (
     peek_remote_consent as peek_remote_consent,
 )
 from markitai.fetch_consent import (
-    reset_explicit_fallback_decision as reset_explicit_fallback_decision,  # noqa: F401
+    reset_explicit_fallback_decision as reset_explicit_fallback_decision,
 )
 from markitai.fetch_consent import (
-    reset_remote_consent as reset_remote_consent,  # noqa: F401
+    reset_remote_consent as reset_remote_consent,
 )
 from markitai.fetch_consent import (
     resolve_remote_consent as resolve_remote_consent,
 )
 from markitai.fetch_consent import (
-    set_remote_consent as set_remote_consent,  # noqa: F401
+    set_remote_consent as set_remote_consent,
 )
 from markitai.fetch_consent import (
-    set_remote_consent_prompt_allowed as set_remote_consent_prompt_allowed,  # noqa: F401
+    set_remote_consent_prompt_allowed as set_remote_consent_prompt_allowed,
 )
 from markitai.fetch_http import (
-    get_static_http_client as get_static_http_client,  # noqa: F401
+    get_static_http_client as get_static_http_client,
 )
 from markitai.fetch_screenshot import (
-    _url_to_screenshot_filename as _url_to_screenshot_filename,  # noqa: F401
+    _url_to_screenshot_filename as _url_to_screenshot_filename,
 )
 from markitai.fetch_session import (
-    FetchSession as FetchSession,  # noqa: F401
+    FetchSession as FetchSession,
 )
 from markitai.fetch_session import (
     get_default_session as get_default_session,
 )
 from markitai.fetch_session import (
-    reset_default_session as reset_default_session,  # noqa: F401
+    reset_default_session as reset_default_session,
 )
 from markitai.fetch_strategies import (
-    CloudflareRunner as CloudflareRunner,  # noqa: F401
+    CloudflareRunner as CloudflareRunner,
 )
 from markitai.fetch_strategies import (
-    DefuddleRunner as DefuddleRunner,  # noqa: F401
+    DefuddleRunner as DefuddleRunner,
 )
 from markitai.fetch_strategies import (
-    JinaRunner as JinaRunner,  # noqa: F401
+    JinaRunner as JinaRunner,
 )
 from markitai.fetch_strategies import (
-    PlaywrightRunner as PlaywrightRunner,  # noqa: F401
+    PlaywrightRunner as PlaywrightRunner,
 )
 from markitai.fetch_strategies import (
-    StaticRunner as StaticRunner,  # noqa: F401
+    StaticRunner as StaticRunner,
 )
 from markitai.fetch_strategies import (
     StrategyContext as StrategyContext,
 )
 from markitai.fetch_strategies import (
-    StrategyRunner as StrategyRunner,  # noqa: F401
+    StrategyRunner as StrategyRunner,
 )
 from markitai.fetch_strategies import (
-    fetch_with_cloudflare as fetch_with_cloudflare,  # noqa: F401
+    fetch_with_cloudflare as fetch_with_cloudflare,
 )
 from markitai.fetch_strategies import (
-    fetch_with_defuddle as fetch_with_defuddle,  # noqa: F401
+    fetch_with_defuddle as fetch_with_defuddle,
 )
 from markitai.fetch_strategies import (
-    fetch_with_jina as fetch_with_jina,  # noqa: F401
+    fetch_with_jina as fetch_with_jina,
 )
 from markitai.fetch_strategies import (
-    fetch_with_static as fetch_with_static,  # noqa: F401
+    fetch_with_static as fetch_with_static,
 )
 from markitai.fetch_strategies import (
     fetch_with_static_conditional as fetch_with_static_conditional,
 )
 from markitai.fetch_strategies import (
-    get_cf_semaphore as get_cf_semaphore,  # noqa: F401
+    get_cf_semaphore as get_cf_semaphore,
 )
 from markitai.fetch_strategies import (
     get_runner as get_runner,
 )
 from markitai.fetch_strategies._shared import (
-    _get_markitdown as _get_markitdown,  # noqa: F401
+    _get_markitdown as _get_markitdown,
 )
 from markitai.fetch_strategies.jina import (
-    _extract_jina_error_message as _extract_jina_error_message,  # noqa: F401
+    _extract_jina_error_message as _extract_jina_error_message,
 )
 from markitai.fetch_strategies.jina import (
-    _get_jina_client as _get_jina_client,  # noqa: F401
+    _get_jina_client as _get_jina_client,
 )
 from markitai.fetch_strategies.jina import (
-    _get_jina_rate_limiter as _get_jina_rate_limiter,  # noqa: F401
+    _get_jina_rate_limiter as _get_jina_rate_limiter,
 )
 from markitai.fetch_strategies.static import (
-    _extract_markdown_title as _extract_markdown_title,  # noqa: F401
+    _extract_markdown_title as _extract_markdown_title,
 )
 from markitai.fetch_support import (
     _detect_proxy as _detect_proxy,
 )
 from markitai.fetch_support import (
-    _get_playwright_advanced_kwargs as _get_playwright_advanced_kwargs,  # noqa: F401
+    _get_playwright_advanced_kwargs as _get_playwright_advanced_kwargs,
 )
 from markitai.fetch_support import (
     _get_playwright_fetch_kwargs as _get_playwright_fetch_kwargs,
 )
 from markitai.fetch_support import (
-    _resolve_playwright_profile_overrides as _resolve_playwright_profile_overrides,  # noqa: F401
+    _resolve_playwright_profile_overrides as _resolve_playwright_profile_overrides,
 )
 from markitai.fetch_support import (
-    _url_to_session_key as _url_to_session_key,  # noqa: F401
+    _url_to_session_key as _url_to_session_key,
 )
 from markitai.fetch_types import (
-    CRITICAL_INVALID_REASONS as CRITICAL_INVALID_REASONS,  # noqa: F401
+    CRITICAL_INVALID_REASONS as CRITICAL_INVALID_REASONS,
 )
 from markitai.fetch_types import (
-    ConditionalFetchResult as ConditionalFetchResult,  # noqa: F401
+    ConditionalFetchResult as ConditionalFetchResult,
 )
-from markitai.fetch_types import FetchError as FetchError  # noqa: F401
-from markitai.fetch_types import FetchResult as FetchResult  # noqa: F401
-from markitai.fetch_types import FetchStrategy as FetchStrategy  # noqa: F401
-from markitai.fetch_types import JinaAPIError as JinaAPIError  # noqa: F401
-from markitai.fetch_types import JinaRateLimitError as JinaRateLimitError  # noqa: F401
+from markitai.fetch_types import FetchError as FetchError
+from markitai.fetch_types import FetchResult as FetchResult
+from markitai.fetch_types import FetchStrategy as FetchStrategy
+from markitai.fetch_types import JinaAPIError as JinaAPIError
+from markitai.fetch_types import JinaRateLimitError as JinaRateLimitError
 
 
 def get_spa_domain_cache() -> SPADomainCache:

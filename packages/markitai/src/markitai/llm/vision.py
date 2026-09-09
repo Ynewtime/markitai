@@ -232,7 +232,7 @@ def _merge_llm_usage(
     """Merge llm_usage dicts without importing workflow helpers."""
     merged: dict[str, Any] = copy.deepcopy(dict(base)) if base else {}
     if not extra:
-        return merged  # type: ignore[return-value]
+        return merged
 
     for model, usage in extra.items():
         if model not in merged:
@@ -258,7 +258,7 @@ def _merge_llm_usage(
             "cost_usd", 0.0
         )
 
-    return merged  # type: ignore[return-value]
+    return merged
 
 
 def _guard_degenerate_extracted_text(analysis: ImageAnalysis, context: str) -> bool:

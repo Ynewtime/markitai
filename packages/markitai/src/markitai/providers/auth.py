@@ -907,7 +907,7 @@ async def _login_chatgpt() -> AuthStatus:
     authenticator = Authenticator()
     interceptor = DeviceCodeInterceptor()
     original_stdout = sys.stdout
-    sys.stdout = interceptor  # type: ignore[assignment]
+    sys.stdout = interceptor
     try:
         authenticator.get_access_token()
     except Exception as e:

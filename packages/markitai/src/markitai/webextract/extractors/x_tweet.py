@@ -48,7 +48,7 @@ class XTweetExtractor:
     def extract_root(self, soup: BeautifulSoup) -> Tag | None:
         """Extract the conversation timeline or single tweet."""
         # Strategy 1: Find the conversation timeline
-        timeline = soup.find(  # type: ignore[call-overload]
+        timeline = soup.find(
             attrs={
                 "aria-label": lambda v: (  # type: ignore[dict-item]
                     v and "Timeline" in str(v) and "Conversation" in str(v)
@@ -94,7 +94,7 @@ class XTweetExtractor:
             primary_col = soup.find("main")
         if not isinstance(primary_col, Tag):
             # Fallback: search the whole document
-            primary_col = soup  # type: ignore[assignment]
+            primary_col = soup
 
         main_article = find_primary_tweet(primary_col)
         if main_article is None:
@@ -127,7 +127,7 @@ class XTweetExtractor:
         continuation_items: list[ConversationItem] = []
         reply_items: list[ConversationItem] = []
         if policy is not None:
-            reply_section = primary_col.find("section")  # type: ignore[union-attr]
+            reply_section = primary_col.find("section")
             if isinstance(reply_section, Tag):
                 reply_articles = reply_section.find_all(
                     "article", attrs={"data-testid": "tweet"}

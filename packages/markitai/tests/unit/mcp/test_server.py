@@ -217,3 +217,29 @@ class TestBatchConvert:
     async def test_unknown_job_id_is_a_tool_error(self) -> None:
         with pytest.raises(ToolError, match="Unknown job id"):
             await job_status("does-not-exist")
+
+
+class TestJobBookkeeping:
+    async def test_finished_jobs_are_bounded(self, sample_md: Path) -> None:
+        """A long-lived server forgets old finished jobs, never running ones."""
+        server_module._JOBS.clear()
+        for _ in range(3):
+            started = await batch_convert([str(sample_md)])
+            await _wait_for_completion(started["job_id"])
+        assert len(server_module._JOBS) == 3
+
+        server_module._forget_finished_jobs(keep=1)
+        assert len(server_module._JOBS) == 1
+        assert await job_status(next(iter(server_module._JOBS)))
+
+    async def test_cancelled_batch_does_not_stay_running(self, sample_md: Path) -> None:
+        server_module._JOBS.clear()
+        started = await batch_convert([str(sample_md)] * 5)
+        job = server_module._JOBS[started["job_id"]]
+        assert job.task is not None
+        await asyncio.sleep(0)  # let the task start converting before cancelling it
+        job.task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await job.task
+        assert job.status == "completed"
+        assert job.task is None

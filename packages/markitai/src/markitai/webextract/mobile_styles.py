@@ -38,7 +38,7 @@ def apply_mobile_style_pruning(soup: BeautifulSoup) -> int:
                 if isinstance(el, Tag):
                     el.decompose()
                     removed += 1
-        except Exception:  # noqa: BLE001
+        except Exception:
             continue
 
     if removed > 0:

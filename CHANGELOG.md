@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Substack article extraction** now handles rendered bodies and `window._preloads` JSON, including custom domains and byline dates, while retaining Notes extraction and generic fallback.
 - **Linux desktop proxy discovery** reads manual GNOME/Unity and KDE HTTP proxy settings and bypass lists. Explicit environment proxies still take precedence; PAC, SOCKS-only and authenticated desktop settings are not imported.
 - **Opt-in benchmark LLM scoring** provides validated content, structure and noise scores through `score_with_llm_judge`, with offline cache reuse, input limits and no automatic retries. A cache miss requires an explicit model and `allow_network=True`; default benchmarks remain heuristic and offline.
+- **Every boolean CLI flag has a spelled-out negation**: `--cache`, `--compress`, `--no-pure` and `--no-screenshot-only` join their siblings, so a config default can be overridden in either direction from the command line
 
 ### Changed
 
@@ -48,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Every dependency moved to its current release**, `litellm` 1.91.1 → 1.97.0 and `markitdown` 0.1.6 → 0.1.7 among 56 updates, with the licence audit re-run against the upgraded tree
 - **The PDF engine floor moved to `pymupdf4llm>=1.28.2`**: 1.28.0 pulled in `pymupdf-layout` under a Polyform Noncommercial licence, which forbids commercial use outright; 1.28.2 restored AGPL-3.0 dual licensing
 - **Setup no longer asks about LibreOffice**: slide rendering is an opt-in runtime path that a local MS Office already covers on Windows and macOS, so the guided installer leaves it out; a PPTX `--screenshot`/`--ocr` conversion with no renderer available warns at conversion time and names the per-OS install command
+- **`--no-pure` beats `MARKITAI_PURE`**: an explicit flag on the command line now overrides the environment variable in both directions, where the env var previously won
 
 ### Removed
 

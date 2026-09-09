@@ -72,6 +72,7 @@ from markitai.providers.timeout import (
     calculate_timeout,
     calculate_timeout_from_messages,
 )
+from markitai.utils.errors import extra_install_command
 from markitai.utils.text import preview_items_for_log
 
 if TYPE_CHECKING:
@@ -420,7 +421,7 @@ def validate_local_provider_deps(models: list[str]) -> list[str]:
         if not importlib.util.find_spec("claude_agent_sdk"):
             warnings.append(
                 "⚠️  claude-agent/ models require Claude Agent SDK."
-                "\n   Install: uv tool install 'markitai[claude-agent]' --upgrade  # or: uv add claude-agent-sdk (dev mode)"
+                f"\n   Install: {extra_install_command('claude-agent')}  # or: uv add claude-agent-sdk (dev mode)"
             )
         elif not shutil.which("claude"):
             warnings.append(
@@ -435,7 +436,7 @@ def validate_local_provider_deps(models: list[str]) -> list[str]:
         if not importlib.util.find_spec("copilot"):
             warnings.append(
                 "⚠️  copilot/ models require GitHub Copilot SDK."
-                "\n   Install: uv tool install 'markitai[copilot]' --upgrade  # or: uv add github-copilot-sdk (dev mode)"
+                f"\n   Install: {extra_install_command('copilot')}  # or: uv add github-copilot-sdk (dev mode)"
             )
         elif not shutil.which("copilot"):
             warnings.append(

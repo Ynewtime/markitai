@@ -425,9 +425,9 @@ async def process_url(
         # image analysis, no raw pure base: delegate base+LLM to the shared
         # workflow cascade (the same code serve/api run). The CLI-only
         # branches stay in the else block below.
-        if not _use_cli_llm_branches(
-            cfg, fetch_result, has_screenshot, downloaded_images
-        ) and not _use_raw_pure_base(cfg):
+        if not _use_cli_llm_branches(cfg, downloaded_images) and not _use_raw_pure_base(
+            cfg
+        ):
             if cfg.llm.enabled:
                 # Pin the LLM stage BEFORE the first [LLM] log (same reason
                 # as the branch matrix below: the loguru bridge would
@@ -1499,12 +1499,7 @@ async def run_url_document_llm(
     )
 
 
-def _use_cli_llm_branches(
-    cfg: MarkitaiConfig,
-    fetch_result: FetchResult,
-    has_screenshot: bool,
-    downloaded_images: list[Path],
-) -> bool:
+def _use_cli_llm_branches(cfg: MarkitaiConfig, downloaded_images: list[Path]) -> bool:
     """Whether the URL needs the CLI's image-analysis LLM branches.
 
     Vision enhancement and screenshot-only extraction now run inside the

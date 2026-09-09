@@ -45,6 +45,11 @@ def _make_model_config(model_id: str, weight: int = 1) -> MagicMock:
     return m
 
 
+def _has_errors(results: dict[str, dict[str, object]]) -> bool:
+    """Whether any doctor check in a JSON report has error or missing status."""
+    return any(info.get("status") in ("error", "missing") for info in results.values())
+
+
 class TestDoctorUnifiedUI:
     """Tests for unified UI output in doctor command."""
 
@@ -246,8 +251,6 @@ class TestDoctorSummaryAllGood:
         self, cli_runner: CliRunner, mock_config: object
     ) -> None:
         """all_good should be False when an auth check has error status."""
-        from markitai.cli.commands.doctor import _has_errors
-
         data = self._invoke_doctor_json(
             cli_runner,
             mock_config,
@@ -267,8 +270,6 @@ class TestDoctorSummaryAllGood:
         self, cli_runner: CliRunner, mock_config: object
     ) -> None:
         """all_good should be False when LLM API check has error status."""
-        from markitai.cli.commands.doctor import _has_errors
-
         data = self._invoke_doctor_json(
             cli_runner,
             mock_config,
@@ -286,8 +287,6 @@ class TestDoctorSummaryAllGood:
         self, cli_runner: CliRunner, mock_config: object
     ) -> None:
         """all_good should be False when vision model check has error status."""
-        from markitai.cli.commands.doctor import _has_errors
-
         data = self._invoke_doctor_json(
             cli_runner,
             mock_config,
@@ -305,8 +304,6 @@ class TestDoctorSummaryAllGood:
         self, cli_runner: CliRunner, mock_config: object
     ) -> None:
         """all_good should be True when all checks pass (no error status)."""
-        from markitai.cli.commands.doctor import _has_errors
-
         # Override llm-api to OK since default mock has no models (= missing)
         data = self._invoke_doctor_json(
             cli_runner,

@@ -175,7 +175,7 @@ def _extract_story_text(soup: BeautifulSoup) -> tuple[str, str]:
                 if isinstance(classes, list) and "comtr" in classes:
                     inside_comment = True
                     break
-            parent = parent.parent  # type: ignore[assignment]
+            parent = parent.parent
 
         if not inside_comment:
             return str(span), span.get_text(separator=" ", strip=True)

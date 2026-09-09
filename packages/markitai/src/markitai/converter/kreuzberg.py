@@ -29,7 +29,7 @@ from markitai.converter.base import (
     FileFormat,
     _converter_registry,
 )
-from markitai.utils.errors import MissingDependencyError
+from markitai.utils.errors import MissingDependencyError, extra_install_command
 
 # Formats that kreuzberg should handle — only those without native converters.
 # NUMBERS: handled by markitdown_ext.
@@ -81,7 +81,7 @@ class KreuzbergConverter(BaseConverter):
         except ImportError:
             raise MissingDependencyError(
                 "kreuzberg is required for this file format but is not "
-                'installed. Install it with: uv tool install "markitai[kreuzberg]"'
+                f"installed. Install it with: {extra_install_command('kreuzberg')}"
             )
 
         input_path = Path(input_path)

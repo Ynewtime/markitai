@@ -61,7 +61,7 @@ class TestDocumentImages:
         out.mkdir()
         base = _write_doc_with_image(out, "a", "a-0001.png")
 
-        found = _document_images(base, base.read_text(encoding="utf-8"), out)
+        found = _document_images(base, base.read_text(encoding="utf-8"))
 
         assert [p.name for p in found] == ["a-0001.png"]
 
@@ -72,7 +72,7 @@ class TestDocumentImages:
         base = out / "a.md"
         base.write_text(f"![]({ASSETS_REL_PATH}/gone.png)", encoding="utf-8")
 
-        assert _document_images(base, base.read_text(encoding="utf-8"), out) == []
+        assert _document_images(base, base.read_text(encoding="utf-8")) == []
 
 
 class TestPreparePendingWithImages:
@@ -290,7 +290,7 @@ class TestPreparePendingWithPages:
         # A neighbour's pages must not be picked up
         self._write_pages(out, "b.pdf", 2)
 
-        found = _document_pages(out / "a.pdf.md", out)
+        found = _document_pages(out / "a.pdf.md")
 
         assert [p.name for p in found] == [
             "a.pdf.page0001.jpg",

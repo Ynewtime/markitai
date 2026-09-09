@@ -135,21 +135,6 @@ def _smoke_test_playwright_browser() -> tuple[bool, str]:
     return False, f"headless launch failed: {detail}"
 
 
-def _has_errors(results: dict[str, dict[str, Any]]) -> bool:
-    """Check whether any check result has error or missing status.
-
-    This covers all categories: required deps, optional capabilities, LLM,
-    auth, and vision.
-
-    Args:
-        results: The full results dict from doctor checks.
-
-    Returns:
-        True if any result has 'error' or 'missing' status.
-    """
-    return any(info.get("status") in ("error", "missing") for info in results.values())
-
-
 def _install_component(component: str, *, package_missing: bool = False) -> bool:
     """Attempt to install a missing component.
 
@@ -399,7 +384,7 @@ def _check_serve() -> dict[str, Any]:
         "description": "Web UI server (markitai serve)",
         "status": "missing",
         "message": "serve extra not installed",
-        "install_hint": 'uv tool install "markitai[serve]"',
+        "install_hint": extra_install_command("serve"),
     }
 
 
@@ -745,7 +730,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                     "description": "Claude Code CLI integration",
                     "status": "missing",
                     "message": "claude-agent-sdk not installed",
-                    "install_hint": "curl -fsSL https://markitai.dev/setup.sh | sh  # or: uv tool install 'markitai[claude-agent]' --upgrade",
+                    "install_hint": f"curl -fsSL https://markitai.dev/setup.sh | sh  # or: {extra_install_command('claude-agent')}",
                 }
         except Exception as e:
             results["claude-agent-sdk"] = {
@@ -753,7 +738,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                 "description": "Claude Code CLI integration",
                 "status": "error",
                 "message": f"Check failed: {e}",
-                "install_hint": "curl -fsSL https://markitai.dev/setup.sh | sh  # or: uv tool install 'markitai[claude-agent]' --upgrade",
+                "install_hint": f"curl -fsSL https://markitai.dev/setup.sh | sh  # or: {extra_install_command('claude-agent')}",
             }
 
         # 5b. Check Claude Agent authentication status
@@ -789,7 +774,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                     "description": "GitHub Copilot CLI integration",
                     "status": "missing",
                     "message": "github-copilot-sdk not installed",
-                    "install_hint": "curl -fsSL https://markitai.dev/setup.sh | sh  # or: uv tool install 'markitai[copilot]' --upgrade",
+                    "install_hint": f"curl -fsSL https://markitai.dev/setup.sh | sh  # or: {extra_install_command('copilot')}",
                 }
         except Exception as e:
             results["copilot-sdk"] = {
@@ -797,7 +782,7 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                 "description": "GitHub Copilot CLI integration",
                 "status": "error",
                 "message": f"Check failed: {e}",
-                "install_hint": "curl -fsSL https://markitai.dev/setup.sh | sh  # or: uv tool install 'markitai[copilot]' --upgrade",
+                "install_hint": f"curl -fsSL https://markitai.dev/setup.sh | sh  # or: {extra_install_command('copilot')}",
             }
 
         # 5c. Check Copilot authentication status
@@ -890,7 +875,6 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
     # asks for — a configured Playwright workflow, an active API model, a
     # local provider — because those are promises the installation is failing
     # to keep.
-    required_deps: list[str] = []
     required_checks: set[str] = set()
     fetch_strategy = getattr(getattr(cfg, "fetch", None), "strategy", "auto")
     screenshot_enabled = (
@@ -965,11 +949,6 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
                     results[key],
                     blocking=_is_blocking_failure(key, results[key]),
                 )
-
-    # Required dependencies (empty unless a future check is unconditionally
-    # required again — an empty section header would just be noise)
-    if any(k in results for k in required_deps):
-        render_section(t("doctor.required"), required_deps)
 
     # Optional capabilities
     if any(k in results for k in optional_deps):

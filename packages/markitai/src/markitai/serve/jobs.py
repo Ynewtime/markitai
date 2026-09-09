@@ -26,6 +26,8 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from markitai.utils.clock import now_iso
+
 if TYPE_CHECKING:
     from markitai.batch import ProcessResult
     from markitai.config import MarkitaiConfig
@@ -33,11 +35,6 @@ if TYPE_CHECKING:
 
 JOB_TTL_HOURS = 7 * 24.0  # conversion history is kept for 7 days
 META_FILENAME = "meta.json"
-
-
-def _now_iso() -> str:
-    """Browser-portable RFC 3339 timestamp with millisecond precision."""
-    return datetime.now().astimezone().isoformat(timespec="milliseconds")
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +209,7 @@ class JobRegistry:
         job = Job(
             job_id=job_id,
             job_dir=job_dir,
-            created_at=_now_iso(),
+            created_at=now_iso(),
             options=options,
             cfg=cfg,
         )
@@ -733,7 +730,7 @@ async def _run_item(
         item.status = "error"
         item.error = "cancelled"
         item.duration_ms = int((time.perf_counter() - start) * 1000)
-        item.finished_at = _now_iso()
+        item.finished_at = now_iso()
         registry.publish_item(job, item)
         raise
     except Exception as e:  # defensive: the item must reach a terminal state
@@ -751,7 +748,7 @@ async def _run_item(
             result.error = "LLM enhancement did not produce an enhanced Markdown result"
     item.duration_ms = int((time.perf_counter() - start) * 1000)
     _apply_result(job, item, result)
-    item.finished_at = _now_iso()
+    item.finished_at = now_iso()
     registry.publish_item(job, item)
     registry.publish_job(job)
 
@@ -809,7 +806,7 @@ async def run_job(
             if item.status in ("queued", "running"):
                 item.status = "error"
                 item.error = "cancelled (server shutdown)"
-                item.finished_at = _now_iso()
+                item.finished_at = now_iso()
         raise
     except Exception as e:  # defensive: the job must reach a terminal state
         logger.exception("[Serve] Job {} crashed: {}", job.job_id, e)
@@ -817,7 +814,7 @@ async def run_job(
             if item.status in ("queued", "running"):
                 item.status = "error"
                 item.error = f"internal error: {e}"
-                item.finished_at = _now_iso()
+                item.finished_at = now_iso()
                 registry.publish_item(job, item)
     finally:
         if finalize:
@@ -838,7 +835,7 @@ async def finalize_if_idle(registry: JobRegistry, job: Job) -> None:
 
 async def finalize_job(registry: JobRegistry, job: Job) -> None:
     """Persist and publish a job after its initial run or retry queue drains."""
-    finished_at = _now_iso()
+    finished_at = now_iso()
     try:
         # rglob the out dir off-thread WHILE the job is still "running" — a
         # job with hundreds of files (or a slow disk) must not block the loop
@@ -952,7 +949,7 @@ async def run_retry_queue(registry: JobRegistry, job: Job) -> None:
                 if item is not None and item.status == "queued":
                     item.status = "error"
                     item.error = "cancelled (server shutdown)"
-                    item.finished_at = _now_iso()
+                    item.finished_at = now_iso()
                     registry.publish_item(job, item)
                 job.retry_pending.discard(work.item_id)
                 job.retry_queue.task_done()

@@ -170,8 +170,6 @@ def check_playwright_for_urls(cfg: Any, console: Console) -> None:
     """
     console = get_stderr_console()
 
-    from rich.markup import escape
-
     from markitai.fetch import FetchStrategy
 
     # Only check if strategy might use browser
@@ -202,10 +200,7 @@ def check_playwright_for_urls(cfg: Any, console: Console) -> None:
     ui.step(
         "  markitai doctor --fix   (installs Chromium automatically)", console=console
     )
-    ui.step(
-        escape(f"  or: {extra_install_command('browser')}"),
-        console=console,
-    )
+    ui.step(f"  or: {extra_install_command('browser')}", console=console)
     ui.step(
         "  Linux: also run 'uv run playwright install-deps chromium' for system deps",
         console=console,

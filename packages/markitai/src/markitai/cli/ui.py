@@ -161,7 +161,7 @@ def step(text: str, *, console: Console | None = None) -> None:
         console: Optional console for output (defaults to shared console).
     """
     c = console or get_console()
-    c.print(f"  [dim]{MARK_LINE}[/] {text}")
+    c.print(f"  [dim]{MARK_LINE}[/] {_plain(text)}")
 
 
 def section(text: str, *, console: Console | None = None) -> None:

@@ -870,6 +870,8 @@ class HistoryConfig(BaseModel):
 
 
 # Built-in preset definitions
+# The order the UI lists presets in; BUILTIN_PRESETS keys are a set of these.
+PRESET_NAMES: tuple[str, ...] = ("minimal", "standard", "rich")
 BUILTIN_PRESETS: dict[str, PresetConfig] = {
     "rich": PresetConfig(llm=True, alt=True, desc=True, screenshot=True),
     "standard": PresetConfig(llm=True, alt=True, desc=True),

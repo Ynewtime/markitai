@@ -557,10 +557,6 @@ class TestDoctorExitCode:
                 return_value="/usr/bin/soffice" if libreoffice_ok else None,
             ),
             patch(
-                "markitai.utils.office.is_libreoffice_functional",
-                return_value=libreoffice_ok,
-            ),
-            patch(
                 "markitai.cli.commands.doctor._check_rapidocr",
                 return_value={
                     "name": "RapidOCR",

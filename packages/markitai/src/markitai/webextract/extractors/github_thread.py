@@ -225,7 +225,7 @@ def _parse_comment_block(block: Tag, item_id: str) -> ConversationItem:
         if isinstance(author_tag, Tag):
             author_name = author_tag.get_text(strip=True)
             break
-        container = container.parent  # type: ignore[assignment]
+        container = container.parent
 
     # Look for relative-time in the same container
     if container is not None and not isinstance(container, BeautifulSoup):

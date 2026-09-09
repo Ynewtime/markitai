@@ -325,7 +325,7 @@ class CurlCffiClient:
         a proxied host use separate pooled sessions.
         """
         session = self._get_or_create_session(resolve_proxy_for_url(url, proxy))
-        resp = await session.get(url, headers=headers, timeout=timeout_s)  # type: ignore[reportArgumentType]  # curl_cffi stub mismatch
+        resp = await session.get(url, headers=headers, timeout=timeout_s)
         return StaticHttpResponse(
             content=resp.content,
             status_code=resp.status_code,

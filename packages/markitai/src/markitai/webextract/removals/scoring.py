@@ -77,7 +77,7 @@ def _is_footnote_context(el: Tag) -> bool:
         if el.select_one(FOOTNOTE_LIST_SELECTORS) is not None:
             return True
         return el.css.closest(FOOTNOTE_LIST_SELECTORS) is not None
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
 
 
@@ -106,7 +106,7 @@ def _is_likely_content(el: Tag) -> bool:
         try:
             if el.select_one(selector):
                 return True
-        except Exception:  # noqa: BLE001
+        except Exception:
             continue
 
     text = el.get_text(" ", strip=True)

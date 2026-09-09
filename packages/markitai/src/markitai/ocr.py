@@ -299,7 +299,7 @@ class OCRProcessor:
                 "latin": LangRec.LATIN,
             }
             lang_enum = lang_map.get(config.lang.lower(), LangRec.CH)
-            params["Rec.lang_type"] = lang_enum  # type: ignore[assignment]
+            params["Rec.lang_type"] = lang_enum
 
         return RapidOCR(params=params)
 

@@ -344,7 +344,7 @@ def add_basic_frontmatter(
 
         else:
 
-            def _rel(p: Path) -> Path:  # type: ignore[misc]
+            def _rel(p: Path) -> Path:
                 return Path(p.name)
 
         if len(tiles) == 1:

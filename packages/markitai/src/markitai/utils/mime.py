@@ -22,7 +22,7 @@ _HAS_CAIROSVG: bool | None = None
 
 def _has_cairosvg() -> bool:
     """Check if cairosvg is available, caching the result."""
-    global _HAS_CAIROSVG  # noqa: PLW0603
+    global _HAS_CAIROSVG
     if _HAS_CAIROSVG is None:
         _HAS_CAIROSVG = importlib.util.find_spec("cairosvg") is not None
     return _HAS_CAIROSVG

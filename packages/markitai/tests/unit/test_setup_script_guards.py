@@ -684,7 +684,7 @@ def test_index_probe_is_application_layer_not_a_port_check() -> None:
 class _ProbeHandler(BaseHTTPRequestHandler):
     """Serve the three responses the probe has to tell apart."""
 
-    def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+    def do_GET(self) -> None:
         if self.path.startswith("/ok"):
             body = b"<a href='markitai-0.23.0.whl'>markitai</a>"
             self.send_response(200)

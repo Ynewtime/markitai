@@ -61,14 +61,14 @@ _BLOCK_LEVEL_ELEMENTS = BLOCK_LEVEL_ELEMENTS
 def _matches(el: Tag, selector: str) -> bool:
     try:
         return el.css.match(selector)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
 
 
 def _closest(el: Tag, selector: str) -> Tag | None:
     try:
         return el.css.closest(selector)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
 

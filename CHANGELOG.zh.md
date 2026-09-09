@@ -30,6 +30,7 @@
 - **Substack 文章提取**支持已渲染正文与 `window._preloads` JSON，覆盖自定义域名和署名栏日期，并保留 Notes 提取与通用回退。
 - **Linux 桌面代理发现**读取 GNOME/Unity 和 KDE 的手动 HTTP 代理及绕过列表，显式环境代理仍优先；不导入 PAC、仅 SOCKS 或需认证的桌面代理设置。
 - **可选的基准 LLM 评分**通过 `score_with_llm_judge` 返回经过校验的内容、结构和噪声分数，支持离线缓存复用、输入上限且不自动重试。缓存未命中时必须指定模型并设置 `allow_network=True`；默认基准仍使用离线启发式评分。
+- **每个布尔 CLI 开关都有明确的否定形式**：新增 `--cache`、`--compress`、`--no-pure`、`--no-screenshot-only`，配置里的默认值可以在命令行上朝任一方向覆盖
 
 ### 变更
 
@@ -48,6 +49,7 @@
 - **所有依赖升级到当前版本**：56 项更新中包括 `litellm` 1.91.1 → 1.97.0、`markitdown` 0.1.6 → 0.1.7，并对升级后的依赖树重跑了许可证审计
 - **PDF 引擎下限提升到 `pymupdf4llm>=1.28.2`**：1.28.0 引入的 `pymupdf-layout` 采用 Polyform Noncommercial 许可，直接禁止商用；1.28.2 恢复了 AGPL-3.0 双许可
 - **安装器不再询问 LibreOffice**：幻灯片渲染是可选的运行时路径，Windows 与 macOS 上本机的 MS Office 已能覆盖，引导安装彻底不再过问；PPTX `--screenshot`/`--ocr` 转换在本机没有任何渲染器时于转换时告警，并给出对应平台的安装命令
+- **`--no-pure` 优先于 `MARKITAI_PURE`**：命令行显式给出的开关现在双向覆盖环境变量，之前是环境变量优先
 
 ### 移除
 

@@ -136,6 +136,18 @@ class TestCLIOptions:
         assert result.exit_code == 0
         assert "LLM" in result.output
 
+    def test_llm_batch_rejects_a_single_file(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """--llm-batch is directory-only; a single file must not run at full price."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello")
+        result = cli_runner.invoke(
+            app, [str(test_file), "-o", str(tmp_path / "out"), "--llm", "--llm-batch"]
+        )
+        assert result.exit_code == 1
+        assert "directory batches only" in result.output
+
     def test_llm_flag_disable(self, tmp_path: Path, cli_runner: CliRunner) -> None:
         """Test --no-llm flag."""
         test_file = tmp_path / "test.txt"

@@ -252,7 +252,7 @@ class EmlConverter(BaseConverter):
 
         msg = message_from_bytes(input_path.read_bytes(), policy=_DEFAULT_POLICY)
         markdown = _render_message(
-            msg,  # type: ignore[arg-type]
+            msg,
             source=f"file://{input_path.resolve()}",
         )
 

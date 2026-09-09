@@ -48,7 +48,7 @@ async def test_base_state_exists_before_the_first_document_is_converted(
 
     original = batch_module.create_process_file
 
-    def _recording_factory(  # noqa: ANN202
+    def _recording_factory(
         cfg: MarkitaiConfig,
         input_dir: Path,
         output_dir: Path,
@@ -56,7 +56,7 @@ async def test_base_state_exists_before_the_first_document_is_converted(
     ):
         process_file = original(cfg, input_dir, output_dir, shared_processor)
 
-        async def _wrapped(path: Path):  # noqa: ANN202
+        async def _wrapped(path: Path):
             if not seen_at_first_file:
                 seen_at_first_file.append(_state_files(output_dir))
             return await process_file(path)

@@ -28,7 +28,7 @@ def _skip_if_no_playwright_browser() -> None:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             browser.close()
-    except Exception:  # noqa: BLE001
+    except Exception:
         pytest.skip("playwright browsers not installed")
 
 

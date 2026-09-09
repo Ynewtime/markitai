@@ -30,6 +30,7 @@ from typing import Any
 
 from loguru import logger
 
+from markitai.cli.ui import get_stderr_console
 from markitai.constants import DEFAULT_MAX_PAGES_PER_BATCH
 from markitai.llm.batch_api import (
     BatchDocItem,
@@ -49,6 +50,7 @@ from markitai.llm.batch_api import (
 from markitai.llm.structured import instructor_mode_for_model
 from markitai.llm.types import ImageAnalysis, ImageAnalysisResult
 from markitai.utils.errors import ConversionError
+from markitai.utils.frontmatter import split_frontmatter
 
 BATCH_COST_FACTOR = 0.5  # both providers bill batches at half of list price
 
@@ -118,7 +120,7 @@ def _anthropic_max_tokens(model: str) -> int:
         return 8192
 
 
-def _document_images(base_md: Path, markdown: str, output_dir: Path) -> list[Path]:
+def _document_images(base_md: Path, markdown: str) -> list[Path]:
     """The asset files one document's markdown refers to, in document order.
 
     Read from the refs the converter itself wrote, not from a glob on the
@@ -142,7 +144,7 @@ def _finalize_doc(
     return processor.documents.finalize_document_plan(plan, result)
 
 
-def _document_pages(base_md: Path, output_dir: Path) -> list[Path]:
+def _document_pages(base_md: Path) -> list[Path]:
     """The page screenshots rendered for one document, in page order.
 
     Unlike assets, these are named by markitai itself —
@@ -175,7 +177,8 @@ def _prepare_pending(
     applied to the written ``.llm.md`` rather than fed to the document call.
 
     Returns:
-        (uncached (item, plan) pairs, number of cache-served requests)
+        (uncached (item, plan) pairs, number of cache-served requests,
+        oversized documents that must run live)
     """
     base_files = sorted(
         p
@@ -190,10 +193,10 @@ def _prepare_pending(
         # not the written base (note1.md.md) — keep the naming identical.
         # The base's frontmatter is stripped so the LLM never sees it.
         source = base_md.name.removesuffix(".md")
-        markdown = _strip_frontmatter(base_md.read_text(encoding="utf-8"))
+        markdown = _body_without_frontmatter(base_md.read_text(encoding="utf-8"))
         relative_base = str(base_md.relative_to(output_dir))
 
-        pages = _document_pages(base_md, output_dir) if analyze_pages else []
+        pages = _document_pages(base_md) if analyze_pages else []
         if len(pages) > max_pages:
             # The live path splits a long document into ordered rounds, and
             # each batch round is a separate 24-hour wait. Sending every page
@@ -227,7 +230,7 @@ def _prepare_pending(
 
         if not analyze_images:
             continue
-        for image in _document_images(base_md, markdown, output_dir):
+        for image in _document_images(base_md, markdown):
             image_plan = processor.vision.prepare_image_plan(
                 image, context=source, document_context=markdown[:500]
             )
@@ -250,16 +253,6 @@ def _prepare_pending(
                 )
             )
     return pending, cached, oversized
-
-
-def _strip_frontmatter(text: str) -> str:
-    """Drop a leading YAML frontmatter block, returning the body."""
-    if not text.startswith("---"):
-        return text
-    end = text.find("\n---", 3)
-    if end == -1:
-        return text
-    return text[end + 4 :].lstrip("\n")
 
 
 def _write_llm_md(
@@ -314,7 +307,7 @@ async def run_batch_llm_enhancement(
             "single-call limit; enhancing live at full price — "
             "batching it would mean one round trip per round, each up to 24h"
         )
-        markdown = _strip_frontmatter(base_md.read_text(encoding="utf-8"))
+        markdown = _body_without_frontmatter(base_md.read_text(encoding="utf-8"))
         cleaned, frontmatter = await processor.documents.enhance_document_complete(
             markdown, pages, source=source
         )
@@ -323,7 +316,9 @@ async def run_batch_llm_enhancement(
         logger.info(f"[Batch] {cached} request(s) served from cache")
     if not pending:
         if not quiet:
-            print("All documents already cached — nothing to submit.")
+            get_stderr_console().print(
+                "All documents already cached — nothing to submit."
+            )
         return 0
 
     state_dir = BatchRunState.state_dir_for(output_dir, "pending")
@@ -367,7 +362,7 @@ async def run_batch_llm_enhancement(
     write_batch_jsonl(requests, jsonl_path)
 
     if not quiet:
-        print(
+        get_stderr_console().print(
             f"Submitting {len(pending)} request(s) to the Batch API "
             f"({model}, 50% of list price)..."
         )
@@ -391,7 +386,9 @@ async def run_batch_llm_enhancement(
 
     def _progress(status: str, done: int, total: int) -> None:
         if not quiet:
-            print(f"\rBatch {batch_id}: {status} ({done}/{total})", end="", flush=True)
+            get_stderr_console().print(
+                f"\rBatch {batch_id}: {status} ({done}/{total})", end=""
+            )
 
     try:
         if provider == "anthropic":
@@ -407,14 +404,15 @@ async def run_batch_llm_enhancement(
             )
     except TimeoutError as e:
         if not quiet:
-            print()
-            print(f"Batch still in flight: {e}")
-            print("It keeps running server-side. Collect it later with:")
-            print(f"  markitai --llm-batch-collect {batch_id} -o {output_dir}")
+            console = get_stderr_console()
+            console.print()
+            console.print(f"Batch still in flight: {e}")
+            console.print("It keeps running server-side. Collect it later with:")
+            console.print(f"  markitai --llm-batch-collect {batch_id} -o {output_dir}")
         return 2
 
     if not quiet:
-        print()
+        get_stderr_console().print()
     if status != "completed":
         raise ConversionError(f"batch {batch_id} ended with status={status!r}")
 
@@ -604,7 +602,7 @@ async def _finish_batch(
             # their names derive from the same source string, so the plan
             # rebuilds identically hours later.
             plan = processor.documents.prepare_vision_plan(
-                markdown, _document_pages(base_md, output_dir), item.source
+                markdown, _document_pages(base_md), item.source
             )
         else:
             plan = processor.documents._prepare_document_plan(markdown, item.source)
@@ -637,7 +635,7 @@ async def _finish_batch(
                     frontmatter,
                 ) = await processor.documents.enhance_document_complete(
                     markdown,
-                    _document_pages(base_md, output_dir),
+                    _document_pages(base_md),
                     source=item.source,
                 )
             else:
@@ -650,7 +648,7 @@ async def _finish_batch(
     _apply_image_answers(cfg, output_dir, images_by_base)
 
     if not quiet:
-        print(
+        get_stderr_console().print(
             f"Batch enhancement done: {done} via batch"
             + (f", {reran} re-ran live" if reran else "")
             + (
@@ -702,10 +700,18 @@ async def collect_batch_llm(
         if status in ("failed", "expired", "cancelled"):
             raise ConversionError(f"batch {batch_id} ended with status={status!r}")
         if not quiet:
-            print(f"Batch {batch_id} is still {status!r} — try again later.")
+            get_stderr_console().print(
+                f"Batch {batch_id} is still {status!r} — try again later."
+            )
         return 2
 
     from markitai.workflow.helpers import create_llm_processor
 
     processor = create_llm_processor(cfg)
     return await _finish_batch(cfg, processor, output_dir, state, quiet=quiet)
+
+
+def _body_without_frontmatter(text: str) -> str:
+    """The document body, with any leading YAML frontmatter removed."""
+    _frontmatter, body = split_frontmatter(text)
+    return body

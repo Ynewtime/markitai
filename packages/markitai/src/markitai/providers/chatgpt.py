@@ -54,7 +54,7 @@ try:
     LITELLM_AVAILABLE = True
 except ImportError:
     LITELLM_AVAILABLE = False
-    CustomLLM = object  # type: ignore[misc, assignment]
+    CustomLLM = object
 
 
 def _import_authenticator() -> type:

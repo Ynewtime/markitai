@@ -252,7 +252,7 @@ def _mock_stream_client(
 ) -> AsyncMock:
     """Create a mock httpx client that simulates client.stream() → SSE."""
 
-    async def _aiter_lines() -> Any:  # noqa: ANN401
+    async def _aiter_lines() -> Any:
         for line in sse_lines:
             yield line
 

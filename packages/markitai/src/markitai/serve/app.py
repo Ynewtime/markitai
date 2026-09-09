@@ -384,7 +384,7 @@ def _is_loopback_host(host: str) -> bool:
 
 
 def _is_loopback_scope(scope: Any) -> bool:
-    """ASGI-scope variant of :func:`_is_loopback_peer`."""
+    """ASGI-scope variant of :func:`_is_loopback_host`."""
     client = scope.get("client")
     return _is_loopback_host(client[0] if client else "127.0.0.1")
 
@@ -1553,7 +1553,7 @@ def create_app(
 
     @app.get("/api/capabilities", response_model=Capabilities)
     async def get_capabilities(request: Request) -> dict[str, Any]:
-        from markitai.config import get_preset
+        from markitai.config import PRESET_NAMES, get_preset
 
         state = _state(request)
         effective = _effective_models(state.configured_models, state.detected_models)
@@ -1566,10 +1566,10 @@ def create_app(
                 "effective": routable,
                 "models": [model.litellm_params.model for model in effective],
             },
-            "presets": ["minimal", "standard", "rich"],
+            "presets": list(PRESET_NAMES),
             "preset_options": {
                 name: preset.model_dump()
-                for name in ("minimal", "standard", "rich")
+                for name in PRESET_NAMES
                 if (preset := get_preset(name, state.config)) is not None
             },
             "extras": {

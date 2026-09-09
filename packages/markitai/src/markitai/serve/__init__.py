@@ -18,10 +18,11 @@ if TYPE_CHECKING:
 
     from markitai.config import MarkitaiConfig
 
+from markitai.utils.errors import extra_install_command
+
 SERVE_INSTALL_HINT = (
     "fastapi, uvicorn and python-multipart are required for the serve "
-    "command but are not installed. Install them with: "
-    'uv tool install "markitai[serve]" (or: pip install "markitai[serve]")'
+    f"command but are not installed. Install them with: {extra_install_command('serve')}"
 )
 
 
