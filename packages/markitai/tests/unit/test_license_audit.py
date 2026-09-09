@@ -132,7 +132,7 @@ class TestNoticeFile:
         """A new extra must say which licence it brings in.
 
         NOTICE closes by naming each extra's package and its licence family.
-        Two extras added in 0.24.0 (`legacy`, `mcp`) were never added to that
+        Two extras added in 1.0.0 (`legacy`, `mcp`) were never added to that
         list — the paragraph read as exhaustive while it was not.
         """
         import re

@@ -40,7 +40,7 @@ dependencies = [
     "rich-click>=1.9.4",
     "loguru>=0.7.3",
     "rich>=14.3.0",
-    "Pillow>=12.1.0",  # sole image backend; opencv-python (121MB) was dropped in 0.24 — measured slower in the real spawn-pool path and worse quality (INTER_LANCZOS4 aliases on downscale)
+    "Pillow>=12.1.0",  # sole image backend; opencv-python (121MB) was dropped in 1.0.0 — measured slower in the real spawn-pool path and worse quality (INTER_LANCZOS4 aliases on downscale)
     "aiofiles>=25.1.0",
     "pydantic>=2.12.0",
     "python-dotenv>=1.2.2",
@@ -69,14 +69,14 @@ kreuzberg = ["kreuzberg>=4.9.6"]
 svg = ["cairosvg>=2.9.0"]
 heif = ["pillow-heif>=1.0"]
 # Rust anydoc backend for legacy Office formats (.doc/.ppt, Office 97-2003).
-# Optional since 0.24: replaces the retired Office-automation path (Windows
+# Optional since 1.0.0: replaces the retired Office-automation path (Windows
 # COM / macOS AppleScript / LibreOffice CLI) — ~7MB, no Office install needed.
 legacy = ["firecrawl-anydoc>=0.2.3"]
 # Official MCP Python SDK for the bundled markitai-mcp server. The extra
 # name `mcp` is a public contract — docs and install hints print
 # `markitai[mcp]` verbatim; renaming it breaks both.
 mcp = ["mcp>=2.0.0"]
-# Local OCR for scanned PDFs/images (--ocr). Optional since 0.24: rapidocr
+# Local OCR for scanned PDFs/images (--ocr). Optional since 1.0.0: rapidocr
 # pulls opencv-python plus its own model files, ~150MB nobody who converts
 # born-digital documents ever executes. The extra name `ocr` is a public
 # contract — install scripts and the CLI's own error messages print

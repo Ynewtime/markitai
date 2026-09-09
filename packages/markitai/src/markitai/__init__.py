@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-__version__ = "0.24.0"  # single source of truth — bump before tagging vX.Y.Z
+__version__ = "1.0.0"  # single source of truth — bump before tagging vX.Y.Z
 
 if TYPE_CHECKING:
     from markitai.api import ConversionOutput, ConversionUsage, aconvert, convert

@@ -78,7 +78,7 @@ type: Document
 title: Lorem ipsum
 resource: sample.pdf
 generated:
-  by: markitai/0.24.0
+  by: markitai/1.0.0
   at: '2026-08-25T01:42:13Z'
 ---
 ```

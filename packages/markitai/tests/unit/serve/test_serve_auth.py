@@ -175,7 +175,7 @@ class TestRemotePeerWithoutToken:
         assert resp.status_code == 401
 
     async def test_public_url_job_rejected(self, tmp_path: Path) -> None:
-        """The 0.24 'public URLs only' half-open surface is gone under auth."""
+        """The pre-1.0 'public URLs only' half-open surface is gone under auth."""
         async with _serve_client(_make_app(tmp_path, TOKEN), peer=LAN_PEER) as client:
             resp = await client.post(
                 "/api/jobs", files=_url_job(["https://example.com/page"])
@@ -271,7 +271,7 @@ class TestRemotePeerWithToken:
 
 
 class TestAuthDisabled:
-    """``token=None`` restores the 0.24 remote-peer surface."""
+    """``token=None`` restores the pre-1.0 remote-peer surface."""
 
     async def test_remote_reads_pass_without_token(self, tmp_path: Path) -> None:
         async with _serve_client(_make_app(tmp_path, None), peer=LAN_PEER) as client:

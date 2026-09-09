@@ -60,7 +60,7 @@ Partial success exits with status 10 (successful URLs are still written).
 | `-s, --strategy` | `auto` (default) `static` `playwright` `defuddle` `jina` `cloudflare` — URL fetching only |
 | `-b, --backend` | `native` (default) `kreuzberg` `cloudflare` — file conversion only; `-s`/`-b` combine freely, but `-b kreuzberg` and `-s cloudflare` are mutually exclusive |
 
-Credentials: `-s jina` needs `JINA_API_KEY`; `-s cloudflare` (and `-b cloudflare`) need `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`; `-b kreuzberg` needs the `kreuzberg` extra. The old `--playwright` / `--defuddle` / `--static` / `--jina` / `--cloudflare` / `--kreuzberg` aliases were removed in 0.24.0; passing one exits 2 with a message naming its `-s` / `-b` replacement.
+Credentials: `-s jina` needs `JINA_API_KEY`; `-s cloudflare` (and `-b cloudflare`) need `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`; `-b kreuzberg` needs the `kreuzberg` extra. The old `--playwright` / `--defuddle` / `--static` / `--jina` / `--cloudflare` / `--kreuzberg` aliases were removed in 1.0.0; passing one exits 2 with a message naming its `-s` / `-b` replacement.
 
 Strategy ordering, per-domain tuning, SPA cache, and privacy rules: [url-fetching.md](url-fetching.md).
 

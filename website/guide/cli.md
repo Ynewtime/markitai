@@ -404,7 +404,7 @@ Cloudflare Browser Rendering is available on the Free plan. Workers AI `toMarkdo
 
 ### Removed per-backend flags
 
-The six per-backend aliases below were **removed** in 0.24. Passing one is now a usage error that names its replacement, so a stale script fails loudly instead of quietly converting with the wrong engine:
+The six per-backend aliases below were **removed** in 1.0.0. Passing one is now a usage error that names its replacement, so a stale script fails loudly instead of quietly converting with the wrong engine:
 
 | Removed flag | Use instead |
 |------------------|------------|

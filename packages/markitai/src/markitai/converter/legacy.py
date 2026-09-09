@@ -1,6 +1,6 @@
 """Legacy Office format converters (DOC, PPT - Office 97-2003) via anydoc.
 
-Since 0.24 these formats are handled by the bundled-Rust anydoc backend
+Since 1.0.0 these formats are handled by the bundled-Rust anydoc backend
 (``firecrawl-anydoc``, opt in via the ``markitai[legacy]`` extra) instead
 of driving Microsoft Office / LibreOffice: no Office installation is
 required on any platform, and conversion is millisecond-scale.
