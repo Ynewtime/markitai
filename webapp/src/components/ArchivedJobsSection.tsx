@@ -191,10 +191,10 @@ export function ArchivedJobRows({
             : null;
         const statusClass =
           entry.failed > 0
-            ? "chip err history-result"
+            ? "rchip err history-result"
             : entry.skipped === entry.total
-              ? "chip skip history-result"
-              : "chip ok history-result";
+              ? "rchip skip history-result"
+              : "rchip ok history-result";
         const activate = (opener: HTMLElement) => {
           if (busy === undefined) void onOpen(entry.job_id, opener);
         };

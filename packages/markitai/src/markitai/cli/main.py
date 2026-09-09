@@ -288,8 +288,8 @@ def run_interactive_mode(ctx: click.Context) -> None:
     help="Enable/disable screenshots (PDF/PPTX pages; full-page for URLs).",
 )
 @click.option(
-    "--screenshot-only",
-    is_flag=True,
+    "--screenshot-only/--no-screenshot-only",
+    default=None,
     help="Use page screenshots as the content source (implies --screenshot). "
     "With --llm: the model reads the screenshots instead of the extracted text "
     "layer. Without --llm: nothing is read from them — a URL just saves the "
@@ -301,14 +301,14 @@ def run_interactive_mode(ctx: click.Context) -> None:
     help="Resume interrupted batch processing.",
 )
 @click.option(
-    "--no-compress",
-    is_flag=True,
-    help="Disable image compression.",
+    "--no-compress/--compress",
+    default=None,
+    help="Disable/enable image compression.",
 )
 @click.option(
-    "--no-cache",
-    is_flag=True,
-    help="Disable LLM result caching (force fresh API calls).",
+    "--no-cache/--cache",
+    default=None,
+    help="Skip/allow cache reads. --no-cache forces fresh fetches and LLM calls but still writes results.",
 )
 @click.option(
     "--no-cache-for",
@@ -423,8 +423,8 @@ def run_interactive_mode(ctx: click.Context) -> None:
     "Skipped in stdout mode.",
 )
 @click.option(
-    "--pure",
-    is_flag=True,
+    "--pure/--no-pure",
+    default=None,
     help="Pure mode: skip frontmatter and post-processing. With --llm: raw MD → LLM → output.",
 )
 @click.option(
@@ -463,10 +463,10 @@ def app(
     desc: bool | None,
     ocr: bool | None,
     screenshot: bool | None,
-    screenshot_only: bool,
+    screenshot_only: bool | None,
     resume: bool,
-    no_compress: bool,
-    no_cache: bool,
+    no_compress: bool | None,
+    no_cache: bool | None,
     no_cache_for: str | None,
     batch_concurrency: int | None,
     url_concurrency: int | None,
@@ -482,7 +482,7 @@ def app(
     quiet: bool,
     dry_run: bool,
     record_history: bool | None,
-    pure: bool,
+    pure: bool | None,
     keep_base: bool,
 ) -> None:
     """Markitai - Opinionated Markdown converter with native LLM enhancement support.
@@ -685,6 +685,8 @@ def app(
         cfg.ocr.enabled = ocr
     if screenshot is not None:
         cfg.screenshot.enabled = screenshot
+    if screenshot_only is not None:
+        cfg.screenshot.screenshot_only = screenshot_only
     if screenshot_only:
         # screenshot_only enables screenshot capture but NOT implicitly LLM
         # --llm --screenshot-only: the LLM reads the screenshots instead of the
@@ -692,12 +694,11 @@ def app(
         # --screenshot-only alone: nothing reads them — a URL stops after
         #   saving the screenshot (processors/url.py), a file still gets its
         #   plain .md from the normal converter
-        cfg.screenshot.screenshot_only = True
         cfg.screenshot.enabled = True  # Implicitly enable screenshot
-    if no_compress:
-        cfg.image.compress = False
-    if no_cache:
-        cfg.cache.no_cache = True
+    if no_compress is not None:
+        cfg.image.compress = not no_compress
+    if no_cache is not None:
+        cfg.cache.no_cache = no_cache
     if no_cache_for:
         # Parse comma-separated patterns
         cfg.cache.no_cache_patterns = [
@@ -712,8 +713,8 @@ def app(
     if max_depth is not None:
         cfg.batch.scan_max_depth = max_depth
 
-    if pure:
-        cfg.llm.pure = True
+    if pure is not None:
+        cfg.llm.pure = pure
 
     if keep_base:
         cfg.llm.keep_base = True
@@ -766,7 +767,11 @@ def app(
         )
 
     # Env var support for pure mode
-    if not pure and os.environ.get("MARKITAI_PURE", "").strip() in ("1", "true", "yes"):
+    if pure is None and os.environ.get("MARKITAI_PURE", "").strip() in (
+        "1",
+        "true",
+        "yes",
+    ):
         cfg.llm.pure = True
 
     # History recording: --record-history flag > MARKITAI_RECORD_HISTORY >
@@ -849,8 +854,11 @@ def app(
         fetch_strategy = FetchStrategy(cfg.fetch.strategy)
         explicit_fetch_strategy = False
 
-    # Resolve file conversion backend: -b/--backend is orthogonal to -s, which
-    # picks the URL fetch strategy
+    # An explicit backend replaces inherited flags; the legacy Cloudflare
+    # strategy still implies its file converter.
+    if file_backend is not None:
+        cfg.fetch.kreuzberg_convert_enabled = False
+        cfg.fetch.cloudflare.convert_enabled = fetch_strategy_name == "cloudflare"
     if file_backend == "kreuzberg":
         if fetch_strategy_name == "cloudflare":
             stderr_console.print(

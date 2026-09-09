@@ -90,6 +90,14 @@ export interface ItemResult {
   artifacts: { relpath: string; size: number }[];
 }
 
+export interface PresetFeatures {
+  llm: boolean;
+  ocr: boolean;
+  alt: boolean;
+  desc: boolean;
+  screenshot: boolean;
+}
+
 export interface Capabilities {
   version: string;
   llm: {
@@ -99,6 +107,7 @@ export interface Capabilities {
     models: string[];
   };
   presets: string[];
+  preset_options: Record<string, PresetFeatures>;
   extras: { browser: boolean; svg: boolean; kreuzberg: boolean };
   /** Server-enforced limits (e.g. folder drops truncate to max_job_items). */
   limits: { max_job_items: number };

@@ -4,9 +4,10 @@ import type { ConversionBackend, FetchStrategy } from "../api/types";
  * row has no space for. Kept beside the types rather than in the component so
  * the panel file exports only its component (fast refresh). */
 export interface Advanced {
-  alt: boolean;
-  desc: boolean;
-  screenshot: boolean;
+  /** null inherits the selected preset; false is an explicit override. */
+  alt: boolean | null;
+  desc: boolean | null;
+  screenshot: boolean | null;
   screenshotOnly: boolean;
   pure: boolean;
   noCache: boolean;
@@ -16,9 +17,9 @@ export interface Advanced {
 }
 
 export const ADVANCED_DEFAULTS: Advanced = {
-  alt: false,
-  desc: false,
-  screenshot: false,
+  alt: null,
+  desc: null,
+  screenshot: null,
   screenshotOnly: false,
   pure: false,
   noCache: false,
@@ -26,12 +27,3 @@ export const ADVANCED_DEFAULTS: Advanced = {
   strategy: "auto",
   backend: "native",
 };
-
-/** Whether anything differs from the defaults. The panel is collapsed by
- * default, so a setting made once and forgotten would otherwise shape every
- * later conversion invisibly; the toggle wears a dot when this is true. */
-export function advancedIsCustom(a: Advanced): boolean {
-  return (Object.keys(ADVANCED_DEFAULTS) as (keyof Advanced)[]).some(
-    (key) => a[key] !== ADVANCED_DEFAULTS[key],
-  );
-}

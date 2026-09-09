@@ -14,11 +14,11 @@ import { DropOverlay } from "./components/DropZone";
 import { ErrorInline } from "./components/ErrorInline";
 import { ItemList } from "./components/ItemList";
 import { JobStats } from "./components/JobStats";
-import { LogoMark } from "./components/icons";
 import { PreviewModal } from "./components/PreviewModal";
 import { OptionsBar } from "./components/OptionsBar";
 import type { Advanced } from "./lib/advanced";
 import { ADVANCED_DEFAULTS } from "./lib/advanced";
+import { applyPreset, BUILTIN_PRESET_OPTIONS, resolveOptions } from "./lib/conversionOptions";
 import { SettingsModal } from "./components/SettingsModal";
 import { UrlInput } from "./components/UrlInput";
 import {
@@ -49,7 +49,7 @@ type View = "home" | "workspace";
 
 const WORKSPACE_PATH = "/jobs";
 const OPTIONS_KEY = "markitai.options";
-const OPTIONS_VERSION = 3;
+const OPTIONS_VERSION = 4;
 
 function viewFromLocation(): View {
   const path = window.location.pathname.replace(/\/+$/, "") || "/";
@@ -63,7 +63,9 @@ function readStoredOptions(): {
   llm: boolean | null;
   ocr: boolean | null;
   profile: OutputProfile | null;
+  imageOverrides: Pick<Advanced, "alt" | "desc" | "screenshot">;
 } {
+  const imageOverrides = { alt: null, desc: null, screenshot: null } as Pick<Advanced, "alt" | "desc" | "screenshot">;
   try {
     const raw = localStorage.getItem(OPTIONS_KEY);
     if (raw !== null) {
@@ -75,7 +77,14 @@ function readStoredOptions(): {
           llm?: unknown;
           ocr?: unknown;
           profile?: unknown;
+          imageOverrides?: unknown;
         };
+        if (typeof stored.imageOverrides === "object" && stored.imageOverrides !== null) {
+          for (const key of ["alt", "desc", "screenshot"] as const) {
+            const value = (stored.imageOverrides as Record<string, unknown>)[key];
+            if (typeof value === "boolean") imageOverrides[key] = value;
+          }
+        }
         const preset =
           stored.preset === "minimal" ||
           stored.preset === "standard" ||
@@ -95,19 +104,19 @@ function readStoredOptions(): {
         // image-analysis flags enabled and made URL jobs download every image
         // for no useful work. Migrate that old default to the CLI-like minimum.
         if (
-          stored.version !== OPTIONS_VERSION &&
+          (typeof stored.version !== "number" || stored.version < 2) &&
           llm === false &&
           preset === "standard"
         ) {
-          return { preset: "minimal", llm: false, ocr, profile };
+          return { preset: "minimal", llm: false, ocr, profile, imageOverrides };
         }
-        return { preset, llm, ocr, profile };
+        return { preset, llm, ocr, profile, imageOverrides };
       }
     }
   } catch {
     /* localStorage unavailable / corrupt */
   }
-  return { preset: null, llm: null, ocr: null, profile: null };
+  return { preset: null, llm: null, ocr: null, profile: null, imageOverrides };
 }
 
 export default function App() {
@@ -145,20 +154,33 @@ export default function App() {
   const [profile, setProfile] = useState<OutputProfile | null>(
     () => readStoredOptions().profile,
   );
-  // Not persisted: these shape one conversion, and a forgotten `--pure` or
-  // `jina` restored on a later visit would be a surprise the collapsed panel
-  // never shows.
-  const [advanced, setAdvanced] = useState<Advanced>(ADVANCED_DEFAULTS);
+  // Persist preset overrides with the bundle; source/remote/cache choices
+  // remain session-only so revisiting cannot silently restore an external service.
+  const [advanced, setAdvanced] = useState<Advanced>(() => ({
+    ...ADVANCED_DEFAULTS,
+    ...readStoredOptions().imageOverrides,
+  }));
+  const presetOptions = caps?.preset_options ?? BUILTIN_PRESET_OPTIONS;
+  const selectPreset = (selected: Preset) => {
+    const next = applyPreset({ preset, llm, ocr, profile, advanced }, selected, presetOptions);
+    setPreset(next.preset);
+    setLlm(next.llm);
+    setOcr(next.ocr);
+    setAdvanced(next.advanced);
+  };
   useEffect(() => {
     try {
       localStorage.setItem(
         OPTIONS_KEY,
-        JSON.stringify({ version: OPTIONS_VERSION, preset, llm, ocr, profile }),
+        JSON.stringify({
+          version: OPTIONS_VERSION, preset, llm, ocr, profile,
+          imageOverrides: { alt: advanced.alt, desc: advanced.desc, screenshot: advanced.screenshot },
+        }),
       );
     } catch {
       /* localStorage unavailable */
     }
-  }, [preset, llm, ocr, profile]);
+  }, [preset, llm, ocr, profile, advanced.alt, advanced.desc, advanced.screenshot]);
   useEffect(() => {
     if (caps !== null && !caps.llm.routable) {
       setPreset("minimal");
@@ -317,24 +339,8 @@ export default function App() {
   // Drops always use the options as currently set; any new conversion
   // brings the workspace forward.
   const jobOptions = useCallback(
-    (): JobOptions => ({
-      preset,
-      llm,
-      ocr,
-      profile,
-      // Image analysis is LLM work, so those two only travel when LLM is on
-      // — the server rejects the combination the CLI rejects.
-      alt: llm ? advanced.alt : null,
-      desc: llm ? advanced.desc : null,
-      screenshot: advanced.screenshot || advanced.screenshotOnly,
-      screenshot_only: advanced.screenshotOnly,
-      pure: advanced.pure,
-      no_cache: advanced.noCache,
-      no_compress: advanced.noCompress,
-      strategy: advanced.strategy,
-      backend: advanced.backend,
-    }),
-    [preset, llm, ocr, profile, advanced],
+    (): JobOptions => resolveOptions({ preset, llm, ocr, profile, advanced }, presetOptions),
+    [preset, llm, ocr, profile, advanced, presetOptions],
   );
   const optionsRef = useRef<JobOptions>(jobOptions());
   useEffect(() => {
@@ -641,9 +647,6 @@ export default function App() {
       <CapabilityHint t={t} onOpenSettings={openSettings} />
     ) : null;
 
-  // One element description feeds both archive-download slots (options row on
-  // desktop, below the ledger on phones); CSS shows exactly one per
-  // breakpoint, so gating and aria semantics can never drift apart.
   const archiveDownload = (
     <DownloadArchiveButton
       t={t}
@@ -730,30 +733,12 @@ export default function App() {
 
       {effectiveView === "home" && (
         <main className="drop-main shell">
-          <LogoMark size={56} className="logo-lg" />
           <h1 className="hero">{t.heroTitle}</h1>
           <p className="hero-sub">{t.heroSub}</p>
           {items.length > 0 && (
             <button type="button" className="sesslink mono" onClick={openTaskList}>
               {activeCount > 0 ? t.sessProgress(activeCount) : t.sessResults(items.length)}
             </button>
-          )}
-          <div className="convert-source">
-            <UrlInput
-              t={t}
-              text={urlText}
-              onText={setUrlText}
-              onConvert={submitUrls}
-              onFiles={submitFiles}
-            />
-          </div>
-          {submitError !== null && (
-            <ErrorInline text={`${t.createJobFailed}: ${submitError}`} />
-          )}
-          {dropNotice !== null && (
-            <p className="notice" role="status">
-              {dropNotice}
-            </p>
           )}
           <OptionsBar
             t={t}
@@ -765,55 +750,50 @@ export default function App() {
             llmConfigured={llmConfigured}
             urls={urlList}
             announce={announce}
-            onPreset={setPreset}
+            onFiles={submitFiles}
+            source={(
+              <UrlInput
+                t={t}
+                text={urlText}
+                onText={setUrlText}
+                onConvert={submitUrls}
+              />
+            )}
+            presetOptions={presetOptions}
+            onPreset={selectPreset}
             onLlm={setLlm}
             onOcr={setOcr}
             onProfile={setProfile}
             onAdvanced={setAdvanced}
           />
+          {submitError !== null && (
+            <ErrorInline text={`${t.createJobFailed}: ${submitError}`} />
+          )}
+          {dropNotice !== null && (
+            <p className="notice" role="status">
+              {dropNotice}
+            </p>
+          )}
           {capHint}
         </main>
       )}
 
       {effectiveView === "workspace" && (
         <main className="shell workspace">
-          <div className="jobhead">
-            <JobStats t={t} running={running} stats={stats} />
-            {items.length > 0 && (
-              <div className="jobhead-r">
-                <ClearJobsButton
-                  t={t}
-                  activeCount={activeCount}
-                  clearableJobCount={terminalJobCount}
-                  onClear={handleClear}
-                />
-              </div>
-            )}
-          </div>
-
           <div className="conversion-workspace">
             <div className="work-grid">
               <div className="work-list">
                 <div className="composer">
-                  <div className="convert-source">
-                    <UrlInput
-                      t={t}
-                      text={urlText}
-                      onText={setUrlText}
-                      onConvert={submitUrls}
-                      onFiles={submitFiles}
-                      compact
-                    />
-                  </div>
-                  {submitError !== null && (
-                    <ErrorInline text={`${t.createJobFailed}: ${submitError}`} />
-                  )}
-                  {dropNotice !== null && (
-                    <p className="notice" role="status">
-                      {dropNotice}
-                    </p>
-                  )}
                   <OptionsBar
+                    heading={<JobStats t={t} running={running} stats={stats} />}
+                    headingActions={items.length > 0 && (
+                      <ClearJobsButton
+                        t={t}
+                        activeCount={activeCount}
+                        clearableJobCount={terminalJobCount}
+                        onClear={handleClear}
+                      />
+                    )}
                     t={t}
                     preset={preset}
                     llm={llm}
@@ -823,13 +803,31 @@ export default function App() {
                     llmConfigured={llmConfigured}
                     urls={urlList}
                     announce={announce}
-                    onPreset={setPreset}
+                    onFiles={submitFiles}
+                    source={(
+                      <UrlInput
+                        t={t}
+                        text={urlText}
+                        onText={setUrlText}
+                        onConvert={submitUrls}
+                        compact
+                      />
+                    )}
+                    presetOptions={presetOptions}
+                    onPreset={selectPreset}
                     onLlm={setLlm}
                     onOcr={setOcr}
                     onProfile={setProfile}
                     onAdvanced={setAdvanced}
-                    trailing={archiveDownload}
                   />
+                  {submitError !== null && (
+                    <ErrorInline text={`${t.createJobFailed}: ${submitError}`} />
+                  )}
+                  {dropNotice !== null && (
+                    <p className="notice" role="status">
+                      {dropNotice}
+                    </p>
+                  )}
                   {capHint}
                 </div>
                 <ItemList
@@ -866,8 +864,6 @@ export default function App() {
                   llmAvailable={llmEnhanceAvailable}
                   llmDisabledReason={llmDisabledReason}
                 />
-                {/* phone slot: the zip CTA reads better under the ledger it
-                    archives than squeezed into the options row */}
                 <div className="list-zip">{archiveDownload}</div>
               </div>
             </div>

@@ -152,7 +152,16 @@ async def convert_url_cascade(
         )
 
     markdown = fetch_result.content
-    if not markdown.strip():
+    capture_only = cfg.screenshot.screenshot_only and not cfg.llm.enabled
+    if capture_only:
+        # The web result contract needs a Markdown wrapper, but its content
+        # source is still only the capture, never the extracted text layer.
+        if (
+            fetch_result.screenshot_path is None
+            or not fetch_result.screenshot_path.is_file()
+        ):
+            raise ConversionError(f"No screenshot captured from {url}")
+    elif not markdown.strip():
         raise ConversionError(f"No content extracted from {url}")
 
     filename = output_name or url_to_filename(url)
@@ -264,7 +273,9 @@ async def convert_url_cascade(
     # the (empty) extracted text.
     output_path: Path | None = None
     if llm_output_path is None or cfg.llm.keep_base:
-        if screenshot_only_mode and fetch_result.screenshot_path is not None:
+        if (
+            screenshot_only_mode or capture_only
+        ) and fetch_result.screenshot_path is not None:
             from markitai.constants import SCREENSHOTS_REL_PATH
             from markitai.utils.text import markdown_image_reference
 
@@ -276,6 +287,8 @@ async def convert_url_cascade(
                 )
                 for i, t in enumerate(ref_files)
             )
+            if capture_only:
+                markdown = screenshot_ref
             base_content = add_basic_frontmatter(
                 screenshot_ref,
                 url,
@@ -285,6 +298,8 @@ async def convert_url_cascade(
                 title=title,
                 extra_meta=extra_meta,
             )
+        elif cfg.llm.pure and not cfg.llm.enabled:
+            base_content = fetch_result.content
         else:
             base_markdown = markdown if base_from_localized else fetch_result.content
             base_content = add_basic_frontmatter(

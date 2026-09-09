@@ -1,41 +1,29 @@
-import { useEffect, useId, useState } from "react";
-import type {
-  ConversionBackend,
-  FetchStrategy,
-  OutputProfile,
-  Preset,
-} from "../api/types";
+import { useEffect, useId, useState, type ReactNode } from "react";
+import type { ConversionBackend, FetchStrategy, OutputProfile, Preset } from "../api/types";
 import type { Dict } from "../i18n";
 import type { Advanced } from "../lib/advanced";
-import { advancedIsCustom } from "../lib/advanced";
+import {
+  BUILTIN_PRESET_OPTIONS,
+  changeAdvanced,
+  hasExtraOptions,
+  presetFeatures,
+  matchingPreset,
+  resolveOptions,
+  type PresetOptions,
+} from "../lib/conversionOptions";
 import { buildCliCommand } from "../lib/cli";
 import { copyTextToClipboard } from "../lib/clipboard";
-import { SlidersIcon } from "./icons";
+import { FilePicker } from "./DropZone";
+import { HelpTooltip } from "./HelpTooltip";
+import { CaretRightIcon, InfoIcon, SlidersIcon, UploadIcon } from "./icons";
 
-const STRATEGIES: FetchStrategy[] = [
-  "auto",
-  "static",
-  "playwright",
-  "defuddle",
-  "jina",
-  "cloudflare",
-];
+const STRATEGIES: FetchStrategy[] = ["auto", "static", "playwright", "defuddle", "jina", "cloudflare"];
 const BACKENDS: ConversionBackend[] = ["native", "kreuzberg", "cloudflare"];
 const PRESETS: Preset[] = ["minimal", "standard", "rich"];
-/** null first: no profile is the default and keeps output byte-identical. */
 const PROFILES: (OutputProfile | null)[] = [null, "rag", "obsidian", "okf"];
-
 type CopyState = "idle" | "copied" | "failed";
 
-/** One shape for every boolean, so a row reads as a set of things you can
- * turn on rather than a mix of switches, checkboxes and buttons. */
-function Chip({
-  label,
-  checked,
-  disabled,
-  hint,
-  onChange,
-}: {
+function Chip({ label, checked, disabled, hint, onChange }: {
   label: string;
   checked: boolean;
   disabled?: boolean;
@@ -43,134 +31,68 @@ function Chip({
   onChange: (v: boolean) => void;
 }) {
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      title={hint}
-      disabled={disabled}
-      className="chip"
-      onClick={() => onChange(!checked)}
-    >
+    <HelpTooltip text={hint ?? label}><button type="button" role="switch" aria-checked={checked} aria-label={label}
+      disabled={disabled} className="chip" onClick={() => onChange(!checked)}>
       {label}
-    </button>
+    </button></HelpTooltip>
   );
 }
 
-function Segments<T extends string | null>({
-  label,
-  value,
-  options,
-  render,
-  onChange,
-}: {
-  label: string;
-  value: T;
+function Segments<T extends string | null>({ label, labelledBy, value, options, render, hint, disabled, onChange }: {
+  label?: string;
+  labelledBy?: string;
+  value: T | null;
   options: readonly T[];
   render: (v: T) => string;
+  hint: (v: T) => string;
+  disabled?: (v: T) => boolean;
   onChange: (v: T) => void;
 }) {
-  const id = useId();
   return (
-    <>
-      <span className="seg" role="group" aria-label={label} id={id}>
-        {options.map((option) => (
-          <button
-            key={option ?? "default"}
-            type="button"
-            className={option === value ? "on" : undefined}
-            aria-pressed={option === value}
-            onClick={() => onChange(option)}
-          >
-            {render(option)}
-          </button>
-        ))}
-      </span>
-    </>
-  );
-}
-
-function Pick<T extends string>({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  value: T;
-  options: readonly T[];
-  onChange: (v: T) => void;
-}) {
-  const id = useId();
-  return (
-    <span className="advpick">
-      <label htmlFor={id}>{label}</label>
-      <select
-        id={id}
-        value={value}
-        onChange={(e) => onChange(e.target.value as T)}
-      >
-        {options.map((option) => (
-          <option key={option} value={option}>
-            {option}
-          </option>
-        ))}
-      </select>
+    <span className="seg" role="group" aria-label={label} aria-labelledby={labelledBy}>
+      {options.map((option) => (
+        <HelpTooltip key={option ?? "default"} text={hint(option)}><button type="button"
+          className={option === value ? "on" : undefined}
+          aria-pressed={option === value} disabled={disabled?.(option)}
+          onClick={() => onChange(option)}>
+          {render(option)}
+        </button></HelpTooltip>
+      ))}
     </span>
   );
 }
 
-/** What the collapsed button says beyond its own name.
- *
- * Every conversion option lives behind this disclosure, so a summary is not
- * decoration: without it, turning LLM on and collapsing would leave nothing
- * on screen saying the next conversion costs money. */
-function summary(
-  t: Dict,
-  llm: boolean,
-  ocr: boolean,
-  profile: OutputProfile | null,
-  custom: boolean,
-): string[] {
-  const parts: string[] = [];
-  if (llm) parts.push(t.llmEnhanceShort);
-  if (ocr) parts.push(t.ocr);
-  if (profile) parts.push(profile);
-  if (custom) parts.push("+");
-  return parts;
+function RowLabel({ id, text, hint }: { id: string; text: string; hint?: string }) {
+  return (
+    <span className="optlbl">
+      <span id={id}>{text}</span>
+      {hint !== undefined && (
+        <HelpTooltip text={hint}><button type="button" className="opthelp" aria-label={hint}>
+          <InfoIcon size={13} />
+        </button></HelpTooltip>
+      )}
+    </span>
+  );
 }
 
 export function OptionsPanel({
-  t,
-  value,
-  preset,
-  llm,
-  ocr,
-  profile,
-  llmConfigured,
-  urls,
-  announce,
-  onChange,
-  onPreset,
-  onLlm,
-  onOcr,
-  onProfile,
+  t, value, preset, presetOptions = BUILTIN_PRESET_OPTIONS, llm, ocr, profile,
+  llmConfigured, urls, announce, source, heading, headingActions, onFiles, onChange, onPreset, onLlm, onOcr, onProfile,
 }: {
   t: Dict;
   value: Advanced;
   preset: Preset;
-  /** Image analysis is LLM work; the CLI rejects `--alt`/`--desc` without
-   * `--llm`, so those chips are shown disabled rather than hidden — the
-   * capability stays visible, with the reason. */
+  presetOptions?: PresetOptions;
   llm: boolean;
   ocr: boolean;
   profile: OutputProfile | null;
-  /** No routable deployment means the LLM chips would promise what the server
-   * cannot do, so they are left out entirely rather than shown broken. */
   llmConfigured: boolean;
   urls: string[];
   announce: (msg: string) => void;
+  source?: ReactNode;
+  heading?: ReactNode;
+  headingActions?: ReactNode;
+  onFiles?: (files: File[]) => void;
   onChange: (next: Advanced) => void;
   onPreset: (p: Preset) => void;
   onLlm: (v: boolean) => void;
@@ -178,13 +100,36 @@ export function OptionsPanel({
   onProfile: (p: OutputProfile | null) => void;
 }) {
   const [open, setOpen] = useState(false);
+  // The rarely-touched fetch/source/cache settings sit behind one disclosure;
+  // it starts open only when something in it already differs from default,
+  // so a non-default choice is never hidden behind a closed fold.
+  const [advOpen, setAdvOpen] = useState(() => hasExtraOptions(value));
   const [copyState, setCopyState] = useState<CopyState>("idle");
   const id = useId();
+  const state = { preset, llm, ocr, profile, advanced: value };
+  const effective = resolveOptions(state, presetOptions);
+  const matchedPreset = matchingPreset(state, presetOptions);
+  const customized = matchedPreset === null;
+  const analysisDisabled = !llm || value.pure;
+  const analysisHint = value.pure ? t.advPlainImages : t.advNeedsLlm;
+  const forcedBackend = value.strategy === "cloudflare";
+  const strategyHints = { auto: t.helpAuto, static: t.helpStatic, playwright: t.helpPlaywright,
+    defuddle: t.helpDefuddle, jina: t.helpJina, cloudflare: t.helpCloudflareUrl };
+  const backendHints = { native: t.helpNative, kreuzberg: t.helpKreuzberg, cloudflare: t.helpCloudflareFile };
+  const remoteNotice = { auto: t.noticeAuto, static: null, playwright: null,
+    defuddle: t.noticeDefuddle, jina: t.noticeJina, cloudflare: t.noticeCloudflareUrl }[effective.strategy];
+  const bundleHint = (p: Preset) => {
+    const features = presetFeatures(p, presetOptions);
+    if (!llmConfigured && features.llm) return t.advNeedsModel;
+    const builtin = BUILTIN_PRESET_OPTIONS[p];
+    const overridden = (Object.keys(builtin) as (keyof typeof builtin)[])
+      .some((key) => features[key] !== builtin[key]);
+    return overridden ? t.helpServerPreset
+      : { minimal: t.helpMinimal, standard: t.helpStandard, rich: t.helpRich }[p];
+  };
   const set = <K extends keyof Advanced>(key: K, v: Advanced[K]) =>
-    onChange({ ...value, [key]: v });
-  const chips = summary(t, llm, ocr, profile, advancedIsCustom(value));
-  const command = buildCliCommand(urls, preset, llm, ocr, profile);
-
+    onChange(changeAdvanced(value, key, v));
+  const command = buildCliCommand(urls, effective, presetOptions);
   useEffect(() => {
     if (copyState === "idle") return;
     const handle = window.setTimeout(() => setCopyState("idle"), 1500);
@@ -198,159 +143,132 @@ export function OptionsPanel({
     });
   };
 
+  const optionsToggle = (
+    <button type="button" className={open ? "srcact optbtn on" : "srcact optbtn"}
+      aria-label={t.options} title={t.options} aria-expanded={open}
+      aria-controls={open ? id : undefined} onClick={() => setOpen((v) => !v)}>
+      <SlidersIcon size={14} />
+      <span>{t.options}</span>
+    </button>
+  );
+
   return (
-    <>
-      <button
-        type="button"
-        className={open ? "clibtn on" : "clibtn"}
-        aria-label={t.options}
-        title={t.options}
-        aria-expanded={open}
-        aria-controls={id}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <SlidersIcon size={14} />
-        <span>{t.options}</span>
-        {chips.length > 0 && (
-          <span className="advchips" aria-label={t.optionsChanged}>
-            {chips.join(" · ")}
-          </span>
-        )}
-      </button>
-      {open && (
-        <div className="advwrap" id={id}>
-          <div className="advcard">
-            <div className="advrows">
-              <div className="advrow">
-                <span className="advlbl">{t.advEnhance}</span>
-                <span className="advfield">
-                  {llmConfigured && (
-                    <Chip label={t.llmEnhance} checked={llm} onChange={onLlm} />
-                  )}
-                  <Chip label={t.ocr} checked={ocr} onChange={onOcr} />
-                  {llmConfigured && llm && (
-                    <Segments
-                      label={t.preset}
-                      value={preset}
-                      options={PRESETS}
-                      render={(p) => p}
-                      onChange={onPreset}
-                    />
-                  )}
-                </span>
+    <div className="options">
+      <div className={heading ? "jobhead" : "composer-toolbar"}>
+        {heading}
+        <div className="jobhead-r">
+          <div className="source-tools" role="group" aria-label={t.sourceActions}>
+            {optionsToggle}
+            {onFiles && <FilePicker label={t.browse} onFiles={onFiles}
+              icon={<UploadIcon />} className="srcact file-picker" />}
+          </div>
+          {headingActions}
+        </div>
+      </div>
+      <div className="convert-source">
+        {source && <div className="srcrow">{source}</div>}
+        {open && (
+          <div className="optpanel" id={id}>
+            <div className="optrows">
+              <div className="optrow">
+                <RowLabel id={`${id}-preset`} text={t.preset} hint={t.presetHint} />
+                <div className="optfield">
+                  <Segments labelledBy={`${id}-preset`} value={matchedPreset} options={PRESETS} render={(p) => p} hint={bundleHint}
+                    disabled={(p) => !llmConfigured && presetFeatures(p, presetOptions).llm}
+                    onChange={onPreset} />
+                  {customized && <span className="optcustom" role="status">{t.presetCustomized}</span>}
+                </div>
               </div>
-              <div className="advrow">
-                <span className="advlbl">{t.advOutput}</span>
-                <span className="advfield">
-                  <Segments
-                    label={t.profile}
-                    value={profile}
-                    options={PROFILES}
-                    render={(p) => p ?? t.profileNone}
-                    onChange={onProfile}
-                  />
-                </span>
+              <div className="optrow" role="group" aria-labelledby={`${id}-enhance`}>
+                <RowLabel id={`${id}-enhance`} text={t.advEnhance}
+                  hint={llmConfigured ? t.helpEnhance : t.advNeedsModel} />
+                <div className="optfield">
+                  <Chip label={t.llmEnhance} checked={llm} disabled={!llmConfigured}
+                    hint={llmConfigured ? t.helpLlm : t.advNeedsModel} onChange={onLlm} />
+                  <Chip label={t.ocr} checked={ocr} hint={t.helpOcr} onChange={onOcr} />
+                  {ocr && <p className="opthint">{llm ? t.advVlmOcr : t.advLocalOcr}</p>}
+                </div>
               </div>
-              <div className="advrow">
-                <span className="advlbl">{t.advImages}</span>
-                <span className="advfield">
-                  <Chip
-                    label={t.advAlt}
-                    checked={value.alt}
-                    disabled={!llm}
-                    hint={llm ? undefined : t.advNeedsLlm}
-                    onChange={(v) => set("alt", v)}
-                  />
-                  <Chip
-                    label={t.advDesc}
-                    checked={value.desc}
-                    disabled={!llm}
-                    hint={llm ? undefined : t.advNeedsLlm}
-                    onChange={(v) => set("desc", v)}
-                  />
-                  <Chip
-                    label={t.advScreenshot}
-                    // --screenshot-only implies --screenshot, so the chip shows
-                    // the state that will actually be sent rather than a stale
-                    // one.
-                    checked={value.screenshot || value.screenshotOnly}
-                    disabled={value.screenshotOnly}
-                    hint={
-                      value.screenshotOnly ? t.advImpliedBySource : undefined
-                    }
-                    onChange={(v) => set("screenshot", v)}
-                  />
-                </span>
+              <div className="optrow" role="group" aria-labelledby={`${id}-images`}>
+                <RowLabel id={`${id}-images`} text={t.advImages}
+                  hint={t.helpImages} />
+                <div className="optfield">
+                  <Chip label={t.advAlt} checked={effective.alt} disabled={analysisDisabled}
+                    hint={analysisDisabled ? analysisHint : t.helpAlt} onChange={(v) => set("alt", v)} />
+                  <Chip label={t.advDesc} checked={effective.desc} disabled={analysisDisabled}
+                    hint={analysisDisabled ? analysisHint : t.helpDesc} onChange={(v) => set("desc", v)} />
+                  <Chip label={t.advScreenshot} checked={effective.screenshot} disabled={value.screenshotOnly}
+                    hint={value.screenshotOnly ? t.advImpliedBySource : t.helpScreenshot}
+                    onChange={(v) => set("screenshot", v)} />
+                </div>
               </div>
-              <div className="advrow">
-                <span className="advlbl">{t.advSource}</span>
-                <span className="advfield">
-                  <Chip
-                    label={t.advScreenshotOnly}
-                    checked={value.screenshotOnly}
-                    hint={t.advScreenshotOnlyHint}
-                    onChange={(v) => set("screenshotOnly", v)}
-                  />
-                  <Chip
-                    label={t.advPure}
-                    checked={value.pure}
-                    hint={t.advPureHint}
-                    onChange={(v) => set("pure", v)}
-                  />
-                </span>
+              <div className="optrow">
+                <RowLabel id={`${id}-output`} text={t.advOutput} hint={t.helpOutput} />
+                <div className="optfield">
+                  <Segments labelledBy={`${id}-output`} value={profile} options={PROFILES}
+                    hint={(p) => ({ default: t.helpDefault, rag: t.helpRag, obsidian: t.helpObsidian, okf: t.helpOkf })[p ?? "default"]}
+                    render={(p) => p ?? t.profileNone} onChange={onProfile} />
+                </div>
               </div>
-              <div className="advrow">
-                <span className="advlbl">{t.advFetch}</span>
-                <span className="advfield">
-                  <Pick
-                    label={t.advStrategy}
-                    value={value.strategy}
-                    options={STRATEGIES}
-                    onChange={(v) => set("strategy", v)}
-                  />
-                  <Pick
-                    label={t.advBackend}
-                    value={value.backend}
-                    options={BACKENDS}
-                    onChange={(v) => set("backend", v)}
-                  />
-                </span>
+              <div className={advOpen ? "optrow optadv on" : "optrow optadv"}>
+                <HelpTooltip text={t.helpAdvanced}><button type="button" className="optlbl optadv-toggle"
+                  aria-expanded={advOpen} aria-controls={advOpen ? `${id}-adv` : undefined}
+                  onClick={() => setAdvOpen((v) => !v)}>
+                  <CaretRightIcon size={11} />
+                  <span>{t.advanced}</span>
+                </button></HelpTooltip>
               </div>
-              <div className="advrow">
-                <span className="advlbl">{t.advOther}</span>
-                <span className="advfield">
-                  <Chip
-                    label={t.advNoCache}
-                    checked={value.noCache}
-                    hint={t.advNoCacheHint}
-                    onChange={(v) => set("noCache", v)}
-                  />
-                  <Chip
-                    label={t.advNoCompress}
-                    checked={value.noCompress}
-                    onChange={(v) => set("noCompress", v)}
-                  />
-                </span>
-              </div>
-            </div>
-            <div className="advcli">
-              <code className="clitext" tabIndex={0} aria-label={t.cliAria}>
-                <span className="clidollar" aria-hidden="true">
-                  ${" "}
-                </span>
-                {command}
-              </code>
-              <button type="button" className="badge" onClick={copy}>
-                {copyState === "copied"
-                  ? t.copied
-                  : copyState === "failed"
-                    ? t.copyFailed
-                    : t.copy}
-              </button>
+              {advOpen && (
+                <div className="optadv-body" id={`${id}-adv`}>
+                  <div className="optrow">
+                    <RowLabel id={`${id}-strategy`} text={t.advStrategy} hint={t.helpStrategy} />
+                    <div className="optfield">
+                      <Segments labelledBy={`${id}-strategy`} value={value.strategy} options={STRATEGIES}
+                        render={(v) => v} hint={(v) => strategyHints[v]} onChange={(v) => set("strategy", v)} />
+                      {remoteNotice && <p className="opthint">{remoteNotice}</p>}
+                    </div>
+                  </div>
+                  <div className="optrow">
+                    <RowLabel id={`${id}-backend`} text={t.advBackend}
+                      hint={forcedBackend ? t.advCloudflareBackend : t.helpBackend} />
+                    <div className="optfield">
+                      <Segments labelledBy={`${id}-backend`} value={effective.backend} options={BACKENDS}
+                        render={(v) => v} hint={(v) => forcedBackend ? t.advCloudflareBackend : backendHints[v]} disabled={() => forcedBackend}
+                        onChange={(v) => set("backend", v)} />
+                      {effective.backend === "cloudflare" && <p className="opthint">{t.noticeCloudflareFile}</p>}
+                    </div>
+                  </div>
+                  <div className="optrow" role="group" aria-labelledby={`${id}-other`}>
+                    <RowLabel id={`${id}-other`} text={t.advOther} hint={t.helpOther} />
+                    <div className="optfield">
+                      <Chip label={t.advScreenshotOnly} checked={effective.screenshot_only}
+                        hint={t.helpSource} onChange={(v) => set("screenshotOnly", v)} />
+                      <Chip label={t.advPure} checked={value.pure} hint={t.helpPure}
+                        onChange={(v) => set("pure", v)} />
+                      <Chip label={t.advNoCache} checked={value.noCache} hint={t.helpCache}
+                        onChange={(v) => set("noCache", v)} />
+                      <Chip label={t.advNoCompress} checked={value.noCompress} hint={t.helpCompress}
+                        onChange={(v) => set("noCompress", v)} />
+                      {(value.pure || value.screenshotOnly) && <p className="opthint">{t.advSourceExclusive}</p>}
+                      {value.screenshotOnly && <p className="opthint">{llm ? t.advScreenshotOnlyHint : t.advCaptureOnly}</p>}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
+        )}
+        <div className="optcli">
+          <div className="clibody">
+            <HelpTooltip text={t.helpCli}><code className="clitext" tabIndex={0} aria-label={t.cliAria}>
+              <span className="clidollar" aria-hidden="true">${" "}</span>{command}
+            </code></HelpTooltip>
+          </div>
+          <button type="button" className="badge" onClick={copy}>
+            {copyState === "copied" ? t.copied : copyState === "failed" ? t.copyFailed : t.copy}
+          </button>
         </div>
-      )}
-    </>
+      </div>
+    </div>
   );
 }

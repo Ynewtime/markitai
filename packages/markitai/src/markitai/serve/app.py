@@ -668,17 +668,16 @@ def _build_job_config(base: MarkitaiConfig, opts: JobOptions) -> MarkitaiConfig:
     if opts.pure is not None:
         cfg.llm.pure = opts.pure
     if opts.no_cache is not None:
-        cfg.cache.enabled = not opts.no_cache
+        cfg.cache.no_cache = opts.no_cache
     if opts.no_compress is not None:
         cfg.image.compress = not opts.no_compress
     if opts.strategy is not None:
         cfg.fetch.strategy = opts.strategy
     # -b/--backend selects a file-conversion path, which lives in two
     # different flags rather than one setting (see cli/main.py).
-    if opts.backend == "kreuzberg":
-        cfg.fetch.kreuzberg_convert_enabled = True
-    elif opts.backend == "cloudflare":
-        cfg.fetch.cloudflare.convert_enabled = True
+    if opts.backend is not None:
+        cfg.fetch.kreuzberg_convert_enabled = opts.backend == "kreuzberg"
+        cfg.fetch.cloudflare.convert_enabled = opts.backend == "cloudflare"
     if cfg.llm.enabled and not cfg.llm.model_list:
         logger.warning(
             "[Serve] LLM requested but no models are configured; "
@@ -1554,6 +1553,8 @@ def create_app(
 
     @app.get("/api/capabilities", response_model=Capabilities)
     async def get_capabilities(request: Request) -> dict[str, Any]:
+        from markitai.config import get_preset
+
         state = _state(request)
         effective = _effective_models(state.configured_models, state.detected_models)
         routable = any(_is_deployment_routable(model) for model in effective)
@@ -1566,6 +1567,11 @@ def create_app(
                 "models": [model.litellm_params.model for model in effective],
             },
             "presets": ["minimal", "standard", "rich"],
+            "preset_options": {
+                name: preset.model_dump()
+                for name in ("minimal", "standard", "rich")
+                if (preset := get_preset(name, state.config)) is not None
+            },
             "extras": {
                 "browser": find_spec("playwright") is not None,
                 "svg": find_spec("cairosvg") is not None,

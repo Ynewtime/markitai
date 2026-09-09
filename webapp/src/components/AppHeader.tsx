@@ -1,6 +1,6 @@
-import type { RefObject } from "react";
+import { useEffect, useId, useRef, useState, type RefObject } from "react";
 import type { Dict, Locale } from "../i18n";
-import { HistoryIcon, LogoMark, SettingsIcon } from "./icons";
+import { HistoryIcon, LogoMark, SettingsIcon, SunIcon } from "./icons";
 import { LangToggle } from "./LangToggle";
 import { ThemeToggle } from "./ThemeToggle";
 
@@ -58,6 +58,36 @@ export function AppHeader({
   onToggleSettings: () => void;
   gearRef: RefObject<HTMLButtonElement | null>;
 }) {
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
+  const appearanceRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const appearanceId = useId();
+
+  useEffect(() => {
+    if (!appearanceOpen) return;
+    panelRef.current?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]')?.focus();
+    const dismiss = () => {
+      setAppearanceOpen(false);
+      triggerRef.current?.focus();
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && !appearanceRef.current?.contains(event.target)) dismiss();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        dismiss();
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [appearanceOpen]);
+
   return (
     <header className="apphdr">
       <div className="shell">
@@ -76,23 +106,38 @@ export function AppHeader({
           </a>
           {version !== null && <span className="ver mono">v{version}</span>}
         </div>
+        <nav className="hdr-links">
+          <ExtLink href="https://markitai.dev" label={t.docsLabel} srNote={t.opensNewTab} />
+          <ExtLink
+            href="https://github.com/Ynewtime/markitai"
+            label="GitHub"
+            srNote={t.opensNewTab}
+          />
+        </nav>
         <div className="hdr-ctl">
-          <nav className="hdr-links">
-            <ExtLink href="https://markitai.dev" label={t.docsLabel} srNote={t.opensNewTab} />
-            <ExtLink
-              href="https://github.com/Ynewtime/markitai"
-              label="GitHub"
-              srNote={t.opensNewTab}
-            />
-          </nav>
-          {/* grouping spans: the phone header grid dissolves .hdr-ctl
-              (display: contents) and needs the toggles and the two nav icons
-              to travel as units — desktop spacing is unchanged */}
-          <span className="hdr-toggles">
-            <LangToggle label={t.langAria} locale={locale} onLocale={onLocale} />
-            <ThemeToggle t={t} label={t.themeAria} />
-          </span>
-          <span className="hdr-icons">
+          <div className="hdr-icons">
+            <div className="hdr-appearance" ref={appearanceRef}
+              onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget)) setAppearanceOpen(false);
+              }}>
+              <button ref={triggerRef} type="button" className="gearbtn"
+                aria-label={t.appearanceTitle} title={t.appearanceTitle}
+                aria-haspopup="dialog" aria-expanded={appearanceOpen} aria-controls={appearanceId}
+                onClick={() => setAppearanceOpen((open) => !open)}>
+                <SunIcon size={16} />
+              </button>
+              <div ref={panelRef} id={appearanceId} className="appearance-popover"
+                role="dialog" aria-label={t.appearanceTitle} hidden={!appearanceOpen}>
+                <div className="appearance-opt">
+                  <span className="lbl">{t.langAria}</span>
+                  <LangToggle label={t.langAria} locale={locale} onLocale={onLocale} />
+                </div>
+                <div className="appearance-opt">
+                  <span className="lbl">{t.themeAria}</span>
+                  <ThemeToggle t={t} label={t.themeAria} />
+                </div>
+              </div>
+            </div>
             <button
               type="button"
               className={historyActive ? "gearbtn tasknav on" : "gearbtn tasknav"}
@@ -101,7 +146,7 @@ export function AppHeader({
               title={historyActive ? t.historyCurrent : t.historyAria}
               onClick={onHistory}
             >
-              <HistoryIcon size={16} />
+              <HistoryIcon size={16} selected={historyActive} />
             </button>
             <button
               ref={gearRef}
@@ -114,7 +159,7 @@ export function AppHeader({
             >
               <SettingsIcon size={16} />
             </button>
-          </span>
+          </div>
         </div>
       </div>
     </header>

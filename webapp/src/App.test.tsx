@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 
 const mocks = vi.hoisted(() => ({
@@ -49,6 +49,7 @@ vi.mock("./api/client", async (importOriginal) => {
       version: "test",
       llm: { configured: true, routable: true, effective: true, models: [] },
       presets: ["minimal", "standard", "rich"],
+      preset_options: (await import("./lib/conversionOptions")).BUILTIN_PRESET_OPTIONS,
       extras: { browser: false, svg: false, kreuzberg: false },
       limits: { max_job_items: mocks.maxJobItems },
     }),
@@ -145,6 +146,8 @@ vi.mock("./hooks/useJobs", () => ({
 }));
 
 describe("App workspace", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   beforeEach(() => {
     window.history.replaceState(null, "", "/");
     mocks.submit.mockReset();
@@ -170,7 +173,7 @@ describe("App workspace", () => {
       name: "LLM enhancement",
     });
     expect(llmSwitch).toHaveAttribute("aria-checked", "false");
-    expect(screen.queryByRole("button", { name: "minimal" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "minimal" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /item in session/ }));
@@ -182,7 +185,9 @@ describe("App workspace", () => {
     ).toBeTruthy();
     const source = composer.closest(".convert-source");
     expect(source).not.toBeNull();
-    expect(source?.querySelector(".url-entry .file-picker")).not.toBeNull();
+    expect(source?.querySelector(".file-picker")).toBeNull();
+    expect(screen.getByRole("button", { name: "Options" }).closest(".jobhead")).not.toBeNull();
+    expect(screen.getByLabelText("Upload", { selector: "input" }).closest(".jobhead")).not.toBeNull();
     const currentRow = screen.getByRole("option", { name: /result\.md/ });
     expect(currentRow.querySelector(".c-finished")).toHaveTextContent("07-13 10:00");
     const enhance = screen.getByRole("button", {
@@ -198,26 +203,19 @@ describe("App workspace", () => {
     expect(listbox.contains(archivedRow)).toBe(true);
     expect(archivedRow).not.toHaveClass("archived-row");
     expect(archivedRow.querySelector(".c-status.archive-actions")).not.toBeNull();
-    // The zip action renders in both breakpoint slots — the composer options
-    // row (desktop) and below the ledger (phones); CSS shows one at a time.
-    // Clear stays in the job header.
     const zipButtons = screen.getAllByRole("button", { name: /download all/i });
-    expect(zipButtons).toHaveLength(2);
-    const [rowZip, listZip] = zipButtons;
-    expect(rowZip).toBeEnabled();
-    expect(rowZip!.closest(".composer .options")).not.toBeNull();
-    expect(rowZip!.closest(".jobhead")).toBeNull();
+    expect(zipButtons).toHaveLength(1);
+    const [listZip] = zipButtons;
     expect(listZip).toBeEnabled();
+    expect(listZip!.closest(".composer")).toBeNull();
     expect(listZip!.closest(".list-zip")).not.toBeNull();
-    expect(
-      listbox.compareDocumentPosition(listZip!) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    expect(listbox.compareDocumentPosition(listZip!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // The phone footer mirrors the header's external links.
     const footer = document.querySelector("footer.app-footer");
     expect(footer?.querySelector('a[href="https://github.com/Ynewtime/markitai"]')).not.toBeNull();
     const clearButton = screen.getByRole("button", { name: "Clear all" });
     expect(clearButton.closest(".jobhead-r")).not.toBeNull();
-    expect(clearButton.closest(".composer")).toBeNull();
+    expect(clearButton.closest(".convert-source")).toBeNull();
     const historyButton = screen.getByRole("button", { name: "View conversions" });
     expect(historyButton).toBeVisible();
     expect(historyButton).toHaveAttribute("aria-current", "page");
@@ -225,6 +223,18 @@ describe("App workspace", () => {
     historyButton.focus();
     fireEvent.click(historyButton);
     await waitFor(() => expect(currentRow).toHaveFocus());
+  });
+
+  it.each(["/", "/jobs"])("uploads from the top toolbar on %s", async (path) => {
+    window.history.replaceState(null, "", path);
+    render(<App />);
+    const picker = await screen.findByLabelText("Upload", { selector: "input" });
+    expect(picker.closest(path === "/" ? ".composer-toolbar" : ".jobhead")).not.toBeNull();
+    expect(picker.closest(".urlrow")).toBeNull();
+    const file = new File(["hello"], "hello.txt", { type: "text/plain" });
+    fireEvent.change(picker, { target: { files: [file] } });
+    await waitFor(() => expect(mocks.submit).toHaveBeenCalled());
+    expect(mocks.submit).toHaveBeenCalledWith([file], [], expect.any(Object));
   });
 
   it("restores the task-list view when /jobs is refreshed", async () => {
@@ -285,6 +295,73 @@ describe("App workspace", () => {
     expect(
       await screen.findByText("LLM enhancement failed: Could not load this job"),
     ).toBeVisible();
+  });
+
+  it("keeps preset UI, manual overrides, and submitted options in sync", async () => {
+    render(<App />);
+    await act(async () => {});
+    fireEvent.click(screen.getByRole("button", { name: "Options" }));
+    const rich = screen.getByRole("button", { name: "rich" });
+    await waitFor(() => expect(rich).toBeEnabled());
+    fireEvent.click(rich);
+    expect(screen.getByRole("switch", { name: "LLM enhancement" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "alt text" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "description JSON" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "page screenshots" })).toBeChecked();
+    fireEvent.click(screen.getByRole("switch", { name: "alt text" }));
+    expect(screen.getByText("Custom")).toBeVisible();
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "https://example.com/article" } });
+    fireEvent.click(screen.getByRole("button", { name: "Convert" }));
+    await waitFor(() => expect(mocks.submit).toHaveBeenCalledOnce());
+    expect(mocks.submit.mock.calls[0]![2]).toMatchObject({
+      preset: "rich", llm: true, ocr: false, alt: false, desc: true, screenshot: true,
+    });
+  });
+
+  it("restores image overrides with the preset but not session-only source settings", async () => {
+    const entries = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => entries.get(key) ?? null,
+      setItem: (key: string, value: string) => entries.set(key, value),
+      clear: () => entries.clear(),
+    };
+    vi.stubGlobal("localStorage", storage);
+    storage.setItem("markitai.options", JSON.stringify({
+      version: 4, preset: "rich", llm: true, ocr: false, profile: null,
+      imageOverrides: { alt: false, desc: null, screenshot: false },
+    }));
+    render(<App />);
+    await act(async () => {});
+    fireEvent.click(screen.getByRole("button", { name: "Options" }));
+    expect(screen.getByRole("switch", { name: "alt text" })).not.toBeChecked();
+    expect(screen.getByRole("switch", { name: "description JSON" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "page screenshots" })).not.toBeChecked();
+    fireEvent.click(screen.getByRole("switch", { name: "alt text" }));
+    const stored = JSON.parse(storage.getItem("markitai.options")!);
+    expect(stored.imageOverrides).toEqual({ alt: true, desc: null, screenshot: false });
+    expect(stored).not.toHaveProperty("pure");
+    expect(stored).not.toHaveProperty("strategy");
+  });
+
+  it("reselects a preset as a bundle and keeps the output profile independent", async () => {
+    render(<App />);
+    await act(async () => {});
+    fireEvent.click(screen.getByRole("button", { name: "Options" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "rich" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "rich" }));
+    fireEvent.click(screen.getByRole("switch", { name: "OCR" }));
+    fireEvent.click(screen.getByRole("button", { name: "rag" }));
+    fireEvent.click(screen.getByRole("button", { name: "minimal" }));
+    for (const name of ["LLM enhancement", "OCR", "alt text", "description JSON", "page screenshots"]) {
+      expect(screen.getByRole("switch", { name })).not.toBeChecked();
+    }
+    expect(screen.getByRole("button", { name: "rag" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "rich" }));
+    fireEvent.click(screen.getByRole("switch", { name: "LLM enhancement" }));
+    expect(screen.getByRole("switch", { name: "alt text" })).not.toBeChecked();
+    expect(screen.getByRole("switch", { name: "alt text" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("switch", { name: "LLM enhancement" }));
+    expect(screen.getByRole("switch", { name: "alt text" })).toBeChecked();
   });
 
   it("caps a pasted URL batch at the job limit and says so", async () => {

@@ -713,6 +713,79 @@ class TestImageOptions:
 # =============================================================================
 
 
+class TestExplicitBooleanOverrides:
+    """Explicit false wins over inherited config; omitted flags preserve it."""
+
+    @pytest.mark.parametrize("inherited", [False, True])
+    @pytest.mark.parametrize("explicit", [None, False, True])
+    @pytest.mark.parametrize(
+        ("section", "field", "positive", "negative", "inverse"),
+        [
+            (
+                "screenshot",
+                "screenshot_only",
+                "--screenshot-only",
+                "--no-screenshot-only",
+                False,
+            ),
+            ("llm", "pure", "--pure", "--no-pure", False),
+            ("cache", "no_cache", "--no-cache", "--cache", False),
+            ("image", "compress", "--no-compress", "--compress", True),
+        ],
+    )
+    def test_boolean_override(
+        self,
+        inherited: bool,
+        explicit: bool | None,
+        section: str,
+        field: str,
+        positive: str,
+        negative: str,
+        inverse: bool,
+        tmp_path: Path,
+        cli_runner: CliRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from markitai.config import ConfigManager, MarkitaiConfig
+
+        cfg = MarkitaiConfig()
+        target = getattr(cfg, section)
+        setattr(target, field, not inherited if inverse else inherited)
+        cfg.screenshot.enabled = False
+        monkeypatch.delenv("MARKITAI_PURE", raising=False)
+        monkeypatch.setattr(ConfigManager, "load", lambda *_args, **_kwargs: cfg)
+        sample = tmp_path / "sample.txt"
+        sample.write_text("hello")
+        flags = [] if explicit is None else [positive if explicit else negative]
+        result = cli_runner.invoke(app, [str(sample), *flags, "--dry-run"])
+        assert result.exit_code == 0, result.output
+        expected = inherited if explicit is None else explicit
+        assert getattr(target, field) is (not expected if inverse else expected)
+        if section == "screenshot":
+            assert cfg.screenshot.enabled is (explicit is True)
+
+    @pytest.mark.parametrize("flag", [None, "--pure", "--no-pure"])
+    def test_explicit_pure_overrides_environment(
+        self,
+        flag: str | None,
+        tmp_path: Path,
+        cli_runner: CliRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from markitai.config import ConfigManager, MarkitaiConfig
+
+        cfg = MarkitaiConfig()
+        monkeypatch.setenv("MARKITAI_PURE", "true")
+        monkeypatch.setattr(ConfigManager, "load", lambda *_args, **_kwargs: cfg)
+        sample = tmp_path / "sample.txt"
+        sample.write_text("hello")
+        result = cli_runner.invoke(
+            app, [str(sample), *([flag] if flag else []), "--dry-run"]
+        )
+        assert result.exit_code == 0, result.output
+        assert cfg.llm.pure is (flag != "--no-pure")
+
+
 class TestOCROptions:
     """Tests for OCR-related CLI options."""
 
@@ -838,6 +911,27 @@ class TestFetchStrategy:
         result = cli_runner.invoke(app, ["--help"])
         assert result.exit_code == 0
         assert "--backend" in result.output
+
+    @pytest.mark.parametrize("backend", ["native", "kreuzberg", "cloudflare"])
+    def test_explicit_backend_replaces_inherited_flags(
+        self,
+        backend: str,
+        tmp_path: Path,
+        cli_runner: CliRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from markitai.config import ConfigManager, MarkitaiConfig
+
+        cfg = MarkitaiConfig()
+        cfg.fetch.kreuzberg_convert_enabled = True
+        cfg.fetch.cloudflare.convert_enabled = True
+        monkeypatch.setattr(ConfigManager, "load", lambda *_args, **_kwargs: cfg)
+        sample = tmp_path / "sample.txt"
+        sample.write_text("hello")
+        result = cli_runner.invoke(app, [str(sample), "-b", backend, "--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert cfg.fetch.kreuzberg_convert_enabled is (backend == "kreuzberg")
+        assert cfg.fetch.cloudflare.convert_enabled is (backend == "cloudflare")
 
     def test_backend_kreuzberg_conflicts_with_cloudflare_strategy(
         self, tmp_path: Path, cli_runner: CliRunner

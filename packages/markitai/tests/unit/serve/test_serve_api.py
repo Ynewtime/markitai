@@ -134,10 +134,29 @@ class TestCapabilitiesAndRoot:
             "models": [],
         }
         assert data["presets"] == ["minimal", "standard", "rich"]
+        from markitai.config import BUILTIN_PRESETS
+
+        assert data["preset_options"] == {
+            name: preset.model_dump() for name, preset in BUILTIN_PRESETS.items()
+        }
         assert set(data["extras"]) == {"browser", "svg", "kreuzberg"}
         assert all(isinstance(v, bool) for v in data["extras"].values())
         # The webapp reads server-owned limits from here (no constant copies).
         assert data["limits"] == {"max_job_items": MAX_JOB_ITEMS}
+
+    async def test_capabilities_exposes_configured_preset_values(
+        self, tmp_path: Path
+    ) -> None:
+        from markitai.config import PresetConfig
+
+        cfg = MarkitaiConfig()
+        cfg.presets["rich"] = PresetConfig(llm=True, ocr=True, desc=True)
+        app = create_app(
+            jobs_root=tmp_path / "jobs", config=cfg, configure_logging=False
+        )
+        async with _serve_client(app) as client:
+            data = (await client.get("/api/capabilities")).json()
+        assert data["preset_options"]["rich"] == cfg.presets["rich"].model_dump()
 
     async def test_capabilities_reports_configured_models(self, tmp_path: Path) -> None:
         from markitai.config import LiteLLMParams, ModelConfig
@@ -366,6 +385,50 @@ class TestJobConfigMapping:
         assert cfg.ocr.enabled is True
         cfg = self._build(self._base_with_model(), preset="rich", ocr=False)
         assert cfg.ocr.enabled is False
+
+    def test_explicit_image_overrides_can_disable_a_rich_preset(self) -> None:
+        cfg = self._build(
+            self._base_with_model(),
+            preset="rich",
+            alt=False,
+            desc=False,
+            screenshot=False,
+        )
+        assert not cfg.image.alt_enabled
+        assert not cfg.image.desc_enabled
+        assert not cfg.screenshot.enabled
+
+    def test_screenshot_source_implies_capture_but_not_llm(self) -> None:
+        cfg = self._build(
+            MarkitaiConfig(), preset="minimal", screenshot=False, screenshot_only=True
+        )
+        assert cfg.screenshot.enabled
+        assert cfg.screenshot.screenshot_only
+        assert not cfg.llm.enabled
+
+    @pytest.mark.parametrize("skip", [False, True])
+    def test_no_cache_controls_cache_reads_without_changing_storage(
+        self, skip: bool
+    ) -> None:
+        base = self._base_with_model()
+        base.cache.no_cache = not skip
+        cfg = self._build(base, no_cache=skip)
+        assert cfg.cache.no_cache is skip
+        assert cfg.cache.enabled == base.cache.enabled
+        assert base.cache.no_cache is not skip
+
+    @pytest.mark.parametrize("backend", ["native", "kreuzberg", "cloudflare"])
+    def test_backend_replaces_both_inherited_converter_flags(
+        self, backend: str
+    ) -> None:
+        base = self._base_with_model()
+        base.fetch.kreuzberg_convert_enabled = True
+        base.fetch.cloudflare.convert_enabled = True
+        cfg = self._build(base, backend=backend)
+        assert cfg.fetch.kreuzberg_convert_enabled is (backend == "kreuzberg")
+        assert cfg.fetch.cloudflare.convert_enabled is (backend == "cloudflare")
+        assert base.fetch.kreuzberg_convert_enabled
+        assert base.fetch.cloudflare.convert_enabled
 
     def test_llm_true_without_models_degrades_to_disabled(self) -> None:
         cfg = self._build(MarkitaiConfig(), llm=True)
@@ -892,6 +955,120 @@ class TestUrlPipeline:
         text = out.read_text(encoding="utf-8")
         assert text.startswith("---\n")  # basic frontmatter block
         assert "body text" in text
+
+    async def test_process_url_item_plain_without_llm_keeps_raw_markdown(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from markitai.serve.jobs import process_url_item
+
+        monkeypatch.setattr("markitai.fetch.fetch_url", self._canned_fetch())
+        url_ctx, cfg, out_dir = self._url_ctx_and_cfg(tmp_path)
+        cfg.llm.pure = True
+        cfg.llm.enabled = False
+        result = await process_url_item(
+            "https://example.com/page.html", cfg, out_dir, None, url_ctx
+        )
+        assert result.success is True
+        assert (out_dir / "page.html.md").read_text(encoding="utf-8") == (
+            "# Fetched\n\nbody text"
+        )
+
+    @pytest.mark.parametrize("content", ["", "Text layer must not become output"])
+    async def test_process_url_item_capture_only_without_llm(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, content: str
+    ) -> None:
+        from markitai.constants import SCREENSHOTS_REL_PATH
+        from markitai.fetch_types import FetchResult
+        from markitai.serve.jobs import process_url_item
+
+        url_ctx, cfg, out_dir = self._url_ctx_and_cfg(tmp_path)
+        cfg.llm.enabled = False
+        cfg.screenshot.enabled = True
+        cfg.screenshot.screenshot_only = True
+        screenshot = out_dir / SCREENSHOTS_REL_PATH / "page.html.0001.png"
+        screenshot.parent.mkdir(parents=True, exist_ok=True)
+        screenshot.write_bytes(b"screenshot")
+
+        async def fake_fetch(url: str, *args: Any, **kwargs: Any) -> FetchResult:
+            assert kwargs["screenshot"] is True
+            return FetchResult(
+                content=content,
+                strategy_used="playwright",
+                url=url,
+                screenshot_path=screenshot,
+            )
+
+        monkeypatch.setattr("markitai.fetch.fetch_url", fake_fetch)
+        result = await process_url_item(
+            "https://example.com/page.html", cfg, out_dir, None, url_ctx
+        )
+        assert result.success is True
+        assert result.screenshots == 1
+        assert result.output_path == str(out_dir / "page.html.md")
+        text = (out_dir / "page.html.md").read_text(encoding="utf-8")
+        assert f"{SCREENSHOTS_REL_PATH}/{screenshot.name}" in text
+        assert "Text layer must not become output" not in text
+
+    async def test_capture_only_job_exposes_screenshot_artifact(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from markitai.fetch_types import FetchResult
+
+        async def fake_fetch(url: str, *args: Any, **kwargs: Any) -> FetchResult:
+            screenshot = kwargs["screenshot_dir"] / "page.html.0001.png"
+            screenshot.write_bytes(b"screenshot")
+            return FetchResult(
+                content="Text layer must not become output",
+                strategy_used="playwright",
+                url=url,
+                screenshot_path=screenshot,
+            )
+
+        monkeypatch.setattr("markitai.fetch.fetch_url", fake_fetch)
+        async with _serve_client(_make_app(tmp_path)) as client:
+            created = await client.post(
+                "/api/jobs",
+                files=_multipart(
+                    urls=["https://example.com/page.html"],
+                    options={"llm": False, "screenshot_only": True},
+                ),
+            )
+            assert created.status_code == 201
+            job_id = created.json()["job_id"]
+            job = await _wait_job_done(client, job_id)
+            assert job["items"][0]["status"] == "done"
+            response = await client.get(f"/api/jobs/{job_id}/items/i1/result")
+            assert response.status_code == 200
+            result = response.json()
+            assert "Text layer must not become output" not in result["markdown"]
+            screenshot = next(
+                artifact
+                for artifact in result["artifacts"]
+                if artifact["relpath"].endswith(".png")
+            )
+            assert screenshot["relpath"] in result["markdown"]
+            download = await client.get(
+                f"/api/jobs/{job_id}/files/{screenshot['relpath']}"
+            )
+            assert download.status_code == 200
+            assert download.content == b"screenshot"
+
+    async def test_process_url_item_capture_only_requires_a_capture(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from markitai.serve.jobs import process_url_item
+
+        monkeypatch.setattr("markitai.fetch.fetch_url", self._canned_fetch())
+        url_ctx, cfg, out_dir = self._url_ctx_and_cfg(tmp_path)
+        cfg.screenshot.enabled = True
+        cfg.screenshot.screenshot_only = True
+        cfg.llm.enabled = False
+        result = await process_url_item(
+            "https://example.com/page.html", cfg, out_dir, None, url_ctx
+        )
+        assert result.success is False
+        assert "No screenshot captured" in (result.error or "")
+        assert not (out_dir / "page.html.md").exists()
 
     async def test_process_url_item_skips_image_download_without_llm(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

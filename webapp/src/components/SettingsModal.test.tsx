@@ -759,38 +759,14 @@ describe("SettingsModal", () => {
     });
   });
 
-  it("hosts the appearance controls for the phone header hand-off", async () => {
-    const user = userEvent.setup();
+  it("leaves appearance controls in the header instead of duplicating them", async () => {
     api.fetchSettings.mockResolvedValue(emptySettings);
     api.fetchProviders.mockResolvedValue([]);
-    const onLocale = vi.fn();
-
-    render(
-      <SettingsModal
-        t={dicts.en}
-        locale="en"
-        onLocale={onLocale}
-        onClose={() => undefined}
-        onSaved={() => undefined}
-        announce={() => undefined}
-      />,
-    );
-
-    const section = document.querySelector<HTMLElement>(".appearance-section");
-    expect(section).not.toBeNull();
-    expect(
-      within(section!).getByRole("group", { name: dicts.en.langAria }),
-    ).toBeInTheDocument();
-    expect(
-      within(section!).getByRole("radiogroup", { name: dicts.en.themeAria }),
-    ).toBeInTheDocument();
-    await user.click(within(section!).getByRole("button", { name: "中" }));
-    expect(onLocale).toHaveBeenCalledWith("zh");
-
-    // The add-models flow replaces the modal body wholesale; the appearance
-    // section belongs to the root breadcrumb level only.
-    await user.click(await screen.findByRole("button", { name: dicts.en.addModels }));
-    expect(document.querySelector(".appearance-section")).toBeNull();
+    render(<SettingsModal t={dicts.en} locale="en" onLocale={vi.fn()}
+      onClose={vi.fn()} onSaved={vi.fn()} announce={vi.fn()} />);
+    await screen.findByRole("button", { name: dicts.en.addModels });
+    expect(screen.queryByRole("group", { name: dicts.en.langAria })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radiogroup", { name: dicts.en.themeAria })).not.toBeInTheDocument();
   });
 
   it("moves focus to the level heading after an Escape unwind", async () => {

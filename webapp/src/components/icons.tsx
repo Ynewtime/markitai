@@ -13,6 +13,7 @@ import {
   FileText,
   Gear,
   Globe,
+  Info,
   MagicWand,
   Moon,
   Sliders,
@@ -98,8 +99,8 @@ export function MoonIcon({ size = 14 }: IconProps) {
   return <Moon size={size} {...iconProps} />;
 }
 
-export function HistoryIcon({ size = 16 }: IconProps) {
-  return <ClockCounterClockwise size={size} {...iconProps} />;
+export function HistoryIcon({ size = 16, selected = false }: IconProps & { selected?: boolean }) {
+  return <ClockCounterClockwise size={size} {...iconProps} weight={selected ? "bold" : "regular"} />;
 }
 
 export function XIcon({ size = 16 }: IconProps) {
@@ -124,6 +125,10 @@ export function MagicWandIcon({ size = 14 }: IconProps) {
 
 export function ArrowRightIcon({ size = 13 }: IconProps) {
   return <ArrowRight size={size} {...iconProps} />;
+}
+
+export function InfoIcon({ size = 13 }: IconProps) {
+  return <Info size={size} {...iconProps} />;
 }
 
 export function CaretRightIcon({ size = 14 }: IconProps) {

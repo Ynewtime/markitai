@@ -32,6 +32,7 @@ TYPES_TS = REPO_ROOT / "webapp" / "src" / "api" / "types.ts"
 #: Field names and optionality must match exactly in both directions.
 RESPONSE_MIRRORS: dict[str, str] = {
     "Capabilities": "Capabilities",
+    "PresetFeatures": "PresetFeatures",
     "CreatedItem": "CreatedItem",
     "CreateJobResponse": "CreateJobResponse",
     "ItemPayload": "ItemPayload",

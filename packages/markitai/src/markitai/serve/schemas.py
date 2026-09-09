@@ -285,6 +285,18 @@ class CapabilitiesLimits(BaseModel):
     max_job_items: int
 
 
+class PresetFeatures(BaseModel):
+    """Resolved preset values, including config-file overrides."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    llm: bool
+    ocr: bool
+    alt: bool
+    desc: bool
+    screenshot: bool
+
+
 class Capabilities(BaseModel):
     """Response of ``GET /api/capabilities``."""
 
@@ -293,6 +305,7 @@ class Capabilities(BaseModel):
     version: str
     llm: CapabilitiesLLM
     presets: list[str]
+    preset_options: dict[str, PresetFeatures]
     extras: CapabilitiesExtras
     limits: CapabilitiesLimits
 

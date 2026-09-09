@@ -43,9 +43,3 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
   if (previouslyFocused instanceof HTMLElement) previouslyFocused.focus();
   return ok;
 }
-
-/** Terminal icon at the end of the options row — expands to a one-line
- * always-dark mono command strip with a copy badge (same badge + live-region
- * voice as the Source card). The command tracks the composer state live:
- * typed URLs are listed verbatim; with no URLs a <your-files> placeholder
- * stands in and a hint explains the swap. */

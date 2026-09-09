@@ -25,8 +25,6 @@ import {
   openDeletePopoverCard,
 } from "./ConfirmDeletePopover";
 import { useMediaQuery } from "../hooks/useMediaQuery";
-import { LangToggle } from "./LangToggle";
-import { ThemeToggle } from "./ThemeToggle";
 import { AppNotification } from "./WarningNotification";
 import { ModelPicker } from "./settings/ModelPicker";
 import { ProviderPicker } from "./settings/ProviderPicker";
@@ -116,8 +114,6 @@ function isLocalProvider(provider: string): boolean {
 
 export function SettingsModal({
   t,
-  locale,
-  onLocale,
   onClose,
   onSaved,
   announce,
@@ -843,30 +839,6 @@ export function SettingsModal({
         </div>
 
         <div className="mdl-body">
-          {/* Phone-only appearance controls: at ≤780px the header hides
-              .hdr-toggles and this section takes over (CSS gates both on the
-              same breakpoint, so exactly one control location exists at any
-              width). Desktop keeps it display: none, which also removes it
-              from the focus trap's offsetParent-based focusable scan. Only on
-              the root breadcrumb level — the add-models flow replaces the
-              body wholesale. */}
-          {!adding && (
-            <section className="appearance-section" aria-labelledby="appearance-title">
-              <h3 id="appearance-title" className="picker-group mono">
-                {t.appearanceTitle}
-              </h3>
-              <div className="appearance-controls">
-                <div className="appearance-opt">
-                  <span className="lbl">{t.langAria}</span>
-                  <LangToggle label={t.langAria} locale={locale} onLocale={onLocale} />
-                </div>
-                <div className="appearance-opt">
-                  <span className="lbl">{t.themeAria}</span>
-                  <ThemeToggle t={t} label={t.themeAria} />
-                </div>
-              </div>
-            </section>
-          )}
           {settings === null ? (
             <p className={loadError === null ? "mdl-dim mono" : "errline"}>{loadError ?? t.loading}</p>
           ) : adding ? (

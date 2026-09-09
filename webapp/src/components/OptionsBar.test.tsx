@@ -29,10 +29,10 @@ describe("OptionsBar", () => {
     render(<OptionsBar {...baseProps} />);
 
     // The product's promise is drop-a-file-get-markdown; every switch,
-    // selector and the CLI command are one click away rather than in the way.
+    // selector stays one click away; the actual command is always readable.
     expect(screen.queryByRole("switch")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
-    expect(screen.queryByText(/markitai/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(t.cliAria)).toHaveTextContent("markitai");
     expect(screen.getByRole("button", { name: t.options })).toBeInTheDocument();
   });
 
@@ -45,9 +45,4 @@ describe("OptionsBar", () => {
     expect(screen.getByLabelText(t.cliAria)).toBeVisible();
   });
 
-  it("renders the trailing slot after the disclosure", () => {
-    render(<OptionsBar {...baseProps} trailing={<button>archive</button>} />);
-
-    expect(screen.getByRole("button", { name: "archive" })).toBeInTheDocument();
-  });
 });

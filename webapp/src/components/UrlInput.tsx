@@ -1,8 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import type { Dict } from "../i18n";
-import { FilePicker } from "./DropZone";
-import { UploadIcon } from "./icons";
+import { ArrowRightIcon } from "./icons";
 
 /** App's mobile breakpoint (matches app.css) — below it the full en
  * placeholder wraps and the 1-row textarea clips it, so swap in the short
@@ -10,8 +9,7 @@ import { UploadIcon } from "./icons";
 const NARROW_Q = "(max-width: 780px)";
 
 /** URL entry: a textarea styled as the mock's single input — pasting
- * multi-line text grows it one row per URL. Enter converts (the placeholder
- * says so); Shift+Enter inserts a newline; Cmd/Ctrl+Enter still works.
+ * multi-line text grows it one row per URL. Enter converts; Shift+Enter inserts a newline; Cmd/Ctrl+Enter still works.
  * `compact` is the slim-composer variant that lives in the workspace.
  * The draft is owned by App (the CLI-command line mirrors it live). */
 export function UrlInput({
@@ -19,14 +17,12 @@ export function UrlInput({
   text,
   onText,
   onConvert,
-  onFiles,
   compact = false,
 }: {
   t: Dict;
   text: string;
   onText: (text: string) => void;
   onConvert: (urls: string[]) => Promise<boolean>;
-  onFiles: (files: File[]) => void;
   compact?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
@@ -74,20 +70,15 @@ export function UrlInput({
             void submit();
           }}
         />
-        <FilePicker
-          label={t.browse}
-          onFiles={onFiles}
-          icon={<UploadIcon />}
-          className="file-picker"
-        />
       </div>
       <button
         type="button"
-        className={compact ? "btn primary" : "btn primary lg"}
+        className="srcact convert"
         disabled={busy || urls.length === 0}
         onClick={() => void submit()}
       >
-        {t.convert}
+        <ArrowRightIcon size={14} />
+        <span>{t.convert}</span>
       </button>
     </div>
   );
