@@ -5,7 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.24.0] - 2026-08-26
+## [Unreleased]
+
+### Added
+
+- **Substack article extraction** now handles rendered bodies and `window._preloads` JSON, including custom domains and byline dates, while retaining Notes extraction and generic fallback.
+- **Linux desktop proxy discovery** reads manual GNOME/Unity and KDE HTTP proxy settings and bypass lists. Explicit environment proxies still take precedence; PAC, SOCKS-only and authenticated desktop settings are not imported.
+- **Opt-in benchmark LLM scoring** provides validated content, structure and noise scores through `score_with_llm_judge`, with offline cache reuse, input limits and no automatic retries. A cache miss requires an explicit model and `allow_network=True`; default benchmarks remain heuristic and offline.
+
+### Fixed
+
+- **Mobile conversion uses one compact source card**: the URL area sits above a shared Options/upload/Convert action row instead of three stacked controls, with 44px touch targets and a naturally wrapping mobile CLI preview. Desktop retains an inline composer.
+- **The composer actions share one lightweight style**: Options, file upload and Convert are borderless, evenly padded controls with the same hover and focus treatment; Convert stays the clear primary through heavier ink and a light accent wash rather than a filled box.
+- **The options panel is grouped instead of listed**: the preset leads as the primary row (with its adjusted status and hint), Enhance collects LLM, OCR and image analysis, Output holds the profile, and the URL/file fetch selectors, source switches and cache/compression toggles fold into an Advanced section that opens automatically when one of them is already non-default. Every control, hint, linkage rule and translation is unchanged.
+- **Presets and conversion options stay linked** across the panel, API request and CLI preview, using server-provided preset definitions. Selecting a preset resets its five features, dependent image analysis pauses and restores with LLM/plain mode, and screenshot source and remote backends resolve consistently. CLI previews default to concise preset-plus-deviation commands using the server preset map. A visible default-config assumption and “Include config overrides” option preserve access to explicit off flags for screenshot-only, pure, cache and compression when local configuration differs.
+
+## [0.24.0] - 2026-08-30
 
 ### Added
 
@@ -44,6 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Images come out better without OpenCV**: Pillow alone beat it on every sample measured — higher PSNR and SSIM, 7.7% smaller files — because OpenCV's `INTER_LANCZOS4` downscale skips anti-alias prefiltering
 - **Every dependency moved to its current release**, `litellm` 1.91.1 → 1.97.0 and `markitdown` 0.1.6 → 0.1.7 among 56 updates, with the licence audit re-run against the upgraded tree
 - **The PDF engine floor moved to `pymupdf4llm>=1.28.2`**: 1.28.0 pulled in `pymupdf-layout` under a Polyform Noncommercial licence, which forbids commercial use outright; 1.28.2 restored AGPL-3.0 dual licensing
+- **Setup no longer asks about LibreOffice**: slide rendering is an opt-in runtime path that a local MS Office already covers on Windows and macOS, so the guided installer leaves it out; a PPTX `--screenshot`/`--ocr` conversion with no renderer available warns at conversion time and names the per-OS install command
 
 ### Removed
 
