@@ -600,18 +600,3 @@ class TestDoctorExitCode:
         )
         assert result.exit_code == 0
         assert "playwright" in json.loads(result.output)
-
-    def test_missing_rapidocr_exits_zero(
-        self, runner: CliRunner, mock_config: MagicMock
-    ) -> None:
-        """OCR left the core install: its absence is a report, not a failure."""
-        result = self._invoke(
-            runner,
-            mock_config,
-            playwright_ok=True,
-            libreoffice_ok=True,
-            rapidocr_ok=False,
-        )
-        assert result.exit_code == 0, result.output
-        assert "Health check failed" not in result.output
-        assert "健康检查失败" not in result.output

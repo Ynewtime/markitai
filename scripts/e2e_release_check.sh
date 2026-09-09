@@ -52,6 +52,7 @@ STARTED_EPOCH=$(date +%s)
 PASS=0
 FAIL=0
 SERVER_PID=""
+RUN_PID=""
 STEP_ID=""
 
 if [ -t 1 ]; then
@@ -80,7 +81,11 @@ file() { log EVIDENCE "$STEP_ID" "$1" "$2"; }          # linked from the report
 
 check() { if "${@:2}"; then ok "$1"; else bad "$1"; fi; }
 
-cleanup() { [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null; return 0; }
+cleanup() {
+  [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null
+  [ -n "$RUN_PID" ] && kill "$RUN_PID" 2>/dev/null
+  return 0
+}
 trap cleanup EXIT
 
 # ── Setup ────────────────────────────────────────────────────────────────────
@@ -97,8 +102,18 @@ set -a
 . "$ENV_FILE"
 set +a
 
+# WORKDIR is caller-supplied and gets removed wholesale: only ever remove a
+# directory this script created, identified by the marker it writes below.
+MARKER="$WORKDIR/_internal/.markitai-e2e"
+if [ -e "$WORKDIR" ] && [ ! -f "$MARKER" ]; then
+  printf '%s%s exists and was not created by this script — refusing to remove it.%s\n' \
+    "$R" "$WORKDIR" "$N"
+  printf 'Set WORKDIR=/path/to/a/throwaway/dir, or delete it yourself.\n'
+  exit 1
+fi
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"/00-inputs "$WORKDIR"/_internal
+: >"$MARKER"
 RESULTS="$WORKDIR/_internal/results.tsv"
 : >"$RESULTS"
 printf '  %skeys read from %s%s\n' "$D" "$ENV_FILE" "$N"
@@ -340,6 +355,7 @@ PYEOF
   kill -INT "$RUN_PID" 2>/dev/null
   wait "$RUN_PID" 2>/dev/null
   RUN_RC=$?
+  RUN_PID=""
 
   PARTIAL=$(ls 07-interrupt-resume/output/*.llm.md 2>/dev/null | wc -l | tr -d ' ')
   if [ "$PARTIAL" -ge "$BATCH_DOCS" ]; then

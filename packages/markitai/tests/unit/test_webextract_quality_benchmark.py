@@ -9,16 +9,9 @@ CI-cron tool (see ``benchmarks/webextract_quality.py``).
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
-
-# benchmarks/ is dev tooling next to src/, not an installed package.
-_PKG_DIR = Path(__file__).parents[2]
-if str(_PKG_DIR) not in sys.path:
-    sys.path.insert(0, str(_PKG_DIR))
-
 from benchmarks import webextract_quality
 from benchmarks.scorer import score_markdown, score_with_llm_judge, split_blocks
 

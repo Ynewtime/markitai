@@ -9,13 +9,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from litellm.types.utils import ModelResponse
-
-_PKG_DIR = Path(__file__).parents[2]
-if str(_PKG_DIR) not in sys.path:
-    sys.path.insert(0, str(_PKG_DIR))
-
 from benchmarks.scorer import LLMJudgeError, ScoreResult, score_with_llm_judge
+from litellm.types.utils import ModelResponse
 
 _VERDICT = {
     "match_score": 80,

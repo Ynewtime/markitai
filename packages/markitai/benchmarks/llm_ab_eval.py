@@ -42,12 +42,13 @@ SAFETY: every judge call costs money once you supply a real ``judge_fn`` /
 ``--judge-model`` with live credentials. This module makes NO network calls
 on import, in its tests (a stub ``JudgeFn`` is injected — see
 ``tests/unit/test_llm_ab_eval.py``), or by running this file with no
-arguments (``--docs`` and ``--output`` are required). Nothing in this
+arguments (``--docs`` is required). Nothing in this
 repository's test suite or CI invokes a real judge model.
 
 Usage (after wiring a real judge model + credentials)::
 
-    # cost estimate only -- builds the pairs, makes NO judge calls:
+    # builds (and LLM-enhances) the pairs, prints a cost estimate, makes NO
+    # judge calls:
     uv run python packages/markitai/benchmarks/llm_ab_eval.py \\
         --docs report.pdf memo.docx --output /tmp/ab.jsonl --dry-run
 
@@ -525,20 +526,6 @@ def aggregate_by_format(judgements: Sequence[DocumentJudgement]) -> dict[str, An
     }
 
 
-async def evaluate_documents(
-    sources: Sequence[str | Path],
-    judge_fn: JudgeFn,
-    checkpoint_path: Path,
-    *,
-    resume: bool = True,
-    config: MarkitaiConfig | None = None,
-) -> tuple[list[DocumentJudgement], dict[str, Any]]:
-    """End-to-end: build pairs, judge them, aggregate. The main library entry point."""
-    pairs = await build_document_pairs(sources, config=config)
-    judgements = await run_ab_eval(pairs, judge_fn, checkpoint_path, resume=resume)
-    return judgements, aggregate_by_format(judgements)
-
-
 # ---------------------------------------------------------------------------
 # Cost estimation
 # ---------------------------------------------------------------------------
@@ -897,7 +884,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="local files to evaluate",
     )
     parser.add_argument(
-        "--output", type=Path, required=True, help="jsonl checkpoint path (resumable)"
+        "--output",
+        type=Path,
+        default=None,
+        help="jsonl checkpoint path (resumable; required unless --dry-run/--build-batch)",
     )
     parser.add_argument(
         "--judge-model",
@@ -955,61 +945,74 @@ async def _main_async(args: argparse.Namespace) -> int:
     if args.llm_config:
         os.environ["MARKITAI_CONFIG"] = str(args.llm_config)
 
-    print(f"Building {len(args.docs)} base/enhanced pair(s)...")
-    pairs = await build_document_pairs(args.docs)
-    for pair in pairs:
+    try:
+        print(f"Building {len(args.docs)} base/enhanced pair(s)...")
+        pairs = await build_document_pairs(args.docs)
+        for pair in pairs:
+            print(
+                f"  {pair.doc_id} [{pair.fmt}]: base {len(pair.base_markdown)} char(s), "
+                f"enhanced {len(pair.enhanced_markdown)} char(s)"
+            )
+
+        if args.build_batch:
+            model = args.judge_model or "REPLACE_WITH_JUDGE_MODEL"
+            requests = build_batch_requests(
+                pairs, model, provider=args.batch_provider, max_chars=args.max_chars
+            )
+            write_batch_jsonl(requests, args.build_batch)
+            print(
+                f"\nWrote {len(requests)} batch request(s) to {args.build_batch} "
+                f"({args.batch_provider} format). No judge call was made -- the "
+                "documents above were already enhanced to build the pairs."
+            )
+            return 0
+
+        estimate = estimate_judge_cost(
+            pairs,
+            input_price_per_mtok=args.input_price_per_mtok,
+            output_price_per_mtok=args.output_price_per_mtok,
+            max_chars=args.max_chars,
+        )
         print(
-            f"  {pair.doc_id} [{pair.fmt}]: base {len(pair.base_markdown)} char(s), "
-            f"enhanced {len(pair.enhanced_markdown)} char(s)"
+            f"\nCost estimate ({estimate.judge_calls} judge call(s), synchronous list price): "
+            f"~{estimate.estimated_input_tokens:,} input + {estimate.estimated_output_tokens:,} output "
+            f"token(s), ~${estimate.estimated_cost_usd:.4f}. Halve for a Batches API run (--build-batch)."
         )
 
-    if args.build_batch:
-        model = args.judge_model or "REPLACE_WITH_JUDGE_MODEL"
-        requests = build_batch_requests(
-            pairs, model, provider=args.batch_provider, max_chars=args.max_chars
-        )
-        write_batch_jsonl(requests, args.build_batch)
+        if args.dry_run:
+            print(
+                "\n--dry-run: no judge call was made -- the documents above were "
+                "already enhanced to build the pairs."
+            )
+            return 0
+
+        if not args.judge_model:
+            print(
+                "\n--judge-model is required unless --dry-run or --build-batch.",
+                file=sys.stderr,
+            )
+            return 1
+
+        if args.output is None:
+            print(
+                "\n--output is required unless --dry-run or --build-batch.",
+                file=sys.stderr,
+            )
+            return 1
+
+        judge_fn = make_litellm_judge(args.judge_model)
         print(
-            f"\nWrote {len(requests)} batch request(s) to {args.build_batch} "
-            f"({args.batch_provider} format). No network call was made."
+            f"\nJudging with {args.judge_model} (2 call(s)/doc, position-swap debiased)..."
         )
+        judgements = await run_ab_eval(
+            pairs, judge_fn, args.output, resume=not args.no_resume
+        )
+        summary = aggregate_by_format(judgements)
+        print(json.dumps(summary, indent=2))
+        print(f"\nCheckpoint: {args.output}")
         return 0
-
-    estimate = estimate_judge_cost(
-        pairs,
-        input_price_per_mtok=args.input_price_per_mtok,
-        output_price_per_mtok=args.output_price_per_mtok,
-        max_chars=args.max_chars,
-    )
-    print(
-        f"\nCost estimate ({estimate.judge_calls} judge call(s), synchronous list price): "
-        f"~{estimate.estimated_input_tokens:,} input + {estimate.estimated_output_tokens:,} output "
-        f"token(s), ~${estimate.estimated_cost_usd:.4f}. Halve for a Batches API run (--build-batch)."
-    )
-
-    if args.dry_run:
-        print("\n--dry-run: no judge calls made.")
-        return 0
-
-    if not args.judge_model:
-        print(
-            "\n--judge-model is required unless --dry-run or --build-batch.",
-            file=sys.stderr,
-        )
-        return 1
-
-    judge_fn = make_litellm_judge(args.judge_model)
-    print(
-        f"\nJudging with {args.judge_model} (2 call(s)/doc, position-swap debiased)..."
-    )
-    judgements = await run_ab_eval(
-        pairs, judge_fn, args.output, resume=not args.no_resume
-    )
-    summary = aggregate_by_format(judgements)
-    print(json.dumps(summary, indent=2))
-    print(f"\nCheckpoint: {args.output}")
-    await _close_shared_llm_clients()
-    return 0
+    finally:
+        await _close_shared_llm_clients()
 
 
 def main(argv: list[str] | None = None) -> int:

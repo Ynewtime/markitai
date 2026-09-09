@@ -307,9 +307,12 @@ def score_with_llm_judge(
             num_retries=0,
             **kwargs,
         )
-    except Exception:
-        # Provider exception chains can include credentials or source documents.
-        raise LLMJudgeError("Judge request failed; no score was recorded") from None
+    except Exception as exc:
+        # Provider exception chains can include credentials or source documents,
+        # so only the exception type crosses the boundary.
+        raise LLMJudgeError(
+            f"Judge request failed ({type(exc).__name__}); no score was recorded"
+        ) from None
     if not isinstance(response, ModelResponse):
         raise LLMJudgeError("Judge returned an invalid non-streaming completion")
     try:

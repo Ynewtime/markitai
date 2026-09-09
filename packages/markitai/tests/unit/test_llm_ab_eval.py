@@ -13,18 +13,11 @@ tooling, not shipped in the wheel, imported the same way
 from __future__ import annotations
 
 import json
-import sys
 from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
-
-# benchmarks/ is dev tooling next to src/, not an installed package.
-_PKG_DIR = Path(__file__).parents[2]
-if str(_PKG_DIR) not in sys.path:
-    sys.path.insert(0, str(_PKG_DIR))
-
 from benchmarks import llm_ab_eval as mod
 from benchmarks.llm_ab_eval import (
     DocumentJudgement,

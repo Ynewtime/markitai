@@ -128,6 +128,8 @@ markitai https://example.com --llm --screenshot-only
 对于**文件输入**（PDF/PPTX），不加 `--llm` 的 `--screenshot-only` **不会**跳过 `.md`，仍会照常写入提取出的文本 Markdown，只是额外附带截图。上面“不生成 `.md` 文件”的保证仅适用于 URL 输入。
 :::
 
+当配置文件启用了该模式时，用 `--no-screenshot-only` 关掉它。
+
 ### `--ocr`
 
 为扫描文档启用 OCR。
@@ -176,6 +178,8 @@ markitai document.pdf --preset rich --pure
 `--pure` 会静默覆盖 `--alt`、`--desc` 和 `--screenshot`。同时使用这些标志时会显示警告。
 :::
 
+当配置文件启用了纯净模式时，用 `--no-pure` 恢复 frontmatter 和后处理。
+
 ### `--keep-base`
 
 在 LLM 模式下仍写入基础 `.md` 文件。默认情况下 `--llm` 只输出 `.llm.md` 以避免冗余文件。
@@ -195,6 +199,8 @@ markitai document.docx --llm --keep-base
 ```bash
 markitai document.pdf --no-compress
 ```
+
+当配置文件禁用了压缩时，用 `--compress` 重新开启。
 
 ## 输出选项
 
@@ -256,6 +262,8 @@ markitai ./docs -o ./output -j 4
 ```bash
 markitai document.docx --llm --no-cache
 ```
+
+当配置文件禁用了缓存时，用 `--cache` 重新允许读取缓存。
 
 ### `--no-cache-for <patterns>`
 

@@ -135,6 +135,9 @@ packages = ["src/markitai"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# benchmarks/ is dev tooling next to src/, not an installed package: the
+# benchmark tests import it as `benchmarks.*`.
+pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [

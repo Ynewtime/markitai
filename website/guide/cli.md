@@ -128,6 +128,8 @@ Use `--llm --screenshot-only` for pages where traditional content extraction fai
 For **file input** (PDF/PPTX), `--screenshot-only` without `--llm` does **not** skip `.md`. It still writes the normal extracted-text markdown alongside the screenshots. The "no `.md` files" guarantee above only applies to URL input.
 :::
 
+Use `--no-screenshot-only` to turn the mode back off when a config file enables it.
+
 ### `--ocr`
 
 Enable OCR for scanned documents.
@@ -176,6 +178,8 @@ markitai document.pdf --preset rich --pure
 `--pure` silently overrides `--alt`, `--desc`, and `--screenshot`. A warning is displayed when these flags are used together.
 :::
 
+Use `--no-pure` to restore frontmatter and post-processing when a config file enables pure mode.
+
 ### `--keep-base`
 
 Write base `.md` file even in LLM mode. By default, `--llm` only outputs `.llm.md` to avoid redundant files.
@@ -195,6 +199,8 @@ Disable image compression.
 ```bash
 markitai document.pdf --no-compress
 ```
+
+Use `--compress` to force compression back on when a config file disables it.
 
 ## Output Options
 
@@ -256,6 +262,8 @@ Disable LLM result caching (force fresh API calls).
 ```bash
 markitai document.docx --llm --no-cache
 ```
+
+Use `--cache` to allow cache reads again when a config file disables them.
 
 ### `--no-cache-for <patterns>`
 

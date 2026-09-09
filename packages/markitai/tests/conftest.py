@@ -2,7 +2,6 @@
 
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -21,42 +20,9 @@ def fixtures_dir() -> Path:
     return Path(__file__).parent / "fixtures"
 
 
-@pytest.fixture
-def tmp_output(tmp_path: Path) -> Path:
-    """Return a temporary output directory."""
-    output = tmp_path / "output"
-    output.mkdir()
-    return output
-
-
 # =============================================================================
 # Sample Content Fixtures
 # =============================================================================
-
-
-@pytest.fixture
-def sample_markdown() -> str:
-    """Return sample markdown content for testing."""
-    return """# Test Document
-
-This is a test document with some content.
-
-## Section 1
-
-Some text in section 1.
-
-- Item 1
-- Item 2
-- Item 3
-
-## Section 2
-
-A table:
-
-| Column 1 | Column 2 |
-|----------|----------|
-| Value 1  | Value 2  |
-"""
 
 
 @pytest.fixture
@@ -122,15 +88,15 @@ def _isolate_user_config_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         fake_home / ".markitai",
     )
     # Scrub any keys the module-level load_dotenv already placed in os.environ.
-    for key in (
-        "ANTHROPIC_API_KEY",
-        "OPENAI_API_KEY",
-        "GEMINI_API_KEY",
-        "DEEPSEEK_API_KEY",
-        "OPENROUTER_API_KEY",
+    # The provider map is the source of truth; the rest are read directly by
+    # provider code that is not in it.
+    from markitai.constants import PROVIDER_API_KEY_ENV
+
+    for key in {
+        *PROVIDER_API_KEY_ENV.values(),
         "MISTRAL_API_KEY",
         "CLOUDFLARE_API_TOKEN",
-    ):
+    }:
         monkeypatch.delenv(key, raising=False)
 
 
@@ -334,34 +300,3 @@ def sample_png_bytes() -> bytes:
             0x82,
         ]
     )
-
-
-# =============================================================================
-# Mock Helpers
-# =============================================================================
-
-
-@pytest.fixture
-def mock_llm_response():
-    """Factory fixture for creating mock LLM responses.
-
-    Usage:
-        def test_something(mock_llm_response):
-            response = mock_llm_response(content="Hello", model="gpt-4")
-    """
-
-    def _create(
-        content: str = "Response",
-        model: str = "test-model",
-        prompt_tokens: int = 100,
-        completion_tokens: int = 50,
-    ) -> MagicMock:
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock(message=MagicMock(content=content))]
-        mock_response.model = model
-        mock_response.usage = MagicMock(
-            prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
-        )
-        return mock_response
-
-    return _create

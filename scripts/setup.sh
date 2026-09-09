@@ -63,7 +63,6 @@ i18n() {
             installing)                 echo "正在安装" ;;
             skipped)                    echo "已跳过" ;;
             failed)                     echo "失败" ;;
-            success)                    echo "成功" ;;
             already_installed)          echo "已经安装" ;;
             not_found)                  echo "未找到" ;;
 
@@ -113,7 +112,6 @@ i18n() {
             info_repo_noninteractive)   echo "非交互模式: 已检测到源码仓库, 将使用 PyPI 发布版" ;;
 
             # Network / Mirrors
-            section_network)            echo "网络环境" ;;
             mirror_slow_index)          echo "PyPI 默认源响应缓慢或不可达" ;;
             mirror_confirm)             echo "使用镜像源加速安装?" ;;
             mirror_select)              echo "选择镜像源" ;;
@@ -134,7 +132,6 @@ i18n() {
             # Getting started
             getting_started)            echo "开始使用" ;;
             quick_start)                echo "快速开始" ;;
-            activate_venv)              echo "激活虚拟环境" ;;
             run_tests)                  echo "运行测试" ;;
             run_cli)                    echo "运行 CLI" ;;
             interactive_mode)           echo "交互模式" ;;
@@ -181,7 +178,6 @@ i18n() {
             installing)                 echo "installing" ;;
             skipped)                    echo "skipped" ;;
             failed)                     echo "failed" ;;
-            success)                    echo "success" ;;
             already_installed)          echo "already installed" ;;
             not_found)                  echo "not found" ;;
 
@@ -231,7 +227,6 @@ i18n() {
             info_repo_noninteractive)   echo "Non-interactive mode: source repo detected, using PyPI release" ;;
 
             # Network / Mirrors
-            section_network)            echo "Network Environment" ;;
             mirror_slow_index)          echo "The default PyPI index is slow or unreachable from here" ;;
             mirror_confirm)             echo "Use a mirror to speed up the install?" ;;
             mirror_select)              echo "Select mirror source" ;;
@@ -252,7 +247,6 @@ i18n() {
             # Getting started
             getting_started)            echo "Getting Started" ;;
             quick_start)                echo "Quick Start" ;;
-            activate_venv)              echo "Activate virtual environment" ;;
             run_tests)                  echo "Run tests" ;;
             run_cli)                    echo "Run CLI" ;;
             interactive_mode)           echo "Interactive mode" ;;
@@ -1354,6 +1348,8 @@ select_markitai_serve() {
     markitai_extra_enabled "serve" && return 0
     if clack_confirm_optional "$(i18n confirm_serve)" "y"; then
         install_markitai_extra "serve"
+    else
+        decline_markitai_extra "serve"
     fi
 }
 
@@ -1834,7 +1830,6 @@ print_user_completion() {
 # Print dev mode completion message
 # Usage: print_dev_completion
 print_dev_completion() {
-    _project_root=$(get_project_root)
     clack_note "$(i18n quick_start)" \
         "$(i18n configure_env):" \
         "  ${CYAN}cp .env.example .env${NC}" \

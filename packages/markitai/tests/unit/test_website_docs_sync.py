@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import re
 import tomllib
-import warnings
 from pathlib import Path
 
 import click
@@ -182,17 +181,13 @@ def test_removed_flags_are_only_named_in_removal_notes() -> None:
     )
 
 
-def test_undocumented_cli_options_are_reported_but_not_fatal() -> None:
-    """Undocumented is a gap; warn so it is visible without blocking a merge."""
+def test_every_cli_option_is_documented() -> None:
+    """A flag nobody wrote down is a flag nobody can use."""
     documented: set[str] = set()
     for path in _iter_docs():
         documented |= _flags_in(path)
     missing = sorted(_cli_option_names() - documented - _FOREIGN_FLAGS)
-    if missing:
-        warnings.warn(
-            f"CLI options not mentioned anywhere under website/: {missing}",
-            stacklevel=1,
-        )
+    assert not missing, f"CLI options not mentioned anywhere under website/: {missing}"
 
 
 # ============================================================

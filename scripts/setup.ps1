@@ -58,7 +58,6 @@ function i18n {
             "installing"                { return "正在安装" }
             "skipped"                   { return "已跳过" }
             "failed"                    { return "失败" }
-            "success"                   { return "成功" }
             "already_installed"         { return "已经安装" }
             "not_found"                 { return "未找到" }
 
@@ -108,7 +107,6 @@ function i18n {
             "info_repo_noninteractive"  { return "非交互模式: 已检测到源码仓库, 将使用 PyPI 发布版" }
 
             # Network / Mirrors
-            "section_network"           { return "网络环境" }
             "mirror_slow_index"         { return "PyPI 默认源响应缓慢或不可达" }
             "mirror_confirm"            { return "使用镜像源加速安装?" }
             "mirror_select"             { return "选择镜像源" }
@@ -131,7 +129,6 @@ function i18n {
             # Getting started
             "getting_started"           { return "开始使用" }
             "quick_start"               { return "快速开始" }
-            "activate_venv"             { return "激活虚拟环境" }
             "run_tests"                 { return "运行测试" }
             "run_cli"                   { return "运行 CLI" }
             "interactive_mode"          { return "交互模式" }
@@ -178,7 +175,6 @@ function i18n {
             "installing"                { return "installing" }
             "skipped"                   { return "skipped" }
             "failed"                    { return "failed" }
-            "success"                   { return "success" }
             "already_installed"         { return "already installed" }
             "not_found"                 { return "not found" }
 
@@ -228,7 +224,6 @@ function i18n {
             "info_repo_noninteractive"  { return "Non-interactive mode: source repo detected, using PyPI release" }
 
             # Network / Mirrors
-            "section_network"           { return "Network Environment" }
             "mirror_slow_index"         { return "The default PyPI index is slow or unreachable from here" }
             "mirror_confirm"            { return "Use a mirror to speed up the install?" }
             "mirror_select"             { return "Select mirror source" }
@@ -251,7 +246,6 @@ function i18n {
             # Getting started
             "getting_started"           { return "Getting Started" }
             "quick_start"               { return "Quick Start" }
-            "activate_venv"             { return "Activate virtual environment" }
             "run_tests"                 { return "Run tests" }
             "run_cli"                   { return "Run CLI" }
             "interactive_mode"          { return "Interactive mode" }
@@ -1333,6 +1327,8 @@ function Select-MarkitaiServe {
     if (Test-MarkitaiExtraEnabled -ExtraName "serve") { return }
     if (Confirm-OptionalInstall (i18n "confirm_serve") "y") {
         Install-MarkitaiExtra -ExtraName "serve"
+    } else {
+        Deny-MarkitaiExtra -ExtraName "serve"
     }
 }
 
@@ -1834,7 +1830,6 @@ function Print-UserCompletion {
 
 # Print dev mode completion message
 function Print-DevCompletion {
-    $projectRoot = Get-ProjectRoot
     Clack-Note (i18n "quick_start") `
         "$(i18n 'configure_env'):" `
         "  copy .env.example .env" `

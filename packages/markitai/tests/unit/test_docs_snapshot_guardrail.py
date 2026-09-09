@@ -14,16 +14,9 @@ change that needs ``uv run python packages/markitai/benchmarks/docs_snapshot.py
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
-
-# benchmarks/ is dev tooling next to src/, not an installed package.
-_PKG_DIR = Path(__file__).parents[2]
-if str(_PKG_DIR) not in sys.path:
-    sys.path.insert(0, str(_PKG_DIR))
-
 from benchmarks.docs_snapshot import FIXTURES, SnapshotCheck, check_fixture
 
 

@@ -32,7 +32,7 @@ concurrency:
 
 jobs:
   webapp:
-    name: Webapp test & build
+    name: Webapp test, lint & build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6.1.0
@@ -48,28 +48,14 @@ jobs:
       - name: Run tests
         run: bun run --cwd webapp test
 
-      - name: Build webapp and verify packaged assets
-        run: scripts/sync_webapp_static.sh --check
-
-  webapp-lint:
-    name: Webapp lint & type check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6.1.0
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Install dependencies
-        run: bun install --cwd webapp
-
       - name: Run eslint
         run: bun run --cwd webapp lint
 
       - name: Run type check
         run: bun run --cwd webapp typecheck
+
+      - name: Build webapp and verify packaged assets
+        run: scripts/sync_webapp_static.sh --check
 
   lint:
     name: Lint & Type Check
@@ -197,46 +183,7 @@ jobs:
           uv build --package markitai --wheel --out-dir wheel-smoke --clear
           wheel="$(find wheel-smoke -name 'markitai-*.whl' -print -quit)"
           test -n "$wheel"
-          python - "$wheel" <<'PY'
-          import sys
-          import zipfile
-
-          with zipfile.ZipFile(sys.argv[1]) as wheel_file:
-              names = set(wheel_file.namelist())
-              entry_points_path = next(
-                  name for name in names if name.endswith(".dist-info/entry_points.txt")
-              )
-              entry_points = wheel_file.read(entry_points_path).decode()
-          required = {
-              "markitai/serve/static/index.html",
-              "markitai/serve/static/favicon.ico",
-              "markitai/serve/static/logo.svg",
-          }
-          missing = required - names
-          if missing or not any(
-              name.startswith("markitai/serve/static/assets/") for name in names
-          ):
-              raise SystemExit(f"wheel is missing packaged webapp files: {sorted(missing)}")
-
-          # MIT requires the licence to travel with every copy, and Apache-2.0
-          # section 4(d) requires the NOTICE; both land in dist-info/licenses/
-          # only while `license-files` resolves inside packages/markitai.
-          for suffix in ("LICENSE", "NOTICE"):
-              if not any(
-                  name.endswith(f".dist-info/licenses/{suffix}") for name in names
-              ):
-                  raise SystemExit(f"wheel is missing dist-info/licenses/{suffix}")
-          # "../" in a member path escapes the install directory on extraction.
-          traversal = sorted(name for name in names if ".." in name.split("/"))
-          if traversal:
-              raise SystemExit(f"wheel contains path-traversal entries: {traversal}")
-
-          # The bundled MCP server must ship its console script and module.
-          if "markitai-mcp = markitai.mcp.server:main" not in entry_points:
-              raise SystemExit(f"wheel is missing the markitai-mcp script:\n{entry_points}")
-          if not any(name.startswith("markitai/mcp/") for name in names):
-              raise SystemExit("wheel is missing the markitai/mcp/ package")
-          PY
+          python scripts/check_wheel.py "$wheel"
           uv tool run --isolated --python '${{ matrix.python-version }}' --from "$wheel" markitai --version
           uv tool run --isolated --python '${{ matrix.python-version }}' --from "$wheel" markitai --help >/dev/null
 

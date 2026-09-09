@@ -180,6 +180,54 @@ class TestPptxToPdf:
         with pytest.raises(RuntimeError, match="PowerPoint not found"):
             office_mac.pptx_to_pdf(Path("deck.pptx"), Path("."))
 
+    def test_staged_input_is_read_only_and_staging_is_removed(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """PowerPoint can only open read-write, so the copy protects the source."""
+        staging = tmp_path / "staging"
+        staging.mkdir()
+        monkeypatch.setattr(office_mac, "_make_staging_dir", lambda: staging)
+        monkeypatch.setattr(office_mac, "find_ms_office_app", lambda _app: True)
+
+        staged_modes: list[int] = []
+
+        def fake_run(script: str, *, timeout: int, app: str) -> None:
+            staged = staging / f"{staging.name}.pptx"
+            staged_modes.append(staged.stat().st_mode & 0o777)
+            (staging / f"{staging.name}.pdf").write_bytes(b"%PDF")
+
+        monkeypatch.setattr(office_mac, "_run_applescript", fake_run)
+
+        src = tmp_path / "deck.pptx"
+        src.write_bytes(b"pptx")
+
+        office_mac.pptx_to_pdf(src, tmp_path / "out")
+
+        assert staged_modes == [0o400]
+        assert not staging.exists()
+
+    def test_missing_product_raises_and_still_cleans_up(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """A silent no-output run must fail loudly and leave nothing staged."""
+        staging = tmp_path / "staging"
+        staging.mkdir()
+        monkeypatch.setattr(office_mac, "_make_staging_dir", lambda: staging)
+        monkeypatch.setattr(office_mac, "find_ms_office_app", lambda _app: True)
+
+        def fake_run(script: str, *, timeout: int, app: str) -> None:
+            """The app returns cleanly but writes nothing."""
+
+        monkeypatch.setattr(office_mac, "_run_applescript", fake_run)
+
+        src = tmp_path / "deck.pptx"
+        src.write_bytes(b"pptx")
+
+        with pytest.raises(RuntimeError, match="did not produce .pdf output"):
+            office_mac.pptx_to_pdf(src, tmp_path / "out")
+
+        assert not staging.exists()
+
 
 class TestStagingDir:
     def test_uses_group_container_when_present(

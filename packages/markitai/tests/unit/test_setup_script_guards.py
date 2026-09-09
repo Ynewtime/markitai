@@ -605,6 +605,19 @@ def test_declined_ocr_is_not_re_added_by_suggest_extras() -> None:
     assert "Deny-MarkitaiExtra" in ps_select
 
 
+def test_declined_serve_is_not_re_added_by_suggest_extras() -> None:
+    """Answering no to the Web UI question must actually skip `serve`.
+
+    Without the decline branch the extra is only left unselected, so the
+    later merge puts it straight back and installs what the user refused.
+    """
+    shell_select = _shell_function("select_markitai_serve")
+    assert "decline_markitai_extra" in shell_select
+
+    ps_select = _powershell_function("Select-MarkitaiServe")
+    assert "Deny-MarkitaiExtra" in ps_select
+
+
 def test_ocr_bilingual_strings_exist_in_both_scripts() -> None:
     """Every new prompt needs an English and a Chinese spelling."""
     for script in (_SETUP_SH, _SETUP_PS1):

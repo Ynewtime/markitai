@@ -99,11 +99,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import tempfile
 import time
 from dataclasses import asdict, dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import quote
 
@@ -136,7 +137,14 @@ def _download(url: str, dest: Path, client: httpx.Client) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     response = client.get(url)
     response.raise_for_status()
-    dest.write_bytes(response.content)
+    # A partial write must not look like a complete cache entry on the next
+    # run, so the bytes land under a temporary name and are moved into place.
+    tmp = dest.with_name(f"{dest.name}.part-{os.getpid()}")
+    try:
+        tmp.write_bytes(response.content)
+        os.replace(tmp, dest)
+    finally:
+        tmp.unlink(missing_ok=True)
     return dest
 
 
@@ -168,6 +176,10 @@ def select_pdfs(rules: list[dict[str, Any]], limit: int) -> list[str]:
 
 def fetch_pdf(pdf_rel_path: str, cache_dir: Path, client: httpx.Client) -> Path:
     """Download (or reuse the cached copy of) one bench PDF."""
+    # pdf_rel_path comes out of a downloaded jsonl: it must stay inside the cache.
+    parts = PurePosixPath(pdf_rel_path).parts
+    if PurePosixPath(pdf_rel_path).is_absolute() or ".." in parts:
+        raise ValueError(f"unsafe bench PDF path: {pdf_rel_path!r}")
     dest = cache_dir / "pdfs" / pdf_rel_path
     url = f"{HF_RESOLVE_BASE}/bench_data/pdfs/{quote(pdf_rel_path)}"
     return _download(url, dest, client)
@@ -175,8 +187,6 @@ def fetch_pdf(pdf_rel_path: str, cache_dir: Path, client: httpx.Client) -> Path:
 
 def _ci_active() -> bool:
     """Return True when running under a CI automation environment."""
-    import os
-
     return os.environ.get(
         "GITHUB_ACTIONS", ""
     ).strip().lower() == "true" or os.environ.get("CI", "").strip().lower() in (
