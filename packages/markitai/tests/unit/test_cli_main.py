@@ -945,6 +945,47 @@ class TestFetchStrategy:
         assert cfg.fetch.kreuzberg_convert_enabled is (backend == "kreuzberg")
         assert cfg.fetch.cloudflare.convert_enabled is (backend == "cloudflare")
 
+    @pytest.mark.parametrize(
+        ("backend", "cloudflare_convert"),
+        [("native", False), ("cloudflare", True)],
+    )
+    def test_explicit_backend_overrides_cloudflare_strategy(
+        self,
+        backend: str,
+        cloudflare_convert: bool,
+        tmp_path: Path,
+        cli_runner: CliRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """`-b` wins over the converter `-s cloudflare` would imply."""
+        from markitai.config import ConfigManager, MarkitaiConfig
+
+        cfg = MarkitaiConfig()
+        monkeypatch.setattr(ConfigManager, "load", lambda *_args, **_kwargs: cfg)
+        sample = tmp_path / "sample.txt"
+        sample.write_text("hello")
+        result = cli_runner.invoke(
+            app,
+            [str(sample), "-b", backend, "-s", "cloudflare", "--dry-run"],
+        )
+        assert result.exit_code == 0, result.output
+        assert cfg.fetch.kreuzberg_convert_enabled is False
+        assert cfg.fetch.cloudflare.convert_enabled is cloudflare_convert
+
+    def test_cloudflare_strategy_without_backend_implies_converter(
+        self, tmp_path: Path, cli_runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without `-b`, `-s cloudflare` still enables the CF file converter."""
+        from markitai.config import ConfigManager, MarkitaiConfig
+
+        cfg = MarkitaiConfig()
+        monkeypatch.setattr(ConfigManager, "load", lambda *_args, **_kwargs: cfg)
+        sample = tmp_path / "sample.txt"
+        sample.write_text("hello")
+        result = cli_runner.invoke(app, [str(sample), "-s", "cloudflare", "--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert cfg.fetch.cloudflare.convert_enabled is True
+
     def test_backend_kreuzberg_conflicts_with_cloudflare_strategy(
         self, tmp_path: Path, cli_runner: CliRunner
     ) -> None:

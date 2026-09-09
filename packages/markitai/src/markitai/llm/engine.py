@@ -644,32 +644,14 @@ class LLMEngine:
             raw_response is None.
         """
 
-        def deserialize(cached: dict[str, Any]) -> Any:
-            if call.deserialize is not None:
-                return call.deserialize(cached)
-            # model_construct() bypasses validation for cached data
-            return call.response_model.model_construct(**cached)
-
         # 1. Cache lookup: in-memory first (fastest), then persistent.
         # The miss is counted before the LLM call so that failed calls also
         # count as misses (matching the historical document_process counting).
         if call.cache_key is not None:
-            cached = self.memory_cache.get(call.cache_key, call.cache_content)
-            if cached is not None:
+            cached_result = self.try_cached(call)
+            if cached_result is not None:
                 self._cache_hits += 1
-                return deserialize(cached), None
-
-            cached = self.persistent_cache.get(
-                call.cache_key,
-                call.cache_content,
-                context=call.context,
-                model=call.cache_model,
-            )
-            if cached is not None:
-                # Also populate in-memory cache for faster subsequent access
-                self.memory_cache.set(call.cache_key, call.cache_content, cached)
-                self._cache_hits += 1
-                return deserialize(cached), None
+                return cached_result, None
 
             self._cache_misses += 1
 
@@ -749,20 +731,7 @@ class LLMEngine:
 
             # Store in both cache layers (unless the cache_if hook vetoes
             # the write, e.g. for degenerate output)
-            if call.cache_key is not None and (
-                call.cache_if is None or call.cache_if(result)
-            ):
-                if call.serialize is not None:
-                    cache_value = call.serialize(result)
-                else:
-                    cache_value = result.model_dump()
-                self.memory_cache.set(call.cache_key, call.cache_content, cache_value)
-                self.persistent_cache.set(
-                    call.cache_key,
-                    call.cache_content,
-                    cache_value,
-                    model=call.cache_model,
-                )
+            self.write_cache(call, result)
 
         return result, raw_response
 

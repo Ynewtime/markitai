@@ -72,16 +72,29 @@ import argparse
 import asyncio
 import json
 import os
-import re
 import sys
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
 if __package__ in {None, ""}:  # executed as a script, not as a module
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from benchmarks._judge import (
+    JudgeEnvelopeError,
+    ajudge_completion,
+    envelope_content,
+    loads_json_object,
+)
+from markitai.llm.batch_api import (
+    download_openai_batch_output,
+    poll_openai_batch,
+    read_openai_batch_output,
+    submit_openai_batch,
+    write_batch_jsonl,
+)
 
 if TYPE_CHECKING:
     from markitai.config import MarkitaiConfig
@@ -241,8 +254,6 @@ _JUDGE_SYSTEM_PROMPT = (
     '"tie", "reason": "<one sentence>"}.'
 )
 
-_JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
-
 
 def build_judge_user_prompt(
     doc_a: str, doc_b: str, *, max_chars: int | None = 20000
@@ -265,16 +276,7 @@ def parse_judge_response(content: str) -> JudgeVerdict:
     isn't parseable JSON or doesn't contain a recognizable winner -- an
     unparseable response must never silently count as a win for either side.
     """
-    data: Any = None
-    try:
-        data = json.loads(content)
-    except json.JSONDecodeError:
-        match = _JSON_OBJECT_RE.search(content)
-        if match:
-            try:
-                data = json.loads(match.group(0))
-            except json.JSONDecodeError:
-                data = None
+    data = loads_json_object(content, embedded=True)
 
     if not isinstance(data, dict):
         return JudgeVerdict(
@@ -314,40 +316,19 @@ async def litellm_judge(
     such as gpt-5.x only accept the default temperature) so one model quirk
     cannot abort a whole run.
     """
-    import litellm
-
     prompt = build_judge_user_prompt(doc_a, doc_b, max_chars=max_chars)
-    base_kwargs: dict[str, Any] = {
-        "model": model,
-        "messages": [
+    response = await ajudge_completion(
+        model=model,
+        messages=[
             {"role": "system", "content": _JUDGE_SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ],
-        "response_format": {"type": "json_object"},
-        "stream": False,
         **litellm_kwargs,
-    }
-
-    async def _call(temperature: float | None) -> Any:
-        kwargs = dict(base_kwargs)
-        if temperature is not None:
-            kwargs["temperature"] = temperature
-        return await litellm.acompletion(**kwargs)
-
+    )
     try:
-        response = await _call(0)
-    except litellm.exceptions.BadRequestError as exc:
-        # Some reasoning models (gpt-5.x) only accept the default
-        # temperature and reject temperature=0. Retry once without it
-        # rather than failing the whole A/B run.
-        if "temperature" in str(exc).lower():
-            response = await _call(None)
-        else:
-            raise
-    # Non-streaming call always returns ModelResponse; litellm's return type
-    # is a broader union because **litellm_kwargs could in principle carry
-    # stream=True, which the type checker can't rule out statically.
-    content = cast("Any", response).choices[0].message.content or ""
+        content = envelope_content(response)
+    except JudgeEnvelopeError:
+        content = ""
     return parse_judge_response(content)
 
 
@@ -697,26 +678,23 @@ def build_batch_requests(
     )  # pragma: no cover - argparse gates this
 
 
-def write_batch_jsonl(requests: Sequence[dict[str, Any]], path: Path) -> None:
-    """Write a batch request list as jsonl (one request per line)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        for request in requests:
-            f.write(json.dumps(request) + "\n")
-
-
 def parse_openai_batch_output(path: Path) -> dict[str, JudgeVerdict]:
-    """Parse a completed OpenAI Batches API output file into ``{custom_id: JudgeVerdict}``."""
+    """Parse a completed OpenAI Batches API output file into ``{custom_id: JudgeVerdict}``.
+
+    Lines the provider could not fulfil (a non-200 response, or an error
+    file downloaded in place of a missing output file) become explicit
+    "tie" verdicts rather than vanishing from the result mapping.
+    """
     results: dict[str, JudgeVerdict] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
+    for line in read_openai_batch_output(path):
+        if line.body is None:
+            results[line.custom_id] = JudgeVerdict(
+                winner="tie", reason=f"batch entry failed: {line.error}"
+            )
             continue
-        entry = json.loads(line)
-        body = entry.get("response", {}).get("body", {})
-        choices = body.get("choices") or []
+        choices = line.body.get("choices") or []
         content = choices[0]["message"]["content"] if choices else ""
-        results[entry["custom_id"]] = parse_judge_response(content)
+        results[line.custom_id] = parse_judge_response(content)
     return results
 
 
@@ -811,18 +789,9 @@ async def submit_openai_batch_via_litellm(
     Returns the provider's batch id; poll it with
     ``poll_and_download_openai_batch``.
     """
-    import litellm
-
-    file_obj = await litellm.acreate_file(
-        file=input_jsonl_path, purpose="batch", custom_llm_provider=custom_llm_provider
+    return await submit_openai_batch(
+        input_jsonl_path, custom_llm_provider=custom_llm_provider
     )
-    batch = await litellm.acreate_batch(
-        completion_window="24h",
-        endpoint="/v1/chat/completions",
-        input_file_id=file_obj.id,
-        custom_llm_provider=custom_llm_provider,
-    )
-    return batch.id
 
 
 async def poll_and_download_openai_batch(
@@ -833,36 +802,23 @@ async def poll_and_download_openai_batch(
     poll_interval_s: float = 30.0,
     timeout_s: float = 24 * 3600,
 ) -> Path:
-    """Poll a submitted batch to completion, then download its output. NETWORK CALL, COSTS MONEY."""
-    import litellm
+    """Poll a submitted batch to completion, then download its output. NETWORK CALL, COSTS MONEY.
 
-    elapsed = 0.0
-    while True:
-        batch = await litellm.aretrieve_batch(
-            batch_id, custom_llm_provider=custom_llm_provider
-        )
-        if batch.status == "completed":
-            break
-        if batch.status in ("failed", "expired", "cancelled"):
-            raise RuntimeError(f"batch {batch_id} ended with status={batch.status!r}")
-        if elapsed >= timeout_s:
-            raise TimeoutError(
-                f"batch {batch_id} still {batch.status!r} after {timeout_s}s"
-            )
-        await asyncio.sleep(poll_interval_s)
-        elapsed += poll_interval_s
-
-    if not batch.output_file_id:
-        raise RuntimeError(f"batch {batch_id} completed with no output_file_id")
-    content = await litellm.afile_content(
-        batch.output_file_id, custom_llm_provider=custom_llm_provider
+    A batch that ends in any non-completed terminal status is an error here:
+    unlike markitai's own collect step, this script has no live re-run to
+    fall back to.
+    """
+    status = await poll_openai_batch(
+        batch_id,
+        custom_llm_provider=custom_llm_provider,
+        timeout_s=timeout_s,
+        interval_s=poll_interval_s,
     )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    # afile_content's return type covers a streaming variant too (only
-    # reachable with stream=True, not passed above); the non-streaming
-    # wrapper exposes .content (raw bytes) per litellm's HTTP file helpers.
-    output_path.write_bytes(cast("Any", content).content)
-    return output_path
+    if status != "completed":
+        raise RuntimeError(f"batch {batch_id} ended with status={status!r}")
+    return await download_openai_batch_output(
+        batch_id, output_path, custom_llm_provider=custom_llm_provider
+    )
 
 
 # ---------------------------------------------------------------------------

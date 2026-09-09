@@ -854,11 +854,12 @@ def app(
         fetch_strategy = FetchStrategy(cfg.fetch.strategy)
         explicit_fetch_strategy = False
 
-    # An explicit backend replaces inherited flags; the legacy Cloudflare
-    # strategy still implies its file converter.
+    # An explicit backend replaces inherited flags, including the file
+    # converter that `-s cloudflare` would otherwise imply — so
+    # `-b native -s cloudflare` fetches via Cloudflare but converts locally.
     if file_backend is not None:
         cfg.fetch.kreuzberg_convert_enabled = False
-        cfg.fetch.cloudflare.convert_enabled = fetch_strategy_name == "cloudflare"
+        cfg.fetch.cloudflare.convert_enabled = False
     if file_backend == "kreuzberg":
         if fetch_strategy_name == "cloudflare":
             stderr_console.print(

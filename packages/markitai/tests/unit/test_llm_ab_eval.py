@@ -442,23 +442,26 @@ class TestBatchResultParsing:
             {
                 "custom_id": "a.pdf::base_first",
                 "response": {
+                    "status_code": 200,
                     "body": {
                         "choices": [
                             {"message": {"content": '{"winner": "A", "reason": "r1"}'}}
                         ]
-                    }
+                    },
                 },
             },
             {
                 "custom_id": "a.pdf::enhanced_first",
                 "response": {
+                    "status_code": 200,
                     "body": {
                         "choices": [
                             {"message": {"content": '{"winner": "B", "reason": "r2"}'}}
                         ]
-                    }
+                    },
                 },
             },
+            {"custom_id": "b.pdf::base_first", "response": {"status_code": 429}},
         ]
         path.write_text(
             "\n".join(json.dumps(e) for e in entries) + "\n", encoding="utf-8"
@@ -467,6 +470,9 @@ class TestBatchResultParsing:
         parsed = mod.parse_openai_batch_output(path)
         assert parsed["a.pdf::base_first"].winner == "A"
         assert parsed["a.pdf::enhanced_first"].winner == "B"
+        # A non-200 line is a recorded tie, never a silently dropped entry.
+        assert parsed["b.pdf::base_first"].winner == "tie"
+        assert "HTTP 429" in (parsed["b.pdf::base_first"].reason or "")
 
     def test_parse_anthropic_batch_results(self) -> None:
         results = [
@@ -729,7 +735,8 @@ class TestBatchSubmitPollWiring:
                 self.status = status
                 self.output_file_id = "outfile" if status == "completed" else None
 
-        statuses = iter(["in_progress", "completed"])
+        # One retrieve per poll, plus the one the download step makes.
+        statuses = iter(["in_progress", "completed", "completed"])
 
         async def fake_aretrieve_batch(batch_id: str, **kwargs: Any) -> Any:
             return _Batch(next(statuses))

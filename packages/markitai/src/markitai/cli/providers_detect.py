@@ -33,28 +33,26 @@ class ProviderDetectionResult:
     source: str  # "cli", "env", "config"
 
 
-def _check_claude_auth() -> bool:
-    """Check if Claude CLI is authenticated."""
+def _provider_authenticated(provider: str) -> bool:
+    """Check one provider's auth status via ``AuthManager``, never raising."""
     from markitai.providers.auth import AuthManager
 
     auth_manager = AuthManager()
     try:
-        status = asyncio.run(auth_manager.check_auth("claude-agent"))
+        status = asyncio.run(auth_manager.check_auth(provider))
         return status.authenticated
     except Exception:
         return False
+
+
+def _check_claude_auth() -> bool:
+    """Check if Claude CLI is authenticated."""
+    return _provider_authenticated("claude-agent")
 
 
 def _check_copilot_auth() -> bool:
     """Check if Copilot CLI is authenticated."""
-    from markitai.providers.auth import AuthManager
-
-    auth_manager = AuthManager()
-    try:
-        status = asyncio.run(auth_manager.check_auth("copilot"))
-        return status.authenticated
-    except Exception:
-        return False
+    return _provider_authenticated("copilot")
 
 
 def _check_chatgpt_auth() -> bool:

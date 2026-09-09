@@ -24,9 +24,16 @@ import re
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TypedDict
 
 from rapidfuzz import fuzz
+
+from benchmarks._judge import (
+    JudgeEnvelopeError,
+    JudgeTransportError,
+    envelope_content,
+    judge_completion,
+    loads_json_object,
+)
 
 # Minimum partial-ratio for a block to count as aligned (marker uses 70).
 ALIGNMENT_THRESHOLD = 70
@@ -181,10 +188,9 @@ losses briefly in reason (a nonempty string). Do not compute an overall score.
 
 
 def _parse_judge_response(content: str) -> LLMJudgeResult:
-    try:
-        data = json.loads(content)
-    except (ValueError, TypeError) as exc:
-        raise LLMJudgeError("Judge response is not valid JSON") from exc
+    data = loads_json_object(content)
+    if data is None:
+        raise LLMJudgeError("Judge response is not valid JSON")
     fields = {"match_score", "order_score", "noise_score", "reason"}
     if not isinstance(data, dict) or set(data) != fields:
         raise LLMJudgeError("Judge response must contain exactly the rubric fields")
@@ -279,51 +285,29 @@ def score_with_llm_judge(
             "Judge cache miss; allow_network=True is required for paid calls"
         )
 
-    # Same provider abstraction as benchmarks/llm_ab_eval.py. Lazy import keeps
-    # heuristic-only runs offline. Omit temperature for reasoning-model support.
-    import litellm
+    # Lazy import keeps heuristic-only runs offline.
     from litellm.types.utils import ModelResponse
 
-    class ProviderOptions(TypedDict, total=False):
-        api_key: str
-        api_base: str
-
-    kwargs: ProviderOptions = {}
-    if api_key is not None:
-        kwargs["api_key"] = api_key
-    if api_base is not None:
-        kwargs["api_base"] = api_base
     try:
-        response = litellm.completion(
+        response = judge_completion(
             model=model,
             messages=[
                 {"role": "system", "content": _JUDGE_PROMPT},
                 {"role": "user", "content": user_content},
             ],
-            response_format={"type": "json_object"},
-            stream=False,
             timeout=timeout,
             max_tokens=2048,
-            num_retries=0,
-            **kwargs,
+            api_key=api_key,
+            api_base=api_base,
         )
-    except Exception as exc:
-        # Provider exception chains can include credentials or source documents,
-        # so only the exception type crosses the boundary.
-        raise LLMJudgeError(
-            f"Judge request failed ({type(exc).__name__}); no score was recorded"
-        ) from None
+    except JudgeTransportError as exc:
+        raise LLMJudgeError(str(exc)) from None
     if not isinstance(response, ModelResponse):
         raise LLMJudgeError("Judge returned an invalid non-streaming completion")
     try:
-        choice = response.choices[0]
-        if choice.finish_reason != "stop":
-            raise LLMJudgeError("Judge response was incomplete or refused")
-        content = choice.message.content
-        if not isinstance(content, str) or not content.strip():
-            raise LLMJudgeError("Judge returned empty or non-text content")
-    except (AttributeError, IndexError, TypeError) as exc:
-        raise LLMJudgeError("Judge returned an invalid completion") from exc
+        content = envelope_content(response, require_stop=True)
+    except JudgeEnvelopeError as exc:
+        raise LLMJudgeError(str(exc)) from exc
     result = _parse_judge_response(content)
     if cache_path is not None:
         temporary = None

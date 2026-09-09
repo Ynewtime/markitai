@@ -209,110 +209,77 @@ from markitai.utils.errors import extra_install_command
 console = get_console()
 
 
-def _check_chatgpt_auth() -> dict[str, str]:
-    """Check ChatGPT authentication status.
+def _check_provider_auth(
+    provider: str,
+    name: str,
+    description: str,
+    *,
+    ok_message: str = "Authenticated",
+    show_user: bool = False,
+) -> dict[str, str]:
+    """Check one provider's authentication status.
+
+    Args:
+        provider: Provider key understood by ``AuthManager.check_auth``.
+        name: Display name for the check row.
+        description: Description for the check row.
+        ok_message: Message used when authenticated.
+        show_user: Append the authenticated user in parentheses when known.
 
     Returns:
         Result dict with status, message, install_hint
     """
     auth_manager = AuthManager()
     try:
-        status = asyncio.run(auth_manager.check_auth("chatgpt"))
+        status = asyncio.run(auth_manager.check_auth(provider))
         if status.authenticated:
+            user_info = f" ({status.user})" if show_user and status.user else ""
             return {
-                "name": "ChatGPT Auth",
-                "description": "ChatGPT OAuth authentication status",
+                "name": name,
+                "description": description,
                 "status": "ok",
-                "message": "Authenticated",
+                "message": f"{ok_message}{user_info}",
                 "install_hint": "",
             }
-        else:
-            return {
-                "name": "ChatGPT Auth",
-                "description": "ChatGPT OAuth authentication status",
-                "status": "error",
-                "message": status.error or "Not authenticated",
-                "install_hint": get_auth_resolution_hint("chatgpt"),
-            }
+        message = status.error or "Not authenticated"
     except Exception as e:
-        return {
-            "name": "ChatGPT Auth",
-            "description": "ChatGPT OAuth authentication status",
-            "status": "error",
-            "message": f"Failed to check auth: {e}",
-            "install_hint": get_auth_resolution_hint("chatgpt"),
-        }
+        message = f"Failed to check auth: {e}"
+    return {
+        "name": name,
+        "description": description,
+        "status": "error",
+        "message": message,
+        "install_hint": get_auth_resolution_hint(provider),
+    }
+
+
+def _check_chatgpt_auth() -> dict[str, str]:
+    """Check ChatGPT authentication status."""
+    return _check_provider_auth(
+        "chatgpt",
+        "ChatGPT Auth",
+        "ChatGPT OAuth authentication status",
+    )
 
 
 def _check_copilot_auth() -> dict[str, str]:
-    """Check Copilot authentication status.
-
-    Returns:
-        Result dict with status, message, install_hint
-    """
-    auth_manager = AuthManager()
-    try:
-        status = asyncio.run(auth_manager.check_auth("copilot"))
-        if status.authenticated:
-            user_info = f" ({status.user})" if status.user else ""
-            return {
-                "name": "Copilot Auth",
-                "description": "GitHub Copilot authentication status",
-                "status": "ok",
-                "message": f"Authenticated{user_info}",
-                "install_hint": "",
-            }
-        else:
-            return {
-                "name": "Copilot Auth",
-                "description": "GitHub Copilot authentication status",
-                "status": "error",
-                "message": status.error or "Not authenticated",
-                "install_hint": get_auth_resolution_hint("copilot"),
-            }
-    except Exception as e:
-        return {
-            "name": "Copilot Auth",
-            "description": "GitHub Copilot authentication status",
-            "status": "error",
-            "message": f"Failed to check auth: {e}",
-            "install_hint": get_auth_resolution_hint("copilot"),
-        }
+    """Check Copilot authentication status."""
+    return _check_provider_auth(
+        "copilot",
+        "Copilot Auth",
+        "GitHub Copilot authentication status",
+        show_user=True,
+    )
 
 
 def _check_claude_auth() -> dict[str, str]:
-    """Check Claude Agent authentication status.
-
-    Returns:
-        Result dict with status, message, install_hint
-    """
-    auth_manager = AuthManager()
-    try:
-        status = asyncio.run(auth_manager.check_auth("claude-agent"))
-        if status.authenticated:
-            return {
-                "name": "Claude Agent Auth",
-                "description": "Claude Code CLI authentication status",
-                "status": "ok",
-                "message": "Authenticated (claude doctor passed)",
-                "install_hint": "",
-            }
-        else:
-            return {
-                "name": "Claude Agent Auth",
-                "description": "Claude Code CLI authentication status",
-                "status": "error",
-                "message": status.error or "Not authenticated",
-                "install_hint": get_auth_resolution_hint("claude-agent"),
-            }
-    except Exception as e:
-        return {
-            "name": "Claude Agent Auth",
-            "description": "Claude Code CLI authentication status",
-            "status": "error",
-            "message": f"Failed to check auth: {e}",
-            "install_hint": get_auth_resolution_hint("claude-agent"),
-        }
+    """Check Claude Agent authentication status."""
+    return _check_provider_auth(
+        "claude-agent",
+        "Claude Agent Auth",
+        "Claude Code CLI authentication status",
+        ok_message="Authenticated (claude doctor passed)",
+    )
 
 
 def _check_playwright(*, check_runtime: bool = True) -> dict[str, Any]:
