@@ -18,9 +18,6 @@ import pytest
 from click.testing import CliRunner
 
 from markitai.cli import app
-from markitai.utils.office import is_libreoffice_functional
-
-_HAS_LIBREOFFICE = is_libreoffice_functional()
 
 # =============================================================================
 # T1: Fixture-based integration test framework
@@ -227,7 +224,6 @@ class TestImageAltGeneration:
 class TestPPTXHeaderFooterCleanup:
     """Tests for PPTX header/footer cleanup."""
 
-    @pytest.mark.skipif(not _HAS_LIBREOFFICE, reason="LibreOffice not installed")
     def test_pptx_converts(
         self, runner: CliRunner, pptx_file: Path, tmp_path: Path
     ) -> None:
@@ -245,7 +241,6 @@ class TestPPTXHeaderFooterCleanup:
         output_file = output_dir / "sample.pptx.md"
         assert output_file.exists()
 
-    @pytest.mark.skipif(not _HAS_LIBREOFFICE, reason="LibreOffice not installed")
     def test_pptx_no_residual_headers(
         self, runner: CliRunner, pptx_file: Path, tmp_path: Path
     ) -> None:
@@ -310,7 +305,6 @@ class TestSubdirectoryImagesJson:
         assert (output_dir / "sub" / "nested.txt.md").exists()
 
     @pytest.mark.slow
-    @pytest.mark.skipif(not _HAS_LIBREOFFICE, reason="LibreOffice not installed")
     def test_doc_in_subdir_creates_assets(
         self, runner: CliRunner, doc_file: Path, tmp_path: Path
     ) -> None:

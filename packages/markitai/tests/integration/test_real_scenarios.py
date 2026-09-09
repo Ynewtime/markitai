@@ -18,9 +18,6 @@ from click.testing import CliRunner
 
 from markitai.cli import app
 from markitai.converter.base import get_converter
-from markitai.utils.office import is_libreoffice_functional
-
-_HAS_LIBREOFFICE = is_libreoffice_functional()
 
 # =============================================================================
 # Fixtures
@@ -98,7 +95,6 @@ class TestBatchConversionResults:
     the legacy ``<name>.md`` scheme (sample.pdf -> sample.pdf.md).
     """
 
-    @pytest.mark.skipif(not _HAS_LIBREOFFICE, reason="LibreOffice not installed")
     def test_batch_conversion_succeeds(self, converted_fixtures: dict):
         """Test batch conversion completes successfully."""
         assert converted_fixtures["exit_code"] == 0
@@ -134,7 +130,6 @@ class TestBatchConversionResults:
         jpg_output = output_dir / "sample.jpg.md"
         assert not jpg_output.exists(), "JPG should be skipped without LLM/OCR"
 
-    @pytest.mark.skipif(not _HAS_LIBREOFFICE, reason="LibreOffice not installed")
     def test_subdirectory_preserved(self, converted_fixtures: dict):
         """Test subdirectory structure is preserved."""
         output_dir = converted_fixtures["output_dir"]
@@ -154,7 +149,6 @@ class TestBatchConversionResults:
         report_files = list(reports_dir.glob("*.json"))
         assert len(report_files) == 1, "Should have one report file"
 
-    @pytest.mark.skipif(not _HAS_LIBREOFFICE, reason="LibreOffice not installed")
     def test_report_structure(self, converted_fixtures: dict):
         """Test report has correct structure."""
         output_dir = converted_fixtures["output_dir"]
