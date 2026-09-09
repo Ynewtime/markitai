@@ -1,6 +1,6 @@
 # MCP 服务器
 
-`markitai-mcp` 服务器随 markitai 主包发布（安装 `mcp` extra 即得），通过 [Model Context Protocol](https://modelcontextprotocol.io)（stdio 传输）把 markitai 的转换能力提供给 AI Agent。Agent 可用四个工具完成本地文档与 URL 的单个及批量转换，运行的是与 CLI、Python API 完全相同的管线。
+`markitai-mcp` 服务器随 markitai 主包发布（安装 `mcp` extra 即得；`markitai mcp` 子命令启动的是同一个服务，官方 MCP Registry 条目用的就是 `uvx --from "markitai[mcp]" markitai mcp`），通过 [Model Context Protocol](https://modelcontextprotocol.io)（stdio 传输）把 markitai 的转换能力提供给 AI Agent。Agent 可用四个工具完成本地文档与 URL 的单个及批量转换，运行的是与 CLI、Python API 完全相同的管线。
 
 无需安装步骤：`uvx` 按需拉取并运行。
 

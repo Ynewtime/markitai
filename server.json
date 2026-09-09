@@ -1,0 +1,48 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Ynewtime/markitai",
+  "title": "markitai",
+  "description": "Convert documents, images and web pages to clean Markdown, for agents: single, URL and batch tools.",
+  "repository": {
+    "url": "https://github.com/Ynewtime/markitai",
+    "source": "github"
+  },
+  "websiteUrl": "https://markitai.dev/guide/mcp",
+  "version": "1.0.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "markitai",
+      "version": "1.0.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "runtimeArguments": [
+        {
+          "type": "named",
+          "name": "--from",
+          "value": "markitai[mcp]",
+          "description": "Install markitai with the mcp extra (the MCP SDK) for this run",
+          "isRequired": true
+        }
+      ],
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp",
+          "description": "Start the MCP server (stdio)",
+          "isRequired": true
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "MODEL",
+          "description": "provider/model for --llm enhancement, e.g. gemini/gemini-flash-lite-latest; with the matching API key env var set",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}

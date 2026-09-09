@@ -10,6 +10,7 @@
 ### 新增
 
 - **markitai 现在既是 CLI 也是库**：`markitai.convert("report.pdf")` 及其异步孪生 `aconvert` 返回带类型的 `ConversionOutput`——markdown、frontmatter、资源与截图路径、逐图分析和用量合计——并复用 CLI 自己的配置分层。0.x 期间标记为暂定
+- **`markitai mcp` 从 CLI 启动内置 MCP 服务**，这也是官方 MCP Registry 条目（`io.github.Ynewtime/markitai`）使用的形式：`uvx --from "markitai[mcp]" markitai mcp`
 - **MCP agent 通过 `mcp` extra 接入 markitai**：`markitai.mcp` 随主 wheel 发布，经 stdio 暴露 `convert_document`、`convert_url`、`batch_convert`、`job_status`。`claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp`
 - **`--profile rag|obsidian|okf` 按下游消费者塑造输出**：`rag` 把图片移到可见的 `assets/`（LlamaIndex 的 `SimpleDirectoryReader` 等摄取器会跳过隐藏路径）并改写 PDF 页标记；`obsidian` 提供可选 wikilink；`okf` 将 frontmatter 映射到 Open Knowledge Format。与 `--preset` 正交；不加它输出逐字节不变
 - **`--llm-batch` 让整个目录的 LLM 阶段以半价运行**：在单模型的 OpenAI 或 Anthropic 池上走提供商的 Batch API，最长等待 `--llm-batch-timeout`（默认 1 小时）后转交 `--llm-batch-collect`

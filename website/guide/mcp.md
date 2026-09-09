@@ -22,7 +22,7 @@ claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp
 }
 ```
 
-Any other MCP client works the same way: command `uvx`, arguments `["--from", "markitai[mcp]", "markitai-mcp"]`. Without uv, `pip install "markitai[mcp]"` provides the same `markitai-mcp` command.
+Any other MCP client works the same way: command `uvx`, arguments `["--from", "markitai[mcp]", "markitai-mcp"]`. Without uv, `pip install "markitai[mcp]"` provides the same `markitai-mcp` command. `markitai mcp` is the same server as a subcommand of the CLI — the form the [MCP Registry](https://registry.modelcontextprotocol.io) entry uses (`uvx --from "markitai[mcp]" markitai mcp`).
 
 ## Tools
 

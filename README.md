@@ -123,7 +123,9 @@ The MCP server `markitai-mcp` (bundled with markitai, enabled by the `mcp` extra
 }
 ```
 
-See the [MCP guide](https://markitai.dev/guide/mcp) for LLM enhancement and batch jobs.
+`markitai mcp` starts the same server through the CLI itself (`uvx --from "markitai[mcp]" markitai mcp`), which is how the [MCP Registry](https://registry.modelcontextprotocol.io) lists it. See the [MCP guide](https://markitai.dev/guide/mcp) for LLM enhancement and batch jobs.
+
+<!-- mcp-name: io.github.Ynewtime/markitai -->
 
 ## Comparison
 

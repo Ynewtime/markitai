@@ -47,6 +47,11 @@ _LAZY_COMMANDS: dict[str, tuple[str, str, str]] = {
         "serve",
         "Run the Markitai web UI server.",
     ),
+    "mcp": (
+        "markitai.cli.commands.mcp",
+        "mcp",
+        "Run the Markitai MCP server (stdio) for AI agents.",
+    ),
 }
 
 

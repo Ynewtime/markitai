@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **markitai is now a library as well as a CLI**: `markitai.convert("report.pdf")` and its async twin `aconvert` return a typed `ConversionOutput` — markdown, frontmatter, asset and screenshot paths, per-image analysis and usage totals — reusing the CLI's own configuration layering. Provisional while markitai is 0.x
+- **`markitai mcp` starts the bundled MCP server from the CLI**, the form the official MCP Registry entry (`io.github.Ynewtime/markitai`) uses: `uvx --from "markitai[mcp]" markitai mcp`
 - **MCP agents get markitai through the `mcp` extra**: `markitai.mcp` ships in the main wheel and exposes `convert_document`, `convert_url`, `batch_convert` and `job_status` over stdio. `claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp`
 - **`--profile rag|obsidian|okf` shapes the output for its consumer**: `rag` moves images into a visible `assets/` (hidden paths are skipped by ingestors like LlamaIndex's `SimpleDirectoryReader`) and rewrites PDF page markers; `obsidian` adds optional wikilinks; `okf` maps frontmatter to the Open Knowledge Format. Orthogonal to `--preset`; without it the output is byte-identical
 - **`--llm-batch` runs a directory's LLM stage at half price** through the provider's Batch API on a single-model OpenAI or Anthropic pool, waiting up to `--llm-batch-timeout` (1h) before handing off to `--llm-batch-collect`

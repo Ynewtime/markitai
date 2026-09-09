@@ -37,6 +37,8 @@ Releases are manual and **tag-driven**: pushing a `vX.Y.Z` tag runs `.github/wor
    - `https://pypi.org/project/markitai/` shows X.Y.Z (`uv tool install markitai==X.Y.Z` resolves).
    - The GitHub Release exists with notes matching the `CHANGELOG.md` section.
 
+8. **Publish the MCP Registry entry** (after PyPI shows X.Y.Z — the registry fetches that exact version's README and looks for the `mcp-name: io.github.Ynewtime/markitai` marker in it): bump `version` in both places in the root `server.json`, then `mcp-publisher validate server.json`, `mcp-publisher login github` (device code in the browser, once per machine), `mcp-publisher publish server.json`. PulseMCP and other aggregators ingest the official registry on their own. Skills need no registration: skills.sh indexes the public repo (`npx skills add Ynewtime/markitai --list`).
+
 ## Re-publishing an existing tag
 
 After a transient failure (PyPI hiccup, runner outage): Actions → **Release** workflow → *Run workflow* with the existing `vX.Y.Z` tag as input. It re-runs the same gates against that tag; fixing code requires a new patch version, not a moved tag.

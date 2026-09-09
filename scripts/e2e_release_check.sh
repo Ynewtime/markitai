@@ -842,6 +842,8 @@ check "it exposes exactly the four documented tools" \
   grep -q '^tools=batch_convert,convert_document,convert_url,job_status$' 19-mcp/probe.txt
 check "convert_document converts through the protocol" grep -q '^is_error=False' 19-mcp/probe.txt
 check "and the file it names exists" test -s "$(grep -oE '^markdown_file=.*' 19-mcp/probe.txt | cut -d= -f2-)"
+check "markitai mcp is the same server as a CLI subcommand (the registry's form)" \
+  markitai mcp --help
 show "what the agent host saw" 19-mcp/probe.txt
 
 # ── 20 ───────────────────────────────────────────────────────────────────────
