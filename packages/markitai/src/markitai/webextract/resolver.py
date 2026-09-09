@@ -82,11 +82,12 @@ def resolve_page(
         TypeError: If the resolver's ``resolve()`` method returns something
             other than a ``ResolvedPage`` (e.g. a Markdown string).
     """
+    soup = parse_html(html)
     extractor = resolver
     if extractor is None:
         from markitai.webextract.extractors.registry import find_extractor
 
-        extractor = find_extractor(url)
+        extractor = find_extractor(url, soup)
 
     if extractor is None:
         return None
@@ -95,7 +96,6 @@ def resolve_page(
     if resolve_fn is None or not callable(resolve_fn):
         return None
 
-    soup = parse_html(html)
     raw_result = resolve_fn(soup, url)
 
     # Validate: resolver must not return final Markdown

@@ -1,43 +1,79 @@
-"""Extractor for Substack note permalink pages.
+"""Extract Substack articles and note permalinks.
 
-Ported from the Notes branch of defuddle ``extractors/substack.ts``
-(commit pinned in ``webextract/PORT_MANIFEST.md``): on a note permalink
-the main note lives in a ``feedPermalinkUnit`` container while the other
-ProseMirror editors on the page belong to feed recommendations. Focused
-subset — the ``window._preloads`` post path and the byline-date parser
-are not ported (post pages fall back to the generic pipeline).
+Ported from defuddle ``extractors/substack.ts`` (commit pinned in
+``webextract/PORT_MANIFEST.md``). Prefer rendered article bodies, then
+``window._preloads`` JSON, with Notes and generic extraction as fallbacks.
+The historical class/module name is retained for compatibility.
 """
 
 from __future__ import annotations
 
+import json
 import re
+from datetime import date
 from html import escape
+from urllib.parse import urlsplit
 
 from bs4 import BeautifulSoup, Tag
 
 from markitai.webextract.resolver import ResolvedPage
 from markitai.webextract.types import ContentProfile
 
-_NOTE_URL_RE = re.compile(r"https?://substack\.com/@[^/]+/note/")
+_PRELOAD_RE = re.compile(r"\bwindow\._preloads\s*=\s*(?:JSON\.parse\(\s*)?")
+_MONTHS = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+]
+_BYLINE_DATE_RE = re.compile(rf"\b({'|'.join(_MONTHS)})\s+(\d{{1,2}}),?\s+(\d{{4}})\b")
 _HANDLE_SUFFIX_RE = re.compile(r"\s*\(@[^)]+\)\s*$")
 _SRCSET_ENTRY_RE = re.compile(r"(\S+)\s+(\d+(?:\.\d+)?)w")
 
 
 class SubstackNoteExtractor:
-    """Extract Substack note permalinks (substack.com/@user/note/...)."""
+    """Extract Substack publications and note permalinks."""
 
     name = "substack_note"
 
     def matches_url(self, url: str) -> bool:
-        """Match Substack note permalink URLs."""
-        return bool(_NOTE_URL_RE.search(url))
+        """Match Substack hosts without accepting lookalike domains."""
+        parts = urlsplit(url)
+        host = parts.hostname or ""
+        return parts.scheme in {"http", "https"} and (
+            host == "substack.com" or host.endswith(".substack.com")
+        )
+
+    def matches_document(self, soup: BeautifulSoup) -> bool:
+        """Recognize custom-domain articles, not arbitrary Substack links."""
+        if _extract_preload_post(soup) is not None:
+            return True
+        if soup.select_one("div.body.markup") is None:
+            return False
+        for asset in soup.select("link[href], script[src]"):
+            source = str(asset.get("href") or asset.get("src") or "")
+            try:
+                host = urlsplit(source).hostname or ""
+            except ValueError:
+                continue
+            if host == "substackcdn.com" or host.endswith(".substackcdn.com"):
+                return True
+        return False
 
     def extract_root(self, soup: BeautifulSoup) -> Tag | None:
-        """Return the note text element (legacy protocol compliance)."""
-        return _find_note_text(soup)
+        """Return rendered content (legacy protocol compliance)."""
+        return soup.select_one("div.body.markup") or _find_note_text(soup)
 
     def resolve(self, soup: BeautifulSoup, url: str) -> ResolvedPage:
-        """Resolve a note permalink into the main note text plus image.
+        """Resolve an article body or the main note text plus image.
 
         Args:
             soup: Parsed document.
@@ -47,6 +83,22 @@ class SubstackNoteExtractor:
             ResolvedPage with the note HTML, or empty content to fall back
             to the generic pipeline when no note element is present.
         """
+        post = _extract_preload_post(soup)
+        rendered = soup.select_one("div.body.markup")
+        if rendered is not None or (post and _post_string(post, "body_html")):
+            return ResolvedPage(
+                content_root=rendered,
+                content_html=None
+                if rendered is not None
+                else _post_string(post or {}, "body_html"),
+                metadata_overrides=_post_metadata(soup, post or {}),
+                diagnostics={
+                    "substack_resolve": "post",
+                    "content_profile": ContentProfile.GENERIC_ARTICLE.value,
+                    "extractor_name": self.name,
+                },
+            )
+
         note = _find_note_text(soup)
         if note is None:
             return ResolvedPage(
@@ -74,6 +126,81 @@ class SubstackNoteExtractor:
                 "extractor_name": self.name,
             },
         )
+
+
+def _extract_preload_post(soup: BeautifulSoup) -> dict[str, object] | None:
+    """Decode preload JSON without evaluating JavaScript or unrelated payloads."""
+    decoder = json.JSONDecoder()
+    metadata_post: dict[str, object] | None = None
+    for script in soup.find_all("script"):
+        text = script.get_text()
+        for match in _PRELOAD_RE.finditer(text):
+            try:
+                data, _ = decoder.raw_decode(text, match.end())
+                if isinstance(data, str):
+                    data = json.loads(data)
+            except (ValueError, RecursionError):
+                continue
+            if not isinstance(data, dict):
+                continue
+            # The app feed and publication pages use different envelopes.
+            feed = data.get("feedData")
+            initial = feed.get("initialPost") if isinstance(feed, dict) else None
+            candidates = (
+                initial.get("post") if isinstance(initial, dict) else None,
+                data.get("post"),
+            )
+            for post in candidates:
+                if not isinstance(post, dict):
+                    continue
+                if _post_string(post, "body_html"):
+                    return post
+                # Keep metadata for rendered articles, but do not let an empty
+                # or metadata-only preload hide a later usable article body.
+                if post and metadata_post is None:
+                    metadata_post = post
+    return metadata_post
+
+
+def _post_string(post: dict[str, object], key: str) -> str:
+    value = post.get(key)
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _post_metadata(soup: BeautifulSoup, post: dict[str, object]) -> dict[str, object]:
+    """Only override metadata when the article supplies a nonempty value."""
+    bylines = post.get("publishedBylines")
+    first = bylines[0] if isinstance(bylines, list) and bylines else None
+    author = _post_string(first, "name") if isinstance(first, dict) else ""
+    if not author:
+        link = soup.select_one('a[href*="substack.com/@"]')
+        author = link.get_text(" ", strip=True) if link else ""
+    values = {
+        "site": "Substack",
+        "title": _post_string(post, "title") or _meta_content(soup, "og:title"),
+        "description": _post_string(post, "subtitle")
+        or _meta_content(soup, "og:description"),
+        "author": author,
+        "published": _post_string(post, "post_date") or _parse_byline_date(soup),
+    }
+    return {key: value for key, value in values.items() if value}
+
+
+def _parse_byline_date(soup: BeautifulSoup) -> str:
+    """Parse Substack's abbreviated English date, including adjacent DOM text."""
+    byline = soup.select_one('[class*="byline-wrapper"]')
+    if byline is None:
+        return ""
+    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", byline.get_text(" ", strip=True))
+    match = _BYLINE_DATE_RE.search(text)
+    if match is None:
+        return ""
+    month, day, year = match.groups()
+    try:
+        published = date(int(year), _MONTHS.index(month) + 1, int(day))
+    except ValueError:
+        return ""
+    return f"{published.isoformat()}T00:00:00+00:00"
 
 
 def _find_note_text(soup: BeautifulSoup) -> Tag | None:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from bs4 import BeautifulSoup
+
 from markitai.webextract.extractors.base import BaseSiteExtractor
 from markitai.webextract.extractors.bilibili_opus import BilibiliOpusExtractor
 from markitai.webextract.extractors.github_repo import GitHubRepoExtractor
@@ -18,7 +20,7 @@ _EXTRACTORS: tuple[BaseSiteExtractor, ...] = (
     RedditPostExtractor(),
     HackerNewsThreadExtractor(),
     SteamNewsExtractor(),  # store.steampowered.com/news (BBCode announcements)
-    SubstackNoteExtractor(),  # substack.com/@user/note/ (note permalinks)
+    SubstackNoteExtractor(),  # Substack articles and note permalinks
     XArticleExtractor(),  # x.com/i/articles/ (long-form articles)
     XTweetExtractor(),  # x.com/user/status/ (regular tweets)
     YouTubePageExtractor(),  # youtube.com/watch and youtu.be (video pages)
@@ -26,11 +28,14 @@ _EXTRACTORS: tuple[BaseSiteExtractor, ...] = (
 )
 
 
-def find_extractor(url: str) -> BaseSiteExtractor | None:
+def find_extractor(
+    url: str, soup: BeautifulSoup | None = None
+) -> BaseSiteExtractor | None:
     """Return a site-specific extractor for the given URL.
 
     Args:
         url: Source URL.
+        soup: Optional document for Substack custom-domain detection.
 
     Returns:
         Matching extractor if one exists, otherwise None.
@@ -39,4 +44,8 @@ def find_extractor(url: str) -> BaseSiteExtractor | None:
     for extractor in _EXTRACTORS:
         if extractor.matches_url(url):
             return extractor
+    if soup is not None:
+        substack = SubstackNoteExtractor()
+        if substack.matches_document(soup):
+            return substack
     return None

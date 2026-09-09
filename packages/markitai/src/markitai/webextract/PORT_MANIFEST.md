@@ -39,7 +39,7 @@ Upstream paths are relative to defuddle `src/`, port paths to
 | `removals/scoring.ts` | `removals/scoring.py` |
 | `removals/selectors.ts` | `removals/selectors.py` |
 | `removals/small-images.ts` | `removals/small_images.py` |
-| `extractors/substack.ts` | `extractors/substack_note.py` (Notes branch only; the `window._preloads` post path is not ported) |
+| `extractors/substack.ts` | `extractors/substack_note.py` (Notes, rendered/preload article bodies, and byline dates; custom-domain routing in `extractors/registry.py`) |
 | `extractors/twitter.ts` | `extractors/x_tweet.py`, `extractors/x_common.py` (reference, reimplemented) |
 | `extractors/x-article.ts` | `extractors/x_article.py` (reference) |
 | `extractors/x-oembed.ts` | `enrichers/x_oembed.py` (reference) |
@@ -64,9 +64,6 @@ resolution, lightbox image dedup, line-number gutter handling, and
 LaTeX-image-service conversion the full-corpus benchmark surfaced.
 Remaining known gaps:
 
-- `extractors/substack.ts`: only the Notes branch is ported; Substack post
-  pages (`window._preloads` body extraction) fall back to the generic
-  pipeline.
 - Fixtures for sites where markitai has its own richer extractors
   (Reddit, Hacker News) intentionally diverge from defuddle's expected
   output; they score low in the benchmark but are held by its per-fixture
