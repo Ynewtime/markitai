@@ -308,6 +308,54 @@ def test_discussion_thread_profile_rejects_too_short_content() -> None:
     assert "too_short" in assessment.reasons
 
 
+# A stub of a Reddit/HN thread: comfortably past the generic article gate
+# (>= 10 plain characters, >= 3 words) but under the thread gate's 10-word
+# floor, so the two profiles must disagree about it.
+_STUB_THREAD_MARKDOWN = """\
+**alice** wrote:
+
+Nice catch, thanks.
+"""
+
+
+def test_discussion_thread_profile_is_stricter_than_generic_article() -> None:
+    """Prove DISCUSSION_THREAD reaches the thread gate, not the generic one.
+
+    The profile map used to be keyed by a ``"conversation_thread"`` string
+    that no extractor emitted, so Reddit/HN silently fell through to the
+    generic article gate. Input the two gates rate differently is the only
+    way to notice that regression.
+    """
+    thread = assess_native_markdown(
+        _STUB_THREAD_MARKDOWN,
+        profile=ContentProfile.DISCUSSION_THREAD.value,
+    )
+    assert thread.accepted is False
+    assert "too_short" in thread.reasons
+
+    generic = assess_native_markdown(
+        _STUB_THREAD_MARKDOWN,
+        profile=ContentProfile.GENERIC_ARTICLE.value,
+    )
+    assert generic.accepted is True
+
+
+def test_discussion_thread_profile_flags_x_chrome_generic_ignores() -> None:
+    """X chrome patterns are thread-gate-only signals; generic accepts them."""
+    thread = assess_native_markdown(
+        _BAD_THREAD_WITH_TRENDS,
+        profile=ContentProfile.DISCUSSION_THREAD.value,
+    )
+    assert thread.accepted is False
+    assert "sidebar_leakage" in thread.reasons
+
+    generic = assess_native_markdown(
+        _BAD_THREAD_WITH_TRENDS,
+        profile=ContentProfile.GENERIC_ARTICLE.value,
+    )
+    assert generic.accepted is True
+
+
 # --- rich_media_page profile ---
 
 _YOUTUBE_PAGE_MARKDOWN = """\

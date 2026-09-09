@@ -845,7 +845,13 @@ class PlaywrightRenderer:
         if not (await assess_url_for_remote(url)).allowed:
             return "", None, ""
         # Anything but an explicit "always" is treated as the conservative "ask".
-        if not resolve_remote_consent(
+        # Under "ask" this reaches a blocking TTY prompt, so it runs off the
+        # event loop: a live Playwright page needs its loop to keep servicing
+        # the browser while the user reads the question. The consent state and
+        # the interaction port are both plain process-wide objects (no
+        # thread-locals), so the decision stays shared across threads.
+        if not await asyncio.to_thread(
+            resolve_remote_consent,
             "always" if remote_consent == "always" else "ask",
             services=["fxtwitter", "twitter-oembed"],
         ):

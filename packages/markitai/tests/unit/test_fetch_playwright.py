@@ -2334,3 +2334,141 @@ async def test_get_or_create_cached_context_concurrent_single_creation() -> None
 
     assert ctx1 is ctx2
     assert mock_browser.new_context.call_count == 1
+
+
+class TestEnricherConsentRunsOffTheEventLoop:
+    """The ``ask`` consent prompt is a blocking TTY read.
+
+    ``_try_enricher_fallback_async`` runs with a Playwright page open, so
+    calling it inline froze the event loop (and with it the browser) until
+    the user answered. It must be pushed onto a worker thread; the consent
+    state and the interaction port are process-wide, so the decision is
+    still shared.
+    """
+
+    @staticmethod
+    def _renderer():
+        from markitai.fetch_playwright import PlaywrightRenderer
+
+        return PlaywrightRenderer()
+
+    @pytest.fixture(autouse=True)
+    def _clean_consent(self, monkeypatch: pytest.MonkeyPatch):
+        from markitai.fetch_consent import reset_remote_consent
+
+        monkeypatch.delenv("MARKITAI_NO_REMOTE_FETCH", raising=False)
+        reset_remote_consent()
+        yield
+        reset_remote_consent()
+
+    @pytest.mark.asyncio
+    async def test_ask_prompt_runs_on_a_worker_thread(self):
+        """The blocking confirm() must not execute on the loop's own thread."""
+        import threading
+
+        import markitai.fetch_consent as fetch_consent
+        import markitai.fetch_policy as fetch_policy
+        import markitai.webextract.enrichers.x_oembed as x_oembed
+
+        prompt_threads: list[int] = []
+        enrich_calls: list[str] = []
+
+        class _PromptingInteraction:
+            def can_prompt(self) -> bool:
+                return True
+
+            def notify(self, message: str) -> None:
+                return None
+
+            def confirm(self, question: str, **kwargs: object) -> bool:
+                prompt_threads.append(threading.get_ident())
+                return True
+
+        class _FakeEnricher:
+            def should_run(self, url: str, policy: object) -> bool:
+                return True
+
+            async def enrich(self, url: str, context: object) -> None:
+                enrich_calls.append(url)
+                return None
+
+        allowed = MagicMock()
+        allowed.allowed = True
+        renderer = self._renderer()
+        with (
+            patch.object(x_oembed, "XOEmbedEnricher", _FakeEnricher),
+            patch.object(
+                fetch_policy,
+                "assess_url_for_remote",
+                new=AsyncMock(return_value=allowed),
+            ),
+            patch.object(
+                fetch_consent,
+                "get_interaction",
+                return_value=_PromptingInteraction(),
+            ),
+        ):
+            result = await renderer._try_enricher_fallback_async(
+                "https://x.com/user/status/123", "ask"
+            )
+
+        assert prompt_threads and prompt_threads[0] != threading.get_ident()
+        # Consent was granted, so the enricher actually ran.
+        assert enrich_calls == ["https://x.com/user/status/123"]
+        assert result == ("", None, "")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("mode", "answer", "expect_enriched"),
+        [
+            ("always", None, True),
+            ("never", None, False),
+            ("ask", True, True),
+            ("ask", False, False),
+        ],
+    )
+    async def test_decision_is_unchanged_by_the_thread_hop(
+        self, mode: str, answer: bool | None, expect_enriched: bool
+    ):
+        import markitai.fetch_consent as fetch_consent
+        import markitai.fetch_policy as fetch_policy
+        import markitai.webextract.enrichers.x_oembed as x_oembed
+
+        enrich_calls: list[str] = []
+
+        class _Interaction:
+            def can_prompt(self) -> bool:
+                return answer is not None
+
+            def notify(self, message: str) -> None:
+                return None
+
+            def confirm(self, question: str, **kwargs: object) -> bool:
+                assert answer is not None
+                return answer
+
+        class _FakeEnricher:
+            def should_run(self, url: str, policy: object) -> bool:
+                return True
+
+            async def enrich(self, url: str, context: object) -> None:
+                enrich_calls.append(url)
+                return None
+
+        allowed = MagicMock()
+        allowed.allowed = True
+        renderer = self._renderer()
+        with (
+            patch.object(x_oembed, "XOEmbedEnricher", _FakeEnricher),
+            patch.object(
+                fetch_policy,
+                "assess_url_for_remote",
+                new=AsyncMock(return_value=allowed),
+            ),
+            patch.object(fetch_consent, "get_interaction", return_value=_Interaction()),
+        ):
+            await renderer._try_enricher_fallback_async(
+                "https://x.com/user/status/123", mode
+            )
+
+        assert bool(enrich_calls) is expect_enriched

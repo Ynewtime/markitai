@@ -411,6 +411,25 @@ def match_local_only(domain: str, patterns: list[str]) -> bool:
     return False
 
 
+def host_bypasses_proxy(url: str, patterns: list[str]) -> bool:
+    """Return whether *url*'s host is exempt from proxying by *patterns*.
+
+    Single home for the NO_PROXY host check: every proxy decision point
+    (static client, session, orchestrator) shares this one implementation so
+    they can never drift on how a URL is reduced to a matchable host.
+
+    Args:
+        url: URL about to be fetched.
+        patterns: NO_PROXY-style patterns from :func:`parse_no_proxy`.
+
+    Returns:
+        True when the host matches a bypass pattern.
+    """
+    if not patterns:
+        return False
+    return match_local_only(urlsplit(url).netloc.lower(), patterns)
+
+
 @dataclass
 class FetchDecision:
     """Decision from the fetch policy engine."""

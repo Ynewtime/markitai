@@ -693,14 +693,9 @@ class FetchSession:
         Returns:
             True when the host matches a NO_PROXY bypass pattern.
         """
-        from urllib.parse import urlparse
+        from markitai.fetch_policy import host_bypasses_proxy
 
-        from markitai.fetch_policy import match_local_only
-
-        patterns = self.proxy_bypass_patterns()
-        if not patterns:
-            return False
-        if match_local_only(urlparse(url).netloc.lower(), patterns):
+        if host_bypasses_proxy(url, self.proxy_bypass_patterns()):
             logger.debug("[Proxy] NO_PROXY bypass for {}", url)
             return True
         return False

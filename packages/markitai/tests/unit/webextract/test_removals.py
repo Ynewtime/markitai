@@ -316,6 +316,54 @@ class TestScoreAndRemove:
         assert removed == 0
         assert root.find("pre") is not None
 
+    def test_keeps_two_word_block_with_inline_svg(self):
+        """Under 3 words scores neutral: an icon block is not chrome evidence."""
+        soup = _make_soup(
+            """<div>
+            <p>Real article prose with plenty of words to anchor the document.</p>
+            <div class="badge">
+                <svg viewBox="0 0 16 16"><path d="M0 0h16v16H0z"/></svg>
+                Read more
+            </div>
+            </div>"""
+        )
+        root = soup.find("div")
+        assert root is not None
+        removed = score_and_remove(root)
+        assert removed == 0
+        assert root.find("svg") is not None
+
+    def test_keeps_two_word_plain_nav(self):
+        """The <3-word rule is unconditional: even a bare <nav> survives here."""
+        soup = _make_soup(
+            """<div>
+            <p>Real article prose with plenty of words to anchor the document.</p>
+            <nav>Home About</nav>
+            </div>"""
+        )
+        root = soup.find("div")
+        assert root is not None
+        removed = score_and_remove(root)
+        assert removed == 0
+        assert root.find("nav") is not None
+
+    def test_still_removes_longer_low_scoring_chrome(self):
+        """Past the 3-word floor the negative signals apply as before."""
+        soup = _make_soup(
+            """<div>
+            <p>Real article prose with plenty of words to anchor the document.</p>
+            <footer class="site-footer">
+                Copyright 2026 <a href="/terms">Terms</a>
+                <a href="/privacy">Privacy</a>
+            </footer>
+            </div>"""
+        )
+        root = soup.find("div")
+        assert root is not None
+        removed = score_and_remove(root)
+        assert removed == 1
+        assert root.find("footer") is None
+
 
 # ─── apply_removals (integration) ────────────────────────────────────
 

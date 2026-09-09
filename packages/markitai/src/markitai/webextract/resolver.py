@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from bs4 import Tag
+from bs4 import BeautifulSoup, Tag
 
 from markitai.webextract.dom import parse_html
 
@@ -64,9 +64,10 @@ def resolve_page(
 ) -> ResolvedPage | None:
     """Attempt structured resolution of a page via a site-specific extractor.
 
-    Parses ``html``, finds a matching extractor (or uses the provided
-    ``resolver``), and calls its ``resolve()`` method if present.  The result
-    is validated to ensure it is a ``ResolvedPage`` and not raw Markdown.
+    Finds a matching extractor (or uses the provided ``resolver``) and calls
+    its ``resolve()`` method if present, parsing ``html`` only when an
+    extractor actually needs the document.  The result is validated to ensure
+    it is a ``ResolvedPage`` and not raw Markdown.
 
     Args:
         html: Raw HTML source of the page.
@@ -82,12 +83,22 @@ def resolve_page(
         TypeError: If the resolver's ``resolve()`` method returns something
             other than a ``ResolvedPage`` (e.g. a Markdown string).
     """
-    soup = parse_html(html)
+    # Parsing is deferred: most pages have no site extractor at all, and the
+    # generic pipeline parses again anyway, so a page that reaches the fallback
+    # must not pay for a BeautifulSoup parse here.
+    soup: BeautifulSoup | None = None
     extractor = resolver
     if extractor is None:
-        from markitai.webextract.extractors.registry import find_extractor
+        from markitai.webextract.extractors.registry import (
+            document_sniff_may_apply,
+            find_extractor_for_document,
+            find_extractor_for_url,
+        )
 
-        extractor = find_extractor(url, soup)
+        extractor = find_extractor_for_url(url)
+        if extractor is None and document_sniff_may_apply(html):
+            soup = parse_html(html)
+            extractor = find_extractor_for_document(soup)
 
     if extractor is None:
         return None
@@ -95,6 +106,9 @@ def resolve_page(
     resolve_fn = getattr(extractor, "resolve", None)
     if resolve_fn is None or not callable(resolve_fn):
         return None
+
+    if soup is None:
+        soup = parse_html(html)
 
     raw_result = resolve_fn(soup, url)
 

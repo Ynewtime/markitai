@@ -82,15 +82,9 @@ def resolve_proxy_for_url(url: str, proxy: str | None) -> str | None:
     if not proxy:
         return None
 
-    patterns = _proxy_bypass_patterns()
-    if not patterns:
-        return proxy
+    from markitai.fetch_policy import host_bypasses_proxy
 
-    from urllib.parse import urlparse
-
-    from markitai.fetch_policy import match_local_only
-
-    if match_local_only(urlparse(url).netloc.lower(), patterns):
+    if host_bypasses_proxy(url, _proxy_bypass_patterns()):
         logger.debug("[HTTP] NO_PROXY bypass: fetching {} without proxy", url)
         return None
     return proxy

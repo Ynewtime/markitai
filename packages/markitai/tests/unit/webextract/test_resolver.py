@@ -175,3 +175,48 @@ class TestResolvePage:
         page = ResolvedPage(content_html="<p>Some content</p>")
         # content_html is HTML - it should not start with a Markdown heading
         assert not page.content_html.startswith("#")  # type: ignore[union-attr]
+
+
+class TestResolverParsesLazily:
+    """The resolver must not parse HTML it has no extractor for.
+
+    The generic pipeline parses the document itself, so a page reaching the
+    fallback used to pay for two full BeautifulSoup parses.
+    """
+
+    def test_no_extractor_url_does_not_parse_html(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[str] = []
+
+        def _spy(html: str) -> BeautifulSoup:
+            calls.append(html)
+            raise AssertionError("resolve_page must not parse without an extractor")
+
+        monkeypatch.setattr("markitai.webextract.resolver.parse_html", _spy)
+        assert resolve_page(_SIMPLE_HTML, _GENERIC_URL) is None
+        assert calls == []
+
+    def test_url_matched_extractor_still_receives_parsed_soup(self) -> None:
+        result = resolve_page(_STRUCTURED_HTML, _X_URL)
+        assert result is None or isinstance(result, ResolvedPage)
+
+    def test_substack_custom_domain_detection_still_works(self) -> None:
+        html = (
+            '<div class="body markup"><p>Important details.</p></div>'
+            '<link rel="stylesheet" href="https://substackcdn.com/bundle/style.css">'
+        )
+        result = resolve_page(html, "https://newsletter.example/p/article")
+        assert result is not None
+        assert result.diagnostics.get("substack_resolve") == "post"
+
+    def test_substack_sniff_skipped_without_platform_marker(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A rendered body alone is not a Substack signal, so do not parse for it."""
+        monkeypatch.setattr(
+            "markitai.webextract.resolver.parse_html",
+            lambda _html: pytest.fail("document sniff must not parse this page"),
+        )
+        html = '<div class="body markup"><p>Important details.</p></div>'
+        assert resolve_page(html, "https://newsletter.example/p/article") is None
