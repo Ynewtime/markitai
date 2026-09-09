@@ -1,3 +1,0 @@
-minimumReleaseAgeExclude:
-  - '@testing-library/react@16.3.3'
-  - '@vitejs/plugin-react@6.1.1'

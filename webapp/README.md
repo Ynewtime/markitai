@@ -8,8 +8,8 @@ Run the API and the dev server side by side:
 
 ```sh
 uv run markitai serve --port 3611 --no-open   # API on 127.0.0.1:3611
-pnpm install
-pnpm dev                                      # Vite proxies /api -> 127.0.0.1:3611
+bun install
+bun run dev                                   # Vite proxies /api -> 127.0.0.1:3611
 ```
 
 ## Build

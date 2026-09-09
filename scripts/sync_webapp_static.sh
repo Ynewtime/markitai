@@ -7,17 +7,8 @@ DIST="$WEBAPP/dist"
 TARGET="$ROOT/packages/markitai/src/markitai/serve/static"
 MODE="${1:---sync}"
 
-if command -v pnpm >/dev/null 2>&1; then
-  PNPM=(pnpm)
-else
-  PNPM_VERSION="$(
-    WEBAPP_PACKAGE_JSON="$WEBAPP/package.json" \
-      node -p "require(process.env.WEBAPP_PACKAGE_JSON).packageManager.split('@').pop()"
-  )"
-  PNPM=(npx --yes "pnpm@$PNPM_VERSION")
-fi
-
-"${PNPM[@]}" --dir "$WEBAPP" build
+bun install --cwd "$WEBAPP"
+bun run --cwd "$WEBAPP" build
 
 case "$MODE" in
   --sync)
