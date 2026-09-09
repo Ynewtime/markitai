@@ -7,7 +7,7 @@ DIST="$WEBAPP/dist"
 TARGET="$ROOT/packages/markitai/src/markitai/serve/static"
 MODE="${1:---sync}"
 
-bun install --cwd "$WEBAPP"
+bun install --cwd "$WEBAPP" --frozen-lockfile
 bun run --cwd "$WEBAPP" build
 
 case "$MODE" in

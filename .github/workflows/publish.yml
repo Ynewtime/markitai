@@ -46,7 +46,7 @@ jobs:
           bun-version: latest
 
       - name: Install dependencies
-        run: bun install --cwd webapp
+        run: bun install --cwd webapp --frozen-lockfile
 
       - name: Run tests
         run: bun run --cwd webapp test

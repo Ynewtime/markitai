@@ -59,8 +59,8 @@ updates:
         patterns:
           - "*"
 
-  # Website dependencies (pnpm)
-  - package-ecosystem: "npm"
+  # JS projects (bun; lockfiles are committed and installs are frozen in CI)
+  - package-ecosystem: "bun"
     directory: "/website"
     schedule:
       interval: "weekly"
@@ -78,5 +78,26 @@ updates:
         update-types: ["version-update:semver-major"]
     groups:
       website-all:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "bun"
+    directory: "/webapp"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "webapp"
+    commit-message:
+      prefix: "chore(deps)"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      webapp-all:
         patterns:
           - "*"

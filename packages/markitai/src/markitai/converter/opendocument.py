@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 import zipfile
 from pathlib import Path
-from xml.etree import ElementTree  # noqa: S405 - DOCTYPE/ENTITY refused below
+from xml.etree import ElementTree  # nosec B405 - DOCTYPE/ENTITY refused before parsing
 
 from loguru import logger
 
@@ -100,7 +100,7 @@ def _content_root(input_path: Path) -> ElementTree.Element:
             "stdlib parser would expand (billion laughs)"
         )
     try:
-        return ElementTree.fromstring(data)  # noqa: S314 - refused above
+        return ElementTree.fromstring(data)  # nosec B314 - refused above
     except ElementTree.ParseError as exc:
         raise _OdfError(f"malformed content.xml: {exc}") from exc
 

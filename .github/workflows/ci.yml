@@ -7,6 +7,8 @@ on:
       - 'packages/markitai/**'
       - 'webapp/**'
       - 'scripts/sync_webapp_static.sh'
+      - 'scripts/check_wheel.py'
+      - 'scripts/check_licenses.py'
       - 'README.md'
       - 'pyproject.toml'
       - 'uv.lock'
@@ -17,6 +19,8 @@ on:
       - 'packages/markitai/**'
       - 'webapp/**'
       - 'scripts/sync_webapp_static.sh'
+      - 'scripts/check_wheel.py'
+      - 'scripts/check_licenses.py'
       - 'README.md'
       - 'pyproject.toml'
       - 'uv.lock'
@@ -43,7 +47,7 @@ jobs:
           bun-version: latest
 
       - name: Install dependencies
-        run: bun install --cwd webapp
+        run: bun install --cwd webapp --frozen-lockfile
 
       - name: Run tests
         run: bun run --cwd webapp test

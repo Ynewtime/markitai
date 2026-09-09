@@ -115,7 +115,7 @@ _SYMBOL_WORDS: dict[str, str] = {
     "zwnj": "‌",
     "zwj": "‍",
     "ltrmark": "‎",
-    "rtlmark": "‏",
+    "rtlmark": "\u200f",
 }
 
 # Destinations whose content is not document text. Footnotes are dropped
