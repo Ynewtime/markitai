@@ -5,21 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Added
-
-- **Substack article extraction** now handles rendered bodies and `window._preloads` JSON, including custom domains and byline dates, while retaining Notes extraction and generic fallback.
-- **Linux desktop proxy discovery** reads manual GNOME/Unity and KDE HTTP proxy settings and bypass lists. Explicit environment proxies still take precedence; PAC, SOCKS-only and authenticated desktop settings are not imported.
-- **Opt-in benchmark LLM scoring** provides validated content, structure and noise scores through `score_with_llm_judge`, with offline cache reuse, input limits and no automatic retries. A cache miss requires an explicit model and `allow_network=True`; default benchmarks remain heuristic and offline.
-
-### Fixed
-
-- **Mobile conversion uses one compact source card**: the URL area sits above a shared Options/upload/Convert action row instead of three stacked controls, with 44px touch targets and a naturally wrapping mobile CLI preview. Desktop retains an inline composer.
-- **The composer actions share one lightweight style**: Options, file upload and Convert are borderless, evenly padded controls with the same hover and focus treatment; Convert stays the clear primary through heavier ink and a light accent wash rather than a filled box.
-- **The options panel is grouped instead of listed**: the preset leads as the primary row (with its adjusted status and hint), Enhance collects LLM, OCR and image analysis, Output holds the profile, and the URL/file fetch selectors, source switches and cache/compression toggles fold into an Advanced section that opens automatically when one of them is already non-default. Every control, hint, linkage rule and translation is unchanged.
-- **Presets and conversion options stay linked** across the panel, API request and CLI preview, using server-provided preset definitions. Selecting a preset resets its five features, dependent image analysis pauses and restores with LLM/plain mode, and screenshot source and remote backends resolve consistently. CLI previews default to concise preset-plus-deviation commands using the server preset map. A visible default-config assumption and “Include config overrides” option preserve access to explicit off flags for screenshot-only, pure, cache and compression when local configuration differs.
-
 ## [0.24.0] - 2026-09-09
 
 ### Added
@@ -42,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The website serves `/llms.txt`**, and the README carries a comparison table against markitdown, docling and anydoc that states what each does better
 - **`NOTICE` records the third-party obligations** MIT alone cannot cover: the AGPL-3.0 PyMuPDF stack and what it means for redistribution and network use, the defuddle port (MIT © kepano) behind `webextract/`, and the marker-derived benchmark scorer
 - **CI fails on a non-commercial or unexpected copyleft dependency**: `scripts/check_licenses.py` reads licence metadata from a no-extras install and rejects anything non-commercial or proprietary, plus any AGPL/GPL package outside an explicit allowlist
+- **Substack article extraction** now handles rendered bodies and `window._preloads` JSON, including custom domains and byline dates, while retaining Notes extraction and generic fallback.
+- **Linux desktop proxy discovery** reads manual GNOME/Unity and KDE HTTP proxy settings and bypass lists. Explicit environment proxies still take precedence; PAC, SOCKS-only and authenticated desktop settings are not imported.
+- **Opt-in benchmark LLM scoring** provides validated content, structure and noise scores through `score_with_llm_judge`, with offline cache reuse, input limits and no automatic retries. A cache miss requires an explicit model and `allow_network=True`; default benchmarks remain heuristic and offline.
 
 ### Changed
 
@@ -101,6 +89,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The installer asks about mirrors only when the default index is actually slow**, rather than warning every user without a proxy — someone in Frankfurt met a question about China mirrors as their first impression
 - **A "no" to OCR is now respected by the installer**: suggestions were merged back into the selection, so declining it still installed it
 - **The test suite is hermetic to the developer's own configuration**: a real `~/.markitai/config.json` or `.env` used to fail parts of the suite on the machine of anyone who actually uses markitai
+- **Mobile conversion uses one compact source card**: the URL area sits above a shared Options/upload/Convert action row instead of three stacked controls, with 44px touch targets and a naturally wrapping mobile CLI preview. Desktop retains an inline composer.
+- **The composer actions share one lightweight style**: Options, file upload and Convert are borderless, evenly padded controls with the same hover and focus treatment; Convert stays the clear primary through heavier ink and a light accent wash rather than a filled box.
+- **The options panel is grouped instead of listed**: the preset leads as the primary row (with its adjusted status and hint), Enhance collects LLM, OCR and image analysis, Output holds the profile, and the URL/file fetch selectors, source switches and cache/compression toggles fold into an Advanced section that opens automatically when one of them is already non-default. Every control, hint, linkage rule and translation is unchanged.
+- **Presets and conversion options stay linked** across the panel, API request and CLI preview, using server-provided preset definitions. Selecting a preset resets its five features, dependent image analysis pauses and restores with LLM/plain mode, and screenshot source and remote backends resolve consistently. CLI previews default to concise preset-plus-deviation commands using the server preset map. A visible default-config assumption and “Include config overrides” option preserve access to explicit off flags for screenshot-only, pure, cache and compression when local configuration differs.
 
 ### Security
 
