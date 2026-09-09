@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from markitai.webextract import extract_web_content
+from markitai.webextract.types import ExtractedWebContent
 
 _FIXTURE_DIR = Path(__file__).parents[1] / "defuddle_fixtures"
 _HTML_DIR = _FIXTURE_DIR / "fixtures"
@@ -195,10 +196,10 @@ def _chrome_noise(markdown: str, expected_body: str) -> list[str]:
     return [p for p in _NOISE_PATTERNS if p in markdown and p not in expected_body]
 
 
-_extraction_cache: dict[str, tuple[object, dict[str, str], str]] = {}
+_extraction_cache: dict[str, tuple[ExtractedWebContent, dict[str, str], str]] = {}
 
 
-def _load_and_extract(stem: str) -> tuple[object, dict[str, str], str]:
+def _load_and_extract(stem: str) -> tuple[ExtractedWebContent, dict[str, str], str]:
     """Load fixture, run extraction, parse expected.
 
     Results are cached so the 4 parametrized tests per fixture share a

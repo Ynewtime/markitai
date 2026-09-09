@@ -27,8 +27,8 @@ def test_dedup_author_keeps_only_one_link() -> None:
     """After cleanup, User-Name should have exactly one link (display name only)."""
     tweet = _make_tweet_with_username()
     _clean_tweet_internals(tweet)
-    user_name = tweet.find(attrs={"data-testid": "User-Name"})
-    assert user_name is not None
+    user_name = tweet.select_one('[data-testid="User-Name"]')
+    assert isinstance(user_name, Tag)
     links = user_name.find_all("a")
     assert len(links) == 1, f"Expected 1 link, got {len(links)}"
     assert "Display Name" in links[0].get_text()

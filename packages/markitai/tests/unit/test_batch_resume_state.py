@@ -16,7 +16,11 @@ earliest moment an interrupt can arrive.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
+
+if TYPE_CHECKING:
+    from markitai.llm import LLMProcessor
 
 import pytest
 
@@ -44,8 +48,13 @@ async def test_base_state_exists_before_the_first_document_is_converted(
 
     original = batch_module.create_process_file
 
-    def _recording_factory(*args: object, **kwargs: object):  # noqa: ANN202
-        process_file = original(*args, **kwargs)
+    def _recording_factory(  # noqa: ANN202
+        cfg: MarkitaiConfig,
+        input_dir: Path,
+        output_dir: Path,
+        shared_processor: LLMProcessor | None,
+    ):
+        process_file = original(cfg, input_dir, output_dir, shared_processor)
 
         async def _wrapped(path: Path):  # noqa: ANN202
             if not seen_at_first_file:

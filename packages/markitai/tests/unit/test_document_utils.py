@@ -733,7 +733,7 @@ class TestSocialPostVerbatimBody:
             )
             mock_instructor.return_value = mock_client
 
-            cleaned, frontmatter = await processor.process_document(
+            cleaned, _frontmatter = await processor.process_document(
                 self.SOCIAL_BODY,
                 "https://x.com/user/status/1",
                 extra_meta={"content_profile": "social_post"},

@@ -176,7 +176,10 @@ class TestBuildAnthropicRequest:
         (tool,) = params["tools"]
         assert "input_schema" in tool  # not OpenAI's function.parameters
         assert "cleaned_markdown" in tool["input_schema"]["properties"]
-        assert params["tool_choice"] == {"type": "tool", "name": "_Doc"}
+        # instructor >=1.17 also sets disable_parallel_tool_use; the forced
+        # single-tool shape is the only part that is our contract
+        assert params["tool_choice"]["type"] == "tool"
+        assert params["tool_choice"]["name"] == "_Doc"
 
     def test_max_tokens_is_always_sent(self) -> None:
         """The Messages API has no server-side default to fall back on."""

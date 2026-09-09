@@ -199,7 +199,7 @@ class TestExtractFromScreenshotDegeneration:
             )
             mock_instructor.return_value = mock_client
 
-            cleaned, frontmatter = await processor.extract_from_screenshot(
+            cleaned, _frontmatter = await processor.extract_from_screenshot(
                 sample_test_image,
                 "https://example.com/page",
             )

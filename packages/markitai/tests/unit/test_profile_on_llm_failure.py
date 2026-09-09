@@ -15,13 +15,13 @@ from unittest.mock import patch
 
 import pytest
 
-from markitai.config import MarkitaiConfig
+from markitai.config import MarkitaiConfig, OutputProfile
 from markitai.constants import ASSETS_REL_PATH, VISIBLE_ASSETS_REL_PATH
 from markitai.converter.base import ConvertResult
 from markitai.workflow.core import ConversionContext, _write_base_md_fallback
 
 
-def _context(tmp_path: Path, profile: str | None) -> ConversionContext:
+def _context(tmp_path: Path, profile: OutputProfile | None) -> ConversionContext:
     config = MarkitaiConfig()
     config.output.profile = profile
     output_dir = tmp_path / "out"
@@ -81,7 +81,9 @@ def test_a_base_file_already_on_disk_is_profiled_too(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("profile", ["rag", "obsidian", "okf"])
-def test_every_profile_reaches_the_fallback(tmp_path: Path, profile: str) -> None:
+def test_every_profile_reaches_the_fallback(
+    tmp_path: Path, profile: OutputProfile
+) -> None:
     """The fix must not be specific to the profile it was found with."""
     ctx = _context(tmp_path / profile, profile)
 

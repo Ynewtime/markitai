@@ -67,7 +67,7 @@ def require_pillow_heif() -> None:
     if _opener_registered:
         return
     try:
-        from pillow_heif import register_heif_opener
+        from pillow_heif.as_plugin import register_heif_opener
     except ImportError as e:
         raise MissingDependencyError(_HEIF_INSTALL_HINT) from e
     register_heif_opener()

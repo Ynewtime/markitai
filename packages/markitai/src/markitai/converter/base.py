@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 if TYPE_CHECKING:
     from markitai.config import MarkitaiConfig
@@ -256,10 +257,15 @@ _CONVERTER_MODULES: dict[FileFormat, str] = {
 }
 
 
-def register_converter(fmt: FileFormat):
-    """Decorator to register a converter for a file format."""
+_ConverterT = TypeVar("_ConverterT", bound=BaseConverter)
 
-    def decorator(cls: type[BaseConverter]):
+
+def register_converter(
+    fmt: FileFormat,
+) -> Callable[[type[_ConverterT]], type[_ConverterT]]:
+    """Register a converter without erasing its concrete class type."""
+
+    def decorator(cls: type[_ConverterT]) -> type[_ConverterT]:
         _converter_registry[fmt] = cls
         return cls
 

@@ -237,9 +237,7 @@ def _make_vision_analyzer():
         get_cached_image=get_cached_image,
         get_next_call_index=lambda _context: 0,
     )
-    # Expose the cache mock under the historical name for assertions
-    analyzer._persistent_cache = persistent_cache  # type: ignore[attr-defined]
-    return analyzer
+    return analyzer, persistent_cache
 
 
 class TestVisionCacheKeyIntegration:
@@ -252,7 +250,7 @@ class TestVisionCacheKeyIntegration:
         """analyze_image called with different document_context should not share cache."""
         from markitai.llm.types import ImageAnalysis
 
-        processor = _make_vision_analyzer()
+        processor, persistent_cache = _make_vision_analyzer()
 
         # Create a test image
         test_image = tmp_path / "test.png"
@@ -260,10 +258,10 @@ class TestVisionCacheKeyIntegration:
 
         # Track what cache keys are used
         cache_get_calls: list[tuple] = []
-        processor._persistent_cache.get.side_effect = lambda *args, **kwargs: (
+        persistent_cache.get.side_effect = lambda *args, **kwargs: (
             cache_get_calls.append((args, kwargs)) or None
         )
-        processor._persistent_cache.set.return_value = None
+        persistent_cache.set.return_value = None
 
         # Mock _analyze_image_with_fallback to return a result
         async def mock_analyze(*args, **kwargs):
@@ -305,13 +303,13 @@ class TestVisionCacheKeyIntegration:
 
         from markitai.llm.types import ImageAnalysis
 
-        processor = _make_vision_analyzer()
+        processor, persistent_cache = _make_vision_analyzer()
 
         test_image = tmp_path / "test.png"
         test_image.write_bytes(b"test_image_data_xyz")
 
         cache_get_calls: list[tuple] = []
-        processor._persistent_cache.get.side_effect = lambda *args, **kwargs: (
+        persistent_cache.get.side_effect = lambda *args, **kwargs: (
             cache_get_calls.append((args, kwargs)) or None
         )
 
@@ -319,7 +317,7 @@ class TestVisionCacheKeyIntegration:
             return ImageAnalysis(caption="test", description="test desc")
 
         processor._analyze_image_with_fallback = mock_analyze  # type: ignore
-        processor._persistent_cache.set.return_value = None
+        persistent_cache.set.return_value = None
 
         # Call without document_context
         await processor.analyze_image(test_image, context="file.pdf")

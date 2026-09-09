@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from markitai.config import FetchConfig
+from markitai.config import FetchConfig, FetchPolicyConfig
 from markitai.fetch import (
     FetchError,
     FetchResult,
@@ -306,15 +306,23 @@ class TestResolveRemoteConsent:
     @pytest.mark.parametrize(
         ("policy", "no_proxy"),
         [
-            ({"local_only_patterns": ["example.com"], "inherit_no_proxy": False}, None),
-            ({"local_only_patterns": [], "inherit_no_proxy": True}, "example.com"),
+            (
+                FetchPolicyConfig(
+                    local_only_patterns=["example.com"], inherit_no_proxy=False
+                ),
+                None,
+            ),
+            (
+                FetchPolicyConfig(local_only_patterns=[], inherit_no_proxy=True),
+                "example.com",
+            ),
         ],
         ids=["configured-pattern", "inherited-no-proxy"],
     )
     async def test_config_selected_remote_strategy_respects_local_only_patterns(
         self,
         monkeypatch: pytest.MonkeyPatch,
-        policy: dict[str, object],
+        policy: FetchPolicyConfig,
         no_proxy: str | None,
     ) -> None:
         """Config selection cannot bypass local-only policy or inherited NO_PROXY."""
@@ -361,10 +369,10 @@ class TestResolveRemoteConsent:
         config = FetchConfig(
             strategy="jina",
             remote_consent="never",
-            policy={
-                "local_only_patterns": ["example.com"],
-                "inherit_no_proxy": False,
-            },
+            policy=FetchPolicyConfig(
+                local_only_patterns=["example.com"],
+                inherit_no_proxy=False,
+            ),
         )
         remote_result = FetchResult(
             content=VALID_CONTENT,

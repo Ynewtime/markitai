@@ -254,7 +254,7 @@ class TestJsonLogFormat:
         monkeypatch.delenv("MARKITAI_LOG_DIR", raising=False)
         monkeypatch.delenv("MARKITAI_LOG_FORMAT", raising=False)
 
-        handler_id, log_file = setup_logging(
+        _handler_id, log_file = setup_logging(
             verbose=False,
             log_dir=str(tmp_path),
             log_format="json",

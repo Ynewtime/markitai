@@ -19,6 +19,7 @@ from types import ModuleType
 import pytest
 
 from markitai.config import MarkitaiConfig, OCRConfig
+from markitai.converter.pdf import PdfConverter
 from markitai.ocr import OCRProcessor
 
 #: The one command every OCR dead end must print.
@@ -130,9 +131,7 @@ class TestScannedPdfAdvisory:
     """
 
     @staticmethod
-    def _converter() -> object:
-        from markitai.converter.pdf import PdfConverter
-
+    def _converter() -> PdfConverter:
         return PdfConverter(config=MarkitaiConfig())
 
     @staticmethod
@@ -264,6 +263,7 @@ class TestFFmpegSurfaceRemoved:
     def test_doctor_never_advertises_audio_video(self) -> None:
         for name in ("doctor", "init"):
             module = _command_module(name)
+            assert module.__file__ is not None
             source = Path(module.__file__).read_text(encoding="utf-8").lower()
             assert "ffmpeg" not in source, name
             assert "audio/video" not in source, name
