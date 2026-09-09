@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The options panel is grouped instead of listed**: the preset leads as the primary row (with its adjusted status and hint), Enhance collects LLM, OCR and image analysis, Output holds the profile, and the URL/file fetch selectors, source switches and cache/compression toggles fold into an Advanced section that opens automatically when one of them is already non-default. Every control, hint, linkage rule and translation is unchanged.
 - **Presets and conversion options stay linked** across the panel, API request and CLI preview, using server-provided preset definitions. Selecting a preset resets its five features, dependent image analysis pauses and restores with LLM/plain mode, and screenshot source and remote backends resolve consistently. CLI previews default to concise preset-plus-deviation commands using the server preset map. A visible default-config assumption and “Include config overrides” option preserve access to explicit off flags for screenshot-only, pure, cache and compression when local configuration differs.
 
-## [0.24.0] - 2026-08-30
+## [0.24.0] - 2026-09-09
 
 ### Added
 
