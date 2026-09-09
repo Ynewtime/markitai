@@ -66,7 +66,7 @@ With `--profile rag` or `--profile obsidian`, referenced images land in a visibl
 |---|---|
 | Office | `.docx` `.doc` `.pptx` `.ppt` `.xlsx` `.xls` `.odt` `.ods` `.numbers` |
 | Documents | `.pdf` `.epub` `.eml` `.msg` `.ipynb` |
-| Text/markup | `.txt` `.md` `.html` `.xml` `.csv` `.tsv` `.rtf` `.rst` `.org` `.tex` (`.rtf` needs the `kreuzberg` extra) |
+| Text/markup | `.txt` `.md` `.html` `.xml` `.csv` `.tsv` `.rtf` `.rst` `.org` `.tex` |
 | Images | `.jpg` `.png` `.webp` `.svg` `.gif` `.bmp` `.tiff` (+ `.heic` `.heif` `.avif` with the `heif` extra) |
 | Web | `http://` / `https://` URLs, and `.urls` list files |
 

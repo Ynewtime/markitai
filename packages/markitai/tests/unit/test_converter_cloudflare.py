@@ -208,7 +208,7 @@ class TestCloudflareConverterIntegration:
         from markitai.converter.base import get_converter
 
         assert detect_format("data.csv") == FileFormat.CSV
-        # CSV may have a kreuzberg fallback converter, but NOT a CloudflareConverter
+        # CSV has a local converter, but NOT a CloudflareConverter
         converter = get_converter("data.csv")
         if converter is not None:
             assert type(converter).__name__ != "CloudflareConverter"

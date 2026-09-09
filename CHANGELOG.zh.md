@@ -30,7 +30,8 @@
 - **Substack 文章提取**支持已渲染正文与 `window._preloads` JSON，覆盖自定义域名和署名栏日期，并保留 Notes 提取与通用回退。
 - **Linux 桌面代理发现**读取 GNOME/Unity 和 KDE 的手动 HTTP 代理及绕过列表，显式环境代理仍优先；不导入 PAC、仅 SOCKS 或需认证的桌面代理设置。
 - **可选的基准 LLM 评分**通过 `score_with_llm_judge` 返回经过校验的内容、结构和噪声分数，支持离线缓存复用、输入上限且不自动重试。缓存未命中时必须指定模型并设置 `allow_network=True`；默认基准仍使用离线启发式评分。
-- **七种格式不再需要 extra**：`.tsv`、`.xml`、`.rst`、`.org`、`.tex`、`.odt`、`.ods` 现在只靠标准库就能在基础安装里转换——制表符分隔文件本就是一张 Markdown 表格，OpenDocument 文件本就是一包 XML。`kreuzberg` extra 现在只有 `.rtf` 还需要，同时仍是 `-b kreuzberg` 后端
+- **八种格式不再需要 extra**：`.tsv`、`.xml`、`.rst`、`.org`、`.tex`、`.odt`、`.ods`、`.rtf` 现在只靠标准库就能在基础安装里转换——制表符分隔文件本就是一张 Markdown 表格，OpenDocument 文件本就是一包 XML
+- **`.rtf` 有了真正的原生解析器**：分词器处理分组、控制字与 `\'xx` 字节，驱动一份按分组进出栈的排版状态，于是 outlinelevel 与样式表名变成标题，`\trowd`/`\cell`/`\row` 变成 Markdown 表格，Word 97 的 `\pntext` 符号与新式 `\ls`/`\ilvl` 列表保住各自的项目符号与层级，`HYPERLINK` 域变成链接，`\ansicpg`/`\fcharset` 正确解码中日韩与 Windows 代码页——不需要 extra，也不需要抽取引擎
 - **每个布尔 CLI 开关都有明确的否定形式**：新增 `--cache`、`--compress`、`--no-pure`、`--no-screenshot-only`，配置里的默认值可以在命令行上朝任一方向覆盖
 
 ### 变更
@@ -55,6 +56,7 @@
 ### 移除
 
 - **三平台 Office 自动化整体退役**——约 1.3k 行 Windows COM、macOS AppleScript 和 LibreOffice CLI 驱动代码，连同围绕它的批量预转换机制。它服务的格式改由 `markitai[legacy]` 覆盖，LibreOffice 的文案收窄到 PPTX 幻灯片渲染
+- **`kreuzberg` extra 与 `-b kreuzberg` 后端全部移除**：它覆盖的每一种格式现在都原生转换，这个 extra 已经没有任何东西可以解锁。`--backend` 只剩 `native|cloudflare`，`fetch.kreuzberg_convert_enabled` 配置项删除，传入 `--kreuzberg` 会得到一条说明 `.rtf` 已原生转换的用法错误，而不是指向某个替代写法
 - **六个已弃用的抓取与后端别名全部移除**（`--playwright`、`--defuddle`、`--static`、`--jina`、`--cloudflare`、`--kreuzberg`），改用 `-s` 与 `-b`。传入已移除的名字现在是会指出替代写法的用法错误，`--help` 的选项从 36 个降到 30 个
 - **LLM 路径里两层多余的防御**：一个手写的 JSON 模式策略压在本就做同一件修复的结构化阶梯之下，以及一份实际流量早已不再走到的手抄 Copilot 价格表
 - **`llm.prompts.page_content_system` 与 `llm.prompts.page_content_user` 两个配置项**，连同它们配置的那条代码路径：其 docstring 声称在用它的两种模式早已改道，所以设了没有任何效果

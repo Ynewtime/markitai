@@ -273,6 +273,7 @@ _CONVERTER_MODULES: dict[FileFormat, str] = {
     FileFormat.TEX: "markitai.converter.latex",
     FileFormat.ODT: "markitai.converter.opendocument",
     FileFormat.ODS: "markitai.converter.opendocument",
+    FileFormat.RTF: "markitai.converter.rtf",
 }
 
 
@@ -294,9 +295,8 @@ def register_converter(
 def load_converter_class(fmt: FileFormat) -> type[BaseConverter] | None:
     """Return the converter class for one format, importing it if needed.
 
-    A format with no native module falls through to kreuzberg, which
-    registers itself for the formats markitai does not cover natively (and
-    only when the optional dependency is installed).
+    Every convertible format names its module in ``_CONVERTER_MODULES``; a
+    format that names none (``UNKNOWN``) simply has no converter.
     """
     import importlib
 
@@ -305,13 +305,10 @@ def load_converter_class(fmt: FileFormat) -> type[BaseConverter] | None:
         return registered
 
     module = _CONVERTER_MODULES.get(fmt)
-    if module is not None:
-        importlib.import_module(module)
-        return _converter_registry.get(fmt)
+    if module is None:
+        return None
 
-    from markitai.converter.kreuzberg import register_kreuzberg_converters
-
-    register_kreuzberg_converters()
+    importlib.import_module(module)
     return _converter_registry.get(fmt)
 
 

@@ -50,17 +50,18 @@ _LAZY_COMMANDS: dict[str, tuple[str, str, str]] = {
 }
 
 
-# Removed option name -> the spelling that replaced it. These were deprecated
-# aliases for -s/--strategy and -b/--backend; click alone would only say "No
-# such option", so parse_args turns them into a usage error naming the
-# replacement.
-_REMOVED_OPTIONS: dict[str, str] = {
+# Removed option name -> the spelling that replaced it, or None when nothing
+# replaced it. These were deprecated aliases for -s/--strategy and
+# -b/--backend; click alone would only say "No such option", so parse_args
+# turns them into a usage error naming the replacement.
+_REMOVED_OPTIONS: dict[str, str | None] = {
     "--playwright": "-s playwright",
     "--defuddle": "-s defuddle",
     "--static": "-s static",
     "--jina": "-s jina",
     "--cloudflare": "-s cloudflare",
-    "--kreuzberg": "-b kreuzberg",
+    # No replacement: the kreuzberg extra is gone and .rtf converts natively.
+    "--kreuzberg": None,
 }
 
 
@@ -174,11 +175,16 @@ class MarkitaiGroup(click.RichGroup):
         """
         for arg in args:
             name = arg.split("=", 1)[0]
-            replacement = _REMOVED_OPTIONS.get(name)
-            if replacement is not None:
+            if name not in _REMOVED_OPTIONS:
+                continue
+            replacement = _REMOVED_OPTIONS[name]
+            if replacement is None:
                 raise click.UsageError(
-                    f"{name} has been removed, use '{replacement}' instead."
+                    f"{name} has been removed, RTF converts natively now."
                 )
+            raise click.UsageError(
+                f"{name} has been removed, use '{replacement}' instead."
+            )
 
     def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
         """Parse arguments, detecting if first arg is a subcommand or file path."""

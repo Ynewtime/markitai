@@ -18,7 +18,7 @@ import { HelpTooltip } from "./HelpTooltip";
 import { CaretRightIcon, InfoIcon, SlidersIcon, UploadIcon } from "./icons";
 
 const STRATEGIES: FetchStrategy[] = ["auto", "static", "playwright", "defuddle", "jina", "cloudflare"];
-const BACKENDS: ConversionBackend[] = ["native", "kreuzberg", "cloudflare"];
+const BACKENDS: ConversionBackend[] = ["native", "cloudflare"];
 const PRESETS: Preset[] = ["minimal", "standard", "rich"];
 const PROFILES: (OutputProfile | null)[] = [null, "rag", "obsidian", "okf"];
 
@@ -117,7 +117,7 @@ export function OptionsPanel({
   const forcedBackend = value.strategy === "cloudflare";
   const strategyHints = { auto: t.helpAuto, static: t.helpStatic, playwright: t.helpPlaywright,
     defuddle: t.helpDefuddle, jina: t.helpJina, cloudflare: t.helpCloudflareUrl };
-  const backendHints = { native: t.helpNative, kreuzberg: t.helpKreuzberg, cloudflare: t.helpCloudflareFile };
+  const backendHints = { native: t.helpNative, cloudflare: t.helpCloudflareFile };
   const remoteNotice = { auto: t.noticeAuto, static: null, playwright: null,
     defuddle: t.noticeDefuddle, jina: t.noticeJina, cloudflare: t.noticeCloudflareUrl }[effective.strategy];
   const bundleHint = (p: Preset) => {

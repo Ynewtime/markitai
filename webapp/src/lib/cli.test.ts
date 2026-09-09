@@ -22,8 +22,8 @@ describe("buildCliCommand", () => {
     expect(buildCliCommand([], jobOptions({
       preset: "rich", llm: true, ocr: true, profile: "obsidian",
       alt: false, desc: true, screenshot: true, screenshot_only: true,
-      pure: false, no_cache: true, no_compress: true, strategy: "playwright", backend: "kreuzberg",
-    }))).toBe("markitai <your-files-or-url-or-url_files> -o out/ --preset rich --ocr --no-alt --profile obsidian --screenshot-only --no-cache --no-compress --strategy playwright --backend kreuzberg");
+      pure: false, no_cache: true, no_compress: true, strategy: "playwright", backend: "cloudflare",
+    }))).toBe("markitai <your-files-or-url-or-url_files> -o out/ --preset rich --ocr --no-alt --profile obsidian --screenshot-only --no-cache --no-compress --strategy playwright --backend cloudflare");
   });
   it("quotes a URL with a query string without altering it", () => {
     expect(command(["https://example.com/page?a=1&b"], "standard", true, false, null)).toBe(

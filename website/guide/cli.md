@@ -387,19 +387,15 @@ Select the file conversion backend, orthogonal to `-s/--strategy` (which only af
 | Value | Description |
 |-------|-------------|
 | `native` (default) | Built-in converters (DOCX, PDF, images, etc.) |
-| `kreuzberg` | Force the kreuzberg converter for all file formats; requires `uv pip install markitai[kreuzberg]` |
 | `cloudflare` | Cloudflare Workers AI `toMarkdown`; requires CF credentials |
 
 ```bash
-markitai document.pdf -b kreuzberg
 markitai document.pdf -b cloudflare
-markitai https://example.com -s playwright -b kreuzberg   # -s and -b combine freely
+markitai https://example.com -s playwright -b cloudflare   # -s and -b combine freely
 ```
 
-`-b kreuzberg` and `-s cloudflare` are mutually exclusive; both override file conversion.
-
 ::: tip
-Cloudflare Browser Rendering is available on the Free plan. Workers AI `toMarkdown` is free for PDF/Office/CSV/XML; image conversion uses Neurons quota. For formats with a local converter, native/kreuzberg generally produce higher-quality output. `-b cloudflare` warns when a better local converter is available.
+Cloudflare Browser Rendering is available on the Free plan. Workers AI `toMarkdown` is free for PDF/Office/CSV/XML; image conversion uses Neurons quota. For formats with a local converter, the native converters generally produce higher-quality output. `-b cloudflare` warns when a better local converter is available.
 :::
 
 ### Removed per-backend flags
@@ -413,13 +409,13 @@ The six per-backend aliases below were **removed** in 1.0.0. Passing one is now 
 | `--static` | `-s static` |
 | `--jina` | `-s jina` |
 | `--cloudflare` | `-s cloudflare` (add `-b cloudflare` for CF file conversion) |
-| `--kreuzberg` | `-b kreuzberg` |
+| `--kreuzberg` | *(nothing — `.rtf` converts natively since 1.0.0)* |
 
 ```bash
 markitai https://example.com -s defuddle   # replaces the old --defuddle alias
 ```
 
-The mutual-exclusion rules those aliases needed are gone with them. `-s/--strategy` and `-b/--backend` are orthogonal and combine freely; the only remaining conflict is `-b kreuzberg` with `-s cloudflare`, since both claim file conversion.
+The mutual-exclusion rules those aliases needed are gone with them: `-s/--strategy` and `-b/--backend` are orthogonal and combine freely.
 
 ## Setup Commands
 
@@ -557,7 +553,7 @@ Check core health, optional capabilities, and authentication status. Missing unu
 markitai doctor
 markitai doctor --fix     # Safely install and re-check Chromium when the Playwright package is already present
 markitai doctor --json    # JSON output
-markitai doctor --suggest-extras   # Comma-separated pip extras for `uv tool install "markitai[...]"`; includes browser/extra-fetch/kreuzberg/svg/heif/ocr, plus detected provider extras
+markitai doctor --suggest-extras   # Comma-separated pip extras for `uv tool install "markitai[...]"`; includes browser/extra-fetch/svg/heif/ocr, plus detected provider extras
 ```
 
 Every check is a capability report, and a capability you have not enabled never fails the run:

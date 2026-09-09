@@ -445,7 +445,7 @@ class TestURLFetchStrategyOptions:
 
     @pytest.mark.parametrize(
         ("removed", "replacement"),
-        [("--playwright", "-s playwright"), ("--kreuzberg", "-b kreuzberg")],
+        [("--playwright", "-s playwright"), ("--defuddle", "-s defuddle")],
     )
     def test_removed_alias_names_its_replacement(
         self,

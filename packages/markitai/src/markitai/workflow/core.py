@@ -30,7 +30,6 @@ from markitai.security import (
     escape_glob_pattern,
     validate_file_size,
 )
-from markitai.utils.errors import extra_install_command
 from markitai.utils.frontmatter import split_frontmatter
 from markitai.utils.paths import ensure_dir
 from markitai.utils.text import format_error_message, markdown_image_reference
@@ -134,29 +133,6 @@ def validate_and_detect_format(
             success=False, error=f"Unsupported file format: {ctx.input_path.suffix}"
         )
 
-    # Check if Kreuzberg converter is explicitly enabled (-b kreuzberg)
-    kreuzberg_forced = getattr(ctx.config.fetch, "kreuzberg_convert_enabled", False)
-    if kreuzberg_forced:
-        import importlib.util
-
-        if importlib.util.find_spec("kreuzberg") is None:
-            return ConversionStepResult(
-                success=False,
-                error="-b kreuzberg requires kreuzberg to be installed. "
-                f"Install with: {extra_install_command('kreuzberg')}",
-            )
-        from markitai.converter.kreuzberg import KreuzbergConverter
-
-        # Warn if overriding a native converter
-        local_converter = get_converter(ctx.input_path, config=ctx.config)
-        if local_converter is not None:
-            logger.warning(
-                f"Using kreuzberg for {fmt.value} "
-                f"(native converter available — output quality may differ)"
-            )
-        ctx.converter = KreuzbergConverter(config=ctx.config)
-        logger.debug(f"Using kreuzberg for {fmt.value} (explicit -b kreuzberg)")
-
     # Check if Cloudflare toMarkdown is explicitly enabled (-b cloudflare)
     cf_config = (
         ctx.config.fetch.cloudflare if hasattr(ctx.config.fetch, "cloudflare") else None
@@ -200,7 +176,9 @@ def validate_and_detect_format(
         ctx.converter = get_converter(ctx.input_path, config=ctx.config)
 
     if ctx.converter is None:
-        return ConversionStepResult(success=False, error=no_converter_message(fmt))
+        return ConversionStepResult(
+            success=False, error=f"No converter available for format: {fmt.value}"
+        )
 
     return ConversionStepResult(success=True)
 
@@ -1286,21 +1264,3 @@ async def convert_document_core(
     apply_output_profile(ctx)
 
     return ConversionStepResult(success=True)
-
-
-def no_converter_message(fmt: FileFormat) -> str:
-    """Explain a format with no converter, naming the extra when one exists.
-
-    The kreuzberg-backed formats are documented as supported, so a bare
-    "no converter" would read as a bug; the fix is one install command.
-    """
-    from markitai.converter.kreuzberg import KREUZBERG_FORMATS
-
-    if fmt in KREUZBERG_FORMATS:
-        from markitai.utils.errors import extra_install_command
-
-        return (
-            f"No converter available for format: {fmt.value}. "
-            f"Install the kreuzberg extra: {extra_install_command('kreuzberg')}"
-        )
-    return f"No converter available for format: {fmt.value}"

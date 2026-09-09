@@ -155,7 +155,7 @@ describe("OptionsPanel", () => {
   });
 
   it("displays the implied Cloudflare backend and external-service notice", () => {
-    open({ value: { ...ADVANCED_DEFAULTS, strategy: "cloudflare", backend: "kreuzberg" } });
+    open({ value: { ...ADVANCED_DEFAULTS, strategy: "cloudflare", backend: "native" } });
     const backend = screen.getByRole("group", { name: t.advBackend });
     const cloudflare = within(backend).getByRole("button", { name: "cloudflare" });
     expect(cloudflare).toHaveAttribute("aria-pressed", "true");
@@ -208,7 +208,7 @@ describe("OptionsPanel", () => {
       );
     }
     const backend = screen.getByRole("group", { name: t.advBackend });
-    expect(within(backend).getByRole("button", { name: "kreuzberg" })).toBeInTheDocument();
+    expect(within(backend).getByRole("button", { name: "native" })).toBeInTheDocument();
     fireEvent.click(within(strategy).getByRole("button", { name: "jina" }));
     expect(onChange).toHaveBeenCalledWith({ ...ADVANCED_DEFAULTS, strategy: "jina" });
   });
@@ -288,7 +288,7 @@ it("highlights a matching bundle without changing options or the command", () =>
 it.each([dicts.en, dicts.zh])("describes every choice and group in either locale with accessible help", (dict) => {
   openAdvanced({ t: dict });
   const fields = document.querySelectorAll(".optfield button");
-  expect(fields.length).toBe(25);
+  expect(fields.length).toBe(24);
   for (const button of fields) {
     const description = document.getElementById(button.getAttribute("aria-describedby")!);
     expect(description?.textContent?.length).toBeGreaterThan(5);

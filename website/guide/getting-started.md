@@ -82,7 +82,6 @@ Add extras only when you need them (`uv tool install 'markitai[<extra>]' --force
 | `markitai[legacy]` (anydoc) | Legacy Office `.doc`/`.ppt` conversion |
 | `markitai[heif]` | HEIC/HEIF/AVIF image input |
 | `markitai[svg]` | High-quality SVG rendering |
-| `markitai[kreuzberg]` | `.rtf` conversion (`.xml`, `.tsv`, `.rst`, `.org`, `.tex`, `.odt`, `.ods` convert natively since 1.0.0) |
 | `markitai[serve]` | Local web workspace and REST API |
 | Jina API key | `-s jina` remote reader (`JINA_API_KEY` env var) |
 | Cloudflare | `-s cloudflare` cloud rendering (`CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`) |
@@ -141,7 +140,7 @@ The output filename appends `.md` to the full input filename: `document.docx` â†
 |--------|------------|
 | Office | `.docx`, `.doc`, `.pptx`, `.ppt`, `.xlsx`, `.xls`, `.odt`, `.ods`, `.numbers` |
 | PDF | `.pdf` |
-| Text / Markup / Structured Data | `.txt`, `.md`, `.markdown`, `.html`, `.htm`, `.xhtml`, `.xml`, `.csv`, `.tsv`, `.rtf`, `.rst`, `.org`, `.tex` (`.rtf` needs `markitai[kreuzberg]`) |
+| Text / Markup / Structured Data | `.txt`, `.md`, `.markdown`, `.html`, `.htm`, `.xhtml`, `.xml`, `.csv`, `.tsv`, `.rtf`, `.rst`, `.org`, `.tex` |
 | Images | `.jpg`, `.jpeg`, `.png`, `.webp`, `.svg`, `.gif`, `.bmp`, `.tiff`, `.tif`, `.heic`, `.heif`, `.avif` (last three need `markitai[heif]`) |
 | Other Documents | `.epub`, `.eml`, `.msg`, `.ipynb` |
 | URLs | `http://`, `https://` |

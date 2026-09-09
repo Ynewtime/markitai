@@ -3668,17 +3668,17 @@ class TestPureDecouplingBehaviorMatrix:
         assert not rule_a_triggers
 
 
-class TestNoConverterMessage:
-    def test_kreuzberg_formats_name_the_extra(self) -> None:
-        from markitai.converter.base import FileFormat
-        from markitai.workflow.core import no_converter_message
+class TestEveryDocumentedFormatHasAConverter:
+    def test_no_extension_maps_to_a_format_without_a_converter(self) -> None:
+        from markitai.converter.base import (
+            EXTENSION_MAP,
+            FileFormat,
+            load_converter_class,
+        )
 
-        message = no_converter_message(FileFormat.RTF)
-        assert "rtf" in message
-        assert 'install "markitai[kreuzberg]"' in message
-
-    def test_other_formats_stay_plain(self) -> None:
-        from markitai.converter.base import FileFormat
-        from markitai.workflow.core import no_converter_message
-
-        assert "kreuzberg" not in no_converter_message(FileFormat.PDF)
+        missing = sorted(
+            fmt.value
+            for fmt in set(EXTENSION_MAP.values())
+            if fmt is not FileFormat.UNKNOWN and load_converter_class(fmt) is None
+        )
+        assert not missing, f"formats with no converter: {missing}"

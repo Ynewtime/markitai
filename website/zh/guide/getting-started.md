@@ -82,7 +82,6 @@ markitai doctor              # 查看核心与可选能力状态
 | `markitai[legacy]`（anydoc） | 旧版 Office `.doc`/`.ppt` 转换 |
 | `markitai[heif]` | HEIC/HEIF/AVIF 图片输入 |
 | `markitai[svg]` | 高质量 SVG 渲染 |
-| `markitai[kreuzberg]` | 转换 `.rtf`（`.xml`、`.tsv`、`.rst`、`.org`、`.tex`、`.odt`、`.ods` 自 1.0.0 起原生支持） |
 | `markitai[serve]` | 本地 Web 工作区与 REST API |
 | Jina API key | `-s jina` 远程阅读器（环境变量 `JINA_API_KEY`） |
 | Cloudflare | `-s cloudflare` 云端渲染（`CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`） |
@@ -141,7 +140,7 @@ output/
 |--------|------------|
 | Office 文档 | `.docx`、`.doc`、`.pptx`、`.ppt`、`.xlsx`、`.xls`、`.odt`、`.ods`、`.numbers` |
 | PDF | `.pdf` |
-| 文本 / 标记 / 结构化数据 | `.txt`、`.md`、`.markdown`、`.html`、`.htm`、`.xhtml`、`.xml`、`.csv`、`.tsv`、`.rtf`、`.rst`、`.org`、`.tex`（`.rtf` 需要 `markitai[kreuzberg]`） |
+| 文本 / 标记 / 结构化数据 | `.txt`、`.md`、`.markdown`、`.html`、`.htm`、`.xhtml`、`.xml`、`.csv`、`.tsv`、`.rtf`、`.rst`、`.org`、`.tex` |
 | 图片 | `.jpg`、`.jpeg`、`.png`、`.webp`、`.svg`、`.gif`、`.bmp`、`.tiff`、`.tif`、`.heic`、`.heif`、`.avif`（后三者需要 `markitai[heif]`） |
 | 其他文档 | `.epub`、`.eml`、`.msg`、`.ipynb` |
 | URL | `http://`、`https://` |

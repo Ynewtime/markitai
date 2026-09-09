@@ -924,7 +924,7 @@ class TestFetchStrategy:
         assert result.exit_code == 0
         assert "--backend" in result.output
 
-    @pytest.mark.parametrize("backend", ["native", "kreuzberg", "cloudflare"])
+    @pytest.mark.parametrize("backend", ["native", "cloudflare"])
     def test_explicit_backend_replaces_inherited_flags(
         self,
         backend: str,
@@ -935,14 +935,12 @@ class TestFetchStrategy:
         from markitai.config import ConfigManager, MarkitaiConfig
 
         cfg = MarkitaiConfig()
-        cfg.fetch.kreuzberg_convert_enabled = True
         cfg.fetch.cloudflare.convert_enabled = True
         monkeypatch.setattr(ConfigManager, "load", lambda *_args, **_kwargs: cfg)
         sample = tmp_path / "sample.txt"
         sample.write_text("hello")
         result = cli_runner.invoke(app, [str(sample), "-b", backend, "--dry-run"])
         assert result.exit_code == 0, result.output
-        assert cfg.fetch.kreuzberg_convert_enabled is (backend == "kreuzberg")
         assert cfg.fetch.cloudflare.convert_enabled is (backend == "cloudflare")
 
     @pytest.mark.parametrize(
@@ -969,7 +967,6 @@ class TestFetchStrategy:
             [str(sample), "-b", backend, "-s", "cloudflare", "--dry-run"],
         )
         assert result.exit_code == 0, result.output
-        assert cfg.fetch.kreuzberg_convert_enabled is False
         assert cfg.fetch.cloudflare.convert_enabled is cloudflare_convert
 
     def test_cloudflare_strategy_without_backend_implies_converter(
@@ -986,18 +983,6 @@ class TestFetchStrategy:
         assert result.exit_code == 0, result.output
         assert cfg.fetch.cloudflare.convert_enabled is True
 
-    def test_backend_kreuzberg_conflicts_with_cloudflare_strategy(
-        self, tmp_path: Path, cli_runner: CliRunner
-    ) -> None:
-        sample = tmp_path / "sample.txt"
-        sample.write_text("hello")
-        result = cli_runner.invoke(
-            app,
-            [str(sample), "-b", "kreuzberg", "-s", "cloudflare", "--dry-run"],
-        )
-        assert result.exit_code == 1
-        assert "exclusive" in result.output
-
 
 # =============================================================================
 # Removed Deprecated Alias Tests
@@ -1010,12 +995,32 @@ REMOVED_ALIASES = {
     "--static": "-s static",
     "--jina": "-s jina",
     "--cloudflare": "-s cloudflare",
-    "--kreuzberg": "-b kreuzberg",
 }
+
+# Removed with nothing to migrate to: .rtf converts natively since 1.0.0.
+REMOVED_WITHOUT_REPLACEMENT = {"--kreuzberg": "RTF converts natively"}
 
 
 class TestRemovedDeprecatedAliases:
     """The six removed strategy/backend aliases must fail with a migration hint."""
+
+    @pytest.mark.parametrize(
+        ("flag", "hint"), sorted(REMOVED_WITHOUT_REPLACEMENT.items())
+    )
+    def test_alias_without_a_replacement_says_so(
+        self, flag: str, hint: str, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """`--kreuzberg` has no replacement; the hint must not invent one."""
+        sample = tmp_path / "sample.txt"
+        sample.write_text("hello")
+
+        result = cli_runner.invoke(app, [str(sample), flag, "--dry-run"])
+
+        assert result.exit_code == 2
+        stderr = _strip_ansi(result.stderr)
+        assert flag in stderr
+        assert hint in stderr
+        assert "No such option" not in stderr
 
     @pytest.mark.parametrize(("flag", "replacement"), sorted(REMOVED_ALIASES.items()))
     def test_removed_alias_names_the_replacement(
@@ -1093,12 +1098,12 @@ class TestRemovedDeprecatedAliases:
     def test_replacement_backend_still_works(
         self, tmp_path: Path, cli_runner: CliRunner
     ) -> None:
-        """`-b kreuzberg` (the replacement) is unaffected."""
+        """`-b cloudflare` (a supported backend) is unaffected."""
         sample = tmp_path / "sample.txt"
         sample.write_text("hello")
         output_dir = tmp_path / "out"
         result = cli_runner.invoke(
-            app, [str(sample), "-o", str(output_dir), "-b", "kreuzberg", "--dry-run"]
+            app, [str(sample), "-o", str(output_dir), "-b", "cloudflare", "--dry-run"]
         )
         assert result.exit_code == 0
 

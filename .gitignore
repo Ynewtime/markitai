@@ -90,9 +90,6 @@ packages/markitai/benchmarks/results/latest.json
 # Local scratch/test outputs
 temp/
 
-# Kreuzberg extraction cache
-.kreuzberg/
-
 # VitePress (website)
 website/node_modules/
 website/.vitepress/cache/

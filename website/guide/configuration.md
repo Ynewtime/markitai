@@ -136,7 +136,6 @@ markitai config validate ./markitai.json    # Validate specific file
   "fetch": {
     "strategy": "auto",
     "remote_consent": "always",
-    "kreuzberg_convert_enabled": false,
     "defuddle": {
       "timeout": 30,
       "rpm": 20
@@ -777,8 +776,6 @@ Configure how URLs are fetched:
 | `playwright` | Use Playwright for JS-rendered pages (SPA support) |
 | `jina` | Use Jina Reader API |
 | `cloudflare` | Use Cloudflare Browser Rendering `/content` API (rendered HTML, extracted locally) |
-
-`fetch.kreuzberg_convert_enabled` (default `false`) forces the kreuzberg converter for **file** conversion. It is the config equivalent of the `-b kreuzberg` CLI flag (see [CLI Reference](/guide/cli#b-backend-name)).
 
 ### Remote Fetch Consent
 

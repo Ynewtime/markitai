@@ -430,12 +430,6 @@ class TestImageConverterSVG:
         assert result.metadata["asset_path"] == ".markitai/assets/test.svg"
         assert (output_dir / ".markitai" / "assets" / "test.svg").exists()
 
-    def test_svg_not_in_kreuzberg_formats(self):
-        """SVG should no longer be handled by KreuzbergConverter."""
-        from markitai.converter.kreuzberg import KREUZBERG_FORMATS
-
-        assert FileFormat.SVG not in KREUZBERG_FORMATS
-
 
 class TestOcrBackendMissingIsNotSilent:
     """Asking for --ocr without the backend must fail, not quietly degrade.

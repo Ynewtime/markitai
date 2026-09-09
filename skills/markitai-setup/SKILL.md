@@ -24,7 +24,6 @@ Target state: `markitai doctor` exits 0 and shows ✓ on every capability the us
    | `browser` | Playwright rendering for JS-heavy pages, URL screenshots | `uv tool install 'markitai[browser]' --force` |
    | `claude-agent` / `copilot` | Claude Agent SDK / GitHub Copilot SDK as LLM providers | `uv tool install 'markitai[claude-agent]' --force` |
    | `extra-fetch` | curl-cffi TLS-impersonating static fetch | same pattern |
-   | `kreuzberg` | `.rtf` conversion, `-b kreuzberg` (all other formats are native) | same pattern |
    | `ocr` | RapidOCR for scanned PDFs and images (`--ocr`); not in a default install | `uv tool install 'markitai[ocr]' --force` |
    | `serve` | the local web workspace (`markitai serve`) | same pattern |
    | `svg` / `heif` | SVG rasterization / HEIC-HEIF-AVIF input | same pattern |

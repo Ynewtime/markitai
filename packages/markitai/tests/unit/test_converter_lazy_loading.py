@@ -80,10 +80,8 @@ class TestEveryFormatStillResolves:
             assert cls is not None, f"{module} does not register {fmt}"
             assert fmt in cls.supported_formats
 
-    def test_known_extensions_resolve_or_fall_through_to_kreuzberg(self) -> None:
-        from markitai.converter.kreuzberg import KREUZBERG_FORMATS
-
-        covered = set(_CONVERTER_MODULES) | set(KREUZBERG_FORMATS)
+    def test_every_known_extension_names_a_converter_module(self) -> None:
+        covered = set(_CONVERTER_MODULES)
         uncovered = {
             fmt
             for fmt in EXTENSION_MAP.values()

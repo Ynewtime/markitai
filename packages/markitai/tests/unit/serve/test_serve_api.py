@@ -139,7 +139,7 @@ class TestCapabilitiesAndRoot:
         assert data["preset_options"] == {
             name: preset.model_dump() for name, preset in BUILTIN_PRESETS.items()
         }
-        assert set(data["extras"]) == {"browser", "svg", "kreuzberg"}
+        assert set(data["extras"]) == {"browser", "svg"}
         assert all(isinstance(v, bool) for v in data["extras"].values())
         # The webapp reads server-owned limits from here (no constant copies).
         assert data["limits"] == {"max_job_items": MAX_JOB_ITEMS}
@@ -417,17 +417,12 @@ class TestJobConfigMapping:
         assert cfg.cache.enabled == base.cache.enabled
         assert base.cache.no_cache is not skip
 
-    @pytest.mark.parametrize("backend", ["native", "kreuzberg", "cloudflare"])
-    def test_backend_replaces_both_inherited_converter_flags(
-        self, backend: str
-    ) -> None:
+    @pytest.mark.parametrize("backend", ["native", "cloudflare"])
+    def test_backend_replaces_the_inherited_converter_flag(self, backend: str) -> None:
         base = self._base_with_model()
-        base.fetch.kreuzberg_convert_enabled = True
         base.fetch.cloudflare.convert_enabled = True
         cfg = self._build(base, backend=backend)
-        assert cfg.fetch.kreuzberg_convert_enabled is (backend == "kreuzberg")
         assert cfg.fetch.cloudflare.convert_enabled is (backend == "cloudflare")
-        assert base.fetch.kreuzberg_convert_enabled
         assert base.fetch.cloudflare.convert_enabled
 
     def test_llm_true_without_models_degrades_to_disabled(self) -> None:

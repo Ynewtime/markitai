@@ -13,7 +13,7 @@ export type FetchStrategy =
   | "defuddle"
   | "jina"
   | "cloudflare";
-export type ConversionBackend = "native" | "kreuzberg" | "cloudflare";
+export type ConversionBackend = "native" | "cloudflare";
 
 export interface JobOptions {
   preset: Preset | null;
@@ -108,7 +108,7 @@ export interface Capabilities {
   };
   presets: string[];
   preset_options: Record<string, PresetFeatures>;
-  extras: { browser: boolean; svg: boolean; kreuzberg: boolean };
+  extras: { browser: boolean; svg: boolean };
   /** Server-enforced limits (e.g. folder drops truncate to max_job_items). */
   limits: { max_job_items: number };
 }

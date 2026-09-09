@@ -676,7 +676,6 @@ def _build_job_config(base: MarkitaiConfig, opts: JobOptions) -> MarkitaiConfig:
     # -b/--backend selects a file-conversion path, which lives in two
     # different flags rather than one setting (see cli/main.py).
     if opts.backend is not None:
-        cfg.fetch.kreuzberg_convert_enabled = opts.backend == "kreuzberg"
         cfg.fetch.cloudflare.convert_enabled = opts.backend == "cloudflare"
     if cfg.llm.enabled and not cfg.llm.model_list:
         logger.warning(
@@ -1575,7 +1574,6 @@ def create_app(
             "extras": {
                 "browser": find_spec("playwright") is not None,
                 "svg": find_spec("cairosvg") is not None,
-                "kreuzberg": find_spec("kreuzberg") is not None,
             },
             # The webapp reads server-owned limits from here instead of
             # duplicating the constants (contract: schemas.CapabilitiesLimits).

@@ -58,9 +58,9 @@ Partial success exits with status 10 (successful URLs are still written).
 | Flag | Values |
 |---|---|
 | `-s, --strategy` | `auto` (default) `static` `playwright` `defuddle` `jina` `cloudflare` — URL fetching only |
-| `-b, --backend` | `native` (default) `kreuzberg` `cloudflare` — file conversion only; `-s`/`-b` combine freely, but `-b kreuzberg` and `-s cloudflare` are mutually exclusive |
+| `-b, --backend` | `native` (default) `cloudflare` — file conversion only; `-s` and `-b` combine freely |
 
-Credentials: `-s jina` needs `JINA_API_KEY`; `-s cloudflare` (and `-b cloudflare`) need `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`; `-b kreuzberg` needs the `kreuzberg` extra. The old `--playwright` / `--defuddle` / `--static` / `--jina` / `--cloudflare` / `--kreuzberg` aliases were removed in 1.0.0; passing one exits 2 with a message naming its `-s` / `-b` replacement.
+Credentials: `-s jina` needs `JINA_API_KEY`; `-s cloudflare` (and `-b cloudflare`) need `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`. The old `--playwright` / `--defuddle` / `--static` / `--jina` / `--cloudflare` / `--kreuzberg` aliases were removed in 1.0.0; passing one exits 2 with a message naming its `-s` / `-b` replacement (`--kreuzberg` has none: `.rtf` converts natively).
 
 Strategy ordering, per-domain tuning, SPA cache, and privacy rules: [url-fetching.md](url-fetching.md).
 

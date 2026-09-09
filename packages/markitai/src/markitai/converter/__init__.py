@@ -30,7 +30,6 @@ if TYPE_CHECKING:
     from markitai.converter.delimited import TsvConverter
     from markitai.converter.eml import EmlConverter
     from markitai.converter.image import ImageConverter
-    from markitai.converter.kreuzberg import register_kreuzberg_converters
     from markitai.converter.latex import TexConverter
     from markitai.converter.legacy import DocConverter, PptConverter
     from markitai.converter.markitdown_ext import (
@@ -86,7 +85,6 @@ _LAZY_EXPORTS: dict[str, str] = {
     "XlsConverter": "markitai.converter.office",
     "XlsxConverter": "markitai.converter.office",
     "XmlConverter": "markitai.converter.xml_doc",
-    "register_kreuzberg_converters": "markitai.converter.kreuzberg",
 }
 
 __all__ = [
@@ -123,7 +121,6 @@ __all__ = [
     "XmlConverter",
     "detect_format",
     "get_converter",
-    "register_kreuzberg_converters",
 ]
 
 

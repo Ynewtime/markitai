@@ -50,7 +50,7 @@ vi.mock("./api/client", async (importOriginal) => {
       llm: { configured: true, routable: true, effective: true, models: [] },
       presets: ["minimal", "standard", "rich"],
       preset_options: (await import("./lib/conversionOptions")).BUILTIN_PRESET_OPTIONS,
-      extras: { browser: false, svg: false, kreuzberg: false },
+      extras: { browser: false, svg: false },
       limits: { max_job_items: mocks.maxJobItems },
     }),
   };

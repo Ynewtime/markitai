@@ -24,9 +24,9 @@
 # commands, the Python API, then — with the serve/mcp/legacy extras added to
 # the same install — doctor again, legacy Office formats, the serve API the
 # browser UI talks to, and markitai-mcp over stdio; then, with browser,
-# kreuzberg and extra-fetch added too, Chromium via doctor --fix, Playwright
-# rendering, URL screenshots and screenshot-only reading, RTF through
-# kreuzberg, the Cloudflare file backend, the remote extraction strategies on
+# and extra-fetch added too, Chromium via doctor --fix, Playwright
+# rendering, URL screenshots and screenshot-only reading, the Cloudflare
+# file backend, the remote extraction strategies on
 # a public page (skipped with the reason when the resolver is a fake-IP
 # VPN), and a real Batch API job through submit, hand-off and collect.
 #
@@ -481,15 +481,13 @@ show "the message when a capability is missing" 09-failure-messages/missing-extr
 
 # ── 10 ───────────────────────────────────────────────────────────────────────
 step 10-formats "Every format the front page lists" \
-  "One directory of one file per format. The base wheel converts most; the rest must say which extra they need."
+  "One directory of one file per format, all converted by the base wheel."
 mkdir -p 00-inputs/formats
-# Handled by the base wheel: converted. Images: skipped without --llm/--ocr.
-# RTF is the one format documented as needing markitai[kreuzberg] — its
-# failure must name that command.
-BASE_FORMATS="pptx xlsx csv tsv html xml eml msg epub ipynb rst org tex odt ods"
+# Every documented format is handled by the base wheel; images are skipped
+# without --llm/--ocr, and the summary has to say so.
+BASE_FORMATS="pptx xlsx csv tsv html xml eml msg epub ipynb rst org tex odt ods rtf"
 IMAGE_FORMATS="jpg bmp"
-KREUZBERG_FORMATS="rtf"
-for f in $BASE_FORMATS $IMAGE_FORMATS $KREUZBERG_FORMATS; do
+for f in $BASE_FORMATS $IMAGE_FORMATS; do
   cp "$REPO_ROOT/packages/markitai/tests/fixtures/sample.$f" 00-inputs/formats/ 2>/dev/null
 done
 cp "$REPO_ROOT/packages/markitai/tests/fixtures/legacy/sample.xls" 00-inputs/formats/ 2>/dev/null
@@ -501,16 +499,10 @@ done
 check "every base-wheel format produced markdown${MISSING:+ (missing:$MISSING)}" test -z "$MISSING"
 check "images are skipped, and the summary says what would read them" \
   grep -q 'image_only.*--llm or --ocr' 10-formats/batch.log
-# The summary wraps long warnings at the terminal width, so the install
-# command may sit on the line after the file name: count both separately.
-KZ_MISSING=""
-for f in $KREUZBERG_FORMATS; do
-  grep -q "sample.$f: No converter available" 10-formats/batch.log || KZ_MISSING="$KZ_MISSING $f"
-done
-check "each kreuzberg-backed format is reported as unconverted${KZ_MISSING:+ (silent:$KZ_MISSING)}" \
-  test -z "$KZ_MISSING"
-check "and that warning names the extra that would convert it" \
-  test "$(grep -c 'install "markitai\[kreuzberg\]"' 10-formats/batch.log)" -eq 1
+check "no format is left without a converter" \
+  test "$(grep -c 'No converter available' 10-formats/batch.log)" -eq 0
+check "an RTF keeps its heading hierarchy" \
+  bash -c "grep -q '^# ' 10-formats/output/sample.rtf.md && grep -q '^## ' 10-formats/output/sample.rtf.md && grep -q '^### ' 10-formats/output/sample.rtf.md"
 check "a spreadsheet keeps its table" grep -q '^|' 10-formats/output/sample.xlsx.md
 check "a TSV becomes a table" grep -q '^| Employee_ID' 10-formats/output/sample.tsv.md
 check "an ODS sheet becomes a table" grep -q '^| Team' 10-formats/output/sample.ods.md
@@ -854,12 +846,12 @@ show "what the agent host saw" 19-mcp/probe.txt
 
 # ── 20 ───────────────────────────────────────────────────────────────────────
 step 20-all-extras "Every installable extra, and the browser" \
-  "browser, kreuzberg and extra-fetch join the install; doctor --fix fetches Chromium the way the docs say."
+  "browser and extra-fetch join the install; doctor --fix fetches Chromium the way the docs say."
 uv tool install --force --python "$E2E_PYTHON" \
-  "markitai[serve,mcp,legacy,browser,kreuzberg,extra-fetch]@$WHEEL" >20-all-extras/install.log 2>&1
+  "markitai[serve,mcp,legacy,browser,extra-fetch]@$WHEEL" >20-all-extras/install.log 2>&1
 check "the remaining extras install on top of the existing tool" test $? -eq 0
-"$TOOL_PY" -c "import curl_cffi, kreuzberg, playwright" >20-all-extras/imports.txt 2>&1
-check "curl_cffi, kreuzberg and playwright import from the tool environment" test $? -eq 0
+"$TOOL_PY" -c "import curl_cffi, playwright" >20-all-extras/imports.txt 2>&1
+check "curl_cffi and playwright import from the tool environment" test $? -eq 0
 note "browsers live in $PLAYWRIGHT_BROWSERS_PATH (set it to an empty dir to exercise the cold download)"
 markitai doctor --fix >20-all-extras/doctor-fix.txt 2>&1
 markitai doctor --json >20-all-extras/doctor.json 2>/dev/null
@@ -871,14 +863,6 @@ PYEOF
 check "doctor --fix leaves a working Chromium behind" grep -q '^playwright ok' 20-all-extras/doctor-playwright.txt
 show "doctor --fix, as the user sees it" 20-all-extras/doctor-fix.txt
 file "tool install log" 20-all-extras/install.log
-
-# ── 21 ───────────────────────────────────────────────────────────────────────
-step 21-kreuzberg "The format the kreuzberg extra unlocks" \
-  "RTF failed with an install hint in step 10; with the extra present it converts."
-markitai 00-inputs/formats/sample.rtf -o 21-kreuzberg/output/ >21-kreuzberg/convert.log 2>&1
-check "an RTF converts once the extra is present" test -s 21-kreuzberg/output/sample.rtf.md
-check "and keeps its headings" grep -q '^# ' 21-kreuzberg/output/sample.rtf.md
-show "RTF output" 21-kreuzberg/output/sample.rtf.md
 
 # ── 22 ───────────────────────────────────────────────────────────────────────
 step 22-browser "Fetching with a real browser" \

@@ -54,7 +54,7 @@ def extra_install_command(extra: str) -> str:
 class MissingDependencyError(SelfExplanatoryError, ImportError):
     """A dependency needed for this operation is not installed.
 
-    Covers optional extras (kreuzberg, pillow-heif, rapidocr) as well as core
+    Covers optional extras (pillow-heif, rapidocr, cairosvg) as well as core
     packages missing from a broken environment. Also an ``ImportError`` so
     existing ``except ImportError`` handlers keep working. The message must
     name the missing package and the exact install command.

@@ -63,9 +63,9 @@ describe("conversion option dependencies", () => {
   });
 
   it("Cloudflare strategy implies its backend without destroying the previous file choice", () => {
-    const advanced = { ...ADVANCED_DEFAULTS, backend: "kreuzberg" as const, strategy: "cloudflare" as const };
+    const advanced = { ...ADVANCED_DEFAULTS, backend: "native" as const, strategy: "cloudflare" as const };
     expect(resolveOptions({ ...initial, advanced }).backend).toBe("cloudflare");
-    expect(resolveOptions({ ...initial, advanced: changeAdvanced(advanced, "strategy", "auto") }).backend).toBe("kreuzberg");
+    expect(resolveOptions({ ...initial, advanced: changeAdvanced(advanced, "strategy", "auto") }).backend).toBe("native");
   });
 
   it("keeps CLI flags consistent with effective values throughout the feature matrix", () => {

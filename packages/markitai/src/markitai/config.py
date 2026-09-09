@@ -171,7 +171,7 @@ OutputProfile = Literal["rag", "obsidian", "okf"]
 FetchStrategy = Literal[
     "auto", "static", "playwright", "defuddle", "jina", "cloudflare"
 ]
-ConversionBackend = Literal["native", "kreuzberg", "cloudflare"]
+ConversionBackend = Literal["native", "cloudflare"]
 
 
 class OutputConfig(BaseModel):
@@ -821,10 +821,6 @@ class FetchConfig(BaseModel):
     playwright: PlaywrightConfig = Field(default_factory=PlaywrightConfig)
     jina: JinaConfig = Field(default_factory=JinaConfig)
     cloudflare: CloudflareConfig = Field(default_factory=CloudflareConfig)
-    kreuzberg_convert_enabled: bool = Field(
-        default=False,
-        description="Force kreuzberg converter for all supported file formats.",
-    )
     policy: FetchPolicyConfig = Field(default_factory=FetchPolicyConfig)
     domain_profiles: dict[str, DomainProfileConfig] = Field(default_factory=dict)
     fallback_patterns: list[str] = Field(

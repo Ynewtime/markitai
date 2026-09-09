@@ -219,7 +219,7 @@ def test_readme_extras_table_matches_package_metadata() -> None:
 def test_optional_capability_extras_are_documented(guide: Path) -> None:
     """Both guides must name the extras a reader has to install by hand."""
     text = (guide / "getting-started.md").read_text(encoding="utf-8")
-    for extra in ("heif", "svg", "kreuzberg", "browser", "ocr"):
+    for extra in ("heif", "svg", "browser", "ocr"):
         assert f"markitai[{extra}]" in text, (
             f"{(guide / 'getting-started.md').relative_to(_REPO_ROOT)} never "
             f"tells the reader how to install the {extra!r} extra"

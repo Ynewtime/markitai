@@ -1243,7 +1243,7 @@ install_markitai() {
 # an interactive session keeps the guided browser-extra default.
 MARKITAI_EXTRAS=""
 MARKITAI_RECEIPT_EXTRAS=""
-MARKITAI_ALL_FALLBACK_EXTRAS="browser,extra-fetch,kreuzberg,svg,heif,legacy,mcp,ocr,serve"
+MARKITAI_ALL_FALLBACK_EXTRAS="browser,extra-fetch,svg,heif,legacy,mcp,ocr,serve"
 # Extras the user explicitly turned down. `markitai doctor --suggest-extras`
 # recommends `ocr` unconditionally, so without this list the finalize pass
 # would reinstall exactly what was just declined and make the prompt a lie.

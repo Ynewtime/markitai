@@ -391,8 +391,7 @@ def run_interactive_mode(ctx: click.Context) -> None:
     type=click.Choice(list(get_args(ConversionBackend))),
     default=None,
     help="File conversion backend. native (default) uses the built-in "
-    "converters; kreuzberg needs 'markitai[kreuzberg]'; cloudflare needs "
-    "CF credentials.",
+    "converters; cloudflare needs CF credentials.",
 )
 @click.option(
     "-v",
@@ -858,17 +857,8 @@ def app(
     # converter that `-s cloudflare` would otherwise imply — so
     # `-b native -s cloudflare` fetches via Cloudflare but converts locally.
     if file_backend is not None:
-        cfg.fetch.kreuzberg_convert_enabled = False
         cfg.fetch.cloudflare.convert_enabled = False
-    if file_backend == "kreuzberg":
-        if fetch_strategy_name == "cloudflare":
-            stderr_console.print(
-                "[red]Error: '-b kreuzberg' and '-s cloudflare' are mutually "
-                "exclusive (both override file conversion).[/red]"
-            )
-            ctx.exit(1)
-        cfg.fetch.kreuzberg_convert_enabled = True
-    elif file_backend == "cloudflare":
+    if file_backend == "cloudflare":
         # CF Workers AI toMarkdown for file conversion (credentials checked
         # with actionable guidance at conversion time)
         cfg.fetch.cloudflare.convert_enabled = True

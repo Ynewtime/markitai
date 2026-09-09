@@ -274,7 +274,6 @@ class CapabilitiesExtras(BaseModel):
 
     browser: bool
     svg: bool
-    kreuzberg: bool
 
 
 class CapabilitiesLimits(BaseModel):

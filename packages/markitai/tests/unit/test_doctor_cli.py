@@ -385,7 +385,6 @@ class TestSuggestExtras:
 
         assert "browser" in result
         assert "extra-fetch" in result
-        assert "kreuzberg" in result
         assert "svg" in result
 
     def test_it_offers_every_declared_extra(self) -> None:

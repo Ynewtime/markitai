@@ -387,19 +387,15 @@ uv run playwright install-deps chromium
 | 取值 | 说明 |
 |------|------|
 | `native`（默认） | 内置转换器（DOCX、PDF、图片等） |
-| `kreuzberg` | 强制所有文件格式使用 kreuzberg 转换器，需要 `uv pip install markitai[kreuzberg]` |
 | `cloudflare` | Cloudflare Workers AI `toMarkdown`，需要 CF 凭据 |
 
 ```bash
-markitai document.pdf -b kreuzberg
 markitai document.pdf -b cloudflare
-markitai https://example.com -s playwright -b kreuzberg   # -s 与 -b 可自由组合
+markitai https://example.com -s playwright -b cloudflare   # -s 与 -b 可自由组合
 ```
 
-`-b kreuzberg` 与 `-s cloudflare` 互斥，两者都会覆盖文件转换行为。
-
 ::: tip
-Cloudflare Browser Rendering 在 Free 计划上可用。Workers AI `toMarkdown` 对 PDF/Office/CSV/XML 免费；图片转换使用 Neurons 配额。对于有本地转换器的格式，native/kreuzberg 通常输出质量更高。存在更优本地转换器时，`-b cloudflare` 会给出提示。
+Cloudflare Browser Rendering 在 Free 计划上可用。Workers AI `toMarkdown` 对 PDF/Office/CSV/XML 免费；图片转换使用 Neurons 配额。对于有本地转换器的格式，内置转换器通常输出质量更高。存在更优本地转换器时，`-b cloudflare` 会给出提示。
 :::
 
 ### 已移除的旧后端参数
@@ -413,13 +409,13 @@ Cloudflare Browser Rendering 在 Free 计划上可用。Workers AI `toMarkdown` 
 | `--static` | `-s static` |
 | `--jina` | `-s jina` |
 | `--cloudflare` | `-s cloudflare`（需要 CF 文件转换时再加 `-b cloudflare`） |
-| `--kreuzberg` | `-b kreuzberg` |
+| `--kreuzberg` | *（无——`.rtf` 自 1.0.0 起原生转换）* |
 
 ```bash
 markitai https://example.com -s defuddle   # 替代旧的 --defuddle
 ```
 
-这些别名带来的互斥规则也随之取消：`-s/--strategy` 与 `-b/--backend` 相互正交，可自由组合；唯一保留的冲突是 `-b kreuzberg` 与 `-s cloudflare`，因为两者都会接管文件转换。
+这些别名带来的互斥规则也随之取消：`-s/--strategy` 与 `-b/--backend` 相互正交，可自由组合。
 
 ## 初始化命令
 
@@ -557,7 +553,7 @@ SPA 域名会在静态抓取检测到 JavaScript 依赖时自动学习。这可�
 markitai doctor
 markitai doctor --fix     # Playwright 包已存在时，安全安装并重新检查 Chromium
 markitai doctor --json    # JSON 输出
-markitai doctor --suggest-extras   # 输出适合 `uv tool install "markitai[...]"` 的逗号分隔 extras 列表，包含 browser/extra-fetch/kreuzberg/svg/heif/ocr 及检测到的提供商 extra
+markitai doctor --suggest-extras   # 输出适合 `uv tool install "markitai[...]"` 的逗号分隔 extras 列表，包含 browser/extra-fetch/svg/heif/ocr 及检测到的提供商 extra
 ```
 
 每一项都是能力报告，没有启用的能力不会让整次检查失败：

@@ -136,7 +136,6 @@ markitai config validate ./markitai.json    # 验证指定文件
   "fetch": {
     "strategy": "auto",
     "remote_consent": "always",
-    "kreuzberg_convert_enabled": false,
     "defuddle": {
       "timeout": 30,
       "rpm": 20
@@ -777,8 +776,6 @@ URL 抓取使用独立的并发池，因为 URL 可能有较高延迟（如浏�
 | `playwright` | 使用 Playwright 处理 JS 渲染的页面（支持 SPA） |
 | `jina` | 使用 Jina Reader API |
 | `cloudflare` | 使用 Cloudflare Browser Rendering `/content` API（取回渲染后的 HTML，本地提取） |
-
-`fetch.kreuzberg_convert_enabled`（默认 `false`）强制对**文件**转换使用 kreuzberg 转换器，是 CLI `-b kreuzberg` 参数（见 [CLI 参考](/zh/guide/cli#b-backend-name)）的配置项等价物。
 
 ### 远程抓取同意
 
