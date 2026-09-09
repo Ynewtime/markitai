@@ -86,33 +86,40 @@
 }
 
 /* Homepage: show the shortest path to a useful result. */
-/* Home: one look at the workbench, so the web UI is not a surprise buried
-   in the guide. Sized from the capture so the reserved box matches. */
-/* The hero and its four feature cards are the pitch: they should land as one
-   screen, not as a block the reader has to scroll to finish. The nav is 64px;
-   the rest is the hero plus the features, centered in what remains. */
-@media (min-width: 960px) and (min-height: 760px) {
-  .VPHome .VPHero + .VPFeatures {
-    padding-bottom: 0;
-  }
-  /* The nav is fixed and overlays the hero, so the offset has to include it:
-     a flat value put the title underneath the nav bar. */
+/* The hero and its feature cards are the pitch: on viewports tall enough to
+   hold them (tablets and desktops) they own the first screen exactly. The
+   hero's negative nav-margin puts its box at the very top of the viewport,
+   so it just needs the viewport height minus the feature cards: it absorbs
+   the rest, the cards' bottom edge lands on the fold, and everything else
+   starts below it. The feature block's height is content-driven, so the
+   theme layout publishes its measured height as --vp-features-h; the 360px
+   fallback only covers the paint before the script runs. Auto margins center
+   the hero content and degrade to top-aligned instead of clipping when the
+   window is too short. Below 640px the stacked cards are always taller than
+   the viewport, so the page simply flows. */
+@media (min-width: 640px) {
   .VPHome > .VPHero {
-    padding-top: calc(var(--vp-nav-height) + 40px);
+    display: flex;
+    flex-direction: column;
+    min-height: max(480px, calc(100vh - var(--vp-features-h, 360px)));
+    min-height: max(480px, calc(100svh - var(--vp-features-h, 360px)));
   }
-  .VPHome .VPHero .container {
-    padding-bottom: 8px;
+  .VPHome > .VPHero .container {
+    /* width: 100% keeps the container spanning its 1152px max (auto margins
+       would otherwise shrink it to fit-content and center the text block). */
+    width: 100%;
+    margin: auto;
+  }
+  .VPHome > .VPFeatures {
+    /* flow-root: the feature grid's -8px margins must not collapse through
+       the block's edges, or the measured height and the real box drift. */
+    display: flow-root;
+    padding-bottom: 64px;
   }
 }
 
-/* Below the fold the page was cramped: the workbench section started right
-   under the feature cards with a hairline between and little else. Give both
-   sides of that divider room, without touching the screen above it. */
-.VPHome .VPFeatures {
-  padding-bottom: 96px;
-  border-bottom: 1px solid var(--vp-c-divider);
-}
-
+/* Below the fold: the workbench and the quickstart. No divider — separation
+   comes from the fold itself plus this margin. */
 .home-shot {
   max-width: 1152px;
   margin: 96px auto 0;
@@ -120,9 +127,12 @@
   text-align: center;
 }
 .home-shot h2 {
-  font-size: 28px;
-  letter-spacing: -0.02em;
   margin: 0 0 8px;
+  padding: 0;
+  border: 0;
+  font-size: clamp(28px, 4vw, 40px);
+  line-height: 1.12;
+  letter-spacing: -0.025em;
 }
 .home-shot > p {
   color: var(--vp-c-text-2);
@@ -154,7 +164,7 @@
   align-self: center;
 }
 
-.home-quickstart .eyebrow {
+.eyebrow {
   margin: 0 0 12px;
   color: var(--vp-c-text-2);
   font-size: 12px;
@@ -285,6 +295,12 @@
 }
 
 @media (max-width: 959px) {
+  /* No forced first screen on small devices: the stacked cards are taller
+     than any phone viewport, so the sections simply flow. */
+  .home-shot {
+    margin-top: 64px;
+  }
+
   .home-quickstart {
     grid-template-columns: 1fr;
     gap: 32px;
@@ -343,6 +359,11 @@
   .dark {
     --vp-home-hero-name-color: #000;
     --vp-home-hero-name-background: none;
+  }
+
+  /* The first screen is a viewport concept; let printed pages break naturally. */
+  .VPHome > .VPHero {
+    min-height: 0;
   }
 
   .VPHero .name.clip {
