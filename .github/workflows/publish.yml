@@ -36,7 +36,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@v6.1.0
         with:
           ref: ${{ github.event.inputs.tag || github.ref_name }}
 
@@ -60,7 +60,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@v6.1.0
         with:
           ref: ${{ github.event.inputs.tag || github.ref_name }}
 
@@ -91,7 +91,7 @@ jobs:
         python-version: ['3.11', '3.12', '3.13']
     steps:
       - name: Checkout
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@v6.1.0
         with:
           ref: ${{ github.event.inputs.tag || github.ref_name }}
 
@@ -172,7 +172,7 @@ jobs:
       TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@v6.1.0
         with:
           ref: ${{ env.TAG }}
 
@@ -196,7 +196,7 @@ jobs:
           fi
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@v1.14.0
+        uses: pypa/gh-action-pypi-publish@v1.14.1
         with:
           packages-dir: dist/
           skip-existing: true
