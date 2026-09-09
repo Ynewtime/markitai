@@ -56,6 +56,154 @@ class _SlidingWindowRateLimiter:
                 await asyncio.sleep(wait_time)
 
 
+def _get_linux_system_proxy() -> tuple[str, str]:
+    """Read the active desktop's manual HTTP proxy, without changing settings.
+
+    Scope: XDG_CURRENT_DESKTOP GNOME/Unity via gsettings, KDE via
+    kreadconfig6 (or 5), including kiosk/global defaults resolved by KConfig.
+    HTTPS wins over HTTP; one HTTP proxy is used for all schemes, as on macOS.
+    Desktop bypass entries feed the existing NO_PROXY matcher (not a full
+    implementation of every desktop's exception syntax).
+
+    No desktop marker/tool, disabled/automatic/PAC/WPAD/environment modes,
+    SOCKS-only settings, authenticated GNOME HTTP proxies and KDE reversed
+    exceptions yield no system proxy. Never fall through to another desktop's
+    possibly stale settings. Headless users should set proxy environment vars.
+    Reads have a shared one-second subprocess budget and are session-cached;
+    first discovery is synchronous, not an asynchronous/background operation.
+    No port probes, configuration writes, PAC execution or credential lookup.
+    """
+    import ast
+    import os
+    import re
+    import shutil
+    import subprocess
+    from urllib.parse import urlsplit
+
+    desktops = set(os.environ.get("XDG_CURRENT_DESKTOP", "").upper().split(":"))
+    deadline = time.monotonic() + 1.0
+
+    def read(args: list[str]) -> str:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=remaining,
+        )
+        if result.returncode != 0:
+            raise ValueError("Desktop proxy setting unavailable")
+        return result.stdout.strip()
+
+    def proxy_url(value: str) -> str:
+        # KConfig also stores proxies as "http://host port".
+        value = re.sub(r"\s+(\d+)$", r":\1", value.strip())
+        if not value:
+            return ""
+        if "://" not in value:
+            value = "http://" + value
+        try:
+            parsed = urlsplit(value)
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.path not in {"", "/"}
+                or parsed.query
+                or parsed.fragment
+                or any(c.isspace() for c in value)
+                or (parsed.port is not None and not 0 < parsed.port < 65536)
+            ):
+                return ""
+        except ValueError:
+            return ""
+        return value
+
+    try:
+        # KDE wins for mixed markers; do not inspect GNOME when KDE is active.
+        if "KDE" in desktops:
+            tool = shutil.which("kreadconfig6") or shutil.which("kreadconfig5")
+            if not tool:
+                return "", ""
+
+            def kde(key: str) -> str:
+                return read(
+                    [
+                        tool,
+                        "--file",
+                        "kioslaverc",
+                        "--group",
+                        "Proxy Settings",
+                        "--key",
+                        key,
+                    ]
+                )
+
+            if kde("ProxyType") != "1":
+                return "", ""
+            if kde("ReversedException").lower() not in {"", "false", "0"}:
+                return "", ""
+            proxy = proxy_url(kde("httpsProxy")) or proxy_url(kde("httpProxy"))
+            if proxy:
+                return proxy, kde("NoProxyFor").replace(";", ",")
+        elif desktops & {"GNOME", "UNITY"}:
+            tool = shutil.which("gsettings")
+            if not tool:
+                return "", ""
+            output = read([tool, "list-recursively", "org.gnome.system.proxy"])
+            settings: dict[str, Any] = {}
+            for line in output.splitlines():
+                parts = line.split(None, 2)
+                if len(parts) == 3:
+                    settings[f"{parts[0]}.{parts[1]}"] = parts[2]
+
+            def gnome(key: str, default: str = "''") -> Any:
+                value = settings.get(f"org.gnome.system.proxy.{key}", default)
+                # GVariant annotates an empty string array with its type.
+                if key == "ignore-hosts" and value == "@as []":
+                    return []
+                return ast.literal_eval(value)
+
+            if gnome("mode") != "manual":
+                return "", ""
+            if settings.get("org.gnome.system.proxy.http.use-authentication") == "true":
+                return "", ""
+            protocols = (
+                ("http",)
+                if settings.get("org.gnome.system.proxy.use-same-proxy") == "true"
+                else ("https", "http")
+            )
+            for protocol in protocols:
+                host = gnome(f"{protocol}.host")
+                port = gnome(f"{protocol}.port", "0")
+                if (
+                    not isinstance(host, str)
+                    or type(port) is not int
+                    or not 0 < port < 65536
+                ):
+                    continue
+                # Host settings are hostnames/IPs, not URLs or credentials.
+                if not host or any(c in host for c in "/@?#"):
+                    continue
+                if ":" in host and not host.startswith("["):
+                    host = f"[{host}]"
+                proxy = proxy_url(f"http://{host}:{port}")
+                if proxy:
+                    bypass = gnome("ignore-hosts", "[]")
+                    if not isinstance(bypass, list) or not all(
+                        isinstance(v, str) for v in bypass
+                    ):
+                        return "", ""
+                    return proxy, ",".join(bypass)
+    except (OSError, ValueError, SyntaxError, TimeoutError, subprocess.SubprocessError):
+        pass  # Missing desktop services/tools and malformed settings are routine.
+    return "", ""
+
+
 def _get_system_proxy() -> tuple[str, str]:
     """Get system proxy settings from OS configuration.
 
@@ -67,6 +215,9 @@ def _get_system_proxy() -> tuple[str, str]:
     import subprocess
 
     system = platform.system()
+
+    if system == "Linux":
+        return _get_linux_system_proxy()
 
     if system == "Windows":
         try:
@@ -459,7 +610,7 @@ class FetchSession:
 
         Detection order:
         1. Environment variables: HTTPS_PROXY, HTTP_PROXY, ALL_PROXY
-        2. System proxy settings (Windows registry / macOS scutil)
+        2. System proxy settings (Windows registry / macOS scutil / Linux desktop)
 
         Only declared configuration is trusted. Scanning localhost for open
         proxy ports was removed deliberately: a bare TCP connect proves
@@ -500,7 +651,7 @@ class FetchSession:
                 )
                 return proxy
 
-        # Check system proxy settings (Windows/macOS)
+        # Check system proxy settings (Windows/macOS/Linux)
         system_proxy, system_bypass = _get_system_proxy()
         if system_proxy:
             self.detected_proxy = system_proxy
@@ -517,7 +668,7 @@ class FetchSession:
 
         Merges the ``NO_PROXY``/``no_proxy`` environment variable with the
         bypass list recorded by :meth:`detect_proxy` (the OS exception list
-        on Windows/macOS). The environment variable is read every call so it
+        on Windows/macOS/Linux). The environment variable is read every call so it
         applies no matter which source supplied the proxy itself.
 
         Returns:

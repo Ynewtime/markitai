@@ -2035,13 +2035,14 @@ class TestCloseSharedClients:
         """Test closing shared fetch cache."""
         from markitai import fetch
         from markitai.fetch import close_shared_clients
+        from markitai.fetch_cache import FetchCache
 
-        # Create a mock cache
-        mock_cache = type("MockCache", (), {"close": lambda _self: None})()
+        mock_cache = MagicMock(spec=FetchCache)
         fetch.get_default_session().fetch_cache = mock_cache
 
         await close_shared_clients()
 
+        mock_cache.close.assert_called_once_with()
         assert fetch.get_default_session().fetch_cache is None
 
     @pytest.mark.asyncio
@@ -3405,13 +3406,18 @@ class TestGetSystemProxy:
     """Tests for _get_system_proxy function."""
 
     def test_get_system_proxy_linux(self) -> None:
-        """Test system proxy detection on Linux (not implemented)."""
+        """Linux delegates to desktop discovery without reading host settings."""
         from markitai.fetch import _get_system_proxy
 
-        with patch("platform.system", return_value="Linux"):
-            proxy, bypass = _get_system_proxy()
-            assert proxy == ""
-            assert bypass == ""
+        with (
+            patch("platform.system", return_value="Linux"),
+            patch(
+                "markitai.fetch_session._get_linux_system_proxy",
+                return_value=("http://proxy.test:8080", "localhost"),
+            ) as discover,
+        ):
+            assert _get_system_proxy() == ("http://proxy.test:8080", "localhost")
+            discover.assert_called_once_with()
 
     def test_get_system_proxy_unknown_platform(self) -> None:
         """Test system proxy detection on unknown platform."""

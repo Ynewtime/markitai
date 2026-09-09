@@ -103,6 +103,240 @@ class TestDetectProxyDoesNotProbePorts:
         assert session.detected_proxy_bypass == "*.local"
 
 
+@pytest.fixture
+def linux_desktop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep desktop tests independent of the host OS and installed tools."""
+    for key in list(os.environ):
+        if key.lower().endswith("_proxy") or key == "XDG_CURRENT_DESKTOP":
+            monkeypatch.delenv(key)
+    monkeypatch.setattr("platform.system", lambda: "Linux")
+    monkeypatch.setattr("shutil.which", lambda tool: f"/usr/bin/{tool}")
+
+
+def _gnome_output(**overrides: str) -> str:
+    values = {
+        "mode": "'manual'",
+        "https.host": "'secure.proxy'",
+        "https.port": "8443",
+        "http.host": "'web.proxy'",
+        "http.port": "8080",
+        "http.use-authentication": "false",
+        "use-same-proxy": "false",
+        "ignore-hosts": "['localhost', '*.corp', '10.0.0.0/8']",
+    }
+    values.update(overrides)
+    return "\n".join(
+        f"org.gnome.system.proxy{'.' + key.rsplit('.', 1)[0] if '.' in key else ''} "
+        f"{key.rsplit('.', 1)[-1]} {value}"
+        for key, value in values.items()
+    )
+
+
+class TestLinuxDesktopProxy:
+    @pytest.mark.parametrize(
+        ("overrides", "expected"),
+        [
+            ({}, "http://secure.proxy:8443"),
+            ({"https.host": "''"}, "http://web.proxy:8080"),
+            ({"https.port": "0"}, "http://web.proxy:8080"),
+            ({"https.port": "70000"}, "http://web.proxy:8080"),
+            ({"https.host": "'::1'"}, "http://[::1]:8443"),
+            ({"use-same-proxy": "true"}, "http://web.proxy:8080"),
+            ({"ignore-hosts": "@as []"}, "http://secure.proxy:8443"),
+            ({"mode": "'none'"}, ""),
+            ({"mode": "'auto'"}, ""),
+            ({"http.use-authentication": "true"}, ""),
+            ({"https.host": "''", "http.host": "''"}, ""),
+            ({"ignore-hosts": "'not a list'"}, ""),
+            ({"mode": "not valid"}, ""),
+            ({"https.host": "'user@proxy'", "http.host": "''"}, ""),
+        ],
+    )
+    def test_gnome(
+        self,
+        linux_desktop: None,
+        monkeypatch: pytest.MonkeyPatch,
+        overrides: dict[str, str],
+        expected: str,
+    ) -> None:
+        import subprocess
+
+        monkeypatch.setenv("XDG_CURRENT_DESKTOP", "ubuntu:GNOME")
+        before = dict(os.environ)
+        with patch(
+            "subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, _gnome_output(**overrides)),
+        ) as run:
+            session = FetchSession()
+            assert session.detect_proxy() == expected
+            assert session.detect_proxy() == expected
+            run.assert_called_once()
+            assert run.call_args.args[0] == [
+                "/usr/bin/gsettings",
+                "list-recursively",
+                "org.gnome.system.proxy",
+            ]
+            assert 0 < run.call_args.kwargs["timeout"] <= 1
+            assert run.call_args.kwargs["stdin"] == subprocess.DEVNULL
+            if expected and "ignore-hosts" not in overrides:
+                assert session.is_proxy_bypassed("http://service.corp")
+                assert session.is_proxy_bypassed("http://10.1.2.3")
+            session.detect_proxy(force_recheck=True)
+            assert run.call_count == 2
+        assert dict(os.environ) == before
+
+    @pytest.mark.parametrize(
+        ("overrides", "expected"),
+        [
+            ({}, "http://secure.proxy:8443"),
+            (
+                {"httpsProxy": "", "httpProxy": "web.proxy:8080"},
+                "http://web.proxy:8080",
+            ),
+            ({"httpsProxy": "http://[::1] 8080"}, "http://[::1]:8080"),
+            ({"ProxyType": "0"}, ""),
+            ({"ProxyType": "2"}, ""),
+            ({"ProxyType": "3"}, ""),
+            ({"ProxyType": "4"}, ""),
+            ({"ReversedException": "true"}, ""),
+            ({"httpsProxy": "socks://proxy:1080", "httpProxy": ""}, ""),
+            ({"httpsProxy": "http://proxy:99999", "httpProxy": ""}, ""),
+            ({"httpsProxy": "http://proxy/path", "httpProxy": ""}, ""),
+        ],
+    )
+    def test_kde(
+        self,
+        linux_desktop: None,
+        monkeypatch: pytest.MonkeyPatch,
+        overrides: dict[str, str],
+        expected: str,
+    ) -> None:
+        import subprocess
+
+        monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE:GNOME")
+        values = {
+            "ProxyType": "1",
+            "ReversedException": "false",
+            "httpsProxy": "http://secure.proxy 8443",
+            "httpProxy": "http://web.proxy 8080",
+            "NoProxyFor": "localhost,.corp;10.0.0.0/8",
+        }
+        values.update(overrides)
+
+        def run(args: list[str], **kwargs: Any) -> Any:
+            assert args[:6] == [
+                "/usr/bin/kreadconfig6",
+                "--file",
+                "kioslaverc",
+                "--group",
+                "Proxy Settings",
+                "--key",
+            ]
+            assert 0 < kwargs["timeout"] <= 1
+            return subprocess.CompletedProcess(args, 0, values[args[-1]])
+
+        with patch("subprocess.run", side_effect=run):
+            session = FetchSession()
+            assert session.detect_proxy() == expected
+            if expected:
+                assert session.is_proxy_bypassed("https://service.corp")
+                assert session.is_proxy_bypassed("http://10.2.3.4")
+
+    @pytest.mark.parametrize("desktop", ["", "sway", "XFCE", "Cinnamon"])
+    def test_unknown_desktop_does_not_probe(
+        self,
+        linux_desktop: None,
+        monkeypatch: pytest.MonkeyPatch,
+        desktop: str,
+    ) -> None:
+        monkeypatch.setenv("XDG_CURRENT_DESKTOP", desktop)
+        with patch("subprocess.run") as run:
+            assert FetchSession().detect_proxy() == ""
+            run.assert_not_called()
+
+    @pytest.mark.parametrize("desktop", ["GNOME", "KDE"])
+    def test_missing_tool(
+        self,
+        linux_desktop: None,
+        monkeypatch: pytest.MonkeyPatch,
+        desktop: str,
+    ) -> None:
+        monkeypatch.setenv("XDG_CURRENT_DESKTOP", desktop)
+        monkeypatch.setattr("shutil.which", lambda _: None)
+        with patch("subprocess.run") as run:
+            assert FetchSession().detect_proxy() == ""
+            run.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "variable",
+        [
+            "HTTPS_PROXY",
+            "HTTP_PROXY",
+            "ALL_PROXY",
+            "https_proxy",
+            "http_proxy",
+            "all_proxy",
+        ],
+    )
+    def test_env_skips_desktop_tools(
+        self,
+        linux_desktop: None,
+        monkeypatch: pytest.MonkeyPatch,
+        variable: str,
+    ) -> None:
+        monkeypatch.setenv("XDG_CURRENT_DESKTOP", "GNOME")
+        monkeypatch.setenv(variable, "http://env.proxy:1234")
+        with patch("subprocess.run") as run:
+            assert FetchSession().detect_proxy() == "http://env.proxy:1234"
+            run.assert_not_called()
+
+    @pytest.mark.parametrize("desktop", ["GNOME", "KDE"])
+    def test_read_failures_are_silent(
+        self,
+        linux_desktop: None,
+        monkeypatch: pytest.MonkeyPatch,
+        desktop: str,
+    ) -> None:
+        import subprocess
+
+        monkeypatch.setenv("XDG_CURRENT_DESKTOP", desktop)
+        for failure in [
+            FileNotFoundError(),
+            PermissionError(),
+            subprocess.TimeoutExpired("tool", 1),
+            UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid"),
+        ]:
+            with patch("subprocess.run", side_effect=failure):
+                assert FetchSession().detect_proxy() == ""
+        with patch(
+            "subprocess.run", return_value=subprocess.CompletedProcess([], 1, "")
+        ):
+            assert FetchSession().detect_proxy() == ""
+
+    def test_kde5_fallback_and_total_budget(
+        self,
+        linux_desktop: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import subprocess
+
+        monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE")
+        monkeypatch.setattr(
+            "shutil.which",
+            lambda tool: "/usr/bin/kreadconfig5" if tool == "kreadconfig5" else None,
+        )
+        with (
+            patch("markitai.fetch_session.time.monotonic", side_effect=[0, 0.2, 1.1]),
+            patch(
+                "subprocess.run", return_value=subprocess.CompletedProcess([], 0, "1")
+            ) as run,
+        ):
+            assert FetchSession().detect_proxy() == ""
+            run.assert_called_once()
+            assert run.call_args.args[0][0] == "/usr/bin/kreadconfig5"
+            assert run.call_args.kwargs["timeout"] == pytest.approx(0.8)
+
+
 class TestSessionProxyBypass:
     """FetchSession owns the single "is this host exempt?" predicate."""
 
