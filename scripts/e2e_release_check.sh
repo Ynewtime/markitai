@@ -126,12 +126,17 @@ VERSION=$(basename "$WHEEL" | sed -E 's/^markitai-(.+)-py3-none-any\.whl$/\1/')
 printf '  %sbuilt markitai %s%s\n' "$D" "$VERSION" "$N"
 
 # A machine that has never seen markitai: empty home, isolated tool dir.
-# Exported here only — the caller's shell is untouched.
+# Exported here only — the caller's shell is untouched. The uv download
+# cache is deliberately kept: isolation is about markitai's config and
+# tools, and a cold cache turns this step into a 200MB download that looks
+# like a hang.
+export UV_CACHE_DIR="${UV_CACHE_DIR:-$(uv cache dir 2>/dev/null || printf '%s' "$HOME/.cache/uv")}"
 export HOME="$WORKDIR/_internal/home"
 export UV_TOOL_DIR="$HOME/.uvtools"
 export UV_TOOL_BIN_DIR="$HOME/bin"
 export PATH="$HOME/bin:$PATH"
 mkdir -p "$HOME"
+printf '  %sinstalling into an empty home (log: %s/_internal/install.log)%s\n' "$D" "$WORKDIR" "$N"
 uv tool install "$WHEEL" >"$WORKDIR/_internal/install.log" 2>&1 \
   || { printf '%stool install failed — see %s/_internal/install.log%s\n' "$R" "$WORKDIR" "$N"; exit 1; }
 printf '  %sinstalled into an empty home%s\n' "$D" "$N"
