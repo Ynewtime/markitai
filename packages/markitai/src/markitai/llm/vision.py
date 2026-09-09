@@ -21,7 +21,13 @@ from markitai.constants import (
     DEFAULT_MAX_IMAGES_PER_BATCH,
 )
 from markitai.llm.degeneration import truncate_degenerate_tail
-from markitai.llm.engine import LLMCall, extract_cached_tokens, run_structured_ladder
+from markitai.llm.engine import (
+    LLMCall,
+    extract_cached_tokens,
+    find_budget_exceeded_error,
+    find_non_retryable_provider_error,
+    run_structured_ladder,
+)
 from markitai.llm.models import context_display_name, get_response_cost
 from markitai.llm.structured import router_structured_ladder
 from markitai.llm.types import (
@@ -207,6 +213,16 @@ def _should_retry_for_language(result: ImageAnalysis, language: str) -> bool:
 
     combined = f"{result.caption} {result.description}".strip()
     return not _text_matches_language(combined, language)
+
+
+def _reraise_if_fatal(exc: BaseException) -> None:
+    """Re-raise the errors a fallback strategy must never absorb."""
+    fatal = find_non_retryable_provider_error(exc)
+    if fatal is not None:
+        raise fatal
+    budget = find_budget_exceeded_error(exc)
+    if budget is not None:
+        raise budget
 
 
 def _merge_llm_usage(
@@ -951,6 +967,9 @@ class VisionAnalyzer:
             return final_results
 
         except Exception as e:
+            # A blown request budget or a fatal provider error must not turn
+            # into N more calls; the ladder raised them on purpose.
+            _reraise_if_fatal(e)
             logger.error(
                 f"Batch image analysis failed: {format_error_message(e)}, "
                 "falling back to individual analysis"
@@ -1019,6 +1038,7 @@ class VisionAnalyzer:
             )
             return result
         except Exception as e:
+            _reraise_if_fatal(e)
             logger.debug(
                 f"[{image_name}] Structured ladder failed: {e}, using two-call fallback"
             )

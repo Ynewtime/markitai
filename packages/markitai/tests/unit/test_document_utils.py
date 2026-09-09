@@ -2818,8 +2818,8 @@ class TestFallbackFrontmatterTitle:
         cleaned_markdown = "# Corrected Title\n\nSome content here."
         original_title = "Old Tittle With Typo"
 
-        # Mock _process_document_combined to fail (trigger fallback)
-        mixin._process_document_combined = AsyncMock(
+        # Make the combined call fail so process_document takes the fallback
+        mixin._run_document_call = AsyncMock(
             side_effect=Exception("structured processing failed")
         )
 

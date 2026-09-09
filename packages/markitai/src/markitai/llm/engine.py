@@ -52,16 +52,7 @@ from markitai.constants import (
     DEFAULT_RETRY_MAX_DELAY,
 )
 from markitai.llm.models import get_response_cost
-
-# Canonical error-pattern definitions live in markitai.llm.router (the
-# routing layer owns error classification); re-exported here because
-# historical call sites import them from the engine.
-from markitai.llm.router import (
-    MODEL_LEVEL_ERROR_PATTERNS as MODEL_LEVEL_ERROR_PATTERNS,
-)
-from markitai.llm.router import (
-    POOL_EXHAUSTED_PATTERN,
-)
+from markitai.llm.router import MODEL_LEVEL_ERROR_PATTERNS, POOL_EXHAUSTED_PATTERN
 from markitai.llm.structured import router_structured_ladder
 from markitai.llm.types import LLMResponse
 from markitai.providers.errors import ProviderError
@@ -535,11 +526,8 @@ class LLMEngine:
         assert self._get_router is not None
         return self._get_router()
 
-    def spend_request_budget(self, context: str) -> None:
+    def _spend_request_budget(self, context: str) -> None:
         """Spend one request from the context's budget (no-op if unbudgeted).
-
-        For call sites that issue router calls directly instead of going
-        through the engine's retry loop.
 
         Raises:
             LLMRequestBudgetExceededError: When the context's budget is
@@ -561,7 +549,7 @@ class LLMEngine:
         """
 
         async def guarded(*args: Any, **kwargs: Any) -> Any:
-            self.spend_request_budget(context)
+            self._spend_request_budget(context)
             return await acompletion(*args, **kwargs)
 
         return guarded

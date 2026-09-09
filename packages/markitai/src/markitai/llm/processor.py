@@ -43,12 +43,6 @@ from markitai.constants import (
 from markitai.llm import content
 from markitai.llm.cache import ContentCache, PersistentCache
 from markitai.llm.document import DocumentEnhancer
-
-# Canonical definition lives in markitai.llm.engine (processor imports engine,
-# not vice versa); re-exported here for backwards compatibility.
-from markitai.llm.engine import (
-    RETRYABLE_ERRORS as RETRYABLE_ERRORS,
-)
 from markitai.llm.engine import LLMEngine, RequestBudget
 from markitai.llm.models import (
     MarkitaiLLMLogger,
@@ -58,12 +52,10 @@ from markitai.llm.models import (
 from markitai.llm.router import MarkitaiRouter
 from markitai.llm.types import (
     ImageAnalysis,
-    LLMResponse,
     LLMRuntime,
 )
 from markitai.llm.vision import VisionAnalyzer
 from markitai.prompts import PromptManager
-from markitai.providers.common import has_images
 from markitai.utils.text import preview_items_for_log
 
 # Enable automatic max_tokens adjustment to model limits
@@ -818,42 +810,6 @@ class LLMProcessor:
 
         return self._vision_router
 
-    async def _call_llm(
-        self,
-        model: str,
-        messages: list[dict[str, Any]],
-        context: str = "",
-    ) -> LLMResponse:
-        """
-        Make an LLM call with rate limiting, retry logic, and detailed logging.
-
-        Smart router selection: automatically uses vision_router when messages
-        contain images, otherwise uses the main router.
-
-        Args:
-            model: Logical model name (e.g., "default")
-            messages: Chat messages
-            context: Context identifier for logging (e.g., filename)
-
-        Returns:
-            LLMResponse with content and usage info
-        """
-        # Generate call ID for logging
-        call_index = self._get_next_call_index(context) if context else 0
-        call_id = f"{context}:{call_index}" if context else f"call:{call_index}"
-
-        # Smart router selection based on message content
-        requires_vision = has_images(messages)
-        router = self.vision_router if requires_vision else self.router
-
-        return await self._call_llm_with_retry(
-            model=model,
-            messages=messages,
-            call_id=call_id,
-            context=context,
-            router=router,
-        )
-
     def _calculate_dynamic_max_tokens(
         self,
         messages: list[Any],
@@ -998,43 +954,6 @@ class LLMProcessor:
         except Exception as e:
             logger.debug("[LLM] Failed to select highest-weight model: {}", e)
         return None
-
-    async def _call_llm_with_retry(
-        self,
-        model: str,
-        messages: list[dict[str, Any]],
-        call_id: str,
-        context: str = "",
-        max_retries: int | None = None,
-        router: MarkitaiRouter | None = None,
-    ) -> LLMResponse:
-        """
-        Make an LLM call with custom retry logic and detailed logging.
-
-        Thin delegate: the transport retry loop lives in
-        ``LLMEngine.complete_text`` (Phase 2.3). This wrapper keeps the
-        historical signature for existing callers and tests.
-
-        Args:
-            model: Logical model name (e.g., "default")
-            messages: Chat messages
-            call_id: Unique identifier for this call (for logging)
-            context: Context identifier for usage tracking (e.g., filename)
-            max_retries: Retry-attempt override (None -> the engine-wide
-                default from ``router_settings.num_retries``)
-            router: Router to use (defaults to self.router)
-
-        Returns:
-            LLMResponse with content and usage info
-        """
-        return await self.engine.complete_text(
-            model=model,
-            messages=messages,
-            call_id=call_id,
-            context=context,
-            max_retries=max_retries,
-            router=router,
-        )
 
     def _track_usage(
         self,

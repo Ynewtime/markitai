@@ -37,7 +37,6 @@ class PromptManager:
         "image_description_user",
         "image_analysis_system",
         "image_analysis_user",
-        # Page content prompts
         # Document prompts
         "document_process_system",
         "document_process_user",

@@ -13,7 +13,6 @@ from markitai.config import ImageConfig, ImageFilterConfig
 from markitai.image import (
     ImageProcessor,
     _compress_image_pillow,
-    _compress_image_worker,
 )
 
 
@@ -683,7 +682,7 @@ class TestExifOrientation:
         assert (width, height) == (50, 100)
 
     def test_worker_applies_exif_orientation(self) -> None:
-        result = _compress_image_worker(
+        result = _compress_image_pillow(
             image_data=create_exif_rotated_jpeg(100, 50),
             quality=85,
             max_size=(1000, 1000),
@@ -705,8 +704,8 @@ class TestExifOrientation:
             assert compressed_img.size == (50, 100)
 
 
-class TestCompressImageWorkerFunctions:
-    """Tests for _compress_image_pillow and _compress_image_worker."""
+class TestCompressImagePillow:
+    """Tests for _compress_image_pillow."""
 
     def test_compress_image_pillow_basic(self) -> None:
         """Test basic Pillow compression."""
@@ -733,42 +732,6 @@ class TestCompressImageWorkerFunctions:
         img_data = create_test_image(50, 50, "red")
 
         result = _compress_image_pillow(
-            image_data=img_data,
-            quality=85,
-            max_size=(1000, 1000),
-            output_format="JPEG",
-            min_width=100,  # Image is smaller
-            min_height=100,
-            min_area=10000,
-        )
-
-        assert result is None  # Filtered out
-
-    def test_compress_image_worker_basic(self) -> None:
-        """Test basic worker compression."""
-        img_data = create_test_image(200, 200, "blue")
-
-        result = _compress_image_worker(
-            image_data=img_data,
-            quality=85,
-            max_size=(100, 100),
-            output_format="JPEG",
-            min_width=10,
-            min_height=10,
-            min_area=100,
-        )
-
-        assert result is not None
-        compressed_data, width, height = result
-        assert width <= 100
-        assert height <= 100
-        assert len(compressed_data) > 0
-
-    def test_compress_image_worker_filters_small(self) -> None:
-        """Test worker compression filters small images."""
-        img_data = create_test_image(50, 50, "blue")
-
-        result = _compress_image_worker(
             image_data=img_data,
             quality=85,
             max_size=(1000, 1000),
@@ -820,11 +783,11 @@ class TestCompressImageWorkerFunctions:
         # WebP signature
         assert compressed_data[:4] == b"RIFF"
 
-    def test_compress_image_worker_produces_valid_output(self) -> None:
+    def test_compress_image_pillow_produces_valid_output(self) -> None:
         """Test that the worker compresses through the Pillow backend."""
         img_data = create_test_image(100, 100, "purple")
 
-        result = _compress_image_worker(
+        result = _compress_image_pillow(
             image_data=img_data,
             quality=85,
             max_size=(100, 100),
@@ -838,11 +801,11 @@ class TestCompressImageWorkerFunctions:
         compressed_data, _width, _height = result
         assert len(compressed_data) > 0
 
-    def test_compress_image_worker_handles_invalid_data(self) -> None:
+    def test_compress_image_pillow_handles_invalid_data(self) -> None:
         """Test that worker handles invalid image data gracefully."""
         invalid_data = b"not an image"
 
-        result = _compress_image_worker(
+        result = _compress_image_pillow(
             image_data=invalid_data,
             quality=85,
             max_size=(100, 100),
@@ -891,7 +854,7 @@ class TestCompressImageWorkerFunctions:
             "min_area": 100,
         }
 
-        assert _compress_image_worker(**kwargs) == _compress_image_pillow(**kwargs)  # type: ignore[arg-type]
+        assert _compress_image_pillow(**kwargs) == _compress_image_pillow(**kwargs)  # type: ignore[arg-type]
 
 
 class TestOpenCVRemoved:
@@ -917,25 +880,6 @@ class TestOpenCVRemoved:
 
         source = Path(image_module.__file__).read_text(encoding="utf-8")
         assert "import cv2" not in source
-
-    def test_worker_delegates_straight_to_pillow(self) -> None:
-        """No try-cv2-then-fallback layer: the worker *is* the Pillow path."""
-        sentinel = (b"compressed", 7, 9)
-        with patch(
-            "markitai.image._compress_image_pillow", return_value=sentinel
-        ) as mock_pillow:
-            result = _compress_image_worker(
-                image_data=create_test_image(100, 100),
-                quality=85,
-                max_size=(100, 100),
-                output_format="JPEG",
-                min_width=10,
-                min_height=10,
-                min_area=100,
-            )
-
-        assert result == sentinel
-        mock_pillow.assert_called_once()
 
     def test_opencv_is_not_a_declared_dependency(self) -> None:
         import tomllib
@@ -2084,7 +2028,7 @@ class TestDownloadUrlImages:
             return image_data, 100, 100
 
         monkeypatch.setattr(httpx.AsyncClient, "get", mock_get)
-        monkeypatch.setattr(image_module, "_compress_image_worker", mock_compress)
+        monkeypatch.setattr(image_module, "_compress_image_pillow", mock_compress)
 
         result = await download_url_images(
             markdown="![](https://example.com/image.png)",
@@ -2185,41 +2129,6 @@ class TestDownloadUrlImages:
 
         assert len(result.downloaded_paths) == 3
         assert len(result.failed_urls) == 0
-
-    @pytest.mark.asyncio
-    async def test_download_url_to_path_mapping(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Test that url_to_path mapping is populated."""
-        import httpx
-
-        from markitai.image import download_url_images
-
-        class MockResponse:
-            status_code = 200
-            content = create_test_image()
-            headers = {"content-type": "image/png"}
-
-            def raise_for_status(self):
-                pass
-
-        async def mock_get(self, url, **kwargs):
-            return MockResponse()
-
-        monkeypatch.setattr(httpx.AsyncClient, "get", mock_get)
-
-        config = ImageConfig(compress=False)
-        markdown = "![](https://example.com/mapped.png)"
-
-        result = await download_url_images(
-            markdown=markdown,
-            output_dir=tmp_path,
-            base_url="https://example.com",
-            config=config,
-        )
-
-        assert "https://example.com/mapped.png" in result.url_to_path
-        assert result.url_to_path["https://example.com/mapped.png"].exists()
 
     @pytest.mark.asyncio
     async def test_download_extension_from_content_type(
@@ -2345,25 +2254,11 @@ class TestUrlImageDownloadResultDataclass:
             updated_markdown="# Test",
             downloaded_paths=[Path("/tmp/img.jpg")],
             failed_urls=["https://fail.com/img.png"],
-            url_to_path={"https://ok.com/img.jpg": Path("/tmp/img.jpg")},
         )
 
         assert result.updated_markdown == "# Test"
         assert len(result.downloaded_paths) == 1
         assert len(result.failed_urls) == 1
-        assert len(result.url_to_path) == 1
-
-    def test_dataclass_default_url_to_path(self) -> None:
-        """Test default empty dict for url_to_path."""
-        from markitai.image import UrlImageDownloadResult
-
-        result = UrlImageDownloadResult(
-            updated_markdown="",
-            downloaded_paths=[],
-            failed_urls=[],
-        )
-
-        assert result.url_to_path == {}
 
 
 class TestImageProcessResultDataclass:
@@ -2560,7 +2455,7 @@ class TestFormerCV2EdgeCases:
         img.save(buffer, format="PNG")
         img_data = buffer.getvalue()
 
-        result = _compress_image_worker(
+        result = _compress_image_pillow(
             image_data=img_data,
             quality=85,
             max_size=(100, 100),
@@ -2577,7 +2472,7 @@ class TestFormerCV2EdgeCases:
         """Test compression falls back to JPEG for unknown formats."""
         img_data = create_test_image(100, 100)
 
-        result = _compress_image_worker(
+        result = _compress_image_pillow(
             image_data=img_data,
             quality=85,
             max_size=(100, 100),
@@ -2596,7 +2491,7 @@ class TestFormerCV2EdgeCases:
         # 80x80 = 6400 area
         img_data = create_test_image(80, 80)
 
-        result = _compress_image_worker(
+        result = _compress_image_pillow(
             image_data=img_data,
             quality=85,
             max_size=(1000, 1000),
@@ -2614,7 +2509,7 @@ class TestFormerCV2EdgeCases:
         buffer = io.BytesIO()
         img.save(buffer, format="JPEG")
 
-        result = _compress_image_worker(
+        result = _compress_image_pillow(
             image_data=buffer.getvalue(),
             quality=85,
             max_size=(100, 100),

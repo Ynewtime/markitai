@@ -242,7 +242,7 @@ class ProviderCostResult:
     ) -> None:
         self.cost_usd = cost_usd
         self.is_estimated = is_estimated
-        self.source = source  # "litellm", "litellm_fuzzy", "fallback", "none"
+        self.source = source  # "litellm", "litellm_fuzzy", "none"
         self.matched_model = matched_model
 
 

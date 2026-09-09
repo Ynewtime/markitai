@@ -526,3 +526,30 @@ class TestMaxTokens:
 
         assert harness.max_tokens_calls == []
         assert harness.router.calls[0]["max_tokens"] == 555
+
+
+class TestAuthErrorHint:
+    async def test_auth_error_logs_friendly_hint(self) -> None:
+        """Auth failures name the model and point at `markitai init`."""
+        from loguru import logger
+
+        harness = Harness(
+            FakeRouter([Exception("AuthenticationError: Incorrect API key provided")])
+        )
+        log_messages: list[str] = []
+        handler_id = logger.add(lambda msg: log_messages.append(str(msg)))
+        try:
+            with pytest.raises(Exception, match="AuthenticationError"):
+                await harness.engine.complete_text(
+                    model="test",
+                    messages=[{"role": "user", "content": "test"}],
+                    call_id="test-hint",
+                    max_retries=0,
+                )
+        finally:
+            logger.remove(handler_id)
+
+        combined = "\n".join(log_messages)
+        assert "Authentication failed" in combined
+        assert "markitai init" in combined
+        assert "openai/gpt-test" in combined

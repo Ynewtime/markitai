@@ -11,7 +11,7 @@ import os
 import re
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import AsyncExitStack
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote, urljoin, urlparse
@@ -123,43 +123,6 @@ def _compress_image_pillow(
     except Exception as e:
         logger.debug("Pillow compression failed for image: {}", e)
         return None
-
-
-def _compress_image_worker(
-    image_data: bytes,
-    quality: int,
-    max_size: tuple[int, int],
-    output_format: str,
-    min_width: int,
-    min_height: int,
-    min_area: int,
-) -> tuple[bytes, int, int] | None:
-    """Compress a single image in a worker thread or process.
-
-    Pillow is the only backend. An OpenCV path used to run first on the
-    grounds that it releases the GIL, but measurement on the two real call
-    sites did not support keeping a 121MB dependency for it: this function
-    runs either in a fresh spawn-based process pool (where cv2's import cost
-    per worker cancels its per-image edge) or one image per HTTP GET. OpenCV
-    also produced *worse* output — ``INTER_LANCZOS4`` applies no antialias
-    prefilter, so downscaling aliased, costing PSNR/SSIM and inflating JPEG
-    size on every sample measured.
-
-    Args:
-        image_data: Raw image bytes
-        quality: JPEG quality (1-100)
-        max_size: Maximum dimensions (width, height)
-        output_format: Output format (JPEG, PNG, WEBP)
-        min_width: Minimum width filter
-        min_height: Minimum height filter
-        min_area: Minimum area filter
-
-    Returns:
-        Tuple of (compressed_data, final_width, final_height) or None if filtered
-    """
-    return _compress_image_pillow(
-        image_data, quality, max_size, output_format, min_width, min_height, min_area
-    )
 
 
 @dataclass
@@ -1126,7 +1089,7 @@ class ImageProcessor:
                 if compress_enabled:
                     future = loop.run_in_executor(
                         executor,
-                        _compress_image_worker,
+                        _compress_image_pillow,
                         image_data,
                         quality,
                         max_size,
@@ -1269,9 +1232,6 @@ class UrlImageDownloadResult:
     updated_markdown: str
     downloaded_paths: list[Path]
     failed_urls: list[str]
-    url_to_path: dict[str, Path] = field(
-        default_factory=dict
-    )  # URL -> local path mapping
 
 
 def _get_extension_from_url(url: str) -> str | None:
@@ -1416,7 +1376,6 @@ async def download_url_images(
     downloaded_paths: list[Path] = []
     failed_urls: list[str] = []
     replacements: dict[str, str] = {}  # original_match -> replacement
-    url_to_path: dict[str, Path] = {}  # image_url -> local_path mapping
 
     # Sanitize source name for filenames
     safe_source = _sanitize_image_filename(source_name, max_length=50)
@@ -1519,7 +1478,7 @@ async def download_url_images(
                         # it on the event loop stalls serve API/SSE responses
                         # while a URL job processes remote images.
                         processed = await asyncio.to_thread(
-                            _compress_image_worker,
+                            _compress_image_pillow,
                             image_data,
                             quality=config.quality,
                             max_size=(config.max_width, config.max_height),
@@ -1553,9 +1512,6 @@ async def download_url_images(
                 replacements[original_match] = markdown_image_reference(
                     alt_text, local_path
                 )
-
-                # Track URL to path mapping for post-processing
-                url_to_path[image_url] = output_path
 
                 logger.debug(f"Downloaded: {image_url[:60]}... -> {output_path}")
 
@@ -1593,5 +1549,4 @@ async def download_url_images(
         updated_markdown=updated_markdown,
         downloaded_paths=downloaded_paths,
         failed_urls=failed_urls,
-        url_to_path=url_to_path,
     )

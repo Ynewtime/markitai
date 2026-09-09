@@ -92,12 +92,15 @@ def _vision_model_names(config: MarkitaiConfig | None) -> list[str]:
             continue
         info = getattr(model, "model_info", None)
         explicit = getattr(info, "supports_vision", None) if info else None
-        if (
-            explicit is True
-            or (explicit is None and is_local_provider_model(model_id))
-            or explicit is None
-            and get_model_info_cached(model_id).get("supports_vision", False)
-        ):
+        if explicit is True:
+            vision = True
+        elif explicit is None:
+            vision = is_local_provider_model(model_id) or bool(
+                get_model_info_cached(model_id).get("supports_vision", False)
+            )
+        else:
+            vision = False
+        if vision:
             names.append(model_id)
     return names
 

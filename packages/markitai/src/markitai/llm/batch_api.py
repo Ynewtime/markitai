@@ -429,8 +429,8 @@ async def submit_anthropic_batch(requests: list[dict[str, Any]]) -> str:
     Unlike the OpenAI path there is no file to upload: the requests travel
     in the create call itself.
     """
-    client = _anthropic_client()
-    batch = await client.messages.batches.create(requests=cast("Any", requests))
+    async with _anthropic_client() as client:
+        batch = await client.messages.batches.create(requests=cast("Any", requests))
     logger.info(f"[Batch] Submitted {len(requests)} request(s) as {batch.id}")
     return batch.id
 
@@ -454,25 +454,25 @@ async def poll_anthropic_batch(
         TimeoutError: Still in flight after ``timeout_s``. The batch keeps
             running server-side; collect it later by id.
     """
-    client = _anthropic_client()
     elapsed = 0.0
-    while True:
-        batch = await client.messages.batches.retrieve(batch_id)
-        status = batch.processing_status
-        counts = batch.request_counts
-        done = counts.succeeded + counts.errored + counts.canceled + counts.expired
-        total = done + counts.processing
-        if on_progress is not None:
-            on_progress(status, done, total)
-        if status == "ended":
-            return "completed"
-        if elapsed >= timeout_s:
-            raise TimeoutError(
-                f"batch {batch_id} still {status!r} after {timeout_s:.0f}s "
-                f"({done}/{total} done)"
-            )
-        await asyncio.sleep(interval_s)
-        elapsed += interval_s
+    async with _anthropic_client() as client:
+        while True:
+            batch = await client.messages.batches.retrieve(batch_id)
+            status = batch.processing_status
+            counts = batch.request_counts
+            done = counts.succeeded + counts.errored + counts.canceled + counts.expired
+            total = done + counts.processing
+            if on_progress is not None:
+                on_progress(status, done, total)
+            if status == "ended":
+                return "completed"
+            if elapsed >= timeout_s:
+                raise TimeoutError(
+                    f"batch {batch_id} still {status!r} after {timeout_s:.0f}s "
+                    f"({done}/{total} done)"
+                )
+            await asyncio.sleep(interval_s)
+            elapsed += interval_s
 
 
 async def download_anthropic_batch_output(batch_id: str, output_path: Path) -> Path:
@@ -484,25 +484,25 @@ async def download_anthropic_batch_output(batch_id: str, output_path: Path) -> P
     ``read_openai_batch_output`` parses either, and only
     ``parse_batch_result`` needs to know whose body it is holding.
     """
-    client = _anthropic_client()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as f:
-        async for entry in await client.messages.batches.results(batch_id):
-            result = entry.result
-            if result.type == "succeeded":
-                line = {
-                    "custom_id": entry.custom_id,
-                    "response": {
-                        "status_code": 200,
-                        "body": result.message.model_dump(mode="json"),
-                    },
-                }
-            elif result.type == "errored":
-                line = {
-                    "custom_id": entry.custom_id,
-                    "error": str(result.error.model_dump(mode="json")),
-                }
-            else:  # canceled / expired
-                line = {"custom_id": entry.custom_id, "error": result.type}
-            f.write(json.dumps(line, ensure_ascii=False) + "\n")
+    async with _anthropic_client() as client:
+        with output_path.open("w", encoding="utf-8") as f:
+            async for entry in await client.messages.batches.results(batch_id):
+                result = entry.result
+                if result.type == "succeeded":
+                    line = {
+                        "custom_id": entry.custom_id,
+                        "response": {
+                            "status_code": 200,
+                            "body": result.message.model_dump(mode="json"),
+                        },
+                    }
+                elif result.type == "errored":
+                    line = {
+                        "custom_id": entry.custom_id,
+                        "error": str(result.error.model_dump(mode="json")),
+                    }
+                else:  # canceled / expired
+                    line = {"custom_id": entry.custom_id, "error": result.type}
+                f.write(json.dumps(line, ensure_ascii=False) + "\n")
     return output_path

@@ -1706,9 +1706,7 @@ class DocumentEnhancer:
 
         # Try combined approach with Instructor first
         try:
-            result = await self._run_document_call(
-                plan.call, plan.original_markdown, source
-            )
+            result = await self._run_document_call(plan.call)
             return self.finalize_document_plan(plan, result)
         except Exception as e:
             fatal_provider_error = _find_non_retryable_provider_error(e)
@@ -1995,25 +1993,22 @@ class DocumentEnhancer:
             deserialize=_document_result_from_cache_value,
         )
 
-    async def _run_document_call(
-        self, call: LLMCall, markdown: str, source: str
-    ) -> DocumentProcessResult:
-        """Run a prepared document call live (cache lookup, then the model).
-
-        Cache lookup order:
-        1. In-memory cache (session-level, fast)
-        2. Persistent cache (cross-session, SQLite)
-        3. LLM API call
-        """
+    async def _run_document_call(self, call: LLMCall) -> DocumentProcessResult:
+        """Run a prepared document call (the engine handles caching)."""
         response, _raw_response = await self._engine.complete_structured(call)
         return response
 
     async def _process_document_combined(
         self, markdown: str, source: str
     ) -> DocumentProcessResult:
-        """Build the combined call and run it live (compat wrapper)."""
+        """Build the combined call and run it.
+
+        Nothing in production calls this; it is the seam the document tests
+        use to exercise one combined call without going through
+        ``process_document``.
+        """
         return await self._run_document_call(
-            self._build_document_call(markdown, source), markdown, source
+            self._build_document_call(markdown, source)
         )
 
     def _validate_no_prompt_leakage(self, cleaned: str, source: str) -> str:

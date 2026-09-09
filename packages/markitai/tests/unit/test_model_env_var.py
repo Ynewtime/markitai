@@ -12,7 +12,7 @@ Tests:
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -329,130 +329,6 @@ class TestLLMAuthErrorHandling:
         )
         error_msg_lower = error_message.lower()
         assert not any(p in error_msg_lower for p in auth_patterns)
-
-    async def test_auth_error_in_call_llm_with_retry(self) -> None:
-        """Auth errors in _call_llm_with_retry produce friendly error messages."""
-        from markitai.config import LiteLLMParams, LLMConfig, ModelConfig, PromptsConfig
-        from markitai.llm.processor import LLMProcessor
-
-        llm_config = LLMConfig(
-            enabled=True,
-            model_list=[
-                ModelConfig(
-                    model_name="test",
-                    litellm_params=LiteLLMParams(model="openai/gpt-4o-mini"),
-                )
-            ],
-        )
-        prompts_config = PromptsConfig()
-        processor = LLMProcessor(config=llm_config, prompts_config=prompts_config)
-
-        # Create a mock router that raises an auth error
-        mock_router = MagicMock()
-        mock_router.acompletion = AsyncMock(
-            side_effect=Exception("AuthenticationError: Incorrect API key provided")
-        )
-
-        # Patch _get_router_primary_model to return a model name
-        with (
-            patch.object(
-                processor,
-                "_get_router_primary_model",
-                return_value="openai/gpt-4o-mini",
-            ),
-            pytest.raises(Exception, match="AuthenticationError"),
-        ):
-            await processor._call_llm_with_retry(
-                model="test",
-                messages=[{"role": "user", "content": "test"}],
-                call_id="test-auth",
-                max_retries=0,
-                router=mock_router,
-            )
-
-    async def test_non_auth_error_in_call_llm_with_retry(self) -> None:
-        """Non-auth errors still raise with standard error logging."""
-        from markitai.config import LiteLLMParams, LLMConfig, ModelConfig, PromptsConfig
-        from markitai.llm.processor import LLMProcessor
-
-        llm_config = LLMConfig(
-            enabled=True,
-            model_list=[
-                ModelConfig(
-                    model_name="test",
-                    litellm_params=LiteLLMParams(model="openai/gpt-4o-mini"),
-                )
-            ],
-        )
-        prompts_config = PromptsConfig()
-        processor = LLMProcessor(config=llm_config, prompts_config=prompts_config)
-
-        # Create a mock router that raises a non-auth error
-        mock_router = MagicMock()
-        mock_router.acompletion = AsyncMock(
-            side_effect=Exception("Connection timeout after 30s")
-        )
-
-        with pytest.raises(Exception, match="Connection timeout"):
-            await processor._call_llm_with_retry(
-                model="test",
-                messages=[{"role": "user", "content": "test"}],
-                call_id="test-timeout",
-                max_retries=0,
-                router=mock_router,
-            )
-
-    async def test_auth_error_logs_friendly_hint(self) -> None:
-        """Auth errors should log a friendly hint mentioning 'markitai init'."""
-        from loguru import logger
-
-        from markitai.config import LiteLLMParams, LLMConfig, ModelConfig, PromptsConfig
-        from markitai.llm.processor import LLMProcessor
-
-        llm_config = LLMConfig(
-            enabled=True,
-            model_list=[
-                ModelConfig(
-                    model_name="test",
-                    litellm_params=LiteLLMParams(model="openai/gpt-4o-mini"),
-                )
-            ],
-        )
-        prompts_config = PromptsConfig()
-        processor = LLMProcessor(config=llm_config, prompts_config=prompts_config)
-
-        mock_router = MagicMock()
-        mock_router.acompletion = AsyncMock(
-            side_effect=Exception("AuthenticationError: Incorrect API key provided")
-        )
-
-        log_messages: list[str] = []
-        handler_id = logger.add(lambda msg: log_messages.append(str(msg)))
-
-        try:
-            with (
-                patch.object(
-                    processor,
-                    "_get_router_primary_model",
-                    return_value="openai/gpt-4o-mini",
-                ),
-                pytest.raises(Exception, match="AuthenticationError"),
-            ):
-                await processor._call_llm_with_retry(
-                    model="test",
-                    messages=[{"role": "user", "content": "test"}],
-                    call_id="test-hint",
-                    max_retries=0,
-                    router=mock_router,
-                )
-        finally:
-            logger.remove(handler_id)
-
-        # Verify the friendly hint was logged
-        combined = "\n".join(log_messages)
-        assert "Authentication failed" in combined
-        assert "markitai init" in combined
-        assert "openai/gpt-4o-mini" in combined
 
 
 # =============================================================================
