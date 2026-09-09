@@ -16,7 +16,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 
 ::: warning 安全提示
 - 脚本会检查 root/管理员权限，并在继续前询问
-- 在交互终端中，可选组件会逐项询问：Playwright 浏览器、Web UI、OCR 默认为是；LibreOffice 和 Claude/Copilot CLI 默认为否
+- 在交互终端中，可选组件会逐项询问：Playwright 浏览器、Web UI、OCR 默认为是；Claude/Copilot CLI 默认为否。LibreOffice 不在安装器之列——PPTX 幻灯片渲染在本机没有任何渲染器时，会在转换时告警并给出安装命令
 - 没有可用终端时，只安装 uv、Python 和 markitai。自动化场景设 `MARKITAI_INSTALL_OPTIONAL=1` 启用可选步骤
 - 默认使用官方包索引，除非实测它在你的网络下缓慢或不可达。`MARKITAI_USE_MIRROR=1` 总是提供镜像选择；`=0` 从不询问
 :::

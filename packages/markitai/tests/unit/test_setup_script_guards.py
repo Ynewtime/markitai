@@ -4,8 +4,9 @@ One root cause guarded here: setup.sh runs under `set -eu`,
 and its optional-component installers return non-zero to signal a
 declined/failed OPTIONAL step (skip → `return 2`, fail → `return 1`).
 When such a call is unguarded, `set -e` treats the non-zero return as
-fatal and exits the whole script — so declining LibreOffice would abort
-setup before the summary/next-steps/outro ever printed.
+fatal and exits the whole script — so declining an optional component
+(say, the Copilot CLI) would abort setup before the summary/next-steps/
+outro ever printed.
 
 The fix guards every non-fatal orchestration call with `|| true`. This
 test fails if any of them regresses back to a bare call.
@@ -47,7 +48,6 @@ _MARKITAI_PYPROJECT = Path(__file__).resolve().parents[2] / "pyproject.toml"
 # `|| { ...; exit 1; }` handler, so they are not in this list.)
 _NON_FATAL_CALLS = (
     "install_optional_playwright",
-    "install_optional_libreoffice",
     "install_optional_claude_cli",
     "install_optional_copilot_cli",
     "finalize_markitai_extras",
@@ -56,7 +56,6 @@ _NON_FATAL_CALLS = (
 
 _OPTIONAL_INSTALLERS = (
     ("install_optional_playwright", "Install-OptionalPlaywright"),
-    ("install_optional_libreoffice", "Install-OptionalLibreOffice"),
     ("install_optional_claude_cli", "Install-OptionalClaudeCLI"),
     ("install_optional_copilot_cli", "Install-OptionalCopilotCLI"),
 )
@@ -102,7 +101,7 @@ def test_setup_sh_runs_under_set_e() -> None:
 def test_non_fatal_calls_are_guarded(func: str) -> None:
     """Every orchestration call to a non-fatal installer must be guarded.
 
-    A bare `    install_optional_libreoffice` line under set -e aborts the
+    A bare `    install_optional_copilot_cli` line under set -e aborts the
     script when the function returns non-zero (declined/failed).
     """
     text = _SETUP_SH.read_text(encoding="utf-8")
@@ -456,7 +455,6 @@ def test_setup_ps1_has_bounded_native_and_global_error_guards() -> None:
     assert "Invoke-Expression" not in text
 
     for function in (
-        "Install-OptionalLibreOffice",
         "Install-OptionalClaudeCLI",
         "Install-OptionalCopilotCLI",
     ):
@@ -503,6 +501,49 @@ def test_setup_scripts_dropped_the_ffmpeg_i18n_strings() -> None:
             "audio/video processing",
             "音视频处理",
             "处理音频和视频文件",
+        ):
+            assert stale not in text, f"{script.name} still contains {stale!r}"
+
+
+# ============================================================
+# LibreOffice: a runtime dependency, not an installer step
+# ============================================================
+
+
+@pytest.mark.parametrize("script", (_SETUP_SH, _SETUP_PS1))
+def test_setup_scripts_no_longer_manage_libreoffice(script: Path) -> None:
+    """Setup must not detect, prompt for, or install LibreOffice.
+
+    Slide rendering is an opt-in runtime path (--screenshot/--ocr) that most
+    installs never exercise, and two of the three renderers come from a local
+    MS Office the installer cannot see (Windows COM, macOS AppleScript). Only
+    a machine with none of them actually needs LibreOffice. Making every
+    guided install answer a ~1GB question for that edge case cost more than
+    it protected; converter/office.py now warns at conversion time when a
+    slide render is requested and no renderer exists, with a per-OS install
+    command in the message.
+    """
+    lines = [
+        f"{number}: {line}"
+        for number, line in enumerate(
+            script.read_text(encoding="utf-8").splitlines(), start=1
+        )
+        if "libreoffice" in line.lower() or "soffice" in line.lower()
+    ]
+    assert not lines, f"{script.name} still references LibreOffice:\n" + "\n".join(
+        lines
+    )
+
+
+def test_setup_scripts_dropped_the_libreoffice_i18n_strings() -> None:
+    """Both languages of every LibreOffice string must be gone, not just English."""
+    for script in (_SETUP_SH, _SETUP_PS1):
+        text = script.read_text(encoding="utf-8")
+        for stale in (
+            "confirm_libreoffice",
+            "info_libreoffice_purpose",
+            "PPTX 幻灯片截图",
+            "PPTX slide screenshots",
         ):
             assert stale not in text, f"{script.name} still contains {stale!r}"
 

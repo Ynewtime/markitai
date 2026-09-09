@@ -36,7 +36,7 @@ Target state: `markitai doctor` exits 0 and shows ✓ on every capability the us
 
 4. **Run the doctor loop** until the needed rows are green — run `markitai doctor`, fix the first failing line, re-run:
    - **Playwright/Chromium missing**: `markitai doctor --fix` installs Chromium when the Playwright package is present; with a core-only install it exits safely and names the extra to add first (step 2, `browser`). Every doctor run smoke-tests a real Chromium launch, so a green result is trustworthy. Linux launch failures name the `playwright install-deps chromium` recovery.
-   - **LibreOffice missing** (legacy `.doc`/`.ppt` / slide rendering; `.xls` converts in pure Python and needs neither): `sudo apt-get install libreoffice` / `brew install --cask libreoffice`. On macOS without LibreOffice, installed MS Office is driven via AppleScript instead — first conversion triggers a one-time consent dialog per app; headless machines should set `{"office": {"macos_fallback": false}}`.
+   - **LibreOffice missing** (PPTX slide rendering; Windows and macOS convert through a local MS Office first, so it is mostly Linux installs that need it): `sudo apt-get install libreoffice` / `brew install --cask libreoffice`. On macOS without LibreOffice, installed MS Office is driven via AppleScript instead — first conversion triggers a one-time consent dialog per app; headless machines should set `{"office": {"macos_fallback": false}}`.
    - **LLM/auth rows failing**: wire a provider (step 5).
    - `--json` gives a machine-readable snapshot (mutually exclusive with `--fix`).
 

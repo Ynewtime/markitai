@@ -19,7 +19,7 @@ Docs: <https://markitai.dev>
 ## Install
 
 **Recommended: guided installer.** Checks/installs Python and uv, lets you
-pick extras, installs optional components (Playwright browser, LibreOffice),
+pick extras, installs the optional Playwright browser,
 falls back to a mirror when it measures the default index as unreachable, and
 is bilingual (EN/中文):
 

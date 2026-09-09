@@ -24,7 +24,7 @@ INSTALL_HINTS: dict[str, dict[str, str]] = {
     "libreoffice": {
         "darwin": "brew install --cask libreoffice",
         "linux": "sudo apt install libreoffice  # Ubuntu/Debian\nsudo dnf install libreoffice  # Fedora\nsudo pacman -S libreoffice-fresh  # Arch",
-        "win32": "winget install LibreOffice.LibreOffice",
+        "win32": "winget install TheDocumentFoundation.LibreOffice",
     },
     "playwright": {
         "darwin": "python -m playwright install chromium",

@@ -376,27 +376,32 @@ class PptxConverter(OfficeConverter):
             elif platform.system() == "Windows":
                 logger.warning(
                     "[PPTX] Cannot render slides: Neither MS Office nor LibreOffice found. "
-                    "Install Microsoft Office (recommended) or LibreOffice to enable slide rendering."
+                    "Install Microsoft Office (recommended) or LibreOffice "
+                    "(winget install TheDocumentFoundation.LibreOffice) "
+                    "to enable slide rendering."
                 )
                 return [], []
             elif platform.system() == "Darwin":
                 if self.config is not None and not self.config.office.macos_fallback:
                     logger.warning(
                         "[PPTX] Cannot render slides: LibreOffice not found and "
-                        "office.macos_fallback is disabled. Install LibreOffice, "
-                        "or enable office.macos_fallback to use Microsoft PowerPoint."
+                        "office.macos_fallback is disabled. Install LibreOffice "
+                        "(brew install --cask libreoffice), or enable "
+                        "office.macos_fallback to use Microsoft PowerPoint."
                     )
                 else:
                     logger.warning(
                         "[PPTX] Cannot render slides: Neither LibreOffice nor "
-                        "Microsoft PowerPoint found. Install LibreOffice or "
-                        "Microsoft Office to enable slide rendering."
+                        "Microsoft PowerPoint found. Install LibreOffice "
+                        "(brew install --cask libreoffice) or Microsoft Office "
+                        "to enable slide rendering."
                     )
                 return [], []
             else:
                 logger.warning(
-                    "[PPTX] Cannot render slides: LibreOffice not found. "
-                    "Install LibreOffice to enable slide rendering."
+                    "[PPTX] Cannot render slides: LibreOffice not found. Install "
+                    "LibreOffice (e.g. apt-get install libreoffice / dnf install "
+                    "libreoffice) to enable slide rendering."
                 )
                 return [], []
 

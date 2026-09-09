@@ -69,7 +69,6 @@ function i18n {
             "serve"                     { return "Web UI (markitai serve)" }
             "ocr"                       { return "OCR (扫描件文字识别)" }
             "playwright"                { return "Playwright 浏览器" }
-            "libreoffice"               { return "LibreOffice" }
             "claude_cli"                { return "Claude Code CLI" }
             "copilot_cli"               { return "Copilot CLI" }
             "precommit"                 { return "pre-commit hooks" }
@@ -79,14 +78,12 @@ function i18n {
             "confirm_serve"             { return "安装 Web UI 依赖? (启用 markitai serve)" }
             "confirm_ocr"               { return "安装 OCR 支持? (识别扫描件和图片中的文字, 约 150MB)" }
             "confirm_playwright"        { return "安装 Playwright 浏览器? (用于 JS 渲染页面)" }
-            "confirm_libreoffice"       { return "安装 LibreOffice? (用于 PPTX 幻灯片截图)" }
             "confirm_claude_cli"        { return "安装 Claude Code CLI? (使用 Claude 订阅)" }
             "confirm_copilot_cli"       { return "安装 Copilot CLI? (使用 GitHub Copilot 订阅)" }
             "confirm_uv"                { return "安装 uv 包管理器?" }
             "confirm_continue_as_admin" { return "以管理员身份继续?" }
 
             # Info messages
-            "info_libreoffice_purpose"  { return "LibreOffice 用于把 PPTX 幻灯片渲染为截图。旧版 .doc/.ppt 转换改由 markitai[legacy] extra 提供" }
             "info_chatgpt_route"        { return "ChatGPT 订阅无需 CLI，也无需 extra（首次使用时登录）" }
             "info_playwright_purpose"   { return "Playwright 用于获取 JavaScript 渲染的网页内容" }
             "info_project_dir"          { return "项目目录" }
@@ -192,7 +189,6 @@ function i18n {
             "serve"                     { return "Web UI (markitai serve)" }
             "ocr"                       { return "OCR (scanned-document text recognition)" }
             "playwright"                { return "Playwright browser" }
-            "libreoffice"               { return "LibreOffice" }
             "claude_cli"                { return "Claude Code CLI" }
             "copilot_cli"               { return "Copilot CLI" }
             "precommit"                 { return "pre-commit hooks" }
@@ -202,14 +198,12 @@ function i18n {
             "confirm_serve"             { return "Install Web UI dependencies? (enables markitai serve)" }
             "confirm_ocr"               { return "Install OCR support? (text recognition in scanned PDFs and images, ~150MB)" }
             "confirm_playwright"        { return "Install Playwright browser? (for JS-rendered pages)" }
-            "confirm_libreoffice"       { return "Install LibreOffice? (for PPTX slide screenshots)" }
             "confirm_claude_cli"        { return "Install Claude Code CLI? (use your Claude subscription)" }
             "confirm_copilot_cli"       { return "Install Copilot CLI? (use your GitHub Copilot subscription)" }
             "confirm_uv"                { return "Install uv package manager?" }
             "confirm_continue_as_admin" { return "Continue as administrator?" }
 
             # Info messages
-            "info_libreoffice_purpose"  { return "LibreOffice renders PPTX slides as screenshots. Legacy .doc/.ppt conversion uses the markitai[legacy] extra instead" }
             "info_chatgpt_route"        { return "ChatGPT subscription needs no CLI and no extra (it signs in on first use)" }
             "info_playwright_purpose"   { return "Playwright fetches JavaScript-rendered web pages" }
             "info_project_dir"          { return "Project directory" }
@@ -1595,77 +1589,6 @@ function Install-OptionalPlaywright {
     return $false
 }
 
-# Install LibreOffice (Optional)
-function Install-OptionalLibreOffice {
-    # Check if already installed
-    $soffice = Get-Command soffice -ErrorAction SilentlyContinue
-    if ($soffice) {
-        Clack-Success "$(i18n 'libreoffice') $(i18n 'already_installed')"
-        Track-Install -Component "libreoffice" -Status "installed"
-        return $true
-    }
-
-    $commonPaths = @(
-        "${env:ProgramFiles}\LibreOffice\program\soffice.exe",
-        "${env:ProgramFiles(x86)}\LibreOffice\program\soffice.exe"
-    )
-    foreach ($path in $commonPaths) {
-        if (Test-Path $path) {
-            Clack-Success "$(i18n 'libreoffice') $(i18n 'already_installed')"
-            Track-Install -Component "libreoffice" -Status "installed"
-            return $true
-        }
-    }
-
-    Clack-Info (i18n "info_libreoffice_purpose")
-
-    if (-not (Confirm-OptionalInstall (i18n "confirm_libreoffice") "n")) {
-        Clack-Skip (i18n "libreoffice")
-        Track-Install -Component "libreoffice" -Status "skipped"
-        return $false
-    }
-
-    Clack-Info "$(i18n 'installing') $(i18n 'libreoffice')..."
-
-    # Priority: winget > scoop > choco
-    $lastResult = $null
-    $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
-    if ($wingetCmd) {
-        $lastResult = Invoke-NativeQuietly { & winget install TheDocumentFoundation.LibreOffice --accept-package-agreements --accept-source-agreements }
-        if ($lastResult.Success) {
-            Clack-Success "$(i18n 'libreoffice') $(i18n 'installed')"
-            Track-Install -Component "libreoffice" -Status "installed"
-            return $true
-        }
-    }
-
-    $scoopCmd = Get-Command scoop -ErrorAction SilentlyContinue
-    if ($scoopCmd) {
-        $null = Invoke-NativeQuietly { & scoop bucket add extras }
-        $lastResult = Invoke-NativeQuietly { & scoop install extras/libreoffice }
-        if ($lastResult.Success) {
-            Clack-Success "$(i18n 'libreoffice') $(i18n 'installed')"
-            Track-Install -Component "libreoffice" -Status "installed"
-            return $true
-        }
-    }
-
-    $chocoCmd = Get-Command choco -ErrorAction SilentlyContinue
-    if ($chocoCmd) {
-        $lastResult = Invoke-NativeQuietly { & choco install libreoffice-fresh -y }
-        if ($lastResult.Success) {
-            Clack-Success "$(i18n 'libreoffice') $(i18n 'installed')"
-            Track-Install -Component "libreoffice" -Status "installed"
-            return $true
-        }
-    }
-
-    Clack-Error "$(i18n 'libreoffice') $(i18n 'failed')"
-    if ($lastResult) { Clack-Detail -Detail $lastResult.Output -MaxLines 3 }
-    Track-Install -Component "libreoffice" -Status "failed"
-    return $false
-}
-
 # Install Claude Code CLI (Optional)
 function Install-OptionalClaudeCLI {
     # Check if already installed
@@ -1971,7 +1894,6 @@ function Run-UserSetup {
 
     Clack-Section (i18n "section_optional")
     Invoke-OptionalStep -Component "playwright" -Action { Install-OptionalPlaywright }
-    Invoke-OptionalStep -Component "libreoffice" -Action { Install-OptionalLibreOffice }
 
     Clack-Section (i18n "section_llm_cli")
     Invoke-OptionalStep -Component "claude_cli" -Action { Install-OptionalClaudeCLI }
@@ -2014,7 +1936,6 @@ function Run-DevSetup {
 
     Clack-Section (i18n "section_optional")
     Invoke-OptionalStep -Component "playwright" -Action { Install-OptionalPlaywright }
-    Invoke-OptionalStep -Component "libreoffice" -Action { Install-OptionalLibreOffice }
 
     Clack-Section (i18n "section_llm_cli")
     Invoke-OptionalStep -Component "claude_cli" -Action { Install-OptionalClaudeCLI }

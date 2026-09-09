@@ -8,7 +8,7 @@ import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
-from click.testing import CliRunner
+from click.testing import CliRunner, Result
 
 from markitai.cli.commands.doctor import (
     FIXABLE_COMPONENTS,
@@ -582,7 +582,7 @@ class TestDoctorCapabilityContract:
         run_result: MagicMock | None = None,
         run_results: list[MagicMock] | None = None,
         libreoffice_check: MagicMock | None = None,
-    ) -> tuple[object, MagicMock]:
+    ) -> tuple[Result, MagicMock]:
         def playwright_result(status: str) -> dict[str, str]:
             if status == "ok":
                 message = "Chromium installed"

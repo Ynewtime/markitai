@@ -74,7 +74,6 @@ i18n() {
             serve)                      echo "Web UI (markitai serve)" ;;
             ocr)                        echo "OCR (扫描件文字识别)" ;;
             playwright)                 echo "Playwright 浏览器" ;;
-            libreoffice)                echo "LibreOffice" ;;
             claude_cli)                 echo "Claude Code CLI" ;;
             copilot_cli)                echo "Copilot CLI" ;;
             precommit)                  echo "pre-commit hooks" ;;
@@ -84,14 +83,12 @@ i18n() {
             confirm_serve)              echo "安装 Web UI 依赖? (启用 markitai serve)" ;;
             confirm_ocr)                echo "安装 OCR 支持? (识别扫描件和图片中的文字, 约 150MB)" ;;
             confirm_playwright)         echo "安装 Playwright 浏览器? (用于 JS 渲染页面)" ;;
-            confirm_libreoffice)        echo "安装 LibreOffice? (用于 PPTX 幻灯片截图)" ;;
             confirm_claude_cli)         echo "安装 Claude Code CLI? (使用 Claude 订阅)" ;;
             confirm_copilot_cli)        echo "安装 Copilot CLI? (使用 GitHub Copilot 订阅)" ;;
             confirm_uv)                 echo "安装 uv 包管理器?" ;;
             confirm_continue_as_root)   echo "以 root 身份继续?" ;;
 
             # Info messages
-            info_libreoffice_purpose)   echo "LibreOffice 用于把 PPTX 幻灯片渲染为截图。旧版 .doc/.ppt 转换改由 markitai[legacy] extra 提供" ;;
             info_chatgpt_route)         echo "ChatGPT 订阅无需 CLI，也无需 extra（首次使用时登录）" ;;
             info_playwright_purpose)    echo "Playwright 用于获取 JavaScript 渲染的网页内容" ;;
             info_project_dir)           echo "项目目录" ;;
@@ -195,7 +192,6 @@ i18n() {
             serve)                      echo "Web UI (markitai serve)" ;;
             ocr)                        echo "OCR (scanned-document text recognition)" ;;
             playwright)                 echo "Playwright browser" ;;
-            libreoffice)                echo "LibreOffice" ;;
             claude_cli)                 echo "Claude Code CLI" ;;
             copilot_cli)                echo "Copilot CLI" ;;
             precommit)                  echo "pre-commit hooks" ;;
@@ -205,14 +201,12 @@ i18n() {
             confirm_serve)              echo "Install Web UI dependencies? (enables markitai serve)" ;;
             confirm_ocr)                echo "Install OCR support? (text recognition in scanned PDFs and images, ~150MB)" ;;
             confirm_playwright)         echo "Install Playwright browser? (for JS-rendered pages)" ;;
-            confirm_libreoffice)        echo "Install LibreOffice? (for PPTX slide screenshots)" ;;
             confirm_claude_cli)         echo "Install Claude Code CLI? (use your Claude subscription)" ;;
             confirm_copilot_cli)        echo "Install Copilot CLI? (use your GitHub Copilot subscription)" ;;
             confirm_uv)                 echo "Install uv package manager?" ;;
             confirm_continue_as_root)   echo "Continue as root?" ;;
 
             # Info messages
-            info_libreoffice_purpose)   echo "LibreOffice renders PPTX slides as screenshots. Legacy .doc/.ppt conversion uses the markitai[legacy] extra instead" ;;
             info_chatgpt_route)         echo "ChatGPT subscription needs no CLI and no extra (it signs in on first use)" ;;
             info_playwright_purpose)    echo "Playwright fetches JavaScript-rendered web pages" ;;
             info_project_dir)           echo "Project directory" ;;
@@ -1600,73 +1594,6 @@ install_optional_playwright() {
     return 0
 }
 
-# Install LibreOffice (Optional)
-# Returns: 0 on success, 1 on failure, 2 if skipped
-install_optional_libreoffice() {
-    # Check if already installed
-    if command -v soffice >/dev/null 2>&1; then
-        _lo_version=$(soffice --version 2>/dev/null | head -n1)
-        clack_success "$(i18n libreoffice): $_lo_version"
-        track_install "libreoffice" "installed"
-        return 0
-    fi
-
-    if command -v libreoffice >/dev/null 2>&1; then
-        _lo_version=$(libreoffice --version 2>/dev/null | head -n1)
-        clack_success "$(i18n libreoffice): $_lo_version"
-        track_install "libreoffice" "installed"
-        return 0
-    fi
-
-    clack_info "$(i18n info_libreoffice_purpose)"
-
-    if ! clack_confirm_optional "$(i18n confirm_libreoffice)" "n"; then
-        clack_skip "$(i18n libreoffice)"
-        track_install "libreoffice" "skipped"
-        return 2
-    fi
-
-    clack_info "$(i18n installing) $(i18n libreoffice)..."
-
-    case "$OS_TYPE" in
-        Darwin)
-            if command -v brew >/dev/null 2>&1; then
-                if clack_run_quiet "$(i18n installing) $(i18n libreoffice)" brew install --cask libreoffice; then
-                    clack_success "$(i18n libreoffice) $(i18n installed)"
-                    track_install "libreoffice" "installed"
-                    return 0
-                fi
-            fi
-            ;;
-        Linux)
-            if [ -f /etc/debian_version ]; then
-                if clack_run_quiet "apt update" sudo apt update && \
-                   clack_run_quiet "$(i18n installing) $(i18n libreoffice)" sudo apt install -y libreoffice; then
-                    clack_success "$(i18n libreoffice) $(i18n installed)"
-                    track_install "libreoffice" "installed"
-                    return 0
-                fi
-            elif [ -f /etc/fedora-release ]; then
-                if clack_run_quiet "$(i18n installing) $(i18n libreoffice)" sudo dnf install -y libreoffice; then
-                    clack_success "$(i18n libreoffice) $(i18n installed)"
-                    track_install "libreoffice" "installed"
-                    return 0
-                fi
-            elif [ -f /etc/arch-release ]; then
-                if clack_run_quiet "$(i18n installing) $(i18n libreoffice)" sudo pacman -S --noconfirm libreoffice-fresh; then
-                    clack_success "$(i18n libreoffice) $(i18n installed)"
-                    track_install "libreoffice" "installed"
-                    return 0
-                fi
-            fi
-            ;;
-    esac
-
-    clack_error "$(i18n libreoffice) $(i18n failed)"
-    track_install "libreoffice" "failed"
-    return 1
-}
-
 # Install Claude Code CLI (Optional)
 # Returns: 0 on success, 1 on failure, 2 if skipped
 install_optional_claude_cli() {
@@ -1964,7 +1891,6 @@ run_user_setup() {
 
     clack_section "$(i18n section_optional)"
     install_optional_playwright || true
-    install_optional_libreoffice || true
 
     clack_section "$(i18n section_llm_cli)"
     install_optional_claude_cli || true
@@ -2001,7 +1927,6 @@ run_dev_setup() {
 
     clack_section "$(i18n section_optional)"
     install_optional_playwright || true
-    install_optional_libreoffice || true
 
     clack_section "$(i18n section_llm_cli)"
     install_optional_claude_cli || true

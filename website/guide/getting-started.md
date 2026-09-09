@@ -16,7 +16,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 
 ::: warning Security Notice
 - The script checks for root/Administrator and asks before continuing
-- In an interactive terminal, optional components prompt before installing: the Playwright browser, Web UI, and OCR default to Yes; LibreOffice and the Claude/Copilot CLIs default to No
+- In an interactive terminal, optional components prompt before installing: the Playwright browser, Web UI, and OCR default to Yes; the Claude/Copilot CLIs default to No. LibreOffice is not an installer step — PPTX slide rendering warns at conversion time and points to the install command when no renderer exists
 - Without a usable terminal, only uv, Python, and markitai are installed. Set `MARKITAI_INSTALL_OPTIONAL=1` to enable the optional steps in automation
 - The default package index is used unless it measures as slow or unreachable from your machine. `MARKITAI_USE_MIRROR=1` always offers a mirror; `=0` never asks
 :::
