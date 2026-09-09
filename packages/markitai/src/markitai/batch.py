@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 
 from loguru import logger
 from rich.live import Live
+from rich.markup import escape
 from rich.progress import (
     BarColumn,
     Progress,
@@ -1595,7 +1596,8 @@ class BatchProcessor:
             parts.append(f"{url_completed} URLs")
 
         cost_str = f", ${total_cost:.3f}" if total_cost > 0 else ""
-        summary_text = f"Done: {', '.join(parts)} ({wall_duration_str}{cost_str})"
+        # Nothing converted is still a finished run; say so instead of "Done: ".
+        summary_text = f"Done: {', '.join(parts) or 'nothing converted'} ({wall_duration_str}{cost_str})"
         term.summary(summary_text, console=self.console)
 
         # Detail lines
@@ -1640,14 +1642,14 @@ class BatchProcessor:
             hint_str = f" {hint}" if hint else ""
             warnings.append(f"{n} {label} skipped ({reason}): {examples}{hint_str}")
 
-        # Warnings (failed and skipped items)
+        # Warnings (failed and skipped items). Never truncated: the useful
+        # part of a warning is usually its tail (the install command, the
+        # flag that would have read the file), and rich wraps long lines.
         if warnings:
-            width = term.term_width(self.console)
-            warn_max = max(width - 4, 20)
             self.console.print()
             for warning in warnings:
                 self.console.print(
-                    f"  [yellow]{term.MARK_WARNING}[/] {term.truncate(warning, warn_max)}"
+                    f"  [yellow]{term.MARK_WARNING}[/] {escape(warning)}"
                 )
 
         self.console.print()

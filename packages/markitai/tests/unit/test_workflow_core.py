@@ -3666,3 +3666,19 @@ class TestPureDecouplingBehaviorMatrix:
             and not ctx.config.ocr.enabled
         )
         assert not rule_a_triggers
+
+
+class TestNoConverterMessage:
+    def test_kreuzberg_formats_name_the_extra(self) -> None:
+        from markitai.converter.base import FileFormat
+        from markitai.workflow.core import no_converter_message
+
+        message = no_converter_message(FileFormat.RTF)
+        assert "rtf" in message
+        assert 'install "markitai[kreuzberg]"' in message
+
+    def test_other_formats_stay_plain(self) -> None:
+        from markitai.converter.base import FileFormat
+        from markitai.workflow.core import no_converter_message
+
+        assert "kreuzberg" not in no_converter_message(FileFormat.PDF)

@@ -200,9 +200,7 @@ def validate_and_detect_format(
         ctx.converter = get_converter(ctx.input_path, config=ctx.config)
 
     if ctx.converter is None:
-        return ConversionStepResult(
-            success=False, error=f"No converter available for format: {fmt.value}"
-        )
+        return ConversionStepResult(success=False, error=no_converter_message(fmt))
 
     return ConversionStepResult(success=True)
 
@@ -1288,3 +1286,21 @@ async def convert_document_core(
     apply_output_profile(ctx)
 
     return ConversionStepResult(success=True)
+
+
+def no_converter_message(fmt: FileFormat) -> str:
+    """Explain a format with no converter, naming the extra when one exists.
+
+    The kreuzberg-backed formats are documented as supported, so a bare
+    "no converter" would read as a bug; the fix is one install command.
+    """
+    from markitai.converter.kreuzberg import KREUZBERG_FORMATS
+
+    if fmt in KREUZBERG_FORMATS:
+        from markitai.utils.errors import extra_install_command
+
+        return (
+            f"No converter available for format: {fmt.value}. "
+            f"Install the kreuzberg extra: {extra_install_command('kreuzberg')}"
+        )
+    return f"No converter available for format: {fmt.value}"

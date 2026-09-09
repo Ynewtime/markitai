@@ -14,6 +14,17 @@
 #
 #   scripts/e2e_release_check.sh
 #
+# What it drives, in order: the first help screen, doctor on a bare machine,
+# zero-config conversion, the three LLM routes (key, MODEL, --alt/--desc), a
+# local web page, a directory batch with cost reporting, interrupt + resume,
+# the cache, the failure messages, every documented input format, presets and
+# output profiles, the flags that change a run's shape, the refusals (removed
+# aliases, private URLs offered to remote services, Batch API on the wrong
+# pool), a .urls list, the three configuration layers plus the cache
+# commands, the Python API, then — with the serve/mcp/legacy extras added to
+# the same install — doctor again, legacy Office formats, the serve API the
+# browser UI talks to, and markitai-mcp over stdio.
+#
 # It writes a report you can open — WORKDIR/report.html — with one numbered
 # directory per step beside it holding that step's inputs, outputs and logs.
 #
@@ -29,7 +40,8 @@
 #   E2E_PYTHON=/path/to/python   interpreter for the throwaway install
 #                          (default: the repo's own venv interpreter)
 #   BATCH_DOCS=40          documents generated for the batch/interrupt steps
-#   HTTP_PORT=8899         port for the local page used by the URL step
+#   HTTP_PORT=8899         port for the local page used by the URL steps
+#   SERVE_PORT=8900        port for the web workspace step
 #   INTERRUPT_AFTER=6      seconds to let the batch run before interrupting it
 #                          (the step shortens the state flush interval so this
 #                          does not have to outlast the 10s default)
@@ -45,6 +57,7 @@ ENV_FILE=${ENV_FILE:-$HOME/.markitai/.env}
 E2E_MODEL=${E2E_MODEL:-gemini/gemini-flash-lite-latest}
 BATCH_DOCS=${BATCH_DOCS:-40}
 HTTP_PORT=${HTTP_PORT:-8899}
+SERVE_PORT=${SERVE_PORT:-8900}
 INTERRUPT_AFTER=${INTERRUPT_AFTER:-6}
 SKIP_INTERRUPT=${SKIP_INTERRUPT:-0}
 
@@ -445,6 +458,366 @@ else
   bad "--ocr without its backend did not explain itself"
 fi
 show "the message when a capability is missing" 09-failure-messages/missing-extra.txt
+
+# ── 10 ───────────────────────────────────────────────────────────────────────
+step 10-formats "Every format the front page lists" \
+  "One directory of one file per format. The base wheel converts most; the rest must say which extra they need."
+mkdir -p 00-inputs/formats
+# Handled by the base wheel: converted. Images: skipped without --llm/--ocr.
+# The kreuzberg-backed set (xml tsv rtf rst org tex odt ods) is documented as
+# needing markitai[kreuzberg] — its failure must name that command.
+BASE_FORMATS="pptx xlsx csv html eml msg epub ipynb"
+IMAGE_FORMATS="jpg bmp"
+KREUZBERG_FORMATS="xml tsv rtf rst org tex odt ods"
+for f in $BASE_FORMATS $IMAGE_FORMATS $KREUZBERG_FORMATS; do
+  cp "$REPO_ROOT/packages/markitai/tests/fixtures/sample.$f" 00-inputs/formats/ 2>/dev/null
+done
+cp "$REPO_ROOT/packages/markitai/tests/fixtures/legacy/sample.xls" 00-inputs/formats/ 2>/dev/null
+markitai 00-inputs/formats/ -o 10-formats/output/ >10-formats/batch.log 2>&1
+MISSING=""
+for f in $BASE_FORMATS xls; do
+  [ -s "10-formats/output/sample.$f.md" ] || MISSING="$MISSING $f"
+done
+check "every base-wheel format produced markdown${MISSING:+ (missing:$MISSING)}" test -z "$MISSING"
+check "images are skipped, and the summary says what would read them" \
+  grep -q 'image_only.*--llm or --ocr' 10-formats/batch.log
+# The summary wraps long warnings at the terminal width, so the install
+# command may sit on the line after the file name: count both separately.
+KZ_MISSING=""
+for f in $KREUZBERG_FORMATS; do
+  grep -q "sample.$f: No converter available" 10-formats/batch.log || KZ_MISSING="$KZ_MISSING $f"
+done
+check "each kreuzberg-backed format is reported as unconverted${KZ_MISSING:+ (silent:$KZ_MISSING)}" \
+  test -z "$KZ_MISSING"
+check "and every one of those warnings names the extra that would convert it" \
+  test "$(grep -c 'install "markitai\[kreuzberg\]"' 10-formats/batch.log)" -eq 8
+check "a spreadsheet keeps its table" grep -q '^|' 10-formats/output/sample.xlsx.md
+check "an email keeps its headers" grep -q '^\*\*From:\*\*' 10-formats/output/sample.eml.md
+check "a notebook keeps its code cells" grep -q '```' 10-formats/output/sample.ipynb.md
+check "an HTML file converts to stdout like any other" \
+  test "$(markitai 00-inputs/formats/sample.html 2>/dev/null | head -c 3)" = "---"
+show "the batch summary" 10-formats/batch.log
+
+# ── 11 ───────────────────────────────────────────────────────────────────────
+step 11-presets-profiles "Presets and output profiles" \
+  "A preset decides how much the model does; a profile decides who the output is shaped for."
+markitai 00-inputs/sample.pdf -o 11-presets-profiles/minimal/ --preset minimal \
+  >11-presets-profiles/minimal.log 2>&1
+check "--preset minimal converts without touching a model" \
+  test -f 11-presets-profiles/minimal/sample.pdf.md -a ! -f 11-presets-profiles/minimal/sample.pdf.llm.md
+MODEL="$E2E_MODEL" markitai 00-inputs/sample.pdf -o 11-presets-profiles/standard-no-desc/ \
+  --preset standard --no-desc >11-presets-profiles/standard.log 2>&1
+check "--preset standard enhances with alt text" \
+  grep -qE '!\[[^]]+\]\(' 11-presets-profiles/standard-no-desc/sample.pdf.llm.md
+check "and --no-desc on top of it leaves the descriptions sidecar out" \
+  test ! -f 11-presets-profiles/standard-no-desc/.markitai/assets/images.json
+markitai 00-inputs/sample.pdf -o 11-presets-profiles/rag/ --profile rag >11-presets-profiles/rag.log 2>&1
+check "--profile rag puts images in a visible assets/ directory" \
+  test -d 11-presets-profiles/rag/assets
+check "and references them there" grep -q '](assets/' 11-presets-profiles/rag/sample.pdf.md
+markitai 00-inputs/sample.pdf -o 11-presets-profiles/obsidian/ --profile obsidian \
+  --config-json '{"output":{"wikilinks":true}}' >11-presets-profiles/obsidian.log 2>&1
+check "--profile obsidian with wikilinks writes ![[assets/...]]" \
+  grep -q '!\[\[assets/' 11-presets-profiles/obsidian/sample.pdf.md
+markitai 00-inputs/sample.docx -o 11-presets-profiles/okf/ --profile okf >11-presets-profiles/okf.log 2>&1
+check "--profile okf writes Open Knowledge Format frontmatter" \
+  grep -q '^type: Document' 11-presets-profiles/okf/sample.docx.md
+check "including who generated it and when" \
+  grep -qE "^  by: markitai/$VERSION" 11-presets-profiles/okf/sample.docx.md
+show "OKF frontmatter" 11-presets-profiles/okf/sample.docx.md
+file "rag output" 11-presets-profiles/rag/sample.pdf.md
+
+# ── 12 ───────────────────────────────────────────────────────────────────────
+step 12-run-shape "Flags that change the shape of a run" \
+  "Preview, pure, keep-base, screenshots, discovery filters, and reading an image with the model."
+markitai 00-inputs/sample.docx -o 12-run-shape/dry-run/ --dry-run >12-run-shape/dry-run.txt 2>&1
+check "--dry-run names the output it would write" grep -q 'sample.docx.md' 12-run-shape/dry-run.txt
+check "and writes nothing" test ! -e 12-run-shape/dry-run/sample.docx.md
+check "--pure yields the body alone, no frontmatter" \
+  test "$(markitai 00-inputs/sample.docx --pure 2>/dev/null | head -c 1)" = "#"
+MODEL="$E2E_MODEL" markitai 00-inputs/sample.docx -o 12-run-shape/keep-base/ --llm --keep-base \
+  >12-run-shape/keep-base.log 2>&1
+check "--keep-base leaves the base .md beside the .llm.md" \
+  test -f 12-run-shape/keep-base/sample.docx.md -a -f 12-run-shape/keep-base/sample.docx.llm.md
+markitai 00-inputs/sample.pdf -o 12-run-shape/screenshot/ --screenshot >12-run-shape/screenshot.log 2>&1
+check "--screenshot renders one image per PDF page" \
+  test "$(ls 12-run-shape/screenshot/.markitai/screenshots/*.jpg 2>/dev/null | wc -l | tr -d ' ')" -ge 1
+mkdir -p 00-inputs/tree/a/b
+cp 00-inputs/formats/sample.csv 00-inputs/tree/
+cp 00-inputs/formats/sample.tsv 00-inputs/tree/a/
+cp 00-inputs/formats/sample.xml 00-inputs/tree/a/b/
+markitai 00-inputs/tree/ -o 12-run-shape/glob/ --glob '*.csv' >12-run-shape/glob.log 2>&1
+check "--glob restricts discovery to matching files" \
+  test "$(ls 12-run-shape/glob/*.md 2>/dev/null | wc -l | tr -d ' ')" -eq 1
+markitai 00-inputs/tree/ -o 12-run-shape/depth/ --max-depth 0 >12-run-shape/depth.log 2>&1
+check "--max-depth 0 stays in the input directory" \
+  test "$(ls 12-run-shape/depth/*.md 2>/dev/null | wc -l | tr -d ' ')" -eq 1
+MODEL="$E2E_MODEL" markitai 00-inputs/formats/sample.jpg -o 12-run-shape/vlm-ocr/ --llm --ocr \
+  >12-run-shape/vlm-ocr.log 2>&1
+check "--llm --ocr on an image has the vision model read it" \
+  grep -q '^description:' 12-run-shape/vlm-ocr/sample.jpg.llm.md
+show "dry-run preview" 12-run-shape/dry-run.txt
+file "what the model saw in the image" 12-run-shape/vlm-ocr/sample.jpg.llm.md
+
+# ── 13 ───────────────────────────────────────────────────────────────────────
+step 13-refusals "Refusals that should be refusals" \
+  "Removed flags, private URLs offered to remote services, and Batch API on the wrong pool."
+markitai 00-inputs/sample.docx --playwright >13-refusals/removed-alias.txt 2>&1
+ALIAS_RC=$?
+check "a removed alias is a usage error, not a silent no-op" test "$ALIAS_RC" -ne 0
+check "and the error names the replacement" grep -q -- '-s playwright' 13-refusals/removed-alias.txt
+markitai "http://127.0.0.1:$HTTP_PORT/" -s jina -o 13-refusals/jina/ >13-refusals/jina-local.txt 2>&1
+check "a local URL is never offered to a remote extraction service" \
+  grep -qi 'private/local host' 13-refusals/jina-local.txt
+markitai 00-inputs/sample.docx -o 13-refusals/llm-batch-file/ --llm --llm-batch \
+  >13-refusals/llm-batch-file.txt 2>&1
+check "--llm-batch on a single file is refused as directory-only" \
+  grep -q 'directory batches only' 13-refusals/llm-batch-file.txt
+MODEL="$E2E_MODEL" markitai 00-inputs/batch-docs/ -o 13-refusals/llm-batch-pool/ --llm --llm-batch \
+  >13-refusals/llm-batch-pool.txt 2>&1
+check "--llm-batch on a pool without a Batch API says which pools have one" \
+  grep -q 'openai and anthropic' 13-refusals/llm-batch-pool.txt
+markitai 00-inputs/sample.docx --preset nope >13-refusals/bad-preset.txt 2>&1
+check "an unknown preset is rejected" test $? -ne 0
+show "what a removed flag tells you" 13-refusals/removed-alias.txt
+show "what a remote strategy says about a private URL" 13-refusals/jina-local.txt
+
+# ── 14 ───────────────────────────────────────────────────────────────────────
+step 14-url-list "A .urls list" \
+  "The batch form of the URL step: one file, one line per page."
+cat >00-inputs/site/second.html <<'HTML'
+<!doctype html><html><head><title>Second Page</title></head><body>
+<article><h1>Second Page</h1>
+<p>A second article, long enough to read as content rather than an empty shell:
+it repeats the point of the first one in different words and then adds a
+closing paragraph so the extractor has something to keep.</p>
+<p>Closing paragraph with a <a href="/">link back</a> and a final sentence.</p>
+</article></body></html>
+HTML
+(cd 00-inputs/site && exec python3 -m http.server "$HTTP_PORT" >/dev/null 2>&1) &
+SERVER_PID=$!
+for _ in 1 2 3 4 5; do
+  sleep 1
+  curl -fsS --max-time 2 "http://127.0.0.1:$HTTP_PORT/second.html" 2>/dev/null | grep -q 'Second Page' && break
+done
+printf 'http://127.0.0.1:%s/\n\nhttp://127.0.0.1:%s/second.html\n' "$HTTP_PORT" "$HTTP_PORT" >00-inputs/pages.urls
+markitai 00-inputs/pages.urls -o 14-url-list/output/ >14-url-list/run.log 2>&1
+URLS_OUT=$(ls 14-url-list/output/*.md 2>/dev/null | wc -l | tr -d ' ')
+check "both pages in the list were converted ($URLS_OUT of 2)" test "$URLS_OUT" -eq 2
+check "blank lines in the list are ignored, not fetched" \
+  test "$(grep -c '✗' 14-url-list/run.log)" -eq 0
+kill "$SERVER_PID" 2>/dev/null; SERVER_PID=""
+file "run log" 14-url-list/run.log
+
+# ── 15 ───────────────────────────────────────────────────────────────────────
+step 15-config "Configuration, three layers" \
+  "A user file, a project file, and inline JSON — and the commands that read and write them."
+markitai init --yes >15-config/init.txt 2>&1
+check "init --yes writes the user config without asking" test -f "$HOME/.markitai/config.json"
+markitai config set llm.enabled true >15-config/set.txt 2>&1
+check "config set persists a value" test "$(markitai config get llm.enabled 2>/dev/null)" = "True"
+markitai config validate >15-config/validate.txt 2>&1
+check "config validate accepts what config set wrote" test $? -eq 0
+markitai config path >15-config/path.txt 2>&1
+check "config path explains precedence" grep -qi 'priority' 15-config/path.txt
+(cd 15-config && markitai init --local --yes >local-init.txt 2>&1)
+check "init --local writes a project markitai.json" test -f 15-config/markitai.json
+markitai 00-inputs/sample.docx -o 15-config/override/ --dry-run \
+  --config-json '{"llm":{"enabled":false}}' >15-config/override.txt 2>&1
+check "--config-json overrides the file the user just wrote" \
+  test "$(grep -c 'Features: none' 15-config/override.txt)" -eq 1
+markitai config set llm.enabled false >/dev/null 2>&1   # leave later steps unaffected
+markitai cache stats >15-config/cache-stats.txt 2>&1
+check "cache stats reports what the earlier runs left behind" grep -qE 'entries' 15-config/cache-stats.txt
+markitai cache clear -y >15-config/cache-clear.txt 2>&1
+check "cache clear -y needs no confirmation" test $? -eq 0
+show "configuration precedence, as the tool explains it" 15-config/path.txt
+file "cache statistics" 15-config/cache-stats.txt
+
+# ── 16 ───────────────────────────────────────────────────────────────────────
+step 16-python-api "markitai as a library" \
+  "The same conversion from Python: a typed result, a clean stdout, and diagnostics that can be silenced."
+TOOL_PY="$UV_TOOL_DIR/markitai/bin/python"
+cat >_internal/api_probe.py <<'PYEOF'
+import sys
+from loguru import logger
+import markitai
+
+if "--quiet" in sys.argv:
+    logger.disable("markitai")
+out = markitai.convert(sys.argv[1])
+print(type(out).__name__, out.frontmatter.get("title"), len(out.markdown))
+PYEOF
+"$TOOL_PY" _internal/api_probe.py 00-inputs/sample.docx >16-python-api/stdout.txt 2>16-python-api/stderr.txt
+check "convert() returns a ConversionOutput with the parsed frontmatter" \
+  grep -q '^ConversionOutput Markitai Snapshot Fixture [0-9]' 16-python-api/stdout.txt
+check "stdout carries only what the program printed" \
+  test "$(wc -l <16-python-api/stdout.txt | tr -d ' ')" -eq 1
+"$TOOL_PY" _internal/api_probe.py 00-inputs/sample.docx --quiet >/dev/null 2>16-python-api/stderr-quiet.txt
+check "logger.disable(\"markitai\") silences the diagnostics, as documented" \
+  test ! -s 16-python-api/stderr-quiet.txt
+file "diagnostics the library emits by default" 16-python-api/stderr.txt
+
+# ── 17 ───────────────────────────────────────────────────────────────────────
+step 17-extras "The optional extras, installed" \
+  "serve, mcp and legacy added to the same install; doctor notices, and the formats they unlock convert."
+uv tool install --force --python "$E2E_PYTHON" "markitai[serve,mcp,legacy]@$WHEEL" \
+  >17-extras/install.log 2>&1
+check "the extras install on top of the existing tool" test $? -eq 0
+markitai doctor --json >17-extras/doctor.json 2>/dev/null
+python3 - <<'PYEOF' >17-extras/doctor-extras.txt
+import json
+d = json.load(open("17-extras/doctor.json"))
+for key in ("serve", "anydoc"):
+    print(key, d.get(key, {}).get("status"))
+PYEOF
+check "doctor sees the serve extra" grep -qE '^serve (ok|installed|available)' 17-extras/doctor-extras.txt
+check "doctor sees the legacy backend" grep -qE '^anydoc (ok|installed|available)' 17-extras/doctor-extras.txt
+cp "$REPO_ROOT/packages/markitai/tests/fixtures/legacy/sample.doc" \
+   "$REPO_ROOT/packages/markitai/tests/fixtures/legacy/sample.ppt" 00-inputs/
+markitai 00-inputs/sample.doc -o 17-extras/legacy/ >17-extras/doc.log 2>&1
+markitai 00-inputs/sample.ppt -o 17-extras/legacy/ >17-extras/ppt.log 2>&1
+check "a Word 97 .doc converts through the legacy extra" test -s 17-extras/legacy/sample.doc.md
+check "a PowerPoint 97 .ppt converts through the legacy extra" test -s 17-extras/legacy/sample.ppt.md
+show "doctor after the extras" 17-extras/doctor-extras.txt
+file "legacy .doc output" 17-extras/legacy/sample.doc.md
+
+# ── 18 ───────────────────────────────────────────────────────────────────────
+step 18-serve "The web workspace" \
+  "The same API the browser UI talks to: capabilities, the packaged UI, one job to completion, history."
+cat >_internal/serve_probe.py <<'PYEOF'
+import json, sys, time, urllib.request, urllib.error, uuid
+
+base, doc = sys.argv[1].rstrip("/"), sys.argv[2]
+
+def call(method, path, body=None, headers=None, raw=False):
+    req = urllib.request.Request(base + path, data=body, method=method, headers=headers or {})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = r.read()
+            return r.status, (data if raw else json.loads(data or b"null"))
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()[:300].decode(errors="replace")
+
+def multipart(fields, files):
+    b = uuid.uuid4().hex; out = bytearray()
+    for k, v in fields.items():
+        out += f'--{b}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode()
+    for k, (name, data) in files.items():
+        out += (f'--{b}\r\nContent-Disposition: form-data; name="{k}"; filename="{name}"\r\n'
+                f'Content-Type: application/octet-stream\r\n\r\n').encode() + data + b"\r\n"
+    out += f"--{b}--\r\n".encode()
+    return bytes(out), {"Content-Type": f"multipart/form-data; boundary={b}"}
+
+r = {}
+st, caps = call("GET", "/api/capabilities")
+r["capabilities_status"] = st
+r["version"] = caps.get("version") if isinstance(caps, dict) else None
+r["presets"] = ",".join(caps.get("presets", [])) if isinstance(caps, dict) else None
+st, html = call("GET", "/", headers={"Accept": "text/html"}, raw=True)
+r["ui_is_html"] = st == 200 and b"<!doctype html" in html.lower()
+body, hdr = multipart({"urls": "[]", "options": json.dumps({"llm": False})},
+                      {"files": (doc.rsplit("/", 1)[-1], open(doc, "rb").read())})
+st, created = call("POST", "/api/jobs", body, hdr)
+r["create_status"] = st
+job_id = created["job_id"] if isinstance(created, dict) else None
+snapshot = {}
+for _ in range(120):
+    st, snapshot = call("GET", f"/api/jobs/{job_id}")
+    if isinstance(snapshot, dict) and snapshot.get("status") == "done":
+        break
+    time.sleep(0.5)
+items = snapshot.get("items", []) if isinstance(snapshot, dict) else []
+r["job_status"] = snapshot.get("status") if isinstance(snapshot, dict) else None
+r["item_status"] = items[0]["status"] if items else None
+if items:
+    st, result = call("GET", f"/api/jobs/{job_id}/items/{items[0]['item_id']}/result")
+    r["result_starts_with_frontmatter"] = isinstance(result, dict) and (result.get("markdown") or "").startswith("---")
+st, history = call("GET", "/api/history")
+r["history_entries"] = len(history) if isinstance(history, list) else -1
+r["history_has_job"] = isinstance(history, list) and any(h.get("job_id") == job_id for h in history)
+for k, v in r.items():
+    print(f"{k}={v}")
+PYEOF
+# A CLI run recorded into the shared history should be visible from the UI.
+markitai 00-inputs/sample.docx -o 18-serve/recorded/ --record-history >18-serve/recorded.log 2>&1
+markitai serve --no-open --port "$SERVE_PORT" >18-serve/serve.log 2>&1 &
+SERVER_PID=$!
+for _ in $(seq 1 30); do
+  curl -fsS --max-time 2 "http://127.0.0.1:$SERVE_PORT/api/capabilities" >/dev/null 2>&1 && break
+  sleep 1
+done
+python3 _internal/serve_probe.py "http://127.0.0.1:$SERVE_PORT" 00-inputs/sample.docx \
+  >18-serve/probe.txt 2>18-serve/probe.err
+check "the server comes up and reports the installed version" \
+  grep -q "^version=$VERSION$" 18-serve/probe.txt
+check "the sign-in URL is printed for the user" grep -q '?token=' 18-serve/serve.log
+check "the packaged UI is served at /" grep -q '^ui_is_html=True' 18-serve/probe.txt
+check "the capabilities list the three presets" grep -q '^presets=minimal,standard,rich' 18-serve/probe.txt
+check "an uploaded file becomes a finished job" grep -q '^item_status=done' 18-serve/probe.txt
+check "and its result is the same markdown the CLI writes" \
+  grep -q '^result_starts_with_frontmatter=True' 18-serve/probe.txt
+check "history lists the job" grep -q '^history_has_job=True' 18-serve/probe.txt
+check "and the CLI run recorded with --record-history" \
+  test "$(grep -oE '^history_entries=[0-9]+' 18-serve/probe.txt | grep -oE '[0-9]+')" -ge 2
+kill "$SERVER_PID" 2>/dev/null; SERVER_PID=""
+show "what the API reported" 18-serve/probe.txt
+file "server log" 18-serve/serve.log
+
+# ── 19 ───────────────────────────────────────────────────────────────────────
+step 19-mcp "markitai-mcp over stdio" \
+  "What an agent host sees: a handshake, four tools, and one conversion through the protocol."
+cat >_internal/mcp_probe.py <<'PYEOF'
+import json, subprocess, sys
+
+cmd, doc, out_dir = sys.argv[1], sys.argv[2], sys.argv[3]
+proc = subprocess.Popen([cmd], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE, text=True)
+seq = 0
+
+def send(method, params=None, notify=False):
+    global seq
+    msg = {"jsonrpc": "2.0", "method": method, "params": params or {}}
+    if not notify:
+        seq += 1
+        msg["id"] = seq
+    proc.stdin.write(json.dumps(msg) + "\n")
+    proc.stdin.flush()
+    if notify:
+        return None
+    while True:
+        line = proc.stdout.readline()
+        if not line:
+            raise SystemExit(f"server closed stdout; stderr: {proc.stderr.read()[-800:]}")
+        reply = json.loads(line)
+        if reply.get("id") == seq:
+            return reply
+
+init = send("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
+                           "clientInfo": {"name": "e2e", "version": "0"}})
+send("notifications/initialized", notify=True)
+tools = send("tools/list")
+call = send("tools/call", {"name": "convert_document",
+                           "arguments": {"path": doc, "output_dir": out_dir}})
+proc.stdin.close()
+proc.wait(timeout=30)
+info = init.get("result", {}).get("serverInfo", {})
+content = call.get("result", {}).get("structuredContent") or {}
+print("server=" + info.get("name", "") + " " + info.get("version", ""))
+print("tools=" + ",".join(sorted(t["name"] for t in tools.get("result", {}).get("tools", []))))
+print("is_error=" + str(call.get("result", {}).get("isError", False)))
+print("markdown_file=" + str(content.get("markdown_file")))
+PYEOF
+mkdir -p 19-mcp/output
+python3 _internal/mcp_probe.py "$(command -v markitai-mcp)" "$PWD/00-inputs/sample.docx" "$PWD/19-mcp/output" \
+  >19-mcp/probe.txt 2>19-mcp/probe.err
+check "the server completes the handshake and identifies itself" \
+  grep -q "^server=markitai $VERSION$" 19-mcp/probe.txt
+check "it exposes exactly the four documented tools" \
+  grep -q '^tools=batch_convert,convert_document,convert_url,job_status$' 19-mcp/probe.txt
+check "convert_document converts through the protocol" grep -q '^is_error=False' 19-mcp/probe.txt
+check "and the file it names exists" test -s "$(grep -oE '^markdown_file=.*' 19-mcp/probe.txt | cut -d= -f2-)"
+show "what the agent host saw" 19-mcp/probe.txt
 
 # ── Report ───────────────────────────────────────────────────────────────────
 DURATION=$(( $(date +%s) - STARTED_EPOCH ))
