@@ -19,7 +19,7 @@ import type {
 } from "../api/types";
 import { detectLocale, dicts } from "../i18n";
 import { serverTimestampMs } from "../lib/format";
-import { emptyJobOptions } from "../lib/jobOptions";
+import { emptyJobOptions, jobOptionsFromSnapshot } from "../lib/jobOptions";
 import { notifyJobDone, requestNotifyPermission } from "../lib/notify";
 
 export { serverTimestampMs } from "../lib/format";
@@ -295,7 +295,7 @@ export function useJobs() {
             jobId,
             status: snap.status,
             createdAt: snap.created_at,
-            options: snap.options,
+            options: jobOptionsFromSnapshot(snap.options),
           },
         }));
         setItems((prev) =>
@@ -562,7 +562,7 @@ export function useJobs() {
         // Inherit the whole snapshot rather than naming fields: the list
         // went stale every time an option was added, silently dropping it
         // from a retry.
-        const options: JobOptions = retryOptions ?? snapshot.options;
+        const options: JobOptions = retryOptions ?? jobOptionsFromSnapshot(snapshot.options);
         notifiedRef.current.delete(snapshot.job_id);
         setJobs((previous) => ({
           ...previous,
@@ -633,7 +633,7 @@ export function useJobs() {
             jobId: snapshot.job_id,
             status: "running",
             createdAt: snapshot.created_at,
-            options: snapshot.options,
+            options: jobOptionsFromSnapshot(snapshot.options),
           },
         }));
         setItems((previous) => [
@@ -785,7 +785,7 @@ export function useJobs() {
               jobId: j.jobId,
               status: snap.status,
               createdAt: snap.created_at,
-              options: snap.options,
+              options: jobOptionsFromSnapshot(snap.options),
             },
           }));
           setItems((prev) =>

@@ -5,6 +5,7 @@ import App from "./App";
 const mocks = vi.hoisted(() => ({
   submit: vi.fn(),
   openJob: vi.fn(),
+  enhanceArchived: vi.fn(),
   // Job cap served by the mocked /api/capabilities below.
   maxJobItems: 50,
 }));
@@ -133,7 +134,7 @@ vi.mock("./hooks/useJobs", () => ({
     submit: mocks.submit,
     retry: vi.fn().mockResolvedValue(null),
     enhance: vi.fn().mockResolvedValue(null),
-    enhanceArchived: vi.fn().mockResolvedValue(null),
+    enhanceArchived: mocks.enhanceArchived,
     retryArchived: vi.fn().mockResolvedValue(null),
     deleteItem: vi.fn().mockResolvedValue(null),
     submitError: null,
@@ -154,6 +155,8 @@ describe("App workspace", () => {
     mocks.submit.mockResolvedValue(true);
     mocks.openJob.mockReset();
     mocks.openJob.mockResolvedValue(archivedSnapshot());
+    mocks.enhanceArchived.mockReset();
+    mocks.enhanceArchived.mockResolvedValue(null);
   });
 
   it("starts at home on / and navigates the task list to /jobs", async () => {
@@ -295,6 +298,31 @@ describe("App workspace", () => {
     expect(
       await screen.findByText("LLM enhancement failed: Could not load this job"),
     ).toBeVisible();
+  });
+
+  it("enhances an archived job without replaying the snapshot's bookkeeping keys", async () => {
+    // Rehydrated and CLI-recorded jobs carry `origin` in their snapshot
+    // options; the retry endpoint rejects unknown keys, so replaying the
+    // snapshot verbatim failed with "Extra inputs are not permitted".
+    window.history.replaceState(null, "", "/jobs");
+    const snapshot = archivedSnapshot();
+    snapshot.options = { ...snapshot.options, origin: "cli" } as typeof snapshot.options;
+    mocks.openJob.mockResolvedValue(snapshot);
+    render(<App />);
+
+    await screen.findByRole("listbox");
+    fireEvent.click(await screen.findByRole("button", { name: "Options" }));
+    fireEvent.click(
+      await screen.findByRole("switch", { name: "LLM enhancement" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Enhance archived.pdf with LLM" }),
+    );
+
+    await waitFor(() => expect(mocks.enhanceArchived).toHaveBeenCalled());
+    const sent = mocks.enhanceArchived.mock.calls[0]?.[2];
+    expect(sent).not.toHaveProperty("origin");
+    expect(sent).toMatchObject({ preset: "standard", llm: true, ocr: false });
   });
 
   it("keeps preset UI, manual overrides, and submitted options in sync", async () => {

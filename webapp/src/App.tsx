@@ -19,6 +19,7 @@ import { OptionsPanel } from "./components/OptionsPanel";
 import type { Advanced } from "./lib/advanced";
 import { ADVANCED_DEFAULTS } from "./lib/advanced";
 import { applyPreset, BUILTIN_PRESET_OPTIONS, resolveOptions } from "./lib/conversionOptions";
+import { jobOptionsFromSnapshot } from "./lib/jobOptions";
 import { SettingsModal } from "./components/SettingsModal";
 import { UrlInput } from "./components/UrlInput";
 import {
@@ -565,7 +566,7 @@ export default function App() {
       // The returned error renders inline on the archived row — its single
       // visible surface, matching enhanceItem above.
       const error = await enhanceArchived(snapshot, candidate.item_id, {
-        ...snapshot.options,
+        ...jobOptionsFromSnapshot(snapshot.options),
         llm: true,
       });
       if (error === null) {
