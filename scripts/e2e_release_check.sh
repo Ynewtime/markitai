@@ -26,6 +26,8 @@
 #                          home go (default /tmp/markitai-e2e)
 #   ENV_FILE=~/.markitai/.env    where provider keys are read from
 #   E2E_MODEL=provider/model     pinned model for the deterministic checks
+#   E2E_PYTHON=/path/to/python   interpreter for the throwaway install
+#                          (default: the repo's own venv interpreter)
 #   BATCH_DOCS=40          documents generated for the batch/interrupt steps
 #   HTTP_PORT=8899         port for the local page used by the URL step
 #   INTERRUPT_AFTER=6      seconds to let the batch run before interrupting it
@@ -131,13 +133,17 @@ printf '  %sbuilt markitai %s%s\n' "$D" "$VERSION" "$N"
 # tools, and a cold cache turns this step into a 200MB download that looks
 # like a hang.
 export UV_CACHE_DIR="${UV_CACHE_DIR:-$(uv cache dir 2>/dev/null || printf '%s' "$HOME/.cache/uv")}"
+# Pin the interpreter to the one the repo develops against: without it uv
+# picks whatever python is first on the machine (here a 3.14 the package
+# does not support), and none of the cached cp312 wheels apply.
+E2E_PYTHON="${E2E_PYTHON:-$(uv python find --project "$REPO_ROOT")}"
 export HOME="$WORKDIR/_internal/home"
 export UV_TOOL_DIR="$HOME/.uvtools"
 export UV_TOOL_BIN_DIR="$HOME/bin"
 export PATH="$HOME/bin:$PATH"
 mkdir -p "$HOME"
-printf '  %sinstalling into an empty home (log: %s/_internal/install.log)%s\n' "$D" "$WORKDIR" "$N"
-uv tool install "$WHEEL" >"$WORKDIR/_internal/install.log" 2>&1 \
+printf '  %sinstalling into an empty home with %s (log: %s/_internal/install.log)%s\n' "$D" "$E2E_PYTHON" "$WORKDIR" "$N"
+uv tool install --python "$E2E_PYTHON" "$WHEEL" >"$WORKDIR/_internal/install.log" 2>&1 \
   || { printf '%stool install failed — see %s/_internal/install.log%s\n' "$R" "$WORKDIR" "$N"; exit 1; }
 printf '  %sinstalled into an empty home%s\n' "$D" "$N"
 
