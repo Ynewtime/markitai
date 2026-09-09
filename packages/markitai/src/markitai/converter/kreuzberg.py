@@ -32,20 +32,11 @@ from markitai.converter.base import (
 from markitai.utils.errors import MissingDependencyError, extra_install_command
 
 # Formats that kreuzberg should handle — only those without native converters.
-# NUMBERS: handled by markitdown_ext.
+# Since 1.0.0 that is .rtf alone: TSV/XML/RST/ORG/TEX/ODT/ODS convert with the
+# standard library (converter/{delimited,xml_doc,markup,latex,opendocument}.py),
+# CSV/NUMBERS through markitdown_ext, EML through eml.py.
 KREUZBERG_FORMATS: list[FileFormat] = [
-    # Structured data (CSV handled by markitdown_ext)
-    FileFormat.TSV,
-    FileFormat.XML,
-    # OpenDocument
-    FileFormat.ODS,
-    FileFormat.ODT,
-    # Rich text / markup
     FileFormat.RTF,
-    FileFormat.RST,
-    FileFormat.ORG,
-    FileFormat.TEX,
-    # Email: EML has a native converter (eml.py), MSG handled by markitdown_ext
 ]
 
 

@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, NoReturn, TypeVar
 
 if TYPE_CHECKING:
     from markitai.config import MarkitaiConfig
@@ -182,6 +182,18 @@ class ConvertResult:
         return len(self.images) > 0
 
 
+def conversion_failed(message: str) -> NoReturn:
+    """Refuse malformed input the way every converter does: by raising.
+
+    A ConversionError is what the workflow turns into a failed item with
+    the reason beside it; returning a "successful" document that says it
+    failed would count as a success in the batch summary.
+    """
+    from markitai.utils.errors import ConversionError
+
+    raise ConversionError(message)
+
+
 class BaseConverter(ABC):
     """Abstract base class for document converters."""
 
@@ -254,6 +266,13 @@ _CONVERTER_MODULES: dict[FileFormat, str] = {
     FileFormat.MSG: "markitai.converter.markitdown_ext",
     FileFormat.IPYNB: "markitai.converter.markitdown_ext",
     FileFormat.NUMBERS: "markitai.converter.markitdown_ext",
+    FileFormat.TSV: "markitai.converter.delimited",
+    FileFormat.XML: "markitai.converter.xml_doc",
+    FileFormat.RST: "markitai.converter.markup",
+    FileFormat.ORG: "markitai.converter.markup",
+    FileFormat.TEX: "markitai.converter.latex",
+    FileFormat.ODT: "markitai.converter.opendocument",
+    FileFormat.ODS: "markitai.converter.opendocument",
 }
 
 

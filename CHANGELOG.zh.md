@@ -30,6 +30,7 @@
 - **Substack 文章提取**支持已渲染正文与 `window._preloads` JSON，覆盖自定义域名和署名栏日期，并保留 Notes 提取与通用回退。
 - **Linux 桌面代理发现**读取 GNOME/Unity 和 KDE 的手动 HTTP 代理及绕过列表，显式环境代理仍优先；不导入 PAC、仅 SOCKS 或需认证的桌面代理设置。
 - **可选的基准 LLM 评分**通过 `score_with_llm_judge` 返回经过校验的内容、结构和噪声分数，支持离线缓存复用、输入上限且不自动重试。缓存未命中时必须指定模型并设置 `allow_network=True`；默认基准仍使用离线启发式评分。
+- **七种格式不再需要 extra**：`.tsv`、`.xml`、`.rst`、`.org`、`.tex`、`.odt`、`.ods` 现在只靠标准库就能在基础安装里转换——制表符分隔文件本就是一张 Markdown 表格，OpenDocument 文件本就是一包 XML。`kreuzberg` extra 现在只有 `.rtf` 还需要，同时仍是 `-b kreuzberg` 后端
 - **每个布尔 CLI 开关都有明确的否定形式**：新增 `--cache`、`--compress`、`--no-pure`、`--no-screenshot-only`，配置里的默认值可以在命令行上朝任一方向覆盖
 
 ### 变更

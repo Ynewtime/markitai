@@ -197,17 +197,9 @@ class TestKreuzbergConverter:
         """KreuzbergConverter.supported_formats should contain expected formats."""
         from markitai.converter.kreuzberg import KreuzbergConverter
 
-        expected = {
-            FileFormat.TSV,
-            FileFormat.XML,
-            FileFormat.ODS,
-            FileFormat.ODT,
-            FileFormat.RTF,
-            FileFormat.RST,
-            FileFormat.ORG,
-            FileFormat.TEX,
-        }
-        assert set(KreuzbergConverter.supported_formats) == expected
+        # Since 1.0.0 every other format converts natively; .rtf is all the
+        # extra still buys.
+        assert set(KreuzbergConverter.supported_formats) == {FileFormat.RTF}
 
     def test_convert_images_always_empty(self, tmp_path: Path) -> None:
         """KreuzbergConverter should always return an empty images list."""

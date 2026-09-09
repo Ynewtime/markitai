@@ -65,7 +65,7 @@ have a different `mkai` on your PATH, use the full `markitai` to avoid ambiguity
 | `copilot` | GitHub Copilot SDK as an LLM provider |
 | `extra-fetch` | curl-cffi HTTP client (better anti-bot compatibility) |
 | `heif` | HEIC/HEIF/AVIF image input |
-| `kreuzberg` | Kreuzberg extraction backend |
+| `kreuzberg` | `.rtf` conversion (every other format converts natively) |
 | `legacy` | Legacy Office conversion (`.doc`/`.ppt`) via the anydoc Rust backend |
 | `mcp` | Bundled `markitai-mcp` server for AI agents (Model Context Protocol) |
 | `ocr` | Local OCR for scanned PDFs and images (`--ocr`) |

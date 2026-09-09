@@ -25,8 +25,8 @@
 # the same install — doctor again, legacy Office formats, the serve API the
 # browser UI talks to, and markitai-mcp over stdio; then, with browser,
 # kreuzberg and extra-fetch added too, Chromium via doctor --fix, Playwright
-# rendering, URL screenshots and screenshot-only reading, the kreuzberg
-# formats, the Cloudflare file backend, the remote extraction strategies on
+# rendering, URL screenshots and screenshot-only reading, RTF through
+# kreuzberg, the Cloudflare file backend, the remote extraction strategies on
 # a public page (skipped with the reason when the resolver is a fake-IP
 # VPN), and a real Batch API job through submit, hand-off and collect.
 #
@@ -484,11 +484,11 @@ step 10-formats "Every format the front page lists" \
   "One directory of one file per format. The base wheel converts most; the rest must say which extra they need."
 mkdir -p 00-inputs/formats
 # Handled by the base wheel: converted. Images: skipped without --llm/--ocr.
-# The kreuzberg-backed set (xml tsv rtf rst org tex odt ods) is documented as
-# needing markitai[kreuzberg] — its failure must name that command.
-BASE_FORMATS="pptx xlsx csv html eml msg epub ipynb"
+# RTF is the one format documented as needing markitai[kreuzberg] — its
+# failure must name that command.
+BASE_FORMATS="pptx xlsx csv tsv html xml eml msg epub ipynb rst org tex odt ods"
 IMAGE_FORMATS="jpg bmp"
-KREUZBERG_FORMATS="xml tsv rtf rst org tex odt ods"
+KREUZBERG_FORMATS="rtf"
 for f in $BASE_FORMATS $IMAGE_FORMATS $KREUZBERG_FORMATS; do
   cp "$REPO_ROOT/packages/markitai/tests/fixtures/sample.$f" 00-inputs/formats/ 2>/dev/null
 done
@@ -509,9 +509,19 @@ for f in $KREUZBERG_FORMATS; do
 done
 check "each kreuzberg-backed format is reported as unconverted${KZ_MISSING:+ (silent:$KZ_MISSING)}" \
   test -z "$KZ_MISSING"
-check "and every one of those warnings names the extra that would convert it" \
-  test "$(grep -c 'install "markitai\[kreuzberg\]"' 10-formats/batch.log)" -eq 8
+check "and that warning names the extra that would convert it" \
+  test "$(grep -c 'install "markitai\[kreuzberg\]"' 10-formats/batch.log)" -eq 1
 check "a spreadsheet keeps its table" grep -q '^|' 10-formats/output/sample.xlsx.md
+check "a TSV becomes a table" grep -q '^| Employee_ID' 10-formats/output/sample.tsv.md
+check "an ODS sheet becomes a table" grep -q '^| Team' 10-formats/output/sample.ods.md
+check "an ODT keeps its heading and list" \
+  bash -c "grep -q '^# ' 10-formats/output/sample.odt.md && grep -q '^- ' 10-formats/output/sample.odt.md"
+check "an XML document keeps its element names and text" \
+  bash -c "grep -q 'Tove' 10-formats/output/sample.xml.md && grep -qE '^#+ (note|to)' 10-formats/output/sample.xml.md"
+check "an RST title becomes a heading" grep -q '^# Example Docs' 10-formats/output/sample.rst.md
+check "an Org title becomes a heading" grep -q '^# Example Docs' 10-formats/output/sample.org.md
+check "a TeX body loses its preamble and keeps its text" \
+  bash -c "grep -q 'Hello World from LaTeX' 10-formats/output/sample.tex.md && ! grep -q documentclass 10-formats/output/sample.tex.md"
 check "an email keeps its headers" grep -q '^\*\*From:\*\*' 10-formats/output/sample.eml.md
 check "a notebook keeps its code cells" grep -q '```' 10-formats/output/sample.ipynb.md
 check "an HTML file converts to stdout like any other" \
@@ -863,16 +873,12 @@ show "doctor --fix, as the user sees it" 20-all-extras/doctor-fix.txt
 file "tool install log" 20-all-extras/install.log
 
 # ── 21 ───────────────────────────────────────────────────────────────────────
-step 21-kreuzberg "The formats the kreuzberg extra unlocks" \
-  "The eight formats that failed with an install hint in step 10 now convert."
-mkdir -p 00-inputs/kreuzberg
-for f in $KREUZBERG_FORMATS; do cp "00-inputs/formats/sample.$f" 00-inputs/kreuzberg/; done
-markitai 00-inputs/kreuzberg/ -o 21-kreuzberg/output/ >21-kreuzberg/batch.log 2>&1
-KZ_OUT=$(ls 21-kreuzberg/output/*.md 2>/dev/null | wc -l | tr -d ' ')
-check "all eight convert once the extra is present ($KZ_OUT of 8)" test "$KZ_OUT" -eq 8
-check "an RTF keeps its text" test -s 21-kreuzberg/output/sample.rtf.md
-check "a TSV becomes a table" grep -q '^|' 21-kreuzberg/output/sample.tsv.md
-show "the batch summary" 21-kreuzberg/batch.log
+step 21-kreuzberg "The format the kreuzberg extra unlocks" \
+  "RTF failed with an install hint in step 10; with the extra present it converts."
+markitai 00-inputs/formats/sample.rtf -o 21-kreuzberg/output/ >21-kreuzberg/convert.log 2>&1
+check "an RTF converts once the extra is present" test -s 21-kreuzberg/output/sample.rtf.md
+check "and keeps its headings" grep -q '^# ' 21-kreuzberg/output/sample.rtf.md
+show "RTF output" 21-kreuzberg/output/sample.rtf.md
 
 # ── 22 ───────────────────────────────────────────────────────────────────────
 step 22-browser "Fetching with a real browser" \

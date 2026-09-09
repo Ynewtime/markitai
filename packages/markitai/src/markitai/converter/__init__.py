@@ -27,9 +27,11 @@ from markitai.converter.base import (
 )
 
 if TYPE_CHECKING:
+    from markitai.converter.delimited import TsvConverter
     from markitai.converter.eml import EmlConverter
     from markitai.converter.image import ImageConverter
     from markitai.converter.kreuzberg import register_kreuzberg_converters
+    from markitai.converter.latex import TexConverter
     from markitai.converter.legacy import DocConverter, PptConverter
     from markitai.converter.markitdown_ext import (
         CsvConverter,
@@ -41,14 +43,17 @@ if TYPE_CHECKING:
         NumbersConverter,
         XhtmlConverter,
     )
+    from markitai.converter.markup import OrgConverter, RstConverter
     from markitai.converter.office import (
         DocxConverter,
         PptxConverter,
         XlsConverter,
         XlsxConverter,
     )
+    from markitai.converter.opendocument import OdsConverter, OdtConverter
     from markitai.converter.pdf import PdfConverter
     from markitai.converter.text import MarkdownConverter, TxtConverter
+    from markitai.converter.xml_doc import XmlConverter
 
 # Cloudflare converter is NOT registered for any format: it must not override
 # local converters by default. The workflow layer selects it explicitly when
@@ -67,13 +72,20 @@ _LAZY_EXPORTS: dict[str, str] = {
     "MarkdownConverter": "markitai.converter.text",
     "MsgConverter": "markitai.converter.markitdown_ext",
     "NumbersConverter": "markitai.converter.markitdown_ext",
+    "OdsConverter": "markitai.converter.opendocument",
+    "OdtConverter": "markitai.converter.opendocument",
+    "OrgConverter": "markitai.converter.markup",
     "PdfConverter": "markitai.converter.pdf",
     "PptConverter": "markitai.converter.legacy",
     "PptxConverter": "markitai.converter.office",
+    "RstConverter": "markitai.converter.markup",
+    "TexConverter": "markitai.converter.latex",
+    "TsvConverter": "markitai.converter.delimited",
     "TxtConverter": "markitai.converter.text",
     "XhtmlConverter": "markitai.converter.markitdown_ext",
     "XlsConverter": "markitai.converter.office",
     "XlsxConverter": "markitai.converter.office",
+    "XmlConverter": "markitai.converter.xml_doc",
     "register_kreuzberg_converters": "markitai.converter.kreuzberg",
 }
 
@@ -95,13 +107,20 @@ __all__ = [
     "MarkdownConverter",
     "MsgConverter",
     "NumbersConverter",
+    "OdsConverter",
+    "OdtConverter",
+    "OrgConverter",
     "PdfConverter",
     "PptConverter",
     "PptxConverter",
+    "RstConverter",
+    "TexConverter",
+    "TsvConverter",
     "TxtConverter",
     "XhtmlConverter",
     "XlsConverter",
     "XlsxConverter",
+    "XmlConverter",
     "detect_format",
     "get_converter",
     "register_kreuzberg_converters",

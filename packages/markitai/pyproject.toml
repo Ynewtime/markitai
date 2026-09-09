@@ -65,6 +65,9 @@ claude-agent = ["claude-agent-sdk>=0.1.50"]
 copilot = ["github-copilot-sdk>=0.2.0"]
 browser = ["playwright>=1.58.0"]
 extra-fetch = ["curl-cffi>=0.14.0"]
+# Since 1.0.0 the base wheel converts .xml/.tsv/.rst/.org/.tex/.odt/.ods with
+# the standard library (converter/{delimited,xml_doc,markup,latex,opendocument}.py);
+# this extra is what .rtf still needs, plus the `-b kreuzberg` backend.
 kreuzberg = ["kreuzberg>=4.9.6"]
 svg = ["cairosvg>=2.9.0"]
 heif = ["pillow-heif>=1.0"]

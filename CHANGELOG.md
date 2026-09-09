@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Substack article extraction** now handles rendered bodies and `window._preloads` JSON, including custom domains and byline dates, while retaining Notes extraction and generic fallback.
 - **Linux desktop proxy discovery** reads manual GNOME/Unity and KDE HTTP proxy settings and bypass lists. Explicit environment proxies still take precedence; PAC, SOCKS-only and authenticated desktop settings are not imported.
 - **Opt-in benchmark LLM scoring** provides validated content, structure and noise scores through `score_with_llm_judge`, with offline cache reuse, input limits and no automatic retries. A cache miss requires an explicit model and `allow_network=True`; default benchmarks remain heuristic and offline.
+- **Seven more formats convert without an extra**: `.tsv`, `.xml`, `.rst`, `.org`, `.tex`, `.odt` and `.ods` now convert in the base wheel with the standard library alone — a tab-separated file is a Markdown table, and an OpenDocument file is a zip of XML. The `kreuzberg` extra is what `.rtf` still needs, and remains the `-b kreuzberg` backend
 - **Every boolean CLI flag has a spelled-out negation**: `--cache`, `--compress`, `--no-pure` and `--no-screenshot-only` join their siblings, so a config default can be overridden in either direction from the command line
 
 ### Changed
