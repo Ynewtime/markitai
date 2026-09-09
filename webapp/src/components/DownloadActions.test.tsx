@@ -51,7 +51,7 @@ describe("DownloadArchiveButton", () => {
       screen.getByRole("button", { name: dicts.en.downloadingZip }),
     ).toHaveAttribute("aria-busy", "true");
 
-    finish?.(new Response(new Blob(["zip"]), { status: 200 }));
+    finish?.(new Response("zip", { status: 200 }));
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: dicts.en.downloadAllZip }),
@@ -82,7 +82,7 @@ describe("DownloadArchiveButton", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
-        new Response(new Blob(["zip"]), {
+        new Response("zip", {
           status: 200,
           headers: {
             "content-disposition":

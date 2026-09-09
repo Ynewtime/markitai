@@ -203,11 +203,22 @@ def test_malformed_completion(completion: Mock, response: object) -> None:
         score_with_llm_judge("a", "b", model="test", allow_network=True)
 
 
-def test_cache_write_failure_is_reported(completion: Mock, cache_dir: Path) -> None:
-    blocked = cache_dir / "file"
-    blocked.write_text("not a directory")
+def test_cache_read_failure_is_reported(
+    completion: Mock, cache_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unreadable cache entry is an error, not a silent paid re-run.
+
+    The failure is injected rather than staged on disk: a path under a
+    regular file raises NotADirectoryError on POSIX but FileNotFoundError
+    (a cache miss) on Windows.
+    """
+
+    def denied(self: Path, *args: object, **kwargs: object) -> str:
+        raise PermissionError(f"denied: {self}")
+
+    monkeypatch.setattr(Path, "read_text", denied)
     with pytest.raises(LLMJudgeError, match="Cannot read judge cache"):
         score_with_llm_judge(
-            "a", "b", model="test", allow_network=True, cache_dir=blocked
+            "a", "b", model="test", allow_network=True, cache_dir=cache_dir
         )
     completion.assert_not_called()

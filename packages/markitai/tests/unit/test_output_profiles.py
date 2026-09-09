@@ -130,9 +130,9 @@ class TestHelpers:
 
     def test_relocate_analysis_asset_path(self) -> None:
         moved = relocate_analysis_asset_path("/out/.markitai/assets/x.png")
-        assert moved == "/out/assets/x.png"
+        assert Path(moved) == Path("/out/assets/x.png")
         untouched = relocate_analysis_asset_path("/out/elsewhere/x.png")
-        assert untouched == "/out/elsewhere/x.png"
+        assert Path(untouched) == Path("/out/elsewhere/x.png")
 
 
 def _write_output(tmp_path: Path, body: str, frontmatter: str | None = None) -> Path:

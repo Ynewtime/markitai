@@ -59,45 +59,9 @@ updates:
         patterns:
           - "*"
 
-  # JS projects (bun; lockfiles are committed and installs are frozen in CI)
-  - package-ecosystem: "bun"
-    directory: "/website"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:00"
-      timezone: "Asia/Shanghai"
-    open-pull-requests-limit: 3
-    labels:
-      - "dependencies"
-      - "website"
-    commit-message:
-      prefix: "chore(deps)"
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-    groups:
-      website-all:
-        patterns:
-          - "*"
-
-  - package-ecosystem: "bun"
-    directory: "/webapp"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:00"
-      timezone: "Asia/Shanghai"
-    open-pull-requests-limit: 3
-    labels:
-      - "dependencies"
-      - "webapp"
-    commit-message:
-      prefix: "chore(deps)"
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-    groups:
-      webapp-all:
-        patterns:
-          - "*"
+  # No entry for webapp/ or website/: Dependabot's bun updater only reads
+  # bun.lock lockfileVersion 1, and Bun 1.4 writes version 2 (the run fails
+  # with "Unsupported bun.lock 'lockfileVersion' 2"). Its npm updater cannot
+  # read bun.lock at all. JS dependencies are bumped by hand with
+  # `bun update --latest` in each directory; re-add a "bun" entry once
+  # Dependabot supports the current lockfile version.

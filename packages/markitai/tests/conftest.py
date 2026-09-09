@@ -80,6 +80,7 @@ def _isolate_user_config_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     fake_home.mkdir()
     monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
     monkeypatch.setenv("HOME", str(fake_home))  # expanduser("~") follows too
+    monkeypatch.setenv("USERPROFILE", str(fake_home))  # ...on Windows, via this one
     # DEFAULT_USER_CONFIG_DIR is computed at import time from Path.home();
     # re-point it so ConfigManager/auth/init never see the developer's real
     # ~/.markitai/config.json either.

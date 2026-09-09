@@ -9,6 +9,7 @@ Note: Real file conversion tests are in test_real_scenarios.py
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -462,8 +463,11 @@ class TestURLFetchStrategyOptions:
             [str(sample_txt), "-o", str(output_dir), removed],
         )
         assert result.exit_code == 2
-        assert removed in result.output
-        assert replacement in result.output
+        # rich highlights the quoted replacement when colour is on (CI), which
+        # splits `-s` from `defuddle` with escape codes: compare the plain text.
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert removed in plain
+        assert replacement in plain
 
 
 # =============================================================================
