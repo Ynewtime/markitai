@@ -10,6 +10,7 @@ import {
   fetchJobSnapshot,
   historyArchiveUrl,
   jobEventsUrl,
+  openLLMConfigFile,
   retryJobItem,
 } from "./client";
 import type { JobOptions } from "./types";
@@ -157,6 +158,22 @@ describe("job-creation request bodies", () => {
     expect((files[0] as File).name).toBe("notes.txt");
     expect(form.get("urls")).toBe(JSON.stringify(["https://example.com"]));
     expect(form.get("options")).toBe(JSON.stringify(options));
+  });
+
+  it("openLLMConfigFile posts to the loopback-only open route", async () => {
+    const mock = stubFetch(new Response(null, { status: 204 }));
+
+    await openLLMConfigFile();
+
+    const { url, init } = sentRequest(mock);
+    expect(url).toBe("/api/settings/llm/config/open");
+    expect(init).toEqual({ method: "POST", headers: {} });
+  });
+
+  it("openLLMConfigFile surfaces the server detail on failure", async () => {
+    stubFetch(jsonResponse({ detail: "config file does not exist yet" }, 404));
+
+    await expect(openLLMConfigFile()).rejects.toThrow("config file does not exist yet");
   });
 
   it("retryJobItem without options posts an empty request", async () => {

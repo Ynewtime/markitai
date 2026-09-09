@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type RefObject } from "react";
 import type { Dict, Locale } from "../i18n";
-import { HistoryIcon, LogoMark, SettingsIcon, SunIcon } from "./icons";
+import { HistoryIcon, LogoMark, PaletteIcon, SettingsIcon } from "./icons";
 import { LangToggle } from "./LangToggle";
 import { ThemeToggle } from "./ThemeToggle";
 
@@ -125,7 +125,7 @@ export function AppHeader({
                 aria-label={t.appearanceTitle} title={t.appearanceTitle}
                 aria-haspopup="dialog" aria-expanded={appearanceOpen} aria-controls={appearanceId}
                 onClick={() => setAppearanceOpen((open) => !open)}>
-                <SunIcon size={16} />
+                <PaletteIcon size={16} />
               </button>
               <div ref={panelRef} id={appearanceId} className="appearance-popover"
                 role="dialog" aria-label={t.appearanceTitle} hidden={!appearanceOpen}>

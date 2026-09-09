@@ -8,6 +8,7 @@ import {
   fetchLLMProviderCredentials,
   fetchLLMSettings,
   fetchProviderConnections,
+  openLLMConfigFile,
   testLLMSettings,
   updateLLMDeployment,
   updateLLMProvider,
@@ -130,6 +131,24 @@ export function SettingsModal({
   const [providers, setProviders] = useState<ProviderConnection[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
+  const openConfig = async () => {
+    setListError(null);
+    try {
+      await openLLMConfigFile();
+    } catch (error) {
+      setListError(settingsError(error, t));
+    }
+  };
+  // Rendered alone below the list, or on the edit form's action row so the
+  // save/cancel buttons and the file reference share one line.
+  const sourceLine = settings === null ? null : (
+    <p className="mdl-src mono">
+      {t.setSourceLbl} {settings.config_origin} ·{" "}
+      <button type="button" className="linkbtn" title={t.openConfigFile} onClick={() => void openConfig()}>
+        {settings.config_path}
+      </button>
+    </p>
+  );
 
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
@@ -1061,12 +1080,13 @@ export function SettingsModal({
                     <label className="fld"><span className="lbl">{t.weight}</span><input type="number" min={0} value={editWeightDraft ?? editWeight} onChange={(event) => { setEditWeightDraft(event.target.value); setEditWeight(Math.max(0, Number(event.target.value) || 0)); }} onBlur={() => setEditWeightDraft(null)} /></label>
                   </div>
                   <div className="set-actions">
+                    {sourceLine}
                     <button type="submit" className="btn primary" disabled={editBusy || editGroup.trim() === "" || editModel.trim() === ""}>{editBusy ? t.saving : t.save}</button>
                     <button type="button" className="btn ghost" onClick={() => setEditing(null)}>{t.cancel}</button>
                   </div>
                 </form>
               )}
-              <p className="mdl-src mono">{t.setSourceLbl} {settings.config_origin} · {settings.config_path}</p>
+              {editing === null && sourceLine}
             </>
           )}
           {listError !== null && <p className="errline mdl-err" role="alert">{listError}</p>}

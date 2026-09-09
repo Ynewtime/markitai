@@ -17,6 +17,7 @@ const api = vi.hoisted(() => ({
   updateProvider: vi.fn(),
   removeProvider: vi.fn(),
   test: vi.fn(),
+  openConfig: vi.fn(),
 }));
 
 vi.mock("../api/client", async (importOriginal) => {
@@ -35,6 +36,7 @@ vi.mock("../api/client", async (importOriginal) => {
     updateLLMProvider: api.updateProvider,
     deleteLLMProvider: api.removeProvider,
     testLLMSettings: api.test,
+    openLLMConfigFile: api.openConfig,
   };
 });
 
@@ -733,6 +735,26 @@ describe("SettingsModal", () => {
       );
       expect(survivor).toHaveFocus();
     });
+  });
+
+  it("opens the config file from its path and reports a failure inline", async () => {
+    const user = userEvent.setup();
+    api.fetchSettings.mockResolvedValue(emptySettings);
+    api.fetchProviders.mockResolvedValue([]);
+    api.openConfig.mockResolvedValueOnce(undefined).mockRejectedValueOnce(
+      new ApiError("config file does not exist yet", 404),
+    );
+    render(<SettingsModal t={dicts.en}
+      onClose={vi.fn()} onSaved={vi.fn()} announce={vi.fn()} />);
+    const path = await screen.findByRole("button", { name: emptySettings.config_path });
+    expect(path).toHaveAttribute("title", dicts.en.openConfigFile);
+
+    await user.click(path);
+    expect(api.openConfig).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    await user.click(path);
+    expect(await screen.findByRole("alert")).toHaveTextContent("config file does not exist yet");
   });
 
   it("leaves appearance controls in the header instead of duplicating them", async () => {

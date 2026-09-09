@@ -219,6 +219,12 @@ export async function deleteLLMDeployment(
   return (await res.json()) as LLMSettingsPayload;
 }
 
+/** Open the config file in the server host's editor (loopback UI only). */
+export async function openLLMConfigFile(): Promise<void> {
+  const res = await apiFetch("/api/settings/llm/config/open", { method: "POST" });
+  if (!res.ok) throw await errorFromResponse(res);
+}
+
 /** Always resolves 200 {ok, detail}; may take up to ~15s. */
 export function testLLMSettings(body: LLMSettingsUpdate): Promise<LLMTestResult> {
   return postJson<LLMTestResult>("/api/settings/llm/test", body);

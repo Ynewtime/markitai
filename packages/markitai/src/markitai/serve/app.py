@@ -714,6 +714,31 @@ def _mask_api_key(api_key: str | None) -> str | None:
     return "…"
 
 
+def _open_in_editor(path: Path) -> None:
+    """Hand *path* to the host's default application for its file type.
+
+    Detached so the server never waits on a GUI editor. The OS default (not
+    ``$EDITOR``, which is usually a terminal program with no terminal here)
+    is what "open in my editor" means from a browser.
+    """
+    import shutil
+    import subprocess
+
+    if sys.platform == "win32":
+        os.startfile(str(path))  # type: ignore[attr-defined]  # nosec B606 - fixed path, no shell
+        return
+    opener = "open" if sys.platform == "darwin" else "xdg-open"
+    if shutil.which(opener) is None:
+        raise RuntimeError(f"'{opener}' is not available on this host")
+    subprocess.Popen(  # noqa: S603
+        [opener, str(path)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
 def _display_config_path(path: Path) -> str:
     """Render a config path with the home directory collapsed to ``~``."""
     try:
@@ -2356,6 +2381,26 @@ def create_app(
             expected_revision=expected_revision,
             backfill_ids=True,
         )
+
+    @app.post("/api/settings/llm/config/open", status_code=204)
+    async def open_llm_config(request: Request) -> None:
+        """Open the config file the settings routes write in the host's editor.
+
+        Loopback-only like every settings route: it launches a program on the
+        server host, which only makes sense when the browser is that host.
+        """
+        state = _state(request)
+        if not state.config_path.is_file():
+            raise HTTPException(
+                status_code=404,
+                detail="config file does not exist yet; save a model to create it",
+            )
+        try:
+            await asyncio.to_thread(_open_in_editor, state.config_path)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, detail=f"could not open the config file: {e}"
+            ) from e
 
     @app.post("/api/settings/llm/test", response_model=LLMTestResult)
     async def test_llm_settings(

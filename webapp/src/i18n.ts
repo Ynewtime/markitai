@@ -226,7 +226,7 @@ const en = {
     ({
       local_cli: "Detected local CLI",
       oauth: "Detected OAuth",
-      environment: "Environment credentials",
+      environment: "Configured environment credentials",
       configured: "Saved providers",
       common: "Common providers",
     })[kind] ?? kind,
@@ -250,6 +250,7 @@ const en = {
   deleteModelDescription: "The provider credentials will be kept for adding models later.",
   setStatusNone: "No models configured",
   setSourceLbl: "Source",
+  openConfigFile: "Open the config file in your editor",
   setModel: "Model",
   setApiKey: "API key",
   setApiBase: "API base",
@@ -526,7 +527,7 @@ const zh: Dict = {
     ({
       local_cli: "检测到的本地 CLI",
       oauth: "检测到的 OAuth",
-      environment: "环境变量凭据",
+      environment: "已配置的环境变量凭据",
       configured: "已保存的服务商",
       common: "常用服务商",
     })[kind] ?? kind,
@@ -549,6 +550,7 @@ const zh: Dict = {
   deleteModelDescription: "服务商鉴权信息会保留，之后仍可添加模型。",
   setStatusNone: "未配置模型",
   setSourceLbl: "来源",
+  openConfigFile: "在本地编辑器中打开配置文件",
   setModel: "模型",
   setApiKey: "API Key",
   setApiBase: "API 地址",

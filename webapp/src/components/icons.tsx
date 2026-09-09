@@ -16,6 +16,7 @@ import {
   Info,
   MagicWand,
   Moon,
+  Palette,
   Sliders,
   Sun,
   TerminalWindow,
@@ -97,6 +98,11 @@ export function SunIcon({ size = 14 }: IconProps) {
 
 export function MoonIcon({ size = 14 }: IconProps) {
   return <Moon size={size} {...iconProps} />;
+}
+
+/** Appearance menu trigger: covers language and theme, unlike a sun. */
+export function PaletteIcon({ size = 16 }: IconProps) {
+  return <Palette size={size} {...iconProps} />;
 }
 
 export function HistoryIcon({ size = 16, selected = false }: IconProps & { selected?: boolean }) {

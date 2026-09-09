@@ -565,6 +565,8 @@
   .tablewrap:focus-visible,
   .homelink:focus-visible,
   .sesslink:focus-visible,
+  .rowact:focus-visible,
+  .linkbtn:focus-visible,
   .rowicon:focus-visible,
   .notification-close:focus-visible,
   .notification-action:focus-visible,
@@ -2722,6 +2724,49 @@
     margin-left: auto;
     flex: none;
   }
+  /* mini text actions inside rows (test / edit / save to config) */
+  .rowact {
+    height: 24px;
+    padding: 0 8px;
+    border: 0;
+    background: transparent;
+    border-radius: var(--r-sm);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-2);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background-color 120ms ease, color 120ms ease,
+      transform 140ms var(--ease-out);
+  }
+  .rowact:not(:disabled):hover {
+    color: var(--text-1);
+    background: color-mix(in srgb, var(--text-1) 6%, transparent);
+  }
+  .rowact:not(:disabled):active {
+    transform: scale(0.97);
+  }
+  .rowact:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+  /* inline text that acts (open the config file) */
+  .linkbtn {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-underline-offset: 3px;
+    overflow-wrap: anywhere;
+  }
+  .linkbtn:hover {
+    color: var(--text-1);
+    text-decoration-style: solid;
+  }
   /* icon actions and anchored destructive confirmation */
   .rowicon {
     display: inline-flex;
@@ -3003,6 +3048,9 @@
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
+  }
+  .set-actions .mdl-src {
+    margin-right: auto;
   }
   .detail-actions {
     padding-top: 14px;

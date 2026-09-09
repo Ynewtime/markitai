@@ -1662,3 +1662,48 @@ class TestConfiguredConnectionReuse:
             "api_key": "sk-stored-secret",
             "api_base": "https://proxy.example/v1",
         }
+
+
+class TestOpenConfigFile:
+    """``POST /api/settings/llm/config/open`` hands the file to the host editor."""
+
+    async def test_opens_existing_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config_path = tmp_path / "config.json"
+        config_path.write_text("{}", encoding="utf-8")
+        opened: list[Path] = []
+        monkeypatch.setattr("markitai.serve.app._open_in_editor", opened.append)
+        async with _serve_client(
+            _make_app(tmp_path, config_path=config_path)
+        ) as client:
+            response = await client.post("/api/settings/llm/config/open")
+        assert response.status_code == 204
+        assert opened == [config_path]
+
+    async def test_missing_config_is_404(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        opened: list[Path] = []
+        monkeypatch.setattr("markitai.serve.app._open_in_editor", opened.append)
+        async with _serve_client(_make_app(tmp_path)) as client:
+            response = await client.post("/api/settings/llm/config/open")
+        assert response.status_code == 404
+        assert opened == []
+
+    async def test_opener_failure_is_500_with_detail(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config_path = tmp_path / "config.json"
+        config_path.write_text("{}", encoding="utf-8")
+
+        def _boom(path: Path) -> None:
+            raise RuntimeError("no opener")
+
+        monkeypatch.setattr("markitai.serve.app._open_in_editor", _boom)
+        async with _serve_client(
+            _make_app(tmp_path, config_path=config_path)
+        ) as client:
+            response = await client.post("/api/settings/llm/config/open")
+        assert response.status_code == 500
+        assert "no opener" in response.json()["detail"]
