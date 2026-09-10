@@ -8,13 +8,13 @@
     "source": "github"
   },
   "websiteUrl": "https://markitai.dev/guide/mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "markitai",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"

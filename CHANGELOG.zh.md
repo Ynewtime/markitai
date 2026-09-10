@@ -5,7 +5,7 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，
 版本号遵循[语义化版本](https://semver.org/spec/v2.0.0.html)规范。
 
-## [Unreleased]
+## [1.0.1] - 2026-09-10
 
 ### 新增
 

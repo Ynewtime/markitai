@@ -1,6 +1,6 @@
 """Markitai - Opinionated Markdown converter with native LLM enhancement support.
 
-Public programmatic API (provisional — 0.x, may change in minor releases)::
+Public programmatic API (provisional; signatures and result fields may change)::
 
     import markitai
 
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-__version__ = "1.0.0"  # single source of truth — bump before tagging vX.Y.Z
+__version__ = "1.0.1"  # single source of truth — bump before tagging vX.Y.Z
 
 if TYPE_CHECKING:
     from markitai.api import ConversionOutput, ConversionUsage, aconvert, convert
