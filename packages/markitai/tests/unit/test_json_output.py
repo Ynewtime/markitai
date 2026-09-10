@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from click import unstyle
 from click.testing import CliRunner
 
 from markitai.runs import Outcome
@@ -145,13 +146,27 @@ class TestEnvelope:
 class TestCliContract:
     """The flag is only valid where stdout can carry the JSON."""
 
-    def test_json_without_output_is_a_usage_error(self) -> None:
+    @pytest.mark.parametrize("color", [False, True])
+    def test_json_without_output_is_a_usage_error(
+        self, color: bool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from markitai.cli.main import app
 
-        result = CliRunner().invoke(app, ["some.txt", "--json"])
+        monkeypatch.setattr("rich_click.rich_click.FORCE_TERMINAL", color)
+        monkeypatch.setattr(
+            "rich_click.rich_click.COLOR_SYSTEM", "standard" if color else None
+        )
+        result = CliRunner().invoke(
+            app,
+            ["some.txt", "--json"],
+            color=color,
+            env={"NO_COLOR": None, "TERM": "xterm"},
+        )
 
         assert result.exit_code == 2
-        assert "--json needs -o" in result.output
+        assert ("\x1b[" in result.output) is color
+        # Rich styles individual option names on CI and color terminals.
+        assert "--json needs -o" in unstyle(result.output)
 
     def test_json_with_batch_collect_is_a_usage_error(self) -> None:
         """The collect path writes its own output; the envelope would lie."""
@@ -162,7 +177,7 @@ class TestCliContract:
         )
 
         assert result.exit_code == 2
-        assert "--llm-batch-collect" in result.output
+        assert "--llm-batch-collect" in unstyle(result.output)
 
     def test_json_with_dry_run_is_a_usage_error(self) -> None:
         """A dry run writes no item, so the envelope could only lie."""
@@ -173,7 +188,7 @@ class TestCliContract:
         )
 
         assert result.exit_code == 2
-        assert "--dry-run" in result.output
+        assert "--dry-run" in unstyle(result.output)
 
     def test_missing_path_still_reports_ok_false(self, tmp_path: Path) -> None:
         """stdout stays pure JSON even on an input error."""
