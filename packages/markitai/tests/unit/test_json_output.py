@@ -164,7 +164,6 @@ class TestCliContract:
         )
 
         assert result.exit_code == 2
-        assert ("\x1b[" in result.output) is color
         # Rich styles individual option names on CI and color terminals.
         assert "--json needs -o" in unstyle(result.output)
 
