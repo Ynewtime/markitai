@@ -2,62 +2,47 @@
 
 ## 配置优先级
 
-Markitai 使用以下优先级顺序（从高到低）：
+从高到低：
 
 1. 命令行参数
 2. 环境变量
 3. 配置文件
-4. 默认值
+4. 内置默认值
 
 ## 配置文件
 
-Markitai 按以下顺序查找配置文件：
+markitai 按下面的顺序找到第一个配置文件就用：
 
-1. `--config` 参数指定的路径
-2. `MARKITAI_CONFIG` 环境变量
-3. `./markitai.json`（当前目录）
-4. `~/.markitai/config.json`（用户主目录）
+1. `--config` 指定的路径
+2. `MARKITAI_CONFIG`
+3. 当前目录的 `./markitai.json`
+4. `~/.markitai/config.json`
 
 ### 初始化配置
 
 ```bash
-# 交互式配置向导（推荐）
-markitai init
-
-# 快速模式（生成默认配置）
-markitai init --yes
-
-# 在指定位置创建全局配置
-markitai init --local  # 创建 ./markitai.json
+markitai init            # 引导式配置
+markitai init --yes      # 全用默认值，不询问
+markitai init --local    # 写 ./markitai.json
 ```
 
 ### 查看配置
 
 ```bash
-# 列出所有设置
-markitai config list
-markitai config list --format json    # JSON（默认）
-markitai config list --format table   # Rich 表格视图
-markitai config list --format yaml    # YAML（需要 pyyaml：uv add pyyaml）
-markitai config list --show-secrets   # 显示原始秘密值
-
-# 获取特定值
+markitai config list                  # 生效的设置，密钥已打码
 markitai config get llm.enabled
-
-# 设置值
 markitai config set llm.enabled true
-
-# 交互式编辑器（引导式菜单）
-markitai config edit
-
-# 验证配置
+markitai config edit                  # 引导菜单
 markitai config validate
-markitai config validate ./markitai.json    # 验证指定文件
 ```
 
-`config list` 默认会递归遮罩秘密值，包括嵌套的 API 密钥、Token、Cookie、认证信息及所有自定义 HTTP Header 值。自定义 `api_base` 只显示 origin。`--show-secrets` 仅供本机检查，不要把它的完整输出贴到 issue、聊天、CI 日志或其他共享渠道。
+`config list` 会给密钥打码，包括嵌套的 API key、token、cookie 和自定义请求头。`--show-secrets` 显示原值，输出只留在本机。
 
 ### 完整配置示例
+
+每个设置及其默认值：
+
+:::: details 含全部默认值的 markitai.json
 
 ```json
 {
@@ -209,9 +194,9 @@ markitai config validate ./markitai.json    # 验证指定文件
 }
 ```
 
-::: tip
-使用 `env:VAR_NAME` 语法在配置文件中引用环境变量。对于 `JINA_API_KEY`、`CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID`，也可以直接设置环境变量（或写入 `.env`），无需在配置文件中声明，markitai 会自动读取。
-:::
+::::
+
+任何字符串值都可以用 `env:VAR_NAME` 引用环境变量。`JINA_API_KEY`、`CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID` 不写进配置也会从环境里自动读取。
 
 ## 环境变量
 
@@ -219,86 +204,74 @@ markitai config validate ./markitai.json    # 验证指定文件
 
 | 变量 | 说明 |
 |------|------|
-| `OPENAI_API_KEY` | OpenAI API 密钥 |
-| `ANTHROPIC_API_KEY` | Anthropic (Claude) API 密钥 |
-| `GEMINI_API_KEY` | Google Gemini API 密钥 |
-| `DEEPSEEK_API_KEY` | DeepSeek API 密钥 |
-| `OPENROUTER_API_KEY` | OpenRouter API 密钥 |
-| `JINA_API_KEY` | Jina Reader API 密钥 |
-| `CLOUDFLARE_API_TOKEN` | Cloudflare API Token（Browser Rendering / Workers AI） |
-| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Account ID |
+| `OPENAI_API_KEY` | OpenAI |
+| `ANTHROPIC_API_KEY` | Anthropic（Claude） |
+| `GEMINI_API_KEY` | Google Gemini |
+| `DEEPSEEK_API_KEY` | DeepSeek |
+| `OPENROUTER_API_KEY` | OpenRouter |
+| `JINA_API_KEY` | Jina Reader |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare（Browser Rendering、Workers AI） |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare 账户 ID |
 
 ### Markitai 设置
 
 | 变量 | 说明 |
 |------|------|
+| `MODEL` | 未配置 `model_list` 时使用的模型 |
 | `MARKITAI_CONFIG` | 配置文件路径 |
 | `MARKITAI_LOG_DIR` | 日志文件目录 |
-| `MARKITAI_LOG_FORMAT` | 日志格式覆盖（`text` 或 `json`） |
-| `MARKITAI_STATIC_HTTP` | 静态 HTTP 后端：`httpx`（默认）或 `curl_cffi`（TLS 指纹伪装） |
-| `MARKITAI_LANG` | CLI 语言覆盖（`en` 或 `zh`） |
-| `MARKITAI_PURE` | 启用 pure 模式（`1`、`true` 或 `yes`） |
-| `MARKITAI_RECORD_HISTORY` | 将 CLI 运行记录到 `markitai serve` 历史（`1`、`true`、`yes` 或 `on`；已设置但为假值表示显式关闭）。可被 `--record-history` / `--no-record-history` 覆盖；会覆盖配置项 `history.record` |
-| `MARKITAI_NO_VLM_OCR` | 禁止视觉模型 OCR：使用 `--ocr --llm` 时强制走本地 RapidOCR，而不是让模型直接读取页面图像（`1`、`true` 或 `yes`） |
-| `MARKITAI_SERVE_TOKEN` | 固定 `markitai serve` 的访问令牌，而不是每次启动随机生成 |
-| `MARKITAI_NO_REMOTE_FETCH` | 硬性禁用远程提取，包括显式远程 `-s` 策略（`1`、`true` 或 `yes`） |
-| `MARKITAI_INSTALL_OPTIONAL` | 仅安装脚本：非交互式安装可选组件（`1`、`true` 或 `yes`） |
-| `MARKITAI_USE_MIRROR` | 仅安装脚本：`1` 始终提供镜像索引，`0` 从不询问 |
-| `MARKITAI_VERSION` | 仅安装脚本：固定要安装的 markitai 版本（省略即安装最新稳定版） |
-| `MODEL` | 无 `model_list` 配置时的单模型覆盖 |
+| `MARKITAI_LOG_FORMAT` | `text` 或 `json` |
+| `MARKITAI_LANG` | CLI 语言，`en` 或 `zh` |
+| `MARKITAI_PURE` | 开启 pure 模式（`1`、`true`、`yes`） |
+| `MARKITAI_RECORD_HISTORY` | 把 CLI 运行记入网页工作台历史（`1`、`true`、`yes`、`on`） |
+| `MARKITAI_NO_REMOTE_FETCH` | 绝不把 URL 发给远程服务，显式 `-s` 也不行（`1`、`true`、`yes`） |
+| `MARKITAI_NO_VLM_OCR` | `--ocr --llm` 时用本地 RapidOCR 而不是视觉模型（`1`、`true`、`yes`） |
+| `MARKITAI_STATIC_HTTP` | 静态抓取客户端：`httpx`（默认）或 `curl_cffi` |
+| `MARKITAI_SERVE_TOKEN` | `markitai serve` 的固定访问令牌 |
+| `MARKITAI_INSTALL_OPTIONAL` | 安装脚本：不询问直接装可选组件 |
+| `MARKITAI_USE_MIRROR` | 安装脚本：`1` 总是提供镜像，`0` 从不询问 |
+| `MARKITAI_VERSION` | 安装脚本：要安装的版本 |
 
 ### `.env` 文件加载
 
-Markitai 按以下顺序自动加载 `.env` 文件（先加载的值优先）：
-
-1. `./.env`（当前工作目录，项目级）
-2. `~/.markitai/.env`（用户主目录，全局兜底）
-
-项目级 `.env` 优先级更高，允许按项目覆盖全局设置。
+markitai 先加载 `./.env`，再加载 `~/.markitai/.env`。先加载的值优先，所以项目可以覆盖全局设置。
 
 ## LLM 配置
 
 ### 支持的提供商
 
-任何 [LiteLLM](https://docs.litellm.ai/) 提供商均可使用——OpenAI、Anthropic、Google、DeepSeek、OpenRouter、Ollama（本地）等。基于订阅的本地提供商通过各自的 CLI 认证，无需 API key：
+任何 [LiteLLM](https://docs.litellm.ai/) 提供商都可以用 API key 接入：OpenAI、Anthropic、Google、DeepSeek、OpenRouter、Ollama 等。
 
-| 提供商 | 前缀 | 认证方式 | 额外依赖 |
-|----------|--------|------|-------|
-| Claude Agent | `claude-agent/` | [Claude Code CLI](https://github.com/anthropics/claude-code) 登录 | `markitai[claude-agent]` |
-| GitHub Copilot | `copilot/` | [Copilot CLI](https://github.com/github/copilot-sdk) 登录 | `markitai[copilot]` |
-| ChatGPT | `chatgpt/` | 首次使用时 OAuth 设备码授权（无需 CLI） | — |
+三家订阅制提供商改用各自的 CLI 或 OAuth 登录：
 
-CLI 安装：`curl -fsSL https://claude.ai/install.sh | bash`（Claude Code；Windows：`irm https://claude.ai/install.ps1 | iex`），`curl -fsSL https://gh.io/copilot-install | bash`（Copilot；Windows：`winget install GitHub.Copilot`）。
+| 提供商 | 前缀 | 登录方式 | Extra |
+|--------|------|----------|-------|
+| Claude Code | `claude-agent/` | `markitai auth claude login` | `markitai[claude-agent]` |
+| GitHub Copilot | `copilot/` | `markitai auth copilot login` | `markitai[copilot]` |
+| ChatGPT | `chatgpt/` | 首次使用时走 OAuth 设备码 | — |
 
-::: tip Gemini 接入方式
-Gemini：使用直连 API 密钥（`gemini/`，见下方“模型命名”）或通过 OpenRouter 接入（`openrouter/google/...`）。
-:::
+Claude Code 和 Copilot 的 CLI 要先装好：`curl -fsSL https://claude.ai/install.sh | bash` 和 `curl -fsSL https://gh.io/copilot-install | bash`（Windows：`irm https://claude.ai/install.ps1 | iex` 和 `winget install GitHub.Copilot`）。
+
+Gemini 没有订阅登录。用 API key（`gemini/`）或走 OpenRouter（`openrouter/google/...`）。
 
 ### 模型命名
 
-使用 LiteLLM 模型命名规范：
+模型按 LiteLLM 的 `provider/model` 命名：
 
-```text
-provider/model-name
-```
-
-示例：
 - `openai/gpt-5.6`
 - `anthropic/claude-sonnet-4-6`
 - `gemini/gemini-flash-lite-latest`
 - `deepseek/deepseek-v4-flash`
 - `ollama/llama3.2`
-- `claude-agent/sonnet`（本地，需要 Claude Code CLI）
-- `copilot/gpt-5.6`（本地，需要 Copilot CLI）
-- `chatgpt/gpt-5.6`（本地，需要 ChatGPT 订阅）
+- `claude-agent/sonnet`、`copilot/gpt-5.6`、`chatgpt/gpt-5.6`（订阅制提供商）
 
 #### markitai 自动选用的默认模型
 
-`markitai init`、设置向导和凭据自动探测都会选各家的便宜快速档；能用厂商维护的别名就用别名，这样厂商发新版不会让配置失效。受限预览版模型不会被自动选中。
+`markitai init` 和自动检测 key 时，会选所找到的提供商里便宜、快速的那一档：
 
 | 提供商 | 默认模型 |
 |---|---|
-| Claude Code CLI | `claude-agent/sonnet` |
+| Claude Code | `claude-agent/sonnet` |
 | GitHub Copilot | `copilot/claude-haiku-4.5` |
 | ChatGPT | `chatgpt/gpt-5.6` |
 | Anthropic | `anthropic/claude-haiku-4-5` |
@@ -307,48 +280,24 @@ provider/model-name
 | DeepSeek | `deepseek/deepseek-v4-flash` |
 | OpenRouter | `openrouter/google/gemini-3.1-flash-lite` |
 
-配置 `model_list` 即可覆盖。
+想用别的就设 `model_list`。配了已被提供商下线的模型只会在启动时警告一句，markitai 不会替你改。
 
-Claude Agent SDK 支持的模型：
-- 别名（推荐）：`sonnet`、`opus`、`haiku`、`inherit`
-- 完整模型字符串：`claude-sonnet-4-6`、`claude-opus-4-6`、`claude-opus-4-5-20251101`
+图片分析（`--alt`、`--desc`）需要支持视觉的模型。订阅制提供商通过文件附件支持。
 
-GitHub Copilot SDK 支持的模型：
-- 支持 Copilot 订阅可用的所有模型（o1/o3 推理模型除外）
-- 例如：`gpt-5.6`、`claude-sonnet-4.6`、`gemini-3.1-pro-preview` 等
-- 可用性取决于您的 Copilot 订阅计划
+常见错误：
 
-ChatGPT 支持的模型：
-- `gpt-5.6`、`gpt-5.6-codex`、`codex-mini` 等
+| 错误 | 处理 |
+|------|------|
+| "SDK not installed" | 安装 `markitai[copilot]` 或 `markitai[claude-agent]` |
+| "CLI not found" | 安装 [Copilot CLI](https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli) 或 [Claude Code](https://claude.ai/code) |
+| "Not authenticated" | 运行 `markitai auth copilot login` 或 `markitai auth claude login`。ChatGPT 首次使用时登录 |
+| "Rate limit" | 稍等再试，或检查订阅额度 |
 
-::: warning 已下线模型
-以下模型已被厂商下线，不再响应请求：
-- `gpt-4o`、`gpt-4.1`、`gpt-4.1-mini`、`o4-mini`、`gpt-5`、`gpt-5.1`、`gpt-5.2`
-
-配置了也只会在启动时告警，markitai 不会替你改写模型。告警里给出的是**你所在提供商**的默认模型（见 [markitai 自动选用的默认模型](#markitai-自动选用的默认模型)），下线日期只在 litellm 收录了的情况下才显示。
-:::
-
-::: tip 本地提供商支持 Vision
-本地提供商（`claude-agent/`、`copilot/`、`chatgpt/`）通过文件附件支持图片分析（`--alt`、`--desc`）。请确保使用支持 vision 的模型（如 `copilot/gpt-5.6`、`chatgpt/gpt-5.6`）。
-:::
-
-::: tip 本地提供商故障排除
-常见错误和解决方案：
-
-| 错误 | 解决方案 |
-|------|----------|
-| "SDK 未安装" | `uv add markitai[copilot]` 或 `uv add markitai[claude-agent]` |
-| "CLI 未找到" | 安装并认证 CLI 工具（[Copilot CLI](https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli)、[Claude Code](https://claude.ai/code)） |
-| "未认证" | 运行 `copilot auth login` 或 `claude auth login`。也可：为 Copilot 设置 `COPILOT_GITHUB_TOKEN`/`GH_TOKEN`/`GITHUB_TOKEN`，为 Claude 设置 `CLAUDE_CODE_USE_BEDROCK=1`/`CLAUDE_CODE_USE_VERTEX=1`/`CLAUDE_CODE_USE_FOUNDRY=1`。ChatGPT 首次使用时自动触发 OAuth。 |
-| "速率限制" | 等待后重试，或检查订阅额度 |
-| "请求超时" | 超时是自适应的；处理非常大的文档可能需要更长时间 |
-
-使用 `markitai doctor` 检查认证状态并获取解决方案提示。
-:::
+`markitai doctor` 会报告登录状态并给出提示。
 
 ### 自定义 API 端点
 
-使用 `api_base` 覆盖提供商的默认 API 端点。该值直接传递给 [LiteLLM](https://docs.litellm.ai/)，适用于任何 LiteLLM 支持的提供商（OpenAI、Anthropic、Gemini、Azure 等）。支持与 `api_key` 相同的 `env:变量名` 语法：
+`api_base` 把提供商指向另一个端点：自建推理服务、地区代理或 API 网关。和 `api_key` 一样支持 `env:VAR_NAME`：
 
 ```json
 {
@@ -367,412 +316,170 @@ ChatGPT 支持的模型：
 }
 ```
 
-示例：
+另外两种写法：
 
 ```json
 // 本地 Ollama
-{
-  "model": "ollama/llama3.2",
-  "api_base": "http://localhost:11434"
-}
+{ "model": "ollama/llama3.2", "api_base": "http://localhost:11434" }
 
-// Azure OpenAI —— "azure/<...>" 填你的 Azure 部署名（你在 Azure Portal 自定义的别名），不是模型 ID
+// Azure OpenAI：model 填你的部署名，不是模型 ID
 {
   "model": "azure/your-deployment-name",
   "api_key": "env:AZURE_API_KEY",
   "api_base": "https://your-resource.openai.azure.com",
   "api_version": "2025-02-01-preview"
 }
-
-// DeepSeek
-{
-  "model": "deepseek/deepseek-v4-flash",
-  "api_key": "env:DEEPSEEK_API_KEY",
-  "api_base": "https://api.deepseek.com/v1"
-}
-
-// 任何 OpenAI 兼容的提供商
-{
-  "model": "openai/custom-model",
-  "api_key": "env:CUSTOM_API_KEY",
-  "api_base": "https://your-proxy-or-provider.com/v1"
-}
-
-// 引用环境变量
-{
-  "model": "anthropic/claude-sonnet-4-6",
-  "api_key": "env:ANTHROPIC_API_KEY",
-  "api_base": "env:ANTHROPIC_BASE_URL"
-}
 ```
 
-::: tip
-常见用例包括自托管推理服务器（vLLM、Ollama、LocalAI）、区域 API 代理和第三方 API 网关。
-:::
-
-::: warning 本地提供商与 `api_base`
-`api_base` 配置字段**不适用于**本地提供商（`claude-agent/`、`copilot/`、`chatgpt/`）。这些提供商作为 CLI 子进程运行或使用 OAuth，内部管理 API 端点：
-
-- **Claude Agent**: 设置 `ANTHROPIC_BASE_URL` 覆盖 API 端点。如果同时设置了 `ANTHROPIC_API_KEY`，CLI 将使用它进行直接 API 访问而非订阅认证。其他路由选项：`CLAUDE_CODE_USE_BEDROCK=1`、`CLAUDE_CODE_USE_VERTEX=1`、`CLAUDE_CODE_USE_FOUNDRY=1`。
-- **GitHub Copilot**: 端点由 Copilot CLI 内部管理，不可覆盖。基于令牌的认证请设置 `COPILOT_GITHUB_TOKEN`、`GH_TOKEN` 或 `GITHUB_TOKEN`。
-- **ChatGPT**: 使用 OpenAI Responses API 端点，通过 LiteLLM 内置 OAuth Device Code Flow 认证。
-:::
+`api_base` 对订阅制提供商无效。Claude Code 认 `ANTHROPIC_BASE_URL`，Copilot 和 ChatGPT 自己管理端点。
 
 ### Vision 模型
 
-对于图片分析（`--alt`、`--desc`），Markitai 自动路由到支持视觉的模型。视觉能力默认**自动检测**自 litellm，大多数模型无需手动配置。
-
-如需显式覆盖自动检测，设置 `supports_vision`：
+视觉能力会从 LiteLLM 自动检测。要手动指定，在模型条目上设 `model_info.supports_vision`：
 
 ```json
 {
-  "llm": {
-    "model_list": [
-      {
-        "model_name": "default",
-        "litellm_params": {
-          "model": "gemini/gemini-flash-lite-latest",
-          "api_key": "env:GEMINI_API_KEY"
-        },
-        "model_info": {
-          "supports_vision": true  // 可选：省略时自动检测
-        }
-      }
-    ]
-  }
+  "model_name": "default",
+  "litellm_params": { "model": "gemini/gemini-flash-lite-latest", "api_key": "env:GEMINI_API_KEY" },
+  "model_info": { "supports_vision": true }
 }
 ```
 
 ### 模型 Token 上限
 
-`litellm_params` 和 `model_info` 都支持可选的 token 上限覆盖：
-
-```json
-{
-  "model_name": "default",
-  "litellm_params": {
-    "model": "gemini/gemini-flash-lite-latest",
-    "api_key": "env:GEMINI_API_KEY",
-    "max_tokens": 8192
-  },
-  "model_info": {
-    "max_tokens": 8192,
-    "max_input_tokens": 1000000
-  }
-}
-```
-
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
-| `litellm_params.max_tokens` | `null` | 覆盖该模型每次调用请求的最大**输出** token 数 |
-| `model_info.max_tokens` | `null` | 最大输出 token 元数据；省略时从 litellm 自动检测 |
-| `model_info.max_input_tokens` | `null` | 最大输入/上下文 token 元数据；省略时从 litellm 自动检测 |
+| `litellm_params.max_tokens` | `null` | 每次调用请求的最大输出 token |
+| `model_info.max_tokens` | `null` | 最大输出 token 元数据；省略时从 LiteLLM 检测 |
+| `model_info.max_input_tokens` | `null` | 最大上下文 token 元数据；省略时从 LiteLLM 检测 |
 
 ### 路由设置
 
-配置 Markitai 如何在多个模型间分发请求：
+`llm.router_settings` 和它旁边的几项控制请求怎样分配到多个模型，以及一份文档最多消耗多少：
 
-```json
-{
-  "llm": {
-    "router_settings": {
-      "routing_strategy": "simple-shuffle",
-      "num_retries": 2,
-      "timeout": 120,
-      "fallbacks": []
-    },
-    "concurrency": 10,
-    "max_requests_per_document": 50,
-    "max_cost_per_document_usd": 0,
-    "max_vision_pages_per_document": 0
-  }
-}
-```
-
-| 设置 | 选项 | 默认值 | 说明 |
-|------|------|--------|------|
-| `routing_strategy` | `simple-shuffle`, `least-busy`, `usage-based-routing`, `latency-based-routing` | `simple-shuffle` | 标准模型的选择策略；本地 provider（`claude-agent/`、`copilot/` 等）始终按权重随机 |
-| `num_retries` | ≥0 | 2 | 每个请求的传输层重试次数，由 markitai 自己的重试循环执行（LiteLLM 内部重试保持关闭） |
-| `timeout` | 秒 | 120 | 请求超时时间（自适应计算的基础值） |
-| `fallbacks` | list | `[]` | LiteLLM 模型组回退，如 `[{"default": ["backup"]}]`。请求从 `default` 组进入，其他组名的模型只经回退获得流量（仅标准模型）。留空 = 全部模型合并进 `default` 组 |
-| `concurrency` | ≥1 | 10 | 最大并发 LLM 请求数 |
-| `max_requests_per_document` | ≥0 | 50 | 断路器：单文档 LLM 请求数上限（重试全部计入）。触发后跳过该文档剩余增强，保留未增强产物。超大文档请调高；`0` 关闭 |
-| `max_cost_per_document_usd` | ≥0 | `0` | 断路器：单文档花费上限（美元）。每次拿到回答后计费——调用前无法预知价格——所以它约束的是该文档**后续**还能花多少，而非跨过阈值的那一次。触发后跳过剩余增强，保留未增强产物。`0` 关闭 |
-| `max_vision_pages_per_document` | ≥0 | `0` | 断路器：单文档发给视觉模型的页图数上限。**发送前**检查，超限的文档一分钱不花，改为不带视觉增强地转换。同时限制纯截图 URL 转换读取的截图分块数（只读前几块）。`0` 关闭 |
+| 设置 | 默认值 | 说明 |
+|------|--------|------|
+| `routing_strategy` | `simple-shuffle` | `simple-shuffle`、`least-busy`、`usage-based-routing` 或 `latency-based-routing`。订阅制提供商始终按权重随机 |
+| `num_retries` | `2` | 每个请求的重试次数 |
+| `timeout` | `120` | 请求超时（秒） |
+| `fallbacks` | `[]` | 分组回退，如 `[{"default": ["backup"]}]`。不在回退组里的模型只通过回退接收流量 |
+| `concurrency` | `10` | 同时发出的 LLM 请求数 |
+| `max_requests_per_document` | `50` | 一份文档的请求数到这个值就停止增强，保留基础输出。`0` 不限 |
+| `max_cost_per_document_usd` | `0` | 一份文档花到这个金额就停止增强。`0` 不限 |
+| `max_vision_pages_per_document` | `0` | 一份文档最多发给视觉模型的页面图片数。超出的文档不做视觉增强。`0` 不限 |
 
 #### 模型权重
 
-`model_list` 中每个模型的 `litellm_params` 支持 `weight` 参数来控制流量分配：
+`model_list` 里每个条目都可以在 `litellm_params` 里设 `weight`。`1` 是正常，`10` 被选中的概率是十倍，`0` 禁用该模型但保留配置。至少要有一个模型权重大于零；这在首次使用时检查，`config validate` 不查。
 
 ```json
 {
   "model_name": "default",
-  "litellm_params": {
-    "model": "gemini/gemini-flash-lite-latest",
-    "api_key": "env:GEMINI_API_KEY",
-    "weight": 10
-  }
+  "litellm_params": { "model": "gemini/gemini-flash-lite-latest", "api_key": "env:GEMINI_API_KEY", "weight": 10 }
 }
 ```
-
-| 值 | 行为 |
-|----|------|
-| `weight: 0` | **禁用**：模型完全排除在路由之外 |
-| `weight: 1`（默认） | 正常优先级 |
-| `weight: 10` | 被选中的概率是 weight=1 模型的 10 倍 |
-
-设置 `weight: 0` 可临时禁用某个模型而无需删除其配置。至少需要一个模型的 `weight > 0`，这一校验是在 LLM 路由器真正启动时（首次使用 LLM 时）才会执行，而不是在 `markitai config validate` 阶段，所以全部模型 weight 都为 0 的配置能通过校验，但会在首次实际使用时失败。
 
 ### 自适应超时
 
-本地 provider（`claude-agent/`、`copilot/`、`chatgpt/`）使用基于请求复杂度的**自适应超时计算**：
-
-- 基础超时：最小 60 秒，最大 600 秒
-- 考虑因素：提示词长度、图片存在/数量、预期输出 token 数
-- 计算公式：
-  1. `timeout = 60 + (提示词字符数 / 500)`
-  2. 如有预期输出 token 数：加 `tokens / 4`
-  3. 如有图片：`timeout *= 1.5`（这一步也会连带放大上面的输出 token 项），多张图片时额外加 `(图片数 - 1) * 10秒`
-  4. 限制在 [60, 600] 秒范围内
-
-这可以防止大文档处理超时，同时保持短请求的响应速度。
+订阅制提供商的请求超时会随提示词长度、图片数量和预期输出自动伸缩，在 60 到 600 秒之间，大文档不会超时，短请求也不会干等。
 
 ### 提示缓存（Claude Agent）
 
-Claude Agent provider 对长度达到 4096 字符（约 4KB）及以上的系统提示词自动启用**提示缓存**。这通过缓存常用的系统提示词前缀来降低 API 成本。
-
-::: tip
-提示缓存是透明的，无需配置。使用 `markitai cache stats --verbose` 查看缓存统计。
-:::
+Claude Code 会自动缓存 4 KB 以上的系统提示词。无需配置，`markitai cache stats --verbose` 能看到数字。
 
 ## 图片配置
 
-控制图片处理和压缩：
-
-```json
-{
-  "image": {
-    "alt_enabled": false,
-    "desc_enabled": false,
-    "compress": true,
-    "quality": 75,
-    "format": "jpeg",
-    "max_width": 1920,
-    "max_height": 99999,
-    "filter": {
-      "min_width": 50,
-      "min_height": 50,
-      "min_area": 5000,
-      "deduplicate": true
-    }
-  }
-}
-```
-
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
-| `alt_enabled` | `false` | 通过 LLM 生成 alt 文本 |
-| `desc_enabled` | `false` | 生成图片描述文件 |
-| `compress` | `true` | 压缩图片 |
-| `quality` | `75` | JPEG/WebP 质量 (1-100) |
-| `format` | `jpeg` | 输出格式：`jpeg`, `png`, `webp` |
+| `alt_enabled` | `false` | 用 LLM 生成 alt 文本 |
+| `desc_enabled` | `false` | 生成图片描述 |
+| `compress` | `true` | 压缩抽取出的图片 |
+| `quality` | `75` | JPEG/WebP 质量（1–100） |
+| `format` | `jpeg` | `jpeg`、`png` 或 `webp` |
 | `max_width` | `1920` | 最大宽度（像素） |
-| `max_height` | `99999` | 最大高度（像素，实际无限制） |
-| `filter.min_width` | `50` | 跳过宽度小于此值的图片 |
-| `filter.min_height` | `50` | 跳过高度小于此值的图片 |
-| `filter.min_area` | `5000` | 跳过面积小于此值的图片 |
-| `filter.deduplicate` | `true` | 去除重复图片 |
-| `stdout_persist` | `true` | 将管道输出图片保存到持久化资产存储 |
-| `stdout_persist_dir` | `~/.markitai/assets` | 持久化图片存储目录 |
-| `stdout_fetch_external` | `false` | 在 stdout 模式下下载外部图片 URL |
+| `max_height` | `99999` | 最大高度（像素） |
+| `filter.min_width` | `50` | 跳过更窄的图片 |
+| `filter.min_height` | `50` | 跳过更矮的图片 |
+| `filter.min_area` | `5000` | 跳过更小的图片 |
+| `filter.deduplicate` | `true` | 去掉重复图片 |
+| `stdout_persist` | `true` | stdout 模式下把图片存进持久目录 |
+| `stdout_persist_dir` | `~/.markitai/assets` | 持久目录位置 |
+| `stdout_fetch_external` | `false` | stdout 模式下下载外部图片 URL |
 
 ## 截图配置
 
-为文档和 URL 启用截图捕获：
-
-```json
-{
-  "screenshot": {
-    "enabled": false,
-    "screenshot_only": false,
-    "viewport_width": 1920,
-    "viewport_height": 1080,
-    "quality": 75,
-    "max_height": 10000,
-    "tile_height": 2000
-  }
-}
-```
-
-启用后（`--screenshot` 或 `--preset rich`）：
-
-- **PDF/PPTX**: 将每个页面/幻灯片渲染为 JPEG 图片
-- **URL**: 使用 Playwright 捕获全页面截图
+截图把 PDF 页面和 PPTX 幻灯片渲染成 JPEG，并用 Playwright 给 URL 截整页。文件放在 `.markitai/screenshots/`。
 
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
-| `enabled` | `false` | 启用截图捕获 |
-| `screenshot_only` | `false` | 仅捕获截图，跳过内容提取（对应 `--screenshot-only` CLI 标志） |
+| `enabled` | `false` | 等同 `--screenshot` |
+| `screenshot_only` | `false` | 等同 `--screenshot-only` |
 | `viewport_width` | `1920` | URL 截图的浏览器视口宽度 |
 | `viewport_height` | `1080` | URL 截图的浏览器视口高度 |
-| `quality` | `75` | JPEG 压缩质量 (1-100) |
-| `max_height` | `10000` | 旧版单文件高度上限；当 `tile_height` 为 0 时使用 |
-| `tile_height` | `2000` | 更高的 URL 截图会按此高度切成纵向 tile（保持全宽），每块均为 VLM 可读，而不是被整体缩小成一张读不清的图 |
-
-截图保存在输出目录的 `.markitai/screenshots/` 子目录中。
-
-::: tip
-对于 URL，启用 `--screenshot` 会在需要时自动将抓取策略升级为 `playwright`，确保页面完全渲染后再捕获。
-:::
+| `quality` | `75` | JPEG 质量（1–100） |
+| `tile_height` | `2000` | 很长的 URL 截图按这个高度切片，视觉模型才读得清 |
+| `max_height` | `10000` | 只在 `tile_height` 为 `0` 时使用的高度上限 |
 
 ## 预设
 
-Markitai 包含三个内置预设（`rich`、`standard`、`minimal`）。您还可以在配置文件中定义**自定义预设**：
+内置三个预设（`minimal`、`standard`、`rich`）。在 `presets` 下定义自己的：
 
 ```json
 {
   "presets": {
-    "my-preset": {
-      "llm": true,
-      "ocr": false,
-      "alt": true,
-      "desc": false,
-      "screenshot": true
-    }
+    "my-preset": { "llm": true, "ocr": false, "alt": true, "desc": false, "screenshot": true }
   }
 }
 ```
 
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `llm` | boolean | `false` | 启用 LLM 增强 |
-| `ocr` | boolean | `false` | 启用扫描文档 OCR |
-| `alt` | boolean | `false` | 生成图片 alt 文本 |
-| `desc` | boolean | `false` | 生成图片描述 |
-| `screenshot` | boolean | `false` | 启用截图捕获 |
-
-通过 `--preset` CLI 标志使用自定义预设：
-
-```bash
-markitai document.pdf --preset my-preset
-```
+五个键默认都是 `false`。用 `markitai document.pdf --preset my-preset` 调用。
 
 ## OCR 配置
 
-配置扫描文档的光学字符识别。Markitai 使用 [RapidOCR](https://github.com/RapidAI/RapidOCR)（ONNX Runtime + OpenCV）进行 OCR 处理。
-
-```json
-{
-  "ocr": {
-    "enabled": false,
-    "lang": "en",
-    "per_page_routing": true
-  }
-}
-```
-
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
-| `enabled` | `false` | 为 PDF 及独立图片启用 OCR |
-| `lang` | `en` | RapidOCR 语言代码 |
-| `per_page_routing` | `true` | 使用 `--ocr` 时，未被判定为扫描/乱码的页面保留原生文本层，仅对其余页面执行 OCR；关闭后对每一页都执行 OCR |
+| `enabled` | `false` | 等同 `--ocr` |
+| `lang` | `en` | 语言：`en`、`zh`、`ja`、`ko`、`ar`、`th` 或 `latin` |
+| `per_page_routing` | `true` | 看起来正常的页面保留原生文本层，只对其余页面做 OCR。`false` 则每页都 OCR |
 
-支持的语言代码：
-- `en` - 英语
-- `zh` / `ch` - 中文（简体）
-- `ja` / `japan` - 日语
-- `ko` / `korean` - 韩语
-- `ar` / `arabic` - 阿拉伯语
-- `th` - 泰语
-- `latin` - 拉丁语系
-
-::: tip
-RapidOCR **不在**基础安装里——它位于 `ocr` 附加组件中，所以 `--ocr` 需要额外一步：
+本地 OCR 用 `ocr` extra 里的 [RapidOCR](https://github.com/RapidAI/RapidOCR)：
 
 ```bash
-uv tool install "markitai[ocr]" --force   # 或：pipx install "markitai[ocr]" --force
+uv tool install "markitai[ocr]" --force
 ```
 
-未安装时，`--ocr` 会直接提示缺少该附加组件，而不是静默返回图片占位符。若已配置支持视觉的模型，`--ocr --llm` 无需该附加组件：模型直接读取页面图像（VLM-OCR）；设置 `MARKITAI_NO_VLM_OCR=1` 可强制走本地 RapidOCR。
-:::
+`--ocr --llm` 加一个支持视觉的模型就不需要 extra：模型直接读页面图片。`MARKITAI_NO_VLM_OCR=1` 强制走本地。
 
 ## Office 配置
 
-控制未安装 LibreOffice 时 macOS 上的 MS Office 备选方案。
-
-```json
-{
-  "office": {
-    "macos_fallback": true
-  }
-}
-```
-
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
-| `macos_fallback` | `true` | macOS 上未安装 LibreOffice 时，通过 AppleScript 驱动已装的 Microsoft PowerPoint 完成 PPTX 幻灯片渲染 |
+| `macos_fallback` | `true` | 没装 LibreOffice 的 Mac 上，调用已装的 PowerPoint 渲染 PPTX 幻灯片 |
 
-::: tip
-首次转换会触发每个应用一次性的 macOS 自动化授权弹窗。无头环境（SSH、CI）无法响应弹窗，建议关闭此备选。
-:::
+首次渲染会弹一次 macOS 授权对话框。无头 Mac（SSH、CI）上没人能点，把它设成 `false`。
 
 ## 批处理配置
 
-控制并行处理：
-
-```json
-{
-  "batch": {
-    "concurrency": 10,
-    "url_concurrency": 5,
-    "scan_max_depth": 5,
-    "scan_max_files": 10000,
-    "state_flush_interval_seconds": 10,
-    "heavy_task_limit": 0
-  }
-}
-```
-
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
-| `concurrency` | `10` | 最大并发文件转换数 |
-| `url_concurrency` | `5` | 最大并发 URL 抓取数（与文件分离） |
-| `scan_max_depth` | `5` | 最大目录扫描深度 |
-| `scan_max_files` | `10000` | 单次运行最大处理文件数 |
-| `state_flush_interval_seconds` | `10` | 批处理状态持久化到磁盘的间隔（秒） |
-| `heavy_task_limit` | `0` | CPU 密集任务限制（0 = 根据内存自动检测） |
-
-::: tip
-URL 抓取使用独立的并发池，因为 URL 可能有较高延迟（如浏览器渲染的页面）。这可以防止慢速 URL 阻塞本地文件处理。
-:::
+| `concurrency` | `10` | 同时转换的文件数 |
+| `url_concurrency` | `5` | 同时抓取的 URL 数，单独计数，慢页面不会拖住文件 |
+| `scan_max_depth` | `5` | 目录扫描深度 |
+| `scan_max_files` | `10000` | 每次运行的最大文件数 |
+| `state_flush_interval_seconds` | `10` | 多久保存一次供 `--resume` 用的批量状态 |
+| `heavy_task_limit` | `0` | CPU 密集任务的上限；`0` 按可用内存自动决定 |
 
 ## URL 抓取配置
-
-配置 URL 的抓取方式：
 
 ```json
 {
   "fetch": {
     "strategy": "auto",
     "remote_consent": "always",
-    "playwright": {
-      "timeout": 30000,
-      "wait_for": "domcontentloaded",
-      "extra_wait_ms": 3000
-    },
-    "jina": {
-      "api_key": "env:JINA_API_KEY",
-      "timeout": 30,
-      "rpm": 20,
-      "no_cache": false,
-      "target_selector": null,
-      "wait_for_selector": null
-    },
-    "cloudflare": {
-      "api_token": "env:CLOUDFLARE_API_TOKEN",
-      "account_id": "env:CLOUDFLARE_ACCOUNT_ID"
-    },
-    "fallback_patterns": ["twitter.com", "x.com", "instagram.com", "facebook.com", "linkedin.com", "threads.net"]
+    "playwright": { "timeout": 30000, "wait_for": "domcontentloaded", "extra_wait_ms": 3000 },
+    "jina": { "api_key": "env:JINA_API_KEY" },
+    "cloudflare": { "api_token": "env:CLOUDFLARE_API_TOKEN", "account_id": "env:CLOUDFLARE_ACCOUNT_ID" },
+    "fallback_patterns": ["x.com", "twitter.com", "instagram.com", "facebook.com", "linkedin.com", "threads.net"]
   }
 }
 ```
@@ -781,353 +488,180 @@ URL 抓取使用独立的并发池，因为 URL 可能有较高延迟（如浏�
 
 | 策略 | 说明 |
 |------|------|
-| `auto` | 自动检测：本地优先顺序（static → playwright → defuddle → jina → cloudflare）；已知 SPA/重 JS 域名则改用 playwright → defuddle → jina → cloudflare → static。详见[抓取策略指南](/zh/guide/fetch-policy) |
-| `static` | 使用静态 HTTP 抓取和内置 webextract（快速，无 JS） |
-| `defuddle` | 使用 Defuddle API 提取干净内容（免费，无需认证） |
-| `playwright` | 使用 Playwright 处理 JS 渲染的页面（支持 SPA） |
-| `jina` | 使用 Jina Reader API |
-| `cloudflare` | 使用 Cloudflare Browser Rendering `/content` API（取回渲染后的 HTML，本地提取） |
+| `auto` | 本机优先：static，然后 Playwright，再 Defuddle、Jina、Cloudflare。已知重 JavaScript 的域名从 Playwright 开始。见[抓取策略](/zh/guide/fetch-policy) |
+| `static` | 普通 HTTP 加内置抽取器。快，不跑 JavaScript |
+| `playwright` | 浏览器渲染 JavaScript 页面 |
+| `defuddle` | Defuddle API，免费，无需 key |
+| `jina` | Jina Reader API |
+| `cloudflare` | Cloudflare Browser Rendering；渲染后的 HTML 在本地抽取 |
 
 ### 远程抓取同意
 
-对于公网 URL，`auto` 可以在无需确认的情况下回退到远程提取服务。标准域名仍会先尝试本地策略。每个进程第一次准备使用远程服务时，Markitai 会先在 stderr 输出说明，再把当前 URL 交给链路中的下一个服务。说明会完整列出该进程级决定覆盖的服务：defuddle.md、Jina、Cloudflare、FxTwitter 与 Twitter oEmbed。各服务按顺序逐个尝试，不会同时收到该 URL。
+| 设置 | 可选值 | 默认值 | 说明 |
+|------|--------|--------|------|
+| `fetch.remote_consent` | `always`、`ask`、`never` | `always` | `always`：公开 URL 可回退到远程服务，首次尝试前在 stderr 提示。`ask`：有终端时每个进程问一次，否则跳过所有远程服务。`never`：只用本地策略 |
 
-对于公网 X/Twitter 状态或文章 URL，本地 DOM 提取失败后，Playwright 可能依次尝试 FxTwitter 与 Twitter oEmbed。这项增强与其他远程服务共用**同一个**进程级同意决定：在 `ask` 模式下，它自己也可以弹出那一次共享确认；本次运行中已经做出的决定会被直接沿用；无法询问时则跳过。`fetch.remote_consent=never` 与 `MARKITAI_NO_REMOTE_FETCH=1` 都会禁用它。
+私有、内网和带凭据的 URL 无论怎么设都不会发给远程服务。`fetch.policy.local_only_patterns` 和 `NO_PROXY` 里的域名在 `auto` 链里只走本地。对公开 URL，显式的 `-s defuddle`、`-s jina` 或 `-s cloudflare` 会覆盖 `never` 和模式规则；`MARKITAI_NO_REMOTE_FETCH=1` 连这个也拦住。
 
-私网、本机、内网及自带认证信息的 URL 绝不会使用远程提取，即使显式指定远程策略也不例外。认证信息包括 URL userinfo，以及 query 或 fragment 中的 Token、签名、Credential、密码、API Key 与授权码等敏感参数。
-
-在 `auto` 策略链中，匹配 `fetch.policy.local_only_patterns` 或 `NO_PROXY` 的域名也只会留在本机处理（启用 `inherit_no_proxy` 时）。对于仍属公网的 URL，显式传入非 `auto` 远程 `-s` 参数表示有意覆盖这些基于模式的规则。仅在配置文件中设置远程 `fetch.strategy` 时，仍受 `fetch.remote_consent` 控制，并使用相同的首次远程揭露。
-
-| 设置 | 选项 | 默认值 | 说明 |
-|------|------|--------|------|
-| `fetch.remote_consent` | `ask`, `always`, `never` | `always` | `always`：公网 URL 可直接使用远程后备，并在第一次远程尝试前输出说明；`ask`：每个进程在交互式终端中询问一次，非交互环境跳过全部远程提取服务（含上述 X/Twitter 增强）；`never`：仅使用本地策略 |
-
-`MARKITAI_NO_REMOTE_FETCH=1`（或 `true`/`yes`）是硬性禁用开关：即使传入 `-s defuddle`、`-s jina` 或 `-s cloudflare`，也不会使用远程提取。未设置该环境变量时，显式传入这些 CLI 参数表示本次运行选择该服务，并可为其他公网 URL 覆盖 `fetch.remote_consent=never` 及 `local_only_patterns`/`NO_PROXY`；但私网、本机及自带认证信息 URL 的保护仍然生效。
+X/Twitter 的补充抓取（FxTwitter、Twitter oEmbed）和其他远程服务遵循同一个同意决定。
 
 ### Playwright 设置
 
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
 | `timeout` | `30000` | 页面加载超时（毫秒） |
-| `wait_for` | `domcontentloaded` | 等待条件：`load`, `domcontentloaded`, `networkidle` |
-| `extra_wait_ms` | `3000` | JS 渲染额外等待时间 |
-| `session_mode` | `isolated` | 会话模式：`isolated`（每个请求新建上下文）、`domain_persistent`（同域名复用上下文） |
-| `session_ttl_seconds` | `600` | 持久化会话的 TTL（秒） |
-| `wait_for_selector` | `null` | 提取前等待的 CSS 选择器 |
-| `cookies` | `null` | 设置 Cookie：`[{name, value, domain, path}]` |
-| `reject_resource_patterns` | `null` | 屏蔽匹配的资源：`["**/*.css"]` |
-| `extra_http_headers` | `null` | 额外 HTTP 请求头：`{"Accept-Language": "zh-CN"}` |
-| `user_agent` | `null` | 自定义 User-Agent 字符串 |
-| `http_credentials` | `null` | HTTP 认证凭据：`{username, password}` |
+| `wait_for` | `domcontentloaded` | `load`、`domcontentloaded` 或 `networkidle` |
+| `extra_wait_ms` | `3000` | 加载事件后再等 JavaScript 的时间 |
+| `session_mode` | `isolated` | `isolated`（每个请求新上下文）或 `domain_persistent`（按域名复用） |
+| `session_ttl_seconds` | `600` | 持久会话的寿命 |
+| `wait_for_selector` | `null` | 等待的 CSS 选择器 |
+| `cookies` | `null` | `[{name, value, domain, path}]` |
+| `reject_resource_patterns` | `null` | 拦截匹配的请求，如 `["**/*.css"]` |
+| `extra_http_headers` | `null` | `{"Accept-Language": "zh-CN"}` |
+| `user_agent` | `null` | 自定义 User-Agent |
+| `http_credentials` | `null` | HTTP 认证的 `{username, password}` |
 
 ### Jina 设置
 
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
-| `api_key` | `null` | Jina Reader API 密钥（支持 `env:` 语法） |
+| `api_key` | `null` | Jina Reader API key（支持 `env:`） |
 | `timeout` | `30` | 请求超时（秒） |
-| `rpm` | `20` | 每分钟请求速率限制 |
-| `no_cache` | `false` | 禁用 Jina 服务端缓存 |
-| `target_selector` | `null` | 定位特定页面内容的 CSS 选择器 |
-| `wait_for_selector` | `null` | 提取前等待的 CSS 选择器 |
+| `rpm` | `20` | 每分钟请求数 |
+| `no_cache` | `false` | 绕过 Jina 的服务端缓存 |
+| `target_selector` | `null` | 要抽取内容的 CSS 选择器 |
+| `wait_for_selector` | `null` | 等待的 CSS 选择器 |
 
 ### Defuddle 设置
 
-[Defuddle](https://defuddle.md) 从网页中提取干净的文章内容，移除广告、侧边栏和导航等干扰元素。返回带有丰富 YAML frontmatter（title、author、published、description、word_count）的 Markdown。
+[Defuddle](https://defuddle.md) 抽取干净的文章正文，返回带丰富 frontmatter 的 Markdown。免费，不需要 key。
 
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
 | `timeout` | `30` | 请求超时（秒） |
-| `rpm` | `20` | 每分钟请求速率限制 |
-
-```json
-{
-  "fetch": {
-    "defuddle": {
-      "timeout": 30,
-      "rpm": 20
-    }
-  }
-}
-```
-
-::: tip
-Defuddle 免费且无需 API 密钥或认证。适合文章类网站的默认选择。
-:::
+| `rpm` | `20` | 每分钟请求数 |
 
 ### Cloudflare 设置
 
-Cloudflare 提供两项能力，各自独立选择：
-
-1. **Browser Rendering**（`-s cloudflare`）：`/content` API 取回渲染后的 HTML，再通过与其他策略相同的原生 webextract 流水线本地提取，用于 URL 转 Markdown
-2. **Workers AI toMarkdown**（`-b cloudflare`）：用于文件转 Markdown（PDF、Office、CSV、XML、图片）
-
-```json
-{
-  "fetch": {
-    "cloudflare": {
-      "api_token": "env:CLOUDFLARE_API_TOKEN",
-      "account_id": "env:CLOUDFLARE_ACCOUNT_ID",
-      "timeout": 30000,
-      "wait_until": "networkidle0",
-      "cache_ttl": 0,
-      "reject_resource_patterns": null,
-      "user_agent": null,
-      "cookies": null,
-      "wait_for_selector": null,
-      "http_credentials": null,
-      "convert_enabled": false
-    }
-  }
-}
-```
+Cloudflare 提供两样东西，分别选用：**Browser Rendering**（`-s cloudflare`）为 URL 抓取渲染后的 HTML，**Workers AI toMarkdown**（`-b cloudflare`）转换文件。
 
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
-| `api_token` | `null` | Cloudflare API Token（支持 `env:` 语法） |
-| `account_id` | `null` | Cloudflare Account ID（支持 `env:` 语法） |
+| `api_token` | `null` | API token（支持 `env:`） |
+| `account_id` | `null` | 账户 ID（支持 `env:`） |
 | `timeout` | `30000` | Browser Rendering 超时（毫秒） |
-| `wait_until` | `networkidle0` | BR 等待事件：`load`, `domcontentloaded`, `networkidle0` |
-| `cache_ttl` | `0` | BR 缓存 TTL（秒，0 = 不缓存） |
-| `reject_resource_patterns` | `null` | 屏蔽匹配正则的资源：`["/\\.css$/"]` |
-| `user_agent` | `null` | Browser Rendering 自定义 User-Agent |
-| `cookies` | `null` | 导航前设置的 Cookie：`[{"name": "k", "value": "v", "url": "..."}]` |
-| `wait_for_selector` | `null` | 页面加载后等待的 CSS 选择器（如 `"#content"`） |
-| `http_credentials` | `null` | HTTP Basic Auth：`{"username": "u", "password": "p"}` |
-| `convert_enabled` | `false` | 启用 Workers AI toMarkdown 文件转换 |
+| `wait_until` | `networkidle0` | `load`、`domcontentloaded` 或 `networkidle0` |
+| `cache_ttl` | `0` | Browser Rendering 缓存 TTL（秒） |
+| `reject_resource_patterns` | `null` | 拦截匹配的请求，如 `["/\\.css$/"]` |
+| `user_agent` | `null` | 自定义 User-Agent |
+| `cookies` | `null` | `[{"name": "k", "value": "v", "url": "..."}]` |
+| `wait_for_selector` | `null` | 等待的 CSS 选择器 |
+| `http_credentials` | `null` | `{"username": "u", "password": "p"}` |
+| `convert_enabled` | `false` | 开启 Workers AI toMarkdown 文件转换 |
 
-::: tip
-Browser Rendering 在 Free 计划上可用。Workers AI toMarkdown 对 PDF/Office/CSV/XML 转换免费；图片转换使用 Neurons 配额。
-:::
+获取凭据：
 
-**凭据获取方式：**
-
-1. **Account ID**：登录 [Cloudflare Dashboard](https://dash.cloudflare.com/)，Account ID 显示在 URL 中（`dash.cloudflare.com/<account_id>/...`），或在任意域名的 **Overview** 页面右侧边栏中。
-
-2. **API Token**：进入 [My Profile → API Tokens](https://dash.cloudflare.com/profile/api-tokens)，点击 **Create Token**，选择 *Custom token* 模板，添加以下权限：
-
-   | 权限 | 访问级别 | 用途 |
-   |------|----------|------|
-   | Account / Cloudflare Workers AI | Read | `toMarkdown` 文件转换 |
-   | Account / Browser Rendering | Edit | `/content` URL 渲染 |
-
-   将 **Account Resources** 设为目标账户，创建后复制 Token。
-
-3. **启用 Browser Rendering**：在 Cloudflare Dashboard 中进入 **Workers & Pages → Browser Rendering**，按提示启用（Free 计划可用）。
+1. **账户 ID**：在[控制台](https://dash.cloudflare.com/)的 URL 里，`dash.cloudflare.com/<account_id>/...`。
+2. **API token**：[My Profile → API Tokens](https://dash.cloudflare.com/profile/api-tokens)，*Create Token*，自定义 token，给你的账户加上 *Browser Rendering: Edit* 和 *Workers AI: Read* 权限。
+3. **启用 Browser Rendering**：在 *Workers & Pages → Browser Rendering* 下开启。免费套餐可用。
 
 ```bash
 export CLOUDFLARE_API_TOKEN="your-api-token"
 export CLOUDFLARE_ACCOUNT_ID="your-account-id"
 ```
 
-::: warning 限制与注意事项
-- **并发限制**：Free 计划允许 **2 个并发浏览器实例**。Markitai 会自动串行化 CF BR 请求，并在收到 429 限流时指数退避重试，因此高 `url_concurrency` 值是安全的，但不会加速 CF BR 抓取。
-- **站点兼容性**：有严格反爬措施的站点（如 x.com、twitter.com）可能通过 CF BR 返回 400 错误。对这些站点请使用 `-s playwright` 或 `-s jina`。
-- **文件转换质量**：对于有本地 converter 的格式（PDF、DOCX、XLSX 等），CF Workers AI `toMarkdown` 的输出质量通常**低于本地 converter**（如格式还原不够精确、无法提取图片等）。使用 `-b cloudflare` 时如果有更好的本地 converter 可用会输出警告。CF `toMarkdown` 最适合基础安装无法转换的格式（例如 `.numbers`）。
-:::
+免费套餐允许两个并发浏览器会话，markitai 会串行发请求并在限流时重试。反爬严格的站点（比如 x.com）走 Cloudflare 可能失败，改用 `-s playwright` 或 `-s jina`。文件转换方面内置转换器通常效果更好，toMarkdown 主要用于 markitai 本地转不了的格式。
 
 ### 抓取策略、域名配置与回退模式 {#fetch-policy-domain-profiles}
 
-策略引擎按域名排序抓取策略，并记录哪些域名需要浏览器渲染。它的选项表、域名配置字段、内置配置与 `fallback_patterns` 列表统一放在[抓取策略指南](/zh/guide/fetch-policy)里，只维护一份，避免两个页面各自漂移。
+策略引擎按域名排定策略顺序，并记住哪些域名需要浏览器。它的选项、域名配置字段和内置配置都写在[抓取策略](/zh/guide/fetch-policy#配置)一页。
 
-配置形态供参考：
-
-```json
-{
-  "fetch": {
-    "policy": {
-      "enabled": true,
-      "max_strategy_hops": 5
-    },
-    "domain_profiles": {
-      "x.com": {
-        "wait_for_selector": "[data-testid=tweetText]",
-        "wait_for": "domcontentloaded",
-        "extra_wait_ms": 1200,
-        "prefer_strategy": "playwright"
-      }
-    },
-    "fallback_patterns": ["x.com", "twitter.com", "instagram.com", "facebook.com", "linkedin.com", "threads.net"]
-  }
-}
-```
-
-有两条规则容易踩坑，值得在这里重复一次：为某个域名自定义 `domain_profiles` 条目会**整体替换**该域名的内置配置而非逐字段合并；`auto` 会把 `fallback_patterns` 中的域名视为 SPA/JS 重度依赖站点，从而提前使用浏览器渲染。其余默认值、类型与各域名字段见[抓取策略指南](/zh/guide/fetch-policy#配置)。
+两条容易踩坑的规则：自定义的 `domain_profiles` 条目会整个替换该域名的内置配置，而不是合并；`auto` 把 `fallback_patterns` 里的域名都当成重 JavaScript，直接从浏览器开始。
 
 ### 代理
 
-抓取时优先使用 `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`（`NO_PROXY` 为绕过列表）。都未设置时读取系统代理：Windows 的 Internet 设置、macOS 的网络设置，以及 Linux 上当前 GNOME/Unity 或 KDE 桌面的手动 HTTP 代理（含绕过列表）。PAC/WPAD、仅 SOCKS 和带认证的桌面设置不会导入——这类情况和无桌面的机器一样，请设置环境变量。
+`HTTPS_PROXY`、`HTTP_PROXY` 和 `ALL_PROXY` 都生效，`NO_PROXY` 是绕过列表。都没设时用操作系统代理：Windows 的 Internet 设置、macOS 的网络设置，以及 Linux 上 GNOME 或 KDE 桌面的手动 HTTP 代理。PAC、纯 SOCKS 和带认证的桌面代理不会导入，请改设环境变量。
 
 ## 缓存配置
 
-Markitai 使用全局缓存，存储在 `~/.markitai/cache.db`。
-
-```json
-{
-  "cache": {
-    "enabled": true,
-    "no_cache_patterns": [],
-    "max_size_bytes": 536870912,
-    "global_dir": "~/.markitai"
-  }
-}
-```
+LLM 结果缓存在 `~/.markitai/cache.db`，同一份文档再转一次不花钱。
 
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
-| `enabled` | `true` | 启用 LLM 结果缓存 |
-| `no_cache` | `false` | 跳过读取缓存但仍写入（相当于 `--no-cache` 标志） |
-| `no_cache_patterns` | `[]` | 跳过缓存的 glob 模式 |
-| `max_size_bytes` | `536870912` (512MB) | 最大缓存大小 |
-| `global_dir` | `~/.markitai` | 全局缓存目录 |
-
-### 缓存命令
+| `enabled` | `true` | 缓存 LLM 结果 |
+| `no_cache` | `false` | 跳过读取但照常写入（同 `--no-cache`） |
+| `no_cache_patterns` | `[]` | 绕过缓存的 glob |
+| `max_size_bytes` | `536870912` | 缓存上限（512 MB） |
+| `global_dir` | `~/.markitai` | 缓存目录 |
 
 ```bash
-# 查看缓存统计
-markitai cache stats
-
-# 查看详细统计（条目、按模型分组）
-markitai cache stats --verbose
-
-# 指定显示数量
-markitai cache stats --verbose --limit 50
-
-# 清除缓存
+markitai cache stats --verbose         # 缓存了什么，按模型列出
 markitai cache clear
-markitai cache clear -y  # 跳过确认
-```
-
-### 禁用缓存
-
-```bash
-# 整次运行禁用
-markitai document.pdf --no-cache
-
-# 对特定文件/模式禁用
+markitai document.pdf --no-cache       # 这一次绕过缓存
 markitai ./docs --no-cache-for "*.pdf"
-markitai ./docs --no-cache-for "file1.pdf,reports/**"
 ```
 
 ## 输出配置
 
-控制输出文件处理：
-
-```json
-{
-  "output": {
-    "on_conflict": "rename"
-  }
-}
-```
-
-| 设置 | 选项 | 默认值 | 说明 |
-|------|------|--------|------|
-| `dir` | - | `null` | 输出目录 |
-| `on_conflict` | `rename`, `overwrite`, `skip` | `rename` | 处理已存在文件的方式 |
-| `allow_symlinks` | - | `false` | 允许输出路径中的符号链接 |
-| `report` | `true`, `false`, `null` | `null` | 是否写入 JSON 转换报告。`null`（默认）仅在批量/URL 批量任务时写入；`true`/`false` 强制对每次运行开启/关闭 |
-| `profile` | `rag`, `obsidian`, `okf`, `null` | `null` | 面向下游消费者的[输出 Profile](./output-profiles.md)。`null` 保持输出不变 |
-| `wikilinks` | `true`, `false` | `false` | 在 `obsidian` profile 下将本地图片引用改写为 wikilink（`![[assets/x.png]]`） |
+| 设置 | 可选值 | 默认值 | 说明 |
+|------|--------|--------|------|
+| `dir` | — | `null` | 输出目录 |
+| `on_conflict` | `rename`、`overwrite`、`skip` | `rename` | 输出文件已存在时怎么办 |
+| `allow_symlinks` | — | `false` | 允许输出路径里有符号链接 |
+| `report` | `true`、`false`、`null` | `null` | 写 JSON 报告。`null` 只在批量运行时写 |
+| `profile` | `rag`、`obsidian`、`okf`、`null` | `null` | [输出 Profile](./output-profiles.md) |
+| `wikilinks` | `true`、`false` | `false` | 用 `obsidian` 时把图片链接写成 `![[assets/x.png]]` |
 
 ## 日志配置
 
-配置日志行为：
-
-```json
-{
-  "log": {
-    "level": "INFO",
-    "format": "text",
-    "dir": null,
-    "rotation": "10 MB",
-    "retention": "7 days"
-  }
-}
-```
+设了 `dir` 才会写日志文件。
 
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
-| `level` | `INFO` | 日志级别：`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
-| `format` | `text` | 日志格式：`text`（可读文本）或 `json`（结构化） |
-| `dir` | `null` | 日志文件目录（未设置时自动检测） |
-| `rotation` | `10 MB` | 文件超过此大小时轮转 |
-| `retention` | `7 days` | 删除早于此时间的日志 |
+| `level` | `INFO` | `DEBUG`、`INFO`、`WARNING`、`ERROR` 或 `CRITICAL` |
+| `format` | `text` | `text` 或 `json` |
+| `dir` | `null` | 日志目录 |
+| `rotation` | `10 MB` | 文件超过这个大小就轮转 |
+| `retention` | `7 days` | 删除更早的日志 |
 
 ## 安全配置
 
-控制 PDF 隐藏文本的处理。这是 LLM 流水线的一种提示注入攻击面（白底白字、近零尺寸、零透明度或页外内容等本会被静默纳入提取结果的隐藏文本）：
+PDF 里可能藏着看不见的文字（白底白字、零字号、页面之外），它们会悄悄进入 Markdown，也会进入由此生成的 LLM 提示词。
 
-```json
-{
-  "security": {
-    "pdf_sanitize": "warn"
-  }
-}
-```
-
-| 设置 | 选项 | 默认值 | 说明 |
-|------|------|--------|------|
-| `pdf_sanitize` | `off`, `warn`, `remove` | `warn` | `warn` 会记录一条汇总提示，标明受影响的页码；`remove` 还会从输出中剥离匹配到的隐藏文本；`off` 禁用检测 |
+| 设置 | 可选值 | 默认值 | 说明 |
+|------|--------|--------|------|
+| `pdf_sanitize` | `off`、`warn`、`remove` | `warn` | `warn` 记录哪些页面有隐藏文字，`remove` 顺便删掉，`off` 不检查 |
 
 ## 自定义提示词
 
-自定义不同任务的 LLM 提示词。每个提示词拆分为 **system**（角色定义）和 **user**（内容模板）两部分：
+每个 LLM 任务都有一条 system 提示词（角色和规则）和一条 user 提示词（内容模板）。往提示词目录里放 Markdown 文件，或在配置里指向某个文件，就能覆盖：
+
+```text
+~/.markitai/prompts/
+├── cleaner_system.md            # 文档清洗
+├── cleaner_user.md
+├── image_caption_system.md      # alt 文本
+├── image_description_system.md  # 图片描述
+├── document_process_system.md   # 文档处理
+└── url_enhance_system.md        # URL 增强
+```
 
 ```json
 {
   "prompts": {
     "dir": "~/.markitai/prompts",
-    "cleaner_system": null,
-    "cleaner_user": null,
-    "image_caption_system": null,
-    "image_caption_user": null,
-    "image_description_system": null,
-    "image_description_user": null,
-    "image_analysis_system": null,
-    "image_analysis_user": null,
-    "document_process_system": null,
-    "document_process_user": null,
-    "document_vision_system": null,
-    "document_vision_user": null,
-    "url_enhance_system": null,
-    "url_enhance_user": null
+    "cleaner_system": "/path/to/my-cleaner-system.md"
   }
 }
 ```
 
-在提示词目录创建自定义提示词文件：
-
-```text
-~/.markitai/prompts/
-├── cleaner_system.md            # 文档清理角色和规则
-├── cleaner_user.md              # 文档清理内容模板
-├── image_caption_system.md      # Alt 文本生成角色
-├── image_caption_user.md        # Alt 文本内容模板
-├── document_process_system.md   # 文档处理角色
-└── url_enhance_system.md        # URL 增强角色
-```
-
-指定特定的提示词文件路径：
-
-```json
-{
-  "prompts": {
-    "cleaner_system": "/path/to/my-cleaner-system.md",
-    "cleaner_user": "/path/to/my-cleaner-user.md"
-  }
-}
-```
-
-::: tip
-system/user 拆分可以防止 LLM 意外地将提示词指令包含在其输出中。system 提示词定义角色和规则，而 user 提示词包含实际要处理的内容。
-:::
+可用的键有 `cleaner`、`image_caption`、`image_description`、`image_analysis`、`document_process`、`document_vision` 和 `url_enhance`，各带 `_system` 和 `_user` 两个变体。
 
 ## 中国大陆用户指南
 
 ### 安装脚本镜像加速
 
-安装脚本会自动检测代理环境变量（`HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`）。如果未检测到代理，会询问是否启用国内镜像加速，并提供以下镜像源选择：
+安装脚本会检测代理环境变量（`HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`）。没有代理时，它会问你要不要用国内镜像：
 
 | 镜像源 | PyPI | npm | 推荐地域 |
 |--------|------|-----|----------|
@@ -1136,70 +670,47 @@ system/user 拆分可以防止 LLM 意外地将提示词指令包含在其输出
 | **腾讯云** | `mirrors.cloud.tencent.com` | `mirrors.cloud.tencent.com` | 南方 |
 | **华为云** | `repo.huaweicloud.com` | `mirrors.huaweicloud.com` | 北方 |
 
-Playwright 浏览器二进制文件统一使用 npmmirror CDN 镜像（`cdn.npmmirror.com`），这是目前唯一可靠的公共镜像。
+Playwright 浏览器统一走 npmmirror CDN（`cdn.npmmirror.com`）。`MARKITAI_USE_MIRROR=1` 总是提供镜像选择，`0` 从不询问。
 
-你也可以在运行安装脚本前手动设置（以清华 TUNA 为例）：
+也可以在运行脚本前手动设置（以清华 TUNA 为例）：
 
-**macOS / Linux / WSL (Bash/Zsh):**
-
-```bash
+::: code-group
+```bash [macOS / Linux]
 export UV_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple"
 export PLAYWRIGHT_DOWNLOAD_HOST="https://cdn.npmmirror.com/binaries/playwright"
 export NPM_CONFIG_REGISTRY="https://registry.npmmirror.com"
 ```
 
-**Windows (PowerShell):**
-
-```powershell
+```powershell [Windows]
 $env:UV_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple"
 $env:PLAYWRIGHT_DOWNLOAD_HOST = "https://cdn.npmmirror.com/binaries/playwright"
 $env:NPM_CONFIG_REGISTRY = "https://registry.npmmirror.com"
 ```
+:::
 
 ### LLM API 访问
 
-国内可用的 LLM 提供商及配置方式：
-
 | 提供商 | 可用性 | 说明 |
 |--------|--------|------|
-| **DeepSeek** | 直连可用 | 无需代理，直接使用 `deepseek/deepseek-v4-flash` |
-| **Ollama** | 完全离线 | 本地模型，使用 `ollama/llama3.2` |
-| **API 代理服务** | 通过中转 | 通过 `api_base` 指向第三方中转服务 |
-| **OpenAI / Claude / Gemini** | 需代理 | 需代理或 `api_base` 中转 |
-
-使用 `api_base` 指向代理中转的示例配置：
-
-```json
-{
-  "llm": {
-    "model_list": [
-      {
-        "model_name": "default",
-        "litellm_params": {
-          "model": "openai/gpt-5.6",
-          "api_key": "env:OPENAI_API_KEY",
-          "api_base": "https://your-api-proxy.com/v1"
-        }
-      }
-    ]
-  }
-}
-```
+| **DeepSeek** | 直连 | 直接用 `deepseek/deepseek-v4-flash` |
+| **Ollama** | 离线 | 本地模型，如 `ollama/llama3.2` |
+| **API 中转** | 通过中转 | 用 `api_base` 指向第三方中转服务，写法见[自定义 API 端点](#自定义-api-端点) |
+| **OpenAI / Claude / Gemini** | 需代理 | 走代理或 `api_base` 中转 |
 
 ### 代理配置
 
-如已有代理，设置环境变量即可对所有网络请求生效（导入规则与桌面代理支持见上文[代理](#代理)一节）：
+已有代理时，设环境变量即可对所有网络请求生效（导入规则见[代理](#代理)一节）：
 
-```bash
+::: code-group
+```bash [macOS / Linux]
 export HTTPS_PROXY="http://127.0.0.1:7890"
 export HTTP_PROXY="http://127.0.0.1:7890"
 ```
 
-```powershell
+```powershell [Windows]
 $env:HTTPS_PROXY = "http://127.0.0.1:7890"
 $env:HTTP_PROXY = "http://127.0.0.1:7890"
 ```
-
-::: tip
-设置了代理环境变量后，安装脚本会自动跳过镜像加速配置。
 :::
+
+设了代理环境变量后，安装脚本会跳过镜像配置。

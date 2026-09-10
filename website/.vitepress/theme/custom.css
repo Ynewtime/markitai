@@ -164,15 +164,17 @@
   margin: 0 auto 24px;
   max-width: 62ch;
 }
-/* Screenshots ship in both themes; show the one matching the site theme.
-   The screenshot is a <picture> with a WebP source and a PNG fallback. */
+/* Each locale supplies its own screenshots. Match the site theme for both
+   homepage <picture> elements and Markdown images in the guides. */
 .home-shot-light,
 .home-shot-dark {
   display: block;
   margin: 0;
 }
 .dark .home-shot-light,
-html:not(.dark) .home-shot-dark {
+html:not(.dark) .home-shot-dark,
+.dark .vp-doc .light-only,
+html:not(.dark) .vp-doc .dark-only {
   display: none;
 }
 
@@ -205,6 +207,179 @@ html:not(.dark) .home-shot img {
 .compact-tables .vp-doc td {
   padding-left: 9px;
   padding-right: 9px;
+}
+
+/* Supplemental documentation uses native disclosures in both locales. Keep
+   closed rows quiet, with a full-width keyboard-accessible summary target. */
+.vp-doc .custom-block.details {
+  border-color: var(--vp-c-divider);
+  padding: 0 16px;
+  background: transparent;
+}
+
+.vp-doc .custom-block.details > summary {
+  margin: 0 -16px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  color: var(--vp-c-text-1);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.vp-doc .custom-block.details > summary:hover {
+  background: var(--vp-c-bg-soft);
+}
+
+.vp-doc .custom-block.details > summary:focus-visible {
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: 2px;
+}
+
+.vp-doc .custom-block.details[open] {
+  padding-bottom: 8px;
+}
+
+.vp-doc .custom-block.details[open] > summary {
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--vp-c-divider);
+  /* Square off the bottom corners only once the panel below is showing, so
+     the summary and its body read as one surface rather than two. */
+  border-radius: 8px 8px 0 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .vp-doc .custom-block.details > summary {
+    transition:
+      background-color 0.2s ease,
+      border-radius 0.2s ease;
+  }
+}
+
+/* Fetch-strategy chain (StrategyChain.vue).
+
+   Replaces an ASCII arrow line plus a paragraph explaining which strategies
+   stay on the machine. Consecutive same-kind strategies are one labelled card,
+   so the privacy boundary is the gap between two cards — legible at a glance,
+   unlike the hairline this used to draw between two of five identical pills. */
+.vp-doc .mk-chain {
+  margin: 22px 0;
+  overflow-x: auto;
+  /* Room for the cards' focus/shadow edge when the track scrolls. */
+  padding-bottom: 2px;
+}
+
+.mk-chain-track {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.mk-chain-group {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  padding: 11px 14px 12px;
+  border: 1px solid var(--vp-c-border);
+  border-radius: 10px;
+}
+
+/* Filled = the URL is still here. Outlined = it has left. Monochrome brand, so
+   the split is carried by fill and text weight rather than hue. */
+.mk-chain-group.is-local {
+  border-color: transparent;
+  background: var(--vp-c-bg-soft);
+}
+
+.mk-chain-label {
+  color: var(--vp-c-text-3);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.mk-chain-steps {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.mk-chain-step {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding-right: 12px;
+}
+
+.mk-chain-step + .mk-chain-step {
+  padding-left: 12px;
+  border-left: 1px solid var(--vp-c-divider);
+}
+
+.mk-chain-step:last-child {
+  padding-right: 0;
+}
+
+.mk-chain-num {
+  color: var(--vp-c-text-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.mk-chain-name {
+  color: var(--vp-c-text-1);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+/* Remote names sit back a step: same size, less ink. */
+.mk-chain-group.is-remote .mk-chain-name {
+  color: var(--vp-c-text-2);
+  font-weight: 500;
+}
+
+/* Falls through to the next group. Drawn in CSS so the arrow can turn with
+   the layout when the groups stack. */
+.mk-chain-link {
+  flex: 0 0 auto;
+  align-self: center;
+  color: var(--vp-c-text-3);
+  font-size: 15px;
+  line-height: 1;
+}
+
+.mk-chain-link::before {
+  content: '\2192';
+}
+
+/* Narrow panes stack the cards; the fallback arrow turns to match. */
+@media (max-width: 640px) {
+  .mk-chain-track {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .mk-chain-link {
+    align-self: flex-start;
+    padding-left: 14px;
+  }
+
+  .mk-chain-link::before {
+    content: '\2193';
+  }
+
+  /* Three narrow strategy names would otherwise overflow the card. */
+  .mk-chain-steps {
+    flex-wrap: wrap;
+    gap: 4px 0;
+  }
 }
 
 .home-quickstart {
@@ -457,4 +632,61 @@ html:not(.dark) .home-shot img {
   .VPHome .home-quickstart-steps .home-install-option code {
     color: #000;
   }
+}
+
+/* Guide pages: a slower reading rhythm than the default theme. Paragraphs
+   breathe, sections are clearly separated, lists and tables get more air. */
+.vp-doc p {
+  margin: 22px 0;
+  line-height: 1.85;
+}
+
+.vp-doc h2 {
+  margin-top: 72px;
+  padding-top: 28px;
+}
+
+.vp-doc h3 {
+  margin-top: 48px;
+}
+
+.vp-doc h4 {
+  margin-top: 36px;
+}
+
+.vp-doc h2 + p,
+.vp-doc h3 + p,
+.vp-doc h4 + p {
+  margin-top: 18px;
+}
+
+.vp-doc ul,
+.vp-doc ol {
+  margin: 22px 0;
+  line-height: 1.8;
+}
+
+.vp-doc li + li {
+  margin-top: 10px;
+}
+
+.vp-doc table {
+  margin: 26px 0;
+}
+
+.vp-doc th,
+.vp-doc td {
+  padding: 10px 16px;
+  line-height: 1.6;
+}
+
+.vp-doc div[class*='language-'],
+.vp-doc .custom-block,
+.vp-doc .vp-code-group {
+  margin: 22px 0;
+}
+
+.vp-doc .custom-block p {
+  margin: 10px 0;
+  line-height: 1.7;
 }

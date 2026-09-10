@@ -1,8 +1,8 @@
 # Output Profiles
 
-Profiles shape the written output for a specific downstream consumer. They are orthogonal to [presets](./configuration.md#presets): a preset picks which features run (LLM, OCR, screenshots, ...), a profile picks what the result looks like.
+A profile shapes the written output for a specific consumer. It is separate from a [preset](./configuration.md#presets): a preset picks which features run, a profile picks what the files look like.
 
-**Without a profile, output is byte-identical to the default behavior** — every transform runs only when a profile is set.
+Without a profile, output is exactly the default. Every transform below runs only when a profile is set.
 
 ## Enabling a profile
 
@@ -25,11 +25,11 @@ out = markitai.convert("document.pdf", output_dir="out/", profile="rag")
 
 ## `rag` — retrieval pipelines
 
-Default output keeps images in a hidden `.markitai/assets/` directory. Most ingestors skip hidden paths (LlamaIndex `SimpleDirectoryReader` does by default), so images silently disappear from the corpus. The `rag` profile makes the output ingestor-friendly:
+Default output keeps images in a hidden `.markitai/assets/` directory, and most ingestors skip hidden paths (LlamaIndex `SimpleDirectoryReader` does by default). The `rag` profile makes the output ingestor-friendly:
 
-- **Visible assets**: images move to `assets/` and markdown references are rewritten to match. Emptied hidden directories are removed.
-- **Page markers**: PDF outputs carry `<!-- page: N -->` comments. They are rewritten from the converter's own `<!-- Page number: N -->` markers, which every path that splits a document into pages writes at a real page boundary — text extraction, `--ocr`, and screenshot-only alike. Positions are never guessed.
-- **Table checks**: the LLM cleaning prompts gain a hard column-consistency constraint, and after writing, pipe tables whose rows disagree with the header column count are reported as warnings (detection only, content is never rewritten).
+- **Visible assets**: images move to `assets/` and Markdown references are rewritten to match.
+- **Page markers**: PDF output carries `<!-- page: N -->` comments at real page boundaries, for text extraction, `--ocr` and screenshot-only runs alike.
+- **Table checks**: pipe tables whose rows disagree with the header column count are reported as warnings. Nothing is rewritten.
 
 ```text
 out/
@@ -39,17 +39,13 @@ out/
     └── images.json          # with --llm --desc
 ```
 
-::: warning Limitations
-Page screenshots (`--screenshot`) stay under `.markitai/screenshots/` — they are referenced from HTML comments only and are not part of the ingestible corpus.
-
-A profile applies to what the run converts, and never rewrites files it did not produce. Adding `--profile` to a directory that was converted without one leaves the earlier output in its original shape; re-run those inputs to convert them under the profile.
-:::
+Page screenshots (`--screenshot`) stay under `.markitai/screenshots/`. They are referenced from HTML comments only and are not part of the corpus.
 
 ## `obsidian` — vault imports
 
-- **Visible assets**: same relocation as `rag`, so pasted output folders work as vault folders without showing a hidden directory.
-- **Wikilinks (optional)**: with `output.wikilinks: true`, local image references become `![[assets/x.png]]` (alt text is kept as the display text: `![[assets/x.png|alt]]`).
-- **Frontmatter**: markitai already writes standard YAML frontmatter (`title`, `source`, `tags`, ...), which Obsidian reads as Properties — nothing to change.
+- **Visible assets**: the same relocation as `rag`, so an output folder pasted into a vault shows no hidden directory.
+- **Wikilinks (optional)**: with `output.wikilinks: true`, local image references become `![[assets/x.png]]`, keeping alt text as the display text.
+- **Frontmatter**: markitai already writes standard YAML frontmatter (`title`, `source`, `tags`), which Obsidian reads as Properties.
 
 ```bash
 markitai note.docx --profile obsidian -o vault/inbox/
@@ -58,19 +54,19 @@ markitai note.docx --profile obsidian --config-json '{"output":{"wikilinks":true
 
 ## `okf` — Open Knowledge Format
 
-Aligns frontmatter with the [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) spec (verified against v0.2):
+Aligns frontmatter with the [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) spec (v0.2):
 
 | markitai field | OKF field |
 |---|---|
 | — | `type: Document` (injected; OKF's only required field) |
-| `title` | `title` (same name) |
-| `description` | `description` (same name) |
+| `title` | `title` |
+| `description` | `description` |
 | `source` | `resource` |
-| `tags` | `tags` (same name) |
+| `tags` | `tags` |
 | `markitai_processed` | `generated: {by: markitai/<version>, at: <UTC timestamp>}` |
 | everything else | kept under its current name |
 
-Fields without an OKF equivalent (`author`, `site`, `published`, `canonical_url`, `fetch_strategy`, ...) keep their names: the spec states consumers "MUST NOT reject documents with unrecognized fields". Asset layout is untouched.
+Fields without an OKF equivalent (`author`, `site`, `published`, ...) keep their names; the spec requires consumers to accept unknown fields. Asset layout is untouched.
 
 ```yaml
 ---
@@ -85,23 +81,23 @@ generated:
 
 ## images.json schema (frozen)
 
-With `--llm --desc`, each assets directory gets an `images.json` describing the analyzed images. The schema is **frozen at version 1.0**; changes require updating the lock test (`tests/unit/test_images_json_schema.py`) and this page together.
+With `--llm --desc`, each assets directory gets an `images.json` describing the analyzed images. The schema is frozen at version 1.0.
 
 Top level:
 
 | Field | Type | Description |
 |---|---|---|
 | `version` | string | Always `"1.0"` |
-| `created` | string | ISO 8601 timestamp of first write (preserved on merge) |
-| `updated` | string | ISO 8601 timestamp of last write |
+| `created` | string | ISO 8601 timestamp of the first write (kept on merge) |
+| `updated` | string | ISO 8601 timestamp of the last write |
 | `images` | array | One entry per analyzed image |
 
 Each entry in `images`:
 
 | Field | Type | Description |
 |---|---|---|
-| `path` | string | Absolute path of the image file on disk |
-| `alt` | string | Short caption (used as alt text) |
+| `path` | string | Absolute path of the image file |
+| `alt` | string | Short caption, used as alt text |
 | `desc` | string | Detailed description |
 | `text` | string | Text extracted from the image (may be empty) |
 | `created` | string | ISO 8601 timestamp of the analysis |
@@ -109,23 +105,23 @@ Each entry in `images`:
 
 ## Recipe: LlamaIndex ingestion
 
-`SimpleDirectoryReader` skips hidden paths by default. With the `rag` profile nothing is hidden, so the markdown **and** its images make it into the corpus, and the frontmatter arrives pre-parsed:
+With the `rag` profile nothing is hidden, so the Markdown and its images both reach the corpus, and the frontmatter arrives pre-parsed:
 
 ```python
 import markitai
 from llama_index.core import SimpleDirectoryReader
 
 out = markitai.convert("report.pdf", output_dir="corpus/", profile="rag")
-print(out.frontmatter["title"])  # parsed YAML frontmatter, ready as metadata
-print([p.name for p in out.assets])  # images now under corpus/assets/
+print(out.frontmatter["title"])       # ready as metadata
+print([p.name for p in out.assets])   # images now under corpus/assets/
 
-# The reader sees every file — markdown, images, images.json
+# The reader sees every file: markdown, images, images.json
 documents = SimpleDirectoryReader("corpus/").load_data()
 print(len(documents))
 ```
 
 ## Notes
 
-- Do not mix profiled and unprofiled runs in the same output directory: earlier outputs referencing `.markitai/assets/` are never rewritten retroactively.
-- Profiles apply to written files; stdout mode (no `-o`) is unaffected.
-- Batch runs keep their JSON reports and `--resume` state under `.markitai/` — conversion bookkeeping, deliberately outside the ingestible corpus. In nested batches each subdirectory gets its own `assets/`.
+- A profile applies to the files it writes and never rewrites earlier output. Do not mix profiled and unprofiled runs in one directory; re-run the inputs instead.
+- Profiles apply to written files only. Stdout mode (no `-o`) is unaffected.
+- Batch reports and `--resume` state stay under `.markitai/`, outside the corpus. In nested batches each subdirectory gets its own `assets/`.

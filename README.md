@@ -18,10 +18,9 @@ Docs: <https://markitai.dev>
 
 ## Install
 
-**Recommended: guided installer.** Checks/installs Python and uv, lets you
-pick extras, installs the optional Playwright browser,
-falls back to a mirror when it measures the default index as unreachable, and
-is bilingual (EN/中文):
+**Guided installer** (recommended). Installs Python and uv if needed, lets you
+pick extras and the Playwright browser, and offers a mirror when the default
+index is unreachable. Bilingual (EN/中文).
 
 ```bash
 # Linux/macOS
@@ -30,31 +29,23 @@ curl -fsSL https://markitai.dev/setup.sh | sh
 powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 ```
 
-**Minimal (uv / pip)**, if you already have Python 3.11-3.13 and just want the package:
+**Already have Python 3.11–3.13?** Install the package alone, then run the two
+setup steps yourself:
 
 ```bash
-uv tool install markitai     # isolated environment (recommended)
-pipx install markitai        # or pipx
+uv tool install markitai     # or: pipx install markitai
+markitai doctor              # check core and optional capabilities
+markitai init                # config and LLM provider
 ```
 
-After a uv/pip install, do the setup steps the guided installer would have done for you:
+Browser rendering needs the `browser` extra, then Chromium:
 
 ```bash
-markitai doctor           # check core and optional capabilities
-markitai init             # create a config and set up an LLM provider
+uv tool install "markitai[browser]" --force
+markitai doctor --fix
 ```
 
-If you need Playwright browser rendering, add its package before asking `doctor` to install Chromium:
-
-```bash
-uv tool install "markitai[browser]" --force     # uv tool install
-# pipx install "markitai[browser]" --force      # pipx alternative
-markitai doctor --fix                           # install Chromium
-```
-
-Both installs provide the `markitai` command **and the shorter `mkai` alias**.
-They are the same command (`mkai --help` == `markitai --help`). If you already
-have a different `mkai` on your PATH, use the full `markitai` to avoid ambiguity.
+Both routes install `markitai` and the shorter `mkai` alias.
 
 ### Extras
 
@@ -72,16 +63,12 @@ have a different `mkai` on your PATH, use the full `markitai` to avoid ambiguity
 | `svg` | SVG rasterization via cairosvg |
 | `all` | Everything above |
 
-The base install is deliberately lean (~475MB). `ocr` is the one extra that
-adds real weight (~160MB of models and OpenCV), so it is opt-in:
+`ocr` is opt-in because it adds ~160MB of models. The guided installer asks
+about it, and `markitai doctor` prints the command when it is missing:
 
 ```bash
 uv tool install "markitai[ocr]" --force
 ```
-
-The guided installer offers it as a yes/no question (defaulting to yes, and
-remembering a "no" for the rest of the run); `markitai doctor` reports OCR as
-an optional capability and prints this command when it is not installed.
 
 Launch the local web workspace with:
 
@@ -115,7 +102,7 @@ See the [Getting Started guide](https://markitai.dev/guide/getting-started) for 
 
 ## MCP server
 
-The MCP server `markitai-mcp` (bundled with markitai, enabled by the `mcp` extra) exposes conversion to AI agents over the Model Context Protocol: `convert_document`, `convert_url`, `batch_convert`, `job_status`. Zero install via `uvx`; large outputs land on disk instead of in the model context. For Claude Code, `claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp`; for other clients:
+`markitai-mcp` exposes conversion to AI agents over the Model Context Protocol with four tools: `convert_document`, `convert_url`, `batch_convert`, `job_status`. Nothing to install, `uvx` runs it on demand, and large outputs land on disk instead of in the model context. For Claude Code, `claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp`; for other clients:
 
 ```json
 {

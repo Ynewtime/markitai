@@ -1,62 +1,54 @@
 # 抓取策略引擎
 
-Markitai 使用策略驱动的抓取策略引擎来确定获取 URL 内容的最佳策略。该引擎设计为弹性、高效且用户友好。
+给 markitai 一个 URL 时，它会按从便宜到昂贵的顺序尝试几种抓取方式，直到拿到可用的内容。这一页讲清楚顺序是什么、哪些不出本机、怎么调。
 
 ## 策略选择逻辑
 
-引擎按以下策略驱动的方式选择抓取策略的顺序：
+三件事决定顺序：
 
-1. **显式策略**：如果您提供了显式策略（如 `-s playwright`、`-s defuddle` 或 `-s jina`），引擎通常只会使用该策略，但有两个例外：显式的 `-s defuddle`/`-s jina`/`-s cloudflare` 在远程服务拒绝请求时（限流、认证失败等）仍会优雅回退到完整的 `auto` 链路；而域名配置中的内容类设置（`wait_for_selector`、`skip_auto_scroll` 等）即便在显式选择 `playwright` 时也仍然生效。
-2. **域名配置**：您可以为特定域名配置专属设置，如自定义等待选择器、额外等待时间，或完整的自定义策略顺序。
-3. **自适应回退**：在 `auto` 模式（默认）下，引擎根据域名和历史成功记录智能排序策略。
+1. **显式指定**：`-s static`、`-s playwright`、`-s defuddle`、`-s jina` 或 `-s cloudflare` 只用那一种策略。远程服务拒绝时（限流、鉴权失败），会回退到 `auto` 链而不是直接失败。
+2. **域名配置**：按域名设置等待的选择器、额外等待时间，或自定义策略顺序。
+3. **自适应回退**（默认的 `auto`）：下面两种顺序之一，再根据 markitai 对该域名的经验调整。
 
 ### 默认顺序（标准域名）
 
-Markitai 采用本地优先策略：对于大多数网站，会先尝试原生本地流水线，再使用远程服务：
+本机优先。内置的静态抓取器在抽取质量上不输远程阅读服务，而且从不把 URL 发出去。
 
-```text
-Static (HTTP) → Playwright (浏览器) → Defuddle → Jina → Cloudflare
-```
-
-Static 的原生 webextract 流水线在提取质量基准语料库上已能匹敌远程 Defuddle（在中日韩文本间距处理上甚至更优），因此排在最前。与远程策略不同，它不会把 URL 发送到本机之外。
+<StrategyChain />
 
 ### SPA/重 JS 顺序
 
-对于已知需要 JavaScript 的域名（如 `x.com`、`instagram.com`、`fallback_patterns` 中列出的域名，或此前静态抓取失败并已被学习进 SPA 缓存的域名），Markitai 会直接跳转到浏览器：
+已知需要 JavaScript 的域名直接上浏览器：`x.com`、`instagram.com`、`fallback_patterns` 里列出的域名，以及静态抓取失败后被记入 SPA 缓存的域名。
 
-```text
-Playwright (浏览器) → Defuddle → Jina → Cloudflare → Static
-```
-
-这里 Static 排在最后，因为对这些域名它已经失败过（或预期会失败），无法产出可用内容。
+<StrategyChain mode="spa" />
 
 ### 远程后备与仅限本地的 URL {#remote-fallback-and-local-only-urls}
 
-`fetch.remote_consent` 的默认值是 `always`。对于公网 URL，本地策略失败后，Markitai 可以无需交互确认，继续尝试 Defuddle、Jina 或 Cloudflare。每个进程第一次准备使用远程服务时，会先在 stderr 输出说明。由于该决定会在进程内缓存，说明会完整列出后续可能授权的服务：defuddle.md、Jina、Cloudflare、FxTwitter 与 Twitter oEmbed。各远程服务仍按顺序逐个尝试，URL 只会发送给当前正在尝试的服务。
+默认（`fetch.remote_consent: always`）下，公开 URL 本机抓不到时，可能发给 Defuddle、Jina 或 Cloudflare。进程内第一次远程尝试之前，markitai 会在 stderr 打一条提示，列出之后可能用到的全部服务：defuddle.md、Jina、Cloudflare、FxTwitter 和 Twitter oEmbed。服务是逐个尝试的，URL 只会发给当前正在尝试的那一个。
 
-Playwright 还有一条公网 URL 增强路径：X/Twitter 状态或文章的本地 DOM 提取失败后，可能依次尝试 FxTwitter 与 Twitter oEmbed。它们和其他远程服务一样，共用**同一个**进程级同意决定，不再享有例外。
+X/Twitter 帖子在本地抽取失败后，Playwright 还可能调用 FxTwitter 和 Twitter oEmbed。它们和其他远程服务遵循同一个进程级的同意决定：在 `ask` 下可以触发那一次共享的询问，复用之前的回答，无法询问时则跳过。
 
-在 `ask` 模式下，这意味着：如果本次运行尚未做出决定且终端可交互，这条路径自己就会弹出那一次共享确认；如果先前已经同意或拒绝，则直接沿用；无法询问时（非交互环境）则跳过。`never` 与 `MARKITAI_NO_REMOTE_FETCH` 会直接禁用它。
+下面这些 URL 无论选什么策略都不出本机：
 
-同意是延迟解析的——只有在确认 URL 属于公网之后才会询问，因此绝不会为一个本就不会离开本机的 URL 弹出提问。
+- localhost、私有 IP 和常见的内网主机名
+- 带凭据的 URL：userinfo、token、签名、密码、API key 或授权码
 
-以下 URL 无论选择哪种策略，都只会留在本机处理：
+在 `auto` 链里，匹配 `fetch.policy.local_only_patterns` 和 `NO_PROXY`（`inherit_no_proxy` 开启时）的域名也只走本地。
 
-- localhost、私网 IP 和常见内网主机名
-- userinfo 或 query/fragment 敏感参数中带有认证信息的 URL，包括签名 URL、Token、签名、密码、API Key 与授权码
+| 设置 | 效果 | 显式 `-s` 能否覆盖 |
+|------|------|-------------------|
+| `remote_consent: always`（默认） | 公开 URL 可远程回退，在 stderr 提示 | — |
+| `remote_consent: ask` | 有终端时每个进程问一次；非交互运行跳过所有远程服务 | — |
+| `remote_consent: never` | 自动和配置选择的策略只走本地 | 能 |
+| `local_only_patterns` / `NO_PROXY` | 匹配的域名在 `auto` 链里只走本地 | 能 |
+| 私有、内网或带凭据的 URL | 永远本地 | **不能** |
+| `MARKITAI_NO_REMOTE_FETCH=1` | 硬性只走本地 | **不能** |
 
-在 `auto` 策略链中，以下匹配项也只会留在本机处理：
-
-- 匹配 `fetch.policy.local_only_patterns` 的域名和 IP
-- 启用 `fetch.policy.inherit_no_proxy` 时，从 `NO_PROXY` 继承的条目
-
-对于仍属公网的 URL，显式传入非 `auto` 远程 `-s` CLI 参数表示有意覆盖上述两项基于模式的规则及 `fetch.remote_consent=never`。仅在配置文件中设置远程 `fetch.strategy` 时仍受同意策略约束。两种路径都不能绕过私网、本机及自带认证信息 URL 的硬性保护。
-
-如需获得硬性的全本机保证（包括显式指定远程策略的运行），请设置 `MARKITAI_NO_REMOTE_FETCH=1`。将 `fetch.remote_consent` 设为 `never` 会让自动策略链与配置文件选择的策略留在本机，但仍允许通过显式 CLI `-s` 主动选择远程服务。也可以设为 `ask`，让交互式终端按上述完整服务清单（含 X/Twitter 增强）做一次进程级确认；非交互环境在此设置下会跳过全部远程服务。
+只在配置文件里设了远程 `fetch.strategy` 不算显式选择。它仍受 `remote_consent` 管，也会打同样的首次提示。
 
 ## 配置
 
-您可以在 `markitai.json` 中调整 fetch policy：
+在 `markitai.json` 里调整策略：
 
 ```json
 {
@@ -84,45 +76,37 @@ Playwright 还有一条公网 URL 增强路径：X/Twitter 状态或文章的本
 
 | 选项 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `enabled` | boolean | `true` | 启用或禁用智能策略排序 |
-| `max_strategy_hops` | integer | `5` | 放弃前尝试的最大策略数 |
-| `strategy_priority` | list | `null` | 自定义全局策略顺序（覆盖默认优先级） |
-| `local_only_patterns` | list | `[]` | 限制为本地策略的域名/IP 模式（NO_PROXY 语法） |
-| `inherit_no_proxy` | boolean | `true` | 将 `NO_PROXY` 环境变量合并到 `local_only_patterns` |
+| `enabled` | boolean | `true` | 开关策略排序 |
+| `max_strategy_hops` | integer | `5` | 放弃前最多尝试几种策略 |
+| `strategy_priority` | list | `null` | 自定义全局策略顺序 |
+| `local_only_patterns` | list | `[]` | 只走本地策略的域名和 IP（`NO_PROXY` 语法） |
+| `inherit_no_proxy` | boolean | `true` | 把 `NO_PROXY` 里的条目也当作只走本地 |
 
 ### 域名配置
 
-域名配置允许按域名覆盖抓取行为：
+按域名覆盖：
 
 | 选项 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `wait_for_selector` | string | `null` | 提取内容前等待的 CSS 选择器 |
-| `wait_for` | string | `null` | 页面加载事件覆盖值（`load`、`domcontentloaded`、`networkidle`）；未设置时继承全局 `fetch.playwright.wait_for`（默认 `domcontentloaded`） |
-| `extra_wait_ms` | integer | `null` | 页面加载事件后的额外等待毫秒数覆盖值；未设置时继承全局 `fetch.playwright.extra_wait_ms`（默认 `3000`） |
-| `prefer_strategy` | string | `null` | 该域名的首选策略（`static`、`defuddle`、`playwright`、`cloudflare`、`jina`） |
-| `strategy_priority` | list | `null` | 该域名的自定义策略顺序（覆盖全局和 `prefer_strategy`） |
-| `skip_auto_scroll` | boolean | `false` | 对单内容页面（推文、issue、文档）跳过自动滚动 |
-| `reject_resource_patterns` | list | `null` | 阻止 Playwright 导航中匹配这些 URL 模式的资源（如 `["**/analytics/**"]`） |
+| `wait_for_selector` | string | `null` | 抽取前等待的 CSS 选择器 |
+| `wait_for` | string | `null` | 页面加载事件：`load`、`domcontentloaded`、`networkidle`。不设则继承 `fetch.playwright.wait_for` |
+| `extra_wait_ms` | integer | `null` | 加载事件后的额外等待。不设则继承 `fetch.playwright.extra_wait_ms` |
+| `prefer_strategy` | string | `null` | 这个域名优先尝试的策略 |
+| `strategy_priority` | list | `null` | 这个域名的完整策略顺序（覆盖全局顺序和 `prefer_strategy`） |
+| `skip_auto_scroll` | boolean | `false` | 单内容页面（推文、issue、文档）跳过自动滚动 |
+| `reject_resource_patterns` | list | `null` | 拦截匹配这些 URL 模式的浏览器请求，如 `["**/analytics/**"]` |
 
-Markitai 内置了 `x.com`/`twitter.com` 和 `github.com` 的域名配置。如果您为同一域名配置自己的条目，会**整体替换**内置配置，而不是逐字段合并。内置的调优（例如 x.com 配置里的 `skip_auto_scroll`/`reject_resource_patterns`）会随之丢失，除非您自己重新声明。
-
-多域名配置示例：
+::: warning
+markitai 内置了 `x.com`、`twitter.com` 和 `github.com` 的配置。你为同一域名写的配置会整个替换内置配置，想保留的内置调优要自己再写一遍。
+:::
 
 ```json
 {
   "fetch": {
     "domain_profiles": {
-      "x.com": {
-        "wait_for_selector": "[data-testid=tweetText]",
-        "extra_wait_ms": 1200
-      },
-      "instagram.com": {
-        "wait_for": "networkidle",
-        "extra_wait_ms": 2000
-      },
-      "docs.example.com": {
-        "prefer_strategy": "static"
-      }
+      "x.com": { "wait_for_selector": "[data-testid=tweetText]", "extra_wait_ms": 1200 },
+      "instagram.com": { "wait_for": "networkidle", "extra_wait_ms": 2000 },
+      "docs.example.com": { "prefer_strategy": "static" }
     }
   }
 }
@@ -130,64 +114,32 @@ Markitai 内置了 `x.com`/`twitter.com` 和 `github.com` 的域名配置。如�
 
 ### Playwright 会话持久化
 
-控制 Playwright 如何管理浏览器上下文：
-
 | 选项 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `session_mode` | string | `"isolated"` | `isolated`：每个请求新建上下文；`domain_persistent`：按域名复用上下文 |
-| `session_ttl_seconds` | integer | `600` | 持久化会话的保活时间（秒） |
+| `session_mode` | string | `"isolated"` | `isolated`：每个请求新开浏览器上下文。`domain_persistent`：按域名复用上下文 |
+| `session_ttl_seconds` | integer | `600` | 持久会话保留多久 |
 
-使用 `domain_persistent` 模式可以通过复用 cookies、localStorage 等浏览器状态，显著加速对同一站点的多次请求。
+`domain_persistent` 会复用 cookie 和本地存储，对同一站点的多次请求快得多。
 
 ## 静态 HTTP 适配器
 
-静态抓取（Static 策略）默认使用 **httpx**，适用于绝大多数网站。对于有 TLS 指纹检测的反爬站点，可选择启用 **curl-cffi** 适配器。
-
-| 适配器 | 安装方式 | 特点 |
-|--------|----------|------|
-| **httpx**（默认） | 内置，开箱即用 | 快速可靠，覆盖大多数场景 |
-| **curl-cffi**（可选） | `uv pip install markitai[extra-fetch]` | 模拟 Chrome TLS/HTTP 签名，绕过部分反爬保护 |
-
-::: tip 何时需要 curl-cffi？
-大多数情况下不需要。如果 Static 策略对某些站点返回 403/空内容，Policy Engine 会自动回退到 Playwright 或 Cloudflare。只有当您需要在**不启动浏览器**的前提下绕过 TLS 指纹检测时，才需要 curl-cffi。
-:::
-
-启用 `curl-cffi`：
+静态策略用 httpx，绝大多数站点都没问题。若站点因为 TLS 指纹检测返回 403 或空内容，`auto` 会自己回退到 Playwright 或 Cloudflare。想不开浏览器就绕过指纹检测，换成 curl-cffi：
 
 ```bash
-# 安装
 uv pip install markitai[extra-fetch]
-
-# 设置环境变量激活
 export MARKITAI_STATIC_HTTP=curl_cffi
 ```
 
-即使设置了环境变量但未安装 curl-cffi，Markitai 也会静默降级到 httpx，不会报错。
+没装 curl-cffi 时，markitai 会静默使用 httpx。
 
 ## 工作原理
 
-```text
-URL 请求
-    │
-    ├─ 显式策略 (-s static/playwright/defuddle/jina/cloudflare)?
-    │       └─ 是 → 仅使用该策略
-    │
-    ├─ 域名在 SPA 缓存中或已知需要 JS（fallback_patterns）?
-    │       └─ 是 → SPA 顺序（Playwright → Defuddle → Jina → Cloudflare → Static）
-    │
-    └─ 默认 → 标准顺序（Static → Playwright → Defuddle → Jina → Cloudflare）
-            │
-            ├─ 尝试策略 #1 → 成功? → 完成
-            ├─ 尝试策略 #2 → 成功? → 完成
-            ├─ 尝试策略 #3 → 成功? → 完成
-            ├─ 尝试策略 #4 → 成功? → 完成
-            └─ 尝试策略 #5 → 成功? → 完成 / 放弃
-```
+策略逐个尝试，最多 `max_strategy_hops` 次。第一个通过校验的结果即为最终结果。
 
-域名配置（`strategy_priority` 或 `prefer_strategy`）以及全局 `strategy_priority` 覆盖项，可以在 SPA/默认回退之前按域名或全局重新排序此链路。详见下方[域名配置](#域名配置)。私网、本机、内网及自带认证信息的 URL 始终只能使用本地策略（`static`、`playwright`）。在策略链中，匹配 `local_only_patterns` 的域名也仅限本地策略；对于公网 URL，显式传入非 `auto` CLI `-s` 参数只会覆盖这一基于模式的限制。
+### 结果校验
 
-每个策略在接受结果前都会验证内容质量，包括内容是否为空或过短、是否命中登录墙，以及是否是反爬/CAPTCHA 挑战页面（Geetest、Cloudflare、reCAPTCHA、hCaptcha）。校验未通过时会回退到下一个策略。
+内容为空或过短、登录墙、反爬或验证码页面（Geetest、Cloudflare、reCAPTCHA、hCaptcha）都会校验失败，转到下一个策略。
 
-::: tip
-当静态抓取成功但内容显示需要 JavaScript 渲染（或页面为空）时，该域名会被加入 SPA 缓存，有效期 30 天。后续对该域名的请求将直接跳到浏览器渲染，节省时间。其他失败情形（CAPTCHA、登录墙、网络错误）不会触发这一学习机制，只有“需要 JS”这一信号会触发。
-:::
+### SPA 学习
+
+静态抓取成功但页面说需要 JavaScript 时，该域名会被记入 SPA 缓存 30 天，之后的请求直接上浏览器。只有这个信号会写入缓存，验证码、登录墙和网络错误都不会。用 `markitai cache spa-domains` 查看或清除。

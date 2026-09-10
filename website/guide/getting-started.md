@@ -2,7 +2,7 @@
 
 ## One-Click Setup (Recommended)
 
-The setup script installs Python (if needed), uv, and markitai in one step:
+One command installs Python (if missing), uv and markitai:
 
 ::: code-group
 ```bash [Linux/macOS]
@@ -14,82 +14,67 @@ powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
 ```
 :::
 
-::: warning Security Notice
-- The script checks for root/Administrator and asks before continuing
-- In an interactive terminal, optional components prompt before installing: the Playwright browser, Web UI, and OCR default to Yes; the Claude/Copilot CLIs default to No. LibreOffice is not an installer step — PPTX slide rendering warns at conversion time and points to the install command when no renderer exists
-- Without a usable terminal, only uv, Python, and markitai are installed. Set `MARKITAI_INSTALL_OPTIONAL=1` to enable the optional steps in automation
-- The default package index is used unless it measures as slow or unreachable from your machine. `MARKITAI_USE_MIRROR=1` always offers a mirror; `=0` never asks
-:::
+The script asks before installing optional pieces. The Playwright browser, the web workspace and OCR default to yes; the Claude and Copilot CLIs default to no.
 
-Pin exact versions via environment variables (omit both for the latest stable release, the recommended default):
-
-::: code-group
-```bash [Linux/macOS]
-export MARKITAI_VERSION="X.Y.Z"   # https://pypi.org/project/markitai/#history
-export UV_VERSION="X.Y.Z"         # https://github.com/astral-sh/uv/releases
-curl -fsSL https://markitai.dev/setup.sh | sh
-```
-
-```powershell [Windows]
-$env:MARKITAI_VERSION = "X.Y.Z"   # https://pypi.org/project/markitai/#history
-$env:UV_VERSION = "X.Y.Z"         # https://github.com/astral-sh/uv/releases
-powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"
-```
-:::
+Without an interactive terminal it installs only the core. Set `MARKITAI_INSTALL_OPTIONAL=1` to add the optional pieces in automation, and `MARKITAI_VERSION=X.Y.Z` to pin a release.
 
 ## Your First Conversion
 
-Convert a real page — this very guide:
+Convert a real page, this very guide:
 
 ```bash
 mkai https://markitai.dev/guide/getting-started --pure
 ```
 
-Every install provides both the `markitai` command and the shorter `mkai` alias (identical; use the full name if another `mkai` exists on your `PATH`). With `--pure`, the Markdown body goes to stdout without frontmatter. Add `-o output/` to write a file instead:
+`mkai` is a short alias for `markitai`. `--pure` prints plain Markdown to the terminal. To save files instead, give an output directory:
 
 ```bash
-markitai document.docx -o output/          # document
-markitai https://example.com/article -o output/   # web page
-markitai ./docs -o ./output                # whole directory
+markitai document.docx -o output/
+markitai https://example.com/article -o output/
+markitai ./docs -o output/
 ```
 
 ### Turning on LLM enhancement
 
-Export a key for any supported provider and `--llm` works immediately — markitai
-reads the model from your environment, so no config file is needed to start:
+Export an API key for any supported provider and add `--llm`:
 
 ```bash
-export GEMINI_API_KEY=...    # or OPENAI_/ANTHROPIC_/DEEPSEEK_/OPENROUTER_API_KEY
+export GEMINI_API_KEY=...    # or OPENAI_ / ANTHROPIC_ / DEEPSEEK_ / OPENROUTER_API_KEY
 markitai report.pdf -o output/ --llm
 ```
 
-To pin one model instead, set `MODEL=gemini/gemini-flash-lite-latest`. For a
-config file, a subscription provider, or several models with fallback:
+markitai picks a model from the key it finds. To choose one yourself, set `MODEL=provider/model`.
+
+For a config file, a subscription provider (ChatGPT, Claude Code, Copilot) or several models with fallback, run the guided setup:
 
 ```bash
-markitai init                # guided setup (or: markitai -I interactive mode)
-markitai doctor              # check core and optional capabilities
+markitai init
+markitai doctor     # shows what is installed and configured
 ```
 
 ## Optional Capabilities
 
-Add extras only when you need them (`uv tool install 'markitai[<extra>]' --force`):
+The core install converts documents on its own. Add an extra only when you need it:
 
-| Extra / Dependency | Enables |
-|--------------------|---------|
-| `markitai[browser]` (Playwright) | `-s playwright` browser rendering for SPA/JS-heavy pages |
-| `markitai[claude-agent]` | Claude Agent SDK as an LLM provider |
-| `markitai[copilot]` | GitHub Copilot SDK as an LLM provider |
-| `markitai[extra-fetch]` | curl-cffi HTTP client, for sites with TLS fingerprint detection |
-| `markitai[heif]` | HEIC/HEIF/AVIF image input |
-| `markitai[legacy]` (anydoc) | Legacy Office `.doc`/`.ppt` conversion |
-| `markitai[mcp]` | Bundled `markitai-mcp` server for AI agents (Model Context Protocol) |
-| `markitai[ocr]` (RapidOCR) | `--ocr` local OCR for scanned PDFs/images |
-| `markitai[serve]` | Local web workspace and REST API |
+```bash
+uv tool install 'markitai[browser]' --force
+```
+
+| Extra | Enables |
+|-------|---------|
+| `markitai[browser]` | Browser rendering (`-s playwright`) for JavaScript-heavy pages and URL screenshots |
+| `markitai[ocr]` | Local OCR (`--ocr`) for scanned PDFs and images |
+| `markitai[serve]` | The [web workspace](/guide/serve) and its REST API |
+| `markitai[mcp]` | The [MCP server](/guide/mcp) for AI agents |
+| `markitai[claude-agent]` | Claude Code subscription as an LLM provider |
+| `markitai[copilot]` | GitHub Copilot subscription as an LLM provider |
+| `markitai[legacy]` | Legacy Office `.doc` and `.ppt` files |
+| `markitai[heif]` | HEIC, HEIF and AVIF images |
 | `markitai[svg]` | High-quality SVG rendering |
+| `markitai[extra-fetch]` | curl-cffi client for sites with TLS fingerprint checks |
 | `markitai[all]` | Everything above |
-| Jina API key | `-s jina` remote reader (`JINA_API_KEY` env var) |
-| Cloudflare | `-s cloudflare` cloud rendering (`CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`) |
+
+Two remote fetch strategies need credentials instead of an extra: `-s jina` reads `JINA_API_KEY`, and `-s cloudflare` reads `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
 
 After adding the browser extra, install Chromium once:
 
@@ -97,47 +82,40 @@ After adding the browser extra, install Chromium once:
 markitai doctor --fix
 ```
 
-(`doctor --fix` installs Chromium only when the Playwright package is present; with a core-only install it exits safely and names the extra to add.)
-
 ## Manual Installation
 
-If you already have Python 3.11–3.13 and prefer a minimal install:
+If Python 3.11 to 3.13 is already installed:
 
 ```bash
-uv tool install markitai        # recommended: isolated tool environment
-uv pip install markitai         # or into the active virtual environment
-pipx install markitai           # or pipx
+uv tool install markitai     # recommended
+pipx install markitai
+uv pip install markitai      # into the active virtual environment
 ```
 
-A manual install sets up nothing optional: run `markitai doctor` to see what's available and `markitai init` for config and LLM provider setup. For browser rendering, add the browser extra matching your install method (`uv tool install 'markitai[browser]' --force`, `pipx install 'markitai[browser]' --force`, or `uv pip install 'markitai[browser]'`), then `markitai doctor --fix`.
+A manual install has no optional pieces. Run `markitai doctor` to see what is available, and `markitai init` to set up an LLM provider.
 
 ## Feature Notes
 
-**URLs**: for public URLs, local methods run first, then `auto` may try Defuddle, Jina, or Cloudflare without asking (the first remote attempt in a process is disclosed on stderr). Private, local, intranet, and credential-bearing URLs stay local-only. `MARKITAI_NO_REMOTE_FETCH=1` forces everything local.
+**Presets** bundle the common flags. `minimal` is plain conversion, `standard` adds LLM cleanup and image analysis, `rich` adds page screenshots. Turn any part off with `--no-*`, for example `--preset rich --no-desc`.
 
-**LLM enhancement** (`--llm`): clean formatting and generate frontmatter. Configure a provider API key or a subscription provider (`chatgpt/` OAuth; `claude-agent/`, `copilot/` CLI sign-in) — see [Configuration](/guide/configuration#supported-providers).
+**URLs** are fetched locally first. When that fails on a public page, markitai may fall back to a remote reader (Defuddle, Jina or Cloudflare) and says so once on stderr. Private, intranet and credential-bearing URLs never leave your machine. `MARKITAI_NO_REMOTE_FETCH=1` keeps everything local.
 
-**Presets** bundle common flags: `rich` (LLM + alt + desc + screenshot), `standard` (LLM + alt + desc), `minimal` (plain conversion). Any preset flag can be overridden with `--no-*`, e.g. `--preset rich --no-desc`.
-
-**Batch runs** write a JSON report and support `--resume` after interruption. See [CLI Reference](/guide/cli) for `--llm-batch` (Batch API, half price) and more.
+**Directories** convert as a batch with a progress display and a JSON report. If a run is interrupted, add `--resume` to pick it up.
 
 ## Output Structure
 
 ```text
 output/
-├── document.pdf.md          # Basic Markdown (skipped in --llm mode unless --keep-base)
-├── document.pdf.llm.md      # LLM-enhanced version (when --llm is used)
-├── .markitai/                 # Metadata namespace
-│   ├── assets/
-│   │   ├── document.docx.0001.jpg   # Images embedded in the source document
-│   │   └── images.json      # Image descriptions
-│   ├── screenshots/          # Page/slide screenshots (PDF/PPTX only; full-page for URLs; --screenshot)
-│   │   └── document.pdf.page0001.jpg
-│   ├── reports/               # Conversion reports (JSON) — batch/URL-batch runs by default, or when output.report = true
-│   └── states/                # Batch state files (for --resume)
+├── document.pdf.md          # Markdown (with --llm, only .llm.md is written unless --keep-base)
+├── document.pdf.llm.md      # LLM-enhanced version
+└── .markitai/
+    ├── assets/              # images from the source, plus images.json descriptions
+    ├── screenshots/         # page, slide or full-page screenshots (--screenshot)
+    ├── reports/             # JSON reports for batch runs
+    └── states/              # batch state for --resume
 ```
 
-The output filename appends `.md` to the full input filename: `document.docx` → `document.docx.md` (`document.docx.llm.md` with `--llm`), so distinct inputs (`report.pdf`, `report.docx`) never collide.
+The output name is the full input name plus `.md`, so `report.pdf` and `report.docx` never collide.
 
 ## Supported Formats
 
@@ -145,46 +123,21 @@ The output filename appends `.md` to the full input filename: `document.docx` �
 |--------|------------|
 | Office | `.docx`, `.doc`, `.pptx`, `.ppt`, `.xlsx`, `.xls`, `.odt`, `.ods`, `.numbers` |
 | PDF | `.pdf` |
-| Text / Markup / Structured Data | `.txt`, `.md`, `.markdown`, `.html`, `.htm`, `.xhtml`, `.xml`, `.csv`, `.tsv`, `.rtf`, `.rst`, `.org`, `.tex` |
+| Text and markup | `.txt`, `.md`, `.markdown`, `.html`, `.htm`, `.xhtml`, `.xml`, `.csv`, `.tsv`, `.rtf`, `.rst`, `.org`, `.tex` |
 | Images | `.jpg`, `.jpeg`, `.png`, `.webp`, `.svg`, `.gif`, `.bmp`, `.tiff`, `.tif`, `.heic`, `.heif`, `.avif` (last three need `markitai[heif]`) |
-| Other Documents | `.epub`, `.eml`, `.msg`, `.ipynb` |
+| Other documents | `.epub`, `.eml`, `.msg`, `.ipynb` |
 | URLs | `http://`, `https://` |
 
 ## Platform-Specific Features
 
-### Windows
+Everything works on Windows, Linux and macOS, with two things to know:
 
-| Feature | Support | Notes |
-|---------|---------|-------|
-| Legacy Office (`.doc`, `.ppt`) | ✅ Full | Needs `markitai[legacy]` (anydoc Rust backend, no Office install; PPT tables flatten to text) |
-| Legacy Excel (`.xls`) | ✅ Full | Built-in (pure Python) |
-| PPTX Slide Rendering | ✅ Full | MS Office preferred, LibreOffice fallback |
-| EMF/WMF Images | ✅ Full | Native support |
-| Browser Automation | ✅ Full | Hidden window mode |
+- **EMF/WMF images** are a Windows-only format and only convert on Windows.
+- **PPTX slide screenshots** need a renderer. Windows uses Microsoft Office or LibreOffice. Linux needs LibreOffice (`apt-get install libreoffice`). macOS prefers LibreOffice (`brew install --cask libreoffice`) and otherwise drives an installed PowerPoint, which pops a one-time permission dialog and needs a desktop session. Set `"office": { "macos_fallback": false }` in the config to disable that on headless Macs.
 
-### Linux
-
-| Feature | Support | Notes |
-|---------|---------|-------|
-| Legacy Office (`.doc`, `.ppt`) | ✅ Full | Needs `markitai[legacy]` (no LibreOffice needed) |
-| Legacy Excel (`.xls`) | ✅ Full | Built-in (pure Python) |
-| PPTX Slide Rendering | ✅ Full | Requires LibreOffice (`apt-get install libreoffice` / `dnf install libreoffice`) |
-| EMF/WMF Images | ❌ No | Windows-only format |
-| Browser Automation | ✅ Full | Requires system dependencies |
-
-### macOS
-
-| Feature | Support | Notes |
-|---------|---------|-------|
-| Legacy Office (`.doc`, `.ppt`) | ✅ Full | Needs `markitai[legacy]` (no Office install) |
-| Legacy Excel (`.xls`) | ✅ Full | Built-in (pure Python) |
-| PPTX Slide Rendering | ✅ Full | LibreOffice preferred (`brew install --cask libreoffice`); falls back to installed MS PowerPoint |
-| EMF/WMF Images | ❌ No | Windows-only format |
-| Browser Automation | ✅ Full | - |
-
-The macOS PowerPoint fallback drives PowerPoint via AppleScript: the first render triggers a one-time consent dialog ("Terminal wants to control Microsoft PowerPoint"), opens the app briefly, and needs a GUI session. Disable it with `"office": { "macos_fallback": false }` in config for headless use.
+Legacy `.doc` and `.ppt` files need `markitai[legacy]` and no Office install on any platform.
 
 ## Next Steps
 
-- [Configuration](/guide/configuration) - LLM providers and all settings
-- [CLI Reference](/guide/cli) - Full command reference
+- [Configuration](/guide/configuration) for LLM providers and every setting
+- [CLI Reference](/guide/cli) for every command and flag

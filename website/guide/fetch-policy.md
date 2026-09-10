@@ -1,62 +1,54 @@
 # Fetch Policy Engine
 
-Markitai uses a policy-driven Fetch Policy Engine to determine the best strategy for retrieving URL content. It is designed to be resilient, fast, and user-friendly.
+When you give markitai a URL, it tries several ways of fetching the page, cheapest first, until one returns usable content. This page explains the order, what stays on your machine, and how to tune it.
 
 ## Strategy Selection Logic
 
-The engine follows a policy-driven approach to select the order of fetching strategies:
+Three things decide the order:
 
-1. **Explicit Strategy**: If you provide an explicit strategy (e.g., `-s playwright`, `-s defuddle`, or `-s jina`), the engine uses only that strategy, with two caveats: explicit `-s defuddle`/`-s jina`/`-s cloudflare` can still gracefully fall back to the full `auto` chain if the remote service refuses the request (rate limit, auth, etc.); and domain-profile content settings (`wait_for_selector`, `skip_auto_scroll`, etc.) still apply on top of an explicitly-chosen `playwright` strategy.
-2. **Domain Profiles**: You can configure specific settings for individual domains, such as custom selectors to wait for, extra wait times, or a full custom strategy order.
-3. **Adaptive Fallback**: In `auto` mode (default), the engine intelligently orders strategies based on the domain and previous success history.
+1. **An explicit strategy**: `-s static`, `-s playwright`, `-s defuddle`, `-s jina` or `-s cloudflare` uses that one strategy. If a remote service refuses (rate limit, auth failure), the run falls back to the `auto` chain instead of failing.
+2. **A domain profile**: per-domain settings such as a selector to wait for, extra wait time, or a custom strategy order.
+3. **Adaptive fallback** (`auto`, the default): one of the two orders below, adjusted by what markitai has learned about the domain.
 
 ### Default Order (Standard Domains)
 
-Markitai is local-first: for most websites, the native local pipeline is tried before any remote service:
+Local first. The built-in static fetcher matches the remote readers on extraction quality and never sends the URL anywhere.
 
-```text
-Static (HTTP) → Playwright (Browser) → Defuddle → Jina → Cloudflare
-```
-
-Static's native webextract pipeline matches remote Defuddle's quality on the extraction benchmark corpus (and does better on CJK spacing), so it goes first. Unlike the remote strategies, it never sends the URL off-machine.
+<StrategyChain />
 
 ### SPA/Heavy-JS Order
 
-For domains known to require JavaScript (like `x.com`, `instagram.com`, domains listed in `fallback_patterns`, or domains that have previously failed static fetching and were learned into the SPA cache), Markitai skips straight to the browser:
+Domains known to need JavaScript go straight to the browser: `x.com`, `instagram.com`, anything in `fallback_patterns`, and domains learned into the SPA cache after a failed static fetch.
 
-```text
-Playwright (Browser) → Defuddle → Jina → Cloudflare → Static
-```
-
-Static goes last here since it has already failed (or is expected to fail) to produce usable content for these domains.
+<StrategyChain mode="spa" />
 
 ### Remote Fallback and Local-only URLs
 
-The default `fetch.remote_consent` value is `always`. For a public URL, Markitai can continue from a failed local strategy to Defuddle, Jina, or Cloudflare without an interactive confirmation. Before the first remote attempt in a process, it writes a disclosure to stderr. Because that decision is cached for the process, the notice names every service it may authorize later: defuddle.md, Jina, Cloudflare, FxTwitter, and Twitter oEmbed. Services are still tried one at a time, so a URL is sent only to the service currently being attempted.
+By default (`fetch.remote_consent: always`) a public URL that fails locally may be sent to Defuddle, Jina or Cloudflare. Before the first remote attempt in a process, markitai prints a notice on stderr naming every service it may use later: defuddle.md, Jina, Cloudflare, FxTwitter and Twitter oEmbed. Services are tried one at a time, so a URL only reaches the service currently being attempted.
 
-Playwright has one public-URL enrichment path: after local DOM extraction fails for an X/Twitter status or article, it may try FxTwitter and then Twitter oEmbed. These are remote services like any other, so they go through the *same* process-wide consent decision instead of having an exemption.
+For X/Twitter posts, Playwright may also call FxTwitter and then Twitter oEmbed after local extraction fails. They follow the same process-wide consent decision as every other remote service: under `ask` they can raise the one shared prompt, reuse an earlier answer, and are skipped when the run cannot prompt.
 
-Under `ask` that means the enrichment can raise the one shared prompt itself when nothing has been decided yet and a TTY is available, reuses a Yes or No already given earlier in the run, and is skipped when the run cannot prompt. `never` and `MARKITAI_NO_REMOTE_FETCH` disable it outright.
+These URLs never leave your machine, whatever strategy is selected:
 
-Consent is resolved lazily — only after the URL has been confirmed public — so no question is ever asked about a URL that would stay on the machine anyway.
+- localhost, private IPs and common intranet hostnames
+- URLs carrying credentials: userinfo, tokens, signatures, passwords, API keys or authorization codes
 
-The following URLs remain local-only regardless of the selected strategy:
+In the `auto` chain, domains matched by `fetch.policy.local_only_patterns` and by `NO_PROXY` (when `inherit_no_proxy` is on) also stay local.
 
-- localhost, private IPs, and common intranet hostnames
-- URLs containing credentials in userinfo or sensitive query/fragment parameters, including signed URLs, tokens, signatures, passwords, API keys, and authorization codes
+| Setting | Effect | Can an explicit `-s` override it? |
+|---------|--------|-----------------------------------|
+| `remote_consent: always` (default) | Remote fallback for public URLs, disclosed on stderr | — |
+| `remote_consent: ask` | One prompt per process on a TTY; non-interactive runs skip every remote service | — |
+| `remote_consent: never` | Automatic and config-selected strategies stay local | Yes |
+| `local_only_patterns` / `NO_PROXY` | Matching domains stay local in the `auto` chain | Yes |
+| Private, intranet or credential-bearing URL | Always local | **No** |
+| `MARKITAI_NO_REMOTE_FETCH=1` | Hard local-only guarantee | **No** |
 
-The `auto` policy chain also keeps the following matches local-only:
-
-- domains and IPs matched by `fetch.policy.local_only_patterns`
-- entries inherited from `NO_PROXY` when `fetch.policy.inherit_no_proxy` is enabled
-
-For an otherwise public URL, explicitly passing a non-`auto` remote `-s` CLI flag is an intentional override of the two pattern-based rules above and `fetch.remote_consent=never`. A remote `fetch.strategy` set only in config is still consent-gated. Neither path can override the private/local/credential-bearing URL guard.
-
-Set `MARKITAI_NO_REMOTE_FETCH=1` for a hard local-only guarantee, including runs that explicitly select a remote strategy. Set `fetch.remote_consent` to `never` to keep automatic and config-selected strategies local-only while still allowing an explicit CLI `-s` opt-in. The `ask` setting remains available for one process-wide interactive confirmation naming the same complete service set — including the X/Twitter enrichment — and non-interactive runs skip every remote service when it is selected.
+A remote `fetch.strategy` set in the config file is not an explicit opt-in. It stays governed by `remote_consent` and prints the same first-use notice.
 
 ## Configuration
 
-You can tune the fetch policy in your `markitai.json`:
+Tune the policy in `markitai.json`:
 
 ```json
 {
@@ -84,45 +76,37 @@ You can tune the fetch policy in your `markitai.json`:
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `enabled` | boolean | `true` | Enable or disable intelligent strategy ordering |
-| `max_strategy_hops` | integer | `5` | Maximum number of strategies to attempt before giving up |
-| `strategy_priority` | list | `null` | Custom global strategy order (overrides default priority) |
-| `local_only_patterns` | list | `[]` | Domain/IP patterns restricted to local strategies (NO_PROXY syntax) |
-| `inherit_no_proxy` | boolean | `true` | Merge `NO_PROXY` env var into `local_only_patterns` |
+| `enabled` | boolean | `true` | Turn strategy ordering on or off |
+| `max_strategy_hops` | integer | `5` | Strategies to try before giving up |
+| `strategy_priority` | list | `null` | Custom global strategy order |
+| `local_only_patterns` | list | `[]` | Domains and IPs restricted to local strategies (`NO_PROXY` syntax) |
+| `inherit_no_proxy` | boolean | `true` | Also treat `NO_PROXY` entries as local-only |
 
 ### Domain Profiles
 
-Domain profiles allow per-domain overrides for fetch behavior:
+Per-domain overrides:
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `wait_for_selector` | string | `null` | CSS selector to wait for before extracting content |
-| `wait_for` | string | `null` | Page load event override (`load`, `domcontentloaded`, `networkidle`); unset inherits the global `fetch.playwright.wait_for` (default `domcontentloaded`) |
-| `extra_wait_ms` | integer | `null` | Extra milliseconds to wait after page load event; unset inherits the global `fetch.playwright.extra_wait_ms` (default `3000`) |
-| `prefer_strategy` | string | `null` | Preferred strategy for this domain (`static`, `defuddle`, `playwright`, `cloudflare`, `jina`) |
-| `strategy_priority` | list | `null` | Custom strategy order for this domain (overrides global and `prefer_strategy`) |
-| `skip_auto_scroll` | boolean | `false` | Skip auto-scrolling for single-content pages (tweets, issues, docs) |
-| `reject_resource_patterns` | list | `null` | Block Playwright-navigation resources matching these URL patterns (e.g. `["**/analytics/**"]`) |
+| `wait_for_selector` | string | `null` | CSS selector to wait for before extracting |
+| `wait_for` | string | `null` | Page load event: `load`, `domcontentloaded`, `networkidle`. Unset inherits `fetch.playwright.wait_for` |
+| `extra_wait_ms` | integer | `null` | Extra wait after the load event. Unset inherits `fetch.playwright.extra_wait_ms` |
+| `prefer_strategy` | string | `null` | Strategy to try first for this domain |
+| `strategy_priority` | list | `null` | Full strategy order for this domain (overrides global order and `prefer_strategy`) |
+| `skip_auto_scroll` | boolean | `false` | Skip auto-scrolling on single-content pages (tweets, issues, docs) |
+| `reject_resource_patterns` | list | `null` | Block browser requests matching these URL patterns, e.g. `["**/analytics/**"]` |
 
-Markitai ships built-in profiles for `x.com`/`twitter.com` and `github.com`. Configuring your own profile for the same domain **replaces it entirely** rather than merging field-by-field; any built-in tuning (like the x.com profile's `skip_auto_scroll`/`reject_resource_patterns`) is lost unless you repeat it yourself.
-
-Example with multiple domains:
+::: warning
+markitai ships built-in profiles for `x.com`, `twitter.com` and `github.com`. Your own profile for the same domain replaces the built-in one entirely, so repeat any built-in tuning you want to keep.
+:::
 
 ```json
 {
   "fetch": {
     "domain_profiles": {
-      "x.com": {
-        "wait_for_selector": "[data-testid=tweetText]",
-        "extra_wait_ms": 1200
-      },
-      "instagram.com": {
-        "wait_for": "networkidle",
-        "extra_wait_ms": 2000
-      },
-      "docs.example.com": {
-        "prefer_strategy": "static"
-      }
+      "x.com": { "wait_for_selector": "[data-testid=tweetText]", "extra_wait_ms": 1200 },
+      "instagram.com": { "wait_for": "networkidle", "extra_wait_ms": 2000 },
+      "docs.example.com": { "prefer_strategy": "static" }
     }
   }
 }
@@ -130,64 +114,32 @@ Example with multiple domains:
 
 ### Playwright Session Persistence
 
-Control how Playwright manages browser contexts:
-
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `session_mode` | string | `"isolated"` | `isolated`: new context per request; `domain_persistent`: reuse contexts per domain |
-| `session_ttl_seconds` | integer | `600` | How long to keep persistent sessions alive (in seconds) |
+| `session_mode` | string | `"isolated"` | `isolated`: a fresh browser context per request. `domain_persistent`: reuse the context per domain |
+| `session_ttl_seconds` | integer | `600` | How long a persistent session is kept |
 
-Using `domain_persistent` mode significantly speeds up multiple requests to the same site by reusing cookies, localStorage, and other browser state.
+`domain_persistent` reuses cookies and local storage, which makes repeated requests to the same site much faster.
 
 ## Static HTTP Adapters
 
-The Static strategy uses **httpx** by default, which works for the vast majority of websites. For sites with TLS fingerprint detection, you can optionally enable the **curl-cffi** adapter.
-
-| Adapter | Installation | Description |
-|---------|-------------|-------------|
-| **httpx** (default) | Built-in, works out of the box | Fast and reliable, covers most use cases |
-| **curl-cffi** (optional) | `uv pip install markitai[extra-fetch]` | Mimics Chrome TLS/HTTP signatures to bypass some anti-bot protections |
-
-::: tip When do you need curl-cffi?
-In most cases, you don't. If the Static strategy returns 403/empty content for a site, the Policy Engine automatically falls back to Playwright or Cloudflare. You only need curl-cffi when you want to bypass TLS fingerprint detection **without launching a browser**.
-:::
-
-To enable `curl-cffi`:
+The static strategy uses httpx, which works for most sites. If a site rejects it with a 403 or empty content because of TLS fingerprinting, `auto` falls back to Playwright or Cloudflare on its own. To get past the fingerprint check without launching a browser, switch to curl-cffi:
 
 ```bash
-# Install
 uv pip install markitai[extra-fetch]
-
-# Activate via environment variable
 export MARKITAI_STATIC_HTTP=curl_cffi
 ```
 
-If the environment variable is set but curl-cffi is not installed, Markitai silently falls back to httpx without errors.
+If curl-cffi is not installed, markitai silently uses httpx.
 
 ## How It Works
 
-```text
-URL Request
-    │
-    ├─ Explicit strategy (-s static/playwright/defuddle/jina/cloudflare)?
-    │       └─ Yes → Use only that strategy
-    │
-    ├─ Domain in SPA cache or known JS-heavy (fallback_patterns)?
-    │       └─ Yes → SPA order (Playwright → Defuddle → Jina → Cloudflare → Static)
-    │
-    └─ Default → Standard order (Static → Playwright → Defuddle → Jina → Cloudflare)
-            │
-            ├─ Try strategy #1 → Success? → Done
-            ├─ Try strategy #2 → Success? → Done
-            ├─ Try strategy #3 → Success? → Done
-            ├─ Try strategy #4 → Success? → Done
-            └─ Try strategy #5 → Success? → Done / Give up
-```
+Strategies are attempted one at a time, up to `max_strategy_hops`. The first result that passes validation ends the run.
 
-Domain profiles (`strategy_priority` or `prefer_strategy`) and a global `strategy_priority` override can reorder this chain per-domain or globally, ahead of the SPA/default fallback. See [Domain Profiles](#domain-profiles) below. Private, local, intranet, and credential-bearing URLs are always restricted to local strategies (`static`, `playwright`). In the policy chain, `local_only_patterns` matches are also restricted to those strategies; an explicit non-`auto` CLI `-s` flag for a public URL overrides only this pattern-based restriction.
+### Result validation
 
-Each strategy validates content quality before accepting the result. It checks for empty/too-short content, login walls, and anti-bot/CAPTCHA challenge pages (Geetest, Cloudflare, reCAPTCHA, hCaptcha). If validation fails, it falls through to the next strategy.
+Empty or too-short content, login walls, and anti-bot or CAPTCHA pages (Geetest, Cloudflare, reCAPTCHA, hCaptcha) all fail validation and fall through to the next strategy.
 
-::: tip
-When static fetching succeeds but the content indicates JavaScript rendering is required (or the page is empty), the domain is added to the SPA cache for 30 days. Future requests to that domain will skip directly to browser rendering, saving time. Other failure modes (CAPTCHA, login walls, network errors) don't trigger this; only the JS-required signal does.
-:::
+### SPA learning
+
+When a static fetch succeeds but the page says it needs JavaScript, the domain is added to the SPA cache for 30 days and later requests skip straight to the browser. Only that signal teaches the cache; CAPTCHAs, login walls and network errors do not. Inspect or clear it with `markitai cache spa-domains`.

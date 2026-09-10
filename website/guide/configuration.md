@@ -2,62 +2,47 @@
 
 ## Configuration Priority
 
-Markitai uses the following priority order (highest to lowest):
+Highest to lowest:
 
-1. Command-line arguments
+1. Command-line flags
 2. Environment variables
 3. Configuration file
-4. Default values
+4. Built-in defaults
 
 ## Configuration File
 
-Markitai looks for configuration files in the following locations:
+markitai reads the first config file it finds:
 
-1. Path specified by `--config` argument
-2. `MARKITAI_CONFIG` environment variable
-3. `./markitai.json` (current directory)
-4. `~/.markitai/config.json` (user home)
+1. The path given with `--config`
+2. `MARKITAI_CONFIG`
+3. `./markitai.json` in the current directory
+4. `~/.markitai/config.json`
 
 ### Initialize Configuration
 
 ```bash
-# Interactive setup wizard (recommended)
-markitai init
-
-# Quick mode (generate default config)
-markitai init --yes
-
-# Create in specific location
-markitai init --local  # creates ./markitai.json
+markitai init            # guided setup
+markitai init --yes      # defaults without prompts
+markitai init --local    # write ./markitai.json
 ```
 
 ### View Configuration
 
 ```bash
-# List all settings
-markitai config list
-markitai config list --format json    # JSON (default)
-markitai config list --format table   # Rich table view
-markitai config list --format yaml    # YAML (requires pyyaml: uv add pyyaml)
-markitai config list --show-secrets   # Reveal original secret values
-
-# Get specific value
+markitai config list                  # effective settings, secrets redacted
 markitai config get llm.enabled
-
-# Set value
 markitai config set llm.enabled true
-
-# Interactive editor (guided menu)
-markitai config edit
-
-# Validate configuration
+markitai config edit                  # guided menu
 markitai config validate
-markitai config validate ./markitai.json    # Validate specific file
 ```
 
-`config list` recursively redacts secrets by default, including nested API keys, tokens, cookies, credentials, and every custom HTTP header value. Custom `api_base` values are reduced to their origin. Use `--show-secrets` only for local inspection, and never paste its complete output into an issue, chat, CI log, or other shared channel.
+Secrets are redacted in `config list`, including nested API keys, tokens, cookies and custom headers. `--show-secrets` reveals them; keep that output on your machine.
 
 ### Full Configuration Example
+
+Every setting with its default value:
+
+:::: details markitai.json with all defaults
 
 ```json
 {
@@ -209,9 +194,9 @@ markitai config validate ./markitai.json    # Validate specific file
 }
 ```
 
-::: tip
-Use `env:VAR_NAME` syntax to reference environment variables in the config file. For `JINA_API_KEY`, `CLOUDFLARE_API_TOKEN`, and `CLOUDFLARE_ACCOUNT_ID`, you can also just set the environment variable (or add it to `.env`) without configuring anything in the config file; markitai reads them automatically.
-:::
+::::
+
+Any string value can reference an environment variable with `env:VAR_NAME`. `JINA_API_KEY`, `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are picked up from the environment even without a config entry.
 
 ## Environment Variables
 
@@ -219,86 +204,74 @@ Use `env:VAR_NAME` syntax to reference environment variables in the config file.
 
 | Variable | Description |
 |----------|-------------|
-| `OPENAI_API_KEY` | OpenAI API key |
-| `ANTHROPIC_API_KEY` | Anthropic (Claude) API key |
-| `GEMINI_API_KEY` | Google Gemini API key |
-| `DEEPSEEK_API_KEY` | DeepSeek API key |
-| `OPENROUTER_API_KEY` | OpenRouter API key |
-| `JINA_API_KEY` | Jina Reader API key |
-| `CLOUDFLARE_API_TOKEN` | Cloudflare API token (Browser Rendering / Workers AI) |
+| `OPENAI_API_KEY` | OpenAI |
+| `ANTHROPIC_API_KEY` | Anthropic (Claude) |
+| `GEMINI_API_KEY` | Google Gemini |
+| `DEEPSEEK_API_KEY` | DeepSeek |
+| `OPENROUTER_API_KEY` | OpenRouter |
+| `JINA_API_KEY` | Jina Reader |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare (Browser Rendering, Workers AI) |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID |
 
 ### Markitai Settings
 
 | Variable | Description |
 |----------|-------------|
-| `MARKITAI_CONFIG` | Path to configuration file |
+| `MODEL` | The model to use when no `model_list` is configured |
+| `MARKITAI_CONFIG` | Path to the config file |
 | `MARKITAI_LOG_DIR` | Directory for log files |
-| `MARKITAI_LOG_FORMAT` | Log format override (`text` or `json`) |
-| `MARKITAI_STATIC_HTTP` | Static HTTP backend: `httpx` (default) or `curl_cffi` (TLS impersonation) |
-| `MARKITAI_LANG` | CLI language override (`en` or `zh`) |
-| `MARKITAI_PURE` | Enable pure mode (`1`, `true`, or `yes`) |
-| `MARKITAI_RECORD_HISTORY` | Record CLI runs to the `markitai serve` history (`1`, `true`, `yes`, or `on`; a set-but-falsy value explicitly opts out). Overridden by `--record-history` / `--no-record-history`; overrides `history.record` |
-| `MARKITAI_NO_VLM_OCR` | Forbid vision-model OCR: with `--ocr --llm`, forces the local RapidOCR path instead of letting the model read page images (`1`, `true`, or `yes`) |
-| `MARKITAI_SERVE_TOKEN` | Pin the `markitai serve` access token instead of generating a random one per start |
-| `MARKITAI_NO_REMOTE_FETCH` | Hard-disable remote extraction, including explicit remote `-s` strategies (`1`, `true`, or `yes`) |
-| `MARKITAI_INSTALL_OPTIONAL` | Setup script only: install the optional components non-interactively (`1`, `true`, or `yes`) |
-| `MARKITAI_USE_MIRROR` | Setup script only: `1` always offers the mirror index, `0` never asks |
-| `MARKITAI_VERSION` | Setup script only: pin the markitai version to install (omit for the latest stable release) |
-| `MODEL` | Single-model override when no `model_list` configured |
+| `MARKITAI_LOG_FORMAT` | `text` or `json` |
+| `MARKITAI_LANG` | CLI language, `en` or `zh` |
+| `MARKITAI_PURE` | Enable pure mode (`1`, `true`, `yes`) |
+| `MARKITAI_RECORD_HISTORY` | Record CLI runs to the web workspace history (`1`, `true`, `yes`, `on`) |
+| `MARKITAI_NO_REMOTE_FETCH` | Never send URLs to remote services, even with an explicit `-s` (`1`, `true`, `yes`) |
+| `MARKITAI_NO_VLM_OCR` | With `--ocr --llm`, use local RapidOCR instead of the vision model (`1`, `true`, `yes`) |
+| `MARKITAI_STATIC_HTTP` | Static fetch client: `httpx` (default) or `curl_cffi` |
+| `MARKITAI_SERVE_TOKEN` | Fixed access token for `markitai serve` |
+| `MARKITAI_INSTALL_OPTIONAL` | Setup script: install optional components without prompting |
+| `MARKITAI_USE_MIRROR` | Setup script: `1` always offers a package mirror, `0` never asks |
+| `MARKITAI_VERSION` | Setup script: version to install |
 
 ### `.env` File Loading
 
-Markitai automatically loads `.env` files in the following order (first-loaded values win):
-
-1. `./.env` (current working directory, project-level)
-2. `~/.markitai/.env` (user home, global fallback)
-
-Project-level `.env` takes priority, allowing per-project overrides of global settings.
+markitai loads `./.env` first and `~/.markitai/.env` second. Values from the first file win, so a project can override global settings.
 
 ## LLM Configuration
 
 ### Supported Providers
 
-Any [LiteLLM](https://docs.litellm.ai/) provider works — OpenAI, Anthropic, Google, DeepSeek, OpenRouter, Ollama (local), and more. Subscription-based local providers authenticate through their CLI instead of an API key:
+Any [LiteLLM](https://docs.litellm.ai/) provider works with an API key: OpenAI, Anthropic, Google, DeepSeek, OpenRouter, Ollama and more.
 
-| Provider | Prefix | Auth | Extra |
-|----------|--------|------|-------|
-| Claude Agent | `claude-agent/` | [Claude Code CLI](https://github.com/anthropics/claude-code) sign-in | `markitai[claude-agent]` |
-| GitHub Copilot | `copilot/` | [Copilot CLI](https://github.com/github/copilot-sdk) sign-in | `markitai[copilot]` |
-| ChatGPT | `chatgpt/` | OAuth Device Code Flow on first use (no CLI needed) | — |
+Three subscription providers sign in through their own CLI or OAuth instead:
 
-CLI installs: `curl -fsSL https://claude.ai/install.sh | bash` (Claude Code; Windows: `irm https://claude.ai/install.ps1 | iex`), `curl -fsSL https://gh.io/copilot-install | bash` (Copilot; Windows: `winget install GitHub.Copilot`).
+| Provider | Prefix | Sign-in | Extra |
+|----------|--------|---------|-------|
+| Claude Code | `claude-agent/` | `markitai auth claude login` | `markitai[claude-agent]` |
+| GitHub Copilot | `copilot/` | `markitai auth copilot login` | `markitai[copilot]` |
+| ChatGPT | `chatgpt/` | OAuth device code on first use | — |
 
-::: tip Gemini Access
-Gemini is not a local/CLI provider. Use a direct API key (`gemini/`, see [Model Naming](#model-naming)) or route through OpenRouter (`openrouter/google/...`).
-:::
+The Claude Code and Copilot CLIs must be installed first: `curl -fsSL https://claude.ai/install.sh | bash` and `curl -fsSL https://gh.io/copilot-install | bash` (Windows: `irm https://claude.ai/install.ps1 | iex` and `winget install GitHub.Copilot`).
+
+Gemini has no subscription sign-in. Use an API key (`gemini/`) or go through OpenRouter (`openrouter/google/...`).
 
 ### Model Naming
 
-Use the LiteLLM model naming convention:
+Models are named `provider/model`, following LiteLLM:
 
-```text
-provider/model-name
-```
-
-Examples:
 - `openai/gpt-5.6`
 - `anthropic/claude-sonnet-4-6`
 - `gemini/gemini-flash-lite-latest`
 - `deepseek/deepseek-v4-flash`
 - `ollama/llama3.2`
-- `claude-agent/sonnet` (local, requires Claude Code CLI)
-- `copilot/gpt-5.6` (local, requires Copilot CLI)
-- `chatgpt/gpt-5.6` (local, requires ChatGPT subscription)
+- `claude-agent/sonnet`, `copilot/gpt-5.6`, `chatgpt/gpt-5.6` (subscription providers)
 
 #### Defaults markitai picks for you
 
-`markitai init`, the setup wizard and credential auto-detection all pick the cheap/fast tier of whichever provider they find, preferring a provider-managed alias so a vendor's next release does not strand the setting. Limited-preview deployments are never picked automatically.
+`markitai init` and the automatic key detection pick the cheap, fast tier of whichever provider they find:
 
 | Provider | Default model |
 |---|---|
-| Claude Code CLI | `claude-agent/sonnet` |
+| Claude Code | `claude-agent/sonnet` |
 | GitHub Copilot | `copilot/claude-haiku-4.5` |
 | ChatGPT | `chatgpt/gpt-5.6` |
 | Anthropic | `anthropic/claude-haiku-4-5` |
@@ -307,48 +280,24 @@ Examples:
 | DeepSeek | `deepseek/deepseek-v4-flash` |
 | OpenRouter | `openrouter/google/gemini-3.1-flash-lite` |
 
-Set `model_list` to override any of them.
+Set `model_list` to use anything else. A model the provider has retired only produces a startup warning; markitai never rewrites your choice.
 
-Claude Agent SDK supported models:
-- Aliases (recommended): `sonnet`, `opus`, `haiku`, `inherit`
-- Full model strings: `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-opus-4-5-20251101`
+Image analysis (`--alt`, `--desc`) needs a vision-capable model. The subscription providers support it through file attachments.
 
-GitHub Copilot SDK supported models:
-- Supports all models available to your Copilot subscription (except o1/o3 reasoning models)
-- Examples: `gpt-5.6`, `claude-sonnet-4.6`, `gemini-3.1-pro-preview`, etc.
-- Availability depends on your Copilot subscription plan
+Common errors:
 
-ChatGPT supported models:
-- `gpt-5.6`, `gpt-5.6-codex`, `codex-mini`, etc.
-
-::: warning Retired Models
-These have been retired by their provider and no longer answer:
-- `gpt-4o`, `gpt-4.1`, `gpt-4.1-mini`, `o4-mini`, `gpt-5`, `gpt-5.1`, `gpt-5.2`
-
-Configuring one only produces a startup warning — markitai never rewrites your model. The warning names the default for the provider you are on (see [Defaults markitai picks for you](#defaults-markitai-picks-for-you)) and carries a retirement date only when litellm records one.
-:::
-
-::: tip Local Providers Support Vision
-Local providers (`claude-agent/`, `copilot/`, `chatgpt/`) support image analysis (`--alt`, `--desc`) via file attachments. Make sure to use a vision-capable model (e.g., `copilot/gpt-5.6`, `chatgpt/gpt-5.6`).
-:::
-
-::: tip Troubleshooting Local Providers
-Common errors and solutions:
-
-| Error | Solution |
-|-------|----------|
-| "SDK not installed" | `uv add markitai[copilot]` or `uv add markitai[claude-agent]` |
-| "CLI not found" | Install and authenticate the CLI tool ([Copilot CLI](https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli), [Claude Code](https://claude.ai/code)) |
-| "Not authenticated" | Run `copilot auth login` or `claude auth login`. Alternatively: set `COPILOT_GITHUB_TOKEN`/`GH_TOKEN`/`GITHUB_TOKEN` for Copilot, or `CLAUDE_CODE_USE_BEDROCK=1`/`CLAUDE_CODE_USE_VERTEX=1`/`CLAUDE_CODE_USE_FOUNDRY=1` for Claude. ChatGPT auto-triggers OAuth on first use. |
+| Error | Fix |
+|-------|-----|
+| "SDK not installed" | Install `markitai[copilot]` or `markitai[claude-agent]` |
+| "CLI not found" | Install the [Copilot CLI](https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli) or [Claude Code](https://claude.ai/code) |
+| "Not authenticated" | Run `markitai auth copilot login` or `markitai auth claude login`. ChatGPT signs in on first use |
 | "Rate limit" | Wait and retry, or check your subscription quota |
-| "Request timeout" | Timeout is adaptive; for very large documents, processing may take longer |
 
-Use `markitai doctor` to check authentication status and get resolution hints.
-:::
+`markitai doctor` reports sign-in status with hints.
 
 ### Custom API Endpoint
 
-Use `api_base` to override a provider's default API endpoint. This value is passed directly to [LiteLLM](https://docs.litellm.ai/) and works with any LiteLLM-supported provider (OpenAI, Anthropic, Gemini, Azure, etc.). Supports `env:VAR_NAME` syntax just like `api_key`:
+`api_base` points a provider at another endpoint: a self-hosted server, a regional proxy or an API gateway. It accepts `env:VAR_NAME` like `api_key`:
 
 ```json
 {
@@ -367,412 +316,170 @@ Use `api_base` to override a provider's default API endpoint. This value is pass
 }
 ```
 
-Examples:
+Two more shapes:
 
 ```json
 // Local Ollama
-{
-  "model": "ollama/llama3.2",
-  "api_base": "http://localhost:11434"
-}
+{ "model": "ollama/llama3.2", "api_base": "http://localhost:11434" }
 
-// Azure OpenAI — "azure/<...>" is your Azure deployment name (an alias you chose in Azure Portal), not a model ID
+// Azure OpenAI: the model is your deployment name, not a model ID
 {
   "model": "azure/your-deployment-name",
   "api_key": "env:AZURE_API_KEY",
   "api_base": "https://your-resource.openai.azure.com",
   "api_version": "2025-02-01-preview"
 }
-
-// DeepSeek
-{
-  "model": "deepseek/deepseek-v4-flash",
-  "api_key": "env:DEEPSEEK_API_KEY",
-  "api_base": "https://api.deepseek.com/v1"
-}
-
-// Any OpenAI-compatible provider
-{
-  "model": "openai/custom-model",
-  "api_key": "env:CUSTOM_API_KEY",
-  "api_base": "https://your-proxy-or-provider.com/v1"
-}
-
-// Reference environment variable
-{
-  "model": "anthropic/claude-sonnet-4-6",
-  "api_key": "env:ANTHROPIC_API_KEY",
-  "api_base": "env:ANTHROPIC_BASE_URL"
-}
 ```
 
-::: tip
-Common use cases include self-hosted inference servers (vLLM, Ollama, LocalAI), regional API proxies, and third-party API gateways.
-:::
-
-::: warning Local Providers and `api_base`
-The `api_base` config field does **not** apply to local providers (`claude-agent/`, `copilot/`, `chatgpt/`). These providers run as CLI subprocesses or use OAuth and manage API endpoints internally:
-
-- **Claude Agent**: Set `ANTHROPIC_BASE_URL` to override the API endpoint. If `ANTHROPIC_API_KEY` is also set, the CLI will use it for direct API access instead of subscription authentication. Other routing options: `CLAUDE_CODE_USE_BEDROCK=1`, `CLAUDE_CODE_USE_VERTEX=1`, `CLAUDE_CODE_USE_FOUNDRY=1`.
-- **GitHub Copilot**: Endpoint is managed by the Copilot CLI internally and cannot be overridden. For token-based auth, set `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN` with a personal access token that has the "Copilot Requests" permission.
-- **ChatGPT**: Uses OpenAI's Responses API endpoint. Authentication handled via LiteLLM's built-in OAuth Device Code Flow.
-:::
+`api_base` does not apply to the subscription providers. Claude Code honours `ANTHROPIC_BASE_URL`; Copilot and ChatGPT manage their endpoints themselves.
 
 ### Vision Models
 
-For image analysis (`--alt`, `--desc`), Markitai automatically routes to vision-capable models. Vision capability is **auto-detected** from litellm by default - no configuration needed for most models.
-
-To explicitly override auto-detection, set `supports_vision`:
+Vision capability is detected automatically from LiteLLM. To override it, set `model_info.supports_vision` on the model entry:
 
 ```json
 {
-  "llm": {
-    "model_list": [
-      {
-        "model_name": "default",
-        "litellm_params": {
-          "model": "gemini/gemini-flash-lite-latest",
-          "api_key": "env:GEMINI_API_KEY"
-        },
-        "model_info": {
-          "supports_vision": true  // Optional: auto-detected if omitted
-        }
-      }
-    ]
-  }
+  "model_name": "default",
+  "litellm_params": { "model": "gemini/gemini-flash-lite-latest", "api_key": "env:GEMINI_API_KEY" },
+  "model_info": { "supports_vision": true }
 }
 ```
 
 ### Model Token Limits
 
-Both `litellm_params` and `model_info` accept optional token-limit overrides:
-
-```json
-{
-  "model_name": "default",
-  "litellm_params": {
-    "model": "gemini/gemini-flash-lite-latest",
-    "api_key": "env:GEMINI_API_KEY",
-    "max_tokens": 8192
-  },
-  "model_info": {
-    "max_tokens": 8192,
-    "max_input_tokens": 1000000
-  }
-}
-```
-
 | Field | Default | Description |
-|-------|---------|--------------|
-| `litellm_params.max_tokens` | `null` | Overrides the max **output** tokens requested per call for this model |
-| `model_info.max_tokens` | `null` | Max output tokens metadata; auto-detected from litellm if omitted |
-| `model_info.max_input_tokens` | `null` | Max input/context tokens metadata; auto-detected from litellm if omitted |
+|-------|---------|-------------|
+| `litellm_params.max_tokens` | `null` | Max output tokens requested per call |
+| `model_info.max_tokens` | `null` | Max output tokens metadata; detected from LiteLLM if omitted |
+| `model_info.max_input_tokens` | `null` | Max context tokens metadata; detected from LiteLLM if omitted |
 
 ### Router Settings
 
-Configure how Markitai routes requests across multiple models:
+`llm.router_settings` and its siblings control how requests are spread over several models and how much one document may consume:
 
-```json
-{
-  "llm": {
-    "router_settings": {
-      "routing_strategy": "simple-shuffle",
-      "num_retries": 2,
-      "timeout": 120,
-      "fallbacks": []
-    },
-    "concurrency": 10,
-    "max_requests_per_document": 50,
-    "max_cost_per_document_usd": 0,
-    "max_vision_pages_per_document": 0
-  }
-}
-```
-
-| Setting | Options | Default | Description |
-|---------|---------|---------|-------------|
-| `routing_strategy` | `simple-shuffle`, `least-busy`, `usage-based-routing`, `latency-based-routing` | `simple-shuffle` | How to select standard models; local providers (`claude-agent/`, `copilot/`, ...) always use weighted random |
-| `num_retries` | ≥0 | 2 | Transport retries per request, run by markitai's own retry loop (LiteLLM-internal retries stay disabled) |
-| `timeout` | seconds | 120 | Request timeout (base value for adaptive calculation) |
-| `fallbacks` | list | `[]` | LiteLLM group fallbacks, e.g. `[{"default": ["backup"]}]`. Requests enter at group `default`; models named otherwise only get traffic via fallback (standard models only). Empty = all models pooled into `default` |
-| `concurrency` | ≥1 | 10 | Max concurrent LLM requests |
-| `max_requests_per_document` | ≥0 | 50 | Circuit breaker: max LLM requests per document (all retries counted). On trip, remaining enhancement is skipped and unenhanced output kept. Raise for very large documents; `0` disables |
-| `max_cost_per_document_usd` | ≥0 | `0` | Circuit breaker: max USD one document may spend. Charged after each answer — a call's price is not knowable before making it — so it bounds what the document goes on to spend, not the call that crosses the line. On trip, remaining enhancement is skipped and unenhanced output kept. `0` disables |
-| `max_vision_pages_per_document` | ≥0 | `0` | Circuit breaker: max page images sent to a vision model for one document. Checked before anything is sent, so an oversized document costs nothing and converts without vision enhancement instead. Also caps the screenshot tiles a screenshot-only URL conversion reads (the first tiles up to the cap). `0` disables |
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `routing_strategy` | `simple-shuffle` | `simple-shuffle`, `least-busy`, `usage-based-routing` or `latency-based-routing`. Subscription providers always use weighted random |
+| `num_retries` | `2` | Retries per request |
+| `timeout` | `120` | Request timeout in seconds |
+| `fallbacks` | `[]` | Group fallbacks, e.g. `[{"default": ["backup"]}]`. Models not in a fallback group only receive traffic through fallback |
+| `concurrency` | `10` | Concurrent LLM requests |
+| `max_requests_per_document` | `50` | Stop enhancing a document after this many requests and keep the plain output. `0` disables |
+| `max_cost_per_document_usd` | `0` | Stop enhancing a document once it has spent this much. `0` disables |
+| `max_vision_pages_per_document` | `0` | Max page images sent to a vision model per document. Oversized documents convert without vision. `0` disables |
 
 #### Model Weight
 
-Each model in `model_list` accepts a `weight` parameter in `litellm_params` to control traffic distribution:
+Each entry in `model_list` accepts `weight` inside `litellm_params`. `1` is normal, `10` is ten times as likely to be picked, `0` disables the model without deleting it. At least one model must have a weight above zero; this is checked at first use, not by `config validate`.
 
 ```json
 {
   "model_name": "default",
-  "litellm_params": {
-    "model": "gemini/gemini-flash-lite-latest",
-    "api_key": "env:GEMINI_API_KEY",
-    "weight": 10
-  }
+  "litellm_params": { "model": "gemini/gemini-flash-lite-latest", "api_key": "env:GEMINI_API_KEY", "weight": 10 }
 }
 ```
-
-| Value | Behavior |
-|-------|----------|
-| `weight: 0` | **Disabled**: model is excluded from routing entirely |
-| `weight: 1` (default) | Normal priority |
-| `weight: 10` | 10x more likely to be selected than weight=1 models |
-
-Set `weight: 0` to temporarily disable a model without removing its configuration. At least one model must have `weight > 0`. This is enforced when the LLM router actually starts (first LLM use), not by `markitai config validate`, so an all-zero-weight config will validate cleanly but fail at first use.
 
 ### Adaptive Timeout
 
-Local providers (`claude-agent/`, `copilot/`, `chatgpt/`) use **adaptive timeout calculation** based on request complexity:
-
-- Base timeout: 60 seconds minimum, 600 seconds maximum
-- Factors: prompt length, image presence/count, expected output tokens
-- Formula:
-  1. `timeout = 60 + (prompt_chars / 500)`
-  2. If expected output tokens provided: add `tokens / 4`
-  3. If images: `timeout *= 1.5` (this also scales the output-token term above), then add `(extra_images - 1) * 10s` for multiple images
-  4. Clamp to [60, 600] seconds
-
-This prevents timeouts on large documents while keeping short requests responsive.
+The subscription providers scale the request timeout with prompt length, image count and expected output, between 60 and 600 seconds, so large documents do not time out and short requests stay responsive.
 
 ### Prompt Caching (Claude Agent)
 
-Claude Agent provider automatically enables **prompt caching** for system prompts of 4096 characters (~4KB) or more. This reduces API costs by caching frequently-used system prompt prefixes.
-
-::: tip
-Prompt caching is transparent - no configuration needed. View cache statistics with `markitai cache stats --verbose`.
-:::
+Claude Code caches system prompts of 4 KB or more automatically. Nothing to configure; `markitai cache stats --verbose` shows the numbers.
 
 ## Image Configuration
 
-Control how images are processed and compressed:
-
-```json
-{
-  "image": {
-    "alt_enabled": false,
-    "desc_enabled": false,
-    "compress": true,
-    "quality": 75,
-    "format": "jpeg",
-    "max_width": 1920,
-    "max_height": 99999,
-    "filter": {
-      "min_width": 50,
-      "min_height": 50,
-      "min_area": 5000,
-      "deduplicate": true
-    }
-  }
-}
-```
-
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `alt_enabled` | `false` | Generate alt text via LLM |
-| `desc_enabled` | `false` | Generate description files |
-| `compress` | `true` | Compress images |
-| `quality` | `75` | JPEG/WebP quality (1-100) |
-| `format` | `jpeg` | Output format: `jpeg`, `png`, `webp` |
+| `alt_enabled` | `false` | Generate alt text with the LLM |
+| `desc_enabled` | `false` | Generate image descriptions |
+| `compress` | `true` | Compress extracted images |
+| `quality` | `75` | JPEG/WebP quality (1–100) |
+| `format` | `jpeg` | `jpeg`, `png` or `webp` |
 | `max_width` | `1920` | Max width in pixels |
-| `max_height` | `99999` | Max height in pixels (effectively unlimited) |
-| `filter.min_width` | `50` | Skip images smaller than this |
-| `filter.min_height` | `50` | Skip images shorter than this |
-| `filter.min_area` | `5000` | Skip images with area below this |
-| `filter.deduplicate` | `true` | Remove duplicate images |
-| `stdout_persist` | `true` | Save piped images to persistent asset store |
-| `stdout_persist_dir` | `~/.markitai/assets` | Directory for persistent image storage |
+| `max_height` | `99999` | Max height in pixels |
+| `filter.min_width` | `50` | Skip narrower images |
+| `filter.min_height` | `50` | Skip shorter images |
+| `filter.min_area` | `5000` | Skip smaller images |
+| `filter.deduplicate` | `true` | Drop duplicate images |
+| `stdout_persist` | `true` | In stdout mode, keep images in a persistent store |
+| `stdout_persist_dir` | `~/.markitai/assets` | Where that store lives |
 | `stdout_fetch_external` | `false` | Download external image URLs in stdout mode |
 
 ## Screenshot Configuration
 
-Enable screenshot capture for documents and URLs:
-
-```json
-{
-  "screenshot": {
-    "enabled": false,
-    "screenshot_only": false,
-    "viewport_width": 1920,
-    "viewport_height": 1080,
-    "quality": 75,
-    "max_height": 10000,
-    "tile_height": 2000
-  }
-}
-```
-
-When enabled (`--screenshot` or `--preset rich`):
-
-- **PDF/PPTX**: Renders each page/slide as a JPEG image
-- **URLs**: Captures full-page screenshots using Playwright
+Screenshots render PDF pages and PPTX slides as JPEG, and capture full-page images of URLs with Playwright. They land in `.markitai/screenshots/`.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `enabled` | `false` | Enable screenshot capture |
-| `screenshot_only` | `false` | Capture screenshots only, skip content extraction (see `--screenshot-only` CLI flag) |
-| `viewport_width` | `1920` | Browser viewport width for URL screenshots |
-| `viewport_height` | `1080` | Browser viewport height for URL screenshots |
-| `quality` | `75` | JPEG compression quality (1-100) |
-| `max_height` | `10000` | Legacy single-file height cap; used when `tile_height` is 0 |
-| `tile_height` | `2000` | Taller URL screenshots are split into vertical tiles of at most this height (full width), each VLM-readable, instead of being downscaled into one unreadable image |
-
-Screenshots are saved to the `.markitai/screenshots/` subdirectory within the output directory.
-
-::: tip
-For URLs, enabling `--screenshot` automatically upgrades the fetch strategy to `playwright` if needed. This ensures the page is fully rendered before capturing.
-:::
+| `enabled` | `false` | Same as `--screenshot` |
+| `screenshot_only` | `false` | Same as `--screenshot-only` |
+| `viewport_width` | `1920` | Browser viewport width for URLs |
+| `viewport_height` | `1080` | Browser viewport height for URLs |
+| `quality` | `75` | JPEG quality (1–100) |
+| `tile_height` | `2000` | Tall URL screenshots are cut into tiles of this height so a vision model can read them |
+| `max_height` | `10000` | Height cap used only when `tile_height` is `0` |
 
 ## Presets
 
-Markitai includes three built-in presets (`rich`, `standard`, `minimal`). You can also define **custom presets** in the config file:
+Three presets are built in (`minimal`, `standard`, `rich`). Define your own under `presets`:
 
 ```json
 {
   "presets": {
-    "my-preset": {
-      "llm": true,
-      "ocr": false,
-      "alt": true,
-      "desc": false,
-      "screenshot": true
-    }
+    "my-preset": { "llm": true, "ocr": false, "alt": true, "desc": false, "screenshot": true }
   }
 }
 ```
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `llm` | boolean | `false` | Enable LLM enhancement |
-| `ocr` | boolean | `false` | Enable OCR for scanned documents |
-| `alt` | boolean | `false` | Generate image alt text |
-| `desc` | boolean | `false` | Generate image descriptions |
-| `screenshot` | boolean | `false` | Enable screenshot capture |
-
-Use custom presets via the `--preset` CLI flag:
-
-```bash
-markitai document.pdf --preset my-preset
-```
+Each of the five keys defaults to `false`. Use it with `markitai document.pdf --preset my-preset`.
 
 ## OCR Configuration
 
-Configure Optical Character Recognition for scanned documents. Markitai uses [RapidOCR](https://github.com/RapidAI/RapidOCR) (ONNX Runtime + OpenCV) for OCR processing.
-
-```json
-{
-  "ocr": {
-    "enabled": false,
-    "lang": "en",
-    "per_page_routing": true
-  }
-}
-```
-
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `enabled` | `false` | Enable OCR for PDF and standalone images |
-| `lang` | `en` | RapidOCR language code |
-| `per_page_routing` | `true` | With `--ocr`, keep the native text layer for pages that don't look scanned/garbled and OCR only the remaining pages. Disable to OCR every page |
+| `enabled` | `false` | Same as `--ocr` |
+| `lang` | `en` | Language: `en`, `zh`, `ja`, `ko`, `ar`, `th` or `latin` |
+| `per_page_routing` | `true` | Keep the native text layer on pages that look fine and OCR only the rest. `false` OCRs every page |
 
-Supported language codes:
-- `en` - English
-- `zh` / `ch` - Chinese (Simplified)
-- `ja` / `japan` - Japanese
-- `ko` / `korean` - Korean
-- `ar` / `arabic` - Arabic
-- `th` - Thai
-- `latin` - Latin languages
-
-::: tip
-RapidOCR is **not** part of the base install — it ships in the `ocr` extra, so `--ocr` needs one extra step:
+Local OCR uses [RapidOCR](https://github.com/RapidAI/RapidOCR) from the `ocr` extra:
 
 ```bash
-uv tool install "markitai[ocr]" --force   # or: pipx install "markitai[ocr]" --force
+uv tool install "markitai[ocr]" --force
 ```
 
-Without it, `--ocr` reports the missing extra instead of silently returning an image placeholder. With a vision-capable model configured, `--ocr --llm` needs no extra: the model reads the page images directly (VLM-OCR), and `MARKITAI_NO_VLM_OCR=1` forces the local RapidOCR path.
-:::
+With `--ocr --llm` and a vision-capable model, no extra is needed: the model reads the page images. `MARKITAI_NO_VLM_OCR=1` forces the local path.
 
 ## Office Configuration
 
-Control the macOS MS Office fallback used when LibreOffice is not installed.
-
-```json
-{
-  "office": {
-    "macos_fallback": true
-  }
-}
-```
-
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `macos_fallback` | `true` | On macOS without LibreOffice, drive an installed Microsoft PowerPoint via AppleScript for PPTX slide rendering |
+| `macos_fallback` | `true` | On a Mac without LibreOffice, drive an installed PowerPoint to render PPTX slides |
 
-::: tip
-The first conversion triggers a one-time macOS Automation consent dialog per app. Disable this fallback in headless sessions (SSH, CI) where the dialog cannot be answered.
-:::
+The first render pops a one-time macOS permission dialog. Set this to `false` on headless Macs (SSH, CI), where nobody can answer it.
 
 ## Batch Configuration
 
-Control parallel processing:
-
-```json
-{
-  "batch": {
-    "concurrency": 10,
-    "url_concurrency": 5,
-    "scan_max_depth": 5,
-    "scan_max_files": 10000,
-    "state_flush_interval_seconds": 10,
-    "heavy_task_limit": 0
-  }
-}
-```
-
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `concurrency` | `10` | Max concurrent file conversions |
-| `url_concurrency` | `5` | Max concurrent URL fetches (separate from files) |
-| `scan_max_depth` | `5` | Max directory depth to scan |
-| `scan_max_files` | `10000` | Max files to process in one run |
-| `state_flush_interval_seconds` | `10` | Interval for persisting batch state to disk |
-| `heavy_task_limit` | `0` | Limit for CPU-intensive tasks (0 = auto-detect based on RAM) |
-
-::: tip
-URL fetching uses a separate concurrency pool because URLs can have high latency (e.g., browser-rendered pages). This prevents slow URLs from blocking local file processing.
-:::
+| `concurrency` | `10` | Concurrent file conversions |
+| `url_concurrency` | `5` | Concurrent URL fetches, separate so slow pages never block files |
+| `scan_max_depth` | `5` | Directory scan depth |
+| `scan_max_files` | `10000` | Max files per run |
+| `state_flush_interval_seconds` | `10` | How often batch state is saved for `--resume` |
+| `heavy_task_limit` | `0` | Cap on CPU-heavy tasks; `0` picks one from available RAM |
 
 ## URL Fetch Configuration
-
-Configure how URLs are fetched:
 
 ```json
 {
   "fetch": {
     "strategy": "auto",
     "remote_consent": "always",
-    "playwright": {
-      "timeout": 30000,
-      "wait_for": "domcontentloaded",
-      "extra_wait_ms": 3000
-    },
-    "jina": {
-      "api_key": "env:JINA_API_KEY",
-      "timeout": 30,
-      "rpm": 20,
-      "no_cache": false,
-      "target_selector": null,
-      "wait_for_selector": null
-    },
-    "cloudflare": {
-      "api_token": "env:CLOUDFLARE_API_TOKEN",
-      "account_id": "env:CLOUDFLARE_ACCOUNT_ID"
-    },
-    "fallback_patterns": ["twitter.com", "x.com", "instagram.com", "facebook.com", "linkedin.com", "threads.net"]
+    "playwright": { "timeout": 30000, "wait_for": "domcontentloaded", "extra_wait_ms": 3000 },
+    "jina": { "api_key": "env:JINA_API_KEY" },
+    "cloudflare": { "api_token": "env:CLOUDFLARE_API_TOKEN", "account_id": "env:CLOUDFLARE_ACCOUNT_ID" },
+    "fallback_patterns": ["x.com", "twitter.com", "instagram.com", "facebook.com", "linkedin.com", "threads.net"]
   }
 }
 ```
@@ -781,344 +488,171 @@ Configure how URLs are fetched:
 
 | Strategy | Description |
 |----------|-------------|
-| `auto` | Auto-detect: local-first priority order (static → playwright → defuddle → jina → cloudflare); known SPA/JS-heavy domains use playwright → defuddle → jina → cloudflare → static instead. See [Fetch Policy Guide](/guide/fetch-policy) |
-| `static` | Use static HTTP fetch with native webextract (fast, no JS) |
-| `defuddle` | Use Defuddle API for clean content extraction (free, no auth) |
-| `playwright` | Use Playwright for JS-rendered pages (SPA support) |
-| `jina` | Use Jina Reader API |
-| `cloudflare` | Use Cloudflare Browser Rendering `/content` API (rendered HTML, extracted locally) |
+| `auto` | Local first: static, then Playwright, then Defuddle, Jina, Cloudflare. Known JavaScript-heavy domains start with Playwright. See [Fetch Policy](/guide/fetch-policy) |
+| `static` | Plain HTTP with the built-in extractor. Fast, no JavaScript |
+| `playwright` | Browser rendering for JavaScript pages |
+| `defuddle` | Defuddle API, free, no key |
+| `jina` | Jina Reader API |
+| `cloudflare` | Cloudflare Browser Rendering; the rendered HTML is extracted locally |
 
 ### Remote Fetch Consent
 
-For public URLs, `auto` may fall back to a remote extraction service without asking. Local strategies still run first on standard domains. When a process reaches its first remote attempt, Markitai writes a disclosure to stderr before sending the requested URL to the next service in the chain. The notice names the complete service set covered by the process-wide decision: defuddle.md, Jina, Cloudflare, FxTwitter, and Twitter oEmbed. Services are tried one at a time; the URL is not broadcast to all of them.
-
-For public X/Twitter status or article URLs, Playwright may try FxTwitter and then Twitter oEmbed after local DOM extraction fails. This enrichment shares the *same* process-wide consent decision as every other remote service: under `ask` it can raise the one shared prompt itself, reuses a decision already made in the run, and is skipped when the run cannot prompt. Both `fetch.remote_consent=never` and `MARKITAI_NO_REMOTE_FETCH=1` disable it.
-
-Private, local, intranet, and credential-bearing URLs never use remote extraction, even when a remote strategy is selected explicitly. Credential-bearing includes URL userinfo and sensitive query/fragment parameters such as tokens, signatures, credentials, passwords, API keys, and authorization codes.
-
-In the `auto` policy chain, domains matched by `fetch.policy.local_only_patterns` or `NO_PROXY` (when `inherit_no_proxy` is enabled) also stay local. For an otherwise public URL, explicitly passing a non-`auto` remote `-s` flag is an intentional override of those pattern-based rules. A remote `fetch.strategy` set only in config remains governed by `fetch.remote_consent` and emits the same first-use disclosure.
-
 | Setting | Options | Default | Description |
 |---------|---------|---------|-------------|
-| `fetch.remote_consent` | `ask`, `always`, `never` | `always` | `always`: allow remote fallback for public URLs without asking and disclose the first remote attempt on stderr; `ask`: prompt once per process on an interactive TTY, otherwise skip every remote extraction service, X/Twitter enrichment included; `never`: local strategies only |
+| `fetch.remote_consent` | `always`, `ask`, `never` | `always` | `always`: fall back to remote services for public URLs and print a notice on stderr before the first attempt. `ask`: prompt once per process on a terminal, skip every remote service otherwise. `never`: local strategies only |
 
-`MARKITAI_NO_REMOTE_FETCH=1` (or `true`/`yes`) is the hard opt-out: it blocks remote extraction even when `-s defuddle`, `-s jina`, or `-s cloudflare` is passed. Without that environment override, explicitly passing one of those CLI flags opts into that service for the run and can override `fetch.remote_consent=never` plus `local_only_patterns`/`NO_PROXY` for an otherwise public URL. The private/local/credential-bearing URL safeguard still applies.
+Private, intranet and credential-bearing URLs never go to a remote service, whatever this is set to. Domains in `fetch.policy.local_only_patterns` and `NO_PROXY` stay local in the `auto` chain. An explicit `-s defuddle`, `-s jina` or `-s cloudflare` overrides `never` and the pattern rules for a public URL; `MARKITAI_NO_REMOTE_FETCH=1` blocks even that.
+
+The X/Twitter enrichment path (FxTwitter, Twitter oEmbed) follows the same consent decision as every other remote service.
 
 ### Playwright Settings
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `timeout` | `30000` | Page load timeout (ms) |
-| `wait_for` | `domcontentloaded` | Wait condition: `load`, `domcontentloaded`, `networkidle` |
-| `extra_wait_ms` | `3000` | Extra wait time for JS rendering |
-| `session_mode` | `isolated` | Session mode: `isolated` (new context per request), `domain_persistent` (reuse context per domain) |
-| `session_ttl_seconds` | `600` | TTL for persistent sessions in seconds |
-| `wait_for_selector` | `null` | CSS selector to wait for before extraction |
-| `cookies` | `null` | Cookies to set: `[{name, value, domain, path}]` |
-| `reject_resource_patterns` | `null` | Block resources matching patterns: `["**/*.css"]` |
-| `extra_http_headers` | `null` | Additional HTTP headers: `{"Accept-Language": "zh-CN"}` |
-| `user_agent` | `null` | Custom User-Agent string |
-| `http_credentials` | `null` | HTTP auth credentials: `{username, password}` |
+| `timeout` | `30000` | Page load timeout in ms |
+| `wait_for` | `domcontentloaded` | `load`, `domcontentloaded` or `networkidle` |
+| `extra_wait_ms` | `3000` | Extra wait for JavaScript after the load event |
+| `session_mode` | `isolated` | `isolated` (fresh context per request) or `domain_persistent` (reuse per domain) |
+| `session_ttl_seconds` | `600` | Lifetime of a persistent session |
+| `wait_for_selector` | `null` | CSS selector to wait for |
+| `cookies` | `null` | `[{name, value, domain, path}]` |
+| `reject_resource_patterns` | `null` | Block matching requests, e.g. `["**/*.css"]` |
+| `extra_http_headers` | `null` | `{"Accept-Language": "zh-CN"}` |
+| `user_agent` | `null` | Custom User-Agent |
+| `http_credentials` | `null` | `{username, password}` for HTTP auth |
 
 ### Jina Settings
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `api_key` | `null` | Jina Reader API key (supports `env:` syntax) |
+| `api_key` | `null` | Jina Reader API key (`env:` works) |
 | `timeout` | `30` | Request timeout in seconds |
-| `rpm` | `20` | Rate limit in requests per minute |
-| `no_cache` | `false` | Disable Jina's server-side cache |
-| `target_selector` | `null` | CSS selector to target specific page content |
-| `wait_for_selector` | `null` | CSS selector to wait for before extraction |
+| `rpm` | `20` | Requests per minute |
+| `no_cache` | `false` | Bypass Jina's server-side cache |
+| `target_selector` | `null` | CSS selector for the content to extract |
+| `wait_for_selector` | `null` | CSS selector to wait for |
 
 ### Defuddle Settings
 
-[Defuddle](https://defuddle.md) extracts clean article content from web pages, removing clutter like ads, sidebars, and navigation. Returns Markdown with rich YAML frontmatter (title, author, published, description, word_count).
+[Defuddle](https://defuddle.md) extracts clean article content and returns Markdown with rich frontmatter. It is free and needs no key.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `timeout` | `30` | Request timeout in seconds |
-| `rpm` | `20` | Rate limit in requests per minute |
-
-```json
-{
-  "fetch": {
-    "defuddle": {
-      "timeout": 30,
-      "rpm": 20
-    }
-  }
-}
-```
-
-::: tip
-Defuddle is free and requires no API key or authentication. It's a good default for article-heavy websites.
-:::
+| `rpm` | `20` | Requests per minute |
 
 ### Cloudflare Settings
 
-Cloudflare provides two capabilities, selected independently:
-
-1. **Browser Rendering** (`-s cloudflare`) — the `/content` API fetches rendered HTML, which is then extracted locally through the same native webextract pipeline as every other strategy — for URL-to-markdown conversion
-2. **Workers AI toMarkdown** (`-b cloudflare`) for file-to-markdown conversion (PDF, Office, CSV, XML, images)
-
-```json
-{
-  "fetch": {
-    "cloudflare": {
-      "api_token": "env:CLOUDFLARE_API_TOKEN",
-      "account_id": "env:CLOUDFLARE_ACCOUNT_ID",
-      "timeout": 30000,
-      "wait_until": "networkidle0",
-      "cache_ttl": 0,
-      "reject_resource_patterns": null,
-      "user_agent": null,
-      "cookies": null,
-      "wait_for_selector": null,
-      "http_credentials": null,
-      "convert_enabled": false
-    }
-  }
-}
-```
+Cloudflare offers two things, chosen independently: **Browser Rendering** (`-s cloudflare`) fetches rendered HTML for URLs, and **Workers AI toMarkdown** (`-b cloudflare`) converts files.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `api_token` | `null` | Cloudflare API token (supports `env:` syntax) |
-| `account_id` | `null` | Cloudflare account ID (supports `env:` syntax) |
-| `timeout` | `30000` | Browser Rendering timeout (ms) |
-| `wait_until` | `networkidle0` | Wait event for BR: `load`, `domcontentloaded`, `networkidle0` |
-| `cache_ttl` | `0` | BR cache TTL in seconds (0 = no cache) |
-| `reject_resource_patterns` | `null` | Block resources matching regex patterns: `["/\\.css$/"]` |
-| `user_agent` | `null` | Custom User-Agent string for Browser Rendering |
-| `cookies` | `null` | Cookies to set before navigation: `[{"name": "k", "value": "v", "url": "..."}]` |
-| `wait_for_selector` | `null` | CSS selector to wait for after page load (e.g. `"#content"`) |
-| `http_credentials` | `null` | HTTP Basic Auth: `{"username": "u", "password": "p"}` |
-| `convert_enabled` | `false` | Enable Workers AI toMarkdown for file conversion |
+| `api_token` | `null` | API token (`env:` works) |
+| `account_id` | `null` | Account ID (`env:` works) |
+| `timeout` | `30000` | Browser Rendering timeout in ms |
+| `wait_until` | `networkidle0` | `load`, `domcontentloaded` or `networkidle0` |
+| `cache_ttl` | `0` | Browser Rendering cache TTL in seconds |
+| `reject_resource_patterns` | `null` | Block matching requests, e.g. `["/\\.css$/"]` |
+| `user_agent` | `null` | Custom User-Agent |
+| `cookies` | `null` | `[{"name": "k", "value": "v", "url": "..."}]` |
+| `wait_for_selector` | `null` | CSS selector to wait for |
+| `http_credentials` | `null` | `{"username": "u", "password": "p"}` |
+| `convert_enabled` | `false` | Enable Workers AI toMarkdown for files |
 
-::: tip
-Browser Rendering is available on the Free plan. Workers AI toMarkdown is free for PDF/Office/CSV/XML conversions; image conversion uses Neurons quota.
-:::
+To get credentials:
 
-**How to obtain credentials:**
-
-1. **Account ID**: Log in to the [Cloudflare Dashboard](https://dash.cloudflare.com/). The Account ID is shown in the URL (`dash.cloudflare.com/<account_id>/...`) or on the right sidebar of any zone's **Overview** page.
-
-2. **API Token**: Go to [My Profile → API Tokens](https://dash.cloudflare.com/profile/api-tokens) and click **Create Token**. Use the *Custom token* template with the following permissions:
-
-   | Permission | Access | Required for |
-   |------------|--------|--------------|
-   | Account / Cloudflare Workers AI | Read | `toMarkdown` file conversion |
-   | Account / Browser Rendering | Edit | `/content` URL rendering |
-
-   Set **Account Resources** to your target account, then create and copy the token.
-
-3. **Enable Browser Rendering**: In your Cloudflare dashboard, go to **Workers & Pages → Browser Rendering** and follow the prompts to enable it (available on Free plan).
+1. **Account ID**: shown in the [dashboard](https://dash.cloudflare.com/) URL, `dash.cloudflare.com/<account_id>/...`.
+2. **API token**: [My Profile → API Tokens](https://dash.cloudflare.com/profile/api-tokens), *Create Token*, custom token with *Browser Rendering: Edit* and *Workers AI: Read* on your account.
+3. **Enable Browser Rendering** under *Workers & Pages → Browser Rendering*. It is available on the Free plan.
 
 ```bash
 export CLOUDFLARE_API_TOKEN="your-api-token"
 export CLOUDFLARE_ACCOUNT_ID="your-account-id"
 ```
 
-::: warning Limitations & Caveats
-- **Concurrency**: Free plan allows **2 concurrent browser instances**. Markitai automatically serializes CF BR requests and retries on 429 rate-limit errors with exponential backoff, so high `url_concurrency` values are safe but won't speed up CF BR fetching.
-- **Site compatibility**: Sites with aggressive anti-bot protection (e.g. x.com, twitter.com) may return 400 errors via CF BR. For these sites, use `-s playwright` or `-s jina` instead.
-- **File conversion quality**: For formats that have a local converter (PDF, DOCX, XLSX, etc.), CF Workers AI `toMarkdown` generally produces **lower quality** output than local converters (e.g. less accurate formatting, no image extraction). `-b cloudflare` will warn when a better local converter is available. CF `toMarkdown` is most useful for formats the base install cannot convert (`.numbers`, for example).
-:::
+The Free plan allows two concurrent browser sessions; markitai serializes its requests and retries on rate limits. Sites with aggressive anti-bot protection (x.com, for example) may fail through Cloudflare; use `-s playwright` or `-s jina` there. For files, the native converters usually give better results; toMarkdown is most useful for formats markitai cannot convert locally.
 
 ### Fetch Policy, Domain Profiles and Fallback Patterns {#fetch-policy-domain-profiles}
 
-The policy engine orders fetch strategies per domain and records which domains need browser rendering. Its option tables, domain-profile fields, built-in profiles and `fallback_patterns` list live in one place — the [Fetch Policy guide](/guide/fetch-policy) — so they are documented once instead of drifting between two pages.
+The policy engine orders strategies per domain and remembers which domains need a browser. Its options, the domain-profile fields and the built-in profiles are documented in the [Fetch Policy guide](/guide/fetch-policy#configuration).
 
-The configuration shape, for reference:
-
-```json
-{
-  "fetch": {
-    "policy": {
-      "enabled": true,
-      "max_strategy_hops": 5
-    },
-    "domain_profiles": {
-      "x.com": {
-        "wait_for_selector": "[data-testid=tweetText]",
-        "wait_for": "domcontentloaded",
-        "extra_wait_ms": 1200,
-        "prefer_strategy": "playwright"
-      }
-    },
-    "fallback_patterns": ["x.com", "twitter.com", "instagram.com", "facebook.com", "linkedin.com", "threads.net"]
-  }
-}
-```
-
-Two rules are worth repeating here because they surprise people: a custom `domain_profiles` entry **replaces** the built-in profile for that domain rather than merging field-by-field, and `auto` treats `fallback_patterns` domains as SPA/JS-heavy, promoting browser rendering. Everything else — defaults, types, and the per-domain fields — is in the [Fetch Policy guide](/guide/fetch-policy#configuration).
+Two rules surprise people: a custom `domain_profiles` entry replaces the built-in profile for that domain instead of merging with it, and `auto` treats every domain in `fallback_patterns` as JavaScript-heavy and starts with the browser.
 
 ### Proxies
 
-Fetching honours `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` first (with `NO_PROXY` as the bypass list). When none is set, the OS proxy is read: Windows internet settings, macOS network settings, and on Linux the manual HTTP proxy of the active GNOME/Unity or KDE desktop, including its bypass list. PAC/WPAD, SOCKS-only and authenticated desktop settings are not imported — set the environment variables instead, as on headless machines.
+`HTTPS_PROXY`, `HTTP_PROXY` and `ALL_PROXY` are honoured, with `NO_PROXY` as the bypass list. When none is set, the operating system proxy is used: Windows internet settings, macOS network settings, and the manual HTTP proxy of a GNOME or KDE desktop on Linux. PAC, SOCKS-only and authenticated desktop proxies are not imported; set the environment variables instead.
 
 ## Cache Configuration
 
-Markitai uses a global cache stored at `~/.markitai/cache.db`.
-
-```json
-{
-  "cache": {
-    "enabled": true,
-    "no_cache_patterns": [],
-    "max_size_bytes": 536870912,
-    "global_dir": "~/.markitai"
-  }
-}
-```
+LLM results are cached in `~/.markitai/cache.db`, so converting the same document again is free.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `enabled` | `true` | Enable LLM result caching |
-| `no_cache` | `false` | Skip reading cache but still write (like `--no-cache` flag) |
-| `no_cache_patterns` | `[]` | Glob patterns to skip cache |
-| `max_size_bytes` | `536870912` (512MB) | Max cache size |
-| `global_dir` | `~/.markitai` | Global cache directory |
-
-### Cache Commands
+| `enabled` | `true` | Cache LLM results |
+| `no_cache` | `false` | Skip reads but keep writing (like `--no-cache`) |
+| `no_cache_patterns` | `[]` | Globs that bypass the cache |
+| `max_size_bytes` | `536870912` | Max cache size (512 MB) |
+| `global_dir` | `~/.markitai` | Cache directory |
 
 ```bash
-# View cache statistics
-markitai cache stats
-
-# View detailed statistics (entries, by model)
-markitai cache stats --verbose
-
-# View with limit
-markitai cache stats --verbose --limit 50
-
-# Clear cache
+markitai cache stats --verbose         # what is cached, by model
 markitai cache clear
-markitai cache clear -y  # Skip confirmation
-```
-
-### Disable Cache
-
-```bash
-# Disable for entire run
-markitai document.pdf --no-cache
-
-# Disable for specific files/patterns
+markitai document.pdf --no-cache       # bypass for one run
 markitai ./docs --no-cache-for "*.pdf"
-markitai ./docs --no-cache-for "file1.pdf,reports/**"
 ```
 
 ## Output Configuration
 
-Control output file handling:
-
-```json
-{
-  "output": {
-    "on_conflict": "rename"
-  }
-}
-```
-
 | Setting | Options | Default | Description |
 |---------|---------|---------|-------------|
-| `dir` | - | `null` | Output directory |
-| `on_conflict` | `rename`, `overwrite`, `skip` | `rename` | How to handle existing files |
-| `allow_symlinks` | - | `false` | Allow symlinks in output paths |
-| `report` | `true`, `false`, `null` | `null` | Write a JSON conversion report. `null` (default) writes one for batch/URL-batch runs only; `true`/`false` force it on/off for every run |
-| `profile` | `rag`, `obsidian`, `okf`, `null` | `null` | [Output profile](./output-profiles.md) shaping results for a downstream consumer. `null` keeps output unchanged |
-| `wikilinks` | `true`, `false` | `false` | With the `obsidian` profile, rewrite local image refs to wikilinks (`![[assets/x.png]]`) |
+| `dir` | — | `null` | Output directory |
+| `on_conflict` | `rename`, `overwrite`, `skip` | `rename` | What to do when the output file exists |
+| `allow_symlinks` | — | `false` | Allow symlinks in output paths |
+| `report` | `true`, `false`, `null` | `null` | Write a JSON report. `null` writes one for batch runs only |
+| `profile` | `rag`, `obsidian`, `okf`, `null` | `null` | [Output profile](./output-profiles.md) |
+| `wikilinks` | `true`, `false` | `false` | With `obsidian`, write image links as `![[assets/x.png]]` |
 
 ## Log Configuration
 
-Configure logging behavior:
-
-```json
-{
-  "log": {
-    "level": "INFO",
-    "format": "text",
-    "dir": null,
-    "rotation": "10 MB",
-    "retention": "7 days"
-  }
-}
-```
+File logging starts when `dir` is set.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `level` | `INFO` | Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
-| `format` | `text` | Log format: `text` (human-readable) or `json` (structured) |
-| `dir` | `null` | Log file directory (auto-detected if not set) |
-| `rotation` | `10 MB` | Rotate when file exceeds this size |
-| `retention` | `7 days` | Delete logs older than this |
+| `level` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL` |
+| `format` | `text` | `text` or `json` |
+| `dir` | `null` | Log directory |
+| `rotation` | `10 MB` | Rotate when a file exceeds this size |
+| `retention` | `7 days` | Delete older logs |
 
 ## Security Configuration
 
-Control PDF hidden-text handling. This is a prompt-injection vector for LLM pipelines (invisible text such as white-on-white, near-zero-size, zero-opacity, or off-page content that would otherwise be silently included in the extracted markdown):
-
-```json
-{
-  "security": {
-    "pdf_sanitize": "warn"
-  }
-}
-```
+PDFs can carry invisible text (white on white, zero size, off page) that would silently end up in the Markdown and in any LLM prompt built from it.
 
 | Setting | Options | Default | Description |
 |---------|---------|---------|-------------|
-| `pdf_sanitize` | `off`, `warn`, `remove` | `warn` | `warn` logs a consolidated advisory naming affected pages; `remove` also strips the matched hidden text from the output; `off` disables detection |
+| `pdf_sanitize` | `off`, `warn`, `remove` | `warn` | `warn` logs which pages carry hidden text, `remove` also strips it, `off` skips the check |
 
 ## Custom Prompts
 
-Customize LLM prompts for different tasks. Each prompt is split into **system** (role definition) and **user** (content template) parts:
+Every LLM task has a system prompt (role and rules) and a user prompt (the content template). Override either by dropping a Markdown file into the prompts directory, or by pointing a setting at a file:
+
+```text
+~/.markitai/prompts/
+├── cleaner_system.md            # document cleaning
+├── cleaner_user.md
+├── image_caption_system.md      # alt text
+├── image_description_system.md  # image descriptions
+├── document_process_system.md   # document processing
+└── url_enhance_system.md        # URL enhancement
+```
 
 ```json
 {
   "prompts": {
     "dir": "~/.markitai/prompts",
-    "cleaner_system": null,
-    "cleaner_user": null,
-    "image_caption_system": null,
-    "image_caption_user": null,
-    "image_description_system": null,
-    "image_description_user": null,
-    "image_analysis_system": null,
-    "image_analysis_user": null,
-    "document_process_system": null,
-    "document_process_user": null,
-    "document_vision_system": null,
-    "document_vision_user": null,
-    "url_enhance_system": null,
-    "url_enhance_user": null
+    "cleaner_system": "/path/to/my-cleaner-system.md"
   }
 }
 ```
 
-Create custom prompt files in the prompts directory:
-
-```text
-~/.markitai/prompts/
-├── cleaner_system.md            # Document cleaning role & rules
-├── cleaner_user.md              # Document cleaning content template
-├── image_caption_system.md      # Alt text generation role
-├── image_caption_user.md        # Alt text content template
-├── document_process_system.md   # Document processing role
-└── url_enhance_system.md        # URL enhancement role
-```
-
-Set a specific prompt file path:
-
-```json
-{
-  "prompts": {
-    "cleaner_system": "/path/to/my-cleaner-system.md",
-    "cleaner_user": "/path/to/my-cleaner-user.md"
-  }
-}
-```
-
-::: tip
-The system/user split prevents LLM from accidentally including prompt instructions in its output. System prompts define the role and rules, while user prompts contain the actual content to process.
-:::
+The available keys are `cleaner`, `image_caption`, `image_description`, `image_analysis`, `document_process`, `document_vision` and `url_enhance`, each with a `_system` and a `_user` variant.

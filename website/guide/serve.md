@@ -1,105 +1,102 @@
 # Web Workspace
 
-`markitai serve` starts a local web UI on top of the conversion core: upload files or folders, submit URLs, watch live progress, preview and download results, configure LLM providers, and revisit seven days of conversion history — all from a bilingual (EN/中文), accessible interface that also works on phones and narrow windows. Use it when you prefer a browser over the command line, want to compare base and LLM-enhanced output side by side, or prefer to manage LLM providers visually.
+`markitai serve` opens a local web page for converting files and URLs. Drop in files, paste links, watch progress, preview and download the results. It works in English and Chinese, on desktop and on a phone.
 
-Everything runs on your machine: jobs and history live on disk, and nothing leaves the host except the fetch strategies, remote file backends and LLM providers you configure.
+Everything runs on your machine. Jobs and history live on disk, and nothing leaves the host except what you send to the fetch strategies and LLM providers you configure.
 
 ![The markitai web workspace: a composer card with a URL field, a Convert button, and Options, CLI, and Upload toggles.](/workbench.png){.light-only}
 ![The markitai web workspace: a composer card with a URL field, a Convert button, and Options, CLI, and Upload toggles.](/workbench.dark.png){.dark-only}
 
-Every conversion option lives behind **Options** — so the default screen asks nothing. The composer is one card: the URL field, and an action row with Options, file upload and Convert (inline on desktop; on phones the URL area sits above the row). The equivalent CLI command appears when Options is open, or when you press the CLI button beside it. Language and theme share the Appearance menu in the header.
-
-The panel is grouped rather than listed: the preset leads, **Enhance** collects LLM, OCR and image analysis, **Output** holds the profile, and an **Advanced** section folds in the content source, URL/file fetch selectors and the cache and compression toggles — it opens by itself when one of them is already non-default.
-
 ## Starting the Server
 
-The server requires the `serve` extra (FastAPI + uvicorn):
+Install the `serve` extra, then start it:
 
 ```bash
 uv tool install "markitai[serve]" --force
 markitai serve
 ```
 
-It listens on `http://127.0.0.1:3600` and opens your browser automatically once startup completes.
+The workspace opens in your browser at `http://127.0.0.1:3600`.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--host` | `127.0.0.1` | Host interface to bind |
+| `--host` | `127.0.0.1` | Interface to bind. Use `0.0.0.0` to reach it from other devices |
 | `--port` | `3600` | Port to listen on |
-| `--no-open` | off | Do not open the browser after startup |
-| `--no-auth` | off | Disable the access token (restores the pre-token remote policy) |
-| `--allowed-host <hostname>` | — | Additional hostname to accept in the `Host`/`Origin` headers (repeatable) |
+| `--no-open` | off | Do not open the browser |
+| `--no-auth` | off | Disable the access token |
+| `--allowed-host <hostname>` | — | Extra hostname to accept when you browse to a DNS name instead of an IP (repeatable) |
 
 ## Access Token
 
-At startup the server generates a random access token and prints a ready-to-open URL like `http://192.168.1.50:3600/#token=mk_…`. The token rides in the URL fragment, so it never reaches the server's access log. Requests from this machine never need the token; requests from any other machine must carry it — the web UI reads it from the fragment, stores it in `sessionStorage`, and the browser strips it from the address bar. Scripts send `Authorization: Bearer <token>` (or `?token=` on download/SSE URLs, which remains supported). Set `MARKITAI_SERVE_TOKEN` to pin a fixed token across restarts; pass `--no-auth` to disable the token entirely, which restricts remote clients’ URL targets to public addresses and blocks LLM settings. File uploads and history access, downloads and deletion remain available to those clients.
+At startup the server prints a URL that ends in `#token=…`. Requests from this machine need no token. Every other device must open that URL; scripts send the token as `Authorization: Bearer <token>`.
 
-For anonymous remote jobs, the public-target check also applies to each HTTP redirect, downloaded image and browser subrequest. Connections use validated IPs while retaining the original TLS hostname; restricted browser sessions block Service Workers and WebSockets and do not reuse trusted sessions or fetch caches.
+Set `MARKITAI_SERVE_TOKEN` to keep the same token across restarts. `--no-auth` drops the token entirely: other devices can still upload, download and use history, but their URL targets are limited to public addresses and LLM settings are locked.
 
 ## Accessing from Other Devices
 
-To use the workspace from another machine or a phone on the same network, bind all interfaces and open the printed token URL on that device:
+Bind all interfaces, then open the printed token URL on the phone or laptop:
 
 ```bash
 markitai serve --host 0.0.0.0
 ```
 
-Add `--allowed-host my-box.lan` if you browse to a DNS name instead of an IP: the server only accepts requests whose `Host`/`Origin` is localhost, an IP literal, or an allow-listed hostname. Any other DNS name is rejected, which blocks DNS-rebinding attacks where a malicious web page tries to reach the API from your browser.
+If you reach the server through a DNS name rather than an IP, add `--allowed-host my-box.lan`. Unknown hostnames are rejected, which blocks DNS-rebinding attacks from malicious web pages.
 
 ::: warning
-The token URL is a credential — anyone holding it gets full access: conversions with your configured LLM providers (including intranet URLs), history, downloads, deletion, and LLM settings. Share it only with devices you trust, and prefer the default loopback bind when you don't need LAN access.
+The token URL is a credential. Anyone holding it can run conversions with your LLM providers, and read, download or delete history. Share it only with devices you trust.
 :::
 
 ## The Workspace
 
-- **Composer**: drag in files or folders, or paste URLs. Options mirror the CLI presets — `minimal`, `standard`, `rich` — plus individual LLM and OCR toggles and the output profile (`rag`, `obsidian`, `okf`). The profile is available with or without LLM.
-- **Live progress**: each item streams its status as it converts; a notification fires when a job finishes in a background tab.
-- **Per-item actions**: retry a failed item in place, or LLM-enhance a finished one without reconverting its siblings; filter large result sets to find an item quickly.
-- **Preview**: rendered Markdown preview with a base vs LLM-enhanced comparison, and a PDF settings menu that prints the preview to a clean A4 document (optional custom header/footer).
-- **Downloads**: individual output files, a per-job zip archive, or a whole-history archive — and a one-click copy of the equivalent CLI command for any job.
-- **Limits**: up to 50 items per job and 100 MB per uploaded file.
+- **Composer**: drag in files or folders, or paste URLs. The default screen asks nothing. Every option sits behind **Options**, grouped as Preset, Enhance (LLM, OCR, image analysis), Output (profile) and Advanced (fetch strategy, cache, compression).
+- **CLI preview**: the equivalent command line appears when Options is open or you press **CLI**, ready to copy.
+- **Live progress**: each item streams its status, and a notification fires when a job finishes in a background tab.
+- **Per-item actions**: retry a failed item, or LLM-enhance a finished one without reconverting the rest.
+- **Preview**: rendered Markdown with a base vs enhanced comparison, plus a print-to-PDF menu with optional header and footer.
+- **Downloads**: single files, a per-job zip, or the whole history as one archive.
+- **Limits**: 50 items per job and 100 MB per uploaded file.
 
 ### Presets, Overrides and Commands
 
-Presets bundle five features: built-in `minimal` disables all five, `standard` enables LLM, alt text and description JSON, and `rich` adds page screenshots. None enables OCR by default. Server configuration can override these definitions. Choosing a preset resets those five features; individual changes retain other choices. For example, minimal plus LLM shows **Custom** without enabling image analysis. An exact five-feature match highlights the matching preset; this is display-only and does not rewrite underlying inheritance or overrides.
+Presets match the CLI:
 
-Every group and each choice offers bilingual hover, focus and tap help describing dependencies, data destinations and limitations. LLM + OCR may incur more model costs; OCR without LLM requires the local OCR engine. URL and file notices separately identify Defuddle, Jina, Cloudflare Browser Rendering and Cloudflare Workers AI toMarkdown.
+| Preset | LLM | alt | desc | screenshot | OCR |
+|--------|:---:|:---:|:----:|:----------:|:---:|
+| `minimal` | – | – | – | – | – |
+| `standard` | ✓ | ✓ | ✓ | – | – |
+| `rich` | ✓ | ✓ | ✓ | ✓ | – |
 
-The compact CLI command preserves explicit deviations and wraps on desktop and mobile. Without URLs, it uses the literal placeholder `<your-files-or-url-or-url_files>` with no extra comment. Command help explains that this must be replaced by local files, URLs or URL-list files, and that the preview assumes default non-preset CLI configuration and matching server preset definitions.
+No preset turns on OCR; it is always a separate choice. Picking a preset resets those five switches. Changing one switch keeps the rest and shows **Custom**.
 
-**Download all ZIP** always sits below the ledger, right-aligned on desktop and full-width on mobile, never alongside expanded options.
+Every option has hover or tap help that says what it depends on, where the data goes and what it may cost.
 
 ## LLM Settings
 
-The settings dialog manages the same configuration as `markitai config`: discover local and API-backed providers, browse live model lists, configure weighted deployments, and test connections without exposing stored credentials. Changes apply to both web jobs and subsequent CLI runs.
+The settings dialog edits the same configuration as `markitai config`: discover providers, browse model lists, set weights and test connections without exposing stored keys. Changes apply to web jobs and to later CLI runs alike.
 
 ## History
 
-Every finished job is kept on disk under `~/.markitai/serve/jobs/` for **7 days**, then cleaned up automatically. From the history page you can reopen a job to preview and download its outputs again, delete a single entry, or download everything as one zip.
+Finished jobs stay under `~/.markitai/serve/jobs/` for 7 days. From the history page you can reopen a job, download its outputs again, delete it, or download everything as one zip.
 
-History entries carry an origin. CLI runs recorded with [`--record-history`](/guide/cli#record-history) (or `MARKITAI_RECORD_HISTORY` / `history.record` in the config) appear alongside browser-created jobs with a small "CLI" badge and behave exactly like them — same TTL, deletion, and archive download — showing up live without restarting the server.
-
-Each item retains its effective conversion options across restarts. Retrying without overrides uses that item’s saved options. A restored snapshot also removes entries deleted by another client.
+CLI runs started with [`--record-history`](/guide/cli#record-history) show up here too, marked with a CLI badge, and behave like any other job.
 
 ## API Overview
 
-The UI is built on a small REST + SSE API that you can also drive from scripts:
+The UI runs on a small REST + SSE API that scripts can call directly:
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /api/capabilities` | Server version, available presets, LLM and extras status |
+| `GET /api/capabilities` | Server version, presets, LLM and extras status |
 | `POST /api/jobs` | Create a job (multipart form: `files`, `urls` JSON array, `options` JSON) |
 | `GET /api/jobs/{job_id}` | Job status and items |
 | `GET /api/jobs/{job_id}/events` | Live progress stream (SSE) |
 | `POST /api/jobs/{job_id}/items/{item_id}/retry` | Retry an item, or LLM-enhance it with `operation: "enhance"` |
 | `DELETE /api/jobs/{job_id}/items/{item_id}` | Remove an item from a job |
 | `GET /api/jobs/{job_id}/items/{item_id}/result` | Item result; sibling assets via `GET /api/jobs/{job_id}/files/{path}` |
-| `GET /api/jobs/{job_id}/archive` | Download the whole job as a zip |
+| `GET /api/jobs/{job_id}/archive` | Download the job as a zip |
 | `GET /api/history` | List history entries |
 | `GET /api/history/archive` | Download all of history as one zip |
 | `DELETE /api/history/{job_id}` | Delete one history entry |
-| `/api/settings/llm*` | LLM provider, model, and deployment management |
+| `/api/settings/llm*` | LLM provider, model and deployment management |
 
-::: tip
-The same `Host`/`Origin` allow-list guards the API: state-changing requests with a cross-site origin are rejected, so an arbitrary web page cannot drive it from your browser.
-:::
+State-changing requests from another web origin are rejected, so a random web page cannot drive the server from your browser.
