@@ -1,5 +1,7 @@
 name: Python CI
 
+# Documentation changes are covered by Website Check, including a targeted
+# README package-build check. Keep the full matrix for code and dependencies.
 on:
   push:
     branches: [main]
@@ -9,11 +11,6 @@ on:
       - 'scripts/sync_webapp_static.sh'
       - 'scripts/check_wheel.py'
       - 'scripts/check_licenses.py'
-      - 'README.md'
-      - 'website/**'
-      - 'skills/**'
-      - 'CHANGELOG.md'
-      - 'CHANGELOG.zh.md'
       - 'scripts/e2e_release_check.sh'
       - 'pyproject.toml'
       - 'uv.lock'
@@ -26,11 +23,6 @@ on:
       - 'scripts/sync_webapp_static.sh'
       - 'scripts/check_wheel.py'
       - 'scripts/check_licenses.py'
-      - 'README.md'
-      - 'website/**'
-      - 'skills/**'
-      - 'CHANGELOG.md'
-      - 'CHANGELOG.zh.md'
       - 'scripts/e2e_release_check.sh'
       - 'pyproject.toml'
       - 'uv.lock'
@@ -123,8 +115,8 @@ jobs:
   # when any fixture or the corpus mean drops below its guardrail floor
   # (benchmarks/guardrails.json, floors = score * 0.9 at generation time).
   # Regenerate floors deliberately with --update-guardrails.
-  # Always runs: the workflow-level paths filter already scopes this to
-  # packages/markitai/** changes and the whole job finishes in ~1 minute.
+  # Runs for the code, dependencies, and build/integration tooling selected
+  # by the workflow paths above; documentation-only changes do not trigger it.
   webextract-guardrails:
     name: Webextract quality guardrails
     runs-on: ubuntu-latest

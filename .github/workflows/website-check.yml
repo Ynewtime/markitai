@@ -1,9 +1,22 @@
 name: Website Check
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - 'README.md'
+      - 'skills/**'
+      - 'CHANGELOG.md'
+      - 'CHANGELOG.zh.md'
+      - 'scripts/setup.sh'
+      - 'scripts/setup.ps1'
+      - '.github/workflows/website-check.yml'
   pull_request:
     paths:
       - 'website/**'
+      - 'README.md'
+      - 'skills/**'
       - 'CHANGELOG.md'
       - 'CHANGELOG.zh.md'
       - 'scripts/setup.sh'
@@ -14,8 +27,68 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  docs:
+    name: Documentation contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.1.0
+        with:
+          fetch-depth: 0
+
+      - name: Check whether README packaging needs validation
+        id: readme
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          # Manual runs, a new branch, or unavailable history exercise the build.
+          if [ -z "$BASE_SHA" ] || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          base="$BASE_SHA"
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            base="$(git merge-base "$BASE_SHA" HEAD)"
+          fi
+          changed="$(git diff --name-only "$base" HEAD -- README.md)"
+          if [ -n "$changed" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7.6.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'uv.lock'
+          python-version: '3.13'
+
+      - name: Install documentation test dependencies
+        run: uv sync --frozen --all-groups
+
+      # These guards compare the published docs with the CLI and metadata.
+      # One Python version is enough; optional extras and coverage are unused.
+      - name: Check documentation contracts
+        run: |
+          uv run --no-sync pytest -n 0 \
+            packages/markitai/tests/unit/test_website_docs_sync.py \
+            packages/markitai/tests/unit/test_changelog_website_safe.py \
+            packages/markitai/tests/unit/test_model_defaults_ssot.py::test_docs_name_every_model_the_code_defaults_to \
+            packages/markitai/tests/unit/test_license_audit.py::TestReadmeLicenceSection
+
+      # README is included in both the package metadata and the sdist.
+      - name: Verify README package build
+        if: steps.readme.outputs.changed == 'true'
+        run: uv build --package markitai --out-dir dist --clear
+
   build:
+    # Deploy Website already builds the site on pushes to main.
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6.1.0

@@ -32,19 +32,18 @@ hero:
 
 <section class="home-quickstart" aria-labelledby="quickstart-title">
   <div class="home-quickstart-intro">
-    <p class="eyebrow">FIRST SUCCESS</p>
-    <h2 id="quickstart-title">From install to Markdown in 60 seconds</h2>
-    <p>The core conversion path needs no API key or optional dependency. Start small, then add browser rendering, extra formats, or an LLM when your workflow calls for them.</p>
-    <a href="/guide/getting-started">Open the full getting started guide <span aria-hidden="true">→</span></a>
-    <p class="home-install-options-note">Choosing between converters? <a href="/guide/comparison">See how markitai compares</a> with markitdown, docling and anydoc.</p>
+    <p class="eyebrow">Quick start</p>
+    <h2 id="quickstart-title">Markdown in 60 seconds</h2>
+    <p>No API key needed.</p>
+    <a href="/guide/getting-started">Getting started <span aria-hidden="true">→</span></a>
   </div>
   <div class="home-quickstart-steps" role="list" aria-label="Quick start commands">
     <div class="home-quickstart-step" role="listitem">
       <span class="step-number" aria-hidden="true">1</span>
       <div>
-        <p class="non-windows-only">Install with the portable script for macOS or Linux</p>
+        <p class="non-windows-only">Install on macOS or Linux</p>
         <code class="platform-install-command non-windows-only">curl -fsSL https://markitai.dev/setup.sh | sh</code>
-        <p class="windows-only">Install with the portable script for Windows</p>
+        <p class="windows-only">Install on Windows</p>
         <code class="platform-install-command windows-only">powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"</code>
         <noscript>
           <p>On Windows (PowerShell):</p>
@@ -69,13 +68,13 @@ hero:
     </div>
     <div class="home-quickstart-step" role="listitem">
       <span class="step-number" aria-hidden="true">2</span>
-      <div><p>Convert a live page</p><code>markitai https://github.com/Ynewtime/markitai --pure</code></div>
+      <div><p>Convert a web page</p><code>markitai https://github.com/Ynewtime/markitai --pure</code></div>
     </div>
     <div class="home-quickstart-step output" role="listitem">
       <span class="step-number" aria-hidden="true">3</span>
       <div>
-        <p>Get clean Markdown on stdout</p>
-        <code># Markitai<br />Opinionated Markdown converter with native LLM enhancement support.<br /><br />- **Multi-format**: DOCX, PPTX, XLSX, PDF, EPUB,<br />&nbsp;&nbsp;EML, TXT, MD, images, and URLs &#8594; clean Markdown<br />- **LLM enhancement**: format cleaning, frontmatter<br />&nbsp;&nbsp;metadata, and vision analysis<br />- **Batch processing**: concurrent conversion with<br />&nbsp;&nbsp;progress display and --resume<br />&#8230;</code>
+        <p>Get Markdown</p>
+        <code># Markitai</code>
       </div>
     </div>
   </div>

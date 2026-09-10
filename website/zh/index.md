@@ -32,19 +32,18 @@ hero:
 
 <section class="home-quickstart" aria-labelledby="quickstart-title">
   <div class="home-quickstart-intro">
-    <p class="eyebrow">第一次成功</p>
-    <h2 id="quickstart-title">60 秒，从安装到得到 Markdown</h2>
-    <p>核心转换无需 API 密钥或可选依赖。先完成一次转换，再按工作流需要添加浏览器渲染、额外格式或 LLM。</p>
-    <a href="/zh/guide/getting-started">打开完整快速开始指南 <span aria-hidden="true">→</span></a>
-    <p class="home-install-options-note">还在比较转换器？<a href="/zh/guide/comparison">看看 markitai 与 markitdown、docling、anydoc 的对比</a>。</p>
+    <p class="eyebrow">快速上手</p>
+    <h2 id="quickstart-title">60 秒，转成 Markdown</h2>
+    <p>无需 API 密钥。</p>
+    <a href="/zh/guide/getting-started">快速开始 <span aria-hidden="true">→</span></a>
   </div>
   <div class="home-quickstart-steps" role="list" aria-label="快速开始命令">
     <div class="home-quickstart-step" role="listitem">
       <span class="step-number" aria-hidden="true">1</span>
       <div>
-        <p class="non-windows-only">使用适用于 macOS 或 Linux 的便携安装脚本</p>
+        <p class="non-windows-only">安装（macOS / Linux）</p>
         <code class="platform-install-command non-windows-only">curl -fsSL https://markitai.dev/setup.sh | sh</code>
-        <p class="windows-only">使用适用于 Windows 的便携安装脚本</p>
+        <p class="windows-only">安装（Windows）</p>
         <code class="platform-install-command windows-only">powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"</code>
         <noscript>
           <p>Windows（PowerShell）：</p>
@@ -69,13 +68,13 @@ hero:
     </div>
     <div class="home-quickstart-step" role="listitem">
       <span class="step-number" aria-hidden="true">2</span>
-      <div><p>转换一个真实网页</p><code>markitai https://github.com/Ynewtime/markitai --pure</code></div>
+      <div><p>转换网页</p><code>markitai https://github.com/Ynewtime/markitai --pure</code></div>
     </div>
     <div class="home-quickstart-step output" role="listitem">
       <span class="step-number" aria-hidden="true">3</span>
       <div>
-        <p>从 stdout 得到干净的 Markdown</p>
-        <code># Markitai<br />Opinionated Markdown converter with native LLM enhancement support.<br /><br />- **Multi-format**: DOCX, PPTX, XLSX, PDF, EPUB,<br />&nbsp;&nbsp;EML, TXT, MD, images, and URLs &#8594; clean Markdown<br />- **LLM enhancement**: format cleaning, frontmatter<br />&nbsp;&nbsp;metadata, and vision analysis<br />- **Batch processing**: concurrent conversion with<br />&nbsp;&nbsp;progress display and --resume<br />&#8230;</code>
+        <p>得到 Markdown</p>
+        <code># Markitai</code>
       </div>
     </div>
   </div>

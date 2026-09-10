@@ -151,7 +151,7 @@
   padding: 0 24px;
   text-align: center;
 }
-.home-shot h2 {
+.VPHome .home-shot h2 {
   margin: 0 0 8px;
   padding: 0;
   border: 0;
@@ -159,10 +159,15 @@
   line-height: 1.12;
   letter-spacing: -0.025em;
 }
-.home-shot > p {
+.VPHome .home-shot > p {
   color: var(--vp-c-text-2);
   margin: 0 auto 24px;
   max-width: 62ch;
+  line-height: 1.7;
+}
+
+.VPHome .home-shot > .eyebrow {
+  margin-bottom: 12px;
 }
 /* Each locale supplies its own screenshots. Match the site theme for both
    homepage <picture> elements and Markdown images in the guides. */
@@ -182,6 +187,7 @@ html:not(.dark) .vp-doc .dark-only {
 .home-shot img {
   width: 100%;
   height: auto;
+  margin: 0;
   border: 1px solid var(--vp-c-divider);
   border-radius: 12px;
 }
@@ -192,8 +198,8 @@ html:not(.dark) .home-shot picture img,
 html:not(.dark) .home-shot img {
   border-color: var(--vp-c-border);
 }
-.home-shot-link {
-  margin-top: 16px;
+.VPHome .home-shot > .home-shot-link {
+  margin: 24px auto 0;
 }
 
 /* The five-column comparison table's min-content is a few px wider than
@@ -394,10 +400,10 @@ html:not(.dark) .home-shot img {
 }
 
 .home-quickstart-intro {
-  align-self: center;
+  align-self: start;
 }
 
-.eyebrow {
+.VPHome .eyebrow {
   margin: 0 0 12px;
   color: var(--vp-c-text-2);
   font-size: 12px;
@@ -428,13 +434,6 @@ html:not(.dark) .home-shot img {
   align-items: center;
   margin-top: 24px;
   font-weight: 600;
-}
-
-.home-install-options-note {
-  margin: 16px 0 0;
-  color: var(--vp-c-text-2);
-  font-size: 14px;
-  line-height: 1.6;
 }
 
 .home-quickstart-steps {
@@ -468,11 +467,11 @@ html:not(.dark) .home-shot img {
   font-weight: 700;
 }
 
-.home-quickstart-step p {
-  margin: 0 0 7px;
+.VPHome .home-quickstart-step p {
+  margin: 0 0 8px;
   color: var(--mk-code-dim);
   font-size: 13px;
-  line-height: 1.4;
+  line-height: 28px;
 }
 
 .VPHome .home-quickstart-steps .home-quickstart-step code {
@@ -513,6 +512,7 @@ html:not(.dark) .home-shot img {
 
 .home-install-options summary {
   width: fit-content;
+  margin: 0;
   cursor: pointer;
   font-weight: 600;
 }
@@ -587,7 +587,7 @@ html:not(.dark) .home-shot img {
     border-top-color: CanvasText;
   }
 
-  .home-quickstart-step p,
+  .VPHome .home-quickstart-step p,
   .VPHome .home-quickstart-steps .home-quickstart-step code,
   .VPHome .home-quickstart-steps .home-quickstart-step.output code,
   .VPHome .home-quickstart-steps .home-install-option code {
@@ -626,7 +626,7 @@ html:not(.dark) .home-shot img {
     border-top-color: #aaa;
   }
 
-  .home-quickstart-step p,
+  .VPHome .home-quickstart-step p,
   .VPHome .home-quickstart-steps .home-quickstart-step code,
   .VPHome .home-quickstart-steps .home-quickstart-step.output code,
   .VPHome .home-quickstart-steps .home-install-option code {
@@ -634,59 +634,59 @@ html:not(.dark) .home-shot img {
   }
 }
 
-/* Guide pages: a slower reading rhythm than the default theme. Paragraphs
-   breathe, sections are clearly separated, lists and tables get more air. */
-.vp-doc p {
+/* Scope reading rhythm to document layouts: the homepage also uses .vp-doc.
+   :where() preserves selector weight for the guide's component overrides. */
+:where(.VPDoc) .vp-doc p {
   margin: 22px 0;
   line-height: 1.85;
 }
 
-.vp-doc h2 {
+:where(.VPDoc) .vp-doc h2 {
   margin-top: 72px;
   padding-top: 28px;
 }
 
-.vp-doc h3 {
+:where(.VPDoc) .vp-doc h3 {
   margin-top: 48px;
 }
 
-.vp-doc h4 {
+:where(.VPDoc) .vp-doc h4 {
   margin-top: 36px;
 }
 
-.vp-doc h2 + p,
-.vp-doc h3 + p,
-.vp-doc h4 + p {
+:where(.VPDoc) .vp-doc h2 + p,
+:where(.VPDoc) .vp-doc h3 + p,
+:where(.VPDoc) .vp-doc h4 + p {
   margin-top: 18px;
 }
 
-.vp-doc ul,
-.vp-doc ol {
+:where(.VPDoc) .vp-doc ul,
+:where(.VPDoc) .vp-doc ol {
   margin: 22px 0;
   line-height: 1.8;
 }
 
-.vp-doc li + li {
+:where(.VPDoc) .vp-doc li + li {
   margin-top: 10px;
 }
 
-.vp-doc table {
+:where(.VPDoc) .vp-doc table {
   margin: 26px 0;
 }
 
-.vp-doc th,
-.vp-doc td {
+:where(.VPDoc) .vp-doc th,
+:where(.VPDoc) .vp-doc td {
   padding: 10px 16px;
   line-height: 1.6;
 }
 
-.vp-doc div[class*='language-'],
-.vp-doc .custom-block,
-.vp-doc .vp-code-group {
+:where(.VPDoc) .vp-doc div[class*='language-'],
+:where(.VPDoc) .vp-doc .custom-block,
+:where(.VPDoc) .vp-doc .vp-code-group {
   margin: 22px 0;
 }
 
-.vp-doc .custom-block p {
+:where(.VPDoc) .vp-doc .custom-block p {
   margin: 10px 0;
   line-height: 1.7;
 }
