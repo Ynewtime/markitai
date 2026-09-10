@@ -47,6 +47,7 @@ if TYPE_CHECKING:
 __all__ = [
     "ConversionOutput",
     "ConversionUsage",
+    "OutputProfileName",
     "aconvert",
     "convert",
 ]
@@ -280,8 +281,8 @@ def _build_file_output(
     llm_output_path: Path | None = None
 
     if ctx.output_file is not None:
-        llm_file = ctx.output_file.with_suffix(".llm.md")
-        if llm_file.exists():
+        llm_file = ctx.llm_output_file
+        if llm_file is not None and llm_file.is_file():
             llm_output_path = llm_file
             frontmatter, llm_markdown = _parse_output_file(llm_file)
         if ctx.output_file.exists():

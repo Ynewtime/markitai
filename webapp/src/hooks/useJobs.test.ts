@@ -1,4 +1,5 @@
 import { act, renderHook } from "@testing-library/react";
+import { ApiError } from "../api/client";
 import { jobOptions } from "../lib/jobOptions";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -16,14 +17,18 @@ const api = vi.hoisted(() => ({
   retryJobItem: vi.fn(),
 }));
 
-vi.mock("../api/client", () => ({
-  createJob: api.createJob,
-  deleteJobItem: api.deleteJobItem,
-  enhanceJobItem: api.enhanceJobItem,
-  fetchJobSnapshot: api.fetchJobSnapshot,
-  jobEventsUrl: (jobId: string) => `/api/jobs/${jobId}/events`,
-  retryJobItem: api.retryJobItem,
-}));
+vi.mock("../api/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/client")>();
+  return {
+    ...actual,
+    createJob: api.createJob,
+    deleteJobItem: api.deleteJobItem,
+    enhanceJobItem: api.enhanceJobItem,
+    fetchJobSnapshot: api.fetchJobSnapshot,
+    jobEventsUrl: (jobId: string) => `/api/jobs/${jobId}/events`,
+    retryJobItem: api.retryJobItem,
+  };
+});
 
 const notify = vi.hoisted(() => ({
   notifyJobDone: vi.fn(),
@@ -360,6 +365,59 @@ describe("useJobs retry identity", () => {
   });
 });
 
+describe("useJobs submit feedback", () => {
+  const options = jobOptions({ preset: "minimal", llm: false, ocr: false });
+
+  it("treats an aborted submit as a cancel, not a failure", async () => {
+    const controller = new AbortController();
+    const reject: { current: (reason: unknown) => void } = { current: () => undefined };
+    api.createJob.mockImplementation(
+      () =>
+        new Promise((_resolve, rej) => {
+          reject.current = rej;
+        }),
+    );
+    const { result, unmount } = renderHook(() => useJobs());
+
+    let created: boolean | undefined;
+    await act(async () => {
+      const pending = result.current.submit(
+        [new File(["pdf"], "doc.pdf")],
+        [],
+        options,
+        controller.signal,
+      );
+      controller.abort();
+      reject.current(new DOMException("Aborted", "AbortError"));
+      created = await pending;
+    });
+
+    // The status line is the cancel button's counterpart: an aborted upload
+    // must not leave "Task creation cancelled" or an error behind.
+    expect(created).toBe(false);
+    expect(result.current.submitError).toBeNull();
+    unmount();
+  });
+
+  it("reports a rejected submit with its HTTP status", async () => {
+    api.createJob.mockRejectedValue(new ApiError("too large", 413));
+    const { result, unmount } = renderHook(() => useJobs());
+
+    let created: boolean | undefined;
+    await act(async () => {
+      created = await result.current.submit(
+        [new File(["pdf"], "doc.pdf")],
+        [],
+        options,
+      );
+    });
+
+    expect(created).toBe(false);
+    expect(result.current.submitError).toEqual({ status: 413, message: "too large" });
+    unmount();
+  });
+});
+
 describe("useJobs event stream", () => {
   it("merges snapshot and item frames and notifies once at the terminal state", async () => {
     const { result, unmount } = renderHook(() => useJobs());
@@ -568,6 +626,46 @@ describe("useJobs session restore", () => {
     expect(stored.map((job) => job.jobId)).toEqual(["job-running", "job-finished"]);
     unmount();
   });
+
+  it("keeps rows and offers a retry when the snapshot cannot be fetched", async () => {
+    sessionStorage.setItem(
+      "markitai.session",
+      JSON.stringify([{ jobId: "job-offline", items: [seed("i1", "offline.pdf")] }]),
+    );
+    api.fetchJobSnapshot.mockRejectedValue(new Error("fetch failed"));
+
+    const { result, unmount } = renderHook(() => useJobs());
+    await act(async () => {});
+
+    // The row survives instead of being deleted, and says it is not restored.
+    expect(result.current.items.map((item) => item.key)).toEqual([
+      "job-offline/i1",
+    ]);
+    expect(result.current.items[0]).toMatchObject({ status: "queued" });
+    expect(result.current.restoreFailedJobs.has("job-offline")).toBe(true);
+    // The job record carries no duplicate flag; the Set is the only source.
+    expect(result.current.jobs["job-offline"]).not.toHaveProperty(
+      "restoreFailed",
+    );
+
+    api.fetchJobSnapshot.mockResolvedValue(
+      jobSnapshot("job-offline", "done", [
+        itemPayload("i1", "done", { name: "offline.pdf", output: "offline.md" }),
+      ]),
+    );
+    let remaining = 0;
+    await act(async () => {
+      remaining = await result.current.retryRestore();
+    });
+
+    expect(remaining).toBe(0);
+    expect(result.current.restoreFailedJobs.size).toBe(0);
+    expect(result.current.items[0]).toMatchObject({
+      status: "done",
+      output: "offline.md",
+    });
+    unmount();
+  });
 });
 
 describe("legacy retry seed migration", () => {
@@ -626,5 +724,25 @@ describe("legacy retry seed migration", () => {
       items: [seed("i2", "other.pdf")],
     });
     expect(migrated.suppressedJobIds.size).toBe(0);
+  });
+});
+
+
+describe("authoritative snapshot membership", () => {
+  it.each(["restore", "events"])("removes vanished seeds and adopts new items via %s", async (mode) => {
+    sessionStorage.setItem("markitai.session", JSON.stringify([{jobId: "job-a", items: [seed("i1", "one.txt"), seed("i2", "deleted.txt")]}]));
+    const snapshot = jobSnapshot("job-a", "done", [itemPayload("i1", "done", {name: "one.txt"}), itemPayload("i3", "done", {name: "new.txt"})]);
+    api.fetchJobSnapshot.mockResolvedValue(mode === "restore" ? snapshot : jobSnapshot("job-a", "running", [itemPayload("i1", "running"), itemPayload("i2", "done")]));
+    const {result} = renderHook(() => useJobs());
+    await act(async () => {});
+    if (mode === "events") {
+      act(() => latestSource().emit("snapshot", snapshot));
+    }
+    expect(result.current.items.map((item) => item.itemId)).toEqual(["i1", "i3"]);
+    expect(result.current.items[0]?.sizeBytes).toBe(12);
+    expect(result.current.activeCount).toBe(0);
+    expect(result.current.stats.total).toBe(2);
+    const stored = JSON.parse(sessionStorage.getItem("markitai.session") ?? "[]");
+    expect(stored[0].items.map((item: {itemId: string}) => item.itemId)).toEqual(["i1", "i3"]);
   });
 });

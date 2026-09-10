@@ -16,6 +16,97 @@ from loguru import logger
 _pending_close_tasks: set[Any] = set()
 
 
+def _public_http_client(proxy: str | None, timeout: float) -> Any:
+    import httpx
+
+    return httpx.AsyncClient(trust_env=False, proxy=proxy, timeout=timeout)
+
+
+async def public_http_request(
+    url: str,
+    *,
+    method: str = "GET",
+    headers: dict[str, str] | None = None,
+    content: bytes | None = None,
+    timeout: float = 30.0,
+    proxy: str | None = None,
+    follow_redirects: bool = True,
+) -> Any:
+    """Fetch public destinations only, pinning each connection to checked DNS.
+
+    The numeric connection URL prevents a second DNS lookup from rebinding
+    the destination. Host and TLS SNI retain the original hostname. Every
+    redirect gets a fresh address check before a request can be sent.
+    """
+    import ipaddress
+    from urllib.parse import urljoin
+
+    import httpx
+
+    from markitai.fetch_policy import (
+        assess_url_for_remote,
+        resolve_hostname_addresses,
+    )
+
+    current = httpx.URL(url)
+    request_headers = httpx.Headers(headers)
+    cookies = httpx.Cookies()
+    async with _public_http_client(proxy, timeout) as client:
+        for _ in range(11):
+            assessment = await assess_url_for_remote(str(current))
+            if not assessment.allowed:
+                raise PermissionError(f"Fetch target refused: {assessment.reason}")
+            addresses = await resolve_hostname_addresses(current.host)
+            if not addresses or any(
+                not ipaddress.ip_address(address).is_global
+                or ipaddress.ip_address(address).is_multicast
+                for address in addresses
+            ):
+                raise PermissionError("Fetch target resolved to a non-public address")
+            request_headers["Host"] = current.netloc.decode("ascii")
+            logical_request = httpx.Request(method, current, headers=request_headers)
+            cookies.set_cookie_header(logical_request)
+            client.cookies.clear()  # Never scope cookies to the pinned numeric IP.
+            for index, address in enumerate(addresses):
+                try:
+                    response = await client.request(
+                        method,
+                        current.copy_with(host=address),
+                        headers=logical_request.headers,
+                        content=content,
+                        extensions={"sni_hostname": current.host},
+                        follow_redirects=False,
+                    )
+                    break
+                except (httpx.ConnectError, httpx.ConnectTimeout):
+                    # IPv6 or one replica can be unavailable. Retry only
+                    # connection failures, before the request was sent.
+                    if index == len(addresses) - 1:
+                        raise
+            # Consumers see the logical URL, never the transport's numeric IP.
+            response.request = logical_request
+            cookies.extract_cookies(response)
+            location = response.headers.get("location")
+            if not follow_redirects or not response.is_redirect or not location:
+                return response
+            target = httpx.URL(urljoin(str(current), location))
+            if (
+                target.host != current.host
+                or target.scheme != current.scheme
+                or target.port != current.port
+            ):
+                for name in ("Authorization", "Cookie", "Proxy-Authorization"):
+                    request_headers.pop(name, None)
+            if (response.status_code == 303 and method != "HEAD") or (
+                response.status_code in (301, 302) and method == "POST"
+            ):
+                method, content = "GET", None
+                request_headers.pop("Content-Length", None)
+                request_headers.pop("Content-Type", None)
+            current = target
+    raise PermissionError("Too many redirects")
+
+
 def schedule_client_close(coro: Any, name: str) -> None:
     """Schedule an async client close on the running loop (best-effort).
 
@@ -219,10 +310,22 @@ class HttpxClient:
         """
         import httpx
 
-        client = self._get_or_create_client(
-            timeout_s, resolve_proxy_for_url(url, proxy)
-        )
-        resp = await client.get(url, headers=headers, timeout=httpx.Timeout(timeout_s))
+        from markitai.fetch_policy import public_network_only
+
+        if public_network_only.get():
+            resp = await public_http_request(
+                url,
+                headers=headers,
+                timeout=timeout_s,
+                proxy=resolve_proxy_for_url(url, proxy),
+            )
+        else:
+            client = self._get_or_create_client(
+                timeout_s, resolve_proxy_for_url(url, proxy)
+            )
+            resp = await client.get(
+                url, headers=headers, timeout=httpx.Timeout(timeout_s)
+            )
         return StaticHttpResponse(
             content=resp.content,
             status_code=resp.status_code,
@@ -318,6 +421,10 @@ class CurlCffiClient:
         The session is keyed by the *effective* proxy, so a NO_PROXY host and
         a proxied host use separate pooled sessions.
         """
+        from markitai.fetch_policy import public_network_only
+
+        if public_network_only.get():
+            return await HttpxClient().get(url, headers, timeout_s, proxy)
         session = self._get_or_create_session(resolve_proxy_for_url(url, proxy))
         resp = await session.get(url, headers=headers, timeout=timeout_s)
         return StaticHttpResponse(

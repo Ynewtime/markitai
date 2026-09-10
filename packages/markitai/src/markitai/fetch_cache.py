@@ -21,6 +21,7 @@ from loguru import logger
 
 from markitai.fetch_types import FetchResult
 from markitai.security import atomic_write_json
+from markitai.utils.sqlite_cache import cache_write
 
 # Bump when extraction semantics change so stale rendered Markdown is not
 # served after parser fixes (for example, quoted-post truncation markers).
@@ -254,64 +255,7 @@ class FetchCache:
         self, url: str, result: FetchResult, strategy: str | None = None
     ) -> None:
         """Cache a fetch result (no lock). Caller must hold a lock."""
-        key = self._compute_hash(url, strategy)
-        now = int(time.time())
-        metadata_json = (
-            self._metadata_to_json(result.metadata) if result.metadata else None
-        )
-        size_bytes = len(result.content.encode("utf-8"))
-
-        conn = self._get_connection()
-        # Check current total size
-        total_size = conn.execute(
-            "SELECT COALESCE(SUM(size_bytes), 0) as total FROM fetch_cache"
-        ).fetchone()["total"]
-
-        # Evict LRU entries if needed
-        while total_size + size_bytes > self._max_size_bytes:
-            oldest = conn.execute(
-                "SELECT key, size_bytes FROM fetch_cache ORDER BY accessed_at ASC LIMIT 1"
-            ).fetchone()
-
-            if oldest is None:
-                break
-
-            conn.execute("DELETE FROM fetch_cache WHERE key = ?", (oldest["key"],))
-            total_size -= oldest["size_bytes"]
-            logger.debug(f"[FetchCache] Evicted LRU entry: {oldest['key'][:8]}...")
-
-        # Serialize screenshot_path to string for storage
-        screenshot_path_str = (
-            str(result.screenshot_path) if result.screenshot_path else None
-        )
-
-        # Insert or replace
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO fetch_cache
-            (key, url, content, strategy_used, title, final_url, metadata,
-             created_at, accessed_at, size_bytes,
-             screenshot_path, static_content, browser_content)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                key,
-                url,
-                result.content,
-                result.strategy_used,
-                result.title,
-                result.final_url,
-                metadata_json,
-                now,
-                now,
-                size_bytes,
-                screenshot_path_str,
-                result.static_content,
-                result.browser_content,
-            ),
-        )
-        conn.commit()
-        logger.debug(f"[FetchCache] Cached URL: {url} ({size_bytes} bytes)")
+        self._set_with_validators_unlocked(url, result, strategy=strategy)
 
     def set(self, url: str, result: FetchResult, strategy: str | None = None) -> None:
         """Cache a fetch result.
@@ -444,57 +388,43 @@ class FetchCache:
         size_bytes = len(result.content.encode("utf-8"))
 
         conn = self._get_connection()
-        # Check current total size
-        total_size = conn.execute(
-            "SELECT COALESCE(SUM(size_bytes), 0) as total FROM fetch_cache"
-        ).fetchone()["total"]
-
-        # Evict LRU entries if needed
-        while total_size + size_bytes > self._max_size_bytes:
-            oldest = conn.execute(
-                "SELECT key, size_bytes FROM fetch_cache ORDER BY accessed_at ASC LIMIT 1"
-            ).fetchone()
-
-            if oldest is None:
-                break
-
-            conn.execute("DELETE FROM fetch_cache WHERE key = ?", (oldest["key"],))
-            total_size -= oldest["size_bytes"]
-            logger.debug(f"[FetchCache] Evicted LRU entry: {oldest['key'][:8]}...")
-
         # Serialize screenshot_path to string for storage
         screenshot_path_str = (
             str(result.screenshot_path) if result.screenshot_path else None
         )
 
-        # Insert or replace
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO fetch_cache
-            (key, url, content, strategy_used, title, final_url, metadata,
-             created_at, accessed_at, size_bytes, etag, last_modified,
-             screenshot_path, static_content, browser_content)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                key,
-                url,
-                result.content,
-                result.strategy_used,
-                result.title,
-                result.final_url,
-                metadata_json,
-                now,
-                now,
-                size_bytes,
-                etag,
-                last_modified,
-                screenshot_path_str,
-                result.static_content,
-                result.browser_content,
-            ),
-        )
-        conn.commit()
+        with cache_write(
+            conn, "fetch_cache", key, size_bytes, self._max_size_bytes
+        ) as admitted:
+            if not admitted:
+                return
+            # Insert or replace
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO fetch_cache
+                (key, url, content, strategy_used, title, final_url, metadata,
+                 created_at, accessed_at, size_bytes, etag, last_modified,
+                 screenshot_path, static_content, browser_content)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    key,
+                    url,
+                    result.content,
+                    result.strategy_used,
+                    result.title,
+                    result.final_url,
+                    metadata_json,
+                    now,
+                    now,
+                    size_bytes,
+                    etag,
+                    last_modified,
+                    screenshot_path_str,
+                    result.static_content,
+                    result.browser_content,
+                ),
+            )
         logger.debug(
             f"[FetchCache] Cached URL with validators: {url} "
             f"(etag={etag is not None}, last_modified={last_modified is not None})"

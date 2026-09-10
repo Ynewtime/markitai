@@ -16,7 +16,9 @@ Read this when a URL conversion fails, returns junk (login wall, CAPTCHA, empty 
 - `fetch.policy.local_only_patterns` (NO_PROXY syntax) and inherited `NO_PROXY` entries stay local in the `auto` chain; an explicit CLI `-s` on a public URL overrides only this pattern-based rule.
 - The first remote attempt in a process prints a stderr disclosure naming every service it may use (defuddle.md, Jina, Cloudflare, FxTwitter, Twitter oEmbed). Services are tried one at a time.
 - `fetch.remote_consent`: `always` (default) / `ask` (one interactive confirmation; non-interactive runs skip remote) / `never` (config-driven remote off; explicit CLI `-s` still allowed).
-- Absolute guarantee for sensitive runs: `MARKITAI_NO_REMOTE_FETCH=1` — blocks remote services even for explicit `-s` flags.
+- `--no-remote-fetch` or `MARKITAI_NO_REMOTE_FETCH=1` blocks remote URL extraction even for explicit `-s` flags. It does not disable an explicitly enabled LLM or `-b cloudflare`.
+- Anonymous remote `serve --no-auth` requests also enforce public targets on redirects and browser subrequests. They use isolated browser contexts with Service Workers and WebSockets disabled, and do not reuse trusted fetch caches.
+- If a VPN maps public domains to fake IPs such as `198.18.0.0/15`, remote eligibility checks refuse them. A skipped E2E remote-service step is not a passing live integration check.
 
 ## Failure recovery, in order
 

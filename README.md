@@ -96,6 +96,8 @@ markitai serve
 markitai document.pdf -o out/            # convert a file
 markitai https://example.com -o out/     # convert a URL
 markitai ./docs -o out/                  # batch convert a directory
+markitai ./docs -o out/ --json           # machine-readable results for automation
+markitai https://example.com --no-remote-fetch -o out/  # local URL extraction only
 markitai doctor                          # check dependencies and configuration
 ```
 

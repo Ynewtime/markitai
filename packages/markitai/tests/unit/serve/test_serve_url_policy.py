@@ -239,3 +239,46 @@ class TestLoopbackPeerUrlPolicy:
                 assert resp.status_code == 201, resp.text
                 await _drain(client, resp.json()["job_id"])
         resolver.assert_not_awaited()
+
+
+async def test_remote_job_rejects_private_redirect_before_connecting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    from markitai.fetch_policy import public_network_only
+
+    visited = []
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        visited.append(str(request.url))
+        assert request.url.host == "93.184.216.34"
+        assert request.headers["host"] == "public.example"
+        return httpx.Response(
+            302, headers={"location": "http://127.0.0.1:8080/private"}
+        )
+
+    monkeypatch.setattr(
+        "markitai.fetch_http._public_http_client",
+        lambda _proxy, _timeout: httpx.AsyncClient(
+            transport=httpx.MockTransport(transport)
+        ),
+    )
+    monkeypatch.setattr(
+        "markitai.fetch_policy.resolve_hostname_addresses",
+        AsyncMock(return_value=["93.184.216.34"]),
+    )
+    async with _serve_client(_make_app(tmp_path), peer=LAN_PEER) as client:
+        response = await client.post(
+            "/api/jobs",
+            data={
+                "urls": json.dumps(["http://public.example/start"]),
+                "options": json.dumps({"strategy": "static", "llm": False}),
+            },
+        )
+        assert response.status_code == 201, response.text
+        snapshot = await _drain(client, response.json()["job_id"])
+    assert snapshot["items"][0]["status"] == "error"
+    assert len(visited) == 1
+    assert "127.0.0.1" not in visited[0]
+    assert public_network_only.get() is False

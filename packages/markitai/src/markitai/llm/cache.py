@@ -27,6 +27,7 @@ from markitai.constants import (
     DEFAULT_GLOBAL_CACHE_DIR,
     DEFAULT_SQLITE_TIMEOUT,
 )
+from markitai.utils.sqlite_cache import cache_write
 
 
 def is_blank_result(result: Any) -> bool:
@@ -177,24 +178,14 @@ class SQLiteCache:
         now = int(time.time())
         size_bytes = len(value.encode("utf-8"))
 
-        with self._connect() as conn:
-            # Check current total size
-            total_size = conn.execute(
-                "SELECT COALESCE(SUM(size_bytes), 0) as total FROM cache"
-            ).fetchone()["total"]
-
-            # Evict LRU entries if needed
-            while total_size + size_bytes > self._max_size_bytes:
-                oldest = conn.execute(
-                    "SELECT key, size_bytes FROM cache ORDER BY accessed_at ASC LIMIT 1"
-                ).fetchone()
-
-                if oldest is None:
-                    break
-
-                conn.execute("DELETE FROM cache WHERE key = ?", (oldest["key"],))
-                total_size -= oldest["size_bytes"]
-                logger.debug(f"[Cache] Evicted LRU entry: {oldest['key'][:8]}...")
+        with (
+            self._connect() as conn,
+            cache_write(
+                conn, "cache", key, size_bytes, self._max_size_bytes
+            ) as admitted,
+        ):
+            if not admitted:
+                return
 
             # Insert or replace
             conn.execute(
@@ -204,7 +195,6 @@ class SQLiteCache:
             """,
                 (key, value, model, now, now, size_bytes),
             )
-            conn.commit()
 
     def clear(self) -> int:
         """Clear all entries.

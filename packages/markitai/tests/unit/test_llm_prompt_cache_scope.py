@@ -268,7 +268,7 @@ class TestCleanerCacheScope:
 
 
 class TestDocumentProcessCacheScope:
-    """_process_document_combined (structured path)."""
+    """_run_document_call (structured path)."""
 
     @pytest.mark.asyncio
     async def test_template_edit_changes_key_and_misses_old_entry(
@@ -279,14 +279,14 @@ class TestDocumentProcessCacheScope:
         markdown = "# Doc\n\nBody."
 
         first = _make_enhancer(prompts_dir, memory, persistent)
-        await first._process_document_combined(markdown, "doc.md")
+        await first._run_document_call(first._build_document_call(markdown, "doc.md"))
         old_key = first._engine.structured_calls[0].cache_key  # type: ignore[attr-defined]
 
         (prompts_dir / "document_process_system.md").write_text(
             "New processing rules for {source}", encoding="utf-8"
         )
         second = _make_enhancer(prompts_dir, memory, persistent)
-        await second._process_document_combined(markdown, "doc.md")
+        await second._run_document_call(second._build_document_call(markdown, "doc.md"))
         new_key = second._engine.structured_calls[0].cache_key  # type: ignore[attr-defined]
 
         assert old_key.startswith("document_process@")
@@ -309,7 +309,9 @@ class TestDocumentProcessCacheScope:
         keys = []
         for _ in range(2):
             enhancer = _make_enhancer(prompts_dir, memory, persistent)
-            await enhancer._process_document_combined(markdown, "doc.md")
+            await enhancer._run_document_call(
+                enhancer._build_document_call(markdown, "doc.md")
+            )
             keys.append(enhancer._engine.structured_calls[0].cache_key)  # type: ignore[attr-defined]
 
         assert keys[0] == keys[1]

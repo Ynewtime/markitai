@@ -430,8 +430,10 @@ class TestCacheStatsErrorHandling:
 
             result = runner.invoke(cache_stats)
 
-            # Should not crash, might show error
-            assert result.exit_code == 0
+            # No traceback, but an unreadable cache is a failure in both
+            # output modes (scripts and humans see the same exit code).
+            assert result.exit_code == 1
+            assert "Cache" in result.output or "cache" in result.output
 
     def test_stats_disabled_cache(self, runner: CliRunner, tmp_path: Path) -> None:
         """Test stats when cache is disabled."""

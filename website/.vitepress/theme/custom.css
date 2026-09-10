@@ -14,13 +14,16 @@
   --vp-home-hero-name-color: transparent;
   --vp-home-hero-name-background: linear-gradient(135deg, #18181b 0%, #52525b 100%);
 
-  /* Hero image glow */
-  --vp-home-hero-image-background-image: linear-gradient(
-    -45deg,
-    #71717a33 50%,
-    #a1a1aa33 50%
-  );
-  --vp-home-hero-image-filter: blur(44px);
+  /* Quickstart terminal panel. Semantic, theme-aware tokens: the panel keeps a
+     terminal look (dark ink on a light page) but lightens its frame in dark
+     mode instead of duplicating a hard-coded palette in every rule. */
+  --mk-code-bg: #18181b;
+  --mk-code-border: #3f3f46;
+  --mk-code-fg: #fafafa;
+  --mk-code-dim: #a1a1aa;
+  --mk-code-num: #d4d4d8;
+  --mk-code-ok: #bbf7d0;
+  --mk-code-outline: #71717a;
 }
 
 .dark {
@@ -33,12 +36,8 @@
   /* Hero title gradient for dark mode */
   --vp-home-hero-name-background: linear-gradient(135deg, #fafafa 0%, #a1a1aa 100%);
 
-  /* Hero image glow for dark mode */
-  --vp-home-hero-image-background-image: linear-gradient(
-    -45deg,
-    #52525b33 50%,
-    #71717a33 50%
-  );
+  --mk-code-bg: #0b0b0d;
+  --mk-code-border: #27272a;
 }
 
 /* Button styling */
@@ -64,6 +63,57 @@
   color: #18181b;
 }
 
+/* Hero type scale. The default theme sets name and headline at the same
+   size; here the product name carries the hero (one step larger, heavier),
+   while the headline and tagline stay deliberately quiet. Selector weight
+   (.VPHome .VPHero) beats the theme's scoped rules, media queries included. */
+.VPHome .VPHero .name {
+  font-size: 40px;
+  line-height: 48px;
+  font-weight: 800;
+}
+.VPHome .VPHero .text {
+  max-width: 460px;
+  font-size: 28px;
+  line-height: 36px;
+}
+.VPHome .VPHero .tagline {
+  font-size: 16px;
+  line-height: 26px;
+}
+
+@media (min-width: 640px) {
+  .VPHome .VPHero .name {
+    font-size: 56px;
+    line-height: 64px;
+  }
+  .VPHome .VPHero .text {
+    max-width: 620px;
+    font-size: 36px;
+    line-height: 46px;
+  }
+  .VPHome .VPHero .tagline {
+    font-size: 16px;
+    line-height: 28px;
+  }
+}
+
+@media (min-width: 960px) {
+  .VPHome .VPHero .name {
+    font-size: 72px;
+    line-height: 80px;
+  }
+  .VPHome .VPHero .text {
+    max-width: 700px;
+    font-size: 40px;
+    line-height: 52px;
+  }
+  .VPHome .VPHero .tagline {
+    font-size: 18px;
+    line-height: 30px;
+  }
+}
+
 /* Feature icon styling - make SVG icons more visible */
 .VPFeature .icon {
   display: flex;
@@ -85,44 +135,19 @@
   stroke: var(--vp-c-brand-1);
 }
 
-/* Homepage: show the shortest path to a useful result. */
-/* The hero and its feature cards are the pitch: on viewports tall enough to
-   hold them (tablets and desktops) they own the first screen exactly. The
-   hero's negative nav-margin puts its box at the very top of the viewport,
-   so it just needs the viewport height minus the feature cards: it absorbs
-   the rest, the cards' bottom edge lands on the fold, and everything else
-   starts below it. The feature block's height is content-driven, so the
-   theme layout publishes its measured height as --vp-features-h; the 360px
-   fallback only covers the paint before the script runs. Auto margins center
-   the hero content and degrade to top-aligned instead of clipping when the
-   window is too short. Below 640px the stacked cards are always taller than
-   the viewport, so the page simply flows. */
-@media (min-width: 640px) {
-  .VPHome > .VPHero {
-    display: flex;
-    flex-direction: column;
-    min-height: max(480px, calc(100vh - var(--vp-features-h, 360px)));
-    min-height: max(480px, calc(100svh - var(--vp-features-h, 360px)));
-  }
-  .VPHome > .VPHero .container {
-    /* width: 100% keeps the container spanning its 1152px max (auto margins
-       would otherwise shrink it to fit-content and center the text block). */
-    width: 100%;
-    margin: auto;
-  }
-  .VPHome > .VPFeatures {
-    /* flow-root: the feature grid's -8px margins must not collapse through
-       the block's edges, or the measured height and the real box drift. */
-    display: flow-root;
-    padding-bottom: 64px;
-  }
+/* Homepage rhythm. The hero is content-sized and the sections below it are
+   separated by margin alone — no viewport-height math and no script, so the
+   first screen never shifts after paint. The feature grid renders through
+   <MarkitaiFeatures /> inside the home content, so it is a descendant, not a
+   direct child, of .VPHome. Section gaps are uniform: the features grid adds
+   no bottom padding, so .home-shot's top margin equals .home-quickstart's. */
+.VPHome .VPFeatures {
+  padding-bottom: 0;
 }
 
-/* Below the fold: the workbench and the quickstart. No divider — separation
-   comes from the fold itself plus this margin. */
 .home-shot {
   max-width: 1152px;
-  margin: 96px auto 0;
+  margin: 112px auto 0;
   padding: 0 24px;
   text-align: center;
 }
@@ -139,27 +164,54 @@
   margin: 0 auto 24px;
   max-width: 62ch;
 }
-/* Screenshots ship in both themes; show the one matching the site theme. */
-.dark .light-only,
-html:not(.dark) .dark-only {
+/* Screenshots ship in both themes; show the one matching the site theme.
+   The screenshot is a <picture> with a WebP source and a PNG fallback. */
+.home-shot-light,
+.home-shot-dark {
+  display: block;
+  margin: 0;
+}
+.dark .home-shot-light,
+html:not(.dark) .home-shot-dark {
   display: none;
 }
 
+.home-shot picture img,
 .home-shot img {
   width: 100%;
   height: auto;
   border: 1px solid var(--vp-c-divider);
   border-radius: 12px;
 }
+
+/* The light screenshot's own background nearly matches the page, so the
+   divider alone disappears; give light mode a slightly firmer edge. */
+html:not(.dark) .home-shot picture img,
+html:not(.dark) .home-shot img {
+  border-color: var(--vp-c-border);
+}
 .home-shot-link {
   margin-top: 16px;
+}
+
+/* The five-column comparison table's min-content is a few px wider than
+   the 688px doc column, which a block table answers with a horizontal
+   scrollbar. A slightly smaller table font and tighter cell padding pull
+   it back inside without forcing breaks inside words. */
+.compact-tables .vp-doc table {
+  font-size: 14px;
+}
+.compact-tables .vp-doc th,
+.compact-tables .vp-doc td {
+  padding-left: 9px;
+  padding-right: 9px;
 }
 
 .home-quickstart {
   display: grid;
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
   gap: 48px;
-  margin: 96px 0 0;
+  margin: 112px 0 0;
   padding: 48px;
   border: 1px solid var(--vp-c-divider);
   border-radius: 20px;
@@ -203,12 +255,19 @@ html:not(.dark) .dark-only {
   font-weight: 600;
 }
 
+.home-install-options-note {
+  margin: 16px 0 0;
+  color: var(--vp-c-text-2);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
 .home-quickstart-steps {
   overflow: hidden;
-  border: 1px solid #3f3f46;
+  border: 1px solid var(--mk-code-border);
   border-radius: 14px;
-  background: #18181b;
-  color: #fafafa;
+  background: var(--mk-code-bg);
+  color: var(--mk-code-fg);
 }
 
 .home-quickstart-step {
@@ -219,7 +278,7 @@ html:not(.dark) .dark-only {
 }
 
 .home-quickstart-step + .home-quickstart-step {
-  border-top: 1px solid #3f3f46;
+  border-top: 1px solid var(--mk-code-border);
 }
 
 .home-quickstart-step .step-number {
@@ -227,16 +286,16 @@ html:not(.dark) .dark-only {
   place-items: center;
   width: 28px;
   height: 28px;
-  border: 1px solid #71717a;
+  border: 1px solid var(--mk-code-outline);
   border-radius: 50%;
-  color: #d4d4d8;
+  color: var(--mk-code-num);
   font-size: 12px;
   font-weight: 700;
 }
 
 .home-quickstart-step p {
   margin: 0 0 7px;
-  color: #a1a1aa;
+  color: var(--mk-code-dim);
   font-size: 13px;
   line-height: 1.4;
 }
@@ -246,17 +305,18 @@ html:not(.dark) .dark-only {
   padding: 0;
   overflow-wrap: anywhere;
   background: transparent;
-  color: #fafafa;
+  color: var(--mk-code-fg);
   font-size: 14px;
   line-height: 1.55;
   white-space: normal;
 }
 
 .VPHome .home-quickstart-steps .home-quickstart-step.output code {
-  color: #bbf7d0;
+  color: var(--mk-code-ok);
 }
 
-/* The platform class is added in <head> before first paint. */
+/* The platform class is added in <head> before first paint when JS is on.
+   Without JS both install commands stay visible (see <noscript> in index.md). */
 .VPHome .home-quickstart-steps .home-quickstart-step .windows-only {
   display: none;
 }
@@ -272,7 +332,7 @@ html:not(.dark) .dark-only {
 
 .home-install-options {
   margin-top: 12px;
-  color: #a1a1aa;
+  color: var(--mk-code-dim);
   font-size: 12px;
 }
 
@@ -296,7 +356,7 @@ html:not(.dark) .dark-only {
 }
 
 .VPHome .home-quickstart-steps .home-install-option code {
-  color: #e4e4e7;
+  color: var(--mk-code-num);
   font-size: 12px;
 }
 
@@ -304,13 +364,13 @@ html:not(.dark) .dark-only {
   /* No forced first screen on small devices: the stacked cards are taller
      than any phone viewport, so the sections simply flow. */
   .home-shot {
-    margin-top: 64px;
+    margin-top: 72px;
   }
 
   .home-quickstart {
     grid-template-columns: 1fr;
     gap: 32px;
-    margin-top: 64px;
+    margin-top: 72px;
     padding: 28px 20px 20px;
     border-radius: 16px;
   }
@@ -368,10 +428,6 @@ html:not(.dark) .dark-only {
   }
 
   /* The first screen is a viewport concept; let printed pages break naturally. */
-  .VPHome > .VPHero {
-    min-height: 0;
-  }
-
   .VPHero .name.clip {
     background: none;
     color: #000;

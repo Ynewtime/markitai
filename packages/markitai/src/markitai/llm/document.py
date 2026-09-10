@@ -1623,59 +1623,6 @@ class DocumentEnhancer:
             batches.append("\n\n".join(batch_texts))
         return batches
 
-    async def _enhance_document_batched_simple(
-        self,
-        extracted_text: str,
-        page_images: list[Path],
-        batch_size: int,
-        source: str = "",
-    ) -> str:
-        """Process long documents in batches - vision cleaning only.
-
-        All batches use the same method for consistent output format.
-
-        Args:
-            extracted_text: Full document text
-            page_images: All page images
-            batch_size: Pages per batch
-            source: Source file name
-
-        Returns:
-            Merged cleaned content
-        """
-        num_pages = len(page_images)
-        num_batches = (num_pages + batch_size - 1) // batch_size
-
-        # Split text by pages
-        page_texts = content_utils.split_text_by_pages(extracted_text, num_pages)
-
-        cleaned_parts = []
-
-        for batch_num in range(num_batches):
-            batch_start = batch_num * batch_size
-            batch_end = min(batch_start + batch_size, num_pages)
-
-            # Get text and images for this batch
-            batch_texts = page_texts[batch_start:batch_end]
-            batch_images = page_images[batch_start:batch_end]
-            batch_text = "\n\n".join(batch_texts)
-
-            logger.info(
-                f"[{source}] Batch {batch_num + 1}/{num_batches}: "
-                f"pages {batch_start + 1}-{batch_end}"
-            )
-
-            # All batches: clean only (no frontmatter)
-            # Use source as context (not batch-specific) so all usage aggregates to same context
-            batch_cleaned = await self.enhance_document_with_vision(
-                batch_text, batch_images, context=source
-            )
-
-            cleaned_parts.append(batch_cleaned)
-
-        # Merge all batches
-        return "\n\n".join(cleaned_parts)
-
     async def process_document(
         self,
         markdown: str,
@@ -1997,19 +1944,6 @@ class DocumentEnhancer:
         """Run a prepared document call (the engine handles caching)."""
         response, _raw_response = await self._engine.complete_structured(call)
         return response
-
-    async def _process_document_combined(
-        self, markdown: str, source: str
-    ) -> DocumentProcessResult:
-        """Build the combined call and run it.
-
-        Nothing in production calls this; it is the seam the document tests
-        use to exercise one combined call without going through
-        ``process_document``.
-        """
-        return await self._run_document_call(
-            self._build_document_call(markdown, source)
-        )
 
     def _validate_no_prompt_leakage(self, cleaned: str, source: str) -> str:
         """Detect and handle prompt leakage.

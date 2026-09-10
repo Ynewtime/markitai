@@ -1248,13 +1248,13 @@ class TestURLListProcessing:
     """Tests for .urls file processing."""
 
     def test_empty_urls_file(self, tmp_path: Path, cli_runner: CliRunner) -> None:
-        """Test handling of empty .urls file."""
+        """An empty .urls file is an input error, not a successful no-op."""
         urls_file = tmp_path / "urls.urls"
         urls_file.write_text("")
         output_dir = tmp_path / "out"
 
         result = cli_runner.invoke(app, [str(urls_file), "-o", str(output_dir)])
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "No valid URLs" in result.output
 
     def test_urls_file_with_comments(
@@ -1585,3 +1585,144 @@ class TestBatchMode:
         assert "URLs (1)" in result.output
         assert "https://example.com/feed" in result.output
         assert "https://example.com/archive" not in result.output
+
+
+class TestRemoteFetchOptOut:
+    """`--no-remote-fetch` makes the privacy decision explicit on the CLI."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_remote_fetch_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The flag writes os.environ in-process; never leak it to a sibling test.
+
+        ``monkeypatch.delenv`` on an absent variable records nothing, so seed
+        it first: teardown then restores the pre-test state (absent).
+        """
+        monkeypatch.setenv("MARKITAI_NO_REMOTE_FETCH", "0")
+
+    def test_flag_sets_the_documented_env_var(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("content", encoding="utf-8")
+
+        result = cli_runner.invoke(
+            app, [str(test_file), "-o", str(tmp_path / "out"), "--no-remote-fetch"]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert os.environ.get("MARKITAI_NO_REMOTE_FETCH") == "1"
+
+    def test_flag_is_absent_by_default(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("content", encoding="utf-8")
+
+        result = cli_runner.invoke(app, [str(test_file), "-o", str(tmp_path / "out")])
+
+        assert result.exit_code == 0, result.output
+        # The fixture seeds "0"; without the flag the run must not force the opt-out.
+        assert os.environ.get("MARKITAI_NO_REMOTE_FETCH") != "1"
+
+    def test_quiet_warns_when_it_suppresses_the_consent_prompt(
+        self,
+        tmp_path: Path,
+        cli_runner: CliRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A verbosity flag must not silently answer a privacy question."""
+        from markitai.config import ConfigManager
+
+        real_load = ConfigManager.load
+
+        def load_with_ask(
+            self: ConfigManager, *args: object, **kwargs: object
+        ) -> object:
+            cfg = real_load(self, *args, **kwargs)  # type: ignore[arg-type]
+            cfg.fetch.remote_consent = "ask"
+            return cfg
+
+        monkeypatch.setattr(ConfigManager, "load", load_with_ask)
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("content", encoding="utf-8")
+
+        result = cli_runner.invoke(
+            app,
+            [
+                "https://example.com/page",
+                "-o",
+                str(tmp_path / "out"),
+                "--quiet",
+                "--dry-run",
+            ],
+        )
+
+        assert "suppresses the remote-fetch consent prompt" in result.output
+
+    def test_json_does_not_disable_the_consent_prompt(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        """--json changes what is printed, not a privacy decision."""
+        from markitai.fetch_consent import _get_state, reset_remote_consent
+
+        reset_remote_consent()
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("content", encoding="utf-8")
+
+        result = cli_runner.invoke(
+            app, [str(test_file), "-o", str(tmp_path / "out"), "--json"]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert _get_state().prompt_allowed is True
+
+    def test_quiet_still_disables_the_consent_prompt(
+        self, tmp_path: Path, cli_runner: CliRunner
+    ) -> None:
+        from markitai.fetch_consent import _get_state, reset_remote_consent
+
+        reset_remote_consent()
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("content", encoding="utf-8")
+
+        result = cli_runner.invoke(
+            app, [str(test_file), "-o", str(tmp_path / "out"), "--quiet"]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert _get_state().prompt_allowed is False
+
+    def test_no_remote_fetch_help_is_documented(self, cli_runner: CliRunner) -> None:
+        result = cli_runner.invoke(app, ["--help"])
+
+        assert result.exit_code == 0
+        assert "--no-remote-fetch" in _strip_ansi(result.output)
+
+
+class TestLogLevelOption:
+    """`--log-level` overrides log.level without touching console verbosity."""
+
+    def test_help_lists_the_choice(self, cli_runner: CliRunner) -> None:
+        result = cli_runner.invoke(app, ["--help"])
+
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        assert "--log-level" in output
+        assert "CRITICAL" in output
+
+    def test_accepts_a_valid_level(self, tmp_path: Path, cli_runner: CliRunner) -> None:
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("content", encoding="utf-8")
+
+        result = cli_runner.invoke(
+            app,
+            [str(test_file), "-o", str(tmp_path / "out"), "--log-level", "WARNING"],
+        )
+
+        assert result.exit_code == 0, result.output
+
+    def test_rejects_an_unknown_level(self, cli_runner: CliRunner) -> None:
+        result = cli_runner.invoke(app, ["some.txt", "--log-level", "LOUD"])
+
+        assert result.exit_code == 2
+        assert "LOUD" in _strip_ansi(result.output)

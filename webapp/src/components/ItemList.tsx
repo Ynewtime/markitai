@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { HistoryEntry } from "../api/types";
 import type {
   SessionItem,
@@ -13,10 +13,14 @@ import {
 } from "./ArchivedJobsSection";
 import { ItemRow } from "./ItemRow";
 
-/** Status facets share the chip vocabulary (mono words, English in both
- * locales — they mirror the status chips). */
+/** Status facets share the chip vocabulary; the wire values stay stable and
+ * the chip renders a translated label. */
 const STATUS_FILTERS = ["all", "done", "failed", "skipped"] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
+
+const filterLabels = (t: Dict): Record<StatusFilter, string> => ({
+  all: t.filterAll, done: t.filterDone, failed: t.filterFailed, skipped: t.filterSkipped,
+});
 
 /** Stable fallback: a fresh [] per render would invalidate the rows memo. */
 const NO_ARCHIVE_ENTRIES: HistoryEntry[] = [];
@@ -179,7 +183,6 @@ export function ItemList({
   jobs,
   archive,
   showCost,
-  now,
   stats,
   settled,
   selectedKey,
@@ -190,7 +193,6 @@ export function ItemList({
   onRetry,
   onEnhance = async () => null,
   onDelete,
-  canDelete,
   llmAvailable = false,
   llmDisabledReason,
 }: {
@@ -199,7 +201,6 @@ export function ItemList({
   jobs: Record<string, SessionJob>;
   archive?: ItemListArchive;
   showCost: boolean;
-  now: number;
   stats: SessionStats;
   settled: boolean;
   selectedKey: string | null;
@@ -210,7 +211,6 @@ export function ItemList({
   onRetry: (item: SessionItem) => Promise<string | null>;
   onEnhance?: (item: SessionItem) => Promise<string | null>;
   onDelete: (item: SessionItem) => Promise<string | null>;
-  canDelete: (item: SessionItem) => boolean;
   llmAvailable?: boolean;
   llmDisabledReason?: string;
 }) {
@@ -268,6 +268,23 @@ export function ItemList({
 
   // Roving tabindex spans both current and persisted rows.
   const [activeKey, setActiveKey] = useState<string | null>(null);
+  const filterText = filterLabels(t);
+  // Stable row-focus handlers: an inline lambda would give every row a new
+  // prop identity and defeat ItemRow's memo on every list render.
+  const focusRow = useCallback(
+    (key: string) => {
+      setActiveKey(key);
+      onSelect(key);
+    },
+    [onSelect],
+  );
+  const focusArchivedRow = useCallback(
+    (jobId: string) => {
+      setActiveKey(`archive:${jobId}`);
+      onSelect(null);
+    },
+    [onSelect],
+  );
   const visibleKeys = useMemo(
     () => new Set(visibleRows.map((row) => row.key)),
     [visibleRows],
@@ -329,7 +346,7 @@ export function ItemList({
     }
   };
 
-  const totalNote = `${stats.done}/${stats.total} ${t.statDone}`;
+  const totalNote = `${stats.done}/${stats.total} ${t.statusDone}`;
   const totalTime = fmtDur(stats.doneDurationMs);
   const hasArchivedRows =
     archivedEntries.length > 0 || (archive?.error ?? null) !== null;
@@ -364,7 +381,7 @@ export function ItemList({
                 aria-pressed={statusFilter === filter}
                 onClick={() => setStatusFilter(filter)}
               >
-                {filter}
+                {filterText[filter]}
               </button>
             ))}
           </div>
@@ -394,18 +411,16 @@ export function ItemList({
                 item={row.item}
                 index={index}
                 showCost={showCost}
-                now={now}
                 selected={row.key === selectedKey}
                 tabbable={row.key === effectiveActive}
                 onPreview={onPreview}
-                onRowFocus={(key) => {
-                  setActiveKey(key);
-                  onSelect(key);
-                }}
+                onRowFocus={focusRow}
                 onRetry={onRetry}
                 onEnhance={onEnhance}
                 onDelete={onDelete}
-                canDelete={canDelete(row.item)}
+                // Derived here, not passed in: ItemList already renders with
+                // the live job map, so this cannot go stale between renders.
+                canDelete={jobs[row.item.jobId]?.status === "done"}
                 llmAvailable={llmAvailable}
                 llmDisabledReason={llmDisabledReason}
               />
@@ -426,10 +441,7 @@ export function ItemList({
               tabbableJobId={
                 row.key === effectiveActive ? row.entry.job_id : null
               }
-              onRowFocus={(jobId) => {
-                setActiveKey(`archive:${jobId}`);
-                onSelect(null);
-              }}
+              onRowFocus={focusArchivedRow}
             />
           );
         })}

@@ -110,7 +110,7 @@ describe("notifyJobDone", () => {
     setHidden(true);
     notifyJobDone("All files converted.");
     expect(FakeNotification.created).toEqual([
-      { title: "markitai", body: "All files converted." },
+      { title: "Markitai", body: "All files converted." },
     ]);
   });
 });

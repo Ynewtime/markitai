@@ -11,7 +11,7 @@ Releases are manual and **tag-driven**: pushing a `vX.Y.Z` tag runs `.github/wor
 
 ## Steps
 
-1. **Preflight** on a clean `main` checkout: `uv run pytest -q`, `uv run ruff check`, and `uv run pyright packages/markitai/src` all green locally (CI re-runs the full matrix, but a red tag run wastes a cycle). Confirm the target version does not already exist on PyPI.
+1. **Preflight** on a clean `main` checkout: all Python gates in `markitai-dev` green locally, plus frontend tests, `scripts/sync_webapp_static.sh --check` and `bun run --cwd website docs:build` (CI re-runs the full matrix, but a red tag run wastes a cycle). Confirm the target version does not already exist on PyPI.
 
 2. **Run the end-to-end check** on a clean `main`: `scripts/e2e_release_check.sh`. It builds the wheel, installs it as a tool into a throwaway `HOME`, and drives the public CLI through install → doctor → zero-config convert → real LLM enhancement → URL → batch → interrupt → resume → cache → failure messages → every input format → presets and profiles → run-shape flags → refusals → `.urls` list → config layers → Python API, then adds the serve/mcp/legacy extras and drives doctor, legacy Office, the serve API and `markitai-mcp` over stdio, then the browser/extra-fetch extras (Chromium via `doctor --fix`, Playwright rendering, screenshots, screenshot-only reading), the Cloudflare file backend, the remote strategies on a public page (skipped, with the reason, on fake-IP VPN resolvers), and a real two-phase Batch API job. It costs a few cents in real LLM calls and it catches the class of defect the suite cannot see: a flag that silently does nothing without a config file, a `--resume` that restarts, an install hint naming a command that does not work. It writes `WORKDIR/report.html` — verdict, per-step results in plain language, and the conversions themselves inline so quality can be judged by eye — with one numbered directory per step beside it holding that step's inputs, outputs and logs. Artifacts are kept for inspection; `CLEANUP_ON_SUCCESS=1` removes them on a clean pass, and a failed run always keeps them. Every knob is documented at the top of the script.
 
@@ -22,7 +22,9 @@ Releases are manual and **tag-driven**: pushing a `vX.Y.Z` tag runs `.github/wor
 4. **Write both changelog sections** for `## [X.Y.Z] - YYYY-MM-DD` (Keep a Changelog format):
    - `CHANGELOG.md` — English; this section becomes the GitHub Release notes **verbatim**.
    - `CHANGELOG.zh.md` — the Chinese mirror of the same section.
-   - The website copies both files from the repo root at docs build time — no separate website step.
+   - Keep entries short: describe user-visible additions, behavior changes and fixes; keep implementation logs in review notes.
+   - The website copies both files from the repo root at docs build time; rebuild to validate Vue/Markdown rendering.
+   - Recheck CLI `--help`, both website languages and `skills/` whenever a flag, default, output layout or extra changes.
 
 5. **Commit and push to main**: `chore(release): X.Y.Z`.
 

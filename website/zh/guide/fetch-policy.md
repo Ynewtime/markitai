@@ -1,6 +1,6 @@
-# Fetch Policy 引擎
+# 抓取策略引擎
 
-Markitai 使用策略驱动的 Fetch Policy 引擎来确定获取 URL 内容的最佳策略。该引擎设计为弹性、高效且用户友好。
+Markitai 使用策略驱动的抓取策略引擎来确定获取 URL 内容的最佳策略。该引擎设计为弹性、高效且用户友好。
 
 ## 策略选择逻辑
 
@@ -14,7 +14,7 @@ Markitai 使用策略驱动的 Fetch Policy 引擎来确定获取 URL 内容的�
 
 Markitai 采用本地优先策略：对于大多数网站，会先尝试原生本地流水线，再使用远程服务：
 
-```
+```text
 Static (HTTP) → Playwright (浏览器) → Defuddle → Jina → Cloudflare
 ```
 
@@ -24,17 +24,21 @@ Static 的原生 webextract 流水线在提取质量基准语料库上已能匹�
 
 对于已知需要 JavaScript 的域名（如 `x.com`、`instagram.com`、`fallback_patterns` 中列出的域名，或此前静态抓取失败并已被学习进 SPA 缓存的域名），Markitai 会直接跳转到浏览器：
 
-```
+```text
 Playwright (浏览器) → Defuddle → Jina → Cloudflare → Static
 ```
 
 这里 Static 排在最后，因为对这些域名它已经失败过（或预期会失败），无法产出可用内容。
 
-### 远程后备与仅限本地的 URL
+### 远程后备与仅限本地的 URL {#remote-fallback-and-local-only-urls}
 
 `fetch.remote_consent` 的默认值是 `always`。对于公网 URL，本地策略失败后，Markitai 可以无需交互确认，继续尝试 Defuddle、Jina 或 Cloudflare。每个进程第一次准备使用远程服务时，会先在 stderr 输出说明。由于该决定会在进程内缓存，说明会完整列出后续可能授权的服务：defuddle.md、Jina、Cloudflare、FxTwitter 与 Twitter oEmbed。各远程服务仍按顺序逐个尝试，URL 只会发送给当前正在尝试的服务。
 
-Playwright 还有一条公网 URL 增强路径：X/Twitter 状态或文章的本地 DOM 提取失败后，可能依次尝试 FxTwitter 与 Twitter oEmbed。它们和其他远程服务一样，共用**同一个**进程级同意决定，不再享有例外。在 `ask` 模式下，这意味着：如果本次运行尚未做出决定且终端可交互，这条路径自己就会弹出那一次共享确认；如果先前已经同意或拒绝，则直接沿用；无法询问时（非交互环境）则跳过。`never` 与 `MARKITAI_NO_REMOTE_FETCH` 会直接禁用它。同意是延迟解析的——只有在确认 URL 属于公网之后才会询问，因此绝不会为一个本就不会离开本机的 URL 弹出提问。
+Playwright 还有一条公网 URL 增强路径：X/Twitter 状态或文章的本地 DOM 提取失败后，可能依次尝试 FxTwitter 与 Twitter oEmbed。它们和其他远程服务一样，共用**同一个**进程级同意决定，不再享有例外。
+
+在 `ask` 模式下，这意味着：如果本次运行尚未做出决定且终端可交互，这条路径自己就会弹出那一次共享确认；如果先前已经同意或拒绝，则直接沿用；无法询问时（非交互环境）则跳过。`never` 与 `MARKITAI_NO_REMOTE_FETCH` 会直接禁用它。
+
+同意是延迟解析的——只有在确认 URL 属于公网之后才会询问，因此绝不会为一个本就不会离开本机的 URL 弹出提问。
 
 以下 URL 无论选择哪种策略，都只会留在本机处理：
 
@@ -162,7 +166,7 @@ export MARKITAI_STATIC_HTTP=curl_cffi
 
 ## 工作原理
 
-```
+```text
 URL 请求
     │
     ├─ 显式策略 (-s static/playwright/defuddle/jina/cloudflare)?

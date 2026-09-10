@@ -8,7 +8,7 @@ second executable name.
 
 from __future__ import annotations
 
-import click
+import rich_click as click
 from rich.markup import escape
 
 from markitai.cli.ui import get_stderr_console
@@ -16,7 +16,16 @@ from markitai.cli.ui import get_stderr_console
 
 @click.command("mcp")
 def mcp() -> None:
-    """Run the Markitai MCP server (stdio) for AI agents."""
+    """Run the Markitai MCP server (stdio) for AI agents.
+
+    Serves convert_document, convert_url, batch_convert and job_status over
+    stdio; the client (Claude Code, Claude Desktop, any MCP host) speaks the
+    protocol. The same server is published as ``markitai-mcp``.
+
+    Examples:
+        markitai mcp                              # stdio server for the host
+        uvx --from "markitai[mcp]" markitai mcp   # registry-style launch
+    """
     try:
         from markitai.mcp.server import main
     except ImportError:

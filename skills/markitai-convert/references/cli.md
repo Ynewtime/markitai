@@ -22,14 +22,15 @@ Authoritative long-form docs: <https://markitai.dev/guide/cli>. This file keeps 
 
 | Flag | Effect |
 |---|---|
-| `-o, --output <path>` | Directory, or exact file target for single input. Without it, single input prints to stdout; directory/`.urls` input requires `-o` |
+| `-o, --output <path>` | Directory, or a `.md` file target for one input. Without it, one input prints Markdown to stdout; directory/`.urls` batches require an output directory |
+| `--json` | One `{version, ok, error, items[], totals}` result on stdout; requires `-o`, excludes `--dry-run` and `--llm-batch-collect`. Includes final paths, usage and timing; argument/usage errors can exit without JSON |
 | `--resume` | Batch only: skip completed, retry failed/interrupted, pick up new files; prints `Resuming batch: N completed, M remaining` |
 | `-g, --glob <pat>` | Restrict directory discovery; repeatable; `!` prefix excludes (`-g '!drafts/**'`, single-quote in zsh) |
 | `--max-depth <n>` | Directory scan depth (default 5; 0 = no recursion) |
 | `-j, --batch-concurrency <n>` | Concurrent file tasks (default 10) |
 | `--url-concurrency <n>` | Concurrent URL fetches (default 5), separate so slow URLs don't block files |
 | `--llm-concurrency <n>` | Concurrent LLM requests (default 10) |
-| `--llm-batch` | Directory batches only: run the LLM stage through the provider's Batch API at half price. Needs a single-model OpenAI or Anthropic pool. Covers `--alt`/`--desc` and `--screenshot` (a document too long for one call is enhanced live); refuses `--ocr`, whose pages are read by local OCR rather than rendered while the batch's first phase runs with the LLM off. Waits up to `--llm-batch-timeout` (default 1h), then hands off |
+| `--llm-batch` | Directory batches only, using files converted by the current run: run the LLM stage through the provider's Batch API at half price. Needs a single-model OpenAI or Anthropic pool. Covers `--alt`/`--desc` and `--screenshot` (a document too long for one call is enhanced live); refuses `--ocr`, whose pages are read by local OCR rather than rendered while the batch's first phase runs with the LLM off. Waits up to `--llm-batch-timeout` (default 1h), then hands off |
 | `--llm-batch-collect <id>` | Finish a handed-off batch later; needs `-o` pointing at the original output directory, no input argument |
 | `--record-history` / `--no-record-history` | Record this run in `markitai serve`'s history (env `MARKITAI_RECORD_HISTORY`, config `history.record`); skipped in stdout mode |
 
@@ -80,7 +81,7 @@ Strategy ordering, per-domain tuning, SPA cache, and privacy rules: [url-fetchin
 |---|---|
 | `-c, --config <path>` | Explicit config file |
 | `--config-json '<json>'` | Inline deep-merge overrides (agent/CI friendly); explicit CLI flags still win |
-| `markitai config list\|get\|set\|path\|edit\|validate` | Inspect and edit persisted config; `config list` redacts secrets unless `--show-secrets` |
+| `markitai config list\|get\|set\|path\|edit\|validate` | Inspect and edit persisted config; `config list`, `get` and `set` redact secrets and nested request headers unless `--show-secrets` |
 
 Config resolution order: CLI args > env vars > config file (`--config` > `MARKITAI_CONFIG` > `./markitai.json` > `~/.markitai/config.json`) > defaults.
 
@@ -89,7 +90,9 @@ Config resolution order: CLI args > env vars > config file (`--config` > `MARKIT
 | Flag | Effect |
 |---|---|
 | `-q, --quiet` | Suppress progress; stdout Markdown payload of a single conversion is preserved |
-| `-v, --verbose` | Verbose logging |
+| `-v, --verbose` | Show conversion progress and diagnostic details on stderr |
+| `--log-level DEBUG\|INFO\|WARNING\|ERROR\|CRITICAL` | Override configured file logging; needs `log.dir`, independent of console verbosity |
+| `--no-remote-fetch` | Disable remote URL extraction, including explicit remote strategies; same as `MARKITAI_NO_REMOTE_FETCH=1` |
 | `--dry-run` | Preview without writing |
 | `-I, --interactive` | Guided conversion setup |
 | `-V, --version` / `-h, --help` | Version / help |
@@ -112,4 +115,5 @@ Config resolution order: CLI args > env vars > config file (`--config` > `MARKIT
 |---|---|
 | 0 | Success |
 | 1 | Failure — including a single-image input with neither `--ocr` nor `--llm` |
-| 10 | `.urls` batch partial success |
+| 2 | Argument/usage error, or a Batch API job handed off for later collection |
+| 10 | Batch partial success |

@@ -767,6 +767,13 @@ async def fetch_url(
         FetchError: If fetch fails and no fallback available
         JinaRateLimitError: If -s jina used and rate limit exceeded
     """
+    from markitai.fetch_policy import public_network_only
+
+    if public_network_only.get():
+        # Trusted callers may have cached a public URL that redirects inward.
+        # Keep that content outside the authority of anonymous remote jobs.
+        cache = None
+        skip_read_cache = True
     # Use provided renderer or get global one if needed
     _renderer = renderer
     if _renderer is None and (

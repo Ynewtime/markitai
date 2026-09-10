@@ -4,10 +4,10 @@
 
 Everything runs on your machine: jobs and history live on disk, and nothing leaves the host except the fetch strategies, remote file backends and LLM providers you configure.
 
-![The markitai web workspace: a composer card with an Options toggle, URL field, file picker, and Convert button, and an always-visible CLI command.](/workbench.png){.light-only}
-![The markitai web workspace: a composer card with an Options toggle, URL field, file picker, and Convert button, and an always-visible CLI command.](/workbench.dark.png){.dark-only}
+![The markitai web workspace: a composer card with a URL field, a Convert button, and Options, CLI, and Upload toggles.](/workbench.png){.light-only}
+![The markitai web workspace: a composer card with a URL field, a Convert button, and Options, CLI, and Upload toggles.](/workbench.dark.png){.dark-only}
 
-Every conversion option lives behind **Options** — so the default screen asks nothing. The composer is one card: the URL field, and an action row with Options, file upload and Convert (inline on desktop; on phones the URL area sits above the row). The equivalent CLI command stays visible whether Options is open or closed. Language and theme share the Appearance menu in the header.
+Every conversion option lives behind **Options** — so the default screen asks nothing. The composer is one card: the URL field, and an action row with Options, file upload and Convert (inline on desktop; on phones the URL area sits above the row). The equivalent CLI command appears when Options is open, or when you press the CLI button beside it. Language and theme share the Appearance menu in the header.
 
 The panel is grouped rather than listed: the preset leads, **Enhance** collects LLM, OCR and image analysis, **Output** holds the profile, and an **Advanced** section folds in the content source, URL/file fetch selectors and the cache and compression toggles — it opens by itself when one of them is already non-default.
 
@@ -32,7 +32,9 @@ It listens on `http://127.0.0.1:3600` and opens your browser automatically once 
 
 ## Access Token
 
-At startup the server generates a random access token and prints a ready-to-open URL like `http://192.168.1.50:3600/?token=mk_…`. Requests from this machine never need the token; requests from any other machine must carry it — the web UI picks it up from that URL automatically (and scrubs it from the address bar), scripts send `Authorization: Bearer <token>` (or `?token=` on download/SSE URLs). Set `MARKITAI_SERVE_TOKEN` to pin a fixed token across restarts; pass `--no-auth` to disable the token entirely, which limits other machines to public-URL conversions and blocks their access to LLM settings.
+At startup the server generates a random access token and prints a ready-to-open URL like `http://192.168.1.50:3600/#token=mk_…`. The token rides in the URL fragment, so it never reaches the server's access log. Requests from this machine never need the token; requests from any other machine must carry it — the web UI reads it from the fragment, stores it in `sessionStorage`, and the browser strips it from the address bar. Scripts send `Authorization: Bearer <token>` (or `?token=` on download/SSE URLs, which remains supported). Set `MARKITAI_SERVE_TOKEN` to pin a fixed token across restarts; pass `--no-auth` to disable the token entirely, which restricts remote clients’ URL targets to public addresses and blocks LLM settings. File uploads and history access, downloads and deletion remain available to those clients.
+
+For anonymous remote jobs, the public-target check also applies to each HTTP redirect, downloaded image and browser subrequest. Connections use validated IPs while retaining the original TLS hostname; restricted browser sessions block Service Workers and WebSockets and do not reuse trusted sessions or fetch caches.
 
 ## Accessing from Other Devices
 
@@ -76,6 +78,8 @@ The settings dialog manages the same configuration as `markitai config`: discove
 Every finished job is kept on disk under `~/.markitai/serve/jobs/` for **7 days**, then cleaned up automatically. From the history page you can reopen a job to preview and download its outputs again, delete a single entry, or download everything as one zip.
 
 History entries carry an origin. CLI runs recorded with [`--record-history`](/guide/cli#record-history) (or `MARKITAI_RECORD_HISTORY` / `history.record` in the config) appear alongside browser-created jobs with a small "CLI" badge and behave exactly like them — same TTL, deletion, and archive download — showing up live without restarting the server.
+
+Each item retains its effective conversion options across restarts. Retrying without overrides uses that item’s saved options. A restored snapshot also removes entries deleted by another client.
 
 ## API Overview
 

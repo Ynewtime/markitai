@@ -2,11 +2,20 @@
 
 > Opinionated Markdown converter with native LLM enhancement support. Converts documents, images, and URLs to clean Markdown, with optional LLM cleaning, frontmatter metadata, vision analysis, OCR for scans, and a local web workspace.
 
-Command-line tool (`markitai`, alias `mkai`) and Python package, MIT licensed. Source and issue tracker: https://github.com/Ynewtime/markitai. Docs are bilingual: English at the site root, 简体中文 under `/zh/`.
+Command-line tool (`markitai`, alias `mkai`) and Python package. Source and issue tracker: https://github.com/Ynewtime/markitai. Docs are bilingual: English at the site root, 简体中文 under `/zh/`.
+
+License: markitai's own source code is MIT. The default install is not uniformly MIT — the PDF engine is PyMuPDF (`pymupdf`, `pymupdf-layout`, `pymupdf4llm`) from Artifex Software, dual-licensed AGPL-3.0 or commercial. Local use is unaffected; redistributing the combined work or offering it to others over a network triggers AGPL-3.0 obligations (or requires a commercial licence from Artifex). See NOTICE for full third-party attribution: https://github.com/Ynewtime/markitai/blob/main/NOTICE
+
+## Automation
+
+- `markitai input -o out/ --json` returns final per-item status, output paths, usage and costs; check the exit code and `ok`/`error`. `--dry-run` and `--llm-batch-collect` exclude JSON output.
+- `--no-remote-fetch` disables remote URL extraction; it does not disable separately enabled LLM enhancement or a Cloudflare file backend.
+- MCP conversions accept `profile`; batches accept `concurrency` (default 10) and isolate outputs by batch/item. Omitted `llm` inherits server configuration; `llm: false` disables it.
 
 ## Docs
 
 - [Getting Started](https://markitai.dev/guide/getting-started): Install (guided script, uv, pipx), prerequisites, first conversion, output structure, supported formats
+- [Why Markitai](https://markitai.dev/guide/comparison): How markitai compares with markitdown, docling and anydoc, and which job each tool optimizes for
 - [CLI Reference](https://markitai.dev/guide/cli): Every command and flag
 - [Output Profiles](https://markitai.dev/guide/output-profiles): rag/obsidian/okf output shaping, frozen images.json schema, LlamaIndex ingestion recipe
 - [Python API](https://markitai.dev/guide/python-api): Programmatic `convert`/`aconvert` with typed results (provisional)
@@ -19,6 +28,7 @@ Command-line tool (`markitai`, alias `mkai`) and Python package, MIT licensed. S
 ## 中文文档
 
 - [快速开始](https://markitai.dev/zh/guide/getting-started): 安装、前置依赖、首次转换、输出结构、支持格式
+- [为什么选 Markitai](https://markitai.dev/zh/guide/comparison): 与 markitdown、docling、anydoc 的对比，以及每个工具各自优化的目标
 - [CLI 命令](https://markitai.dev/zh/guide/cli): 完整命令与参数参考
 - [输出 Profile](https://markitai.dev/zh/guide/output-profiles): rag/obsidian/okf 输出塑形、冻结的 images.json schema、LlamaIndex 摄取示例
 - [Python API](https://markitai.dev/zh/guide/python-api): 程序化调用 `convert`/`aconvert` 与类型化结果（暂定阶段）

@@ -107,6 +107,7 @@ class MarkitaiGroup(click.RichGroup):
         "--max-depth",
         "-s",
         "--strategy",
+        "--log-level",
     }
 
     def invoke(self, ctx: Context) -> Any:

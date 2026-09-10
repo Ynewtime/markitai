@@ -43,6 +43,14 @@ function open(props: Partial<Props> = {}) {
   return handlers;
 }
 
+/** The CLI readout is opt-in: open the panel, then the CLI toggle. */
+function openCli(props: Partial<Props> = {}) {
+  const handlers = open(props);
+  const toggle = screen.getByRole("button", { name: (props.t ?? t).cliToggleAria });
+  if (toggle.getAttribute("aria-expanded") !== "true") fireEvent.click(toggle);
+  return handlers;
+}
+
 /** The fetch/source/cache switches live behind the Advanced fold, which
  * only starts open when one of them already differs from its default. */
 function openAdvanced(props: Partial<Props> = {}) {
@@ -61,7 +69,7 @@ describe("OptionsPanel", () => {
     expect(screen.getByRole("group", { name: t.advImages }))
       .toContainElement(screen.getByLabelText(t.advAlt));
     expect(screen.getByRole("group", { name: t.advOutput }))
-      .toContainElement(screen.getByRole("button", { name: "rag" }));
+      .toContainElement(screen.getByRole("button", { name: t.profileRag }));
     const fold = screen.getByRole("button", { name: t.advanced });
     expect(fold).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByLabelText(t.advStrategy)).not.toBeInTheDocument();
@@ -87,8 +95,41 @@ describe("OptionsPanel", () => {
     expect(screen.queryByLabelText(t.llmEnhance)).not.toBeInTheDocument();
   });
 
+  it("keeps the CLI command hidden until it is asked for", () => {
+    panel();
+    expect(screen.queryByLabelText(t.cliAria)).not.toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: t.cliToggleAria });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText(t.cliAria)).toHaveTextContent("markitai");
+    expect(document.getElementById(toggle.getAttribute("aria-controls")!)).not.toBeNull();
+    fireEvent.click(toggle);
+    expect(screen.queryByLabelText(t.cliAria)).not.toBeInTheDocument();
+  });
+
+  it("toggles the CLI readout independently of the options panel", () => {
+    // Opening the panel does not reveal the readout…
+    open();
+    expect(screen.queryByLabelText(t.cliAria)).not.toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: t.cliToggleAria });
+    // …and its own switch works with the panel open…
+    fireEvent.click(toggle);
+    expect(screen.getByLabelText(t.cliAria)).toBeInTheDocument();
+    // …or closed: hiding the panel leaves the readout alone…
+    fireEvent.click(screen.getByRole("button", { name: t.options }));
+    expect(screen.getByLabelText(t.cliAria)).toBeInTheDocument();
+    // …and switching the readout off never touches the panel.
+    fireEvent.click(screen.getByRole("button", { name: t.options }));
+    fireEvent.click(toggle);
+    expect(screen.queryByLabelText(t.cliAria)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t.options })).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("shares one live command across disclosure states instead of a stale summary", () => {
     const { rerender } = render(<OptionsPanel {...base} ocr profile="rag" />);
+    const toggle = screen.getByRole("button", { name: t.cliToggleAria });
+    fireEvent.click(toggle);
     const command = screen.getByLabelText(t.cliAria);
     expect(command).toHaveTextContent("--llm --ocr --profile rag");
     for (const expanded of [true, false, true, false]) {
@@ -111,7 +152,7 @@ describe("OptionsPanel", () => {
     expect(onLlm).toHaveBeenCalledWith(false);
     fireEvent.click(screen.getByLabelText(t.ocr));
     expect(onOcr).toHaveBeenCalledWith(true);
-    fireEvent.click(screen.getByRole("button", { name: "rag" }));
+    fireEvent.click(screen.getByRole("button", { name: t.profileRag }));
     expect(onProfile).toHaveBeenCalledWith("rag");
   });
 
@@ -121,17 +162,17 @@ describe("OptionsPanel", () => {
     expect(screen.getByLabelText(t.llmEnhance)).toBeDisabled();
     // the reason rides the row label as a tooltip mark, not a hint paragraph
     expect(screen.getByRole("button", { name: t.helpLabel, description: t.advNeedsModel })).toBeVisible();
-    expect(screen.getByRole("button", { name: "standard" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: t.presetStandard })).toBeDisabled();
   });
 
   it("keeps presets reachable while LLM is off", () => {
     const { onPreset } = open({ llm: false });
-    fireEvent.click(screen.getByRole("button", { name: "standard" }));
+    fireEvent.click(screen.getByRole("button", { name: t.presetStandard }));
     expect(onPreset).toHaveBeenCalledWith("standard");
   });
 
   it("displays the inherited rich preset instead of false overrides", () => {
-    open({ preset: "rich" });
+    openCli({ preset: "rich" });
     expect(screen.getByLabelText(t.advAlt)).toBeChecked();
     expect(screen.getByLabelText(t.advDesc)).toBeChecked();
     expect(screen.getByLabelText(t.advScreenshot)).toBeChecked();
@@ -140,7 +181,7 @@ describe("OptionsPanel", () => {
   });
 
   it("shows a customized preset and its explicit off switch in the command", () => {
-    open({ preset: "rich", value: { ...ADVANCED_DEFAULTS, alt: false } });
+    openCli({ preset: "rich", value: { ...ADVANCED_DEFAULTS, alt: false } });
     expect(screen.getByLabelText(t.advAlt)).not.toBeChecked();
     expect(screen.getByText(t.presetCustomized)).toBeVisible();
     expect(screen.getByLabelText(t.cliAria)).toHaveTextContent("--preset rich --no-alt");
@@ -155,9 +196,9 @@ describe("OptionsPanel", () => {
   });
 
   it("displays the implied Cloudflare backend and external-service notice", () => {
-    open({ value: { ...ADVANCED_DEFAULTS, strategy: "cloudflare", backend: "native" } });
+    openCli({ value: { ...ADVANCED_DEFAULTS, strategy: "cloudflare", backend: "native" } });
     const backend = screen.getByRole("group", { name: t.advBackend });
-    const cloudflare = within(backend).getByRole("button", { name: "cloudflare" });
+    const cloudflare = within(backend).getByRole("button", { name: t.backendCloudflare });
     expect(cloudflare).toHaveAttribute("aria-pressed", "true");
     for (const button of within(backend).getAllByRole("button")) expect(button).toBeDisabled();
     expect(screen.getByRole("button", { name: t.helpLabel, description: t.advCloudflareBackend })).toBeInTheDocument();
@@ -192,7 +233,7 @@ describe("OptionsPanel", () => {
   it("shows the command those settings produce, in the panel", () => {
     // It is the settings spelled out, not a sibling of them — a second
     // disclosure made it look like an unrelated feature.
-    open({ llm: true, ocr: false });
+    openCli({ llm: true, ocr: false });
     expect(screen.getByLabelText(t.cliAria)).toHaveTextContent("--llm");
     expect(screen.getByRole("button", { name: t.copy })).toBeInTheDocument();
   });
@@ -202,14 +243,16 @@ describe("OptionsPanel", () => {
     // current one reads without opening anything.
     const { onChange } = openAdvanced();
     const strategy = screen.getByRole("group", { name: t.advStrategy });
-    for (const name of ["auto", "static", "playwright", "defuddle", "jina", "cloudflare"]) {
+    const strategyLabels = [t.strategyAuto, t.strategyStatic, t.strategyPlaywright,
+      t.strategyDefuddle, t.strategyJina, t.strategyCloudflare];
+    for (const name of strategyLabels) {
       expect(within(strategy).getByRole("button", { name })).toHaveAttribute(
-        "aria-pressed", name === "auto" ? "true" : "false",
+        "aria-pressed", name === t.strategyAuto ? "true" : "false",
       );
     }
     const backend = screen.getByRole("group", { name: t.advBackend });
-    expect(within(backend).getByRole("button", { name: "native" })).toBeInTheDocument();
-    fireEvent.click(within(strategy).getByRole("button", { name: "jina" }));
+    expect(within(backend).getByRole("button", { name: t.backendNative })).toBeInTheDocument();
+    fireEvent.click(within(strategy).getByRole("button", { name: t.strategyJina }));
     expect(onChange).toHaveBeenCalledWith({ ...ADVANCED_DEFAULTS, strategy: "jina" });
   });
 
@@ -234,30 +277,41 @@ it.each([dicts.en, dicts.zh])("keeps tools above the input in either locale", (d
   expect(actions).not.toContainElement(convert);
   expect(convert).toBeDisabled();
   expect(actions.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const cliToggle = screen.getByRole("button", { name: dict.cliToggleAria });
+  expect(actions).toContainElement(cliToggle);
+  expect(screen.queryByLabelText(dict.cliAria)).not.toBeInTheDocument();
   fireEvent.click(toggle);
   expect(toggle).toHaveAttribute("aria-expanded", "true");
   expect(document.getElementById(toggle.getAttribute("aria-controls")!)).toContainElement(screen.getByLabelText(dict.advAlt));
-  expect(screen.getAllByLabelText(dict.cliAria)).toHaveLength(1);
+  // The readout is independent: an open panel alone does not reveal it.
+  expect(screen.queryByLabelText(dict.cliAria)).not.toBeInTheDocument();
   expect(screen.getAllByRole("textbox")).toHaveLength(1);
+  fireEvent.click(cliToggle);
+  expect(screen.getByLabelText(dict.cliAria)).toHaveTextContent("markitai");
   fireEvent.click(toggle);
   expect(toggle).toHaveAttribute("aria-expanded", "false");
+  // The panel closed; the readout stays because its own switch is still on.
+  expect(screen.getByLabelText(dict.cliAria)).toBeInTheDocument();
+  fireEvent.click(cliToggle);
+  expect(screen.queryByLabelText(dict.cliAria)).not.toBeInTheDocument();
 });
 it("prints the literal input placeholder without a CLI comment", () => {
-  open({ llm: false });
+  openCli({ llm: false });
   const command = screen.getByLabelText(t.cliAria);
   expect(command).toHaveTextContent("$ markitai <your-files-or-url-or-url_files> -o out/ --preset minimal");
   expect(command.textContent).not.toContain("--no-");
-  expect(command).toHaveAccessibleDescription(t.helpCli);
+  // The readout is a plain command line: no tooltip rides on it.
+  expect(command).not.toHaveAccessibleDescription();
   expect(document.querySelector(".clinote")).toBeNull();
   expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
 });
 it("uses real inputs without adding a CLI comment", () => {
-  open({ urls: ["https://example.com/a"] });
+  openCli({ urls: ["https://example.com/a"] });
   expect(screen.getByLabelText(t.cliAria)).toHaveTextContent("markitai https://example.com/a -o out/");
   expect(document.querySelector(".clinote")).toBeNull();
 });
 it("compacts against the server preset map rather than hardcoded rich defaults", () => {
-  open({ preset: "rich", ocr: true, presetOptions: {
+  openCli({ preset: "rich", ocr: true, presetOptions: {
     rich: { llm: true, ocr: true, alt: false, desc: false, screenshot: false },
   } });
   expect(screen.getByLabelText(t.cliAria).textContent).toBe("$ markitai <your-files-or-url-or-url_files> -o out/ --preset rich");
@@ -267,8 +321,8 @@ it("compacts against the server preset map rather than hardcoded rich defaults",
 it("shows Custom while keeping the chosen preset pressed for minimal plus LLM", () => {
   const { onChange, onPreset } = open();
   expect(screen.getByText(t.presetCustomized)).toBeVisible();
-  for (const name of ["minimal", "standard", "rich"]) {
-    expect(screen.getByRole("button", { name })).toHaveAttribute("aria-pressed", String(name === "minimal"));
+  for (const name of [t.presetMinimal, t.presetStandard, t.presetRich]) {
+    expect(screen.getByRole("button", { name })).toHaveAttribute("aria-pressed", String(name === t.presetMinimal));
   }
   expect(screen.getByLabelText(t.advAlt)).not.toBeChecked();
   expect(screen.getByLabelText(t.advDesc)).not.toBeChecked();
@@ -277,8 +331,8 @@ it("shows Custom while keeping the chosen preset pressed for minimal plus LLM", 
 });
 
 it("highlights a matching bundle without changing options or the command", () => {
-  const { onPreset } = open({ value: { ...ADVANCED_DEFAULTS, alt: true, desc: true } });
-  expect(screen.getByRole("button", { name: "standard" })).toHaveAttribute("aria-pressed", "true");
+  const { onPreset } = openCli({ value: { ...ADVANCED_DEFAULTS, alt: true, desc: true } });
+  expect(screen.getByRole("button", { name: t.presetStandard })).toHaveAttribute("aria-pressed", "true");
   expect(screen.queryByText(t.presetCustomized)).not.toBeInTheDocument();
   // The command names the bundle the panel highlights, so the two readouts agree.
   expect(screen.getByLabelText(t.cliAria).textContent).toBe("$ markitai <your-files-or-url-or-url_files> -o out/ --preset standard");
@@ -356,7 +410,7 @@ it.each([dicts.en, dicts.zh])("uses factual terse help for overridden and disabl
   } };
   const { rerender } = render(<OptionsPanel {...props} />);
   fireEvent.click(screen.getByRole("button", { name: dict.options }));
-  const rich = screen.getByRole("button", { name: "rich" });
+  const rich = screen.getByRole("button", { name: dict.presetRich });
   expect(rich).toHaveAccessibleDescription(dict.helpServerPreset);
   rerender(<OptionsPanel {...base} t={dict} />);
   expect(rich).toHaveAccessibleDescription(dict.helpRich);

@@ -33,7 +33,7 @@ from markitai.json_order import order_report, order_state
 from markitai.runs.report import build_llm_usage_block, build_report_shell
 from markitai.security import atomic_write_json
 from markitai.utils import term
-from markitai.utils.term import get_console
+from markitai.utils.term import get_stderr_console
 from markitai.utils.text import format_error_message
 
 if TYPE_CHECKING:
@@ -511,7 +511,7 @@ class BatchProcessor:
         self.state_file = self._get_state_file_path()
         self.report_file = self._get_report_file_path()
         self.state: BatchState | None = None
-        self.console = get_console()
+        self.console = get_stderr_console()
         self._console_log_restorer = console_log_restorer
         # Collect image analysis results for JSON aggregation
         self.image_analysis_results: list[ImageAnalysisResult] = []

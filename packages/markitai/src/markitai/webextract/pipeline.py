@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import io
 from dataclasses import asdict
 
 from bs4 import BeautifulSoup, Tag
@@ -564,31 +563,3 @@ def _create_markitdown() -> object:
     md = MarkItDown()
     md.register_converter(WebExtractHtmlConverter(), priority=-1)
     return md
-
-
-def _html_fragment_to_markdown(html: str, md: object | None = None) -> str:
-    """Convert an HTML fragment to Markdown.
-
-    Args:
-        html: HTML content to convert.
-        md: Optional pre-created MarkItDown instance. If None, creates a new one.
-
-    Returns:
-        Markdown text.
-    """
-    from markitdown import StreamInfo
-
-    if md is None:
-        md = _create_markitdown()
-
-    stream = io.BytesIO(html.encode("utf-8"))
-    result = md.convert_stream(  # type: ignore[union-attr]
-        stream,
-        file_extension=".html",
-        stream_info=StreamInfo(
-            mimetype="text/html",
-            extension=".html",
-            charset="utf-8",
-        ),
-    )
-    return result.text_content if result and result.text_content else ""

@@ -78,11 +78,16 @@ markitai doctor              # 查看核心与可选能力状态
 | Extra / 依赖 | 启用能力 |
 |--------------------|---------|
 | `markitai[browser]`（Playwright） | `-s playwright` 浏览器渲染（SPA/重 JS 页面） |
-| `markitai[ocr]`（RapidOCR） | `--ocr` 扫描件 PDF/图片的本地 OCR |
-| `markitai[legacy]`（anydoc） | 旧版 Office `.doc`/`.ppt` 转换 |
+| `markitai[claude-agent]` | 以 Claude Agent SDK 作为 LLM 提供商 |
+| `markitai[copilot]` | 以 GitHub Copilot SDK 作为 LLM 提供商 |
+| `markitai[extra-fetch]` | curl-cffi HTTP 客户端，用于有 TLS 指纹检测的站点 |
 | `markitai[heif]` | HEIC/HEIF/AVIF 图片输入 |
-| `markitai[svg]` | 高质量 SVG 渲染 |
+| `markitai[legacy]`（anydoc） | 旧版 Office `.doc`/`.ppt` 转换 |
+| `markitai[mcp]` | 随包发布的 `markitai-mcp` 服务器，供 AI Agent 使用（Model Context Protocol） |
+| `markitai[ocr]`（RapidOCR） | `--ocr` 扫描件 PDF/图片的本地 OCR |
 | `markitai[serve]` | 本地 Web 工作区与 REST API |
+| `markitai[svg]` | 高质量 SVG 渲染 |
+| `markitai[all]` | 以上全部 |
 | Jina API key | `-s jina` 远程阅读器（环境变量 `JINA_API_KEY`） |
 | Cloudflare | `-s cloudflare` 云端渲染（`CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`） |
 
@@ -110,7 +115,7 @@ pipx install markitai           # 或 pipx
 
 **URL**：公开 URL 先走本地方法，之后 `auto` 可能不经询问尝试 Defuddle、Jina 或 Cloudflare（进程内首次远程尝试会在 stderr 披露）。私有、本地、内网及带凭据的 URL 始终只走本地。`MARKITAI_NO_REMOTE_FETCH=1` 强制全部本地。
 
-**LLM 增强**（`--llm`）：清洗格式并生成 frontmatter。配置提供商 API key 或订阅制提供商（`chatgpt/` 走 OAuth；`claude-agent/`、`copilot/` 用各自 CLI 登录）——见[配置](/zh/guide/configuration#supported-providers)。
+**LLM 增强**（`--llm`）：清洗格式并生成 frontmatter。配置提供商 API key 或订阅制提供商（`chatgpt/` 走 OAuth；`claude-agent/`、`copilot/` 用各自 CLI 登录）——见[配置](/zh/guide/configuration#支持的提供商)。
 
 **预设**打包常用参数：`rich`（LLM + alt + desc + 截图）、`standard`（LLM + alt + desc）、`minimal`（仅基础转换）。预设里的任何特性都可用 `--no-*` 覆盖，如 `--preset rich --no-desc`。
 
@@ -118,7 +123,7 @@ pipx install markitai           # 或 pipx
 
 ## 输出结构
 
-```
+```text
 output/
 ├── document.pdf.md          # 基础 Markdown（--llm 模式下默认跳过，除非 --keep-base）
 ├── document.pdf.llm.md      # LLM 增强版（使用 --llm 时）

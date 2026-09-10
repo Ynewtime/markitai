@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { jobOptions } from "../lib/jobOptions";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
@@ -46,7 +46,6 @@ function Harness() {
         },
       }}
       showCost={false}
-      now={Date.now()}
       stats={{
         done: 1,
         skipped: 1,
@@ -64,7 +63,6 @@ function Harness() {
       onFocusKeyHandled={vi.fn()}
       onRetry={vi.fn().mockResolvedValue(null)}
       onDelete={vi.fn().mockResolvedValue(null)}
-      canDelete={() => true}
     />
   );
 }
@@ -154,6 +152,95 @@ describe("merged task ordering", () => {
   });
 });
 
+describe("ItemList status filters", () => {
+  it("narrows the ledger to the clicked status without renumbering it", async () => {
+    const user = userEvent.setup();
+    const items = [
+      ...Array.from({ length: 11 }, (_, index) => item(`row-${index}`)),
+      item("skipped-row", true),
+    ];
+    const stats = {
+      done: 11,
+      skipped: 1,
+      failed: 0,
+      total: 12,
+      costTotal: 0,
+      hasCost: false,
+      doneDurationMs: 10,
+    };
+    render(
+      <ItemList
+        t={dicts.en}
+        items={items}
+        jobs={{}}
+        showCost={false}
+        stats={stats}
+        settled
+        selectedKey={null}
+        onSelect={vi.fn()}
+        onPreview={vi.fn()}
+        focusKey={null}
+        onFocusKeyHandled={vi.fn()}
+        onRetry={vi.fn().mockResolvedValue(null)}
+        onDelete={vi.fn().mockResolvedValue(null)}
+      />,
+    );
+
+    const group = screen.getByRole("group", { name: dicts.en.filterStatusAria });
+    const chip = (label: string) => within(group).getByRole("button", { name: label });
+
+    await user.click(chip(dicts.en.filterSkipped));
+    expect(chip(dicts.en.filterSkipped)).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    // The row number stays anchored to the unfiltered ledger.
+    expect(screen.getByRole("option").querySelector(".c-num")).toHaveTextContent("12");
+
+    await user.click(chip(dicts.en.filterDone));
+    expect(screen.getAllByRole("option")).toHaveLength(11);
+    await user.click(chip(dicts.en.filterFailed));
+    expect(screen.queryAllByRole("option")).toHaveLength(0);
+    // An empty result explains itself; the no-conversions copy would be wrong.
+    expect(screen.getByText(dicts.en.filterNoMatch)).toBeVisible();
+
+    await user.click(chip(dicts.en.filterAll));
+    expect(screen.getAllByRole("option")).toHaveLength(12);
+  });
+
+  it("labels the filter chips in the active locale", () => {
+    const items = Array.from({ length: 12 }, (_, index) => item(`row-${index}`));
+    render(
+      <ItemList
+        t={dicts.zh}
+        items={items}
+        jobs={{}}
+        showCost={false}
+        stats={{
+          done: items.length,
+          skipped: 0,
+          failed: 0,
+          total: items.length,
+          costTotal: 0,
+          hasCost: false,
+          doneDurationMs: 10,
+        }}
+        settled
+        selectedKey={null}
+        onSelect={vi.fn()}
+        onPreview={vi.fn()}
+        focusKey={null}
+        onFocusKeyHandled={vi.fn()}
+        onRetry={vi.fn().mockResolvedValue(null)}
+        onDelete={vi.fn().mockResolvedValue(null)}
+      />,
+    );
+
+    const group = screen.getByRole("group", { name: dicts.zh.filterStatusAria });
+    for (const label of [dicts.zh.filterAll, dicts.zh.filterDone, dicts.zh.filterFailed, dicts.zh.filterSkipped]) {
+      expect(within(group).getByRole("button", { name: label })).toBeInTheDocument();
+    }
+  });
+});
+
 describe("ItemList roving selection", () => {
   it("lets a skipped row take focus and selection on click", async () => {
     const user = userEvent.setup();
@@ -175,7 +262,6 @@ describe("ItemList empty workspace", () => {
         items={[]}
         jobs={{}}
         showCost={false}
-        now={Date.now()}
         stats={{
           done: 0,
           skipped: 0,
@@ -193,7 +279,6 @@ describe("ItemList empty workspace", () => {
         onFocusKeyHandled={vi.fn()}
         onRetry={vi.fn().mockResolvedValue(null)}
         onDelete={vi.fn().mockResolvedValue(null)}
-        canDelete={() => false}
       />,
     );
 
@@ -223,7 +308,6 @@ describe("ItemList empty workspace", () => {
           },
         }}
         showCost={false}
-        now={Date.now()}
         stats={{
           done: 0,
           skipped: 0,
@@ -241,7 +325,6 @@ describe("ItemList empty workspace", () => {
         onFocusKeyHandled={vi.fn()}
         onRetry={vi.fn().mockResolvedValue(null)}
         onDelete={vi.fn().mockResolvedValue(null)}
-        canDelete={() => false}
       />,
     );
 

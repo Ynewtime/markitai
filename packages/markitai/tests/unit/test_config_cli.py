@@ -261,7 +261,7 @@ class TestConfigValidateCommand:
 
             result = runner.invoke(config_validate, [str(config_file)])
 
-            assert result.exit_code == 2
+            assert result.exit_code == 1
             assert "error" in result.output.lower()
 
 
@@ -323,6 +323,62 @@ class TestConfigGetCommand:
             assert result.exit_code == 0
             assert "null" in result.output
             assert "not found" not in result.output.lower()
+
+    def test_get_redacts_secret_scalar(self, runner: CliRunner) -> None:
+        """A secret scalar read must not print the secret by default."""
+        with patch("markitai.cli.commands.config.ConfigManager") as MockManager:
+            mock_manager = MagicMock()
+            mock_manager.get.return_value = "sk-super-secret"
+            MockManager.return_value = mock_manager
+
+            result = runner.invoke(config_get, ["fetch.jina.api_key"])
+
+            assert result.exit_code == 0
+            assert "[REDACTED]" in result.output
+            assert "sk-super-secret" not in result.output
+
+    def test_get_show_secrets_flag_prints_secret(self, runner: CliRunner) -> None:
+        """--show-secrets is the explicit opt-in for a shared terminal."""
+        with patch("markitai.cli.commands.config.ConfigManager") as MockManager:
+            mock_manager = MagicMock()
+            mock_manager.get.return_value = "sk-super-secret"
+            MockManager.return_value = mock_manager
+
+            result = runner.invoke(config_get, ["fetch.jina.api_key", "--show-secrets"])
+
+            assert result.exit_code == 0
+            assert "sk-super-secret" in result.output
+            assert "[REDACTED]" not in result.output
+
+    def test_get_keeps_env_reference_visible(self, runner: CliRunner) -> None:
+        """``env:VAR`` names the secret's home, not the secret."""
+        with patch("markitai.cli.commands.config.ConfigManager") as MockManager:
+            mock_manager = MagicMock()
+            mock_manager.get.return_value = "env:JINA_API_KEY"
+            MockManager.return_value = mock_manager
+
+            result = runner.invoke(config_get, ["fetch.jina.api_key"])
+
+            assert result.exit_code == 0
+            assert "env:JINA_API_KEY" in result.output
+            assert "[REDACTED]" not in result.output
+
+    def test_get_redacts_secret_inside_section(self, runner: CliRunner) -> None:
+        """A whole-section read redacts the secrets nested in it."""
+        with patch("markitai.cli.commands.config.ConfigManager") as MockManager:
+            mock_manager = MagicMock()
+            mock_manager.get.return_value = {
+                "api_key": "sk-nested-secret",
+                "enabled": True,
+            }
+            MockManager.return_value = mock_manager
+
+            result = runner.invoke(config_get, ["fetch.jina"])
+
+            assert result.exit_code == 0
+            assert "[REDACTED]" in result.output
+            assert "sk-nested-secret" not in result.output
+            assert "enabled" in result.output
 
 
 class TestConfigSetCommand:
@@ -436,6 +492,50 @@ class TestConfigSetCommand:
         saved = json.loads(config_file.read_text())
         assert saved["llm"]["model_list"][0]["litellm_params"]["weight"] == 0
 
+    def test_set_redacts_secret_echo(self, runner: CliRunner) -> None:
+        """The confirmation must not echo the secret back to the terminal."""
+        with patch("markitai.cli.commands.config.ConfigManager") as MockManager:
+            mock_manager = MagicMock()
+            mock_manager.config = MagicMock()
+            mock_manager.config.model_dump.return_value = {}
+            MockManager.return_value = mock_manager
+
+            result = runner.invoke(config_set, ["fetch.jina.api_key", "sk-echo-secret"])
+
+            assert result.exit_code == 0
+            assert "sk-echo-secret" not in result.output
+            assert "[REDACTED]" in result.output
+            # The real value still reaches the manager.
+            assert mock_manager.set.call_args[0][1] == "sk-echo-secret"
+
+    def test_set_show_secrets_flag_echoes_value(self, runner: CliRunner) -> None:
+        with patch("markitai.cli.commands.config.ConfigManager") as MockManager:
+            mock_manager = MagicMock()
+            mock_manager.config = MagicMock()
+            mock_manager.config.model_dump.return_value = {}
+            MockManager.return_value = mock_manager
+
+            result = runner.invoke(
+                config_set,
+                ["fetch.jina.api_key", "sk-echo-secret", "--show-secrets"],
+            )
+
+            assert result.exit_code == 0
+            assert "sk-echo-secret" in result.output
+
+    def test_set_non_secret_value_is_echoed(self, runner: CliRunner) -> None:
+        with patch("markitai.cli.commands.config.ConfigManager") as MockManager:
+            mock_manager = MagicMock()
+            mock_manager.config = MagicMock()
+            mock_manager.config.model_dump.return_value = {}
+            MockManager.return_value = mock_manager
+
+            result = runner.invoke(config_set, ["output.dir", "./converted"])
+
+            assert result.exit_code == 0
+            assert "./converted" in result.output
+            assert "[REDACTED]" not in result.output
+
 
 class TestResolveFieldType:
     """Tests for schema-based type resolution used by config set."""
@@ -459,3 +559,30 @@ class TestResolveFieldType:
         from markitai.cli.commands.config import _resolve_field_type
 
         assert _resolve_field_type("nope.nothing") is None
+
+
+@pytest.mark.parametrize("command", ["get", "set"])
+@pytest.mark.parametrize("show", [False, True])
+def test_header_descendant_redaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str, show: bool
+) -> None:
+    from markitai.cli.main import app
+
+    config_file = tmp_path / "config.json"
+    secret = "DUMMY_HEADER_CREDENTIAL"
+    config_file.write_text(
+        json.dumps(
+            {"fetch": {"playwright": {"extra_http_headers": {"X-Access": secret}}}}
+        )
+    )
+    monkeypatch.setenv("MARKITAI_CONFIG", str(config_file))
+    args = ["config", command, "fetch.playwright.extra_http_headers.X-Access"]
+    if command == "set":
+        args.append(secret)
+    if show:
+        args.append("--show-secrets")
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code == 0, result.output
+    assert (secret in result.output) is show
+    if not show:
+        assert "[REDACTED]" in result.output

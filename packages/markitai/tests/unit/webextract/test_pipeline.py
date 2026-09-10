@@ -7,23 +7,24 @@ import pytest
 # ---- Medium-6: MarkItDown instance reuse tests ----
 
 
-def test_html_fragment_to_markdown_reuses_markitdown_instance() -> None:
-    """_html_fragment_to_markdown should accept an optional MarkItDown instance
-    to avoid recreating it on every call (Medium-6 optimization)."""
-    from markitai.webextract.pipeline import _html_fragment_to_markdown
+def test_html_to_markdown_reuses_markitdown_instance() -> None:
+    """The production adapter accepts and reuses a custom converter instance."""
+    from markitai.webextract.markdown import html_to_markdown
+    from markitai.webextract.pipeline import _create_markitdown
 
     html = "<p>Hello world.</p>"
 
-    # Call twice — should produce identical results
-    result1 = _html_fragment_to_markdown(html)
-    result2 = _html_fragment_to_markdown(html)
+    md = _create_markitdown()
+    # Reuse one converter across both calls
+    result1 = html_to_markdown(html, md_instance=md)
+    result2 = html_to_markdown(html, md_instance=md)
     assert result1 == result2
     assert "Hello world" in result1
 
 
 def test_extract_web_content_creates_markitdown_once() -> None:
     """extract_web_content should create MarkItDown at most once even when
-    adaptive retry triggers a second _html_fragment_to_markdown call."""
+    adaptive retry triggers a second markdown conversion."""
     from markitai.webextract.pipeline import extract_web_content
 
     # HTML that triggers adaptive retry: <article> wins scoring but is short,

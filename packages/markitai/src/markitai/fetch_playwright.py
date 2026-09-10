@@ -367,6 +367,47 @@ class CachedContext:
     session_key: str
 
 
+async def _guard_public_context(context: Any, timeout: int, proxy: str | None) -> None:
+    """Route anonymous browser HTTP traffic through DNS-pinned requests."""
+    from markitai.fetch_http import public_http_request
+
+    async def public_route(route: Any) -> None:
+        request = route.request
+        try:
+            response = await public_http_request(
+                request.url,
+                method=request.method,
+                headers=await request.all_headers(),
+                content=request.post_data_buffer,
+                timeout=timeout / 1000,
+                proxy=proxy,
+                follow_redirects=False,
+            )
+            headers = dict(response.headers)
+            for name in (
+                "content-encoding",
+                "content-length",
+                "transfer-encoding",
+            ):
+                headers.pop(name, None)
+            await route.fulfill(
+                status=response.status_code,
+                headers=headers,
+                body=response.content,
+            )
+        except Exception as exc:
+            logger.debug("[Fetch] Blocked browser request: {}", exc)
+            await route.abort("blockedbyclient")
+
+    async def block_socket(socket: Any) -> None:
+        await socket.close()
+
+    # Context routing also covers popups and nested frames. Never
+    # reuse a logged-in context for an anonymous remote caller.
+    await context.route("**/*", public_route)
+    await context.route_web_socket("**/*", block_socket)
+
+
 class PlaywrightRenderer:
     """Reusable Playwright renderer to avoid browser cold starts."""
 
@@ -557,6 +598,10 @@ class PlaywrightRenderer:
             # fall through to the normal browser-render path below so the
             # user still gets the (login-wall) page rather than nothing.
 
+        from markitai.fetch_policy import public_network_only
+
+        restricted = public_network_only.get()
+
         # Build context options from advanced config
         ctx_options: dict[str, Any] = {}
         if needs_screenshot and screenshot_config is not None:
@@ -576,7 +621,14 @@ class PlaywrightRenderer:
         if http_credentials:
             ctx_options["http_credentials"] = http_credentials
 
-        if self._session_cache_enabled and persist_context and session_key:
+        if restricted:
+            ctx_options["service_workers"] = "block"
+        if (
+            self._session_cache_enabled
+            and persist_context
+            and session_key
+            and not restricted
+        ):
             context = await self._get_or_create_cached_context(session_key, ctx_options)
             should_close_context = False
         else:
@@ -586,6 +638,9 @@ class PlaywrightRenderer:
 
         page = None
         try:
+            if restricted:
+                await _guard_public_context(context, timeout, self.proxy)
+
             # Inject cookies before navigation
             if cookies:
                 await context.add_cookies(cookies)

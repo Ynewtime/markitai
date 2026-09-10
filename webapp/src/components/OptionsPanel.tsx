@@ -15,12 +15,27 @@ import { buildCliCommand } from "../lib/cli";
 import { copyTextToClipboard, type CopyState } from "../lib/clipboard";
 import { FilePicker } from "./DropZone";
 import { HelpTooltip } from "./HelpTooltip";
-import { CaretRightIcon, InfoIcon, SlidersIcon, UploadIcon } from "./icons";
+import { CaretRightIcon, InfoIcon, SlidersIcon, TerminalIcon, UploadIcon } from "./icons";
 
 const STRATEGIES: FetchStrategy[] = ["auto", "static", "playwright", "defuddle", "jina", "cloudflare"];
 const BACKENDS: ConversionBackend[] = ["native", "cloudflare"];
 const PRESETS: Preset[] = ["minimal", "standard", "rich"];
 const PROFILES: (OutputProfile | null)[] = [null, "rag", "obsidian", "okf"];
+
+/** Enum values stay the wire/CLI spelling; the UI shows a translated label. */
+const presetLabels = (t: Dict): Record<Preset, string> => ({
+  minimal: t.presetMinimal, standard: t.presetStandard, rich: t.presetRich,
+});
+const profileLabels = (t: Dict): Record<OutputProfile | "default", string> => ({
+  default: t.profileNone, rag: t.profileRag, obsidian: t.profileObsidian, okf: t.profileOkf,
+});
+const strategyLabels = (t: Dict): Record<FetchStrategy, string> => ({
+  auto: t.strategyAuto, static: t.strategyStatic, playwright: t.strategyPlaywright,
+  defuddle: t.strategyDefuddle, jina: t.strategyJina, cloudflare: t.strategyCloudflare,
+});
+const backendLabels = (t: Dict): Record<ConversionBackend, string> => ({
+  native: t.backendNative, cloudflare: t.backendCloudflare,
+});
 
 function Chip({ label, checked, disabled, hint, onChange }: {
   label: string;
@@ -76,7 +91,8 @@ function RowLabel({ id, text, hint, helpLabel }: { id: string; text: string; hin
 
 export function OptionsPanel({
   t, value, preset, presetOptions = BUILTIN_PRESET_OPTIONS, llm, ocr, profile,
-  llmConfigured, urls, announce, source, heading, headingActions, onFiles, onChange, onPreset, onLlm, onOcr, onProfile,
+  llmConfigured, urls, announce, source, heading, headingActions, onFiles, busy = false,
+  onChange, onPreset, onLlm, onOcr, onProfile,
 }: {
   t: Dict;
   value: Advanced;
@@ -92,6 +108,7 @@ export function OptionsPanel({
   heading?: ReactNode;
   headingActions?: ReactNode;
   onFiles?: (files: File[]) => void;
+  busy?: boolean;
   onChange: (next: Advanced) => void;
   onPreset: (p: Preset) => void;
   onLlm: (v: boolean) => void;
@@ -99,14 +116,25 @@ export function OptionsPanel({
   onProfile: (p: OutputProfile | null) => void;
 }) {
   const [open, setOpen] = useState(false);
+  // The CLI command is a power-user readout with its own switch: it and the
+  // options panel open and close independently — neither forces the other,
+  // so a panel left open never pins the command bar on screen.
+  const [cliOpen, setCliOpen] = useState(false);
   // The rarely-touched fetch/source/cache settings sit behind one disclosure;
   // it starts open only when something in it already differs from default,
   // so a non-default choice is never hidden behind a closed fold.
   const [advOpen, setAdvOpen] = useState(() => hasExtraOptions(value));
   const [copyState, setCopyState] = useState<CopyState>("idle");
   const id = useId();
+  const cliId = `${id}-cli`;
   const state = { preset, llm, ocr, profile, advanced: value };
   const effective = resolveOptions(state, presetOptions);
+  // One map per enum per render: the render props below run once per option,
+  // so rebuilding them in place would allocate per option, not per render.
+  const presetText = presetLabels(t);
+  const profileText = profileLabels(t);
+  const strategyText = strategyLabels(t);
+  const backendText = backendLabels(t);
   // An exact five-feature match highlights that bundle; otherwise the chosen
   // name stays pressed and the Custom badge says the bundle was adjusted.
   const matchedPreset = matchingPreset(state, presetOptions);
@@ -161,8 +189,16 @@ export function OptionsPanel({
         <div className="jobhead-r">
           <div className="source-tools" role="group" aria-label={t.sourceActions}>
             {optionsToggle}
+            <button type="button"
+              className={cliOpen ? "srcact clitoggle on" : "srcact clitoggle"}
+              aria-label={t.cliToggleAria} aria-expanded={cliOpen}
+              aria-controls={cliOpen ? cliId : undefined}
+              onClick={() => setCliOpen((v) => !v)}>
+              <TerminalIcon size={14} />
+              <span>{t.cliToggle}</span>
+            </button>
             {onFiles && <FilePicker label={t.browse} onFiles={onFiles}
-              icon={<UploadIcon />} className="srcact file-picker" />}
+              icon={<UploadIcon />} className="srcact file-picker" disabled={busy} />}
           </div>
           {headingActions}
         </div>
@@ -175,7 +211,7 @@ export function OptionsPanel({
               <div className="optrow">
                 <RowLabel helpLabel={t.helpLabel} id={`${id}-preset`} text={t.preset} hint={t.presetHint} />
                 <div className="optfield">
-                  <Segments labelledBy={`${id}-preset`} value={shownPreset} options={PRESETS} render={(p) => p} hint={bundleHint}
+                  <Segments labelledBy={`${id}-preset`} value={shownPreset} options={PRESETS} render={(p) => presetText[p]} hint={bundleHint}
                     disabled={(p) => !llmConfigured && presetFeatures(p, presetOptions).llm}
                     onChange={onPreset} />
                   {customized && <span className="optcustom" role="status">{t.presetCustomized}</span>}
@@ -209,7 +245,7 @@ export function OptionsPanel({
                 <div className="optfield">
                   <Segments labelledBy={`${id}-output`} value={profile} options={PROFILES}
                     hint={(p) => ({ default: t.helpDefault, rag: t.helpRag, obsidian: t.helpObsidian, okf: t.helpOkf })[p ?? "default"]}
-                    render={(p) => p ?? t.profileNone} onChange={onProfile} />
+                    render={(p) => profileText[p ?? "default"]} onChange={onProfile} />
                 </div>
               </div>
               <div className={advOpen ? "optrow optadv on" : "optrow optadv"}>
@@ -226,7 +262,7 @@ export function OptionsPanel({
                     <RowLabel helpLabel={t.helpLabel} id={`${id}-strategy`} text={t.advStrategy} hint={t.helpStrategy} />
                     <div className="optfield">
                       <Segments labelledBy={`${id}-strategy`} value={value.strategy} options={STRATEGIES}
-                        render={(v) => v} hint={(v) => strategyHints[v]} onChange={(v) => set("strategy", v)} />
+                        render={(v) => strategyText[v]} hint={(v) => strategyHints[v]} onChange={(v) => set("strategy", v)} />
                       {remoteNotice && <p className="opthint">{remoteNotice}</p>}
                     </div>
                   </div>
@@ -235,7 +271,7 @@ export function OptionsPanel({
                       hint={forcedBackend ? t.advCloudflareBackend : t.helpBackend} />
                     <div className="optfield">
                       <Segments labelledBy={`${id}-backend`} value={effective.backend} options={BACKENDS}
-                        render={(v) => v} hint={(v) => forcedBackend ? t.advCloudflareBackend : backendHints[v]} disabled={() => forcedBackend}
+                        render={(v) => backendText[v]} hint={(v) => forcedBackend ? t.advCloudflareBackend : backendHints[v]} disabled={() => forcedBackend}
                         onChange={(v) => set("backend", v)} />
                       {effective.backend === "cloudflare" && <p className="opthint">{t.noticeCloudflareFile}</p>}
                     </div>
@@ -260,16 +296,18 @@ export function OptionsPanel({
             </div>
           </div>
         )}
-        <div className="optcli">
-          <div className="clibody">
-            <HelpTooltip text={t.helpCli}><code className="clitext" role="group" tabIndex={0} aria-label={t.cliAria}>
-              <span className="clidollar" aria-hidden="true">${" "}</span>{command}
-            </code></HelpTooltip>
+        {cliOpen && (
+          <div className="optcli" id={cliId}>
+            <div className="clibody">
+              <code className="clitext" role="group" tabIndex={0} aria-label={t.cliAria}>
+                <span className="clidollar" aria-hidden="true">${" "}</span>{command}
+              </code>
+            </div>
+            <button type="button" className="badge" onClick={copy}>
+              {copyState === "copied" ? t.copied : copyState === "failed" ? t.copyFailed : t.copy}
+            </button>
           </div>
-          <button type="button" className="badge" onClick={copy}>
-            {copyState === "copied" ? t.copied : copyState === "failed" ? t.copyFailed : t.copy}
-          </button>
-        </div>
+        )}
       </div>
     </div>
   );

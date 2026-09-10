@@ -24,6 +24,7 @@ from markitai.converter.base import (
     FileFormat,
     detect_format,
     get_converter,
+    unsupported_format_message,
 )
 
 if TYPE_CHECKING:
@@ -121,6 +122,7 @@ __all__ = [
     "XmlConverter",
     "detect_format",
     "get_converter",
+    "unsupported_format_message",
 ]
 
 

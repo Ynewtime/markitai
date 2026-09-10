@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import parse_qs, urlsplit, urlunsplit
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
@@ -219,7 +221,8 @@ class _BodyLimitMiddleware:
                 from fastapi.responses import JSONResponse
 
                 response = JSONResponse(
-                    {"detail": "request body too large"}, status_code=413
+                    {"detail": "request body too large", "code": _http_error_code(413)},
+                    status_code=413,
                 )
                 await response(scope, receive, send)
                 return
@@ -335,7 +338,8 @@ class _HostGuardMiddleware:
                             f"host '{host_header}' is not allowed; use "
                             "localhost, an IP address, or start the server "
                             "with --allowed-host"
-                        )
+                        ),
+                        "code": _http_error_code(400),
                     },
                     status_code=400,
                 )
@@ -355,7 +359,8 @@ class _HostGuardMiddleware:
                         "detail": (
                             f"cross-site request from origin "
                             f"'{origin_header}' is not allowed"
-                        )
+                        ),
+                        "code": _http_error_code(403),
                     },
                     status_code=403,
                 )
@@ -446,7 +451,7 @@ class _TokenAuthMiddleware:
             and not _scope_presents_token(scope, self.token)
         ):
             response = JSONResponse(
-                {"detail": _AUTH_REQUIRED_DETAIL},
+                {"detail": _AUTH_REQUIRED_DETAIL, "code": _http_error_code(401)},
                 status_code=401,
                 headers={"WWW-Authenticate": "Bearer"},
             )
@@ -488,6 +493,27 @@ def _is_trusted_request(request: Request) -> bool:
         return True
     token = request.app.state.serve_token
     return token is not None and _scope_presents_token(request.scope, token)
+
+
+def _http_error_code(status_code: int) -> str:
+    """Map an HTTP status onto a stable, coarse machine code.
+
+    The ``detail`` string is for humans (and may be translated); ``code`` is
+    the part a client or agent branches on.
+    """
+    return {
+        400: "bad_request",
+        401: "unauthorized",
+        403: "forbidden",
+        404: "not_found",
+        405: "method_not_allowed",
+        409: "conflict",
+        413: "payload_too_large",
+        422: "invalid_request",
+        429: "rate_limited",
+        500: "server_error",
+        503: "unavailable",
+    }.get(status_code, "server_error" if status_code >= 500 else "request_failed")
 
 
 def _url_rejection_detail(url: str, reason: str | None) -> str:
@@ -1555,12 +1581,71 @@ def create_app(
         ),
     )
 
+    @app.exception_handler(Exception)
+    async def _unhandled_error_with_code(
+        request: Request, exc: Exception
+    ) -> JSONResponse:
+        """Give an unhandled 500 the same machine code as every other error.
+
+        Starlette's default handler returns a plain-text body, which would be
+        the one reply a client cannot branch on. The detail stays generic on
+        purpose: an internal message belongs in the server log.
+        """
+        logger.exception(
+            "[Serve] Unhandled error on {} {}", request.method, request.url.path
+        )
+        return JSONResponse(
+            {
+                "detail": "internal server error",
+                "code": _http_error_code(500),
+            },
+            status_code=500,
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation_error_with_code(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        """Give pydantic's 422 the same machine code as a route-raised one.
+
+        FastAPI's default body is ``{"detail": [...]}``; adding ``code`` keeps
+        the error contract uniform without changing the shape clients read.
+        """
+        return JSONResponse(
+            {
+                "detail": jsonable_encoder(exc.errors()),
+                "code": _http_error_code(422),
+            },
+            status_code=422,
+        )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_error_with_code(
+        request: Request, exc: StarletteHTTPException
+    ) -> JSONResponse:
+        """Add a stable machine code beside FastAPI's human ``detail``.
+
+        Clients keep reading ``detail`` unchanged; a script can branch on
+        ``code`` without string-matching prose that may be translated.
+        """
+        return JSONResponse(
+            {
+                "detail": exc.detail,
+                "code": _http_error_code(exc.status_code),
+            },
+            status_code=exc.status_code,
+            headers=exc.headers,
+        )
+
     @app.middleware("http")
     async def protect_local_settings(request: Request, call_next: Any) -> Response:
         if request.url.path.startswith("/api/settings/llm"):
             if not _is_trusted_request(request):
                 return JSONResponse(
-                    {"detail": "LLM settings are available on loopback only"},
+                    {
+                        "detail": "LLM settings are available on loopback only",
+                        "code": _http_error_code(403),
+                    },
                     status_code=403,
                     headers={"Cache-Control": "no-store"},
                 )
@@ -2470,6 +2555,7 @@ def create_app(
 
         cfg = _build_job_config(state.config, opts)
         job = state.registry.create_job(options=opts.model_dump(), cfg=cfg)
+        job.public_network_only = not _is_trusted_request(request)
         cfg.output.dir = str(job.out_dir)
 
         from markitai.serve.jobs import JobItem
@@ -2568,8 +2654,13 @@ def create_app(
         if body is not None and body.options is not None:
             opts = body.options
         else:
+            saved_options = item.options if item.options is not None else job.options
             opts = JobOptions.model_validate(
-                {key: job.options.get(key) for key in ("preset", "llm", "ocr")}
+                {
+                    key: value
+                    for key, value in saved_options.items()
+                    if key in JobOptions.model_fields
+                }
             )
         if opts.preset is not None:
             from markitai.config import get_preset
@@ -2610,6 +2701,9 @@ def create_app(
                 status_code=409,
                 detail="LLM enhancement is unavailable; enable a routable LLM first",
             )
+        job.public_network_only = job.public_network_only or not _is_trusted_request(
+            request
+        )
         cfg.output.dir = str(job.out_dir)
         # The rerun reuses the job's out_dir, so it would otherwise hit
         # on_conflict against its own prior output (rename → duplicate
@@ -2619,6 +2713,7 @@ def create_app(
         job.cfg = cfg
         if operation != "enhance":
             job.options = opts.model_dump()
+            item.options = opts.model_dump()
 
         # Snapshot the previous successful (non-skipped) result so a failed
         # rerun can be rolled back to it instead of destroying a done output.
@@ -2650,6 +2745,7 @@ def create_app(
         item.skipped = False
         item.skip_reason = None
         job.status = "running"
+        job.generation += 1
         job.finished_at = None
         job.retry_pending.add(item_id)
         job.retry_queue.put_nowait(work)
@@ -2915,7 +3011,9 @@ def create_app(
         if not jobs:
             raise HTTPException(status_code=404, detail="no completed jobs to archive")
 
-        archive_path = registry.jobs_root / "archive.zip"
+        # A response owns its archive until streaming and cleanup finish.
+        # Sharing a path lets one download remove another response's file.
+        archive_path = registry.jobs_root / f"archive-{uuid.uuid4().hex}.zip"
 
         def build() -> None:
             tmp_path = archive_path.with_name(f".archive.{uuid.uuid4().hex}.tmp")
@@ -2941,9 +3039,7 @@ def create_app(
 
         async with registry.archive_lock:
             await asyncio.to_thread(build)
-        # The whole-history zip is rebuilt on every download, so it is pure
-        # dead weight afterwards. Unlink once the response is sent (POSIX keeps
-        # the open fd valid for the in-flight stream); nothing else removes it.
+        # Each response removes only its own completed archive.
         return FileResponse(
             archive_path,
             filename="markitai-all.zip",

@@ -72,7 +72,14 @@ def _resolve_token(no_auth: bool) -> str | None:
 
 
 def _token_url(url_host: str, port: int, token: str) -> str:
-    return f"http://{url_host}:{port}/?token={quote(token, safe='')}"
+    """Startup URL carrying the token in the fragment, never the query.
+
+    The fragment is not sent to the server, so the token stays out of Uvicorn's
+    access log and out of any proxy log. The web app reads it from
+    ``location.hash``, stores it, and scrubs it from the address bar; API
+    requests keep working through ``Authorization: Bearer`` or ``?token=``.
+    """
+    return f"http://{url_host}:{port}/#token={quote(token, safe='')}"
 
 
 def _lan_address() -> str | None:
@@ -212,8 +219,9 @@ def _open_browser_when_ready(
     default=False,
     help=(
         "Disable the access token. Requests from other machines then need no "
-        "credential, but may only submit public URLs and cannot touch history "
-        "deletion or LLM settings; loopback keeps full access either way."
+        "credential. Their URL targets must be public and LLM settings stay "
+        "blocked, but uploads and history access, downloads and deletion remain "
+        "available; loopback keeps full access either way."
     ),
 )
 @click.option(

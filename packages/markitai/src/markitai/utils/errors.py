@@ -77,3 +77,24 @@ class ConversionError(SelfExplanatoryError, RuntimeError):
     carries the inner exception's class name when that exception was
     unexpected), so re-prefixing it with ``RuntimeError:`` adds nothing.
     """
+
+
+class CliInputRejection(SystemExit):
+    """An input rejected before conversion could start.
+
+    Subclasses ``SystemExit`` so every existing ``pytest.raises(SystemExit)``
+    and exit-code path keeps working, while the carried ``message`` lets the
+    ``--json`` envelope explain a run that produced no work item — otherwise
+    it would report ``ok: true`` with an empty list and a non-zero exit.
+
+    This stays out of conversion history: an unsupported file is a usage
+    error, not a conversion result, and batch discovery never surfaces one.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(1)
+        self.message = message
+
+    def __str__(self) -> str:
+        """Render the reason, not the exit code (``SystemExit(1)`` -> "1")."""
+        return self.message

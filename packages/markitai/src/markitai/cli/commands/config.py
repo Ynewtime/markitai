@@ -89,27 +89,56 @@ def _redact_header_values(headers: Any) -> Any:
     return dict.fromkeys(headers, _REDACTED)
 
 
+def _redact_named_field(name: str, value: Any) -> tuple[bool, Any]:
+    """Apply the name-based redaction rules to one field.
+
+    Returns ``(handled, redacted_value)``. Shared by the whole-section walker
+    and the single-key reader so the two can never disagree about what counts
+    as a secret; a suffix match also covers nested fields such as
+    ``llm.custom_api_base`` that the section walker used to pass through.
+    """
+    normalized = normalize_identifier_key(name)
+    if normalized == "extra_http_headers" or normalized.endswith("_extra_http_headers"):
+        return True, _redact_header_values(value)
+    if normalized == "api_base" or normalized.endswith("_api_base"):
+        return True, _safe_api_base_origin(value)
+    if _is_sensitive_config_key(name):
+        if isinstance(value, str) and value.startswith("env:"):
+            return True, value
+        return True, _REDACTED
+    return False, value
+
+
 def _redact_config_secrets(value: Any) -> Any:
     """Recursively redact inline secrets while preserving ``env:VAR`` refs."""
     if isinstance(value, dict):
         redacted: dict[str, Any] = {}
         for key, item in value.items():
-            normalized = normalize_identifier_key(str(key))
-            if normalized == "extra_http_headers":
-                redacted[key] = _redact_header_values(item)
-            elif normalized == "api_base":
-                redacted[key] = _safe_api_base_origin(item)
-            elif _is_sensitive_config_key(str(key)):
-                if isinstance(item, str) and item.startswith("env:"):
-                    redacted[key] = item
-                else:
-                    redacted[key] = _REDACTED
-            else:
-                redacted[key] = _redact_config_secrets(item)
+            handled, result = _redact_named_field(str(key), item)
+            redacted[key] = result if handled else _redact_config_secrets(item)
         return redacted
     if isinstance(value, list):
         return [_redact_config_secrets(item) for item in value]
     return value
+
+
+def _redact_value_for_key(key: str, value: Any) -> Any:
+    """Redact one config value addressed by its dot-notation key.
+
+    ``_redact_config_secrets`` redacts by the *field names inside* a mapping, so
+    it cannot protect a scalar read such as ``config get llm.api_key``. This
+    wrapper applies the same rules to the key the user asked for, then recurses
+    into the value for container reads.
+    """
+    # A scalar below a sensitive container inherits its protection, even if
+    # the leaf has an innocuous name (for example headers.X-Access).
+    ancestors = key.split(".")[:-1]
+    for ancestor in ancestors:
+        normalized = normalize_identifier_key(ancestor)
+        if normalized == "extra_http_headers" or _is_sensitive_config_key(ancestor):
+            return _REDACTED
+    handled, result = _redact_named_field(key, value)
+    return result if handled else _redact_config_secrets(value)
 
 
 def _resolve_field_type(key: str) -> Any:
@@ -363,15 +392,22 @@ def config_validate(config_file: Path | None) -> None:
 
     except Exception as e:
         console.print(f"[red]Configuration error:[/red] {e}")
-        raise SystemExit(2)
+        # Exit 1 (runtime failure), not 2: 2 is Click's usage-error code.
+        raise SystemExit(1)
 
 
 @config.command("get")
 @click.argument("key")
-def config_get(key: str) -> None:
+@click.option(
+    "--show-secrets",
+    is_flag=True,
+    help="Show secret values instead of redacting them (unsafe for shared logs).",
+)
+def config_get(key: str, show_secrets: bool) -> None:
     """Get a configuration value.
 
-    KEY uses dot notation; nested sections print as JSON.
+    KEY uses dot notation; nested sections print as JSON. Secret values are
+    redacted unless --show-secrets is given.
 
     Examples:
         markitai config get llm.enabled        # Single value
@@ -399,6 +435,9 @@ def config_get(key: str) -> None:
     elif isinstance(value, list) and value and isinstance(value[0], BaseModel):
         value = [v.model_dump(mode="json", exclude_none=True) for v in value]
 
+    if not show_secrets:
+        value = _redact_value_for_key(key, value)
+
     # Format output
     if isinstance(value, (dict, list)):
         output = json.dumps(value, indent=2, ensure_ascii=False)
@@ -411,11 +450,17 @@ def config_get(key: str) -> None:
 @config.command("set")
 @click.argument("key")
 @click.argument("value")
-def config_set(key: str, value: str) -> None:
+@click.option(
+    "--show-secrets",
+    is_flag=True,
+    help="Echo secret values instead of redacting them (unsafe for shared logs).",
+)
+def config_set(key: str, value: str, show_secrets: bool) -> None:
     """Set a configuration value.
 
     Values are validated against the config schema before saving;
-    invalid values are rejected and nothing is written.
+    invalid values are rejected and nothing is written. Secret values are
+    redacted in the confirmation unless --show-secrets is given.
 
     Examples:
         markitai config set llm.enabled true
@@ -454,7 +499,10 @@ def config_set(key: str, value: str) -> None:
             raise SystemExit(1)
 
         saved_path = manager.save()
-        console.print(f"[green]Set {key} = {parsed_value}[/green]")
+        shown = (
+            parsed_value if show_secrets else _redact_value_for_key(key, parsed_value)
+        )
+        console.print(f"[green]Set {key} = {shown}[/green]")
         console.print(f"[dim]Saved to {saved_path}[/dim]")
 
     except SystemExit:

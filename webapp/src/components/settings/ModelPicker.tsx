@@ -158,7 +158,7 @@ export function ModelPicker({
                 <span className="mono">{candidate.label}</span>
                 <span className="model-id mono">{candidate.model}</span>
               </span>
-              {candidate.supports_vision && <span className="minibadge">Vision</span>}
+              {candidate.supports_vision && <span className="minibadge">{t.visionTag}</span>}
               {configured && <span className="minibadge">{t.alreadyConfigured}</span>}
             </label>
           );

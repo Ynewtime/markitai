@@ -49,6 +49,7 @@ click.rich_click.OPTION_GROUPS = {
             "name": "Output & Configuration",
             "options": [
                 "--output",
+                "--json",
                 "--config",
                 "--config-json",
                 "--preset",
@@ -80,6 +81,7 @@ click.rich_click.OPTION_GROUPS = {
             "options": [
                 "--strategy",
                 "--backend",
+                "--no-remote-fetch",
             ],
         },
         {
@@ -101,7 +103,7 @@ click.rich_click.OPTION_GROUPS = {
         },
         {
             "name": "Logging & Info",
-            "options": ["--verbose", "--quiet", "--version", "--help"],
+            "options": ["--verbose", "--quiet", "--log-level", "--version", "--help"],
         },
     ]
 }
@@ -111,7 +113,7 @@ click.rich_click.OPTION_GROUPS = {
 load_dotenv(Path.cwd() / ".env")
 load_dotenv(Path.home() / ".markitai" / ".env")
 
-from typing import get_args
+from typing import NoReturn, get_args
 
 from click import Context
 from loguru import logger
@@ -134,11 +136,14 @@ from markitai.config import (
     OutputProfile,
 )
 from markitai.runs import Outcome
+from markitai.runs import json_output as json_result
 
 # Import utilities from refactored modules
 from markitai.utils.cli_helpers import (
     is_url,
+    unsupported_url_scheme,
 )
+from markitai.utils.errors import CliInputRejection
 from markitai.utils.executor import shutdown_converter_executor
 from markitai.utils.term import MARK_LINE
 from markitai.utils.url_redaction import redact_url
@@ -151,6 +156,18 @@ stderr_console = get_stderr_console()
 # =============================================================================
 # Main CLI app
 # =============================================================================
+
+
+def normalize_exit_code(code: object) -> int:
+    """Coerce a ``SystemExit`` code onto the CLI's integer exit matrix.
+
+    ``None`` means success; an int passes through (0/1/10); anything else
+    (a string message) is a failure. Shared by process finalization and the
+    ``--json`` run-level error text so both read the same code.
+    """
+    if code is None:
+        return 0
+    return code if isinstance(code, int) else 1
 
 
 def main() -> None:
@@ -171,12 +188,9 @@ def main() -> None:
         code = exc.code
     else:  # pragma: no cover - click's standalone mode always raises SystemExit
         code = 0
-    if code is None:
-        code = 0
-    elif not isinstance(code, int):
+    if code is not None and not isinstance(code, int):
         print(code, file=sys.stderr)
-        code = 1
-    finalize_process(code)
+    finalize_process(normalize_exit_code(code))
 
 
 def run_interactive_mode(ctx: click.Context) -> None:
@@ -227,7 +241,23 @@ def run_interactive_mode(ctx: click.Context) -> None:
     "-o",
     type=click.Path(path_type=Path),
     default=None,
-    help="Output directory. If not specified, output to stdout.",
+    help=(
+        "Output directory. A single file or URL may instead name a .md file "
+        "here; a batch (directory or .urls) requires a directory and rejects "
+        "a .md value. If not specified, output to stdout."
+    ),
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help=(
+        "Print one machine-readable JSON result on stdout (per-item status, "
+        "output path, error, cost) and suppress progress output. Needs -o, "
+        "because stdout carries the JSON. Runtime failures appear in error; "
+        "argument/usage errors exit on stderr without JSON. Incompatible with "
+        "--dry-run and --llm-batch-collect."
+    ),
 )
 @click.option(
     "--config",
@@ -329,7 +359,7 @@ def run_interactive_mode(ctx: click.Context) -> None:
     help="Directory batches only: run LLM enhancement through the provider's "
     "Batch API at half the list price. Waits up to --llm-batch-timeout, then "
     "hands off to a later --llm-batch-collect. Requires a single-model "
-    "OpenAI or Anthropic pool.",
+    "OpenAI or Anthropic pool. Only files converted by this run are submitted.",
 )
 @click.option(
     "--llm-batch-timeout",
@@ -394,6 +424,13 @@ def run_interactive_mode(ctx: click.Context) -> None:
     "converters; cloudflare needs CF credentials.",
 )
 @click.option(
+    "--no-remote-fetch",
+    is_flag=True,
+    help="Never send URLs to remote extraction services (Defuddle, Jina, "
+    "Cloudflare). Same effect as MARKITAI_NO_REMOTE_FETCH=1, and it makes the "
+    "privacy choice explicit instead of inheriting it from --quiet.",
+)
+@click.option(
     "-v",
     "--verbose",
     is_flag=True,
@@ -408,6 +445,15 @@ def run_interactive_mode(ctx: click.Context) -> None:
     help="Suppress progress and info messages, only show errors. Converting a "
     "single file or URL is already quiet by default (add -v to see the "
     "details); batch runs over a directory or .urls list are not.",
+)
+@click.option(
+    "--log-level",
+    type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]),
+    default=None,
+    help="Minimum level for the log file, overriding log.level from the "
+    "config. Conversion runs only: no effect without a configured log.dir "
+    "(file logging is off by default), and subcommands print their own "
+    "output. The console stays governed by --verbose/--quiet.",
 )
 @click.option(
     "--dry-run",
@@ -453,6 +499,7 @@ def run_interactive_mode(ctx: click.Context) -> None:
 def app(
     ctx: Context,
     output: Path | None,
+    json_output: bool,
     config_path: Path | None,
     config_json: str | None,
     preset: str | None,
@@ -477,8 +524,10 @@ def app(
     max_depth: int | None,
     fetch_strategy_name: str | None,
     file_backend: str | None,
+    no_remote_fetch: bool,
     verbose: bool,
     quiet: bool,
+    log_level: str | None,
     dry_run: bool,
     record_history: bool | None,
     pure: bool | None,
@@ -516,6 +565,52 @@ def app(
     if not input_path_str and llm_batch_collect is None:
         click.echo(ctx.get_help())
         ctx.exit(0)
+
+    # The user's own --quiet decides the consent prompt; --json only changes
+    # what is printed, so it must not answer a privacy question for them.
+    user_quiet = quiet
+
+    # Per-item results collected by the processors for history recording;
+    # recorded as one job after the run completes (even on partial failure).
+    # Defined before the JSON helpers so early input errors can report them.
+    history_items: list[Outcome] = []
+
+    if json_output:
+        # stdout carries the JSON result, so the Markdown needs a real
+        # destination and the collection path (which writes its own output)
+        # stays out of the contract.
+        if output is None:
+            raise click.UsageError(
+                "--json needs -o: stdout carries the JSON result, so the "
+                "Markdown needs a file destination."
+            )
+        if llm_batch_collect is not None:
+            raise click.UsageError("--json is not supported with --llm-batch-collect.")
+        if dry_run:
+            raise click.UsageError(
+                "--json is not supported with --dry-run: the preview is for a "
+                "human, and a dry run writes no item the envelope could report."
+            )
+        # Human progress would corrupt the JSON document; keep it off stdout
+        # and let the per-item results carry the summary.
+        quiet = True
+
+    def write_json(error: str | None = None) -> None:
+        """Print the JSON envelope on stdout when --json asked for one."""
+        if not json_output:
+            return
+        sys.stdout.write(json_result.render(history_items, error=error))
+        sys.stdout.flush()
+
+    def abort_with_json(message: str) -> NoReturn:
+        """Report an input error on stderr, then exit with a JSON envelope.
+
+        Only the envelope goes to stdout, so a script sees ``ok: false`` and
+        the reason instead of an empty, successful-looking document. Every
+        caller is an input rejection, so the exit code is always 1.
+        """
+        write_json(error=message)
+        ctx.exit(1)
 
     # Batch-API collection runs without an input argument
     # Parse --config-json overrides (merged over the file config below,
@@ -562,6 +657,18 @@ def app(
     # Check if input is a URL
     is_url_input = is_url(input_path_str)
 
+    # A URL-like string with another scheme is not a path; say so instead of
+    # letting Path() report a missing file for "ftp://host/file".
+    if not is_url_input:
+        scheme = unsupported_url_scheme(input_path_str)
+        if scheme is not None:
+            message = (
+                f"Unsupported URL scheme '{scheme}://'. markitai can fetch "
+                "http:// and https:// URLs only."
+            )
+            stderr_console.print(f"[red]Error: {message}[/red]")
+            abort_with_json(message)
+
     # Initialize URL list mode variables
     url_entries: list = []
     is_url_list_mode = False
@@ -571,10 +678,9 @@ def app(
     if not is_url_input:
         input_path = Path(input_path_str)
         if not input_path.exists():
-            stderr_console.print(
-                f"[red]Error: Path '{input_path}' does not exist.[/red]"
-            )
-            ctx.exit(1)
+            message = f"Path '{input_path}' does not exist."
+            stderr_console.print(f"[red]Error: {message}[/red]")
+            abort_with_json(message)
 
         # Auto-detect .urls file
         if input_path.is_file() and input_path.suffix == ".urls":
@@ -583,21 +689,27 @@ def app(
             try:
                 url_entries = parse_url_list(input_path)
             except UrlListParseError as e:
-                stderr_console.print(f"[red]Error parsing URL list: {e}[/red]")
-                ctx.exit(1)
+                message = f"Error parsing URL list: {e}"
+                stderr_console.print(f"[red]{message}[/red]")
+                abort_with_json(message)
 
             if not url_entries:
-                stderr_console.print(
-                    f"[yellow]No valid URLs found in {input_path}[/yellow]"
-                )
-                ctx.exit(0)
+                message = f"No valid URLs found in {input_path}."
+                stderr_console.print(f"[yellow]{message}[/yellow]")
+                abort_with_json(message)
 
             is_url_list_mode = True
             input_path = None  # Clear input_path for URL list mode
 
-    # Load configuration first
+    # Load configuration first. A broken config file is an input error like any
+    # other: report it once, keep stdout machine-readable under --json, and
+    # never let a JSONDecodeError traceback out of the command.
     config_manager = ConfigManager()
-    cfg = config_manager.load(config_path=config_path, overrides=config_overrides)
+    try:
+        cfg = config_manager.load(config_path=config_path, overrides=config_overrides)
+    except ConfigFileError as exc:
+        stderr_console.print(f"[red]{exc}[/red]")
+        abort_with_json(str(exc))
 
     # Determine if we're in single file/URL mode (not batch)
     # Single file/URL mode: quiet console unless --verbose is specified
@@ -616,7 +728,7 @@ def app(
     console_handler_id, log_file_path = setup_logging(
         verbose=verbose,
         log_dir=cfg.log.dir,
-        log_level=cfg.log.level,
+        log_level=log_level or cfg.log.level,
         log_format=cfg.log.format,
         rotation=cfg.log.rotation,
         retention=cfg.log.retention,
@@ -657,10 +769,9 @@ def app(
             builtin = ", ".join(sorted(BUILTIN_PRESETS))
             custom = ", ".join(sorted(cfg.presets)) if cfg.presets else ""
             available = builtin + (f", {custom}" if custom else "")
-            stderr_console.print(
-                f"[red]Error: Unknown preset '{preset}'. Available: {available}[/red]"
-            )
-            raise SystemExit(1)
+            message = f"Unknown preset '{preset}'. Available: {available}"
+            stderr_console.print(f"[red]Error: {message}[/red]")
+            abort_with_json(message)
 
     # Apply output profile (orthogonal to presets: presets pick features,
     # the profile picks the output shape)
@@ -785,10 +896,6 @@ def app(
         else:
             record_history_enabled = cfg.history.record
 
-    # Per-item results collected by the processors for history recording;
-    # recorded as one job after the run completes (even on partial failure).
-    history_items: list[Outcome] = []
-
     # Warn about features that --pure silently overrides
     if cfg.llm.pure and cfg.llm.enabled:
         ignored_flags = []
@@ -836,8 +943,28 @@ def app(
     # Route consent prompts and privacy notices from lower layers through a
     # live-display-aware implementation (pauses StageList around prompts)
     set_interaction(ConsoleInteraction())
-    # --quiet suppresses the interactive remote-fetch consent prompt
-    set_remote_consent_prompt_allowed(not quiet)
+    if no_remote_fetch:
+        # Set the documented hard opt-out so every layer (and any library call
+        # in this process) honours it, even when -s names a remote strategy.
+        os.environ["MARKITAI_NO_REMOTE_FETCH"] = "1"
+    # The user's --quiet suppresses the interactive remote-fetch consent
+    # prompt. Say so rather than letting a verbosity flag silently decide a
+    # privacy question. --json does not count: it only changes what is
+    # printed, so the prompt stays available (a non-interactive run still
+    # auto-denies it, as before).
+    set_remote_consent_prompt_allowed(not user_quiet)
+    if (
+        user_quiet
+        and not no_remote_fetch
+        and cfg.fetch.remote_consent == "ask"
+        and (is_url_input or url_entries)
+    ):
+        stderr_console.print(
+            "[yellow]Note:[/yellow] --quiet suppresses the remote-fetch consent "
+            "prompt, so remote strategies (Defuddle/Jina/Cloudflare) are "
+            "skipped. Pass --no-remote-fetch to make that explicit, or drop "
+            "--quiet to be asked."
+        )
 
     if fetch_strategy_name is not None:
         fetch_strategy = FetchStrategy(fetch_strategy_name)
@@ -898,20 +1025,18 @@ def app(
         if is_url_list_mode:
             effective_output = get_effective_output()
             if effective_output is None:
-                stderr_console.print(
-                    "[red]Error: URL list mode requires -o/--output directory.[/red]"
-                )
-                ctx.exit(1)
+                message = "URL list mode requires -o/--output directory."
+                stderr_console.print(f"[red]Error: {message}[/red]")
+                abort_with_json(message)
         elif is_url_input:
             # Single URL: output is optional (None means stdout, like single file mode)
             effective_output = get_effective_output()
         elif input_path is not None and input_path.is_dir():
             effective_output = get_effective_output()
             if effective_output is None:
-                stderr_console.print(
-                    "[red]Error: Batch mode requires -o/--output directory.[/red]"
-                )
-                ctx.exit(1)
+                message = "Batch mode requires -o/--output directory."
+                stderr_console.print(f"[red]Error: {message}[/red]")
+                abort_with_json(message)
 
         # ── Phase 2: Pre-flight auth check ──
         # Now that parameter validation passed, check auth for local providers.
@@ -1024,10 +1149,9 @@ def app(
         if llm_batch and not input_path.is_dir():
             # The flag is documented as directory-only; silently running a
             # single file at full price would contradict the help text.
-            stderr_console.print(
-                "[red]Error: --llm-batch applies to directory batches only.[/red]"
-            )
-            raise SystemExit(1)
+            message = "--llm-batch applies to directory batches only."
+            stderr_console.print(f"[red]Error: {message}[/red]")
+            raise CliInputRejection(message)
 
         # Directory batch mode
         if input_path.is_dir():
@@ -1043,25 +1167,27 @@ def app(
                 from markitai.utils.errors import ConversionError
 
                 if not cfg.llm.enabled:
-                    stderr_console.print(
-                        "[red]Error: --llm-batch requires --llm.[/red]"
-                    )
-                    raise SystemExit(1)
+                    message = "--llm-batch requires --llm."
+                    stderr_console.print(f"[red]Error: {message}[/red]")
+                    raise CliInputRejection(message)
                 if cfg.ocr.enabled:
                     # --ocr with the LLM off takes the RapidOCR route, which
                     # renders no page images at all — so by submission time
                     # there is nothing for the vision request to attach.
                     # --screenshot does render them, and is supported.
+                    message = (
+                        "--llm-batch cannot run --ocr yet: the batch converts "
+                        "with the LLM off first, and that is the branch which "
+                        "reads scanned pages with local OCR instead of "
+                        "rendering them for a vision model."
+                    )
                     stderr_console.print(
-                        "[red]Error: --llm-batch cannot run --ocr yet.[/red]\n"
-                        "The batch converts with the LLM off first, and that "
-                        "is the branch which reads scanned pages with local "
-                        "OCR instead of rendering them for a vision model.\n"
+                        f"[red]Error: {message}[/red]\n"
                         "[dim]Run without --llm-batch to use --ocr at full "
                         "price. --alt/--desc and --screenshot do work with "
                         "--llm-batch.[/dim]"
                     )
-                    raise SystemExit(1)
+                    raise CliInputRejection(message)
 
                 cfg_no_llm = cfg.model_copy(deep=True)
                 cfg_no_llm.llm.enabled = False
@@ -1086,6 +1212,7 @@ def app(
                     code = await run_batch_llm_enhancement(
                         cfg,
                         effective_output,
+                        items=history_items,
                         timeout_s=float(llm_batch_timeout),
                         quiet=quiet,
                     )
@@ -1179,6 +1306,15 @@ def app(
                 "view with 'markitai serve'"
             )
 
+    def exit_error(exc: SystemExit) -> str | None:
+        """Run-level error text for a non-zero exit that no item recorded."""
+        if isinstance(exc, CliInputRejection):
+            return exc.message
+        code = normalize_exit_code(exc.code)
+        if code == 0 or any(item.status == "failed" for item in history_items):
+            return None
+        return f"markitai exited with code {code}; see stderr for the reason"
+
     try:
         asyncio.run(run_workflow_with_cleanup())
     except KeyboardInterrupt:
@@ -1186,20 +1322,22 @@ def app(
         # wrote its state. click's bare "Aborted." leaves the reader to guess
         # whether stopping cost them the run — and the guess decides whether
         # they re-convert (and re-pay for) work that is already done.
+        write_json(error="interrupted before the run finished")
         if input_path is not None and input_path.is_dir() and not quiet:
             stderr_console.print(
                 "\n[yellow]Interrupted.[/yellow] Re-run the same command with "
                 "[cyan]--resume[/cyan] to continue from here."
             )
         raise
-    except SystemExit:
+    except SystemExit as exc:
         # Processors signal (partial) failure via SystemExit; record the
         # collected per-item results first so failed runs also show up.
+        write_json(error=exit_error(exc))
         record_run_history()
         raise
     except EnvVarNotFoundError as e:
         stderr_console.print(f"[red]Error: {e}[/red]")
-        ctx.exit(1)
+        abort_with_json(str(e))
     except ValueError as e:
         error_msg = str(e)
         if (
@@ -1207,9 +1345,10 @@ def app(
             or "No available models" in error_msg
         ):
             stderr_console.print(f"[red]Error: {error_msg}[/red]")
-            ctx.exit(1)
+            abort_with_json(error_msg)
         raise
     else:
+        write_json()
         record_run_history()
 
 

@@ -46,7 +46,7 @@ export function notifyJobDone(body: string): void {
   if (!document.hidden) return;
   if (Notification.permission !== "granted") return;
   try {
-    const n = new Notification("markitai", { body });
+    const n = new Notification("Markitai", { body });
     n.onclick = () => {
       window.focus();
       n.close();

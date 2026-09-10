@@ -3473,9 +3473,10 @@ class TestFetchCacheEvictionEdgeCases:
         )
         cache.set("https://example.com", result)
 
-        # Should still store (no entries to evict initially)
+        # A single oversized value must not exceed the configured capacity.
         stats = cache.stats()
-        assert stats["count"] == 1
+        assert stats["count"] == 0
+        assert cache.get("https://example.com") is None
         cache.close()
 
 

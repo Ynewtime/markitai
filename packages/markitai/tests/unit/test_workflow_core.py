@@ -3682,3 +3682,27 @@ class TestEveryDocumentedFormatHasAConverter:
             if fmt is not FileFormat.UNKNOWN and load_converter_class(fmt) is None
         )
         assert not missing, f"formats with no converter: {missing}"
+
+
+@pytest.mark.parametrize(
+    "original,expected",
+    [
+        ("![](assets/image.png)", "![A diagram](assets/image.png)"),
+        ("![[assets/image.png|old]]", "![[assets/image.png|A diagram]]"),
+        ("![](.markitai/assets/image.png)", "![A diagram](.markitai/assets/image.png)"),
+    ],
+)
+def test_alt_updates_preserve_profile_asset_layout(
+    tmp_path: Path, original: str, expected: str
+) -> None:
+    from types import SimpleNamespace
+
+    from markitai.workflow.core import apply_alt_text_updates
+
+    markdown = tmp_path / "doc.llm.md"
+    markdown.write_text(original)
+    assert apply_alt_text_updates(
+        markdown,
+        SimpleNamespace(assets=[{"asset": "assets/image.png", "alt": "A diagram"}]),
+    )
+    assert markdown.read_text() == expected

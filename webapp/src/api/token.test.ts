@@ -12,6 +12,54 @@ beforeEach(() => {
 });
 
 describe("initToken", () => {
+  it("captures the fragment token and scrubs the hash", async () => {
+    const { initToken } = await load();
+    window.history.replaceState(null, "", "/#token=mk_secret");
+
+    initToken();
+
+    expect(sessionStorage.getItem("markitai.serve.token")).toBe("mk_secret");
+    expect(window.location.hash).toBe("");
+  });
+
+  it("reads the fragment token from a multi-parameter fragment", async () => {
+    const { initToken } = await load();
+    window.history.replaceState(null, "", "/#token=mk_secret&view=ledger");
+
+    initToken();
+
+    expect(sessionStorage.getItem("markitai.serve.token")).toBe("mk_secret");
+    expect(window.location.hash).toBe("");
+  });
+
+  it("reads a bare fragment as the token", async () => {
+    const { initToken } = await load();
+    window.history.replaceState(null, "", "/#mk_secret");
+
+    initToken();
+
+    expect(sessionStorage.getItem("markitai.serve.token")).toBe("mk_secret");
+    expect(window.location.hash).toBe("");
+  });
+
+  it("decodes a percent-encoded fragment token", async () => {
+    const { initToken } = await load();
+    window.history.replaceState(null, "", "/#token=mk_a%2Bb");
+
+    initToken();
+
+    expect(sessionStorage.getItem("markitai.serve.token")).toBe("mk_a+b");
+  });
+
+  it("prefers the fragment over a query token", async () => {
+    const { initToken } = await load();
+    window.history.replaceState(null, "", "/?token=old#token=mk_new");
+
+    initToken();
+
+    expect(sessionStorage.getItem("markitai.serve.token")).toBe("mk_new");
+  });
+
   it("captures ?token= into sessionStorage and scrubs the URL bar", async () => {
     const { initToken } = await load();
     window.history.replaceState(null, "", "/?token=mk_secret&lang=en");
@@ -22,6 +70,16 @@ describe("initToken", () => {
     expect(window.location.search).toBe("?lang=en");
   });
 
+  it("scrubs a query token and a fragment token at once", async () => {
+    const { initToken } = await load();
+    window.history.replaceState(null, "", "/?token=mk_secret&lang=en#token=mk_secret");
+
+    initToken();
+
+    expect(window.location.search).toBe("?lang=en");
+    expect(window.location.hash).toBe("");
+  });
+
   it("leaves the URL untouched without a token parameter", async () => {
     const { initToken } = await load();
     window.history.replaceState(null, "", "/?lang=en");
@@ -29,6 +87,16 @@ describe("initToken", () => {
     initToken();
 
     expect(window.location.search).toBe("?lang=en");
+  });
+
+  it("leaves a non-token fragment untouched", async () => {
+    const { initToken } = await load();
+    window.history.replaceState(null, "", "/?lang=en#section-2");
+
+    initToken();
+
+    expect(window.location.search).toBe("?lang=en");
+    expect(window.location.hash).toBe("#section-2");
   });
 
   it("keeps the captured token when storage accepts reads but rejects writes", async () => {

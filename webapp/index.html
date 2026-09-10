@@ -5,7 +5,7 @@
     <link rel="icon" href="/logo.svg" type="image/svg+xml" />
     <link rel="alternate icon" href="/favicon.ico" sizes="32x32" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Web UI for markitai: convert documents, images, and web pages into clean Markdown, with optional LLM enhancement." />
+    <meta name="description" content="Web UI for Markitai: convert documents, images, and web pages into clean Markdown, with optional LLM enhancement." />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#fafafa" />
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#09090b" />
@@ -27,6 +27,12 @@
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <p style="font: 14px/1.6 system-ui, sans-serif; padding: 24px">
+        Markitai needs JavaScript to run. Use the CLI instead:
+        <code>markitai &lt;file-or-url&gt; -o out/</code>
+      </p>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

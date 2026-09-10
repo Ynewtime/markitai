@@ -14,7 +14,7 @@ The engine follows a policy-driven approach to select the order of fetching stra
 
 Markitai is local-first: for most websites, the native local pipeline is tried before any remote service:
 
-```
+```text
 Static (HTTP) → Playwright (Browser) → Defuddle → Jina → Cloudflare
 ```
 
@@ -24,7 +24,7 @@ Static's native webextract pipeline matches remote Defuddle's quality on the ext
 
 For domains known to require JavaScript (like `x.com`, `instagram.com`, domains listed in `fallback_patterns`, or domains that have previously failed static fetching and were learned into the SPA cache), Markitai skips straight to the browser:
 
-```
+```text
 Playwright (Browser) → Defuddle → Jina → Cloudflare → Static
 ```
 
@@ -34,7 +34,11 @@ Static goes last here since it has already failed (or is expected to fail) to pr
 
 The default `fetch.remote_consent` value is `always`. For a public URL, Markitai can continue from a failed local strategy to Defuddle, Jina, or Cloudflare without an interactive confirmation. Before the first remote attempt in a process, it writes a disclosure to stderr. Because that decision is cached for the process, the notice names every service it may authorize later: defuddle.md, Jina, Cloudflare, FxTwitter, and Twitter oEmbed. Services are still tried one at a time, so a URL is sent only to the service currently being attempted.
 
-Playwright has one public-URL enrichment path: after local DOM extraction fails for an X/Twitter status or article, it may try FxTwitter and then Twitter oEmbed. These are remote services like any other, so they go through the *same* process-wide consent decision instead of having an exemption. Under `ask` that means the enrichment can raise the one shared prompt itself when nothing has been decided yet and a TTY is available, reuses a Yes or No already given earlier in the run, and is skipped when the run cannot prompt. `never` and `MARKITAI_NO_REMOTE_FETCH` disable it outright. Consent is resolved lazily — only after the URL has been confirmed public — so no question is ever asked about a URL that would stay on the machine anyway.
+Playwright has one public-URL enrichment path: after local DOM extraction fails for an X/Twitter status or article, it may try FxTwitter and then Twitter oEmbed. These are remote services like any other, so they go through the *same* process-wide consent decision instead of having an exemption.
+
+Under `ask` that means the enrichment can raise the one shared prompt itself when nothing has been decided yet and a TTY is available, reuses a Yes or No already given earlier in the run, and is skipped when the run cannot prompt. `never` and `MARKITAI_NO_REMOTE_FETCH` disable it outright.
+
+Consent is resolved lazily — only after the URL has been confirmed public — so no question is ever asked about a URL that would stay on the machine anyway.
 
 The following URLs remain local-only regardless of the selected strategy:
 
@@ -162,7 +166,7 @@ If the environment variable is set but curl-cffi is not installed, Markitai sile
 
 ## How It Works
 
-```
+```text
 URL Request
     │
     ├─ Explicit strategy (-s static/playwright/defuddle/jina/cloudflare)?

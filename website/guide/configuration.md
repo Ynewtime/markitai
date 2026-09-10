@@ -239,7 +239,12 @@ Use `env:VAR_NAME` syntax to reference environment variables in the config file.
 | `MARKITAI_LANG` | CLI language override (`en` or `zh`) |
 | `MARKITAI_PURE` | Enable pure mode (`1`, `true`, or `yes`) |
 | `MARKITAI_RECORD_HISTORY` | Record CLI runs to the `markitai serve` history (`1`, `true`, `yes`, or `on`; a set-but-falsy value explicitly opts out). Overridden by `--record-history` / `--no-record-history`; overrides `history.record` |
+| `MARKITAI_NO_VLM_OCR` | Forbid vision-model OCR: with `--ocr --llm`, forces the local RapidOCR path instead of letting the model read page images (`1`, `true`, or `yes`) |
+| `MARKITAI_SERVE_TOKEN` | Pin the `markitai serve` access token instead of generating a random one per start |
 | `MARKITAI_NO_REMOTE_FETCH` | Hard-disable remote extraction, including explicit remote `-s` strategies (`1`, `true`, or `yes`) |
+| `MARKITAI_INSTALL_OPTIONAL` | Setup script only: install the optional components non-interactively (`1`, `true`, or `yes`) |
+| `MARKITAI_USE_MIRROR` | Setup script only: `1` always offers the mirror index, `0` never asks |
+| `MARKITAI_VERSION` | Setup script only: pin the markitai version to install (omit for the latest stable release) |
 | `MODEL` | Single-model override when no `model_list` configured |
 
 ### `.env` File Loading
@@ -273,7 +278,7 @@ Gemini is not a local/CLI provider. Use a direct API key (`gemini/`, see [Model 
 
 Use the LiteLLM model naming convention:
 
-```
+```text
 provider/model-name
 ```
 
@@ -682,7 +687,13 @@ Supported language codes:
 - `latin` - Latin languages
 
 ::: tip
-RapidOCR is included as a dependency and works out of the box. No additional installation required.
+RapidOCR is **not** part of the base install — it ships in the `ocr` extra, so `--ocr` needs one extra step:
+
+```bash
+uv tool install "markitai[ocr]" --force   # or: pipx install "markitai[ocr]" --force
+```
+
+Without it, `--ocr` reports the missing extra instead of silently returning an image placeholder. With a vision-capable model configured, `--ocr --llm` needs no extra: the model reads the page images directly (VLM-OCR), and `MARKITAI_NO_VLM_OCR=1` forces the local RapidOCR path.
 :::
 
 ## Office Configuration
@@ -783,7 +794,9 @@ For public URLs, `auto` may fall back to a remote extraction service without ask
 
 For public X/Twitter status or article URLs, Playwright may try FxTwitter and then Twitter oEmbed after local DOM extraction fails. This enrichment shares the *same* process-wide consent decision as every other remote service: under `ask` it can raise the one shared prompt itself, reuses a decision already made in the run, and is skipped when the run cannot prompt. Both `fetch.remote_consent=never` and `MARKITAI_NO_REMOTE_FETCH=1` disable it.
 
-Private, local, intranet, and credential-bearing URLs never use remote extraction, even when a remote strategy is selected explicitly. Credential-bearing includes URL userinfo and sensitive query/fragment parameters such as tokens, signatures, credentials, passwords, API keys, and authorization codes. In the `auto` policy chain, domains matched by `fetch.policy.local_only_patterns` or `NO_PROXY` (when `inherit_no_proxy` is enabled) also stay local. For an otherwise public URL, explicitly passing a non-`auto` remote `-s` flag is an intentional override of those pattern-based rules. A remote `fetch.strategy` set only in config remains governed by `fetch.remote_consent` and emits the same first-use disclosure.
+Private, local, intranet, and credential-bearing URLs never use remote extraction, even when a remote strategy is selected explicitly. Credential-bearing includes URL userinfo and sensitive query/fragment parameters such as tokens, signatures, credentials, passwords, API keys, and authorization codes.
+
+In the `auto` policy chain, domains matched by `fetch.policy.local_only_patterns` or `NO_PROXY` (when `inherit_no_proxy` is enabled) also stay local. For an otherwise public URL, explicitly passing a non-`auto` remote `-s` flag is an intentional override of those pattern-based rules. A remote `fetch.strategy` set only in config remains governed by `fetch.remote_consent` and emits the same first-use disclosure.
 
 | Setting | Options | Default | Description |
 |---------|---------|---------|-------------|
@@ -910,12 +923,14 @@ export CLOUDFLARE_ACCOUNT_ID="your-account-id"
 ::: warning Limitations & Caveats
 - **Concurrency**: Free plan allows **2 concurrent browser instances**. Markitai automatically serializes CF BR requests and retries on 429 rate-limit errors with exponential backoff, so high `url_concurrency` values are safe but won't speed up CF BR fetching.
 - **Site compatibility**: Sites with aggressive anti-bot protection (e.g. x.com, twitter.com) may return 400 errors via CF BR. For these sites, use `-s playwright` or `-s jina` instead.
-- **File conversion quality**: For formats that have a local converter (PDF, DOCX, XLSX, etc.), CF Workers AI `toMarkdown` generally produces **lower quality** output than local converters (e.g. less accurate formatting, no image extraction). `-b cloudflare` will warn when a better local converter is available. CF `toMarkdown` is most useful for formats without a local converter (`.numbers`, `.ods`, `.svg`, etc.).
+- **File conversion quality**: For formats that have a local converter (PDF, DOCX, XLSX, etc.), CF Workers AI `toMarkdown` generally produces **lower quality** output than local converters (e.g. less accurate formatting, no image extraction). `-b cloudflare` will warn when a better local converter is available. CF `toMarkdown` is most useful for formats the base install cannot convert (`.numbers`, for example).
 :::
 
-### Fetch Policy Engine
+### Fetch Policy, Domain Profiles and Fallback Patterns {#fetch-policy-domain-profiles}
 
-The policy engine intelligently orders fetch strategies based on domain characteristics and history. See the [Fetch Policy Guide](/guide/fetch-policy) for details.
+The policy engine orders fetch strategies per domain and records which domains need browser rendering. Its option tables, domain-profile fields, built-in profiles and `fallback_patterns` list live in one place — the [Fetch Policy guide](/guide/fetch-policy) — so they are documented once instead of drifting between two pages.
+
+The configuration shape, for reference:
 
 ```json
 {
@@ -923,26 +938,7 @@ The policy engine intelligently orders fetch strategies based on domain characte
     "policy": {
       "enabled": true,
       "max_strategy_hops": 5
-    }
-  }
-}
-```
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `enabled` | `true` | Enable intelligent strategy ordering |
-| `max_strategy_hops` | `5` | Maximum number of strategies to attempt before giving up |
-| `strategy_priority` | `null` | Custom global strategy order (overrides default priority) |
-| `local_only_patterns` | `[]` | Domain/IP patterns restricted to local strategies (NO_PROXY syntax) |
-| `inherit_no_proxy` | `true` | Merge `NO_PROXY` env var into `local_only_patterns` |
-
-### Domain Profiles
-
-Configure per-domain fetch overrides for sites with specific requirements:
-
-```json
-{
-  "fetch": {
+    },
     "domain_profiles": {
       "x.com": {
         "wait_for_selector": "[data-testid=tweetText]",
@@ -950,34 +946,13 @@ Configure per-domain fetch overrides for sites with specific requirements:
         "extra_wait_ms": 1200,
         "prefer_strategy": "playwright"
       }
-    }
-  }
-}
-```
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `wait_for_selector` | `null` | CSS selector to wait for before content extraction |
-| `wait_for` | `null` | Wait condition override: `load`, `domcontentloaded`, `networkidle` (unset inherits the global `fetch.playwright.wait_for`) |
-| `extra_wait_ms` | `null` | Extra wait time override in ms (unset inherits the global `fetch.playwright.extra_wait_ms`) |
-| `prefer_strategy` | `null` | Preferred strategy: `static`, `defuddle`, `playwright`, `cloudflare`, `jina` |
-| `strategy_priority` | `null` | Custom strategy order for this domain (overrides global and `prefer_strategy`) |
-| `skip_auto_scroll` | `false` | Skip auto-scrolling for single-content pages (tweets, issues, docs) |
-| `reject_resource_patterns` | `null` | Block Playwright-navigation resources matching these URL patterns (e.g. `["**/analytics/**"]`) |
-
-Markitai ships built-in profiles for `x.com`/`twitter.com` and `github.com`. Setting your own `domain_profiles` entry for the same domain **replaces it entirely** rather than merging field-by-field; any built-in tuning is lost unless you repeat it yourself.
-
-### Fallback Patterns
-
-Sites matching these patterns are treated as SPA/JS-heavy, promoting browser rendering in the strategy order:
-
-```json
-{
-  "fetch": {
+    },
     "fallback_patterns": ["x.com", "twitter.com", "instagram.com", "facebook.com", "linkedin.com", "threads.net"]
   }
 }
 ```
+
+Two rules are worth repeating here because they surprise people: a custom `domain_profiles` entry **replaces** the built-in profile for that domain rather than merging field-by-field, and `auto` treats `fallback_patterns` domains as SPA/JS-heavy, promoting browser rendering. Everything else — defaults, types, and the per-domain fields — is in the [Fetch Policy guide](/guide/fetch-policy#configuration).
 
 ### Proxies
 
@@ -1123,7 +1098,7 @@ Customize LLM prompts for different tasks. Each prompt is split into **system** 
 
 Create custom prompt files in the prompts directory:
 
-```
+```text
 ~/.markitai/prompts/
 ├── cleaner_system.md            # Document cleaning role & rules
 ├── cleaner_user.md              # Document cleaning content template

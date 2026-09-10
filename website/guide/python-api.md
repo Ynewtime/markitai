@@ -3,7 +3,7 @@
 Markitai can be used as a library, without the CLI. `markitai.convert()` and its async twin `markitai.aconvert()` run the same conversion pipeline the CLI uses — including LLM enhancement — and return a typed result.
 
 ::: warning Provisional
-The Python API is **provisional** while markitai is 0.x: signatures and result fields may change in minor releases.
+The Python API is **provisional**: signatures and result fields may still change in minor releases. The CLI is the stable interface; pin an exact version if you depend on a library detail.
 :::
 
 ```bash
@@ -103,5 +103,7 @@ markitdown pulls Magika, and Magika pulls onnxruntime, into every markitai proce
 | `usage` | `ConversionUsage` | `cost_usd`, token totals, per-model breakdown |
 | `skip_reason` | `str \| None` | `"exists"` when skipped by conflict policy |
 | `duration` | `float` | Wall-clock seconds |
+
+Enhanced fields refer only to an enhancement produced by the current call; a stale neighboring `.llm.md` is not returned when LLM is disabled. `assets` includes visible `assets/` references for rag/Obsidian, including Obsidian wikilinks.
 
 Failures raise instead of returning partial results: `ConversionError` for pipeline failures, `FetchError` for unreachable URLs, `ValueError` when LLM is enabled without a resolvable model. One call converts one file or URL; directory batches remain CLI territory.

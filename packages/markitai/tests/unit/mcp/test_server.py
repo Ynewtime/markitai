@@ -218,6 +218,19 @@ class TestBatchConvert:
         with pytest.raises(ToolError, match="Unknown job id"):
             await job_status("does-not-exist")
 
+    async def test_forgotten_job_says_it_expired_not_unknown(
+        self, sample_md: Path
+    ) -> None:
+        """A bounded server must not report an expired job as never-seen."""
+        server_module._JOBS.clear()
+        server_module._FORGOTTEN_JOBS.clear()
+        started = await batch_convert([str(sample_md)])
+        await _wait_for_completion(started["job_id"])
+
+        server_module._forget_finished_jobs(keep=0)
+        with pytest.raises(ToolError, match="has been forgotten"):
+            await job_status(started["job_id"])
+
 
 class TestJobBookkeeping:
     async def test_finished_jobs_are_bounded(self, sample_md: Path) -> None:
@@ -232,7 +245,8 @@ class TestJobBookkeeping:
         assert len(server_module._JOBS) == 1
         assert await job_status(next(iter(server_module._JOBS)))
 
-    async def test_cancelled_batch_does_not_stay_running(self, sample_md: Path) -> None:
+    async def test_cancelled_batch_reports_cancelled(self, sample_md: Path) -> None:
+        """A cancelled job must not claim "completed" while done < total."""
         server_module._JOBS.clear()
         started = await batch_convert([str(sample_md)] * 5)
         job = server_module._JOBS[started["job_id"]]
@@ -241,5 +255,108 @@ class TestJobBookkeeping:
         job.task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await job.task
-        assert job.status == "completed"
+        assert job.status == "cancelled"
         assert job.task is None
+        status = await job_status(started["job_id"])
+        assert status["status"] == "cancelled"
+
+
+class TestConfigParity:
+    """MCP defaults and options must line up with the CLI and the config file."""
+
+    async def test_llm_is_tri_state_on_every_conversion_tool(self) -> None:
+        """Omit llm to follow the config; only an explicit false forces it off."""
+        tools = {tool.name: tool for tool in await server.list_tools()}
+        for name in ("convert_document", "convert_url", "batch_convert"):
+            variants = tools[name].input_schema["properties"]["llm"]["anyOf"]
+            assert {"type": "boolean"} in variants, f"{name}.llm must accept a boolean"
+            assert {"type": "null"} in variants, f"{name}.llm must accept null"
+
+    async def test_profile_and_concurrency_are_exposed(self) -> None:
+        tools = {tool.name: tool for tool in await server.list_tools()}
+        for name in ("convert_document", "convert_url", "batch_convert"):
+            assert "profile" in tools[name].input_schema["properties"]
+        assert "concurrency" in tools["batch_convert"].input_schema["properties"]
+
+    def test_batch_concurrency_prefers_the_explicit_argument(self) -> None:
+        assert server_module._batch_concurrency(3) == 3
+        assert server_module._batch_concurrency(0) == 1
+
+    def test_batch_concurrency_falls_back_to_a_positive_default(self) -> None:
+        assert (
+            server_module._batch_concurrency(None)
+            == server_module._DEFAULT_BATCH_CONCURRENCY
+        )
+
+    def test_default_concurrency_mirrors_the_package_constant(self) -> None:
+        """The mcp layer cannot import constants, so pin the copy."""
+        from markitai.constants import DEFAULT_BATCH_CONCURRENCY
+
+        assert server_module._DEFAULT_BATCH_CONCURRENCY == DEFAULT_BATCH_CONCURRENCY
+
+    async def test_batch_runs_bounded_parallelism(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A semaphore caps in-flight conversions; every item still finishes."""
+        server_module._JOBS.clear()
+        in_flight = 0
+        peak = 0
+
+        async def fake_convert(source: str, workdir: Path, **kwargs: object) -> dict:
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await asyncio.sleep(0.02)
+            in_flight -= 1
+            return {
+                "source": source,
+                "markdown_file": None,
+                "cost_usd": 0.0,
+            }
+
+        monkeypatch.setattr(server_module, "_convert_source", fake_convert)
+        started = await batch_convert([f"item-{i}.md" for i in range(6)], concurrency=2)
+        status = await _wait_for_completion(started["job_id"])
+
+        assert status["done"] == 6
+        assert status["failed"] == 0
+        assert peak == 2, f"expected 2 in flight, saw {peak}"
+
+
+class TestBatchResultOrder:
+    """`results[i]` must answer `sources[i]` even though items finish out of order."""
+
+    async def test_slow_first_item_still_leads_the_result_list(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        server_module._JOBS.clear()
+
+        async def fake_convert(source: str, workdir: Path, **kwargs: object) -> dict:
+            # The first source is the slowest, so completion order is reversed.
+            await asyncio.sleep(0.05 if source == "slow" else 0.0)
+            return {"source": source, "markdown_file": None, "cost_usd": 0.0}
+
+        monkeypatch.setattr(server_module, "_convert_source", fake_convert)
+        started = await batch_convert(["slow", "fast"], concurrency=2)
+        status = await _wait_for_completion(started["job_id"])
+
+        assert [entry["source"] for entry in status["results"]] == ["slow", "fast"]
+
+
+async def test_parallel_same_name_sources_preserve_every_result(tmp_path: Path) -> None:
+    sources = []
+    for label in ("alpha", "beta", "gamma", "delta"):
+        source = tmp_path / label / "report.csv"
+        source.parent.mkdir()
+        source.write_text(f"name,value\n{label},source-{label}\n")
+        sources.append(str(source))
+    created = await batch_convert(
+        sources, output_dir=str(tmp_path / "out"), llm=False, concurrency=4
+    )
+    status = await _wait_for_completion(created["job_id"])
+    results = status["results"]
+    paths = [Path(result["markdown_file"]) for result in results]
+    assert len(set(paths)) == 4
+    assert all(result["status"] == "ok" for result in results)
+    for path, label in zip(paths, ("alpha", "beta", "gamma", "delta"), strict=True):
+        assert f"source-{label}" in path.read_text()

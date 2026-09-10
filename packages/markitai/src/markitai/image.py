@@ -1425,10 +1425,22 @@ async def download_url_images(
             if reason is not None:
                 raise PermissionError(reason)
 
-            client = await client_for(current)
-            response = await client.get(
-                current, follow_redirects=False, timeout=timeout
-            )
+            from markitai.fetch_policy import public_network_only
+
+            if public_network_only.get():
+                from markitai.fetch_http import public_http_request
+
+                response = await public_http_request(
+                    current,
+                    follow_redirects=False,
+                    timeout=timeout,
+                    headers={"User-Agent": _IMAGE_DOWNLOAD_USER_AGENT},
+                )
+            else:
+                client = await client_for(current)
+                response = await client.get(
+                    current, follow_redirects=False, timeout=timeout
+                )
             if response.status_code not in _REDIRECT_STATUS_CODES:
                 response.raise_for_status()
                 return response, current

@@ -33,13 +33,13 @@ claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp
 | `batch_convert` | 多个路径/URL 后台转换 → 返回 `job_id` |
 | `job_status` | 查询批量任务的进度与逐项结果 |
 
-每次转换都写出真实文件——写入 Agent 传入的 `output_dir`，或一个新建的临时目录（路径随结果返回）。结果默认内联 Markdown 文本，超过约 40 KB 时改为截断预览加 `markdown_file`（完整输出的文件路径），大文档不会灌爆模型上下文。
+每次转换都写出真实文件——写入 Agent 传入的 `output_dir`，或一个新建的临时目录（路径随结果返回）。结果默认内联 Markdown 文本，超过约 40 KB 时改为截断预览加 `markdown_file`（完整输出的文件路径），大文档不会灌爆模型上下文。三个转换工具都支持 `profile`（`rag`、`obsidian`、`okf`）为下游消费者塑形输出，省略时跟随服务器配置。
 
-批量任务在服务器进程内执行，任务表保存在内存中：轮询 `job_status` 直到 `status` 为 `"completed"`，再读取各项的 `markdown_file`。服务器重启后任务记录即丢失，已写出的文件仍在。
+批量任务在服务器进程内执行，任务表保存在内存中：轮询 `job_status` 直到 `status` 为 `"completed"`（或 `"cancelled"`），再读取各项的 `markdown_file`。任务为 `"completed"` 时，`results[i]` 对应你传入的 `sources[i]`；运行中或取消的任务省略未完成项，此时通过 `source` 识别部分结果。每项写入 `output_dir/batch-<job_id>/<item_number>/`（编号从 `0001` 开始），同名文件及其资源相互隔离，同时运行多个批次也不会覆盖。`batch_convert` 接受 `concurrency`（默认 10）限制同时转换的数量。任务会随着新任务完成以及服务器重启被遗忘——`job_status` 会说明属于哪种情况；已写出的文件仍在。
 
 ## LLM 增强
 
-所有工具的 LLM 增强**默认关闭**，按调用以 `llm: true` 开启（`alt`/`desc` 控制图片分析，`ocr` 与 `screenshot` 对应各自能力）。开启前需要配置模型——写在 `~/.markitai/config.json`（[与 CLI 共用](/zh/guide/configuration)），或通过服务器条目的环境变量：
+LLM 增强按调用以 `llm: true` 开启：省略 `llm` 时跟随服务器自己的 markitai 配置（`llm.enabled`，默认关闭），传 `llm: false` 则强制关闭。`alt`/`desc` 控制图片分析，`ocr` 与 `screenshot` 对应各自能力；开启 LLM 可能产生提供商费用。开启前需要配置模型——写在 `~/.markitai/config.json`（[与 CLI 共用](/zh/guide/configuration)），或通过服务器条目的环境变量：
 
 ```json
 {

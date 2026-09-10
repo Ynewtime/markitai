@@ -582,7 +582,7 @@ export function MarkdownPreview({
 
   const docDate = createdAt !== null ? fmtDate(createdAt) : null;
   const variantLabel =
-    result === null ? null : result.variant === "llm" ? t.llmEnhancedLabel : "Base";
+    result === null ? null : result.variant === "llm" ? t.llmEnhancedLabel : t.baseTag;
   const renderedBody = useMemo(
     () => portableLocalImageDestinations(meta?.split.body ?? markdown ?? ""),
     [markdown, meta?.split.body],

@@ -3,6 +3,9 @@ import { createPortal } from "react-dom";
 
 type Trigger = HTMLAttributes<HTMLElement> & { disabled?: boolean };
 
+/** How long a shown tooltip may stay up, even while hovered. */
+const AUTO_HIDE_MS = 4000;
+
 export function HelpTooltip({ text, children }: { text: string; children: ReactElement<Trigger> }) {
   const id = useId();
   const anchor = useRef<HTMLSpanElement>(null);
@@ -39,7 +42,11 @@ export function HelpTooltip({ text, children }: { text: string; children: ReactE
       // Reset the height cap so a previous cramped placement cannot stick.
       bubble.style.maxHeight = `${Math.max(0, Math.min(200, viewportHeight - margin * 2))}px`;
       const natural = bubble.getBoundingClientRect();
-      const placeBelow = natural.height <= below || (natural.height > above && below >= above);
+      // Above by default; below only when above cannot fit the bubble (and,
+      // when neither side fits, whichever side has strictly more room).
+      const fitsAbove = natural.height <= above;
+      const fitsBelow = natural.height <= below;
+      const placeBelow = !fitsAbove && (fitsBelow || below > above);
       const space = placeBelow ? below : above;
       bubble.style.maxHeight = `${Math.min(200, space)}px`;
       const measured = bubble.getBoundingClientRect();
@@ -77,7 +84,12 @@ export function HelpTooltip({ text, children }: { text: string; children: ReactE
     window.addEventListener("markitai:option-help", otherHelp);
     window.addEventListener("pointerdown", outside);
     window.addEventListener("keydown", escape);
+    // Hover tooltips self-dismiss after a few seconds even while the pointer
+    // rests on the trigger: they must never sit over the form. Re-hover
+    // re-shows and restarts the clock.
+    const autoHide = setTimeout(dismiss, AUTO_HIDE_MS);
     return () => {
+      clearTimeout(autoHide);
       window.removeEventListener("markitai:option-help", otherHelp);
       window.removeEventListener("pointerdown", outside);
       window.removeEventListener("keydown", escape);

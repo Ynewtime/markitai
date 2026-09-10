@@ -6,13 +6,33 @@ export function fmtBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** "4.2s" — the mock's duration language (seconds, one decimal). */
-export function fmtDur(ms: number): string {
-  return `${(ms / 1000).toFixed(1)}s`;
+/** A duration split for display: under a minute the tenths are kept and
+ * `minutes` is 0; at a minute and above it is whole minutes plus the leftover
+ * seconds. One rounding step behind both the printed and the spoken label, so
+ * the two can never disagree. */
+export function durParts(ms: number): { minutes: number; seconds: number } {
+  // Round to the displayed tenth first, so 59.96s becomes a full minute rather
+  // than a value the label renders as "60.0s".
+  const tenths = Math.round(Math.max(0, ms) / 100) / 10;
+  if (tenths < 60) return { minutes: 0, seconds: tenths };
+  const whole = Math.round(tenths);
+  return { minutes: Math.floor(whole / 60), seconds: whole % 60 };
 }
 
+/** "4.2s" under a minute, "1:23" / "1:02:03" above it — a long batch should
+ * not print a four-digit second count. */
+export function fmtDur(ms: number): string {
+  const { minutes, seconds } = durParts(ms);
+  if (minutes === 0) return `${seconds.toFixed(1)}s`;
+  const s = String(seconds).padStart(2, "0");
+  if (minutes < 60) return `${minutes}:${s}`;
+  return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}:${s}`;
+}
+
+/** "$0.0123" — trailing zeros are noise; a zero cost reads as "$0". */
 export function fmtCost(usd: number): string {
-  return `$${usd.toFixed(4)}`;
+  const trimmed = usd.toFixed(4).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+  return `$${trimmed}`;
 }
 
 /** ISO timestamp -> "2026-07-12". */
@@ -20,10 +40,16 @@ export function fmtDate(iso: string): string {
   return iso.slice(0, 10);
 }
 
-/** Server-local ISO timestamp -> compact "07-12 14:30". */
+/** Server ISO timestamp -> compact "07-12 14:30" in the reader's own zone.
+ * Offset-aware values are converted; a naive timestamp is already server-local
+ * and is shown as written. Unparseable input falls back to the raw slice. */
 export function fmtDateTime(iso: string | null): string {
   if (iso === null || iso.length < 16) return "-";
-  return `${iso.slice(5, 10)} ${iso.slice(11, 16)}`;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const zoneAware = /(Z|[+-]\d{2}:\d{2})$/.test(iso);
+  const date = zoneAware ? new Date(serverTimestampMs(iso) ?? Number.NaN) : new Date(iso);
+  if (Number.isNaN(date.getTime())) return `${iso.slice(5, 10)} ${iso.slice(11, 16)}`;
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 /** Parse Python's offset-aware ISO timestamps without Date.parse quirks.

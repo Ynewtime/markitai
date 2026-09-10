@@ -10,6 +10,8 @@ def resolve_name_conflict(
     path: Path,
     on_conflict: str,
     rename_fn: Callable[[int], Path],
+    *,
+    exists: Callable[[Path], bool] = Path.exists,
 ) -> Path | None:
     """Resolve a filename conflict using the given strategy.
 
@@ -27,7 +29,7 @@ def resolve_name_conflict(
     Returns:
         Resolved path, or ``None`` if the file should be skipped.
     """
-    if not path.exists():
+    if not exists(path):
         return path
 
     if on_conflict == "skip":
@@ -39,7 +41,7 @@ def resolve_name_conflict(
     seq = 2
     while True:
         candidate = rename_fn(seq)
-        if not candidate.exists():
+        if not exists(candidate):
             return candidate
         seq += 1
 
@@ -71,4 +73,11 @@ def resolve_output_path(
     def _rename(seq: int) -> Path:
         return base_path.parent / f"{base_stem}.v{seq}{markitai_suffix}"
 
-    return resolve_name_conflict(base_path, on_conflict, _rename)
+    def occupied(path: Path) -> bool:
+        if path.name.endswith(".llm.md"):
+            sibling = path.with_name(path.name.removesuffix(".llm.md") + ".md")
+        else:
+            sibling = path.with_suffix(".llm.md")
+        return path.exists() or sibling.exists()
+
+    return resolve_name_conflict(base_path, on_conflict, _rename, exists=occupied)

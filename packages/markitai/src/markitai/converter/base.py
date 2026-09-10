@@ -155,6 +155,27 @@ def detect_format(path: Path | str) -> FileFormat:
     return EXTENSION_MAP.get(ext, FileFormat.UNKNOWN)
 
 
+# Rendered once: the error below is raised per rejected file, and the list
+# only changes when EXTENSION_MAP does.
+_SUPPORTED_EXTENSIONS_TEXT = " ".join(sorted(EXTENSION_MAP))
+
+
+def unsupported_format_message(path: Path | str) -> str:
+    """One actionable line for a file whose extension markitai cannot convert.
+
+    A bare ``Unsupported file format:`` with an empty suffix (``/etc/hosts``)
+    tells the user nothing; listing the supported set turns the message into a
+    next step. No ``--ocr`` hint here: OCR reads a supported PDF or image, it
+    cannot make an unknown extension convertible.
+    """
+    suffix = Path(path).suffix.lower()
+    shown = f"'{suffix}'" if suffix else "(no extension)"
+    return (
+        f"Unsupported file format: {shown}. "
+        f"Supported extensions: {_SUPPORTED_EXTENSIONS_TEXT}."
+    )
+
+
 @dataclass
 class ExtractedImage:
     """Represents an image extracted from a document."""

@@ -1,10 +1,19 @@
-import { useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
+import { jobFileUrl } from "../api/client";
 import type { ItemStatus } from "../api/types";
 import type { SessionItem } from "../hooks/useJobs";
 import type { Dict } from "../i18n";
-import { fmtBytes, fmtCost, fmtDateTime, fmtDur, shortError } from "../lib/format";
+import {
+  durParts,
+  fmtBytes,
+  fmtCost,
+  fmtDateTime,
+  fmtDur,
+  shortError,
+} from "../lib/format";
 import { ConfirmDeletePopover } from "./ConfirmDeletePopover";
 import {
+  DownloadIcon,
   FileTextIcon,
   GlobeIcon,
   MagicWandIcon,
@@ -12,20 +21,29 @@ import {
   WarningIcon,
 } from "./icons";
 
-const STATUS_TEXT: Record<ItemStatus | "skipped", string> = {
-  queued: "Queued",
-  running: "Converting",
-  done: "Done",
-  error: "Failed",
-  skipped: "Skipped",
-};
+/** Status words are UI labels, so they come from the locale dictionary. */
+const statusText = (t: Dict): Record<ItemStatus | "skipped", string> => ({
+  queued: t.statusQueued,
+  running: t.statusRunning,
+  done: t.statusDone,
+  error: t.statusFailed,
+  skipped: t.statusSkipped,
+});
 const DASH = "-";
 const NAME_TAIL_CHARS = 12;
 
-function liveDuration(item: SessionItem, now: number): string | null {
-  if (item.startedAt === null) return null;
-  return fmtDur(Math.max(0, now - item.startedAt));
-}
+/** Owns the 150ms clock for one running row, so a tick repaints this span
+ * instead of the whole ledger. Non-running rows never mount it. */
+const Elapsed = memo(function Elapsed({ startedAt }: { startedAt: number | null }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (startedAt === null) return;
+    const id = window.setInterval(() => setNow(Date.now()), 150);
+    return () => window.clearInterval(id);
+  }, [startedAt]);
+  if (startedAt === null) return <>-</>;
+  return <>{fmtDur(Math.max(0, now - startedAt))}</>;
+});
 
 /** Preserve the filename tail while the middle of a long name ellipsizes. */
 function MidName({ name, title }: { name: string; title: string }) {
@@ -49,54 +67,53 @@ function StatusMark({ item, t }: { item: SessionItem; t: Dict }) {
   if (item.status === "done") {
     const skipped = item.skipped;
     const tooltip =
-      skipped && item.skipReason === "image_only" ? t.skipImageOnly : t.statSkipped;
+      skipped && item.skipReason === "image_only" ? t.skipImageOnly : t.statusSkipped;
     return (
       <span
         className={skipped ? "item-result skip tooltip" : "item-result ok"}
-        title={skipped ? tooltip : t.done}
+        title={skipped ? tooltip : t.statusDone}
         data-tooltip={skipped ? tooltip : undefined}
-        aria-label={skipped ? tooltip : t.done}
+        aria-label={skipped ? tooltip : t.statusDone}
         tabIndex={skipped ? 0 : undefined}
       >
         <span aria-hidden="true">
           {skipped ? <WarningIcon size={17} /> : "✓"}
         </span>
-        <span className="sr-only">{skipped ? tooltip : t.done}</span>
+        <span className="sr-only">{skipped ? tooltip : t.statusDone}</span>
       </span>
     );
   }
   if (item.status === "error") {
-    const detail = item.error ?? t.statFailed;
+    const detail = item.error ?? t.statusFailed;
     return (
       <span
         className="item-result error tooltip"
         title={detail}
         data-tooltip={detail}
-        aria-label={`${t.statFailed}: ${detail}`}
+        aria-label={`${t.statusFailed}: ${detail}`}
         tabIndex={0}
       >
         <span aria-hidden="true">×</span>
-        <span className="sr-only">{t.statFailed}</span>
+        <span className="sr-only">{t.statusFailed}</span>
       </span>
     );
   }
   if (item.status === "running") {
     return (
-      <span className="runstat" title={STATUS_TEXT.running}>
+      <span className="runstat" title={t.statusRunning}>
         <span className="spin" aria-hidden="true" />
-        <span className="sr-only">{STATUS_TEXT.running}</span>
+        <span className="sr-only">{t.statusRunning}</span>
       </span>
     );
   }
-  return <span className="runstat queued">{STATUS_TEXT.queued}</span>;
+  return <span className="runstat queued">{t.statusQueued}</span>;
 }
 
-export function ItemRow({
+export const ItemRow = memo(function ItemRow({
   t,
   item,
   index,
   showCost,
-  now,
   selected,
   tabbable,
   canDelete,
@@ -112,7 +129,6 @@ export function ItemRow({
   item: SessionItem;
   index: number;
   showCost: boolean;
-  now: number;
   selected: boolean;
   tabbable: boolean;
   canDelete: boolean;
@@ -135,7 +151,14 @@ export function ItemRow({
   const running = item.status === "running";
   const failed = item.status === "error";
   const skipped = item.status === "done" && item.skipped;
-  const previewable = item.status === "done" && item.output !== null && !item.skipped;
+  // Previewable = done with a fresh output; skips complete as "done" but carry
+  // no fresh result. `outputPath` holds the narrowed path so the download link
+  // does not repeat the null check.
+  const outputPath =
+    item.status === "done" && item.output !== null && !item.skipped
+      ? item.output
+      : null;
+  const previewable = outputPath !== null;
   const llmApplied =
     item.llmEnhanced ||
     item.operation === "enhance" ||
@@ -195,12 +218,11 @@ export function ItemRow({
     return true;
   };
 
-  const live = running ? liveDuration(item, now) : null;
   const timeText = skipped
     ? DASH
     : item.durationMs !== null
       ? fmtDur(item.durationMs)
-      : (live ?? DASH);
+      : null;
   const finishedText = fmtDateTime(item.finishedAt);
   const sizeText = item.sizeBytes !== null ? fmtBytes(item.sizeBytes) : null;
   const costText = item.costUsd !== null ? fmtCost(item.costUsd) : null;
@@ -212,28 +234,31 @@ export function ItemRow({
   // timestamp is tagged: it is the first bit the tightest phones drop.
   const metaParts: { text: string; time?: boolean }[] = [];
   if (sizeText !== null) metaParts.push({ text: sizeText });
-  if (running) metaParts.push({ text: `${STATUS_TEXT.running} ${live ?? DASH}` });
+  if (running) metaParts.push({ text: t.statusRunning });
   else if (!skipped && item.durationMs !== null)
     metaParts.push({ text: fmtDur(item.durationMs) });
   if (item.finishedAt !== null) metaParts.push({ text: finishedText, time: true });
   if (showCost) {
     metaParts.push({
-      text: llmApplied ? `LLM${costText === null ? "" : ` ${costText}`}` : "Base",
+      text: llmApplied ? `${t.llmTag}${costText === null ? "" : ` ${costText}`}` : t.baseTag,
     });
   }
-  if (item.status === "queued") metaParts.push({ text: STATUS_TEXT.queued });
+  if (item.status === "queued") metaParts.push({ text: t.statusQueued });
 
   // A skipped row still hosts an enabled Retry (rendered on failed || skipped),
   // so it must not announce itself disabled to assistive tech.
   const inert = !previewable && !failed && !skipped && !canDelete;
-  const skipText =
+  // Known reasons read as sentences; an unknown one keeps the generic label
+  // and carries the raw wire value in the title/aria description instead.
+  const skipKnown =
     item.skipReason === "image_only"
       ? t.skipImageOnly
       : item.skipReason === "exists"
         ? t.skipExists
-        : item.skipReason === null
-          ? STATUS_TEXT.skipped
-          : `${STATUS_TEXT.skipped} (${item.skipReason})`;
+        : null;
+  const statusTexts = statusText(t);
+  const skipText = skipKnown ?? t.statusSkipped;
+  const skipTitle = skipKnown === null ? (item.skipReason ?? undefined) : undefined;
   const detailId =
     failed || (skipped && item.skipReason !== "image_only")
       ? `d-${item.key.replace(/[^a-zA-Z0-9_-]/g, "-")}`
@@ -241,14 +266,18 @@ export function ItemRow({
 
   const ariaParts = [displayName];
   if (sizeText !== null) ariaParts.push(sizeText);
-  if (!skipped && item.durationMs !== null)
-    ariaParts.push(`${(item.durationMs / 1000).toFixed(1)} ${t.ariaSeconds}`);
+  if (!skipped && item.durationMs !== null) {
+    // Spoken form: a long job must not read "312.4 Seconds", and fmtDur's
+    // clock form ("5:12") would be read out as a time of day.
+    const { minutes, seconds } = durParts(item.durationMs);
+    ariaParts.push(t.ariaDuration(minutes, seconds));
+  }
   if (showCost) {
     ariaParts.push(
-      llmApplied ? `LLM${costText === null ? "" : ` ${costText}`}` : "Base",
+      llmApplied ? `${t.llmTag}${costText === null ? "" : ` ${costText}`}` : t.baseTag,
     );
   }
-  ariaParts.push(skipped ? STATUS_TEXT.skipped : STATUS_TEXT[item.status]);
+  ariaParts.push(skipped ? t.statusSkipped : statusTexts[item.status]);
 
   const activate = (opener: HTMLElement) => {
     if (previewable) onPreview(item.key, opener);
@@ -289,14 +318,16 @@ export function ItemRow({
         {item.kind === "file" ? <FileTextIcon /> : <GlobeIcon />}
         <MidName name={displayName} title={nameTitle} />
       </span>
-      <span className={running ? "c-duration live" : "c-duration"}>{timeText}</span>
+      <span className={running ? "c-duration live" : "c-duration"}>
+        {running ? <Elapsed startedAt={item.startedAt} /> : (timeText ?? DASH)}
+      </span>
       <span className="c-finished" title={item.finishedAt ?? undefined}>
         {finishedText}
       </span>
       {showCost && (
         <span className="c-cost llm-cell">
           <span className={llmApplied ? "llm-tag on" : "llm-tag"}>
-            {llmApplied ? "LLM" : "Base"}
+            {llmApplied ? t.llmTag : t.baseTag}
           </span>
           {llmApplied && costText !== null && (
             <span className="llm-price">{costText}</span>
@@ -305,8 +336,22 @@ export function ItemRow({
       )}
       <span className="c-status archive-actions">
         <StatusMark item={item} t={t} />
-        {(enhanceable || failed || skipped || canDelete) && (
+        {(previewable || enhanceable || failed || skipped || canDelete) && (
           <span className="item-actions">
+            {outputPath !== null && (
+              // The row's primary output is one click away; the preview modal
+              // stays the way to read the file, not the way to fetch it.
+              <a
+                className="rowicon download"
+                href={jobFileUrl(item.jobId, outputPath)}
+                download
+                aria-label={`${t.downloadMd}: ${displayName}`}
+                title={`${t.downloadMd}: ${displayName}`}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <DownloadIcon size={15} />
+              </a>
+            )}
             {enhanceable && (
               <button
                 type="button"
@@ -399,10 +444,10 @@ export function ItemRow({
         </span>
       )}
       {skipped && item.skipReason !== "image_only" && (
-        <span className="c-skip" id={detailId}>
+        <span className="c-skip" id={detailId} title={skipTitle}>
           {skipText}
         </span>
       )}
     </div>
   );
-}
+});

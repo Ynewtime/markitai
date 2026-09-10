@@ -307,6 +307,8 @@ class TestJobCreationValidation:
                 },
             )
         assert resp.status_code == 413
+        # Middleware-produced errors carry the same machine code as route ones.
+        assert resp.json()["code"] == "payload_too_large"
 
     async def test_unknown_job_and_item_are_404(self, tmp_path: Path) -> None:
         async with _serve_client(_make_app(tmp_path)) as client:
@@ -315,6 +317,16 @@ class TestJobCreationValidation:
                 await client.get("/api/jobs/nope/items/i1/result")
             ).status_code == 404
             assert (await client.get("/api/jobs/nope/archive")).status_code == 404
+
+    async def test_error_bodies_carry_a_machine_code(self, tmp_path: Path) -> None:
+        """``detail`` stays human; ``code`` is the stable part clients branch on."""
+        async with _serve_client(_make_app(tmp_path)) as client:
+            resp = await client.get("/api/jobs/nope")
+
+        assert resp.status_code == 404
+        body = resp.json()
+        assert body["code"] == "not_found"
+        assert isinstance(body["detail"], str) and body["detail"]
 
 
 class TestJobConfigMapping:
@@ -1904,3 +1916,18 @@ class TestJobHousekeeping:
         assert cleanup_stale_jobs(jobs_root, ttl_hours=24.0) == 1
         assert not stale.exists()
         assert fresh.exists()
+
+
+class TestValidationErrorContract:
+    """Pydantic 422s carry the same machine code as route-raised errors."""
+
+    async def test_validation_errors_carry_a_machine_code(self, tmp_path: Path) -> None:
+        async with _serve_client(_make_app(tmp_path)) as client:
+            # An empty body fails the model-create schema (a real pydantic
+            # 422), not a route-raised one.
+            resp = await client.post("/api/settings/llm/models", json={})
+
+        assert resp.status_code == 422
+        body = resp.json()
+        assert body["code"] == "invalid_request"
+        assert isinstance(body["detail"], list)

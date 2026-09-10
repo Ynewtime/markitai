@@ -30,7 +30,9 @@ markitai docs/ --llm --llm-batch -o out/       # waits up to --llm-batch-timeout
 markitai --llm-batch-collect <batch-id> -o out/  # finish a handed-off batch later
 ```
 
-Requires a single-model OpenAI or Anthropic pool. Cache hits are served instantly; documents whose batch request fails are re-run live, so a partial batch never loses output. On OpenAI, reasoning models run with reasoning off inside a batch — the batch deployments require that of function-tool calls. `--alt`/`--desc` and `--screenshot` ride the same job, so image analysis and page-image enhancement are batched at the same discount; a document with more pages than fit one call is enhanced live instead, since each extra batch round is a separate wait. Not yet combinable with `--ocr`, whose pages are never rendered — the batch converts with the LLM off first, and that is the branch which reads scanned pages with local OCR.
+Only files successfully converted by the current run are enhanced; unrelated files already in the output directory are excluded. Requires a single-model OpenAI or Anthropic pool. Cache hits are served instantly; failed batch requests are retried live at standard rates, and base output remains available if enhancement fails. On OpenAI, reasoning models run with reasoning off inside a batch — the batch deployments require that of function-tool calls.
+
+`--alt`/`--desc` and `--screenshot` ride the same job, so image analysis and page-image enhancement are batched at the same discount; a document with more pages than fit one call is enhanced live instead, since each extra batch round is a separate wait. Not yet combinable with `--ocr`, whose pages are never rendered — the batch converts with the LLM off first, and that is the branch which reads scanned pages with local OCR.
 
 ::: tip
 `--llm`, `--alt`, `--desc`, `--ocr`, and `--screenshot` all have `--no-*` counterparts (`--no-llm`, `--no-alt`, `--no-desc`, `--no-ocr`, `--no-screenshot`) to explicitly disable a feature a preset would otherwise enable, for example `--preset rich --no-desc`.
@@ -206,12 +208,32 @@ Use `--compress` to force compression back on when a config file disables it.
 
 ### `-o, --output <path>`
 
-Specify the output location. For a single file/URL input, `-o` can also be an exact file target (e.g. `-o result.md`) rather than a directory. If omitted, single file/URL conversions print to stdout instead; directory-batch and `.urls`-list input require `-o`.
+Specify the output location. A single file or URL may instead name a `.md` file here (e.g. `-o result.md`). A batch (directory or `.urls` input) requires a directory: a `.md` value is rejected with a usage error rather than turned into a directory. If omitted, single file/URL conversions print to stdout instead; directory-batch and `.urls`-list input require `-o`.
 
 ```bash
 markitai document.docx -o ./output
 markitai document.docx -o ./result.md
 ```
+
+### `--json`
+
+Print one machine-readable JSON result on stdout and suppress progress output. Needs `-o`, because stdout carries the JSON, and it is not compatible with `--llm-batch-collect` or `--dry-run` (a dry run reports no item the envelope could carry).
+
+The document is `{version, ok, error, items[], totals}`; `version` is the envelope schema version, not the markitai release.
+
+- `items[]` — one entry per work item with `kind`, `source`, `status` (`completed` / `failed` / `skipped`), `output`, `error`, `skip_reason`, `images`, `screenshots`, `cost_usd`, `duration_s`, cache flags, `fetch_strategy` and `llm_usage`.
+- `error` — a run-level failure that produced no item (a missing input path, a rejected URL scheme, an unreadable or invalid config file, an interrupt), otherwise `null`.
+- `totals` — `total`, `completed`, `failed`, `skipped`, `cost_usd`, and `duration_s` (the sum of the per-item durations; a concurrent batch finishes sooner than that sum).
+- `ok` — `false` when any item failed or a run-level `error` is present.
+
+```bash
+markitai ./docs -o ./output --json
+markitai document.pdf -o ./output --json | jq '.items[] | select(.status == "failed")'
+```
+
+The exit code keeps its usual meaning (see [Exit codes](#exit-codes)); scripts should read `ok` as well, since a partial batch exits `10` while still emitting a JSON document. Argument/usage errors (an unknown flag, `--json` without `-o`, or a nonexistent path passed to `-c`) exit on stderr without JSON. Runtime configuration errors, including malformed JSON, a non-object root or invalid UTF-8, appear in the JSON `error` field. Interactive mode (`-I`) re-runs the gathered command in a subprocess without `--json`, so combine the two only for human sessions.
+
+With `--llm-batch`, the envelope includes final enhanced paths and combined usage/costs. On timeout, unfinished enhancements are marked failed with a pending explanation and the process exits `2`; use the printed collect command to finish them. Collection itself does not support `--json`.
 
 ### `--resume`
 
@@ -221,7 +243,7 @@ Resume interrupted batch processing. Completed files are skipped, `FAILED`/inter
 markitai ./docs -o ./output --resume
 ```
 
-### `--record-history`
+### `--record-history` {#record-history}
 
 Record the completed run as a job in the `markitai serve` history (stored under `~/.markitai/serve/jobs/`, with outputs and referenced assets copied in), so it shows up in the web UI history page live, without restarting the server. CLI-recorded entries are marked with a "CLI" badge and share the same seven-day cleanup, deletion, and archive download as web-created jobs.
 
@@ -293,7 +315,7 @@ markitai urls.urls -o ./output
 The `.urls` file supports three formats:
 
 Plain text: one URL per line, with an optional custom output name after whitespace:
-```
+```text
 # Comments start with #
 https://example.com/page1
 https://example.com/page2 custom_name
@@ -416,6 +438,27 @@ markitai https://example.com -s defuddle   # replaces the old --defuddle alias
 ```
 
 The mutual-exclusion rules those aliases needed are gone with them: `-s/--strategy` and `-b/--backend` are orthogonal and combine freely.
+
+### `--no-remote-fetch`
+
+Never send URLs to remote extraction services (Defuddle, Jina, Cloudflare). Same effect as `MARKITAI_NO_REMOTE_FETCH=1`, but stated on the command line, so the privacy choice is explicit instead of inherited from `--quiet`.
+
+```bash
+markitai https://example.com -o ./output --no-remote-fetch
+```
+
+`--quiet` suppresses the remote-fetch consent prompt, so with `fetch.remote_consent=ask` a quiet run skips every remote strategy. The CLI now prints a note on stderr in that case and points at `--no-remote-fetch`. See [Fetch Policy → Remote fallback and local-only URLs](/guide/fetch-policy#remote-fallback-and-local-only-urls).
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success, including `--dry-run` |
+| `1` | A single item failed, or a runtime error (including `config validate` failing, or `cache stats --json` reading a corrupt cache) |
+| `2` | Argument/usage error, or a Batch API wait timed out and requires `--llm-batch-collect` |
+| `10` | Batch run finished with partial failures (directory batch or URL batch); successful items are kept |
+
+`--json` does not change these codes: a partial batch still exits `10` while printing a JSON document, so scripts should check the `ok` field too.
 
 ## Setup Commands
 
@@ -566,12 +609,14 @@ Every check is a capability report, and a capability you have not enabled never 
 - **Vision Model**: For image analysis (auto-detected from litellm)
 - **Local Provider Auth**: Authentication status for Claude Agent, GitHub Copilot, and ChatGPT (if configured)
 
-Every normal doctor run performs an isolated, timeout-bounded Chromium launch smoke test when the browser files exist, so a stale marker or missing Linux system library cannot produce a green result. `doctor --fix` never adds a Python package to the current project. If Playwright is installed but Chromium is missing or unusable, it installs Chromium with Markitai's own interpreter and repeats the runtime check. A failed launch stays non-zero; on Linux the message includes the `playwright install-deps chromium` recovery command. If the Playwright package itself is missing, the command exits safely and tells you to replace the isolated tool install with `uv tool install 'markitai[browser]' --force` or the pipx equivalent.
+Every normal doctor run performs an isolated, timeout-bounded Chromium launch smoke test when the browser files exist, so a stale marker or missing Linux system library cannot produce a green result. `doctor --fix` never adds a Python package to the current project.
+
+If Playwright is installed but Chromium is missing or unusable, it installs Chromium with Markitai's own interpreter and repeats the runtime check. A failed launch stays non-zero; on Linux the message includes the `playwright install-deps chromium` recovery command. If the Playwright package itself is missing, the command exits safely and tells you to replace the isolated tool install with `uv tool install 'markitai[browser]' --force` or the pipx equivalent.
 
 `--json` and `--fix` are mutually exclusive: JSON is a read-only health snapshot, while repair is an interactive human-facing operation.
 
 Example output:
-```
+```text
 ◆ System Check
 
   • Config: ~/.markitai/config.json
@@ -666,6 +711,37 @@ markitai auth chatgpt login
 You can also use `markitai doctor` to check authentication status for all configured providers at once.
 :::
 
+## Server & Agent Commands
+
+### `markitai serve`
+
+Run the local web workspace and its REST + SSE API. It needs the `serve` extra (`fastapi`, `uvicorn`, `python-multipart`):
+
+```bash
+uv tool install "markitai[serve]" --force
+markitai serve                    # http://127.0.0.1:3600, opens the browser
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--host <interface>` | `127.0.0.1` | Interface to bind. The default is reachable only from this machine; any other value publishes the API to every host that can reach it, and those requests then need the startup access token (unless `--no-auth`) |
+| `--port <n>` | `3600` | Port to listen on |
+| `--no-open` | off | Do not open the browser after startup |
+| `--no-auth` | off | Disable the access token. Other machines then need no credential, URL targets are restricted to public addresses and LLM settings are blocked, but file uploads and history access, downloads and deletion remain available; loopback keeps full access either way |
+| `--allowed-host <hostname>` | — | Additional hostname accepted in the `Host`/`Origin` headers (repeatable). `localhost` and IP literals are always accepted; other names are rejected to block DNS rebinding. This is name filtering, not authentication |
+
+An access token is generated at startup and printed as a ready-to-open URL (`http://host:port/#token=…`), or pinned with `MARKITAI_SERVE_TOKEN`. Requests from this machine never need it; requests from any other machine must carry it — the web UI reads it from the URL fragment and stores it in `sessionStorage` (the browser strips it from the address bar), while scripts send `Authorization: Bearer <token>` (or `?token=` on download/SSE URLs). The token is a credential: anyone holding it gets conversions, history, downloads, deletion and LLM settings. See the [Web Workspace guide](/guide/serve) for the workspace itself and the full API table.
+
+### `markitai mcp`
+
+Run the bundled MCP server over stdio for AI agents:
+
+```bash
+markitai mcp
+```
+
+It is the same server as the `markitai-mcp` console script, so registries and clients can start it through the host CLI package without knowing a second executable name (`uvx --from "markitai[mcp]" markitai mcp`). It exposes `convert_document`, `convert_url`, `batch_convert` and `job_status`; see the [MCP guide](/guide/mcp) for client setup, LLM configuration and the extras each capability needs.
+
 ## Other Options
 
 ### `--quiet, -q`
@@ -682,6 +758,14 @@ Enable verbose output.
 
 ```bash
 markitai document.docx --verbose
+```
+
+### `--log-level <level>`
+
+Minimum level for the **log file** (`DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`), overriding `log.level` from the config. File logging is off until `log.dir` is set, so this flag has no effect without one; it applies to conversion runs (subcommands print their own output). Console output stays governed by `--verbose` / `--quiet`; this flag never makes the terminal louder.
+
+```bash
+markitai ./docs -o out --log-level WARNING
 ```
 
 ### `--dry-run`

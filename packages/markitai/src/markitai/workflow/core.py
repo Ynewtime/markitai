@@ -12,17 +12,21 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import quote
+from urllib.parse import unquote
 
 from loguru import logger
 
 from markitai.constants import (
-    ASSETS_REL_PATH,
     IMAGE_EXTENSIONS,
     MARKITAI_META_DIR,
     SCREENSHOTS_REL_PATH,
 )
-from markitai.converter.base import FileFormat, detect_format, get_converter
+from markitai.converter.base import (
+    FileFormat,
+    detect_format,
+    get_converter,
+    unsupported_format_message,
+)
 from markitai.image import ImageProcessor
 from markitai.security import (
     atomic_write_text,
@@ -72,6 +76,7 @@ class ConversionContext:
     converter: Any = None
     conversion_result: ConvertResult | None = None
     output_file: Path | None = None
+    llm_output_file: Path | None = None  # set only by a successful LLM write
     embedded_images_count: int = 0
     screenshots_count: int = 0
 
@@ -130,7 +135,7 @@ def validate_and_detect_format(
     ctx.detected_format = fmt
     if fmt == FileFormat.UNKNOWN:
         return ConversionStepResult(
-            success=False, error=f"Unsupported file format: {ctx.input_path.suffix}"
+            success=False, error=unsupported_format_message(ctx.input_path)
         )
 
     # Check if Cloudflare toMarkdown is explicitly enabled (-b cloudflare)
@@ -559,41 +564,32 @@ def apply_alt_text_updates(
     try:
         llm_content = llm_file.read_text(encoding="utf-8")
 
-        # Build combined pattern and replacement map for a single-pass substitution
-        replacements: dict[tuple[str, str], str] = {}
-        patterns: list[str] = []
-        for asset in image_analysis.assets:
-            asset_path = Path(asset.get("asset", ""))
-            alt_text = asset.get("alt", "")
-            if not alt_text or not asset_path.name:
-                continue
+        replacements = {
+            Path(asset.get("asset", "")).name: asset["alt"]
+            for asset in image_analysis.assets
+            if asset.get("alt") and Path(asset.get("asset", "")).name
+        }
+        pattern = re.compile(
+            r"!\[(?:[^\]\\]|\\.)*\]\((?P<markdown>[^)]+)\)"
+            r"|!\[\[(?P<wiki>[^|\]]+)(?:\|[^\]]*)?\]\]"
+        )
 
-            encoded_name = quote(asset_path.name, safe="._~-")
-            pattern = (
-                rf"!\[[^\]]*\]\([^)]*(?:{re.escape(asset_path.name)}|"
-                rf"{re.escape(encoded_name)})\)"
-            )
-            new_ref = markdown_image_reference(
-                alt_text, f"{ASSETS_REL_PATH}/{asset_path.name}"
-            )
-            patterns.append(pattern)
-            replacements[(asset_path.name, encoded_name)] = new_ref
+        def replace_match(match: re.Match[str]) -> str:
+            target = match.group("markdown") or match.group("wiki")
+            decoded = unquote(target)
+            alt = replacements.get(decoded.replace("\\", "/").rsplit("/", 1)[-1])
+            if alt is None:
+                return match.group(0)
+            if match.group("wiki") is not None:
+                safe_alt = alt.replace("|", " ").replace("]", "\\]")
+                return f"![[{target}|{safe_alt}]]"
+            return markdown_image_reference(alt, decoded)
 
-        if patterns:
-            combined = re.compile("|".join(patterns))
-
-            def replace_match(m: re.Match[str]) -> str:
-                text = m.group(0)
-                for names, ref in replacements.items():
-                    if any(name in text for name in names):
-                        return ref
-                return text
-
-            new_content = combined.sub(replace_match, llm_content)
-            if new_content != llm_content:
-                atomic_write_text(llm_file, new_content)
-                logger.debug(f"Applied alt text updates to {llm_file}")
-                return True
+        new_content = pattern.sub(replace_match, llm_content)
+        if new_content != llm_content:
+            atomic_write_text(llm_file, new_content)
+            logger.debug("Applied alt text updates to {}", llm_file)
+            return True
 
     except Exception as e:
         logger.warning(f"Failed to apply alt text updates: {e}")
@@ -616,8 +612,9 @@ def apply_output_profile(ctx: ConversionContext) -> None:
 
     from markitai.output_profiles import apply_profile_to_file
 
-    for candidate in (ctx.output_file, ctx.output_file.with_suffix(".llm.md")):
-        apply_profile_to_file(candidate, ctx.output_dir, ctx.config)
+    for candidate in (ctx.output_file, ctx.llm_output_file):
+        if candidate is not None:
+            apply_profile_to_file(candidate, ctx.output_dir, ctx.config)
 
 
 def stabilize_written_llm_output(
@@ -693,6 +690,7 @@ async def process_with_pure_llm(ctx: ConversionContext) -> ConversionStepResult:
             ctx.input_path.name,
             ctx.output_file,
         )
+        ctx.llm_output_file = ctx.output_file.with_suffix(".llm.md")
         ctx.llm_cost += doc_cost
         merge_llm_usage(ctx.llm_usage, doc_usage)
     except Exception as e:
@@ -765,6 +763,7 @@ async def process_image_with_vision_pure(
     # Write to .llm.md
     llm_output = ctx.output_file.with_suffix(".llm.md")
     atomic_write_text(llm_output, content)
+    ctx.llm_output_file = llm_output
     logger.info(f"[Core] Written pure Vision output: {llm_output}")
 
     # Track cost if available
@@ -881,6 +880,7 @@ async def process_with_vision_llm(
         ctx.conversion_result.markdown, frontmatter
     )
     atomic_write_text(llm_output, llm_content)
+    ctx.llm_output_file = llm_output
     logger.info(f"Written LLM version: {llm_output}")
 
     return ConversionStepResult(success=True)
@@ -1027,6 +1027,7 @@ async def process_with_standard_llm(
             llm_output = ctx.output_file.with_suffix(".llm.md")
             apply_alt_text_updates(llm_output, ctx.image_analysis)
 
+    ctx.llm_output_file = ctx.output_file.with_suffix(".llm.md")
     return ConversionStepResult(success=True)
 
 

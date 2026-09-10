@@ -5,11 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `--json` conversion results with per-item status, output, usage, cost and run-level errors; requires `-o` and excludes `--dry-run` / `--llm-batch-collect`.
+- `--no-remote-fetch` to disable remote URL extraction and `--log-level` to control configured file logging.
+- MCP output profiles and bounded batch concurrency (default 10); omitted `llm` now follows server configuration.
+- Bilingual website comparison pages, search/social metadata, and documentation and UI checks in CI.
+
+### Changed
+
+- Serve sign-in URLs use `#token=`; config list/get/set redact secrets, including nested request headers, unless `--show-secrets` is explicit.
+- Web workspace adds upload progress/cancel, row downloads, clearer options and errors, improved accessibility, and settings/preview loading on demand. Removes Tailwind and unused UI code.
+- CLI progress goes to stderr; help and errors clarify output paths, supported formats, optional dependencies and removed flags.
+
+### Fixed
+
+- Prevent same-name MCP outputs from overwriting each other and stale LLM files from appearing in API results.
+- Preserve job options across retries/restarts, prevent premature completion and restored ghost rows, and isolate concurrent ZIP downloads.
+- Validate and pin public destinations through redirects and browser subrequests for anonymous remote jobs; isolate their fetch caches and browser sessions.
+- Limit Batch enhancement to the current run and report final artifacts, usage and failures correctly. Preserve RAG/Obsidian images, wikilinks and alt text through Batch processing and history.
+- Handle malformed configuration, cache replacement limits, empty URL lists and error exit codes consistently; align release checks with fragment-based sign-in URLs.
+
 ## [1.0.0] - 2026-09-09
 
 ### Added
 
-- **markitai is now a library as well as a CLI**: `markitai.convert("report.pdf")` and its async twin `aconvert` return a typed `ConversionOutput` — markdown, frontmatter, asset and screenshot paths, per-image analysis and usage totals — reusing the CLI's own configuration layering. Provisional while markitai is 0.x
+- **markitai is now a library as well as a CLI**: `markitai.convert("report.pdf")` and its async twin `aconvert` return a typed `ConversionOutput` — markdown, frontmatter, asset and screenshot paths, per-image analysis and usage totals — reusing the CLI's own configuration layering. Provisional: signatures and result fields may still change
 - **`markitai mcp` starts the bundled MCP server from the CLI**, the form the official MCP Registry entry (`io.github.Ynewtime/markitai`) uses: `uvx --from "markitai[mcp]" markitai mcp`
 - **MCP agents get markitai through the `mcp` extra**: `markitai.mcp` ships in the main wheel and exposes `convert_document`, `convert_url`, `batch_convert` and `job_status` over stdio. `claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp`
 - **`--profile rag|obsidian|okf` shapes the output for its consumer**: `rag` moves images into a visible `assets/` (hidden paths are skipped by ingestors like LlamaIndex's `SimpleDirectoryReader`) and rewrites PDF page markers; `obsidian` adds optional wikilinks; `okf` maps frontmatter to the Open Knowledge Format. Orthogonal to `--preset`; without it the output is byte-identical

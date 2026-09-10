@@ -776,7 +776,9 @@ python3 _internal/serve_probe.py "http://127.0.0.1:$SERVE_PORT" 00-inputs/sample
   >18-serve/probe.txt 2>18-serve/probe.err
 check "the server comes up and reports the installed version" \
   grep -q "^version=$VERSION$" 18-serve/probe.txt
-check "the sign-in URL is printed for the user" grep -q '?token=' 18-serve/serve.log
+# Browser sign-in uses a fragment so credentials never enter request logs.
+check "the sign-in URL is printed for the user" grep -Fq "http://127.0.0.1:$SERVE_PORT/#token=" 18-serve/serve.log
+check "the startup log keeps the token out of URL queries" bash -c '! grep -Fq "?token=" "$1"' _ 18-serve/serve.log
 check "the packaged UI is served at /" grep -q '^ui_is_html=True' 18-serve/probe.txt
 check "the capabilities list the three presets" grep -q '^presets=minimal,standard,rich' 18-serve/probe.txt
 check "an uploaded file becomes a finished job" grep -q '^item_status=done' 18-serve/probe.txt

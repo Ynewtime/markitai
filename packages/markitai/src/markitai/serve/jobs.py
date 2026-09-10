@@ -25,7 +25,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
+from pydantic import ValidationError
 
+from markitai.serve.schemas import JobOptions
 from markitai.utils.clock import now_iso
 
 if TYPE_CHECKING:
@@ -35,6 +37,21 @@ if TYPE_CHECKING:
 
 JOB_TTL_HOURS = 7 * 24.0  # conversion history is kept for 7 days
 META_FILENAME = "meta.json"
+
+
+def normalize_job_options(options: dict[str, Any]) -> dict[str, Any]:
+    """Read current and legacy persisted settings through the request schema."""
+    values = {
+        key: value for key, value in options.items() if key in JobOptions.model_fields
+    }
+    try:
+        normalized = JobOptions.model_validate(values).model_dump()
+    except ValidationError:
+        logger.warning("[Serve] Invalid persisted job options; using defaults")
+        normalized = JobOptions().model_dump()
+    if "origin" in options:
+        normalized["origin"] = options["origin"]
+    return normalized
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +78,7 @@ class JobItem:
     operation: str = "convert"  # convert | retry | enhance
     skipped: bool = False  # completed as a skip (status stays "done")
     skip_reason: str | None = None  # e.g. "exists", "image_only"
+    options: dict[str, Any] | None = None  # persisted per-item retry settings
 
     def to_payload(self) -> dict[str, Any]:
         """Return the item event payload (contract: ``event: item``)."""
@@ -124,6 +142,8 @@ class Job:
     # retry queued while the initial run is still active is never stranded and
     # the two never double- or prematurely-finalize.
     runners: int = 0
+    generation: int = 0  # invalidates a finalizer when new work is accepted
+    public_network_only: bool = False
     subscribers: list[asyncio.Queue[tuple[str, dict[str, Any]]]] = field(
         default_factory=list
     )
@@ -287,6 +307,12 @@ def cleanup_stale_jobs(jobs_root: Path, ttl_hours: float = JOB_TTL_HOURS) -> int
     # any job dir, so nothing else reclaims it.
     (jobs_root / "archive.zip").unlink(missing_ok=True)
     cutoff = time.time() - ttl_hours * 3600
+    for archive in jobs_root.glob("archive-*.zip"):
+        try:
+            if archive.stat().st_mtime < cutoff:
+                archive.unlink(missing_ok=True)
+        except OSError:
+            continue
     removed = 0
     for entry in jobs_root.iterdir():
         try:
@@ -327,7 +353,11 @@ def write_job_meta(job: Job, *, refresh_size: bool = True) -> None:
             "status": job.status,
             "options": job.options,
             "dir_size_bytes": job.dir_size_bytes,
-            "items": [item.to_payload() for item in job.items],
+            "version": 2,
+            "items": [
+                {**item.to_payload(), "options": item.options or job.options}
+                for item in job.items
+            ],
         },
     )
 
@@ -354,6 +384,9 @@ def _item_from_payload(
         operation=str(raw.get("operation") or "convert"),
         skipped=bool(raw.get("skipped", False)),
         skip_reason=raw.get("skip_reason"),
+        options=normalize_job_options(raw["options"])
+        if isinstance(raw.get("options"), dict)
+        else None,
     )
 
 
@@ -394,9 +427,7 @@ def rehydrate_jobs(registry: JobRegistry, cfg: MarkitaiConfig) -> int:
             raw_items = []
         raw_options = meta.get("options")
         options = raw_options if isinstance(raw_options, dict) else {}
-        normalized_options = {
-            key: options.get(key) for key in ("preset", "llm", "ocr", "origin")
-        }
+        normalized_options = normalize_job_options(options)
         raw_size = meta.get("dir_size_bytes")
         job = Job(
             job_id=entry.name,
@@ -764,6 +795,9 @@ async def run_job(
 ) -> None:
     """Run selected items of *job*, optionally leaving finalization to a queue."""
     targets = list(job.items if items is None else items)
+    for item in targets:
+        if item.options is None:
+            item.options = dict(job.options)
     run_cfg = job.cfg if cfg is None else cfg
     if finalize:
         job.runners += 1
@@ -790,15 +824,21 @@ async def run_job(
         async def run_gated(item: JobItem) -> None:
             semaphore = file_semaphore if item.kind == "file" else url_semaphore
             async with semaphore:
-                await _run_item(
-                    registry,
-                    job,
-                    item,
-                    run_cfg,
-                    shared_processor,
-                    url_ctx,
-                    require_llm=require_llm,
-                )
+                from markitai.fetch_policy import public_network_only
+
+                token = public_network_only.set(job.public_network_only)
+                try:
+                    await _run_item(
+                        registry,
+                        job,
+                        item,
+                        run_cfg,
+                        shared_processor,
+                        url_ctx,
+                        require_llm=require_llm,
+                    )
+                finally:
+                    public_network_only.reset(token)
 
         await asyncio.gather(*(run_gated(item) for item in targets))
     except asyncio.CancelledError:
@@ -829,13 +869,18 @@ async def finalize_if_idle(registry: JobRegistry, job: Job) -> None:
     its drainer task is even scheduled, so this guard also covers the gap
     between queueing a retry and the drainer starting.
     """
-    if job.runners == 0 and job.retry_queue.empty() and not job.retry_pending:
+    if _job_is_idle(job):
         await finalize_job(registry, job)
+
+
+def _job_is_idle(job: Job) -> bool:
+    return job.runners == 0 and job.retry_queue.empty() and not job.retry_pending
 
 
 async def finalize_job(registry: JobRegistry, job: Job) -> None:
     """Persist and publish a job after its initial run or retry queue drains."""
     finished_at = now_iso()
+    generation = job.generation
     try:
         # rglob the out dir off-thread WHILE the job is still "running" — a
         # job with hundreds of files (or a slow disk) must not block the loop
@@ -843,6 +888,8 @@ async def finalize_job(registry: JobRegistry, job: Job) -> None:
         size: int | None = await asyncio.to_thread(job_dir_size, job.job_dir)
     except asyncio.CancelledError:
         # graceful shutdown: persist synchronously so the job still rehydrates
+        if generation != job.generation or not _job_is_idle(job):
+            raise
         job.finished_at = finished_at
         job.status = "done"
         try:
@@ -852,6 +899,8 @@ async def finalize_job(registry: JobRegistry, job: Job) -> None:
         raise
     except OSError:
         size = None
+    if generation != job.generation or not _job_is_idle(job) or job.status == "done":
+        return
     # No await past this point: the observable status flips to "done" and
     # meta.json lands together, so the job is never seen terminal without it.
     job.finished_at = finished_at

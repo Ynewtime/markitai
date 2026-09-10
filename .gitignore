@@ -7,6 +7,9 @@ docs/
 # Git worktrees
 .worktrees/
 
+# Runtime artifact a dependency writes into the CWD during tests
+:memory:.ses
+
 # Python
 __pycache__/
 *.py[cod]
@@ -98,9 +101,8 @@ website/changelog.md
 
 webapp/node_modules/
 
-# JS lockfiles are not committed: bun regenerates them on install, and the
-# projects here track the current release of their toolchains rather than
-# pinning one. CI installs without --frozen-lockfile to match.
+# Track each project's bun.lock for reproducible --frozen-lockfile installs.
+# Ignore lockfiles produced by other package managers and legacy Bun versions.
 bun.lockb
 pnpm-lock.yaml
 package-lock.json

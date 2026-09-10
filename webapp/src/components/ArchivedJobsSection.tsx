@@ -13,9 +13,9 @@ import {
 
 function statsLine(entry: HistoryEntry, t: Dict): string {
   const succeeded = Math.max(0, entry.done - entry.skipped);
-  const parts = [`${succeeded} ${t.statDone}`];
-  if (entry.failed > 0) parts.push(`${entry.failed} ${t.statFailed}`);
-  if (entry.skipped > 0) parts.push(`${entry.skipped} ${t.statSkipped}`);
+  const parts = [`${succeeded} ${t.statusDone}`];
+  if (entry.failed > 0) parts.push(`${entry.failed} ${t.statusFailed}`);
+  if (entry.skipped > 0) parts.push(`${entry.skipped} ${t.statusSkipped}`);
   return parts.join(" · ");
 }
 
@@ -174,10 +174,10 @@ export function ArchivedJobRows({
           (entry.cost_usd !== null && entry.cost_usd > 0);
         const llmLabel =
           !hasLlm
-            ? "Base"
+            ? t.baseTag
             : entry.llm_enhanced === 0 || entry.llm_enhanced === entry.total
-              ? "LLM"
-              : `LLM ${entry.llm_enhanced}/${entry.total}`;
+              ? t.llmTag
+              : `${t.llmTag} ${entry.llm_enhanced}/${entry.total}`;
         const duration =
           entry.duration_ms === null ? "-" : fmtDur(entry.duration_ms);
         const finished = fmtDateTime(entry.finished_at);
@@ -265,18 +265,18 @@ export function ArchivedJobRows({
                   className={`item-result ${singleResult}${singleResult === "skip" ? " tooltip" : ""}`}
                   title={
                     singleResult === "error"
-                      ? t.statFailed
+                      ? t.statusFailed
                       : singleResult === "skip"
-                        ? t.statSkipped
-                        : t.done
+                        ? t.statusSkipped
+                        : t.statusDone
                   }
-                  data-tooltip={singleResult === "skip" ? t.statSkipped : undefined}
+                  data-tooltip={singleResult === "skip" ? t.statusSkipped : undefined}
                   aria-label={
                     singleResult === "error"
-                      ? t.statFailed
+                      ? t.statusFailed
                       : singleResult === "skip"
-                        ? t.statSkipped
-                        : t.done
+                        ? t.statusSkipped
+                        : t.statusDone
                   }
                   tabIndex={singleResult === "skip" ? 0 : undefined}
                 >
@@ -291,10 +291,10 @@ export function ArchivedJobRows({
                   </span>
                   <span className="sr-only">
                     {singleResult === "error"
-                      ? t.statFailed
+                      ? t.statusFailed
                       : singleResult === "skip"
-                        ? t.statSkipped
-                        : t.done}
+                        ? t.statusSkipped
+                        : t.statusDone}
                   </span>
                 </span>
               )}

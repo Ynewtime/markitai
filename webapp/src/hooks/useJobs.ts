@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ApiError,
   createJob,
   deleteJobItem,
   enhanceJobItem,
@@ -27,6 +28,13 @@ export { serverTimestampMs } from "../lib/format";
 /** sessionStorage seeds so an F5 mid-job can rebuild the ledger and re-attach
  * to still-running jobs (the server replays a snapshot on connect). */
 const SESSION_KEY = "markitai.session";
+
+/** A failed create-job POST: the raw message stays available for the detail
+ * line, while `status` lets the UI choose readable copy. */
+export interface SubmitFailure {
+  status: number;
+  message: string;
+}
 
 interface StoredSeed {
   itemId: string;
@@ -243,6 +251,32 @@ function itemFromPayload(jobId: string, payload: ItemPayload, now: number): Sess
   );
 }
 
+function persistSnapshotSeeds(jobId: string, payloads: ItemPayload[]): void {
+  writeStoredJobs(readStoredJobs().map((job) => {
+    if (job.jobId !== jobId) return job;
+    const seeds = new Map(job.items.map((seed) => [seed.itemId, seed]));
+    return { jobId, items: payloads.map((item) => ({
+      itemId: item.item_id, name: item.name, kind: item.kind,
+      sizeBytes: seeds.get(item.item_id)?.sizeBytes ?? null,
+    })) };
+  }));
+}
+
+/** Server snapshots own membership; local rows retain only UI metadata. */
+function reconcileItems(
+  previous: SessionItem[], jobId: string, payloads: ItemPayload[], now: number,
+): SessionItem[] {
+  const local = new Map(previous.filter((item) => item.jobId === jobId).map((item) => [item.itemId, item]));
+  const incoming = payloads.map((payload) => {
+    const prior = local.get(payload.item_id);
+    return prior ? mergeItem(prior, payload, now) : itemFromPayload(jobId, payload, now);
+  });
+  const first = previous.findIndex((item) => item.jobId === jobId);
+  const others = previous.filter((item) => item.jobId !== jobId);
+  others.splice(first < 0 ? others.length : first, 0, ...incoming);
+  return others;
+}
+
 /**
  * Session-level job state: every drop/convert action POSTs a new job; items
  * from all session jobs accumulate in one ledger. One EventSource per active
@@ -252,11 +286,14 @@ function itemFromPayload(jobId: string, payload: ItemPayload, now: number): Sess
 export function useJobs() {
   const [items, setItems] = useState<SessionItem[]>([]);
   const [jobs, setJobs] = useState<Record<string, SessionJob>>({});
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<SubmitFailure | null>(null);
   const [suppressedHistoryIds, setSuppressedHistoryIds] = useState(
     () => new Set<string>(),
   );
   const [historyRevision, setHistoryRevision] = useState(0);
+  const [restoreFailedJobs, setRestoreFailedJobs] = useState<Set<string>>(
+    () => new Set(),
+  );
   const sourcesRef = useRef<Map<string, EventSource>>(new Map());
   // One completion notification per job; both the snapshot and the final
   // `job` frame can report the terminal state, so terminality is latched.
@@ -298,13 +335,8 @@ export function useJobs() {
             options: jobOptionsFromSnapshot(snap.options),
           },
         }));
-        setItems((prev) =>
-          prev.map((item) => {
-            if (item.jobId !== jobId) return item;
-            const p = snap.items.find((x) => x.item_id === item.itemId);
-            return p === undefined ? item : mergeItem(item, p, now);
-          }),
-        );
+        setItems((prev) => reconcileItems(prev, jobId, snap.items, now));
+        persistSnapshotSeeds(jobId, snap.items);
         if (snap.status !== "running") {
           notifyTerminal(jobId, snap.done, snap.failed);
           closeEvents(jobId);
@@ -414,13 +446,19 @@ export function useJobs() {
     [openEvents],
   );
 
-  /** POST a new job. Returns true when created (errors land in submitError). */
+  /** POST a new job. Returns true when created (errors land in submitError);
+   * an aborted request reports neither, so cancelling is not a failure. */
   const submit = useCallback(
-    async (files: File[], urls: string[], options: JobOptions): Promise<boolean> => {
+    async (
+      files: File[],
+      urls: string[],
+      options: JobOptions,
+      signal?: AbortSignal,
+    ): Promise<boolean> => {
       requestNotifyPermission(); // first submit is the moment to ask, never load
       setSubmitError(null);
       try {
-        const res = await createJob(files, urls, options);
+        const res = await createJob(files, urls, options, signal);
         // Backend item order is files-then-urls, matching our FormData order.
         adopt(
           res,
@@ -431,7 +469,11 @@ export function useJobs() {
         );
         return true;
       } catch (e) {
-        setSubmitError(e instanceof Error ? e.message : String(e));
+        if (signal?.aborted === true) return false;
+        setSubmitError({
+          status: e instanceof ApiError ? e.status : 0,
+          message: e instanceof Error ? e.message : String(e),
+        });
         return false;
       }
     },
@@ -719,9 +761,74 @@ export function useJobs() {
   }, [jobs]);
 
   // ---- session restore (F5 mid-job): seed the ledger from sessionStorage,
-  // then reconcile each job against the server. 404 (server restarted) drops
-  // the job silently; running jobs re-attach via EventSource snapshot replay.
+  // then reconcile each job against the server. A 404 means the server really
+  // forgot the job, so its rows drop. A transport failure is different: the
+  // rows stay, flagged "restore failed" with a retry, because the job may
+  // still be running on the server.
   const restoredRef = useRef(false);
+
+  const dropJob = useCallback((jobId: string) => {
+    setItems((prev) => prev.filter((i) => i.jobId !== jobId));
+    setJobs((prev) => {
+      const { [jobId]: _gone, ...rest } = prev;
+      return rest;
+    });
+    setRestoreFailedJobs((prev) => {
+      if (!prev.has(jobId)) return prev;
+      const next = new Set(prev);
+      next.delete(jobId);
+      return next;
+    });
+    writeStoredJobs(readStoredJobs().filter((j) => j.jobId !== jobId));
+  }, []);
+
+  const reconcileJob = useCallback(
+    async (jobId: string): Promise<boolean> => {
+      try {
+        const snap = await fetchJobSnapshot(jobId);
+        if (snap === null) {
+          dropJob(jobId);
+          return true;
+        }
+        const now = Date.now();
+        setJobs((prev) => ({
+          ...prev,
+          [jobId]: {
+            jobId,
+            status: snap.status,
+            createdAt: snap.created_at,
+            options: jobOptionsFromSnapshot(snap.options),
+          },
+        }));
+        setItems((prev) => reconcileItems(prev, jobId, snap.items, now));
+        persistSnapshotSeeds(jobId, snap.items);
+        setRestoreFailedJobs((prev) => {
+          if (!prev.has(jobId)) return prev;
+          const next = new Set(prev);
+          next.delete(jobId);
+          return next;
+        });
+        if (snap.status === "running") openEvents(jobId);
+        return true;
+      } catch {
+        // Unreachable server: keep the seeded rows and let the user retry.
+        // The Set is the single source of truth for "restore failed"; the
+        // job record keeps only the fields the ledger reads.
+        setRestoreFailedJobs((prev) => new Set(prev).add(jobId));
+        return false;
+      }
+    },
+    [dropJob, openEvents],
+  );
+
+  /** Retry every job whose restore failed; resolves with the count still failing. */
+  const retryRestore = useCallback(async (): Promise<number> => {
+    const pending = [...restoreFailedJobs];
+    if (pending.length === 0) return 0;
+    const outcomes = await Promise.all(pending.map((jobId) => reconcileJob(jobId)));
+    return outcomes.filter((ok) => !ok).length;
+  }, [reconcileJob, restoreFailedJobs]);
+
   useEffect(() => {
     if (restoredRef.current) return;
     restoredRef.current = true;
@@ -754,6 +861,8 @@ export function useJobs() {
       for (const j of stored) {
         next[j.jobId] ??= {
           jobId: j.jobId,
+          // The seeded rows stay "queued" until the snapshot answers; the
+          // job-level flag is only a placeholder until reconcile replaces it.
           status: "running",
           createdAt: null,
           options: emptyJobOptions(),
@@ -762,45 +871,8 @@ export function useJobs() {
       return next;
     });
 
-    const dropJob = (jobId: string) => {
-      setItems((prev) => prev.filter((i) => i.jobId !== jobId));
-      setJobs((prev) => {
-        const { [jobId]: _gone, ...rest } = prev;
-        return rest;
-      });
-      writeStoredJobs(readStoredJobs().filter((j) => j.jobId !== jobId));
-    };
-
-    for (const j of stored) {
-      void fetchJobSnapshot(j.jobId).then(
-        (snap) => {
-          if (snap === null) {
-            dropJob(j.jobId);
-            return;
-          }
-          const now = Date.now();
-          setJobs((prev) => ({
-            ...prev,
-            [j.jobId]: {
-              jobId: j.jobId,
-              status: snap.status,
-              createdAt: snap.created_at,
-              options: jobOptionsFromSnapshot(snap.options),
-            },
-          }));
-          setItems((prev) =>
-            prev.map((item) => {
-              if (item.jobId !== j.jobId) return item;
-              const p = snap.items.find((x) => x.item_id === item.itemId);
-              return p === undefined ? item : mergeItem(item, p, now);
-            }),
-          );
-          if (snap.status === "running") openEvents(j.jobId);
-        },
-        () => dropJob(j.jobId), // unreachable server state — treat like 404
-      );
-    }
-  }, [openEvents]);
+    for (const j of stored) void reconcileJob(j.jobId);
+  }, [reconcileJob]);
 
   useEffect(() => {
     const sources = sourcesRef.current;
@@ -809,17 +881,6 @@ export function useJobs() {
       sources.clear();
     };
   }, []);
-
-  // Live timer for running rows: tick only while something is in flight.
-  const anyActive = items.some(
-    (i) => i.status === "running" || i.status === "queued",
-  );
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!anyActive) return;
-    const id = window.setInterval(() => setNow(Date.now()), 150);
-    return () => window.clearInterval(id);
-  }, [anyActive]);
 
   const stats = useMemo<SessionStats>(() => {
     let done = 0;
@@ -883,7 +944,6 @@ export function useJobs() {
     stats,
     running,
     activeCount,
-    now,
     submit,
     retry,
     retryArchived,
@@ -891,6 +951,8 @@ export function useJobs() {
     enhanceArchived,
     deleteItem,
     submitError,
+    restoreFailedJobs,
+    retryRestore,
     clear,
     clearSettled,
     terminalJobCount,

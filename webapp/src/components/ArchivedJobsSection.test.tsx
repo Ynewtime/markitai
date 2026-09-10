@@ -42,6 +42,16 @@ const entries: HistoryEntry[] = [
   },
 ];
 
+/** The fixture timestamps are offset-aware, so the row renders them in the
+ * reader's own zone; compare against the same conversion the UI performs. */
+function localStamp(iso: string): string {
+  return new Date(iso)
+    .toLocaleString("en-CA", {
+      month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
+    })
+    .replace(",", "");
+}
+
 describe("ArchivedJobRows", () => {
   it("uses an explicit permanent-delete confirmation and hands focus to the next row", async () => {
     const user = userEvent.setup();
@@ -66,8 +76,8 @@ describe("ArchivedJobRows", () => {
     const first = screen.getByRole("option", { name: "Open first.pdf" });
     expect(first).toHaveClass("lrow", "actionable");
     expect(first).not.toHaveClass("archived-row");
-    expect(first.querySelector(".c-duration")).toHaveTextContent("60.0s");
-    expect(first.querySelector(".c-finished")).toHaveTextContent("07-13 10:01");
+    expect(first.querySelector(".c-duration")).toHaveTextContent("1:00");
+    expect(first.querySelector(".c-finished")).toHaveTextContent(localStamp("2026-07-13T10:01:00Z"));
     const resultMark = first.querySelector(".c-status.archive-actions .item-result.ok");
     expect(resultMark).toHaveTextContent("✓");
     expect(resultMark).toHaveAttribute("title", "Done");
@@ -80,10 +90,10 @@ describe("ArchivedJobRows", () => {
     const metaBits = Array.from(first.querySelectorAll(".rowmeta .metabit")).map(
       (bit) => bit.textContent,
     );
-    expect(metaBits).toEqual(["60.0s", "07-13 10:01", "Base", "Storage 100 B"]);
+    expect(metaBits).toEqual(["1:00", localStamp("2026-07-13T10:01:00Z"), "Base", "Storage 100 B"]);
     expect(
       first.querySelector(".rowmeta .metabit-time"),
-    ).toHaveTextContent("07-13 10:01");
+    ).toHaveTextContent(localStamp("2026-07-13T10:01:00Z"));
 
     await user.click(screen.getByRole("button", { name: "Permanently delete first.pdf" }));
     expect(screen.getByRole("alertdialog")).toHaveTextContent("Delete first.pdf?");

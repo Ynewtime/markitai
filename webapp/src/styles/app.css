@@ -1,11 +1,17 @@
 /* markitai web ui — tokens + component language.
  * Every value traces to scratchpad/mocks/ledger/index.html (the winning mock)
- * and DESIGN_BRIEF.md. Palette = Tailwind zinc + one green (#bbf7d0, success
- * output only). Code syntax colors are the sole content-level exception.
+ * and DESIGN_BRIEF.md. Palette = zinc + one green (#bbf7d0, success output
+ * only). Code syntax colors are the sole content-level exception.
+ *
+ * The stylesheet is plain CSS: no utility framework, no @apply. Every size,
+ * radius, duration and shadow comes from a token below, so a new value has to
+ * be added here first (see the scale-guard note on the tokens).
  */
 
 @import "@fontsource-variable/inter";
-@import "tailwindcss";
+
+/* One cascade order for the whole sheet: tokens, base, components, then the
+   unlayered media/print overrides at the end. */
 
 /* ---------------------------------------------------------------- tokens */
 
@@ -45,13 +51,50 @@
   /* theme-invariant focus ring for members of the always-dark card */
   --t-focus: #f4f4f5;
 
-  /* geometry family: 8 (small) / 14 (terminal) / 16 (outer panel) */
+  /* font stacks: the sans chain must cover CJK, because the UI ships a
+     Chinese dictionary and falls back to system fonts for ideographs */
+  --font-sans:
+    "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC",
+    "Source Han Sans SC", "Helvetica Neue", Arial, sans-serif;
+  /* Latin monospace first, CJK fallbacks last: a CJK face placed before the
+     Latin monospace families would win for Latin glyphs on a machine that
+     lacks the first five and break column alignment. */
+  --font-mono:
+    ui-monospace, "Menlo", "Monaco", "Consolas", "Liberation Mono",
+    "Courier New",
+    "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", monospace;
+
+  /* Row actions always reserve three icon slots (download, enhance/retry,
+     delete) so the ✓/× status mark lands at one x whether or not every icon
+     renders. Desktop rowicon is 28px, mobile 44px, gap 2px. */
+  --actions-w: 88px;
+
+  /* geometry family: 6 (chips) / 8 (small) / 14 (terminal) / 16 (outer panel) */
+  --r-xs: 6px;
   --r-sm: 8px;
   --r-term: 14px;
   --r-panel: 16px;
 
-  /* motion: press/entrance easing (colors keep plain 120ms ease) */
+  /* type scale — the only sizes the sheet may use (see scale guard) */
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 14px;
+  --text-md: 16px;
+  --text-lg: 18px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+
+  /* motion: two durations + one easing; colors keep the fast one */
+  --dur-fast: 120ms;
+  --dur-base: 140ms;
+  --dur-slow: 160ms;
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  /* shadows: popovers and modals only; ordinary cards stay flat */
+  --shadow-pop: 0 8px 24px rgb(9 9 11 / 0.18);
+  --shadow-modal: 0 10px 28px rgb(9 9 11 / 0.16);
 
   /* row hover underlay — weaker than --sel so selection stays distinct */
   --row-hover: color-mix(in srgb, var(--strip) 45%, var(--bg));
@@ -75,42 +118,48 @@
   /* logo tile keyline: invisible on light, zinc-800 on dark page bg */
   --logo-edge: transparent;
 
-  /* workspace preview geometry: sticky offset + internal pane scroll cap */
-  --sticky-top: 24px;
-  --panelbar-h: 49px;
-  --pane-cap: calc(100dvh - 2 * var(--sticky-top) - var(--panelbar-h));
+  /* preview pane scroll cap: viewport minus the panel chrome around it */
+  --preview-gap: 24px;
+  --preview-bar: 49px;
+  --pane-cap: calc(100dvh - 2 * var(--preview-gap) - var(--preview-bar));
 }
 
+/* Dark palette has exactly one definition. `auto` resolves through the media
+   query and an explicit choice through data-theme; both selectors read these
+   values, so a new dark token is added once. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --bg: #09090b;
-    --surface: #18181b;
-    --strip: #18181b;
-    --sel: #18181b;
-    --text-1: #fafafa;
-    --text-2: #a1a1aa;
-    --text-3: #a1a1aa;
-    --text-4: #71717a;
-    --hairline: #27272a;
-    --hairline-strong: #3f3f46;
-    --accent: #fafafa;
-    --accent-hover: #e4e4e7;
-    --accent-contrast: #18181b;
-    --err: #fca5a5;
-    --warning: #fbbf24;
-    --success: #86efac;
-    --selection-bg: #fafafa;
-    --selection-fg: #18181b;
-    --logo-edge: #27272a;
-    --diff-add-bg: color-mix(in srgb, var(--t-green) 12%, var(--surface));
-    --diff-del-bg: color-mix(in srgb, var(--t-red) 11%, var(--surface));
-    --syntax-comment: #8b949e;
-    --syntax-keyword: #ff7b72;
-    --syntax-title: #d2a8ff;
-    --syntax-string: #a5d6ff;
-    --syntax-variable: #ffa657;
-    --syntax-constant: #79c0ff;
+      --bg: #09090b;
+      --surface: #18181b;
+      --strip: #18181b;
+      --sel: #18181b;
+      --text-1: #fafafa;
+      --text-2: #a1a1aa;
+      --text-3: #a1a1aa;
+      --text-4: #71717a;
+      --hairline: #27272a;
+      --hairline-strong: #3f3f46;
+      --accent: #fafafa;
+      --accent-hover: #e4e4e7;
+      --accent-contrast: #18181b;
+      --err: #fca5a5;
+      --warning: #fbbf24;
+      --success: #86efac;
+      --danger-fill: #ef4444;
+      --danger-fill-hover: #f87171;
+      --danger-on-fill: #18181b;
+      --selection-bg: #fafafa;
+      --selection-fg: #18181b;
+      --logo-edge: #27272a;
+      --diff-add-bg: color-mix(in srgb, var(--t-green) 12%, var(--surface));
+      --diff-del-bg: color-mix(in srgb, var(--t-red) 11%, var(--surface));
+      --syntax-comment: #8b949e;
+      --syntax-keyword: #ff7b72;
+      --syntax-title: #d2a8ff;
+      --syntax-string: #a5d6ff;
+      --syntax-variable: #ffa657;
+      --syntax-constant: #79c0ff;
   }
 }
 :root[data-theme="dark"] {
@@ -131,6 +180,9 @@
   --err: #fca5a5;
   --warning: #fbbf24;
   --success: #86efac;
+  --danger-fill: #ef4444;
+  --danger-fill-hover: #f87171;
+  --danger-on-fill: #18181b;
   --selection-bg: #fafafa;
   --selection-fg: #18181b;
   --logo-edge: #27272a;
@@ -144,51 +196,207 @@
   --syntax-constant: #79c0ff;
 }
 
-@theme inline {
-  --font-sans:
-    "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
-    "Helvetica Neue", Arial, sans-serif;
-  --font-mono:
-    ui-monospace, "Menlo", "Monaco", "Consolas", "Liberation Mono",
-    "Courier New", monospace;
-
-  --color-bg: var(--bg);
-  --color-surface: var(--surface);
-  --color-strip: var(--strip);
-  --color-sel: var(--sel);
-  --color-fg-1: var(--text-1);
-  --color-fg-2: var(--text-2);
-  --color-fg-3: var(--text-3);
-  --color-fg-4: var(--text-4);
-  --color-line: var(--hairline);
-  --color-line-strong: var(--hairline-strong);
-  --color-accent: var(--accent);
-  --color-accent-hover: var(--accent-hover);
-  --color-accent-contrast: var(--accent-contrast);
-  --color-err: var(--err);
-  --color-warning: var(--warning);
-  --color-term-bg: var(--t-bg);
-  --color-term-border: var(--t-border);
-  --color-term-fg: var(--t-text);
-  --color-term-dim: var(--t-dim);
-  --color-term-badge: var(--t-badge);
-  --color-term-badge-fg: var(--t-badge-text);
-  --color-ok: var(--t-green);
-  --color-term-err: var(--t-red);
-
-  --radius-sm: var(--r-sm);
-  --radius-term: var(--r-term);
-  --radius-panel: var(--r-panel);
-}
-
 /* ------------------------------------------------------------------ base */
 
 @layer base {
+  /* The Tailwind preflight that left with the framework, transcribed rule
+     for rule (minus its theme-variable indirection). Without `box-sizing`
+     and the zeroed margin the UA defaults return and the shell overflows;
+     the element rules restore the native behaviours a reset erases: hr
+     rules, the `<summary>` marker, search/number/date widgets, submit
+     inputs, and the placeholder colour. `check:css` fails when the
+     universal part is missing. */
+  *,
+  ::before,
+  ::after,
+  ::backdrop,
+  ::file-selector-button {
+    box-sizing: border-box;
+    border: 0 solid;
+    margin: 0;
+    padding: 0;
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+    tab-size: 4;
+    line-height: 1.5;
+    font-family: var(--font-sans);
+    font-feature-settings: normal;
+    font-variation-settings: normal;
+    -webkit-tap-highlight-color: transparent;
+  }
+  hr {
+    height: 0;
+    color: inherit;
+    border-top-width: 1px;
+  }
+  abbr:where([title]) {
+    -webkit-text-decoration: underline dotted;
+    text-decoration: underline dotted;
+  }
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-size: inherit;
+    font-weight: inherit;
+  }
+  a {
+    color: inherit;
+    -webkit-text-decoration: inherit;
+    text-decoration: inherit;
+  }
+  b,
+  strong {
+    font-weight: bolder;
+  }
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--font-mono);
+    font-size: 1em;
+  }
+  small {
+    font-size: 80%;
+  }
+  sub,
+  sup {
+    position: relative;
+    vertical-align: baseline;
+    font-size: 75%;
+    line-height: 0;
+  }
+  sub {
+    bottom: -0.25em;
+  }
+  sup {
+    top: -0.5em;
+  }
+  table {
+    text-indent: 0;
+    border-color: inherit;
+    border-collapse: collapse;
+  }
+  :-moz-focusring:where(:not(iframe)) {
+    outline: auto;
+  }
+  progress {
+    vertical-align: baseline;
+  }
+  summary {
+    display: list-item;
+  }
+  ol,
+  ul,
+  menu {
+    list-style: none;
+  }
+  img,
+  svg,
+  video,
+  canvas,
+  audio,
+  iframe,
+  embed,
+  object {
+    display: block;
+    vertical-align: middle;
+  }
+  img,
+  video {
+    max-width: 100%;
+    height: auto;
+  }
+  button,
+  input,
+  select,
+  optgroup,
+  textarea {
+    font: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+    opacity: 1;
+    background-color: transparent;
+    border-radius: 0;
+  }
+  :where(select:is([multiple], [size])) optgroup {
+    font-weight: bolder;
+  }
+  :where(select:is([multiple], [size])) optgroup option {
+    padding-inline-start: 20px;
+  }
+  /* stylelint-disable-next-line selector-pseudo-element-no-unknown */
+  ::file-selector-button {
+    font: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+    opacity: 1;
+    background-color: transparent;
+    border-radius: 0;
+    appearance: button;
+    margin-inline-end: 4px;
+  }
+  ::placeholder {
+    opacity: 1;
+    color: currentColor;
+  }
+  @supports (color: color-mix(in lab, red, red)) {
+    ::placeholder {
+      color: color-mix(in oklab, currentColor 50%, transparent);
+    }
+  }
+  textarea {
+    resize: vertical;
+  }
+  ::-webkit-search-decoration {
+    -webkit-appearance: none;
+  }
+  ::-webkit-date-and-time-value {
+    min-height: 1lh;
+    text-align: inherit;
+  }
+  ::-webkit-datetime-edit {
+    display: inline-flex;
+    padding-block: 0;
+  }
+  ::-webkit-datetime-edit-fields-wrapper {
+    padding: 0;
+  }
+  ::-webkit-datetime-edit-year-field,
+  ::-webkit-datetime-edit-month-field,
+  ::-webkit-datetime-edit-day-field,
+  ::-webkit-datetime-edit-hour-field,
+  ::-webkit-datetime-edit-minute-field,
+  ::-webkit-datetime-edit-second-field,
+  ::-webkit-datetime-edit-millisecond-field,
+  ::-webkit-datetime-edit-meridiem-field {
+    padding-block: 0;
+  }
+  ::-webkit-calendar-picker-indicator {
+    line-height: 1;
+  }
+  :-moz-ui-invalid {
+    box-shadow: none;
+  }
+  button,
+  input:where([type="button"], [type="reset"], [type="submit"]) {
+    appearance: button;
+  }
+  ::-webkit-inner-spin-button,
+  ::-webkit-outer-spin-button {
+    height: auto;
+  }
+  [hidden]:where(:not([hidden="until-found"])) {
+    display: none !important;
+  }
   body {
     font-family: var(--font-sans);
     background: var(--bg);
     color: var(--text-1);
-    font-size: 14px;
+    font-size: var(--text-base);
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
@@ -225,7 +433,7 @@
   }
   /* workspace page heading: real hierarchy, not a tracked-out caps eyebrow */
   .eyebrow {
-    font-size: 17px;
+    font-size: var(--text-lg);
     font-weight: 650;
     letter-spacing: -0.015em;
     color: var(--text-1);
@@ -255,14 +463,14 @@
     border-radius: var(--r-sm);
   }
   .brand .wordmark {
-    font-size: 15px;
+    font-size: var(--text-md);
     font-weight: 600;
     letter-spacing: -0.01em;
-    transition: opacity 120ms ease;
+    transition: opacity var(--dur-fast) ease;
   }
   .brand .ver {
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--text-3);
     margin-top: 1px;
   }
@@ -292,19 +500,19 @@
     min-width: 32px;
     padding: 0 8px;
     border: 0;
-    border-radius: 6px;
+    border-radius: var(--r-xs);
     background: transparent;
   }
   .hdr-links a,
   .app-footer a {
-    font-size: 13px;
+    font-size: var(--text-base);
     color: var(--text-2);
-    transition: color 120ms ease;
+    transition: color var(--dur-fast) ease;
   }
   .hdr-links .ext,
   .app-footer .ext {
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--text-xs);
     margin-left: 3px;
     color: var(--text-3);
   }
@@ -322,8 +530,8 @@
     border-radius: var(--r-sm);
     color: var(--text-2);
     cursor: pointer;
-    transition: color 120ms ease, background-color 120ms ease,
-      transform 140ms var(--ease-out);
+    transition: color var(--dur-fast) ease, background-color var(--dur-fast) ease,
+      transform var(--dur-base) var(--ease-out);
   }
   .gearbtn:active {
     transform: scale(0.97);
@@ -364,7 +572,7 @@
     text-wrap: balance;
   }
   .hero-sub {
-    font-size: 15px;
+    font-size: var(--text-md);
     line-height: 1.65;
     color: var(--text-2);
     max-width: 56ch;
@@ -390,12 +598,15 @@
     display: block;
     width: 100%;
     min-height: 36px;
-    padding: 8px 4px;
+    /* 14px inline padding + .srcrow's 12px puts the text ~26px from the card
+       edge — matching the gap to the Convert button on the right, so the
+       card's inner spacing reads even. */
+    padding: 8px 14px;
     border: 0;
-    border-radius: 4px;
+    border-radius: var(--r-xs);
     background: transparent;
     font-family: var(--font-mono);
-    font-size: 13px;
+    font-size: var(--text-base);
     line-height: 20px;
     color: var(--text-1);
     resize: none;
@@ -415,6 +626,15 @@
     gap: 6px;
     flex: none;
   }
+  /* The three tools read as one segmented group: a quiet box on each button
+     frames every gap with a hard edge, so equal gaps also look equal — bare
+     text edges made the thin-stroked CLI|上传 pair read wider than 选项|CLI. */
+  .source-tools .srcact {
+    background: color-mix(in srgb, var(--strip) 55%, transparent);
+  }
+  .source-tools .srcact.on {
+    background: var(--strip);
+  }
   .composer-toolbar {
     display: flex;
     justify-content: flex-end;
@@ -432,16 +652,16 @@
     height: 36px;
     padding: 0 10px;
     border: 0;
-    border-radius: 6px;
+    border-radius: var(--r-xs);
     background: transparent;
     color: var(--text-2);
     font-family: var(--font-mono);
-    font-size: 11.5px;
+    font-size: var(--text-sm);
     font-weight: 600;
     white-space: nowrap;
     cursor: pointer;
-    transition: color 120ms ease, background-color 120ms ease,
-      transform 140ms var(--ease-out);
+    transition: color var(--dur-fast) ease, background-color var(--dur-fast) ease,
+      transform var(--dur-base) var(--ease-out);
   }
   .srcact:not(:disabled):active {
     transform: scale(0.97);
@@ -450,11 +670,16 @@
     color: var(--text-1);
     background: var(--strip);
   }
+  /* All-caps Latin in the mono face reads heavier than the CJK labels at the
+     same weight; drop the CLI label one step so the toolbar stays even. */
+  .srcact.clitoggle {
+    font-weight: 500;
+  }
   .srcact.convert {
     flex: none;
     padding: 0 14px;
     color: var(--text-1);
-    font-size: 12.5px;
+    font-size: var(--text-sm);
     font-weight: 700;
     letter-spacing: 0.01em;
     background: color-mix(in srgb, var(--accent) 7%, transparent);
@@ -466,14 +691,14 @@
   }
   .srcact svg {
     color: var(--text-3);
-    transition: color 120ms ease;
+    transition: color var(--dur-fast) ease;
   }
   .srcact.convert svg {
     color: inherit;
   }
-  .file-picker:has(input:focus-visible) {
-    outline: 1px solid var(--text-2);
-    outline-offset: -1px;
+  .file-picker.disabled {
+    color: var(--text-4);
+    cursor: not-allowed;
   }
 
   /* Tools live above this card; the input, optional drawer, and persistent
@@ -493,7 +718,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 10px;
+    padding: 12px;
   }
   .srcrow .urlrow {
     width: auto;
@@ -508,12 +733,12 @@
     height: 32px;
     padding: 0 12px;
     border-radius: var(--r-sm);
-    font-size: 13px;
+    font-size: var(--text-base);
     font-weight: 600;
     white-space: nowrap;
     cursor: pointer;
-    transition: background-color 120ms ease, border-color 120ms ease,
-      transform 140ms var(--ease-out);
+    transition: background-color var(--dur-fast) ease, border-color var(--dur-fast) ease,
+      transform var(--dur-base) var(--ease-out);
   }
   .btn:not(:disabled):active {
     transform: scale(0.97);
@@ -521,7 +746,7 @@
   .btn.sm {
     height: 28px;
     padding: 0 12px;
-    font-size: 12px;
+    font-size: var(--text-sm);
   }
   .btn.primary {
     background: var(--accent);
@@ -574,25 +799,29 @@
   .connection-options summary:focus-visible,
   .manual-disclosure summary:focus-visible,
   .picker-advanced summary:focus-visible {
-    outline: 1px solid var(--text-2);
-    outline-offset: -1px;
+    outline: 2px solid var(--text-2);
+    outline-offset: -2px;
   }
-  /* Thin monochrome focus stays inside controls without a height-changing halo. */
+  /* Monochrome focus stays inside controls without a height-changing halo;
+     2px keeps it visible against the hairline borders it sits on. */
   .srcact:focus-visible,
-  .opthelp:focus-visible,
   .help-anchor:focus-visible,
   .optfield button:focus-visible,
   .optadv-toggle:focus-visible {
-    outline: 1px solid var(--text-2);
-    outline-offset: -1px;
+    outline: 2px solid var(--text-2);
+    outline-offset: -2px;
     box-shadow: none;
   }
+  .opthelp:focus-visible {
+    outline: 2px solid var(--text-2);
+    outline-offset: 1px;
+  }
   .file-picker:has(input:focus-visible) {
-    outline: 1px solid var(--text-2);
-    outline-offset: -1px;
+    outline: 2px solid var(--text-2);
+    outline-offset: -2px;
   }
   .pane:focus-visible {
-    outline: 1px solid var(--text-2);
+    outline: 2px solid var(--text-2);
     outline-offset: -2px;
   }
   /* members of the always-dark terminal card need a theme-invariant ring:
@@ -623,20 +852,20 @@
     display: inline-flex;
     height: 26px;
     border: 1px solid var(--hairline-strong);
-    border-radius: 6px;
+    border-radius: var(--r-xs);
     overflow: hidden;
     background: var(--surface);
   }
   .seg button {
     padding: 0 10px;
     font-family: var(--font-mono);
-    font-size: 11.5px;
+    font-size: var(--text-sm);
     font-weight: 500;
     color: var(--text-2);
     cursor: pointer;
     position: relative;
-    transition: background-color 120ms ease, color 120ms ease,
-      transform 140ms var(--ease-out);
+    transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease,
+      transform var(--dur-base) var(--ease-out);
   }
   .seg button:not(:disabled):active {
     transform: scale(0.97);
@@ -665,12 +894,12 @@
   .opthint {
     flex-basis: 100%;
     margin: 2px 0 0;
-    font-size: 11px;
+    font-size: var(--text-xs);
     line-height: 1.6;
     color: var(--text-3);
   }
   .optcustom {
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--text-2);
   }
 
@@ -701,28 +930,30 @@
     align-items: center;
     gap: 5px;
     min-height: 26px; /* the chip/segment height — label centers on line one */
-    font-size: 12.5px;
+    font-size: var(--text-sm);
     font-weight: 550;
     color: var(--text-2);
   }
   .help-anchor { display: inline-flex; min-width: 0; }
-  .optcli .help-anchor { display: block; }
   .seg > .help-anchor + .help-anchor { border-left: 1px solid var(--hairline); }
   .seg > .help-anchor > button { border-radius: inherit; }
   .option-tooltip {
     position: fixed;
     z-index: 1000;
-    width: min(360px, calc(100vw - 24px));
+    /* Shrink-wrap short text; the cap keeps long help readable. */
+    width: fit-content;
+    max-width: min(360px, calc(100vw - 24px));
     max-height: min(200px, calc(100dvh - 24px));
     overflow-y: auto;
     padding: 10px 12px;
     border: 1px solid var(--hairline-strong);
-    border-radius: 8px;
+    border-radius: var(--r-sm);
     background: var(--surface);
     color: var(--text-1);
-    box-shadow: 0 4px 20px #0002;
-    font-size: 12px;
+    box-shadow: var(--shadow-pop);
+    font-size: var(--text-sm);
     line-height: 1.6;
+    text-align: center;
     overflow-wrap: anywhere;
   }
   .opthelp {
@@ -736,9 +967,9 @@
     height: 18px;
     margin: -2px 0;
     border-radius: 50%;
-    color: var(--text-4);
+    color: var(--text-3);
     cursor: help;
-    transition: color 120ms ease;
+    transition: color var(--dur-fast) ease;
   }
   .opthelp:hover,
   .opthelp:focus-visible {
@@ -751,12 +982,12 @@
     min-height: 0;
     margin: 0 -4px;
     padding: 0 4px;
-    border-radius: 4px;
+    border-radius: var(--r-xs);
     cursor: pointer;
-    transition: color 120ms ease, background-color 120ms ease;
+    transition: color var(--dur-fast) ease, background-color var(--dur-fast) ease;
   }
   .optadv .optlbl svg {
-    transition: transform 140ms var(--ease-out);
+    transition: transform var(--dur-base) var(--ease-out);
   }
   .optadv.on .optlbl svg {
     transform: rotate(90deg);
@@ -765,7 +996,7 @@
     color: var(--text-1);
   }
   .optadv .optlbl:focus-visible {
-    outline: 1px solid var(--text-2);
+    outline: 2px solid var(--text-2);
     outline-offset: -1px;
   }
   .optadv-body {
@@ -781,7 +1012,7 @@
   }
   .optfield .seg button {
     padding: 0 10px;
-    font-size: 11.5px;
+    font-size: var(--text-sm);
   }
 
   /* One shape for every boolean: a hairline chip in the segmented control's
@@ -794,13 +1025,13 @@
     height: 26px;
     padding: 0 10px;
     border: 1px solid var(--hairline-strong);
-    border-radius: 6px;
+    border-radius: var(--r-xs);
     background: transparent;
     color: var(--text-2);
-    font-size: 12px;
+    font-size: var(--text-sm);
     cursor: pointer;
-    transition: background-color 120ms ease, color 120ms ease,
-      border-color 120ms ease, transform 140ms var(--ease-out);
+    transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease,
+      border-color var(--dur-fast) ease, transform var(--dur-base) var(--ease-out);
   }
   .chip:not(:disabled):active {
     transform: scale(0.97);
@@ -859,8 +1090,8 @@
     background: var(--surface);
     position: relative;
     cursor: pointer;
-    transition: background-color 120ms ease, border-color 120ms ease,
-      transform 140ms var(--ease-out);
+    transition: background-color var(--dur-fast) ease, border-color var(--dur-fast) ease,
+      transform var(--dur-base) var(--ease-out);
   }
   .switch:not(:disabled):active {
     transform: scale(0.97);
@@ -880,7 +1111,7 @@
     height: 14px;
     border-radius: 50%;
     background: var(--text-3);
-    transition: transform 140ms var(--ease-out), background-color 120ms ease;
+    transition: transform var(--dur-base) var(--ease-out), background-color var(--dur-fast) ease;
   }
   .switch.on {
     background: var(--accent);
@@ -897,14 +1128,14 @@
 
   /* home → workspace status link (only when the session holds items) */
   .sesslink {
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--text-2);
     text-decoration: underline;
     text-underline-offset: 3px;
     margin: -20px 0 32px;
     cursor: pointer;
     font-variant-numeric: tabular-nums;
-    transition: color 120ms ease;
+    transition: color var(--dur-fast) ease;
   }
 
   /* keyboard-usable file picker (hidden input inside a label) */
@@ -913,7 +1144,7 @@
     text-decoration: underline;
     text-underline-offset: 3px;
     color: var(--text-3);
-    transition: color 120ms ease;
+    transition: color var(--dur-fast) ease;
   }
   .browse:has(input:focus-visible) {
     outline: 2px solid var(--accent);
@@ -928,7 +1159,7 @@
     text-decoration: underline;
     text-underline-offset: 3px;
     cursor: pointer;
-    transition: color 120ms ease;
+    transition: color var(--dur-fast) ease;
   }
 
   /* full-page drag veil: bg wash quiets the page, accent hairline frames it,
@@ -948,7 +1179,7 @@
   }
   .dropveil .veillbl {
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--text-sm);
     font-weight: 700;
     color: var(--accent);
     background: var(--bg);
@@ -960,7 +1191,7 @@
   /* inline (printed-red) error line — no toasts, no modals */
   .errline {
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--err);
     margin-top: 16px;
   }
@@ -969,7 +1200,7 @@
   .caphint {
     margin-top: 16px;
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--text-3);
   }
 
@@ -991,8 +1222,8 @@
     border-left: 3px solid var(--notice-color);
     border-radius: 0;
     background: var(--surface);
-    box-shadow: 0 10px 28px rgb(9 9 11 / 0.13);
-    animation: notification-in 160ms var(--ease-out);
+    box-shadow: var(--shadow-modal);
+    animation: notification-in var(--dur-slow) var(--ease-out);
   }
   .warning-notification.error {
     --notice-color: var(--err);
@@ -1015,7 +1246,7 @@
     flex-direction: column;
     gap: 6px;
     min-width: 0;
-    font-size: 13px;
+    font-size: var(--text-base);
     line-height: 1.6;
     color: var(--text-2);
     overflow-wrap: anywhere;
@@ -1023,18 +1254,18 @@
   .warning-notification-copy strong {
     color: var(--text-1);
     font-family: var(--font-sans);
-    font-size: 13.5px;
+    font-size: var(--text-base);
     font-weight: 650;
     line-height: 1.45;
   }
   :lang(zh) .warning-notification-copy {
     gap: 7px;
-    font-size: 13.5px;
+    font-size: var(--text-base);
     line-height: 1.72;
     letter-spacing: 0.01em;
   }
   :lang(zh) .warning-notification-copy strong {
-    font-size: 14px;
+    font-size: var(--text-base);
     line-height: 1.55;
   }
   .notification-action {
@@ -1049,10 +1280,10 @@
     background: transparent;
     color: var(--text-1);
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--text-xs);
     font-weight: 600;
     cursor: pointer;
-    transition: background-color 120ms ease;
+    transition: background-color var(--dur-fast) ease;
   }
   .notification-close {
     display: inline-flex;
@@ -1079,15 +1310,68 @@
     }
   }
 
+  /* visually hidden but available to assistive tech (was Tailwind's utility;
+     declared here so the stylesheet owns every class it uses) */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+
+  /* last-resort crash surface (ErrorBoundary in main.tsx) */
+  .crash {
+    max-width: 560px;
+    margin: 15vh auto;
+    padding: 0 24px;
+    font-family: var(--font-mono);
+    font-size: var(--text-base);
+    color: var(--text-1);
+  }
+  .crash h1 {
+    font-size: var(--text-xl);
+    margin-bottom: 12px;
+  }
+  .crash p {
+    color: var(--text-2);
+    margin-bottom: 20px;
+    overflow-wrap: anywhere;
+  }
+
   /* neutral informational line (folder-drop truncation / empty notices) */
   .notice {
     margin-top: 16px;
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--text-2);
   }
   .composer .notice {
     margin-top: 0;
+  }
+  /* the create-job busy line: spinner, message, and the cancel escape hatch */
+  .notice.submitting {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .notice-action {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text-1);
+    font: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+  }
+  .notice-action:focus-visible {
+    outline: 2px solid var(--text-1);
+    outline-offset: 2px;
   }
 
   /* ---------- CLI preview ---------- */
@@ -1095,7 +1379,7 @@
     flex: 1;
     min-width: 0;
     font-family: var(--font-mono);
-    font-size: 12.5px;
+    font-size: var(--text-sm);
     line-height: 20px;
     color: var(--t-text);
     text-align: left;
@@ -1122,7 +1406,7 @@
   }
   .jobhead .stats {
     font-family: var(--font-mono);
-    font-size: 13px;
+    font-size: var(--text-base);
     color: var(--text-2);
     margin-top: 8px;
     font-variant-numeric: tabular-nums;
@@ -1141,7 +1425,7 @@
   /* ---------- session ledger (one compact shape for the whole workspace) */
   .lrow {
     display: grid;
-    column-gap: 12px;
+    column-gap: 16px;
     align-items: center;
     border-bottom: 1px solid var(--hairline);
   }
@@ -1149,14 +1433,14 @@
     border-bottom: 1px solid var(--accent);
   }
   .lrow.lhead > span {
-    font-size: 11.5px;
+    font-size: var(--text-sm);
     font-weight: 600;
     letter-spacing: 0.02em;
     color: var(--text-3);
   }
   .c-num {
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--text-3);
   }
   .c-name {
@@ -1167,7 +1451,7 @@
   }
   .c-name .fname {
     font-family: var(--font-mono);
-    font-size: 13px;
+    font-size: var(--text-base);
     color: var(--text-1);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1189,13 +1473,13 @@
     white-space: nowrap;
   }
   .c-name svg {
-    color: var(--text-4);
+    color: var(--text-3);
   }
   .c-duration,
   .c-finished,
   .c-cost {
     font-family: var(--font-mono);
-    font-size: 13px;
+    font-size: var(--text-base);
     color: var(--text-2);
     text-align: right;
     font-variant-numeric: tabular-nums;
@@ -1207,7 +1491,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: flex-end;
-    gap: 5px;
+    gap: 8px;
     white-space: nowrap;
   }
   .llm-tag,
@@ -1217,10 +1501,10 @@
     min-height: 18px;
     padding: 0 5px;
     border: 1px solid var(--hairline-strong);
-    border-radius: 4px;
+    border-radius: var(--r-xs);
     color: var(--text-3);
     font-family: var(--font-mono);
-    font-size: 9.5px;
+    font-size: var(--text-2xs);
     font-weight: 600;
     letter-spacing: 0.03em;
     line-height: 1;
@@ -1236,7 +1520,7 @@
   .llm-price {
     color: var(--text-2);
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: var(--text-2xs);
     font-variant-numeric: tabular-nums;
   }
   .c-finished {
@@ -1255,7 +1539,7 @@
     height: 20px;
     flex: none;
     font-family: var(--font-mono);
-    font-size: 18px;
+    font-size: var(--text-lg);
     font-weight: 700;
     line-height: 1;
   }
@@ -1286,16 +1570,16 @@
     background: var(--selection-bg);
     color: var(--selection-fg);
     font-family: var(--font-sans);
-    font-size: 12px;
+    font-size: var(--text-sm);
     font-weight: 500;
     line-height: 1.4;
     text-align: left;
     white-space: normal;
-    box-shadow: 0 8px 24px rgb(9 9 11 / 0.2);
+    box-shadow: var(--shadow-pop);
     opacity: 0;
     pointer-events: none;
     transform: translateY(2px);
-    transition: opacity 120ms ease, transform 120ms var(--ease-out);
+    transition: opacity var(--dur-fast) ease, transform var(--dur-fast) var(--ease-out);
   }
   .tooltip:hover::after,
   .tooltip:focus-visible::after {
@@ -1305,12 +1589,14 @@
   .tooltip:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
-    border-radius: 4px;
+    border-radius: var(--r-xs);
   }
   .item-actions {
     display: inline-flex;
     align-items: center;
+    justify-content: flex-end;
     gap: 2px;
+    min-width: var(--actions-w);
   }
   .lhead .c-duration,
   .lhead .c-finished,
@@ -1326,7 +1612,7 @@
     align-items: flex-start;
     gap: 10px;
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--err);
     margin-top: 8px;
     padding-left: 22px; /* aligns with filename text: 14px icon + 8px gap */
@@ -1344,7 +1630,7 @@
   .c-skip {
     grid-column: 2 / -1;
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--text-3); /* neutral zinc: informational, not an error */
     margin-top: 8px;
     padding-left: 22px; /* same alignment as .c-err */
@@ -1365,7 +1651,7 @@
     background: var(--t-bg);
     border: 1px solid var(--t-border);
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--text-sm);
     font-weight: 700;
     color: var(--t-badge-text);
   }
@@ -1384,7 +1670,7 @@
     align-items: center;
     gap: 8px;
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--text-2);
     font-variant-numeric: tabular-nums;
   }
@@ -1434,9 +1720,9 @@
     border: 1px solid var(--hairline);
     border-radius: var(--r-sm);
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--text-1);
-    transition: border-color 120ms ease;
+    transition: border-color var(--dur-fast) ease;
   }
   .fin::placeholder {
     color: var(--text-3);
@@ -1464,13 +1750,13 @@
     border: 1px solid var(--hairline-strong);
     background: transparent;
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--text-xs);
     font-weight: 700;
     color: var(--text-3);
     cursor: pointer;
     position: relative;
-    transition: color 120ms ease, border-color 120ms ease,
-      background-color 120ms ease, transform 140ms var(--ease-out);
+    transition: color var(--dur-fast) ease, border-color var(--dur-fast) ease,
+      background-color var(--dur-fast) ease, transform var(--dur-base) var(--ease-out);
   }
   .fchip:active {
     transform: scale(0.97);
@@ -1496,14 +1782,14 @@
   .fempty {
     padding: 20px 12px;
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--text-3);
     border-bottom: 1px solid var(--hairline);
   }
   /* "n of m shown" rider on the TOTAL label — plain mono, not an eyebrow */
   .t-shownote {
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--text-xs);
     font-weight: 400;
     letter-spacing: normal;
     text-transform: none;
@@ -1530,17 +1816,21 @@
     gap: 40px;
   }
   .flist .lrow {
-    grid-template-columns: 28px minmax(0, 1fr) 64px 110px 92px 172px;
+    grid-template-columns: 28px minmax(0, 1fr) 72px 124px 108px 172px;
     position: relative;
     padding: 16px 12px;
   }
   .flist.nocost .lrow {
-    grid-template-columns: 28px minmax(0, 1fr) 64px 110px 172px;
+    grid-template-columns: 28px minmax(0, 1fr) 72px 124px 172px;
   }
   .flist [role="option"] {
     cursor: pointer;
-    transition: background-color 120ms ease;
-    animation: rowin 150ms var(--ease-out); /* soft entrance, no stagger */
+    transition: background-color var(--dur-fast) ease;
+  }
+  /* one entrance for the whole list: a per-row animation meant 50 concurrent
+     animations on a full ledger for the same visual result */
+  .flist [role="listbox"] {
+    animation: rowin var(--dur-base) var(--ease-out);
   }
   .flist [role="option"][aria-disabled="true"] {
     cursor: default;
@@ -1552,9 +1842,6 @@
     padding: 0 12px 10px;
     cursor: default;
   }
-  .flist .lrow.sel {
-    background: var(--sel);
-  }
   .flist .lrow.sel::before {
     content: "";
     position: absolute;
@@ -1564,22 +1851,12 @@
     width: 2px;
     background: var(--accent);
   }
-  /* accounting double rule under TOTAL */
+  /* one rule above TOTAL carries the sum; a second floating rule added
+     weight without adding meaning */
   .lrow.totals {
     border-top: 1px solid var(--accent);
-    border-bottom: 1px solid var(--accent);
-    margin-top: -1px;
     position: relative;
     cursor: default;
-  }
-  .lrow.totals::after {
-    content: "";
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: -4px;
-    height: 1px;
-    background: var(--accent);
   }
   .totals .c-duration,
   .totals .c-cost {
@@ -1587,14 +1864,14 @@
     font-weight: 600;
   }
   .totals .t-lbl {
-    font-size: 11.5px;
+    font-size: var(--text-sm);
     font-weight: 600;
     letter-spacing: 0.02em;
     color: var(--text-3);
   }
   .totals .t-note {
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--text-3);
     text-align: right;
     font-variant-numeric: tabular-nums;
@@ -1657,12 +1934,12 @@
     display: inline-flex;
     align-items: center;
     font-family: var(--font-mono);
-    font-size: 12.5px;
+    font-size: var(--text-sm);
     font-weight: 600;
     color: var(--text-3);
     padding: 0 2px;
     cursor: pointer;
-    transition: color 120ms ease, transform 140ms var(--ease-out);
+    transition: color var(--dur-fast) ease, transform var(--dur-base) var(--ease-out);
   }
   .tab:active {
     transform: scale(0.97);
@@ -1686,7 +1963,7 @@
   }
   .panelbar .meta {
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--text-3);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
@@ -1712,14 +1989,14 @@
     background: var(--surface);
     color: var(--text-2);
     font-family: var(--font-sans);
-    font-size: 12.5px;
+    font-size: var(--text-sm);
     line-height: 1.5;
     text-align: left;
     white-space: normal;
     box-shadow:
       0 18px 48px rgb(9 9 11 / 0.16),
       0 3px 10px rgb(9 9 11 / 0.08);
-    animation: popover-in 140ms var(--ease-out);
+    animation: popover-in var(--dur-base) var(--ease-out);
   }
   .pdf-settings-head {
     display: flex;
@@ -1732,7 +2009,7 @@
   }
   .pdf-settings-card strong {
     color: var(--text-1);
-    font-size: 13px;
+    font-size: var(--text-base);
     line-height: 1.4;
   }
   /* why the follow-theme switch is disabled (WebKit); hangs directly off its
@@ -1764,7 +2041,7 @@
     padding-top: 10px;
     border-top: 1px solid var(--hairline);
     color: var(--text-3);
-    font-size: 11.5px;
+    font-size: var(--text-sm);
   }
 
   /* both panes scroll internally under a viewport cap (like the Source
@@ -1780,7 +2057,7 @@
   .pane-note {
     padding: 40px 44px 48px;
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--text-3);
   }
 
@@ -1790,21 +2067,21 @@
   }
   .docmeta {
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--text-3);
     margin-bottom: 20px;
     font-variant-numeric: tabular-nums;
     overflow-wrap: anywhere;
   }
   .md h1 {
-    font-size: 24px;
+    font-size: var(--text-2xl);
     font-weight: 600;
     letter-spacing: -0.02em;
     line-height: 1.2;
     margin-bottom: 16px;
   }
   .md h2 {
-    font-size: 16px;
+    font-size: var(--text-md);
     font-weight: 600;
     letter-spacing: -0.01em;
     margin: 28px 0 12px;
@@ -1813,12 +2090,12 @@
   .md h4,
   .md h5,
   .md h6 {
-    font-size: 14px;
+    font-size: var(--text-base);
     font-weight: 600;
     margin: 20px 0 8px;
   }
   .md p {
-    font-size: 14px;
+    font-size: var(--text-base);
     line-height: 1.75;
     color: var(--text-2);
     margin-bottom: 16px;
@@ -1838,14 +2115,14 @@
     margin: 0 0 16px;
   }
   .md th {
-    font-size: 13px;
+    font-size: var(--text-base);
     font-weight: 600;
     text-align: left;
     padding: 0 12px 8px 0;
     border-bottom: 1px solid var(--accent);
   }
   .md td {
-    font-size: 13.5px;
+    font-size: var(--text-base);
     color: var(--text-2);
     padding: 9px 12px 9px 0;
     border-bottom: 1px solid var(--hairline);
@@ -1855,7 +2132,7 @@
     margin: 12px 0 16px;
   }
   .md ul li {
-    font-size: 14px;
+    font-size: var(--text-base);
     line-height: 1.7;
     color: var(--text-2);
     padding-left: 20px;
@@ -1866,7 +2143,7 @@
     content: "-";
     position: absolute;
     left: 2px;
-    color: var(--text-4);
+    color: var(--text-3);
   }
   .md ol {
     list-style: decimal;
@@ -1874,7 +2151,7 @@
     padding-left: 22px;
   }
   .md ol li {
-    font-size: 14px;
+    font-size: var(--text-base);
     line-height: 1.7;
     color: var(--text-2);
     margin-bottom: 6px;
@@ -1890,10 +2167,10 @@
   }
   .md code {
     font-family: var(--font-mono);
-    font-size: 12.5px;
+    font-size: var(--text-sm);
     background: var(--strip);
     border: 1px solid var(--hairline);
-    border-radius: 6px;
+    border-radius: var(--r-xs);
     padding: 1px 5px;
   }
   .md pre {
@@ -1908,7 +2185,7 @@
     background: none;
     border: none;
     padding: 0;
-    font-size: 12.5px;
+    font-size: var(--text-sm);
     line-height: 1.8;
   }
   .md pre code.hljs {
@@ -2011,7 +2288,7 @@
   }
   .term-head .tname {
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--t-dim);
     font-variant-numeric: tabular-nums;
     overflow: hidden;
@@ -2028,12 +2305,12 @@
     border-radius: 999px;
     border: 1px solid var(--t-badge);
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--text-sm);
     font-weight: 700;
     color: var(--t-badge-text);
     background: transparent;
     cursor: pointer;
-    transition: border-color 120ms ease, transform 140ms var(--ease-out);
+    transition: border-color var(--dur-fast) ease, transform var(--dur-base) var(--ease-out);
   }
   .badge:active {
     transform: scale(0.97);
@@ -2041,7 +2318,7 @@
   .term pre {
     padding: 20px;
     font-family: var(--font-mono);
-    font-size: 12.5px;
+    font-size: var(--text-sm);
     line-height: 1.8;
     color: var(--t-green);
     overflow-x: auto;
@@ -2057,7 +2334,7 @@
   /* ---------- diff view (base vs llm) — theme-aware mono line view ---------- */
   .diffview {
     font-family: var(--font-mono);
-    font-size: 12.5px;
+    font-size: var(--text-sm);
     line-height: 1.7;
     padding: 16px 0 28px;
     font-variant-numeric: tabular-nums;
@@ -2112,34 +2389,34 @@
     padding: 2px;
     background: transparent;
     border: 1px solid var(--hairline-strong);
-    border-radius: 6px;
+    border-radius: var(--r-xs);
   }
   .langtoggle button {
     height: 26px;
     padding: 0 10px;
-    border-radius: 6px;
+    border-radius: var(--r-xs);
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--text-2);
     cursor: pointer;
     position: relative;
-    transition: background-color 120ms ease, color 120ms ease,
-      transform 140ms var(--ease-out);
+    transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease,
+      transform var(--dur-base) var(--ease-out);
   }
   /* Icon radios use the same compact geometry as language choices. */
   .themetoggle button {
     width: 26px;
     height: 26px;
     padding: 0;
-    border-radius: 6px;
+    border-radius: var(--r-xs);
     display: inline-flex;
     align-items: center;
     justify-content: center;
     color: var(--text-3);
     cursor: pointer;
     position: relative;
-    transition: background-color 120ms ease, color 120ms ease,
-      transform 140ms var(--ease-out);
+    transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease,
+      transform var(--dur-base) var(--ease-out);
   }
   .themetoggle button:active,
   .langtoggle button:active {
@@ -2160,9 +2437,9 @@
     width: min(280px, calc(100vw - 32px));
     padding: 16px;
     border: 1px solid var(--hairline);
-    border-radius: 10px;
+    border-radius: var(--r-sm);
     background: var(--surface);
-    box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+    box-shadow: var(--shadow-pop);
   }
   .appearance-popover:not([hidden]) { display: grid; gap: 12px; }
   .appearance-popover .appearance-opt {
@@ -2190,7 +2467,7 @@
     align-items: center;
     justify-content: center;
     padding: 24px;
-    animation: mdl-fade-in 160ms var(--ease-out);
+    animation: mdl-fade-in var(--dur-slow) var(--ease-out);
   }
   .mdl {
     width: min(512px, 100%);
@@ -2201,15 +2478,15 @@
     border: 1px solid var(--hairline);
     border-radius: var(--r-term);
     transform-origin: center;
-    animation: mdl-card-in 160ms var(--ease-out);
+    animation: mdl-card-in var(--dur-slow) var(--ease-out);
     outline: none;
   }
   .mdl-veil.out {
-    animation: mdl-fade-out 120ms ease forwards;
+    animation: mdl-fade-out var(--dur-fast) ease forwards;
     pointer-events: none;
   }
   .mdl-veil.out .mdl {
-    animation: mdl-card-out 120ms ease forwards;
+    animation: mdl-card-out var(--dur-fast) ease forwards;
   }
   .settings-modal .mdl-body > * { flex-shrink: 0; }
   .settings-modal .btn { flex-shrink: 0; min-height: 36px; padding: 8px 14px; }
@@ -2245,7 +2522,7 @@
     display: block;
     margin-bottom: 4px;
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--text-3);
   }
   .preview-modal-title h2 {
@@ -2253,7 +2530,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-family: var(--font-mono);
-    font-size: 13px;
+    font-size: var(--text-base);
     font-weight: 600;
     color: var(--text-1);
   }
@@ -2266,7 +2543,7 @@
     text-decoration: underline;
     text-decoration-color: transparent;
     text-underline-offset: 3px;
-    transition: text-decoration-color 120ms ease;
+    transition: text-decoration-color var(--dur-fast) ease;
   }
   .preview-modal-title h2 a span {
     overflow: hidden;
@@ -2346,11 +2623,11 @@
     flex-shrink: 0;
   }
   .mdl-dim {
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--text-3);
   }
   .mdl-src {
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--text-3);
     overflow-wrap: anywhere;
   }
@@ -2363,7 +2640,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--text-3);
   }
   .settings-crumbs button {
@@ -2373,14 +2650,14 @@
     white-space: nowrap;
     color: var(--text-3);
     cursor: pointer;
-    transition: color 120ms ease;
+    transition: color var(--dur-fast) ease;
   }
   .settings-crumbs h2 {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 14px;
+    font-size: var(--text-base);
     font-weight: 650;
     letter-spacing: -0.01em;
     color: var(--text-1);
@@ -2394,11 +2671,11 @@
   }
   .appearance-opt .lbl {
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--text-3);
   }
   .settings-summary > span {
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--text-2);
   }
   .provider-picker {
@@ -2408,7 +2685,7 @@
   }
   .picker-group {
     margin-bottom: 8px;
-    font-size: 12px;
+    font-size: var(--text-sm);
     font-weight: 650;
     color: var(--text-2);
   }
@@ -2427,14 +2704,14 @@
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
     background: var(--surface);
-    transition: background-color 120ms ease, color 120ms ease;
+    transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease;
   }
   /* an odd last card fills its row instead of leaving a dead grey cell */
   .provider-card:last-child:nth-child(odd) {
     grid-column: 1 / -1;
   }
   .provider-card.on {
-    background: var(--sel);
+    /* one selected-state signal: the inset rail, not a fill + rail */
     box-shadow: inset 2px 0 var(--accent);
   }
   .provider-card-select {
@@ -2470,7 +2747,7 @@
     align-self: center;
   }
   .provider-card-name {
-    font-size: 13px;
+    font-size: var(--text-base);
     font-weight: 600;
     color: var(--text-1);
   }
@@ -2479,7 +2756,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 10px;
+    font-size: var(--text-2xs);
     color: var(--text-3);
   }
   .provider-detail {
@@ -2497,7 +2774,7 @@
     min-width: 0;
   }
   .provider-detail-copy h3 {
-    font-size: 15px;
+    font-size: var(--text-md);
     font-weight: 650;
     letter-spacing: -0.01em;
     color: var(--text-1);
@@ -2505,7 +2782,7 @@
   .provider-detail-copy p {
     max-width: 56ch;
     margin-top: 5px;
-    font-size: 12px;
+    font-size: var(--text-sm);
     line-height: 1.55;
     color: var(--text-3);
   }
@@ -2525,7 +2802,7 @@
   }
   .required-field {
     margin-left: 7px;
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--text-3);
   }
   .connection-options,
@@ -2536,7 +2813,7 @@
   .manual-disclosure summary,
   .picker-advanced summary {
     color: var(--text-2);
-    font-size: 11px;
+    font-size: var(--text-xs);
     cursor: pointer;
   }
   .connection-options .fld {
@@ -2550,12 +2827,12 @@
     padding: 11px 12px;
     border-left: 2px solid var(--hairline-strong);
     background: var(--strip);
-    font-size: 11px;
+    font-size: var(--text-xs);
     line-height: 1.5;
     color: var(--text-2);
   }
   .discovery-state strong {
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--text-1);
   }
   .discovery-state.error {
@@ -2590,7 +2867,7 @@
   }
   .picker-note,
   .picker-count {
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--text-3);
   }
   .model-picker {
@@ -2608,7 +2885,7 @@
     gap: 9px;
   }
   .checkline {
-    font-size: 11px;
+    font-size: var(--text-xs);
     color: var(--text-2);
     white-space: nowrap;
   }
@@ -2652,13 +2929,13 @@
     flex-direction: column;
     gap: 3px;
     flex: 1;
-    font-size: 12px;
+    font-size: var(--text-sm);
   }
   .model-id {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 10px;
+    font-size: var(--text-2xs);
     color: var(--text-3);
   }
   .picker-footer {
@@ -2703,13 +2980,13 @@
     min-width: 0; /* one line — the model span truncates, never wraps */
   }
   .prov-name {
-    font-size: 13px;
+    font-size: var(--text-base);
     font-weight: 600;
     color: var(--text-1);
     flex: none;
   }
   .prov-model {
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--text-3);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -2732,12 +3009,12 @@
     background: transparent;
     border-radius: var(--r-sm);
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--text-2);
     cursor: pointer;
     white-space: nowrap;
-    transition: background-color 120ms ease, color 120ms ease,
-      transform 140ms var(--ease-out);
+    transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease,
+      transform var(--dur-base) var(--ease-out);
   }
   .rowact:not(:disabled):hover {
     color: var(--text-1);
@@ -2778,11 +3055,16 @@
     border-radius: var(--r-sm);
     color: var(--text-3);
     cursor: pointer;
-    transition: color 120ms ease, background-color 120ms ease,
-      transform 140ms var(--ease-out);
+    transition: color var(--dur-fast) ease, background-color var(--dur-fast) ease,
+      transform var(--dur-base) var(--ease-out);
   }
   .rowicon.danger {
     color: var(--text-3);
+  }
+  /* the inline output link is an <a>: keep it out of link styling and out of
+     the row's click target */
+  .rowicon.download {
+    text-decoration: none;
   }
   .rowicon.enhance.fail {
     color: var(--err);
@@ -2815,14 +3097,14 @@
     background: var(--surface);
     color: var(--text-2);
     font-family: var(--font-sans);
-    font-size: 12px;
+    font-size: var(--text-sm);
     line-height: 1.5;
     text-align: left;
     white-space: normal;
     box-shadow:
       0 18px 48px rgb(9 9 11 / 0.16),
       0 3px 10px rgb(9 9 11 / 0.08);
-    animation: popover-in 140ms var(--ease-out);
+    animation: popover-in var(--dur-base) var(--ease-out);
   }
   .delete-popover-arrow {
     position: absolute;
@@ -2855,7 +3137,7 @@
     justify-content: center;
     width: 34px;
     height: 34px;
-    border-radius: 10px;
+    border-radius: var(--r-sm);
     background: color-mix(in srgb, var(--err) 10%, var(--surface));
     color: var(--err);
   }
@@ -2869,7 +3151,7 @@
   }
   .delete-popover-card strong {
     color: var(--text-1);
-    font-size: 13px;
+    font-size: var(--text-base);
     line-height: 1.4;
   }
   .delete-popover-actions {
@@ -2907,7 +3189,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    animation: test-swap-in 160ms var(--ease-out);
+    animation: test-swap-in var(--dur-slow) var(--ease-out);
   }
   .model-test.ok {
     color: var(--success);
@@ -2915,11 +3197,9 @@
   .model-test.fail {
     color: var(--err);
   }
-  .model-test.ok .model-test-swap {
-    animation: test-result 1400ms var(--ease-out) both;
-  }
+  .model-test.ok .model-test-swap,
   .model-test.fail .model-test-swap {
-    animation: test-result 1800ms var(--ease-out) both;
+    animation: test-result var(--dur-slow) var(--ease-out) both;
   }
   .model-test .spin {
     width: 12px;
@@ -2931,19 +3211,16 @@
       transform: scale(0.84);
     }
   }
+  /* Result icon settles in and stays visible: a connection test's verdict
+     must not fade away while the row still reads ok/fail. */
   @keyframes test-result {
     0% {
       opacity: 0;
       transform: scale(0.72);
     }
-    14%,
-    78% {
+    100% {
       opacity: 1;
       transform: scale(1);
-    }
-    100% {
-      opacity: 0;
-      transform: scale(0.88);
     }
   }
 
@@ -2959,7 +3236,7 @@
     border: 1px solid var(--hairline-strong);
     border-radius: 999px;
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: var(--text-2xs);
     font-weight: 600;
     letter-spacing: 0.02em;
     color: var(--text-3);
@@ -2981,7 +3258,7 @@
   }
   .fld .lbl {
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--text-sm);
     color: var(--text-3);
   }
   .mdl input {
@@ -2993,9 +3270,9 @@
     border: 1px solid var(--hairline);
     border-radius: var(--r-sm);
     font-family: var(--font-mono);
-    font-size: 13px;
+    font-size: var(--text-base);
     color: var(--text-1);
-    transition: border-color 120ms ease;
+    transition: border-color var(--dur-fast) ease;
   }
   .mdl input::placeholder {
     color: var(--text-3);
@@ -3027,11 +3304,11 @@
     height: 28px;
     align-items: center;
     justify-content: center;
-    border-radius: 5px;
+    border-radius: var(--r-xs);
     color: var(--text-3);
     cursor: pointer;
     transform: translateY(-50%);
-    transition: color 120ms ease, background-color 120ms ease;
+    transition: color var(--dur-fast) ease, background-color var(--dur-fast) ease;
   }
   .secret-reveal:disabled {
     cursor: not-allowed;
@@ -3077,7 +3354,7 @@
     border-bottom: 1px solid var(--hairline);
   }
 
-  /* ---------- hover voice: one 120ms fade, pointer-only (touch devices
+  /* ---------- hover voice: one var(--dur-fast) fade, pointer-only (touch devices
      otherwise keep sticky hover states after a tap) ---------- */
   @media (hover: hover) and (pointer: fine) {
     .hdr-links a:hover,
@@ -3214,7 +3491,7 @@
       row-gap: 2px;
       grid-column: 2 / -1;
       font-family: var(--font-mono);
-      font-size: 12px;
+      font-size: var(--text-sm);
       color: var(--text-3);
       margin-top: 5px;
       font-variant-numeric: tabular-nums;
@@ -3237,7 +3514,7 @@
       display: flex;
       justify-content: flex-end;
       font-family: var(--font-mono);
-      font-size: 13px;
+      font-size: var(--text-base);
       font-weight: 600;
       color: var(--text-1);
       font-variant-numeric: tabular-nums;
@@ -3254,7 +3531,7 @@
       padding: 0 8px 8px 0;
     }
     .md td {
-      font-size: 13px;
+      font-size: var(--text-base);
       padding: 8px 8px 8px 0;
     }
     /* touch surfaces show no hover scrollbar, so panning inside tables and
@@ -3382,12 +3659,10 @@
       height: 44px;
       margin-block: -8px;
     }
-    /* fixed two-icon slot (2 × 44px rowicons + 2px gap): the ✓/× mark lands
-       at one x down the list whether or not wand/retry render beside the
-       always-present delete */
+    /* the same three-icon slot at the 44px touch size: the ✓/× mark lands at
+       one x down the list whether or not every icon renders */
     .archive-actions .item-actions {
-      min-width: 90px;
-      justify-content: flex-end;
+      --actions-w: 136px;
     }
     .warning-notification {
       top: 128px;
@@ -3462,14 +3737,31 @@
       inset: -10px -3px;
     }
     .badge,
+    .notice-action,
     .notification-close,
+    .notice-action::before,
     .file-picker::before,
     .badge::before,
     .secret-reveal::before,
-    .notification-close::before {
+    .notification-close::before,
+    .rowact::before,
+    .history-result::before,
+    .notification-action::before {
       content: "";
       position: absolute;
       inset: -8px;
+    }
+    .rowact,
+    .history-result,
+    .notification-action,
+    .notice-action {
+      position: relative;
+    }
+    .notice-action::before {
+      inset: -8px 0;
+    }
+    .history-result::before {
+      inset: -10px -2px;
     }
     .fin {
       width: 100%;
@@ -3484,8 +3776,8 @@
     .hdr-links { display: none; }
     .apphdr .shell { gap: 8px; flex-wrap: nowrap; padding-inline: 16px; }
     .apphdr .brand { gap: 6px; }
-    .apphdr .wordmark { font-size: 14px; }
-    .apphdr .ver { font-size: 11px; }
+    .apphdr .wordmark { font-size: var(--text-base); }
+    .apphdr .ver { font-size: var(--text-xs); }
     .hdr-icons { gap: 0; }
     /* sticky-footer column: short pages must still pin the link band to the
        viewport bottom, not leave it floating mid-page after the content */
@@ -3517,7 +3809,7 @@
     /* Keep URL + Convert on one row, with equal 44px first-line heights. */
     .urlrow { gap: 6px; }
     .urlrow .urlin {
-      font-size: 16px; /* avoid iOS focus zoom */
+      font-size: var(--text-md); /* avoid iOS focus zoom */
       padding: 12px 4px;
       min-height: 44px;
     }
@@ -3641,11 +3933,11 @@
   /* modal drops the scale — enter/exit become pure opacity fades */
   .mdl-veil,
   .mdl {
-    animation: mdl-fade-in 160ms ease-out !important;
+    animation: mdl-fade-in var(--dur-slow) ease-out !important;
   }
   .mdl-veil.out,
   .mdl-veil.out .mdl {
-    animation: mdl-fade-out 120ms ease forwards !important;
+    animation: mdl-fade-out var(--dur-fast) ease forwards !important;
   }
 }
 

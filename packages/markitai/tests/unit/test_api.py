@@ -20,7 +20,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -527,3 +527,87 @@ class TestPackageExports:
     def test_unknown_attribute_raises(self) -> None:
         with pytest.raises(AttributeError):
             _ = markitai.does_not_exist
+
+
+@pytest.mark.parametrize("on_conflict", ["overwrite", "rename"])
+async def test_disabled_llm_never_returns_previous_enhancement(
+    tmp_path: Path, on_conflict: Literal["overwrite", "rename"]
+) -> None:
+    source = tmp_path / "document.txt"
+    source.write_text("Current source content")
+    output = tmp_path / "out"
+    output.mkdir()
+    stale = output / "document.txt.llm.md"
+    stale.write_text("OLD LLM CONTENT")
+    cfg = MarkitaiConfig()
+    cfg.output.on_conflict = on_conflict
+    result = await aconvert(
+        source, output_dir=output, config=cfg, llm=False, profile="rag"
+    )
+    assert result.llm_markdown is None
+    assert result.llm_output_path is None
+    assert "Current source content" in result.markdown
+    assert stale.read_text() == "OLD LLM CONTENT"
+
+
+@pytest.mark.parametrize("profile,wikilinks", [("rag", False), ("obsidian", True)])
+async def test_profile_assets_survive_api_batch_and_history(
+    tmp_path: Path, profile, wikilinks
+) -> None:
+    from unittest.mock import MagicMock
+
+    from markitai.cli.processors.batch_llm import _document_images, _prepare_pending
+    from markitai.runs.history import record_cli_job
+    from markitai.runs.types import Outcome
+
+    source = Path(__file__).parents[1] / "fixtures" / "sample.pdf"
+    cfg = MarkitaiConfig()
+    cfg.output.wikilinks = wikilinks
+    cfg.cache.enabled = False
+    result = await aconvert(
+        source, config=cfg, output_dir=tmp_path / "out", profile=profile, llm=False
+    )
+    assert result.output_path is not None
+    assert result.assets
+    assert all(path.is_file() for path in result.assets)
+    assert set(_document_images(result.output_path, result.markdown)) == set(
+        result.assets
+    )
+    processor = MagicMock()
+    processor._engine.try_cached.return_value = None
+    processor.vision.prepare_image_plan.return_value.answer = None
+    pending, cached, oversized = _prepare_pending(
+        processor,
+        result.output_path.parent,
+        base_files=[result.output_path],
+        analyze_images=True,
+        cfg=cfg,
+    )
+    image_requests = [item for item, _plan in pending if item.kind == "image"]
+    assert cached == 0 and not oversized
+    assert len(image_requests) == len(result.assets)
+    assert {
+        result.output_path.parent / item.image
+        for item in image_requests
+        if item.image is not None
+    } == set(result.assets)
+    assert {
+        call.args[0] for call in processor.vision.prepare_image_plan.call_args_list
+    } == set(result.assets)
+    history = record_cli_job(
+        [
+            Outcome(
+                kind="file",
+                source=source.name,
+                status="completed",
+                output_path=result.output_path,
+            )
+        ],
+        options={"profile": profile},
+        jobs_root=tmp_path / "jobs",
+    )
+    assert history is not None
+    for asset in result.assets:
+        assert (
+            history / "out" / "assets" / asset.name
+        ).read_bytes() == asset.read_bytes()

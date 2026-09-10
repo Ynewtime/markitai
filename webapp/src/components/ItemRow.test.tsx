@@ -1,10 +1,15 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionItem } from "../hooks/useJobs";
 import { dicts } from "../i18n";
 import { ItemRow } from "./ItemRow";
+
+afterEach(() => {
+  // A fake-timer test must not leak its clock into the next one.
+  vi.useRealTimers();
+});
 
 function item(status: SessionItem["status"]): SessionItem {
   return {
@@ -37,7 +42,6 @@ function renderRow(
     item: value,
     index: 0,
     showCost: false,
-    now: Date.now(),
     selected: false,
     tabbable: true,
     canDelete: true,
@@ -83,9 +87,14 @@ describe("ItemRow terminal actions", () => {
     const bits = Array.from(meta?.querySelectorAll(".metabit") ?? []).map(
       (bit) => bit.textContent,
     );
-    expect(bits).toEqual(["100 B", "0.1s", "07-15 10:00", "Base"]);
+    expect(bits.slice(0, 2)).toEqual(["100 B", "0.1s"]);
+    expect(bits[3]).toBe("Base");
     // the timestamp bit is tagged: it is what the tightest phones drop
-    expect(meta?.querySelector(".metabit-time")).toHaveTextContent("07-15 10:00");
+    expect(meta?.querySelector(".metabit-time")).toHaveTextContent(
+      new Date("2026-07-15T10:00:00Z").toLocaleString("en-CA", {
+        month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
+      }).replace(",", ""),
+    );
     // separators are CSS ::before — a joined string would strand a "/" on wrap
     expect(meta?.textContent).not.toContain("/");
   });
@@ -230,6 +239,19 @@ describe("ItemRow terminal actions", () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
+  it("downloads the output straight from the row without opening the preview", async () => {
+    const user = userEvent.setup();
+    const onPreview = vi.fn();
+    renderRow(item("done"), { onPreview });
+
+    const link = screen.getByRole("link", { name: `Download .md: doc.pdf` });
+    expect(link).toHaveAttribute("href", "/api/jobs/job-1/files/doc.md");
+    expect(link).toHaveAttribute("download");
+    await user.click(link);
+    // The row's own click would open the preview; the action stops there.
+    expect(onPreview).not.toHaveBeenCalled();
+  });
+
   it("toggles the full error detail on the failed row", async () => {
     const user = userEvent.setup();
     const { container } = renderRow(item("error"));
@@ -241,6 +263,86 @@ describe("ItemRow terminal actions", () => {
     expect(container.querySelector(".err-full")).toBeNull();
     await user.click(row);
     expect(container.querySelector(".err-full")).not.toBeNull();
+  });
+
+  it("ticks the elapsed time of a running row and stops on unmount", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-15T10:00:04.200Z"));
+    const running = {
+      ...item("running"),
+      output: null,
+      durationMs: null,
+      finishedAt: null,
+      startedAt: Date.now() - 4200,
+    };
+    const { unmount } = renderRow(running);
+
+    expect(screen.getByRole("option").querySelector(".c-duration")).toHaveTextContent("4.2s");
+    // The ticker runs at 150ms: one second of fake time is six ticks.
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(screen.getByRole("option").querySelector(".c-duration")).toHaveTextContent("5.1s");
+
+    unmount();
+    // A row that left the list must not keep a 150ms ticker alive.
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
+  });
+
+  it("shows a dash rather than a zero clock before the server reports a start", () => {
+    renderRow({
+      ...item("running"),
+      output: null,
+      durationMs: null,
+      finishedAt: null,
+      startedAt: null,
+    });
+
+    expect(screen.getByRole("option").querySelector(".c-duration")).toHaveTextContent("-");
+  });
+
+  it("speaks a long duration as minutes and seconds, not a clock time", () => {
+    renderRow({ ...item("done"), durationMs: 312_400 });
+
+    // 5:12 on screen, "5 Minutes 12 Seconds" in the accessible name: fmtDur's
+    // clock form is read out as a time of day.
+    expect(screen.getByRole("option")).toHaveAccessibleName(
+      "doc.pdf, 100 B, 5 Minutes 12 Seconds, Done",
+    );
+    // Printed once as a clock time, once in the meta line.
+    expect(screen.getAllByText("5:12")).toHaveLength(2);
+  });
+
+  it("rounds the spoken duration exactly like the printed one", () => {
+    // 59.96s rolls the printed label over to "1:00"; the spoken one must not
+    // still say "60.0 Seconds".
+    renderRow({ ...item("done"), durationMs: 59_960 });
+
+    expect(screen.getByRole("option")).toHaveAccessibleName(
+      "doc.pdf, 100 B, 1 Minute, Done",
+    );
+  });
+
+  it("labels a skipped row from the one status family", () => {
+    const skipped = {
+      ...item("done"),
+      output: null,
+      skipped: true,
+      skipReason: "exists",
+    };
+    renderRow(skipped);
+
+    // One key per concept: the icon tooltip and the accessible name read the
+    // same status word, while the reason cell spells out why.
+    expect(screen.getByTitle(dicts.en.statusSkipped)).toHaveAttribute(
+      "data-tooltip",
+      dicts.en.statusSkipped,
+    );
+    expect(screen.getByRole("option")).toHaveAccessibleName(
+      `doc.pdf, 100 B, ${dicts.en.statusSkipped}`,
+    );
+    expect(screen.getByText(dicts.en.skipExists)).toBeVisible();
   });
 
   it("hands focus to the neighboring row after a delete", async () => {

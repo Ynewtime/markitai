@@ -46,19 +46,19 @@ function expectPlacement(bubble: HTMLElement, left: number, top: number) {
 }
 
 describe("HelpTooltip positioning", () => {
-  it("portals directly to body and centers the measured bubble below its anchor", () => {
+  it("portals directly to body and centers the measured bubble above its anchor", () => {
     const { bubble, container } = show();
     expect(bubble.parentElement).toBe(document.body);
     expect(container).not.toContainElement(bubble);
-    expectPlacement(bubble, 300, 332);
+    expectPlacement(bubble, 300, 228);
   });
 
   it.each([
     [400, 12, 300, 44],
     [400, 750, 300, 678],
-    [0, 300, 12, 332],
-    [970, 300, 748, 332],
-  ])("clamps viewport edges and flips without overlap at (%i, %i)", (x, y, left, top) => {
+    [0, 300, 12, 228],
+    [970, 300, 748, 228],
+  ])("clamps viewport edges and flips below only when above cannot fit at (%i, %i)", (x, y, left, top) => {
     anchorRect = box(x, y, 40, 24);
     const { bubble } = show();
     expectPlacement(bubble, left, top);
@@ -86,7 +86,7 @@ describe("HelpTooltip positioning", () => {
     vi.stubGlobal("innerHeight", 800);
     anchorRect = box(400, 300, 100, 24);
     act(() => resized());
-    expectPlacement(bubble, 330, 332);
+    expectPlacement(bubble, 330, 112);
     expect(bubble).toHaveStyle({ maxHeight: "200px" });
     bubbleHeight = 100;
     anchorRect = box(400, 700, 100, 24);
@@ -124,5 +124,32 @@ describe("HelpTooltip positioning", () => {
     unmount();
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
     expect(disconnect).toHaveBeenCalledTimes(2);
+  });
+
+  it("auto-hides after a delay even while the pointer stays on the trigger", () => {
+    vi.useFakeTimers();
+    try {
+      show();
+      expect(screen.getByRole("tooltip")).toBeInTheDocument();
+      act(() => { vi.advanceTimersByTime(4000); });
+      expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+      // Re-hovering shows it again and restarts the clock.
+      fireEvent.mouseEnter(screen.getByRole("button"));
+      expect(screen.getByRole("tooltip")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("hides as soon as the pointer leaves the trigger", () => {
+    vi.useFakeTimers();
+    try {
+      show();
+      fireEvent.mouseLeave(screen.getByRole("button"));
+      act(() => { vi.advanceTimersByTime(150); });
+      expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

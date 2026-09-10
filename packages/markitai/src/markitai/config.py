@@ -1079,9 +1079,28 @@ class ConfigManager:
         return None
 
     def _load_json(self, path: Path) -> dict[str, Any]:
-        """Load JSON configuration file."""
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
+        """Load JSON configuration file.
+
+        A malformed or unreadable file is a user error, not a crash: raise the
+        same framework-free error the validation failures use, so every entry
+        point reports it as a message instead of a JSONDecodeError traceback.
+        """
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ConfigFileError(
+                f"Invalid JSON in {path}: line {e.lineno} column {e.colno}: {e.msg}"
+            ) from e
+        except OSError as e:
+            raise ConfigFileError(f"Cannot read config file {path}: {e}") from e
+        except UnicodeError as e:
+            raise ConfigFileError(f"Config file {path} must contain UTF-8 text") from e
+        if not isinstance(data, dict):
+            raise ConfigFileError(
+                f"Invalid configuration in {path}: expected a JSON object"
+            )
+        return data
 
     def _generate_minimal_config(self) -> dict[str, Any]:
         """Generate minimal template config for init command.

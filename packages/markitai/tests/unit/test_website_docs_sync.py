@@ -16,9 +16,12 @@ The guard is deliberately cheap and one-directional where it has to be:
   prose does not.
 * **Fails** when the English and Chinese CLI guides document different option
   sets, which is how half-finished bilingual edits show up.
-* **Warns only** when the CLI defines an option no guide mentions. Undocumented
-  is a gap, not a lie, and failing on it would make every new flag a
-  docs-blocking change.
+* **Fails** when the CLI defines an option no guide mentions at all, and when
+  a top-level command has no reference section. Both are coverage gaps rather
+  than lies, but a shipped flag nobody documented is a flag nobody can use.
+* **Ignores fenced code blocks** when scanning headings and flags: a shell
+  comment such as `# removed in 1.0` inside a snippet must not be able to
+  satisfy — or excuse — any rule.
 
 What it cannot catch: wrong descriptions, stale defaults, wrong values for a
 `Choice` option, or prose that contradicts behavior. Those still need review.
@@ -29,6 +32,7 @@ from __future__ import annotations
 import re
 import tomllib
 from pathlib import Path
+from urllib.parse import unquote
 
 import click
 import pytest
@@ -53,8 +57,12 @@ _FOREIGN_FLAGS = frozenset(
     {
         "--force",  # uv tool install / pipx install
         "--help",  # click's built-in, not a declared param
+        "--from",  # uvx --from "markitai[mcp]" in MCP client setup snippets
     }
 )
+
+# A Markdown heading: `#`, optional level, then a space (a bash comment is not one).
+_HEADING_RE = re.compile(r"^#{1,6}\s")
 
 # A removed flag may only be named under a heading that says it is removed.
 _REMOVAL_MARKERS = ("removed", "已移除")
@@ -102,15 +110,41 @@ def _cli_option_names() -> set[str]:
     return walk(app)
 
 
-def _removed_option_names() -> dict[str, str]:
-    """The CLI's own removed-option table: removed name -> replacement."""
+def _removed_option_names() -> dict[str, str | None]:
+    """The CLI's own removed-option table: removed name -> replacement.
+
+    A ``None`` replacement means the option was dropped with nothing to use
+    instead (``--kreuzberg``), and the docs must not promise a successor.
+    """
     from markitai.cli.framework import _REMOVED_OPTIONS
 
     return dict(_REMOVED_OPTIONS)
 
 
+def _prose_lines(text: str) -> list[str]:
+    """Lines with fenced code blocks blanked out, numbering preserved.
+
+    A bash comment (`# removed in 1.0`) or an install snippet inside a fence
+    must not count as a heading or as documentation of a flag.
+    """
+    out: list[str] = []
+    in_fence = False
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            out.append("")
+            continue
+        out.append("" if in_fence else line)
+    return out
+
+
 def _flags_in(path: Path) -> set[str]:
-    """Every long flag named anywhere in one page."""
+    """Every long flag named anywhere in one page, examples included.
+
+    Unlike the heading scan, code fences count here: a flag shown in a
+    runnable example is discoverable. Only headings need the prose-only view,
+    because a bash `# comment` otherwise reads as a section title.
+    """
     return {
         flag
         for flag in _FLAG_RE.findall(path.read_text(encoding="utf-8"))
@@ -119,13 +153,20 @@ def _flags_in(path: Path) -> set[str]:
 
 
 def _sectioned_lines(path: Path) -> list[tuple[str, str]]:
-    """Yield (nearest preceding heading, line) for each line of a page."""
+    """Yield (nearest preceding prose heading, line) for every line.
+
+    Lines inside a fence stay in the scan — a stale example is still stale —
+    but a bash `# comment` inside one never becomes the heading that would
+    excuse the flag it mentions.
+    """
+    raw_lines = path.read_text(encoding="utf-8").splitlines()
+    prose_lines = _prose_lines(path.read_text(encoding="utf-8"))
     heading = ""
     out: list[tuple[str, str]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.startswith("#"):
-            heading = line
-        out.append((heading, line))
+    for raw_line, prose_line in zip(raw_lines, prose_lines):
+        if _HEADING_RE.match(prose_line):
+            heading = prose_line
+        out.append((heading, raw_line))
     return out
 
 
@@ -217,9 +258,14 @@ def test_readme_extras_table_matches_package_metadata() -> None:
 
 @pytest.mark.parametrize("guide", (_EN_GUIDE, _ZH_GUIDE))
 def test_optional_capability_extras_are_documented(guide: Path) -> None:
-    """Both guides must name the extras a reader has to install by hand."""
+    """Both guides must name the extras a reader has to install by hand.
+
+    Written from the package metadata so a new extra cannot ship
+    undocumented; `all` is included because the guide presents it as the
+    one-step option.
+    """
     text = (guide / "getting-started.md").read_text(encoding="utf-8")
-    for extra in ("heif", "svg", "browser", "ocr"):
+    for extra in sorted(_declared_extras()):
         assert f"markitai[{extra}]" in text, (
             f"{(guide / 'getting-started.md').relative_to(_REPO_ROOT)} never "
             f"tells the reader how to install the {extra!r} extra"
@@ -304,6 +350,11 @@ def test_doctor_docs_treat_ocr_as_optional() -> None:
         "核心 RapidOCR 检查",
         "Required Dependencies\n  ✓ RapidOCR",
         "必需依赖\n  ✓ RapidOCR",
+        # The configuration page claimed OCR "works out of the box" long
+        # after it moved behind the `ocr` extra; a bare `markitai` install
+        # fails on `--ocr`.
+        "RapidOCR is included as a dependency and works out of the box",
+        "RapidOCR 已作为依赖包含，开箱即用",
     )
     for path in _iter_docs():
         text = path.read_text(encoding="utf-8")
@@ -312,3 +363,201 @@ def test_doctor_docs_treat_ocr_as_optional() -> None:
                 f"{path.relative_to(_REPO_ROOT)} still calls OCR a core "
                 f"requirement: {phrase!r}"
             )
+
+
+# ============================================================
+# Version, command coverage, anchors, licence: facts that drift silently
+# ============================================================
+
+
+def _project_version() -> str:
+    """The version is single-sourced in `__init__.py` (hatch dynamic version)."""
+    init = Path(__file__).resolve().parents[2] / "src" / "markitai" / "__init__.py"
+    match = re.search(
+        r'^__version__\s*=\s*["\']([^"\']+)',
+        init.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    assert match, f"no __version__ in {init}"
+    return match.group(1)
+
+
+def test_docs_do_not_describe_the_project_as_pre_1_0() -> None:
+    """markitai is 1.x; a stale "0.x" makes a stable API look provisional."""
+    assert not _project_version().startswith("0."), (
+        "this guard exists for the 1.x era; update it with the version bump"
+    )
+    offenders: list[str] = []
+    for path in _iter_docs():
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if re.search(r"\b0\.x\b", line):
+                offenders.append(
+                    f"{path.relative_to(_REPO_ROOT)}:{number}: {line.strip()}"
+                )
+    assert not offenders, "docs still describe the project as 0.x:\n" + "\n".join(
+        offenders
+    )
+
+
+def _top_level_commands() -> set[str]:
+    """Every subcommand the CLI group actually exposes."""
+    from markitai.cli import app
+
+    return set(app.list_commands(click.Context(app)))
+
+
+@pytest.mark.parametrize("guide", (_EN_GUIDE, _ZH_GUIDE))
+def test_cli_reference_covers_every_top_level_command(guide: Path) -> None:
+    """A command nobody documents is a command nobody finds.
+
+    `llms.txt` promises "Every command and flag"; `serve` and `mcp` used to
+    be named only in passing, so the reference never taught them.
+    """
+    page = guide / "cli.md"
+    headings = [
+        line
+        for line in _prose_lines(page.read_text(encoding="utf-8"))
+        if _HEADING_RE.match(line)
+    ]
+    missing = sorted(
+        name
+        for name in _top_level_commands()
+        if not any(f"markitai {name}" in heading for heading in headings)
+    )
+    assert not missing, f"{page.relative_to(_REPO_ROOT)} has no section for: {missing}"
+
+
+# Targets generated by `bun run docs:build` rather than committed.
+_GENERATED_PAGE_TARGETS = {"/changelog", "/zh/changelog"}
+
+_ZH_LINK_RE = re.compile(r"\]\((/zh/[^)\s#]*)(?:#([^)\s]+))?\)")
+
+
+def _slugify_heading(text: str) -> str:
+    """Approximate VitePress/markdown-it-anchor ids (CJK kept as-is).
+
+    ``### `--record-history``` renders as ``id="record-history"``: leading
+    and trailing punctuation is stripped, so the slug is stripped too.
+    """
+    # An explicit ``{#anchor}`` suffix is the heading's real id; drop it from
+    # the text so the slug matches what the link points at.
+    slug = re.sub(r"\s*\{#[^}]*\}\s*$", "", text).strip().lower()
+    slug = re.sub(r"[`*_]", "", slug)
+    slug = slug.replace(" ", "-")
+    return re.sub(r"[^\w\u4e00-\u9fff-]", "", slug, flags=re.UNICODE).strip("-")
+
+
+def _heading_slugs(path: Path) -> set[str]:
+    """Every id a heading answers to: its explicit `{#id}` or its slug."""
+    slugs: set[str] = set()
+    for line in _prose_lines(path.read_text(encoding="utf-8")):
+        match = re.match(r"^#{1,6}\s+(.*)$", line)
+        if not match:
+            continue
+        text = match.group(1)
+        explicit = re.search(r"\{#[^}]*\}\s*$", text)
+        if explicit:
+            slugs.add(explicit.group(0)[2:-1].strip())
+        slugs.add(_slugify_heading(text))
+    return slugs
+
+
+def test_zh_internal_anchors_resolve() -> None:
+    """A Chinese link must resolve to a page, and to a heading when it has one."""
+    offenders: list[str] = []
+    for page in sorted(_ZH_GUIDE.glob("*.md")):
+        text = page.read_text(encoding="utf-8")
+        for match in _ZH_LINK_RE.finditer(text):
+            target, anchor = match.group(1), match.group(2)
+            candidate = _WEBSITE / target.lstrip("/")
+            if not candidate.suffix:
+                candidate = candidate.with_suffix(".md")
+            if not candidate.exists():
+                # The changelog pages are copied in at build time; their
+                # committed sources are the repo-root files.
+                if target not in _GENERATED_PAGE_TARGETS:
+                    offenders.append(
+                        f"{page.relative_to(_REPO_ROOT)} -> {target} "
+                        f"(target page does not exist)"
+                    )
+                continue
+            if anchor is not None and unquote(anchor) not in _heading_slugs(candidate):
+                offenders.append(
+                    f"{page.relative_to(_REPO_ROOT)} -> {target}#{anchor} "
+                    f"(no such heading in {candidate.relative_to(_REPO_ROOT)})"
+                )
+    assert not offenders, "broken Chinese internal anchors:\n" + "\n".join(offenders)
+
+
+def test_llms_txt_states_the_licence_accurately() -> None:
+    """`llms.txt` is what AI agents quote for compliance; it cannot say "MIT".
+
+    The default install bundles Artifex's PyMuPDF stack under AGPL-3.0 or a
+    commercial licence, so a bare "MIT licensed" overclaims.
+    """
+    text = (_WEBSITE / "public" / "llms.txt").read_text(encoding="utf-8")
+    assert "MIT licensed" not in text, (
+        "llms.txt still claims the whole project is MIT licensed; name the "
+        "AGPL PyMuPDF components and point at NOTICE instead"
+    )
+    assert "AGPL" in text or "NOTICE" in text, (
+        "llms.txt must explain the AGPL/commercial PyMuPDF component"
+    )
+
+
+def _comparison_table(text: str) -> list[str]:
+    """Rows of the markitai-vs-others table, whitespace-normalised."""
+    rows: list[str] = []
+    started = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("| |") and "markitai" in stripped:
+            started = True
+        if not started:
+            continue
+        if not stripped.startswith("|"):
+            break
+        rows.append(" ".join(stripped.split()))
+    return rows
+
+
+def test_readme_and_site_publish_the_same_comparison_table() -> None:
+    """The same table lives on GitHub and on the site; drift misleads one of them."""
+    readme = _comparison_table(_README.read_text(encoding="utf-8"))
+    site = _comparison_table((_EN_GUIDE / "comparison.md").read_text(encoding="utf-8"))
+    assert len(readme) >= 2, "README.md lost its markitai-vs-others comparison table"
+    assert readme == site, (
+        "README.md and website/guide/comparison.md publish different comparison "
+        "tables; update both from one source"
+    )
+    zh_site = _comparison_table(
+        (_ZH_GUIDE / "comparison.md").read_text(encoding="utf-8")
+    )
+    assert len(zh_site) == len(site), (
+        "the Chinese comparison page has a different number of table rows"
+    )
+
+
+def test_home_feature_cards_stay_bilingual_and_grid_aligned() -> None:
+    """One shared feature list feeds both home pages.
+
+    VitePress picks `grid-6` for a multiple of three cards and `grid-4`
+    otherwise, so five cards leave one alone in a four-wide row. Each entry
+    also carries its own `en`/`zh` copy; a one-language addition is the usual
+    way the two home pages drift apart.
+    """
+    features = (_WEBSITE / ".vitepress" / "theme" / "features.ts").read_text(
+        encoding="utf-8"
+    )
+    cards = len(re.findall(r"icon: svg\(", features))
+    assert cards >= 3 and cards % 3 == 0, (
+        f"{cards} home feature cards do not fill the default theme's grid "
+        f"(use a multiple of three)"
+    )
+    # 4-space indent: the interface's own `en:`/`zh:` declarations are 2-space.
+    english = len(re.findall(r"^    en: \{$", features, re.MULTILINE))
+    chinese = len(re.findall(r"^    zh: \{$", features, re.MULTILINE))
+    assert english == cards, "a feature card is missing its English copy"
+    assert chinese == cards, "a feature card is missing its Chinese copy"

@@ -24,6 +24,7 @@ import re
 import socket
 from collections import Counter
 from collections.abc import Awaitable, Callable, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass
 from urllib.parse import parse_qsl, unquote, urlsplit
 
@@ -32,6 +33,10 @@ from markitai.utils.text import normalize_identifier_key
 
 ALL_STRATEGIES = list(ALL_FETCH_STRATEGIES)
 LOCAL_ONLY_STRATEGIES = list(LOCAL_STRATEGIES)
+
+# Task-local authority, inherited by fetch/image subtasks without changing
+# trusted CLI/API callers or sharing a mutable policy between concurrent jobs.
+public_network_only: ContextVar[bool] = ContextVar("public_network_only", default=False)
 
 
 def _extract_host(domain: str) -> str:

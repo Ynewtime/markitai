@@ -326,8 +326,8 @@ class TestPrintSummaryWithSkips:
 
         captured = capsys.readouterr()
         # Should show "1/3 ✓" (only 1 truly completed) and mention 2 skipped
-        assert "1/3" in captured.out
-        assert "2 skipped" in captured.out
+        assert "1/3" in captured.err
+        assert "2 skipped" in captured.err
 
     def test_skip_warnings_show_two_example_filenames(
         self, tmp_path: Path, capsys
@@ -372,9 +372,9 @@ class TestPrintSummaryWithSkips:
 
         captured = capsys.readouterr()
         # Should be ONE grouped line with 2 example names + "..."
-        assert "5 files skipped (image_only)" in captured.out
+        assert "5 files skipped (image_only)" in captured.err
         # Only 2 example filenames shown, plus "..."
-        assert "..." in captured.out
+        assert "..." in captured.err
 
     def test_skip_warnings_show_hint_for_image_only(
         self, tmp_path: Path, capsys
@@ -398,8 +398,8 @@ class TestPrintSummaryWithSkips:
         processor.print_summary()
 
         captured = capsys.readouterr()
-        assert "--llm" in captured.out
-        assert "--ocr" in captured.out
+        assert "--llm" in captured.err
+        assert "--ocr" in captured.err
 
     def test_skip_warnings_many_files_no_individual_names(
         self, tmp_path: Path, capsys
@@ -424,8 +424,8 @@ class TestPrintSummaryWithSkips:
         processor.print_summary()
 
         captured = capsys.readouterr()
-        assert "10 files skipped (image_only)" in captured.out
-        assert "..." in captured.out
+        assert "10 files skipped (image_only)" in captured.err
+        assert "..." in captured.err
 
     def test_skip_warnings_multiple_reasons_separate_lines(
         self, tmp_path: Path, capsys
@@ -454,8 +454,8 @@ class TestPrintSummaryWithSkips:
         processor.print_summary()
 
         captured = capsys.readouterr()
-        assert "1 file skipped (image_only)" in captured.out
-        assert "1 file skipped (exists)" in captured.out
+        assert "1 file skipped (image_only)" in captured.err
+        assert "1 file skipped (exists)" in captured.err
 
 
 class TestBatchProcessor:

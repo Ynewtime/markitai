@@ -690,3 +690,15 @@ class TestBracketNotationSetAndNullGet:
         assert manager.get("fetch.jina.api_key", sentinel) is None
         # A truly missing key returns the default
         assert manager.get("fetch.jina.nope", sentinel) is sentinel
+
+
+@pytest.mark.parametrize("raw", [b"null", b"123", b'"text"', b"[]", b"\xff\xfe"])
+@pytest.mark.parametrize("overrides", [None, {"llm": {"enabled": False}}])
+def test_invalid_config_shape_is_user_error(
+    tmp_path: Path, raw: bytes, overrides
+) -> None:
+    config_file = tmp_path / "config.json"
+    config_file.write_bytes(raw)
+    with pytest.raises(ConfigFileError):
+        ConfigManager().load(config_path=config_file, overrides=overrides)
+    assert config_file.read_bytes() == raw

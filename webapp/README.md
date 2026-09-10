@@ -1,6 +1,6 @@
 # markitai webapp
 
-Web UI for `markitai serve` — Vite + React 19 + TypeScript + Tailwind CSS v4.
+Web UI for `markitai serve` — Vite + React 19 + TypeScript + plain CSS (no utility framework; the sheet carries its own preflight reset).
 
 ## Dev
 
@@ -8,7 +8,7 @@ Run the API and the dev server side by side:
 
 ```sh
 uv run markitai serve --port 3611 --no-open   # API on 127.0.0.1:3611
-bun install
+bun install --frozen-lockfile
 bun run dev                                   # Vite proxies /api -> 127.0.0.1:3611
 ```
 
@@ -62,7 +62,9 @@ map is only a fallback while capabilities load or when using an older server.
   Cloudflare Workers AI file upload. Auto discloses policy-gated remote fallbacks.
 - Skip-cache bypasses reads rather than disabling cache storage, matching CLI
   `--no-cache`.
-- The CLI preview is compact: it omits features already supplied by the
+- The CLI preview is compact and opt-in: the toolbar's terminal button (or
+  opening the Options panel) reveals it, so the first screen stays with the
+  input. It omits features already supplied by the
   selected preset and retains explicit deviations, including image opt-outs. It
   assumes default local CLI configuration and matching preset definitions.
   Minimal defaults therefore need only `--preset minimal`. While no URLs are
@@ -87,7 +89,28 @@ map is only a fallback while capabilities load or when using an older server.
 
 ## Layout
 
-- `src/styles/app.css` — all brand tokens (Tailwind `@theme`) + component CSS
+- `src/styles/app.css` — all design tokens + component CSS (plain CSS, no
+  utility framework; every size, radius, duration and shadow is a token)
 - `src/api/` — typed client mirroring the serve API contract
 - `src/hooks/useJobs.ts` — session state: jobs, SSE item/job events
 - `src/i18n.ts` — en/zh dictionaries (auto-detected, default en)
+- `scripts/check-css-scale.mjs` — the scale guard (`bun run check:css`)
+
+## Design scale
+
+One ladder, enforced by `bun run check:css`:
+
+| Family | Allowed values | Tokens |
+| --- | --- | --- |
+| Type | 10, 11, 12, 14, 16, 18, 20, 24px; 9px exception | `--text-2xs` … `--text-2xl` |
+| Radius | 0, 2, 6, 8, 14, 16, 999px | `--r-xs`, `--r-sm`, `--r-term`, `--r-panel` |
+| Motion | 120, 140, 160ms | `--dur-fast`, `--dur-base`, `--dur-slow` |
+| Shadow | popover, modal only | `--shadow-pop`, `--shadow-modal` |
+
+The guard fails the build on any value outside these sets, so a new step is a
+token change first. The declared print (`pt`) ladder, the fluid `clamp()`
+hero bounds (30–44px), and the reset's relative sizes (`80%`, `75%`, `1em`, `inherit`) are
+the only exemptions. The same guard fails when the preflight reset
+(`box-sizing`/`margin` on `*`) goes missing. Dark tokens have one definition shared by the
+`prefers-color-scheme` block and `[data-theme="dark"]`; `--font-sans` carries a
+CJK fallback chain because the UI ships a Chinese dictionary.

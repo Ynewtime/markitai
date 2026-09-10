@@ -78,11 +78,16 @@ Add extras only when you need them (`uv tool install 'markitai[<extra>]' --force
 | Extra / Dependency | Enables |
 |--------------------|---------|
 | `markitai[browser]` (Playwright) | `-s playwright` browser rendering for SPA/JS-heavy pages |
-| `markitai[ocr]` (RapidOCR) | `--ocr` local OCR for scanned PDFs/images |
-| `markitai[legacy]` (anydoc) | Legacy Office `.doc`/`.ppt` conversion |
+| `markitai[claude-agent]` | Claude Agent SDK as an LLM provider |
+| `markitai[copilot]` | GitHub Copilot SDK as an LLM provider |
+| `markitai[extra-fetch]` | curl-cffi HTTP client, for sites with TLS fingerprint detection |
 | `markitai[heif]` | HEIC/HEIF/AVIF image input |
-| `markitai[svg]` | High-quality SVG rendering |
+| `markitai[legacy]` (anydoc) | Legacy Office `.doc`/`.ppt` conversion |
+| `markitai[mcp]` | Bundled `markitai-mcp` server for AI agents (Model Context Protocol) |
+| `markitai[ocr]` (RapidOCR) | `--ocr` local OCR for scanned PDFs/images |
 | `markitai[serve]` | Local web workspace and REST API |
+| `markitai[svg]` | High-quality SVG rendering |
+| `markitai[all]` | Everything above |
 | Jina API key | `-s jina` remote reader (`JINA_API_KEY` env var) |
 | Cloudflare | `-s cloudflare` cloud rendering (`CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`) |
 
@@ -118,7 +123,7 @@ A manual install sets up nothing optional: run `markitai doctor` to see what's a
 
 ## Output Structure
 
-```
+```text
 output/
 ├── document.pdf.md          # Basic Markdown (skipped in --llm mode unless --keep-base)
 ├── document.pdf.llm.md      # LLM-enhanced version (when --llm is used)

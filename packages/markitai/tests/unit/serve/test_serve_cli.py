@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -179,8 +180,61 @@ class TestServeToken:
         token = mock_create.call_args.kwargs["token"]
         assert isinstance(token, str) and token.startswith("mk_")
         assert len(token) > 20
-        # The banner prints a ready-to-open URL carrying the token.
-        assert f"http://127.0.0.1:3600/?token={token}" in _squeeze(result.stderr)
+        # The banner prints a ready-to-open URL carrying the token in the
+        # fragment, so the token never reaches an access log.
+        assert f"http://127.0.0.1:3600/#token={token}" in _squeeze(result.stderr)
+        assert "?token=" not in result.stderr
+
+    @pytest.mark.parametrize(
+        "banner_kind,expected",
+        [("current", 0), ("query", 1), ("missing", 1), ("mixed", 1)],
+    )
+    def test_release_checks_accept_current_banner_and_reject_unsafe_variants(
+        self,
+        cli_runner: CliRunner,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        banner_kind: str,
+        expected: int,
+    ) -> None:
+        import shutil
+        import subprocess
+
+        bash = shutil.which("bash")
+        if bash is None:
+            pytest.skip("bash is required to exercise the release shell checks")
+        result, _ = _invoke_serve(cli_runner, ["--port", "8900"], monkeypatch)
+        assert result.exit_code == 0
+        banner = result.stderr
+        if banner_kind == "query":
+            banner = banner.replace("#token=", "?token=")
+        elif banner_kind == "missing":
+            banner = "Server started without a sign-in URL.\n"
+        elif banner_kind == "mixed":
+            banner += "\nhttp://127.0.0.1:8900/?token=leaked-token\n"
+        logs = tmp_path / "18-serve"
+        logs.mkdir()
+        (logs / "serve.log").write_text(banner, encoding="utf-8")
+        script = Path(__file__).resolve().parents[5] / "scripts/e2e_release_check.sh"
+        checks = [
+            line
+            for line in script.read_text(encoding="utf-8").splitlines()
+            if line.startswith('check "the sign-in URL')
+            or line.startswith('check "the startup log keeps the token')
+        ]
+        assert len(checks) == 2
+        checked = subprocess.run(
+            [
+                bash,
+                "-c",
+                'check() { shift; "$@" || exit 1; }\nSERVE_PORT=8900\n'
+                + "\n".join(checks),
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+        )
+        assert checked.returncode == expected, checked.stderr
 
     def test_env_var_pins_the_token(
         self, cli_runner: CliRunner, monkeypatch: pytest.MonkeyPatch
@@ -199,7 +253,8 @@ class TestServeToken:
             result = cli_runner.invoke(serve, ["--no-open"])
         assert result.exit_code == 0, result.output
         assert mock_create.call_args.kwargs["token"] == "pinned-secret"
-        assert "?token=pinned-secret" in result.stderr
+        assert "#token=pinned-secret" in result.stderr
+        assert "?token=pinned-secret" not in result.stderr
 
     def test_no_auth_disables_the_token(
         self, cli_runner: CliRunner, monkeypatch: pytest.MonkeyPatch
@@ -207,7 +262,7 @@ class TestServeToken:
         result, mock_create = _invoke_serve(cli_runner, ["--no-auth"], monkeypatch)
         assert result.exit_code == 0, result.output
         assert mock_create.call_args.kwargs["token"] is None
-        assert "?token=" not in result.stderr
+        assert "token=" not in result.stderr
 
     def test_ready_probe_authenticates_itself(self) -> None:
         """--host <LAN-IP> makes the probe a non-loopback peer of its own
@@ -291,7 +346,8 @@ class TestNonLoopbackBindWarning:
         result, _ = _invoke_serve(cli_runner, args, monkeypatch)
         assert result.exit_code == 0, result.output
         stderr = _squeeze(result.stderr)
-        assert "?token=mk_" in stderr
+        assert "#token=mk_" in stderr
+        assert "?token=" not in stderr
         assert "Warning" not in stderr
 
     def test_no_auth_loopback_stays_silent(

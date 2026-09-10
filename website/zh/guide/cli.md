@@ -30,7 +30,9 @@ markitai docs/ --llm --llm-batch -o out/       # 挂等到 --llm-batch-timeout�
 markitai --llm-batch-collect <batch-id> -o out/  # 稍后收取已转交的 batch
 ```
 
-需要单模型的 OpenAI 或 Anthropic 池。命中缓存的文档立即完成；batch 中失败的文档会逐个实时重跑，部分失败不会丢输出。OpenAI 侧的推理模型在 batch 中以关闭推理运行——batch 部署对 function tools 的硬性要求。`--alt`/`--desc` 与 `--screenshot` 都与文档增强同批提交，图片分析和页图增强同样享受折扣；页数超过单次调用上限的文档改为实时增强，因为批处理多一轮就多一次等待。暂不能与 `--ocr` 组合——它的页图从不渲染：batch 第一阶段关闭 LLM 转换，而那正是用本地 OCR 读扫描页的分支。
+只增强本次成功转换的文件，输出目录中已有的无关文件不会被纳入。需要单模型的 OpenAI 或 Anthropic 池。命中缓存的文档立即完成；失败的 batch 请求按实时价格重试，增强失败时仍保留基础输出。OpenAI 侧的推理模型在 batch 中以关闭推理运行——batch 部署对 function tools 的硬性要求。
+
+`--alt`/`--desc` 与 `--screenshot` 都与文档增强同批提交，图片分析和页图增强同样享受折扣；页数超过单次调用上限的文档改为实时增强，因为批处理多一轮就多一次等待。暂不能与 `--ocr` 组合——它的页图从不渲染：batch 第一阶段关闭 LLM 转换，而那正是用本地 OCR 读扫描页的分支。
 
 ::: tip
 `--llm`、`--alt`、`--desc`、`--ocr`、`--screenshot` 都有对应的 `--no-*` 反义参数（`--no-llm`、`--no-alt`、`--no-desc`、`--no-ocr`、`--no-screenshot`），可用来显式关闭某个预设本会启用的特性，例如 `--preset rich --no-desc`。
@@ -206,12 +208,32 @@ markitai document.pdf --no-compress
 
 ### `-o, --output <path>`
 
-指定输出位置。对单个文件/URL 输入，`-o` 也可以是一个具体文件路径（如 `-o result.md`），而不一定是目录。省略时，单文件/URL 转换会输出到 stdout；目录批量与 `.urls` 列表输入则必须指定 `-o`。
+指定输出位置。单个文件或 URL 输入时，`-o` 也可以直接写一个 `.md` 文件路径（如 `-o result.md`）。批量（目录或 `.urls` 列表输入）必须传目录：`.md` 值会被拒绝并报用法错误，而不会变成目录。省略时，单文件/URL 转换会输出到 stdout；目录批量与 `.urls` 列表输入则必须指定 `-o`。
 
 ```bash
 markitai document.docx -o ./output
 markitai document.docx -o ./result.md
 ```
+
+### `--json`
+
+在 stdout 打印一份机器可读的 JSON 结果，并关闭进度输出。必须配合 `-o`（stdout 归 JSON），与 `--llm-batch-collect` 及 `--dry-run` 不兼容（dry-run 不产生任何可由信封承载的 item）。
+
+文档结构为 `{version, ok, error, items[], totals}`；其中 `version` 是信封 schema 版本，不是 markitai 发行版本。
+
+- `items[]`：每个工作项一条，含 `kind`、`source`、`status`（`completed` / `failed` / `skipped`）、`output`、`error`、`skip_reason`、`images`、`screenshots`、`cost_usd`、`duration_s`、缓存标志、`fetch_strategy` 与 `llm_usage`。
+- `error`：没有产生任何 item 的运行级失败（输入路径不存在、URL scheme 被拒、配置文件无法读取或格式非法、被中断），否则为 `null`。
+- `totals`：`total`、`completed`、`failed`、`skipped`、`cost_usd`，以及 `duration_s`（各项耗时之和；并发批次的实际墙钟时间会短于该值）。
+- `ok`：任一 item 失败或存在运行级 `error` 时为 `false`。
+
+```bash
+markitai ./docs -o ./output --json
+markitai document.pdf -o ./output --json | jq '.items[] | select(.status == "failed")'
+```
+
+退出码语义不变（见[退出码](#退出码)）；脚本还应同时读取 `ok`，因为部分失败的批量会以 `10` 退出但仍输出 JSON。参数与用法错误（未知参数、`--json` 未配 `-o`、`-c` 指向不存在的路径）以非零状态退出，只写 stderr，不输出 JSON。运行时配置错误，包括非法 JSON、非对象根节点或无效 UTF-8，写入 JSON 的 `error` 字段。交互模式（`-I`）会在子进程中重跑收集到的命令且不带 `--json`，因此两者只在人工会话里搭配使用。
+
+配合 `--llm-batch` 时，JSON 包含最终增强文件路径及累计 usage/费用。Batch 等待超时后，未完成增强的项以失败状态说明仍在等待，进程退出 `2`；使用打印的收取命令继续。收取命令本身不支持 `--json`。
 
 ### `--resume`
 
@@ -221,7 +243,7 @@ markitai document.docx -o ./result.md
 markitai ./docs -o ./output --resume
 ```
 
-### `--record-history`
+### `--record-history` {#record-history}
 
 将本次完成的运行记录为 `markitai serve` 历史中的任务（保存在 `~/.markitai/serve/jobs/` 下，输出与引用的资源会一并复制），使其无需重启服务即可实时出现在网页界面的历史页面中。CLI 记录的条目带有「CLI」徽标，并与网页创建的任务共享七天清理、删除与归档下载。
 
@@ -293,7 +315,7 @@ markitai urls.urls -o ./output
 `.urls` 文件支持三种格式：
 
 纯文本：每行一个 URL，可在 URL 后加空白与自定义输出文件名：
-```
+```text
 # 以 # 开头的是注释
 https://example.com/page1
 https://example.com/page2 custom_name
@@ -416,6 +438,27 @@ markitai https://example.com -s defuddle   # 替代旧的 --defuddle
 ```
 
 这些别名带来的互斥规则也随之取消：`-s/--strategy` 与 `-b/--backend` 相互正交，可自由组合。
+
+### `--no-remote-fetch`
+
+绝不把 URL 交给远程抽取服务（Defuddle、Jina、Cloudflare）。效果等同于 `MARKITAI_NO_REMOTE_FETCH=1`，但写在命令行上，因此这是一个显式的隐私选择，而不是从 `--quiet` 继承来的副作用。
+
+```bash
+markitai https://example.com -o ./output --no-remote-fetch
+```
+
+`--quiet` 会抑制远程抓取同意提示，因此在 `fetch.remote_consent=ask` 下，静默运行会跳过所有远程策略。此时 CLI 会在 stderr 打印一条提示，并建议改用 `--no-remote-fetch`。详见[抓取策略 → 远程回退与仅本地 URL](/zh/guide/fetch-policy#remote-fallback-and-local-only-urls)。
+
+## 退出码
+
+| 退出码 | 含义 |
+|--------|------|
+| `0` | 成功（包括 `--dry-run`） |
+| `1` | 单项失败或运行时错误（包括 `config validate` 校验失败、`cache stats --json` 读到损坏的缓存） |
+| `2` | 参数/用法错误，或 Batch API 等待超时、需用 `--llm-batch-collect` 继续 |
+| `10` | 批量运行部分失败（目录批处理或 URL 批量）；成功的条目会被保留 |
+
+`--json` 不改变这些退出码：部分失败的批量仍以 `10` 退出，同时打印 JSON 文档，因此脚本应同时检查 `ok` 字段。
 
 ## 初始化命令
 
@@ -566,12 +609,14 @@ markitai doctor --suggest-extras   # 输出适合 `uv tool install "markitai[...
 - **Vision Model**：用于图像分析（从 litellm 自动检测）
 - **本地 Provider 认证**：Claude Agent、GitHub Copilot 和 ChatGPT 的认证状态（如果已配置）
 
-普通 doctor 每次发现 Chromium 文件存在时，都会执行隔离且有超时限制的 headless 启动测试，因此过期 marker 或缺少 Linux 系统库不会得到绿灯。`doctor --fix` 不会向当前项目添加 Python 包。Playwright 包存在但 Chromium 缺失或不可用时，它会使用 Markitai 自身的解释器安装 Chromium，并重新执行运行时检查。启动失败仍会以非零状态退出；Linux 下会附上 `playwright install-deps chromium` 修复命令。如果 Playwright 包本身缺失，命令会安全退出，并提示使用 `uv tool install 'markitai[browser]' --force` 或对应的 pipx 命令替换隔离安装。
+普通 doctor 每次发现 Chromium 文件存在时，都会执行隔离且有超时限制的 headless 启动测试，因此过期 marker 或缺少 Linux 系统库不会得到绿灯。`doctor --fix` 不会向当前项目添加 Python 包。
+
+Playwright 包存在但 Chromium 缺失或不可用时，它会使用 Markitai 自身的解释器安装 Chromium，并重新执行运行时检查。启动失败仍会以非零状态退出；Linux 下会附上 `playwright install-deps chromium` 修复命令。如果 Playwright 包本身缺失，命令会安全退出，并提示使用 `uv tool install 'markitai[browser]' --force` 或对应的 pipx 命令替换隔离安装。
 
 `--json` 与 `--fix` 不能同时使用：JSON 是只读的健康状态快照，修复则是面向人的交互操作。
 
 输出示例：
-```
+```text
 ◆ 系统检查
 
   • 配置文件：~/.markitai/config.json
@@ -665,6 +710,37 @@ markitai auth chatgpt login
 也可以使用 `markitai doctor` 一次性检查所有已配置提供商的认证状态。
 :::
 
+## 服务与 Agent 命令
+
+### `markitai serve`
+
+启动本地网页工作台及其 REST + SSE API。它需要 `serve` 附加组件（`fastapi`、`uvicorn`、`python-multipart`）：
+
+```bash
+uv tool install "markitai[serve]" --force
+markitai serve                    # http://127.0.0.1:3600，自动打开浏览器
+```
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--host <interface>` | `127.0.0.1` | 绑定的主机接口。默认值仅本机可访问；改为其他值会把 API 发布给所有能连上该地址的主机，这些请求需要启动时打印的访问令牌（除非使用 `--no-auth`） |
+| `--port <n>` | `3600` | 监听端口 |
+| `--no-open` | 关闭 | 启动后不打开浏览器 |
+| `--no-auth` | 关闭 | 禁用访问令牌。其他机器此时无需凭据，URL 目标限定为公网地址且不能访问 LLM 设置，但仍可上传文件、访问历史、下载和删除；回环地址仍保持完整权限 |
+| `--allowed-host <hostname>` | — | 额外允许出现在 `Host`/`Origin` 头中的主机名（可重复传入）。`localhost` 与 IP 字面量始终接受，其他名称一律拒绝以阻止 DNS 重绑定。这只是名称过滤，不是身份认证 |
+
+启动时会生成访问令牌并打印形如 `http://host:port/#token=…` 的可直接打开的 URL，也可用 `MARKITAI_SERVE_TOKEN` 固定。本机请求永远不需要令牌；其他机器的请求必须携带——网页界面从 URL fragment 读取令牌并存入 `sessionStorage`（浏览器会把它从地址栏抹掉），脚本则发送 `Authorization: Bearer <token>`（下载/SSE 链接也可用 `?token=`）。令牌就是凭据：持有它的人可发起转换、查看历史、下载、删除并管理 LLM 设置。工作台本身与完整 API 列表见[网页工作台指南](/zh/guide/serve)。
+
+### `markitai mcp`
+
+通过 stdio 为 AI Agent 启动随包发布的 MCP 服务器：
+
+```bash
+markitai mcp
+```
+
+它与 `markitai-mcp` 命令是同一个服务器，因此注册表与客户端可以通过主 CLI 包启动它，而无需知道第二个可执行文件名（`uvx --from "markitai[mcp]" markitai mcp`）。它暴露 `convert_document`、`convert_url`、`batch_convert` 与 `job_status` 四个工具；客户端配置、LLM 设置与各能力所需附加组件见 [MCP 指南](/zh/guide/mcp)。
+
 ## 其他选项
 
 ### `--quiet, -q`
@@ -681,6 +757,14 @@ markitai document.docx --quiet
 
 ```bash
 markitai document.docx --verbose
+```
+
+### `--log-level <level>`
+
+**日志文件**的最低级别（`DEBUG`、`INFO`、`WARNING`、`ERROR`、`CRITICAL`），覆盖配置里的 `log.level`。未配置 `log.dir` 时文件日志本身是关闭的，因此该标志在那种情况下不生效；它只作用于转换运行（子命令有自己的输出）。终端输出仍由 `--verbose` / `--quiet` 控制；这个标志不会让终端变吵。
+
+```bash
+markitai ./docs -o out --log-level WARNING
 ```
 
 ### `--dry-run`

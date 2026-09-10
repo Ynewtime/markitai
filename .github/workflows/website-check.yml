@@ -1,0 +1,30 @@
+name: Website Check
+
+on:
+  pull_request:
+    paths:
+      - 'website/**'
+      - 'CHANGELOG.md'
+      - 'CHANGELOG.zh.md'
+      - 'scripts/setup.sh'
+      - 'scripts/setup.ps1'
+      - '.github/workflows/website-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.1.0
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.0'
+      - run: bun install --frozen-lockfile
+        working-directory: website
+      - run: bun run docs:build
+        working-directory: website

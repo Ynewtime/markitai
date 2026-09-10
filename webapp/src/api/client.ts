@@ -72,6 +72,9 @@ function messageForCode(code: string): string {
 async function errorFromResponse(res: Response): Promise<ApiError> {
   try {
     const body: unknown = await res.json();
+    // Two code shapes exist: a structured `detail.code` for settings
+    // conflicts (with `current_revision`), and the top-level `code` the
+    // server adds to every HTTP error. The nested one wins when both appear.
     if (typeof body === "object" && body !== null && "detail" in body) {
       const detail = (body as { detail: unknown }).detail;
       const msg = flattenDetail(detail);
@@ -253,12 +256,13 @@ export async function createJob(
   files: File[],
   urls: string[],
   options: JobOptions,
+  signal?: AbortSignal,
 ): Promise<CreateJobResponse> {
   const form = new FormData();
   for (const file of files) form.append("files", file, file.name);
   form.append("urls", JSON.stringify(urls));
   form.append("options", JSON.stringify(options));
-  const res = await apiFetch("/api/jobs", { method: "POST", body: form });
+  const res = await apiFetch("/api/jobs", { method: "POST", body: form, signal });
   if (!res.ok) throw await errorFromResponse(res);
   return (await res.json()) as CreateJobResponse;
 }
@@ -339,10 +343,6 @@ export function jobFileUrl(jobId: string, relpath: string): string {
   return withToken(
     `/api/jobs/${encodeURIComponent(jobId)}/files/${encodeRelPath(relpath)}`,
   );
-}
-
-export function jobArchiveUrl(jobId: string): string {
-  return withToken(`/api/jobs/${encodeURIComponent(jobId)}/archive`);
 }
 
 export function historyArchiveUrl(): string {

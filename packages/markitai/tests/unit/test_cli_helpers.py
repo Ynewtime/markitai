@@ -397,6 +397,29 @@ class TestBatchResumeDuration:
         assert (started_at - before_process).total_seconds() < 5
 
 
+class TestUnsupportedFormatMessage:
+    """The message must turn a dead end into a next step."""
+
+    def test_lists_supported_extensions(self) -> None:
+        from markitai.converter.base import unsupported_format_message
+
+        message = unsupported_format_message("notes.xyz")
+
+        assert "Unsupported file format: '.xyz'" in message
+        assert ".pdf" in message and ".docx" in message and ".md" in message
+
+    def test_names_a_missing_extension_instead_of_leaving_it_blank(self) -> None:
+        from markitai.converter.base import unsupported_format_message
+
+        assert "(no extension)" in unsupported_format_message("/etc/hosts")
+
+    def test_does_not_suggest_ocr_for_an_unknown_extension(self) -> None:
+        """OCR reads a supported PDF/image; it cannot fix an unknown suffix."""
+        from markitai.converter.base import unsupported_format_message
+
+        assert "--ocr" not in unsupported_format_message("notes.xyz")
+
+
 class TestUrlHelpers:
     """Tests for URL helper functions."""
 
@@ -425,6 +448,24 @@ class TestUrlHelpers:
         assert is_url("./relative/path") is False
         assert is_url("C:\\Windows\\path") is False
         assert is_url("ftp://example.com") is False  # Not http/https
+
+    def test_unsupported_url_scheme_names_the_scheme(self) -> None:
+        """A non-http URL is reported as a URL problem, not a missing path."""
+        from markitai.utils.cli_helpers import unsupported_url_scheme
+
+        assert unsupported_url_scheme("ftp://example.com/x") == "ftp"
+        assert unsupported_url_scheme("file:///tmp/x") == "file"
+        assert unsupported_url_scheme("HTTPS://example.com") is None
+        assert unsupported_url_scheme("https://example.com") is None
+
+    def test_unsupported_url_scheme_leaves_paths_alone(self) -> None:
+        """A Windows drive path and a bare path are not URL schemes."""
+        from markitai.utils.cli_helpers import unsupported_url_scheme
+
+        assert unsupported_url_scheme("C://dir/file.txt") is None
+        assert unsupported_url_scheme("C:\\Windows\\path") is None
+        assert unsupported_url_scheme("./relative/path") is None
+        assert unsupported_url_scheme("report.pdf") is None
 
     def test_url_to_filename_basic(self) -> None:
         """Test url_to_filename with basic URLs."""

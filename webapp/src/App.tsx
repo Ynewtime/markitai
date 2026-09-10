@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchCapabilities, historyArchiveUrl } from "./api/client";
 import type {
   Capabilities,
@@ -6,7 +6,7 @@ import type {
   OutputProfile,
   Preset,
 } from "./api/types";
-import type { SessionItem } from "./hooks/useJobs";
+import type { SessionItem, SubmitFailure } from "./hooks/useJobs";
 import { AppFooter, AppHeader } from "./components/AppHeader";
 import { CapabilityHint } from "./components/CapabilityHint";
 import { ClearJobsButton, DownloadArchiveButton } from "./components/DownloadActions";
@@ -14,13 +14,11 @@ import { DropOverlay } from "./components/DropZone";
 import { ErrorInline } from "./components/ErrorInline";
 import { ItemList } from "./components/ItemList";
 import { JobStats } from "./components/JobStats";
-import { PreviewModal } from "./components/PreviewModal";
 import { OptionsPanel } from "./components/OptionsPanel";
 import type { Advanced } from "./lib/advanced";
 import { ADVANCED_DEFAULTS } from "./lib/advanced";
 import { applyPreset, BUILTIN_PRESET_OPTIONS, resolveOptions } from "./lib/conversionOptions";
 import { jobOptionsFromSnapshot } from "./lib/jobOptions";
-import { SettingsModal } from "./components/SettingsModal";
 import { UrlInput } from "./components/UrlInput";
 import {
   AppNotification,
@@ -31,6 +29,9 @@ import { useArchivedJobs } from "./hooks/useArchivedJobs";
 import { useJobs } from "./hooks/useJobs";
 import { detectLocale, dicts, storeLocale, type Locale } from "./i18n";
 
+const SettingsModal = lazy(() => import("./components/SettingsModal").then((module) => ({ default: module.SettingsModal })));
+const PreviewModal = lazy(() => import("./components/PreviewModal").then((module) => ({ default: module.PreviewModal })));
+
 /** Terminal = the item will not change again. */
 function isSettled(i: SessionItem): boolean {
   return i.status === "done" || i.status === "error";
@@ -39,6 +40,20 @@ function isSettled(i: SessionItem): boolean {
 function settledWord(i: SessionItem): string {
   if (i.status === "error") return "failed";
   return i.skipped ? "skipped" : "done";
+}
+
+/** Known create-job failures get readable copy; anything else keeps the HTTP
+ * status and the raw server message for the detail line. The raw message is
+ * also logged so a 422 body stays diagnosable without leaking into the UI. */
+function submitFailureText(t: (typeof dicts)["en"], failure: SubmitFailure): string {
+  // Status 0 means fetch itself failed (server down, network dropped), so
+  // "HTTP 0" would be nonsense.
+  if (failure.status === 0) return t.submitNetworkFailed;
+  if (failure.status === 401 || failure.status === 403) return t.submitAuthFailed;
+  if (failure.status === 413) return t.submitTooLarge;
+  if (failure.status === 422) return t.submitInvalid;
+  if (failure.status >= 500) return t.submitServerFailed;
+  return t.submitHttpFailed(failure.status);
 }
 
 function optionDomId(key: string): string {
@@ -204,7 +219,6 @@ export default function App() {
     stats,
     running,
     activeCount,
-    now,
     submit,
     retry,
     retryArchived,
@@ -217,8 +231,17 @@ export default function App() {
     terminalJobCount,
     suppressedHistoryIds,
     historyRevision,
+    restoreFailedJobs,
+    retryRestore,
   } = useJobs();
 
+  // Enhancement reads the originating job's options through a ref: taking
+  // `jobs` directly would hand ItemRow a new callback on every SSE frame and
+  // defeat its memo. A click always lands after the effect that syncs the ref.
+  const jobsRef = useRef(jobs);
+  useEffect(() => {
+    jobsRef.current = jobs;
+  }, [jobs]);
   const archived = useArchivedJobs(jobs, suppressedHistoryIds);
   useEffect(() => {
     if (historyRevision > 0) void archived.refresh();
@@ -343,6 +366,33 @@ export default function App() {
   useEffect(() => {
     optionsRef.current = jobOptions();
   }, [jobOptions]);
+  // ---- submission feedback: every create-job POST is tracked so the composer
+  // can show a determinate busy state and the user can abort an upload.
+  const submitControllersRef = useRef<Set<AbortController>>(new Set());
+  const [submitting, setSubmitting] = useState(false);
+  const beginSubmit = useCallback((): AbortController => {
+    const controller = new AbortController();
+    submitControllersRef.current.add(controller);
+    setSubmitting(true);
+    return controller;
+  }, []);
+  const finishSubmit = useCallback((controller: AbortController) => {
+    submitControllersRef.current.delete(controller);
+    setSubmitting(submitControllersRef.current.size > 0);
+  }, []);
+  useEffect(
+    () => () => {
+      for (const controller of submitControllersRef.current) controller.abort();
+      submitControllersRef.current.clear();
+    },
+    [],
+  );
+  const cancelSubmit = useCallback(() => {
+    for (const controller of submitControllersRef.current) controller.abort();
+    submitControllersRef.current.clear();
+    setSubmitting(false);
+    announce(t.submitCancelled);
+  }, [announce, t.submitCancelled]);
   const submitFiles = useCallback(
     (files: File[], fromFolder = false) => {
       let notice: string | null = null;
@@ -356,11 +406,14 @@ export default function App() {
       }
       setDropNotice(notice);
       if (send.length === 0) return;
-      void submit(send, [], optionsRef.current).then((ok) => {
-        if (ok) navigateView("workspace");
-      });
+      const controller = beginSubmit();
+      void submit(send, [], optionsRef.current, controller.signal)
+        .then((ok) => {
+          if (ok) navigateView("workspace");
+        })
+        .finally(() => finishSubmit(controller));
     },
-    [maxJobItems, navigateView, submit, t],
+    [beginSubmit, finishSubmit, maxJobItems, navigateView, submit, t],
   );
   const submitUrls = useCallback(
     async (urls: string[]) => {
@@ -373,11 +426,16 @@ export default function App() {
         notice = t.dropTruncated(maxJobItems, urls.length);
       }
       setDropNotice(notice);
-      const ok = await submit([], send, optionsRef.current);
-      if (ok) navigateView("workspace");
-      return ok;
+      const controller = beginSubmit();
+      try {
+        const ok = await submit([], send, optionsRef.current, controller.signal);
+        if (ok) navigateView("workspace");
+        return ok;
+      } finally {
+        finishSubmit(controller);
+      }
     },
-    [maxJobItems, navigateView, submit, t],
+    [beginSubmit, finishSubmit, maxJobItems, navigateView, submit, t],
   );
   // The OCR override applies to the retried request only; the persisted
   // toggle changes solely through the notification action that says so.
@@ -398,10 +456,10 @@ export default function App() {
   // failures through the row settling as failed. No app-level toast doubles them.
   const enhanceItem = useCallback(
     async (item: SessionItem) => {
-      const sourceOptions = jobs[item.jobId]?.options ?? optionsRef.current;
+      const sourceOptions = jobsRef.current[item.jobId]?.options ?? optionsRef.current;
       return enhance(item, { ...sourceOptions, llm: true });
     },
-    [enhance, jobs],
+    [enhance],
   );
   const imageWarningItem =
     imageWarningKey === null
@@ -454,6 +512,29 @@ export default function App() {
       (opener?.isConnected ? opener : fallback)?.focus();
     });
   }, []);
+
+  // One click re-queues every failed row of this session in place. Running
+  // jobs are skipped: their stream is already authoritative.
+  const failedItems = useMemo(
+    () => items.filter((item) => item.status === "error"),
+    [items],
+  );
+  const [retryingFailed, setRetryingFailed] = useState(false);
+  const retryAllFailed = useCallback(async () => {
+    if (retryingFailed || failedItems.length === 0) return;
+    setRetryingFailed(true);
+    let failedAgain = 0;
+    for (const item of failedItems) {
+      const error = await retryItem(item);
+      if (error !== null) failedAgain += 1;
+    }
+    setRetryingFailed(false);
+    announce(
+      failedAgain === 0
+        ? t.announceRetryAll(failedItems.length)
+        : t.announceRetryAllFailed(failedItems.length, failedAgain),
+    );
+  }, [announce, failedItems, retryingFailed, retryItem, t]);
 
   const handleClear = useCallback(() => {
     if (running) {
@@ -639,10 +720,81 @@ export default function App() {
   const archivedJobCount = archived.entries?.length ?? 0;
   const completedJobCount = terminalJobCount + archivedJobCount;
 
+  useEffect(() => {
+    if (submitError !== null) console.error("create job failed", submitError);
+  }, [submitError]);
+
+  // The document title names the current view; a running batch adds its count
+  // so a backgrounded tab still says what is happening.
+  useEffect(() => {
+    const base = effectiveView === "workspace" ? t.titleWorkspace : t.titleHome;
+    document.title =
+      effectiveView === "workspace" && activeCount > 0
+        ? `${activeCount} · ${base}`
+        : base;
+  }, [activeCount, effectiveView, t.titleHome, t.titleWorkspace]);
+
   const capHint =
     caps !== null && !caps.llm.routable ? (
       <CapabilityHint t={t} onOpenSettings={openSettings} />
     ) : null;
+
+  // A restore that could not reach the server keeps its rows and says so,
+  // with a retry, instead of silently deleting the user's task list.
+  const restoreNotice = restoreFailedJobs.size > 0 ? (
+    <p className="notice" role="status">
+      <span>{t.restoreFailed}</span>
+      <button
+        type="button"
+        className="notice-action"
+        onClick={() => {
+          void retryRestore().then((remaining) => {
+            if (remaining === 0) announce(t.sessResults(items.length));
+          });
+        }}
+      >
+        {t.restoreRetry}
+      </button>
+    </p>
+  ) : null;
+
+  // One deterministic busy surface for every create-job POST, with the escape
+  // hatch next to it: a slow upload must never look like a dead UI.
+  const submitStatus = submitting ? (
+    <p className="notice submitting" role="status">
+      <span className="spin" aria-hidden="true" />
+      <span>{t.submitting}</span>
+      <button type="button" className="notice-action" onClick={cancelSubmit}>
+        {t.cancelSubmit}
+      </button>
+    </p>
+  ) : null;
+
+  // One rendered error line, shared by the home and workspace composers.
+  const submitErrorLine =
+    submitError !== null ? (
+      <ErrorInline
+        text={submitFailureText(t, submitError)}
+        detail={submitError.message}
+      />
+    ) : null;
+
+  // One feedback stack under either composer, in one order: the busy row the
+  // user just actioned, then restore failure, submit error, drop notice and
+  // the capability hint. Both views must show the same thing.
+  const composerFeedback = (
+    <>
+      {submitStatus}
+      {restoreNotice}
+      {submitErrorLine}
+      {dropNotice !== null && (
+        <p className="notice" role="status">
+          {dropNotice}
+        </p>
+      )}
+      {capHint}
+    </>
+  );
 
   const archiveDownload = (
     <DownloadArchiveButton
@@ -706,6 +858,7 @@ export default function App() {
           onClose={() => setJobNotice(null)}
         />
       )}
+      <Suspense fallback={<p role="status">{t.loading}</p>}>
       {settingsOpen && (
         <SettingsModal
           t={t}
@@ -725,6 +878,8 @@ export default function App() {
           announce={announce}
         />
       )}
+
+      </Suspense>
 
       {effectiveView === "home" && (
         <main className="drop-main shell">
@@ -746,12 +901,14 @@ export default function App() {
             urls={urlList}
             announce={announce}
             onFiles={submitFiles}
+            busy={submitting}
             source={(
               <UrlInput
                 t={t}
                 text={urlText}
                 onText={setUrlText}
                 onConvert={submitUrls}
+                busy={submitting}
               />
             )}
             presetOptions={presetOptions}
@@ -761,20 +918,13 @@ export default function App() {
             onProfile={setProfile}
             onChange={setAdvanced}
           />
-          {submitError !== null && (
-            <ErrorInline text={`${t.createJobFailed}: ${submitError}`} />
-          )}
-          {dropNotice !== null && (
-            <p className="notice" role="status">
-              {dropNotice}
-            </p>
-          )}
-          {capHint}
+          {composerFeedback}
         </main>
       )}
 
       {effectiveView === "workspace" && (
         <main className="shell workspace">
+          <h1 className="sr-only">{t.titleWorkspace}</h1>
           <div className="conversion-workspace">
             <div className="work-grid">
               <div className="work-list">
@@ -782,12 +932,25 @@ export default function App() {
                   <OptionsPanel
                     heading={<JobStats t={t} running={running} stats={stats} />}
                     headingActions={items.length > 0 && (
-                      <ClearJobsButton
-                        t={t}
-                        activeCount={activeCount}
-                        clearableJobCount={terminalJobCount}
-                        onClear={handleClear}
-                      />
+                      <>
+                        {failedItems.length > 0 && (
+                          <button
+                            type="button"
+                            className="btn ghost"
+                            disabled={retryingFailed}
+                            aria-busy={retryingFailed || undefined}
+                            onClick={() => void retryAllFailed()}
+                          >
+                            {t.retryAllFailed(failedItems.length)}
+                          </button>
+                        )}
+                        <ClearJobsButton
+                          t={t}
+                          activeCount={activeCount}
+                          clearableJobCount={terminalJobCount}
+                          onClear={handleClear}
+                        />
+                      </>
                     )}
                     t={t}
                     preset={preset}
@@ -799,12 +962,14 @@ export default function App() {
                     urls={urlList}
                     announce={announce}
                     onFiles={submitFiles}
+                    busy={submitting}
                     source={(
                       <UrlInput
                         t={t}
                         text={urlText}
                         onText={setUrlText}
                         onConvert={submitUrls}
+                        busy={submitting}
                         compact
                       />
                     )}
@@ -815,15 +980,7 @@ export default function App() {
                     onProfile={setProfile}
                     onChange={setAdvanced}
                   />
-                  {submitError !== null && (
-                    <ErrorInline text={`${t.createJobFailed}: ${submitError}`} />
-                  )}
-                  {dropNotice !== null && (
-                    <p className="notice" role="status">
-                      {dropNotice}
-                    </p>
-                  )}
-                  {capHint}
+                  {composerFeedback}
                 </div>
                 <ItemList
                   t={t}
@@ -844,7 +1001,6 @@ export default function App() {
                     },
                   }}
                   showCost={showCost}
-                  now={now}
                   stats={stats}
                   settled={!running}
                   selectedKey={selected?.key ?? null}
@@ -855,7 +1011,6 @@ export default function App() {
                   onRetry={retryItem}
                   onEnhance={enhanceItem}
                   onDelete={deleteSessionItem}
-                  canDelete={(item) => jobs[item.jobId]?.status === "done"}
                   llmAvailable={llmEnhanceAvailable}
                   llmDisabledReason={llmDisabledReason}
                 />
@@ -867,7 +1022,11 @@ export default function App() {
       )}
 
       <AppFooter t={t} />
-      <DropOverlay label={t.dropToConvert} onFiles={submitFiles} />
+      <DropOverlay
+        label={t.dropToConvert}
+        onFiles={submitFiles}
+        suspended={settingsOpen || previewOpen}
+      />
       <div className="sr-only" role="status" aria-live="polite">
         {liveMsg}
       </div>

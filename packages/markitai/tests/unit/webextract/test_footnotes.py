@@ -9,7 +9,8 @@ from __future__ import annotations
 from bs4 import BeautifulSoup, Tag
 
 from markitai.webextract.elements.footnotes import standardize_footnotes
-from markitai.webextract.pipeline import _html_fragment_to_markdown
+from markitai.webextract.markdown import html_to_markdown
+from markitai.webextract.pipeline import _create_markitdown
 
 
 def _standardize(html: str) -> Tag:
@@ -21,7 +22,7 @@ def _standardize(html: str) -> Tag:
 
 
 def _to_markdown(root: Tag) -> str:
-    return _html_fragment_to_markdown(str(root))
+    return html_to_markdown(str(root), md_instance=_create_markitdown())
 
 
 WIKIPEDIA_HTML = """
@@ -203,6 +204,6 @@ class TestNoFootnotesPassThrough:
         root = soup.find("div", id="content")
         assert isinstance(root, Tag)
         standardize_footnotes(root)
-        md = _html_fragment_to_markdown(str(root))
+        md = html_to_markdown(str(root), md_instance=_create_markitdown())
         assert "[^" not in md
         assert "1. step one" in md

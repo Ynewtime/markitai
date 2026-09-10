@@ -26,8 +26,10 @@ Target state: `markitai doctor` exits 0 and shows ✓ on every capability the us
    | `extra-fetch` | curl-cffi TLS-impersonating static fetch | same pattern |
    | `ocr` | RapidOCR for scanned PDFs and images (`--ocr`); not in a default install | `uv tool install 'markitai[ocr]' --force` |
    | `serve` | the local web workspace (`markitai serve`) | same pattern |
+   | `mcp` | MCP tools over stdio (`markitai mcp` / `markitai-mcp`) | `uv tool install 'markitai[mcp]' --force` |
+   | `legacy` | Office 97–2003 `.doc` / `.ppt` conversion via anydoc; no Office application needed | `uv tool install 'markitai[legacy]' --force` |
    | `svg` / `heif` | SVG rasterization / HEIC-HEIF-AVIF input | same pattern |
-   | `all` | everything above | `uv tool install 'markitai[all]' --force` |
+   | `all` | all runtime extras above | `uv tool install 'markitai[all]' --force` |
 
    `markitai doctor --suggest-extras` prints the comma-separated extras the current environment would benefit from.
 
@@ -59,4 +61,6 @@ Target state: `markitai doctor` exits 0 and shows ✓ on every capability the us
 | Rate limit / timeout on `--llm` | retry later or lower `--llm-concurrency`; timeouts adapt to document size |
 | Secrets needed for URL strategies | `JINA_API_KEY`; `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` (token permissions: Browser Rendering Edit, Workers AI Read) |
 
-Config debugging: `markitai config list` (secrets redacted; never paste `--show-secrets` output into shared channels), `markitai config path`, `markitai config validate`. Resolution order: CLI args > env vars > config file (`--config` > `MARKITAI_CONFIG` > `./markitai.json` > `~/.markitai/config.json`) > defaults. `.env` files load from `./.env` then `~/.markitai/.env`.
+Config debugging: `markitai config list|get|set` redact secrets, including nested HTTP headers (`--show-secrets` explicitly reveals them). `markitai config path` explains precedence; `markitai config validate` exits 1 for invalid config. Resolution order: CLI args > env vars > config file (`--config` > `MARKITAI_CONFIG` > `./markitai.json` > `~/.markitai/config.json`) > defaults. `.env` files load from `./.env` then `~/.markitai/.env`.
+
+For `markitai serve`, open the printed `/#token=…` URL on remote devices. Loopback requests are trusted; remote requests need the token unless `--no-auth` is set. The latter restricts URL targets to public addresses and denies access to LLM settings, but still permits file uploads and history access, downloads and deletion. For MCP, omitting `llm` inherits server configuration; pass `llm: false` to disable enhancement for that call. `profile` and batch `concurrency` are supported; inspect each result's `markdown_file` under its isolated batch/item directory.

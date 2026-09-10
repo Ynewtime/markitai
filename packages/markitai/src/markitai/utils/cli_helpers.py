@@ -7,12 +7,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 from markitai.constants import MARKITAI_META_DIR
 from markitai.urls import _URL_PATTERN
+
+# Any "scheme://" prefix, so a non-http(s) URL is reported as such instead of
+# being handed to the filesystem as a path.
+_URL_LIKE_PATTERN = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://")
 
 
 def is_url(s: str) -> bool:
@@ -25,6 +30,31 @@ def is_url(s: str) -> bool:
         True if the string starts with http:// or https://
     """
     return bool(_URL_PATTERN.match(s))
+
+
+def unsupported_url_scheme(s: str) -> str | None:
+    """Return the scheme of a URL-like string markitai cannot fetch.
+
+    ``ftp://host/file`` is not a local path, so falling through to the
+    filesystem produces a confusing "Path does not exist" for a string that
+    was never a path. Returning the scheme lets the caller say what is
+    actually wrong.
+
+    Args:
+        s: Candidate input string.
+
+    Returns:
+        The scheme (lowercase, without ``://``) when *s* looks like a URL with
+        a scheme other than http/https, else ``None``. A single-letter scheme
+        is treated as a Windows drive path (``C://dir``), not a URL.
+    """
+    match = _URL_LIKE_PATTERN.match(s)
+    if match is None:
+        return None
+    scheme = match.group(0)[:-3].lower()
+    if len(scheme) == 1:
+        return None
+    return None if scheme in {"http", "https"} else scheme
 
 
 def url_to_filename(url: str) -> str:

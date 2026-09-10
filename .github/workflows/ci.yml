@@ -10,6 +10,11 @@ on:
       - 'scripts/check_wheel.py'
       - 'scripts/check_licenses.py'
       - 'README.md'
+      - 'website/**'
+      - 'skills/**'
+      - 'CHANGELOG.md'
+      - 'CHANGELOG.zh.md'
+      - 'scripts/e2e_release_check.sh'
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/ci.yml'
@@ -22,6 +27,11 @@ on:
       - 'scripts/check_wheel.py'
       - 'scripts/check_licenses.py'
       - 'README.md'
+      - 'website/**'
+      - 'skills/**'
+      - 'CHANGELOG.md'
+      - 'CHANGELOG.zh.md'
+      - 'scripts/e2e_release_check.sh'
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/ci.yml'
@@ -54,6 +64,11 @@ jobs:
 
       - name: Run eslint
         run: bun run --cwd webapp lint
+
+      # Type ladder / radius / motion / shadow discipline. The Python test
+      # suite covers contrast and token discipline (test_webapp_design_guard).
+      - name: Run CSS scale guard
+        run: bun run --cwd webapp check:css
 
       - name: Run type check
         run: bun run --cwd webapp typecheck

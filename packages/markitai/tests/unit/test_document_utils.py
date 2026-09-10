@@ -974,7 +974,7 @@ class TestProcessDocumentAsync:
     """Async tests for process_document method."""
 
     @pytest.mark.asyncio
-    async def test_process_document_combined_success(
+    async def test_run_document_call_success(
         self,
         llm_config: LLMConfig,
         prompts_config: PromptsConfig,
@@ -1407,9 +1407,9 @@ Slide body
             )
             mock_instructor.return_value = mock_client
 
-            # The combined call goes through _process_document_combined which checks cache
-            result = await processor.documents._process_document_combined(
-                content, "test.md"
+            # The structured document call checks the cache before invoking the engine
+            result = await processor.documents._run_document_call(
+                processor.documents._build_document_call(content, "test.md")
             )
 
         assert result.cleaned_markdown == "# Cached Cleaned"
@@ -2242,10 +2242,10 @@ class TestExtractFromScreenshotAsync:
 
 
 class TestProcessDocumentCombinedAsync:
-    """Async tests for _process_document_combined method."""
+    """Async tests for the structured document call."""
 
     @pytest.mark.asyncio
-    async def test_process_document_combined_truncation_warning(
+    async def test_run_document_call_truncation_warning(
         self,
         llm_config: LLMConfig,
         prompts_config: PromptsConfig,
@@ -2273,14 +2273,14 @@ class TestProcessDocumentCombinedAsync:
             mock_instructor.return_value = mock_client
 
             # Should not raise, just truncate
-            doc_result = await processor.documents._process_document_combined(
-                long_content, "test.md"
+            doc_result = await processor.documents._run_document_call(
+                processor.documents._build_document_call(long_content, "test.md")
             )
 
         assert doc_result.cleaned_markdown is not None
 
     @pytest.mark.asyncio
-    async def test_process_document_combined_validates_prompt_leakage(
+    async def test_run_document_call_validates_prompt_leakage(
         self,
         llm_config: LLMConfig,
         prompts_config: PromptsConfig,
@@ -2311,15 +2311,15 @@ class TestProcessDocumentCombinedAsync:
             )
             mock_instructor.return_value = mock_client
 
-            doc_result = await processor.documents._process_document_combined(
-                "# Test", "test.md"
+            doc_result = await processor.documents._run_document_call(
+                processor.documents._build_document_call("# Test", "test.md")
             )
 
         # Should have recovered content after frontmatter
         assert "# Actual Content" in doc_result.cleaned_markdown
 
     @pytest.mark.asyncio
-    async def test_process_document_combined_raises_on_truncation(
+    async def test_run_document_call_raises_on_truncation(
         self,
         llm_config: LLMConfig,
         prompts_config: PromptsConfig,
@@ -2351,8 +2351,8 @@ class TestProcessDocumentCombinedAsync:
             mock_instructor.return_value = mock_client
 
             with pytest.raises(ValueError, match="truncated"):
-                await processor.documents._process_document_combined(
-                    "# Test", "test.md"
+                await processor.documents._run_document_call(
+                    processor.documents._build_document_call("# Test", "test.md")
                 )
 
 

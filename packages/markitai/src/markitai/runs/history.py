@@ -31,7 +31,11 @@ from typing import Any
 
 from loguru import logger
 
-from markitai.constants import ASSETS_REL_PATH, SCREENSHOTS_REL_PATH
+from markitai.constants import (
+    ASSETS_REL_PATH,
+    SCREENSHOTS_REL_PATH,
+    VISIBLE_ASSETS_REL_PATH,
+)
 from markitai.runs.types import Outcome
 from markitai.security import atomic_write_json
 from markitai.utils.clock import now_iso
@@ -75,14 +79,14 @@ def _dedupe_output_name(name: str, used: set[str]) -> str:
     return f"{stem} ({counter}){suffix}"
 
 
-def _find_meta_dirs(output_refs: list[tuple[Path, int]]) -> list[Path]:
-    """Locate ``.markitai`` asset dirs referenced by the given outputs.
+def _find_asset_roots(output_refs: list[tuple[Path, int]]) -> list[Path]:
+    """Locate hidden or visible asset roots referenced by the given outputs.
 
     Each entry is an output path plus how many directory levels its assets
     may live above it: flat layouts keep the ``.markitai`` dir next to the
     output, while nested directory batches keep it at the batch output root
     (the source relpath's depth). The walk stops at the first level that
-    has a ``.markitai`` dir, so an unrelated ancestor's dir (e.g. a global
+    has a ``.markitai`` or ``assets`` dir, so an unrelated ancestor's dir (e.g. a global
     ``~/.markitai``) is never picked up.
     """
     found: list[Path] = []
@@ -90,9 +94,9 @@ def _find_meta_dirs(output_refs: list[tuple[Path, int]]) -> list[Path]:
         level = output_path.parent
         for _ in range(ascend + 1):
             meta_dir = level / ".markitai"
-            if meta_dir.is_dir():
-                if meta_dir not in found:
-                    found.append(meta_dir)
+            if meta_dir.is_dir() or (level / VISIBLE_ASSETS_REL_PATH).is_dir():
+                if level not in found:
+                    found.append(level)
                 break
             if level.parent == level:
                 break
@@ -231,9 +235,9 @@ def _record_cli_job(
             for item in items
             if item.output_path is not None
         ]
-        for meta_dir in _find_meta_dirs(output_refs):
-            for rel in (ASSETS_REL_PATH, SCREENSHOTS_REL_PATH):
-                assets = meta_dir.parent / rel
+        for asset_root in _find_asset_roots(output_refs):
+            for rel in (ASSETS_REL_PATH, SCREENSHOTS_REL_PATH, VISIBLE_ASSETS_REL_PATH):
+                assets = asset_root / rel
                 if assets.is_dir():
                     shutil.copytree(assets, out_dir / rel, dirs_exist_ok=True)
 

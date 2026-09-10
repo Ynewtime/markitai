@@ -380,3 +380,61 @@ class TestFinishBatch:
         assert code == 0
         llm_md = (out / "a.llm.md").read_text(encoding="utf-8")
         assert "# Live A" in llm_md  # live re-run output, not a lost document
+
+
+async def test_run_manifest_controls_batch_scope_and_final_outcomes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from markitai.cli.processors.batch_llm import run_batch_llm_enhancement
+    from markitai.runs.json_output import render
+    from markitai.runs.types import Outcome
+
+    current = tmp_path / "current.txt.md"
+    current.write_text("Current input")
+    unrelated = tmp_path / "unrelated.md"
+    unrelated.write_text("Do not send this document")
+    processor = MagicMock()
+    processor._engine.try_cached.return_value = object()
+    processor.documents.finalize_document_plan.return_value = (
+        "ENHANCED",
+        "title: Current",
+    )
+    processor.format_llm_output.side_effect = lambda cleaned, fm: (
+        f"---\n{fm}\n---\n{cleaned}"
+    )
+    processor.get_context_cost.return_value = 0.125
+    processor.get_context_usage.return_value = {
+        "test-model": {
+            "requests": 1,
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "cost_usd": 0.125,
+        }
+    }
+    monkeypatch.setattr(
+        "markitai.workflow.helpers.create_llm_processor", lambda _cfg: processor
+    )
+    items = [
+        Outcome(
+            kind="file",
+            source="current.txt",
+            status="completed",
+            output_path=current,
+            duration=0.1,
+        )
+    ]
+    code = await run_batch_llm_enhancement(
+        _cfg_with_model("openai/test"), tmp_path, items=items, quiet=True
+    )
+    assert code == 0
+    assert processor.documents._prepare_document_plan.call_count == 1
+    assert processor.documents._prepare_document_plan.call_args.args == (
+        "Current input",
+        "current.txt",
+    )
+    assert not unrelated.with_suffix(".llm.md").exists()
+    envelope = json.loads(render(items))
+    assert envelope["items"][0]["output"] == str(current.with_suffix(".llm.md"))
+    assert envelope["totals"]["cost_usd"] == 0.125
+    assert envelope["items"][0]["duration_s"] >= 0.1
+    assert envelope["items"][0]["llm_usage"]["test-model"]["input_tokens"] == 10

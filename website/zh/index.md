@@ -3,8 +3,8 @@ layout: home
 
 hero:
   name: Markitai
-  text: 文件和网页，一条命令转为 Markdown
-  tagline: 支持文档、图片和公网 URL，需要时再开启 LLM 增强。
+  text: 文件和网页，一条命令转成 Markdown
+  tagline: 文档、图片和网页链接都能转。LLM 增强按需开启，不开也完全够用。
   actions:
     - theme: brand
       text: 快速开始
@@ -12,32 +12,21 @@ hero:
     - theme: alt
       text: GitHub
       link: https://github.com/Ynewtime/markitai
-
-features:
-  - icon: |
-      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>
-    title: 多格式支持
-    details: 支持 DOCX、PPTX、XLSX、PDF、EPUB、EML、TXT、MD、图片（JPG/PNG/WebP）和 URL 转换为 Markdown；旧版 .doc/.ppt 需 legacy extra。
-  - icon: |
-      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
-    title: LLM 增强
-    details: AI 驱动的格式清洗、元数据生成（frontmatter）和图片分析。
-  - icon: |
-      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M16 3h5v5"/><path d="M8 3H3v5"/><path d="M12 22v-8.3a4 4 0 0 0-1.172-2.872L3 3"/><path d="m15 9 6-6"/></svg>
-    title: 批量处理
-    details: 并发转换，支持进度显示和断点恢复。
-  - icon: |
-      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M15 3v4a2 2 0 0 0 2 2h4"/><path d="M12 17v-6"/><path d="M9.5 14.5 12 17l2.5-2.5"/><path d="M20 17.5a9 9 0 1 1-18 0V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"/></svg>
-    title: OCR 识别
-    details: 通过可选的 markitai[ocr] extra 使用本地 RapidOCR，或用 --ocr --llm 让视觉模型直接读取页面图像（VLM-OCR）。
 ---
 
+<!-- 功能卡片由主题的 home-features-before 插槽渲染（见 .vitepress/theme/index.ts）。 -->
 <section class="home-shot" aria-labelledby="shot-title">
   <p class="eyebrow">网页工作台</p>
   <h2 id="shot-title">不想敲命令时，有个工作台</h2>
   <p><code>markitai serve</code> 用同一套转换内核提供本地网页界面——拖入文件、粘贴 URL、实时查看进度、下载结果。</p>
-  <img class="light-only" src="/workbench.zh.png" alt="markitai 网页工作台：一张转换输入卡片，含「选项」开关、URL 输入框、文件选择与「转换」按钮。" width="1440" height="700" loading="lazy" />
-  <img class="dark-only" src="/workbench.zh.dark.png" alt="markitai 网页工作台：一张转换输入卡片，含「选项」开关、URL 输入框、文件选择与「转换」按钮。" width="1440" height="700" loading="lazy" />
+  <picture class="home-shot-light">
+    <source srcset="/workbench.zh.webp" type="image/webp" />
+    <img src="/workbench.zh.png" alt="markitai 网页工作台：一张转换输入卡片，含 URL 输入框、「转换」按钮与「选项」「CLI」「上传」开关。" width="1440" height="700" loading="lazy" />
+  </picture>
+  <picture class="home-shot-dark">
+    <source srcset="/workbench.zh.dark.webp" type="image/webp" />
+    <img src="/workbench.zh.dark.png" alt="markitai 网页工作台：一张转换输入卡片，含 URL 输入框、「转换」按钮与「选项」「CLI」「上传」开关。" width="1440" height="700" loading="lazy" />
+  </picture>
   <p class="home-shot-link"><a href="/zh/guide/serve">了解网页工作台 <span aria-hidden="true">→</span></a></p>
 </section>
 
@@ -47,6 +36,7 @@ features:
     <h2 id="quickstart-title">60 秒，从安装到得到 Markdown</h2>
     <p>核心转换无需 API 密钥或可选依赖。先完成一次转换，再按工作流需要添加浏览器渲染、额外格式或 LLM。</p>
     <a href="/zh/guide/getting-started">打开完整快速开始指南 <span aria-hidden="true">→</span></a>
+    <p class="home-install-options-note">还在比较转换器？<a href="/zh/guide/comparison">看看 markitai 与 markitdown、docling、anydoc 的对比</a>。</p>
   </div>
   <div class="home-quickstart-steps" role="list" aria-label="快速开始命令">
     <div class="home-quickstart-step" role="listitem">
@@ -56,6 +46,10 @@ features:
         <code class="platform-install-command non-windows-only">curl -fsSL https://markitai.dev/setup.sh | sh</code>
         <p class="windows-only">使用适用于 Windows 的便携安装脚本</p>
         <code class="platform-install-command windows-only">powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"</code>
+        <noscript>
+          <p>Windows（PowerShell）：</p>
+          <code>powershell -ExecutionPolicy ByPass -c "irm https://markitai.dev/setup.ps1 | iex"</code>
+        </noscript>
         <details class="home-install-options">
           <summary>其他平台和手动安装方式</summary>
           <div class="home-install-option">
@@ -79,7 +73,10 @@ features:
     </div>
     <div class="home-quickstart-step output" role="listitem">
       <span class="step-number" aria-hidden="true">3</span>
-      <div><p>从 stdout 得到干净的 Markdown</p><code># Ynewtime/markitai ...</code></div>
+      <div>
+        <p>从 stdout 得到干净的 Markdown</p>
+        <code># Markitai<br />Opinionated Markdown converter with native LLM enhancement support.<br /><br />- **Multi-format**: DOCX, PPTX, XLSX, PDF, EPUB,<br />&nbsp;&nbsp;EML, TXT, MD, images, and URLs &#8594; clean Markdown<br />- **LLM enhancement**: format cleaning, frontmatter<br />&nbsp;&nbsp;metadata, and vision analysis<br />- **Batch processing**: concurrent conversion with<br />&nbsp;&nbsp;progress display and --resume<br />&#8230;</code>
+      </div>
     </div>
   </div>
 </section>

@@ -20,19 +20,19 @@ export function JobStats({
       {stats.total > 0 && (
         <div className="stats">
           <strong>
-            {t.currentSession} · {running ? `${t.converting} · ` : ""}
-            {stats.done}/{stats.total} {t.statDone}
+            {t.currentSession} · {running ? `${t.statusRunning} · ` : ""}
+            {stats.done}/{stats.total} {t.statusDone}
           </strong>
           {stats.skipped > 0 && (
             <>
               {" · "}
-              {stats.skipped} {t.statSkipped}
+              {stats.skipped} {t.statusSkipped}
             </>
           )}
           {stats.failed > 0 && (
             <>
               {" · "}
-              {stats.failed} {t.statFailed}
+              {stats.failed} {t.statusFailed}
             </>
           )}
           {stats.hasCost && <> · {fmtCost(stats.costTotal)}</>}

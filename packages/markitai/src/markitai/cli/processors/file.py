@@ -17,7 +17,11 @@ from markitai.cli.console import get_console, get_stderr_console
 from markitai.cli.ui import MARK_INFO, MARK_TITLE
 from markitai.config import MarkitaiConfig
 from markitai.constants import MAX_DOCUMENT_SIZE
-from markitai.converter import FileFormat, detect_format
+from markitai.converter import (
+    FileFormat,
+    detect_format,
+    unsupported_format_message,
+)
 from markitai.json_order import order_report
 from markitai.runs import Outcome, build_single_report, resolve_exit_code
 
@@ -38,7 +42,7 @@ from markitai.runs.output import (
 )
 from markitai.security import atomic_write_json, validate_file_size
 from markitai.utils.cli_helpers import compute_task_hash, get_report_file_path
-from markitai.utils.errors import ConversionError
+from markitai.utils.errors import CliInputRejection, ConversionError
 from markitai.utils.paths import derive_output_name
 from markitai.utils.text import format_error_message
 from markitai.workflow.helpers import write_images_json
@@ -104,13 +108,17 @@ async def process_single_file(
         validate_file_size(input_path, MAX_DOCUMENT_SIZE)
     except ValueError as e:
         ui.error(str(e), console=diag_console)
-        raise SystemExit(1)
+        raise CliInputRejection(str(e)) from e
 
     # Detect file format for dry-run display
     fmt = detect_format(input_path)
     if fmt == FileFormat.UNKNOWN:
-        ui.error(f"Unsupported file format: {input_path.suffix}", console=diag_console)
-        raise SystemExit(1)
+        message = unsupported_format_message(input_path)
+        ui.error(message, console=diag_console)
+        # Not recorded in history: an unsupported file is a usage error, and
+        # batch discovery never surfaces one. The carried message is what
+        # lets `--json` report the reason instead of a generic exit error.
+        raise CliInputRejection(message)
 
     # Handle dry-run
     if dry_run:

@@ -1,15 +1,48 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import { dicts } from "./i18n";
 
 const mocks = vi.hoisted(() => ({
   submit: vi.fn(),
   openJob: vi.fn(),
   enhanceArchived: vi.fn(),
+  retry: vi.fn(),
   // Job cap served by the mocked /api/capabilities below.
   maxJobItems: 50,
+  // Per-test create-job failure, surfaced through the mocked useJobs below.
+  submitError: null as null | { status: number; message: string },
+  // Per-test ledger rows; null keeps the default single completed row.
+  failedItems: null as null | Array<Record<string, unknown>>,
+  // Per-test session-restore failures and running batch size.
+  restoreFailed: null as null | string[],
+  retryRestore: vi.fn(),
+  activeCount: 0,
 }));
 const MAX_JOB_ITEMS = mocks.maxJobItems;
+
+/** One failed ledger row for the retry-all action. */
+function failedRow(itemId: string): Record<string, unknown> {
+  return {
+    key: `job-1/${itemId}`,
+    jobId: "job-1",
+    itemId,
+    name: `${itemId}.pdf`,
+    kind: "file",
+    status: "error",
+    error: "conversion failed",
+    output: null,
+    durationMs: 100,
+    finishedAt: "2026-07-13T10:00:01Z",
+    costUsd: null,
+    llmEnhanced: false,
+    operation: "convert",
+    skipped: false,
+    skipReason: null,
+    sizeBytes: null,
+    startedAt: null,
+  };
+}
 
 function archivedSnapshot() {
   return {
@@ -90,7 +123,7 @@ vi.mock("./hooks/useArchivedJobs", () => ({
 
 vi.mock("./hooks/useJobs", () => ({
   useJobs: () => ({
-    items: [
+    items: mocks.failedItems ?? [
       {
         key: "job-1/item-1",
         jobId: "job-1",
@@ -129,20 +162,21 @@ vi.mock("./hooks/useJobs", () => ({
       doneDurationMs: 120,
     },
     running: false,
-    activeCount: 0,
-    now: Date.now(),
+    activeCount: mocks.activeCount,
     submit: mocks.submit,
-    retry: vi.fn().mockResolvedValue(null),
+    retry: mocks.retry,
     enhance: vi.fn().mockResolvedValue(null),
     enhanceArchived: mocks.enhanceArchived,
     retryArchived: vi.fn().mockResolvedValue(null),
     deleteItem: vi.fn().mockResolvedValue(null),
-    submitError: null,
+    submitError: mocks.submitError,
     clear: vi.fn(),
     clearSettled: vi.fn(),
     terminalJobCount: 1,
     suppressedHistoryIds: new Set<string>(),
     historyRevision: 0,
+    restoreFailedJobs: new Set(mocks.restoreFailed ?? []),
+    retryRestore: mocks.retryRestore,
   }),
 }));
 
@@ -157,6 +191,29 @@ describe("App workspace", () => {
     mocks.openJob.mockResolvedValue(archivedSnapshot());
     mocks.enhanceArchived.mockReset();
     mocks.enhanceArchived.mockResolvedValue(null);
+    mocks.retry.mockReset();
+    mocks.retry.mockResolvedValue(null);
+    mocks.submitError = null;
+    mocks.failedItems = null;
+    mocks.restoreFailed = null;
+    mocks.retryRestore.mockReset();
+    mocks.retryRestore.mockResolvedValue(0);
+    mocks.activeCount = 0;
+  });
+
+  it("names an unreachable server instead of printing HTTP 0", async () => {
+    mocks.submitError = { status: 0, message: "Failed to fetch" };
+    render(<App />);
+
+    expect(await screen.findByText(dicts.en.submitNetworkFailed)).toBeVisible();
+    expect(screen.queryByText(/HTTP 0/)).toBeNull();
+  });
+
+  it("keeps the status line for a known HTTP failure", async () => {
+    mocks.submitError = { status: 413, message: "too large" };
+    render(<App />);
+
+    expect(await screen.findByText(dicts.en.submitTooLarge)).toBeVisible();
   });
 
   it("starts at home on / and navigates the task list to /jobs", async () => {
@@ -173,10 +230,10 @@ describe("App workspace", () => {
     await screen.findByRole("button", { name: /item in session/ });
     fireEvent.click(screen.getByRole("button", { name: "Options" }));
     const llmSwitch = await screen.findByRole("switch", {
-      name: "LLM enhancement",
+      name: "LLM Enhancement",
     });
     expect(llmSwitch).toHaveAttribute("aria-checked", "false");
-    expect(screen.getByRole("button", { name: "minimal" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: dicts.en.presetMinimal })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /item in session/ }));
@@ -192,14 +249,18 @@ describe("App workspace", () => {
     expect(screen.getByRole("button", { name: "Options" }).closest(".jobhead")).not.toBeNull();
     expect(screen.getByLabelText("Upload", { selector: "input" }).closest(".jobhead")).not.toBeNull();
     const currentRow = screen.getByRole("option", { name: /result\.md/ });
-    expect(currentRow.querySelector(".c-finished")).toHaveTextContent("07-13 10:00");
+    expect(currentRow.querySelector(".c-finished")).toHaveTextContent(
+      new Date("2026-07-13T10:00:01Z").toLocaleString("en-CA", {
+        month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
+      }).replace(",", ""),
+    );
     const enhance = screen.getByRole("button", {
       name: "Enhance result.md with LLM",
     });
     expect(enhance).toBeDisabled();
     // The workspace has its own options row, so its panel starts collapsed.
     fireEvent.click(screen.getByRole("button", { name: "Options" }));
-    fireEvent.click(screen.getByRole("switch", { name: "LLM enhancement" }));
+    fireEvent.click(screen.getByRole("switch", { name: "LLM Enhancement" }));
     expect(enhance).toBeEnabled();
     expect(currentRow.querySelector(".c-status.archive-actions")).not.toBeNull();
     const archivedRow = screen.getByRole("option", { name: "Open archived.pdf" });
@@ -237,7 +298,122 @@ describe("App workspace", () => {
     const file = new File(["hello"], "hello.txt", { type: "text/plain" });
     fireEvent.change(picker, { target: { files: [file] } });
     await waitFor(() => expect(mocks.submit).toHaveBeenCalled());
-    expect(mocks.submit).toHaveBeenCalledWith([file], [], expect.any(Object));
+    expect(mocks.submit).toHaveBeenCalledWith([file], [], expect.any(Object), expect.any(AbortSignal));
+  });
+
+  it("shows an abortable busy state while the create-job POST is in flight", async () => {
+    let resolveSubmit: (value: boolean) => void = () => undefined;
+    const seenSignal: { current: AbortSignal | null } = { current: null };
+    mocks.submit.mockImplementation(
+      (_files: File[], _urls: string[], _options: unknown, signal?: AbortSignal) => {
+        seenSignal.current = signal ?? null;
+        return new Promise<boolean>((resolve) => {
+          resolveSubmit = resolve;
+        });
+      },
+    );
+    render(<App />);
+    const picker = await screen.findByLabelText("Upload", { selector: "input" });
+    const file = new File(["hello"], "hello.txt", { type: "text/plain" });
+
+    fireEvent.change(picker, { target: { files: [file] } });
+
+    // Deterministic feedback: a status line, a disabled input, and a cancel.
+    const status = await screen.findByText(dicts.en.submitting);
+    expect(status.closest("[role='status']")).not.toBeNull();
+    expect(picker).toBeDisabled();
+    expect(seenSignal.current?.aborted).toBe(false);
+    const cancel = screen.getByRole("button", { name: dicts.en.cancelSubmit });
+    fireEvent.click(cancel);
+    // Cancel must actually abort the in-flight request, not just hide the row.
+    expect(seenSignal.current?.aborted).toBe(true);
+    expect(screen.queryByText(dicts.en.submitting)).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveSubmit(false);
+    });
+  });
+
+  it("re-queues every failed row from one action", async () => {
+    window.history.replaceState(null, "", "/jobs");
+    mocks.failedItems = [failedRow("item-a"), failedRow("item-b")];
+    render(<App />);
+
+    const retryAll = await screen.findByRole("button", {
+      name: dicts.en.retryAllFailed(2),
+    });
+    fireEvent.click(retryAll);
+
+    await waitFor(() => expect(mocks.retry).toHaveBeenCalledTimes(2));
+  });
+
+  it("shows a failed session restore under the home composer too", async () => {
+    mocks.restoreFailed = ["job-9"];
+    render(<App />);
+
+    // The restore notice used to live only inside the workspace, so a user who
+    // never left the home view never learned the task list was not restored.
+    const notice = await screen.findByText(dicts.en.restoreFailed);
+    expect(notice.closest(".drop-main")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: dicts.en.restoreRetry }));
+    await waitFor(() => expect(mocks.retryRestore).toHaveBeenCalledOnce());
+    // A full recovery is announced through the polite live region.
+    await waitFor(() =>
+      expect(document.querySelector(".sr-only[role='status']")).toHaveTextContent(
+        dicts.en.sessResults(1),
+      ),
+    );
+  });
+
+  it("retries only the failed rows and disables the action while it runs", async () => {
+    window.history.replaceState(null, "", "/jobs");
+    mocks.failedItems = [failedRow("item-a"), failedRow("item-b")];
+    const gate: { release: (value: string | null) => void } = {
+      release: () => undefined,
+    };
+    mocks.retry.mockImplementation(
+      () =>
+        new Promise<string | null>((resolve) => {
+          gate.release = resolve;
+        }),
+    );
+    render(<App />);
+
+    // Running rows are not failed rows: the label counts what the click sends.
+    const retryAll = await screen.findByRole("button", {
+      name: dicts.en.retryAllFailed(2),
+    });
+    fireEvent.click(retryAll);
+    await waitFor(() => expect(retryAll).toBeDisabled());
+    expect(retryAll).toHaveAttribute("aria-busy", "true");
+    // Rows re-queue one at a time, in list order.
+    expect(mocks.retry).toHaveBeenCalledTimes(1);
+    expect(mocks.retry.mock.calls[0]![0]).toMatchObject({ itemId: "item-a" });
+
+    await act(async () => {
+      gate.release(null);
+    });
+    await act(async () => {
+      gate.release(null);
+    });
+    await waitFor(() => expect(mocks.retry).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(retryAll).toBeEnabled());
+    expect(retryAll).not.toHaveAttribute("aria-busy");
+    expect(document.querySelector(".sr-only[role='status']")).toHaveTextContent(
+      dicts.en.announceRetryAll(2),
+    );
+  });
+
+  it("names the view and the running count in the document title", async () => {
+    mocks.activeCount = 3;
+    window.history.replaceState(null, "", "/jobs");
+    render(<App />);
+
+    await waitFor(() =>
+      expect(document.title).toBe(`3 · ${dicts.en.titleWorkspace}`),
+    );
+    fireEvent.click(await screen.findByRole("link", { name: dicts.en.homeAria }));
+    await waitFor(() => expect(document.title).toBe(dicts.en.titleHome));
   });
 
   it("restores the task-list view when /jobs is refreshed", async () => {
@@ -287,7 +463,7 @@ describe("App workspace", () => {
     await screen.findByRole("listbox");
     fireEvent.click(await screen.findByRole("button", { name: "Options" }));
     fireEvent.click(
-      await screen.findByRole("switch", { name: "LLM enhancement" }),
+      await screen.findByRole("switch", { name: "LLM Enhancement" }),
     );
     const wand = screen.getByRole("button", {
       name: "Enhance archived.pdf with LLM",
@@ -313,7 +489,7 @@ describe("App workspace", () => {
     await screen.findByRole("listbox");
     fireEvent.click(await screen.findByRole("button", { name: "Options" }));
     fireEvent.click(
-      await screen.findByRole("switch", { name: "LLM enhancement" }),
+      await screen.findByRole("switch", { name: "LLM Enhancement" }),
     );
     fireEvent.click(
       screen.getByRole("button", { name: "Enhance archived.pdf with LLM" }),
@@ -329,14 +505,14 @@ describe("App workspace", () => {
     render(<App />);
     await act(async () => {});
     fireEvent.click(screen.getByRole("button", { name: "Options" }));
-    const rich = screen.getByRole("button", { name: "rich" });
+    const rich = screen.getByRole("button", { name: dicts.en.presetRich });
     await waitFor(() => expect(rich).toBeEnabled());
     fireEvent.click(rich);
-    expect(screen.getByRole("switch", { name: "LLM enhancement" })).toBeChecked();
-    expect(screen.getByRole("switch", { name: "alt text" })).toBeChecked();
-    expect(screen.getByRole("switch", { name: "description JSON" })).toBeChecked();
-    expect(screen.getByRole("switch", { name: "page screenshots" })).toBeChecked();
-    fireEvent.click(screen.getByRole("switch", { name: "alt text" }));
+    expect(screen.getByRole("switch", { name: "LLM Enhancement" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "Alt Text" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "Description JSON" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "Page Screenshots" })).toBeChecked();
+    fireEvent.click(screen.getByRole("switch", { name: "Alt Text" }));
     expect(screen.getByText("Custom")).toBeVisible();
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "https://example.com/article" } });
     fireEvent.click(screen.getByRole("button", { name: "Convert" }));
@@ -361,10 +537,10 @@ describe("App workspace", () => {
     render(<App />);
     await act(async () => {});
     fireEvent.click(screen.getByRole("button", { name: "Options" }));
-    expect(screen.getByRole("switch", { name: "alt text" })).not.toBeChecked();
-    expect(screen.getByRole("switch", { name: "description JSON" })).toBeChecked();
-    expect(screen.getByRole("switch", { name: "page screenshots" })).not.toBeChecked();
-    fireEvent.click(screen.getByRole("switch", { name: "alt text" }));
+    expect(screen.getByRole("switch", { name: "Alt Text" })).not.toBeChecked();
+    expect(screen.getByRole("switch", { name: "Description JSON" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "Page Screenshots" })).not.toBeChecked();
+    fireEvent.click(screen.getByRole("switch", { name: "Alt Text" }));
     const stored = JSON.parse(storage.getItem("markitai.options")!);
     expect(stored.imageOverrides).toEqual({ alt: true, desc: null, screenshot: false });
     expect(stored).not.toHaveProperty("pure");
@@ -375,21 +551,21 @@ describe("App workspace", () => {
     render(<App />);
     await act(async () => {});
     fireEvent.click(screen.getByRole("button", { name: "Options" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "rich" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "rich" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: dicts.en.presetRich })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: dicts.en.presetRich }));
     fireEvent.click(screen.getByRole("switch", { name: "OCR" }));
-    fireEvent.click(screen.getByRole("button", { name: "rag" }));
-    fireEvent.click(screen.getByRole("button", { name: "minimal" }));
-    for (const name of ["LLM enhancement", "OCR", "alt text", "description JSON", "page screenshots"]) {
+    fireEvent.click(screen.getByRole("button", { name: dicts.en.profileRag }));
+    fireEvent.click(screen.getByRole("button", { name: dicts.en.presetMinimal }));
+    for (const name of ["LLM Enhancement", "OCR", "Alt Text", "Description JSON", "Page Screenshots"]) {
       expect(screen.getByRole("switch", { name })).not.toBeChecked();
     }
-    expect(screen.getByRole("button", { name: "rag" })).toHaveAttribute("aria-pressed", "true");
-    fireEvent.click(screen.getByRole("button", { name: "rich" }));
-    fireEvent.click(screen.getByRole("switch", { name: "LLM enhancement" }));
-    expect(screen.getByRole("switch", { name: "alt text" })).not.toBeChecked();
-    expect(screen.getByRole("switch", { name: "alt text" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("switch", { name: "LLM enhancement" }));
-    expect(screen.getByRole("switch", { name: "alt text" })).toBeChecked();
+    expect(screen.getByRole("button", { name: dicts.en.profileRag })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: dicts.en.presetRich }));
+    fireEvent.click(screen.getByRole("switch", { name: "LLM Enhancement" }));
+    expect(screen.getByRole("switch", { name: "Alt Text" })).not.toBeChecked();
+    expect(screen.getByRole("switch", { name: "Alt Text" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("switch", { name: "LLM Enhancement" }));
+    expect(screen.getByRole("switch", { name: "Alt Text" })).toBeChecked();
   });
 
   it("caps a pasted URL batch at the job limit and says so", async () => {

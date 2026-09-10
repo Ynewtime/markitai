@@ -80,6 +80,8 @@ _VISIBLE_IMAGE_REF_RE = re.compile(
     rf"!\[((?:[^\]\\]|\\.)*)\]\({re.escape(VISIBLE_ASSETS_REL_PATH)}/([^)]+)\)"
 )
 
+_VISIBLE_WIKI_REF_RE = re.compile(r"!\[\[assets/([^|\]]+)(?:\|[^\]]*)?\]\]")
+
 _FENCE_RE = re.compile(r"^(`{3,}|~{3,})")
 
 _DELIMITER_CELL_RE = re.compile(r"^:?-+:?$")
@@ -309,8 +311,14 @@ def visible_asset_names(markdown: str) -> list[str]:
     from urllib.parse import unquote
 
     names: list[str] = []
-    for match in _VISIBLE_IMAGE_REF_RE.finditer(markdown):
-        name = unquote(match.group(2)).replace("\\", "/").split("/")[-1]
+    references = [
+        (m.start(), m.group(2)) for m in _VISIBLE_IMAGE_REF_RE.finditer(markdown)
+    ]
+    references.extend(
+        (m.start(), m.group(1)) for m in _VISIBLE_WIKI_REF_RE.finditer(markdown)
+    )
+    for _, target in sorted(references):
+        name = unquote(target).replace("\\", "/").split("/")[-1]
         if name and name not in names:
             names.append(name)
     return names

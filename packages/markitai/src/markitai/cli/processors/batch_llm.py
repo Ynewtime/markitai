@@ -24,6 +24,7 @@ them.
 from __future__ import annotations
 
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -49,6 +50,7 @@ from markitai.llm.batch_api import (
 )
 from markitai.llm.structured import instructor_mode_for_model
 from markitai.llm.types import ImageAnalysis, ImageAnalysisResult
+from markitai.runs.types import Outcome
 from markitai.utils.errors import ConversionError
 from markitai.utils.frontmatter import split_frontmatter
 
@@ -127,11 +129,18 @@ def _document_images(base_md: Path, markdown: str) -> list[Path]:
     source name: extractors sanitize filenames, so a prefix glob misses
     them (see ``extract_asset_image_names``).
     """
-    from markitai.constants import ASSETS_REL_PATH
+    from markitai.constants import ASSETS_REL_PATH, VISIBLE_ASSETS_REL_PATH
+    from markitai.output_profiles import visible_asset_names
     from markitai.utils.text import extract_asset_image_names
 
-    assets_dir = base_md.parent / ASSETS_REL_PATH
-    found = [assets_dir / name for name in extract_asset_image_names(markdown)]
+    found = [
+        base_md.parent / ASSETS_REL_PATH / name
+        for name in extract_asset_image_names(markdown)
+    ]
+    found.extend(
+        base_md.parent / VISIBLE_ASSETS_REL_PATH / name
+        for name in visible_asset_names(markdown)
+    )
     return [path for path in found if path.is_file()]
 
 
@@ -168,6 +177,9 @@ def _prepare_pending(
     analyze_images: bool = False,
     analyze_pages: bool = False,
     max_pages: int = DEFAULT_MAX_PAGES_PER_BATCH,
+    base_files: list[Path] | None = None,
+    written: set[Path] | None = None,
+    cfg: Any = None,
 ) -> tuple[list[tuple[BatchDocItem, Any]], int, list[tuple[Path, str, list[Path]]]]:
     """Build the batch's requests, serving anything already cached.
 
@@ -180,11 +192,14 @@ def _prepare_pending(
         (uncached (item, plan) pairs, number of cache-served requests,
         oversized documents that must run live)
     """
-    base_files = sorted(
-        p
-        for p in output_dir.rglob("*.md")
-        if not p.name.endswith(".llm.md") and ".markitai" not in p.parts
-    )
+    # Production callers always supply the current run's manifest. The
+    # directory fallback is only for explicit internal directory planning.
+    if base_files is None:
+        base_files = sorted(
+            p
+            for p in output_dir.rglob("*.md")
+            if not p.name.endswith(".llm.md") and ".markitai" not in p.parts
+        )
     pending: list[tuple[BatchDocItem, Any]] = []
     oversized: list[tuple[Path, str, list[Path]]] = []
     cached = 0
@@ -192,7 +207,7 @@ def _prepare_pending(
         # Live runs name the LLM context after the input file (note1.md),
         # not the written base (note1.md.md) — keep the naming identical.
         # The base's frontmatter is stripped so the LLM never sees it.
-        source = base_md.name.removesuffix(".md")
+        source = str(base_md.relative_to(output_dir)).removesuffix(".md")
         markdown = _body_without_frontmatter(base_md.read_text(encoding="utf-8"))
         relative_base = str(base_md.relative_to(output_dir))
 
@@ -212,7 +227,9 @@ def _prepare_pending(
         hit = processor._engine.try_cached(plan.call)
         if hit is not None:
             cleaned, frontmatter = _finalize_doc(processor, plan, hit, bool(pages))
-            _write_llm_md(processor, base_md, frontmatter, cleaned)
+            _write_llm_md(
+                processor, base_md, frontmatter, cleaned, cfg=cfg, written=written
+            )
             cached += 1
         else:
             pending.append(
@@ -256,7 +273,13 @@ def _prepare_pending(
 
 
 def _write_llm_md(
-    processor: Any, base_md: Path, frontmatter: str, cleaned: str
+    processor: Any,
+    base_md: Path,
+    frontmatter: str,
+    cleaned: str,
+    *,
+    cfg: Any = None,
+    written: set[Path] | None = None,
 ) -> Path:
     """Write the enhanced .llm.md next to its base file.
 
@@ -267,6 +290,12 @@ def _write_llm_md(
 
     target = base_md.with_suffix(".llm.md")
     atomic_write_text(target, processor.format_llm_output(cleaned, frontmatter))
+    if cfg is not None:
+        from markitai.output_profiles import apply_profile_to_file
+
+        apply_profile_to_file(target, base_md.parent, cfg)
+    if written is not None:
+        written.add(base_md)
     return target
 
 
@@ -274,6 +303,69 @@ async def run_batch_llm_enhancement(
     cfg: Any,
     output_dir: Path,
     *,
+    items: list[Outcome],
+    timeout_s: float = 3600.0,
+    quiet: bool = False,
+) -> int:
+    """Enhance only this run's successful artifacts and update their outcomes."""
+    from markitai.workflow.helpers import create_llm_processor
+
+    _single_batch_model(cfg)
+    processor = create_llm_processor(cfg)
+    selected = [
+        item
+        for item in items
+        if item.status == "completed" and item.output_path is not None
+    ]
+    base_files = list(
+        dict.fromkeys(
+            item.output_path for item in selected if item.output_path is not None
+        )
+    )
+    written: set[Path] = set()
+    started = time.perf_counter()
+    error: str | None = None
+    try:
+        code = await _run_batch_llm_enhancement(
+            cfg,
+            output_dir,
+            processor=processor,
+            base_files=base_files,
+            written=written,
+            timeout_s=timeout_s,
+            quiet=quiet,
+        )
+        if code:
+            error = "Batch enhancement is still pending; use --llm-batch-collect to finish it"
+        return code
+    except Exception as exc:
+        error = str(exc)
+        raise
+    finally:
+        duration = time.perf_counter() - started
+        for item in selected:
+            base = item.output_path
+            assert base is not None
+            source = str(base.relative_to(output_dir)).removesuffix(".md")
+            item.duration = (item.duration or 0.0) + duration
+            item.cost_usd += processor.get_context_cost(source)
+            from markitai.workflow.helpers import merge_llm_usage
+
+            merge_llm_usage(item.llm_usage, processor.get_context_usage(source))
+            if base in written:
+                item.output_path = base.with_suffix(".llm.md")
+            elif error is not None:
+                item.status = "failed"
+                item.error = error
+
+
+async def _run_batch_llm_enhancement(
+    cfg: Any,
+    output_dir: Path,
+    *,
+    processor: Any,
+    base_files: list[Path],
+    written: set[Path],
     timeout_s: float = 3600.0,
     quiet: bool = False,
 ) -> int:
@@ -288,16 +380,16 @@ async def run_batch_llm_enhancement(
         ConversionError: Pool/config unsupported, or the batch ended in a
             non-completed terminal state.
     """
-    from markitai.workflow.helpers import create_llm_processor
-
     model, provider = _single_batch_model(cfg)
     mode = instructor_mode_for_model(f"{provider}/{model}")
-    processor = create_llm_processor(cfg)
 
     analyze_images = bool(cfg.image.alt_enabled or cfg.image.desc_enabled)
     pending, cached, oversized = _prepare_pending(
         processor,
         output_dir,
+        base_files=base_files,
+        written=written,
+        cfg=cfg,
         analyze_images=analyze_images,
         analyze_pages=bool(cfg.screenshot.enabled),
     )
@@ -311,7 +403,9 @@ async def run_batch_llm_enhancement(
         cleaned, frontmatter = await processor.documents.enhance_document_complete(
             markdown, pages, source=source
         )
-        _write_llm_md(processor, base_md, frontmatter, cleaned)
+        _write_llm_md(
+            processor, base_md, frontmatter, cleaned, cfg=cfg, written=written
+        )
     if cached:
         logger.info(f"[Batch] {cached} request(s) served from cache")
     if not pending:
@@ -416,7 +510,9 @@ async def run_batch_llm_enhancement(
     if status != "completed":
         raise ConversionError(f"batch {batch_id} ended with status={status!r}")
 
-    return await _finish_batch(cfg, processor, output_dir, state, quiet=quiet)
+    return await _finish_batch(
+        cfg, processor, output_dir, state, quiet=quiet, written=written
+    )
 
 
 def _batch_usage(
@@ -561,6 +657,7 @@ async def _finish_batch(
     state: BatchRunState,
     *,
     quiet: bool,
+    written: set[Path] | None = None,
 ) -> int:
     """Download results and finalize each document (live re-run on failure)."""
     import instructor
@@ -623,7 +720,9 @@ async def _finish_batch(
             cleaned, frontmatter = _finalize_doc(processor, plan, result, vision)
             processor._engine.write_cache(plan.call, result)
             _account_batch_usage(processor, state, line, item.source)
-            _write_llm_md(processor, base_md, frontmatter, cleaned)
+            _write_llm_md(
+                processor, base_md, frontmatter, cleaned, cfg=cfg, written=written
+            )
             done += 1
         except Exception as e:
             logger.warning(
@@ -642,7 +741,9 @@ async def _finish_batch(
                 cleaned, frontmatter = await processor.documents.process_document(
                     markdown, item.source
                 )
-            _write_llm_md(processor, base_md, frontmatter, cleaned)
+            _write_llm_md(
+                processor, base_md, frontmatter, cleaned, cfg=cfg, written=written
+            )
             reran += 1
 
     _apply_image_answers(cfg, output_dir, images_by_base)

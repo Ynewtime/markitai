@@ -3,7 +3,7 @@
 Markitai 也可以作为库使用，不经过 CLI。`markitai.convert()` 及其异步版本 `markitai.aconvert()` 运行与 CLI 完全相同的转换管线——包括 LLM 增强——并返回带类型的结果。
 
 ::: warning 暂定接口
-markitai 处于 0.x 阶段，Python API 为**暂定（provisional）**接口：签名与结果字段可能在次版本中调整。
+Python API 目前是**暂定（provisional）**接口：签名与结果字段仍可能在次版本中调整。CLI 才是稳定接口；如果你依赖某个库层面的细节，请固定精确版本。
 :::
 
 ```bash
@@ -103,5 +103,7 @@ markitdown 会拉入 Magika，Magika 又会拉入 onnxruntime——任何 markit
 | `usage` | `ConversionUsage` | `cost_usd`、token 总量与按模型明细 |
 | `skip_reason` | `str \| None` | 因冲突策略跳过时为 `"exists"` |
 | `duration` | `float` | 耗时（秒） |
+
+增强字段仅指本次调用生成的增强结果；关闭 LLM 时不会返回磁盘中残留的相邻 `.llm.md`。`assets` 包含 rag/Obsidian 的可见 `assets/` 引用，也识别 Obsidian wikilink。
 
 失败会直接抛异常而非返回残缺结果：管线失败抛 `ConversionError`，URL 不可达抛 `FetchError`，启用 LLM 但无法解析模型抛 `ValueError`。每次调用只转换一个文件或 URL；目录批处理仍由 CLI 负责。

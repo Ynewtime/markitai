@@ -5,11 +5,34 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，
 版本号遵循[语义化版本](https://semver.org/spec/v2.0.0.html)规范。
 
+## [Unreleased]
+
+### 新增
+
+- `--json` 输出逐项状态、产物、usage、费用及运行级错误；需配合 `-o`，与 `--dry-run` / `--llm-batch-collect` 互斥。
+- `--no-remote-fetch` 禁用远程 URL 抽取，`--log-level` 控制已配置的文件日志。
+- MCP 支持输出 profile 和有界批量并发（默认 10）；省略 `llm` 时跟随服务器配置。
+- 双语网站对比页、搜索与社交元数据，以及文档和 UI 的 CI 检查。
+
+### 变更
+
+- Serve 登录地址改用 `#token=`；config list/get/set 默认脱敏，包括嵌套请求头，显式 `--show-secrets` 才显示原值。
+- 网页工作台增加可取消的上传进度、行内下载、清晰的选项与错误反馈，改善无障碍访问，设置和预览按需加载。移除 Tailwind 与无用 UI 代码。
+- CLI 进度写入 stderr；帮助与报错明确输出路径、支持格式、可选依赖和已移除参数。
+
+### 修复
+
+- 防止 MCP 同名输出互相覆盖，以及 API 混入残留的 LLM 文件。
+- 保留重试和重启后的任务选项，修复提前完成、恢复幽灵行及并发 ZIP 下载冲突。
+- 未认证远程任务逐跳校验并固定公网目标，覆盖重定向与浏览器子请求，隔离抓取缓存和浏览器会话。
+- Batch 只增强本次转换的文件并正确回填最终产物、usage 与失败状态；RAG/Obsidian 图片、wikilink 和 alt 在 Batch 与历史中保持完整。
+- 统一处理非法配置、缓存替换容量、空 URL 列表及错误退出码；发布检查适配 fragment 登录地址。
+
 ## [1.0.0] - 2026-09-09
 
 ### 新增
 
-- **markitai 现在既是 CLI 也是库**：`markitai.convert("report.pdf")` 及其异步孪生 `aconvert` 返回带类型的 `ConversionOutput`——markdown、frontmatter、资源与截图路径、逐图分析和用量合计——并复用 CLI 自己的配置分层。0.x 期间标记为暂定
+- **markitai 现在既是 CLI 也是库**：`markitai.convert("report.pdf")` 及其异步孪生 `aconvert` 返回带类型的 `ConversionOutput`——markdown、frontmatter、资源与截图路径、逐图分析和用量合计——并复用 CLI 自己的配置分层。暂定：签名与结果字段仍可能变化
 - **`markitai mcp` 从 CLI 启动内置 MCP 服务**，这也是官方 MCP Registry 条目（`io.github.Ynewtime/markitai`）使用的形式：`uvx --from "markitai[mcp]" markitai mcp`
 - **MCP agent 通过 `mcp` extra 接入 markitai**：`markitai.mcp` 随主 wheel 发布，经 stdio 暴露 `convert_document`、`convert_url`、`batch_convert`、`job_status`。`claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp`
 - **`--profile rag|obsidian|okf` 按下游消费者塑造输出**：`rag` 把图片移到可见的 `assets/`（LlamaIndex 的 `SimpleDirectoryReader` 等摄取器会跳过隐藏路径）并改写 PDF 页标记；`obsidian` 提供可选 wikilink；`okf` 将 frontmatter 映射到 Open Knowledge Format。与 `--preset` 正交；不加它输出逐字节不变

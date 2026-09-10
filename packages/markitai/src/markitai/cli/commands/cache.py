@@ -154,6 +154,8 @@ def cache_stats(as_json: bool, verbose: bool, limit: int) -> None:
     if global_cache:
         global_cache.close()
 
+    cache_error = bool(stats_data["cache"]) and "error" in stats_data["cache"]
+
     if as_json:
         click.echo(json.dumps(stats_data, indent=2, ensure_ascii=False))
     else:
@@ -180,6 +182,11 @@ def cache_stats(as_json: bool, verbose: bool, limit: int) -> None:
         # Print verbose details after summary
         if verbose and stats_data.get("cache") and "error" not in stats_data["cache"]:
             _print_verbose(stats_data["cache"], console)
+
+    if cache_error:
+        # Both output modes treat an unreadable cache as a failure, so a
+        # script and a human see the same exit code.
+        raise SystemExit(1)
 
 
 @cache.command("clear")

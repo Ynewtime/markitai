@@ -164,7 +164,12 @@ class TestJobMeta:
         assert meta["finished_at"] == data["finished_at"]
         assert meta["status"] == "done"
         assert meta["options"] == _all_job_options()
-        assert meta["items"] == data["items"]  # full item snapshot
+        assert meta["version"] == 2
+        assert [
+            {key: value for key, value in item.items() if key != "options"}
+            for item in meta["items"]
+        ] == data["items"]
+        assert all(item["options"] == meta["options"] for item in meta["items"])
         item = meta["items"][0]
         assert item["output"] == "doc.txt.md"
         assert item["finished_at"] is not None
@@ -596,3 +601,119 @@ class TestHistoryTTL:
         assert cleanup_stale_jobs(jobs_root) == 1
         assert recent.exists()
         assert not stale.exists()
+
+
+async def test_finalization_rechecks_idle_after_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    from markitai.serve.jobs import JobItem, JobRegistry, finalize_if_idle
+
+    registry = JobRegistry(tmp_path / "jobs")
+    job = registry.create_job({}, MarkitaiConfig())
+    job.items = [JobItem("i1", "test.txt", "file", None, status="done")]
+    entered, release = threading.Event(), threading.Event()
+
+    def scan(_path: Path) -> int:
+        entered.set()
+        assert release.wait(5)
+        return 123
+
+    monkeypatch.setattr("markitai.serve.jobs.job_dir_size", scan)
+    finalizer = asyncio.create_task(finalize_if_idle(registry, job))
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        job.generation += 1
+        job.runners = 1
+        job.retry_pending.add("i1")
+        job.items[0].status = "running"
+    finally:
+        release.set()
+        await finalizer
+    assert job.status == "running"
+    assert not (job.job_dir / "meta.json").exists()
+    job.runners = 0
+    job.retry_pending.clear()
+    job.items[0].status = "done"
+    await finalize_if_idle(registry, job)
+    assert job.status == "done"
+
+
+async def test_history_archives_have_independent_response_lifetimes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from starlette.requests import Request
+    from starlette.routing import Route
+
+    monkeypatch.setattr("markitai.serve.jobs.process_file_item", _fake_converter())
+    app = _make_app(tmp_path)
+    async with _serve_client(app) as client:
+        created = await client.post(
+            "/api/jobs", files=_multipart([("doc.txt", b"hello")])
+        )
+        await _wait_job_done(client, created.json()["job_id"])
+        endpoint = next(
+            route.endpoint
+            for route in app.routes
+            if isinstance(route, Route) and route.path == "/api/history/archive"
+        )
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/history/archive",
+            "query_string": b"",
+            "headers": [],
+            "app": app,
+            "client": ("127.0.0.1", 1),
+            "http_version": "1.1",
+        }
+        first, second = await asyncio.gather(
+            endpoint(Request(scope)), endpoint(Request(scope))
+        )
+        payloads = []
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        for response in (first, second):
+            chunks = []
+
+            async def send(message, chunks=chunks):
+                if message["type"] == "http.response.body":
+                    chunks.append(message.get("body", b""))
+
+            await response(scope, receive, send)
+            payloads.append(b"".join(chunks))
+        for data in payloads:
+            with zipfile.ZipFile(BytesIO(data)) as archive:
+                assert "doc.txt.md" in archive.namelist()
+        assert not list((tmp_path / "jobs").glob("archive*.zip"))
+
+
+async def test_retry_preserves_profile_options_after_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("markitai.serve.jobs.process_file_item", _fake_converter())
+    options = {
+        "llm": False,
+        "profile": "obsidian",
+        "screenshot": True,
+        "strategy": "static",
+        "no_cache": True,
+    }
+    async with _serve_client(_make_app(tmp_path)) as client:
+        response = await client.post(
+            "/api/jobs",
+            files=[("files", ("doc.txt", b"hello"))],
+            data={"options": json.dumps(options)},
+        )
+        job_id = response.json()["job_id"]
+        await _wait_job_done(client, job_id)
+    async with _serve_client(_make_app(tmp_path)) as client:
+        restored = (await client.get(f"/api/jobs/{job_id}")).json()
+        assert restored["options"] == _all_job_options(**options)
+        response = await client.post(f"/api/jobs/{job_id}/items/i1/retry")
+        assert response.status_code == 202, response.text
+        retried = await _wait_job_done(client, job_id)
+        assert retried["options"] == _all_job_options(**options)

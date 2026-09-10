@@ -239,7 +239,12 @@ markitai config validate ./markitai.json    # 验证指定文件
 | `MARKITAI_LANG` | CLI 语言覆盖（`en` 或 `zh`） |
 | `MARKITAI_PURE` | 启用 pure 模式（`1`、`true` 或 `yes`） |
 | `MARKITAI_RECORD_HISTORY` | 将 CLI 运行记录到 `markitai serve` 历史（`1`、`true`、`yes` 或 `on`；已设置但为假值表示显式关闭）。可被 `--record-history` / `--no-record-history` 覆盖；会覆盖配置项 `history.record` |
+| `MARKITAI_NO_VLM_OCR` | 禁止视觉模型 OCR：使用 `--ocr --llm` 时强制走本地 RapidOCR，而不是让模型直接读取页面图像（`1`、`true` 或 `yes`） |
+| `MARKITAI_SERVE_TOKEN` | 固定 `markitai serve` 的访问令牌，而不是每次启动随机生成 |
 | `MARKITAI_NO_REMOTE_FETCH` | 硬性禁用远程提取，包括显式远程 `-s` 策略（`1`、`true` 或 `yes`） |
+| `MARKITAI_INSTALL_OPTIONAL` | 仅安装脚本：非交互式安装可选组件（`1`、`true` 或 `yes`） |
+| `MARKITAI_USE_MIRROR` | 仅安装脚本：`1` 始终提供镜像索引，`0` 从不询问 |
+| `MARKITAI_VERSION` | 仅安装脚本：固定要安装的 markitai 版本（省略即安装最新稳定版） |
 | `MODEL` | 无 `model_list` 配置时的单模型覆盖 |
 
 ### `.env` 文件加载
@@ -273,7 +278,7 @@ Gemini：使用直连 API 密钥（`gemini/`，见下方“模型命名”）或
 
 使用 LiteLLM 模型命名规范：
 
-```
+```text
 provider/model-name
 ```
 
@@ -682,7 +687,13 @@ markitai document.pdf --preset my-preset
 - `latin` - 拉丁语系
 
 ::: tip
-RapidOCR 已作为依赖包含，开箱即用，无需额外安装。
+RapidOCR **不在**基础安装里——它位于 `ocr` 附加组件中，所以 `--ocr` 需要额外一步：
+
+```bash
+uv tool install "markitai[ocr]" --force   # 或：pipx install "markitai[ocr]" --force
+```
+
+未安装时，`--ocr` 会直接提示缺少该附加组件，而不是静默返回图片占位符。若已配置支持视觉的模型，`--ocr --llm` 无需该附加组件：模型直接读取页面图像（VLM-OCR）；设置 `MARKITAI_NO_VLM_OCR=1` 可强制走本地 RapidOCR。
 :::
 
 ## Office 配置
@@ -770,7 +781,7 @@ URL 抓取使用独立的并发池，因为 URL 可能有较高延迟（如浏�
 
 | 策略 | 说明 |
 |------|------|
-| `auto` | 自动检测：本地优先顺序（static → playwright → defuddle → jina → cloudflare）；已知 SPA/重 JS 域名则改用 playwright → defuddle → jina → cloudflare → static。详见 [Fetch Policy 指南](/zh/guide/fetch-policy) |
+| `auto` | 自动检测：本地优先顺序（static → playwright → defuddle → jina → cloudflare）；已知 SPA/重 JS 域名则改用 playwright → defuddle → jina → cloudflare → static。详见[抓取策略指南](/zh/guide/fetch-policy) |
 | `static` | 使用静态 HTTP 抓取和内置 webextract（快速，无 JS） |
 | `defuddle` | 使用 Defuddle API 提取干净内容（免费，无需认证） |
 | `playwright` | 使用 Playwright 处理 JS 渲染的页面（支持 SPA） |
@@ -783,7 +794,9 @@ URL 抓取使用独立的并发池，因为 URL 可能有较高延迟（如浏�
 
 对于公网 X/Twitter 状态或文章 URL，本地 DOM 提取失败后，Playwright 可能依次尝试 FxTwitter 与 Twitter oEmbed。这项增强与其他远程服务共用**同一个**进程级同意决定：在 `ask` 模式下，它自己也可以弹出那一次共享确认；本次运行中已经做出的决定会被直接沿用；无法询问时则跳过。`fetch.remote_consent=never` 与 `MARKITAI_NO_REMOTE_FETCH=1` 都会禁用它。
 
-私网、本机、内网及自带认证信息的 URL 绝不会使用远程提取，即使显式指定远程策略也不例外。认证信息包括 URL userinfo，以及 query 或 fragment 中的 Token、签名、Credential、密码、API Key 与授权码等敏感参数。在 `auto` 策略链中，匹配 `fetch.policy.local_only_patterns` 或 `NO_PROXY` 的域名也只会留在本机处理（启用 `inherit_no_proxy` 时）。对于仍属公网的 URL，显式传入非 `auto` 远程 `-s` 参数表示有意覆盖这些基于模式的规则。仅在配置文件中设置远程 `fetch.strategy` 时，仍受 `fetch.remote_consent` 控制，并使用相同的首次远程揭露。
+私网、本机、内网及自带认证信息的 URL 绝不会使用远程提取，即使显式指定远程策略也不例外。认证信息包括 URL userinfo，以及 query 或 fragment 中的 Token、签名、Credential、密码、API Key 与授权码等敏感参数。
+
+在 `auto` 策略链中，匹配 `fetch.policy.local_only_patterns` 或 `NO_PROXY` 的域名也只会留在本机处理（启用 `inherit_no_proxy` 时）。对于仍属公网的 URL，显式传入非 `auto` 远程 `-s` 参数表示有意覆盖这些基于模式的规则。仅在配置文件中设置远程 `fetch.strategy` 时，仍受 `fetch.remote_consent` 控制，并使用相同的首次远程揭露。
 
 | 设置 | 选项 | 默认值 | 说明 |
 |------|------|--------|------|
@@ -910,12 +923,14 @@ export CLOUDFLARE_ACCOUNT_ID="your-account-id"
 ::: warning 限制与注意事项
 - **并发限制**：Free 计划允许 **2 个并发浏览器实例**。Markitai 会自动串行化 CF BR 请求，并在收到 429 限流时指数退避重试，因此高 `url_concurrency` 值是安全的，但不会加速 CF BR 抓取。
 - **站点兼容性**：有严格反爬措施的站点（如 x.com、twitter.com）可能通过 CF BR 返回 400 错误。对这些站点请使用 `-s playwright` 或 `-s jina`。
-- **文件转换质量**：对于有本地 converter 的格式（PDF、DOCX、XLSX 等），CF Workers AI `toMarkdown` 的输出质量通常**低于本地 converter**（如格式还原不够精确、无法提取图片等）。使用 `-b cloudflare` 时如果有更好的本地 converter 可用会输出警告。CF `toMarkdown` 最适合本地没有 converter 的格式（`.numbers`、`.ods`、`.svg` 等）。
+- **文件转换质量**：对于有本地 converter 的格式（PDF、DOCX、XLSX 等），CF Workers AI `toMarkdown` 的输出质量通常**低于本地 converter**（如格式还原不够精确、无法提取图片等）。使用 `-b cloudflare` 时如果有更好的本地 converter 可用会输出警告。CF `toMarkdown` 最适合基础安装无法转换的格式（例如 `.numbers`）。
 :::
 
-### 抓取策略引擎
+### 抓取策略、域名配置与回退模式 {#fetch-policy-domain-profiles}
 
-策略引擎基于域名特征和历史记录智能排序抓取策略。详见 [Fetch Policy 指南](/zh/guide/fetch-policy)。
+策略引擎按域名排序抓取策略，并记录哪些域名需要浏览器渲染。它的选项表、域名配置字段、内置配置与 `fallback_patterns` 列表统一放在[抓取策略指南](/zh/guide/fetch-policy)里，只维护一份，避免两个页面各自漂移。
+
+配置形态供参考：
 
 ```json
 {
@@ -923,26 +938,7 @@ export CLOUDFLARE_ACCOUNT_ID="your-account-id"
     "policy": {
       "enabled": true,
       "max_strategy_hops": 5
-    }
-  }
-}
-```
-
-| 设置 | 默认值 | 说明 |
-|------|--------|------|
-| `enabled` | `true` | 启用智能策略排序 |
-| `max_strategy_hops` | `5` | 放弃前最多尝试的策略数 |
-| `strategy_priority` | `null` | 自定义全局策略顺序（覆盖默认优先级） |
-| `local_only_patterns` | `[]` | 限制为本地策略的域名/IP 模式（NO_PROXY 语法） |
-| `inherit_no_proxy` | `true` | 将 `NO_PROXY` 环境变量合并到 `local_only_patterns` |
-
-### 域名配置
-
-为特定域名配置抓取覆盖：
-
-```json
-{
-  "fetch": {
+    },
     "domain_profiles": {
       "x.com": {
         "wait_for_selector": "[data-testid=tweetText]",
@@ -950,34 +946,13 @@ export CLOUDFLARE_ACCOUNT_ID="your-account-id"
         "extra_wait_ms": 1200,
         "prefer_strategy": "playwright"
       }
-    }
-  }
-}
-```
-
-| 设置 | 默认值 | 说明 |
-|------|--------|------|
-| `wait_for_selector` | `null` | 内容提取前等待的 CSS 选择器 |
-| `wait_for` | `null` | 等待条件覆盖：`load`, `domcontentloaded`, `networkidle`（未设置时继承全局 `fetch.playwright.wait_for`） |
-| `extra_wait_ms` | `null` | 额外等待时间覆盖（毫秒，未设置时继承全局 `fetch.playwright.extra_wait_ms`） |
-| `prefer_strategy` | `null` | 首选策略：`static`, `defuddle`, `playwright`, `cloudflare`, `jina` |
-| `strategy_priority` | `null` | 该域名的自定义策略顺序（覆盖全局和 `prefer_strategy`） |
-| `skip_auto_scroll` | `false` | 对单内容页面（推文、issue、文档）跳过自动滚动 |
-| `reject_resource_patterns` | `null` | 阻止 Playwright 导航中匹配这些 URL 模式的资源（如 `["**/analytics/**"]`） |
-
-Markitai 内置了 `x.com`/`twitter.com` 和 `github.com` 的域名配置。为同一域名设置自己的 `domain_profiles` 条目会**整体替换**内置配置而非逐字段合并，除非自行重复声明，否则内置调优会丢失。
-
-### 回退模式
-
-匹配这些模式的网站被视为 SPA/JS 重度依赖站点，在策略顺序中提升浏览器渲染的优先级：
-
-```json
-{
-  "fetch": {
+    },
     "fallback_patterns": ["x.com", "twitter.com", "instagram.com", "facebook.com", "linkedin.com", "threads.net"]
   }
 }
 ```
+
+有两条规则容易踩坑，值得在这里重复一次：为某个域名自定义 `domain_profiles` 条目会**整体替换**该域名的内置配置而非逐字段合并；`auto` 会把 `fallback_patterns` 中的域名视为 SPA/JS 重度依赖站点，从而提前使用浏览器渲染。其余默认值、类型与各域名字段见[抓取策略指南](/zh/guide/fetch-policy#配置)。
 
 ### 代理
 
@@ -1123,7 +1098,7 @@ markitai ./docs --no-cache-for "file1.pdf,reports/**"
 
 在提示词目录创建自定义提示词文件：
 
-```
+```text
 ~/.markitai/prompts/
 ├── cleaner_system.md            # 文档清理角色和规则
 ├── cleaner_user.md              # 文档清理内容模板
@@ -1213,7 +1188,7 @@ $env:NPM_CONFIG_REGISTRY = "https://registry.npmmirror.com"
 
 ### 代理配置
 
-如已有代理，设置环境变量即可对所有网络请求生效：
+如已有代理，设置环境变量即可对所有网络请求生效（导入规则与桌面代理支持见上文[代理](#代理)一节）：
 
 ```bash
 export HTTPS_PROXY="http://127.0.0.1:7890"

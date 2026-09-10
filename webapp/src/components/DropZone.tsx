@@ -13,20 +13,31 @@ function dragHasFiles(e: DragEvent): boolean {
 export function DropOverlay({
   label,
   onFiles,
+  suspended = false,
 }: {
   label: string;
   onFiles: (files: File[], fromFolder?: boolean) => void;
+  /** A modal is open: ignore drops instead of starting a hidden job. */
+  suspended?: boolean;
 }) {
   const [active, setActive] = useState(false);
   const depthRef = useRef(0);
   const onFilesRef = useRef(onFiles);
+  const suspendedRef = useRef(suspended);
   useEffect(() => {
     onFilesRef.current = onFiles;
   }, [onFiles]);
+  useEffect(() => {
+    suspendedRef.current = suspended;
+    if (suspended) {
+      depthRef.current = 0;
+      setActive(false);
+    }
+  }, [suspended]);
 
   useEffect(() => {
     const onEnter = (e: DragEvent) => {
-      if (!dragHasFiles(e)) return;
+      if (!dragHasFiles(e) || suspendedRef.current) return;
       e.preventDefault();
       depthRef.current += 1;
       setActive(true);
@@ -42,6 +53,13 @@ export function DropOverlay({
     };
     const onDrop = (e: DragEvent) => {
       if (!dragHasFiles(e)) return;
+      if (suspendedRef.current) {
+        // The modal owns the screen; a drop must not start a job behind it.
+        e.preventDefault();
+        depthRef.current = 0;
+        setActive(false);
+        return;
+      }
       e.preventDefault();
       depthRef.current = 0;
       setActive(false);
@@ -87,21 +105,28 @@ export function FilePicker({
   onFiles,
   icon,
   className = "browse",
+  disabled = false,
 }: {
   label: string;
   onFiles: (files: File[]) => void;
   icon?: ReactNode;
   className?: string;
+  disabled?: boolean;
 }) {
   return (
     // aria-label duplicates the visible text so the icon-only phone variant
     // (the span is display:none there) keeps its accessible name
-    <label className={className} aria-label={label}>
+    <label className={disabled ? `${className} disabled` : className} aria-label={label}>
       {icon}
       <span>{label}</span>
       <input
         type="file"
         multiple
+        disabled={disabled}
+        // Mirrors converter/base.py EXTENSION_MAP; test_webapp_design_guard
+        // fails when the two drift apart (a stale entry offers a file the
+        // backend will reject).
+        accept=".avif,.bmp,.csv,.doc,.docx,.eml,.epub,.gif,.heic,.heif,.htm,.html,.ipynb,.jpeg,.jpg,.markdown,.md,.msg,.numbers,.odt,.ods,.org,.pdf,.png,.ppt,.pptx,.rst,.rtf,.svg,.tex,.tif,.tiff,.tsv,.txt,.webp,.xhtml,.xls,.xlsx,.xml"
         className="sr-only"
         onChange={(e) => {
           const files = e.currentTarget.files === null ? [] : Array.from(e.currentTarget.files);

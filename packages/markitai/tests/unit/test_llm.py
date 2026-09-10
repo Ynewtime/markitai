@@ -192,7 +192,7 @@ class TestLLMProcessorAsync:
             assert "source: test.md" in frontmatter
             assert "markitai_processed:" in frontmatter
 
-    async def test_process_document_combined_success(
+    async def test_run_document_call_success(
         self, llm_config: LLMConfig, prompts_config: PromptsConfig
     ):
         """Test combined document processing with Instructor."""
@@ -225,8 +225,8 @@ class TestLLMProcessorAsync:
             )
             mock_from_litellm.return_value = mock_client
 
-            result = await processor.documents._process_document_combined(
-                "# Raw Test", "test.md"
+            result = await processor.documents._run_document_call(
+                processor.documents._build_document_call("# Raw Test", "test.md")
             )
 
             assert result.cleaned_markdown == "# Cleaned Title\n\nClean content."
@@ -333,8 +333,8 @@ class TestCacheModelScope:
             patcher, mock_client = self._mock_instructor_success()
             with patcher as mock_from_litellm:
                 mock_from_litellm.return_value = mock_client
-                await processor.documents._process_document_combined(
-                    "# Same content", "doc.md"
+                await processor.documents._run_document_call(
+                    processor.documents._build_document_call("# Same content", "doc.md")
                 )
 
             set_call = processor._persistent_cache.set.call_args
@@ -366,8 +366,8 @@ class TestCacheModelScope:
         patcher, mock_client = self._mock_instructor_success("# Cleaned once")
         with patcher as mock_from_litellm:
             mock_from_litellm.return_value = mock_client
-            await processor_a.documents._process_document_combined(
-                markdown, "original.md"
+            await processor_a.documents._run_document_call(
+                processor_a.documents._build_document_call(markdown, "original.md")
             )
 
         # Second run (fresh processor, fresh in-memory cache): renamed source
@@ -379,8 +379,8 @@ class TestCacheModelScope:
         )
         with patcher as mock_from_litellm:
             mock_from_litellm.return_value = mock_client
-            result = await processor_b.documents._process_document_combined(
-                markdown, "renamed.md"
+            result = await processor_b.documents._run_document_call(
+                processor_b.documents._build_document_call(markdown, "renamed.md")
             )
 
         assert result.cleaned_markdown == "# Cleaned once"

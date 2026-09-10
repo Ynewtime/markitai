@@ -17,15 +17,17 @@ export function UrlInput({
   text,
   onText,
   onConvert,
+  busy: submitting = false,
   compact = false,
 }: {
   t: Dict;
   text: string;
   onText: (text: string) => void;
   onConvert: (urls: string[]) => Promise<boolean>;
+  busy?: boolean;
   compact?: boolean;
 }) {
-  const [busy, setBusy] = useState(false);
+  const [sending, setSending] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const narrow = useMediaQuery(NARROW_Q);
 
@@ -40,13 +42,13 @@ export function UrlInput({
   const rows = Math.min(6, Math.max(1, text.split("\n").length));
 
   const submit = async () => {
-    if (urls.length === 0 || busy) return;
-    setBusy(true);
+    if (urls.length === 0 || sending) return;
+    setSending(true);
     try {
       const created = await onConvert(urls);
       if (created) onText("");
     } finally {
-      setBusy(false);
+      setSending(false);
       inputRef.current?.focus({ preventScroll: true });
     }
   };
@@ -74,7 +76,8 @@ export function UrlInput({
       <button
         type="button"
         className="srcact convert"
-        disabled={busy || urls.length === 0}
+        disabled={submitting || sending || urls.length === 0}
+        aria-busy={submitting || sending || undefined}
         onClick={() => void submit()}
       >
         <ArrowRightIcon size={14} />
