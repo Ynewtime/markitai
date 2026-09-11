@@ -34,7 +34,7 @@
 | packages/markitai/src/markitai/cli/processors/validators.py                |      108 |        8 |       48 |        1 |     93% |103-111, 188-189 |
 | packages/markitai/src/markitai/cli/providers\_detect.py                    |       71 |       11 |       20 |        1 |     87% |38-45, 50, 55, 65-66, 150-\>161 |
 | packages/markitai/src/markitai/cli/ui.py                                   |      264 |        5 |       84 |        4 |     97% |436-\>exit, 464, 467, 527-528, 614 |
-| packages/markitai/src/markitai/config.py                                   |      488 |       41 |      138 |       24 |     88% |650, 652, 735, 780-782, 789-791, 916, 919, 921, 924, 976, 1058-\>1070, 1077, 1096, 1112, 1143, 1147, 1150, 1156, 1159, 1199-1202, 1205, 1212-1214, 1225, 1228, 1250, 1269-1278, 1281-\>exit, 1286-1290 |
+| packages/markitai/src/markitai/config.py                                   |      488 |       37 |      138 |       26 |     89% |650, 652, 735, 781, 790, 916, 919, 921, 924, 976, 1058-\>1070, 1077, 1096, 1112, 1143, 1147, 1150, 1156, 1159, 1199-1202, 1205, 1212-1214, 1225, 1228, 1250, 1269-1278, 1281-\>exit, 1286-1290 |
 | packages/markitai/src/markitai/constants.py                                |      101 |        0 |        0 |        0 |    100% |           |
 | packages/markitai/src/markitai/converter/\_\_init\_\_.py                   |       12 |        6 |        2 |        0 |     43% |   131-137 |
 | packages/markitai/src/markitai/converter/\_patches.py                      |       47 |        0 |       10 |        0 |    100% |           |
@@ -65,7 +65,7 @@
 | packages/markitai/src/markitai/fetch\_session.py                           |      362 |       84 |      156 |        9 |     72% |54-\>41, 161-\>159, 195-\>180, 223-264, 267-329, 478-479, 490-496, 504, 586-591, 599, 712-715, 721-722, 769 |
 | packages/markitai/src/markitai/fetch\_strategies/\_\_init\_\_.py           |       34 |        0 |        6 |        2 |     95% |70-\>exit, 72-\>exit |
 | packages/markitai/src/markitai/fetch\_strategies/\_shared.py               |       45 |        2 |        8 |        3 |     91% |57, 84, 94-\>97 |
-| packages/markitai/src/markitai/fetch\_strategies/cloudflare.py             |      106 |       17 |       42 |        7 |     80% |95-\>97, 97-\>99, 99-\>105, 154-\>198, 199, 220-221, 226, 245-265, 275-280 |
+| packages/markitai/src/markitai/fetch\_strategies/cloudflare.py             |      106 |        9 |       42 |       10 |     87% |95-\>97, 97-\>99, 99-\>105, 154-\>198, 199, 220-221, 226, 248, 251, 265, 275-280 |
 | packages/markitai/src/markitai/fetch\_strategies/defuddle.py               |       64 |       18 |       20 |        4 |     64% |96, 109-119, 123-126, 129, 141-144 |
 | packages/markitai/src/markitai/fetch\_strategies/jina.py                   |       84 |        7 |       30 |        8 |     87% |40-\>38, 42, 112, 114, 116, 141, 162-\>167, 185-186 |
 | packages/markitai/src/markitai/fetch\_strategies/playwright.py             |       34 |        2 |       14 |        2 |     92% |    31, 44 |
@@ -196,7 +196,7 @@
 | packages/markitai/src/markitai/workflow/helpers.py                         |      222 |       19 |      112 |       15 |     89% |111, 117, 121, 148-\>150, 282-\>276, 298-\>301, 342-348, 433, 448-454, 474-475, 477-480, 487-\>486, 490-\>486, 499-\>501, 516-\>522, 520 |
 | packages/markitai/src/markitai/workflow/single.py                          |      187 |        3 |       30 |        4 |     97% |149, 157, 336-\>358, 483 |
 | packages/markitai/src/markitai/workflow/url.py                             |      206 |        9 |       68 |       10 |     93% |144-145, 179, 335-336, 370-372, 424, 551-\>543, 606, 607-\>618, 618-\>604, 625-\>630, 630-\>639 |
-| **TOTAL**                                                                  | **29547** | **3478** | **11088** | **1580** | **86%** |           |
+| **TOTAL**                                                                  | **29547** | **3466** | **11088** | **1585** | **86%** |           |
 
 
 ## Setup coverage badge
