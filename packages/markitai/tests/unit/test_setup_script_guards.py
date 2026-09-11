@@ -27,6 +27,7 @@ Two later contracts live here too:
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -42,6 +43,7 @@ import pytest
 _SETUP_SH = Path(__file__).resolve().parents[4] / "scripts" / "setup.sh"
 _SETUP_PS1 = Path(__file__).resolve().parents[4] / "scripts" / "setup.ps1"
 _MARKITAI_PYPROJECT = Path(__file__).resolve().parents[2] / "pyproject.toml"
+_POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
 
 # Non-fatal orchestration calls: declining/failing these must NOT abort setup.
 # (install_uv / install_markitai are intentionally fatal and use their own
@@ -83,6 +85,168 @@ def _powershell_function(name: str) -> str:
     )
     assert function is not None, f"{name} not found"
     return function.group("body")
+
+
+def _extras_runtime(script_path: Path) -> str:
+    """Load the real extras helpers without running the setup entry point."""
+    text = script_path.read_text(encoding="utf-8")
+    start = text.index("# Global variable tracking all needed extras")
+    end = text.index("# Sync project dependencies (Dev mode)", start)
+    return text[start:end]
+
+
+@pytest.mark.parametrize(
+    "runtime",
+    [
+        "sh",
+        pytest.param(
+            "powershell",
+            marks=pytest.mark.skipif(
+                _POWERSHELL is None, reason="no PowerShell available"
+            ),
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "recorded,selected,expected,needs_update,version",
+    [
+        (["browser", "kreuzberg", "serve"], "", "browser,serve", True, ""),
+        (["kreuzberg"], "", "", True, ""),
+        (["all", "kreuzberg"], "", "all", True, ""),
+        (["kreuzberg", "all"], "", "all", True, ""),
+        (["browser", "kreuzberg"], "ocr", "ocr,browser", True, ""),
+        (["custom-extra", "kreuzberg"], "", "custom-extra", True, ""),
+        (["browser", "serve", "ocr"], "", "browser,serve,ocr", False, ""),
+        (["all"], "serve", "all", False, ""),
+        (["browser"], "serve", "serve,browser", True, ""),
+        ([], "", "", False, ""),
+        (["browser", "kreuzberg"], "", "browser,kreuzberg", False, "0.23.0"),
+        (["browser", "kreuzberg"], "", "browser", True, "1.0.0"),
+        (["browser", "kreuzberg"], "", "browser", True, "1.0.1"),
+    ],
+)
+def test_setup_migrates_retired_receipt_extras(
+    tmp_path: Path,
+    runtime: str,
+    recorded: list[str],
+    selected: str,
+    expected: str,
+    needs_update: bool,
+    version: str,
+) -> None:
+    """A rerun must rewrite stale uv requirements and keep other capabilities."""
+    tools_dir = tmp_path / "tools"
+    receipt = tools_dir / "markitai" / "uv-receipt.toml"
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(
+        f'[tool]\nrequirements = [{{ name = "markitai", extras = {json.dumps(recorded)} }}]\n',
+        encoding="utf-8",
+    )
+    clean_receipt = tmp_path / "clean-receipt.toml"
+    clean_extras = expected.split(",") if expected else []
+    clean_receipt.write_text(
+        f'[tool]\nrequirements = [{{ name = "markitai", extras = {json.dumps(clean_extras)} }}]\n',
+        encoding="utf-8",
+    )
+    calls = tmp_path / "uv-calls.txt"
+    harness = (
+        "#!/bin/sh\nset -eu\n"
+        "has_interactive_tty() { return 1; }\n"
+        "optional_install_requested() { return 1; }\n"
+        f"{_extras_runtime(_SETUP_SH)}\n"
+        f"markitai_pkg_spec() {{\n{_shell_function('markitai_pkg_spec')}}}\n"
+        f"install_markitai() {{\n{_shell_function('install_markitai')}}}\n"
+        'markitai_tools_dir() { printf "%s\\n" "$TEST_TOOLS_DIR"; }\n'
+        "i18n() { :; }\nclack_success() { :; }\ntrack_install() { :; }\n"
+        'clack_spinner() { shift; "$@"; }\n'
+        'markitai() { printf "markitai %s\\n" "$TEST_INSTALLED_VERSION"; }\n'
+        "uv() {\n"
+        '  printf "%s\\n" "$@" >> "$TEST_UV_CALLS"\n'
+        '  if [ "$2" = install ]; then\n'
+        '    cp "$TEST_NEW_RECEIPT" "$TEST_TOOLS_DIR/markitai/uv-receipt.toml"\n'
+        "  fi\n}\n"
+        'MARKITAI_SOURCE="pypi"\nMARKITAI_VERSION="$TEST_VERSION"\nPYTHON_CMD="python-test"\n'
+        'MARKITAI_EXTRAS="$TEST_SELECTED_EXTRAS"\n'
+        "load_existing_markitai_extras\n"
+        'printf "extras=%s\\n" "$MARKITAI_EXTRAS"\n'
+        "if markitai_extras_need_update; then echo update=yes; else echo update=no; fi\n"
+        "install_markitai\n"
+        # Simulate a stale suggestion from the old doctor's output as well.
+        "install_markitai_extra kreuzberg\n"
+        "load_existing_markitai_extras\n"
+        'printf "after=%s\\n" "$MARKITAI_EXTRAS"\n'
+        "if markitai_extras_need_update; then echo pending=yes; else echo pending=no; fi\n"
+    )
+    if runtime == "powershell":
+        harness = (
+            '$ErrorActionPreference = "Stop"\n'
+            "function Test-InteractiveInput { return $false }\n"
+            "function Test-OptionalInstallRequested { return $false }\n"
+            f"{_extras_runtime(_SETUP_PS1)}\n"
+            f"function Get-MarkitaiPkgSpec {{\n{_powershell_function('Get-MarkitaiPkgSpec')}}}\n"
+            f"function Install-Markitai {{\n{_powershell_function('Install-Markitai')}}}\n"
+            "function Get-MarkitaiToolsDir { return $env:TEST_TOOLS_DIR }\n"
+            "function i18n {}\nfunction Clack-Info {}\n"
+            "function Clack-Success {}\nfunction Track-Install {}\n"
+            'function markitai { return "markitai $env:TEST_INSTALLED_VERSION" }\n'
+            "function uv {\n"
+            "  $args | Add-Content -LiteralPath $env:TEST_UV_CALLS -Encoding UTF8\n"
+            "  if ($args[1] -eq 'install') {\n"
+            "    Copy-Item -LiteralPath $env:TEST_NEW_RECEIPT -Destination "
+            "(Join-Path $env:TEST_TOOLS_DIR 'markitai/uv-receipt.toml')\n"
+            "  }\n  $global:LASTEXITCODE = 0\n}\n"
+            '$script:MARKITAI_SOURCE = "pypi"\n$script:MarkitaiVersion = $env:TEST_VERSION\n'
+            '$script:PYTHON_CMD = "python-test"\n'
+            "$script:MARKITAI_EXTRAS = $env:TEST_SELECTED_EXTRAS\n"
+            "Import-MarkitaiReceiptExtras\n"
+            'Write-Output "extras=$script:MARKITAI_EXTRAS"\n'
+            "if (Test-MarkitaiExtrasNeedUpdate) { 'update=yes' } else { 'update=no' }\n"
+            "if (-not (Install-Markitai)) { exit 1 }\n"
+            "Install-MarkitaiExtra -ExtraName kreuzberg\n"
+            "Import-MarkitaiReceiptExtras\n"
+            'Write-Output "after=$script:MARKITAI_EXTRAS"\n'
+            "if (Test-MarkitaiExtrasNeedUpdate) { 'pending=yes' } else { 'pending=no' }\n"
+        )
+        assert _POWERSHELL is not None
+        command = [_POWERSHELL, "-NoLogo", "-NoProfile", "-File"]
+        script = tmp_path / "migrate.ps1"
+    else:
+        command = ["sh"]
+        script = tmp_path / "migrate.sh"
+    script.write_text(harness, encoding="utf-8")
+    result = subprocess.run(
+        [*command, str(script)],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env={
+            **os.environ,
+            "TEST_TOOLS_DIR": str(tools_dir),
+            "TEST_NEW_RECEIPT": str(clean_receipt),
+            "TEST_UV_CALLS": str(calls),
+            "TEST_SELECTED_EXTRAS": selected,
+            "TEST_VERSION": version,
+            "TEST_INSTALLED_VERSION": version or "1.0.1",
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [
+        f"extras={expected}",
+        f"update={'yes' if needs_update else 'no'}",
+        f"after={expected}",
+        "pending=no",
+    ]
+    spec = f"markitai[{expected}]" if expected else "markitai"
+    if version:
+        spec += f"=={version}"
+    assert calls.read_text(encoding="utf-8-sig").splitlines() == (
+        ["tool", "install", spec, "--python", "python-test", "--force"]
+        if needs_update or version
+        else ["tool", "upgrade", "markitai"]
+    )
+    current = tomllib.loads(receipt.read_text(encoding="utf-8"))
+    assert current["tool"]["requirements"][0]["extras"] == clean_extras
 
 
 @pytest.mark.skipif(not _SETUP_SH.exists(), reason="scripts/setup.sh not present")
@@ -783,9 +947,6 @@ def test_shell_probe_rejects_a_dead_port(tmp_path: Path) -> None:
         sock.bind(("127.0.0.1", 0))
         dead_port = sock.getsockname()[1]
     assert _run_shell_probe(tmp_path, f"http://127.0.0.1:{dead_port}/ok") == 1
-
-
-_POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
 
 
 def _run_powershell_probe(tmp_path: Path, url: str, timeout: str = "3") -> int:

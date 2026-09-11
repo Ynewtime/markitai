@@ -1244,6 +1244,9 @@ install_markitai() {
 MARKITAI_EXTRAS=""
 MARKITAI_RECEIPT_EXTRAS=""
 MARKITAI_ALL_FALLBACK_EXTRAS="browser,extra-fetch,svg,heif,legacy,mcp,ocr,serve"
+# Only drop explicitly retired capabilities; preserve other receipt extras,
+# including extensions supplied by a local/custom package.
+MARKITAI_RETIRED_EXTRAS="kreuzberg"
 # Extras the user explicitly turned down. `markitai doctor --suggest-extras`
 # recommends `ocr` unconditionally, so without this list the finalize pass
 # would reinstall exactly what was just declined and make the prompt a lie.
@@ -1268,11 +1271,28 @@ markitai_extra_enabled() {
     esac
 }
 
+markitai_extra_retired() {
+    # These extras were retired in 1.0.0. An explicit pre-1.0 PyPI pin still
+    # supports them; a local source takes precedence over the version pin.
+    if [ "${MARKITAI_SOURCE:-pypi}" != "local" ]; then
+        case "${MARKITAI_VERSION:-}" in
+            0.*) return 1 ;;
+        esac
+    fi
+    case ",$MARKITAI_RETIRED_EXTRAS," in
+        *",$1,"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # Track a markitai extra for the next combined installation.
 # Usage: install_markitai_extra "claude-agent"
 install_markitai_extra() {
     _extra_name="$1"
     [ -z "$_extra_name" ] && return 0
+    if markitai_extra_retired "$_extra_name"; then
+        return 0
+    fi
     if [ "$_extra_name" = "all" ]; then
         MARKITAI_EXTRAS="all"
         return 0
@@ -1299,7 +1319,8 @@ decline_markitai_extra() {
     MARKITAI_DECLINED_EXTRAS="${MARKITAI_DECLINED_EXTRAS:+$MARKITAI_DECLINED_EXTRAS,}$1"
 }
 
-# Preserve every extra recorded by uv before asking for new capabilities.
+# Preserve non-retired extras before asking for new capabilities. Keep the
+# raw receipt too: retired entries require a reinstall even with no additions.
 load_existing_markitai_extras() {
     _uv_tools_dir=$(markitai_tools_dir)
     _receipt_file="$_uv_tools_dir/markitai/uv-receipt.toml"
@@ -1327,11 +1348,17 @@ markitai_receipt_has_extra() {
     esac
 }
 
-# Return success when the combined target contains an extra absent from the
-# current uv receipt. In that case `uv tool upgrade` is insufficient because
-# it only upgrades the old receipt and ignores newly selected extras.
+# Return success when the receipt needs retired extras removed or new ones
+# added. `uv tool upgrade` reuses the old requirements, so either change needs
+# `uv tool install` with the cleaned combined spec (including core-only).
 markitai_extras_need_update() {
     _old_ifs="$IFS"; IFS=','
+    for _extra in $MARKITAI_RECEIPT_EXTRAS; do
+        if markitai_extra_retired "$_extra"; then
+            IFS="$_old_ifs"
+            return 0
+        fi
+    done
     for _extra in $MARKITAI_EXTRAS; do
         if [ -n "$_extra" ] && ! markitai_receipt_has_extra "$_extra"; then
             IFS="$_old_ifs"

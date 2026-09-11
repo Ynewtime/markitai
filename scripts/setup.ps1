@@ -1233,6 +1233,9 @@ function Install-Markitai {
 $script:MARKITAI_EXTRAS = ""
 $script:MARKITAI_RECEIPT_EXTRAS = @()
 $script:MARKITAI_ALL_FALLBACK_EXTRAS = "browser,extra-fetch,svg,heif,legacy,mcp,ocr,serve"
+# Only drop explicitly retired capabilities; preserve other receipt extras,
+# including extensions supplied by a local/custom package.
+$script:MARKITAI_RETIRED_EXTRAS = "kreuzberg"
 # Extras the user explicitly turned down. `markitai doctor --suggest-extras`
 # recommends `ocr` unconditionally, so without this list the finalize pass
 # would reinstall exactly what was just declined and make the prompt a lie.
@@ -1250,11 +1253,23 @@ function Test-MarkitaiExtraEnabled {
     return (($script:MARKITAI_EXTRAS -split ",") -contains $ExtraName)
 }
 
+function Test-MarkitaiExtraRetired {
+    param([string]$ExtraName)
+
+    # These extras were retired in 1.0.0. An explicit pre-1.0 PyPI pin still
+    # supports them; a local source takes precedence over the version pin.
+    if ($script:MARKITAI_SOURCE -ne "local" -and $script:MarkitaiVersion -match '^0\.') {
+        return $false
+    }
+    return (($script:MARKITAI_RETIRED_EXTRAS -split ",") -contains $ExtraName)
+}
+
 # Track a markitai extra for the next combined installation.
 function Install-MarkitaiExtra {
     param([string]$ExtraName)
 
     if ([string]::IsNullOrWhiteSpace($ExtraName)) { return }
+    if (Test-MarkitaiExtraRetired -ExtraName $ExtraName) { return }
     if ($ExtraName -eq "all") {
         $script:MARKITAI_EXTRAS = "all"
         return
@@ -1282,7 +1297,8 @@ function Deny-MarkitaiExtra {
     $script:MARKITAI_DECLINED_EXTRAS += $ExtraName
 }
 
-# Preserve every extra recorded by uv before asking for new capabilities.
+# Preserve non-retired extras before asking for new capabilities. Keep the
+# raw receipt too: retired entries require a reinstall even with no additions.
 function Import-MarkitaiReceiptExtras {
     $uvToolsDir = Get-MarkitaiToolsDir
     $receiptFile = Join-Path $uvToolsDir "markitai\uv-receipt.toml"
@@ -1310,9 +1326,14 @@ function Test-MarkitaiReceiptHasExtra {
     )
 }
 
-# A generic `uv tool upgrade` only reuses the old receipt. Return true when
-# the combined target has a newly selected extra and needs an exact reinstall.
+# A generic `uv tool upgrade` reuses the old requirements. Retired extras or
+# additions need `uv tool install` with the cleaned spec, including core-only.
 function Test-MarkitaiExtrasNeedUpdate {
+    foreach ($extra in $script:MARKITAI_RECEIPT_EXTRAS) {
+        if (Test-MarkitaiExtraRetired -ExtraName $extra) {
+            return $true
+        }
+    }
     foreach ($extra in ($script:MARKITAI_EXTRAS -split ",")) {
         if ($extra -and -not (Test-MarkitaiReceiptHasExtra -ExtraName $extra)) {
             return $true
