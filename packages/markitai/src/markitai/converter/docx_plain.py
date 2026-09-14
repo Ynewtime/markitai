@@ -3,6 +3,7 @@
 The supported subset follows Mammoth 1.11 default style and HTML collapsing
 semantics (BSD-2-Clause; see NOTICE). Unsupported packages return None so the
 caller retains Mammoth and its customizations, rich features, and error handling.
+Element only constructs nodes; read_xml parses input with defusedxml.
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from html import escape
-from xml.etree.ElementTree import Element
+from xml.etree.ElementTree import Element  # nosec B405
 from zipfile import ZipFile
 
 from defusedxml import ElementTree as ET

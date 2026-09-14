@@ -64,7 +64,7 @@ markers = [
 source = ["packages/markitai/src/markitai"]
 branch = true
 parallel = true
-relative_files = true  # required by py-cov-action/python-coverage-comment-action
+relative_files = true  # portable paths in coverage artifacts
 omit = [
     "*/tests/*",
     "*/__pycache__/*",
