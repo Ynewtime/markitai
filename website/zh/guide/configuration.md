@@ -499,7 +499,7 @@ uv tool install "markitai[ocr]" --force
 
 | 设置 | 可选值 | 默认值 | 说明 |
 |------|--------|--------|------|
-| `fetch.remote_consent` | `always`、`ask`、`never` | `always` | `always`：公开 URL 可回退到远程服务，首次尝试前在 stderr 提示。`ask`：有终端时每个进程问一次，否则跳过所有远程服务。`never`：只用本地策略 |
+| `fetch.remote_consent` | `always`、`ask`、`never` | `always` | `always`：允许公开 URL 使用远程服务，每位用户仅首次在 stderr 显示简短提示。`ask`：有终端时每个进程问一次，否则跳过所有远程服务。`never`：只用本地策略 |
 
 私有、内网和带凭据的 URL 无论怎么设都不会发给远程服务。`fetch.policy.local_only_patterns` 和 `NO_PROXY` 里的域名在 `auto` 链里只走本地。对公开 URL，显式的 `-s defuddle`、`-s jina` 或 `-s cloudflare` 会覆盖 `never` 和模式规则；`MARKITAI_NO_REMOTE_FETCH=1` 连这个也拦住。
 
@@ -576,7 +576,7 @@ export CLOUDFLARE_ACCOUNT_ID="your-account-id"
 
 策略引擎按域名排定策略顺序，并记住哪些域名需要浏览器。它的选项、域名配置字段和内置配置都写在[抓取策略](/zh/guide/fetch-policy#配置)一页。
 
-两条容易踩坑的规则：自定义的 `domain_profiles` 条目会整个替换该域名的内置配置，而不是合并；`auto` 把 `fallback_patterns` 里的域名都当成重 JavaScript，直接从浏览器开始。
+自定义的 `domain_profiles` 条目仅覆盖显式设置的字段，其余内置调优继续生效。`auto` 把 `fallback_patterns` 里的域名都当成重 JavaScript，直接从浏览器策略开始。
 
 ### 代理
 
