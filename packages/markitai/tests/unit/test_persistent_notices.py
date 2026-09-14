@@ -21,6 +21,7 @@ if sys.argv[2] == "fetch":
 elif sys.argv[2] == "vision":
     ensure_vlm_ocr_disclosed(None)
 else:
+    assert not sys.stdin.isatty(), "ask test requires noninteractive stdin"
     print(resolve_remote_consent("ask"))
 """
 
@@ -28,7 +29,8 @@ else:
 def run_notice(home, mode):
     return subprocess.run(
         [sys.executable, "-c", SCRIPT, str(home), mode],
-        stdin=subprocess.DEVNULL,
+        # Windows NUL is a character device and reports isatty() == True.
+        input="",
         capture_output=True,
         text=True,
         check=True,
@@ -55,7 +57,7 @@ def test_concurrent_processes_emit_once(tmp_path):
     processes = [
         subprocess.Popen(
             [sys.executable, "-c", SCRIPT, str(tmp_path), "fetch"],
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
