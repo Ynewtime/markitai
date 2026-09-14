@@ -136,7 +136,7 @@ class TestFetchUsesThePort:
         try:
             disclose_remote_use(["jina"])
             assert len(fake.notices) == 1
-            assert "remote extraction services" in fake.notices[0]
+            assert "Remote services" in fake.notices[0]
         finally:
             fetch_mod.get_default_session().consent.disclosure_emitted = original
 

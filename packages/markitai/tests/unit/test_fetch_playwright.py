@@ -1216,8 +1216,8 @@ class TestTryEnricherFallbackAsync:
         mock_confirm.assert_not_called()
         mock_enrich.assert_awaited_once()
         disclosure = capsys.readouterr().err
-        assert "remote extraction services may receive URLs" in disclosure
-        assert "FxTwitter, Twitter oEmbed" in disclosure
+        assert "Remote services may receive public URLs" in disclosure
+        assert "--no-remote-fetch" in disclosure
 
     @pytest.mark.asyncio
     async def test_ask_prompts_once_and_a_yes_covers_later_calls(

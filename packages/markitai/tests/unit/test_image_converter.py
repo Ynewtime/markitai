@@ -514,7 +514,7 @@ class TestOcrLlmVlmPath:
         assert result.metadata["ocr_path"] == "vlm"
         assert vlm_ocr_disclosure_emitted() is True
         mock_port.notify.assert_called_once()
-        assert "1 page image(s)" in mock_port.notify.call_args.args[0]
+        assert "Page images" in mock_port.notify.call_args.args[0]
 
     def test_no_vlm_ocr_falls_back_to_rapidocr(
         self, sample_image: Path, monkeypatch: pytest.MonkeyPatch

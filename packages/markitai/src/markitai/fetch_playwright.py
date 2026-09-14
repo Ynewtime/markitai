@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from dataclasses import dataclass, field
 from importlib.util import find_spec
 from pathlib import Path
@@ -40,9 +41,15 @@ from markitai.constants import (
 try:
     from markitai.webextract import (
         coerce_source_frontmatter,
-        extract_web_content,
         is_native_extraction_acceptable,
     )
+
+    def extract_web_content(html: str, url: str) -> Any:
+        """Load the full DOM extraction pipeline only when a page needs it."""
+        from markitai.webextract import extract_web_content as extract
+
+        return extract(html, url)
+
 except ImportError:  # pragma: no cover - optional during staged implementation
     extract_web_content = None  # type: ignore[assignment]
     coerce_source_frontmatter = None  # type: ignore[assignment]
@@ -552,48 +559,33 @@ class PlaywrightRenderer:
         remote_consent: str = "ask",
     ) -> PlaywrightFetchResult:
         """Fetch URL using a persistent browser instance."""
-        # X Articles are login-walled for anonymous visitors — the browser
-        # render (launch + navigate + fixed post-load wait + auto-scroll)
-        # is guaranteed wasted work, so skip it and go straight to the
-        # FxTwitter/oEmbed enricher (mirrors defuddle's
-        # canExtractAsync()+prefersAsync() early exit). Screenshots need an
-        # actual page render, so they keep the normal path.
+        # Like defuddle's server-side extraction, anonymous X posts can use
+        # FxTwitter/oEmbed without first downloading an unusable page shell.
+        # Existing sessions and screenshots still need the rendered DOM.
         needs_screenshot = bool(
             screenshot_config and getattr(screenshot_config, "enabled", True)
         )
-        if _is_x_article_url(url) and not needs_screenshot:
-            (
-                enriched_md,
-                overrides,
-                enricher_source,
-            ) = await self._try_enricher_fallback_async(url, remote_consent)
-            if enriched_md:
-                # Build source_frontmatter directly from the enriched
-                # content — cli/processors/url.py reads this specific key
-                # for the output YAML frontmatter. Computing word_count
-                # here (rather than skipping it) also avoids the stale
-                # values the slow path used to produce: it ran native
-                # webextract against the discarded login-wall page first,
-                # so word_count/content_profile described that ~2-word
-                # page rather than the actual enriched article.
-                from markitai.webextract.utils import count_words
+        authenticated = bool(
+            cookies or http_credentials or extra_http_headers or persist_context
+        )
+        from markitai.fetch_consent import peek_cached_remote_consent
+        from markitai.webextract.enrichers.x_oembed import is_x_post_url
 
-                source_frontmatter: dict[str, Any] = dict(overrides or {})
-                source_frontmatter["word_count"] = count_words(enriched_md)
-                # x_article gets the same profile as regular tweets in the
-                # native pipeline (see webextract/pipeline.py's
-                # _EXTRACTOR_CONTENT_PROFILES).
-                source_frontmatter.setdefault("content_profile", "social_post")
-                return PlaywrightFetchResult(
-                    content=enriched_md,
-                    title=source_frontmatter.get("title"),
-                    final_url=url,
-                    screenshot_path=None,
-                    metadata={
-                        "_enricher_source": enricher_source,
-                        "source_frontmatter": source_frontmatter,
-                    },
-                )
+        enrichment_attempted = False
+        if (
+            is_x_post_url(url)
+            and not needs_screenshot
+            and not authenticated
+            and (
+                remote_consent == "always"
+                or peek_cached_remote_consent() is True
+                or _is_x_article_url(url)
+            )
+        ):
+            enrichment_attempted = True
+            enriched = await self._enriched_result(url, remote_consent)
+            if enriched is not None:
+                return enriched
             # Enricher blocked (e.g. remote_consent="never") or failed —
             # fall through to the normal browser-render path below so the
             # user still gets the (login-wall) page rather than nothing.
@@ -664,10 +656,40 @@ class PlaywrightRenderer:
             }
             wait_until = wait_until_map.get(wait_for, "domcontentloaded")
 
-            await page.goto(url, timeout=timeout, wait_until=wait_until)
+            navigation_started = time.perf_counter()
+            response = await page.goto(url, timeout=timeout, wait_until=wait_until)
+            status = getattr(response, "status", None)
+            logger.debug(
+                "[Playwright] Navigation: {:.3f}s, HTTP {}",
+                time.perf_counter() - navigation_started,
+                status,
+            )
+            if isinstance(status, int) and status >= 400:
+                # goto() does not raise for HTTP failures. An error document
+                # cannot produce the requested tweet selector; try the same
+                # remote enrichment used for missing DOM content immediately.
+                enriched = (
+                    None
+                    if enrichment_attempted
+                    else await self._enriched_result(url, remote_consent)
+                )
+                if enriched is None:
+                    from markitai.fetch_types import FetchError
+
+                    raise FetchError(f"Playwright navigation returned HTTP {status}")
+                enriched.metadata["http_status"] = status
+                if needs_screenshot and screenshot_config and output_dir:
+                    (
+                        enriched.screenshot_path,
+                        enriched.screenshot_tiles,
+                    ) = await _capture_screenshot(
+                        page, screenshot_config, output_dir, url
+                    )
+                return enriched
 
             # Precise element waiting (preferred) or time-based fallback
             if wait_for_selector:
+                wait_started = time.perf_counter()
                 try:
                     await page.wait_for_selector(
                         wait_for_selector, timeout=min(timeout, 10000)
@@ -676,9 +698,14 @@ class PlaywrightRenderer:
                     logger.debug(
                         f"wait_for_selector '{wait_for_selector}' timed out: {e}"
                     )
-                # Short stabilization wait after selector found
-                if extra_wait_ms > 0:
-                    await asyncio.sleep(extra_wait_ms / 1000)
+                else:
+                    # Stabilize only when the selector was actually found.
+                    if extra_wait_ms > 0:
+                        await asyncio.sleep(extra_wait_ms / 1000)
+                logger.debug(
+                    "[Playwright] Element wait: {:.3f}s",
+                    time.perf_counter() - wait_started,
+                )
             elif extra_wait_ms > 0:
                 await asyncio.sleep(extra_wait_ms / 1000)
 
@@ -713,6 +740,7 @@ class PlaywrightRenderer:
             # Try native webextract FIRST to avoid redundant HTML→Markdown
             # conversion. Only fall back to _html_to_markdown if webextract
             # is unavailable or produces insufficient quality.
+            extraction_started = time.perf_counter()
             markdown_content = ""
             used_native_webextract = False
             if extract_web_content is not None:
@@ -757,7 +785,7 @@ class PlaywrightRenderer:
             # 1. For X/Twitter URLs with very short native content (<50 words),
             #    try the oEmbed enricher (handles Articles via FxTwitter API)
             # 2. Use _html_to_markdown as last resort
-            if not markdown_content:
+            if not markdown_content and not enrichment_attempted:
                 (
                     enriched_md,
                     overrides,
@@ -771,8 +799,6 @@ class PlaywrightRenderer:
                         new_title = overrides.get("title")
                         if new_title:
                             title = str(new_title)
-                if not markdown_content:
-                    markdown_content = _html_to_markdown(html_content)
             elif used_native_webextract:
                 # Structural completeness check (not a word-count guess).
                 # The extractor knows whether it found real content:
@@ -793,7 +819,7 @@ class PlaywrightRenderer:
                     or (is_article and len(markdown_content) < 500)
                     or is_login_wall
                 )
-                if needs_enricher and is_x_url and "/" in url:
+                if needs_enricher and is_x_url and not enrichment_attempted:
                     (
                         enriched_md,
                         overrides,
@@ -809,6 +835,9 @@ class PlaywrightRenderer:
                             if new_title:
                                 title = str(new_title)
 
+            if not markdown_content:
+                markdown_content = _html_to_markdown(html_content)
+
             if not used_native_webextract and _is_content_incomplete(markdown_content):
                 try:
                     rendered_text = await page.inner_text("body")
@@ -821,6 +850,10 @@ class PlaywrightRenderer:
                         "[Playwright] Failed to extract inner_text fallback: {}", e
                     )
 
+            logger.debug(
+                "[Playwright] Extraction/enrichment: {:.3f}s",
+                time.perf_counter() - extraction_started,
+            )
             screenshot_path = None
             screenshot_tiles: list[Path] = []
             if screenshot_config and output_dir:
@@ -863,6 +896,30 @@ class PlaywrightRenderer:
                 await self._playwright.stop()
                 self._playwright = None
 
+    async def _enriched_result(
+        self, url: str, remote_consent: str
+    ) -> PlaywrightFetchResult | None:
+        """Build a result whose frontmatter describes the enriched content."""
+        markdown, overrides, source = await self._try_enricher_fallback_async(
+            url, remote_consent
+        )
+        if not markdown:
+            return None
+        from urllib.parse import urlsplit
+
+        from markitai.webextract.utils import count_words
+
+        frontmatter: dict[str, Any] = dict(overrides or {})
+        frontmatter.setdefault("domain", urlsplit(url).hostname)
+        frontmatter["word_count"] = count_words(markdown)
+        frontmatter.setdefault("content_profile", "social_post")
+        return PlaywrightFetchResult(
+            content=markdown,
+            title=frontmatter.get("title"),
+            final_url=url,
+            metadata={"_enricher_source": source, "source_frontmatter": frontmatter},
+        )
+
     async def _try_enricher_fallback_async(
         self,
         url: str,
@@ -888,10 +945,10 @@ class PlaywrightRenderer:
         """
         from markitai.fetch_consent import (
             _env_no_remote_fetch,
+            assess_remote_url,
             disclose_remote_use,
             resolve_remote_consent,
         )
-        from markitai.fetch_policy import assess_url_for_remote
         from markitai.webextract.enrichers.base import EnrichmentPolicy
         from markitai.webextract.enrichers.x_oembed import XOEmbedEnricher
 
@@ -902,7 +959,11 @@ class PlaywrightRenderer:
         policy = EnrichmentPolicy(allow_network=True, allow_async=True)
         if not enricher.should_run(url, policy):
             return "", None, ""
-        if not (await assess_url_for_remote(url)).allowed:
+        assessment = await assess_remote_url(
+            url, remote_consent, ["fxtwitter", "twitter-oembed"]
+        )
+        if not assessment.allowed:
+            logger.debug("[Fetch] Skipping X enrichment: {}", assessment.reason)
             return "", None, ""
         # Anything but an explicit "always" is treated as the conservative "ask".
         # Under "ask" this reaches a blocking TTY prompt, so it runs off the
@@ -929,10 +990,8 @@ class PlaywrightRenderer:
             return "", None, ""
 
         from markitai.webextract.markdown import render_markdown
-        from markitai.webextract.pipeline import _create_markitdown
 
-        md_instance = _create_markitdown()
-        enriched_md = render_markdown(resolved.content_html, md_instance=md_instance)
+        enriched_md = render_markdown(resolved.content_html)
         source = str(resolved.diagnostics.get("source", ""))
         return enriched_md, resolved.metadata_overrides or None, source
 

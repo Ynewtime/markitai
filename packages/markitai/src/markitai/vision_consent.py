@@ -9,15 +9,14 @@ deliberately no "ask" prompt: the user opted in explicitly by passing both
 (there, the prompt exists because remote strategies fire implicitly inside
 the auto chain). The gate is two things only:
 
-* a one-time, per-process disclosure naming the vision model(s) the page
-  images will be sent to, delivered to stderr so ``--quiet`` cannot hide it
+* a short notice, shown once per OS user across runs on stderr
   (the same privacy-boundary rule as ``disclose_remote_use``);
 * ``MARKITAI_NO_VLM_OCR`` as a hard opt-out: when set truthy, the VLM-OCR
   path never sends page images — it degrades to local RapidOCR when
   installed, or fails with an actionable error.
 
-State is process-wide and module-local (there is no session to attach it to
-in the converter layer). Tests reset it with :func:`reset_vlm_ocr_disclosure`.
+The process-local flag avoids repeated disk checks. The notice marker is
+persisted under ~/.markitai/notices; neither records user authorization.
 """
 
 from __future__ import annotations
@@ -67,48 +66,10 @@ def vlm_ocr_allowed() -> bool:
     return not _env_no_vlm_ocr()
 
 
-def _vision_model_names(config: MarkitaiConfig | None) -> list[str]:
-    """Best-effort names of vision-capable configured models.
-
-    Mirrors the vision router's capability rule: an explicit
-    ``model_info.supports_vision`` wins, local provider models are assumed
-    vision-capable, and standard models are auto-detected from the litellm
-    registry. Auto-detection is deferred (it pulls litellm) and only runs
-    when the LLM path is already active, i.e. at disclosure time.
-    """
-    if config is None:
-        return []
-    llm_cfg = getattr(config, "llm", None)
-    if llm_cfg is None or not getattr(llm_cfg, "model_list", None):
-        return []
-
-    from markitai.llm.models import get_model_info_cached
-    from markitai.providers import is_local_provider_model
-
-    names: list[str] = []
-    for model in llm_cfg.model_list:
-        model_id = getattr(getattr(model, "litellm_params", None), "model", "") or ""
-        if not model_id:
-            continue
-        info = getattr(model, "model_info", None)
-        explicit = getattr(info, "supports_vision", None) if info else None
-        if explicit is True:
-            vision = True
-        elif explicit is None:
-            vision = is_local_provider_model(model_id) or bool(
-                get_model_info_cached(model_id).get("supports_vision", False)
-            )
-        else:
-            vision = False
-        if vision:
-            names.append(model_id)
-    return names
-
-
 def ensure_vlm_ocr_disclosed(
     config: MarkitaiConfig | None, page_count: int | None = None
 ) -> None:
-    """Emit the one-time VLM-OCR privacy disclosure (once per process).
+    """Emit the VLM-OCR notice once per user across CLI runs.
 
     Delivered to stderr via the interaction port so ``--quiet`` cannot hide
     it. Call at the point where the VLM-OCR path is actually taken — before
@@ -116,16 +77,11 @@ def ensure_vlm_ocr_disclosed(
     """
     if _state.disclosure_emitted:
         return
-    model_names = _vision_model_names(config)
-    label = ", ".join(model_names) if model_names else "your configured vision model"
-    subject = f"{page_count} page image(s)" if page_count else "page images"
+    from markitai.notices import notify_once
+
     disclosure = (
-        "[VLM OCR] This run will send "
-        f"{subject} of scanned documents to the vision LLM ({label}) for OCR "
-        "reading. Set MARKITAI_NO_VLM_OCR=1 to use local RapidOCR instead."
+        "[VLM OCR] Page images go to your vision model. Disable: MARKITAI_NO_VLM_OCR=1."
     )
-    # Privacy boundary, not diagnostics: deliver via the interaction port so
-    # normal log filtering and --quiet cannot hide it.
-    get_interaction().notify(disclosure)
-    logger.info(disclosure)
+    notify_once("vlm-ocr", disclosure, get_interaction().notify)
+    logger.debug("[VLM OCR] Sending {} page image(s)", page_count or "document")
     _state.disclosure_emitted = True

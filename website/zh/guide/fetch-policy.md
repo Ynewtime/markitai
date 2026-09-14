@@ -18,15 +18,19 @@
 
 ### SPA/重 JS 顺序
 
-已知需要 JavaScript 的域名直接上浏览器：`x.com`、`instagram.com`、`fallback_patterns` 里列出的域名，以及静态抓取失败后被记入 SPA 缓存的域名。
+已知需要 JavaScript 的域名直接上浏览器：`instagram.com`、`fallback_patterns` 里列出的域名，以及静态抓取失败后被记入 SPA 缓存的域名。
 
 <StrategyChain mode="spa" />
 
+X/Twitter 默认保持 `playwright → defuddle → jina → cloudflare → static`。Playwright 策略对已允许远程提取的匿名推文/文章先尝试 FxTwitter，再尝试 oEmbed，成功便无需启动 Chromium。配置 Cookie、自定义请求头、凭据、持久会话、请求截图，或网络提取失败时，仍走浏览器。`playwright(fxtwitter)` / `playwright(oembed)` 标明实际来源；成功时不需要请求 defuddle。
+
+浏览器导航遇到 HTTP 错误不一定抛出异常。Markitai 会跳过此时的元素等待和稳定等待，立即尝试 X 的补充提取。补充成功标记为 `playwright(fxtwitter)` 或 `playwright(oembed)`，不表示浏览器渲染出了推文；补充失败或禁用时报告 HTTP 错误，`auto` 继续下一策略。
+
 ### 远程后备与仅限本地的 URL {#remote-fallback-and-local-only-urls}
 
-默认（`fetch.remote_consent: always`）下，公开 URL 本机抓不到时，可能发给 Defuddle、Jina 或 Cloudflare。进程内第一次远程尝试之前，markitai 会在 stderr 打一条提示，列出之后可能用到的全部服务：defuddle.md、Jina、Cloudflare、FxTwitter 和 Twitter oEmbed。服务是逐个尝试的，URL 只会发给当前正在尝试的那一个。
+默认（`fetch.remote_consent: always`）下，公开 URL 可能发给 Defuddle、Jina 或 Cloudflare。首次使用时，markitai 在 stderr 显示一行简短提示，并在 `~/.markitai/notices/remote-fetch` 记录已展示状态，后续运行不再重复；VLM OCR 的同类提示也按此规则处理。记录仅表示提示已展示，不代表用户授权：`remote_consent: ask` 仍按进程询问。可能使用的服务包括 defuddle.md、Jina、Cloudflare、FxTwitter 和 Twitter oEmbed。服务是逐个尝试的，URL 只会发给当前正在尝试的那一个。
 
-X/Twitter 帖子在本地抽取失败后，Playwright 还可能调用 FxTwitter 和 Twitter oEmbed。它们和其他远程服务遵循同一个进程级的同意决定：在 `ask` 下可以触发那一次共享的询问，复用之前的回答，无法询问时则跳过。
+X/Twitter 的 Playwright 策略可能调用 FxTwitter 和 Twitter oEmbed。它们和其他远程服务遵循同一个进程级的同意决定：在 `ask` 下可以触发那一次共享的询问，复用之前的回答，无法询问时则跳过。
 
 下面这些 URL 无论选什么策略都不出本机：
 
@@ -98,9 +102,7 @@ Clash 等代理返回 `198.18.0.0/15` 或 `2001:2::/48` 中的 Fake-IP 地址时
 | `skip_auto_scroll` | boolean | `false` | 单内容页面（推文、issue、文档）跳过自动滚动 |
 | `reject_resource_patterns` | list | `null` | 拦截匹配这些 URL 模式的浏览器请求，如 `["**/analytics/**"]` |
 
-::: warning
-markitai 内置了 `x.com`、`twitter.com` 和 `github.com` 的配置。你为同一域名写的配置会整个替换内置配置，想保留的内置调优要自己再写一遍。
-:::
+markitai 内置了 `x.com`、`twitter.com` 和 `github.com` 的配置。只有你显式设置的字段才会覆盖内置浏览器调优；仅修改策略或额外等待时间会保留其他设置。设置 `skip_auto_scroll: false` 可恢复滚动，`reject_resource_patterns: []` 可清空资源过滤，将可空浏览器字段设为 `null` 则继承对应的全局设置。
 
 ```json
 {

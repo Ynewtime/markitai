@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from markitai.fetch_http import resolve_proxy_for_url
+from markitai.fetch_policy import build_local_only_patterns, match_local_only
 from markitai.fetch_session import get_default_session
 
 if TYPE_CHECKING:
@@ -51,12 +52,10 @@ def _resolve_playwright_profile_overrides(
     """Resolve domain-specific Playwright overrides from config."""
     from urllib.parse import urlparse
 
-    from markitai.domain_profiles import BUILTIN_DOMAIN_PROFILES
+    from markitai.domain_profiles import resolve_domain_profile
 
     domain = urlparse(url).netloc.lower()
-    profile = domain_profiles.get(domain)
-    if not profile:
-        profile = BUILTIN_DOMAIN_PROFILES.get(domain)
+    profile = resolve_domain_profile(domain, domain_profiles)
     if not profile:
         return {}
 
@@ -67,9 +66,9 @@ def _resolve_playwright_profile_overrides(
         out["wait_for"] = profile.wait_for
     if profile.extra_wait_ms is not None:
         out["extra_wait_ms"] = profile.extra_wait_ms
-    if profile.skip_auto_scroll:
+    if "skip_auto_scroll" in profile.model_fields_set:
         out["skip_auto_scroll"] = profile.skip_auto_scroll
-    if profile.reject_resource_patterns:
+    if profile.reject_resource_patterns is not None:
         out["reject_resource_patterns"] = profile.reject_resource_patterns
     return out
 
@@ -103,6 +102,13 @@ def _get_playwright_fetch_kwargs(
     )
 
     kwargs = {
+        "remote_consent": (
+            "never"
+            if match_local_only(
+                _url_to_session_key(url), build_local_only_patterns(config.policy)
+            )
+            else config.remote_consent
+        ),
         "timeout": config.playwright.timeout,
         "wait_for": profile_overrides.get("wait_for", config.playwright.wait_for),
         "extra_wait_ms": profile_overrides.get(

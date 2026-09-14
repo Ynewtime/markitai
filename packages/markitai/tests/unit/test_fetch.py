@@ -4763,22 +4763,19 @@ class TestCloudflareBRPayload:
 
 
 def test_domain_profile_applies_wait_for_selector() -> None:
+    from markitai.config import DomainProfileConfig
     from markitai.fetch import _resolve_playwright_profile_overrides
 
     overrides = _resolve_playwright_profile_overrides(
         url="https://x.com/user/status/1",
         domain_profiles={
-            "x.com": type(
-                "DomainProfileConfig",
-                (),
-                {
-                    "wait_for_selector": '[data-testid="tweetText"]',
-                    "wait_for": "domcontentloaded",
-                    "extra_wait_ms": 1200,
-                    "skip_auto_scroll": False,
-                    "reject_resource_patterns": None,
-                },
-            )()
+            "x.com": DomainProfileConfig(
+                wait_for_selector='[data-testid="tweetText"]',
+                wait_for="domcontentloaded",
+                extra_wait_ms=1200,
+                skip_auto_scroll=False,
+                reject_resource_patterns=None,
+            )
         },
     )
 

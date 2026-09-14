@@ -11,12 +11,14 @@ acceptable content for an X/Twitter status URL.
 from __future__ import annotations
 
 import re
+from datetime import UTC
+from html import escape
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 from loguru import logger
 
 from markitai.webextract.enrichers.base import EnrichmentPolicy
-from markitai.webextract.markdown import html_to_markdown, postprocess_markdown
 from markitai.webextract.render import render_semantic_content
 from markitai.webextract.semantics import (
     ConversationItem,
@@ -45,6 +47,21 @@ _TIMEOUT = 10.0
 _USER_AGENT = "Mozilla/5.0 (compatible; MarkitAI/1.0)"
 
 
+def is_x_post_url(url: str) -> bool:
+    """Match supported X post URLs by authority, never a substring in a path."""
+    try:
+        parsed = urlsplit(url)
+        return (
+            parsed.scheme in {"http", "https"}
+            and parsed.hostname
+            in {"x.com", "www.x.com", "twitter.com", "www.twitter.com"}
+            and re.fullmatch(r"/[^/]+/(?:status|article)/\d+(?:/.*)?", parsed.path)
+            is not None
+        )
+    except ValueError:
+        return False
+
+
 class XOEmbedEnricher:
     """Enrich X/Twitter pages using FxTwitter API, falling back to oEmbed.
 
@@ -58,9 +75,7 @@ class XOEmbedEnricher:
         """Return True for X/Twitter status and article URLs when the policy permits it."""
         if not policy.allow_network or not policy.allow_async:
             return False
-        is_x = "x.com/" in url or "twitter.com/" in url
-        is_status_or_article = "/status/" in url or "/article/" in url
-        return bool(is_x and is_status_or_article)
+        return is_x_post_url(url)
 
     async def enrich(
         self,
@@ -87,7 +102,7 @@ class XOEmbedEnricher:
         return None
 
     async def _try_fxtwitter(self, url: str) -> ResolvedPage | None:
-        """Fetch via FxTwitter API with retry on transient failures."""
+        """Fetch a complete post once, leaving fallback to the enricher chain."""
         m = _STATUS_RE.match(url)
         if not m:
             return None
@@ -95,41 +110,22 @@ class XOEmbedEnricher:
         username, _kind, tweet_id = m.group(1), m.group(2), m.group(3)
         api_url = f"{_FXTWITTER_API}/{username}/status/{tweet_id}"
 
-        import asyncio as _asyncio
-
         import httpx
 
-        last_error: Exception | None = None
-        for attempt in range(3):
-            try:
-                async with httpx.AsyncClient(
-                    timeout=_TIMEOUT, follow_redirects=True
-                ) as client:
-                    resp = await client.get(
-                        api_url, headers={"User-Agent": _USER_AGENT}
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
-            except Exception as exc:
-                last_error = exc
-                if attempt < 2:
-                    wait_s = 2**attempt * 0.5
-                    logger.debug(
-                        "[XOEmbedEnricher] FxTwitter attempt {} failed, "
-                        "retrying in {:.1f}s: {}",
-                        attempt + 1,
-                        wait_s,
-                        exc,
-                    )
-                    await _asyncio.sleep(wait_s)
-                    continue
-                logger.warning(
-                    "[XOEmbedEnricher] FxTwitter failed after 3 attempts: {}",
-                    last_error,
+        # Like defuddle, try each source once. Nested retries delay both
+        # oEmbed and the outer strategy chain, often for the same refusal.
+        try:
+            async with httpx.AsyncClient(
+                timeout=_TIMEOUT, follow_redirects=True
+            ) as client:
+                response = await client.get(
+                    api_url, headers={"User-Agent": _USER_AGENT}
                 )
-                return None
-            else:
-                break
+                response.raise_for_status()
+                data = response.json()
+        except Exception as exc:
+            logger.debug("[XOEmbedEnricher] FxTwitter failed: {}", exc)
+            return None
 
         tweet_data = data.get("tweet")
         if not tweet_data:
@@ -145,13 +141,8 @@ class XOEmbedEnricher:
         extraction = SemanticExtraction(thread=thread)
         html = render_semantic_content(extraction)
 
-        from markitai.webextract.pipeline import _create_markitdown
-
-        md_instance = _create_markitdown()
-        markdown = html_to_markdown(html, md_instance)
-        markdown = postprocess_markdown(markdown)
-
-        return self._build_resolved_from_html(html, thread.title, markdown, tweet_data)
+        # Resolvers return canonical HTML; the caller renders Markdown once.
+        return self._build_resolved_from_html(html, thread.title, "", tweet_data)
 
     async def _try_oembed(self, url: str) -> ResolvedPage | None:
         """Fetch via X oEmbed API and build a ResolvedPage."""
@@ -223,12 +214,13 @@ class XOEmbedEnricher:
             author_name=author_name,
             author_handle=author_handle,
             text=text,
+            html=self._render_tweet_text(tweet_data),
             timestamp=timestamp,
             quoted_item=quoted_item,
             media=media_list,
         )
 
-        title = f"Post by {author_handle or author_name or 'Unknown'}"
+        title = f"Post by {author_handle or author_name or 'Unknown'} on X"
         return ConversationThread(
             title=title,
             main_item=main_item,
@@ -236,13 +228,87 @@ class XOEmbedEnricher:
             show_author_meta=False,
         )
 
+    @staticmethod
+    def _render_tweet_text(tweet_data: dict) -> str:
+        """Preserve paragraph breaks, quotations and FxTwitter rich-text facets.
+
+        Facet offsets count Unicode code points, as Python string slices do.
+        Split/clip ranges per paragraph so formatting cannot cross HTML blocks.
+        Media facet offsets are stale after FxTwitter strips media shortlinks.
+        """
+        raw = tweet_data.get("raw_text") or {}
+        text = raw.get("text") or tweet_data.get("text") or ""
+        facets = raw.get("facets", []) if raw.get("text") else []
+        parts = []
+        for paragraph in re.finditer(r"(?:[^\n]|\n(?!\n))+", text):
+            value = paragraph.group()
+            start = paragraph.start()
+            quoted = value.lstrip().startswith(">")
+            if quoted:
+                stripped = value.lstrip()[1:].lstrip()
+                start += len(value) - len(stripped)
+                value = stripped
+            ranges = []
+            for facet in facets:
+                indices = facet.get("indices", [])
+                if len(indices) != 2 or not all(isinstance(n, int) for n in indices):
+                    continue
+                left, right = (
+                    max(0, indices[0] - start),
+                    min(len(value), indices[1] - start),
+                )
+                if left >= right:
+                    continue
+                kind = facet.get("type")
+                if kind in {"italic", "bold"}:
+                    tag = "em" if kind == "italic" else "strong"
+                    opening, closing = f"<{tag}>", f"</{tag}>"
+                elif kind in {"url", "mention"}:
+                    href = (
+                        facet.get("original", "")
+                        if kind == "url"
+                        else f"https://x.com/{str(facet.get('text', '')).lstrip('@')}"
+                    )
+                    if not href.startswith(("https://", "http://")):
+                        continue
+                    opening, closing = f'<a href="{escape(href, quote=True)}">', "</a>"
+                else:
+                    continue
+                ranges.append((left, right, opening, closing))
+            # Segment at every range boundary and reopen formatting when needed;
+            # this also produces valid HTML for partially overlapping facets.
+            boundaries = sorted({0, len(value), *(n for r in ranges for n in r[:2])})
+            rendered = []
+            active = []
+            for left, right in zip(boundaries, boundaries[1:]):
+                wanted = sorted(
+                    (r for r in ranges if r[0] <= left and right <= r[1]),
+                    key=lambda r: (r[0], -r[1], r[2]),
+                )
+                common = 0
+                while (
+                    common < min(len(active), len(wanted))
+                    and active[common] == wanted[common]
+                ):
+                    common += 1
+                rendered.extend(r[3] for r in reversed(active[common:]))
+                rendered.extend(r[2] for r in wanted[common:])
+                rendered.append(escape(value[left:right]).replace("\n", "<br>"))
+                active = wanted
+            rendered.extend(r[3] for r in reversed(active))
+            body = "".join(rendered)
+            if body.strip():
+                block = f"<p>{body}</p>"
+                parts.append(f"<blockquote>{block}</blockquote>" if quoted else block)
+        return "\n".join(parts)
+
     def _build_media(self, tweet_data: dict) -> list[MediaAttachment]:
         """Convert FxTwitter media JSON to MediaAttachment objects."""
         media_list: list[MediaAttachment] = []
         media_data = tweet_data.get("media", {})
         if not isinstance(media_data, dict):
             return media_list
-        for item in media_data.get("all", []):
+        for item in media_data.get("all") or media_data.get("photos", []):
             media_type = item.get("type", "image")
             if media_type == "photo":
                 media_type = "image"
@@ -344,14 +410,21 @@ class XOEmbedEnricher:
 
     @staticmethod
     def _to_date_string(date_str: str | None) -> str | None:
-        """Convert ISO date to YYYY-MM-DD."""
+        """Convert ISO or Twitter/RFC dates to a UTC day, as defuddle does."""
         if not date_str:
             return None
-        try:
-            from datetime import datetime as dt
+        from datetime import datetime
+        from email.utils import parsedate_to_datetime
 
-            return dt.fromisoformat(date_str.replace("Z", "+00:00")).date().isoformat()
-        except (ValueError, TypeError):
+        try:
+            try:
+                value = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+            except ValueError:
+                value = parsedate_to_datetime(date_str)
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=UTC)
+            return value.astimezone(UTC).date().isoformat()
+        except (ValueError, TypeError, AttributeError):
             return None
 
     @staticmethod
@@ -436,8 +509,28 @@ class XOEmbedEnricher:
             markers.append((mention["fromIndex"], "open", f'<a href="{mention_url}">'))
             markers.append((mention["toIndex"], "close", "</a>"))
 
+        for link in block.get("data", {}).get("urls", []):
+            href = self._escape(link.get("text", ""))
+            markers.append((link["fromIndex"], "open", f'<a href="{href}">'))
+            markers.append((link["toIndex"], "close", "</a>"))
+
         if not markers:
             return self._escape(text)
+
+        # Draft.js offsets use UTF-16 code units (unlike tweet facets, which
+        # use code points). Translate before slicing Python's Unicode text.
+        if any(ord(char) > 0xFFFF for char in text):
+            utf16 = text.encode("utf-16-le")
+            markers = [
+                (
+                    len(
+                        utf16[: max(0, offset) * 2].decode("utf-16-le", errors="ignore")
+                    ),
+                    kind,
+                    tag,
+                )
+                for offset, kind, tag in markers
+            ]
 
         # Sort markers: by offset, close before open at same offset
         markers.sort(key=lambda m: (m[0], 0 if m[1] == "close" else 1))
@@ -568,6 +661,15 @@ class XOEmbedEnricher:
             metadata_overrides["author"] = author_name
         elif tweet_data and tweet_data.get("author", {}).get("screen_name"):
             metadata_overrides["author"] = f"@{tweet_data['author']['screen_name']}"
+        if tweet_data:
+            published = self._to_date_string(tweet_data.get("created_at"))
+            if published:
+                metadata_overrides["published"] = published
+            description = re.sub(
+                r"\s+", " ", (tweet_data.get("text") or "").strip()[:140]
+            )
+            if description:
+                metadata_overrides["description"] = description
 
         return ResolvedPage(
             content_html=html,

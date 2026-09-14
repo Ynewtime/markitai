@@ -2026,4 +2026,4 @@ class TestOcrLlmVlmPath:
             result = converter._render_pages_for_llm(pdf_file, out)
         assert result.metadata["ocr_path"] == "vlm"
         assert vlm_ocr_disclosure_emitted() is True
-        assert "2 page image(s)" in mock_port.notify.call_args.args[0]
+        assert "Page images" in mock_port.notify.call_args.args[0]

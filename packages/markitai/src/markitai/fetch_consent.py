@@ -30,6 +30,38 @@ from markitai.ports import get_interaction
 
 if TYPE_CHECKING:
     from markitai.config import FetchConfig
+    from markitai.fetch_policy import RemoteURLAssessment
+
+
+async def assess_remote_url(
+    url: str,
+    config: FetchConfig | str,
+    services: list[str],
+    *,
+    consent_granted: bool = False,
+) -> RemoteURLAssessment:
+    """Check remote URL sharing, verifying Fake-IP DNS only after consent.
+
+    This is shared by external strategies and browser enrichers. Local
+    connection guards continue to use the strict policy without public DNS.
+    A prompt must not block the event loop while a browser page is open.
+    """
+    import asyncio
+
+    from markitai.fetch_policy import (
+        assess_url_for_remote,
+        resolve_public_hostname_addresses,
+    )
+
+    async def verify_proxy_hostname(hostname: str) -> tuple[str, ...]:
+        if not consent_granted and not await asyncio.to_thread(
+            resolve_remote_consent, config, services=services
+        ):
+            return ()
+        disclose_remote_use(services)
+        return await resolve_public_hostname_addresses(hostname)
+
+    return await assess_url_for_remote(url, public_resolver=verify_proxy_hostname)
 
 
 @dataclass
@@ -192,27 +224,20 @@ def _remote_service_names(services: list[str] | None) -> str:
 
 
 def disclose_remote_use(services: list[str] | None = None) -> None:
-    """Emit the process-wide first-use privacy disclosure directly to stderr."""
+    """Show the short first-use notice once per user; do not persist consent."""
     state = _get_state()
     if state.disclosure_emitted:
         return
 
+    from markitai.notices import notify_once
+
     disclosure = (
-        "[Fetch] This run's remote extraction services may receive URLs "
-        "when needed, tried one at a time "
-        f"({_remote_service_names(services)}). Disable all remote extraction "
-        "with MARKITAI_NO_REMOTE_FETCH=1; fetch.remote_consent=never disables "
-        "automatic and config-selected remote use. Private/local/"
-        "credential-bearing URLs stay local. For Fake-IP DNS, Cloudflare DNS "
-        "may receive hostnames to verify public addresses."
+        "[Fetch] Remote services may receive public URLs. Disable: --no-remote-fetch."
     )
-    # This is a privacy boundary, not diagnostic logging. Deliver it via the
-    # interaction port (stderr) so normal INFO filtering and --quiet cannot
-    # hide it.
-    get_interaction().notify(disclosure)
-    # Keep the disclosure in diagnostic log files too. The console filter
-    # suppresses this copy to avoid duplicating the direct stderr message.
-    logger.info(disclosure)
+    notify_once("remote-fetch", disclosure, get_interaction().notify)
+    logger.debug(
+        "[Fetch] Remote extraction services: {}", _remote_service_names(services)
+    )
     state.disclosure_emitted = True
 
 
@@ -224,8 +249,8 @@ def resolve_remote_consent(
     Precedence: MARKITAI_NO_REMOTE_FETCH env var (truthy behaves as a hard
     "never", including explicit remote strategies) > cached/explicit decision
     > ``fetch.remote_consent`` config ("always" / "never" / "ask"). With
-    "always" (the default) the first use is disclosed directly to stderr and
-    retained in the INFO log; with "ask", prompts once on an interactive TTY
+    "always" (the default) shows a short stderr notice once per OS user;
+    with "ask", prompts once on an interactive TTY
     (unless prompting is disabled, e.g. --quiet), otherwise remote services
     are skipped. The decision is cached for the whole process.
     Private/local/credentialed URLs never reach this gate — the policy layer
