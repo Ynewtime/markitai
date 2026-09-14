@@ -12,6 +12,10 @@ bun install --frozen-lockfile
 bun run dev                                   # Vite proxies /api -> 127.0.0.1:3611
 ```
 
+Keep TypeScript on 6.x while `typescript-eslint` requires its compiler API.
+After dependency updates, run `bun run test`, `bun run lint`,
+`bun run typecheck`, and `bun run check:css`, then rebuild the packaged assets.
+
 ## Build
 
 From the repository root, build the app and sync it into the Python package:
