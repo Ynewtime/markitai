@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import base64
 import threading
-import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -493,13 +492,12 @@ class TestMarkitaiRouterLocal:
         router = MarkitaiRouter([_local_entry("claude-agent/sonnet")])
 
         with (
+            patch("markitai.llm.router.time.monotonic", return_value=100.0),
             patch("markitai.providers.get_provider", return_value=mock_handler),
             pytest.raises(RuntimeError),
         ):
             await router.acompletion("default", [{"role": "user", "content": "Hi"}])
-
-        remaining = router._cooldowns["claude-agent/sonnet"] - time.monotonic()
-        assert 25 < remaining <= 30
+        assert router._cooldowns["claude-agent/sonnet"] == 130.0
 
     @pytest.mark.asyncio
     async def test_model_level_error_records_long_cooldown(self):
@@ -512,13 +510,12 @@ class TestMarkitaiRouterLocal:
         router = MarkitaiRouter([_local_entry("claude-agent/sonnet")])
 
         with (
+            patch("markitai.llm.router.time.monotonic", return_value=100.0),
             patch("markitai.providers.get_provider", return_value=mock_handler),
             pytest.raises(RuntimeError),
         ):
             await router.acompletion("default", [{"role": "user", "content": "Hi"}])
-
-        remaining = router._cooldowns["claude-agent/sonnet"] - time.monotonic()
-        assert remaining > 3500
+        assert router._cooldowns["claude-agent/sonnet"] == 3700.0
 
     @pytest.mark.asyncio
     async def test_regular_error_records_no_cooldown(self):
@@ -815,13 +812,12 @@ class TestMarkitaiRouterMixed:
         router._standard_router = mock_standard
 
         with (
+            patch("markitai.llm.router.time.monotonic", return_value=100.0),
             patch.object(router, "_select", return_value=STANDARD_POOL_ID),
             pytest.raises(ValueError),
         ):
             await router.acompletion("default", [{"role": "user", "content": "Hi"}])
-
-        remaining = router._cooldowns[STANDARD_POOL_ID] - time.monotonic()
-        assert 55 < remaining <= 60
+        assert router._cooldowns[STANDARD_POOL_ID] == 160.0
 
     @pytest.mark.asyncio
     async def test_standard_error_does_not_cool_down_pool(self):
