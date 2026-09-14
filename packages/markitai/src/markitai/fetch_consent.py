@@ -203,7 +203,8 @@ def disclose_remote_use(services: list[str] | None = None) -> None:
         f"({_remote_service_names(services)}). Disable all remote extraction "
         "with MARKITAI_NO_REMOTE_FETCH=1; fetch.remote_consent=never disables "
         "automatic and config-selected remote use. Private/local/"
-        "credential-bearing URLs stay local."
+        "credential-bearing URLs stay local. For Fake-IP DNS, Cloudflare DNS "
+        "may receive hostnames to verify public addresses."
     )
     # This is a privacy boundary, not diagnostic logging. Deliver it via the
     # interaction port (stderr) so normal INFO filtering and --quiet cannot
@@ -275,7 +276,9 @@ def resolve_remote_consent(
             default=False,
             preamble=(
                 "This run can try remote services for public URLs, one at a "
-                f"time (first success wins): {_remote_service_names(services)}."
+                f"time (first success wins): {_remote_service_names(services)}. "
+                "For Fake-IP DNS, Cloudflare DNS may receive hostnames to "
+                "verify public addresses."
             ),
         )
         if not allowed:

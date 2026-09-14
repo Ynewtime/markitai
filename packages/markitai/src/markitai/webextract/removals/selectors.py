@@ -16,6 +16,7 @@ from markitai.webextract.constants import (
     PARTIAL_SELECTOR_REGEX,
     TEST_ATTRIBUTES,
 )
+from markitai.webextract.selectors import select
 from markitai.webextract.utils import has_responsive_show_class
 
 _ID_DELIMITER_RE = re.compile(r"[\s_\-:.]")
@@ -49,7 +50,7 @@ def remove_by_selectors(
 
     # Phase 1: Exact CSS selectors (single joined query for performance)
     try:
-        for el in root.select(EXACT_SELECTORS_JOINED):
+        for el in select(root, EXACT_SELECTORS_JOINED):
             eid = id(el)
             if eid in seen_ids:
                 continue
@@ -82,9 +83,14 @@ def remove_by_selectors(
             eid = id(el)
             if eid in seen_ids:
                 continue
+            # Like defuddle, collect actual attribute matches first. Protection
+            # checks walk ancestors/subtrees; running them for every DOM node
+            # is especially expensive on math and syntax-highlighted pages.
+            if not _matches_partial(el):
+                continue
             if _should_protect(el, main_content):
                 continue
-            if _matches_partial(el) and not _protected_for_partial(el):
+            if not _protected_for_partial(el):
                 to_remove.append(el)
                 seen_ids.add(eid)
 

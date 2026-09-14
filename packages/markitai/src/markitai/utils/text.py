@@ -309,6 +309,9 @@ def clean_residual_placeholders(content: str) -> str:
     Returns:
         Cleaned content
     """
+    if "__MARKITAI_" not in content:
+        return content
+
     # Remove standalone placeholder lines
     content = re.sub(r"^__MARKITAI_[A-Z_]+_?\d*__\s*$", "", content, flags=re.MULTILINE)
 
@@ -353,7 +356,11 @@ def normalize_markdown_whitespace(content: str) -> str:
 
     for i, line in enumerate(lines):
         # Check for code fence (``` or ~~~, possibly more)
-        fence_match = re.match(r"^(`{3,}|~{3,})", line)
+        fence_match = (
+            re.match(r"^(`{3,}|~{3,})", line)
+            if line.startswith(("```", "~~~"))
+            else None
+        )
         if fence_match:
             fence = fence_match.group(1)
             fence_char = fence[0]
@@ -371,13 +378,16 @@ def normalize_markdown_whitespace(content: str) -> str:
 
         # Only process headers and slide comments outside code blocks
         in_code_block = code_block_char is not None
+        if in_code_block or not line.startswith(("#", "<!--")):
+            result_lines.append(line)
+            continue
 
         # ATX headers: 1-6 # followed by space or end of line
         # Excludes: #hashtag, #123, #! (shebang)
-        is_atx_header = bool(re.match(r"^#{1,6}(\s|$)", line))
+        is_atx_header = line.startswith("#") and bool(re.match(r"^#{1,6}(\s|$)", line))
 
         # Slide comments: <!-- Slide number: X -->
-        is_slide_comment = bool(
+        is_slide_comment = line.startswith("<!--") and bool(
             re.match(r"^<!--\s*Slide\s+(number:\s*)?\d+\s*-->", line)
         )
 
@@ -397,7 +407,8 @@ def normalize_markdown_whitespace(content: str) -> str:
     content = "\n".join(result_lines)
 
     # Merge 3+ consecutive blank lines into 2 (keep one blank line between blocks)
-    content = re.sub(r"\n{3,}", "\n\n", content)
+    if "\n\n\n" in content:
+        content = re.sub(r"\n{3,}", "\n\n", content)
 
     # Ensure single newline at end
     return content.strip() + "\n"
@@ -417,6 +428,9 @@ def fix_malformed_image_refs(content: str) -> str:
     Returns:
         Content with fixed image references
     """
+    if "![" not in content:
+        return content
+
     # Fix double alt text: ![alt1]![alt2](path) -> ![alt2](path)
     # This happens when LLM generates two consecutive alt texts
     content = re.sub(

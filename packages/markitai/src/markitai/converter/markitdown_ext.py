@@ -7,9 +7,9 @@ but markitai didn't previously handle (HTML, CSV, EPUB, MSG, IPYNB).
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from loguru import logger
-from markitdown import MarkItDown
 
 from markitai.converter._patches import apply_all_patches
 from markitai.converter.base import (
@@ -19,10 +19,8 @@ from markitai.converter.base import (
     register_converter,
 )
 
-# markitdown reads Office files through openpyxl/python-pptx; the
-# compatibility patches must be in place before the first conversion, and
-# this module is only imported when one is about to happen.
-apply_all_patches()
+if TYPE_CHECKING:
+    from markitdown import MarkItDown
 
 _markitdown: MarkItDown | None = None
 
@@ -90,6 +88,11 @@ def _convert(input_path: Path) -> ConvertResult:
     """
     global _markitdown
     if _markitdown is None:
+        from markitdown import MarkItDown
+
+        # Only generic file conversion needs the Office compatibility patches.
+        # Native HTML completes without loading any of those libraries.
+        apply_all_patches()
         _markitdown = MarkItDown()
 
     input_path = Path(input_path)
@@ -141,14 +144,16 @@ class XhtmlConverter(HtmlConverter):
 
 @register_converter(FileFormat.CSV)
 class CsvConverter(BaseConverter):
-    """Converter for CSV files using markitdown."""
+    """Converter for known CSV input using the native CSV parser."""
 
     supported_formats = [FileFormat.CSV]
 
     def convert(
         self, input_path: Path, output_dir: Path | None = None
     ) -> ConvertResult:
-        return _convert(input_path)
+        from markitai.converter.structured_text import convert_csv
+
+        return convert_csv(Path(input_path))
 
 
 @register_converter(FileFormat.EPUB)
@@ -177,14 +182,16 @@ class MsgConverter(BaseConverter):
 
 @register_converter(FileFormat.IPYNB)
 class IpynbConverter(BaseConverter):
-    """Converter for Jupyter Notebook files using markitdown."""
+    """Converter for Jupyter Notebook files using the native JSON parser."""
 
     supported_formats = [FileFormat.IPYNB]
 
     def convert(
         self, input_path: Path, output_dir: Path | None = None
     ) -> ConvertResult:
-        return _convert(input_path)
+        from markitai.converter.structured_text import convert_notebook
+
+        return convert_notebook(Path(input_path))
 
 
 @register_converter(FileFormat.NUMBERS)

@@ -19,6 +19,8 @@ from markitai.webextract.content_boundary import (
     is_above_content_start,
 )
 from markitai.webextract.dom import attr_str
+from markitai.webextract.selectors import select as _css_select
+from markitai.webextract.selectors import select_one as _css_select_one
 from markitai.webextract.utils import count_words, normalize_text, tag_children
 
 _DATE_RE = re.compile(
@@ -181,7 +183,7 @@ def _is_or_contains_heading(el: Tag) -> bool:
 
 def _has_content_element(el: Tag, *, include_images: bool = True) -> bool:
     css = _CONTENT_ELEMENT_CSS if include_images else _CONTENT_ELEMENT_NO_IMG_CSS
-    return el.select_one(css) is not None
+    return _css_select_one(el, css) is not None
 
 
 def _is_newsletter_element(el: Tag, max_words: int) -> bool:
@@ -325,7 +327,7 @@ def _remove_hero_header(main_content: Tag, content_start: Tag | None) -> int:
                 total_words = count_words(_text(current))
                 # Count words in metadata elements, deduping nested ones.
                 metadata_els: list[Tag] = []
-                for el in current.select("h1, h2, h3, time, [aria-label]"):
+                for el in _css_select(current, "h1, h2, h3, time, [aria-label]"):
                     if not any(existing in el.parents for existing in metadata_els):
                         metadata_els.append(el)
                 metadata_words = sum(count_words(el.get_text()) for el in metadata_els)
@@ -405,9 +407,10 @@ def remove_eyebrow_label(main_content: Tag) -> int:
         return 0
     if _DATE_RE.search(text):
         return 0
-    if prev.select_one(
+    if _css_select_one(
+        prev,
         "img, picture, video, iframe, figure, table, pre, code, time, [datetime], "
-        "h1, h2, h3, h4, h5, h6, ul, ol, blockquote"
+        "h1, h2, h3, h4, h5, h6, ul, ol, blockquote",
     ):
         return 0
 
@@ -436,7 +439,7 @@ def _remove_promo_banner_links(root: Tag) -> int:
     if first_h1 is None:
         return 0
     removed = 0
-    for link in root.select("a[href]"):
+    for link in _css_select(root, "a[href]"):
         if _gone(link) or _gone(first_h1):
             continue
         if not element_precedes(link, first_h1):
@@ -536,7 +539,7 @@ def _remove_toc(root: Tag, content_text: str, url: str) -> int:
         if list_pos < 0 or list_pos > len(content_text) * 0.3:
             continue
 
-        links = list_el.select("a[href]")
+        links = _css_select(list_el, "a[href]")
         if len(links) < 3:
             continue
         if _has_content_element(list_el):
@@ -686,7 +689,7 @@ def _remove_metadata_candidates(
             and is_pre_content(el)
             and el.find("img") is not None
         ):
-            links = el.select("a[href]")
+            links = _css_select(el, "a[href]")
             if links:
                 link_text_len = sum(len(_text(a)) for a in links)
                 if link_text_len / (len(text) or 1) >= 0.8:
@@ -813,7 +816,7 @@ def _remove_metadata_lists(root: Tag, content_text: str) -> int:
             continue
         # NOTE: divergence from defuddle — GitHub-style task lists are short
         # and punctuation-free but are real content markitai preserves.
-        if list_el.select_one('input[type="checkbox"]') is not None:
+        if _css_select_one(list_el, 'input[type="checkbox"]') is not None:
             continue
         is_dl = list_el.name == "dl"
         items = [
@@ -890,7 +893,7 @@ def _remove_section_breadcrumbs(root: Tag, url: str) -> int:
                     continue
                 if not element_precedes(el, first_heading):
                     continue
-        link = el if el.name == "a" else el.select_one("a[href]")
+        link = el if el.name == "a" else _css_select_one(el, "a[href]")
         if link is None:
             continue
         try:
@@ -953,7 +956,7 @@ def _remove_trailing_external_link_lists(root: Tag, url: str) -> int:
         # Every list item must be primarily a link pointing off-site.
         all_external = True
         for item in items:
-            links = item.select("a[href]")
+            links = _css_select(item, "a[href]")
             if not links:
                 all_external = False
                 break
@@ -1008,7 +1011,7 @@ def _remove_trailing_related_posts(root: Tag) -> int:
 
     for p in paras:
         text = re.sub(r"\s+", " ", _text(p))
-        links = p.select("a[href]")
+        links = _css_select(p, "a[href]")
         if not links:
             return 0
         link_text_len = sum(len(_text(a)) for a in links)
@@ -1178,7 +1181,9 @@ def _remove_related_card_grids(root: Tag, content_text: str) -> int:
             1
             for c in children
             if c.find(["img", "picture"]) is not None
-            and (c.find(["h2", "h3", "h4"]) is not None or c.select_one("a[href]"))
+            and (
+                c.find(["h2", "h3", "h4"]) is not None or _css_select_one(c, "a[href]")
+            )
         )
         if card_count < 2 or card_count < len(children) * 0.7:
             continue
@@ -1192,7 +1197,7 @@ def _remove_related_card_grids(root: Tag, content_text: str) -> int:
             follows_content = content_text.find(first_text) >= 500
         else:
             follows_content = (
-                all(c.select_one("a[href]") is not None for c in children)
+                all(_css_select_one(c, "a[href]") is not None for c in children)
                 and _preceding_prose_words(el, root) >= 100
             )
         if not follows_content:
@@ -1285,7 +1290,7 @@ def _remove_author_contact_blocks(root: Tag, content_text: str) -> int:
         if not (
             _EMAIL_RE.search(text)
             or _PHONE_RE.search(text)
-            or el.select_one('a[href^="mailto:"]')
+            or _css_select_one(el, 'a[href^="mailto:"]')
         ):
             continue
 
@@ -1362,7 +1367,7 @@ def _remove_trailing_tag_blocks(root: Tag, content_text: str) -> int:
         if len(content_text) - (pos + len(text)) > 300:
             continue
 
-        links = el.select("a[href]")
+        links = _css_select(el, "a[href]")
         if not links:
             continue
         link_text_len = sum(len(_text(a)) for a in links)

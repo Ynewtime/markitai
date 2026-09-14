@@ -30,6 +30,8 @@ from markitai.webextract.constants import (
     FOOTNOTE_LIST_SELECTORS,
 )
 from markitai.webextract.dom import attr_str
+from markitai.webextract.selectors import select as _css_select
+from markitai.webextract.selectors import select_one as _css_select_one
 from markitai.webextract.utils import tag_children
 
 # Matches heading text for loose footnote section delimiters
@@ -155,7 +157,7 @@ def _is_attached(el: Tag) -> bool:
 
 
 def _extract_footnoteref(el: Tag) -> str:
-    link = el.select_one('a[id^="footnoteref-"]')
+    link = _css_select_one(el, 'a[id^="footnoteref-"]')
     if link is not None:
         m = re.match(r"^footnoteref-(\d+)$", _get_id(link))
         if m:
@@ -175,7 +177,7 @@ def _extract_science_org(el: Tag) -> str:
 
 def _extract_mediawiki(el: Tag) -> str:
     ref_id = ""
-    for link in el.select("a"):
+    for link in _css_select(el, "a"):
         href = attr_str(link, "href")
         segment = href.split("/")[-1] if href else ""
         m = re.search(r"(?:cite_note|cite_ref)-(.+)", segment)
@@ -217,7 +219,7 @@ _INLINE_REF_EXTRACTORS: list[tuple[str, Callable[[Tag], str]]] = [
     ('sup[id^="fnr"]', lambda el: _get_id(el).replace("fnr", "", 1).lower()),
     (
         "sup.footnote-reference",
-        lambda el: _get_href_fragment(el.select_one('a[href^="#"]')),
+        lambda el: _get_href_fragment(_css_select_one(el, 'a[href^="#"]')),
     ),
     # LessWrong uses id="fnrefXXX" on the span when data-footnote-id is missing.
     ("span.footnote-reference", _extract_lesswrong_span),
@@ -333,8 +335,8 @@ class _FootnoteHandler:
                     if self.is_backref_link(child):
                         continue
                     if child.name == "p":
-                        if not _text_content(child).strip() and not child.select_one(
-                            "img, br"
+                        if not _text_content(child).strip() and not _css_select_one(
+                            child, "img, br"
                         ):
                             continue
                         new_p = self._new_tag("p")
@@ -346,7 +348,7 @@ class _FootnoteHandler:
                         self.remove_backrefs(clone)
                         new_item.append(clone)
 
-        last_paragraph = new_item.select_one("p:last-of-type") or new_item
+        last_paragraph = _css_select_one(new_item, "p:last-of-type") or new_item
         for index, ref_id in enumerate(refs):
             backlink = self._new_tag("a")
             backlink["href"] = f"#{ref_id}"
@@ -364,7 +366,7 @@ class _FootnoteHandler:
 
     def collect_footnotes(self, element: Tag) -> dict[int, _FootnoteData]:
         state = _CollectState()
-        for note_list in element.select(FOOTNOTE_LIST_SELECTORS):
+        for note_list in _css_select(element, FOOTNOTE_LIST_SELECTORS):
             if self._collect_from_list(element, note_list, state):
                 continue
 
@@ -389,7 +391,7 @@ class _FootnoteHandler:
     ) -> bool:
         # Wikidot uses div.footnotes-footer containing div.footnote-footer
         if _matches(note_list, "div.footnotes-footer"):
-            for div in note_list.select("div.footnote-footer"):
+            for div in _css_select(note_list, "div.footnote-footer"):
                 m = re.match(r"^footnote-(\d+)$", _get_id(div))
                 if not m:
                     continue
@@ -398,7 +400,7 @@ class _FootnoteHandler:
                     continue
                 # Clone to avoid modifying the original DOM
                 clone = _clone(div)
-                back_link = clone.select_one("a")
+                back_link = _css_select_one(clone, "a")
                 if back_link is not None:
                     back_link.decompose()
                 text = re.sub(r"^\s*\.\s*", "", clone.decode_contents())
@@ -416,7 +418,7 @@ class _FootnoteHandler:
                 return True
             footnote_id = _get_id(note_list).lower()
             clone = _clone(note_list)
-            label = clone.select_one("sup.footnote-definition-label")
+            label = _css_select_one(clone, "sup.footnote-definition-label")
             if label is not None:
                 label.decompose()
             self._add_footnote(state, footnote_id, clone)
@@ -426,9 +428,9 @@ class _FootnoteHandler:
         # children: <sup id="footnote-N"><a href="#footnote-reference-N">N</a>
         # </sup><div class="footnote-body"><p>content</p></div>
         if _matches(note_list, "div.footnote-definitions"):
-            for definition in note_list.select("div.footnote-definition"):
-                sup_el = definition.select_one("sup[id]")
-                body = definition.select_one(".footnote-body")
+            for definition in _css_select(note_list, "div.footnote-definition"):
+                sup_el = _css_select_one(definition, "sup[id]")
+                body = _css_select_one(definition, ".footnote-body")
                 if sup_el is None or body is None:
                     continue
                 self._add_footnote(state, _get_id(sup_el).lower(), _clone(body))
@@ -443,8 +445,8 @@ class _FootnoteHandler:
 
         # Easy Footnotes WP plugin: li items have no id, id is on a child span
         if _matches(note_list, "ol.easy-footnotes-wrapper"):
-            for li in note_list.select("li.easy-footnote-single"):
-                id_span = li.select_one('span[id^="easy-footnote-bottom-"]')
+            for li in _css_select(note_list, "li.easy-footnote-single"):
+                id_span = _css_select_one(li, 'span[id^="easy-footnote-bottom-"]')
                 if id_span is None:
                     continue
                 clone = _clone(li)
@@ -452,13 +454,13 @@ class _FootnoteHandler:
                     'span[id^="easy-footnote-bottom-"]',
                     "a.easy-footnote-to-top",
                 ):
-                    found = clone.select_one(sel)
+                    found = _css_select_one(clone, sel)
                     if found is not None:
                         found.decompose()
                 self._add_footnote(state, _get_id(id_span).lower(), clone)
             # Track empty anchor spans left in the body by the plugin
             self._pending_removals.extend(
-                element.select("span.easy-footnote-margin-adjust")
+                _css_select(element, "span.easy-footnote-margin-adjust")
             )
             return True
 
@@ -466,8 +468,8 @@ class _FootnoteHandler:
         # footnote followed by the body <p>. Inline markers reference the
         # heading anchor id, so register under that id.
         if _matches(note_list, "div.footnotes-segment"):
-            for heading in note_list.select("h5.footnote-body-heading"):
-                anchor = heading.select_one("a[id]")
+            for heading in _css_select(note_list, "h5.footnote-body-heading"):
+                anchor = _css_select_one(heading, "a[id]")
                 heading_id = _get_id(anchor).lower() if anchor is not None else ""
                 if not heading_id:
                     continue
@@ -477,7 +479,9 @@ class _FootnoteHandler:
                     sibling.name == "h5"
                     and "footnote-body-heading" in _class_list(sibling)
                 ):
-                    if _text_content(sibling).strip() or sibling.select_one("img, br"):
+                    if _text_content(sibling).strip() or _css_select_one(
+                        sibling, "img, br"
+                    ):
                         content_div.append(_clone(sibling))
                     sibling = _next_element_sibling(sibling)
                 self._add_footnote(state, heading_id, content_div)
@@ -486,8 +490,8 @@ class _FootnoteHandler:
 
         # Substack has individual footnote divs with no parent
         if _matches(note_list, 'div.footnote[data-component-name="FootnoteToDOM"]'):
-            anchor = note_list.select_one("a.footnote-number")
-            content = note_list.select_one(".footnote-content")
+            anchor = _css_select_one(note_list, "a.footnote-number")
+            content = _css_select_one(note_list, ".footnote-content")
             if anchor is not None and content is not None:
                 self._add_footnote(
                     state,
@@ -496,7 +500,7 @@ class _FootnoteHandler:
                 )
             return True
 
-        for li in note_list.select('li, div[role="listitem"]'):
+        for li in _css_select(note_list, 'li, div[role="listitem"]'):
             footnote_id, content = self._extract_list_item_id_and_content(li)
             self._add_footnote(
                 state, footnote_id, content if content is not None else li
@@ -512,7 +516,7 @@ class _FootnoteHandler:
         this explicit markup before the generic id fallback, which would
         mis-collect surrounding paragraphs as footnote content.
         """
-        for definition in element.select('p[data-type="footnote"][id]'):
+        for definition in _css_select(element, 'p[data-type="footnote"][id]'):
             def_id = _get_id(definition).lower()
             if not def_id:
                 continue
@@ -523,7 +527,7 @@ class _FootnoteHandler:
             if (
                 marker is not None
                 and marker.name == "sup"
-                and marker.select_one('a[href*="#"]') is not None
+                and _css_select_one(marker, 'a[href*="#"]') is not None
             ):
                 marker.decompose()
                 self._trim_leading_whitespace(clone)
@@ -534,7 +538,7 @@ class _FootnoteHandler:
     def _try_generic_id_detection(self, element: Tag, state: _CollectState) -> None:
         """Detect footnotes by numeric anchor text referencing in-container ids."""
         candidate_refs: dict[str, list[Tag]] = {}
-        for a in element.select('a[href*="#"]'):
+        for a in _css_select(element, 'a[href*="#"]'):
             fragment = _get_href_fragment(a)
             if not fragment:
                 continue
@@ -549,7 +553,7 @@ class _FootnoteHandler:
         fragment_set = set(candidate_refs.keys())
         best_container: Tag | None = None
         best_match_count = 0
-        for container in element.select("div, section, aside, footer, ol, ul"):
+        for container in _css_select(element, "div, section, aside, footer, ol, ul"):
             if container is element:
                 continue
             match_count = len(
@@ -590,14 +594,14 @@ class _FootnoteHandler:
             clone = _clone(el)
 
             # Remove empty/numeric ID anchors (e.g. <a id="r1"></a>)
-            id_anchor = clone.select_one(f'a[id="{frag_id}"]')
+            id_anchor = _css_select_one(clone, f'a[id="{frag_id}"]')
             if id_anchor is not None:
                 anchor_text = _text_content(id_anchor).strip()
                 if not anchor_text or re.match(r"^\d+[.)]*\s*$", anchor_text):
                     id_anchor.decompose()
 
             # Remove named anchor footnote marker (e.g. Gutenberg)
-            named_anchor = clone.select_one("a[name]")
+            named_anchor = _css_select_one(clone, "a[name]")
             if (
                 named_anchor is not None
                 and attr_str(named_anchor, "name").lower() == frag_id
@@ -629,7 +633,7 @@ class _FootnoteHandler:
 
     def _try_word_export(self, element: Tag, state: _CollectState) -> None:
         """Microsoft Word HTML export: refs #_ftn[N], back-links #_ftnref[N]."""
-        word_backrefs = element.select('a[href*="#_ftnref"]')
+        word_backrefs = _css_select(element, 'a[href*="#_ftnref"]')
         if len(word_backrefs) < 2:
             return
 
@@ -654,7 +658,7 @@ class _FootnoteHandler:
                 continue
 
             clone = _clone(container)
-            backref_anchor = clone.select_one('a[href*="_ftnref"]')
+            backref_anchor = _css_select_one(clone, 'a[href*="_ftnref"]')
             if backref_anchor is not None:
                 wrap_sup = backref_anchor.find_parent("sup")
                 if wrap_sup is not None:
@@ -671,7 +675,7 @@ class _FootnoteHandler:
     def _try_google_docs(self, element: Tag, state: _CollectState) -> None:
         """Google Docs/Sites: p[id^="ftnt"] with back-link a[href*="#ftnt_ref"]."""
         gdoc_pairs: list[tuple[int, Tag]] = []
-        for p in element.select('p[id^="ftnt"]'):
+        for p in _css_select(element, 'p[id^="ftnt"]'):
             m = re.match(r"^ftnt(\d+)$", _get_id(p))
             if m:
                 gdoc_pairs.append((int(m.group(1)), p))
@@ -686,7 +690,7 @@ class _FootnoteHandler:
                 continue
 
             clone = _clone(el)
-            backref = clone.select_one('a[href*="#ftnt_ref"]')
+            backref = _css_select_one(clone, 'a[href*="#ftnt_ref"]')
             if backref is not None:
                 backref.decompose()
 
@@ -756,7 +760,7 @@ class _FootnoteHandler:
         or minimum count is required — a single footnote is detected.
         """
         footnote_paragraphs: list[tuple[int, Tag]] = []
-        for p in element.select("p.footnote"):
+        for p in _css_select(element, "p.footnote"):
             num = self._parse_footnote_num(p)
             if num is not None:
                 footnote_paragraphs.append((num, p))
@@ -772,7 +776,7 @@ class _FootnoteHandler:
         single footnote is detected. Handles CSS module hashes like
         ``PostDetail__UQuRMa__footnotes``.
         """
-        for container in element.select("div, section, aside"):
+        for container in _css_select(element, "div, section, aside"):
             class_name = _class_name(container)
             container_id = _get_id(container)
             if not re.search(r"footnote", class_name, re.IGNORECASE) and not re.search(
@@ -780,14 +784,14 @@ class _FootnoteHandler:
             ):
                 continue
 
-            heading = container.select_one("h1, h2, h3, h4, h5, h6")
+            heading = _css_select_one(container, "h1, h2, h3, h4, h5, h6")
             if heading is None or not FOOTNOTE_SECTION_RE.match(
                 _text_content(heading).strip()
             ):
                 continue
 
             paragraphs: list[tuple[int, Tag]] = []
-            for p in container.select("p"):
+            for p in _css_select(container, "p"):
                 num = self._parse_footnote_num(p)
                 if num is not None:
                     paragraphs.append((num, p))
@@ -873,10 +877,10 @@ class _FootnoteHandler:
     def _cross_validate(self, element: Tag, paragraphs: list[tuple[int, Tag]]) -> bool:
         numbered_nums = {num for num, _ in paragraphs}
         matched_nums: set[int] = set()
-        for sup in element.select("sup"):
+        for sup in _css_select(element, "sup"):
             if any(_contains(el, sup) for _, el in paragraphs):
                 continue
-            if sup.select_one("a") is not None:
+            if _css_select_one(sup, "a") is not None:
                 continue  # already standardized or linked
             text = _text_content(sup).strip()
             if text.isdigit():
@@ -889,7 +893,7 @@ class _FootnoteHandler:
         self, element: Tag
     ) -> tuple[list[tuple[int, Tag]], list[Tag]] | None:
         # Use parent of last <p> as scan container for nested layouts
-        all_ps = element.select("p")
+        all_ps = _css_select(element, "p")
         container: Tag = element
         if all_ps:
             last_parent = _parent_element(all_ps[-1])
@@ -971,7 +975,7 @@ class _FootnoteHandler:
         return bool(_CITE_REF_RE.match(attr_str(el, "href")))
 
     def remove_backrefs(self, el: Tag) -> None:
-        for a in el.select("a"):
+        for a in _css_select(el, "a"):
             if self.is_backref_link(a):
                 # Remove the wrapping <sup> if it only contained this link
                 parent = _parent_element(a)
@@ -1001,7 +1005,7 @@ class _FootnoteHandler:
 
     @staticmethod
     def _get_child_anchor_id(el: Tag) -> str:
-        anchor = el.select_one("a[id], a[name]")
+        anchor = _css_select_one(el, "a[id], a[name]")
         if anchor is None:
             return ""
         return (_get_id(anchor) or attr_str(anchor, "name")).lower()
@@ -1013,11 +1017,11 @@ class _FootnoteHandler:
         Handles Science ``.citations``, Arxiv ``bib.bib*``, ``fn:*``, ``fn*``,
         Nature ``data-counter``, MediaWiki ``cite_note``.
         """
-        citations_div = li.select_one(".citations")
+        citations_div = _css_select_one(li, ".citations")
         if citations_div is not None and _get_id(citations_div).lower().startswith("r"):
             return (
                 _get_id(citations_div).lower(),
-                citations_div.select_one(".citation-content"),
+                _css_select_one(citations_div, ".citation-content"),
             )
 
         raw_id = _get_id(li).lower()
@@ -1037,7 +1041,7 @@ class _FootnoteHandler:
     ) -> list[tuple[Tag, str]]:
         results: list[tuple[Tag, str]] = []
         seen: set[str] = set()
-        for el in container.select("li, p, div"):
+        for el in _css_select(container, "li, p, div"):
             matched_id = ""
             el_id = _get_id(el)
             if el_id and el_id.lower() in fragment_set:
@@ -1112,14 +1116,15 @@ class _FootnoteHandler:
     def collect_inline_sidenotes(self, element: Tag) -> dict[int, _FootnoteData]:
         """Tufte-style and inline sidenotes embedded in text."""
         footnotes: dict[int, _FootnoteData] = {}
-        containers = element.select(
-            "span.footnote-container, span.sidenote-container, span.inline-footnote"
+        containers = _css_select(
+            element,
+            "span.footnote-container, span.sidenote-container, span.inline-footnote",
         )
 
         if not containers:
             # Org Mode CSS sidenotes: label.footref + input.footref-toggle +
             # span.sidenote
-            footrefs = element.select("label.footref")
+            footrefs = _css_select(element, "label.footref")
             if footrefs:
                 footnote_count = 1
                 for label in footrefs:
@@ -1141,7 +1146,7 @@ class _FootnoteHandler:
 
                     content = _clone(sibling)
                     # Remove the leading sup number from the sidenote content
-                    leading_sup = content.select_one("sup")
+                    leading_sup = _css_select_one(content, "sup")
                     if leading_sup is not None and (
                         content.contents and content.contents[0] is leading_sup
                     ):
@@ -1170,21 +1175,21 @@ class _FootnoteHandler:
                     footnote_count += 1
 
                 # Remove the footer that duplicates these sidenotes
-                for footer in element.select("footer"):
-                    if footer.select_one(".footdef") is not None:
+                for footer in _css_select(element, "footer"):
+                    if _css_select_one(footer, ".footdef") is not None:
                         footer.decompose()
 
                 return footnotes
 
             # Remove standalone sidenotes that duplicate the footnote list
-            for sidenote in element.select("span.sidenote"):
+            for sidenote in _css_select(element, "span.sidenote"):
                 sidenote.decompose()
             return footnotes
 
         footnote_count = 1
         for container in containers:
-            content = container.select_one(
-                "span.footnote, span.sidenote, span.footnoteContent"
+            content = _css_select_one(
+                container, "span.footnote, span.sidenote, span.footnoteContent"
             )
             if content is None:
                 continue
@@ -1208,7 +1213,7 @@ class _FootnoteHandler:
         """Sidenotes rendered in a separate column/container."""
         footnotes: dict[int, _FootnoteData] = {}
 
-        columns = element.select(".sidenotes-column")
+        columns = _css_select(element, ".sidenotes-column")
 
         # Sidenote columns are often siblings of an ancestor
         if not columns:
@@ -1216,19 +1221,19 @@ class _FootnoteHandler:
             for _ in range(3):
                 if ancestor is None or columns:
                     break
-                columns = ancestor.select(":scope > .sidenotes-column")
+                columns = _css_select(ancestor, ":scope > .sidenotes-column")
                 ancestor = _parent_element(ancestor)
         if not columns:
             return footnotes
 
         footnote_count = 1
         for column in columns:
-            for sidenote in column.select(".sidenote[id]"):
+            for sidenote in _css_select(column, ".sidenote[id]"):
                 sidenote_id = _get_id(sidenote)
                 if not sidenote_id:
                     continue
 
-                id_span = sidenote.select_one(".sidenote__id")
+                id_span = _css_select_one(sidenote, ".sidenote__id")
                 num_text = re.sub(r"\D", "", _text_content(id_span)) if id_span else ""
                 footnote_number = int(num_text) if num_text else footnote_count
 
@@ -1260,7 +1265,7 @@ class _FootnoteHandler:
         """Footnotes in asides with numbered ordered lists."""
         footnotes: dict[int, _FootnoteData] = {}
 
-        ols = element.select("aside > ol[start]")
+        ols = _css_select(element, "aside > ol[start]")
         if not ols:
             return footnotes
 
@@ -1273,7 +1278,7 @@ class _FootnoteHandler:
             if footnote_number < 1:
                 continue
 
-            items = ol.select("li")
+            items = _css_select(ol, "li")
             if not items:
                 continue
 
@@ -1304,12 +1309,12 @@ class _FootnoteHandler:
         """
         footnotes: dict[int, _FootnoteData] = {}
 
-        refs = element.select("span[data-definition]")
+        refs = _css_select(element, "span[data-definition]")
         if not refs:
             return footnotes
 
         aside_map: dict[str, Tag] = {}
-        for aside in element.select("aside[id]"):
+        for aside in _css_select(element, "aside[id]"):
             aside_map[_get_id(aside)] = aside
 
         footnote_count = 1
@@ -1348,7 +1353,7 @@ class _FootnoteHandler:
         self._merge_footnotes(footnotes, self.collect_sidenotes_column(element))
         self._merge_footnotes(footnotes, self.collect_aside_footnotes(element))
 
-        inline_references = element.select(FOOTNOTE_INLINE_REFERENCES)
+        inline_references = _css_select(element, FOOTNOTE_INLINE_REFERENCES)
         # Grouped sup containers: container id -> (container, refs)
         sup_groups: dict[int, tuple[Tag, list[tuple[str, str]]]] = {}
 
@@ -1367,7 +1372,7 @@ class _FootnoteHandler:
             # several refs.
             if _matches(el, "cite.ltx_cite"):
                 refs: list[Tag] = []
-                for link in el.select("a"):
+                for link in _css_select(el, "a"):
                     href = attr_str(link, "href")
                     if not href:
                         continue
@@ -1468,7 +1473,7 @@ class _FootnoteHandler:
                 )
 
             # Pass 1: Match by fragment link
-            for link in element.select('a[href*="#"]'):
+            for link in _css_select(element, 'a[href*="#"]'):
                 if link.parent is None or is_inside_footnotes(link):
                     continue
                 fragment = _get_href_fragment(link)
@@ -1485,7 +1490,7 @@ class _FootnoteHandler:
             # Pass 2: Match sup/span elements with numeric text
             has_unmatched = any(not data.refs for data in footnotes.values())
             if has_unmatched:
-                for el in element.select("sup, span.footnote-ref"):
+                for el in _css_select(element, "sup, span.footnote-ref"):
                     if el.parent is None or _get_id(el).startswith("fnref:"):
                         continue
                     if _closest(el, "#footnotes") is not None:
@@ -1518,7 +1523,7 @@ class _FootnoteHandler:
                 self.create_footnote_item(number, data.content, data.refs)
             )
 
-        for note_list in element.select(FOOTNOTE_LIST_SELECTORS):
+        for note_list in _css_select(element, FOOTNOTE_LIST_SELECTORS):
             note_list.decompose()
         for el in self._pending_removals:
             if el.parent is not None:
@@ -1560,7 +1565,7 @@ def _remove_orphaned_dividers(element: Tag) -> None:
             break
 
     # Collapse consecutive <hr> elements (skipping whitespace between them)
-    for hr in element.select("hr"):
+    for hr in _css_select(element, "hr"):
         if hr.parent is None:
             continue
         node = hr.next_sibling
@@ -1592,7 +1597,7 @@ def adopt_external_footnotes(main_content: Tag) -> None:
     if body is None or main_content is body:
         return
 
-    for el in body.select("div, section, aside"):
+    for el in _css_select(body, "div, section, aside"):
         class_name = _class_name(el)
         el_id = _get_id(el)
         if not re.search(r"footnote", class_name, re.IGNORECASE) and not re.search(
@@ -1603,7 +1608,7 @@ def adopt_external_footnotes(main_content: Tag) -> None:
         if _contains(main_content, el) or _contains(el, main_content):
             continue
 
-        heading = el.select_one("h1, h2, h3, h4, h5, h6")
+        heading = _css_select_one(el, "h1, h2, h3, h4, h5, h6")
         if heading is None or not FOOTNOTE_SECTION_RE.match(
             _text_content(heading).strip()
         ):

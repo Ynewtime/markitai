@@ -581,7 +581,7 @@ async def _analyze_url_images_stage(
     Serial counterpart of the CLI's concurrent image-analysis branches —
     correct first, fast enough for the serve/API surfaces that reach it.
     """
-    from datetime import datetime
+    from datetime import UTC, datetime
 
     from markitai.constants import ASSETS_REL_PATH
     from markitai.output_profiles import assets_visible
@@ -597,7 +597,7 @@ async def _analyze_url_images_stage(
         context=context,
         document_context=extract_document_context(llm_md.read_text(encoding="utf-8")),
     )
-    timestamp = datetime.now().astimezone().isoformat()
+    timestamp = datetime.now(UTC).astimezone().isoformat()
 
     asset_descriptions: list[dict[str, Any]] = []
     llm_content = llm_md.read_text(encoding="utf-8")

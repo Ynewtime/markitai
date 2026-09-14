@@ -32,6 +32,10 @@ dependencies = [
                          # half for Anthropic and raises NotImplementedError on create.
                          # Pure Python; httpx2/pydantic/anyio already come with litellm
     "markitdown[docx,pptx,xlsx,xls,outlook]>=0.1.5",  # office formats only; pdf handled by pymupdf4llm, audio/youtube/azure unused
+    "markdownify>=1.2.3,<2",  # native HTML renderer uses the parent_tags API
+    "mammoth>=1.11,<2",  # direct DOCX path; OMML still uses markitdown fallback
+    "pandas>=2.2,<4",  # preserve Excel cell formatting in the direct XLSX path
+    "python-pptx>=1.0.2,<2",  # direct PPTX reader and local geometry resolution
     "httpx>=0.27.0",  # unconditional imports: providers/chatgpt.py, image.py, fetch_http.py default backend
     "lxml>=5.0.0",  # converter/_patches.py python-pptx fix + webextract/dom.py fast parser
     "litellm>=1.83.0,!=1.92.0",  # >=1.83.0 excludes compromised 1.82.7/1.82.8 (March 2026 supply-chain attack); !=1.92.0 shipped manylinux-only wheels — macOS/Windows installs fall back to building its Rust extension from sdist (fails without cargo, or with pyo3-unsupported default Pythons)

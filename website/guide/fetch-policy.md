@@ -46,6 +46,8 @@ In the `auto` chain, domains matched by `fetch.policy.local_only_patterns` and b
 
 A remote `fetch.strategy` set in the config file is not an explicit opt-in. It stays governed by `remote_consent` and prints the same first-use notice.
 
+When a proxy such as Clash returns Fake-IP addresses in `198.18.0.0/15` or `2001:2::/48`, remote extraction verifies the hostname's public A and AAAA records through [Cloudflare DNS over HTTPS](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json/). This happens only after remote consent; DNS receives the hostname, without the URL path or query. Failed verification or non-public answers still block remote extraction. Private IP literals and local connection checks, including unauthenticated `serve` requests, remain blocked regardless of this verification.
+
 ## Configuration
 
 Tune the policy in `markitai.json`:

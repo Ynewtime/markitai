@@ -1,0 +1,120 @@
+{
+  "recorded_date": "2026-09-14",
+  "environment": {
+    "os": "macOS",
+    "python": "3.12.14"
+  },
+  "baseline": {
+    "head": "a4f36e9fa97b586f27b6d1ebf1e8de4b591ac213",
+    "includes_uncommitted_fixes": true,
+    "note": "The frozen source already includes the Fake-IP and CJK fixes. Their gains are not counted again. This is not a comparison against a pristine release.",
+    "source_manifest_sha256": "fa23b39f94af3e763bab800c7de326aa15289e6497f6a7124971feeaa05fb3cc"
+  },
+  "measured_source_wheel_sha256": "90152c5709830d37dedaf481fa9d2397e537c25a1e0b16453e00cd4113fded91",
+  "fixed_file_cases": 49,
+  "fresh_processes_per_case": 3,
+  "model_enrichment": false,
+  "remote_fetch": false,
+  "cache": false,
+  "score": {
+    "weights": {
+      "url": 0.3333333333333333,
+      "office_pdf": 0.3333333333333333,
+      "batch": 0.3333333333333333
+    },
+    "groups": {
+      "url": 5.832450749265064,
+      "office_pdf": 5.610445492339252,
+      "batch": 6.636942979045631
+    },
+    "composite_speedup": 6.010890797252089,
+    "target": 10,
+    "target_met": false,
+    "issues": [],
+    "url_speedups": {
+      "author-contact-block": 5.992307693605113,
+      "general--wikipedia": 5.081227802370418,
+      "math--katex": 5.6640423151796595,
+      "short-note": 6.373226613289673,
+      "table-layout--paulgraham.com-makersschedule": 6.140543036903795
+    },
+    "diagnostic_speedups": {
+      "api-csv": 4.470739928012076,
+      "api-docx": 3.788323470171193,
+      "api-eml": 1.6731193122289194,
+      "api-epub": 0.9680734868387261,
+      "api-html": 3.3538837969723048,
+      "api-ipynb": 4.39361985498948,
+      "api-md": 1.6868357797539095,
+      "api-msg": 1.1912203848336718,
+      "api-ods": 1.6716214391670505,
+      "api-odt": 1.675959515562608,
+      "api-org": 1.700207766658622,
+      "api-pdf": 0.9985596088261146,
+      "api-pptx": 2.123705922052414,
+      "api-rst": 1.6940090565802233,
+      "api-rtf": 1.668266569869475,
+      "api-tex": 1.628831714742197,
+      "api-tsv": 1.6917832364778087,
+      "api-txt": 1.6926554400833216,
+      "api-xlsx": 3.0428048954826092,
+      "api-xml": 1.6753174125254555,
+      "cli-batch-30": 6.636942979045631,
+      "cli-docx": 9.381756441169136,
+      "cli-help": 1.041631590862802,
+      "cli-html": 7.922359066998921,
+      "cli-pdf": 2.253358151184399,
+      "cli-pptx": 6.413171132792657,
+      "cli-txt": 8.758649760757965,
+      "cli-version": 1.0086760509642054,
+      "cli-xlsx": 7.3080613070198,
+      "converter-csv": 4.137031253162781,
+      "converter-docx": 3.598885300991295,
+      "converter-eml": 1.0073892730451743,
+      "converter-epub": 0.50325474299994,
+      "converter-html": 3.1183058181476504,
+      "converter-ipynb": 4.159395568209267,
+      "converter-md": 1.0017303268619469,
+      "converter-msg": 1.0043108437777681,
+      "converter-ods": 1.0107614326736938,
+      "converter-odt": 1.0160129968646117,
+      "converter-org": 0.993417646332226,
+      "converter-pdf": 0.9961373465424284,
+      "converter-pptx": 2.741027097592901,
+      "converter-rst": 0.9916177445570653,
+      "converter-rtf": 1.0040451032780382,
+      "converter-tex": 0.9930842737300719,
+      "converter-tsv": 0.9968764063119231,
+      "converter-txt": 0.9999428933956709,
+      "converter-xlsx": 2.846739094703267,
+      "converter-xml": 0.9865440981380273
+    }
+  },
+  "validation": {
+    "complete_converter_api_cases": 40,
+    "additional_complex_table_cases": 23,
+    "web_cases": 208,
+    "outputs_identical": true,
+    "release_e2e": {
+      "checks_passed": 124,
+      "checks_failed": 0,
+      "checks_skipped": 0,
+      "wheel_sha256": "ffa1bd06526eda8e6c7f89dc5a43d79cb94a5f715eba8142a0898a34fcfa1cb5",
+      "remote_strategies": [
+        "jina",
+        "defuddle",
+        "cloudflare"
+      ],
+      "batch_api": "submit, timeout handoff, later collect, all 3 documents enhanced",
+      "fresh_install_licenses_checked": 122,
+      "source_matches_installed_wheel": true
+    }
+  },
+  "limitations": [
+    "Cold CLI aggregate, not an assurance for every document or machine.",
+    "URL timings use loopback HTTP and exclude internet or remote service cache latency.",
+    "Original EPUB anomaly remains in diagnostic_speedups. Five-process rechecks against the preceding wheel found both converter and API medians within 1%.",
+    "Recorded score precedes final code cleanup; full output parity was rechecked after cleanup.",
+    "The recorded composite speedup is approximately 6x; target_met remains false for the original 10x research threshold."
+  ]
+}

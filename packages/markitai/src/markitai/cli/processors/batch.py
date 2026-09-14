@@ -763,7 +763,7 @@ async def process_batch(
             "pass an output directory"
         )
 
-    from datetime import datetime
+    from datetime import UTC, datetime
 
     from markitai.batch import BatchProcessor, FileState, FileStatus, UrlState
     from markitai.cli.processors.validators import (
@@ -931,7 +931,7 @@ async def process_batch(
         raise SystemExit(0)
 
     # Record batch start time before any processing (including pre-conversion)
-    batch_started_at = datetime.now().astimezone().isoformat()
+    batch_started_at = datetime.now(UTC).astimezone().isoformat()
 
     # Start Live display early to capture all logs (including URL processing)
     # This ensures all INFO+ logs go to the panel instead of console
@@ -1039,7 +1039,7 @@ async def process_batch(
 
         # Update state to in_progress
         url_state.status = FileStatus.IN_PROGRESS
-        url_state.started_at = datetime.now().astimezone().isoformat()
+        url_state.started_at = datetime.now(UTC).astimezone().isoformat()
         batch._dirty_keys.add(url)
 
         start_time = asyncio.get_running_loop().time()
@@ -1078,7 +1078,7 @@ async def process_batch(
 
         finally:
             end_time = asyncio.get_running_loop().time()
-            url_state.completed_at = datetime.now().astimezone().isoformat()
+            url_state.completed_at = datetime.now(UTC).astimezone().isoformat()
             url_state.duration = end_time - start_time
 
             # Update progress
@@ -1099,7 +1099,7 @@ async def process_batch(
 
         # Update state to in_progress
         file_state.status = FileStatus.IN_PROGRESS
-        file_state.started_at = datetime.now().astimezone().isoformat()
+        file_state.started_at = datetime.now(UTC).astimezone().isoformat()
         batch._dirty_keys.add(file_key)
 
         start_time = asyncio.get_running_loop().time()
@@ -1146,7 +1146,7 @@ async def process_batch(
 
         finally:
             end_time = asyncio.get_running_loop().time()
-            file_state.completed_at = datetime.now().astimezone().isoformat()
+            file_state.completed_at = datetime.now(UTC).astimezone().isoformat()
             file_state.duration = end_time - start_time
 
             # Update progress
@@ -1211,7 +1211,7 @@ async def process_batch(
 
     if state:
         # Update state timestamp
-        state.updated_at = datetime.now().astimezone().isoformat()
+        state.updated_at = datetime.now(UTC).astimezone().isoformat()
         batch.compact_state()
 
         # Print summary (uses state for URL stats)

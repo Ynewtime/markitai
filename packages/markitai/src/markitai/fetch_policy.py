@@ -293,6 +293,60 @@ class RemoteURLAssessment:
 HostResolver = Callable[[str], Awaitable[Sequence[str]]]
 
 
+def _is_proxy_dns_address(value: str) -> bool:
+    """Recognize benchmark ranges used by Fake-IP DNS, never public targets."""
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return address in ipaddress.ip_network("198.18.0.0/15") or address in (
+        ipaddress.ip_network("2001:2::/48")
+    )
+
+
+async def resolve_public_hostname_addresses(hostname: str) -> tuple[str, ...]:
+    """Verify public DNS through HTTPS, independent of a local Fake-IP answer.
+
+    Only remote URL sharing may use this resolver, after consent. Never use
+    these answers to approve or pin local connections. The resolver receives
+    the hostname only, not the URL path or query.
+    """
+    import httpx
+
+    async def query(client: httpx.AsyncClient, record_type: int) -> list[str]:
+        response = await client.get(
+            "https://cloudflare-dns.com/dns-query",
+            params={"name": hostname, "type": str(record_type)},
+            headers={"Accept": "application/dns-json"},
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, dict) or data.get("Status") != 0:
+            raise ValueError("Public DNS query failed")
+        answers = data.get("Answer", [])
+        if not isinstance(answers, list):
+            raise ValueError("Invalid public DNS answers")
+        addresses = []
+        for answer in answers:
+            if not isinstance(answer, dict):
+                raise ValueError("Invalid public DNS record")
+            if answer.get("type") == record_type:
+                address = ipaddress.ip_address(answer["data"])
+                if address.version != (4 if record_type == 1 else 6):
+                    raise ValueError("Public DNS record family mismatch")
+                addresses.append(str(address))
+        return addresses
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0, follow_redirects=False) as client:
+            ipv4, ipv6 = await asyncio.wait_for(
+                asyncio.gather(query(client, 1), query(client, 28)), timeout=5.0
+            )
+    except (httpx.HTTPError, TimeoutError, ValueError, KeyError, TypeError) as exc:
+        raise OSError("Could not verify public DNS") from exc
+    return tuple(dict.fromkeys((*ipv4, *ipv6)))
+
+
 async def resolve_hostname_addresses(hostname: str) -> tuple[str, ...]:
     """Resolve a hostname without blocking the event loop."""
     loop = asyncio.get_running_loop()
@@ -317,8 +371,14 @@ async def assess_url_for_remote(
     url: str,
     *,
     resolver: HostResolver | None = None,
+    public_resolver: HostResolver | None = None,
 ) -> RemoteURLAssessment:
-    """Apply the complete hard privacy policy before sharing a URL remotely."""
+    """Apply the hard URL policy, with optional Fake-IP verification for sharing.
+
+    Local connection/serve guards omit ``public_resolver`` and stay strict.
+    A remote-service caller may supply a consent-gated public DNS resolver.
+    Benchmark answers alone do not establish that a hostname is public.
+    """
     try:
         parsed = urlsplit(url)
         hostname = parsed.hostname
@@ -348,6 +408,22 @@ async def assess_url_for_remote(
 
     if not addresses:
         return RemoteURLAssessment(False, "hostname_resolution_failed")
+    if (
+        direct_address is None
+        and public_resolver is not None
+        and not public_network_only.get()
+        and any(_is_proxy_dns_address(address) for address in addresses)
+        and all(
+            _address_is_global(address) or _is_proxy_dns_address(address)
+            for address in addresses
+        )
+    ):
+        try:
+            addresses = await public_resolver(hostname)
+        except (TimeoutError, OSError, UnicodeError):
+            return RemoteURLAssessment(False, "hostname_resolution_failed")
+        if not addresses:
+            return RemoteURLAssessment(False, "hostname_resolution_failed")
     if any(not _address_is_global(address) for address in addresses):
         return RemoteURLAssessment(False, "non_global_address")
     return RemoteURLAssessment(True)

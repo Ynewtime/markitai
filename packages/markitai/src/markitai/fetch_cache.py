@@ -12,7 +12,7 @@ import json
 import sqlite3
 import time
 from dataclasses import asdict, is_dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -509,13 +509,15 @@ class SPADomainCache:
           "last_hit": "2026-01-27T15:30:00"
         }
       },
-      "version": 1
+      "version": 3
     }
     """
 
     # Cache file expires after 30 days of no hits
     EXPIRY_DAYS = 30
-    VERSION = 1
+    # v1 misclassified CJK prose; v2 still misclassified accepted short native
+    # content. Neither cache can guide the current content-aware detector.
+    VERSION = 3
 
     def __init__(self, cache_path: Path | None = None) -> None:
         """Initialize SPA domain cache.
@@ -558,8 +560,6 @@ class SPADomainCache:
 
     def _is_expired(self, entry: dict[str, Any]) -> bool:
         """Check if a cache entry has expired."""
-        from datetime import datetime, timedelta
-
         last_hit_str = entry.get("last_hit") or entry.get("learned_at", "")
         if not last_hit_str:
             return True
@@ -568,7 +568,7 @@ class SPADomainCache:
             # Handle both naive (old cache) and aware (new cache) timestamps
             if last_hit.tzinfo is None:
                 last_hit = last_hit.astimezone()
-            return datetime.now().astimezone() - last_hit > timedelta(
+            return datetime.now(UTC).astimezone() - last_hit > timedelta(
                 days=self.EXPIRY_DAYS
             )
         except ValueError:
@@ -600,10 +600,8 @@ class SPADomainCache:
         Args:
             url: URL whose domain should be recorded
         """
-        from datetime import datetime
-
         domain = self._extract_domain(url)
-        now = datetime.now().astimezone().isoformat()
+        now = datetime.now(UTC).astimezone().isoformat()
 
         if domain in self._data["domains"]:
             # Update existing entry
@@ -626,13 +624,11 @@ class SPADomainCache:
         Args:
             url: URL that was fetched using cached knowledge
         """
-        from datetime import datetime
-
         domain = self._extract_domain(url)
         if domain in self._data["domains"]:
             self._data["domains"][domain]["hits"] += 1
             self._data["domains"][domain]["last_hit"] = (
-                datetime.now().astimezone().isoformat()
+                datetime.now(UTC).astimezone().isoformat()
             )
             self._save()
 

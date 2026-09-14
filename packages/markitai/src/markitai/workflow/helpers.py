@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -64,9 +64,9 @@ def extract_document_context(markdown: str, max_chars: int = 200) -> str:
         A short text snippet from the document body, or empty string.
     """
     # Strip YAML frontmatter (--- ... ---)
-    from markitai.utils.frontmatter import FRONTMATTER_PATTERN
+    from markitai.utils.frontmatter import strip_frontmatter
 
-    body = FRONTMATTER_PATTERN.sub("", markdown, count=1)
+    body = strip_frontmatter(markdown)
 
     text_lines = [
         line
@@ -227,6 +227,30 @@ def normalize_frontmatter(frontmatter: str | dict[str, Any]) -> str:
     return "\n".join(ordered_lines)
 
 
+def _extract_heading_title(markdown: str) -> str:
+    """First workflow heading, preserving its existing permissive syntax."""
+    # The old scanner stripped the document before splitting it, so whitespace
+    # before the first nonempty line is ignored; indentation later is retained.
+    leading = re.match(r"\s*", markdown)
+    position = leading.end() if leading else 0
+    while position < len(markdown):
+        if markdown[position] != "#":
+            boundary = markdown.find("\n#", position)
+            if boundary < 0:
+                return ""
+            position = boundary + 1
+        end = markdown.find("\n", position)
+        if end < 0:
+            end = len(markdown)
+        line = markdown[position:end]
+        if len(line) > 1 and line[1] in "# ":
+            title = line.lstrip("#").strip().replace("**", "").strip()
+            if title:
+                return title
+        position = end + 1
+    return ""
+
+
 def add_basic_frontmatter(
     content: str,
     source: str,
@@ -271,23 +295,11 @@ def add_basic_frontmatter(
 
     from markitai.utils.frontmatter import resolve_document_title
 
-    def extract_heading_title(markdown: str) -> str:
-        lines = markdown.strip().split("\n")
-        for line in lines:
-            # Match markdown headings (# followed by space), not hashtags
-            if line.startswith("# ") or (
-                len(line) > 1 and line[0] == "#" and line[1] in "# "
-            ):
-                extracted = line.lstrip("#").strip().replace("**", "").strip()
-                if extracted:
-                    return extracted
-        return ""
-
     title = resolve_document_title(
         source=source,
         explicit_title=title,
         content=content,
-        extractor=extract_heading_title,
+        extractor=_extract_heading_title,
     )
 
     from markitai.utils.frontmatter import frontmatter_timestamp
@@ -459,7 +471,7 @@ def write_images_json(
 
     # Write an images.json file for each assets directory
     created_files: list[Path] = []
-    local_now = datetime.now().astimezone().isoformat()
+    local_now = datetime.now(UTC).astimezone().isoformat()
 
     for assets_dir, image_entries in images_by_dir.items():
         # Check for both old (assets.json) and new (images.json) filenames

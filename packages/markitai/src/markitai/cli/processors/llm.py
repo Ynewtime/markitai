@@ -238,7 +238,7 @@ async def analyze_images_with_llm(
         - llm_usage: Per-model usage {model: {requests, input_tokens, output_tokens, cost_usd}}
         - image_analysis_result: Analysis data for JSON output (None if desc_enabled=False)
     """
-    from datetime import datetime
+    from datetime import UTC, datetime
 
     alt_enabled = cfg.image.alt_enabled
     desc_enabled = cfg.image.desc_enabled
@@ -265,7 +265,7 @@ async def analyze_images_with_llm(
             document_context=document_context,
         )
 
-        timestamp = datetime.now().astimezone().isoformat()
+        timestamp = datetime.now(UTC).astimezone().isoformat()
 
         # Collect asset descriptions for JSON output
         asset_descriptions: list[dict[str, Any]] = []

@@ -339,7 +339,7 @@ class TestPptxScreenshotExtensionConsistency:
         with (
             patch.dict(sys.modules, {"pymupdf": mock_pymupdf}),
             patch(
-                "markitai.converter.office.ImageProcessor",
+                "markitai.image.ImageProcessor",
                 return_value=mock_img_processor,
             ),
             patch(

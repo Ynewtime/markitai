@@ -260,36 +260,42 @@ def preserve_figure_captions(root: Tag | BeautifulSoup) -> None:
 
 
 # ---------------------------------------------------------------------------
-# HTML → Markdown (delegate to MarkItDown)
+# HTML → Markdown (dedicated converter, optional MarkItDown adapter)
 # ---------------------------------------------------------------------------
 
 
 def html_to_markdown(html: str, md_instance: object | None = None) -> str:
-    """Convert HTML to Markdown using MarkItDown.
+    """Convert known HTML directly without general file-format detection.
 
     Args:
         html: HTML string to convert.
-        md_instance: Optional pre-created MarkItDown instance.
+        md_instance: Optional HTML converter or MarkItDown-compatible adapter.
 
     Returns:
-        Markdown text from MarkItDown.
+        Converted Markdown text.
     """
-    import io
-
-    from markitdown import MarkItDown, StreamInfo
+    from markitai.webextract.html_to_markdown import WebExtractHtmlConverter
 
     if md_instance is None:
-        md_instance = MarkItDown()
+        md_instance = WebExtractHtmlConverter()
+
+    if isinstance(md_instance, WebExtractHtmlConverter):
+        markdown = md_instance.convert_string(html).markdown or ""
+        # Preserve the normalization formerly performed by MarkItDown's
+        # generic dispatcher, so the faster path does not change formatting.
+        markdown = "\n".join(line.rstrip() for line in re.split(r"\r?\n", markdown))
+        return re.sub(r"\n{3,}", "\n\n", markdown)
+    # Preserve compatibility with callers supplying a MarkItDown-like adapter.
+    import io
+
+    from markitdown import StreamInfo
 
     stream = io.BytesIO(html.encode("utf-8"))
+    stream_info = StreamInfo(mimetype="text/html", extension=".html", charset="utf-8")
     result = md_instance.convert_stream(  # type: ignore[union-attr]
         stream,
         file_extension=".html",
-        stream_info=StreamInfo(
-            mimetype="text/html",
-            extension=".html",
-            charset="utf-8",
-        ),
+        stream_info=stream_info,
     )
     return result.text_content if result and result.text_content else ""
 

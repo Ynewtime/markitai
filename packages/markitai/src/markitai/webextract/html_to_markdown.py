@@ -1,21 +1,23 @@
 """Custom Markdown converter with enhanced code-block language detection.
 
-Extends MarkItDown's ``_CustomMarkdownify`` with rules ported from
-defuddle's ``elements/code.ts``.
+Uses isolated MarkItDown-compatible Markdownify rules with enhancements ported
+from defuddle's ``elements/code.ts``.
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Any, cast
 
 from bs4 import Tag
 from bs4.element import NavigableString
-from markitdown._base_converter import DocumentConverterResult
-from markitdown.converters._html_converter import HtmlConverter
-from markitdown.converters._markdownify import _CustomMarkdownify
 
 from markitai.webextract.constants import CODE_LANGUAGES
+from markitai.webextract.markdownify_compat import (
+    CompatibleMarkdownConverter,
+    parse_markdown_html,
+)
 
 # ---------------------------------------------------------------------------
 # Language detection patterns (ported from defuddle elements/code.ts)
@@ -348,7 +350,7 @@ def _is_footnote_list(el: Any) -> bool:
     return all(str(li.get("id") or "").startswith("fn:") for li in items)
 
 
-class WebExtractMarkdownConverter(_CustomMarkdownify):
+class WebExtractMarkdownConverter(CompatibleMarkdownConverter):
     """Markdownify converter with enhanced rules for web content."""
 
     def convert_math(self, el: Any, text: str, parent_tags: set) -> str:
@@ -489,18 +491,38 @@ class WebExtractMarkdownConverter(_CustomMarkdownify):
         return f"\n\n```{language}\n{code_text}\n```\n\n"
 
 
-class WebExtractHtmlConverter(HtmlConverter):
-    """HtmlConverter that uses our custom markdownify converter."""
+@dataclass
+class HtmlConversionResult:
+    """Small structural adapter, without importing generic file detectors."""
+
+    markdown: str
+    title: str | None = None
+
+    @property
+    def text_content(self) -> str:
+        return self.markdown
+
+
+class WebExtractHtmlConverter:
+    """Dedicated known-HTML converter with a stream-compatible entry point."""
 
     def convert(
         self, file_stream: Any, stream_info: Any, **kwargs: Any
-    ) -> DocumentConverterResult:
-        from bs4 import BeautifulSoup
-
+    ) -> HtmlConversionResult:
         from markitai.webextract.dom import default_parser
 
         encoding = "utf-8" if stream_info.charset is None else stream_info.charset
-        soup = BeautifulSoup(file_stream, default_parser(), from_encoding=encoding)
+        soup = parse_markdown_html(
+            file_stream, default_parser(), from_encoding=encoding
+        )
+        return self._convert_soup(soup, **kwargs)
+
+    def convert_string(self, html: str, **kwargs: Any) -> HtmlConversionResult:
+        from markitai.webextract.dom import default_parser
+
+        return self._convert_soup(parse_markdown_html(html, default_parser()), **kwargs)
+
+    def _convert_soup(self, soup: Any, **kwargs: Any) -> HtmlConversionResult:
 
         for script in soup(["script", "style"]):
             script.extract()
@@ -511,7 +533,7 @@ class WebExtractHtmlConverter(HtmlConverter):
         else:
             webpage_text = WebExtractMarkdownConverter(**kwargs).convert_soup(soup)
 
-        return DocumentConverterResult(
+        return HtmlConversionResult(
             markdown=webpage_text.strip(),
             title=None if soup.title is None else soup.title.string,
         )
