@@ -5,19 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.0] - 2026-09-14
 
-### Changed
-
-- Reduce cold conversion overhead by loading optional backends on demand, using dedicated DOCX/XLSX/PPTX/CSV/notebook readers, and avoiding repeated DOM scans and whole-document text splitting.
-- Preserve rich Office content, equations, images, metadata and configured adapters through the existing fallback paths. PDF extraction and model settings remain unchanged.
-- Add reproducible performance and complete-output audits with equally weighted URL, Office/PDF and batch workloads; the measured composite improvement is approximately 6× on the recorded workload, not a guarantee for every input.
-
-### Fixed
-
-- Allow public URLs behind Fake-IP DNS to use remote extraction after consent and independent public DNS verification, while retaining private-address restrictions.
-- Avoid unnecessary browser fallback for complete short articles and CJK prose; invalidate older SPA classifications that used the previous detector.
-- Preserve callout text, Hacker News thread content and hidden-content retry behavior in native web extraction.
+- **About 6× faster overall**: URLs **5.8×**, Office/PDF **5.6×**, batch conversion **6.6×** in equally weighted local benchmarks, excluding LLM, OCR and internet latency.
+- **Faster results**: reduce startup and repeated parsing; avoid unnecessary browser fallback for complete short articles and CJK prose.
+- **Preserve output quality**: retain compatible handling of text, metadata, equations and images, with established fallbacks for complex documents.
+- **Fix public URL detection**: Defuddle and other remote readers work behind Fake-IP proxies such as Clash while private-address protections remain in place.
 
 ## [1.0.1] - 2026-09-10
 
