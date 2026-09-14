@@ -27,8 +27,8 @@
 # and extra-fetch added too, Chromium via doctor --fix, Playwright
 # rendering, URL screenshots and screenshot-only reading, the Cloudflare
 # file backend, the remote extraction strategies on
-# a public page (skipped with the reason when the resolver is a fake-IP
-# VPN), and a real Batch API job through submit, hand-off and collect.
+# a public page (including Fake-IP VPN resolution), and a real Batch API
+# job through submit, hand-off and collect.
 #
 # It writes a report you can open — WORKDIR/report.html — with one numbered
 # directory per step beside it holding that step's inputs, outputs and logs.
@@ -912,37 +912,23 @@ fi
 
 # ── 24 ───────────────────────────────────────────────────────────────────────
 step 24-remote-strategies "Remote extraction services" \
-  "jina, defuddle and Cloudflare Browser Rendering on a public page — each needs its key, and a resolver that tells public from private."
-RESOLVED=$(python3 - "$E2E_PUBLIC_URL" <<'PYEOF'
-import ipaddress, socket, sys
-from urllib.parse import urlsplit
-host = urlsplit(sys.argv[1]).hostname or ""
-try:
-    ip = ipaddress.ip_address(socket.gethostbyname(host))
-except OSError as e:
-    print(f"unresolvable ({e})"); raise SystemExit
-fake = ipaddress.ip_network("198.18.0.0/15")
-print("public" if ip.is_global and ip not in fake else f"non-public ({ip})")
-PYEOF
-)
-note "$E2E_PUBLIC_URL resolves as: $RESOLVED"
-if [ "$RESOLVED" != "public" ]; then
-  skip "this machine's resolver maps public hosts to a non-public address (a fake-IP VPN, typically); markitai correctly refuses to hand such URLs to remote services — run with the VPN's TUN mode off to exercise them"
-else
-  for STRATEGY in jina defuddle cloudflare; do
-    case "$STRATEGY" in
-      jina) [ -n "${JINA_API_KEY:-}" ] || { skip "-s jina: JINA_API_KEY not in $ENV_FILE"; continue; } ;;
-      cloudflare) [ -n "${CLOUDFLARE_API_TOKEN:-}" ] || { skip "-s cloudflare: CLOUDFLARE_API_TOKEN not in $ENV_FILE"; continue; } ;;
-    esac
-    markitai "$E2E_PUBLIC_URL" -s "$STRATEGY" -o "24-remote-strategies/$STRATEGY/" \
-      >"24-remote-strategies/$STRATEGY.log" 2>&1
-    R_MD=$(ls "24-remote-strategies/$STRATEGY"/*.md 2>/dev/null | head -1)
-    check "-s $STRATEGY fetches the page through the service" test -n "$R_MD"
-    check "and the frontmatter records that route" grep -q "^fetch_strategy: $STRATEGY" "${R_MD:-/dev/null}"
-    check "with a real article body behind it" test "$(wc -c <"${R_MD:-/dev/null}" | tr -d ' ')" -gt 500
-    file "-s $STRATEGY output" "${R_MD:-24-remote-strategies/$STRATEGY.log}"
-  done
-fi
+  "jina, defuddle and Cloudflare Browser Rendering on a public page, including public DNS verification behind a Fake-IP proxy."
+# Let the installed product enforce remote URL policy, including public DNS
+# verification for Fake-IP answers. A local resolver precheck would skip the
+# very regression this step needs to exercise.
+for STRATEGY in jina defuddle cloudflare; do
+  case "$STRATEGY" in
+    jina) [ -n "${JINA_API_KEY:-}" ] || { skip "-s jina: JINA_API_KEY not in $ENV_FILE"; continue; } ;;
+    cloudflare) [ -n "${CLOUDFLARE_API_TOKEN:-}" ] || { skip "-s cloudflare: CLOUDFLARE_API_TOKEN not in $ENV_FILE"; continue; } ;;
+  esac
+  markitai "$E2E_PUBLIC_URL" -s "$STRATEGY" --no-cache -o "24-remote-strategies/$STRATEGY/" \
+    >"24-remote-strategies/$STRATEGY.log" 2>&1
+  R_MD=$(ls "24-remote-strategies/$STRATEGY"/*.md 2>/dev/null | head -1)
+  check "-s $STRATEGY fetches the page through the service" test -n "$R_MD"
+  check "and the frontmatter records that route" grep -q "^fetch_strategy: $STRATEGY" "${R_MD:-/dev/null}"
+  check "with a real article body behind it" test "$(wc -c <"${R_MD:-/dev/null}" | tr -d ' ')" -gt 500
+  file "-s $STRATEGY output" "${R_MD:-24-remote-strategies/$STRATEGY.log}"
+done
 
 # ── 25 ───────────────────────────────────────────────────────────────────────
 step 25-batch-api "The Batch API, at half price" \

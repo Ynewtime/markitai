@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -252,7 +252,7 @@ class SingleFileWorkflow:
                 image_path: Path,
             ) -> tuple[Path, ImageAnalysis | None, str]:
                 """Analyze a single image."""
-                timestamp = datetime.now().astimezone().isoformat()
+                timestamp = datetime.now(UTC).astimezone().isoformat()
                 try:
                     analysis = await self.processor.analyze_image(
                         image_path,

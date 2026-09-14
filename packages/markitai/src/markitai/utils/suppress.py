@@ -12,6 +12,7 @@ share one idempotent implementation.
 from __future__ import annotations
 
 import os
+import sys
 
 _APPLIED = False
 
@@ -27,7 +28,7 @@ def _suppress_onnx_runtime_logs() -> None:
     os.environ.setdefault("ORT_CPP_LOG_SEVERITY_LEVEL", "3")
 
 
-def _suppress_mupdf_logs() -> None:
+def _suppress_mupdf_logs(*, load: bool = True) -> None:
     """Suppress MuPDF C-level logs that bypass Python logging.
 
     MuPDF (via PyMuPDF) logs directly to stderr, which can clutter output
@@ -38,6 +39,8 @@ def _suppress_mupdf_logs() -> None:
     inside piped markdown (`markitai doc.pdf | ...`) — i.e. a noise-
     suppression helper that emitted noise of its own.
     """
+    if not load and "pymupdf" not in sys.modules:
+        return
     try:
         # PyMuPDF might not be installed in all environments
         import pymupdf
@@ -58,5 +61,7 @@ def suppress_parser_noise() -> None:
     if _APPLIED:
         return
     _suppress_onnx_runtime_logs()
-    _suppress_mupdf_logs()
+    # A text/HTML conversion must not initialize a PDF engine merely to
+    # silence it. PDF converters apply this after loading their own engine.
+    _suppress_mupdf_logs(load=False)
     _APPLIED = True

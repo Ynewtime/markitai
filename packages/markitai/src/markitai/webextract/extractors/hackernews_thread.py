@@ -77,11 +77,22 @@ class HackerNewsThreadExtractor:
         title = _extract_story_title(soup)
         story_text_html, story_text = _extract_story_text(soup)
         story_author = _extract_story_author(soup)
+        main_comment = soup.select_one(".fatitem .comhead")
+        comment_permalink = (
+            main_comment is not None and soup.select_one(".titleline") is None
+        )
+        published = None
+        if comment_permalink and isinstance(main_comment, Tag):
+            age = main_comment.select_one(".age[title]")
+            if isinstance(age, Tag):
+                # HN appends a Unix timestamp after the ISO timestamp.
+                published = str(age.get("title") or "").split(" ", 1)[0] or None
 
         # If no story text, use the title as the body so main_item is non-empty
         main_item = ConversationItem(
             id="story",
             author_name=story_author,
+            timestamp=published,
             text=story_text or title,
             html=story_text_html,
         )
@@ -92,6 +103,7 @@ class HackerNewsThreadExtractor:
             title=title,
             main_item=main_item,
             items=comment_items,
+            show_title_in_body=not comment_permalink,
         )
 
         semantic = SemanticExtraction(thread=thread)
@@ -101,6 +113,8 @@ class HackerNewsThreadExtractor:
             "title": title,
             "site": "Hacker News",
         }
+        if published:
+            metadata_overrides["published"] = published
         if story_author:
             metadata_overrides["author"] = story_author
 
@@ -160,10 +174,11 @@ def _extract_story_text(soup: BeautifulSoup) -> tuple[str, str]:
     Returns:
         A tuple of (html_string, plain_text).
     """
-    # Story text lives in a <span class="commtext"> outside the comment tree,
+    # Story text lives in a .commtext outside the comment tree,
     # or in a <td class="title"> adjacent to the first athing row.
     # We look for the first .commtext that is NOT inside a .comtr row.
-    for span in soup.find_all("span", class_="commtext"):
+    # HN serves both span.commtext and div.commtext (comment permalinks).
+    for span in soup.find_all(class_="commtext"):
         if not isinstance(span, Tag):
             continue
         # Check if this span is inside a .comtr (comment row)
@@ -198,6 +213,10 @@ def _extract_story_author(soup: BeautifulSoup) -> str | None:
         user_tag = subline.find("a", class_="hnuser")
         if isinstance(user_tag, Tag):
             return user_tag.get_text(strip=True)
+    # A comment permalink has a comhead in fatitem rather than a story subline.
+    user_tag = soup.select_one(".fatitem .comhead .hnuser")
+    if isinstance(user_tag, Tag):
+        return user_tag.get_text(strip=True)
     return None
 
 
@@ -246,7 +265,7 @@ def _collect_comments(soup: BeautifulSoup) -> list[ConversationItem]:
         # Comment text
         body_html = ""
         body_text = ""
-        commtext = row.find("span", class_="commtext")
+        commtext = row.find(class_="commtext")
         if isinstance(commtext, Tag):
             body_html = str(commtext)
             body_text = commtext.get_text(separator=" ", strip=True)

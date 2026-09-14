@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
 from markitai.constants import DEFAULT_RENDER_DPI, SCREENSHOTS_REL_PATH
-from markitai.converter._patches import apply_all_patches
+from markitai.converter._patches import (
+    apply_all_patches,
+    apply_openpyxl_patches,
+    apply_pptx_patches,
+)
 from markitai.converter.base import (
     BaseConverter,
     ConvertResult,
@@ -17,16 +21,10 @@ from markitai.converter.base import (
     FileFormat,
     register_converter,
 )
-from markitai.image import ImageProcessor
 from markitai.utils import office_mac
 from markitai.utils.mime import get_mime_type, normalize_image_extension
 from markitai.utils.office import find_libreoffice, has_ms_office
 from markitai.utils.paths import create_tracked_temp_dir, ensure_screenshots_dir
-
-# openpyxl and python-pptx read the files this module converts, so the
-# compatibility patches must be in place before the first conversion. This
-# module is only imported when one is about to happen.
-apply_all_patches()
 
 if TYPE_CHECKING:
     from markitai.config import MarkitaiConfig
@@ -41,9 +39,15 @@ class OfficeConverter(BaseConverter):
 
     def __init__(self, config: MarkitaiConfig | None = None) -> None:
         super().__init__(config)
-        from markitdown import MarkItDown
-
-        self._markitdown = MarkItDown()
+        self._markitdown: Any = None
+        # Rendering paths may use openpyxl/python-pptx directly. Plain DOCX
+        # uses neither; only its generic fallback needs those imports.
+        if FileFormat.XLSX in self.supported_formats:
+            apply_openpyxl_patches()
+        elif FileFormat.PPTX in self.supported_formats:
+            apply_pptx_patches()
+        elif FileFormat.DOCX not in self.supported_formats:
+            apply_all_patches()
 
     def convert(
         self, input_path: Path, output_dir: Path | None = None
@@ -61,6 +65,11 @@ class OfficeConverter(BaseConverter):
 
     def _convert_with_markitdown(self, input_path: Path) -> ConvertResult:
         """Convert using MarkItDown library."""
+        if self._markitdown is None:
+            from markitdown import MarkItDown
+
+            apply_all_patches()
+            self._markitdown = MarkItDown()
         result = self._markitdown.convert(input_path, keep_data_uris=True)
 
         metadata = {
@@ -83,17 +92,29 @@ class OfficeConverter(BaseConverter):
 class DocxConverter(OfficeConverter):
     """Converter for DOCX (Word) documents.
 
-    Uses MarkItDown directly (via python-docx) - cross-platform.
+    Uses a plain-document reader, Mammoth for rich content, and MarkItDown's
+    preprocessing for OMML equations.
     """
 
     supported_formats = [FileFormat.DOCX]
+
+    def convert(
+        self, input_path: Path, output_dir: Path | None = None
+    ) -> ConvertResult:
+        if self._markitdown is not None:
+            return self._convert_with_markitdown(Path(input_path))
+        from markitai.converter.docx import convert_docx_without_math
+
+        path = Path(input_path)
+        result = convert_docx_without_math(path)
+        return result if result is not None else self._convert_with_markitdown(path)
 
 
 @register_converter(FileFormat.PPTX)
 class PptxConverter(OfficeConverter):
     """Converter for PPTX (PowerPoint) documents.
 
-    Text extraction uses MarkItDown (via python-pptx) - cross-platform.
+    Text extraction uses python-pptx directly, with generic format fallback.
     Slide rendering uses COM (Windows) or LibreOffice (Linux/macOS),
     falling back to PowerPoint AppleScript on macOS without LibreOffice.
 
@@ -105,6 +126,21 @@ class PptxConverter(OfficeConverter):
     """
 
     supported_formats = [FileFormat.PPTX]
+
+    def _convert_with_markitdown(self, input_path: Path) -> ConvertResult:
+        # Keep an explicitly supplied adapter and the generic fallback intact.
+        if self._markitdown is not None:
+            return super()._convert_with_markitdown(input_path)
+        from zipfile import BadZipFile
+
+        from pptx.exc import PackageNotFoundError
+
+        from markitai.converter.pptx import convert_pptx
+
+        try:
+            return convert_pptx(input_path)
+        except (BadZipFile, ValueError, KeyError, OSError, PackageNotFoundError):
+            return super()._convert_with_markitdown(input_path)
 
     def convert(
         self, input_path: Path, output_dir: Path | None = None
@@ -130,7 +166,7 @@ class PptxConverter(OfficeConverter):
             logger.info("PPTX OCR mode: extracting text with slide images (commented)")
             return self._convert_with_slide_images(input_path, output_dir)
 
-        # Standard conversion - use MarkItDown directly (cross-platform)
+        # Standard text conversion; the dedicated reader preserves slide content.
         # COM is only needed for slide screenshots, not text extraction
         result = self._convert_with_markitdown(input_path)
 
@@ -266,6 +302,8 @@ class PptxConverter(OfficeConverter):
         slide_images: list[dict] = []
 
         # Create ImageProcessor for compression with config
+        from markitai.image import ImageProcessor
+
         img_processor = ImageProcessor(self.config.image if self.config else None)
 
         # Initialize COM for this thread (required for asyncio thread pool)
@@ -463,6 +501,8 @@ class PptxConverter(OfficeConverter):
 
             render_start = time.perf_counter()
             # Create ImageProcessor for compression
+            from markitai.image import ImageProcessor
+
             img_processor = ImageProcessor(self.config.image if self.config else None)
 
             doc = pymupdf.open(pdf_path)
@@ -572,10 +612,26 @@ class PptxConverter(OfficeConverter):
 class XlsxConverter(OfficeConverter):
     """Converter for XLSX (Excel) documents.
 
-    Uses MarkItDown directly (via openpyxl) - cross-platform.
+    Reads each sheet with openpyxl; ambiguous values retain pandas formatting.
     """
 
     supported_formats = [FileFormat.XLSX]
+
+    def convert(
+        self, input_path: Path, output_dir: Path | None = None
+    ) -> ConvertResult:
+        if self._markitdown is not None:
+            return self._convert_with_markitdown(Path(input_path))
+        from zipfile import BadZipFile
+
+        from markitai.converter.xlsx import convert_xlsx
+
+        path = Path(input_path)
+        try:
+            return convert_xlsx(path)
+        except (BadZipFile, ValueError, KeyError, OSError):
+            # Preserve generic format detection for mislabeled/non-XLSX files.
+            return self._convert_with_markitdown(path)
 
 
 @register_converter(FileFormat.XLS)

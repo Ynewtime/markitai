@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -180,7 +180,7 @@ class PromptManager:
 
         # Add default variables
         if "timestamp" not in variables:
-            variables["timestamp"] = datetime.now().astimezone().isoformat()
+            variables["timestamp"] = datetime.now(UTC).astimezone().isoformat()
 
         for key, value in variables.items():
             result = result.replace(f"{{{key}}}", str(value))

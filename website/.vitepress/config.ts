@@ -196,6 +196,7 @@ export default defineConfig({
               items: [
                 { text: '网页工作台', link: '/zh/guide/serve' },
                 { text: '抓取策略', link: '/zh/guide/fetch-policy' },
+                { text: '转换性能', link: '/zh/guide/performance' },
                 { text: '输出 Profile', link: '/zh/guide/output-profiles' },
               ],
             },
@@ -313,6 +314,7 @@ export default defineConfig({
           items: [
             { text: 'Web Workspace', link: '/guide/serve' },
             { text: 'Fetch Policy', link: '/guide/fetch-policy' },
+            { text: 'Performance', link: '/guide/performance' },
             { text: 'Output Profiles', link: '/guide/output-profiles' },
           ],
         },

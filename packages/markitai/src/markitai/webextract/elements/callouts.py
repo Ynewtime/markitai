@@ -1,4 +1,4 @@
-"""Callout standardization: GitHub alerts, Bootstrap alerts."""
+"""Callout standardization: Obsidian, GitHub alerts, Bootstrap alerts."""
 
 from __future__ import annotations
 
@@ -20,10 +20,40 @@ def normalize_callouts(root: Tag) -> None:
     Args:
         root: Content root element.
     """
+    _normalize_obsidian_callouts(root)
     _normalize_github_alerts(root)
     _normalize_bootstrap_alerts(root)
     _normalize_callout_asides(root)
     _normalize_admonitions(root)
+
+
+def _normalize_obsidian_callouts(root: Tag) -> None:
+    """Preserve collapsed callout bodies before hidden-element removal.
+
+    Normalize inner callouts first, then move the content wrapper's children
+    into a blockquote. Its display:none represents the fold state, not absent
+    content. Hidden elements *inside* the body still follow normal removal.
+    """
+    for callout in reversed(root.select("div.callout[data-callout]")):
+        content = callout.find("div", class_="callout-content", recursive=False)
+        if not isinstance(content, Tag):
+            continue
+        callout_type = str(callout.get("data-callout") or "note")
+        if not re.fullmatch(r"[\w-]+", callout_type):
+            callout_type = "note"
+        title_el = callout.select_one(".callout-title-inner")
+        title = title_el.get_text(" ", strip=True) if title_el else ""
+        classes = callout.get("class") or []
+        fold = str(callout.get("data-callout-fold") or "")
+        if fold not in {"-", "+"}:
+            fold = (
+                "-"
+                if "is-collapsed" in classes
+                else ("+" if "is-collapsible" in classes else "")
+            )
+        _convert_to_blockquote(
+            callout, callout_type, title=title, content=content, fold=fold
+        )
 
 
 def _normalize_github_alerts(root: Tag) -> None:
@@ -135,6 +165,7 @@ def _convert_to_blockquote(
     *,
     title: str = "",
     content: Tag | None = None,
+    fold: str = "",
 ) -> None:
     """Replace element with a blockquote containing [!type] marker.
 
@@ -148,6 +179,7 @@ def _convert_to_blockquote(
         title: Callout title; defaults to the capitalized type.
         content: Element whose children hold the callout body; defaults
             to ``el`` itself.
+        fold: Obsidian fold marker ("-", "+", or empty).
     """
     doc = BeautifulSoup("", "html.parser")
     bq = doc.new_tag("blockquote")
@@ -155,7 +187,7 @@ def _convert_to_blockquote(
 
     # Inject [!type] marker as first paragraph
     marker = doc.new_tag("p")
-    marker.string = f"[!{callout_type}] {title or callout_type.capitalize()}"
+    marker.string = f"[!{callout_type}]{fold} {title or callout_type.capitalize()}"
     bq.append(marker)
 
     # Move children to blockquote

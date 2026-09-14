@@ -68,3 +68,17 @@ Remaining known gaps:
   (Reddit, Hacker News) intentionally diverge from defuddle's expected
   output; they score low in the benchmark but are held by its per-fixture
   guardrail floors, not by parity.
+
+## Local source comparison (2026-09-13)
+
+A build-and-run comparison against defuddle
+`a0984a817518565cedd0f89423c85cfff9e8ba45` found additional behavior gaps despite
+the passing quality floors: collapsed Obsidian callouts, hidden-content retry
+selection, arbitrary Tailwind variants, and Hacker News comment permalinks.
+These are now covered by focused regressions. The corpus pin above is unchanged;
+passing quality tests does not mean byte-identical Markdown or complete parity.
+
+The audit also adopted a dedicated known-HTML conversion path and cheap selector
+checks before subtree protection scans. Reproducible comparison scripts live in
+`scripts/benchmarks/`. Remaining differences include CLI startup cost, unsupported
+stdin HTML input, and intentional Markdown differences in richer extractors.

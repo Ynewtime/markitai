@@ -6,6 +6,8 @@ from bs4 import BeautifulSoup, Tag
 from bs4.element import NavigableString
 
 from markitai.webextract.constants import CODE_LANGUAGES
+from markitai.webextract.selectors import select as _css_select
+from markitai.webextract.selectors import select_one as _css_select_one
 
 # Language extraction patterns (ported from defuddle elements/code.ts)
 _LANG_PATTERNS: list[re.Pattern[str]] = [
@@ -44,7 +46,7 @@ def normalize_code_blocks(root: Tag) -> None:
     Args:
         root: Content root.
     """
-    for gutter in root.select(_LINE_NUMBER_GUTTER_SELECTOR):
+    for gutter in _css_select(root, _LINE_NUMBER_GUTTER_SELECTOR):
         gutter.decompose()
     _strip_inline_numeric_gutters(root)
     _collapse_code_layout_tables(root)
@@ -90,7 +92,7 @@ def _strip_inline_numeric_gutters(root: Tag) -> None:
     ``extractStructuredText``; without it the text concatenates as
     ``"1p = 61"``.
     """
-    for el in root.select("pre span, pre div, code span, code div"):
+    for el in _css_select(root, "pre span, pre div, code span, code div"):
         children = el.find_all(True, recursive=False)
         if len(children) != 2:
             continue
@@ -127,7 +129,7 @@ def _collapse_code_layout_tables(root: Tag) -> None:
     extraction that picks the code ``<pre>``; here the table is replaced
     with that ``<pre>`` so it never reaches Markdown table conversion.
     """
-    for wrapper in root.select(_HIGHLIGHTER_WRAPPER_SELECTOR):
+    for wrapper in _css_select(root, _HIGHLIGHTER_WRAPPER_SELECTOR):
         for table in list(wrapper.find_all("table")):
             if table.parent is None:
                 continue
@@ -140,8 +142,9 @@ def _collapse_code_layout_tables(root: Tag) -> None:
                 (
                     p
                     for p in pres
-                    if p.select_one(
-                        'code[data-lang], code[class*="language-"], .line, [data-line]'
+                    if _css_select_one(
+                        p,
+                        'code[data-lang], code[class*="language-"], .line, [data-line]',
                     )
                 ),
                 None,
@@ -175,7 +178,7 @@ def _rebuild_codemirror_blocks(root: Tag) -> None:
     Args:
         root: Content root.
     """
-    for cm_content in list(root.select(".cm-content")):
+    for cm_content in list(_css_select(root, ".cm-content")):
         pre = cm_content.find_parent("pre")
         if pre is None or pre.parent is None:
             continue

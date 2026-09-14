@@ -276,7 +276,7 @@ async def _get_playwright_renderer(
     )
 
 
-def detect_js_required(content: str) -> bool:
+def detect_js_required(content: str, *, allow_short_content: bool = False) -> bool:
     """Detect if content indicates JavaScript rendering is required.
 
     Note: This function receives MARKDOWN content (converted by markitdown),
@@ -289,6 +289,8 @@ def detect_js_required(content: str) -> bool:
 
     Args:
         content: Markdown content to check (from markitdown conversion)
+        allow_short_content: Trust the native extractor's accepted content;
+            still reject explicit JS requirements and loading placeholders.
 
     Returns:
         True if content suggests JavaScript is needed
@@ -331,13 +333,33 @@ def detect_js_required(content: str) -> bool:
     text_only = re.sub(r"\[.*?\]\(.*?\)", "", text_only)  # Remove links
     text_only = " ".join(text_only.split()).strip()
 
+    if allow_short_content:
+        # Native extraction has already passed a content-aware quality gate.
+        # A second arbitrary length/word-diversity threshold would turn valid
+        # notes, formulas and short social posts into expensive browser jobs.
+        placeholder = re.sub(r"[^\w\s]", " ", text_only.lower())
+        return bool(
+            re.fullmatch(
+                r"\s*(?:(?:loading|please wait|loading please wait|"
+                r"正在加载|加载中|请稍候|読み込み中|読み込み中です|로딩 중|로딩 중입니다)\s*)+",
+                placeholder,
+            )
+        )
+
     if len(text_only) < 100:
         logger.debug(f"JS required: content too short ({len(text_only)} chars)")
         return True
 
     # 4. Check for repetitive/placeholder content (SPA stub pages)
     # Some SPAs return minimal placeholder text
-    unique_words = set(text_only.lower().split())
+    # Chinese/Japanese/Korean prose often has no spaces. Count CJK characters
+    # individually so a complete short article is not mistaken for a SPA stub.
+    tokenized = re.sub(
+        r"([\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af])",
+        r" \1 ",
+        text_only.lower(),
+    )
+    unique_words = set(tokenized.split())
     if len(text_only) < 500 and len(unique_words) < 20:
         logger.debug(
             f"JS required: low content diversity "
@@ -402,6 +424,7 @@ async def _ensure_external_strategy_allowed(
     from markitai.fetch_policy import (
         assess_url_for_remote,
         match_local_only,
+        resolve_public_hostname_addresses,
     )
 
     if strategy_name not in {
@@ -431,7 +454,18 @@ async def _ensure_external_strategy_allowed(
             "on the CLI to override the pattern for this public URL."
         )
 
-    assessment = await assess_url_for_remote(url)
+    async def verify_proxy_hostname(hostname: str) -> tuple[str, ...]:
+        # Invoked only for Fake-IP DNS answers. Honor consent before even
+        # sending the hostname to a public resolver; explicit CLI selection
+        # has already authorized remote use.
+        if not allow_pattern_override and not resolve_remote_consent(
+            config or FetchConfig(), services=[strategy_name]
+        ):
+            return ()
+        disclose_remote_use([strategy_name])
+        return await resolve_public_hostname_addresses(hostname)
+
+    assessment = await assess_url_for_remote(url, public_resolver=verify_proxy_hostname)
     if not assessment.allowed:
         reason = assessment.reason or "privacy policy"
         if reason == "non_global_address":
@@ -883,12 +917,16 @@ async def fetch_url(
     return result
 
 
-def _is_invalid_content(content: str) -> tuple[bool, str]:
+def _is_invalid_content(
+    content: str, *, allow_short_content: bool = False
+) -> tuple[bool, str]:
     """Check if fetched content is invalid (JS error page, login prompt,
     anti-bot/CAPTCHA challenge, etc.).
 
     Args:
         content: Fetched content to check
+        allow_short_content: The native extractor has already accepted this
+            content. Skip only the duplicate length gate, never error patterns.
 
     Returns:
         Tuple of (is_invalid, reason). CAPTCHA/anti-bot reasons are
@@ -933,7 +971,7 @@ def _is_invalid_content(content: str) -> tuple[bool, str]:
     )  # Remove markdown syntax
     clean_content = " ".join(clean_content.split())  # Normalize whitespace
 
-    if len(clean_content) < 30:
+    if not allow_short_content and len(clean_content) < 30:
         return True, "too_short"
 
     return False, ""
@@ -1084,18 +1122,23 @@ async def _fetch_with_fallback(
 
         try:
             result = await runner.fetch(url, ctx)
+            native_accepted = result.metadata.get("converter") == "native-html"
 
             # Static-only follow-up: a JS-rendered page can look like a
             # successful static fetch — learn the domain for future
             # browser-first requests and fall through to the next strategy.
-            if strat == "static" and detect_js_required(result.content):
+            if strat == "static" and detect_js_required(
+                result.content, allow_short_content=native_accepted
+            ):
                 spa_cache = get_spa_domain_cache()
                 spa_cache.record_spa_domain(url)
                 errors.append(f"{strat}: page requires JavaScript rendering")
                 continue
 
             # Validate content quality before accepting
-            is_invalid, reason = _is_invalid_content(result.content)
+            is_invalid, reason = _is_invalid_content(
+                result.content, allow_short_content=native_accepted
+            )
             if is_invalid:
                 logger.debug(f"Strategy {strat} returned invalid content: {reason}")
                 errors.append(f"{strat}: invalid content ({reason})")

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 
 def now_iso() -> str:
     """Browser-portable RFC 3339 timestamp with millisecond precision."""
-    return datetime.now().astimezone().isoformat(timespec="milliseconds")
+    return datetime.now(UTC).astimezone().isoformat(timespec="milliseconds")

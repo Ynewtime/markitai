@@ -6,7 +6,7 @@ import asyncio
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Fix Windows console encoding for Unicode output
@@ -933,11 +933,15 @@ def app(
 
     # Determine fetch strategy
     from markitai.cli.ui import ConsoleInteraction
-    from markitai.fetch import (
-        FetchStrategy,
+    from markitai.fetch_consent import (
         set_remote_consent,
         set_remote_consent_prompt_allowed,
     )
+
+    # Register session-owned consent before using its setters, without loading
+    # the webpage strategies and extraction pipeline for a local text file.
+    from markitai.fetch_session import get_default_session
+    from markitai.fetch_types import FetchStrategy
     from markitai.ports import set_interaction
 
     # Route consent prompts and privacy notices from lower layers through a
@@ -1002,7 +1006,7 @@ def app(
         logger.debug(f"Output directory: {output.resolve()}")
 
     # Run start time drives the recorded history job's created_at.
-    run_started_at = datetime.now().astimezone()
+    run_started_at = datetime.now(UTC).astimezone()
 
     async def run_workflow() -> None:
         # Helper to get effective output directory (CLI -o or config fallback)
@@ -1258,24 +1262,24 @@ def app(
 
     async def run_workflow_with_cleanup() -> None:
         """Run workflow with explicit resource cleanup on exit."""
-        from markitai.fetch import close_shared_clients
-
         try:
             await run_workflow()
         finally:
             # Cleanup shared resources
-            await close_shared_clients()  # Close httpx.AsyncClient for Jina
+            await get_default_session().close()
             shutdown_converter_executor()  # Shutdown ThreadPoolExecutor
 
-            # Close LiteLLM's aiohttp sessions to prevent "Unclosed connection" warning
-            try:
-                from litellm.llms.custom_httpx.async_client_cleanup import (
-                    close_litellm_async_clients,
-                )
+            # A local conversion has no LLM clients to close. Importing the
+            # provider just to clean it up costs more than the conversion.
+            if "litellm" in sys.modules:
+                try:
+                    from litellm.llms.custom_httpx.async_client_cleanup import (
+                        close_litellm_async_clients,
+                    )
 
-                await close_litellm_async_clients()
-            except Exception as e:
-                logger.debug("[Cleanup] LiteLLM client cleanup failed: {}", e)
+                    await close_litellm_async_clients()
+                except Exception as e:
+                    logger.debug("[Cleanup] LiteLLM client cleanup failed: {}", e)
 
     def record_run_history() -> None:
         """Publish this run to the 'markitai serve' history (best effort).

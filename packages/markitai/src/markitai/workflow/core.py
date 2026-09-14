@@ -27,7 +27,6 @@ from markitai.converter.base import (
     get_converter,
     unsupported_format_message,
 )
-from markitai.image import ImageProcessor
 from markitai.security import (
     atomic_write_text,
     check_symlink_safety,
@@ -328,22 +327,18 @@ async def process_embedded_images(ctx: ConversionContext) -> ConversionStepResul
         return ConversionStepResult(success=False, error="No conversion result")
 
     conversion_result = ctx.conversion_result
+    ctx.screenshots_count = len(conversion_result.metadata.get("page_images", []))
+    ctx.embedded_images_count = len(conversion_result.images)
+    if "data:image" not in conversion_result.markdown:
+        return ConversionStepResult(success=True)
+
+    from markitai.image import ImageProcessor
+
     image_processor = ImageProcessor(config=ctx.config.image)
-    if "data:image" in conversion_result.markdown:
-        base64_images = image_processor.extract_base64_images(
-            conversion_result.markdown
-        )
-    else:
-        base64_images = []
+    base64_images = image_processor.extract_base64_images(conversion_result.markdown)
 
-    # Count screenshots from page images
-    page_images = conversion_result.metadata.get("page_images", [])
-    ctx.screenshots_count = len(page_images)
-
-    # Count embedded images from two sources:
-    # 1. Base64 images in markdown (will be processed below)
-    # 2. Images already extracted by converter (e.g., PDF converter saves directly to assets)
-    converter_images = len(conversion_result.images)
+    # Add inline images to those already saved by the converter.
+    converter_images = ctx.embedded_images_count
     ctx.embedded_images_count = len(base64_images) + converter_images
 
     if base64_images:
@@ -862,6 +857,8 @@ async def process_with_vision_llm(
     )
 
     # Strip any hallucinated base64 images
+    from markitai.image import ImageProcessor
+
     image_processor = ImageProcessor(config=ctx.config.image)
     ctx.conversion_result.markdown = image_processor.strip_base64_images(
         ctx.conversion_result.markdown

@@ -185,14 +185,41 @@ class _ExtractionContext:
         self.original_soup = parse_html(html)
         self.metadata = extract_metadata(self.original_soup, url)
         self.md_instance = _create_markitdown()
+        self._root_path: tuple[int, ...] | None = None
+        self._schema_used = False
 
     def fresh_soup_and_root(
         self, extractor: object | None, diagnostics: dict[str, object]
     ) -> tuple[BeautifulSoup, Tag | BeautifulSoup]:
         """Return a fresh deep-copy of the parsed soup with root selected."""
         soup = copy.deepcopy(self.original_soup)
+        if extractor is None and self._root_path is not None:
+            selected: Tag | BeautifulSoup = soup
+            for index in self._root_path:
+                selected = selected.contents[index]  # type: ignore[assignment]
+            if self._schema_used:
+                diagnostics["schema_fallback_used"] = True
+            return soup, selected
         root = _pick_root(soup, extractor)
         root = _maybe_apply_schema_fallback(soup, root, diagnostics)
+        if extractor is None:
+            # The source tree stays immutable after mobile pruning. Save a
+            # structural path, not a Tag, to reuse selection without sharing
+            # mutable nodes between removal attempts. Custom extractors retain
+            # their own extraction lifecycle.
+            path = []
+            current = root
+            while current is not soup and isinstance(current.parent, Tag):
+                parent = current.parent
+                path.append(
+                    next(
+                        i for i, child in enumerate(parent.contents) if child is current
+                    )
+                )
+                current = parent
+            if current is soup:
+                self._root_path = tuple(reversed(path))
+                self._schema_used = bool(diagnostics.get("schema_fallback_used"))
         return soup, root
 
 
@@ -297,6 +324,11 @@ def _extract_once(
     title = getattr(metadata, "title", None)
     removal_stats: dict[str, int] = {}
     if isinstance(root, Tag):
+        from markitai.webextract.elements.callouts import normalize_callouts
+
+        # Expand and canonicalize callouts before hidden/selector removal,
+        # matching defuddle's ordering. Collapsed bodies are still content.
+        normalize_callouts(root)
         # Standardize footnotes before removals (mirrors defuddle: CSS
         # sidenotes use display:none and would be lost to hidden removal;
         # footnote sections would be stripped by selector/scoring removal).
@@ -351,6 +383,9 @@ def _extract_with_retry(
     # fall back to the source URL for base-URL link resolution.
     url = getattr(ctx.metadata, "canonical_url", None) or ctx.url
     use_scoring = extractor is None
+    # A generic body root already covers the fallback's entire input. Custom
+    # extractors may modify their root, so their original body remains distinct.
+    selected_body = extractor is None and root.name == "body"
 
     # Level 1: Full pipeline
     clean_html, markdown, removal_stats = _extract_once(
@@ -362,45 +397,55 @@ def _extract_with_retry(
     )
     diagnostics["removal_stats"] = removal_stats
     word_count = count_words(markdown)
+    relaxed_stages_removed_content = any(
+        removal_stats.get(stage, 0)
+        for stage in ("selectors", "scoring", "content_patterns")
+    )
+    body_fallback_extracted = selected_body and not relaxed_stages_removed_content
 
     # Skip retry if schema fallback already found a good match
     schema_used = diagnostics.get("schema_fallback_used", False)
     if word_count >= _RETRY_SPARSE_THRESHOLD or schema_used:
         return clean_html, markdown
 
-    # Level 2: Retry without partial selectors
-    _soup2, root2 = ctx.fresh_soup_and_root(extractor, diagnostics)
-    clean2, md2, _ = _extract_once(
-        root2,
-        ctx.metadata,
-        ctx.md_instance,
-        url,
-        use_partial_selectors=False,
-        use_scoring=use_scoring,
-    )
-    wc2 = count_words(md2)
-    if wc2 > word_count * 2:
-        clean_html, markdown, word_count = clean2, md2, wc2
-        diagnostics["adaptive_retry_used"] = True
-        diagnostics["retry_level"] = 2
+    # A disabled stage can only recover content if it removed something.
+    # Counts come from the identical first-pass input, not a length heuristic.
+    if removal_stats.get("selectors", 0):
+        _soup2, root2 = ctx.fresh_soup_and_root(extractor, diagnostics)
+        clean2, md2, _ = _extract_once(
+            root2,
+            ctx.metadata,
+            ctx.md_instance,
+            url,
+            use_partial_selectors=False,
+            use_scoring=use_scoring,
+        )
+        wc2 = count_words(md2)
+        if wc2 > word_count * 2:
+            clean_html, markdown, word_count = clean2, md2, wc2
+            diagnostics["adaptive_retry_used"] = True
+            diagnostics["retry_level"] = 2
     if word_count >= _RETRY_SPARSE_THRESHOLD:
         return clean_html, markdown
 
-    # Level 3: Retry without hidden element removal
-    _soup3, root3 = ctx.fresh_soup_and_root(extractor, diagnostics)
-    clean3, md3, _ = _extract_once(
-        root3,
-        ctx.metadata,
-        ctx.md_instance,
-        url,
-        use_hidden_removal=False,
-        use_scoring=use_scoring,
-    )
-    wc3 = count_words(md3)
-    if wc3 > word_count:
-        clean_html, markdown, word_count = clean3, md3, wc3
-        diagnostics["adaptive_retry_used"] = True
-        diagnostics["retry_level"] = 3
+    # Hidden exact selectors also change on this attempt; both stage counts
+    # must be zero before skipping it. The external hidden-root scan below
+    # still runs, since it may find content outside the originally chosen root.
+    if removal_stats.get("hidden", 0) or removal_stats.get("selectors", 0):
+        _soup3, root3 = ctx.fresh_soup_and_root(extractor, diagnostics)
+        clean3, md3, _ = _extract_once(
+            root3,
+            ctx.metadata,
+            ctx.md_instance,
+            url,
+            use_hidden_removal=False,
+            use_scoring=use_scoring,
+        )
+        wc3 = count_words(md3)
+        if wc3 > word_count * 2:
+            clean_html, markdown, word_count = clean3, md3, wc3
+            diagnostics["adaptive_retry_used"] = True
+            diagnostics["retry_level"] = 3
 
     # Level 3b: Target the largest hidden subtree directly to avoid
     # body-level leftovers when hidden content is the real article
@@ -439,28 +484,32 @@ def _extract_with_retry(
     if word_count >= _RETRY_SPARSE_THRESHOLD:
         return clean_html, markdown
 
-    # Level 4: Retry with all removals disabled
-    _soup4, root4 = ctx.fresh_soup_and_root(extractor, diagnostics)
-    clean4, md4, _ = _extract_once(
-        root4,
-        ctx.metadata,
-        ctx.md_instance,
-        url,
-        use_partial_selectors=False,
-        use_hidden_removal=False,
-        use_scoring=False,
-        use_content_patterns=False,
-    )
-    wc4 = count_words(md4)
-    if wc4 > word_count:
-        clean_html, markdown, word_count = clean4, md4, wc4
-        diagnostics["adaptive_retry_used"] = True
-        diagnostics["retry_level"] = 4
+    # Level 4: Retry index/listing content. Keep hidden removal enabled, as
+    # defuddle does; otherwise this would undo the guarded hidden retry above.
+    if relaxed_stages_removed_content:
+        _soup4, root4 = ctx.fresh_soup_and_root(extractor, diagnostics)
+        clean4, md4, _ = _extract_once(
+            root4,
+            ctx.metadata,
+            ctx.md_instance,
+            url,
+            use_partial_selectors=False,
+            use_hidden_removal=True,
+            use_scoring=False,
+            use_content_patterns=False,
+        )
+        wc4 = count_words(md4)
+        if selected_body:
+            body_fallback_extracted = True
+        if wc4 > word_count:
+            clean_html, markdown, word_count = clean4, md4, wc4
+            diagnostics["adaptive_retry_used"] = True
+            diagnostics["retry_level"] = 4
 
     # Fallback: broaden to <body> (copy just the body subtree — a body root
     # makes adopt_external_footnotes a no-op, so the parents chain a
     # whole-tree copy would preserve is never consulted here).
-    if word_count < _RETRY_SPARSE_THRESHOLD:
+    if word_count < _RETRY_SPARSE_THRESHOLD and not body_fallback_extracted:
         body = ctx.original_soup.body
         if body is not None:
             body = copy.copy(body)
@@ -470,7 +519,7 @@ def _extract_with_retry(
                 ctx.md_instance,
                 url,
                 use_partial_selectors=False,
-                use_hidden_removal=False,
+                use_hidden_removal=True,
                 use_scoring=False,
                 use_content_patterns=False,
             )
@@ -550,16 +599,11 @@ def _maybe_apply_schema_fallback(
 
 
 def _create_markitdown() -> object:
-    """Create a MarkItDown instance with WebExtract's custom converter.
+    """Create the dedicated HTML converter; keep the legacy factory name.
 
-    Registers ``WebExtractHtmlConverter`` at higher priority than the
-    built-in ``HtmlConverter`` so code-block language detection and
-    other enhanced rules are applied.
+    The input is already canonical HTML. Calling the converter directly
+    avoids constructing Magika/ONNX and registering unrelated file formats.
     """
-    from markitdown import MarkItDown
-
     from markitai.webextract.html_to_markdown import WebExtractHtmlConverter
 
-    md = MarkItDown()
-    md.register_converter(WebExtractHtmlConverter(), priority=-1)
-    return md
+    return WebExtractHtmlConverter()

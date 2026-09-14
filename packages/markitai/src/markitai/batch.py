@@ -9,7 +9,7 @@ import json
 import re
 from collections.abc import Callable, Coroutine, Iterable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from itertools import chain
 from pathlib import Path
@@ -1020,7 +1020,7 @@ class BatchProcessor:
         if not force:
             last_saved = getattr(self, "_last_state_save", None)
             if last_saved:
-                now = datetime.now().astimezone()
+                now = datetime.now(UTC).astimezone()
                 if (now - last_saved).total_seconds() < interval:
                     return  # Skip: interval not passed
 
@@ -1033,7 +1033,7 @@ class BatchProcessor:
             return
 
         try:
-            now = datetime.now().astimezone()
+            now = datetime.now(UTC).astimezone()
 
             # Re-check interval after acquiring lock (double-checked locking)
             if not force:
@@ -1244,7 +1244,7 @@ class BatchProcessor:
         options["input_dir"] = abs_input_dir
         options["output_dir"] = abs_output_dir
 
-        now = datetime.now().astimezone().isoformat()
+        now = datetime.now(UTC).astimezone().isoformat()
         state = BatchState(
             started_at=started_at or now,
             updated_at=now,
@@ -1286,7 +1286,7 @@ class BatchProcessor:
             Final batch state
         """
         # Use provided started_at or default to now
-        actual_started_at = started_at or datetime.now().astimezone().isoformat()
+        actual_started_at = started_at or datetime.now(UTC).astimezone().isoformat()
 
         # Initialize or load state
         if resume:
@@ -1368,7 +1368,7 @@ class BatchProcessor:
 
             # Update state to in_progress
             file_state.status = FileStatus.IN_PROGRESS
-            file_state.started_at = datetime.now().astimezone().isoformat()
+            file_state.started_at = datetime.now(UTC).astimezone().isoformat()
             self._dirty_keys.add(file_key)
 
             start_time = asyncio.get_running_loop().time()
@@ -1409,7 +1409,7 @@ class BatchProcessor:
 
             finally:
                 end_time = asyncio.get_running_loop().time()
-                file_state.completed_at = datetime.now().astimezone().isoformat()
+                file_state.completed_at = datetime.now(UTC).astimezone().isoformat()
                 file_state.duration = end_time - start_time
 
                 # Update progress and clear current file

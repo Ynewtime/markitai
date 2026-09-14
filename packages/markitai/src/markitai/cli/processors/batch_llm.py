@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import re
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -473,7 +473,7 @@ async def _run_batch_llm_enhancement(
         model=model,
         mode=mode.value,
         provider=provider,
-        created_at=datetime.now().astimezone().isoformat(),
+        created_at=datetime.now(UTC).astimezone().isoformat(),
         items=[item for item, _ in pending],
     )
     state.save(final_state_dir)

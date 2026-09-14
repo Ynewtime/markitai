@@ -329,7 +329,7 @@ class TestAnalyzeImage:
         self, mock_processor: MockVisionProcessor, sample_svg_file: Path
     ):
         """SVG returns a placeholder result when rasterization support is unavailable."""
-        with patch("markitai.utils.mime.importlib.util.find_spec", return_value=None):
+        with patch("markitai.utils.mime._HAS_CAIROSVG", False):
             result = await mock_processor.analyze_image(sample_svg_file)
 
         assert result.caption == "test_image"  # stem of filename
@@ -667,7 +667,7 @@ class TestAnalyzeBatch:
         svg1.write_text("<svg>1</svg>")
         svg2.write_text("<svg>2</svg>")
 
-        with patch("markitai.utils.mime.importlib.util.find_spec", return_value=None):
+        with patch("markitai.utils.mime._HAS_CAIROSVG", False):
             result = await mock_processor.analyze_batch([svg1, svg2])
 
         assert len(result) == 2

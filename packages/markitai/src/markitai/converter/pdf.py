@@ -359,6 +359,9 @@ class PdfConverter(BaseConverter):
 
     def __init__(self, config: MarkitaiConfig | None = None) -> None:
         super().__init__(config)
+        from markitai.utils.suppress import _suppress_mupdf_logs
+
+        _suppress_mupdf_logs()
 
     # Absolute cap on internal thread pool workers. PyMuPDF is not thread-safe,
     # so each worker opens its own document copy. These internal pools may run

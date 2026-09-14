@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections import OrderedDict
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -69,7 +69,7 @@ def extract_title_from_content(content: str, fallback: str = "") -> str:
     Returns:
         Extracted title string (max 100 chars)
     """
-    if not content or not content.strip():
+    if not content or content.isspace():
         return fallback
 
     # Remove YAML frontmatter block first
@@ -102,7 +102,7 @@ def extract_frontmatter_title(content: str) -> str | None:
     Returns:
         Title string if found in frontmatter, None otherwise
     """
-    if not content or not content.strip():
+    if not content or content.isspace():
         return None
 
     # Match frontmatter block
@@ -179,8 +179,30 @@ def _strip_frontmatter(content: str) -> str:
     Returns:
         Content without frontmatter block
     """
-    # Match frontmatter at the start of the document
-    # Uses shared FRONTMATTER_PATTERN with line-anchored closing ---
+    return strip_frontmatter(content)
+
+
+def strip_frontmatter(content: str) -> str:
+    """Apply the existing frontmatter pattern only when an opener can exist.
+
+    Inline table separators cannot start a match. Skip their whole line after
+    checking its first triple dash, avoiding quadratic scans of wide tables.
+    Keep the original regex for candidates, including its historical handling
+    of indented or later blocks; this filter must not redefine YAML boundaries.
+    """
+    position = 0
+    while True:
+        marker = content.find("---", position)
+        if marker < 0:
+            return content
+        start = content.rfind("\n", 0, marker) + 1
+        prefix = content[start:marker]
+        if not prefix or prefix.isspace():
+            break
+        end = content.find("\n", marker)
+        if end < 0:
+            return content
+        position = end + 1
     return FRONTMATTER_PATTERN.sub("", content, count=1)
 
 
@@ -194,28 +216,33 @@ def _find_heading(content: str, level: int) -> str | None:
     Returns:
         Heading text or None if not found
     """
-    lines = content.split("\n")
-    in_code_block = False
-    code_fence_pattern = re.compile(r"^(`{3,}|~{3,})")
-
-    for line in lines:
-        # Track code blocks to skip headings inside them
-        fence_match = code_fence_pattern.match(line)
-        if fence_match:
-            in_code_block = not in_code_block
-            continue
-
-        if in_code_block:
-            continue
-
-        # Match exact heading level: # for H1, ## for H2
-        # Pattern ensures we match exactly N hashes followed by space or end
-        heading_pattern = rf"^#{{{level}}}(?!#)\s+(.+)$"
-        match = re.match(heading_pattern, line)
+    prefix = "#" * level
+    heading_pattern = re.compile(rf"^#{{{level}}}(?!#)\s+(.+)$")
+    # Native string searches skip ordinary body/table lines without allocating
+    # a list of them or invoking a Python regex for every line. Only candidate
+    # headings need a slice. Preserve the existing rule that any unindented
+    # triple backtick/tilde line toggles the code-block state, even mixed fences.
+    in_code_block = content.startswith(("```", "~~~"))
+    scanned_until = 0
+    position = 0 if content.startswith(prefix) else content.find("\n" + prefix) + 1
+    if position == 0 and not content.startswith(prefix):
+        return None
+    while True:
+        end = content.find("\n", position)
+        line = content[position:] if end < 0 else content[position:end]
+        match = heading_pattern.match(line)
         if match:
-            return match.group(1).strip()
-
-    return None
+            fences = content.count("\n```", scanned_until, position) + content.count(
+                "\n~~~", scanned_until, position
+            )
+            in_code_block ^= bool(fences % 2)
+            scanned_until = position
+            if not in_code_block:
+                return match.group(1).strip()
+        next_line = content.find("\n" + prefix, position)
+        if next_line < 0:
+            return None
+        position = next_line + 1
 
 
 def _find_first_content_line(content: str) -> str | None:
@@ -233,10 +260,13 @@ def _find_first_content_line(content: str) -> str | None:
     Returns:
         First suitable content line or None
     """
-    lines = content.split("\n")
-
-    for line in lines:
-        stripped = line.strip()
+    position = 0
+    while position < len(content):
+        end = content.find("\n", position)
+        if end < 0:
+            end = len(content)
+        stripped = content[position:end].strip()
+        position = end + 1
 
         # Skip empty lines
         if not stripped:
@@ -308,7 +338,7 @@ def frontmatter_timestamp() -> str:
     Returns:
         ISO 8601 timestamp string
     """
-    return datetime.now().astimezone().isoformat(timespec="milliseconds")
+    return datetime.now(UTC).astimezone().isoformat(timespec="milliseconds")
 
 
 def build_frontmatter_dict(

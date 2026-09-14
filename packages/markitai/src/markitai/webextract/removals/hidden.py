@@ -76,6 +76,11 @@ def _is_hidden(el: Tag) -> bool:
         if has_responsive_show_class(" ".join(classes)):
             return False
         for cls in classes:
+            # Arbitrary variants target descendants or depend on state;
+            # "[&_.newsletter]:hidden" does not hide this content container.
+            # Match defuddle's conservative treatment of bracketed variants.
+            if "[" in cls:
+                continue
             bare = cls.split(":")[-1]  # handle "md:hidden" → "hidden"
             if bare in _HIDDEN_CLASSES:
                 return True

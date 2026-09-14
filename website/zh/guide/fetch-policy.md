@@ -46,6 +46,8 @@ X/Twitter 帖子在本地抽取失败后，Playwright 还可能调用 FxTwitter 
 
 只在配置文件里设了远程 `fetch.strategy` 不算显式选择。它仍受 `remote_consent` 管，也会打同样的首次提示。
 
+Clash 等代理返回 `198.18.0.0/15` 或 `2001:2::/48` 中的 Fake-IP 地址时，远程抽取会通过 [Cloudflare DNS over HTTPS](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json/) 复核域名的公网 A 和 AAAA 记录。复核只在允许远程访问后进行，DNS 仅收到域名，不含 URL 路径和查询参数。复核失败或解析结果含非公网地址时仍会拦截。直接填写非公网 IP，以及本机连接检查（包括未认证的 `serve` 请求），不会因此放行。
+
 ## 配置
 
 在 `markitai.json` 里调整策略：

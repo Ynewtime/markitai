@@ -21,6 +21,8 @@ from markitai.webextract.constants import (
     FOOTNOTE_LIST_SELECTORS,
 )
 from markitai.webextract.dom import attr_str
+from markitai.webextract.selectors import select_many as _css_select_many
+from markitai.webextract.selectors import select_one as _css_select_one
 from markitai.webextract.utils import count_words
 
 # Ordered entry-point selectors (defuddle ENTRY_POINT_ELEMENTS). Earlier
@@ -139,9 +141,9 @@ def score_candidate(node: Tag) -> float:
     if any(token in class_name for token in _CONTENT_CLASS_TOKENS):
         score += 15
 
-    if node.select_one(FOOTNOTE_INLINE_REFERENCES) is not None:
+    if _css_select_one(node, FOOTNOTE_INLINE_REFERENCES) is not None:
         score += 10
-    if node.select_one(FOOTNOTE_LIST_SELECTORS) is not None:
+    if _css_select_one(node, FOOTNOTE_LIST_SELECTORS) is not None:
         score += 10
 
     nested_tables = len(node.find_all("table"))
@@ -208,10 +210,14 @@ def select_best_candidate(soup: BeautifulSoup) -> Tag | None:
     """Return the main-content element (port of defuddle findMainContent)."""
     candidates: list[tuple[Tag, float, int]] = []
     total = len(ENTRY_POINT_SELECTORS)
-    for index, selector in enumerate(ENTRY_POINT_SELECTORS):
-        for el in soup.select(selector):
+    scores: dict[int, float] = {}
+    for index, elements in enumerate(_css_select_many(soup, ENTRY_POINT_SELECTORS)):
+        for el in elements:
+            identity = id(el)
+            if identity not in scores:
+                scores[identity] = score_candidate(el)
             base = (total - index) * 40
-            candidates.append((el, base + score_candidate(el), index))
+            candidates.append((el, base + scores[identity], index))
 
     if not candidates:
         return _find_content_by_scoring(soup)

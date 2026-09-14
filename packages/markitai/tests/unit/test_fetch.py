@@ -600,7 +600,7 @@ class TestSPADomainCache:
             # Manually create an expired entry
             old_date = (datetime.now() - timedelta(days=31)).isoformat()
             data = {
-                "version": 1,
+                "version": SPADomainCache.VERSION,
                 "domains": {
                     "expired.com": {
                         "learned_at": old_date,
@@ -666,7 +666,7 @@ class TestSPADomainCache:
             fresh_date = now.isoformat()
 
             data = {
-                "version": 1,
+                "version": SPADomainCache.VERSION,
                 "domains": {
                     "fresh.com": {
                         "learned_at": fresh_date,
@@ -1410,7 +1410,7 @@ class TestSPADomainCacheEdgeCases:
 
             # Create entry with missing dates
             data = {
-                "version": 1,
+                "version": SPADomainCache.VERSION,
                 "domains": {
                     "nodates.com": {
                         "hits": 1,
@@ -1431,7 +1431,7 @@ class TestSPADomainCacheEdgeCases:
             cache_path = Path(tmp_dir) / "spa_cache.json"
 
             data = {
-                "version": 1,
+                "version": SPADomainCache.VERSION,
                 "domains": {
                     "baddate.com": {
                         "learned_at": "not-a-valid-date",
@@ -3171,6 +3171,13 @@ class TestScreenshotDecoupled:
         )
 
         with (
+            patch(
+                "markitai.fetch_strategies.static.fetch_with_static",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError(
+                    "Static unavailable in this fallback scenario"
+                ),
+            ),
             patch(
                 "markitai.fetch_strategies.defuddle.fetch_with_defuddle",
                 new_callable=AsyncMock,

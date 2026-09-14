@@ -1,12 +1,33 @@
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from markitai.webextract.frontmatter import build_source_frontmatter
-from markitai.webextract.pipeline import extract_web_content
 from markitai.webextract.quality import assess_native_markdown
 from markitai.webextract.types import ExtractedWebContent, WebMetadata
+
+if TYPE_CHECKING:
+    from markitai.webextract.pipeline import extract_web_content
+
+# Reload should re-export the current implementation on the next lookup.
+globals().pop("extract_web_content", None)
+
+
+def __getattr__(name: str) -> Any:
+    # Office converters import only the Markdown renderer. Loading a submodule
+    # must not also initialize the independent web extraction pipeline.
+    if name == "extract_web_content":
+        from markitai.webextract.pipeline import extract_web_content
+
+        globals()[name] = extract_web_content
+        return extract_web_content
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
+
 
 __all__ = [
     "ExtractedWebContent",

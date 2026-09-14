@@ -10,7 +10,7 @@ the final field ordering at write time.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -50,7 +50,7 @@ def build_report_shell(
     """
     return {
         "version": version,
-        "generated_at": datetime.now().astimezone().isoformat(),
+        "generated_at": datetime.now(UTC).astimezone().isoformat(),
         "log_file": log_file,
     }
 
