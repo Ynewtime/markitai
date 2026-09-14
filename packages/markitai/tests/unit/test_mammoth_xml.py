@@ -58,7 +58,7 @@ def test_text_stream_and_filename_inputs(tmp_path):
     xml = '<root xml:space="preserve">中文 text</root>'
     assert parse_mammoth_xml(io.StringIO(xml)) == reference_parse_xml(io.StringIO(xml))
     path = tmp_path / "document.xml"
-    path.write_text(xml)
+    path.write_text(xml, encoding="utf-8")
     assert parse_mammoth_xml(str(path)) == reference_parse_xml(str(path))
 
 

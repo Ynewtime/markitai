@@ -10,7 +10,9 @@ FIXTURES = Path(__file__).parents[2] / "defuddle_fixtures" / "fixtures"
 
 def test_collapsed_callouts_keep_their_body_type_and_fold_state():
     result = extract_web_content(
-        (FIXTURES / "callouts--obsidian-publish-callouts.html").read_text(),
+        (FIXTURES / "callouts--obsidian-publish-callouts.html").read_text(
+            encoding="utf-8"
+        ),
         "https://example.com/callouts",
     )
     assert "> [!faq]- Is this foldable?" in result.markdown
@@ -22,7 +24,9 @@ def test_collapsed_callouts_keep_their_body_type_and_fold_state():
 
 def test_hackernews_comment_permalink_keeps_div_commtext_body():
     result = extract_web_content(
-        (FIXTURES / "general--news.ycombinator.com-item-id=12345678.html").read_text(),
+        (FIXTURES / "general--news.ycombinator.com-item-id=12345678.html").read_text(
+            encoding="utf-8"
+        ),
         "https://news.ycombinator.com/item?id=12345678",
     )
     assert "This is the main comment text that should be extracted" in result.markdown
