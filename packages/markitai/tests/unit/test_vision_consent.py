@@ -1,7 +1,7 @@
 """Tests for the VLM-OCR privacy gate (``markitai.vision_consent``).
 
-The gate is two things only: a one-time per-process disclosure naming the
-vision model(s) page images go to, and the ``MARKITAI_NO_VLM_OCR`` hard
+The gate is two things only: a short persistent notice about sending
+page images to vision models, and the ``MARKITAI_NO_VLM_OCR`` hard
 opt-out. No interactive prompt (``--ocr --llm`` is already an explicit
 double opt-in). These tests never call a real model.
 """
@@ -79,52 +79,24 @@ class TestVlmOcrAllowed:
 
 
 class TestDisclosure:
-    def _emit(self, config: MarkitaiConfig, page_count: int | None = None) -> str:
-        """Emit the disclosure and return the stderr text delivered once."""
-        with patch("markitai.vision_consent.get_interaction") as mock_get:
-            mock_port = mock_get.return_value
-            ensure_vlm_ocr_disclosed(config, page_count=page_count)
-            return mock_port.notify.call_args.args[0]
-
-    def test_disclosed_once_per_process(self) -> None:
+    def test_short_notice_once_across_process_state_resets(self):
         config = _config_with_models(("claude-agent/sonnet", None))
-        with patch("markitai.vision_consent.get_interaction") as mock_get:
-            mock_port = mock_get.return_value
+        with patch("markitai.vision_consent.get_interaction") as interaction:
+            port = interaction.return_value
             ensure_vlm_ocr_disclosed(config, page_count=3)
             ensure_vlm_ocr_disclosed(config, page_count=9)
-            mock_port.notify.assert_called_once()
-            assert "3 page image(s)" in mock_port.notify.call_args.args[0]
-
-    def test_names_the_vision_model_and_skips_non_vision(self) -> None:
-        config = _config_with_models(
-            ("claude-agent/sonnet", None),  # local provider → vision
-            ("deepseek/deepseek-chat", False),  # explicit non-vision
-        )
-        msg = self._emit(config, page_count=1)
-        assert "claude-agent/sonnet" in msg
-        assert "deepseek/deepseek-chat" not in msg
-        assert "MARKITAI_NO_VLM_OCR" in msg
-
-    def test_explicit_supports_vision_is_honored(self) -> None:
-        config = _config_with_models(("custom-vision", True))
-        assert "custom-vision" in self._emit(config, page_count=2)
-
-    def test_fallback_wording_without_models(self) -> None:
-        msg = self._emit(MarkitaiConfig(), page_count=1)
-        assert "your configured vision model" in msg
-
-    def test_generic_wording_without_page_count(self) -> None:
-        config = _config_with_models(("claude-agent/sonnet", None))
-        msg = self._emit(config, page_count=None)
-        assert "page images of scanned documents" in msg
-
-    def test_reset_allows_re_disclosure(self) -> None:
-        config = _config_with_models(("claude-agent/sonnet", None))
-        with patch("markitai.vision_consent.get_interaction") as mock_get:
-            mock_port = mock_get.return_value
-            ensure_vlm_ocr_disclosed(config)
-            assert mock_port.notify.call_count == 1
             reset_vlm_ocr_disclosure()
             ensure_vlm_ocr_disclosed(config)
-            assert mock_port.notify.call_count == 2
+        port.notify.assert_called_once()
+        message = port.notify.call_args.args[0]
+        assert "Page images" in message
+        assert "MARKITAI_NO_VLM_OCR=1" in message
+        assert len(message) <= 80
+        assert "\n" not in message
         assert vlm_ocr_disclosure_emitted() is True
+
+    def test_notice_does_not_change_opt_out(self, monkeypatch):
+        with patch("markitai.vision_consent.get_interaction"):
+            ensure_vlm_ocr_disclosed(MarkitaiConfig())
+        monkeypatch.setenv("MARKITAI_NO_VLM_OCR", "1")
+        assert vlm_ocr_allowed() is False

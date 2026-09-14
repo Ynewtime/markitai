@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Faster results**: reduce startup and repeated parsing; avoid unnecessary browser fallback for complete short articles and CJK prose.
 - **Preserve output quality**: retain compatible handling of text, metadata, equations and images, with established fallbacks for complex documents.
 - **Fix public URL detection**: Defuddle and other remote readers work behind Fake-IP proxies such as Clash while private-address protections remain in place.
+- **Improve X/Twitter extraction**: fetch anonymous posts without launching a browser when remote use is allowed; recover promptly from HTTP errors and preserve rich text, links, images and publication dates.
+- **Keep domain tuning**: custom domain profiles override only explicitly configured fields, preserving built-in browser settings.
+- **Quieter repeat runs**: show remote-fetch and VLM OCR notices once per user; consent prompts and opt-outs remain effective.
 
 ## [1.0.1] - 2026-09-10
 

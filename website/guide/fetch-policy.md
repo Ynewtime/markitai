@@ -18,13 +18,17 @@ Local first. The built-in static fetcher matches the remote readers on extractio
 
 ### SPA/Heavy-JS Order
 
-Domains known to need JavaScript go straight to the browser: `x.com`, `instagram.com`, anything in `fallback_patterns`, and domains learned into the SPA cache after a failed static fetch.
+Domains known to need JavaScript go straight to the browser: `instagram.com`, anything in `fallback_patterns`, and domains learned into the SPA cache after a failed static fetch.
 
 <StrategyChain mode="spa" />
 
+X/Twitter keeps `playwright → defuddle → jina → cloudflare → static`. Within the Playwright strategy, anonymous status/article requests with remote use allowed try FxTwitter, then oEmbed, before launching Chromium. A rendered browser context is still used for cookies, custom headers, credentials, persistent sessions, screenshots, or when network extraction fails. `playwright(fxtwitter)` / `playwright(oembed)` identifies the actual content source; no defuddle request is needed when it succeeds.
+
+A browser navigation can return an HTTP error without raising an exception. Markitai skips element and stabilization waits on HTTP errors and tries the X enrichment fallback immediately. Successful enrichment is labeled `playwright(fxtwitter)` or `playwright(oembed)`; it does not mean the browser rendered the tweet. If enrichment fails or is disabled, the HTTP error is reported and `auto` tries its next strategy.
+
 ### Remote Fallback and Local-only URLs
 
-By default (`fetch.remote_consent: always`) a public URL that fails locally may be sent to Defuddle, Jina or Cloudflare. Before the first remote attempt in a process, markitai prints a notice on stderr naming every service it may use later: defuddle.md, Jina, Cloudflare, FxTwitter and Twitter oEmbed. Services are tried one at a time, so a URL only reaches the service currently being attempted.
+By default (`fetch.remote_consent: always`) a public URL may be sent to Defuddle, Jina or Cloudflare. On first use, markitai prints one short line on stderr. It remembers that notice under `~/.markitai/notices/remote-fetch`, so subsequent runs stay quiet. VLM OCR uses the same once-per-user mechanism. These markers record only that a notice was shown; `remote_consent: ask` still asks for permission each process. The possible services are defuddle.md, Jina, Cloudflare, FxTwitter and Twitter oEmbed. Services are tried one at a time, so a URL only reaches the service currently being attempted.
 
 For X/Twitter posts, Playwright may also call FxTwitter and then Twitter oEmbed after local extraction fails. They follow the same process-wide consent decision as every other remote service: under `ask` they can raise the one shared prompt, reuse an earlier answer, and are skipped when the run cannot prompt.
 
@@ -98,9 +102,7 @@ Per-domain overrides:
 | `skip_auto_scroll` | boolean | `false` | Skip auto-scrolling on single-content pages (tweets, issues, docs) |
 | `reject_resource_patterns` | list | `null` | Block browser requests matching these URL patterns, e.g. `["**/analytics/**"]` |
 
-::: warning
-markitai ships built-in profiles for `x.com`, `twitter.com` and `github.com`. Your own profile for the same domain replaces the built-in one entirely, so repeat any built-in tuning you want to keep.
-:::
+markitai ships built-in profiles for `x.com`, `twitter.com` and `github.com`. Only fields you explicitly set override the built-in browser tuning; changing the strategy or extra wait preserves the remaining settings. Set `skip_auto_scroll: false` to restore scrolling, `reject_resource_patterns: []` to clear resource filters, or a nullable browser field to `null` to inherit its global setting.
 
 ```json
 {

@@ -112,7 +112,10 @@ def test_user_profile_overrides_builtin() -> None:
         "https://x.com/user/status/123", user_profiles
     )
     assert overrides.get("extra_wait_ms") == 2000
-    assert "skip_auto_scroll" not in overrides
+    assert overrides["skip_auto_scroll"] is True
+    assert overrides["wait_for_selector"] == (
+        'article[data-tweet-id], [data-testid="tweet"]'
+    )
 
 
 def test_site_noise_selectors_exist_for_x_com() -> None:

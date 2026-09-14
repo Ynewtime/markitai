@@ -87,7 +87,6 @@ class PlaywrightRunner:
                 output_dir=ctx.screenshot_kwargs.get("screenshot_dir"),
                 renderer=ctx.screenshot_kwargs.get("renderer"),
             ),
-            remote_consent=ctx.config.remote_consent,
         )
 
         return FetchResult(

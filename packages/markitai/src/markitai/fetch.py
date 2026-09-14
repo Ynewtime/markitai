@@ -26,6 +26,7 @@ Example usage:
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -41,7 +42,6 @@ from markitai.constants import (
 if TYPE_CHECKING:
     from markitai.config import (
         FetchConfig,
-        FetchPolicyConfig,
         ScreenshotConfig,
     )
 
@@ -94,6 +94,9 @@ from markitai.fetch_consent import (
 )
 from markitai.fetch_http import (
     get_static_http_client as get_static_http_client,
+)
+from markitai.fetch_policy import (
+    build_local_only_patterns as _build_local_only_patterns,
 )
 from markitai.fetch_screenshot import (
     _url_to_screenshot_filename as _url_to_screenshot_filename,
@@ -421,11 +424,8 @@ async def _ensure_external_strategy_allowed(
     allow_pattern_override: bool = False,
 ) -> None:
     """Enforce hard privacy guards before any external-only strategy runs."""
-    from markitai.fetch_policy import (
-        assess_url_for_remote,
-        match_local_only,
-        resolve_public_hostname_addresses,
-    )
+    from markitai.fetch_consent import assess_remote_url
+    from markitai.fetch_policy import match_local_only
 
     if strategy_name not in {
         FetchStrategy.DEFUDDLE.value,
@@ -454,18 +454,12 @@ async def _ensure_external_strategy_allowed(
             "on the CLI to override the pattern for this public URL."
         )
 
-    async def verify_proxy_hostname(hostname: str) -> tuple[str, ...]:
-        # Invoked only for Fake-IP DNS answers. Honor consent before even
-        # sending the hostname to a public resolver; explicit CLI selection
-        # has already authorized remote use.
-        if not allow_pattern_override and not resolve_remote_consent(
-            config or FetchConfig(), services=[strategy_name]
-        ):
-            return ()
-        disclose_remote_use([strategy_name])
-        return await resolve_public_hostname_addresses(hostname)
-
-    assessment = await assess_url_for_remote(url, public_resolver=verify_proxy_hostname)
+    assessment = await assess_remote_url(
+        url,
+        config or "always",
+        [strategy_name],
+        consent_granted=allow_pattern_override,
+    )
     if not assessment.allowed:
         reason = assessment.reason or "privacy policy"
         if reason == "non_global_address":
@@ -822,6 +816,7 @@ async def fetch_url(
     # Screenshot kwargs for browser fetching (used by _fetch_with_fallback)
     screenshot_kwargs: dict[str, Any] = {
         "renderer": _renderer,
+        "screenshot": screenshot,
         "screenshot_config": screenshot_config,
         "screenshot_dir": screenshot_dir,
     }
@@ -977,30 +972,6 @@ def _is_invalid_content(
     return False, ""
 
 
-def _build_local_only_patterns(policy: FetchPolicyConfig) -> list[str]:
-    """Build effective local-only patterns from config + NO_PROXY env var.
-
-    When ``inherit_no_proxy`` is True (default), patterns from the NO_PROXY
-    environment variable are merged into the configured ``local_only_patterns``
-    (deduplicated, config patterns take precedence).
-    """
-    import os
-
-    from markitai.fetch_policy import parse_no_proxy
-
-    patterns = list(policy.local_only_patterns)
-    if policy.inherit_no_proxy:
-        no_proxy = os.environ.get("NO_PROXY") or os.environ.get("no_proxy")
-        if no_proxy:
-            inherited = parse_no_proxy(no_proxy)
-            seen = set(patterns)
-            for p in inherited:
-                if p not in seen:
-                    patterns.append(p)
-                    seen.add(p)
-    return patterns
-
-
 async def _fetch_with_fallback(
     url: str,
     config: FetchConfig,
@@ -1052,6 +1023,7 @@ async def _fetch_with_fallback(
         domain_strategy_priority=domain_priority,
         local_only_patterns=effective_local_only,
     )
+    logger.debug("[Fetch] Policy {}: {}", decision.reason, decision.order)
     strategies = decision.order[: config.policy.max_strategy_hops]
     if is_private_or_local_domain(domain) or url_contains_credentials(url):
         strategies = [s for s in strategies if s in {"static", "playwright"}]
@@ -1094,6 +1066,8 @@ async def _fetch_with_fallback(
         if runner is None:
             continue
 
+        attempt_started = time.perf_counter()
+
         skip_reason = runner.unavailable_reason(ctx)
         if skip_reason is not None:
             if skip_reason:
@@ -1122,7 +1096,10 @@ async def _fetch_with_fallback(
 
         try:
             result = await runner.fetch(url, ctx)
-            native_accepted = result.metadata.get("converter") == "native-html"
+            native_accepted = result.metadata.get("converter") == "native-html" or (
+                result.metadata.get("_enricher_source")
+                in {"fxtwitter", "fxtwitter_article", "oembed"}
+            )
 
             # Static-only follow-up: a JS-rendered page can look like a
             # successful static fetch — learn the domain for future
@@ -1166,6 +1143,12 @@ async def _fetch_with_fallback(
             errors.append(f"{strat}: {e}")
             logger.debug(f"Strategy {strat} failed: {e}")
             continue
+        finally:
+            logger.debug(
+                "[Fetch] Strategy {} finished in {:.3f}s",
+                strat,
+                time.perf_counter() - attempt_started,
+            )
 
     # All strategies failed
     detail = "\n".join(f"  - {e}" for e in errors) or (

@@ -46,21 +46,12 @@ class TestDefaultConsentBehavior:
             assert resolve_remote_consent(FetchConfig()) is True
             mock_confirm.assert_not_called()
 
-    def test_always_logs_disclosure_once_per_process(self) -> None:
-        """The first remote use logs an INFO disclosure; later calls don't."""
-        from loguru import logger
-
-        messages: list[str] = []
-        sink_id = logger.add(lambda m: messages.append(str(m)), level="INFO")
-        try:
-            assert resolve_remote_consent(FetchConfig()) is True
-            assert resolve_remote_consent(FetchConfig()) is True
-        finally:
-            logger.remove(sink_id)
-        disclosures = [m for m in messages if "remote extraction" in m.lower()]
-        assert len(disclosures) == 1, (
-            f"expected exactly one disclosure log, got: {disclosures}"
-        )
+    def test_notice_survives_process_state_reset(self, capsys):
+        assert resolve_remote_consent(FetchConfig()) is True
+        assert "Remote services" in capsys.readouterr().err
+        reset_remote_consent()
+        assert resolve_remote_consent(FetchConfig()) is True
+        assert "Remote services" not in capsys.readouterr().err
 
     @pytest.mark.parametrize(
         ("verbose", "quiet"),
@@ -98,14 +89,11 @@ class TestDefaultConsentBehavior:
         disclosures = [
             line
             for line in captured.err.splitlines()
-            if "remote extraction services may receive URLs" in line
+            if "Remote services may receive public URLs" in line
         ]
         assert len(disclosures) == 1
-        assert "defuddle.md, Jina" in disclosures[0]
-        assert "Cloudflare (your account)" in disclosures[0]
-        assert "FxTwitter" in disclosures[0]
-        assert "Twitter oEmbed" in disclosures[0]
-        assert "MARKITAI_NO_REMOTE_FETCH=1" in disclosures[0]
+        assert "--no-remote-fetch" in disclosures[0]
+        assert len(disclosures[0]) <= 80
 
 
 class TestAskPromptWording:
@@ -423,7 +411,7 @@ class TestResolveRemoteConsent:
 
         assert result.strategy_used == "jina"
         remote_fetch.assert_awaited_once()
-        assert "remote extraction services may receive URLs" in capsys.readouterr().err
+        assert "Remote services may receive public URLs" in capsys.readouterr().err
 
     @pytest.mark.asyncio
     async def test_cli_explicit_remote_strategy_overrides_config_never(
@@ -452,7 +440,7 @@ class TestResolveRemoteConsent:
 
         assert result.strategy_used == "jina"
         remote_fetch.assert_awaited_once()
-        assert "remote extraction services may receive URLs" in capsys.readouterr().err
+        assert "Remote services may receive public URLs" in capsys.readouterr().err
 
     @pytest.mark.parametrize("value", ["0", "false", "no", "", "  "])
     def test_env_var_falsy_values_ignored(
@@ -700,7 +688,7 @@ class TestFallbackChainConsentGate:
 
         assert result.strategy_used == "defuddle"
         mock_defuddle.assert_called_once()
-        assert "remote extraction services may receive URLs" in capsys.readouterr().err
+        assert "Remote services may receive public URLs" in capsys.readouterr().err
 
     @pytest.mark.asyncio
     async def test_env_var_skips_remote_despite_always(

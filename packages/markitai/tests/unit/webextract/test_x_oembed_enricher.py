@@ -127,7 +127,7 @@ class TestTryFxtwitter:
             "source": "fxtwitter",
         }
         assert result.metadata_overrides["author"] == "@testuser"
-        assert result.metadata_overrides["title"] == "Post by @testuser"
+        assert result.metadata_overrides["title"] == "Post by @testuser on X"
         assert "Hello from FxTwitter" in (result.content_html or "")
 
     async def test_missing_tweet_key_returns_none(self) -> None:
@@ -138,32 +138,17 @@ class TestTryFxtwitter:
 
         assert result is None
 
-    async def test_retries_on_transient_failure_then_succeeds(self) -> None:
+    async def test_failure_immediately_allows_next_source(self) -> None:
         enricher = XOEmbedEnricher()
-        client = _mock_client([ConnectionError("boom"), _http_response(MOCK_TWEET)])
+        client = _mock_client([ConnectionError("unreachable")])
         with (
             patch("httpx.AsyncClient", return_value=client),
-            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            patch("asyncio.sleep", new_callable=AsyncMock) as sleep,
         ):
             result = await enricher._try_fxtwitter(TWEET_URL)
-
-        assert result is not None
-        assert result.metadata_overrides["author"] == "@testuser"
-        mock_sleep.assert_awaited_once()
-
-    async def test_returns_none_after_exhausting_retries(self) -> None:
-        enricher = XOEmbedEnricher()
-        client = _mock_client(
-            [ConnectionError("1"), ConnectionError("2"), ConnectionError("3")]
-        )
-        with (
-            patch("httpx.AsyncClient", return_value=client),
-            patch("asyncio.sleep", new_callable=AsyncMock),
-        ):
-            result = await enricher._try_fxtwitter(TWEET_URL)
-
         assert result is None
-        assert client.get.await_count == 3
+        client.get.assert_awaited_once()
+        sleep.assert_not_awaited()
 
     async def test_article_dispatches_to_build_article_result(self) -> None:
         enricher = XOEmbedEnricher()
@@ -696,3 +681,106 @@ class TestBuildResolvedFromHtml:
         )
         assert result is not None
         assert result.metadata_overrides["author"] == "Explicit Name"
+
+
+class TestTweetFidelity:
+    def test_unicode_facets_preserve_links_and_emphasis(self):
+        from markitai.webextract.markdown import render_markdown
+
+        text = "😀 中文 @alice docs emphasis"
+
+        def span(value):
+            start = text.index(value)
+            return [start, start + len(value)]
+
+        data = {
+            "text": text,
+            "raw_text": {
+                "text": text,
+                "facets": [
+                    {"type": "mention", "text": "alice", "indices": span("@alice")},
+                    {
+                        "type": "url",
+                        "original": "https://example.com/docs?a=1&b=2",
+                        "indices": span("docs"),
+                    },
+                    {"type": "italic", "indices": span("emphasis")},
+                    {"type": "media", "indices": [0, 20]},
+                ],
+            },
+        }
+        md = render_markdown(XOEmbedEnricher._render_tweet_text(data))
+        assert "😀 中文" in md
+        assert "[@alice](https://x.com/alice)" in md
+        assert "[docs](https://example.com/docs?a=1&b=2)" in md
+        assert "*emphasis*" in md
+
+    def test_paragraphs_soft_breaks_and_blockquotes(self):
+        from markitai.webextract.markdown import render_markdown
+
+        html = XOEmbedEnricher._render_tweet_text(
+            {"text": "first\nsecond\n\n> quoted\n\nlast"}
+        )
+        assert "first<br>second" in html
+        assert "<blockquote><p>quoted</p></blockquote>" in html
+        md = render_markdown(html)
+        assert "first" in md and "second" in md and "> quoted" in md and "last" in md
+
+    def test_metadata_matches_reference_and_photos_only_are_preserved(self):
+        enricher = XOEmbedEnricher()
+        data = {
+            "text": "正文",
+            "created_at": "Mon Sep 14 07:44:59 +0000 2026",
+            "author": {"screen_name": "user"},
+            "media": {"photos": [{"url": "https://example.com/p.jpg"}]},
+        }
+        thread = enricher._build_thread(data, "123", TWEET_URL)
+        result = enricher._build_resolved_from_html(
+            "<p>正文</p>", thread.title, "", data
+        )
+        assert result is not None
+        assert result.metadata_overrides["title"] == "Post by @user on X"
+        assert result.metadata_overrides["published"] == "2026-09-14"
+        assert result.metadata_overrides["author"] == "@user"
+        assert result.metadata_overrides["description"] == "正文"
+        assert thread.main_item.media[0].url == "https://example.com/p.jpg"
+
+    def test_url_matching_does_not_accept_x_in_another_sites_path(self):
+        from markitai.webextract.enrichers.x_oembed import is_x_post_url
+
+        assert not is_x_post_url("https://example.com/x.com/user/status/123")
+        assert not is_x_post_url("https://notx.com/user/status/123")
+        assert is_x_post_url("https://www.twitter.com/user/status/123/photo/1")
+
+
+class TestArticleUnicodeFidelity:
+    def test_draft_ranges_after_emoji_use_utf16_offsets(self):
+        block = {
+            "text": "😀 bold link",
+            "inlineStyleRanges": [{"style": "Bold", "offset": 3, "length": 4}],
+            "entityRanges": [{"key": 0, "offset": 8, "length": 4}],
+            "data": {},
+        }
+        html = XOEmbedEnricher()._render_inline(
+            block, {"0": {"type": "LINK", "data": {"url": "https://example.com/"}}}
+        )
+        assert (
+            html == '😀 <strong>bold</strong> <a href="https://example.com/">link</a>'
+        )
+
+    def test_draft_url_annotations_are_preserved(self):
+        block = {
+            "text": "😀 docs",
+            "data": {
+                "urls": [{"text": "https://example.com/", "fromIndex": 3, "toIndex": 7}]
+            },
+        }
+        assert (
+            XOEmbedEnricher()._render_inline(block, {})
+            == '😀 <a href="https://example.com/">docs</a>'
+        )
+
+    def test_dates_use_utc_calendar_day(self):
+        assert (
+            XOEmbedEnricher._to_date_string("2026-09-14T23:30:00-08:00") == "2026-09-15"
+        )

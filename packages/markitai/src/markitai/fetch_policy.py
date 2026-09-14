@@ -26,10 +26,15 @@ from collections import Counter
 from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 from markitai.constants import ALL_FETCH_STRATEGIES, LOCAL_STRATEGIES
 from markitai.utils.text import normalize_identifier_key
+
+if TYPE_CHECKING:
+    from markitai.config import FetchPolicyConfig
+
 
 ALL_STRATEGIES = list(ALL_FETCH_STRATEGIES)
 LOCAL_ONLY_STRATEGIES = list(LOCAL_STRATEGIES)
@@ -601,7 +606,7 @@ class FetchPolicyEngine:
                 reason="disabled",
             )
 
-        # 7. SPA/JS-heavy: browser first
+        # SPA/JS-heavy: browser first
         # Known SPAs and fallback-pattern domains need JS rendering — go
         # straight to the local browser; consent-gated remote services are
         # the fallback, and static (which already failed to produce content
@@ -617,3 +622,25 @@ class FetchPolicyEngine:
             order=ALL_STRATEGIES.copy(),
             reason="default",
         )
+
+
+def build_local_only_patterns(policy: FetchPolicyConfig) -> list[str]:
+    """Build effective local-only patterns from config + NO_PROXY env var.
+
+    When ``inherit_no_proxy`` is True (default), patterns from the NO_PROXY
+    environment variable are merged into the configured ``local_only_patterns``
+    (deduplicated, config patterns take precedence).
+    """
+    import os
+
+    patterns = list(policy.local_only_patterns)
+    if policy.inherit_no_proxy:
+        no_proxy = os.environ.get("NO_PROXY") or os.environ.get("no_proxy")
+        if no_proxy:
+            inherited = parse_no_proxy(no_proxy)
+            seen = set(patterns)
+            for p in inherited:
+                if p not in seen:
+                    patterns.append(p)
+                    seen.add(p)
+    return patterns

@@ -9,6 +9,20 @@ from __future__ import annotations
 
 from markitai.config import DomainProfileConfig
 
+
+def resolve_domain_profile(
+    domain: str, profiles: dict[str, DomainProfileConfig]
+) -> DomainProfileConfig | None:
+    """Merge explicit user fields over built-in tuning without mutating either."""
+    builtin = BUILTIN_DOMAIN_PROFILES.get(domain)
+    user = profiles.get(domain)
+    if builtin is None:
+        return user
+    if user is None:
+        return builtin
+    return builtin.model_copy(update=user.model_dump(exclude_unset=True))
+
+
 _X_COM_PROFILE = DomainProfileConfig(
     wait_for_selector='article[data-tweet-id], [data-testid="tweet"]',
     wait_for="domcontentloaded",

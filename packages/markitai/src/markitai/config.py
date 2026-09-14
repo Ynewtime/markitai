@@ -802,7 +802,8 @@ class FetchConfig(BaseModel):
         description=(
             "Consent for sending URLs to remote extraction services "
             "(defuddle.md, Jina, Cloudflare) in the auto strategy chain, "
-            "tried one at a time only after local strategies fail. "
+            "tried one at a time. Anonymous X/Twitter extraction in the "
+            "playwright strategy can use FxTwitter before browser navigation. "
             "Private/local/credentialed URLs never use remote services "
             "regardless of this setting. Public X/Twitter Playwright "
             "enrichment (FxTwitter, Twitter oEmbed) shares this same "
@@ -810,7 +811,7 @@ class FetchConfig(BaseModel):
             "own, reuses whatever the main chain already decided, and under "
             "ask with nothing decided yet prompts once on an interactive TTY "
             "and declines otherwise. always (default): use them without "
-            "asking (a stderr notice discloses the first use); ask: prompt once "
+            "asking (a short notice is shown once per user); ask: prompt once "
             "per run on an interactive TTY, otherwise skip remote services; "
             "never: local strategies only. Overridden by the "
             "MARKITAI_NO_REMOTE_FETCH hard opt-out, including when an "
