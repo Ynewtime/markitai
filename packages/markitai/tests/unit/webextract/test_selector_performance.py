@@ -26,7 +26,7 @@ FIXTURES = Path(__file__).parents[2] / "defuddle_fixtures/fixtures"
 def test_indexed_removal_selection_matches_css_reference(path, selector):
     from markitai.webextract.selectors import select
 
-    root = BeautifulSoup(path.read_text(), "lxml")
+    root = BeautifulSoup(path.read_text(encoding="utf-8"), "lxml")
     expected = root.select(selector)
     actual = select(root, selector)
     assert [id(el) for el in actual] == [id(el) for el in expected]
