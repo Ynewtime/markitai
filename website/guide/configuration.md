@@ -499,7 +499,7 @@ The first render pops a one-time macOS permission dialog. Set this to `false` on
 
 | Setting | Options | Default | Description |
 |---------|---------|---------|-------------|
-| `fetch.remote_consent` | `always`, `ask`, `never` | `always` | `always`: fall back to remote services for public URLs and print a notice on stderr before the first attempt. `ask`: prompt once per process on a terminal, skip every remote service otherwise. `never`: local strategies only |
+| `fetch.remote_consent` | `always`, `ask`, `never` | `always` | `always`: allow remote services for public URLs and show a short stderr notice once per user. `ask`: prompt once per process on a terminal, skip every remote service otherwise. `never`: local strategies only |
 
 Private, intranet and credential-bearing URLs never go to a remote service, whatever this is set to. Domains in `fetch.policy.local_only_patterns` and `NO_PROXY` stay local in the `auto` chain. An explicit `-s defuddle`, `-s jina` or `-s cloudflare` overrides `never` and the pattern rules for a public URL; `MARKITAI_NO_REMOTE_FETCH=1` blocks even that.
 
@@ -576,7 +576,7 @@ The Free plan allows two concurrent browser sessions; markitai serializes its re
 
 The policy engine orders strategies per domain and remembers which domains need a browser. Its options, the domain-profile fields and the built-in profiles are documented in the [Fetch Policy guide](/guide/fetch-policy#configuration).
 
-Two rules surprise people: a custom `domain_profiles` entry replaces the built-in profile for that domain instead of merging with it, and `auto` treats every domain in `fallback_patterns` as JavaScript-heavy and starts with the browser.
+Custom `domain_profiles` entries override only explicitly set fields, preserving the remaining built-in tuning. `auto` treats every domain in `fallback_patterns` as JavaScript-heavy and starts with the browser strategy.
 
 ### Proxies
 
