@@ -98,61 +98,60 @@ markitai document.pdf --preset rich      # LLM + alt text + descriptions + scree
 markitai init                            # or configure it interactively, once
 ```
 
-See the [Getting Started guide](https://markitai.dev/guide/getting-started) for LLM configuration, presets, caching, and batch options.
-
 ## MCP server
 
-`markitai-mcp` exposes conversion to AI agents over the Model Context Protocol with four tools: `convert_document`, `convert_url`, `batch_convert`, `job_status`. Nothing to install, `uvx` runs it on demand, and large outputs land on disk instead of in the model context. For Claude Code, `claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp`; for other clients:
+`markitai-mcp` exposes conversion to AI agents over the Model Context Protocol
+with four tools: `convert_document`, `convert_url`, `batch_convert`,
+`job_status`. Nothing to install — `uvx` runs it on demand, and large outputs
+land on disk instead of in the model context. For Claude Code:
 
-```json
-{
-  "mcpServers": {
-    "markitai": { "command": "uvx", "args": ["--from", "markitai[mcp]", "markitai-mcp"] }
-  }
-}
+```bash
+claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp
 ```
 
-`markitai mcp` starts the same server through the CLI itself (`uvx --from "markitai[mcp]" markitai mcp`), which is how the [MCP Registry](https://registry.modelcontextprotocol.io) lists it. See the [MCP guide](https://markitai.dev/guide/mcp) for LLM enhancement and batch jobs.
+Other clients, LLM enhancement and batch jobs are covered in the
+[MCP guide](https://markitai.dev/guide/mcp). `markitai mcp` starts the same
+server through the CLI itself, which is how the
+[MCP Registry](https://registry.modelcontextprotocol.io) lists it.
 
 <!-- mcp-name: io.github.Ynewtime/markitai -->
 
-## Comparison
+## Documentation
 
-How markitai compares to three tools people mention in the same breath. No star or download counts — those go stale immediately.
+- [Getting started](https://markitai.dev/guide/getting-started) — install, first conversion, output layout, supported formats
+- [CLI reference](https://markitai.dev/guide/cli) — every command and flag
+- [Configuration](https://markitai.dev/guide/configuration) — config file, environment variables, LLM providers, every setting
+- [Fetch policy](https://markitai.dev/guide/fetch-policy) — the URL strategy cascade, domain profiles, what stays local
+- [Output profiles](https://markitai.dev/guide/output-profiles) — `rag`, `obsidian` and `okf` output shaping
+- [Web workspace](https://markitai.dev/guide/serve) — `markitai serve`, its history and REST API
+- [Python API](https://markitai.dev/guide/python-api) — `convert()` and `aconvert()` as a library
+- [Conversion performance](https://markitai.dev/guide/performance) — measured local-conversion results and how to reproduce them
+- [Why Markitai](https://markitai.dev/guide/comparison) — how it compares with markitdown, docling and anydoc
 
-| | **markitai** | markitdown | docling | anydoc |
-| --- | --- | --- | --- | --- |
-| Engine | Python; rule-based conversion + optional LLM pipeline | Python; lightweight rule-based converters + plugins | Python; ML layout/table/VLM document-structure models | Rust; zero-ML parsers |
-| LLM enhancement | Built-in: format cleaning, frontmatter, vision analysis, per-run JSON cost/usage reports | Optional: image captions, transcription, an OCR plugin | VLM for structure (DocTags), not prose cleanup | None |
-| Web pages | 5-strategy fetch cascade, local-first; static runs a from-scratch port of [defuddle](https://github.com/kepano/defuddle)'s readability algorithm before falling back to a browser or 3 remote APIs | Whole-DOM HTML→Markdown, no main-content pass | Downloads a document URL into the same file pipeline | No URL input — local files/bytes only |
-| Scanned docs | Optional local OCR (`markitai[ocr]`, RapidOCR), or `--ocr --llm` to have the vision model read the pages | Optional plugin (LLM-vision or Azure OCR) | Built-in OCR for scanned PDFs/images | None in the OSS library |
-| Positioning | Independent project; CLI + local bilingual (EN/中文) web workspace | Microsoft (AutoGen team); widest ecosystem/plugin adoption | IBM Research origin, now governed by the LF AI & Data Foundation; enterprise RAG building block | Firecrawl open-source; dependency-free, millisecond-scale, 14 formats, Node/Python/WASM bindings |
+Contributors start at [CONTRIBUTING.md](https://github.com/Ynewtime/markitai/blob/main/CONTRIBUTING.md).
 
-Each optimizes for a different job: anydoc for dependency-free speed, docling for ML-driven document structure in RAG pipelines, markitdown for ecosystem reach — markitai trades those for a built-in LLM pipeline, live web fetching, and a local UI. Two of them are also dependencies rather than only alternatives: markitdown converts the Office formats, and anydoc handles legacy `.doc`/`.ppt` behind `markitai[legacy]`.
+## How markitai compares
+
+Two of the tools markitai is usually compared with are also its dependencies:
+markitdown converts the Office formats, and anydoc handles legacy `.doc`/`.ppt`
+behind `markitai[legacy]`. Against them and docling, markitai trades ecosystem
+reach, ML document-structure models and dependency-free speed for a built-in
+LLM pipeline, live web fetching and a local workspace. The feature-by-feature
+table is in [Why Markitai](https://markitai.dev/guide/comparison).
 
 ## License
 
 markitai's own source code is [MIT](https://github.com/Ynewtime/markitai/blob/main/LICENSE).
 
 The default installation is not uniformly MIT, because the PDF engine is not.
-The PyMuPDF packages `pymupdf`, `pymupdf-layout`, and `pymupdf4llm` come from
-Artifex Software and are
-dual-licensed under **AGPL-3.0 or a commercial licence from Artifex**. They are
-core dependencies — PDF conversion does not work without them.
+The PyMuPDF packages `pymupdf`, `pymupdf-layout` and `pymupdf4llm` come from
+Artifex Software and are dual-licensed under **AGPL-3.0 or a commercial licence
+from Artifex**. They are core dependencies — PDF conversion does not work
+without them. Running the CLI on your own machine, or a `markitai serve`
+instance only you talk to, carries no AGPL obligation; redistributing the
+combined work or offering it to other people over a network does.
 
-For local use — running the CLI on your own machine, or a `markitai serve`
-instance only you talk to — this changes nothing. AGPL obligations attach when
-you *redistribute* the combined work or offer it to other people over a network:
-in that case AGPL-3.0 asks you to make the corresponding source available on the
-same terms, or to buy a [commercial licence from Artifex](https://artifex.com/licensing/)
-instead.
-
-Everything else in the default install is MIT, Apache-2.0, BSD, or MIT-CMU. CI
-enforces this: `scripts/check_licenses.py` fails the build on any
-non-commercial or proprietary dependency, and on any AGPL/GPL package outside an
-explicit allowlist.
-
-Full details, plus attribution for the code markitai ports from
-[defuddle](https://github.com/kepano/defuddle) (MIT) and
-[marker](https://github.com/VikParuchuri/marker) (Apache-2.0), are in
-[NOTICE](https://github.com/Ynewtime/markitai/blob/main/NOTICE).
+[NOTICE](https://github.com/Ynewtime/markitai/blob/main/NOTICE) carries the
+full terms, the rest of the dependency licensing, and the attribution for the
+code markitai ports from [defuddle](https://github.com/kepano/defuddle) (MIT)
+and [marker](https://github.com/VikParuchuri/marker) (Apache-2.0).

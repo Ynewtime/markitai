@@ -51,34 +51,15 @@ Not tracked (markitai-original, no upstream counterpart): `dom.py`,
 `github_thread`, `hackernews_thread`, `reddit_post`, `steam_news`,
 `youtube_page`, `registry`, `base`).
 
-## Known gaps vs upstream 0.19.3 (audited 2026-08-25)
+## Known divergences
 
-The corpus is synced to release 0.19.3
-(`a332b4d5d539066ddfe19fc4ef6f1b6ffaf914b8`) and all 208 fixtures pass the
-parity quality tests. The 6 porting gaps found by the first resync attempt
-(aria-hidden overlay articles, CodeMirror code blocks, mid-article image
-rows, Substack note permalinks, SVG external-CSS fallbacks, inline
-related-stories blocks) are ported, as are the SVG CSS-variable /
-`light-dark()` / Tailwind color resolution passes, noscript lazy-image
-resolution, lightbox image dedup, line-number gutter handling, and
-LaTeX-image-service conversion the full-corpus benchmark surfaced.
-Remaining known gaps:
+Passing the parity quality tests does not mean byte-identical Markdown. Two
+differences are intentional:
 
-- Fixtures for sites where markitai has its own richer extractors
-  (Reddit, Hacker News) intentionally diverge from defuddle's expected
-  output; they score low in the benchmark but are held by its per-fixture
-  guardrail floors, not by parity.
+- Sites markitai has its own richer extractor for (Reddit, Hacker News) diverge
+  from defuddle's expected output. Those fixtures score low in the benchmark
+  and are held by its per-fixture guardrail floors, not by parity.
+- Upstream accepts HTML on stdin; markitai takes files and URLs.
 
-## Local source comparison (2026-09-13)
-
-A build-and-run comparison against defuddle
-`a0984a817518565cedd0f89423c85cfff9e8ba45` found additional behavior gaps despite
-the passing quality floors: collapsed Obsidian callouts, hidden-content retry
-selection, arbitrary Tailwind variants, and Hacker News comment permalinks.
-These are now covered by focused regressions. The corpus pin above is unchanged;
-passing quality tests does not mean byte-identical Markdown or complete parity.
-
-The audit also adopted a dedicated known-HTML conversion path and cheap selector
-checks before subtree protection scans. Reproducible comparison scripts live in
-`scripts/benchmarks/`. Remaining differences include CLI startup cost, unsupported
-stdin HTML input, and intentional Markdown differences in richer extractors.
+Dated audit records — which gaps were found when, and what was ported in
+response — are in `process/defuddle-port-audits.md`.
