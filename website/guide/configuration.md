@@ -40,7 +40,10 @@ Secrets are redacted in `config list`, including nested API keys, tokens, cookie
 
 ### Full Configuration Example
 
-Every setting with its default value:
+Every setting with the value it takes when nothing sets it. The defaults come
+from the models in
+[`config.py`](https://github.com/Ynewtime/markitai/blob/main/packages/markitai/src/markitai/config.py);
+`markitai config list` prints the effective values for your own installation.
 
 :::: details markitai.json with all defaults
 
@@ -48,19 +51,13 @@ Every setting with its default value:
 {
   "llm": {
     "enabled": false,
-    "model_list": [
-      {
-        "model_name": "default",
-        "litellm_params": {
-          "model": "gemini/gemini-flash-lite-latest",
-          "api_key": "env:GEMINI_API_KEY"
-        }
-      }
-    ],
+    "model_list": [],
+    "providers": [],
     "router_settings": {
       "routing_strategy": "simple-shuffle",
       "num_retries": 2,
-      "timeout": 120
+      "timeout": 120,
+      "fallbacks": []
     },
     "concurrency": 10,
     "max_requests_per_document": 50,
@@ -101,6 +98,7 @@ Every setting with its default value:
     "viewport_width": 1920,
     "viewport_height": 1080,
     "quality": 75,
+    "tile_height": 2000,
     "max_height": 10000
   },
   "cache": {
@@ -167,13 +165,15 @@ Every setting with its default value:
       "inherit_no_proxy": true
     },
     "domain_profiles": {},
-    "fallback_patterns": ["x.com", "twitter.com", "instagram.com", "facebook.com", "linkedin.com", "threads.net"]
+    "fallback_patterns": ["twitter.com", "x.com", "instagram.com", "facebook.com", "linkedin.com", "threads.net"]
   },
   "output": {
     "dir": null,
     "on_conflict": "rename",
     "allow_symlinks": false,
-    "report": null
+    "report": null,
+    "profile": null,
+    "wikilinks": false
   },
   "log": {
     "level": "INFO",
@@ -188,6 +188,7 @@ Every setting with its default value:
   "history": {
     "record": false
   },
+  "presets": {},
   "prompts": {
     "dir": "~/.markitai/prompts"
   }
@@ -195,6 +196,8 @@ Every setting with its default value:
 ```
 
 ::::
+
+`llm.model_list` starts empty: with no entry, markitai resolves a model from `MODEL` or from whichever provider API key it finds in the environment. `markitai init` writes an entry for the provider it detects, and the web workspace's settings dialog fills `llm.providers` with the connections it stores.
 
 Any string value can reference an environment variable with `env:VAR_NAME`. `JINA_API_KEY`, `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are picked up from the environment even without a config entry.
 

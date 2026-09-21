@@ -40,7 +40,9 @@ markitai config validate
 
 ### 完整配置示例
 
-每个设置及其默认值：
+每个设置在没有任何配置时取的值。默认值来自
+[`config.py`](https://github.com/Ynewtime/markitai/blob/main/packages/markitai/src/markitai/config.py)
+中的模型定义；`markitai config list` 会打印你这台机器上的实际生效值。
 
 :::: details 含全部默认值的 markitai.json
 
@@ -48,19 +50,13 @@ markitai config validate
 {
   "llm": {
     "enabled": false,
-    "model_list": [
-      {
-        "model_name": "default",
-        "litellm_params": {
-          "model": "gemini/gemini-flash-lite-latest",
-          "api_key": "env:GEMINI_API_KEY"
-        }
-      }
-    ],
+    "model_list": [],
+    "providers": [],
     "router_settings": {
       "routing_strategy": "simple-shuffle",
       "num_retries": 2,
-      "timeout": 120
+      "timeout": 120,
+      "fallbacks": []
     },
     "concurrency": 10,
     "max_requests_per_document": 50,
@@ -101,6 +97,7 @@ markitai config validate
     "viewport_width": 1920,
     "viewport_height": 1080,
     "quality": 75,
+    "tile_height": 2000,
     "max_height": 10000
   },
   "cache": {
@@ -167,13 +164,15 @@ markitai config validate
       "inherit_no_proxy": true
     },
     "domain_profiles": {},
-    "fallback_patterns": ["x.com", "twitter.com", "instagram.com", "facebook.com", "linkedin.com", "threads.net"]
+    "fallback_patterns": ["twitter.com", "x.com", "instagram.com", "facebook.com", "linkedin.com", "threads.net"]
   },
   "output": {
     "dir": null,
     "on_conflict": "rename",
     "allow_symlinks": false,
-    "report": null
+    "report": null,
+    "profile": null,
+    "wikilinks": false
   },
   "log": {
     "level": "INFO",
@@ -188,6 +187,7 @@ markitai config validate
   "history": {
     "record": false
   },
+  "presets": {},
   "prompts": {
     "dir": "~/.markitai/prompts"
   }
@@ -195,6 +195,8 @@ markitai config validate
 ```
 
 ::::
+
+`llm.model_list` 默认为空：没有条目时，markitai 会从 `MODEL` 或环境里找到的提供商 API 密钥解析出模型。`markitai init` 会为检测到的提供商写入一条，网页工作台的设置对话框则把它保存的连接写进 `llm.providers`。
 
 任何字符串值都可以用 `env:VAR_NAME` 引用环境变量。`JINA_API_KEY`、`CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID` 不写进配置也会从环境里自动读取。
 

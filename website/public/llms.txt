@@ -23,6 +23,7 @@ License: markitai's own source code is MIT. The default install is not uniformly
 - [Configuration](https://markitai.dev/guide/configuration): Config file and env vars, LLM providers, image/screenshot/OCR/office settings, cache, security
 - [Fetch Policy](https://markitai.dev/guide/fetch-policy): URL fetch strategy cascade (static/Playwright/Defuddle/Jina/Cloudflare), domain profiles, remote-fetch consent
 - [Web Workspace](https://markitai.dev/guide/serve): `markitai serve` local UI, job history, REST + SSE API
+- [Conversion Performance](https://markitai.dev/guide/performance): what keeps a run cheap, the dated speedup audit and its measurement conditions, diagnosing a slow run
 - [Changelog](https://markitai.dev/changelog): Release history
 
 ## 中文文档
@@ -36,6 +37,7 @@ License: markitai's own source code is MIT. The default install is not uniformly
 - [配置说明](https://markitai.dev/zh/guide/configuration): 配置文件与环境变量、LLM 提供商、缓存、安全设置
 - [抓取策略](https://markitai.dev/zh/guide/fetch-policy): URL 抓取策略级联、域名配置、远程抓取同意
 - [网页工作台](https://markitai.dev/zh/guide/serve): `markitai serve` 本地界面、历史记录、REST + SSE API
+- [转换性能](https://markitai.dev/zh/guide/performance): 降低单次转换开销的做法、带日期的提速审计与测量条件、慢速转换排查
 - [更新日志](https://markitai.dev/zh/changelog): 发布历史
 
 ## Optional

@@ -14,6 +14,8 @@ uv run pre-commit install --hook-type pre-push   # pyright + tests on push
 
 This is a uv workspace: the published package lives in `packages/markitai`,
 the docs site in `website/` (VitePress + bun), install scripts in `scripts/`.
+Dated audit and experiment records — the evidence the docs cite, rather than
+documentation of current behavior — live in [`process/`](process/README.md).
 
 ## Everyday commands
 
@@ -94,8 +96,8 @@ parity corpus in `tests/defuddle_fixtures/` from a local clone of the upstream
 `tests/fixtures/*.html` and `tests/expected/*.md` and records the source commit
 in `VERSION`. Run it only when deliberately refreshing the corpus against a
 newer defuddle; both the parity tests and the quality benchmark read these
-fixtures, so a resync can shift scores. The corpus was last synced 2026-03-23
-(see `tests/defuddle_fixtures/VERSION`). The script also rewrites the pin in
+fixtures, so a resync can shift scores. `tests/defuddle_fixtures/VERSION`
+records the commit and date of the last sync. The script also rewrites the pin in
 `src/markitai/webextract/PORT_MANIFEST.md` (the upstream→port module map);
 a unit test keeps the two pins equal, and the weekly
 `.github/workflows/defuddle-watch.yml` opens an issue when upstream cuts a
@@ -123,13 +125,11 @@ covers the scoring math offline.
 
 `packages/markitai/benchmarks/llm_ab_eval.py` measures what markitai's LLM
 enhancement (`llm=True` / `--llm`) actually buys: a blind, position-debiased
-A/B judge compares base vs. enhanced conversions of the same documents (see
-the module docstring for the full methodology — position-swap x2 debiasing,
-per-format aggregation, jsonl resume/checkpointing, and an optional Batches
-API path at 50% of list price on OpenAI and Anthropic). It costs real money
-once you supply `--judge-model` with live credentials — run `--dry-run`
-first for a cost estimate; nothing in this repository ever calls a real
-judge model:
+A/B judge compares base vs. enhanced conversions of the same documents. The
+module docstring carries the methodology — debiasing, aggregation,
+checkpointing and the optional Batches API path. It costs real money once you
+supply `--judge-model` with live credentials, so run `--dry-run` first for a
+cost estimate; nothing in this repository ever calls a real judge model:
 
 ```bash
 uv run python packages/markitai/benchmarks/llm_ab_eval.py \
@@ -157,7 +157,8 @@ auto-generated release PR — you cut a release only when you intend to.
    at build time. Also bump the workspace `version` in the root
    `pyproject.toml` (unpublished, but shell prompts like starship read it).
 2. Add a `## [X.Y.Z] - YYYY-MM-DD` section to `CHANGELOG.md` (this becomes the
-   GitHub Release notes verbatim).
+   GitHub Release notes verbatim) and mirror it in `CHANGELOG.zh.md`. The docs
+   build copies both files in, so the website publishes whatever you write.
 3. Commit and push to `main` (e.g. `chore(release): v X.Y.Z`).
 4. Tag and push:
 
@@ -170,8 +171,16 @@ test suite, builds the package, verifies the tag matches `__version__` (fails
 loudly if you forgot to bump), publishes to PyPI via trusted publishing, and
 creates the GitHub Release with the matching `CHANGELOG.md` section as notes.
 
+Once PyPI shows the new version, publish the MCP Registry entry: bump `version`
+in both places in the root `server.json`, then `mcp-publisher validate`,
+`login github` and `publish`. The registry reads that exact version's README
+from PyPI and looks for the `mcp-name:` marker in it.
+
 To re-publish an existing tag (e.g. after a transient failure), run the
 **Release** workflow manually from the Actions tab with the tag as input.
-Commit-type discipline no longer affects releases, but keep using
+Commit type does not affect what gets released, but keep using
 [Conventional Commits](https://www.conventionalcommits.org/) — they keep the
 history readable and make writing the changelog easier.
+
+`skills/markitai-release/SKILL.md` carries the full checklist, including the
+preflight gates and the end-to-end release check.

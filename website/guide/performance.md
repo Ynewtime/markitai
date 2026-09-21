@@ -1,19 +1,17 @@
 # Conversion performance
 
-Complete short articles and CJK prose can finish through local static extraction
-without an unnecessary browser launch. Public URLs behind Fake-IP proxies can
-use an explicitly selected remote reader after the public DNS checks described
-in [Fetch Policy](./fetch-policy).
+Two things keep a typical run cheap. URL extraction is local-first: short
+articles and CJK prose usually finish in the static strategy without starting a
+browser — the [Fetch Policy](./fetch-policy) guide has the full cascade, and the
+public-DNS check that gates remote readers behind a Fake-IP proxy. Local file
+conversion loads only the backend a format needs, with dedicated paths for plain
+Office documents and compatible fallback readers for rich content, equations and
+ambiguous spreadsheet values.
 
-Local file conversion loads the backend it needs. Plain Office documents take
-dedicated paths; rich content, equations and ambiguous spreadsheet values retain
-compatible fallback readers. Images, metadata, error handling and configured
-adapters remain part of the output contract. PDF model settings are unchanged.
+## Recorded results (14 September 2026)
 
-## Recorded results
-
-A September 2026 audit on macOS with Python 3.12 measured approximately **6.01×**
-composite speedup against a frozen pre-optimization source snapshot:
+An audit on macOS with Python 3.12.14 measured a **6.01×** composite speedup
+against a frozen pre-optimization source snapshot:
 
 | Equally weighted workload | Speedup |
 | --- | ---: |
@@ -21,23 +19,29 @@ composite speedup against a frozen pre-optimization source snapshot:
 | DOCX, XLSX, PPTX and PDF cold CLI runs | 5.61× |
 | 30-file TXT/HTML/DOCX batch | 6.64× |
 
-The metric is the geometric mean of the three groups, with three fresh-process
-runs per case. These are local conversion results with model enrichment and
-remote fetching disabled. Internet delays, remote cache hits, LLM responses,
-OCR and arbitrary document sizes can produce different results.
+The composite is the geometric mean of the three groups, over 49 fixed cases
+with three fresh processes each, and with model enrichment, remote fetching and
+the cache all off. The same audit compared output rather than only speed: 40
+converter and API snapshots, 23 complex table cases and 208 web fixtures came
+out identical.
 
-The audit compares full output and assets, not speed alone: 40 converter/API
-snapshots, 23 additional complex table cases and 208 web fixtures were checked.
-The broader test suite also covers rich DOCX fallbacks and runtime adapters.
+Conditions and scope: these are cold CLI aggregates, not a figure for one
+particular document or machine. URL timings run over loopback HTTP, so they
+exclude internet latency and any remote service's cache. The frozen baseline
+already contained the Fake-IP and CJK fixes, so it is not a comparison against a
+released version.
 
-For reproducible commands and quality gates, see the repository's
+The full record — baseline identity, per-case speedups and the measurement's own
+limitations — is
+[`scripts/benchmarks/results/2026-09-14.json`](https://github.com/Ynewtime/markitai/blob/main/scripts/benchmarks/results/2026-09-14.json).
+Commands for reproducing it are in the
 [benchmark guide](https://github.com/Ynewtime/markitai/blob/main/scripts/benchmarks/README.md).
 
 ## Understanding a slow run
 
-Use `-v` to inspect the selected strategy and fallback reasons. `--no-cache`
-turns off Markitai's cache; it cannot disable a remote service's cache. Comparing
-an already-running remote reader to a new local CLI process therefore measures
-different work. Use `--preset minimal --no-remote-fetch` when measuring local
-conversion alone. Keep your normal enhancement and OCR options when measuring
-the complete workflow you actually use.
+`-v` prints the selected strategy and the reason for each fallback. `--no-cache`
+turns off markitai's own cache and cannot reach a remote service's, so timing an
+already-warm remote reader against a fresh local CLI process compares different
+work. Measure local conversion alone with `--preset minimal --no-remote-fetch`;
+measure the workflow you actually run with your usual enhancement and OCR
+options left on.

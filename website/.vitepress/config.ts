@@ -8,9 +8,10 @@ const OG_IMAGE_ALT =
 
 /**
  * Per-page descriptions. VitePress publishes `frontmatter.description` as the
- * meta description; without this map every page inherited the one site-wide
- * description, which made 18 pages indistinguishable in search results and
- * social previews.
+ * meta description; without an entry here a page inherits the one site-wide
+ * description, which makes it indistinguishable from every other page in
+ * search results and social previews. A page missing from this map also gets
+ * no hreflang alternates, so add both locales together.
  */
 const PAGE_DESCRIPTIONS: Record<string, string> = {
   '/': 'Convert documents, images and web pages to clean Markdown with one command. LLM enhancement stays optional.',
@@ -48,6 +49,10 @@ const PAGE_DESCRIPTIONS: Record<string, string> = {
     'Run the bundled markitai MCP server so AI agents can convert documents and URLs to Markdown over stdio.',
   '/zh/guide/mcp':
     '运行随包发布的 markitai MCP 服务器，让 AI Agent 通过 stdio 把文档与 URL 转换为 Markdown。',
+  '/guide/performance':
+    'What markitai does to keep a conversion cheap, the recorded speedup audit and its conditions, and how to diagnose a slow run.',
+  '/zh/guide/performance':
+    'markitai 如何降低单次转换的开销、提速审计的实测结果与测量条件，以及慢速转换的排查方法。',
   '/guide/fetch-policy':
     'How markitai fetches URLs: the static, Playwright, Defuddle, Jina and Cloudflare strategy cascade, domain profiles and remote-fetch consent.',
   '/zh/guide/fetch-policy':

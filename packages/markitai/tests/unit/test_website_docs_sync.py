@@ -523,14 +523,22 @@ def _comparison_table(text: str) -> list[str]:
     return rows
 
 
-def test_readme_and_site_publish_the_same_comparison_table() -> None:
-    """The same table lives on GitHub and on the site; drift misleads one of them."""
-    readme = _comparison_table(_README.read_text(encoding="utf-8"))
+def test_the_comparison_table_lives_only_on_the_site() -> None:
+    """One table, one page. The README links to it instead of copying it.
+
+    The table was published twice — README and comparison page — and kept in
+    step by hand. A copy on the landing page is the one that goes stale
+    unnoticed, so the README carries the positioning paragraph and a link.
+    """
+    readme = _README.read_text(encoding="utf-8")
     site = _comparison_table((_EN_GUIDE / "comparison.md").read_text(encoding="utf-8"))
-    assert len(readme) >= 2, "README.md lost its markitai-vs-others comparison table"
-    assert readme == site, (
-        "README.md and website/guide/comparison.md publish different comparison "
-        "tables; update both from one source"
+    assert len(site) >= 2, "website/guide/comparison.md lost its comparison table"
+    assert not _comparison_table(readme), (
+        "README.md copies the comparison table again; keep it on "
+        "website/guide/comparison.md and link there"
+    )
+    assert "/guide/comparison" in readme, (
+        "README.md no longer points readers at the comparison page"
     )
     zh_site = _comparison_table(
         (_ZH_GUIDE / "comparison.md").read_text(encoding="utf-8")

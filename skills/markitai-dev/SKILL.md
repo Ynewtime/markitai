@@ -20,7 +20,7 @@ uv run pre-commit install --hook-type pre-push    # pyright + tests on push
 ```bash
 uv run pytest -q                                 # default selection: parallel, excludes slow/network
 uv run ruff check && uv run ruff format          # lint + format (rules: E,W,F,I,B,C4,UP,ARG,SIM)
-uv run pyright                                   # src + tests, 0 errors required
+uv run pyright packages/markitai/src packages/markitai/tests   # 0 errors required, same scope as CI
 uv run lint-imports                              # architecture layering contracts, 0 broken required
 uv run bandit -c pyproject.toml -r packages/markitai/src -q   # security lint
 ```
