@@ -396,20 +396,9 @@ class TestChatGPTAuthCLI:
 class TestAuthOverview:
     """Tests for the bare `markitai auth` all-providers overview."""
 
-    def test_bare_auth_shows_all_providers_overview(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_bare_auth_shows_all_providers_overview(self, tmp_path: Path) -> None:
         """`markitai auth` renders a glyph overview of all four providers."""
         runner = CliRunner()
-        for var in (
-            "GH_TOKEN",
-            "GITHUB_TOKEN",
-            "CLAUDE_CODE_USE_BEDROCK",
-            "CLAUDE_CODE_USE_VERTEX",
-            "CLAUDE_CODE_USE_FOUNDRY",
-        ):
-            monkeypatch.delenv(var, raising=False)
-
         with (
             patch("pathlib.Path.home", return_value=tmp_path),
             patch(
@@ -467,13 +456,10 @@ class TestStatusCardUnified:
         assert "Logged in: user@example.com (max plan)" in result.output
 
     def test_copilot_status_failure_points_at_markitai_login(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path
     ) -> None:
         """Copilot failure card ends with the markitai login command."""
         runner = CliRunner()
-        monkeypatch.delenv("GH_TOKEN", raising=False)
-        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
-
         with patch("pathlib.Path.home", return_value=tmp_path):
             result = runner.invoke(app, ["auth", "copilot", "status"])
 
