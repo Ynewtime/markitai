@@ -318,6 +318,15 @@ class TestCheckSymlinkSafety:
         sys.platform == "win32",
         reason="Symlink creation requires admin privileges on Windows",
     )
+    @pytest.mark.skipif(
+        getattr(os, "geteuid", lambda: -1)() == 0,
+        reason=(
+            "running as root, every symlink this test plants is root-owned, "
+            "and _is_system_symlink deliberately waves those through as OS "
+            "artifacts — the unprivileged-attacker path this guards cannot be "
+            "constructed here"
+        ),
+    )
     def test_file_through_symlink_dir_blocked(self, tmp_path: Path) -> None:
         """Regression: writing through a symlinked parent dir is blocked.
 

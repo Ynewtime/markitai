@@ -91,12 +91,26 @@ def _isolate_user_config_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # Scrub any keys the module-level load_dotenv already placed in os.environ.
     # The provider map is the source of truth; the rest are read directly by
     # provider code that is not in it.
+    #
+    # The subscription providers take credentials from the environment ahead of
+    # their config file, so an ambient token short-circuits every config-file
+    # test into the env branch: `GH_TOKEN` or `GITHUB_TOKEN` is set on any
+    # machine with the gh CLI configured, and in CI. A test that exercises the
+    # env branch sets the variable itself, after this fixture.
     from markitai.constants import PROVIDER_API_KEY_ENV
 
     for key in {
         *PROVIDER_API_KEY_ENV.values(),
         "MISTRAL_API_KEY",
         "CLOUDFLARE_API_TOKEN",
+        # Copilot: `copilot login --help`'s own precedence order.
+        "COPILOT_GITHUB_TOKEN",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        # Claude Code: cloud-backend selectors, checked before the CLI's state.
+        "CLAUDE_CODE_USE_BEDROCK",
+        "CLAUDE_CODE_USE_VERTEX",
+        "CLAUDE_CODE_USE_FOUNDRY",
     }:
         monkeypatch.delenv(key, raising=False)
 
