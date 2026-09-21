@@ -112,8 +112,8 @@ import markitai
 from llama_index.core import SimpleDirectoryReader
 
 out = markitai.convert("report.pdf", output_dir="corpus/", profile="rag")
-print(out.frontmatter["title"])       # 可直接当元数据
-print([p.name for p in out.assets])   # 图片现在在 corpus/assets/ 下
+print(out.frontmatter["title"])  # 可直接当元数据
+print([p.name for p in out.assets])  # 图片现在在 corpus/assets/ 下
 
 # 读取器能看到全部文件：markdown、图片、images.json
 documents = SimpleDirectoryReader("corpus/").load_data()

@@ -112,8 +112,8 @@ import markitai
 from llama_index.core import SimpleDirectoryReader
 
 out = markitai.convert("report.pdf", output_dir="corpus/", profile="rag")
-print(out.frontmatter["title"])       # ready as metadata
-print([p.name for p in out.assets])   # images now under corpus/assets/
+print(out.frontmatter["title"])  # ready as metadata
+print([p.name for p in out.assets])  # images now under corpus/assets/
 
 # The reader sees every file: markdown, images, images.json
 documents = SimpleDirectoryReader("corpus/").load_data()
