@@ -132,7 +132,7 @@ Contributors start at [CONTRIBUTING.md](https://github.com/Ynewtime/markitai/blo
 
 ## How markitai compares
 
-Two of the tools markitai is usually compared with are also its dependencies:
+Two of the tools markitai is compared with are also its dependencies:
 markitdown converts the Office formats, and anydoc handles legacy `.doc`/`.ppt`
 behind `markitai[legacy]`. Against them and docling, markitai trades ecosystem
 reach, ML document-structure models and dependency-free speed for a built-in

@@ -31,9 +31,8 @@ time, peak RSS, loaded dependencies and content hashes.
 equally weighted groups — five loopback HTTP pages, four Office/PDF formats, and
 a batch of 30 TXT/HTML/DOCX files — and reports the score against the 10×
 research target it was set up to test. Loopback transport excludes internet
-latency and remote service caching. The weights, the target and the input set
-are what make one run comparable to another; changing any of them produces a
-different measurement, which needs its own record rather than a rewritten one.
+latency and remote service caching. Changing the weights, the target or the
+input set produces a different measurement, and needs its own record.
 
 `audit_quality.py` compares 40 converter and API snapshots, covering Markdown,
 metadata, image bytes and dimensions, frontmatter and output assets. Only the
@@ -41,10 +40,10 @@ clock, the output directory and explicit engine-provenance transitions are
 normalized. Missing quality evidence, or changed outputs, fails the scoring
 gate.
 
-Recorded runs live in [`results/`](results), one dated file each, with the
-baseline identity and that run's own limitations:
-[`2026-09-14.json`](results/2026-09-14.json) is the latest. Its headline figure
-is published in the [performance guide](https://markitai.dev/guide/performance).
+Recorded runs are in [`results/`](results), one dated file each with its
+baseline identity and limitations. The latest,
+[`2026-09-14.json`](results/2026-09-14.json), is the source for the
+[performance guide](https://markitai.dev/guide/performance).
 
 ## Defuddle and scaling
 
@@ -60,11 +59,9 @@ acceptance and browser-fallback decisions. Inspect the non-timing fields as well
 as speed. `compare_cli.py` covers file/URL/stdin behavior; `audit_title_scaling.py`
 and `audit_spreadsheet_scaling.py` exercise large documents; `excel_fixtures.py`
 supplies the shared workbook edge cases `tests/unit/test_xlsx_plain_tables.py`
-also loads. Run any of them with `--help` for arguments.
-
-Backends that were prototyped here and not adopted are recorded in
-[`process/rejected-backends.md`](../../process/rejected-backends.md), so they
-do not get re-proposed.
+also loads. Run any of them with `--help` for arguments. Backends prototyped
+here and not adopted are in
+[`process/rejected-backends.md`](../../process/rejected-backends.md).
 
 ## Release end-to-end validation
 

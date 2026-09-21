@@ -40,10 +40,9 @@ Secrets are redacted in `config list`, including nested API keys, tokens, cookie
 
 ### Full Configuration Example
 
-Every setting with the value it takes when nothing sets it. The defaults come
-from the models in
-[`config.py`](https://github.com/Ynewtime/markitai/blob/main/packages/markitai/src/markitai/config.py);
-`markitai config list` prints the effective values for your own installation.
+Every setting with the value it takes when nothing sets it, from the models in
+[`config.py`](https://github.com/Ynewtime/markitai/blob/main/packages/markitai/src/markitai/config.py).
+`markitai config list` prints your own effective values.
 
 :::: details markitai.json with all defaults
 
@@ -197,9 +196,9 @@ from the models in
 
 ::::
 
-`llm.model_list` starts empty. With no entry and `--llm`, markitai picks a model itself: `MODEL` first, then a signed-in subscription CLI (Claude Code, Copilot, ChatGPT), then a provider API key in the environment — `detect_all_providers` in [`cli/providers_detect.py`](https://github.com/Ynewtime/markitai/blob/main/packages/markitai/src/markitai/cli/providers_detect.py) holds that order, and [Defaults markitai picks for you](#defaults-markitai-picks-for-you) lists the model each one yields. With none of them it logs that no model is configured and names the two ways to set one, rather than choosing on your behalf.
+`llm.model_list` starts empty. With `--llm` and no entry, markitai picks one itself — `MODEL`, then a signed-in CLI (Claude Code, Copilot, ChatGPT), then a provider API key; with none of them the run reports that no model is configured. [Defaults markitai picks for you](#defaults-markitai-picks-for-you) lists what each yields.
 
-`markitai init` writes an entry for the provider it detects, and the web workspace's settings dialog fills `llm.providers` with the connections it stores.
+`markitai init` writes an entry for the provider it detects; the web workspace's settings dialog fills `llm.providers`.
 
 Any string value can reference an environment variable with `env:VAR_NAME`. `JINA_API_KEY`, `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are picked up from the environment even without a config entry.
 

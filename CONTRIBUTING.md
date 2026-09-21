@@ -14,8 +14,7 @@ uv run pre-commit install --hook-type pre-push   # pyright + tests on push
 
 This is a uv workspace: the published package lives in `packages/markitai`,
 the docs site in `website/` (VitePress + bun), install scripts in `scripts/`.
-Dated audit and experiment records — the evidence the docs cite, rather than
-documentation of current behavior — live in [`process/`](process/README.md).
+Dated audit and experiment records live in [`process/`](process/README.md).
 
 ## Everyday commands
 
