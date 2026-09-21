@@ -1,12 +1,10 @@
 # Conversion performance
 
-Two things keep a typical run cheap. URL extraction is local-first: short
-articles and CJK prose usually finish in the static strategy without starting a
-browser — the [Fetch Policy](./fetch-policy) guide has the full cascade, and the
-public-DNS check that gates remote readers behind a Fake-IP proxy. Local file
-conversion loads only the backend a format needs, with dedicated paths for plain
-Office documents and compatible fallback readers for rich content, equations and
-ambiguous spreadsheet values.
+URL extraction is local-first: short articles and CJK prose usually finish in
+the static strategy without starting a browser. Local file conversion loads only
+the backend a format needs, with dedicated paths for plain Office documents and
+fallback readers for rich content, equations and ambiguous spreadsheet values.
+The [Fetch Policy](./fetch-policy) guide has the full strategy cascade.
 
 ## Recorded results (14 September 2026)
 
@@ -21,21 +19,18 @@ against a frozen pre-optimization source snapshot:
 
 The composite is the geometric mean of the three groups, over 49 fixed cases
 with three fresh processes each, and with model enrichment, remote fetching and
-the cache all off. The same audit compared output rather than only speed: 40
-converter and API snapshots, 23 complex table cases and 208 web fixtures came
-out identical.
+the cache all off. The audit also compared output: 40 converter and API
+snapshots, 23 complex table cases and 208 web fixtures came out identical.
 
-Conditions and scope: these are cold CLI aggregates, not a figure for one
-particular document or machine. URL timings run over loopback HTTP, so they
-exclude internet latency and any remote service's cache. The frozen baseline
-already contained the Fake-IP and CJK fixes, so it is not a comparison against a
-released version.
+These are cold CLI aggregates, not a figure for one document or machine. URL
+timings run over loopback HTTP, excluding internet latency and any remote
+service's cache. The frozen baseline already contained the Fake-IP and CJK
+fixes, so it is not a comparison against a released version.
 
-The full record — baseline identity, per-case speedups and the measurement's own
-limitations — is
-[`scripts/benchmarks/results/2026-09-14.json`](https://github.com/Ynewtime/markitai/blob/main/scripts/benchmarks/results/2026-09-14.json).
-Commands for reproducing it are in the
-[benchmark guide](https://github.com/Ynewtime/markitai/blob/main/scripts/benchmarks/README.md).
+[`2026-09-14.json`](https://github.com/Ynewtime/markitai/blob/main/scripts/benchmarks/results/2026-09-14.json)
+holds the full record; the
+[benchmark guide](https://github.com/Ynewtime/markitai/blob/main/scripts/benchmarks/README.md)
+has the commands to reproduce it.
 
 ## Understanding a slow run
 

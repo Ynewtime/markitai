@@ -40,9 +40,9 @@ markitai config validate
 
 ### 完整配置示例
 
-每个设置在没有任何配置时取的值。默认值来自
+每个设置在没有任何配置时取的值，来自
 [`config.py`](https://github.com/Ynewtime/markitai/blob/main/packages/markitai/src/markitai/config.py)
-中的模型定义；`markitai config list` 会打印你这台机器上的实际生效值。
+中的模型定义。`markitai config list` 打印你这台机器上的实际生效值。
 
 :::: details 含全部默认值的 markitai.json
 
@@ -196,9 +196,9 @@ markitai config validate
 
 ::::
 
-`llm.model_list` 默认为空。没有条目又用了 `--llm` 时，markitai 会自己挑一个模型：先看 `MODEL`，再看已登录的订阅制 CLI（Claude Code、Copilot、ChatGPT），最后看环境里的提供商 API 密钥——这个顺序由 [`cli/providers_detect.py`](https://github.com/Ynewtime/markitai/blob/main/packages/markitai/src/markitai/cli/providers_detect.py) 里的 `detect_all_providers` 决定，各自对应的模型见[markitai 自动选用的默认模型](#markitai-自动选用的默认模型)。三者都没有时，它会记录「未配置模型」并说明设置它的两种方式，而不是替你选一个。
+`llm.model_list` 默认为空。用了 `--llm` 又没有条目时，markitai 会自己挑一个——先 `MODEL`，再是已登录的 CLI（Claude Code、Copilot、ChatGPT），最后是提供商 API 密钥；三者都没有则报告未配置模型。各自对应的模型见[markitai 自动选用的默认模型](#markitai-自动选用的默认模型)。
 
-`markitai init` 会为检测到的提供商写入一条，网页工作台的设置对话框则把它保存的连接写进 `llm.providers`。
+`markitai init` 会为检测到的提供商写入一条；网页工作台的设置对话框写入 `llm.providers`。
 
 任何字符串值都可以用 `env:VAR_NAME` 引用环境变量。`JINA_API_KEY`、`CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID` 不写进配置也会从环境里自动读取。
 
