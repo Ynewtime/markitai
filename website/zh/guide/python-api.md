@@ -22,7 +22,7 @@ print(out.markdown)
 # 写入目录，同时保留抽取的图片
 out = markitai.convert("report.pdf", output_dir="out/")
 print(out.output_path)  # out/report.pdf.md
-print(out.assets)       # 图片在 out/.markitai/assets/ 下
+print(out.assets)  # 图片在 out/.markitai/assets/ 下
 
 # URL 用法相同
 out = markitai.convert("https://example.com/article")
@@ -43,9 +43,9 @@ import markitai
 os.environ["MODEL"] = "openai/gpt-5.6-luna"  # 或配置 llm.model_list
 
 out = markitai.convert("report.pdf", output_dir="out/", llm=True)
-print(out.llm_markdown)          # 增强后的正文
+print(out.llm_markdown)  # 增强后的正文
 print(out.frontmatter["title"])  # 解析后的 YAML frontmatter
-print(out.usage.cost_usd)        # 这次转换的 LLM 花费
+print(out.usage.cost_usd)  # 这次转换的 LLM 花费
 ```
 
 模型的解析方式和 CLI 一样：先看[配置](/zh/guide/configuration)里的 `llm.model_list`，再看环境变量 `MODEL`。默认加载和 CLI 相同的配置文件。要完全自己控制，传一个 `markitai.MarkitaiConfig`：
@@ -53,8 +53,8 @@ print(out.usage.cost_usd)        # 这次转换的 LLM 花费
 ```python
 from markitai import MarkitaiConfig
 
-cfg = MarkitaiConfig()   # 纯默认值，忽略配置文件
-cfg.llm.pure = True      # 只做 LLM 清洗，不生成 frontmatter
+cfg = MarkitaiConfig()  # 纯默认值，忽略配置文件
+cfg.llm.pure = True  # 只做 LLM 清洗，不生成 frontmatter
 out = markitai.convert("notes.docx", config=cfg, llm=True)
 ```
 

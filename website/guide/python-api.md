@@ -22,7 +22,7 @@ print(out.markdown)
 # Write outputs and extracted images to a directory
 out = markitai.convert("report.pdf", output_dir="out/")
 print(out.output_path)  # out/report.pdf.md
-print(out.assets)       # images under out/.markitai/assets/
+print(out.assets)  # images under out/.markitai/assets/
 
 # URLs work the same way
 out = markitai.convert("https://example.com/article")
@@ -43,9 +43,9 @@ import markitai
 os.environ["MODEL"] = "openai/gpt-5.6-luna"  # or configure llm.model_list
 
 out = markitai.convert("report.pdf", output_dir="out/", llm=True)
-print(out.llm_markdown)          # enhanced body
+print(out.llm_markdown)  # enhanced body
 print(out.frontmatter["title"])  # parsed YAML frontmatter
-print(out.usage.cost_usd)        # LLM spend for this conversion
+print(out.usage.cost_usd)  # LLM spend for this conversion
 ```
 
 Models resolve as in the CLI: `llm.model_list` from your [configuration](/guide/configuration) first, then the `MODEL` environment variable. By default the same config files as the CLI are loaded. Pass a `markitai.MarkitaiConfig` for full control:
@@ -53,8 +53,8 @@ Models resolve as in the CLI: `llm.model_list` from your [configuration](/guide/
 ```python
 from markitai import MarkitaiConfig
 
-cfg = MarkitaiConfig()   # pure defaults, ignores config files
-cfg.llm.pure = True      # raw LLM cleanup, no frontmatter
+cfg = MarkitaiConfig()  # pure defaults, ignores config files
+cfg.llm.pure = True  # raw LLM cleanup, no frontmatter
 out = markitai.convert("notes.docx", config=cfg, llm=True)
 ```
 
