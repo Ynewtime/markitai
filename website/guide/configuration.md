@@ -197,7 +197,9 @@ from the models in
 
 ::::
 
-`llm.model_list` starts empty: with no entry, markitai resolves a model from `MODEL` or from whichever provider API key it finds in the environment. `markitai init` writes an entry for the provider it detects, and the web workspace's settings dialog fills `llm.providers` with the connections it stores.
+`llm.model_list` starts empty. With no entry and `--llm`, markitai picks a model itself: `MODEL` first, then a signed-in subscription CLI (Claude Code, Copilot, ChatGPT), then a provider API key in the environment — `detect_all_providers` in [`cli/providers_detect.py`](https://github.com/Ynewtime/markitai/blob/main/packages/markitai/src/markitai/cli/providers_detect.py) holds that order, and [Defaults markitai picks for you](#defaults-markitai-picks-for-you) lists the model each one yields. With none of them it logs that no model is configured and names the two ways to set one, rather than choosing on your behalf.
+
+`markitai init` writes an entry for the provider it detects, and the web workspace's settings dialog fills `llm.providers` with the connections it stores.
 
 Any string value can reference an environment variable with `env:VAR_NAME`. `JINA_API_KEY`, `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are picked up from the environment even without a config entry.
 
