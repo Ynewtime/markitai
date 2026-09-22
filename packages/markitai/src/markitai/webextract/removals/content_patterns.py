@@ -211,6 +211,24 @@ def _walk_up_to_wrapper(el: Tag, text: str, main_content: Tag) -> Tag:
     return target
 
 
+def _is_labeled_metadata(el: Tag, main_content: Tag) -> bool:
+    """Whether ``el`` sits inside a short labeled row ("Date: ...").
+
+    A date inside a labeled row belongs to that row, even when only the
+    label's sibling span holds the date. Stripping the value alone leaves
+    an orphaned label, so the row is left for the row-level rules.
+    """
+    current: Tag | None = el
+    while isinstance(current, Tag) and current is not main_content:
+        text = _text(current)
+        if count_words(text) > 15:
+            break
+        if _METADATA_LABEL_RE.match(text):
+            return True
+        current = current.parent if isinstance(current.parent, Tag) else None
+    return False
+
+
 def _remove_trailing_siblings(element: Tag, remove_self: bool) -> int:
     removed = 0
     sibling = _next_tag_sibling(element)
@@ -630,6 +648,8 @@ def _remove_metadata_candidates(
 
         tag = el.name
         has_date = _DATE_RE.search(text) is not None
+        if has_date and _is_labeled_metadata(el, root):
+            continue
 
         # Timezone widgets (e.g. NYT live blogs): label is a child of a
         # container that also holds timezone entries.

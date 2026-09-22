@@ -8,7 +8,8 @@ string level is intentional: they need to run before the parser sees the HTML
 so that the parser receives clean, normalised markup.
 
 Phases (in order):
-1. Declarative Shadow DOM flattening — ``<template shadowrootmode="open">``
+1. Declarative Shadow DOM flattening — ``<template shadowrootmode>``
+   (open or closed, legacy ``shadowroot``, nested)
 2. ``<wbr>`` removal — word-break hints that pollute extracted text
 3. Streamed / incomplete HTML normalisation — nothing to do yet; handled by
    tolerant parsers, but the hook is here for future use
@@ -23,19 +24,28 @@ import re
 # Phase 1: Declarative Shadow DOM flattening
 # ---------------------------------------------------------------------------
 
-# Matches <template shadowrootmode="...">...</template> (case-insensitive attr value)
+# Innermost <template shadowrootmode="open|closed"> (or the legacy
+# ``shadowroot`` attribute): the body contains no further <template> start
+# tag, so nested roots resolve inside-out across iterations.
 _SHADOW_TEMPLATE_RE = re.compile(
-    r'<template\s[^>]*shadowrootmode\s*=\s*["\']open["\'][^>]*>(.*?)</template>',
+    r"<template\s[^>]*\bshadowroot(?:mode)?\s*=\s*[\"']?(?:open|closed)[\"']?"
+    r"[^>]*>((?:(?!<template\b).)*?)</template>",
     re.IGNORECASE | re.DOTALL,
 )
 
+# Hoisting can expose nested templates; bound the traversal depth.
+_SHADOW_MAX_DEPTH = 10
+
 
 def _flatten_declarative_shadow_dom(html: str) -> str:
-    """Replace ``<template shadowrootmode="open">`` with its inner content.
+    """Replace declarative shadow-root templates with their inner content.
 
     Declarative Shadow DOM is invisible to static parsers because it lives
-    inside a ``<template>`` element.  By replacing the wrapper with its
-    content we make the text visible to downstream extraction.
+    inside a ``<template>`` element. Browsers attach it as a shadow root;
+    server-side DOMs leave it inert. Replacing the wrapper with its content
+    makes the text visible to downstream extraction. Both ``open`` and
+    ``closed`` roots are hoisted (the content is in the markup either way),
+    innermost first so nested roots unwrap too.
 
     Args:
         html: Raw HTML string.
@@ -43,7 +53,11 @@ def _flatten_declarative_shadow_dom(html: str) -> str:
     Returns:
         HTML with declarative shadow roots flattened.
     """
-    return _SHADOW_TEMPLATE_RE.sub(r"\1", html)
+    for _ in range(_SHADOW_MAX_DEPTH):
+        html, count = _SHADOW_TEMPLATE_RE.subn(r"\1", html)
+        if not count:
+            break
+    return html
 
 
 # ---------------------------------------------------------------------------

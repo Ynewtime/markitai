@@ -5,6 +5,13 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，
 版本号遵循[语义化版本](https://semver.org/spec/v2.0.0.html)规范。
 
+## [未发布]
+
+### 变更
+
+- defuddle 对照语料同步至上游 0.19.4，并移植其提取改动：代码块围栏按内容中的反引号串自动加长而不再转义；`<sub>`/`<sup>` 保留为内联 HTML 并紧贴前后文（`2021<sub>5ya</sub>` 不再被压成 `20215ya`）；邮件式 `Date:` 等带标签行中的日期随标签一起保留；arXiv 隐藏的重复脚注标记被移除；`closed`、旧式 `shadowroot` 属性及嵌套的声明式 Shadow DOM 都能被提取。
+- 网页提取结果中移除惰性 `<template>` 片段和 SVG SMIL 动画元素。
+
 ## [1.1.0] - 2026-09-14
 
 - **综合提速约 6 倍**：网页 URL **5.8×**、Office/PDF **5.6×**、批处理 **6.6×**。基于三类等权本地基准，不含 LLM、OCR 及公网时延。
