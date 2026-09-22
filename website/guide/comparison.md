@@ -4,7 +4,7 @@ pageClass: compact-tables
 
 # Why Markitai
 
-There is no single best converter — each of the tools below optimizes for a different job. This page states what markitai does, where another tool is the better choice, and why, without star counts or download numbers that go stale.
+There is no single best converter — each of the tools below optimizes for a different job. This page states what markitai does, where another tool is the better choice, and why.
 
 | | **markitai** | markitdown | docling | anydoc |
 | --- | --- | --- | --- | --- |
