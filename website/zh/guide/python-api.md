@@ -3,7 +3,7 @@
 把 markitai 当库用。`markitai.convert()` 和它的异步版本 `markitai.aconvert()` 跑的是和 CLI 一样的管线，包括 LLM 增强，并返回类型化的结果。
 
 ::: warning API 稳定性
-Python API 目前是临时接口：函数签名和结果字段在小版本里仍可能变化。CLI 才是稳定接口。依赖某个库细节时，请固定精确版本。
+Python API 目前还没定型：函数签名和结果字段在小版本里仍可能变化。CLI 才是稳定接口。依赖某个库细节时，请固定精确版本。
 :::
 
 ```bash

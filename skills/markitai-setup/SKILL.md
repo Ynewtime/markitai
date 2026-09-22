@@ -5,7 +5,7 @@ description: "Install, configure, and heal a markitai (mkai) installation. Use w
 
 # Set up and heal markitai
 
-Target state: `markitai doctor` exits 0 and shows ✓ on every capability the user's workflow needs. Missing optional tools that the workflow doesn't use are warnings, not failures — stop when the needed rows are green, not when every row is.
+Target state: `markitai doctor` exits 0 and shows ✓ on every capability the user's workflow needs. Missing optional tools the workflow doesn't use count as warnings rather than failures. Stop once the rows you need are green; the rest can stay as they are.
 
 ## Workflow
 
@@ -15,9 +15,9 @@ Target state: `markitai doctor` exits 0 and shows ✓ on every capability the us
    uv tool install markitai        # isolated tool env (recommended); pipx install markitai also works
    ```
 
-   Humans setting up interactively can instead use the guided installer, which handles Python/uv, extras, optional components, and mirrors: `curl -fsSL https://markitai.dev/setup.sh | sh` (Windows: `irm https://markitai.dev/setup.ps1 | iex`). Requires Python 3.11–3.13. Both `markitai` and the `mkai` alias are installed.
+   Humans setting up interactively can instead use the guided installer, which handles Python/uv, extras, optional components, and mirrors: `curl -fsSL https://markitai.dev/setup.sh | sh` (Windows: `irm https://markitai.dev/setup.ps1 | iex`). markitai needs Python 3.11–3.13. The install gives you both `markitai` and the `mkai` alias.
 
-2. **Add extras only when the workflow needs them** — reinstall with the extra spelled into the requirement:
+2. **Add extras only when the workflow needs them**, by reinstalling with the extra spelled into the requirement:
 
    | Extra | Unlocks | Install (uv tool) |
    |---|---|---|
@@ -35,20 +35,20 @@ Target state: `markitai doctor` exits 0 and shows ✓ on every capability the us
 
 3. **Create config**: `markitai init` (interactive wizard: detects providers, checks dependencies) or `markitai init --yes` for defaults without prompts; `--local` writes `./markitai.json` instead of `~/.markitai/config.json`.
 
-4. **Run the doctor loop** until the needed rows are green — run `markitai doctor`, fix the first failing line, re-run:
-   - **Playwright/Chromium missing**: `markitai doctor --fix` installs Chromium when the Playwright package is present; with a core-only install it exits safely and names the extra to add first (step 2, `browser`). Every doctor run smoke-tests a real Chromium launch, so a green result is trustworthy. Linux launch failures name the `playwright install-deps chromium` recovery.
-   - **LibreOffice missing** (PPTX slide rendering; Windows and macOS convert through a local MS Office first, so it is mostly Linux installs that need it): `sudo apt-get install libreoffice` / `brew install --cask libreoffice`. On macOS without LibreOffice, installed MS Office is driven via AppleScript instead — first conversion triggers a one-time consent dialog per app; headless machines should set `{"office": {"macos_fallback": false}}`.
+4. **Run the doctor loop** until the needed rows are green. Run `markitai doctor`, fix the first failing line, run it again:
+   - **Playwright/Chromium missing**: `markitai doctor --fix` installs Chromium when the Playwright package is present; with a core-only install it exits safely and names the extra to add first (step 2, `browser`). Every doctor run smoke-tests a real Chromium launch, so you can trust a green result. Linux launch failures name the `playwright install-deps chromium` recovery.
+   - **LibreOffice missing** (PPTX slide rendering; Windows and macOS convert through a local MS Office first, so it is mostly Linux installs that need it): `sudo apt-get install libreoffice` / `brew install --cask libreoffice`. On macOS without LibreOffice, markitai drives installed MS Office through AppleScript instead; the first conversion triggers a one-time consent dialog per app, so headless machines should set `{"office": {"macos_fallback": false}}`.
    - **LLM/auth rows failing**: wire a provider (step 5).
    - `--json` gives a machine-readable snapshot (mutually exclusive with `--fix`).
 
 5. **Wire an LLM provider** (needed for `--llm`, `--alt`, `--desc`, presets `rich`/`standard`). Two routes:
-   - **API key**: setting the provider env var (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`) is enough on its own — markitai detects the key and picks that provider's default model, no config file required. Pin one model with `MODEL=provider/model` (e.g. `gemini/gemini-flash-lite-latest`), or write it into `llm.model_list` when the run needs several models or per-model settings; reference keys there as `"api_key": "env:GEMINI_API_KEY"`.
+   - **API key**: setting the provider env var (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`) is enough on its own: markitai detects the key and picks that provider's default model, no config file required. Pin one model with `MODEL=provider/model` (e.g. `gemini/gemini-flash-lite-latest`), or write it into `llm.model_list` when the run needs several models or per-model settings; reference keys there as `"api_key": "env:GEMINI_API_KEY"`.
    - **Subscription (no API key)**: `claude-agent/sonnet` (Claude Code CLI login), `copilot/gpt-5.6` (Copilot CLI login), `chatgpt/gpt-5.6` (OAuth on first use). Check and repair auth with `markitai auth` (overview) and `markitai auth copilot|claude|chatgpt status|login`.
    - Model lists, `api_base`/Azure/Ollama examples, vision requirements, and provider error table: [references/providers.md](references/providers.md).
 
-6. **Verify end-to-end** — the setup is done only when both hold:
+6. **Verify end-to-end.** The setup is done only when both hold:
    - `markitai doctor` exits 0 with the workflow's rows green.
-   - A real conversion succeeds: `markitai https://example.com --pure` (plain), plus `markitai <sample> --llm` if LLM was configured.
+   - A real conversion succeeds: `markitai https://example.com --pure` (plain), plus `markitai <sample> --llm` if you configured an LLM.
 
 ## Quick diagnosis table
 
@@ -61,6 +61,6 @@ Target state: `markitai doctor` exits 0 and shows ✓ on every capability the us
 | Rate limit / timeout on `--llm` | retry later or lower `--llm-concurrency`; timeouts adapt to document size |
 | Secrets needed for URL strategies | `JINA_API_KEY`; `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` (token permissions: Browser Rendering Edit, Workers AI Read) |
 
-Config debugging: `markitai config list|get|set` redact secrets, including nested HTTP headers (`--show-secrets` explicitly reveals them). `markitai config path` explains precedence; `markitai config validate` exits 1 for invalid config. Resolution order: CLI args > env vars > config file (`--config` > `MARKITAI_CONFIG` > `./markitai.json` > `~/.markitai/config.json`) > defaults. `.env` files load from `./.env` then `~/.markitai/.env`.
+Config debugging: `markitai config list|get|set` redact secrets, including nested HTTP headers (`--show-secrets` reveals them). `markitai config path` explains precedence; `markitai config validate` exits 1 for invalid config. Resolution order: CLI args > env vars > config file (`--config` > `MARKITAI_CONFIG` > `./markitai.json` > `~/.markitai/config.json`) > defaults. `.env` files load from `./.env` then `~/.markitai/.env`.
 
-For `markitai serve`, open the printed `/#token=…` URL on remote devices. Loopback requests are trusted; remote requests need the token unless `--no-auth` is set. The latter restricts URL targets to public addresses and denies access to LLM settings, but still permits file uploads and history access, downloads and deletion. For MCP, omitting `llm` inherits server configuration; pass `llm: false` to disable enhancement for that call. `profile` and batch `concurrency` are supported; inspect each result's `markdown_file` under its isolated batch/item directory.
+For `markitai serve`, open the printed `/#token=…` URL on remote devices. Loopback requests are trusted; remote requests need the token unless `--no-auth` is set. The latter restricts URL targets to public addresses and denies access to LLM settings, but still permits file uploads and history access, downloads and deletion. For MCP, omitting `llm` inherits server configuration; pass `llm: false` to disable enhancement for that call. The tools also accept `profile` and batch `concurrency`; inspect each result's `markdown_file` under its isolated batch/item directory.

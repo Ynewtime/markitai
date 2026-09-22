@@ -6,9 +6,9 @@ Read this when a URL conversion fails, returns junk (login wall, CAPTCHA, empty 
 
 - Standard domains: `static → playwright → defuddle → jina → cloudflare`. Static's native extractor matches remote Defuddle quality on the benchmark corpus and never sends the URL off-machine, so it goes first.
 - Known JS-heavy domains (`x.com`, `instagram.com`, other `fallback_patterns` entries, and domains learned into the SPA cache): `playwright → defuddle → jina → cloudflare → static`.
-- Each result is quality-validated (too-short content, login walls, Geetest/Cloudflare/reCAPTCHA/hCaptcha challenge pages) before being accepted; a failed check falls through to the next strategy.
+- Every result goes through a quality check (too-short content, login walls, Geetest/Cloudflare/reCAPTCHA/hCaptcha challenge pages) before markitai accepts it; a failed check falls through to the next strategy.
 - When static fetch succeeds but the page signals JS-required rendering, the domain enters the SPA cache for 30 days and future runs skip straight to the browser. Inspect or reset with `markitai cache spa-domains [--clear]`.
-- An explicit `-s <strategy>` uses only that strategy — except explicit `-s defuddle`/`-s jina`/`-s cloudflare`, which fall back to the full `auto` chain if the remote service refuses (rate limit, auth).
+- An explicit `-s <strategy>` uses only that strategy. The exceptions are explicit `-s defuddle`/`-s jina`/`-s cloudflare`, which fall back to the full `auto` chain if the remote service refuses (rate limit, auth).
 
 ## Privacy rules
 
@@ -22,8 +22,8 @@ Read this when a URL conversion fails, returns junk (login wall, CAPTCHA, empty 
 
 ## Failure recovery, in order
 
-1. **Empty/partial content on a JS-heavy site** → `-s playwright`. Ensure Chromium is ready via `markitai doctor --fix` (needs the `browser` extra).
-2. **403 or bot-blocked on static fetch, browser undesired** → install `extra-fetch` extra, set `MARKITAI_STATIC_HTTP=curl_cffi`.
+1. **Empty/partial content on a JS-heavy site** → `-s playwright`. Get Chromium ready with `markitai doctor --fix` (needs the `browser` extra).
+2. **403 or bot-blocked on static fetch, and you'd rather not use a browser** → install `extra-fetch` extra, set `MARKITAI_STATIC_HTTP=curl_cffi`.
 3. **Site needs time or a specific element** → domain profile with `wait_for_selector` / `extra_wait_ms` (below).
 4. **Local strategies exhausted** → let `auto` fall through to Defuddle/Jina/Cloudflare, or force one with `-s defuddle` / `-s jina` / `-s cloudflare` (credentials: `JINA_API_KEY`; `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`).
 5. **Everything extracts garbage but the page renders** → `--llm --screenshot-only`: the LLM reads full-page screenshots instead of the DOM.
@@ -51,6 +51,6 @@ Read this when a URL conversion fails, returns junk (login wall, CAPTCHA, empty 
 | `skip_auto_scroll` | Skip auto-scroll on single-content pages (tweets, issues) |
 | `reject_resource_patterns` | Block matching resource URLs during Playwright navigation |
 
-Built-in profiles exist for `x.com`/`twitter.com` and `github.com`. Defining your own profile for one of these domains **replaces the built-in entirely** — repeat any built-in tuning you still want.
+Built-in profiles exist for `x.com`/`twitter.com` and `github.com`. Defining your own profile for one of these domains **replaces the built-in entirely**, so repeat any built-in tuning you still want.
 
 Global knobs: `fetch.policy.strategy_priority` (custom global order), `fetch.policy.max_strategy_hops` (default 5), `fetch.playwright.session_mode: "domain_persistent"` + `session_ttl_seconds` to reuse browser state across requests to one site.

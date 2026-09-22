@@ -22,15 +22,15 @@
 
 <StrategyChain mode="spa" />
 
-X/Twitter 默认保持 `playwright → defuddle → jina → cloudflare → static`。Playwright 策略对已允许远程提取的匿名推文/文章先尝试 FxTwitter，再尝试 oEmbed，成功便无需启动 Chromium。配置 Cookie、自定义请求头、凭据、持久会话、请求截图，或网络提取失败时，仍走浏览器。`playwright(fxtwitter)` / `playwright(oembed)` 标明实际来源；成功时不需要请求 defuddle。
+X/Twitter 默认保持 `playwright → defuddle → jina → cloudflare → static`。Playwright 策略对已允许远程提取的匿名推文/文章先尝试 FxTwitter，再尝试 oEmbed，成功便无需启动 Chromium。配置了 Cookie、自定义请求头、凭据或持久会话，要截图，或者网络提取失败时，markitai 仍会打开浏览器。`playwright(fxtwitter)` 或 `playwright(oembed)` 这个标记说明内容实际从哪来；补充成功后不再请求 defuddle。
 
-浏览器导航遇到 HTTP 错误不一定抛出异常。Markitai 会跳过此时的元素等待和稳定等待，立即尝试 X 的补充提取。补充成功标记为 `playwright(fxtwitter)` 或 `playwright(oembed)`，不表示浏览器渲染出了推文；补充失败或禁用时报告 HTTP 错误，`auto` 继续下一策略。
+浏览器导航遇到 HTTP 错误不一定抛出异常。遇到 HTTP 错误时，markitai 跳过元素等待和稳定等待，立即尝试 X 的补充提取。补充成功标记为 `playwright(fxtwitter)` 或 `playwright(oembed)`，这时浏览器并没有渲染出推文。补充失败或被关掉时，markitai 报告 HTTP 错误，`auto` 换下一个策略。
 
 ### 远程后备与仅限本地的 URL {#remote-fallback-and-local-only-urls}
 
-默认（`fetch.remote_consent: always`）下，公开 URL 可能发给 Defuddle、Jina 或 Cloudflare。首次使用时，markitai 在 stderr 显示一行简短提示，并在 `~/.markitai/notices/remote-fetch` 记录已展示状态，后续运行不再重复；VLM OCR 的同类提示也按此规则处理。记录仅表示提示已展示，不代表用户授权：`remote_consent: ask` 仍按进程询问。可能使用的服务包括 defuddle.md、Jina、Cloudflare、FxTwitter 和 Twitter oEmbed。服务是逐个尝试的，URL 只会发给当前正在尝试的那一个。
+默认（`fetch.remote_consent: always`）下，markitai 可能把公开 URL 发给 Defuddle、Jina 或 Cloudflare。首次使用时它在 stderr 显示一行简短提示，并在 `~/.markitai/notices/remote-fetch` 记下已展示，后续运行不再重复；VLM OCR 的同类提示也按此规则处理。这条记录只说明提示展示过，不代表用户授权：`remote_consent: ask` 仍按进程询问。涉及的服务有 defuddle.md、Jina、Cloudflare、FxTwitter 和 Twitter oEmbed。markitai 逐个尝试，URL 只会发给当前正在尝试的那一个。
 
-X/Twitter 的 Playwright 策略可能调用 FxTwitter 和 Twitter oEmbed。它们和其他远程服务遵循同一个进程级的同意决定：在 `ask` 下可以触发那一次共享的询问，复用之前的回答，无法询问时则跳过。
+X/Twitter 的 Playwright 策略可能调用 FxTwitter 和 Twitter oEmbed。它们和其他远程服务遵循同一个进程级的同意决定：在 `ask` 下可以触发那一次共享的询问或复用之前的回答，无法询问的运行则跳过它们。
 
 下面这些 URL 无论选什么策略都不出本机：
 
@@ -48,9 +48,9 @@ X/Twitter 的 Playwright 策略可能调用 FxTwitter 和 Twitter oEmbed。它�
 | 私有、内网或带凭据的 URL | 永远本地 | **不能** |
 | `MARKITAI_NO_REMOTE_FETCH=1` | 硬性只走本地 | **不能** |
 
-只在配置文件里设了远程 `fetch.strategy` 不算显式选择。它仍受 `remote_consent` 管，也会打同样的首次提示。
+只在配置文件里设了远程 `fetch.strategy` 不算显式选择：它仍受 `remote_consent` 管，也会打同样的首次提示。
 
-Clash 等代理返回 `198.18.0.0/15` 或 `2001:2::/48` 中的 Fake-IP 地址时，远程抽取会通过 [Cloudflare DNS over HTTPS](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json/) 复核域名的公网 A 和 AAAA 记录。复核只在允许远程访问后进行，DNS 仅收到域名，不含 URL 路径和查询参数。复核失败或解析结果含非公网地址时仍会拦截。直接填写非公网 IP，以及本机连接检查（包括未认证的 `serve` 请求），不会因此放行。
+Clash 等代理返回 `198.18.0.0/15` 或 `2001:2::/48` 中的 Fake-IP 地址时，远程抽取会通过 [Cloudflare DNS over HTTPS](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json/) 复核域名的公网 A 和 AAAA 记录。复核只在允许远程访问后进行，DNS 只看到域名，看不到 URL 路径和查询参数。复核失败或解析结果含非公网地址时照样拦截。直接写非公网 IP 的 URL，以及本机连接检查（包括未认证的 `serve` 请求），不管复核结果如何都不放行。
 
 ## 配置
 
@@ -102,7 +102,7 @@ Clash 等代理返回 `198.18.0.0/15` 或 `2001:2::/48` 中的 Fake-IP 地址时
 | `skip_auto_scroll` | boolean | `false` | 单内容页面（推文、issue、文档）跳过自动滚动 |
 | `reject_resource_patterns` | list | `null` | 拦截匹配这些 URL 模式的浏览器请求，如 `["**/analytics/**"]` |
 
-markitai 内置了 `x.com`、`twitter.com` 和 `github.com` 的配置。只有你显式设置的字段才会覆盖内置浏览器调优；仅修改策略或额外等待时间会保留其他设置。设置 `skip_auto_scroll: false` 可恢复滚动，`reject_resource_patterns: []` 可清空资源过滤，将可空浏览器字段设为 `null` 则继承对应的全局设置。
+markitai 内置了 `x.com`、`twitter.com` 和 `github.com` 的配置。只有你写了的字段才会覆盖内置浏览器调优；改了策略或额外等待时间，其余设置照旧。设置 `skip_auto_scroll: false` 可恢复滚动，`reject_resource_patterns: []` 可清空资源过滤，将可空浏览器字段设为 `null` 则继承对应的全局设置。
 
 ```json
 {
@@ -138,7 +138,7 @@ export MARKITAI_STATIC_HTTP=curl_cffi
 
 ## 工作原理
 
-策略逐个尝试，最多 `max_strategy_hops` 次。第一个通过校验的结果即为最终结果。
+markitai 逐个尝试策略，最多 `max_strategy_hops` 次。第一个通过校验的结果就是最终结果，运行到此结束。
 
 ### 结果校验
 
@@ -146,4 +146,4 @@ export MARKITAI_STATIC_HTTP=curl_cffi
 
 ### SPA 学习
 
-静态抓取成功但页面说需要 JavaScript 时，该域名会被记入 SPA 缓存 30 天，之后的请求直接上浏览器。只有这个信号会写入缓存，验证码、登录墙和网络错误都不会。用 `markitai cache spa-domains` 查看或清除。
+静态抓取成功但页面说需要 JavaScript 时，markitai 把该域名记入 SPA 缓存 30 天，之后的请求直接上浏览器。只有这个信号会写入缓存，验证码、登录墙和网络错误都不会。用 `markitai cache spa-domains` 查看或清除。
