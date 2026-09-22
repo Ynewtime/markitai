@@ -30,13 +30,13 @@ Authoritative long-form docs: <https://markitai.dev/guide/cli>. This file keeps 
 | `-j, --batch-concurrency <n>` | Concurrent file tasks (default 10) |
 | `--url-concurrency <n>` | Concurrent URL fetches (default 5), separate so slow URLs don't block files |
 | `--llm-concurrency <n>` | Concurrent LLM requests (default 10) |
-| `--llm-batch` | Directory batches only, using files converted by the current run: run the LLM stage through the provider's Batch API at half price. Needs a single-model OpenAI or Anthropic pool. Covers `--alt`/`--desc` and `--screenshot` (a document too long for one call is enhanced live); refuses `--ocr`, whose pages are read by local OCR rather than rendered while the batch's first phase runs with the LLM off. Waits up to `--llm-batch-timeout` (default 1h), then hands off |
+| `--llm-batch` | Directory batches only, using files converted by the current run: run the LLM stage through the provider's Batch API at half price. Needs a single-model OpenAI or Anthropic pool. Covers `--alt`/`--desc` and `--screenshot` (a document too long for one call gets enhanced live); refuses `--ocr`, because the batch's first phase runs with the LLM off, and local OCR would read those pages instead of rendering them. Waits up to `--llm-batch-timeout` (default 1h), then hands off |
 | `--llm-batch-collect <id>` | Finish a handed-off batch later; needs `-o` pointing at the original output directory, no input argument |
 | `--record-history` / `--no-record-history` | Record this run in `markitai serve`'s history (env `MARKITAI_RECORD_HISTORY`, config `history.record`); skipped in stdout mode |
 
 ## `.urls` list files
 
-A `.urls` input file is processed as a URL batch; directory batches also auto-discover `.urls` files in the scan tree and merge them. Three formats:
+markitai treats a `.urls` input file as a URL batch; directory batches also auto-discover `.urls` files in the scan tree and merge them. Three formats:
 
 ```
 # plain text: URL per line, optional output name after whitespace
@@ -52,16 +52,16 @@ https://example.com/page2 custom_name
 [{"url": "https://example1.com"}, {"url": "https://example2.com", "output_name": "custom"}]
 ```
 
-Partial success exits with status 10 (successful URLs are still written).
+Partial success exits with status 10 (the successful URLs still get written).
 
 ## URL strategy and file backend
 
 | Flag | Values |
 |---|---|
-| `-s, --strategy` | `auto` (default) `static` `playwright` `defuddle` `jina` `cloudflare` — URL fetching only |
-| `-b, --backend` | `native` (default) `cloudflare` — file conversion only; `-s` and `-b` combine freely |
+| `-s, --strategy` | `auto` (default) `static` `playwright` `defuddle` `jina` `cloudflare`; URL fetching only |
+| `-b, --backend` | `native` (default) `cloudflare`; file conversion only, and `-s` and `-b` combine freely |
 
-Credentials: `-s jina` needs `JINA_API_KEY`; `-s cloudflare` (and `-b cloudflare`) need `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`. The old `--playwright` / `--defuddle` / `--static` / `--jina` / `--cloudflare` / `--kreuzberg` aliases were removed in 1.0.0; passing one exits 2 with a message naming its `-s` / `-b` replacement (`--kreuzberg` has none: `.rtf` converts natively).
+Credentials: `-s jina` needs `JINA_API_KEY`; `-s cloudflare` (and `-b cloudflare`) need `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`. 1.0.0 removed the old `--playwright` / `--defuddle` / `--static` / `--jina` / `--cloudflare` / `--kreuzberg` aliases; passing one exits 2 with a message naming its `-s` / `-b` replacement (`--kreuzberg` has none: `.rtf` converts natively).
 
 Strategy ordering, per-domain tuning, SPA cache, and privacy rules: [url-fetching.md](url-fetching.md).
 
@@ -89,7 +89,7 @@ Config resolution order: CLI args > env vars > config file (`--config` > `MARKIT
 
 | Flag | Effect |
 |---|---|
-| `-q, --quiet` | Suppress progress; stdout Markdown payload of a single conversion is preserved |
+| `-q, --quiet` | Suppress progress; a single conversion's Markdown still goes to stdout |
 | `-v, --verbose` | Show conversion progress and diagnostic details on stderr |
 | `--log-level DEBUG\|INFO\|WARNING\|ERROR\|CRITICAL` | Override configured file logging; needs `log.dir`, independent of console verbosity |
 | `--no-remote-fetch` | Disable remote URL extraction, including explicit remote strategies; same as `MARKITAI_NO_REMOTE_FETCH=1` |
@@ -114,6 +114,6 @@ Config resolution order: CLI args > env vars > config file (`--config` > `MARKIT
 | Code | Meaning |
 |---|---|
 | 0 | Success |
-| 1 | Failure — including a single-image input with neither `--ocr` nor `--llm` |
+| 1 | Failure, including a single-image input with neither `--ocr` nor `--llm` |
 | 2 | Argument/usage error, or a Batch API job handed off for later collection |
 | 10 | Batch partial success |

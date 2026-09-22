@@ -22,15 +22,15 @@ Domains known to need JavaScript go straight to the browser: `instagram.com`, an
 
 <StrategyChain mode="spa" />
 
-X/Twitter keeps `playwright → defuddle → jina → cloudflare → static`. Within the Playwright strategy, anonymous status/article requests with remote use allowed try FxTwitter, then oEmbed, before launching Chromium. A rendered browser context is still used for cookies, custom headers, credentials, persistent sessions, screenshots, or when network extraction fails. `playwright(fxtwitter)` / `playwright(oembed)` identifies the actual content source; no defuddle request is needed when it succeeds.
+X/Twitter keeps `playwright → defuddle → jina → cloudflare → static`. Within the Playwright strategy, anonymous status/article requests with remote use allowed try FxTwitter, then oEmbed, before launching Chromium. markitai still opens a rendered browser context for cookies, custom headers, credentials, persistent sessions and screenshots, and whenever network extraction fails. The label `playwright(fxtwitter)` or `playwright(oembed)` names the actual content source; when it succeeds, no defuddle request follows.
 
-A browser navigation can return an HTTP error without raising an exception. Markitai skips element and stabilization waits on HTTP errors and tries the X enrichment fallback immediately. Successful enrichment is labeled `playwright(fxtwitter)` or `playwright(oembed)`; it does not mean the browser rendered the tweet. If enrichment fails or is disabled, the HTTP error is reported and `auto` tries its next strategy.
+A browser navigation can return an HTTP error without raising an exception. On an HTTP error markitai skips the element and stabilization waits and tries the X enrichment fallback at once. A successful enrichment carries the label `playwright(fxtwitter)` or `playwright(oembed)`; the browser did not render the tweet in that case. If enrichment fails or is off, markitai reports the HTTP error and `auto` moves to its next strategy.
 
 ### Remote Fallback and Local-only URLs
 
-By default (`fetch.remote_consent: always`) a public URL may be sent to Defuddle, Jina or Cloudflare. On first use, markitai prints one short line on stderr. It remembers that notice under `~/.markitai/notices/remote-fetch`, so subsequent runs stay quiet. VLM OCR uses the same once-per-user mechanism. These markers record only that a notice was shown; `remote_consent: ask` still asks for permission each process. The possible services are defuddle.md, Jina, Cloudflare, FxTwitter and Twitter oEmbed. Services are tried one at a time, so a URL only reaches the service currently being attempted.
+By default (`fetch.remote_consent: always`) markitai may send a public URL to Defuddle, Jina or Cloudflare. On first use it prints one short line on stderr and remembers that under `~/.markitai/notices/remote-fetch`, so later runs stay quiet. VLM OCR uses the same once-per-user mechanism. The marker records only that the notice appeared; `remote_consent: ask` still asks each process. The services in question are defuddle.md, Jina, Cloudflare, FxTwitter and Twitter oEmbed. markitai tries them one at a time, so a URL reaches only the service being tried at that moment.
 
-For X/Twitter posts, Playwright may also call FxTwitter and then Twitter oEmbed after local extraction fails. They follow the same process-wide consent decision as every other remote service: under `ask` they can raise the one shared prompt, reuse an earlier answer, and are skipped when the run cannot prompt.
+For X/Twitter posts, Playwright may also call FxTwitter and then Twitter oEmbed after local extraction fails. They follow the same process-wide consent decision as every other remote service: under `ask` they can raise the one shared prompt or reuse an earlier answer, and a run that cannot prompt skips them.
 
 These URLs never leave your machine, whatever strategy is selected:
 
@@ -48,9 +48,9 @@ In the `auto` chain, domains matched by `fetch.policy.local_only_patterns` and b
 | Private, intranet or credential-bearing URL | Always local | **No** |
 | `MARKITAI_NO_REMOTE_FETCH=1` | Hard local-only guarantee | **No** |
 
-A remote `fetch.strategy` set in the config file is not an explicit opt-in. It stays governed by `remote_consent` and prints the same first-use notice.
+Setting a remote `fetch.strategy` in the config file does not count as an explicit opt-in: `remote_consent` still governs it, and it prints the same first-use notice.
 
-When a proxy such as Clash returns Fake-IP addresses in `198.18.0.0/15` or `2001:2::/48`, remote extraction verifies the hostname's public A and AAAA records through [Cloudflare DNS over HTTPS](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json/). This happens only after remote consent; DNS receives the hostname, without the URL path or query. Failed verification or non-public answers still block remote extraction. Private IP literals and local connection checks, including unauthenticated `serve` requests, remain blocked regardless of this verification.
+When a proxy such as Clash returns Fake-IP addresses in `198.18.0.0/15` or `2001:2::/48`, remote extraction verifies the hostname's public A and AAAA records through [Cloudflare DNS over HTTPS](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json/). The check runs only after remote consent; DNS sees the hostname and nothing of the URL path or query. A failed check or a non-public answer still blocks remote extraction. Private IP literals and local connection checks, including unauthenticated `serve` requests, stay blocked whatever the check says.
 
 ## Configuration
 
@@ -102,7 +102,7 @@ Per-domain overrides:
 | `skip_auto_scroll` | boolean | `false` | Skip auto-scrolling on single-content pages (tweets, issues, docs) |
 | `reject_resource_patterns` | list | `null` | Block browser requests matching these URL patterns, e.g. `["**/analytics/**"]` |
 
-markitai ships built-in profiles for `x.com`, `twitter.com` and `github.com`. Only fields you explicitly set override the built-in browser tuning; changing the strategy or extra wait preserves the remaining settings. Set `skip_auto_scroll: false` to restore scrolling, `reject_resource_patterns: []` to clear resource filters, or a nullable browser field to `null` to inherit its global setting.
+markitai ships built-in profiles for `x.com`, `twitter.com` and `github.com`. Only the fields you set override the built-in browser tuning; change the strategy or the extra wait and the rest stays. Set `skip_auto_scroll: false` to restore scrolling, `reject_resource_patterns: []` to clear resource filters, or a nullable browser field to `null` to inherit its global setting.
 
 ```json
 {
@@ -138,7 +138,7 @@ If curl-cffi is not installed, markitai silently uses httpx.
 
 ## How It Works
 
-Strategies are attempted one at a time, up to `max_strategy_hops`. The first result that passes validation ends the run.
+markitai attempts strategies one at a time, up to `max_strategy_hops`. The first result that passes validation ends the run.
 
 ### Result validation
 
@@ -146,4 +146,4 @@ Empty or too-short content, login walls, and anti-bot or CAPTCHA pages (Geetest,
 
 ### SPA learning
 
-When a static fetch succeeds but the page says it needs JavaScript, the domain is added to the SPA cache for 30 days and later requests skip straight to the browser. Only that signal teaches the cache; CAPTCHAs, login walls and network errors do not. Inspect or clear it with `markitai cache spa-domains`.
+When a static fetch succeeds but the page says it needs JavaScript, markitai adds the domain to the SPA cache for 30 days, and later requests skip straight to the browser. Only that signal teaches the cache; CAPTCHAs, login walls and network errors do not. Inspect or clear it with `markitai cache spa-domains`.

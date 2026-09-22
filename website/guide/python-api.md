@@ -3,7 +3,7 @@
 Use markitai as a library. `markitai.convert()` and its async twin `markitai.aconvert()` run the same pipeline as the CLI, LLM enhancement included, and return a typed result.
 
 ::: warning API stability
-The Python API is provisional: signatures and result fields may still change in minor releases. The CLI is the stable interface. Pin an exact version if you depend on a library detail.
+Treat the Python API as provisional: signatures and result fields can still change in minor releases. The CLI is the stable interface. Pin an exact version if you depend on a library detail.
 :::
 
 ```bash
@@ -28,7 +28,7 @@ print(out.assets)  # images under out/.markitai/assets/
 out = markitai.convert("https://example.com/article")
 ```
 
-Without `output_dir` the conversion runs in a temporary directory that is deleted afterwards. You get the Markdown in memory, path fields are `None`, and image links keep their relative `.markitai/assets/...` form. Pass `output_dir` whenever you need the image files.
+Without `output_dir` the conversion runs in a temporary directory and deletes it afterwards. You get the Markdown in memory, path fields are `None`, and image links keep their relative `.markitai/assets/...` form. Pass `output_dir` whenever you need the image files.
 
 Library calls keep `stdout` clean. Diagnostics go through [loguru](https://github.com/Delgan/loguru) on stderr; silence them with `logger.disable("markitai")`.
 
@@ -48,7 +48,7 @@ print(out.frontmatter["title"])  # parsed YAML frontmatter
 print(out.usage.cost_usd)  # LLM spend for this conversion
 ```
 
-Models resolve as in the CLI: `llm.model_list` from your [configuration](/guide/configuration) first, then the `MODEL` environment variable. By default the same config files as the CLI are loaded. Pass a `markitai.MarkitaiConfig` for full control:
+Models resolve as in the CLI: `llm.model_list` from your [configuration](/guide/configuration) first, then the `MODEL` environment variable. By default it loads the same config files as the CLI. Pass a `markitai.MarkitaiConfig` for full control:
 
 ```python
 from markitai import MarkitaiConfig

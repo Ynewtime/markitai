@@ -36,12 +36,12 @@ markitai config edit                  # guided menu
 markitai config validate
 ```
 
-Secrets are redacted in `config list`, including nested API keys, tokens, cookies and custom headers. `--show-secrets` reveals them; keep that output on your machine.
+`config list` redacts secrets, including nested API keys, tokens, cookies and custom headers. `--show-secrets` prints them; keep that output on your machine.
 
 ### Full Configuration Example
 
-Every setting with the value it takes when nothing sets it, from the models in
-[`config.py`](https://github.com/Ynewtime/markitai/blob/main/packages/markitai/src/markitai/config.py).
+Every setting, with the value it takes when nothing sets it. The values come straight from the models in
+[`config.py`](https://github.com/Ynewtime/markitai/blob/main/packages/markitai/src/markitai/config.py);
 `markitai config list` prints your own effective values.
 
 :::: details markitai.json with all defaults
@@ -196,11 +196,11 @@ Every setting with the value it takes when nothing sets it, from the models in
 
 ::::
 
-`llm.model_list` starts empty. With `--llm` and no entry, markitai picks one itself — `MODEL`, then a signed-in CLI (Claude Code, Copilot, ChatGPT), then a provider API key; with none of them the run reports that no model is configured. [Defaults markitai picks for you](#defaults-markitai-picks-for-you) lists what each yields.
+`llm.model_list` starts empty. With `--llm` and no entry, markitai picks one itself: `MODEL`, then a signed-in CLI (Claude Code, Copilot, ChatGPT), then a provider API key. With none of them the run reports that no model is configured. [Defaults markitai picks for you](#defaults-markitai-picks-for-you) lists what each yields.
 
 `markitai init` writes an entry for the provider it detects; the web workspace's settings dialog fills `llm.providers`.
 
-Any string value can reference an environment variable with `env:VAR_NAME`. `JINA_API_KEY`, `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are picked up from the environment even without a config entry.
+Any string value can reference an environment variable with `env:VAR_NAME`. markitai also reads `JINA_API_KEY`, `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` from the environment without any config entry.
 
 ## Environment Variables
 
@@ -221,7 +221,7 @@ Any string value can reference an environment variable with `env:VAR_NAME`. `JIN
 
 | Variable | Description |
 |----------|-------------|
-| `MODEL` | The model to use when no `model_list` is configured |
+| `MODEL` | Model to use when `model_list` is not set |
 | `MARKITAI_CONFIG` | Path to the config file |
 | `MARKITAI_LOG_DIR` | Directory for log files |
 | `MARKITAI_LOG_FORMAT` | `text` or `json` |
@@ -254,13 +254,13 @@ Three subscription providers sign in through their own CLI or OAuth instead:
 | GitHub Copilot | `copilot/` | `markitai auth copilot login` | `markitai[copilot]` |
 | ChatGPT | `chatgpt/` | OAuth device code on first use | — |
 
-The Claude Code and Copilot CLIs must be installed first: `curl -fsSL https://claude.ai/install.sh | bash` and `curl -fsSL https://gh.io/copilot-install | bash` (Windows: `irm https://claude.ai/install.ps1 | iex` and `winget install GitHub.Copilot`).
+Install the Claude Code and Copilot CLIs first: `curl -fsSL https://claude.ai/install.sh | bash` and `curl -fsSL https://gh.io/copilot-install | bash` (Windows: `irm https://claude.ai/install.ps1 | iex` and `winget install GitHub.Copilot`).
 
 Gemini has no subscription sign-in. Use an API key (`gemini/`) or go through OpenRouter (`openrouter/google/...`).
 
 ### Model Naming
 
-Models are named `provider/model`, following LiteLLM:
+Model names follow LiteLLM's `provider/model` form:
 
 - `openai/gpt-5.6`
 - `anthropic/claude-sonnet-4-6`
@@ -339,7 +339,7 @@ Two more shapes:
 
 ### Vision Models
 
-Vision capability is detected automatically from LiteLLM. To override it, set `model_info.supports_vision` on the model entry:
+markitai detects vision capability from LiteLLM. To override that, set `model_info.supports_vision` on the model entry:
 
 ```json
 {
@@ -359,7 +359,7 @@ Vision capability is detected automatically from LiteLLM. To override it, set `m
 
 ### Router Settings
 
-`llm.router_settings` and its siblings control how requests are spread over several models and how much one document may consume:
+`llm.router_settings` and its siblings control how markitai spreads requests over several models and how much one document may consume:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -374,7 +374,7 @@ Vision capability is detected automatically from LiteLLM. To override it, set `m
 
 #### Model Weight
 
-Each entry in `model_list` accepts `weight` inside `litellm_params`. `1` is normal, `10` is ten times as likely to be picked, `0` disables the model without deleting it. At least one model must have a weight above zero; this is checked at first use, not by `config validate`.
+Each entry in `model_list` accepts `weight` inside `litellm_params`. `1` is normal, `10` is ten times as likely to be picked, `0` disables the model without deleting it. At least one model must have a weight above zero. markitai checks that at first use; `config validate` does not.
 
 ```json
 {
@@ -426,7 +426,7 @@ Screenshots render PDF pages and PPTX slides as JPEG, and capture full-page imag
 
 ## Presets
 
-Three presets are built in (`minimal`, `standard`, `rich`). Define your own under `presets`:
+markitai ships three presets (`minimal`, `standard`, `rich`). Define your own under `presets`:
 
 ```json
 {
@@ -452,7 +452,7 @@ Local OCR uses [RapidOCR](https://github.com/RapidAI/RapidOCR) from the `ocr` ex
 uv tool install "markitai[ocr]" --force
 ```
 
-With `--ocr --llm` and a vision-capable model, no extra is needed: the model reads the page images. `MARKITAI_NO_VLM_OCR=1` forces the local path.
+With `--ocr --llm` and a vision-capable model you can skip the extra: the model reads the page images itself. `MARKITAI_NO_VLM_OCR=1` forces the local path.
 
 ## Office Configuration
 
@@ -470,7 +470,7 @@ The first render pops a one-time macOS permission dialog. Set this to `false` on
 | `url_concurrency` | `5` | Concurrent URL fetches, separate so slow pages never block files |
 | `scan_max_depth` | `5` | Directory scan depth |
 | `scan_max_files` | `10000` | Max files per run |
-| `state_flush_interval_seconds` | `10` | How often batch state is saved for `--resume` |
+| `state_flush_interval_seconds` | `10` | How often markitai saves batch state for `--resume` |
 | `heavy_task_limit` | `0` | Cap on CPU-heavy tasks; `0` picks one from available RAM |
 
 ## URL Fetch Configuration
@@ -538,7 +538,7 @@ The X/Twitter enrichment path (FxTwitter, Twitter oEmbed) follows the same conse
 
 ### Defuddle Settings
 
-[Defuddle](https://defuddle.md) extracts clean article content and returns Markdown with rich frontmatter. It is free and needs no key.
+[Defuddle](https://defuddle.md) extracts the article body and returns Markdown with rich frontmatter. Free, no key needed.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -567,7 +567,7 @@ To get credentials:
 
 1. **Account ID**: shown in the [dashboard](https://dash.cloudflare.com/) URL, `dash.cloudflare.com/<account_id>/...`.
 2. **API token**: [My Profile → API Tokens](https://dash.cloudflare.com/profile/api-tokens), *Create Token*, custom token with *Browser Rendering: Edit* and *Workers AI: Read* on your account.
-3. **Enable Browser Rendering** under *Workers & Pages → Browser Rendering*. It is available on the Free plan.
+3. **Enable Browser Rendering** under *Workers & Pages → Browser Rendering*. The Free plan includes it.
 
 ```bash
 export CLOUDFLARE_API_TOKEN="your-api-token"
@@ -578,17 +578,17 @@ The Free plan allows two concurrent browser sessions; markitai serializes its re
 
 ### Fetch Policy, Domain Profiles and Fallback Patterns {#fetch-policy-domain-profiles}
 
-The policy engine orders strategies per domain and remembers which domains need a browser. Its options, the domain-profile fields and the built-in profiles are documented in the [Fetch Policy guide](/guide/fetch-policy#configuration).
+The policy engine orders strategies per domain and remembers which domains need a browser. The [Fetch Policy guide](/guide/fetch-policy#configuration) documents its options, the domain-profile fields and the built-in profiles.
 
-Custom `domain_profiles` entries override only explicitly set fields, preserving the remaining built-in tuning. `auto` treats every domain in `fallback_patterns` as JavaScript-heavy and starts with the browser strategy.
+A custom `domain_profiles` entry overrides only the fields you set; the rest of the built-in tuning stays. `auto` treats every domain in `fallback_patterns` as JavaScript-heavy and starts with the browser strategy.
 
 ### Proxies
 
-`HTTPS_PROXY`, `HTTP_PROXY` and `ALL_PROXY` are honoured, with `NO_PROXY` as the bypass list. When none is set, the operating system proxy is used: Windows internet settings, macOS network settings, and the manual HTTP proxy of a GNOME or KDE desktop on Linux. PAC, SOCKS-only and authenticated desktop proxies are not imported; set the environment variables instead.
+markitai honours `HTTPS_PROXY`, `HTTP_PROXY` and `ALL_PROXY`, with `NO_PROXY` as the bypass list. When none is set it falls back to the operating system proxy: Windows internet settings, macOS network settings, and the manual HTTP proxy of a GNOME or KDE desktop on Linux. It does not import PAC, SOCKS-only or authenticated desktop proxies; set the environment variables for those.
 
 ## Cache Configuration
 
-LLM results are cached in `~/.markitai/cache.db`, so converting the same document again is free.
+markitai caches LLM results in `~/.markitai/cache.db`, so converting the same document again costs nothing.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -659,4 +659,4 @@ Every LLM task has a system prompt (role and rules) and a user prompt (the conte
 }
 ```
 
-The available keys are `cleaner`, `image_caption`, `image_description`, `image_analysis`, `document_process`, `document_vision` and `url_enhance`, each with a `_system` and a `_user` variant.
+The keys are `cleaner`, `image_caption`, `image_description`, `image_analysis`, `document_process`, `document_vision` and `url_enhance`, each with a `_system` and a `_user` variant.

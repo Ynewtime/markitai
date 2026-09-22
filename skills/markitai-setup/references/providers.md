@@ -39,7 +39,7 @@ Multiple entries with the same `model_name` load-balance through the litellm rou
 | Copilot subscription | `copilot/gpt-5.6`, `copilot/claude-haiku-4.5`, … (plan-dependent; no o1/o3) | Copilot CLI login; extra: `copilot` |
 | ChatGPT subscription | `chatgpt/gpt-5.6`, `chatgpt/gpt-5.6-codex`, `chatgpt/codex-mini` | OAuth device flow on first use; no SDK needed |
 
-Gemini has no CLI/subscription route — direct API key or OpenRouter only.
+Gemini has no CLI/subscription route: direct API key or OpenRouter only.
 
 Retired upstream (rejected on request): `gpt-4o`, `gpt-4.1`, `gpt-4.1-mini`, `o4-mini`, `gpt-5`, `gpt-5.1`, `gpt-5.2`. markitai warns at startup and names the default for the provider in use; it never rewrites the configured model.
 
@@ -57,7 +57,7 @@ Retired upstream (rejected on request): `gpt-4o`, `gpt-4.1`, `gpt-4.1-mini`, `o4
 
 ## Vision (`--alt` / `--desc`)
 
-Image analysis needs a vision-capable model. Remote API models are auto-detected via litellm; local providers pass images as file attachments, so pick a vision-capable model there too (e.g. `copilot/gpt-5.6`, `chatgpt/gpt-5.6`, `claude-agent/sonnet`). `markitai doctor` reports which vision model it detected.
+Image analysis needs a vision-capable model. litellm auto-detects this for remote API models; local providers pass images as file attachments, so pick a vision-capable model there too (e.g. `copilot/gpt-5.6`, `chatgpt/gpt-5.6`, `claude-agent/sonnet`). `markitai doctor` reports which vision model it detected.
 
 ## Local provider errors
 
@@ -66,7 +66,7 @@ Image analysis needs a vision-capable model. Remote API models are auto-detected
 | "SDK not installed" | install the `claude-agent` or `copilot` extra into the same environment as markitai |
 | "CLI not found" | install Claude Code (`curl -fsSL https://claude.ai/install.sh \| bash`) or Copilot CLI (`curl -fsSL https://gh.io/copilot-install \| bash`) |
 | "Not authenticated" | `markitai auth claude\|copilot login`; env alternatives: `COPILOT_GITHUB_TOKEN`/`GH_TOKEN`/`GITHUB_TOKEN`, `CLAUDE_CODE_USE_BEDROCK=1`/`CLAUDE_CODE_USE_VERTEX=1`/`CLAUDE_CODE_USE_FOUNDRY=1`; ChatGPT re-triggers OAuth on next use |
-| "Rate limit" | subscription quota — wait or switch models |
+| "Rate limit" | subscription quota; wait or switch models |
 | "Request timeout" | adaptive; very large documents legitimately take longer |
 
 `markitai doctor` aggregates auth status for all three local providers and prints resolution hints.

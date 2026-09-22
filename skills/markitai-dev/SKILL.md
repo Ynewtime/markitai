@@ -15,7 +15,7 @@ uv run pre-commit install                         # ruff on commit
 uv run pre-commit install --hook-type pre-push    # pyright + tests on push
 ```
 
-## Gates — a change is done only when every one passes
+## Gates: a change is done only when every one passes
 
 ```bash
 uv run pytest -q                                 # default selection: parallel, excludes slow/network
@@ -40,21 +40,21 @@ bun install --cwd website --frozen-lockfile
 bun run --cwd website docs:build
 ```
 
-Treat `website/guide`, `website/zh/guide`, `skills/`, and CLI `--help` as one documentation surface. `test_website_docs_sync.py` checks option coverage, removed flags, extras, and bilingual links; descriptions and defaults still need comparison with code. Keep Unreleased changelog entries concise and synchronized between languages. Generated website changelogs and installer copies come from the root files during docs builds.
+Treat `website/guide`, `website/zh/guide`, `skills/`, and CLI `--help` as one documentation surface. `test_website_docs_sync.py` checks option coverage, removed flags, extras, and bilingual links; you still have to compare descriptions and defaults against the code yourself. Keep Unreleased changelog entries concise and synchronized between languages. Generated website changelogs and installer copies come from the root files during docs builds.
 
 For public CLI changes, inspect the matching step in `scripts/e2e_release_check.sh`: its checks must match current CLI output (serve sign-in URLs use `#token=`). The full script uses real provider keys and incurs charges; use targeted local checks for presentation-only changes and keep an existing E2E report as historical evidence.
 
-Opt-in markers: `uv run pytest -m "slow or network"`; `parity` marks defuddle-parity tests. CI runs the default selection plus an isolated built-wheel install smoke test on Linux/macOS/Windows × Python 3.11–3.13 — platform-only failures are real failures.
+Opt-in markers: `uv run pytest -m "slow or network"`; `parity` marks defuddle-parity tests. CI runs the default selection plus an isolated built-wheel install smoke test on Linux/macOS/Windows × Python 3.11–3.13; a failure on one platform only is still a real failure.
 
 Run the CLI from source with `uv run markitai <input>`.
 
 ## Conventions
 
 - Match surrounding code style; ruff and pyright must stay clean.
-- Logging is loguru with `{}` formatting: `logger.info("x={}", x)` — never printf-style `%s`.
+- Logging is loguru with `{}` formatting: `logger.info("x={}", x)`, never printf-style `%s`.
 - Google-style docstrings; English comments.
 - Every bug fix ships with a regression test.
-- Conventional Commits keep history and changelog writing easy (releases themselves are tag-driven — see the `markitai-release` skill).
+- Conventional Commits keep history and changelog writing easy (releases themselves are tag-driven; see the `markitai-release` skill).
 
 ## Extraction-quality benchmark
 
@@ -64,8 +64,8 @@ Run the CLI from source with `uv run markitai <input>`.
 uv run python packages/markitai/benchmarks/webextract_quality.py
 ```
 
-It prints per-fixture deltas against the committed `benchmarks/results/baseline.json` and writes `benchmarks/results/latest.json` (gitignored). A quality change that is intentional gets a deliberate `--update-baseline`; an unintentional delta is a regression to fix. The full-corpus run is manual/CI-cron only; `tests/unit/test_webextract_quality_benchmark.py` smoke-tests the scorer math. `scorer.score_with_llm_judge` is an opt-in LiteLLM judge (content/structure/noise, 0–100): a cache miss needs an explicit `model` and `allow_network=True`, there are no retries or heuristic fallbacks, and the default runner never calls it.
+It prints per-fixture deltas against the committed `benchmarks/results/baseline.json` and writes `benchmarks/results/latest.json` (gitignored). An intentional quality change gets a deliberate `--update-baseline`; an unintentional delta is a regression to fix. The full-corpus run is manual/CI-cron only; `tests/unit/test_webextract_quality_benchmark.py` smoke-tests the scorer math. `scorer.score_with_llm_judge` is an opt-in LiteLLM judge (content/structure/noise, 0–100): a cache miss needs an explicit `model` and `allow_network=True`, there are no retries or heuristic fallbacks, and the default runner never calls it.
 
 ## Syncing the defuddle fixture corpus
 
-`scripts/sync_defuddle_fixtures.sh /path/to/defuddle-clone` copies upstream defuddle's `tests/fixtures/*.html` + `tests/expected/*.md` into `tests/defuddle_fixtures/` and records the source commit in `VERSION`. Both the parity tests and the benchmark read this corpus, so resync only as a deliberate act — expect scores to shift, and re-baseline afterwards.
+`scripts/sync_defuddle_fixtures.sh /path/to/defuddle-clone` copies upstream defuddle's `tests/fixtures/*.html` + `tests/expected/*.md` into `tests/defuddle_fixtures/` and records the source commit in `VERSION`. Both the parity tests and the benchmark read this corpus, so resync only as a deliberate act: expect scores to shift, and re-baseline afterwards.

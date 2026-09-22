@@ -1,16 +1,16 @@
 # Performance and output audits
 
-Run these from the repository root with the project Python environment. They use
-synthetic or checked-in public fixtures, and they keep timing separate from
-output validation. Write results outside the tracked source tree.
+Run these from the repository root with the project Python environment. They
+use synthetic or checked-in public fixtures, and they keep timing separate from
+output validation. Write results somewhere outside the tracked source tree.
 
 ## Fixed comparison
 
-`BEFORE_SOURCE` must contain a `markitai/` source package from the version being
-compared against. Preserve that directory: switching it mid-run changes the
-baseline. For an unmodified commit, extract it with `git archive`; a dirty
-source snapshot must also retain its patch and revision. Use fresh result
-directories.
+`BEFORE_SOURCE` must contain a `markitai/` source package from the version you
+are comparing against. Leave that directory alone once you start: switching it
+mid-run changes the baseline. For an unmodified commit, extract it with
+`git archive`; a dirty source snapshot must also keep its patch and revision.
+Use fresh result directories.
 
 ```bash
 export LITELLM_LOCAL_MODEL_COST_MAP=True
@@ -28,22 +28,22 @@ three fresh processes; its worker records cold and warm conversion details, CPU
 time, peak RSS, loaded dependencies and content hashes.
 
 `score_performance.py` builds the composite from cold CLI times in three
-equally weighted groups — five loopback HTTP pages, four Office/PDF formats, and
-a batch of 30 TXT/HTML/DOCX files — and reports the score against the 10×
-research target it was set up to test. Loopback transport excludes internet
-latency and remote service caching. Changing the weights, the target or the
-input set produces a different measurement, and needs its own record.
+equally weighted groups (five loopback HTTP pages, four Office/PDF formats, and
+a batch of 30 TXT/HTML/DOCX files) and reports the score against the 10×
+research target it was set up to test. Loopback transport leaves out internet
+latency and remote service caching. If you change the weights, the target or
+the input set, you have a different measurement, and it needs its own record.
 
 `audit_quality.py` compares 40 converter and API snapshots, covering Markdown,
-metadata, image bytes and dimensions, frontmatter and output assets. Only the
-clock, the output directory and explicit engine-provenance transitions are
-normalized. Missing quality evidence, or changed outputs, fails the scoring
+metadata, image bytes and dimensions, frontmatter and output assets. It
+normalizes only the clock, the output directory and explicit engine-provenance
+transitions. Missing quality evidence, or changed outputs, fails the scoring
 gate.
 
-Recorded runs are in [`results/`](results), one dated file each with its
+Recorded runs live in [`results/`](results), one dated file each, with its
 baseline identity and limitations. The latest,
-[`2026-09-14.json`](results/2026-09-14.json), is the source for the
-[performance guide](https://markitai.dev/guide/performance).
+[`2026-09-14.json`](results/2026-09-14.json), is what the
+[performance guide](https://markitai.dev/guide/performance) quotes.
 
 ## Defuddle and scaling
 
@@ -55,13 +55,13 @@ Build a separate Defuddle checkout with `bun install --frozen-lockfile` and
 ```
 
 This compares the shared web corpus and records text, metadata, extraction
-acceptance and browser-fallback decisions. Inspect the non-timing fields as well
-as speed. `compare_cli.py` covers file/URL/stdin behavior; `audit_title_scaling.py`
-and `audit_spreadsheet_scaling.py` exercise large documents; `excel_fixtures.py`
-supplies the shared workbook edge cases `tests/unit/test_xlsx_plain_tables.py`
-also loads. Run any of them with `--help` for arguments. Backends prototyped
-here and not adopted are in
-[`process/rejected-backends.md`](../../process/rejected-backends.md).
+acceptance and browser-fallback decisions. Look at the non-timing fields, not
+just the speed. `compare_cli.py` covers file/URL/stdin behavior;
+`audit_title_scaling.py` and `audit_spreadsheet_scaling.py` exercise large
+documents; `excel_fixtures.py` supplies the shared workbook edge cases that
+`tests/unit/test_xlsx_plain_tables.py` also loads. Run any of them with
+`--help` for arguments. Backends we prototyped here and did not adopt are
+listed in [`process/rejected-backends.md`](../../process/rejected-backends.md).
 
 ## Release end-to-end validation
 
@@ -69,10 +69,10 @@ here and not adopted are in
 home, then exercises the public CLI commands, local HTTP, formats,
 batch/resume, the Python API, serve/MCP, browsers and optional services. It also
 calls real models and remote providers using `ENV_FILE`; those checks send
-synthetic fixtures and can incur provider charges. The HTML report distinguishes
+synthetic fixtures and can cost you provider charges. The HTML report separates
 passed, failed and skipped checks, and missing credentials do not count as a
 successful remote check. A Fake-IP DNS resolver does not skip the remote
-extraction step: the installed product has to perform its own public DNS
+extraction step: the installed product has to do its own public DNS
 verification.
 
 ```bash
@@ -80,5 +80,5 @@ WORKDIR=/tmp/markitai-release-check bash scripts/e2e_release_check.sh
 ```
 
 `scripts/check_wheel.py` and `scripts/check_licenses.py` are separate offline
-checks of the built artifact and of dependency licences; they do not replace the
-end-to-end run.
+checks, of the built artifact and of dependency licences. They do not replace
+the end-to-end run.

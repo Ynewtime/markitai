@@ -29,7 +29,7 @@ out = markitai.convert("document.pdf", output_dir="out/", profile="rag")
 
 - **可见资源**：图片移到 `assets/`，Markdown 里的引用同步改写。
 - **页码标记**：PDF 输出在真实分页处带 `<!-- page: N -->` 注释，文本抽取、`--ocr` 和纯截图模式都一样。
-- **表格检查**：管道表格里列数和表头对不上的行会报警告。内容不会被改写。
+- **表格检查**：管道表格里列数和表头对不上的行，markitai 会报警告，但不改内容。
 
 ```text
 out/
@@ -39,7 +39,7 @@ out/
     └── images.json          # 带 --llm --desc 时生成
 ```
 
-页面截图（`--screenshot`）仍在 `.markitai/screenshots/` 下。它们只在 HTML 注释里被引用，不算语料的一部分。
+页面截图（`--screenshot`）仍在 `.markitai/screenshots/` 下。只有 HTML 注释引用它们，所以不进语料。
 
 ## `obsidian` — 导入 vault
 
@@ -123,5 +123,5 @@ print(len(documents))
 ## 注意
 
 - Profile 只作用于这次写出的文件，不会回头改写早先的输出。别在同一个目录里混用带 profile 和不带 profile 的运行，需要时重新转一遍。
-- Profile 只影响写出的文件。stdout 模式（不带 `-o`）不受影响。
+- Profile 只影响写出的文件。stdout 模式（不带 `-o`）不理会 profile。
 - 批量报告和 `--resume` 状态仍在 `.markitai/` 下，不进语料。嵌套批量时每个子目录有自己的 `assets/`。
