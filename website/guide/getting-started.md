@@ -96,9 +96,9 @@ A manual install has no optional pieces. Run `markitai doctor` to see what is av
 
 ## Feature Notes
 
-**Presets** bundle the common flags. `minimal` is plain conversion, `standard` adds LLM cleanup and image analysis, `rich` adds page screenshots. Turn any part off with `--no-*`, for example `--preset rich --no-desc`.
+**Presets** bundle the common flags. `minimal` does plain conversion, `standard` adds LLM cleanup and image analysis, `rich` adds page screenshots. Turn any part off with `--no-*`, for example `--preset rich --no-desc`.
 
-**URLs** are fetched locally first. When that fails on a public page, markitai may fall back to a remote reader (Defuddle, Jina or Cloudflare) and says so once on stderr. Private, intranet and credential-bearing URLs never leave your machine. `MARKITAI_NO_REMOTE_FETCH=1` keeps everything local.
+**URLs** fetch locally first. When that fails on a public page, markitai may fall back to a remote reader (Defuddle, Jina or Cloudflare) and says so once on stderr. Private, intranet and credential-bearing URLs never leave your machine. `MARKITAI_NO_REMOTE_FETCH=1` keeps everything local.
 
 **Directories** convert as a batch with a progress display and a JSON report. If a run is interrupted, add `--resume` to pick it up.
 
@@ -132,7 +132,7 @@ The output name is the full input name plus `.md`, so `report.pdf` and `report.d
 
 Everything works on Windows, Linux and macOS, with two things to know:
 
-- **EMF/WMF images** are a Windows-only format and only convert on Windows.
+- **EMF/WMF images** only convert on Windows, because the format itself is Windows-only.
 - **PPTX slide screenshots** need a renderer. Windows uses Microsoft Office or LibreOffice. Linux needs LibreOffice (`apt-get install libreoffice`). macOS prefers LibreOffice (`brew install --cask libreoffice`) and otherwise drives an installed PowerPoint, which pops a one-time permission dialog and needs a desktop session. Set `"office": { "macos_fallback": false }` in the config to disable that on headless Macs.
 
 Legacy `.doc` and `.ppt` files need `markitai[legacy]` and no Office install on any platform.
