@@ -1,8 +1,8 @@
 # Output Profiles
 
-A profile shapes the written output for a specific consumer. It is separate from a [preset](./configuration.md#presets): a preset picks which features run, a profile picks what the files look like.
+A profile shapes the written output for a specific consumer. Don't confuse it with a [preset](./configuration.md#presets): a preset picks which features run, a profile picks what the files look like.
 
-Without a profile, output is exactly the default. Every transform below runs only when a profile is set.
+Without a profile you get the default output, untouched. Every transform below runs only when you set a profile.
 
 ## Enabling a profile
 
@@ -27,9 +27,9 @@ out = markitai.convert("document.pdf", output_dir="out/", profile="rag")
 
 Default output keeps images in a hidden `.markitai/assets/` directory, and most ingestors skip hidden paths (LlamaIndex `SimpleDirectoryReader` does by default). The `rag` profile makes the output ingestor-friendly:
 
-- **Visible assets**: images move to `assets/` and Markdown references are rewritten to match.
+- **Visible assets**: images move to `assets/` and the Markdown references follow.
 - **Page markers**: PDF output carries `<!-- page: N -->` comments at real page boundaries, for text extraction, `--ocr` and screenshot-only runs alike.
-- **Table checks**: pipe tables whose rows disagree with the header column count are reported as warnings. Nothing is rewritten.
+- **Table checks**: markitai warns about pipe tables whose rows disagree with the header column count. It rewrites nothing.
 
 ```text
 out/
@@ -39,7 +39,7 @@ out/
     └── images.json          # with --llm --desc
 ```
 
-Page screenshots (`--screenshot`) stay under `.markitai/screenshots/`. They are referenced from HTML comments only and are not part of the corpus.
+Page screenshots (`--screenshot`) stay under `.markitai/screenshots/`. Only HTML comments reference them, so they never enter the corpus.
 
 ## `obsidian` — vault imports
 
@@ -66,7 +66,7 @@ Aligns frontmatter with the [Open Knowledge Format](https://github.com/GoogleClo
 | `markitai_processed` | `generated: {by: markitai/<version>, at: <UTC timestamp>}` |
 | everything else | kept under its current name |
 
-Fields without an OKF equivalent (`author`, `site`, `published`, ...) keep their names; the spec requires consumers to accept unknown fields. Asset layout is untouched.
+Fields without an OKF equivalent (`author`, `site`, `published`, ...) keep their names; the spec requires consumers to accept unknown fields. Asset layout stays as it was.
 
 ```yaml
 ---
@@ -123,5 +123,5 @@ print(len(documents))
 ## Notes
 
 - A profile applies to the files it writes and never rewrites earlier output. Do not mix profiled and unprofiled runs in one directory; re-run the inputs instead.
-- Profiles apply to written files only. Stdout mode (no `-o`) is unaffected.
+- Profiles apply to written files only. Stdout mode (no `-o`) ignores them.
 - Batch reports and `--resume` state stay under `.markitai/`, outside the corpus. In nested batches each subdirectory gets its own `assets/`.

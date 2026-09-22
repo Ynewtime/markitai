@@ -18,7 +18,7 @@ hero:
 <section class="home-shot" aria-labelledby="shot-title">
   <p class="eyebrow">Web workspace</p>
   <h2 id="shot-title">A web workspace, when you would rather not type</h2>
-  <p><code>markitai serve</code> runs the same conversion core behind a local web UI — drop files in, paste URLs, watch progress, and download results.</p>
+  <p><code>markitai serve</code> puts the same conversion core behind a local web UI. Drop files in, paste URLs, watch progress, download results.</p>
   <picture class="home-shot-light">
     <source srcset="/workbench.webp" type="image/webp" />
     <img src="/workbench.png" alt="The markitai web workspace: a composer card with a URL field, a Convert button, and Options, CLI, and Upload toggles." width="1440" height="700" loading="lazy" />

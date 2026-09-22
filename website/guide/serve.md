@@ -40,7 +40,7 @@ Bind all interfaces, then open the printed token URL on the phone or laptop:
 markitai serve --host 0.0.0.0
 ```
 
-If you reach the server through a DNS name rather than an IP, add `--allowed-host my-box.lan`. Unknown hostnames are rejected, which blocks DNS-rebinding attacks from malicious web pages.
+If you reach the server through a DNS name rather than an IP, add `--allowed-host my-box.lan`. The server rejects unknown hostnames, which blocks DNS-rebinding attacks from malicious web pages.
 
 ::: warning
 The token URL is a credential. Anyone holding it can run conversions with your LLM providers, and read, download or delete history. Share it only with devices you trust.
@@ -66,7 +66,7 @@ Presets match the CLI:
 | `standard` | ✓ | ✓ | ✓ | – | – |
 | `rich` | ✓ | ✓ | ✓ | ✓ | – |
 
-No preset turns on OCR; it is always a separate choice. Picking a preset resets those five switches. Changing one switch keeps the rest and shows **Custom**.
+No preset turns on OCR; you always pick that separately. Picking a preset resets those five switches. Changing one switch keeps the rest and shows **Custom**.
 
 Every option has hover or tap help that says what it depends on, where the data goes and what it may cost.
 
@@ -99,4 +99,4 @@ The UI runs on a small REST + SSE API that scripts can call directly:
 | `DELETE /api/history/{job_id}` | Delete one history entry |
 | `/api/settings/llm*` | LLM provider, model and deployment management |
 
-State-changing requests from another web origin are rejected, so a random web page cannot drive the server from your browser.
+The server rejects state-changing requests from another web origin, so a random web page cannot drive it from your browser.

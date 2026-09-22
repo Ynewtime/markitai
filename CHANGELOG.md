@@ -7,13 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.1.0] - 2026-09-14
 
-- **About 6× faster overall**: URLs **5.8×**, Office/PDF **5.6×**, batch conversion **6.6×** in equally weighted local benchmarks, excluding LLM, OCR and internet latency.
-- **Faster results**: reduce startup and repeated parsing; avoid unnecessary browser fallback for complete short articles and CJK prose.
-- **Preserve output quality**: retain compatible handling of text, metadata, equations and images, with established fallbacks for complex documents.
-- **Fix public URL detection**: Defuddle and other remote readers work behind Fake-IP proxies such as Clash while private-address protections remain in place.
-- **Improve X/Twitter extraction**: fetch anonymous posts without launching a browser when remote use is allowed; recover promptly from HTTP errors and preserve rich text, links, images and publication dates.
-- **Keep domain tuning**: custom domain profiles override only explicitly configured fields, preserving built-in browser settings.
-- **Quieter repeat runs**: show remote-fetch and VLM OCR notices once per user; consent prompts and opt-outs remain effective.
+- **About 6× faster overall**: URLs **5.8×**, Office/PDF **5.6×**, batch conversion **6.6×**, measured in equally weighted local benchmarks that leave out LLM, OCR and internet latency.
+- **Faster results**: less startup and repeated parsing, and no browser fallback for short articles and CJK prose that arrived complete the first time.
+- **Output quality unchanged**: text, metadata, equations and images go through the same handling as before, and complex documents still take the established fallbacks.
+- **Public URL detection fixed**: Defuddle and the other remote readers now work behind Fake-IP proxies such as Clash, and the private-address protections still apply.
+- **Better X/Twitter extraction**: when remote use is allowed, anonymous posts are fetched without launching a browser; an HTTP error falls back promptly, and rich text, links, images and publication dates survive.
+- **Domain tuning kept**: a custom domain profile overrides only the fields it sets explicitly, so the built-in browser settings stay in place.
+- **Quieter repeat runs**: the remote-fetch and VLM OCR notices show once per user; consent prompts and opt-outs work as before.
 
 ## [1.0.1] - 2026-09-10
 
@@ -42,13 +42,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **markitai is now a library as well as a CLI**: `markitai.convert("report.pdf")` and its async twin `aconvert` return a typed `ConversionOutput` — markdown, frontmatter, asset and screenshot paths, per-image analysis and usage totals — reusing the CLI's own configuration layering. Provisional: signatures and result fields may still change
+- **markitai is now a library as well as a CLI**: `markitai.convert("report.pdf")` and its async twin `aconvert` return a typed `ConversionOutput` holding the markdown, frontmatter, asset and screenshot paths, per-image analysis and usage totals, and they reuse the CLI's own configuration layering. Provisional: signatures and result fields may still change
 - **`markitai mcp` starts the bundled MCP server from the CLI**, the form the official MCP Registry entry (`io.github.Ynewtime/markitai`) uses: `uvx --from "markitai[mcp]" markitai mcp`
 - **MCP agents get markitai through the `mcp` extra**: `markitai.mcp` ships in the main wheel and exposes `convert_document`, `convert_url`, `batch_convert` and `job_status` over stdio. `claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp`
 - **`--profile rag|obsidian|okf` shapes the output for its consumer**: `rag` moves images into a visible `assets/` (hidden paths are skipped by ingestors like LlamaIndex's `SimpleDirectoryReader`) and rewrites PDF page markers; `obsidian` adds optional wikilinks; `okf` maps frontmatter to the Open Knowledge Format. Orthogonal to `--preset`; without it the output is byte-identical
 - **`--llm-batch` runs a directory's LLM stage at half price** through the provider's Batch API on a single-model OpenAI or Anthropic pool, waiting up to `--llm-batch-timeout` (1h) before handing off to `--llm-batch-collect`
 - **`--llm-batch` covers image analysis and page screenshots**: `--alt`/`--desc` and `--screenshot` ride the same job at the same discount. A document with more pages than fit one call is enhanced live instead, since each extra batch round is a separate wait
-- **The web UI can choose an output profile**, beside Preset and deliberately not hidden with the LLM switches — a profile shapes output rather than enhancement, so a plain local conversion can carry one
+- **The web UI can choose an output profile**, beside Preset, and deliberately not hidden with the LLM switches: a profile shapes output rather than enhancement, so a plain local conversion can carry one
 - **Three circuit breakers bounding one document's cost**: `llm.max_requests_per_document` (default 50) caps retry multiplication; `llm.max_vision_pages_per_document` is checked before anything is sent, so an oversized document costs nothing; `llm.max_cost_per_document_usd` is charged after each answer, bounding what a document goes on to spend. A trip skips the rest of that document's enhancement and keeps the unenhanced output. The two cost caps default to off
 - **Legacy `.doc`/`.ppt` conversion through `markitai[legacy]`**: the bundled-Rust anydoc backend handles Office 97-2003 in milliseconds, with no Microsoft Office or LibreOffice on any platform
 - **`--ocr --llm` is now named, measured and gated**: that combination sends page images to a vision model rather than running RapidOCR, which nothing used to say. Help, `doctor` and both CLI guides now call it VLM-OCR, metadata records which path ran, and `MARKITAI_NO_VLM_OCR=1` forbids it outright
@@ -61,27 +61,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The website serves `/llms.txt`**, and the README carries a comparison table against markitdown, docling and anydoc that states what each does better
 - **`NOTICE` records the third-party obligations** MIT alone cannot cover: the AGPL-3.0 PyMuPDF stack and what it means for redistribution and network use, the defuddle port (MIT © kepano) behind `webextract/`, and the marker-derived benchmark scorer
 - **CI fails on a non-commercial or unexpected copyleft dependency**: `scripts/check_licenses.py` reads licence metadata from a no-extras install and rejects anything non-commercial or proprietary, plus any AGPL/GPL package outside an explicit allowlist
-- **Substack article extraction** now handles rendered bodies and `window._preloads` JSON, including custom domains and byline dates, while retaining Notes extraction and generic fallback.
-- **Linux desktop proxy discovery** reads manual GNOME/Unity and KDE HTTP proxy settings and bypass lists. Explicit environment proxies still take precedence; PAC, SOCKS-only and authenticated desktop settings are not imported.
-- **Opt-in benchmark LLM scoring** provides validated content, structure and noise scores through `score_with_llm_judge`, with offline cache reuse, input limits and no automatic retries. A cache miss requires an explicit model and `allow_network=True`; default benchmarks remain heuristic and offline.
-- **Eight more formats convert without an extra**: `.tsv`, `.xml`, `.rst`, `.org`, `.tex`, `.odt`, `.ods` and `.rtf` now convert in the base wheel with the standard library alone — a tab-separated file is a Markdown table, and an OpenDocument file is a zip of XML
-- **`.rtf` has a real native reader**: a tokenizer for groups, control words and `\'xx` bytes drives a group-scoped formatting state, so outline levels and stylesheet names become headings, `\trowd`/`\cell`/`\row` becomes a Markdown table, Word 97 `\pntext` glyphs and newer `\ls`/`\ilvl` lists keep their bullets and nesting, `HYPERLINK` fields become links, and `\ansicpg`/`\fcharset` decode CJK and Windows codepages — no extra, no extraction engine
+- **Substack article extraction** reads rendered bodies and `window._preloads` JSON, custom domains and byline dates included; Notes extraction and the generic fallback stay
+- **Linux desktop proxy discovery** reads the manual HTTP proxy and bypass list from GNOME/Unity and KDE. An explicit environment proxy still wins, and PAC, SOCKS-only and authenticated desktop settings are left alone
+- **Opt-in benchmark LLM scoring**: `score_with_llm_judge` returns validated content, structure and noise scores, reuses an offline cache, caps its input and never retries on its own. A cache miss needs an explicit model and `allow_network=True`; the default benchmarks stay heuristic and offline
+- **Eight more formats convert without an extra**: `.tsv`, `.xml`, `.rst`, `.org`, `.tex`, `.odt`, `.ods` and `.rtf` now convert in the base wheel with the standard library alone. A tab-separated file is already a Markdown table, and an OpenDocument file is a zip of XML
+- **`.rtf` has a real native reader**: a tokenizer for groups, control words and `\'xx` bytes drives a group-scoped formatting state, so outline levels and stylesheet names become headings, `\trowd`/`\cell`/`\row` becomes a Markdown table, Word 97 `\pntext` glyphs and newer `\ls`/`\ilvl` lists keep their bullets and nesting, `HYPERLINK` fields become links, and `\ansicpg`/`\fcharset` decode CJK and Windows codepages. No extra, no extraction engine
 - **Every boolean CLI flag has a spelled-out negation**: `--cache`, `--compress`, `--no-pure` and `--no-screenshot-only` join their siblings, so a config default can be overridden in either direction from the command line
 
 ### Changed
 
 - **The three LLM routing surfaces merged into one `MarkitaiRouter`**: local providers dispatch through their handler table and standard models go back to litellm's own group balancing, cooldowns and fallbacks instead of a hand-rolled reimplementation
-- **Structured LLM calls use the strongest mode a model actually supports**: native tool calling, then `response_format` JSON schema — which also switches on the claude-agent provider's until-now-unused native path — with markdown-JSON demoted to a last resort
+- **Structured LLM calls use the strongest mode a model actually supports**: native tool calling, then `response_format` JSON schema (which also switches on the native path the claude-agent provider had never used), with markdown-JSON demoted to a last resort
 - **One URL pipeline behind all four entry points**: `serve`, the Python API, `markitai <url>` and URL batches wrapped near-identical copies of fetch → localize → enhance → write, and now share one cascade in `workflow/url.py`
 - **Prompt caching actually engages**: five system templates had their per-request variables near the top, leaving a stable prefix too short for any provider's cache to match. The variable segments moved to the tail; instruction text is unchanged
 - **Converting a `.txt` no longer loads a PDF and Office toolchain**: converters registered eagerly, costing ~430ms per process and pulling in markitdown, Magika and onnxruntime regardless of input
-- **A provider is described in one table, not five**: its default model and API-key variable had been hand-copied across credential detection, the setup wizard, `serve`'s startup candidates and `init`, and had drifted
-- **Retirement warnings and cost estimates are derived, not transcribed**: the replacement model now comes from the defaults table and the retirement date from litellm's own record, replacing a stale literal and one hardcoded date stamped on every model
+- **A provider is described in one table**: its default model and API-key variable had been hand-copied into four other places (credential detection, the setup wizard, `serve`'s startup candidates and `init`), and the copies had drifted
+- **Retirement warnings and cost estimates are derived**: the replacement model now comes from the defaults table and the retirement date from litellm's own record, replacing a stale literal and one hardcoded date stamped on every model
 - **Self-explanatory errors no longer leak exception class names**: a missing OCR backend, an oversized file or an unsupported format prints the actionable message alone
 - **The parity corpus is pinned to the same upstream as the algorithm**: fixtures resynced from a March 2026 snapshot to defuddle 0.19.3 (83 → 208), after porting the six upstream behaviours the new corpus exposed as missing
 - **webextract parses and copies less**: one lxml path for fragments and documents, five copies of the block-tag table converged, no whole-tree deep copy per retry attempt, and one `srcset` implementation
-- **A default install is 155 MB smaller** — 633 MB down to 477 MB. `opencv-python` left the core entirely and RapidOCR moved behind a new `ocr` extra. **Scanned-document and image OCR now needs `uv tool install "markitai[ocr]" --force`**
-- **Images come out better without OpenCV**: Pillow alone beat it on every sample measured — higher PSNR and SSIM, 7.7% smaller files — because OpenCV's `INTER_LANCZOS4` downscale skips anti-alias prefiltering
+- **A default install is 155 MB smaller**, 633 MB down to 477 MB. `opencv-python` left the core entirely and RapidOCR moved behind a new `ocr` extra. **Scanned-document and image OCR now needs `uv tool install "markitai[ocr]" --force`**
+- **Images come out better without OpenCV**: Pillow alone beat it on every sample measured, with higher PSNR and SSIM and 7.7% smaller files, because OpenCV's `INTER_LANCZOS4` downscale skips anti-alias prefiltering
 - **Every dependency moved to its current release**, `litellm` 1.91.1 → 1.97.0 and `markitdown` 0.1.6 → 0.1.7 among 56 updates, with the licence audit re-run against the upgraded tree
 - **The PDF engine floor moved to `pymupdf4llm>=1.28.2`**: 1.28.0 pulled in `pymupdf-layout` under a Polyform Noncommercial licence, which forbids commercial use outright; 1.28.2 restored AGPL-3.0 dual licensing
 - **Setup no longer asks about LibreOffice**: slide rendering is an opt-in runtime path that a local MS Office already covers on Windows and macOS, so the guided installer leaves it out; a PPTX `--screenshot`/`--ocr` conversion with no renderer available warns at conversion time and names the per-OS install command
@@ -89,7 +89,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- **The three-platform Office automation is gone** — about 1.3k lines of Windows COM, macOS AppleScript and LibreOffice CLI driving, plus the batch pre-conversion machinery around it. `markitai[legacy]` covers the formats it existed for, and the LibreOffice hints now speak only about PPTX slide rendering
+- **The three-platform Office automation is gone**: about 1.3k lines of Windows COM, macOS AppleScript and LibreOffice CLI driving, plus the batch pre-conversion machinery around it. `markitai[legacy]` covers the formats it existed for, and the LibreOffice hints now speak only about PPTX slide rendering
 - **The `kreuzberg` extra and the `-b kreuzberg` backend are gone**: every format it covered now converts natively, so the extra had nothing left to unlock. `--backend` is `native|cloudflare`, the `fetch.kreuzberg_convert_enabled` setting is dropped, and `--kreuzberg` is a usage error that says `.rtf` converts natively rather than naming a replacement
 - **The six deprecated fetch and backend flag aliases are gone** (`--playwright`, `--defuddle`, `--static`, `--jina`, `--cloudflare`, `--kreuzberg`) in favour of `-s` and `-b`. A removed name is now a usage error naming its replacement, and `--help` drops from 36 options to 30
 - **Two redundant defence layers inside the LLM path**: a hand-rolled JSON-mode strategy sitting below a structured ladder that already does the same repair, and a hand-maintained Copilot price table live traffic had stopped reaching
@@ -102,7 +102,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Azure OpenAI deployments get the `api_version` they configure**: `litellm_params` declared no such field and unknown keys are ignored, so the documented Azure example had it dropped on parse and never reached litellm
 - **A PDF converted with `--ocr` arrives as pages again**: both OCR paths joined pages with a bare blank line and screenshot-only emitted a marker spelling no reader matched, so an OCR'd document reached LLM batching, the drift guard and output profiles as one undivided run of text
 - **The document whose LLM call failed keeps the same layout as the rest**: every failure path returned before the pipeline's profile step, leaving one file in a `--profile` run with the default asset layout
-- **`--llm-batch` explains itself when it refuses `--ocr`**: page images travel inside the document's own request, and the batch converts with the LLM off first — the branch that reads scanned pages with local OCR rather than rendering them
+- **`--llm-batch` explains itself when it refuses `--ocr`**: page images travel inside the document's own request, and the batch converts with the LLM off first, which is the branch that reads scanned pages with local OCR rather than rendering them
 - **`--llm` did nothing without a config file**: the step that fills the model pool from `MODEL` or a detected key was gated on the config's own `llm.enabled` and ran before `--preset` and `--llm` were applied
 - **`--resume` could not resume an interruption**: the CLI batch path never wrote the base state file the loader needs, so an interrupted run left a delta sidecar nothing could replay and paid for every document again
 - **`--llm-batch-collect` honours `--config-json`**: it built its configuration without the inline overrides, so a collect run's live fallback used whatever pool the config file named
@@ -116,22 +116,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`--ocr` without the OCR extra no longer reports success**: it fell back to an image placeholder and exited 0, so the file "converted" with nothing read from it
 - **Install hints name commands that work**: extras names were eaten as rich markup, and `pip install` / `uv add` act on the current project rather than markitai's isolated environment. One helper now renders the command and reads `sys.prefix`, so a pipx install is told about pipx and a `uv tool` install about `uv tool`
 - **The wheel now carries `LICENSE` and `NOTICE`**: `license-files` named a path that does not exist inside the package directory, so every published wheel shipped without a licence
-- **Six extraction gaps against defuddle 0.19.3**: article text inside dismissible `aria-hidden` overlays, CodeMirror code blocks, mid-article image rows, Substack Notes, SVG figures and inline related-story blocks. The resync also fixed what it newly exposed — Hugo admonitions, lightbox duplication, LaTeX image services, `<noscript>` fallbacks and line-numbered code
+- **Six extraction gaps against defuddle 0.19.3**: article text inside dismissible `aria-hidden` overlays, CodeMirror code blocks, mid-article image rows, Substack Notes, SVG figures and inline related-story blocks. The resync also fixed what it newly exposed: Hugo admonitions, lightbox duplication, LaTeX image services, `<noscript>` fallbacks and line-numbered code
 - **Reddit, Hacker News and YouTube pages are quality-checked again**: their gate was registered under a profile name the extractors never emit, so all three fell through to the generic-article check
 - **Embedded PDF images survive symlinked and out-of-tree output directories**: pymupdf4llm may write paths symlink-resolved or relative to the working directory, and only one spelling was being rewritten
 - **CMYK JPEGs no longer fail image compression**: images from print-sourced PDFs reached a path handling only RGBA, P and LA, and were dropped
 - **The screenshot viewport settings finally do something**: `screenshot.viewport_width` and `viewport_height` were declared, described and published in the schema, but no code read them
 - **Two settings that looked configurable never were**: `auto_proxy` and the screenshot `full_page` flag were read with a `getattr` default although no config model declares either
-- **`NO_PROXY` is honoured on every fetch path**: the unified resolver had no callers at all, and the Playwright launch, both Cloudflare paths and the batch renderer resolved a proxy without consulting the exception list — the system list on macOS and Windows included
+- **`NO_PROXY` is honoured on every fetch path**: the unified resolver had no callers at all, and the Playwright launch, both Cloudflare paths and the batch renderer resolved a proxy without consulting the exception list, the system list on macOS and Windows included
 - **Proxy auto-detection no longer invents a proxy that isn't there**: it probed common local ports for a TCP connection, which succeeds for every port under a TUN-mode VPN
 - **`markitai --help` opened on the Batch API**: the `--llm-batch` flags belonged to no panel, and ungrouped options render first. The examples also offered a YouTube conversion that has never existed
-- **The installer asks about mirrors only when the default index is actually slow**, rather than warning every user without a proxy — someone in Frankfurt met a question about China mirrors as their first impression
+- **The installer asks about mirrors only when the default index is actually slow**, rather than warning every user without a proxy. Someone in Frankfurt used to meet a question about China mirrors as their first impression
 - **A "no" to OCR is now respected by the installer**: suggestions were merged back into the selection, so declining it still installed it
 - **The test suite is hermetic to the developer's own configuration**: a real `~/.markitai/config.json` or `.env` used to fail parts of the suite on the machine of anyone who actually uses markitai
-- **Mobile conversion uses one compact source card**: the URL area sits above a shared Options/upload/Convert action row instead of three stacked controls, with 44px touch targets and a naturally wrapping mobile CLI preview. Desktop retains an inline composer.
-- **The composer actions share one lightweight style**: Options, file upload and Convert are borderless, evenly padded controls with the same hover and focus treatment; Convert stays the clear primary through heavier ink and a light accent wash rather than a filled box.
-- **The options panel is grouped instead of listed**: the preset leads as the primary row (with its adjusted status and hint), Enhance collects LLM, OCR and image analysis, Output holds the profile, and the URL/file fetch selectors, source switches and cache/compression toggles fold into an Advanced section that opens automatically when one of them is already non-default. Every control, hint, linkage rule and translation is unchanged.
-- **Presets and conversion options stay linked** across the panel, API request and CLI preview, using server-provided preset definitions. Selecting a preset resets its five features, dependent image analysis pauses and restores with LLM/plain mode, and screenshot source and remote backends resolve consistently. CLI previews default to concise preset-plus-deviation commands using the server preset map. A visible default-config assumption and “Include config overrides” option preserve access to explicit off flags for screenshot-only, pure, cache and compression when local configuration differs.
+- **Mobile conversion uses one compact source card**: the URL area sits above one shared row of Options, upload and Convert instead of three stacked controls, with 44px touch targets and a mobile CLI preview that wraps on its own. Desktop keeps the inline composer
+- **The composer actions share one lightweight style**: Options, file upload and Convert are borderless, evenly padded controls with the same hover and focus treatment; Convert still reads as the primary action through heavier ink and a light accent wash instead of a filled box
+- **The options panel is grouped**: the preset leads as the primary row, with its adjusted status and hint; Enhance collects LLM, OCR and image analysis; Output holds the profile; and the URL/file fetch selectors, source switches and cache/compression toggles fold into an Advanced section that opens on its own when one of them is already off the default. Every control, hint, linkage rule and translation is unchanged
+- **Presets and conversion options stay linked** across the panel, the API request and the CLI preview, all reading the preset definitions the server provides. Selecting a preset resets its five features; image analysis pauses and comes back with LLM/plain mode; screenshot source and remote backends resolve the same way everywhere. The CLI preview defaults to a short preset-plus-deviation command built from the server's preset map and states the default-config assumption it makes; when the local configuration differs, an “Include config overrides” option keeps the explicit off flags for screenshot-only, pure, cache and compression reachable
 
 ### Security
 
@@ -144,16 +144,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Export any web-workspace preview to PDF**: the rendered Markdown prints to a clean A4 document — real four-side margins, whole code blocks and figures that never clip mid-page, and repeating table headers. A "PDF settings" menu holds an optional custom header/footer (on by default); PDFs always print light so the result is identical in Chrome, Safari and macOS Preview
+- **Export any web-workspace preview to PDF**: the rendered Markdown prints to a clean A4 document, with real margins on all four sides, code blocks and figures that never clip mid-page, and table headers that repeat across pages. A "PDF settings" menu holds an optional custom header/footer (on by default); PDFs always print light so the result is identical in Chrome, Safari and macOS Preview
 
 ### Changed
 
-- **The web workspace is now usable on phones and narrow windows**: a single ≤780px layout gives the composer, options and task list one coherent column — the header collapses to identity plus history/settings, language and theme move into the settings dialog, external links and notifications dock to the bottom, and the batch download sits under the task list
+- **The web workspace is now usable on phones and narrow windows**: a single ≤780px layout gives the composer, options and task list one coherent column. The header collapses to identity plus history/settings, language and theme move into the settings dialog, external links and notifications dock to the bottom, and the batch download sits under the task list
 - **Batch download moved next to the conversion options** on desktop, so it no longer competes with the Clear action in the workspace header
 
 ### Fixed
 
-- **The local server now refuses cross-origin and rebinding requests**: a Host/Origin allow-list (loopback, IP-literal hosts, and any `--allowed-host` you pass) blocks a malicious web page from reaching the API — which could otherwise read saved provider credentials or drive server-side URL fetches — while same-origin use and LAN binds keep working
+- **The local server now refuses cross-origin and rebinding requests**: a Host/Origin allow-list (loopback, IP-literal hosts, and any `--allowed-host` you pass) blocks a malicious web page from reaching the API, where it could otherwise read saved provider credentials or drive server-side URL fetches. Same-origin use and LAN binds keep working
 - **In-place retry and LLM enhancement are reliable**: retrying an item while its siblings are still converting no longer strands it as "queued"; a failed enhancement keeps the working base result instead of downgrading the row to an output-less error; an interrupted rerun no longer erases the whole job from history on restart; and re-runs overwrite their own prior outputs instead of accumulating versioned duplicates or serving a stale enhanced variant
 - **Scanned-document OCR stays accurate across a batch**: the sparse-page tiled fallback no longer lowers detection thresholds process-wide, so later pages are OCR'd at full confidence
 - **LLM alt text applies to images whose names contain spaces or CJK**: references written percent-encoded were not being matched, so captions were silently dropped for those assets
@@ -167,8 +167,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **`markitai serve` adds a local web workspace for conversion**: install the `serve` extra to upload files or folders, submit URLs, watch live progress, preview and download results, and revisit seven days of on-disk history from a bilingual, accessible interface
-- **LLM setup moves into the web workspace**: discover available local and API-backed providers, browse live model lists, configure weighted deployments, test connections without exposing stored credentials, and use the same settings for conversion jobs
-- **Web jobs gain recovery and comparison tools**: retry failed file or URL items, filter large result sets, receive background completion notifications, copy an equivalent CLI command, and compare the base Markdown with its LLM-enhanced variant
+- **LLM setup moves into the web workspace**: it finds the local and API-backed providers you have, lists their models live, lets you configure weighted deployments and test a connection without showing the stored credential, and conversion jobs run on the same settings
+- **Web jobs can be retried and compared**: a failed file or URL item can be retried on its own, a large result set filtered, a completion notification arrives in the background, the equivalent CLI command is one click to copy, and the base Markdown sits beside its LLM-enhanced variant
 
 ### Fixed
 
@@ -179,28 +179,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Fresh installs on macOS and Windows no longer try to compile litellm from source**: litellm 1.92.0 shipped Linux-only wheels, so `uv tool install markitai` on other platforms fell back to building its new Rust extension from the sdist — failing outright without a Rust toolchain, or with a wall of pyo3 errors when the build environment picked an unsupported Python (e.g. a system-default 3.14). That release is excluded; dependency resolution lands on a version with wheels for every supported platform
+- **Fresh installs on macOS and Windows no longer try to compile litellm from source**: litellm 1.92.0 shipped Linux-only wheels, so `uv tool install markitai` on other platforms fell back to building its new Rust extension from the sdist. That failed outright without a Rust toolchain, or with a wall of pyo3 errors when the build environment picked an unsupported Python (e.g. a system-default 3.14). That release is excluded; dependency resolution lands on a version with wheels for every supported platform
 
 ## [0.21.0] - 2026-07-12
 
 ### Changed
 
 - **Legacy `.xls` files now convert in pure Python** (xlrd via MarkItDown, same engine as `.xlsx`): no Office application or LibreOffice is launched or required, on any platform. Cell content is identical to the previous Excel-automation output (verified live); conversion is also faster and no longer serialized behind an app lock
-- **The persistent LLM cache is now scoped to your model pool**: switching model configuration stops serving results produced by the old models, while rotating an API key keeps every hit; document cleanups also keep hitting after a file is renamed (identical content, different name). Existing cache entries miss once after upgrading — the old entries were unreachable anyway (see Fixed)
-- **Structured LLM calls now go through the full transport retry loop** (exponential backoff, quota/billing short-circuit, empty-response retry) that plain-text calls always had; they previously bypassed it entirely. With a persistently degenerate model the worst-case attempt count is accordingly higher — that is the cost of actually retrying
+- **The persistent LLM cache is now scoped to your model pool**: switching model configuration stops serving results produced by the old models, while rotating an API key keeps every hit; document cleanups also keep hitting after a file is renamed (identical content, different name). Existing cache entries miss once after upgrading; the old entries were unreachable anyway (see Fixed)
+- **Structured LLM calls now go through the full transport retry loop** (exponential backoff, quota/billing short-circuit, empty-response retry) that plain-text calls always had; they previously bypassed it entirely. With a persistently degenerate model the worst-case attempt count is accordingly higher. That is the cost of actually retrying
 - **Standalone `.urls` batches gain vision enhancement** in the `--screenshot` multi-source corner, matching what a single-URL conversion of the same page produces
-- **Internal: the fetch, LLM, and CLI subsystems were restructured** behind unchanged behavior — machine-enforced import-layering contracts now run in CI, fetch.py shrank from ~3000 to ~1100 lines with per-strategy modules, the LLM pipeline is a single engine instead of five hand-rolled copies, and report/exit-code/output handling is single-sourced across all input paths. A 43-item regression matrix over every 0.15–0.20 fix verified nothing regressed
+- **Internal: the fetch, LLM, and CLI subsystems were restructured** behind unchanged behavior. Machine-enforced import-layering contracts now run in CI, fetch.py shrank from ~3000 to ~1100 lines with per-strategy modules, the LLM pipeline is a single engine instead of five hand-rolled copies, and report/exit-code/output handling is single-sourced across all input paths. A 43-item regression matrix over every 0.15–0.20 fix verified nothing regressed
 
 ### Removed
 
 - **Python 3.14 support**: `requires-python` narrows to `>=3.11,<3.14` across the package and installers, and the CI/publish matrices no longer test 3.14. The platform-conditional ONNX Runtime constraint that existed only to keep 3.14 resolvable is gone with it
-- Excel COM automation (Windows) and Excel AppleScript automation (macOS), together with the `.xls` entries in the batch pre-conversion and heavy-task paths — `.xls` no longer needs them
+- Excel COM automation (Windows) and Excel AppleScript automation (macOS), together with the `.xls` entries in the batch pre-conversion and heavy-task paths, since `.xls` no longer needs them
 
 ### Fixed
 
-- **The cross-session LLM cache never actually hit**: the persistent cache's reads and writes disagreed on the cache key's model column, so no run ever saw a previous run's results — every rerun of an already-processed document paid the full LLM cost again. Reads and writes now agree (locked by a regression test), and reprocessing an unchanged document is near-instant and free
-- **macOS `.doc`/`.ppt` conversion via Microsoft Office was broken end to end**: Word's and PowerPoint's AppleScript `open` returns nothing, so the script's document binding was never established — the first reference died, the error handler's own reference to the same variable masked the real error behind an inscrutable "variable openedItem is not defined", the document was never closed, and the stranded zombie documents degraded the app further with every retry. The script now binds the document by its unique staged name, closes it under both its pre- and post-save names, and always propagates the original error. Excel's "Parameter error -50" had the same root and is fixed the same way (now moot for `.xls` — see Removed — but the fix also covers the PPTX-to-PDF export path)
-- **macOS: `.doc`/`.ppt` conversion failing on an Office app's first scripted launch after an Office update** ("the document never registered" / PowerPoint error -9074). In that state the app silently drops Word's parametered `open` request while answering everything else; Word's script now retries with a plain `open` mid-poll (verified to penetrate and heal the state) and logs the recovery. Error messages for the stall and for -9074 now carry the verified remedy — open the app manually once so it finishes first-run setup — instead of the misleading "app stuck or overloaded, quit and retry"
+- **The cross-session LLM cache never actually hit**: the persistent cache's reads and writes disagreed on the cache key's model column, so no run ever saw a previous run's results, and every rerun of an already-processed document paid the full LLM cost again. Reads and writes now agree (locked by a regression test), and reprocessing an unchanged document is near-instant and free
+- **macOS `.doc`/`.ppt` conversion via Microsoft Office was broken end to end**: Word's and PowerPoint's AppleScript `open` returns nothing, so the script's document binding was never established. The first reference died, the error handler's own reference to the same variable masked the real error behind an inscrutable "variable openedItem is not defined", the document was never closed, and the stranded zombie documents degraded the app further with every retry. The script now binds the document by its unique staged name, closes it under both its pre- and post-save names, and always propagates the original error. Excel's "Parameter error -50" had the same root and is fixed the same way (moot for `.xls` now, see Removed, but the fix also covers the PPTX-to-PDF export path)
+- **macOS: `.doc`/`.ppt` conversion failing on an Office app's first scripted launch after an Office update** ("the document never registered" / PowerPoint error -9074). In that state the app silently drops Word's parametered `open` request while answering everything else; Word's script now retries with a plain `open` mid-poll (verified to penetrate and heal the state) and logs the recovery. Error messages for the stall and for -9074 now carry the verified remedy (open the app manually once so it finishes first-run setup) instead of the misleading "app stuck or overloaded, quit and retry"
 - **Truncated or degenerate LLM output no longer poisons the cache**: screenshot extraction and URL enhancement now reject length-truncated responses like every other call site, and URL enhancement no longer caches output whose degenerate tail had to be cut
 - **`markitai -I` no longer crashes with a raw traceback when a config file is invalid**: the interactive wizard now reports the same actionable message as every other command
 - **Directory-batch reports no longer drop screenshot counts for URL entries**
@@ -212,54 +212,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **macOS can use installed Microsoft Office when LibreOffice is absent**: legacy `.doc`, `.ppt`, and `.xls` files are converted through Word, PowerPoint, or Excel via AppleScript, and PowerPoint can export PPTX slides to PDF for rendering. The fallback is enabled by `office.macos_fallback`, can be disabled for headless sessions, and reports one-time Automation permission requirements through `doctor` and the documentation
+- **macOS can use installed Microsoft Office when LibreOffice is absent**: AppleScript drives Word, PowerPoint or Excel to convert legacy `.doc`, `.ppt` and `.xls` files, and PowerPoint can export PPTX slides to PDF for rendering. `office.macos_fallback` switches the fallback on, headless sessions can turn it off, and `doctor` and the documentation explain the one-time Automation permission macOS asks for
 
 ### Changed
 
-- **Remote fetching keeps public URLs frictionless while tightening privacy**: public URLs may use remote fallbacks without confirmation, with one process-wide stderr notice covering defuddle.md, Jina, Cloudflare, FxTwitter, and Twitter oEmbed; private, local, DNS-resolved non-global, and credential-bearing URLs (including sensitive path tokens) remain local, while `MARKITAI_NO_REMOTE_FETCH=1` blocks every remote path, including an explicit remote `-s`
-- **`doctor` reports capability health instead of package presence**: normal checks fail only for RapidOCR and configured workflows; Playwright is verified by launching Chromium, active model environment references are checked, and a requested `--fix` only installs and rechecks Chromium without changing project dependencies
+- **Public URLs go remote without a prompt; private ones never do**: a public URL may use the remote fallbacks without confirmation, and one process-wide stderr notice covers defuddle.md, Jina, Cloudflare, FxTwitter and Twitter oEmbed. Private, local, DNS-resolved non-global and credential-bearing URLs (sensitive path tokens included) stay local, and `MARKITAI_NO_REMOTE_FETCH=1` blocks every remote path, an explicit remote `-s` included
+- **`doctor` checks that a capability works rather than that a package exists**: only RapidOCR and the configured workflows can fail a normal run; Playwright is verified by launching Chromium, the environment variables the active models reference are checked, and `--fix`, when asked for, installs and rechecks Chromium and leaves the project's dependencies alone
 - **`markitai init` now preserves existing configuration by default**: pressing Enter selects Keep, while Update and Overwrite remain explicit choices
-- **Onboarding starts with the portable installer**: the homepage detects Windows versus macOS or Linux before first paint and recommends `setup.ps1` or `setup.sh`, keeps `uv tool install markitai` as a manual option, includes a 60-second no-LLM example, and improves Chinese navigation plus screen-reader and high-contrast support
-- **Copilot pricing metadata recognizes `gpt-5.6-luna` when explicitly configured**: generally available models remain the automatic OpenAI and ChatGPT onboarding defaults while the limited-preview model stays opt-in
+- **Onboarding starts with the portable installer**: the homepage works out Windows versus macOS or Linux before first paint and recommends `setup.ps1` or `setup.sh`, with `uv tool install markitai` kept as the manual route. It also carries a 60-second no-LLM example, and the Chinese navigation, screen-reader and high-contrast support got better
+- **Copilot pricing metadata recognizes `gpt-5.6-luna` when explicitly configured**: the automatic OpenAI and ChatGPT onboarding defaults stay on generally available models, and the limited-preview model is opt-in
 
 ### Fixed
 
-- **Quiet mode is consistent across single and batch work**: Markdown requested on stdout is preserved, errors stay on stderr, quiet dry runs omit previews, partial URL batches keep successful outputs and exit 10, and informational progress or success paths remain hidden
+- **Quiet mode is consistent across single and batch work**: Markdown you asked for on stdout still arrives, errors stay on stderr, a quiet dry run prints no preview, a partly failed URL batch keeps its successful outputs and exits 10, and progress and success chatter stays hidden
 - **Image conversions with no enabled extraction path no longer report success**: a standalone image without `--ocr` or `--llm` now exits 1 with an actionable message instead of producing no output with a successful status
 - **Installer reruns preserve intent**: the shell and PowerShell setup scripts skip `markitai init --yes` when `~/.markitai/config.json` already exists, preserve existing extras, and honor an explicit `MARKITAI_VERSION` even when Markitai is already installed
-- **Homepage quick-start commands remain readable in light mode**: the dark command panel now consistently uses light text and transparent code backgrounds, stacks before commands become cramped, and serves a real `/favicon.ico` instead of returning 404
-- **Python 3.14 dependency resolution avoids an incompatible ONNX Runtime pin**: platform-aware constraints keep Magika's Windows cap where required while allowing supported ONNX Runtime releases elsewhere
+- **Homepage quick-start commands remain readable in light mode**: the dark command panel now always uses light text and transparent code backgrounds and stacks before the commands get cramped, and the site serves a real `/favicon.ico` instead of a 404
+- **Python 3.14 dependency resolution avoids an incompatible ONNX Runtime pin**: the constraints are now per platform, so Magika's Windows cap stays where it is needed and other platforms can take a supported ONNX Runtime release
 
 ### Security
 
-- **Configuration output hides secrets by default**: `markitai config list` recursively redacts secrets and custom header values, reduces `api_base` values to their origin, and only reveals original values when `--show-secrets` is explicitly passed
-- **URL credentials stay local and out of diagnostics**: userinfo, sensitive path tokens, query strings, and fragments are removed from terminal errors, progress labels, dry-run previews, console and file logs, and generated output names; hostnames resolving to any non-global address cannot cross a remote dispatch boundary
-- **macOS Office automation isolates untrusted documents**: the fallback disables macros and external-link updates while opening read-only staged copies, binds and closes only the exact document it opened, serializes app access across processes, and keeps recoverable staging files private
-- **Headless setup never implies consent to optional software**: without a usable terminal, the portable installer installs only uv, Python, and Markitai unless `MARKITAI_INSTALL_OPTIONAL=1` explicitly enables optional packages, browser binaries, system dependencies, and third-party CLIs
+- **Configuration output hides secrets by default**: `markitai config list` recursively redacts secrets and custom header values, cuts `api_base` down to its origin, and shows the original values only when you pass `--show-secrets`
+- **URL credentials stay local and out of diagnostics**: terminal errors, progress labels, dry-run previews, console and file logs and generated output names all drop userinfo, sensitive path tokens, query strings and fragments, and a hostname that resolves to any non-global address never crosses a remote dispatch boundary
+- **macOS Office automation isolates untrusted documents**: the fallback opens a read-only staged copy with macros and external-link updates disabled, binds and closes only the exact document it opened, serializes app access across processes, and keeps the recoverable staging files private
+- **A headless install does not count as consent to optional software**: without a usable terminal, the portable installer puts in uv, Python and Markitai and nothing else, unless `MARKITAI_INSTALL_OPTIONAL=1` explicitly turns on optional packages, browser binaries, system dependencies and third-party CLIs
 
 ## [0.19.0] - 2026-07-10
 
 ### Changed
 
-- **Remote extraction no longer prompts by default** (`fetch.remote_consent` default `ask` → `always`): public URLs fall back to remote extraction services (defuddle.md, Jina, Cloudflare — tried one at a time, only after local strategies fail) without an interactive confirmation; the first use is disclosed via an INFO log. Private/local URLs never use remote services regardless of this setting, and URLs carrying credentials in the netloc (`user:pass@host`) are now treated as private too. Set `fetch.remote_consent=ask`/`never` or `MARKITAI_NO_REMOTE_FETCH=1` to restore prompting or disable remote services
-- **Consent prompt rewording** (for `remote_consent=ask`): the prompt now explains why it appears (local extraction didn't succeed), that services are tried one at a time (first success wins), and dynamically lists only the services actually in the chain — Cloudflare (which runs against your own account credentials) only appears when configured. Interactive prompts also pause the live progress display instead of tearing it
+- **Remote extraction no longer prompts by default** (`fetch.remote_consent` default `ask` → `always`): public URLs fall back to remote extraction services (defuddle.md, Jina, Cloudflare, tried one at a time and only after the local strategies fail) without an interactive confirmation; an INFO log discloses the first use. Private/local URLs never use remote services regardless of this setting, and URLs carrying credentials in the netloc (`user:pass@host`) are now treated as private too. Set `fetch.remote_consent=ask`/`never` or `MARKITAI_NO_REMOTE_FETCH=1` to restore prompting or disable remote services
+- **Consent prompt rewording** (for `remote_consent=ask`): the prompt now explains why it appears (local extraction didn't succeed), that services are tried one at a time (first success wins), and lists only the services actually in the chain, so Cloudflare (which runs against your own account credentials) appears only when configured. Interactive prompts also pause the live progress display instead of tearing it
 
 ### Added
 
-- **Live progress checklist (StageList)**: multi-stage live progress for single-URL and single-file conversions — completed stages persist as `✓ Fetched via fxtwitter (2.1s)` lines, and the active stage shows a spinner with an elapsed-time suffix. Stdout-mode conversions (no `-o`) finally show progress; they were previously fully silent through fetch + LLM enhancement
+- **Live progress checklist (StageList)**: multi-stage live progress for single-URL and single-file conversions. Completed stages persist as `✓ Fetched via fxtwitter (2.1s)` lines, and the active stage shows a spinner with an elapsed-time suffix. Stdout-mode conversions (no `-o`) finally show progress; they were previously fully silent through fetch + LLM enhancement
 
 ### Fixed
 
-- **`--resume` was a no-op**: the CLI batch entry point accepted the flag but always reprocessed every file from scratch. It now correctly loads saved state — completed files are skipped, failed/interrupted files are retried, newly-discovered files are picked up — and reports `Resuming batch: N completed, M remaining`
+- **`--resume` was a no-op**: the CLI batch entry point accepted the flag but always reprocessed every file from scratch. It now loads the saved state, skips completed files, retries failed or interrupted ones, picks up newly discovered files, and reports `Resuming batch: N completed, M remaining`
 - **Output naming reverted to the append scheme**: `sample.pdf` → `sample.pdf.md` (not `sample.md`), undoing the 0.15.0 extension-replacement change, which hid the source format, mangled multi-suffix names, and made single-file and batch conversions of the same file disagree
 - **Windows install one-liner 404**: the website now serves `setup.ps1` (docs pointed to https://markitai.dev/setup.ps1 but only setup.sh was deployed); Chinese changelog edits now trigger site redeploys
-- **Prompt REMINDER leaked into cleaned output**: with smaller models (observed with `gpt-5.4-mini`), the vision-cleaning prompt's trailing `REMINDER: ...` instruction — and its `---` delimiter — could be echoed verbatim at the end of `.llm.md` output. The prompt now delimits the document with `<document>` tags and puts all instructions before the content, and a new output guard strips echoed prompt fragments, including from previously cached results
-- **Image alt text was silently skipped for some URL conversions**: URLs with a screenshot but no multi-source content (e.g. X posts via site extractors) fell through to text-only LLM processing without image analysis, and the URL-batch path never analyzed images at all — `--alt`/`--desc` had no effect there. Both paths now analyze downloaded images (alt text + `images.json`). The stdout asset rewrite also no longer overwrites LLM-generated alt text with the bare filename
+- **Prompt REMINDER leaked into cleaned output**: with smaller models (observed with `gpt-5.4-mini`), the vision-cleaning prompt's trailing `REMINDER: ...` instruction, `---` delimiter included, could be echoed verbatim at the end of `.llm.md` output. The prompt now delimits the document with `<document>` tags and puts all instructions before the content, and a new output guard strips echoed prompt fragments, including from previously cached results
+- **Image alt text was silently skipped for some URL conversions**: URLs with a screenshot but no multi-source content (e.g. X posts via site extractors) fell through to text-only LLM processing without image analysis, and the URL-batch path never analyzed images at all, so `--alt`/`--desc` had no effect there. Both paths now analyze downloaded images (alt text + `images.json`). The stdout asset rewrite also no longer overwrites LLM-generated alt text with the bare filename
 - **Batch image analysis no longer trips over bare-payload JSON**: small models sometimes answer a single-image batch with the bare item instead of the `{"images": [...]}` wrapper; this burned Instructor retries and fell back to per-image analysis with an ERROR log. The JSON repair layer now coerces such shapes in place, so the batch succeeds directly
-- **Weak models could mangle social-post bodies during LLM cleanup** (flattened quoted-post blockquotes, respaced CJK text — observed with `claude-agent/haiku`): content profiled as `social_post` now passes its body through verbatim and the LLM only generates metadata. For all other document types, the document-processing prompt gained explicit blockquote-preservation and CJK-spacing rules
+- **Weak models could mangle social-post bodies during LLM cleanup** (flattened quoted-post blockquotes, respaced CJK text; observed with `claude-agent/haiku`): content profiled as `social_post` now passes its body through verbatim and the LLM only generates metadata. For all other document types, the document-processing prompt gained explicit blockquote-preservation and CJK-spacing rules
 - **ChatGPT connection errors were non-retryable and unreadable**: httpx transport failures (connection reset/refused, timeouts) were mapped to a non-retryable `ProviderError` with an empty message, bypassing every retry layer. They are now marked retryable and carry the underlying error text
 - **Console log lines no longer tear the live progress display**: log output now routes through the shared rich stderr console, so lines print above the StageList spinner instead of leaving stale frames behind; quiet/stdout mode also applies the same third-party retry-noise filter as normal mode (raw instructor retry errors previously leaked through)
-- **Failed LLM enhancement is now visible in the output**: when every LLM path fails, the fallback `.llm.md` frontmatter carries `llm_enhanced: false` and an ERROR-level log is emitted — previously the only hint of degraded output was an empty description
+- **Failed LLM enhancement is now visible in the output**: when every LLM path fails, the fallback `.llm.md` frontmatter carries `llm_enhanced: false` and an ERROR-level log is emitted. Previously the only hint of degraded output was an empty description
 
 ### Removed
 
@@ -276,7 +276,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- **Gemini CLI provider** (`gemini-cli/`) — Google retired the underlying OAuth onboarding. Use a direct `GEMINI_API_KEY` or route through OpenRouter instead
+- **Gemini CLI provider** (`gemini-cli/`): Google retired the OAuth onboarding it depended on. Use a direct `GEMINI_API_KEY` or route through OpenRouter instead
 
 ### Added
 
@@ -310,7 +310,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.15.0] - 2026-07-04
 
-Maintenance overhaul: dependency refresh, Python 3.14 support, and a multi-round audit fixing 30+ verified bugs across batch processing, fetch/cache, LLM providers, image handling, and configuration.
+A maintenance release: refreshed dependencies, Python 3.14 support, and several rounds of auditing that fixed 30+ verified bugs across batch processing, fetch/cache, LLM providers, image handling and configuration.
 
 ### Added
 
@@ -329,7 +329,7 @@ Maintenance overhaul: dependency refresh, Python 3.14 support, and a multi-round
 
 ### Fixed
 
-Selected highlights from a multi-round quality and bug-hunt pass:
+The main fixes from several rounds of bug hunting:
 
 - X/Twitter DOM extractor rebuilt for X's 2026 markup redesign; FxTwitter fallback now actually reachable from the default fetch chain
 - `.eml` email support (native), HEIC/HEIF/AVIF image input (`markitai[heif]`), quality guardrails gate for CI
@@ -344,7 +344,7 @@ Selected highlights from a multi-round quality and bug-hunt pass:
 - Mixing an input path with a subcommand is now an error instead of silently dropping the input
 - `-o out.md` on a single file/URL writes exactly that file
 - Diagnostics moved to stderr so piped stdout output stays clean
-- Output naming switched to an extension-replacement scheme (`sample.pdf` → `sample.md`) — **reverted in 0.19.0**
+- Output naming switched to an extension-replacement scheme (`sample.pdf` → `sample.md`); **reverted in 0.19.0**
 - `image.stdout_persist` now defaults on
 - Reports (`.markitai/reports/`) are batch-only by default
 - Dependency refresh (litellm, opencv-python, playwright, instructor, and others)
@@ -427,7 +427,7 @@ Selected highlights from a multi-round quality and bug-hunt pass:
 ## [0.7.0] - 2026-03-05
 
 - Added: **ChatGPT provider** (`chatgpt/`) via OAuth device-code flow
-- Added: **Gemini CLI provider** (`gemini-cli/`) — later removed in 0.17.0
+- Added: **Gemini CLI provider** (`gemini-cli/`), later removed in 0.17.0
 - Added: `weight: 0` to explicitly disable a model in routing
 - Fixed: Router division-by-zero when all models were weight-0
 

@@ -12,7 +12,7 @@ The input is a file (`document.docx`), a directory (`./docs`) or a URL (`https:/
 
 ### `--llm`
 
-Clean up formatting and generate frontmatter with an LLM. By default only `.llm.md` is written; add `--keep-base` to keep the plain `.md` as well.
+Clean up formatting and generate frontmatter with an LLM. By default markitai writes only `.llm.md`; add `--keep-base` to keep the plain `.md` as well.
 
 ```bash
 markitai document.docx --llm
@@ -31,7 +31,7 @@ markitai docs/ --llm --llm-batch -o out/         # waits up to --llm-batch-timeo
 markitai --llm-batch-collect <batch-id> -o out/  # finish a handed-off batch later
 ```
 
-It needs a single OpenAI or Anthropic model. Image analysis and screenshots ride the same batch job. `--ocr` is not yet supported in batch mode. If enhancement fails, the base output is still written.
+It needs a single OpenAI or Anthropic model. Image analysis and screenshots ride the same batch job. `--ocr` does not work in batch mode yet. If enhancement fails, markitai still writes the base output.
 
 ### `-p, --preset <name>`
 
@@ -43,7 +43,7 @@ Use a bundle of common flags:
 | `standard` | ✓ | ✓ | ✓ | – | – |
 | `rich` | ✓ | ✓ | ✓ | ✓ | – |
 
-No preset turns on OCR; `--ocr` is always explicit. Custom presets can be defined in the [config file](/guide/configuration#presets).
+No preset turns on OCR; `--ocr` is always explicit. Define your own presets in the [config file](/guide/configuration#presets).
 
 ```bash
 markitai document.pdf --preset rich
@@ -118,7 +118,7 @@ Read scanned PDFs and images.
 markitai scanned.pdf --ocr
 ```
 
-Without `--llm`, OCR runs locally with RapidOCR (`markitai[ocr]`). With `--llm`, the vision model reads the page images instead, so no OCR extra is needed but the pages go to the model. `MARKITAI_NO_VLM_OCR=1` forces the local path.
+Without `--llm`, OCR runs locally with RapidOCR (`markitai[ocr]`). With `--llm`, the vision model reads the page images instead, so you need no OCR extra, but the pages go to the model. `MARKITAI_NO_VLM_OCR=1` forces the local path.
 
 A single image input needs `--ocr` or `--llm`; with neither, markitai exits with status 1 rather than reporting an empty success.
 
@@ -142,7 +142,7 @@ markitai document.docx --llm --pure
 ```
 
 ::: warning
-`--pure` overrides `--alt`, `--desc` and `--screenshot`. A warning is printed when they are combined.
+`--pure` overrides `--alt`, `--desc` and `--screenshot`. Combining them prints a warning.
 :::
 
 `--no-pure` restores frontmatter when a config file enables pure mode.
@@ -190,11 +190,11 @@ The document is `{version, ok, error, items[], totals}`:
 - `totals`: counts by status plus `cost_usd` and `duration_s`.
 - `ok`: `false` when any item failed or `error` is set.
 
-The exit code keeps its usual meaning (see [Exit codes](#exit-codes)); a partial batch exits `10` while still printing JSON, so scripts should check `ok` too. Usage errors go to stderr without JSON. `--json` cannot be combined with `--dry-run` or `--llm-batch-collect`.
+The exit code keeps its usual meaning (see [Exit codes](#exit-codes)); a partial batch exits `10` while still printing JSON, so scripts should check `ok` too. Usage errors go to stderr without JSON. You cannot combine `--json` with `--dry-run` or `--llm-batch-collect`.
 
 ### `--resume`
 
-Resume an interrupted batch. Completed files are skipped, failed and interrupted ones are retried, new files are picked up. Batch input only.
+Resume an interrupted batch. It skips completed files, retries failed and interrupted ones, and picks up new files. Batch input only.
 
 ```bash
 markitai ./docs -o ./output --resume
@@ -208,7 +208,7 @@ Add this run to the [web workspace](/guide/serve#history) history, with a CLI ba
 markitai document.docx -o ./output --record-history
 ```
 
-Precedence: `--record-history` / `--no-record-history`, then `MARKITAI_RECORD_HISTORY`, then `history.record` in the config, then off. Recording is skipped in stdout mode and never fails a conversion.
+Precedence: `--record-history` / `--no-record-history`, then `MARKITAI_RECORD_HISTORY`, then `history.record` in the config, then off. Stdout mode skips recording, and a failed recording never fails the conversion.
 
 ## Concurrency Options
 
@@ -250,7 +250,7 @@ markitai ./docs --no-cache-for "*.pdf,reports/**"
 
 ### `.urls` File Support
 
-A `.urls` file is converted as a URL batch. Directory batches also pick up any `.urls` files inside the tree.
+markitai treats a `.urls` file as a URL batch. Directory batches also pick up any `.urls` files inside the tree.
 
 ```bash
 markitai urls.urls -o ./output
@@ -263,7 +263,7 @@ https://example.com/page1
 https://example.com/page2 custom_name
 ```
 
-Successful URLs are kept when another one fails; a partially successful run exits with status 10.
+When one URL fails, the successful ones stay; a partially successful run exits with status 10.
 
 ### `--glob, -g <pattern>`
 
@@ -329,7 +329,7 @@ The native converters usually produce better output for formats they support; `-
 
 ### Removed per-backend flags
 
-Six aliases were removed in 1.0.0. Passing one is a usage error that names the replacement:
+1.0.0 removed six aliases. Passing one is a usage error, and the error names the replacement:
 
 | Removed flag | Use instead |
 |--------------|-------------|
@@ -384,7 +384,7 @@ markitai -I
 
 ### `markitai config list`
 
-Show the effective configuration. Secrets are redacted.
+Show the effective configuration, with secrets redacted.
 
 ```bash
 markitai config list                    # JSON
@@ -559,7 +559,7 @@ Show more detail.
 
 ### `--log-level <level>`
 
-Minimum level for the log file (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`). Takes effect only when `log.dir` is set; terminal output is controlled by `--verbose` and `--quiet`.
+Minimum level for the log file (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`). Takes effect only when `log.dir` is set; `--verbose` and `--quiet` control terminal output.
 
 ```bash
 markitai ./docs -o out --log-level WARNING

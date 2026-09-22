@@ -1,6 +1,6 @@
 # Conversion performance
 
-URL extraction is local-first: short articles and CJK prose usually finish in
+URL extraction runs local-first: short articles and CJK prose usually finish in
 the static strategy without starting a browser. Local file conversion loads only
 the backend a format needs, with dedicated paths for plain Office documents and
 fallback readers for rich content, equations and ambiguous spreadsheet values.
@@ -22,10 +22,10 @@ with three fresh processes each, and with model enrichment, remote fetching and
 the cache all off. The audit also compared output: 40 converter and API
 snapshots, 23 complex table cases and 208 web fixtures came out identical.
 
-These are cold CLI aggregates, not a figure for one document or machine. URL
-timings run over loopback HTTP, excluding internet latency and any remote
-service's cache. The frozen baseline already contained the Fake-IP and CJK
-fixes, so it is not a comparison against a released version.
+These are cold CLI aggregates; don't read them as a figure for one document
+or machine. URL timings run over loopback HTTP, excluding internet latency and
+any remote service's cache. The frozen baseline already contained the Fake-IP
+and CJK fixes, so this does not compare against a released version.
 
 [`2026-09-14.json`](https://github.com/Ynewtime/markitai/blob/main/scripts/benchmarks/results/2026-09-14.json)
 holds the full record; the

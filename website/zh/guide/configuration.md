@@ -40,9 +40,9 @@ markitai config validate
 
 ### 完整配置示例
 
-每个设置在没有任何配置时取的值，来自
+每个设置在没有任何配置时取的值。这些值直接来自
 [`config.py`](https://github.com/Ynewtime/markitai/blob/main/packages/markitai/src/markitai/config.py)
-中的模型定义。`markitai config list` 打印你这台机器上的实际生效值。
+中的模型定义；`markitai config list` 打印你这台机器上的实际生效值。
 
 :::: details 含全部默认值的 markitai.json
 
@@ -196,11 +196,11 @@ markitai config validate
 
 ::::
 
-`llm.model_list` 默认为空。用了 `--llm` 又没有条目时，markitai 会自己挑一个——先 `MODEL`，再是已登录的 CLI（Claude Code、Copilot、ChatGPT），最后是提供商 API 密钥；三者都没有则报告未配置模型。各自对应的模型见[markitai 自动选用的默认模型](#markitai-自动选用的默认模型)。
+`llm.model_list` 默认为空。用了 `--llm` 又没有条目时，markitai 会自己挑一个：先 `MODEL`，再是已登录的 CLI（Claude Code、Copilot、ChatGPT），最后是提供商 API 密钥。三者都没有就报告未配置模型。各自对应的模型见[markitai 自动选用的默认模型](#markitai-自动选用的默认模型)。
 
 `markitai init` 会为检测到的提供商写入一条；网页工作台的设置对话框写入 `llm.providers`。
 
-任何字符串值都可以用 `env:VAR_NAME` 引用环境变量。`JINA_API_KEY`、`CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID` 不写进配置也会从环境里自动读取。
+任何字符串值都可以用 `env:VAR_NAME` 引用环境变量。`JINA_API_KEY`、`CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID` 不写进配置，markitai 也会从环境里读。
 
 ## 环境变量
 
@@ -221,7 +221,7 @@ markitai config validate
 
 | 变量 | 说明 |
 |------|------|
-| `MODEL` | 未配置 `model_list` 时使用的模型 |
+| `MODEL` | 没设 `model_list` 时使用的模型 |
 | `MARKITAI_CONFIG` | 配置文件路径 |
 | `MARKITAI_LOG_DIR` | 日志文件目录 |
 | `MARKITAI_LOG_FORMAT` | `text` 或 `json` |
@@ -339,7 +339,7 @@ Gemini 没有订阅登录。用 API key（`gemini/`）或走 OpenRouter（`openr
 
 ### Vision 模型
 
-视觉能力会从 LiteLLM 自动检测。要手动指定，在模型条目上设 `model_info.supports_vision`：
+markitai 会从 LiteLLM 检测模型的视觉能力。要手动指定，在模型条目上设 `model_info.supports_vision`：
 
 ```json
 {
@@ -374,7 +374,7 @@ Gemini 没有订阅登录。用 API key（`gemini/`）或走 OpenRouter（`openr
 
 #### 模型权重
 
-`model_list` 里每个条目都可以在 `litellm_params` 里设 `weight`。`1` 是正常，`10` 被选中的概率是十倍，`0` 禁用该模型但保留配置。至少要有一个模型权重大于零；这在首次使用时检查，`config validate` 不查。
+`model_list` 里每个条目都可以在 `litellm_params` 里设 `weight`。`1` 是正常，`10` 被选中的概率是十倍，`0` 禁用该模型但保留配置。至少要有一个模型权重大于零。markitai 在首次使用时检查这一点，`config validate` 不查。
 
 ```json
 {
@@ -452,7 +452,7 @@ Claude Code 会自动缓存 4 KB 以上的系统提示词。无需配置，`mark
 uv tool install "markitai[ocr]" --force
 ```
 
-`--ocr --llm` 加一个支持视觉的模型就不需要 extra：模型直接读页面图片。`MARKITAI_NO_VLM_OCR=1` 强制走本地。
+`--ocr --llm` 加一个支持视觉的模型就可以省掉 extra：模型自己读页面图片。`MARKITAI_NO_VLM_OCR=1` 强制走本地。
 
 ## Office 配置
 
@@ -538,7 +538,7 @@ X/Twitter 的补充抓取（FxTwitter、Twitter oEmbed）和其他远程服务�
 
 ### Defuddle 设置
 
-[Defuddle](https://defuddle.md) 抽取干净的文章正文，返回带丰富 frontmatter 的 Markdown。免费，不需要 key。
+[Defuddle](https://defuddle.md) 抽取文章正文，返回带丰富 frontmatter 的 Markdown。免费，不需要 key。
 
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
@@ -567,7 +567,7 @@ Cloudflare 提供两样东西，分别选用：**Browser Rendering**（`-s cloud
 
 1. **账户 ID**：在[控制台](https://dash.cloudflare.com/)的 URL 里，`dash.cloudflare.com/<account_id>/...`。
 2. **API token**：[My Profile → API Tokens](https://dash.cloudflare.com/profile/api-tokens)，*Create Token*，自定义 token，给你的账户加上 *Browser Rendering: Edit* 和 *Workers AI: Read* 权限。
-3. **启用 Browser Rendering**：在 *Workers & Pages → Browser Rendering* 下开启。免费套餐可用。
+3. **启用 Browser Rendering**：在 *Workers & Pages → Browser Rendering* 下开启。免费套餐就包含它。
 
 ```bash
 export CLOUDFLARE_API_TOKEN="your-api-token"
@@ -580,15 +580,15 @@ export CLOUDFLARE_ACCOUNT_ID="your-account-id"
 
 策略引擎按域名排定策略顺序，并记住哪些域名需要浏览器。它的选项、域名配置字段和内置配置都写在[抓取策略](/zh/guide/fetch-policy#配置)一页。
 
-自定义的 `domain_profiles` 条目仅覆盖显式设置的字段，其余内置调优继续生效。`auto` 把 `fallback_patterns` 里的域名都当成重 JavaScript，直接从浏览器策略开始。
+自定义的 `domain_profiles` 条目只覆盖你写了的字段，其余内置调优照旧。`auto` 把 `fallback_patterns` 里的域名都当成重 JavaScript，直接从浏览器策略开始。
 
 ### 代理
 
-`HTTPS_PROXY`、`HTTP_PROXY` 和 `ALL_PROXY` 都生效，`NO_PROXY` 是绕过列表。都没设时用操作系统代理：Windows 的 Internet 设置、macOS 的网络设置，以及 Linux 上 GNOME 或 KDE 桌面的手动 HTTP 代理。PAC、纯 SOCKS 和带认证的桌面代理不会导入，请改设环境变量。
+markitai 认 `HTTPS_PROXY`、`HTTP_PROXY` 和 `ALL_PROXY`，`NO_PROXY` 是绕过列表。都没设时退回操作系统代理：Windows 的 Internet 设置、macOS 的网络设置，以及 Linux 上 GNOME 或 KDE 桌面的手动 HTTP 代理。PAC、纯 SOCKS 和带认证的桌面代理不会导入，这几种请改设环境变量。
 
 ## 缓存配置
 
-LLM 结果缓存在 `~/.markitai/cache.db`，同一份文档再转一次不花钱。
+markitai 把 LLM 结果缓存在 `~/.markitai/cache.db`，同一份文档再转一次不花钱。
 
 | 设置 | 默认值 | 说明 |
 |------|--------|------|

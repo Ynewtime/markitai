@@ -31,7 +31,7 @@ markitai docs/ --llm --llm-batch -o out/         # 最多等 --llm-batch-timeout
 markitai --llm-batch-collect <batch-id> -o out/  # 稍后收取转为后台的批次
 ```
 
-需要单个 OpenAI 或 Anthropic 模型。图片分析和截图走同一个批次。`--ocr` 暂不支持批量模式。增强失败时基础输出照常写出。
+需要单个 OpenAI 或 Anthropic 模型。图片分析和截图走同一个批次。`--ocr` 暂时不能用在批量模式。增强失败时，markitai 照常写出基础输出。
 
 ### `-p, --preset <name>`
 
@@ -43,7 +43,7 @@ markitai --llm-batch-collect <batch-id> -o out/  # 稍后收取转为后台的�
 | `standard` | ✓ | ✓ | ✓ | – | – |
 | `rich` | ✓ | ✓ | ✓ | ✓ | – |
 
-没有预设会开 OCR，`--ocr` 总是显式指定。自定义预设可在[配置文件](/zh/guide/configuration#预设)里定义。
+没有预设会开 OCR，`--ocr` 总是显式指定。自己的预设写在[配置文件](/zh/guide/configuration#预设)里。
 
 ```bash
 markitai document.pdf --preset rich
@@ -118,7 +118,7 @@ markitai https://example.com --llm --screenshot-only
 markitai scanned.pdf --ocr
 ```
 
-不带 `--llm` 时，用 RapidOCR 在本地识别（需要 `markitai[ocr]`）。带 `--llm` 时改由视觉模型直接读页面图片，不需要 OCR extra，但页面会发给模型。`MARKITAI_NO_VLM_OCR=1` 强制走本地。
+不带 `--llm` 时，用 RapidOCR 在本地识别（需要 `markitai[ocr]`）。带 `--llm` 时改由视觉模型直接读页面图片，你不用装 OCR extra，但页面会发给模型。`MARKITAI_NO_VLM_OCR=1` 强制走本地。
 
 单张图片作为输入时需要 `--ocr` 或 `--llm`，两者都没有时 markitai 以状态码 1 退出，而不是报告一次空成功。
 
@@ -194,7 +194,7 @@ markitai document.pdf -o ./output --json | jq '.items[] | select(.status == "fai
 
 ### `--resume`
 
-继续被中断的批量。已完成的跳过，失败和中断的重试，新增的文件会被捡起。只对批量输入有效。
+继续被中断的批量。它跳过已完成的文件，重试失败和中断的，新增的文件也捡起来。只对批量输入有效。
 
 ```bash
 markitai ./docs -o ./output --resume
@@ -208,7 +208,7 @@ markitai ./docs -o ./output --resume
 markitai document.docx -o ./output --record-history
 ```
 
-优先级：`--record-history` / `--no-record-history`，其次环境变量 `MARKITAI_RECORD_HISTORY`，再次配置项 `history.record`，默认关闭。stdout 模式不记录，记录失败也不影响转换。
+优先级：`--record-history` / `--no-record-history`，其次环境变量 `MARKITAI_RECORD_HISTORY`，再次配置项 `history.record`，默认关闭。stdout 模式不记录；记录失败了，转换本身不受影响。
 
 ## 并发选项
 
@@ -250,7 +250,7 @@ markitai ./docs --no-cache-for "*.pdf,reports/**"
 
 ### `.urls` 文件支持
 
-`.urls` 文件按 URL 批量转换。目录批量也会捡起目录树里的 `.urls` 文件。
+markitai 把 `.urls` 文件当成 URL 批量。目录批量也会捡起目录树里的 `.urls` 文件。
 
 ```bash
 markitai urls.urls -o ./output
@@ -263,7 +263,7 @@ https://example.com/page1
 https://example.com/page2 custom_name
 ```
 
-有 URL 失败时成功的照样保留；部分成功的运行以状态码 10 退出。
+一个 URL 失败，成功的照样保留；部分成功的运行以状态码 10 退出。
 
 ### `--glob, -g <pattern>`
 
@@ -329,7 +329,7 @@ markitai document.pdf -b cloudflare
 
 ### 已移除的旧后端参数
 
-1.0.0 移除了六个别名。传入会报用法错误并给出替代写法：
+1.0.0 移除了六个别名。传入会报用法错误，错误信息里写着替代写法：
 
 | 已移除 | 改用 |
 |--------|------|
@@ -384,7 +384,7 @@ markitai -I
 
 ### `markitai config list`
 
-显示生效的配置。密钥会被打码。
+显示生效的配置，密钥已打码。
 
 ```bash
 markitai config list                    # JSON
