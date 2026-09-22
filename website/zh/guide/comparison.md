@@ -4,7 +4,7 @@ pageClass: compact-tables
 
 # 为什么选 Markitai
 
-没有哪个转换器是全面最优的——下面这些工具各自优化的目标不同。本页说明 markitai 做了什么、什么时候该选别的工具以及原因，不列那些很快就会过期的 star 数和下载量。
+没有哪个转换器是全面最优的——下面这些工具各自优化的目标不同。本页说明 markitai 做了什么、什么时候该选别的工具以及原因。
 
 | | **markitai** | markitdown | docling | anydoc |
 | --- | --- | --- | --- | --- |
