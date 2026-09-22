@@ -42,3 +42,40 @@ and the Markdown that markitai's richer site-specific extractors produce.
 
 Comparison scripts are in
 [`scripts/benchmarks/`](../scripts/benchmarks/README.md).
+
+## 2026-09-22 — resync to upstream 0.19.4
+
+The corpus moved to release 0.19.4
+(`d4c4bad0dc96ca31b2383328e38061cc1490db47`, 27 commits past the previous
+pin), prompted by the watch workflow's issue #41. 209 fixtures; the
+benchmark mean went from 96.01 to 96.20, with a local build of upstream used
+as the oracle for each change.
+
+Ported from the upstream diff:
+
+- code fences grow past the longest backtick run instead of escaping
+  backticks (#359)
+- `<sub>`/`<sup>` keep their tags and hug their neighbours (#379); the port
+  had been flattening them to bare text, merging `2021<sub>5ya</sub>` into
+  `20215ya`
+- a date inside a labeled row (`Date:`, `Published:` …) is no longer stripped
+  from the row, which left an orphaned label
+- declarative shadow roots: `closed` mode, the legacy `shadowroot`
+  attribute, and nested roots (hoisted inside-out, depth-bounded)
+- `<template>` fragments and SVG SMIL elements are removed, and a content
+  root that is itself unsafe is emptied rather than serialized
+
+Found missing while comparing, and ported in the same pass: arXiv
+`span.ltx_note_outer` removal (upstream since March), which took
+`issues--144-arxiv-footnote-marks` from 74 to 100.
+
+Not ported, recorded under "Known divergences" in the manifest: presentation
+MathML preserved through arXiv equation tables, and YouTube default-caption
+selection. Not applicable: linkedom heading-case and `compareDocumentPosition`
+workarounds, the C2 wiki extractor.
+
+Two footnote fixtures upstream recognises and markitai does not
+(`footnotes--br-separated-named-anchors`, `footnotes--labeled-section-ol`)
+dropped about 1.5 points each: their `<sup>` markers now render as tags
+instead of bare digits. The footnote patterns themselves were already a gap.
+

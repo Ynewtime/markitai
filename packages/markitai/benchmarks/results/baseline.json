@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-08-25T00:14:22+00:00",
+  "generated_at": "2026-09-22T08:37:55+00:00",
   "scorer": "heuristic (rapidfuzz partial-ratio, marker-style)",
-  "fixture_count": 208,
+  "fixture_count": 209,
   "aggregate": {
-    "mean_score": 95.6,
+    "mean_score": 96.2,
     "local_mean_score": 99.47
   },
   "fixtures": {
@@ -18,9 +18,9 @@
       "order_score": 98.48
     },
     "callouts--obsidian-publish-callouts": {
-      "score": 88.0,
-      "match_score": 87.92,
-      "order_score": 88.33
+      "score": 99.67,
+      "match_score": 100.0,
+      "order_score": 98.33
     },
     "code-blocks--chroma-linenums": {
       "score": 97.69,
@@ -268,8 +268,8 @@
       "order_score": 100.0
     },
     "elements--lazy-image": {
-      "score": 90.57,
-      "match_score": 88.21,
+      "score": 99.89,
+      "match_score": 99.86,
       "order_score": 100.0
     },
     "elements--lightbox-image-dedup": {
@@ -348,8 +348,8 @@
       "order_score": 100.0
     },
     "footnotes--br-separated-named-anchors": {
-      "score": 97.9,
-      "match_score": 97.38,
+      "score": 96.28,
+      "match_score": 95.35,
       "order_score": 100.0
     },
     "footnotes--child-anchor-id": {
@@ -408,14 +408,14 @@
       "order_score": 100.0
     },
     "footnotes--labeled-section-ol": {
-      "score": 97.01,
-      "match_score": 96.27,
+      "score": 95.64,
+      "match_score": 94.55,
       "order_score": 100.0
     },
     "footnotes--maggieappleton.com-xanadu-patterns": {
-      "score": 97.95,
-      "match_score": 97.96,
-      "order_score": 97.91
+      "score": 98.31,
+      "match_score": 98.41,
+      "order_score": 97.92
     },
     "footnotes--named-anchor": {
       "score": 100.0,
@@ -449,7 +449,7 @@
     },
     "footnotes--pulldown-cmark-footnote-definition": {
       "score": 99.94,
-      "match_score": 99.93,
+      "match_score": 99.92,
       "order_score": 100.0
     },
     "footnotes--sidenote-inline-with-list": {
@@ -483,8 +483,8 @@
       "order_score": 100.0
     },
     "general--12gramsofcarbon.com-p-ilyas-30-papers-to-carmack-vlaes": {
-      "score": 98.94,
-      "match_score": 98.67,
+      "score": 99.07,
+      "match_score": 98.84,
       "order_score": 100.0
     },
     "general--apnews-link-enhancement": {
@@ -533,8 +533,8 @@
       "order_score": 100.0
     },
     "general--lesswrong.com-s-N7nDePaNabJdnbXeE-p-vJFdjigzmcXMhNTsx": {
-      "score": 99.51,
-      "match_score": 99.76,
+      "score": 99.53,
+      "match_score": 99.79,
       "order_score": 98.48
     },
     "general--multi-article-portfolio": {
@@ -543,8 +543,8 @@
       "order_score": 100.0
     },
     "general--news.ycombinator.com-item-id=12345678": {
-      "score": 20.0,
-      "match_score": 0.0,
+      "score": 94.28,
+      "match_score": 92.85,
       "order_score": 100.0
     },
     "general--obsidian-publish-cjk": {
@@ -553,8 +553,8 @@
       "order_score": 100.0
     },
     "general--obsidian.md-blog-verify-obsidian-sync-encryption": {
-      "score": 99.61,
-      "match_score": 99.51,
+      "score": 99.64,
+      "match_score": 99.55,
       "order_score": 100.0
     },
     "general--react-streaming-ssr": {
@@ -713,8 +713,8 @@
       "order_score": 100.0
     },
     "issues--144-arxiv-footnote-marks": {
-      "score": 73.45,
-      "match_score": 66.81,
+      "score": 100.0,
+      "match_score": 100.0,
       "order_score": 100.0
     },
     "issues--159-lean-heading-permalink-emoji": {
@@ -872,6 +872,11 @@
       "match_score": 4.21,
       "order_score": 100.0
     },
+    "math--equation-table-mathml": {
+      "score": 98.5,
+      "match_score": 98.13,
+      "order_score": 100.0
+    },
     "math--katex": {
       "score": 100.0,
       "match_score": 100.0,
@@ -958,8 +963,8 @@
       "order_score": 100.0
     },
     "metadata--email-style-header-block": {
-      "score": 96.68,
-      "match_score": 95.85,
+      "score": 100.0,
+      "match_score": 100.0,
       "order_score": 100.0
     },
     "metadata--h1-sibling-byline": {
@@ -1023,8 +1028,8 @@
       "order_score": 100.0
     },
     "table-layout--blogger-two-column": {
-      "score": 99.87,
-      "match_score": 99.83,
+      "score": 100.0,
+      "match_score": 100.0,
       "order_score": 100.0
     },
     "table-layout--paulgraham.com-makersschedule": {
