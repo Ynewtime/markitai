@@ -52,6 +52,34 @@ class TestDeclarativeShadowDomFlattening:
         assert "<p>second</p>" in result
         assert "shadowrootmode" not in result
 
+    def test_flattens_closed_shadow_root(self) -> None:
+        """The markup is present either way; a closed root is content too."""
+        html = '<div><template shadowrootmode="closed"><p>closed</p></template></div>'
+        result = preprocess_html(html)
+        assert "<p>closed</p>" in result
+        assert "<template" not in result
+
+    def test_flattens_legacy_shadowroot_attribute(self) -> None:
+        html = '<div><template shadowroot="open"><p>legacy</p></template></div>'
+        result = preprocess_html(html)
+        assert "<p>legacy</p>" in result
+        assert "<template" not in result
+
+    def test_flattens_nested_shadow_roots(self) -> None:
+        """Hoisting exposes nested roots; they unwrap inside-out."""
+        html = (
+            '<div><template shadowrootmode="open">'
+            '<section><template shadowrootmode="open"><p>inner</p></template></section>'
+            "<p>outer</p>"
+            "</template></div>"
+        )
+        result = preprocess_html(html)
+        assert result == "<div><section><p>inner</p></section><p>outer</p></div>"
+
+    def test_ignores_unknown_shadowroot_mode(self) -> None:
+        html = '<div><template shadowrootmode="lazy"><p>x</p></template></div>'
+        assert preprocess_html(html) == html
+
 
 class TestWbrRemoval:
     """<wbr> tags break word boundaries and should be removed."""

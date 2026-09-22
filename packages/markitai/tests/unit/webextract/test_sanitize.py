@@ -61,3 +61,31 @@ def test_sanitize_checks_formaction_attribute() -> None:
         '<div formaction="javascript:evil()"><p>safe</p></div>'
     )
     assert "formaction" not in sanitized
+
+
+def test_sanitize_removes_template_and_svg_smil_elements() -> None:
+    """Inert template fragments and SMIL animations can mutate the output."""
+    html = (
+        "<div><p>a</p><template><img src=x onerror=alert(1)></template>"
+        '<svg><a href="#ok"><animate attributeName="href" to="javascript:alert(1)"/>'
+        '<set attributeName="href" to="javascript:alert(1)"/></a></svg></div>'
+    )
+    out = _sanitize_fragment(html)
+    assert "<template" not in out
+    assert "onerror" not in out
+    assert "<animate" not in out
+    assert "<set" not in out
+    assert "<p>a</p>" in out
+
+
+def test_sanitize_empties_an_unsafe_root() -> None:
+    """find_all omits the root, so an unsafe root is neutralized in place."""
+    from bs4 import BeautifulSoup, Tag
+
+    from markitai.webextract.sanitize import sanitize_tag_tree
+
+    soup = BeautifulSoup('<template id="t"><p>leak</p></template>', "html.parser")
+    root = soup.find("template")
+    assert isinstance(root, Tag)
+    sanitize_tag_tree(root)
+    assert str(root) == "<template></template>"

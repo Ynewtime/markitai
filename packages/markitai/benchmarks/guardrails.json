@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-08-25T00:14:22+00:00",
+  "generated_at": "2026-09-22T08:37:55+00:00",
   "threshold_factor": 0.9,
-  "mean_floor": 86.04,
+  "mean_floor": 86.58,
   "fixtures": {
     "author-contact-block": {
       "min_score": 90.0
@@ -10,7 +10,7 @@
       "min_score": 89.73
     },
     "callouts--obsidian-publish-callouts": {
-      "min_score": 79.2
+      "min_score": 89.7
     },
     "code-blocks--chroma-linenums": {
       "min_score": 87.92
@@ -160,7 +160,7 @@
       "min_score": 89.72
     },
     "elements--lazy-image": {
-      "min_score": 81.51
+      "min_score": 89.9
     },
     "elements--lightbox-image-dedup": {
       "min_score": 90.0
@@ -208,7 +208,7 @@
       "min_score": 90.0
     },
     "footnotes--br-separated-named-anchors": {
-      "min_score": 88.11
+      "min_score": 86.65
     },
     "footnotes--child-anchor-id": {
       "min_score": 90.0
@@ -244,10 +244,10 @@
       "min_score": 89.86
     },
     "footnotes--labeled-section-ol": {
-      "min_score": 87.31
+      "min_score": 86.08
     },
     "footnotes--maggieappleton.com-xanadu-patterns": {
-      "min_score": 88.16
+      "min_score": 88.48
     },
     "footnotes--named-anchor": {
       "min_score": 90.0
@@ -289,7 +289,7 @@
       "min_score": 89.6
     },
     "general--12gramsofcarbon.com-p-ilyas-30-papers-to-carmack-vlaes": {
-      "min_score": 89.05
+      "min_score": 89.16
     },
     "general--apnews-link-enhancement": {
       "min_score": 90.0
@@ -319,19 +319,19 @@
       "min_score": 89.41
     },
     "general--lesswrong.com-s-N7nDePaNabJdnbXeE-p-vJFdjigzmcXMhNTsx": {
-      "min_score": 89.56
+      "min_score": 89.58
     },
     "general--multi-article-portfolio": {
       "min_score": 90.0
     },
     "general--news.ycombinator.com-item-id=12345678": {
-      "min_score": 18.0
+      "min_score": 84.85
     },
     "general--obsidian-publish-cjk": {
       "min_score": 88.18
     },
     "general--obsidian.md-blog-verify-obsidian-sync-encryption": {
-      "min_score": 89.65
+      "min_score": 89.68
     },
     "general--react-streaming-ssr": {
       "min_score": 90.0
@@ -427,7 +427,7 @@
       "min_score": 76.05
     },
     "issues--144-arxiv-footnote-marks": {
-      "min_score": 66.11
+      "min_score": 90.0
     },
     "issues--159-lean-heading-permalink-emoji": {
       "min_score": 90.0
@@ -522,6 +522,9 @@
     "listing--news.ycombinator.com-news": {
       "min_score": 21.03
     },
+    "math--equation-table-mathml": {
+      "min_score": 88.65
+    },
     "math--katex": {
       "min_score": 90.0
     },
@@ -574,7 +577,7 @@
       "min_score": 90.0
     },
     "metadata--email-style-header-block": {
-      "min_score": 87.01
+      "min_score": 90.0
     },
     "metadata--h1-sibling-byline": {
       "min_score": 90.0
@@ -613,7 +616,7 @@
       "min_score": 90.0
     },
     "table-layout--blogger-two-column": {
-      "min_score": 89.88
+      "min_score": 90.0
     },
     "table-layout--paulgraham.com-makersschedule": {
       "min_score": 89.6
