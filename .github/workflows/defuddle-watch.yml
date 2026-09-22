@@ -70,7 +70,8 @@ jobs:
 
           1. Port any new extraction behavior for the modules listed in
              \`packages/markitai/src/markitai/webextract/PORT_MANIFEST.md\`
-             (see its known-gaps section first).
+             (its "Known divergences" section lists the intentional gaps;
+             \`process/defuddle-port-audits.md\` records earlier ports).
           2. Resync the corpus: \`scripts/sync_defuddle_fixtures.sh /path/to/defuddle\`
              checked out at \`$LATEST_TAG\` (updates VERSION and the manifest pin).
           3. Re-run the parity suite and the quality benchmark; regenerate
