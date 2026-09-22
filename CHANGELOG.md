@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Sync the defuddle parity corpus to upstream 0.19.4 and port its extraction changes: code fences grow past backtick runs instead of escaping them, `<sub>`/`<sup>` stay as inline HTML hugging their neighbours (`2021<sub>5ya</sub>` no longer flattens to `20215ya`), dates inside labeled rows such as email-style `Date:` headers are kept with their label, arXiv hidden footnote-mark duplicates are dropped, and closed, legacy (`shadowroot`) and nested declarative shadow roots are extracted.
+- Strip inert `<template>` fragments and SVG SMIL animation elements from extracted web content.
+
 ## [1.1.0] - 2026-09-14
 
 - **About 6× faster overall**: URLs **5.8×**, Office/PDF **5.6×**, batch conversion **6.6×** in equally weighted local benchmarks, excluding LLM, OCR and internet latency.

@@ -17,6 +17,7 @@ from markitai.webextract.elements.code import normalize_code_blocks
 from markitai.webextract.elements.headings import normalize_headings
 from markitai.webextract.elements.images import normalize_images
 from markitai.webextract.elements.math import normalize_math
+from markitai.webextract.selectors import select as _css_select
 
 _PRESERVE_ELEMENTS = frozenset(
     {
@@ -60,6 +61,7 @@ def standardize_content(root: Tag, title: str | None, base_url: str) -> None:
     """
 
     _remove_comments(root)
+    _remove_arxiv_note_outers(root)
     _convert_h1_to_h2(root)
     _dedupe_title_headings(root, title)
     _resolve_relative_urls(root, base_url)
@@ -304,6 +306,16 @@ def _has_style_prop(el: Tag, prop: str) -> bool:
     if not isinstance(style, str):
         return False
     return re.search(rf"(?:^|;)\s*{prop}\s*:", style) is not None
+
+
+def _remove_arxiv_note_outers(root: Tag) -> None:
+    """Drop arXiv LaTeXML ``span.ltx_note_outer`` (display:none on arxiv.org).
+
+    They repeat the footnote mark and add a "footnotemark:" label next to
+    the visible ``<sup>``.
+    """
+    for outer in _css_select(root, "span.ltx_note_outer"):
+        outer.decompose()
 
 
 def _remove_comments(root: Tag) -> None:

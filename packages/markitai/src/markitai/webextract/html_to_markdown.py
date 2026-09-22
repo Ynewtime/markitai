@@ -338,6 +338,22 @@ def _mo_replace(text: str) -> str:
     return _MO_REPLACEMENTS.get(text, text)
 
 
+# Leading run of three or more backticks (up to three spaces of indent) that
+# could terminate a fenced code block.
+_FENCE_RUN_RE = re.compile(r"^ {0,3}`{3,}", re.MULTILINE)
+
+
+def _tight_inline(tag: str, text: str) -> str:
+    """Keep sub/sup as inline HTML, hugging their neighbours.
+
+    Markdown has no syntax for them, and flattening to plain text merges
+    the script with the surrounding word (``2021<sub>5ya</sub>`` becoming
+    ``20215ya``). Defuddle keeps the tags for the same reason.
+    """
+    inner = text.strip()
+    return f"<{tag}>{inner}</{tag}>" if inner else ""
+
+
 def _is_footnote_list(el: Any) -> bool:
     """Check whether an <ol> is the standardized footnotes list.
 
@@ -439,7 +455,10 @@ class WebExtractMarkdownConverter(CompatibleMarkdownConverter):
                 ref_text = el.get_text(strip=True)
                 if ref_text.isdigit():
                     return f"[^{ref_text}]"
-        return text
+        return _tight_inline("sup", text)
+
+    def convert_sub(self, el: Any, text: str, parent_tags: set) -> str:
+        return _tight_inline("sub", text)
 
     def convert_a(self, el: Any, text: str, parent_tags: set) -> str:
         """Drop footnote back-reference links; defer to the base rule."""
@@ -488,7 +507,15 @@ class WebExtractMarkdownConverter(CompatibleMarkdownConverter):
         if code_text.endswith("\n"):
             code_text = code_text[:-1]
 
-        return f"\n\n```{language}\n{code_text}\n```\n\n"
+        # Backslash escapes are literal inside a fence, so backticks stay as
+        # they are. A run of three or more backticks indented by up to three
+        # spaces would close the block, so grow the fence past the longest one.
+        fence_size = max(
+            (len(run.strip()) + 1 for run in _FENCE_RUN_RE.findall(code_text)),
+            default=3,
+        )
+        fence = "`" * max(fence_size, 3)
+        return f"\n\n{fence}{language}\n{code_text}\n{fence}\n\n"
 
 
 @dataclass
