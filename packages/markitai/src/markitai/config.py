@@ -334,6 +334,10 @@ class LLMConfig(BaseModel):
         default=False,
         description="Keep base .md file alongside .llm.md in LLM mode",
     )
+    on_failure: Literal["fallback", "fail"] = Field(
+        default="fallback",
+        description='What a failed LLM enhancement (invalid key, provider error, timeout, refusal, request budget) does to the item. "fallback" (default): the item still succeeds with the unenhanced .md as its output, and a warning names the failure. "fail": the item fails (exit 1 for a single input, 10 for a batch); the unenhanced .md is still written.',
+    )
     model_list: list[ModelConfig] = Field(default_factory=list)
     providers: list[LLMProviderConfig] = Field(default_factory=list)
     router_settings: RouterSettings = Field(default_factory=RouterSettings)

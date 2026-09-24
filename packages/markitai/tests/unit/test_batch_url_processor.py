@@ -58,10 +58,14 @@ def fetched(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any]:
     return state
 
 
-def _cfg(*, llm: bool, screenshot_only: bool = False) -> MarkitaiConfig:
+def _cfg(
+    *, llm: bool, screenshot_only: bool = False, fail_on_llm_error: bool = False
+) -> MarkitaiConfig:
     cfg = MarkitaiConfig()
     cfg.cache.enabled = False
     cfg.llm.enabled = llm
+    if fail_on_llm_error:
+        cfg.llm.on_failure = "fail"
     cfg.screenshot.enabled = True
     cfg.screenshot.screenshot_only = screenshot_only
     return cfg
@@ -136,7 +140,9 @@ async def test_screenshot_only_llm_failure_fails_the_url_with_a_base_md(
         "markitai.cli.processors.url.run_url_screenshot_only_llm", _screenshot_llm
     )
     out = tmp_path / "out"
-    result = await _run_directory_worker(_cfg(llm=True, screenshot_only=True), out)
+    result = await _run_directory_worker(
+        _cfg(llm=True, screenshot_only=True, fail_on_llm_error=True), out
+    )
 
     assert not result.success
     assert "LLM processing failed" in (result.error or "")
@@ -158,7 +164,7 @@ async def test_vision_llm_failure_fails_the_url_with_a_base_md(
 
     monkeypatch.setattr("markitai.cli.processors.url.process_url_with_vision", _vision)
     out = tmp_path / "out"
-    result = await _run_directory_worker(_cfg(llm=True), out)
+    result = await _run_directory_worker(_cfg(llm=True, fail_on_llm_error=True), out)
 
     assert not result.success
     assert "LLM processing failed" in (result.error or "")
@@ -192,7 +198,7 @@ async def test_image_analysis_branch_failure_writes_base_md_and_images_use_final
     monkeypatch.setattr(
         "markitai.cli.processors.url.run_url_llm_with_images", _with_images
     )
-    cfg = _cfg(llm=True)
+    cfg = _cfg(llm=True, fail_on_llm_error=True)
     cfg.screenshot.enabled = False
     fetched["screenshot"] = None
     cfg.image.alt_enabled = True
@@ -278,7 +284,10 @@ async def test_renamed_output_names_the_downloaded_images_after_itself(
         result = await _run_directory_worker(cfg, out)
 
     assert source_names == ["docs.v2"]
-    assert not result.success  # the faked image analysis failed
+    # The faked image analysis failed; the default llm.on_failure keeps the
+    # base .md as the output
+    assert result.success
+    assert result.output_path.endswith("docs.v2.md")
     assert (out / "docs.md").read_text() == "someone else's page"
     assert "Text layer." in (out / "docs.v2.md").read_text()
 

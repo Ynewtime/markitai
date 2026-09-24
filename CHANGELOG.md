@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `llm.on_failure` decides what a failed LLM enhancement does to its item: `"fallback"` (default) keeps the unenhanced `.md` as the output with a warning, `"fail"` fails the item (exit `1` for one input, `10` for a batch).
 - `--resume` works for `.urls` lists, and Ctrl-C now saves the batch state in every mode, so an interrupted run resumes from what actually finished.
 - `--json` reports a handed-off `--llm-batch` run: a top-level `batch` object with the id and the `--llm-batch-collect` command, a `pending` item status, a `pending` total, and per-item `warnings`. Items also report `cache_hit` correctly.
 - `cache.fetch_ttl_seconds` (default 24 hours) expires fetched pages that carry no ETag/Last-Modified. `cache stats`/`cache clear` include the URL fetch cache, and a `--no-cache-for` pattern that matches a URL bypasses the fetch cache for it.
@@ -19,8 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **A failed LLM enhancement fails the item.** An invalid key, a provider error, a timeout or a refusal used to report success; now the base `.md` is still written, the item is `failed`, and the run exits `1` (single file) or `10` (batch).
-- Documents longer than one LLM request are enhanced chunk by chunk instead of being cut at 32,000 characters. A document that needs more requests than `max_requests_per_document` leaves fails before anything is sent.
+- **A failed LLM enhancement is no longer silent.** An invalid key, a provider error, a timeout or a refusal used to pass unenhanced text off as the result. The item still succeeds by default, but its output is the unenhanced `.md` and a warning (stderr, `--json` `warnings`, the web workspace) names the failure. Set `llm.on_failure` to `"fail"` to fail such items.
+- Documents longer than one LLM request are enhanced chunk by chunk instead of being cut at 32,000 characters. A document that needs more requests than `max_requests_per_document` leaves is not enhanced, and nothing is sent.
 - When several provider keys are found and no model is configured, markitai says which models it will spread requests across and how to pin one. The Python API and the MCP server now resolve models the same way as the CLI.
 - Outputs follow the umask (usually `0644`) instead of always `0600`; config files and `.env` written by markitai stay private.
 - OCR text is laid out in reading order: two-column pages read column by column, vertical CJK reads right to left, upside-down scans are detected, and spaced rows become Markdown tables. Margin stamps and side notes no longer merge into body lines, centered titles and address blocks are not mistaken for columns, and label/value forms and numbered lists stay as text.
@@ -48,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Images downloaded from a URL are named after the output the item actually gets (`docs.v2.*`, or `custom.*` with `-o custom.md`). A batch with `--llm --pure --screenshot-only` reads the text layer, as a single URL does.
 - Overwriting a read-only output (`0444`) no longer fails.
 - `--llm-batch`: cached image answers are kept, and documents too long for one request still get their images analyzed. `--resume` no longer resubmits documents whose batch was never collected; it prints the collect command instead. Ctrl-C after submission prints the collect command, `--screenshot-only` URLs are left out of enhancement, and collecting honors the `--alt`/`--desc` given at submission. A handoff that also has failed items still exits `2` and reports the failures.
-- `--llm-batch`: collecting a batch with `--alt`/`--desc` no longer crashes; Anthropic image requests use the Messages API format; the batch uses the `api_key`/`api_base` from `llm.model_list`; an unsupported pool is refused before converting; a failed submission ends with one error line; documents converted before an interrupted or failed submission are enhanced on `--resume`; a partial conversion failure no longer skips enhancement.
+- `--llm-batch`: collecting a batch with `--alt`/`--desc` no longer crashes; Anthropic image requests use the Messages API format; the batch uses the `api_key`/`api_base` from `llm.model_list`; an unsupported pool is refused before converting; a failed submission ends with one line (a warning by default, an error with `llm.on_failure = "fail"`); documents converted before an interrupted or failed submission are enhanced on `--resume`; a partial conversion failure no longer skips enhancement.
 - Web pages decode with their `<meta charset>` (GBK, Shift_JIS, CP1252 and similar); relative links resolve against the final URL after redirects; PDF and Office URLs are converted with markitai's own converters.
 - A conditional fetch that returns a challenge page or a JavaScript shell no longer replaces a good cached result; if the full fetch then fails too, the cached copy is returned with `stale` and `fetch_warning` in its metadata. Short plain-text responses are no longer mistaken for single-page apps, and only HTML responses are checked for challenge pages.
 - One invalid byte no longer garbles a whole page: the declared charset (even past the first 1 KiB) or UTF-8 is decoded with replacement, and undeclared Western text falls back to CP1252 instead of a mis-detected code page.

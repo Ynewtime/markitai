@@ -237,6 +237,7 @@ class TestCreateProcessFile:
         from markitai.cli.processors.batch import create_process_file
 
         default_config.llm.enabled = True
+        default_config.llm.on_failure = "fail"  # the failure semantics under test
 
         txt_file = sample_input_dir / "test.txt"
         txt_file.write_text("# Test Document\n\nSome content here.")
@@ -862,6 +863,7 @@ class TestCreateUrlProcessor:
         from markitai.cli.processors.batch import create_url_processor
 
         default_config.llm.enabled = True
+        default_config.llm.on_failure = "fail"  # the failure semantics under test
         default_config.cache.enabled = False
         default_config.image.alt_enabled = True
 
@@ -946,6 +948,7 @@ class TestCreateUrlProcessor:
         from markitai.cli.processors.batch import create_url_processor
 
         default_config.llm.enabled = True
+        default_config.llm.on_failure = "fail"  # the failure semantics under test
         default_config.cache.enabled = False
         default_config.screenshot.enabled = True
         default_config.image.alt_enabled = True

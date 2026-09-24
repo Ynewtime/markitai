@@ -35,10 +35,11 @@ def document_process_result(
           ``output_path`` and ``error="skipped (exists)"``;
         * ``skip_reason == "image_only"``: success, no output,
           ``error="skipped (image_only)"``;
-        * otherwise the produced file — the ``.llm.md`` when LLM is enabled
-          (``ctx.llm_output_file`` is set only after a successful LLM write,
-          the real "enhanced" signal, never the file suffix), else the base
-          ``.md`` — or a failure when that file is not on disk.
+        * otherwise ``ctx.produced_file`` — the ``.llm.md`` when LLM is
+          enabled (``ctx.llm_output_file`` is set only after a successful
+          LLM write, the real "enhanced" signal, never the file suffix),
+          else the base ``.md`` (also when an LLM failure kept it as the
+          fallback) — or a failure when that file is not on disk.
     """
     from markitai.batch import ProcessResult
     from markitai.utils.paths import derive_output_name
@@ -56,7 +57,7 @@ def document_process_result(
     if result.skip_reason == "image_only":
         return ProcessResult(success=True, error=f"{SKIPPED_PREFIX}image_only)")
 
-    produced = ctx.llm_output_file if ctx.config.llm.enabled else ctx.output_file
+    produced = ctx.produced_file
     if produced is None or not produced.is_file():
         return ProcessResult(
             success=False,
@@ -72,6 +73,6 @@ def document_process_result(
         image_analysis_result=ctx.image_analysis,
         # Served from cache: the core's per-file tally saw only cache hits
         cache_hit=ctx.cache_hit,
-        llm_enhanced=ctx.llm_output_file is not None,
+        llm_enhanced=ctx.llm_output_file is not None and not ctx.llm_fell_back,
         warnings=list(ctx.warnings),
     )
