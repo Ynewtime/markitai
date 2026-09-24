@@ -22,6 +22,7 @@ const entries: HistoryEntry[] = [
     duration_ms: 60_000,
     size_bytes: 100,
     origin: "web",
+    retryable: true,
   },
   {
     job_id: "job-2",
@@ -39,6 +40,7 @@ const entries: HistoryEntry[] = [
     duration_ms: 30_000,
     size_bytes: 200,
     origin: "web",
+    retryable: true,
   },
 ];
 
@@ -260,6 +262,46 @@ describe("ArchivedJobRows", () => {
         .getByRole("option", { name: "打开 first.pdf" })
         .querySelector(".c-name .origin-tag"),
     ).toHaveTextContent(dicts.zh.originCli);
+  });
+
+  it("hides retry and enhance for entries that cannot be re-run", () => {
+    render(
+      <ArchivedJobRows
+        t={dicts.en}
+        entries={[
+          { ...entries[0]!, origin: "cli" as const, retryable: false },
+          {
+            ...entries[1]!,
+            origin: "cli" as const,
+            retryable: false,
+            done: 0,
+            failed: 1,
+          },
+        ]}
+        error={null}
+        actions={{}}
+        rowErrors={{}}
+        showCost={false}
+        startIndex={0}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onOpen={vi.fn().mockResolvedValue(null)}
+        onRetry={vi.fn().mockResolvedValue(null)}
+        onEnhance={vi.fn().mockResolvedValue(null)}
+        onDelete={vi.fn().mockResolvedValue(true)}
+        announce={() => undefined}
+        llmAvailable
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Enhance first.pdf with LLM" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Retry second.pdf" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Permanently delete second.pdf" }),
+    ).toBeInTheDocument();
   });
 
   it("restores retry for a persisted single-item failure", async () => {

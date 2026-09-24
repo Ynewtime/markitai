@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import sys
 import tempfile
 import time
@@ -81,12 +82,58 @@ async def _replace_with_retry_async(src: str, dst: Path) -> None:
         raise last_error
 
 
+_PRIVATE_FILE_MODE = 0o600
+
+
+def _read_process_umask() -> int:
+    """Return the process umask.
+
+    ``os.umask`` can only be read by setting it, which briefly widens the
+    permissions of files other threads create; so it is read once, at import,
+    before any writer thread exists.
+    """
+    current = os.umask(0o022)
+    os.umask(current)
+    return current
+
+
+_PROCESS_UMASK = _read_process_umask()
+
+
+def _final_file_mode(path: Path, private: bool) -> int:
+    """Permissions an atomically written file should end up with.
+
+    ``tempfile.mkstemp`` always creates 0600, and ``os.replace`` carries that
+    onto the target, so without this every output (Markdown, reports,
+    images) would be private and overwriting a 0644 file would downgrade it.
+
+    - ``private``: 0600 regardless (config with credentials, ``.env``).
+    - an existing regular file keeps its own permissions.
+    - a new file gets what ``open()`` would give it: ``0o666 & ~umask``.
+    """
+    if private:
+        return _PRIVATE_FILE_MODE
+    try:
+        existing = os.lstat(path)
+    except OSError:
+        existing = None
+    if existing is not None and stat.S_ISREG(existing.st_mode):
+        return stat.S_IMODE(existing.st_mode)
+    return 0o666 & ~_PROCESS_UMASK
+
+
+def _apply_mode(tmp_path: str, path: Path, private: bool) -> None:
+    """Give the temp file its final permissions before it replaces ``path``."""
+    os.chmod(tmp_path, _final_file_mode(path, private))
+
+
 def atomic_write_text(
     path: Path,
     content: str,
     encoding: str = "utf-8",
     *,
     follow_symlinks: bool = False,
+    private: bool = False,
 ) -> None:
     """Write text to file atomically using temp file + rename.
 
@@ -99,6 +146,8 @@ def atomic_write_text(
         encoding: Text encoding (default: utf-8)
         follow_symlinks: If True, write to the resolved symlink target instead of
             replacing the symlink entry itself.
+        private: If True, the file is always 0600 (credentials). Otherwise it
+            keeps an existing file's permissions, or follows the umask.
     """
     path = Path(path)
     if follow_symlinks and path.is_symlink():
@@ -114,6 +163,7 @@ def atomic_write_text(
     )
     fd_closed = False
     try:
+        _apply_mode(tmp_path, path, private)
         with os.fdopen(fd, "w", encoding=encoding) as f:
             fd_closed = True  # fdopen takes ownership of fd
             f.write(content)
@@ -147,6 +197,7 @@ def atomic_write_json(
     order_func: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     *,
     follow_symlinks: bool = False,
+    private: bool = False,
 ) -> None:
     """Write JSON to file atomically.
 
@@ -158,6 +209,8 @@ def atomic_write_json(
         order_func: Optional function to order/transform dict before serialization
         follow_symlinks: If True, write to the resolved symlink target instead of
             replacing the symlink entry itself.
+        private: If True, the file is always 0600 (credentials). Otherwise it
+            keeps an existing file's permissions, or follows the umask.
     """
     if order_func is not None and isinstance(obj, dict):
         obj = order_func(obj)
@@ -167,6 +220,7 @@ def atomic_write_json(
         content,
         encoding="utf-8",
         follow_symlinks=follow_symlinks,
+        private=private,
     )
 
 
@@ -176,6 +230,7 @@ async def atomic_write_text_async(
     encoding: str = "utf-8",
     *,
     follow_symlinks: bool = False,
+    private: bool = False,
 ) -> None:
     """Write text to file atomically using temp file + rename (async version).
 
@@ -188,6 +243,8 @@ async def atomic_write_text_async(
         encoding: Text encoding (default: utf-8)
         follow_symlinks: If True, write to the resolved symlink target instead of
             replacing the symlink entry itself.
+        private: If True, the file is always 0600 (credentials). Otherwise it
+            keeps an existing file's permissions, or follows the umask.
     """
     import aiofiles
     import aiofiles.os
@@ -209,6 +266,10 @@ async def atomic_write_text_async(
         os.close(fd)
         async with aiofiles.open(tmp_path, "w", encoding=encoding) as f:
             await f.write(content)
+        # Final permissions only once the content is in: the temp file is
+        # reopened by path, which a read-only mode (overwriting a 0444
+        # file, a umask without owner write) would refuse
+        _apply_mode(tmp_path, path, private)
         # Atomic rename (POSIX guarantees atomicity on same filesystem)
         # On Windows, use retry logic to handle file locking
         await _replace_with_retry_async(tmp_path, path)
@@ -228,6 +289,7 @@ async def write_bytes_async(
     data: bytes,
     *,
     follow_symlinks: bool = False,
+    private: bool = False,
 ) -> None:
     """Write bytes to file atomically using temp file + rename.
 
@@ -236,6 +298,8 @@ async def write_bytes_async(
         data: Bytes to write
         follow_symlinks: If True, write to the resolved symlink target instead of
             replacing the symlink entry itself.
+        private: If True, the file is always 0600 (credentials). Otherwise it
+            keeps an existing file's permissions, or follows the umask.
     """
     import aiofiles
 
@@ -256,6 +320,8 @@ async def write_bytes_async(
         os.close(fd)
         async with aiofiles.open(tmp_path, "wb") as f:
             await f.write(data)
+        # After the write, for the same reason as atomic_write_text_async
+        _apply_mode(tmp_path, path, private)
         await _replace_with_retry_async(tmp_path, path)
     except Exception:
         try:

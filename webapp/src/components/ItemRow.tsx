@@ -67,7 +67,11 @@ function StatusMark({ item, t }: { item: SessionItem; t: Dict }) {
   if (item.status === "done") {
     const skipped = item.skipped;
     const tooltip =
-      skipped && item.skipReason === "image_only" ? t.skipImageOnly : t.statusSkipped;
+      skipped && item.skipReason === "image_only"
+        ? t.skipImageOnly
+        : skipped && item.skipReason === "pending_batch"
+          ? t.skipPendingBatch
+          : t.statusSkipped;
     return (
       <span
         className={skipped ? "item-result skip tooltip" : "item-result ok"}
@@ -163,7 +167,8 @@ export const ItemRow = memo(function ItemRow({
     item.llmEnhanced ||
     item.operation === "enhance" ||
     (item.costUsd !== null && item.costUsd > 0);
-  const enhanceable = previewable && canDelete;
+  const enhanceable = previewable && canDelete && item.retryable;
+  const retryable = (failed || skipped) && item.retryable;
 
   const doRetry = async () => {
     if (retryBusy || enhanceBusy || deleteBusy) return;
@@ -245,9 +250,9 @@ export const ItemRow = memo(function ItemRow({
   }
   if (item.status === "queued") metaParts.push({ text: t.statusQueued });
 
-  // A skipped row still hosts an enabled Retry (rendered on failed || skipped),
-  // so it must not announce itself disabled to assistive tech.
-  const inert = !previewable && !failed && !skipped && !canDelete;
+  // A skipped row still hosts an enabled Retry (unless its source cannot be
+  // re-run), so it must not announce itself disabled to assistive tech.
+  const inert = !previewable && !failed && !retryable && !canDelete;
   // Known reasons read as sentences; an unknown one keeps the generic label
   // and carries the raw wire value in the title/aria description instead.
   const skipKnown =
@@ -255,14 +260,31 @@ export const ItemRow = memo(function ItemRow({
       ? t.skipImageOnly
       : item.skipReason === "exists"
         ? t.skipExists
-        : null;
+        : item.skipReason === "pending_batch"
+          ? t.skipPendingBatch
+          : null;
   const statusTexts = statusText(t);
   const skipText = skipKnown ?? t.statusSkipped;
-  const skipTitle = skipKnown === null ? (item.skipReason ?? undefined) : undefined;
+  // A pending batch carries the collect instructions as its note.
+  const skipTitle =
+    item.skipReason === "pending_batch"
+      ? (item.error ?? undefined)
+      : skipKnown === null
+        ? (item.skipReason ?? undefined)
+        : undefined;
+  const domKey = item.key.replace(/[^a-zA-Z0-9_-]/g, "-");
   const detailId =
     failed || (skipped && item.skipReason !== "image_only")
-      ? `d-${item.key.replace(/[^a-zA-Z0-9_-]/g, "-")}`
+      ? `d-${domKey}`
       : undefined;
+  // Notices from a finished conversion (scanned pages, hidden text, ...):
+  // the web user has no console, so the row says there were some and the
+  // preview lists them in full.
+  const warnings =
+    item.status === "done" || item.status === "error" ? item.warnings : [];
+  const warnId = warnings.length > 0 ? `w-${domKey}` : undefined;
+  const describedBy =
+    [detailId, warnId].filter((id) => id !== undefined).join(" ") || undefined;
 
   const ariaParts = [displayName];
   if (sizeText !== null) ariaParts.push(sizeText);
@@ -278,6 +300,7 @@ export const ItemRow = memo(function ItemRow({
     );
   }
   ariaParts.push(skipped ? t.statusSkipped : statusTexts[item.status]);
+  if (warnings.length > 0) ariaParts.push(t.itemWarnings(warnings.length));
 
   const activate = (opener: HTMLElement) => {
     if (previewable) onPreview(item.key, opener);
@@ -294,7 +317,7 @@ export const ItemRow = memo(function ItemRow({
       aria-selected={selected}
       aria-disabled={inert ? true : undefined}
       aria-label={ariaParts.join(", ")}
-      aria-describedby={detailId}
+      aria-describedby={describedBy}
       tabIndex={tabbable ? 0 : -1}
       className={`lrow${selected ? " sel" : ""}${failed ? " actionable" : ""}`}
       title={failed ? (item.error ?? undefined) : undefined}
@@ -336,7 +359,7 @@ export const ItemRow = memo(function ItemRow({
       )}
       <span className="c-status archive-actions">
         <StatusMark item={item} t={t} />
-        {(previewable || enhanceable || failed || skipped || canDelete) && (
+        {(previewable || enhanceable || retryable || canDelete) && (
           <span className="item-actions">
             {outputPath !== null && (
               // The row's primary output is one click away; the preview modal
@@ -384,7 +407,7 @@ export const ItemRow = memo(function ItemRow({
                 )}
               </button>
             )}
-            {(failed || skipped) && (
+            {retryable && (
               <button
                 type="button"
                 className="rowicon retry"
@@ -446,6 +469,14 @@ export const ItemRow = memo(function ItemRow({
       {skipped && item.skipReason !== "image_only" && (
         <span className="c-skip" id={detailId} title={skipTitle}>
           {skipText}
+        </span>
+      )}
+      {warnings.length > 0 && (
+        <span className="c-warn" id={warnId} title={warnings.join("\n")}>
+          <WarningIcon size={13} />
+          <span className="warntext">
+            {t.itemWarnings(warnings.length)}: {warnings[0]}
+          </span>
         </span>
       )}
     </div>

@@ -9,6 +9,15 @@ import pytest
 from click.testing import CliRunner
 
 
+@pytest.fixture(autouse=True)
+def _no_real_office_container_probe():
+    """Doctor must not write-probe the developer's real Office container."""
+    with patch(
+        "markitai.utils.office_mac.staging_container_writable", return_value=True
+    ):
+        yield
+
+
 class TestDoctorCommand:
     """Tests for doctor CLI command."""
 

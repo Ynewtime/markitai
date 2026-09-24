@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import type { SessionItem } from "../hooks/useJobs";
 import type { Dict } from "../i18n";
 import { MarkdownPreview, openPdfSettingsCard } from "./MarkdownPreview";
-import { ExternalLinkIcon, XIcon } from "./icons";
+import { ExternalLinkIcon, WarningIcon, XIcon } from "./icons";
 
 export function PreviewModal({
   t,
@@ -127,6 +127,19 @@ export function PreviewModal({
             <XIcon size={16} />
           </button>
         </div>
+        {item.warnings.length > 0 && (
+          <div className="preview-warnings" role="note" aria-label={t.itemWarningsTitle}>
+            <p className="preview-warnings-title">
+              <WarningIcon size={14} />
+              <span>{t.itemWarningsTitle}</span>
+            </p>
+            <ul>
+              {item.warnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          </div>
+        )}
         <MarkdownPreview t={t} item={item} createdAt={createdAt} announce={announce} />
       </div>
     </div>

@@ -136,6 +136,8 @@ export MARKITAI_STATIC_HTTP=curl_cffi
 
 If curl-cffi is not installed, markitai silently uses httpx.
 
+The static strategy decodes pages the way a browser does: a byte-order mark first, then the `charset` in `Content-Type`, then a `<meta charset>` in the first 1024 bytes, then detection. Legacy labels map to the superset browsers use (`gb2312`/`gbk` to GB18030, `shift_jis` to Windows-31J, `iso-8859-1` to Windows-1252). Relative links and images resolve against the URL after redirects. A response that is not HTML is converted by its `Content-Type` (or `Content-Disposition` file name) like a local file: PDF, Word, Excel, PowerPoint and similar documents go through markitai's own converters, plain text, CSV and JSON through the text converters.
+
 ## How It Works
 
 markitai attempts strategies one at a time, up to `max_strategy_hops`. The first result that passes validation ends the run.
@@ -146,4 +148,4 @@ Empty or too-short content, login walls, and anti-bot or CAPTCHA pages (Geetest,
 
 ### SPA learning
 
-When a static fetch succeeds but the page says it needs JavaScript, markitai adds the domain to the SPA cache for 30 days, and later requests skip straight to the browser. Only that signal teaches the cache; CAPTCHAs, login walls and network errors do not. Inspect or clear it with `markitai cache spa-domains`.
+When a static fetch succeeds but the page says it needs JavaScript, markitai adds the domain to the SPA cache for 30 days, and later requests skip straight to the browser. Only that signal teaches the cache; CAPTCHAs, login walls and network errors do not. Only HTML pages are checked: a short text file, a CSV or a PDF is the document itself and neither fails as "requires JavaScript" nor teaches the cache. Inspect or clear it with `markitai cache spa-domains`.

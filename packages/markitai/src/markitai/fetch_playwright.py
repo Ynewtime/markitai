@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from importlib.util import find_spec
 from pathlib import Path
@@ -37,6 +38,7 @@ from markitai.constants import (
     DEFAULT_PLAYWRIGHT_WAIT_FOR,
     DEFAULT_SCREENSHOT_TILE_HEIGHT,
 )
+from markitai.fetch_types import FetchError
 
 try:
     from markitai.webextract import (
@@ -350,6 +352,118 @@ def _is_x_article_url(url: str) -> bool:
     return is_x and "/article/" in url
 
 
+#: Upper bound for closing a page/context whose renderer may be wedged.
+_CLOSE_TIMEOUT_S = 10.0
+
+
+class PlaywrightPageTimeoutError(FetchError):
+    """A page operation after navigation outran fetch.playwright.timeout."""
+
+
+class _PageDeadline:
+    """One shared time budget for the page operations after navigation.
+
+    Playwright only times out ``goto()`` (and the waits given an explicit
+    timeout); ``evaluate()``, ``title()``, ``content()`` and friends wait
+    forever on a renderer stuck in a script loop. Each such call runs under
+    what is left of this budget. The screenshot is timed on its own (see
+    :func:`_capture_screenshot_within`) and handed back with :meth:`extend`,
+    so a slow capture cannot starve the text extraction.
+    """
+
+    def __init__(self, budget_s: float, timeout_ms: int) -> None:
+        self._budget_s = budget_s
+        self._timeout_ms = timeout_ms
+        self._deadline = time.monotonic() + budget_s
+
+    def remaining(self) -> float:
+        """Seconds left in the budget (never negative)."""
+        return max(0.0, self._deadline - time.monotonic())
+
+    def extend(self, seconds: float) -> None:
+        """Give back time spent on work that has its own timeout."""
+        self._deadline += max(0.0, seconds)
+
+    async def run(self, awaitable: Any, what: str) -> Any:
+        """Await ``awaitable`` within the remaining budget.
+
+        Raises:
+            PlaywrightPageTimeoutError: The budget ran out first.
+        """
+        remaining = self.remaining()
+        try:
+            if remaining <= 0:
+                raise TimeoutError
+            return await asyncio.wait_for(awaitable, remaining)
+        except TimeoutError as e:
+            if asyncio.iscoroutine(awaitable):
+                awaitable.close()
+            if remaining <= 0:
+                stage = (
+                    f"the {self._budget_s:.1f}s page budget was used up before "
+                    f"{what} started"
+                )
+            else:
+                stage = (
+                    f"{what} was still running after {remaining:.1f}s, the rest "
+                    f"of the {self._budget_s:.1f}s page budget"
+                )
+            raise PlaywrightPageTimeoutError(
+                f"Playwright page did not respond: {stage} "
+                f"(fetch.playwright.timeout={self._timeout_ms}ms). The page "
+                "is likely busy (for example stuck in a script loop); the "
+                "browser page was closed."
+            ) from e
+
+
+#: Share of the screenshot budget given to ``page.screenshot()`` itself, so
+#: Playwright's own timeout fires (as an ordinary capture failure) before
+#: the outer bound, which also covers compression and tiling.
+_SCREENSHOT_INNER_TIMEOUT_SHARE = 0.8
+
+
+async def _capture_screenshot_within(
+    page: Any,
+    config: ScreenshotConfig,
+    output_dir: Path,
+    url: str,
+    *,
+    timeout_ms: int,
+) -> tuple[Path | None, list[Path], str | None]:
+    """Capture a screenshot under its own ``timeout_ms`` budget.
+
+    A screenshot is an optional extra: when it fails or runs out of time
+    the fetch keeps its text and reports why in ``screenshot_error``.
+
+    Returns:
+        ``(primary path, tiles, error)``; ``error`` is None on success.
+    """
+    budget_s = max(timeout_ms, 1) / 1000
+    capture_errors: list[str] = []
+    try:
+        path, tiles = await asyncio.wait_for(
+            _capture_screenshot(
+                page,
+                config,
+                output_dir,
+                url,
+                errors=capture_errors,
+                timeout_ms=max(1, int(timeout_ms * _SCREENSHOT_INNER_TIMEOUT_SHARE)),
+            ),
+            budget_s,
+        )
+    except TimeoutError:
+        error = (
+            f"screenshot capture timed out after {budget_s:.1f}s "
+            f"(fetch.playwright.timeout={timeout_ms}ms)"
+        )
+        logger.warning(f"Screenshot capture failed: {error}")
+        return None, [], error
+    if path is None:
+        return None, [], capture_errors[0] if capture_errors else "screenshot failed"
+    return path, tiles, None
+
+
 @dataclass
 class PlaywrightFetchResult:
     """Result from Playwright fetch."""
@@ -415,11 +529,55 @@ async def _guard_public_context(context: Any, timeout: int, proxy: str | None) -
     await context.route_web_socket("**/*", block_socket)
 
 
+#: Hosts a proxied browser reaches directly. Playwright launches Chromium
+#: with ``<-loopback>`` (loopback traffic goes through the proxy, which then
+#: dials its own loopback), so these have to be bypassed explicitly.
+_LOOPBACK_PROXY_BYPASS = ("localhost", "*.localhost", "127.0.0.0/8", "[::1]")
+
+
+def chromium_proxy_bypass(patterns: Sequence[str]) -> str:
+    """Translate NO_PROXY patterns into a Playwright ``proxy.bypass`` value.
+
+    The browser applies the list to every request of a page — subresources,
+    redirects, frames — which a per-URL proxy choice cannot reach. Loopback
+    hosts are always bypassed (see ``_LOOPBACK_PROXY_BYPASS``).
+
+    Args:
+        patterns: NO_PROXY-style patterns (``markitai.fetch_policy`` syntax).
+
+    Returns:
+        Comma-separated bypass rules.
+    """
+    import ipaddress
+
+    rules: list[str] = list(_LOOPBACK_PROXY_BYPASS)
+    for raw in patterns:
+        pattern = raw.strip()
+        # Playwright splits the value on commas; Chromium on whitespace too
+        if not pattern or any(c in pattern for c in ", \t;"):
+            continue
+        try:
+            # Chromium wants IPv6 literals bracketed ("[fd00::1]")
+            if isinstance(ipaddress.ip_address(pattern), ipaddress.IPv6Address):
+                pattern = f"[{pattern}]"
+        except ValueError:
+            pass
+        if pattern not in rules:
+            rules.append(pattern)
+    return ",".join(rules)
+
+
 class PlaywrightRenderer:
     """Reusable Playwright renderer to avoid browser cold starts."""
 
-    def __init__(self, proxy: str | None = None) -> None:
+    def __init__(
+        self,
+        proxy: str | None = None,
+        proxy_bypass: Sequence[str] | None = None,
+    ) -> None:
         self.proxy = proxy
+        # NO_PROXY patterns the proxied browser reaches directly
+        self.proxy_bypass = list(proxy_bypass or [])
         self._playwright: Any = None
         self._browser: Any = None
         self._lock = asyncio.Lock()
@@ -466,7 +624,10 @@ class PlaywrightRenderer:
             self._playwright = await async_playwright().start()
             launch_options: dict[str, Any] = {"headless": True}
             if self.proxy:
-                launch_options["proxy"] = {"server": self.proxy}
+                launch_options["proxy"] = {
+                    "server": self.proxy,
+                    "bypass": chromium_proxy_bypass(self.proxy_bypass),
+                }
 
             try:
                 self._browser = await self._playwright.chromium.launch(**launch_options)
@@ -629,6 +790,7 @@ class PlaywrightRenderer:
             should_close_context = True
 
         page = None
+        timed_out = False
         try:
             if restricted:
                 await _guard_public_context(context, timeout, self.proxy)
@@ -674,17 +836,18 @@ class PlaywrightRenderer:
                     else await self._enriched_result(url, remote_consent)
                 )
                 if enriched is None:
-                    from markitai.fetch_types import FetchError
-
                     raise FetchError(f"Playwright navigation returned HTTP {status}")
                 enriched.metadata["http_status"] = status
                 if needs_screenshot and screenshot_config and output_dir:
                     (
                         enriched.screenshot_path,
                         enriched.screenshot_tiles,
-                    ) = await _capture_screenshot(
-                        page, screenshot_config, output_dir, url
+                        shot_error,
+                    ) = await _capture_screenshot_within(
+                        page, screenshot_config, output_dir, url, timeout_ms=timeout
                     )
+                    if shot_error is not None:
+                        enriched.metadata["screenshot_error"] = shot_error
                 return enriched
 
             # Precise element waiting (preferred) or time-based fallback
@@ -709,33 +872,82 @@ class PlaywrightRenderer:
             elif extra_wait_ms > 0:
                 await asyncio.sleep(extra_wait_ms / 1000)
 
+            # Every page operation from here on shares one budget derived
+            # from fetch.playwright.timeout (plus the auto-scroll's own
+            # steps). goto() is the only call Playwright times out by
+            # itself; a page stuck in a script loop would otherwise hang
+            # evaluate()/content() forever.
+            scroll_allowance_s = (
+                0.0
+                if skip_auto_scroll
+                else (
+                    DEFAULT_PLAYWRIGHT_AUTO_SCROLL_STEPS
+                    * DEFAULT_PLAYWRIGHT_AUTO_SCROLL_DELAY_MS
+                    + DEFAULT_PLAYWRIGHT_POST_SCROLL_DELAY_MS
+                )
+                / 1000
+            )
+            deadline = _PageDeadline(timeout / 1000 + scroll_allowance_s, timeout)
+
             # Auto-scroll to trigger lazy-loaded content
             if not skip_auto_scroll:
                 try:
                     scroll_script = _build_auto_scroll_script()
-                    await page.evaluate(scroll_script)
+                    await deadline.run(page.evaluate(scroll_script), "auto-scroll")
                     await asyncio.sleep(DEFAULT_PLAYWRIGHT_POST_SCROLL_DELAY_MS / 1000)
+                except PlaywrightPageTimeoutError:
+                    raise
                 except Exception as e:
                     logger.debug(f"Auto-scroll failed (non-critical): {e}")
+
+            # Screenshot the page as rendered, BEFORE any DOM change below:
+            # the shadow-DOM flattening and noise cleanup strip styles, SVG,
+            # canvas, iframes and navigation for text extraction, which
+            # would otherwise leave the capture a bare unstyled text page.
+            screenshot_path = None
+            screenshot_tiles: list[Path] = []
+            screenshot_error: str | None = None
+            if (
+                screenshot_config
+                and output_dir
+                and getattr(screenshot_config, "enabled", True)
+            ):
+                # Timed on its own and given back to the page budget: a
+                # slow capture costs the screenshot, never the text.
+                capture_started = time.monotonic()
+                (
+                    screenshot_path,
+                    screenshot_tiles,
+                    screenshot_error,
+                ) = await _capture_screenshot_within(
+                    page, screenshot_config, output_dir, url, timeout_ms=timeout
+                )
+                deadline.extend(time.monotonic() - capture_started)
 
             # Browser DOM normalize: flatten live shadow roots before extraction
             try:
                 shadow_script = _build_shadow_dom_normalize_script()
-                await page.evaluate(shadow_script)
+                await deadline.run(page.evaluate(shadow_script), "shadow DOM flatten")
+            except PlaywrightPageTimeoutError:
+                raise
             except Exception as e:
                 logger.debug(f"Shadow DOM normalize failed (non-critical): {e}")
 
             # DOM cleanup: remove noise elements before extraction
             try:
                 cleanup_script = _build_dom_cleanup_script(url=url)
-                await page.evaluate(cleanup_script)
+                await deadline.run(page.evaluate(cleanup_script), "DOM cleanup")
+            except PlaywrightPageTimeoutError:
+                raise
             except Exception as e:
                 logger.debug(f"DOM cleanup failed (non-critical): {e}")
 
-            title = await page.title()
+            title = await deadline.run(page.title(), "page.title()")
             final_url = page.url
-            html_content = await page.content()
+            html_content = await deadline.run(page.content(), "page.content()")
             metadata: dict[str, Any] = {"renderer": "playwright", "wait_for": wait_for}
+            if screenshot_error is not None:
+                metadata["screenshot_error"] = screenshot_error
 
             # Try native webextract FIRST to avoid redundant HTML→Markdown
             # conversion. Only fall back to _html_to_markdown if webextract
@@ -749,9 +961,11 @@ class PlaywrightRenderer:
                 assert coerce_source_frontmatter is not None
                 try:
                     # CPU-bound (BeautifulSoup parsing + deepcopies); run in a
-                    # thread to avoid blocking the event loop
+                    # thread to avoid blocking the event loop. Relative links
+                    # and images resolve against where the browser ended up
+                    # after redirects, not the URL that was requested.
                     extracted = await asyncio.to_thread(
-                        extract_web_content, html_content, url
+                        extract_web_content, html_content, final_url or url
                     )
                 except Exception as e:
                     logger.debug(f"Native webextract failed, using fallback: {e}")
@@ -840,11 +1054,15 @@ class PlaywrightRenderer:
 
             if not used_native_webextract and _is_content_incomplete(markdown_content):
                 try:
-                    rendered_text = await page.inner_text("body")
+                    rendered_text = await deadline.run(
+                        page.inner_text("body"), "page.inner_text()"
+                    )
                     if rendered_text and len(rendered_text.strip()) > len(
                         markdown_content.strip()
                     ):
                         markdown_content = _format_inner_text(rendered_text)
+                except PlaywrightPageTimeoutError:
+                    raise
                 except Exception as e:
                     logger.debug(
                         "[Playwright] Failed to extract inner_text fallback: {}", e
@@ -854,14 +1072,6 @@ class PlaywrightRenderer:
                 "[Playwright] Extraction/enrichment: {:.3f}s",
                 time.perf_counter() - extraction_started,
             )
-            screenshot_path = None
-            screenshot_tiles: list[Path] = []
-            if screenshot_config and output_dir:
-                enabled = getattr(screenshot_config, "enabled", True)
-                if enabled:
-                    screenshot_path, screenshot_tiles = await _capture_screenshot(
-                        page, screenshot_config, output_dir, url
-                    )
 
             return PlaywrightFetchResult(
                 content=markdown_content,
@@ -871,12 +1081,43 @@ class PlaywrightRenderer:
                 screenshot_tiles=screenshot_tiles,
                 metadata=metadata,
             )
+        except PlaywrightPageTimeoutError:
+            timed_out = True
+            raise
         finally:
-            if should_close_context:
-                await context.close()
-            elif page is not None:
-                # In persistent mode, close the page but keep the context
-                await page.close()
+            await self._release_page(
+                context,
+                page,
+                close_context=should_close_context or timed_out,
+                session_key=None if should_close_context else session_key,
+            )
+
+    async def _release_page(
+        self,
+        context: Any,
+        page: Any,
+        *,
+        close_context: bool,
+        session_key: str | None,
+    ) -> None:
+        """Close the page (and context) without letting a hung page block us.
+
+        A page whose script loop timed out cannot be trusted to close
+        quickly, so every close is bounded; a cached context that held such
+        a page is evicted from the session cache and closed with it.
+        """
+        if close_context and session_key is not None:
+            async with self._context_cache_lock:
+                cached = self._context_cache.get(session_key)
+                if cached is not None and cached.context is context:
+                    self._context_cache.pop(session_key, None)
+        target = context if close_context else page
+        if target is None:
+            return
+        try:
+            await asyncio.wait_for(target.close(), _CLOSE_TIMEOUT_S)
+        except Exception as e:
+            logger.debug("[Playwright] Closing the page/context failed: {}", e)
 
     async def close(self) -> None:
         """Close browser and playwright instances."""
@@ -1005,6 +1246,7 @@ async def fetch_with_playwright(
     screenshot_config: ScreenshotConfig | None = None,
     output_dir: Path | None = None,
     renderer: PlaywrightRenderer | None = None,
+    proxy_bypass: Sequence[str] | None = None,
     # Advanced browser control
     wait_for_selector: str | None = None,
     cookies: list[dict[str, str]] | None = None,
@@ -1056,7 +1298,9 @@ async def fetch_with_playwright(
         )
 
     # Legacy one-off path
-    async with PlaywrightRenderer(proxy=proxy) as standalone_renderer:
+    async with PlaywrightRenderer(
+        proxy=proxy, proxy_bypass=proxy_bypass
+    ) as standalone_renderer:
         return await standalone_renderer.fetch(
             url,
             timeout=timeout,
@@ -1213,6 +1457,9 @@ async def _capture_screenshot(
     config: ScreenshotConfig,
     output_dir: Path,
     url: str,
+    *,
+    errors: list[str] | None = None,
+    timeout_ms: int | None = None,
 ) -> tuple[Path | None, list[Path]]:
     """Capture page screenshot, tiling long pages.
 
@@ -1221,6 +1468,8 @@ async def _capture_screenshot(
         config: Screenshot configuration
         output_dir: Output directory
         url: Original URL (for filename)
+        errors: When given, a failure reason is appended to it
+        timeout_ms: Playwright timeout for the capture itself
 
     Returns:
         (primary screenshot path, all screenshot tiles). The primary path is
@@ -1230,6 +1479,7 @@ async def _capture_screenshot(
     from markitai.fetch_screenshot import (
         _compress_screenshot,
         _url_to_screenshot_filename,
+        remove_stale_screenshot_tiles,
     )
 
     try:
@@ -1238,6 +1488,9 @@ async def _capture_screenshot(
 
         output_dir.mkdir(parents=True, exist_ok=True)
         screenshot_path = output_dir / filename
+        # Tiles of an earlier, longer capture under this name would
+        # otherwise survive and be picked up alongside the new ones.
+        remove_stale_screenshot_tiles(screenshot_path)
 
         # Get settings from config. Full-page capture is not configurable:
         # ScreenshotConfig has never declared `full_page`, so the old
@@ -1249,12 +1502,15 @@ async def _capture_screenshot(
         max_height = getattr(config, "max_height", 10000)
         tile_height = getattr(config, "tile_height", DEFAULT_SCREENSHOT_TILE_HEIGHT)
 
-        await page.screenshot(
-            path=str(screenshot_path),
-            full_page=full_page,
-            type="jpeg",
-            quality=quality,
-        )
+        screenshot_kwargs: dict[str, Any] = {
+            "path": str(screenshot_path),
+            "full_page": full_page,
+            "type": "jpeg",
+            "quality": quality,
+        }
+        if timeout_ms is not None:
+            screenshot_kwargs["timeout"] = timeout_ms
+        await page.screenshot(**screenshot_kwargs)
 
         # Compress and tile if needed (tall pages become N VLM-readable tiles)
         tiles = (
@@ -1274,4 +1530,6 @@ async def _capture_screenshot(
         return primary, tiles
     except Exception as e:
         logger.warning(f"Screenshot capture failed: {e}")
+        if errors is not None:
+            errors.append(f"screenshot capture failed: {e}")
         return None, []

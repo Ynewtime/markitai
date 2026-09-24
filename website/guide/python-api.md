@@ -48,7 +48,7 @@ print(out.frontmatter["title"])  # parsed YAML frontmatter
 print(out.usage.cost_usd)  # LLM spend for this conversion
 ```
 
-Models resolve as in the CLI: `llm.model_list` from your [configuration](/guide/configuration) first, then the `MODEL` environment variable. By default it loads the same config files as the CLI. Pass a `markitai.MarkitaiConfig` for full control:
+Models resolve as in the CLI: `llm.model_list` from your [configuration](/guide/configuration) first, then the `MODEL` environment variable, then [automatic detection](/guide/configuration#defaults-markitai-picks-for-you) of provider API keys in the environment and signed-in subscription providers. When detection finds several providers they share one pool, and a loguru warning (stderr by default) lists them once per process; set `MODEL` to pin one. By default it loads the same config files as the CLI. Unlike the CLI, the library does not read `.env` files, so export keys before calling it. Pass a `markitai.MarkitaiConfig` for full control:
 
 ```python
 from markitai import MarkitaiConfig
@@ -101,5 +101,6 @@ A short-lived script can occasionally end with exit code 134 after a successful 
 | `usage` | `ConversionUsage` | `cost_usd`, token totals, per-model breakdown |
 | `skip_reason` | `str \| None` | `"exists"` when skipped by the conflict policy |
 | `duration` | `float` | Wall-clock seconds |
+| `warnings` | `list[str]` | Notices that didn't fail the call but are worth acting on: pages that look scanned (retry with `ocr=True`), hidden PDF text (a possible prompt injection), OCR that found no text, slides that couldn't be rendered, a URL screenshot that wasn't captured. Collected per call, so concurrent `aconvert` calls never mix them up. They're also logged as warnings |
 
-Failures raise instead of returning partial results: `ConversionError` for pipeline failures, `FetchError` for unreachable URLs, `ValueError` when LLM is enabled without a model. One call converts one file or URL; directory batches stay with the CLI.
+Failures raise instead of returning partial results: `ConversionError` for pipeline failures, `FetchError` for unreachable URLs, `NoModelConfiguredError` (a `ValueError` subclass) when LLM is enabled and no model resolves. All three can be imported from `markitai.api`. One call converts one file or URL; directory batches stay with the CLI.

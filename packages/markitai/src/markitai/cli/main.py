@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import sys
 from datetime import UTC, datetime
@@ -119,7 +118,13 @@ from click import Context
 from loguru import logger
 
 from markitai.cli.console import get_console, get_stderr_console
-from markitai.cli.framework import MarkitaiGroup
+from markitai.cli.framework import (
+    ROOT_CONFIG_OVERRIDES_KEY,
+    ROOT_CONFIG_PATH_KEY,
+    MarkitaiGroup,
+    parse_config_json,
+    require_existing_config,
+)
 from markitai.cli.logging_config import (
     print_version,
     setup_logging,
@@ -168,6 +173,25 @@ def normalize_exit_code(code: object) -> int:
     if code is None:
         return 0
     return code if isinstance(code, int) else 1
+
+
+def describe_os_error(exc: OSError, output_dir: Path | None) -> str:
+    """One-line reason for an OSError that ended a run.
+
+    Names the output directory when the failing path is it (or on its way
+    there), since that is the usual cause: ``-o`` pointing at a regular file,
+    a directory without write permission, a read-only disk.
+    """
+    reason = exc.strerror or str(exc) or type(exc).__name__
+    if exc.filename is None:
+        return reason
+    target = Path(os.fsdecode(exc.filename)).absolute()
+    if output_dir is not None:
+        out = output_dir.expanduser().absolute()
+        if target == out or out in target.parents or target in out.parents:
+            message = f"Cannot create output directory '{output_dir}': {reason}"
+            return message if target == out else f"{message} ('{target}')"
+    return f"{reason}: '{target}'"
 
 
 def main() -> None:
@@ -263,9 +287,14 @@ def run_interactive_mode(ctx: click.Context) -> None:
     "--config",
     "-c",
     "config_path",
-    type=click.Path(exists=True, path_type=Path),
+    # Existence is checked where the file is read (require_existing_config):
+    # `-c new.json config set ...` creates the file it names
+    type=click.Path(path_type=Path),
     default=None,
-    help="Path to configuration file.",
+    help=(
+        "Path to configuration file. Must exist, except for 'config set' "
+        "and 'config edit', which create it."
+    ),
 )
 @click.option(
     "--config-json",
@@ -553,13 +582,24 @@ def app(
         markitai ./docs/ -o ./output/ --resume      # Batch conversion
         markitai config list                        # Show configuration
     """
+    # Parse --config-json overrides (merged over the file config, but still
+    # under explicit CLI flags, which are applied later). Subcommands read
+    # both -c and the overrides from ctx.obj, so they see the same config.
+    ctx.ensure_object(dict)
+    config_overrides = parse_config_json(config_json)
+    ctx.obj[ROOT_CONFIG_PATH_KEY] = config_path
+    ctx.obj[ROOT_CONFIG_OVERRIDES_KEY] = config_overrides
+
     # If subcommand is invoked, setup logging (quiet console) and let it handle
     if ctx.invoked_subcommand is not None:
         setup_logging(verbose=False, quiet=True)
         return
 
+    # A conversion reads the config: a missing -c file is a usage error
+    # (only `config set`/`config edit` may name a file that is not there yet)
+    require_existing_config(config_path)
+
     # Get input path from context (set by MarkitaiGroup.parse_args)
-    ctx.ensure_object(dict)
     input_path_str = ctx.obj.get("_input_path")
 
     if not input_path_str and llm_batch_collect is None:
@@ -599,7 +639,14 @@ def app(
         """Print the JSON envelope on stdout when --json asked for one."""
         if not json_output:
             return
-        sys.stdout.write(json_result.render(history_items, error=error))
+        handoff = ctx.obj.get("_llm_batch_handoff")
+        sys.stdout.write(
+            json_result.render(
+                history_items,
+                error=error,
+                batch=handoff.to_json() if handoff is not None else None,
+            )
+        )
         sys.stdout.flush()
 
     def abort_with_json(message: str) -> NoReturn:
@@ -613,25 +660,6 @@ def app(
         ctx.exit(1)
 
     # Batch-API collection runs without an input argument
-    # Parse --config-json overrides (merged over the file config below,
-    # but still under explicit CLI flags, which are applied later)
-    config_overrides: dict | None = None
-    if config_json:
-        try:
-            parsed_overrides = json.loads(config_json)
-        except json.JSONDecodeError as e:
-            raise click.BadParameter(
-                f"invalid JSON at line {e.lineno} column {e.colno}: {e.msg}",
-                param_hint="'--config-json'",
-            ) from e
-        if not isinstance(parsed_overrides, dict):
-            raise click.BadParameter(
-                "expected a JSON object of config overrides, "
-                f"got {type(parsed_overrides).__name__}",
-                param_hint="'--config-json'",
-            )
-        config_overrides = parsed_overrides
-
     if llm_batch_collect is not None:
         from markitai.cli.processors.batch_llm import collect_batch_llm
         from markitai.utils.errors import ConversionError
@@ -645,10 +673,38 @@ def app(
         collect_cfg = ConfigManager().load(
             config_path=config_path, overrides=config_overrides
         )
+        # Same console/file logging as a conversion run; without it loguru's
+        # default DEBUG handler prints cache and router internals.
+        setup_logging(
+            verbose=verbose,
+            log_dir=collect_cfg.log.dir,
+            log_level=log_level or collect_cfg.log.level,
+            log_format=collect_cfg.log.format,
+            rotation=collect_cfg.log.rotation,
+            retention=collect_cfg.log.retention,
+            quiet=quiet,
+        )
+
+        async def collect_with_cleanup() -> int:
+            try:
+                return await collect_batch_llm(
+                    collect_cfg, output, llm_batch_collect, quiet=quiet
+                )
+            finally:
+                # Close litellm's pooled async clients inside the loop that
+                # opened them, as the conversion path does.
+                if "litellm" in sys.modules:
+                    try:
+                        from litellm.llms.custom_httpx.async_client_cleanup import (
+                            close_litellm_async_clients,
+                        )
+
+                        await close_litellm_async_clients()
+                    except Exception as e:
+                        logger.debug("[Cleanup] LiteLLM client cleanup failed: {}", e)
+
         try:
-            code = asyncio.run(
-                collect_batch_llm(collect_cfg, output, llm_batch_collect, quiet=quiet)
-            )
+            code = asyncio.run(collect_with_cleanup())
         except ConversionError as e:
             stderr_console.print(f"[red]Error: {e}[/red]")
             ctx.exit(1)
@@ -733,6 +789,9 @@ def app(
         rotation=cfg.log.rotation,
         retention=cfg.log.retention,
         quiet=quiet_console,
+        # A quiet console still shows actionable notices ("pages look
+        # scanned, re-run with --ocr") unless the user asked for --quiet.
+        show_notices=not user_quiet,
     )
 
     # Log configuration status after logging is set up
@@ -837,37 +896,38 @@ def app(
     # the environment silently produced no enhancement at all.
     if cfg.llm.enabled and not cfg.llm.model_list:
         # Priority 1: MODEL env var (explicit single-model override)
-        model_env = os.environ.get("MODEL")
-        if model_env:
-            from markitai.config import LiteLLMParams, ModelConfig
+        # Priority 2: auto-detect from env keys and authenticated CLI providers
+        # (shared with the Python API and the MCP server)
+        from markitai.providers.detect import (
+            pooled_providers_notice,
+            resolve_auto_models,
+        )
 
-            cfg.llm.model_list = [
-                ModelConfig(
-                    model_name="default",
-                    litellm_params=LiteLLMParams(model=model_env),
-                )
-            ]
+        resolution = resolve_auto_models()
+        cfg.llm.model_list = resolution.model_list
+        if resolution.source == "env":
+            model_env = resolution.model_list[0].litellm_params.model
             logger.info(f"[Config] Using MODEL env var: {model_env}")
-        else:
-            # Priority 2: Auto-detect from env keys and authenticated CLI providers
-            from markitai.cli.providers_detect import (
-                detect_all_providers,
-                providers_to_model_configs,
+        elif resolution.source == "detected":
+            detected = resolution.detected
+            logger.info(
+                f"[Config] Auto-detected {len(detected)} provider(s): "
+                + ", ".join(d.model for d in detected)
             )
+            # Every detected provider joins one pool and the router
+            # spreads requests across them, so one document can be
+            # cleaned by several vendors. Say so where it is seen
+            # (stderr, even without -v); only --quiet silences it.
+            if resolution.pooled and not user_quiet:
+                from markitai.cli import ui
 
-            detected = detect_all_providers()
-            if detected:
-                cfg.llm.model_list = providers_to_model_configs(detected)
-                names = [d.model for d in detected]
-                logger.info(
-                    f"[Config] Auto-detected {len(detected)} provider(s): "
-                    + ", ".join(names)
-                )
-            else:
-                logger.warning(
-                    "[Config] LLM enabled but no models configured. "
-                    "Set MODEL env var or add models to llm.model_list in config file."
-                )
+                message, fix = pooled_providers_notice(detected)
+                ui.warning(message, detail=fix, console=stderr_console)
+        else:
+            logger.warning(
+                "[Config] LLM enabled but no models configured. "
+                "Set MODEL env var or add models to llm.model_list in config file."
+            )
     elif cfg.llm.enabled and cfg.llm.model_list:
         model_names = [m.litellm_params.model for m in cfg.llm.model_list]
         unique_models = set(model_names)
@@ -957,6 +1017,12 @@ def app(
     # printed, so the prompt stays available (a non-interactive run still
     # auto-denies it, as before).
     set_remote_consent_prompt_allowed(not user_quiet)
+    # URL fetch-cache read policy (TTL for pages without validators, and the
+    # --no-cache-for / cache.no_cache_patterns globs, which match URLs too)
+    get_default_session().configure_fetch_cache(
+        ttl_seconds=cfg.cache.fetch_ttl_seconds,
+        no_cache_patterns=cfg.cache.no_cache_patterns,
+    )
     if (
         user_quiet
         and not no_remote_fetch
@@ -1123,6 +1189,8 @@ def app(
                 explicit_fetch_strategy=explicit_fetch_strategy,
                 quiet=quiet,
                 history=history_items,
+                resume=resume,
+                source_file=Path(input_path_str),
             )
             return
 
@@ -1166,6 +1234,9 @@ def app(
                 # Batch-API mode: convert with LLM disabled, then enhance
                 # the whole directory through one Batch API job.
                 from markitai.cli.processors.batch_llm import (
+                    BatchHandoff,
+                    report_uncollected_batches,
+                    resumed_unenhanced_outcomes,
                     run_batch_llm_enhancement,
                 )
                 from markitai.utils.errors import ConversionError
@@ -1192,39 +1263,93 @@ def app(
                         "--llm-batch.[/dim]"
                     )
                     raise CliInputRejection(message)
+                # Refuse an unusable pool before anything is converted: found
+                # afterwards, it cost a full conversion pass, and the re-run
+                # with corrected flags wrote a second set of outputs.
+                from markitai.cli.processors.batch_llm import validate_batch_pool
+
+                try:
+                    validate_batch_pool(cfg)
+                except ConversionError as e:
+                    stderr_console.print(f"[red]Error: {e}[/red]")
+                    raise CliInputRejection(str(e)) from None
 
                 cfg_no_llm = cfg.model_copy(deep=True)
                 cfg_no_llm.llm.enabled = False
-                await process_batch(
-                    input_path,
-                    effective_output,
-                    cfg_no_llm,
-                    resume,
-                    dry_run,
-                    verbose=verbose,
-                    console_handler_id=console_handler_id,
-                    log_file_path=log_file_path,
-                    fetch_strategy=fetch_strategy,
-                    explicit_fetch_strategy=explicit_fetch_strategy,
-                    glob_patterns=glob_patterns,
-                    quiet=quiet,
-                    history=history_items,
-                )
+                try:
+                    await process_batch(
+                        input_path,
+                        effective_output,
+                        cfg_no_llm,
+                        resume,
+                        dry_run,
+                        verbose=verbose,
+                        console_handler_id=console_handler_id,
+                        log_file_path=log_file_path,
+                        fetch_strategy=fetch_strategy,
+                        explicit_fetch_strategy=explicit_fetch_strategy,
+                        glob_patterns=glob_patterns,
+                        quiet=quiet,
+                        history=history_items,
+                    )
+                except SystemExit as exc:
+                    # A partial conversion failure still leaves converted
+                    # documents to enhance; the exit code is recomputed from
+                    # every item below. Any other exit ends the run here.
+                    if normalize_exit_code(exc.code) != 10:
+                        raise
                 if dry_run:
                     return
+
+                def remember_submission(submitted: BatchHandoff) -> None:
+                    # Until the wait ends, a Ctrl-C reports this batch (see
+                    # the KeyboardInterrupt handler below).
+                    ctx.obj["_llm_batch_submitted"] = submitted
+
                 try:
-                    code = await run_batch_llm_enhancement(
+                    if resume:
+                        # Documents an interrupted or failed-to-submit run
+                        # already converted are not in this run's items;
+                        # those still in an uncollected batch stay out.
+                        history_items.extend(
+                            resumed_unenhanced_outcomes(effective_output, history_items)
+                        )
+                        report_uncollected_batches(
+                            effective_output, config_path=config_path
+                        )
+                    handoff = await run_batch_llm_enhancement(
                         cfg,
                         effective_output,
                         items=history_items,
                         timeout_s=float(llm_batch_timeout),
                         quiet=quiet,
+                        config_path=config_path,
+                        on_submitted=remember_submission,
                     )
                 except ConversionError as e:
+                    ctx.obj.pop("_llm_batch_submitted", None)
                     stderr_console.print(f"[red]Error: {e}[/red]")
                     raise SystemExit(1) from None
-                if code != 0:
-                    raise SystemExit(code)
+                ctx.obj.pop("_llm_batch_submitted", None)
+                failed = sum(1 for item in history_items if item.status == "failed")
+                if handoff is not None:
+                    # --json reads the batch id from here; stderr gets the
+                    # same facts even under --quiet/--json.
+                    ctx.obj["_llm_batch_handoff"] = handoff
+                    handoff.report()
+                    if failed:
+                        # Exit 2 wins (the batch must be collected or its
+                        # results are lost); the failures are still said.
+                        stderr_console.print(
+                            f"[red]{failed} item(s) failed and are not in the "
+                            "batch; see the run's results.[/red]"
+                        )
+                    raise SystemExit(2)
+                from markitai.runs.report import resolve_exit_code
+
+                exit_code = resolve_exit_code(failed, batch=True)
+                if exit_code != 0:
+                    raise SystemExit(exit_code)
                 return
 
             await process_batch(
@@ -1315,7 +1440,11 @@ def app(
         if isinstance(exc, CliInputRejection):
             return exc.message
         code = normalize_exit_code(exc.code)
-        if code == 0 or any(item.status == "failed" for item in history_items):
+        # A pending item (--llm-batch handoff) explains the exit like a
+        # failed one does; the envelope's batch object says how to finish.
+        if code == 0 or any(
+            item.status in ("failed", "pending") for item in history_items
+        ):
             return None
         return f"markitai exited with code {code}; see stderr for the reason"
 
@@ -1326,8 +1455,16 @@ def app(
         # wrote its state. click's bare "Aborted." leaves the reader to guess
         # whether stopping cost them the run — and the guess decides whether
         # they re-convert (and re-pay for) work that is already done.
+        submitted = ctx.obj.get("_llm_batch_submitted")
+        if submitted is not None:
+            # Stopped while waiting on a submitted --llm-batch job: it keeps
+            # running (and billing) server-side. Printed under --quiet/--json
+            # too, since nothing else ever showed the batch id.
+            ctx.obj["_llm_batch_handoff"] = submitted
+            submitted.report()
         write_json(error="interrupted before the run finished")
-        if input_path is not None and input_path.is_dir() and not quiet:
+        resumable = is_url_list_mode or (input_path is not None and input_path.is_dir())
+        if resumable and not quiet:
             stderr_console.print(
                 "\n[yellow]Interrupted.[/yellow] Re-run the same command with "
                 "[cyan]--resume[/cyan] to continue from here."
@@ -1342,6 +1479,22 @@ def app(
     except EnvVarNotFoundError as e:
         stderr_console.print(f"[red]Error: {e}[/red]")
         abort_with_json(str(e))
+    except OSError as e:
+        # A filesystem failure the processors did not turn into a failed item
+        # (the batch and URL modes create the output directory up front) is a
+        # runtime error: one line on stderr and the envelope's error under
+        # --json, not a traceback. The traceback still reaches the log file.
+        from rich.markup import escape
+
+        logger.opt(exception=e).debug("[CLI] Run stopped by {}", type(e).__name__)
+        output_dir = output
+        if output_dir is None and cfg.output.dir:
+            output_dir = Path(cfg.output.dir)
+        message = describe_os_error(e, output_dir)
+        stderr_console.print(f"[red]Error: {escape(message)}[/red]")
+        write_json(error=message)
+        record_run_history()
+        ctx.exit(1)
     except ValueError as e:
         error_msg = str(e)
         if (

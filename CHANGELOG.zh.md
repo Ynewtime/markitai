@@ -7,10 +7,60 @@
 
 ## [未发布]
 
+### 新增
+
+- `.urls` 列表支持 `--resume`；各种模式下按 Ctrl-C 都会保存批处理状态，续跑从真正完成的地方继续。
+- `--json` 能描述交接出去的 `--llm-batch` 运行：顶层 `batch` 对象给出批次 id 和 `--llm-batch-collect` 命令，新增 `pending` 条目状态与 `pending` 合计，以及逐项 `warnings`。条目的 `cache_hit` 也会如实报告。
+- 新增 `cache.fetch_ttl_seconds`（默认 24 小时），没有 ETag/Last-Modified 的已抓取页面会过期。`cache stats`/`cache clear` 覆盖 URL 抓取缓存；`--no-cache-for` 的模式匹配到某个 URL 时，该 URL 不走抓取缓存。
+- 可操作的提示在默认模式下也会显示（不再只在 `-v` 下）：未开 `--ocr` 的扫描页、OCR 失败、PDF 隐藏文字、无法渲染的 PPTX 幻灯片、没拍到的 URL 截图。批处理会在汇总里列出。
+- `markitai doctor` 在装了 PowerPoint、但 macOS 不允许 markitai 写入其容器目录时给出警告，并说明如何授权。
+- Python API 导出 `ConversionError`、`FetchError` 和 `NoModelConfiguredError`（`ValueError` 的子类，启用 LLM 但没有可用模型时抛出）。
+- 不开 LLM 时，`--screenshot` 会在基础 `.md` 里以 HTML 注释引用每页 PDF 和每张 PPTX 幻灯片的截图。
+
 ### 变更
 
+- **LLM 增强失败时条目记为失败。** key 无效、服务端报错、超时或模型拒答以前都报告成功；现在仍写出基础 `.md`，但条目状态为 `failed`，单文件以 `1`、批处理以 `10` 退出。
+- 超过单次 LLM 请求长度的文档改为分块增强，不再在 32,000 字符处截断。所需请求数超过 `max_requests_per_document` 剩余额度的文档，一个请求都不发就直接失败。
+- 找到多个服务商的 key 且没有配置模型时，markitai 会说明请求将分散到哪些模型，以及如何固定为一个。Python API 和 MCP 服务器现在按与 CLI 相同的方式确定模型。
+- 输出文件跟随 umask（通常为 `0644`），不再一律是 `0600`；markitai 写出的配置文件和 `.env` 仍保持私有。
+- OCR 文本按阅读顺序排版：双栏页面逐栏读取，竖排中日文从右到左读取，能识别倒置的扫描页，间隔排列的行输出为 Markdown 表格。页边印章和侧注不再并入正文行，居中标题和地址块不再被误判为分栏，“标签 值”式表单和编号列表按普通文本输出。
+- `--ocr` 在有真实文字层的页面上保留标题、列表、表格和图片，并照常执行隐藏文字清理。不支持的 `ocr.lang` 值会直接报错，RapidOCR 的最低版本改为 `>=3.9`。
+- 提取出的图片和页面/幻灯片截图按最终输出名命名（如 `report.pdf.v2-0001-01.jpg`），改名重跑不会再覆盖旧版本引用的文件。
+- `-c`/`--config-json` 对子命令生效：`config get/set/path`、`cache` 和 `doctor` 读取、`config set` 写入的都是你指定的文件。`-c` 指向的文件还不存在时，`config set`/`config edit` 会创建它；其他命令遇到不存在的 `-c` 路径直接报错（退出码 `2`）。
+- `markitai-mcp` 与 `markitai mcp` 一样加载 `./.env` 和 `~/.markitai/.env`。
+- `--screenshot-only` 在文本提取失败时改用截图完成，没拍到截图时算失败；目录批处理中的 `.urls` 文件也遵守该选项。
+- 警告会出现在所有入口：网页工作台按条目显示，Python API 放在 `ConversionOutput.warnings` 里，MCP 结果带 `warnings` 字段。
+- 文档写明 `MARKITAI_NO_VLM_OCR` 只管 OCR；同时使用 `--screenshot --llm` 时，markitai 会提示页面截图仍会发给视觉模型。
+- 网页工作台：删除条目时一并删除其上传原件、图片和截图。从 CLI 记录的文件条目标记为不可重试（重试接口返回 `409`），其中的 URL 条目仍可重试或增强。因服务关闭而中止的条目，错误文案由 `cancelled` 改为 `cancelled (server shutdown)`。
 - defuddle 对照语料同步至上游 0.19.4，并移植其提取改动：代码块围栏按内容中的反引号串自动加长而不再转义；`<sub>`/`<sup>` 保留为内联 HTML 并紧贴前后文（`2021<sub>5ya</sub>` 不再被压成 `20215ya`）；邮件式 `Date:` 等带标签行中的日期随标签一起保留；arXiv 隐藏的重复脚注标记被移除；`closed`、旧式 `shadowroot` 属性及嵌套的声明式 Shadow DOM 都能被提取。
 - 网页提取结果中移除惰性 `<template>` 片段和 SVG SMIL 动画元素。
+
+### 修复
+
+- 批处理不再把自己的输出目录或 `.markitai/` 资源当作输入，也能识别 `.Docx` 这类大小写混合的扩展名。
+- 续跑时重做的条目覆盖自己之前的输出，不再生成 `.v2` 副本。输出名在批次内预留，同名 URL、以及 URL 与同名文件之间不再互相覆盖。
+- `--profile rag`/`obsidian` 重跑不再在 `assets/` 里保留旧图；`--record-history` 不再把不同子目录下的同名资源合并覆盖。
+- 独立图片的视觉分析失败时，不再无输出却报告成功；图片分析失败时保留原作者的 alt 文本。
+- 模型拒答不再被当作文档正文接受并写入缓存，`--pure` 和视觉路径也一样。
+- 增强失败后，兜底的 `.md` 是本轮的转换结果；覆盖模式下会删除本条目遗留的旧 `.llm.md`。文档调用失败后不再额外付费做一次清理调用；遇到鉴权错误时，该文档剩余的请求会停止。
+- 图片分析失败不再覆盖 alt 文本，也不写入 `images.json`，而是作为条目警告报告（stderr 和 `--json`）。
+- 在另一个工作目录下 `--resume`，结果仍写回原来的输出目录。列表里同一个 URL 用不同名字出现两次时，各自保留一份状态；完全重复的行会跳过并给出警告。没有记录输出路径的续跑条目遵守 `--on-conflict`。目录批处理会在 stderr 和 `--json` 中报告 URL 的警告（例如截图没有拍到）。
+- 从 URL 下载的图片按条目实际得到的输出名命名（`docs.v2.*`；用 `-o custom.md` 时为 `custom.*`）。批处理中 `--llm --pure --screenshot-only` 和单个 URL 一样读取正文。
+- 覆盖只读（`0444`）的输出文件不再失败。
+- `--llm-batch`：缓存命中的图片答案不再丢失；单次请求放不下的长文档仍会分析其中的图片。`--resume` 不再重新提交批次尚未收取的文档，而是打印收取命令。提交后按 Ctrl-C 会打印收取命令；`--screenshot-only` 的 URL 不参与增强；收取时沿用提交时的 `--alt`/`--desc`。交接时如果还有失败条目，仍以 `2` 退出，并报告失败数。
+- `--llm-batch`：带 `--alt`/`--desc` 的批次收取时不再崩溃；Anthropic 图片请求改用 Messages API 格式；批次使用 `llm.model_list` 中的 `api_key`/`api_base`；不支持的模型池在转换前就被拒绝；提交失败时只输出一行错误；中断或提交失败前已转换的文档在 `--resume` 时会被增强；部分文件转换失败不再导致整批跳过增强。
+- 网页按 `<meta charset>` 解码（GBK、Shift_JIS、CP1252 等）；重定向后的相对链接按最终 URL 解析；PDF 和 Office 文档的 URL 改用 markitai 自己的转换器。
+- 条件请求返回验证页或 JavaScript 空壳时不再覆盖原有的正常缓存；如果随后的完整抓取也失败，就返回缓存副本，metadata 中带 `stale` 和 `fetch_warning`。较短的纯文本响应不再被误判为单页应用，也只有 HTML 响应才会做验证页检查。
+- 一个非法字节不再让整页乱码：按声明的编码（即使声明位于前 1 KiB 之后）或 UTF-8 替换解码；未声明编码的西文文本回退到 CP1252，不再被误判成别的代码页。
+- Playwright 在清理 DOM 之前截图，保留全部截图分块，不同查询串使用各自的截图文件，页面加载后卡死会超时退出；截图有单独的时间预算，页面繁忙时仍能拿到正文；同一批次中 URL 使用不同代理时不再关掉共享浏览器；NO_PROXY 和本机地址不走代理，环境变量里设置的 `HTTP(S)_PROXY` 也一样。`--no-cache-for` 匹配主机名时不区分大小写；普通的 `#锚点` 不再让 URL 生成单独的截图文件。
+- OCR 失败（图片损坏、为空或过大，语言不受支持）会让条目失败，不再把错误写进输出。多帧 TIFF 逐帧识别，并发 OCR 不再调低共享引擎的阈值，本地 OCR 计为重任务。
+- PPTX 的 `--ocr --llm` 遵守 `MARKITAI_NO_VLM_OCR`；PDF/PPTX 的页面渲染图不再计入提取的图片数。
+- stdout 输出中的图片链接指向不可变的副本，使用 `--profile rag`/`obsidian` 时也是如此。
+- 输出路径含空格或括号时（例如 iCloud 的 `Mobile Documents`）PDF 图片能正确写出；文件名含空格或中文的图片也会做 OCR；同前缀的兄弟 PDF 的图片不再被认领或重新压缩。`--ocr --screenshot` 不再把页面渲染图计入图片数。
+- CSV/TSV 中不配对的引号只影响它所在的那一行。多帧 TIFF 逐帧解码。
+- 带 UTF-8 BOM 的 `.urls` 文件、带引号的多行 TSV 单元格，以及正文只在 HTML 或 ANSI 部分的 `.msg` 邮件现在都能正确转换。
+- 输出目录无法创建时只输出一行错误（`--json` 中带 `error`），不再打印堆栈。MCP 工具会返回失败原因，`batch_convert` 拒绝相对路径。
+- 网页工作台：有事件流连接时按 Ctrl-C 能及时关闭，任务仍保留在历史中；输出名和上传名按不区分大小写去重；结果中列出 PDF 图片；重试 CLI 记录的 `--llm` URL 不再写出 `.llm.llm.md`；增强失败时恢复之前的结果，重跑途中关闭服务也一样。同时删除同一条目两次返回 `404`，不再是 `500`。名字只差一个后缀的条目（`notes` 和 `notes.llm`）不再共用输出。等待收取的 `--llm-batch` 条目显示为等待中；“重试全部失败”只重试可以重试的条目。
 
 ## [1.1.0] - 2026-09-14
 

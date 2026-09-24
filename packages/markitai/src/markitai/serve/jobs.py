@@ -37,6 +37,9 @@ if TYPE_CHECKING:
 
 JOB_TTL_HOURS = 7 * 24.0  # conversion history is kept for 7 days
 META_FILENAME = "meta.json"
+#: Queue sentinel telling an SSE stream the server is shutting down. Never
+#: sent to clients: the stream just ends.
+SHUTDOWN_EVENT = "__shutdown__"
 
 
 def normalize_job_options(options: dict[str, Any]) -> dict[str, Any]:
@@ -79,6 +82,12 @@ class JobItem:
     skipped: bool = False  # completed as a skip (status stays "done")
     skip_reason: str | None = None  # e.g. "exists", "image_only"
     options: dict[str, Any] | None = None  # persisted per-item retry settings
+    # False for items whose source cannot be re-run from the web UI: a file
+    # recorded from a CLI run (--record-history) has no uploaded original.
+    retryable: bool = True
+    # Actionable notices raised while this item converted ("pages look
+    # scanned", "hidden text detected", ...): the web user has no console.
+    warnings: list[str] = field(default_factory=list)
 
     def to_payload(self) -> dict[str, Any]:
         """Return the item event payload (contract: ``event: item``)."""
@@ -99,6 +108,8 @@ class JobItem:
             "operation": self.operation,
             "skipped": self.skipped,
             "skip_reason": self.skip_reason,
+            "retryable": self.retryable,
+            "warnings": list(self.warnings),
         }
 
 
@@ -120,6 +131,7 @@ class RetryWork:
     prior_finished_at: str | None = None
     prior_operation: str = "convert"
     prior_llm_enhanced: bool = False
+    prior_warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -148,6 +160,10 @@ class Job:
         default_factory=list
     )
     archive_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # Serializes item / history deletion: each awaits file work off-thread,
+    # and two of them interleaving would remove one row twice or leave an
+    # empty job behind in history.
+    delete_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     retry_queue: asyncio.Queue[RetryWork] = field(
         default_factory=asyncio.Queue, repr=False
     )
@@ -221,6 +237,9 @@ class JobRegistry:
         self.jobs_root = jobs_root
         self.jobs: dict[str, Job] = {}
         self.archive_lock = asyncio.Lock()
+        # Set once the server starts shutting down: SSE streams end instead
+        # of waiting for their job, so they never hold the shutdown open.
+        self.closing = False
 
     def create_job(self, options: dict[str, Any], cfg: MarkitaiConfig) -> Job:
         """Create a job with fresh uploads/out directories on disk."""
@@ -277,8 +296,28 @@ class JobRegistry:
         """Publish a ``job`` progress event."""
         self.publish(job, "job", job.progress_payload())
 
+    def begin_shutdown(self) -> None:
+        """End every open SSE stream (and refuse to keep new ones open).
+
+        The ASGI server waits for open responses before it runs the lifespan
+        shutdown; an SSE stream following a long job would otherwise hold it
+        open until the job finishes, and a second Ctrl-C then skips
+        :meth:`shutdown` entirely (no meta.json, the job vanishes from
+        history). Idempotent; must run on the event loop thread.
+        """
+        if self.closing:
+            return
+        self.closing = True
+        for job in self.jobs.values():
+            self.publish(job, SHUTDOWN_EVENT, {})
+
     async def shutdown(self) -> None:
-        """Cancel all still-running job tasks (server shutdown)."""
+        """Cancel all still-running job tasks (server shutdown).
+
+        Their items end as ``cancelled (server shutdown)`` and each job is
+        finalized, so its meta.json is written and it rehydrates as history.
+        """
+        self.begin_shutdown()
         tasks = [
             task
             for job in self.jobs.values()
@@ -362,19 +401,49 @@ def write_job_meta(job: Job, *, refresh_size: bool = True) -> None:
     )
 
 
+def _base_output_name(value: Any) -> str | None:
+    """Normalize a persisted ``output_name`` to the base ``.md`` name.
+
+    ``output_name`` is the item's base output (the ``.llm.md`` sibling is
+    derived from it). CLI history recorded before that was pinned down
+    stored the actual ``x.llm.md`` output there; a retry would then write
+    ``x.llm.llm.md`` and put unenhanced markdown into ``x.llm.md``.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    if value.endswith(".llm.md"):
+        return f"{value.removesuffix('.llm.md')}.md"
+    return value
+
+
 def _item_from_payload(
-    raw: dict[str, Any], index: int, fallback_finished_at: str | None = None
+    raw: dict[str, Any],
+    index: int,
+    fallback_finished_at: str | None = None,
+    *,
+    origin: str | None = None,
 ) -> JobItem:
     """Rebuild a JobItem from its meta.json payload dict."""
+    kind = str(raw.get("kind") or "file")
+    raw_warnings = raw.get("warnings")
+    warnings = (
+        [str(w) for w in raw_warnings if isinstance(w, str)]
+        if isinstance(raw_warnings, list)
+        else []
+    )
+    retryable = raw.get("retryable")
+    if not isinstance(retryable, bool):
+        # CLI-recorded files keep no original to convert again.
+        retryable = not (origin == "cli" and kind == "file")
     return JobItem(
         item_id=str(raw.get("item_id") or f"i{index}"),
         name=str(raw.get("name") or ""),
-        kind=str(raw.get("kind") or "file"),
+        kind=kind,
         source=None,  # original upload path / URL is not needed for archives
         status=str(raw.get("status") or "done"),
         error=raw.get("error"),
         output=raw.get("output"),
-        output_name=raw.get("output_name"),
+        output_name=_base_output_name(raw.get("output_name")),
         duration_ms=raw.get("duration_ms"),
         finished_at=raw.get("finished_at") or fallback_finished_at,
         cost_usd=raw.get("cost_usd"),
@@ -387,6 +456,8 @@ def _item_from_payload(
         options=normalize_job_options(raw["options"])
         if isinstance(raw.get("options"), dict)
         else None,
+        retryable=retryable,
+        warnings=warnings,
     )
 
 
@@ -436,7 +507,9 @@ def rehydrate_jobs(registry: JobRegistry, cfg: MarkitaiConfig) -> int:
             options=normalized_options,
             cfg=cfg,
             items=[
-                _item_from_payload(raw, index, meta.get("finished_at"))
+                _item_from_payload(
+                    raw, index, meta.get("finished_at"), origin=options.get("origin")
+                )
                 for index, raw in enumerate(raw_items, start=1)
                 if isinstance(raw, dict)
             ],
@@ -539,15 +612,16 @@ async def process_file_item(
 ) -> ProcessResult:
     """Convert one uploaded file via ``convert_document_core``.
 
-    Thin serve-side counterpart of the CLI batch worker: same skip semantics
-    (``skipped (...)`` error strings are non-errors), same ``.llm.md`` output
-    selection when LLM is enabled.
+    Thin serve-side counterpart of the CLI batch worker: the ProcessResult
+    mapping (skip semantics, ``.llm.md`` output selection) is the shared
+    ``workflow.results.document_process_result``; serve only adds the
+    ``images.json`` write.
     """
     from markitai.batch import ProcessResult
     from markitai.constants import MAX_DOCUMENT_SIZE
-    from markitai.utils.paths import derive_output_name
     from markitai.utils.text import format_error_message
     from markitai.workflow.core import ConversionContext, convert_document_core
+    from markitai.workflow.results import document_process_result
 
     try:
         ctx = ConversionContext(
@@ -558,20 +632,12 @@ async def process_file_item(
         )
         result = await convert_document_core(ctx, MAX_DOCUMENT_SIZE)
 
-        if not result.success:
-            return ProcessResult(success=False, error=result.error)
-
-        if result.skip_reason == "exists":
-            skipped_output = out_dir / derive_output_name(file_path.name)
-            return ProcessResult(
-                success=True,
-                output_path=str(skipped_output),
-                error="skipped (exists)",
-            )
-        if result.skip_reason == "image_only":
-            return ProcessResult(success=True, error="skipped (image_only)")
-
-        if cfg.image.desc_enabled and ctx.image_analysis is not None:
+        if (
+            result.success
+            and result.skip_reason is None
+            and cfg.image.desc_enabled
+            and ctx.image_analysis is not None
+        ):
             from markitai.output_profiles import assets_visible
             from markitai.workflow.helpers import write_images_json
 
@@ -579,17 +645,7 @@ async def process_file_item(
                 out_dir, [ctx.image_analysis], visible_assets=assets_visible(cfg)
             )
 
-        output_file = ctx.output_file
-        if cfg.llm.enabled and output_file is not None:
-            output_file = output_file.with_suffix(".llm.md")
-        return ProcessResult(
-            success=True,
-            output_path=str(output_file) if output_file else None,
-            images=ctx.embedded_images_count,
-            screenshots=ctx.screenshots_count,
-            cost_usd=ctx.llm_cost,
-            llm_usage=ctx.llm_usage,
-        )
+        return document_process_result(ctx, result)
     except Exception as e:
         return ProcessResult(success=False, error=format_error_message(e))
 
@@ -671,6 +727,14 @@ async def process_url_item(
             url,
             result.llm_error,
         )
+        # Same policy as files: the cascade wrote the base .md as the
+        # fallback, and the item fails rather than passing it off as done
+        return ProcessResult(
+            success=False,
+            error=f"LLM processing failed: {result.llm_error}",
+            cost_usd=result.cost_usd,
+            llm_usage=result.llm_usage,
+        )
 
     if result.skipped:
         return ProcessResult(
@@ -684,6 +748,15 @@ async def process_url_item(
         if result.screenshot_tiles
         else (1 if result.screenshot_path else 0)
     )
+    if cfg.screenshot.enabled and not screenshots:
+        from markitai.notices import user_notice
+        from markitai.utils.url_redaction import redact_url
+
+        # The fetch layer logged why; the job item needs to say it happened.
+        user_notice(
+            "[URL] Screenshot not captured for {}; the page was converted without it",
+            redact_url(url),
+        )
     final_output = result.llm_output_path or result.output_path
     return ProcessResult(
         success=True,
@@ -691,6 +764,7 @@ async def process_url_item(
         screenshots=screenshots,
         cost_usd=result.cost_usd,
         llm_usage=result.llm_usage,
+        llm_enhanced=result.llm_output_path is not None,
     )
 
 
@@ -717,9 +791,7 @@ def _apply_result(job: Job, item: JobItem, result: ProcessResult) -> None:
         is_skip = result.error is not None and result.error.startswith("skipped (")
         item.error = result.error if is_skip else None
         item.skipped = is_skip
-        item.llm_enhanced = bool(
-            not is_skip and item.output and item.output.endswith(".llm.md")
-        )
+        item.llm_enhanced = bool(not is_skip and item.output and result.llm_enhanced)
         if is_skip and result.error is not None:
             item.skip_reason = result.error.removeprefix("skipped (").removesuffix(")")
     else:
@@ -739,27 +811,37 @@ async def _run_item(
     require_llm: bool = False,
 ) -> None:
     """Run one item, emitting running -> done/error events."""
+    from markitai.notices import capture_task_notices
+
     item.status = "running"
+    item.warnings = []
     registry.publish_item(job, item)
     start = time.perf_counter()
     try:
-        if item.kind == "file":
-            result = await process_file_item(
-                Path(item.source), cfg, job.out_dir, shared_processor
-            )
-        else:
-            assert url_ctx is not None
-            result = await process_url_item(
-                str(item.source),
-                cfg,
-                job.out_dir,
-                shared_processor,
-                url_ctx,
-                output_name=item.output_name,
-            )
+        # Per-item capture: items of one job convert concurrently, and each
+        # gathered item runs in its own task (its own context copy).
+        with capture_task_notices() as notices:
+            try:
+                if item.kind == "file":
+                    result = await process_file_item(
+                        Path(item.source), cfg, job.out_dir, shared_processor
+                    )
+                else:
+                    assert url_ctx is not None
+                    result = await process_url_item(
+                        str(item.source),
+                        cfg,
+                        job.out_dir,
+                        shared_processor,
+                        url_ctx,
+                        output_name=item.output_name,
+                    )
+            finally:
+                item.warnings = list(notices)
     except asyncio.CancelledError:
+        # Only registry.shutdown() cancels job tasks.
         item.status = "error"
-        item.error = "cancelled"
+        item.error = "cancelled (server shutdown)"
         item.duration_ms = int((time.perf_counter() - start) * 1000)
         item.finished_at = now_iso()
         registry.publish_item(job, item)
@@ -770,10 +852,7 @@ async def _run_item(
 
         result = ProcessResult(success=False, error=format_error_message(e))
     if require_llm and result.success:
-        enhanced_output = bool(
-            result.output_path and result.output_path.endswith(".llm.md")
-        )
-        if not enhanced_output:
+        if not (result.output_path and result.llm_enhanced):
             result.success = False
             result.output_path = None
             result.error = "LLM enhancement did not produce an enhanced Markdown result"
@@ -940,6 +1019,119 @@ def _restore_prior_result(job: Job, item: JobItem, work: RetryWork) -> None:
     item.llm_enhanced = work.prior_llm_enhanced
     item.skipped = False
     item.skip_reason = None
+    item.warnings = list(work.prior_warnings)
+
+
+def item_base_name(item: JobItem) -> str | None:
+    """The item's output base name: its output without the markdown suffix.
+
+    Taken from what the item is known to write, not reverse-engineered from
+    its current output: ``split_output_name`` cannot tell the base output of
+    an upload named ``notes.llm`` (``notes.llm.md``) from the enhanced output
+    of a sibling upload ``notes`` (also ``notes.llm.md``). ``output_name`` is
+    the pinned base ``.md`` name (URL items, CLI history); an uploaded file
+    writes ``derive_output_name(name)``. Only an output that matches neither
+    variant of that base (or an item with no known base) falls back to
+    stripping its suffix.
+    """
+    from markitai.serve.artifacts import split_output_name
+    from markitai.utils.paths import derive_output_name
+
+    base: str | None = None
+    if item.output_name:
+        base = Path(item.output_name).name.removesuffix(".md")
+    elif item.kind == "file" and item.name:
+        base = derive_output_name(Path(item.name).name).removesuffix(".md")
+    if item.output:
+        output_name = Path(item.output).name
+        if base is None or output_name not in (f"{base}.md", f"{base}.llm.md"):
+            return split_output_name(output_name)
+    return base or None
+
+
+def _sibling_markdown(job: Job, item: JobItem) -> set[Path]:
+    """Markdown outputs other items of *job* claim (``serve.artifacts`` rule)."""
+    from markitai.serve.artifacts import markdown_pair
+
+    out_dir = job.out_dir.resolve()
+    claimed: set[Path] = set()
+    for sibling in job.items:
+        if sibling is item:
+            continue
+        base_name = item_base_name(sibling)
+        if base_name is not None:
+            claimed.update(p.resolve() for p in markdown_pair(out_dir, base_name))
+    return claimed
+
+
+def _snapshot_outputs(
+    job: Job, item: JobItem, work: RetryWork
+) -> dict[Path, str | None]:
+    """Capture the item's ``.md``/``.llm.md`` pair before a rerun touches it.
+
+    A rerun writes into the job's own out_dir with ``on_conflict=overwrite``,
+    so the snapshot is what makes the rerun provisional: its files only
+    stand if it produces a real result, otherwise ``_restore_outputs`` puts
+    the previous pair back verbatim (``None`` marks a file that did
+    not exist and must not be left behind).
+
+    The pair comes from the item's known base name (``item_base_name``),
+    never from stripping ``prior_output``'s suffix, which is ambiguous.
+    """
+    if work.prior_output is None:
+        return {}
+    stem = item_base_name(item)
+    if stem is None:
+        return {}
+    out_dir = job.out_dir.resolve()
+    snapshot: dict[Path, str | None] = {}
+    for name in (f"{stem}.md", f"{stem}.llm.md"):
+        path = (out_dir / name).resolve()
+        if not path.is_relative_to(out_dir):
+            continue
+        try:
+            snapshot[path] = (
+                path.read_text(encoding="utf-8") if path.is_file() else None
+            )
+        except (OSError, UnicodeDecodeError):
+            continue
+    return snapshot
+
+
+def _restore_outputs(
+    snapshot: dict[Path, str | None], keep: set[Path] | frozenset[Path] = frozenset()
+) -> None:
+    """Put back the files captured by ``_snapshot_outputs`` (best effort).
+
+    A file that did not exist before the rerun is removed again, unless it
+    is in *keep* — markdown a sibling item claims (two uploads can map to
+    one name: ``notes`` enhanced and ``notes.llm`` both write
+    ``notes.llm.md``), which a rollback must never delete.
+    """
+    from markitai.security import atomic_write_text
+
+    for path, content in snapshot.items():
+        try:
+            if content is None:
+                if path not in keep:
+                    path.unlink(missing_ok=True)
+            else:
+                atomic_write_text(path, content)
+        except OSError as e:
+            logger.warning("[Serve] Could not restore {}: {}", path, e)
+
+
+def _roll_back_rerun(
+    registry: JobRegistry,
+    job: Job,
+    item: JobItem,
+    work: RetryWork,
+    snapshot: dict[Path, str | None],
+) -> None:
+    """Undo a rerun that did not stand: previous files, then previous row."""
+    _restore_outputs(snapshot, _sibling_markdown(job, item))
+    _restore_prior_result(job, item, work)
+    registry.publish_item(job, item)
 
 
 def _prune_stale_variant(job: Job, item: JobItem) -> None:
@@ -965,9 +1157,11 @@ async def run_retry_queue(registry: JobRegistry, job: Job) -> None:
     try:
         while not job.retry_queue.empty():
             work = job.retry_queue.get_nowait()
+            item = job.get_item(work.item_id)
+            snapshot: dict[Path, str | None] = {}
             try:
-                item = job.get_item(work.item_id)
                 if item is not None:
+                    snapshot = _snapshot_outputs(job, item, work)
                     await run_job(
                         registry,
                         job,
@@ -977,12 +1171,18 @@ async def run_retry_queue(registry: JobRegistry, job: Job) -> None:
                         require_llm=work.operation == "enhance",
                     )
                     if item.status == "error" and work.prior_output is not None:
-                        _restore_prior_result(job, item, work)
-                        registry.publish_item(job, item)
+                        # A failed rerun (an enhance whose LLM failed
+                        # included) leaves the previous files and row intact
+                        _roll_back_rerun(registry, job, item, work, snapshot)
                     elif item.status == "done":
                         _prune_stale_variant(job, item)
             except asyncio.CancelledError:
                 cancelled = True
+                if item is not None and work.prior_output is not None:
+                    # Shut down mid-rerun: the interrupted rerun never
+                    # produced a result, so the done row and its files go
+                    # back rather than being persisted as a cancelled error.
+                    _roll_back_rerun(registry, job, item, work, snapshot)
                 raise
             finally:
                 job.retry_pending.discard(work.item_id)
@@ -996,9 +1196,14 @@ async def run_retry_queue(registry: JobRegistry, job: Job) -> None:
                     break
                 item = job.get_item(work.item_id)
                 if item is not None and item.status == "queued":
-                    item.status = "error"
-                    item.error = "cancelled (server shutdown)"
-                    item.finished_at = now_iso()
+                    if work.prior_output is not None:
+                        # Never started: its files are untouched, only the
+                        # row was reset when the rerun was queued.
+                        _restore_prior_result(job, item, work)
+                    else:
+                        item.status = "error"
+                        item.error = "cancelled (server shutdown)"
+                        item.finished_at = now_iso()
                     registry.publish_item(job, item)
                 job.retry_pending.discard(work.item_id)
                 job.retry_queue.task_done()

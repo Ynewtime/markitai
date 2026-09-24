@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 
-from markitai.api import ConversionOutput
+from markitai.api import ConversionError, ConversionOutput, FetchError
 from markitai.mcp import server as server_module
 from markitai.mcp.server import (
     MAX_INLINE_CHARS,
@@ -122,8 +122,41 @@ class TestConvertDocument:
             await convert_document(str(sample_md), output_dir="relative/out")
 
     async def test_directory_input_raises(self, tmp_path: Path) -> None:
-        with pytest.raises(IsADirectoryError, match="directory"):
+        with pytest.raises(ToolError, match="directory"):
             await convert_document(str(tmp_path))
+
+    async def test_expected_failures_keep_their_reason(self, tmp_path: Path) -> None:
+        """Regression: only ValueError became a ToolError; the SDK turned the
+        rest into an opaque "Error executing tool convert_document"."""
+        with pytest.raises(ToolError, match="does not exist") as excinfo:
+            await convert_document(str(tmp_path / "missing.pdf"))
+        assert isinstance(excinfo.value.__cause__, FileNotFoundError)
+        assert "MODEL" not in str(excinfo.value)
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            ConversionError("No content extracted from scan.pdf"),
+            FetchError("HTTP 404 fetching https://example.com/x"),
+            IsADirectoryError("/tmp/dir is a directory"),
+            ValueError("Refusing to write through symlink /tmp/out"),
+        ],
+    )
+    async def test_every_expected_error_becomes_a_tool_error(
+        self,
+        error: Exception,
+        sample_md: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        async def failing_aconvert(*args: object, **kwargs: object) -> None:
+            raise error
+
+        monkeypatch.setattr(server_module, "aconvert", failing_aconvert)
+        with pytest.raises(ToolError) as excinfo:
+            await convert_document(str(sample_md))
+        assert str(excinfo.value) == str(error)
+        # The LLM setup hint belongs to the no-model error only
+        assert "mcpServers" not in str(excinfo.value)
 
     async def test_llm_without_model_passes_guidance_through(
         self, sample_md: Path
@@ -172,6 +205,26 @@ class TestConvertUrl:
         assert result["markdown_file"] == str(enhanced)
         assert result["truncated"] is False
 
+    async def test_passes_conversion_warnings_through(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        notice = "[URL] Screenshot not captured for https://example.com/a"
+
+        async def fake_aconvert(source: str, **kwargs) -> ConversionOutput:
+            return ConversionOutput(
+                source=str(source), markdown="# Page", warnings=[notice]
+            )
+
+        monkeypatch.setattr(server_module, "aconvert", fake_aconvert)
+        result = await convert_url("https://example.com/a")
+        assert result["warnings"] == [notice]
+
+        started = await batch_convert(
+            ["https://example.com/a"], output_dir=str(tmp_path / "batch")
+        )
+        status = await _wait_for_completion(started["job_id"])
+        assert status["results"][0]["warnings"] == [notice]
+
 
 # =============================================================================
 # batch_convert + job_status
@@ -213,6 +266,34 @@ class TestBatchConvert:
         status = await _wait_for_completion(started["job_id"])
         assert status["failed"] == 1
         assert "MODEL" in status["results"][0]["error"]
+
+    async def test_relative_sources_are_rejected(
+        self, sample_md: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: batch_convert resolved relative paths against the
+        server's cwd while convert_document rejected them."""
+        monkeypatch.chdir(sample_md.parent)
+        with pytest.raises(ToolError, match="absolute") as excinfo:
+            await batch_convert([str(sample_md), "sample.md", "https://example.com"])
+        assert "'sample.md'" in str(excinfo.value)
+        assert "example.com" not in str(excinfo.value)
+        assert server_module._JOBS == {}
+
+    async def test_urls_and_home_relative_paths_are_accepted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def fake_convert(source: str, workdir: Path, **kwargs: object) -> dict:
+            return {
+                "source": source,
+                "markdown_file": None,
+                "cost_usd": 0.0,
+                "warnings": [],
+            }
+
+        monkeypatch.setattr(server_module, "_convert_source", fake_convert)
+        started = await batch_convert(["https://example.com/a", "~/doc.md"])
+        status = await _wait_for_completion(started["job_id"])
+        assert status["failed"] == 0
 
     async def test_unknown_job_id_is_a_tool_error(self) -> None:
         with pytest.raises(ToolError, match="Unknown job id"):
@@ -312,10 +393,13 @@ class TestConfigParity:
                 "source": source,
                 "markdown_file": None,
                 "cost_usd": 0.0,
+                "warnings": [],
             }
 
         monkeypatch.setattr(server_module, "_convert_source", fake_convert)
-        started = await batch_convert([f"item-{i}.md" for i in range(6)], concurrency=2)
+        started = await batch_convert(
+            [f"/abs/item-{i}.md" for i in range(6)], concurrency=2
+        )
         status = await _wait_for_completion(started["job_id"])
 
         assert status["done"] == 6
@@ -333,14 +417,22 @@ class TestBatchResultOrder:
 
         async def fake_convert(source: str, workdir: Path, **kwargs: object) -> dict:
             # The first source is the slowest, so completion order is reversed.
-            await asyncio.sleep(0.05 if source == "slow" else 0.0)
-            return {"source": source, "markdown_file": None, "cost_usd": 0.0}
+            await asyncio.sleep(0.05 if source == "/abs/slow" else 0.0)
+            return {
+                "source": source,
+                "markdown_file": None,
+                "cost_usd": 0.0,
+                "warnings": [],
+            }
 
         monkeypatch.setattr(server_module, "_convert_source", fake_convert)
-        started = await batch_convert(["slow", "fast"], concurrency=2)
+        started = await batch_convert(["/abs/slow", "/abs/fast"], concurrency=2)
         status = await _wait_for_completion(started["job_id"])
 
-        assert [entry["source"] for entry in status["results"]] == ["slow", "fast"]
+        assert [entry["source"] for entry in status["results"]] == [
+            "/abs/slow",
+            "/abs/fast",
+        ]
 
 
 async def test_parallel_same_name_sources_preserve_every_result(tmp_path: Path) -> None:
@@ -360,3 +452,82 @@ async def test_parallel_same_name_sources_preserve_every_result(tmp_path: Path) 
     assert all(result["status"] == "ok" for result in results)
     for path, label in zip(paths, ("alpha", "beta", "gamma", "delta"), strict=True):
         assert f"source-{label}" in path.read_text()
+
+
+# =============================================================================
+# Model resolution and environment loading
+# =============================================================================
+
+
+class TestModelResolutionParity:
+    async def test_provider_key_is_auto_detected_like_the_cli(
+        self,
+        sample_md: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Regression: MCP only fell back to MODEL; a provider key alone
+        (the CLI's documented quick path) failed with "no models"."""
+        from markitai.providers.detect import ProviderDetectionResult
+
+        captured: dict[str, object] = {}
+
+        async def fake_core(ctx, _max_size):  # type: ignore[no-untyped-def]
+            from markitai.workflow.core import ConversionStepResult
+
+            captured["models"] = [
+                m.litellm_params.model for m in ctx.config.llm.model_list
+            ]
+            return ConversionStepResult(success=False, error="stop here")
+
+        monkeypatch.setattr(
+            "markitai.providers.detect.detect_all_providers",
+            lambda: [
+                ProviderDetectionResult(
+                    provider="openai",
+                    model="openai/gpt-5.6-luna",
+                    authenticated=True,
+                    source="env",
+                )
+            ],
+        )
+        monkeypatch.setattr("markitai.workflow.core.convert_document_core", fake_core)
+        with pytest.raises(ToolError, match="stop here"):
+            await convert_document(str(sample_md), output_dir=str(tmp_path), llm=True)
+        assert captured["models"] == ["openai/gpt-5.6-luna"]
+
+
+class TestDotenvLoading:
+    def test_main_loads_cwd_then_home_env_without_override(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: markitai-mcp skipped the .env files markitai mcp (via
+        the CLI's import-time load_dotenv) and markitai init rely on."""
+        import os
+
+        project = tmp_path / "project"
+        project.mkdir()
+        (project / ".env").write_text(
+            "MARKITAI_T_BOTH=cwd\nMARKITAI_T_CWD=cwd\nMARKITAI_T_PRESET=cwd\n"
+        )
+        home_env = Path.home() / ".markitai" / ".env"
+        home_env.parent.mkdir(parents=True, exist_ok=True)
+        home_env.write_text("MARKITAI_T_BOTH=home\nMARKITAI_T_HOME=home\n")
+        monkeypatch.chdir(project)
+        for key in ("MARKITAI_T_BOTH", "MARKITAI_T_CWD", "MARKITAI_T_HOME"):
+            monkeypatch.delenv(key, raising=False)
+        monkeypatch.setenv("MARKITAI_T_PRESET", "server-env")
+
+        runs: list[str] = []
+        monkeypatch.setattr(server, "run", lambda transport: runs.append(transport))
+        try:
+            server_module.main()
+            assert runs == ["stdio"]
+            assert os.environ["MARKITAI_T_BOTH"] == "cwd"
+            assert os.environ["MARKITAI_T_CWD"] == "cwd"
+            assert os.environ["MARKITAI_T_HOME"] == "home"
+            # An mcpServers env block (already in the environment) wins
+            assert os.environ["MARKITAI_T_PRESET"] == "server-env"
+        finally:
+            for key in ("MARKITAI_T_BOTH", "MARKITAI_T_CWD", "MARKITAI_T_HOME"):
+                os.environ.pop(key, None)

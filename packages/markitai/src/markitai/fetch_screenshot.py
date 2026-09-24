@@ -24,6 +24,13 @@ def _url_to_screenshot_filename(url: str) -> str:
     Examples:
         https://example.com/path → example.com_path.full.jpg
         https://x.com/user/status/123 → x.com_user_status_123.full.jpg
+        https://example.com/list?page=2 → example.com_list_q1f0c6a2e.full.jpg
+
+    A query string (or a hash route such as ``#/settings`` or ``#!/page``)
+    selects different content, so it contributes a short hash: ``?n=5`` and
+    ``?n=300`` get separate files instead of overwriting each other. A plain
+    anchor (``#section``) only scrolls the same page and is ignored, so
+    links to two headings of one page share one screenshot.
 
     Args:
         url: URL to convert
@@ -39,6 +46,10 @@ def _url_to_screenshot_filename(url: str) -> str:
         if parsed.path and parsed.path != "/":
             path_parts = parsed.path.strip("/").split("/")
             parts.extend(path_parts)
+        route = parsed.fragment if parsed.fragment.startswith(("/", "!")) else ""
+        variant = parsed.query + (f"#{route}" if route else "")
+        if variant and parts:
+            parts.append("q" + hashlib.sha256(variant.encode()).hexdigest()[:8])
 
         # If no parts, fall back to hash
         if not parts or not any(parts):
@@ -60,10 +71,11 @@ def _url_to_screenshot_filename(url: str) -> str:
         # Strip leading/trailing underscores
         name = name.strip("_")
 
-        # Limit length (leave room for extension)
+        # Limit length (leave room for extension), keeping the query hash
         max_length = 200
         if len(name) > max_length:
-            name = name[:max_length]
+            suffix = f"_{parts[-1]}" if variant else ""
+            name = name[: max_length - len(suffix)] + suffix
 
         # Final check for empty name
         if not name:
@@ -75,6 +87,38 @@ def _url_to_screenshot_filename(url: str) -> str:
         # Fallback: hash the URL
         url_hash = hashlib.sha256(url.encode()).hexdigest()[:16]
         return f"screenshot_{url_hash}.full.jpg"
+
+
+def _tile_pattern(primary: Path) -> re.Pattern[str]:
+    """Match the ``name--N.jpg`` tiles that belong to ``primary``."""
+    return re.compile(rf"^{re.escape(primary.stem)}--(\d+){re.escape(primary.suffix)}$")
+
+
+def existing_screenshot_tiles(primary: Path) -> list[Path]:
+    """Return ``primary`` followed by its on-disk tiles, in tile order."""
+    pattern = _tile_pattern(primary)
+    tiles: list[tuple[int, Path]] = []
+    try:
+        for candidate in primary.parent.iterdir():
+            match = pattern.match(candidate.name)
+            if match:
+                tiles.append((int(match.group(1)), candidate))
+    except OSError:
+        pass
+    return [primary] + [path for _, path in sorted(tiles)]
+
+
+def remove_stale_screenshot_tiles(primary: Path) -> None:
+    """Delete tiles left by an earlier, longer capture under the same name.
+
+    A re-capture writes tiles 1..N-1 again; without this, tiles N.. of a
+    previous longer page stay behind and get attached to the new result.
+    """
+    for tile in existing_screenshot_tiles(primary)[1:]:
+        try:
+            tile.unlink()
+        except OSError as e:
+            logger.debug(f"Failed to remove stale screenshot tile {tile}: {e}")
 
 
 def _compress_screenshot(

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import stat
 import sys
 import threading
 from pathlib import Path
@@ -203,3 +205,155 @@ class TestAtomicWriteAtomicity:
 
         assert len(errors) == 0, f"Errors: {errors}"
         assert len(results) == 2
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+class TestAtomicWritePermissions:
+    """mkstemp creates 0600; the final file must not inherit that blindly."""
+
+    @pytest.fixture(autouse=True)
+    def _umask_022(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import markitai.security as security
+
+        monkeypatch.setattr(security, "_PROCESS_UMASK", 0o022)
+
+    @staticmethod
+    def _mode(path: Path) -> int:
+        return stat.S_IMODE(path.stat().st_mode)
+
+    def test_new_file_follows_umask(self, tmp_path: Path) -> None:
+        target = tmp_path / "out.md"
+
+        atomic_write_text(target, "# doc")
+
+        assert self._mode(target) == 0o644
+
+    def test_new_file_honours_a_stricter_umask(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import markitai.security as security
+
+        monkeypatch.setattr(security, "_PROCESS_UMASK", 0o077)
+        target = tmp_path / "out.md"
+
+        atomic_write_text(target, "# doc")
+
+        assert self._mode(target) == 0o600
+
+    def test_overwrite_keeps_existing_permissions(self, tmp_path: Path) -> None:
+        target = tmp_path / "out.md"
+        target.write_text("old")
+        target.chmod(0o664)
+
+        atomic_write_text(target, "new")
+
+        assert target.read_text() == "new"
+        assert self._mode(target) == 0o664
+
+    def test_json_follows_umask(self, tmp_path: Path) -> None:
+        target = tmp_path / "report.json"
+
+        atomic_write_json(target, {"ok": True})
+
+        assert self._mode(target) == 0o644
+
+    def test_private_write_is_owner_only_even_over_a_public_file(
+        self, tmp_path: Path
+    ) -> None:
+        target = tmp_path / "config.json"
+        target.write_text("{}")
+        target.chmod(0o644)
+
+        atomic_write_json(target, {"api_key": "x"}, private=True)
+
+        assert self._mode(target) == 0o600
+
+    def test_async_text_and_bytes_follow_umask(self, tmp_path: Path) -> None:
+        import asyncio
+
+        from markitai.security import atomic_write_text_async, write_bytes_async
+
+        text_target = tmp_path / "a.md"
+        bytes_target = tmp_path / "a.png"
+
+        asyncio.run(atomic_write_text_async(text_target, "# a"))
+        asyncio.run(write_bytes_async(bytes_target, b"\x89PNG"))
+
+        assert self._mode(text_target) == 0o644
+        assert self._mode(bytes_target) == 0o644
+
+    def test_async_bytes_keep_existing_permissions(self, tmp_path: Path) -> None:
+        import asyncio
+
+        from markitai.security import write_bytes_async
+
+        target = tmp_path / "a.png"
+        target.write_bytes(b"old")
+        target.chmod(0o640)
+
+        asyncio.run(write_bytes_async(target, b"new"))
+
+        assert self._mode(target) == 0o640
+
+    @pytest.mark.skipif(
+        hasattr(os, "geteuid") and os.geteuid() == 0,
+        reason="root ignores the owner write bit",
+    )
+    def test_async_writes_overwrite_a_read_only_file(self, tmp_path: Path) -> None:
+        """The async writers reopen the temp file by path.
+
+        They used to give it its final mode first, so a 0444 target (whose
+        mode the temp file inherits) made the reopen fail with EACCES; the
+        sync writer, which keeps its fd, overwrote it fine.
+        """
+        import asyncio
+
+        from markitai.security import atomic_write_text_async, write_bytes_async
+
+        text_target = tmp_path / "a.md"
+        bytes_target = tmp_path / "a.png"
+        for target in (text_target, bytes_target):
+            target.write_text("old")
+            target.chmod(0o444)
+
+        asyncio.run(atomic_write_text_async(text_target, "new"))
+        asyncio.run(write_bytes_async(bytes_target, b"new"))
+
+        assert text_target.read_text() == "new"
+        assert bytes_target.read_bytes() == b"new"
+        assert self._mode(text_target) == 0o444
+        assert self._mode(bytes_target) == 0o444
+        assert not list(tmp_path.glob("*.tmp"))  # no temp file left behind
+
+    @pytest.mark.skipif(
+        hasattr(os, "geteuid") and os.geteuid() == 0,
+        reason="root ignores the owner write bit",
+    )
+    def test_async_writes_under_a_umask_without_owner_write(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+
+        import markitai.security as security
+        from markitai.security import atomic_write_text_async, write_bytes_async
+
+        monkeypatch.setattr(security, "_PROCESS_UMASK", 0o277)
+
+        asyncio.run(atomic_write_text_async(tmp_path / "a.md", "# a"))
+        asyncio.run(write_bytes_async(tmp_path / "a.png", b"\x89PNG"))
+
+        assert (tmp_path / "a.md").read_text() == "# a"
+        assert self._mode(tmp_path / "a.md") == 0o400
+        assert self._mode(tmp_path / "a.png") == 0o400
+
+    def test_config_manager_save_is_private(self, tmp_path: Path) -> None:
+        from markitai.config import ConfigManager
+
+        target = tmp_path / "config.json"
+        manager = ConfigManager()
+        manager.load(config_path=target)
+        manager.set("output.dir", "./out")
+
+        manager.save(target)
+
+        assert self._mode(target) == 0o600

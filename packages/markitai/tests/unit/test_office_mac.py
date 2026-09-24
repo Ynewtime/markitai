@@ -375,7 +375,7 @@ class TestPptxRenderWiring:
             patch.object(
                 office_mac, "powerpoint_available", return_value=True
             ) as available_mock,
-            patch("markitai.converter.office.logger.warning") as warning_mock,
+            patch("markitai.converter.office.user_notice") as warning_mock,
         ):
             images, slide_infos = converter._render_slides_via_pdf(
                 tmp_path / "deck.pptx", tmp_path, "jpg"
@@ -397,6 +397,10 @@ class TestDoctorFallbackMessage:
             patch("sys.platform", "darwin"),
             patch("markitai.utils.office.find_libreoffice", return_value=None),
             patch("markitai.utils.office_mac.powerpoint_available", return_value=True),
+            patch(
+                "markitai.utils.office_mac.staging_container_writable",
+                return_value=True,
+            ),
         ):
             result = _check_libreoffice()
 
@@ -461,3 +465,79 @@ class TestConfig:
         schema = json.loads(schema_path.read_text())
         assert "OfficeConfig" in schema["$defs"]
         assert schema["properties"]["office"]["$ref"] == "#/$defs/OfficeConfig"
+
+
+class TestOfficeContainerPermission:
+    """macOS answers a write into the Office container with a bare EPERM."""
+
+    @pytest.fixture
+    def container(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        container = tmp_path / "UBF8T346G9.Office"
+        container.mkdir()
+        monkeypatch.setattr(office_mac, "_OFFICE_GROUP_CONTAINER", container)
+        monkeypatch.setattr(office_mac, "_STAGING_ROOT", container / "markitai")
+        return container
+
+    def test_eperm_inside_the_container_is_recognised(self, container: Path) -> None:
+        exc = PermissionError(1, "Operation not permitted", str(container / "m"))
+
+        assert office_mac.is_container_permission_error(exc)
+
+    def test_errors_elsewhere_are_not(self, container: Path, tmp_path: Path) -> None:
+        elsewhere = PermissionError(1, "Operation not permitted", str(tmp_path / "x"))
+        no_name = PermissionError(1, "Operation not permitted")
+        other = FileNotFoundError(2, "No such file", str(container / "m"))
+
+        assert not office_mac.is_container_permission_error(elsewhere)
+        assert not office_mac.is_container_permission_error(no_name)
+        assert not office_mac.is_container_permission_error(other)
+        assert not office_mac.is_container_permission_error(RuntimeError("x"))
+
+    def test_probe_succeeds_and_leaves_nothing_behind(self, container: Path) -> None:
+        assert office_mac.staging_container_writable() is True
+        assert list(container.iterdir()) == []
+
+    def test_probe_keeps_an_existing_staging_root(self, container: Path) -> None:
+        (container / "markitai").mkdir()
+
+        assert office_mac.staging_container_writable() is True
+        assert list((container / "markitai").iterdir()) == []
+
+    def test_probe_reports_a_refused_write(
+        self, container: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import tempfile
+
+        def refuse(*_args, **_kwargs):
+            raise PermissionError(1, "Operation not permitted", str(container))
+
+        monkeypatch.setattr(tempfile, "mkstemp", refuse)
+
+        assert office_mac.staging_container_writable() is False
+        assert list(container.iterdir()) == []
+
+    def test_no_container_means_temp_staging(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(office_mac, "_OFFICE_GROUP_CONTAINER", tmp_path / "none")
+
+        assert office_mac.staging_container_writable() is True
+
+    def test_doctor_reports_the_blocked_fallback(self) -> None:
+        from markitai.cli.commands.doctor import _check_libreoffice
+
+        with (
+            patch("sys.platform", "darwin"),
+            patch("markitai.utils.office.find_libreoffice", return_value=None),
+            patch("markitai.utils.office_mac.powerpoint_available", return_value=True),
+            patch(
+                "markitai.utils.office_mac.staging_container_writable",
+                return_value=False,
+            ),
+        ):
+            result = _check_libreoffice()
+
+        assert result["status"] == "warning"
+        assert "PowerPoint fallback blocked" in result["message"]
+        assert "Full Disk Access" in result["message"]
+        assert "brew install --cask libreoffice" in result["message"]

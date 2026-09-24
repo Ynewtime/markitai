@@ -34,6 +34,7 @@ function entry(jobId: string): HistoryEntry {
     duration_ms: 10,
     size_bytes: 100,
     origin: "web",
+    retryable: true,
   };
 }
 

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import codecs
 import os
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
@@ -155,6 +153,31 @@ def _proxy_bypass_patterns() -> list[str]:
     return parse_no_proxy(os.environ.get("NO_PROXY") or os.environ.get("no_proxy"))
 
 
+def is_loopback_url(url: str) -> bool:
+    """Whether *url* targets this machine (``localhost``, 127.0.0.0/8, ``::1``).
+
+    Loopback hosts are always reached without a proxy, matching the browser
+    (``fetch_playwright.chromium_proxy_bypass``): a proxy would dial its own
+    loopback, not ours.
+    """
+    import ipaddress
+    from urllib.parse import urlsplit
+
+    try:
+        host = (urlsplit(url).hostname or "").rstrip(".").lower()
+    except ValueError:
+        return False
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        address = address.ipv4_mapped
+    return address.is_loopback
+
+
 def resolve_proxy_for_url(url: str, proxy: str | None) -> str | None:
     """Apply NO_PROXY bypass rules to a caller-supplied proxy candidate.
 
@@ -167,6 +190,8 @@ def resolve_proxy_for_url(url: str, proxy: str | None) -> str | None:
         url: URL about to be fetched.
         proxy: Proxy URL the caller wants to use (may be empty/None).
 
+    Loopback hosts are always exempt (see :func:`is_loopback_url`).
+
     Returns:
         The proxy to use, or None when the host is exempt or no proxy was given.
     """
@@ -175,6 +200,9 @@ def resolve_proxy_for_url(url: str, proxy: str | None) -> str | None:
 
     from markitai.fetch_policy import host_bypasses_proxy
 
+    if is_loopback_url(url):
+        logger.debug("[HTTP] Loopback host: fetching {} without proxy", url)
+        return None
     if host_bypasses_proxy(url, _proxy_bypass_patterns()):
         logger.debug("[HTTP] NO_PROXY bypass: fetching {} without proxy", url)
         return None
@@ -192,28 +220,24 @@ class StaticHttpResponse:
 
     @property
     def encoding(self) -> str | None:
-        """Best-effort charset parsed from the response headers."""
-        content_type = self.headers.get("content-type", "")
-        match = re.search(r"charset=([^\s;]+)", content_type, re.IGNORECASE)
-        if not match:
-            return None
+        """Codec for the ``Content-Type`` charset, widened per WHATWG.
 
-        encoding = match.group(1).strip().strip("\"'")
-        try:
-            codecs.lookup(encoding)
-        except LookupError:
-            return None
-        return encoding
+        ``gb2312`` resolves to GB18030, ``iso-8859-1`` to Windows-1252 and so
+        on (see :mod:`markitai.utils.charset`); None when the header has no
+        usable charset.
+        """
+        from markitai.utils.charset import charset_from_content_type
+
+        return charset_from_content_type(self.headers.get("content-type", ""))
 
     @property
     def text(self) -> str:
-        """Get response content as string."""
-        if self.encoding:
-            try:
-                return self.content.decode(self.encoding)
-            except UnicodeDecodeError:
-                pass
-        return self.content.decode("utf-8", errors="replace")
+        """Get response content as string (BOM > header > meta > detection)."""
+        from markitai.utils.charset import decode_body
+
+        content_type = self.headers.get("content-type", "")
+        is_html = not content_type or "html" in content_type.lower()
+        return decode_body(self.content, content_type, html=is_html)[0]
 
 
 @runtime_checkable
@@ -235,6 +259,11 @@ class StaticHttpClient(Protocol):
     async def close(self) -> None:
         """Close the client and release resources."""
         ...
+
+
+#: httpx mount keys its environment proxies live under; mapping them to None
+#: routes every request through the client's own direct transport.
+_DIRECT_MOUNT_KEYS = ("http://", "https://", "all://")
 
 
 class HttpxClient:
@@ -290,6 +319,11 @@ class HttpxClient:
         }
         if proxy:
             client_kwargs["proxy"] = proxy
+        else:
+            # No proxy means direct: resolve_proxy_for_url already decided
+            # (NO_PROXY, loopback), so httpx must not re-add HTTP(S)_PROXY
+            # from the environment. Other env settings (CA bundle) still apply.
+            client_kwargs["mounts"] = dict.fromkeys(_DIRECT_MOUNT_KEYS)
 
         self._client = httpx.AsyncClient(**client_kwargs)
         self._client_proxy = proxy
@@ -400,7 +434,10 @@ class CurlCffiClient:
             else:
                 logger.debug("[HTTP] Dropping curl session bound to a stale loop")
 
-        proxies = {"http": proxy, "https": proxy} if proxy else None
+        # An empty proxy string makes libcurl connect directly even when
+        # http_proxy/HTTPS_PROXY are set; None would let it re-read them for
+        # a host resolve_proxy_for_url already exempted (NO_PROXY, loopback).
+        proxies = {"http": proxy, "https": proxy} if proxy else {"all": ""}
         self._session = AsyncSession(
             impersonate="chrome",
             proxies=proxies,  # type: ignore[arg-type]  # ProxySpec TypedDict accepts str values

@@ -32,6 +32,7 @@ opening the app manually once does.
 
 from __future__ import annotations
 
+import errno
 import os
 import platform
 import shutil
@@ -105,6 +106,73 @@ def find_ms_office_app(app_name: str) -> bool:
 def powerpoint_available() -> bool:
     """Check whether Microsoft PowerPoint is installed (for PDF export)."""
     return find_ms_office_app("Microsoft PowerPoint")
+
+
+# One-to-two-line recovery hint for a staging write refused by macOS privacy
+# protection (App Data / "Operation not permitted", with no dialog shown).
+CONTAINER_BLOCKED_HINT = (
+    "macOS privacy protection blocked writing to PowerPoint's container "
+    "(~/Library/Group Containers/UBF8T346G9.Office). Grant your terminal app "
+    "Full Disk Access (System Settings > Privacy & Security > Full Disk "
+    "Access) and retry, or install LibreOffice (brew install --cask libreoffice)."
+)
+
+
+def _inside_office_container(name: object) -> bool:
+    if not isinstance(name, str | bytes | os.PathLike):
+        return False
+    try:
+        path = Path(os.fsdecode(name)).absolute()
+    except (TypeError, ValueError):
+        return False
+    container = _OFFICE_GROUP_CONTAINER.absolute()
+    return path == container or container in path.parents
+
+
+def is_container_permission_error(exc: BaseException) -> bool:
+    """Whether *exc* is macOS refusing a write into the Office container.
+
+    Current macOS rejects it outright with EPERM ("Operation not permitted")
+    unless the terminal has Full Disk Access; no consent dialog appears.
+    """
+    return (
+        isinstance(exc, OSError)
+        and exc.errno in (errno.EPERM, errno.EACCES)
+        and (
+            _inside_office_container(exc.filename)
+            or _inside_office_container(exc.filename2)
+        )
+    )
+
+
+def staging_container_writable() -> bool:
+    """Cheap write probe of the PowerPoint staging location (cleaned up).
+
+    True when no Office container exists (staging then uses a temp dir) or
+    when the probe could not tell; False only for a refused write.
+    """
+    if not _OFFICE_GROUP_CONTAINER.is_dir():
+        return True
+    created_root = False
+    try:
+        if not _STAGING_ROOT.exists():
+            _STAGING_ROOT.mkdir(mode=0o700)
+            created_root = True
+        fd, probe = tempfile.mkstemp(prefix=".markitai-probe-", dir=_STAGING_ROOT)
+        os.close(fd)
+        os.unlink(probe)
+    except OSError as exc:
+        if exc.errno in (errno.EPERM, errno.EACCES):
+            return False
+        logger.debug(f"[OfficeMac] Staging write probe inconclusive: {exc}")
+        return True
+    finally:
+        if created_root:
+            try:
+                _STAGING_ROOT.rmdir()
+            except OSError:
+                pass
+    return True
 
 
 def _as_quote(path: Path) -> str:

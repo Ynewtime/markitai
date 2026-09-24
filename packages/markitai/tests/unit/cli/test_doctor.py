@@ -19,6 +19,15 @@ from markitai.cli.commands.doctor import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_real_office_container_probe():
+    """Doctor must not write-probe the developer's real Office container."""
+    with patch(
+        "markitai.utils.office_mac.staging_container_writable", return_value=True
+    ):
+        yield
+
+
 @pytest.fixture
 def cli_runner() -> CliRunner:
     """Provide a Click CLI runner."""

@@ -201,6 +201,7 @@ def _install_component(component: str, *, package_missing: bool = False) -> bool
 
 from markitai.cli import ui
 from markitai.cli.console import get_console
+from markitai.cli.framework import root_config_options
 from markitai.cli.i18n import t
 from markitai.config import ConfigManager
 from markitai.providers.auth import AuthManager, get_auth_resolution_hint
@@ -386,6 +387,19 @@ def _check_libreoffice(macos_fallback: bool = True) -> dict[str, Any]:
             from markitai.utils import office_mac
 
             if office_mac.powerpoint_available():
+                if not office_mac.staging_container_writable():
+                    # Installed, but macOS refuses the staging write, so the
+                    # fallback would fail on every PPTX.
+                    return {
+                        "name": "LibreOffice",
+                        "description": "PPTX slide rendering",
+                        "status": "warning",
+                        "message": (
+                            "not found; PowerPoint fallback blocked: "
+                            f"{office_mac.CONTAINER_BLOCKED_HINT}"
+                        ),
+                        "install_hint": get_install_hint("libreoffice"),
+                    }
                 return {
                     "name": "LibreOffice",
                     "description": "PPTX slide rendering",
@@ -475,54 +489,40 @@ def _check_rapidocr(cfg: Any) -> dict[str, Any]:
         except Exception:
             rapidocr_version = "unknown"
 
-        # Get configured language
+        # Get configured language; the same validation --ocr applies
+        from markitai.ocr import OCRLanguageError, resolve_ocr_language
+
         configured_lang = cfg.ocr.lang if cfg.ocr else "en"
-        # RapidOCR supported languages
-        supported_langs = {
-            "zh",
-            "ch",
-            "en",
-            "ja",
-            "japan",
-            "ko",
-            "korean",
-            "ar",
-            "arabic",
-            "th",
-            "latin",
-        }
         lang_display = {
-            "zh": "Chinese",
             "ch": "Chinese",
+            "chinese_cht": "Traditional Chinese",
             "en": "English",
-            "ja": "Japanese",
             "japan": "Japanese",
-            "ko": "Korean",
             "korean": "Korean",
-            "ar": "Arabic",
             "arabic": "Arabic",
             "th": "Thai",
             "latin": "Latin",
         }
 
-        if configured_lang.lower() in supported_langs:
-            return {
-                "name": "RapidOCR",
-                "description": "OCR for scanned documents (--ocr)",
-                "status": "ok",
-                "optional": True,
-                "message": f"v{rapidocr_version}, lang: {configured_lang} ({lang_display.get(configured_lang.lower(), configured_lang)})",
-                "install_hint": "",
-            }
-        else:
+        try:
+            rec_lang, _ = resolve_ocr_language(configured_lang)
+        except OCRLanguageError as e:
             return {
                 "name": "RapidOCR",
                 "description": "OCR for scanned documents (--ocr)",
                 "status": "warning",
                 "optional": True,
-                "message": f"v{rapidocr_version}, unknown lang '{configured_lang}' (supported: {', '.join(sorted(supported_langs))})",
-                "install_hint": "Set ocr.lang to one of: zh, en, ja, ko, ar, th, latin",
+                "message": f"v{rapidocr_version}, {e}",
+                "install_hint": "Set ocr.lang to one of: en, zh, ja, ko, ar, th, latin",
             }
+        return {
+            "name": "RapidOCR",
+            "description": "OCR for scanned documents (--ocr)",
+            "status": "ok",
+            "optional": True,
+            "message": f"v{rapidocr_version}, lang: {configured_lang} ({lang_display.get(rec_lang, rec_lang)})",
+            "install_hint": "",
+        }
     except ImportError:
         return {
             "name": "RapidOCR",
@@ -551,7 +551,8 @@ def _doctor_impl(as_json: bool, fix: bool = False) -> None:
     from markitai.fetch_playwright import clear_browser_cache
 
     manager = ConfigManager()
-    cfg = manager.load()
+    config_path, overrides = root_config_options()
+    cfg = manager.load(config_path=config_path, overrides=overrides)
 
     results: dict[str, dict[str, Any]] = {}
 

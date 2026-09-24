@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,7 +12,7 @@ from PIL import Image
 from markitai.config import LLMConfig, MarkitaiConfig, OCRConfig
 from markitai.converter.base import FileFormat
 from markitai.converter.image import ImageConverter
-from markitai.ocr import OCRBackendMissing
+from markitai.ocr import OCRBackendMissing, OCRError
 
 
 @pytest.fixture
@@ -102,7 +103,7 @@ class TestImageConverter:
             assert "test.png" in result.markdown
 
     def test_convert_ocr_failure(self, sample_image: Path):
-        """Test converting image when OCR fails."""
+        """An OCR engine failure fails the item instead of a silent placeholder."""
         config = MarkitaiConfig()
         config.ocr.enabled = True
         converter = ImageConverter(config)
@@ -110,10 +111,8 @@ class TestImageConverter:
         with patch("markitai.ocr.OCRProcessor") as MockOCR:
             MockOCR.side_effect = Exception("OCR failed")
 
-            result = converter.convert(sample_image)
-
-            # Should fall back to placeholder
-            assert "test.png" in result.markdown
+            with pytest.raises(OCRError, match="OCR failed for test.png"):
+                converter.convert(sample_image)
 
 
 class TestImageConverterFormats:
@@ -439,8 +438,8 @@ class TestOcrBackendMissingIsNotSilent:
     exited 0 with output that contains no recognised text at all. That was
     rare while RapidOCR was a core dependency; once OCR moved behind the
     ``ocr`` extra it became what everyone without the extra sees. A genuine
-    runtime OCR failure still degrades — only "the backend is not installed"
-    is fatal, because it is the one the user can fix with one command.
+    runtime OCR failure is fatal too (``OCRError``): the same placeholder
+    reported a file nothing was read from as converted.
     """
 
     def _png(self, tmp_path: Path) -> Path:
@@ -471,7 +470,7 @@ class TestOcrBackendMissingIsNotSilent:
 
         assert "markitai[ocr]" in str(excinfo.value)
 
-    def test_a_runtime_ocr_failure_still_degrades_to_a_placeholder(
+    def test_a_runtime_ocr_failure_fails_the_item(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from markitai import ocr as ocr_module
@@ -486,8 +485,8 @@ class TestOcrBackendMissingIsNotSilent:
         )
         converter = ImageConverter(config=self._config())
 
-        result = converter.convert(self._png(tmp_path), output_dir=tmp_path / "out")
-        assert "scan" in result.markdown
+        with pytest.raises(ocr_module.OCRError, match="engine exploded"):
+            converter.convert(self._png(tmp_path), output_dir=tmp_path / "out")
 
 
 class TestOcrLlmVlmPath:
@@ -544,3 +543,204 @@ class TestOcrLlmVlmPath:
             converter.convert(sample_image)
         assert "MARKITAI_NO_VLM_OCR" in str(excinfo.value)
         assert "RapidOCR" in str(excinfo.value)
+
+
+class TestOcrFailuresFailTheItem:
+    """Bad images under --ocr fail; a blank one succeeds with a notice.
+
+    0-byte, corrupt and decompression-bomb files used to come back as a
+    text-free placeholder reported as converted (exit 0, ``ok: true``),
+    while the same files without --ocr failed.
+    """
+
+    def _config(self) -> MarkitaiConfig:
+        return MarkitaiConfig(ocr=OCRConfig(enabled=True))
+
+    def test_zero_byte_png_raises(self, tmp_path: Path) -> None:
+        empty = tmp_path / "empty.png"
+        empty.write_bytes(b"")
+        with (
+            patch("markitai.ocr.OCRProcessor"),
+            pytest.raises(OCRError, match="empty.png"),
+        ):
+            ImageConverter(self._config()).convert(empty, tmp_path / "out")
+
+    def test_decompression_bomb_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from PIL import Image as PILImage
+
+        bomb = tmp_path / "bomb.png"
+        PILImage.new("L", (200, 200), 255).save(bomb)
+        monkeypatch.setattr(PILImage, "MAX_IMAGE_PIXELS", 1000)
+        with (
+            patch("markitai.ocr.OCRProcessor"),
+            pytest.raises(OCRError, match="decompression bomb"),
+        ):
+            ImageConverter(self._config()).convert(bomb, tmp_path / "out")
+
+    def test_blank_image_succeeds_with_a_user_notice(self, tmp_path: Path) -> None:
+        from loguru import logger
+
+        from markitai.notices import is_user_notice
+
+        blank = tmp_path / "blank.png"
+        Image.new("RGB", (64, 64), "white").save(blank)
+        records: list[Any] = []
+        sink_id = logger.add(lambda m: records.append(m.record), level="WARNING")
+        try:
+            with patch("markitai.ocr.OCRProcessor") as ocr_cls:
+                ocr_cls.return_value.recognize_to_markdown.return_value = ""
+                result = ImageConverter(self._config()).convert(blank, tmp_path / "out")
+        finally:
+            logger.remove(sink_id)
+
+        assert "blank" in result.markdown
+        notices = [r for r in records if is_user_notice(r)]
+        assert len(notices) == 1
+        assert "No text found in blank.png" in notices[0]["message"]
+
+
+class TestOcrReadsEveryPage:
+    """Multi-page TIFF and SVG inputs are OCR'd in full."""
+
+    def test_every_tiff_frame_is_recognized_under_its_page_marker(
+        self, tmp_path: Path
+    ) -> None:
+        from markitai.constants import page_marker
+
+        tiff = tmp_path / "fax.tiff"
+        frames = [Image.new("RGB", (40, 30), c) for c in ("white", "gray")]
+        frames[0].save(tiff, save_all=True, append_images=frames[1:])
+
+        with patch("markitai.ocr.OCRProcessor") as ocr_cls:
+            processor = ocr_cls.return_value
+            processor.recognize_array_to_markdown.side_effect = ["page one", "page two"]
+            result = ImageConverter(
+                MarkitaiConfig(ocr=OCRConfig(enabled=True))
+            ).convert(tiff, tmp_path / "out")
+
+        assert processor.recognize_array_to_markdown.call_count == 2
+        processor.recognize_to_markdown.assert_not_called()
+        markdown = result.markdown
+        assert markdown.index(page_marker(1)) < markdown.index("page one")
+        assert markdown.index(page_marker(2)) < markdown.index("page two")
+
+    def test_tiff_frames_are_decoded_one_at_a_time(self, tmp_path: Path) -> None:
+        """Each frame is recognized before the next is decoded.
+
+        All frames were decoded up front: a long scan held every page in
+        memory at once.
+        """
+        from markitai.converter import image as image_module
+
+        tiff = tmp_path / "long.tiff"
+        frames = [Image.new("RGB", (40, 30), c) for c in ("white", "gray", "black")]
+        frames[0].save(tiff, save_all=True, append_images=frames[1:])
+        events: list[str] = []
+        decode = image_module._frame_rgb_array
+
+        def tracked_decode(image: Any, index: int) -> Any:
+            events.append(f"decode {index}")
+            return decode(image, index)
+
+        def recognize(array: Any) -> str:
+            events.append("recognize")
+            return "text"
+
+        with (
+            patch("markitai.ocr.OCRProcessor") as ocr_cls,
+            patch.object(image_module, "_frame_rgb_array", tracked_decode),
+        ):
+            ocr_cls.return_value.recognize_array_to_markdown.side_effect = recognize
+            ImageConverter(MarkitaiConfig(ocr=OCRConfig(enabled=True))).convert(
+                tiff, tmp_path / "out"
+            )
+
+        assert events == [
+            "decode 0",
+            "recognize",
+            "decode 1",
+            "recognize",
+            "decode 2",
+            "recognize",
+        ]
+
+    def test_svg_is_rasterized_before_ocr(self, tmp_path: Path) -> None:
+        svg = tmp_path / "logo.svg"
+        svg.write_text(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="40">'
+            '<rect width="120" height="40" fill="white"/></svg>'
+        )
+        with patch("markitai.ocr.OCRProcessor") as ocr_cls:
+            processor = ocr_cls.return_value
+            processor.recognize_array_to_markdown.return_value = "Vector text"
+            result = ImageConverter(
+                MarkitaiConfig(ocr=OCRConfig(enabled=True))
+            ).convert(svg, tmp_path / "out")
+
+        (array,), _ = processor.recognize_array_to_markdown.call_args
+        assert array.shape == (80, 240, 3)
+        assert "Vector text" in result.markdown
+
+
+class TestOutputDerivedAssetNames:
+    """The image's asset copy follows the resolved output name (asset_prefix),
+    so a renamed re-run does not share the copy an older output references."""
+
+    @staticmethod
+    def _image(tmp_path: Path, name: str, color: str) -> Path:
+        path = tmp_path / name
+        Image.new("RGB", (8, 8), color=color).save(path)
+        return path
+
+    def test_default_prefix_keeps_the_input_name(self, tmp_path: Path) -> None:
+        src = self._image(tmp_path, "photo.png", "red")
+        converter = ImageConverter()
+        converter.asset_prefix = "photo.png"
+
+        ref = converter._copy_to_assets(src, tmp_path / "out")
+
+        assert ref == ".markitai/assets/photo.png"
+
+    def test_renamed_output_gets_its_own_copy(self, tmp_path: Path) -> None:
+        out = tmp_path / "out"
+        src = self._image(tmp_path, "photo.png", "red")
+        first = ImageConverter()
+        first.asset_prefix = "photo.png"
+        first._copy_to_assets(src, out)
+        old_bytes = (out / ".markitai" / "assets" / "photo.png").read_bytes()
+
+        self._image(tmp_path, "photo.png", "blue")  # the source changed
+        second = ImageConverter()
+        second.asset_prefix = "photo.png.v2"
+        ref = second._copy_to_assets(src, out)
+
+        assets = out / ".markitai" / "assets"
+        assert ref == ".markitai/assets/photo.png.v2.png"
+        assert (assets / "photo.png.v2.png").read_bytes() == src.read_bytes()
+        assert (assets / "photo.png").read_bytes() == old_bytes
+
+    def test_custom_output_name_keeps_the_extension(self, tmp_path: Path) -> None:
+        src = self._image(tmp_path, "photo.png", "red")
+        converter = ImageConverter()
+        converter.asset_prefix = "cover"
+
+        ref = converter._copy_to_assets(src, tmp_path / "out")
+
+        assert ref == ".markitai/assets/cover.png"
+
+    def test_transcoded_preview_follows_the_prefix(
+        self, tmp_path: Path, sample_bmp_image: Path
+    ) -> None:
+        plain = ImageConverter()
+        plain.asset_prefix = sample_bmp_image.name
+        renamed = ImageConverter()
+        renamed.asset_prefix = f"{sample_bmp_image.name}.v2"
+
+        plain_ref = plain._copy_to_assets(sample_bmp_image, tmp_path / "out")
+        renamed_ref = renamed._copy_to_assets(sample_bmp_image, tmp_path / "out")
+
+        assert plain_ref.startswith(f".markitai/assets/{sample_bmp_image.stem}-")
+        assert renamed_ref.startswith(f".markitai/assets/{sample_bmp_image.name}.v2-")
+        assert plain_ref != renamed_ref

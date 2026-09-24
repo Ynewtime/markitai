@@ -6,21 +6,21 @@ from unittest.mock import patch
 
 import pytest
 
-from markitai.cli.providers_detect import (
+from markitai.constants import PROVIDER_DEFAULT_MODELS
+from markitai.providers.detect import (
     ProviderDetectionResult,
     detect_all_providers,
     detect_first_provider,
     format_model_list,
     get_active_models_from_config,
 )
-from markitai.constants import PROVIDER_DEFAULT_MODELS
 
 
 @pytest.fixture(autouse=True)
 def available_runtime_dependency():
     """Provider detection tests must not depend on extras in the test venv."""
     with patch(
-        "markitai.cli.providers_detect._runtime_dependency_available",
+        "markitai.providers.detect._runtime_dependency_available",
         return_value=True,
     ):
         yield
@@ -33,15 +33,15 @@ class TestDetectAllProviders:
         """Should detect authenticated Claude CLI."""
         with (
             patch(
-                "markitai.cli.providers_detect.shutil.which",
+                "markitai.providers.detect.shutil.which",
                 side_effect=lambda cmd: "/usr/bin/claude" if cmd == "claude" else None,
             ),
             patch(
-                "markitai.cli.providers_detect._check_claude_auth",
+                "markitai.providers.detect._check_claude_auth",
                 return_value=True,
             ),
             patch(
-                "markitai.cli.providers_detect._check_chatgpt_auth",
+                "markitai.providers.detect._check_chatgpt_auth",
                 return_value=False,
             ),
             patch.dict("os.environ", {}, clear=True),
@@ -57,15 +57,15 @@ class TestDetectAllProviders:
         """Should detect authenticated Copilot CLI."""
         with (
             patch(
-                "markitai.cli.providers_detect.shutil.which",
+                "markitai.providers.detect.shutil.which",
                 side_effect=lambda x: "/usr/bin/copilot" if x == "copilot" else None,
             ),
             patch(
-                "markitai.cli.providers_detect._check_copilot_auth",
+                "markitai.providers.detect._check_copilot_auth",
                 return_value=True,
             ),
             patch(
-                "markitai.cli.providers_detect._check_chatgpt_auth",
+                "markitai.providers.detect._check_chatgpt_auth",
                 return_value=False,
             ),
             patch.dict("os.environ", {}, clear=True),
@@ -78,15 +78,15 @@ class TestDetectAllProviders:
     def test_installed_but_signed_out_cli_is_not_detected(self) -> None:
         with (
             patch(
-                "markitai.cli.providers_detect.shutil.which",
+                "markitai.providers.detect.shutil.which",
                 side_effect=lambda cmd: "/usr/bin/claude" if cmd == "claude" else None,
             ),
             patch(
-                "markitai.cli.providers_detect._check_claude_auth",
+                "markitai.providers.detect._check_claude_auth",
                 return_value=False,
             ),
             patch(
-                "markitai.cli.providers_detect._check_chatgpt_auth",
+                "markitai.providers.detect._check_chatgpt_auth",
                 return_value=False,
             ),
             patch.dict("os.environ", {}, clear=True),
@@ -97,19 +97,19 @@ class TestDetectAllProviders:
         """A global CLI login must not create an unusable local model."""
         with (
             patch(
-                "markitai.cli.providers_detect.shutil.which",
+                "markitai.providers.detect.shutil.which",
                 side_effect=lambda cmd: "/usr/bin/claude" if cmd == "claude" else None,
             ),
             patch(
-                "markitai.cli.providers_detect._check_claude_auth",
+                "markitai.providers.detect._check_claude_auth",
                 return_value=True,
             ),
             patch(
-                "markitai.cli.providers_detect._runtime_dependency_available",
+                "markitai.providers.detect._runtime_dependency_available",
                 return_value=False,
             ),
             patch(
-                "markitai.cli.providers_detect._check_chatgpt_auth",
+                "markitai.providers.detect._check_chatgpt_auth",
                 return_value=False,
             ),
             patch.dict("os.environ", {}, clear=True),
@@ -119,9 +119,9 @@ class TestDetectAllProviders:
     def test_detect_env_providers(self) -> None:
         """Should detect environment variable providers."""
         with (
-            patch("markitai.cli.providers_detect.shutil.which", return_value=None),
+            patch("markitai.providers.detect.shutil.which", return_value=None),
             patch(
-                "markitai.cli.providers_detect._check_chatgpt_auth",
+                "markitai.providers.detect._check_chatgpt_auth",
                 return_value=False,
             ),
             patch.dict(
@@ -139,15 +139,15 @@ class TestDetectAllProviders:
         """Should return all available providers ordered by priority."""
         with (
             patch(
-                "markitai.cli.providers_detect.shutil.which",
+                "markitai.providers.detect.shutil.which",
                 side_effect=lambda x: "/usr/bin/claude" if x == "claude" else None,
             ),
             patch(
-                "markitai.cli.providers_detect._check_claude_auth",
+                "markitai.providers.detect._check_claude_auth",
                 return_value=True,
             ),
             patch(
-                "markitai.cli.providers_detect._check_chatgpt_auth",
+                "markitai.providers.detect._check_chatgpt_auth",
                 return_value=False,
             ),
             patch.dict(
@@ -164,9 +164,9 @@ class TestDetectAllProviders:
     def test_detect_no_provider(self) -> None:
         """Should return empty list when no provider is available."""
         with (
-            patch("markitai.cli.providers_detect.shutil.which", return_value=None),
+            patch("markitai.providers.detect.shutil.which", return_value=None),
             patch(
-                "markitai.cli.providers_detect._check_chatgpt_auth",
+                "markitai.providers.detect._check_chatgpt_auth",
                 return_value=False,
             ),
             patch.dict("os.environ", {}, clear=True),
@@ -177,9 +177,9 @@ class TestDetectAllProviders:
     def test_detect_chatgpt_provider(self) -> None:
         """Should detect ChatGPT when authenticated."""
         with (
-            patch("markitai.cli.providers_detect.shutil.which", return_value=None),
+            patch("markitai.providers.detect.shutil.which", return_value=None),
             patch(
-                "markitai.cli.providers_detect._check_chatgpt_auth",
+                "markitai.providers.detect._check_chatgpt_auth",
                 return_value=True,
             ),
             patch.dict("os.environ", {}, clear=True),
@@ -197,15 +197,15 @@ class TestDetectFirstProvider:
         """Should return the highest-priority provider."""
         with (
             patch(
-                "markitai.cli.providers_detect.shutil.which",
+                "markitai.providers.detect.shutil.which",
                 side_effect=lambda cmd: "/usr/bin/claude" if cmd == "claude" else None,
             ),
             patch(
-                "markitai.cli.providers_detect._check_claude_auth",
+                "markitai.providers.detect._check_claude_auth",
                 return_value=True,
             ),
             patch(
-                "markitai.cli.providers_detect._check_chatgpt_auth",
+                "markitai.providers.detect._check_chatgpt_auth",
                 return_value=False,
             ),
             patch.dict("os.environ", {}, clear=True),
@@ -217,9 +217,9 @@ class TestDetectFirstProvider:
     def test_returns_none_when_no_provider(self) -> None:
         """Should return None when no provider detected."""
         with (
-            patch("markitai.cli.providers_detect.shutil.which", return_value=None),
+            patch("markitai.providers.detect.shutil.which", return_value=None),
             patch(
-                "markitai.cli.providers_detect._check_chatgpt_auth",
+                "markitai.providers.detect._check_chatgpt_auth",
                 return_value=False,
             ),
             patch.dict("os.environ", {}, clear=True),
@@ -324,8 +324,8 @@ class TestProvidersToModelConfigs:
 
     def test_converts_single_provider(self) -> None:
         """Should convert a single provider to ModelConfig."""
-        from markitai.cli.providers_detect import providers_to_model_configs
         from markitai.config import ModelConfig
+        from markitai.providers.detect import providers_to_model_configs
 
         providers = [
             ProviderDetectionResult(
@@ -343,7 +343,7 @@ class TestProvidersToModelConfigs:
 
     def test_converts_multiple_providers(self) -> None:
         """Should convert multiple providers to ModelConfig list."""
-        from markitai.cli.providers_detect import providers_to_model_configs
+        from markitai.providers.detect import providers_to_model_configs
 
         providers = [
             ProviderDetectionResult("claude-agent", "claude-agent/sonnet", True, "cli"),
@@ -358,7 +358,7 @@ class TestProvidersToModelConfigs:
 
     def test_empty_providers_returns_empty(self) -> None:
         """Should return empty list for empty input."""
-        from markitai.cli.providers_detect import providers_to_model_configs
+        from markitai.providers.detect import providers_to_model_configs
 
         assert providers_to_model_configs([]) == []
 
@@ -383,6 +383,73 @@ class TestBackwardCompatImports:
         from markitai.cli.interactive import (
             ProviderDetectionResult as InteractiveResult,
         )
-        from markitai.cli.providers_detect import ProviderDetectionResult
+        from markitai.providers.detect import ProviderDetectionResult
 
         assert InteractiveResult is ProviderDetectionResult
+
+
+class TestResolveAutoModels:
+    """MODEL env var > auto-detection: one rule for CLI, API and MCP."""
+
+    @staticmethod
+    def _result(model: str) -> ProviderDetectionResult:
+        return ProviderDetectionResult(
+            provider=model.split("/")[0],
+            model=model,
+            authenticated=True,
+            source="env",
+        )
+
+    def test_model_env_wins_without_detecting(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from markitai.providers.detect import resolve_auto_models
+
+        monkeypatch.setenv("MODEL", "openai/gpt-test")
+        with patch("markitai.providers.detect.detect_all_providers") as detect:
+            resolution = resolve_auto_models()
+
+        detect.assert_not_called()
+        assert resolution.source == "env"
+        assert [m.litellm_params.model for m in resolution.model_list] == [
+            "openai/gpt-test"
+        ]
+        assert resolution.detected == []
+        assert not resolution.pooled
+
+    def test_detection_fills_the_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from markitai.providers.detect import resolve_auto_models
+
+        monkeypatch.delenv("MODEL", raising=False)
+        found = [self._result("anthropic/a"), self._result("openai/b")]
+        with patch(
+            "markitai.providers.detect.detect_all_providers", return_value=found
+        ):
+            resolution = resolve_auto_models()
+
+        assert resolution.source == "detected"
+        assert [m.litellm_params.model for m in resolution.model_list] == [
+            "anthropic/a",
+            "openai/b",
+        ]
+        assert resolution.pooled
+
+    def test_nothing_found(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from markitai.providers.detect import resolve_auto_models
+
+        monkeypatch.delenv("MODEL", raising=False)
+        with patch("markitai.providers.detect.detect_all_providers", return_value=[]):
+            resolution = resolve_auto_models()
+
+        assert resolution.source is None
+        assert resolution.model_list == []
+
+    def test_pooled_notice_names_every_model_and_the_fix(self) -> None:
+        from markitai.providers.detect import pooled_providers_notice
+
+        message, fix = pooled_providers_notice(
+            [self._result("anthropic/a"), self._result("openai/b")]
+        )
+        assert message.startswith("Auto-detected 2 LLM providers")
+        assert "anthropic/a, openai/b" in message
+        assert "MODEL=" in fix and "llm.model_list" in fix

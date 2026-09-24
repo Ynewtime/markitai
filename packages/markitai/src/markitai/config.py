@@ -18,6 +18,7 @@ from markitai.constants import (
     DEFAULT_CACHE_SIZE_LIMIT,
     DEFAULT_DEFUDDLE_RPM,
     DEFAULT_DEFUDDLE_TIMEOUT,
+    DEFAULT_FETCH_CACHE_TTL_SECONDS,
     DEFAULT_FETCH_FALLBACK_PATTERNS,
     DEFAULT_FETCH_STRATEGY,
     DEFAULT_GLOBAL_CACHE_DIR,
@@ -568,7 +569,17 @@ class CacheConfig(BaseModel):
     no_cache: bool = Field(default=False, description="Skip reading cache, still write")
     no_cache_patterns: list[
         str
-    ] = []  # Patterns to skip cache (glob, relative to input_dir)
+    ] = []  # Patterns to skip cache (glob, relative to input_dir; URLs too)
+    fetch_ttl_seconds: int = Field(
+        default=DEFAULT_FETCH_CACHE_TTL_SECONDS,
+        ge=0,
+        description=(
+            "How long a fetched URL without ETag/Last-Modified is reused from "
+            "fetch_cache.db before it is fetched again (seconds). Pages with "
+            "validators are revalidated on every run instead. 0 never reuses "
+            "an unvalidated entry."
+        ),
+    )
     max_size_bytes: int = Field(
         default=DEFAULT_CACHE_SIZE_LIMIT, description="Max cache size in bytes"
     )
@@ -1167,7 +1178,8 @@ class ConfigManager:
         from markitai.security import atomic_write_text
 
         content = json.dumps(output_data, indent=2, ensure_ascii=False) + "\n"
-        atomic_write_text(save_path, content, follow_symlinks=True)
+        # The config may hold literal API keys, so it stays owner-only.
+        atomic_write_text(save_path, content, follow_symlinks=True, private=True)
 
         return save_path
 

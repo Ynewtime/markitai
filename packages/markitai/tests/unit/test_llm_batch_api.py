@@ -191,6 +191,147 @@ class TestBuildAnthropicRequest:
         assert request["custom_id"] == "doc_0_note_md"
         assert set(request) == {"custom_id", "params"}
 
+    def test_image_blocks_are_translated_to_anthropic_shape(self) -> None:
+        """The plans build OpenAI ``image_url`` blocks; the Messages API
+        rejects them ("Input tag 'image_url' ... does not match"), which
+        failed every image of an Anthropic batch."""
+        messages = [
+            {"role": "system", "content": "Describe images."},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What is this?"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="},
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "https://example.com/a.jpg"},
+                    },
+                ],
+            },
+        ]
+
+        params = build_anthropic_batch_request(
+            "img_0_a",
+            messages=messages,
+            response_model=_Doc,
+            model="claude-haiku-4-5",
+            max_tokens=1024,
+        )["params"]
+
+        assert params["system"] == [{"type": "text", "text": "Describe images."}]
+        (user,) = params["messages"]
+        assert user["content"] == [
+            {"type": "text", "text": "What is this?"},
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": "iVBORw0KGgo=",
+                },
+            },
+            {
+                "type": "image",
+                "source": {"type": "url", "url": "https://example.com/a.jpg"},
+            },
+        ]
+        # The caller's OpenAI-shaped messages stay as they were
+        assert messages[1]["content"][1]["type"] == "image_url"
+
+
+class TestBatchCredentials:
+    """Configured api_key/api_base must reach the batch transport."""
+
+    async def test_openai_calls_carry_the_configured_key_and_base(
+        self, tmp_path: Path
+    ) -> None:
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from markitai.llm.batch_api import (
+            BatchCredentials,
+            download_openai_batch_output,
+            poll_openai_batch,
+            submit_openai_batch,
+        )
+
+        creds = BatchCredentials(api_key="sk-config", api_base="http://x.test/v1")
+        batch = MagicMock(
+            id="batch_1",
+            status="completed",
+            output_file_id="file-out",
+            error_file_id=None,
+        )
+        batch.request_counts.completed = 1
+        batch.request_counts.total = 1
+        jsonl = tmp_path / "requests.jsonl"
+        jsonl.write_text("{}\n", encoding="utf-8")
+
+        with (
+            patch(
+                "litellm.acreate_file",
+                new_callable=AsyncMock,
+                return_value=MagicMock(id="file-in"),
+            ) as create_file,
+            patch(
+                "litellm.acreate_batch", new_callable=AsyncMock, return_value=batch
+            ) as create_batch,
+            patch(
+                "litellm.aretrieve_batch", new_callable=AsyncMock, return_value=batch
+            ) as retrieve,
+            patch(
+                "litellm.afile_content",
+                new_callable=AsyncMock,
+                return_value=MagicMock(content=b"{}\n"),
+            ) as file_content,
+        ):
+            await submit_openai_batch(jsonl, credentials=creds)
+            await poll_openai_batch("batch_1", credentials=creds)
+            await download_openai_batch_output(
+                "batch_1", tmp_path / "out.jsonl", credentials=creds
+            )
+
+        for mock in (create_file, create_batch, retrieve, file_content):
+            kwargs = mock.call_args.kwargs
+            assert kwargs["api_key"] == "sk-config", mock
+            assert kwargs["api_base"] == "http://x.test/v1", mock
+
+    async def test_retrieve_opts_out_of_litellm_batch_cost_logging(self) -> None:
+        """litellm's success logger downloads the whole output file of a
+        completed batch on every retrieve, in a background task — a second
+        download per status check, and the never-awaited ``afile_content``
+        warning when the loop closes first."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from markitai.llm.batch_api import poll_openai_batch
+
+        batch = MagicMock(status="completed")
+        with patch(
+            "litellm.aretrieve_batch", new_callable=AsyncMock, return_value=batch
+        ) as retrieve:
+            await poll_openai_batch("batch_1")
+
+        metadata = retrieve.call_args.kwargs["litellm_metadata"]
+        assert metadata == {"batch_ignore_default_logging": True}
+        # No credentials configured: the SDK's environment lookup applies
+        assert "api_key" not in retrieve.call_args.kwargs
+
+    def test_anthropic_client_uses_the_configured_key_and_base(self) -> None:
+        from unittest.mock import patch
+
+        from markitai.llm.batch_api import BatchCredentials, _anthropic_client
+
+        with patch("anthropic.AsyncAnthropic") as client_cls:
+            _anthropic_client(
+                BatchCredentials(api_key="sk-ant-config", api_base="http://a.test")
+            )
+
+        client_cls.assert_called_once_with(
+            api_key="sk-ant-config", base_url="http://a.test"
+        )
+
 
 class TestParseOutput:
     def _write_output(self, tmp_path: Path, lines: list[dict]) -> Path:

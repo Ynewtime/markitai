@@ -17,9 +17,14 @@ from rich.console import Console
 
 from markitai.cli import ui
 from markitai.cli.console import get_console
+from markitai.cli.framework import root_config_options
 from markitai.cli.i18n import t
 from markitai.config import ConfigManager
-from markitai.constants import DEFAULT_CACHE_DB_FILENAME
+from markitai.constants import (
+    DEFAULT_CACHE_DB_FILENAME,
+    DEFAULT_FETCH_CACHE_DB_FILENAME,
+    DEFAULT_FETCH_CACHE_TTL_SECONDS,
+)
 from markitai.llm import SQLiteCache
 
 console = get_console()
@@ -73,17 +78,46 @@ def _print_verbose(cache_data: dict[str, Any], con: Console) -> None:
             con.print(line)
 
 
+def _fetch_cache_path(cfg: Any) -> Path:
+    return Path(cfg.cache.global_dir).expanduser() / DEFAULT_FETCH_CACHE_DB_FILENAME
+
+
+def _ttl_hours(cfg: Any) -> str:
+    ttl = getattr(cfg.cache, "fetch_ttl_seconds", DEFAULT_FETCH_CACHE_TTL_SECONDS)
+    if not isinstance(ttl, int):
+        ttl = DEFAULT_FETCH_CACHE_TTL_SECONDS
+    return f"{ttl / 3600:g}"
+
+
+def _fetch_cache_stats(cfg: Any) -> dict[str, Any] | None:
+    """Stats for fetch_cache.db, or None when it does not exist yet."""
+    path = _fetch_cache_path(cfg)
+    if not path.exists():
+        return None
+    from markitai.fetch_cache import FetchCache
+
+    try:
+        fetch_cache = FetchCache(path, cfg.cache.max_size_bytes)
+        try:
+            return fetch_cache.stats()
+        finally:
+            fetch_cache.close()
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @click.group()
 def cache() -> None:
     """Cache management commands.
 
-    Markitai caches LLM responses so repeated conversions are fast and
-    cheap, and remembers domains that need browser rendering (SPA).
+    Markitai caches LLM responses and fetched URL pages so repeated
+    conversions are fast and cheap, and remembers domains that need browser
+    rendering (SPA).
 
     Examples:
         markitai cache stats            # How much is cached?
         markitai cache stats -v         # Per-model breakdown + entries
-        markitai cache clear            # Clear LLM response cache
+        markitai cache clear            # Clear LLM + URL fetch caches
         markitai cache spa-domains      # Show learned SPA domains
     """
 
@@ -110,7 +144,8 @@ def cache() -> None:
 def cache_stats(as_json: bool, verbose: bool, limit: int) -> None:
     """Show cache statistics.
 
-    Reports how many LLM responses are cached and how much disk they use.
+    Reports how many LLM responses and fetched URL pages are cached and how
+    much disk they use.
 
     Examples:
         markitai cache stats                # Summary (entries + size)
@@ -118,7 +153,8 @@ def cache_stats(as_json: bool, verbose: bool, limit: int) -> None:
         markitai cache stats --json         # Machine-readable output
     """
     manager = ConfigManager()
-    cfg = manager.load()
+    config_path, overrides = root_config_options()
+    cfg = manager.load(config_path=config_path, overrides=overrides)
 
     stats_data: dict[str, Any] = {
         "cache": None,
@@ -154,7 +190,12 @@ def cache_stats(as_json: bool, verbose: bool, limit: int) -> None:
     if global_cache:
         global_cache.close()
 
-    cache_error = bool(stats_data["cache"]) and "error" in stats_data["cache"]
+    # URL fetch cache (fetch_cache.db): fetched pages reused across runs
+    stats_data["fetch_cache"] = _fetch_cache_stats(cfg)
+
+    cache_error = (bool(stats_data["cache"]) and "error" in stats_data["cache"]) or (
+        bool(stats_data["fetch_cache"]) and "error" in stats_data["fetch_cache"]
+    )
 
     if as_json:
         click.echo(json.dumps(stats_data, indent=2, ensure_ascii=False))
@@ -178,6 +219,15 @@ def cache_stats(as_json: bool, verbose: bool, limit: int) -> None:
         else:
             ui.info(f"{t('cache.llm')}: 0 {t('cache.entries')}")
             console.print(f"  [dim]{t('cache.empty_hint')}[/dim]")
+
+        f = stats_data["fetch_cache"]
+        if f and "error" in f:
+            ui.error(f"{t('cache.fetch')}: {f['error']}")
+        else:
+            count = f["count"] if f else 0
+            size = f"({f['size_mb']} MB)" if f else ""
+            ui.info(f"{t('cache.fetch')}: {count} {t('cache.entries')} {size}".rstrip())
+            console.print(f"  [dim]{t('cache.fetch_ttl', hours=_ttl_hours(cfg))}[/dim]")
 
         # Print verbose details after summary
         if verbose and stats_data.get("cache") and "error" not in stats_data["cache"]:
@@ -207,25 +257,26 @@ def cache_clear(include_spa_domains: bool, yes: bool) -> None:
     Asks for confirmation unless --yes is given.
 
     Examples:
-        markitai cache clear                      # Clear LLM cache (asks first)
+        markitai cache clear                      # Clear LLM + URL fetch caches
         markitai cache clear -y                   # No confirmation prompt
         markitai cache clear --include-spa-domains  # Also forget SPA domains
     """
     manager = ConfigManager()
-    cfg = manager.load()
+    config_path, overrides = root_config_options()
+    cfg = manager.load(config_path=config_path, overrides=overrides)
 
     cache_dir = Path(cfg.cache.global_dir).expanduser()
 
     # Confirm if not --yes
     if not yes:
-        desc = f"global cache ({cache_dir})"
+        desc = f"LLM + URL fetch caches ({cache_dir})"
         if include_spa_domains:
             desc += " + learned SPA domains"
         if not click.confirm(f"Clear {desc}?"):
             console.print("[yellow]Aborted[/yellow]")
             return
 
-    result = {"cache": 0, "spa_domains": 0}
+    result = {"cache": 0, "fetch_cache": 0, "spa_domains": 0}
 
     # Clear global cache
     global_cache_path = cache_dir / DEFAULT_CACHE_DB_FILENAME
@@ -236,6 +287,20 @@ def cache_clear(include_spa_domains: bool, yes: bool) -> None:
             global_cache.close()
         except Exception as e:
             console.print(f"[red]Failed to clear cache:[/red] {e}")
+
+    # Clear the URL fetch cache (fetch_cache.db)
+    fetch_cache_path = _fetch_cache_path(cfg)
+    if fetch_cache_path.exists():
+        from markitai.fetch_cache import FetchCache
+
+        try:
+            fetch_cache = FetchCache(fetch_cache_path, cfg.cache.max_size_bytes)
+            try:
+                result["fetch_cache"] = fetch_cache.clear()
+            finally:
+                fetch_cache.close()
+        except Exception as e:
+            console.print(f"[red]Failed to clear URL fetch cache:[/red] {e}")
 
     # Clear SPA domains if requested
     if include_spa_domains:
@@ -248,8 +313,12 @@ def cache_clear(include_spa_domains: bool, yes: bool) -> None:
             console.print(f"[red]Failed to clear SPA domains:[/red] {e}")
 
     # Report results
-    if result["cache"] > 0 or result["spa_domains"] > 0:
-        ui.summary(t("cache.cleared", count=result["cache"]))
+    if result["cache"] > 0 or result["fetch_cache"] > 0 or result["spa_domains"] > 0:
+        ui.summary(t("cache.cleared", count=result["cache"] + result["fetch_cache"]))
+        if result["cache"] > 0 and result["fetch_cache"] > 0:
+            console.print(f"  {t('cache.llm')}: {result['cache']}")
+        if result["fetch_cache"] > 0:
+            console.print(f"  {t('cache.fetch')}: {result['fetch_cache']}")
         if result["spa_domains"] > 0:
             console.print(f"  SPA domains: {result['spa_domains']}")
     else:

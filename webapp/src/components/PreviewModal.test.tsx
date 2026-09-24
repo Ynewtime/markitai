@@ -33,6 +33,8 @@ const item: SessionItem = {
   operation: "convert",
   skipped: false,
   skipReason: null,
+  retryable: true,
+  warnings: [],
   sizeBytes: 8,
   startedAt: null,
 };
@@ -67,6 +69,41 @@ describe("PreviewModal", () => {
 
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("lists the item's conversion warnings above the preview", () => {
+    const warnings = [
+      "[PDF] result.pdf: 2 page(s) look scanned/garbled (pages 1, 2)",
+      "[OCR] No text found in result.pdf",
+    ];
+    render(
+      <PreviewModal
+        t={dicts.en}
+        item={{ ...item, warnings }}
+        createdAt={null}
+        onClose={() => undefined}
+        announce={() => undefined}
+      />,
+    );
+
+    const note = screen.getByRole("note", { name: dicts.en.itemWarningsTitle });
+    expect(note).toBeVisible();
+    expect(
+      Array.from(note.querySelectorAll("li"), (li) => li.textContent),
+    ).toEqual(warnings);
+  });
+
+  it("renders no warnings block for a clean conversion", () => {
+    render(
+      <PreviewModal
+        t={dicts.en}
+        item={item}
+        createdAt={null}
+        onClose={() => undefined}
+        announce={() => undefined}
+      />,
+    );
+    expect(screen.queryByRole("note")).toBeNull();
   });
 
   it("keeps Markdown download and opens the PDF print export", async () => {

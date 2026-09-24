@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from markitai.cli.processors.file import resolve_asset_references
 
@@ -177,8 +178,9 @@ class TestResolveAssetReferences:
             source_name="doc.pdf",
         )
 
-        assert "file://" in result
-        assert "chart.jpg" in result
+        assert "![chart](file://" in result
+        # Linked to the immutable content-addressed blob, not refs/
+        assert "/blobs/" in result
         assert "![image:" not in result  # not placeholder
 
     def test_protocol_tier_renders_escape_sequence(self, tmp_path: Path) -> None:
@@ -295,53 +297,94 @@ class TestImageOnlySkip:
 
 
 class TestFinalOutputFileDetermination:
-    """Tests for the final output file selection logic."""
+    """The reported output is the file the pipeline says it produced."""
 
-    def test_llm_mode_prefers_llm_md(self, tmp_path: Path) -> None:
-        """When .llm.md exists, it should be preferred in LLM mode."""
-        output_file = tmp_path / "test.md"
-        llm_file = tmp_path / "test.llm.md"
-        output_file.write_text("base content")
-        llm_file.write_text("llm content")
+    @staticmethod
+    def _fake_core(*, llm_written: bool, cache_hit: bool = False) -> Any:
+        from markitai.workflow.core import ConversionStepResult
 
+        async def core(ctx: Any, _max_size: int) -> ConversionStepResult:
+            ctx.output_dir.mkdir(parents=True, exist_ok=True)
+            ctx.output_file = ctx.output_dir / f"{ctx.input_path.name}.md"
+            if llm_written:
+                ctx.llm_output_file = ctx.output_file.with_suffix(".llm.md")
+                ctx.llm_output_file.write_text("# enhanced", encoding="utf-8")
+                ctx.cache_hit = cache_hit
+            return ConversionStepResult(success=True)
+
+        return core
+
+    @pytest.mark.asyncio
+    async def test_llm_output_and_cache_hit_reach_the_outcome(
+        self, tmp_path: Path
+    ) -> None:
+        """Regression: single-file --json always reported cache_hit false,
+        even for a rerun served entirely from cache at zero cost."""
+        from unittest.mock import patch
+
+        from markitai.cli.processors.file import process_single_file
+        from markitai.runs import Outcome
+
+        doc = tmp_path / "doc.txt"
+        doc.write_text("hello", encoding="utf-8")
         cfg = MarkitaiConfig()
         cfg.llm.enabled = True
+        history: list[Outcome] = []
 
-        final = output_file.with_suffix(".llm.md") if cfg.llm.enabled else output_file
-        if not final.exists() and cfg.llm.enabled:
-            final = output_file
+        with patch(
+            "markitai.workflow.core.convert_document_core",
+            self._fake_core(llm_written=True, cache_hit=True),
+        ):
+            await process_single_file(
+                input_path=doc,
+                output_dir=tmp_path / "out",
+                cfg=cfg,
+                dry_run=False,
+                quiet=True,
+                history=history,
+            )
 
-        assert final == llm_file
-        assert final.read_text() == "llm content"
+        [outcome] = history
+        assert outcome.status == "completed"
+        assert outcome.output_path == tmp_path / "out" / "doc.txt.llm.md"
+        assert outcome.cache_hit is True
+        assert outcome.llm_cache_hit is True
 
-    def test_llm_mode_falls_back_to_md(self, tmp_path: Path) -> None:
-        """When .llm.md doesn't exist (LLM failed), should fall back to .md."""
-        output_file = tmp_path / "test.md"
-        output_file.write_text("base content")
-        # No .llm.md file
+    @pytest.mark.asyncio
+    async def test_missing_llm_output_fails_instead_of_printing_a_path(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Regression: with no .llm.md the CLI fell back to a .md that did
+        not exist either, printed its path and exited 0."""
+        from unittest.mock import patch
 
+        from markitai.cli.processors.file import process_single_file
+        from markitai.runs import Outcome
+
+        doc = tmp_path / "doc.txt"
+        doc.write_text("hello", encoding="utf-8")
         cfg = MarkitaiConfig()
         cfg.llm.enabled = True
+        history: list[Outcome] = []
 
-        final = output_file.with_suffix(".llm.md") if cfg.llm.enabled else output_file
-        if not final.exists() and cfg.llm.enabled:
-            final = output_file
+        with (
+            patch(
+                "markitai.workflow.core.convert_document_core",
+                self._fake_core(llm_written=False),
+            ),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            await process_single_file(
+                input_path=doc,
+                output_dir=tmp_path / "out",
+                cfg=cfg,
+                dry_run=False,
+                history=history,
+            )
 
-        assert final == output_file
-        assert final.read_text() == "base content"
-
-    def test_non_llm_uses_md(self, tmp_path: Path) -> None:
-        """Without LLM, should always use .md."""
-        output_file = tmp_path / "test.md"
-        output_file.write_text("base content")
-
-        cfg = MarkitaiConfig()
-
-        final = output_file.with_suffix(".llm.md") if cfg.llm.enabled else output_file
-        if not final.exists() and cfg.llm.enabled:
-            final = output_file
-
-        assert final == output_file
+        assert exc_info.value.code == 1
+        assert [o.status for o in history] == ["failed"]
+        assert "doc.txt.md" not in capsys.readouterr().out
 
 
 class TestStdoutPersistDefault:
@@ -465,3 +508,188 @@ class TestNormalizeTempAssetRefs:
 
         markdown = "![a](.markitai/assets/a.jpg) ![b](/elsewhere/b.jpg)"
         assert normalize_temp_asset_refs(markdown, tmp_path) == markdown
+
+    def test_rewrites_absolute_visible_asset_ref(self, tmp_path: Path) -> None:
+        """Absolute refs into temp_dir/assets (asset-visible profiles) too."""
+        from markitai.cli.processors.file import normalize_temp_asset_refs
+
+        markdown = f"![img]({tmp_path.resolve().as_posix()}/assets/a.jpg)"
+        result = normalize_temp_asset_refs(markdown, tmp_path)
+        assert result == "![img](assets/a.jpg)"
+
+
+class TestVisibleAssetRefs:
+    """Asset-visible profiles (rag/obsidian) write ``assets/`` refs in stdout
+    mode; they point into the temp dir just like ``.markitai/`` refs.
+
+    Regression: ASSET_REF_PATTERN only matched ``.markitai/...``, so under
+    ``--profile rag|obsidian`` the stdout links were neither persisted nor
+    rewritten and pointed at the deleted temp dir, without any warning.
+    """
+
+    @staticmethod
+    def _asset(tmp_path: Path, name: str, data: bytes = b"img") -> None:
+        assets_dir = tmp_path / "assets"
+        assets_dir.mkdir(parents=True, exist_ok=True)
+        (assets_dir / name).write_bytes(data)
+
+    def test_pattern_detects_visible_and_wikilink_refs(self) -> None:
+        from markitai.runs import ASSET_REF_PATTERN
+
+        assert ASSET_REF_PATTERN.search("![x](assets/a.png)")
+        assert ASSET_REF_PATTERN.search("![[assets/a.png]]")
+        assert ASSET_REF_PATTERN.search("![[assets/a.png|cap]]")
+        assert not ASSET_REF_PATTERN.search("![x](https://h/assets/a.png)")
+        assert not ASSET_REF_PATTERN.search("![x](img/assets/a.png)")
+
+    def test_visible_ref_persisted_to_store(self, tmp_path: Path) -> None:
+        from markitai.utils.asset_store import AssetStore
+
+        self._asset(tmp_path, "doc.pdf-0001-01.jpg", b"chart")
+        store = AssetStore(tmp_path / "store")
+        result = resolve_asset_references(
+            "![A chart](assets/doc.pdf-0001-01.jpg)",
+            temp_dir=tmp_path,
+            asset_store=store,
+            source_name="doc.pdf",
+        )
+
+        assert result.startswith("![A chart](file://")
+        assert "/blobs/" in result
+        assert "](assets/" not in result
+
+    def test_escaped_alt_text_is_kept_verbatim(self, tmp_path: Path) -> None:
+        from markitai.utils.asset_store import AssetStore
+
+        self._asset(tmp_path, "a.jpg")
+        store = AssetStore(tmp_path / "store")
+        result = resolve_asset_references(
+            r"![see \[1\]](assets/a.jpg)",
+            temp_dir=tmp_path,
+            asset_store=store,
+        )
+
+        assert result.startswith(r"![see \[1\]](file://")
+
+    def test_wikilink_persisted_as_markdown_image(self, tmp_path: Path) -> None:
+        """A wikilink cannot carry a file:// target: emit a markdown image."""
+        from markitai.utils.asset_store import AssetStore
+
+        self._asset(tmp_path, "a b.jpg", b"chart")
+        store = AssetStore(tmp_path / "store")
+        result = resolve_asset_references(
+            "before ![[assets/a b.jpg| Fig *1* ]] after ![[assets/a b.jpg]]",
+            temp_dir=tmp_path,
+            asset_store=store,
+        )
+
+        assert "![[" not in result
+        assert "before ![Fig *1*](file://" in result
+        assert "![a b.jpg](file://" in result
+
+    def test_visible_ref_without_store_becomes_placeholder(
+        self, tmp_path: Path
+    ) -> None:
+        self._asset(tmp_path, "a.jpg")
+        result = resolve_asset_references(
+            "![x](assets/a.jpg) ![[assets/a.jpg]]", temp_dir=tmp_path
+        )
+        assert result == "![image: a.jpg]() ![image: a.jpg]()"
+
+    def test_foreign_relative_assets_ref_left_untouched(self, tmp_path: Path) -> None:
+        """A source document's own ``assets/`` image is not an extracted asset."""
+        from markitai.utils.asset_store import AssetStore
+
+        store = AssetStore(tmp_path / "store")
+        markdown = "![logo](assets/logo.png)"
+        result = resolve_asset_references(
+            markdown, temp_dir=tmp_path, asset_store=store
+        )
+        assert result == markdown
+
+    def test_same_named_documents_keep_their_own_images(self, tmp_path: Path) -> None:
+        """Regression: stdout links pointed at the mutable refs/<name>/<file>
+        symlink, so converting b/report.pdf after a/report.pdf silently
+        swapped the image shown by the earlier output."""
+        from markitai.utils.asset_store import AssetStore
+
+        store = AssetStore(tmp_path / "store")
+        outputs = []
+        for sub, data in (("a", b"red"), ("b", b"blue")):
+            temp = tmp_path / sub
+            (temp / ".markitai" / "assets").mkdir(parents=True)
+            (temp / ".markitai" / "assets" / "report.pdf-0001-01.jpg").write_bytes(data)
+            outputs.append(
+                resolve_asset_references(
+                    "![](.markitai/assets/report.pdf-0001-01.jpg)",
+                    temp_dir=temp,
+                    asset_store=store,
+                    source_name="report.pdf",
+                )
+            )
+
+        from urllib.parse import unquote, urlparse
+
+        def _target(md: str) -> Path:
+            return Path(unquote(urlparse(md[md.index("(") + 1 : -1]).path))
+
+        assert _target(outputs[0]).read_bytes() == b"red"
+        assert _target(outputs[1]).read_bytes() == b"blue"
+
+
+class TestStdoutProfileAssets:
+    """End to end: stdout mode + asset-visible profile persists images."""
+
+    @staticmethod
+    def _pdf_with_image(path: Path) -> None:
+        import io
+
+        import pymupdf
+        from PIL import Image
+
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.insert_text((72, 72), "Report with an image")
+        buf = io.BytesIO()
+        Image.new("RGB", (200, 120), "red").save(buf, format="PNG")
+        page.insert_image(pymupdf.Rect(72, 100, 272, 220), stream=buf.getvalue())
+        doc.save(path)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("profile", "wikilinks"),
+        [("rag", False), ("obsidian", False), ("obsidian", True)],
+    )
+    async def test_profile_stdout_links_point_at_persisted_blobs(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        profile: str,
+        wikilinks: bool,
+    ) -> None:
+        from urllib.parse import unquote, urlparse
+
+        from markitai.cli.processors.file import process_single_file
+
+        doc = tmp_path / "report.pdf"
+        self._pdf_with_image(doc)
+        cfg = MarkitaiConfig()
+        cfg.output.profile = profile  # type: ignore[assignment]
+        cfg.output.wikilinks = wikilinks
+        cfg.image.stdout_persist_dir = str(tmp_path / "store")
+
+        await process_single_file(
+            input_path=doc, output_dir=None, cfg=cfg, dry_run=False, quiet=True
+        )
+
+        out = capsys.readouterr().out
+        assert "](assets/" not in out
+        assert "![[assets/" not in out
+        [uri] = [
+            line[line.index("](") + 2 : -1]
+            for line in out.splitlines()
+            if line.startswith("![")
+        ]
+        target = Path(unquote(urlparse(uri).path))
+        assert target.parent == (tmp_path / "store" / "blobs").resolve()
+        assert target.is_file()

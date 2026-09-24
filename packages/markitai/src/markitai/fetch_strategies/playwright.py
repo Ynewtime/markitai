@@ -97,4 +97,6 @@ class PlaywrightRunner:
             final_url=pw_result.final_url,
             metadata=pw_result.metadata,
             screenshot_path=pw_result.screenshot_path,
+            # Every tile of a long page, not just the first one
+            screenshot_tiles=list(getattr(pw_result, "screenshot_tiles", None) or []),
         )

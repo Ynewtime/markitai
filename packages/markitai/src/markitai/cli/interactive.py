@@ -15,7 +15,7 @@ from loguru import logger
 
 from markitai.cli import ui
 from markitai.cli.console import get_console
-from markitai.cli.providers_detect import (
+from markitai.providers.detect import (
     ProviderDetectionResult,
     detect_all_providers,
     detect_first_provider,
@@ -371,7 +371,7 @@ def _append_env_var(env_path: Path, var_name: str, value: str) -> None:
     if not found:
         lines.append(f'{var_name}="{value}"')
 
-    atomic_write_text(env_path, "\n".join(lines) + "\n")
+    atomic_write_text(env_path, "\n".join(lines) + "\n", private=True)
 
 
 def _prompt_env_file(session: InteractiveSession) -> bool:

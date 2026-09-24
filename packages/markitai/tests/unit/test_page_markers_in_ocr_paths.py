@@ -28,6 +28,7 @@ import pytest
 from markitai.config import MarkitaiConfig
 from markitai.constants import PAGE_MARKER_RE, page_marker
 from markitai.converter.pdf import PdfConverter
+from markitai.ocr import OCRError
 
 _FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "sample.pdf"
 _FIXTURE_PAGES = 5
@@ -96,19 +97,26 @@ class TestRapidOcrPath:
         assert _marked_pages(result.markdown) == list(range(1, _FIXTURE_PAGES + 1))
         assert result.metadata["pages"] == _FIXTURE_PAGES
 
-    def test_a_page_that_failed_ocr_still_gets_its_marker(self, tmp_path: Path) -> None:
-        """Otherwise the failure silently merges into the previous page."""
+    def test_a_page_that_failed_ocr_fails_the_conversion(self, tmp_path: Path) -> None:
+        """A page OCR could not read is an error, never page content.
+
+        The failure used to be written into the page as ``*(OCR failed:
+        ...)*`` and the file reported as converted.
+        """
         config = MarkitaiConfig()
         config.ocr.enabled = True
         config.llm.enabled = False
         config.screenshot.enabled = False
         config.ocr.per_page_routing = False
 
-        with patch("markitai.ocr.OCRProcessor") as ocr_class:
+        with (
+            patch("markitai.ocr.OCRProcessor") as ocr_class,
+            pytest.raises(OCRError, match=r"OCR failed on 5 of 5 page\(s\)") as excinfo,
+        ):
             ocr_class.return_value.recognize_pdf_page.side_effect = RuntimeError("boom")
-            result = PdfConverter(config=config)._convert_with_ocr(_FIXTURE, tmp_path)
+            PdfConverter(config=config)._convert_with_ocr(_FIXTURE, tmp_path)
 
-        assert _marked_pages(result.markdown) == list(range(1, _FIXTURE_PAGES + 1))
+        assert "boom" in str(excinfo.value)
 
 
 @pytest.mark.skipif(not _FIXTURE.is_file(), reason="sample.pdf fixture missing")

@@ -514,9 +514,11 @@ export default function App() {
   }, []);
 
   // One click re-queues every failed row of this session in place. Running
-  // jobs are skipped: their stream is already authoritative.
+  // jobs are skipped: their stream is already authoritative. Rows the server
+  // cannot rerun (CLI-recorded files) would only come back as a 409, so they
+  // are neither sent nor counted.
   const failedItems = useMemo(
-    () => items.filter((item) => item.status === "error"),
+    () => items.filter((item) => item.status === "error" && item.retryable),
     [items],
   );
   const [retryingFailed, setRetryingFailed] = useState(false);
@@ -595,6 +597,8 @@ export default function App() {
           operation: item.operation,
           skipped: item.skipped,
           skipReason: item.skip_reason,
+          retryable: item.retryable,
+          warnings: item.warnings ?? [],
           sizeBytes: null,
           startedAt: null,
         },
@@ -612,7 +616,9 @@ export default function App() {
       const snapshot = await archived.openJob(jobId);
       if (snapshot === null) return t.jobLoadFailed;
       const retryable = snapshot.items.find(
-        (item) => item.status === "error" || (item.status === "done" && item.skipped),
+        (item) =>
+          item.retryable &&
+          (item.status === "error" || (item.status === "done" && item.skipped)),
       );
       if (retryable === undefined) return t.noFailedItem;
       const error = retryable.skipped
@@ -636,8 +642,11 @@ export default function App() {
     async (jobId: string) => {
       const snapshot = await archived.openJob(jobId);
       if (snapshot === null) return t.jobLoadFailed;
+      // Same rule as the row wand: a CLI-recorded file cannot be rerun, so
+      // a mixed job offers its first enhanceable URL instead of a sure 409.
       const candidate = snapshot.items.find(
         (item) =>
+          item.retryable &&
           item.status === "done" &&
           item.output !== null &&
           !item.skipped &&

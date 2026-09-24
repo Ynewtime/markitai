@@ -17,6 +17,7 @@ from loguru import logger
 from markitai.constants import (
     ASSETS_REL_PATH,
     DEFAULT_RENDER_DPI,
+    PAGE_MARKER_RE,
     SCREENSHOTS_REL_PATH,
     page_marker,
 )
@@ -25,16 +26,19 @@ from markitai.converter.base import (
     ConvertResult,
     ExtractedImage,
     FileFormat,
+    append_screenshot_comments,
     register_converter,
 )
 from markitai.image import ImageProcessor
+from markitai.notices import user_notice
 from markitai.ocr import (
     OCR_INSTALL_HINT,
     OCRBackendMissing,
+    OCRError,
+    OCRLanguageError,
     is_likely_garbled,
     is_ocr_available,
 )
-from markitai.security import escape_glob_pattern
 from markitai.utils.errors import MissingDependencyError
 from markitai.utils.mime import get_mime_type, normalize_image_extension
 from markitai.utils.paths import (
@@ -234,6 +238,22 @@ def _collect_native_text_pages(doc: Any) -> dict[int, str]:
         if len(text) >= _SCANNED_MAX_TEXT_CHARS and not is_likely_garbled(text):
             native[i] = text
     return native
+
+
+# Pictures on native pages smaller than this (pixels at the render DPI, about
+# 1.8 square inches at 150 DPI) are icons, logos or rules: not worth an OCR pass.
+_PICTURE_OCR_MIN_PIXELS = 40_000
+
+_MARKDOWN_HEADING_RE = re.compile(r"^#{1,6}\s+\S", re.MULTILINE)
+
+
+def _metadata_title(doc: Any) -> str:
+    """The PDF's own document title (Info dictionary), or ``""``."""
+    try:
+        title = (doc.metadata or {}).get("title")
+    except Exception:
+        return ""
+    return " ".join(title.split()) if isinstance(title, str) else ""
 
 
 # --- Hidden-text / prompt-injection sanitization -------------------------------
@@ -509,9 +529,17 @@ class PdfConverter(BaseConverter):
 
         # Determine image output path
         temp_dir: Path | None = None
+        staging_dir: Path | None = None
         try:
             if output_dir:
-                image_path = ensure_assets_dir(output_dir)
+                # pymupdf4llm never writes into the output dir itself: it
+                # names images after a sanitized input name ("a b.pdf" and
+                # "a_b.pdf" both become "a_b.pdf-...") and would overwrite the
+                # ones an earlier output still references, and it mangles
+                # the directory path too (see _new_image_staging_dir). Extract
+                # into a private dir, then adopt the images into assets.
+                staging_dir = self._new_image_staging_dir()
+                image_path = staging_dir
                 write_images = True
             else:
                 # Use temp directory if no output dir specified
@@ -583,13 +611,27 @@ class PdfConverter(BaseConverter):
             # Fix image paths in markdown: pymupdf4llm uses absolute/full paths,
             # we need relative paths (assets/xxx.jpg)
             markdown = self._fix_image_paths(markdown, image_path)
+            if staging_dir is not None:
+                image_path = ensure_assets_dir(cast(Path, output_dir))
+                markdown, produced = self._adopt_staged_images(
+                    markdown,
+                    reference_images,
+                    staging_dir,
+                    image_path,
+                    self.asset_prefix,
+                )
+            else:
+                produced = sorted(p.name for p in image_path.iterdir() if p.is_file())
 
             # Collect extracted images (only for current file). Resolve the
             # refs the converter wrote into the markdown (plus demoted
             # reference images) — pymupdf4llm sanitizes the source filename
             # when naming assets (spaces → "_", parens → "-"), so a prefix
-            # glob on the input name misses them.
-            if write_images and image_path.exists():
+            # glob on the input name misses them. Only files this conversion
+            # wrote are candidates: a prefix glob in the shared assets dir
+            # also matched a renamed sibling output's images ("a.pdf" ->
+            # "a.pdf.v2-0001-01.jpg"), and recompressed them in place.
+            if write_images and produced:
                 ref_names = extract_asset_image_names(markdown)
                 for ref in reference_images:
                     ref_name = ref.get("name")
@@ -599,17 +641,19 @@ class PdfConverter(BaseConverter):
                         and ref_name not in ref_names
                     ):
                         ref_names.append(ref_name)
+                own = set(produced)
                 img_files = [
                     image_path / name
                     for name in ref_names
-                    if (image_path / name).is_file()
+                    if name in own and (image_path / name).is_file()
                 ]
                 if not img_files:
-                    # Legacy fallback: prefix glob on the input file name
-                    file_prefix = escape_glob_pattern(input_path.name)
-                    img_files = sorted(
-                        image_path.glob(f"{file_prefix}*.{image_format}")
-                    )
+                    # No refs in the markdown: every image this run wrote
+                    img_files = [
+                        image_path / name
+                        for name in produced
+                        if (image_path / name).is_file()
+                    ]
                 image_processor = ImageProcessor(
                     self.config.image if self.config else None
                 )
@@ -707,6 +751,12 @@ class PdfConverter(BaseConverter):
                 metadata["page_images"] = page_images
                 metadata["pages"] = len(page_images)
                 metadata["extracted_text"] = markdown
+                if not (self.config and self.config.llm.enabled):
+                    # Without LLM nothing else points at the renders (the
+                    # vision path adds its own references to .llm.md)
+                    markdown = append_screenshot_comments(
+                        markdown, page_images, PAGE_MARKER_RE, "Page"
+                    )
 
             # Clean up temporary directory if used
             if temp_dir and temp_dir.exists():
@@ -724,6 +774,110 @@ class PdfConverter(BaseConverter):
         finally:
             if temp_dir and temp_dir.exists():
                 shutil.rmtree(temp_dir, ignore_errors=True)
+            if staging_dir is not None:
+                shutil.rmtree(staging_dir, ignore_errors=True)
+
+    _STAGED_IMAGE_TAIL_RE = re.compile(r"-\d+-\d+\.[A-Za-z0-9]+$")
+
+    @staticmethod
+    def _new_image_staging_dir() -> Path:
+        """A private directory in the system temp dir for pymupdf4llm images.
+
+        pymupdf4llm 1.28 rewrites spaces, ``()`` and ``[]`` anywhere in the
+        image path (not just the file name) and then saves to the rewritten
+        path, so under an output dir such as iCloud Drive's
+        ``~/Library/Mobile Documents`` every image write failed. The system
+        temp dir has none of those characters; the images are moved into
+        the assets dir afterwards (across devices if need be).
+        """
+        return Path(tempfile.mkdtemp(prefix="markitai-pdf-images-"))
+
+    @classmethod
+    def _adopt_staged_images(
+        cls,
+        markdown: str,
+        reference_images: list[dict[str, Any]],
+        staging_dir: Path,
+        assets_dir: Path,
+        prefix: str | None,
+    ) -> tuple[str, list[str]]:
+        """Move staged pymupdf4llm images into assets under *prefix*.
+
+        pymupdf4llm names images ``<sanitized input>-<page>-<index>.<ext>``;
+        the ``-<page>-<index>.<ext>`` tail is kept and the prefix replaced,
+        so every image of this output carries the output's own name and no
+        two outputs can land on one file. References in *markdown* and
+        *reference_images* are rewritten to the new names (percent-encoded,
+        like every other asset reference). Without a prefix the names are
+        kept.
+
+        Returns:
+            The markdown with rewritten asset references, and the names of
+            the images now in *assets_dir*.
+        """
+        renames = cls._move_staged_images(staging_dir, assets_dir, prefix)
+        cls._rename_reference_images(reference_images, renames)
+        return cls._rewrite_asset_refs(markdown, renames), list(renames.values())
+
+    @classmethod
+    def _move_staged_images(
+        cls, staging_dir: Path, assets_dir: Path, prefix: str | None
+    ) -> dict[str, str]:
+        """Move staged images into *assets_dir* under *prefix*; old -> new names.
+
+        The assets dir is (re)created right here, not trusted to still exist
+        from before the extraction: an output-profile migration running
+        meanwhile removes it once it is empty.
+        """
+        renames: dict[str, str] = {}
+        staged = sorted(p for p in staging_dir.iterdir() if p.is_file())
+        for index, staged_file in enumerate(staged, start=1):
+            if prefix:
+                match = cls._STAGED_IMAGE_TAIL_RE.search(staged_file.name)
+                tail = match.group(0) if match else f"-{index:04d}{staged_file.suffix}"
+                new_name = f"{prefix}{tail}"
+            else:
+                new_name = staged_file.name
+            target = assets_dir / new_name
+            try:
+                assets_dir.mkdir(parents=True, exist_ok=True)
+                shutil.move(staged_file, target)
+            except FileNotFoundError:
+                # Pruned between the mkdir and the move: once more
+                assets_dir.mkdir(parents=True, exist_ok=True)
+                shutil.move(staged_file, target)
+            renames[staged_file.name] = new_name
+        return renames
+
+    @staticmethod
+    def _rename_reference_images(
+        reference_images: list[dict[str, Any]], renames: dict[str, str]
+    ) -> None:
+        """Point demoted reference images at their adopted names, in place."""
+        for ref in reference_images:
+            new_name = renames.get(str(ref.get("name")))
+            if new_name is not None:
+                ref["name"] = new_name
+                ref["rel_path"] = f"{ASSETS_REL_PATH}/{new_name}"
+
+    @staticmethod
+    def _rewrite_asset_refs(markdown: str, renames: dict[str, str]) -> str:
+        """Rewrite ``.markitai/assets/<old>`` references to their adopted names."""
+        from urllib.parse import quote, unquote
+
+        if not renames:
+            return markdown
+
+        ref_re = re.compile(rf"\]\({re.escape(ASSETS_REL_PATH)}/([^)]+)\)")
+
+        def replace_ref(match: re.Match[str]) -> str:
+            old_name = unquote(match.group(1))
+            new_name = renames.get(old_name)
+            if new_name is None or new_name == old_name:
+                return match.group(0)
+            return f"]({ASSETS_REL_PATH}/{quote(new_name, safe='/._~-')})"
+
+        return ref_re.sub(replace_ref, markdown)
 
     def _sanitize_hidden_text(
         self,
@@ -779,9 +933,12 @@ class PdfConverter(BaseConverter):
         excerpt = "; ".join(t for texts in hidden.values() for t in texts)
         if len(excerpt) > _HIDDEN_EXCERPT_MAX_CHARS:
             excerpt = excerpt[:_HIDDEN_EXCERPT_MAX_CHARS] + "..."
-        logger.warning(
-            "[PDF] {} hidden text span(s) detected on page(s) {} "
+        # A user notice, not a plain warning: a prompt-injection hint must
+        # reach the default console and the batch summary.
+        user_notice(
+            "[PDF] {}: {} hidden text span(s) detected on page(s) {} "
             "(possible prompt injection; excerpt: {!r}){}",
+            input_path.name,
             total_spans,
             ", ".join(str(p) for p in sorted(hidden)),
             excerpt,
@@ -843,8 +1000,11 @@ class PdfConverter(BaseConverter):
             else f"consider re-running with --ocr, which needs the optional "
             f"OCR backend: {OCR_INSTALL_HINT}"
         )
-        logger.warning(
-            "[PDF] {} page(s) look scanned/garbled (pages {}); {}",
+        # A user notice: the default single-file console only shows errors,
+        # and this is the one line that says how to get the missing text.
+        user_notice(
+            "[PDF] {}: {} page(s) look scanned/garbled (pages {}); {}",
+            input_path.name,
             len(flagged),
             ", ".join(str(p) for p in flagged),
             remedy,
@@ -906,7 +1066,10 @@ class PdfConverter(BaseConverter):
                 pix = page.get_pixmap(matrix=mat)
 
                 # Save page image with compression (ensures < 5MB for LLM)
-                image_name = f"{input_path.name}.page{page_num + 1:04d}.{image_format}"
+                # Named after the resolved output (see BaseConverter.asset_prefix)
+                # so a renamed re-run never overwrites an older output's pages.
+                prefix = self.asset_prefix or input_path.name
+                image_name = f"{prefix}.page{page_num + 1:04d}.{image_format}"
                 image_path = screenshots_dir / image_name
                 final_size, actual_path = img_processor.save_screenshot(
                     pix.samples, pix.width, pix.height, image_path
@@ -1005,12 +1168,13 @@ class PdfConverter(BaseConverter):
         pymupdf4llm extracts embedded images with names like: filename.pdf-0-0.png
         (page index - image index on that page). The name prefix is a
         sanitized form of the source filename (spaces → "_"), so files are
-        resolved from the markdown refs first; matching on the raw input
-        name is kept as a fallback for markdown without asset refs.
+        resolved from the markdown refs first; matching on the asset name
+        prefix is kept as a fallback for markdown without asset refs.
 
         Args:
             assets_dir: Directory where images were extracted
-            input_name: Original PDF filename
+            input_name: The images' name prefix (the output-derived
+                ``asset_prefix``, else the PDF filename)
             markdown: Converted markdown whose asset refs name the files
 
         Returns:
@@ -1019,6 +1183,11 @@ class PdfConverter(BaseConverter):
         embedded_images: list[ExtractedImage] = []
         # Suffix pattern: ...-{page}-{index}.{ext}
         index_pattern = re.compile(r"-(\d+)-(\d+)\.(png|jpg|jpeg|webp)$", re.IGNORECASE)
+
+        # Nothing was extracted, or an output-profile migration removed the
+        # emptied dir meanwhile: no images, not a failed conversion.
+        if not assets_dir.is_dir():
+            return embedded_images
 
         image_files = [
             assets_dir / name
@@ -1029,9 +1198,12 @@ class PdfConverter(BaseConverter):
             legacy_pattern = re.compile(
                 rf"^{re.escape(input_name)}-(\d+)-(\d+)\.(png|jpg|jpeg|webp)$"
             )
-            image_files = [
-                f for f in assets_dir.iterdir() if legacy_pattern.match(f.name)
-            ]
+            try:
+                image_files = [
+                    f for f in assets_dir.iterdir() if legacy_pattern.match(f.name)
+                ]
+            except FileNotFoundError:
+                return embedded_images
 
         for image_file in image_files:
             match = index_pattern.search(image_file.name)
@@ -1067,6 +1239,14 @@ class PdfConverter(BaseConverter):
     ) -> ConvertResult:
         """Convert PDF using OCR for scanned documents.
 
+        With per-page routing (the default), pages that carry a healthy
+        text layer go through the same pymupdf4llm extraction as the
+        standard path -- headings, lists, tables and image references
+        intact -- and only scanned/garbled pages are OCR'd. Pictures on
+        the native pages are OCR'd too, their text placed under the image
+        reference. Running headers/footers are stripped and hidden text
+        is sanitized exactly as on the standard path.
+
         Also renders each page as an image (if enable_screenshot) for reference.
 
         Args:
@@ -1075,6 +1255,10 @@ class PdfConverter(BaseConverter):
 
         Returns:
             ConvertResult containing OCR-extracted markdown with commented page images
+
+        Raises:
+            OCRError: OCR failed on one or more pages. The failure is never
+                written into the Markdown as if it were page content.
         """
         try:
             import pymupdf
@@ -1104,203 +1288,421 @@ class PdfConverter(BaseConverter):
         # Check if screenshot is enabled
         enable_screenshot = self.config and self.config.screenshot.enabled
 
-        images: list[ExtractedImage] = []
         page_images: list[dict] = []
-        markdown_parts = []
         dpi = DEFAULT_RENDER_DPI
 
-        # Step 2: Render each page as image (only if screenshot enabled)
-        # Use parallel processing for better performance
         # Per-page OCR routing: pages with a healthy native text layer keep
         # that text; only scanned/garbled pages go through OCR.
         per_page_routing = ocr_config.per_page_routing if ocr_config else True
-        native_texts: dict[int, str] = {}
+        native_pages: list[int] = []
         doc = pymupdf.open(input_path)
-        total_pages = len(doc)
-        if per_page_routing:
-            try:
-                native_texts = _collect_native_text_pages(doc)
-            except Exception as e:
-                logger.debug("[PDF] OCR routing check failed: {}", e)
-                native_texts = {}
-        doc.close()
+        try:
+            total_pages = len(doc)
+            pdf_title = _metadata_title(doc)
+            if per_page_routing:
+                try:
+                    native_pages = sorted(_collect_native_text_pages(doc))
+                except Exception as e:
+                    logger.debug("[PDF] OCR routing check failed: {}", e)
+                    native_pages = []
+        finally:
+            doc.close()
         if per_page_routing:
             logger.debug(
                 "OCR routing: {} pages native, {} pages OCR",
-                len(native_texts),
-                total_pages - len(native_texts),
+                len(native_pages),
+                total_pages - len(native_pages),
             )
 
-        max_workers = self._get_worker_count(input_path, total_pages)
-
-        if enable_screenshot:
-            screenshots_dir.mkdir(parents=True, exist_ok=True)
-
-            def process_page_with_screenshot(page_num: int) -> dict:
-                """Process a single page: render + OCR (thread-safe)."""
-                # Each thread opens its own document (PyMuPDF not thread-safe)
-                thread_doc = pymupdf.open(input_path)
-                img_processor = ImageProcessor(
-                    self.config.image if self.config else None
+        # Native pages: the standard path's pymupdf4llm extraction, so they
+        # keep their structure and image refs instead of flat get_text().
+        temp_assets: Path | None = None
+        assets_dir: Path | None = None
+        page_texts: dict[int, str] = {}
+        reference_images: list[dict[str, Any]] = []
+        if native_pages:
+            if output_dir:
+                # Not created here: extraction stages its images elsewhere
+                # and creates the dir when it moves them in (a profile
+                # migration running meanwhile prunes an empty one).
+                assets_dir = output_dir / ASSETS_REL_PATH
+            else:
+                temp_assets = Path(tempfile.mkdtemp())
+                assets_dir = temp_assets
+            try:
+                page_texts, reference_images = self._extract_native_pages(
+                    input_path, native_pages, assets_dir, image_format
                 )
-                try:
-                    page = thread_doc[page_num]
+            except Exception as e:
+                # Not worth failing over: OCR can still read these pages.
+                logger.debug("[PDF] Native extraction failed, OCR'ing all: {}", e)
+                page_texts, reference_images = {}, []
+            native_pages = sorted(page_texts)
+        ocr_pages = [i for i in range(total_pages) if i not in page_texts]
 
-                    # Render page to image
-                    mat = pymupdf.Matrix(dpi / 72, dpi / 72)
-                    pix = page.get_pixmap(matrix=mat)
+        try:
+            max_workers = self._get_worker_count(input_path, total_pages)
+            ocr_texts: dict[int, str] = {}
+            failures: dict[int, str] = {}
 
-                    # Save page image with compression
-                    image_name = (
-                        f"{input_path.name}.page{page_num + 1:04d}.{image_format}"
+            if enable_screenshot:
+                screenshots_dir.mkdir(parents=True, exist_ok=True)
+                ocr_page_set = set(ocr_pages)
+
+                def process_page_with_screenshot(page_num: int) -> dict:
+                    """Process a single page: render + OCR (thread-safe)."""
+                    # Each thread opens its own document (PyMuPDF not thread-safe)
+                    thread_doc = pymupdf.open(input_path)
+                    img_processor = ImageProcessor(
+                        self.config.image if self.config else None
                     )
-                    image_path = screenshots_dir / image_name
-                    final_size, actual_path = img_processor.save_screenshot(
-                        pix.samples, pix.width, pix.height, image_path
-                    )
+                    try:
+                        page = thread_doc[page_num]
 
-                    # Use the actual path returned by save_screenshot, which may
-                    # differ from image_path when the fallback changes the extension
-                    actual_name = actual_path.name
-                    actual_mime = get_mime_type(
-                        actual_path.suffix, default=f"image/{image_format}"
-                    )
+                        # Render page to image
+                        mat = pymupdf.Matrix(dpi / 72, dpi / 72)
+                        pix = page.get_pixmap(matrix=mat)
 
-                    if page_num in native_texts:
-                        # Routed native: page has a healthy text layer, skip OCR
-                        text_content = native_texts[page_num]
-                    else:
-                        # OCR - reuse already rendered pixmap to avoid re-rendering
-                        try:
-                            result = ocr.recognize_pixmap(
+                        # Save page image with compression
+                        prefix = self.asset_prefix or input_path.name
+                        image_name = f"{prefix}.page{page_num + 1:04d}.{image_format}"
+                        image_path = screenshots_dir / image_name
+                        _size, actual_path = img_processor.save_screenshot(
+                            pix.samples, pix.width, pix.height, image_path
+                        )
+
+                        # Use the actual path returned by save_screenshot, which may
+                        # differ from image_path when the fallback changes the extension
+                        actual_name = actual_path.name
+
+                        text: str | None = None
+                        if page_num in ocr_page_set:
+                            # OCR - reuse already rendered pixmap to avoid re-rendering
+                            text = ocr.recognize_pixmap(
                                 pix.samples, pix.width, pix.height, pix.n
-                            )
-                            text_content = (
-                                result.text.strip()
-                                if result.text.strip()
-                                else "*(No text detected)*"
-                            )
-                        except Exception as e:
-                            logger.warning(f"OCR failed for page {page_num + 1}: {e}")
-                            text_content = f"*(OCR failed: {e})*"
+                            ).text.strip()
 
-                    page_content = f"{text_content}\n\n<!-- ![Page {page_num + 1}]({SCREENSHOTS_REL_PATH}/{actual_name}) -->"
+                        return {
+                            "page_image": {
+                                "page": page_num + 1,
+                                "path": str(actual_path),
+                                "name": actual_name,
+                            },
+                            "text": text,
+                        }
+                    finally:
+                        thread_doc.close()
 
-                    return {
-                        "page_num": page_num,
-                        "image": ExtractedImage(
-                            path=actual_path,
-                            index=page_num + 1,
-                            original_name=actual_name,
-                            mime_type=actual_mime,
-                            width=final_size[0],
-                            height=final_size[1],
-                        ),
-                        "page_image": {
-                            "page": page_num + 1,
-                            "path": str(actual_path),
-                            "name": actual_name,
-                        },
-                        "markdown": page_content,
+                # Process pages in parallel
+                results: dict[int, dict] = {}
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {
+                        executor.submit(process_page_with_screenshot, i): i
+                        for i in range(total_pages)
                     }
-                finally:
-                    thread_doc.close()
+                    for future in as_completed(futures):
+                        page_num = futures[future]
+                        try:
+                            results[page_num] = future.result()
+                            logger.debug(
+                                f"OCR processed page {page_num + 1}/{total_pages}"
+                            )
+                        except (OCRBackendMissing, OCRLanguageError):
+                            raise
+                        except Exception as e:
+                            failures[page_num] = str(e)
 
-            # Process pages in parallel
-            results: dict[int, dict] = {}
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = {
-                    executor.submit(process_page_with_screenshot, i): i
-                    for i in range(total_pages)
-                }
-                for future in as_completed(futures):
-                    page_num = futures[future]
-                    try:
-                        result = future.result()
-                        results[page_num] = result
-                        logger.debug(f"OCR processed page {page_num + 1}/{total_pages}")
-                    except Exception as e:
-                        logger.error(f"Failed to process page {page_num + 1}: {e}")
-                        results[page_num] = {
-                            "page_num": page_num,
-                            "image": None,
-                            "page_image": None,
-                            "markdown": f"*(Page processing failed: {e})*",
-                        }
-
-            # Collect results in order
-            for i in range(total_pages):
-                r = results[i]
-                if r["image"]:
-                    images.append(r["image"])
-                if r["page_image"]:
+                # Collect results in order. Page renders are screenshots,
+                # counted from page_images like on the standard path, never
+                # as embedded images.
+                for i in range(total_pages):
+                    r = results.get(i)
+                    if r is None:
+                        continue
                     page_images.append(r["page_image"])
-                markdown_parts.append(r["markdown"])
-        else:
+                    if r["text"] is not None:
+                        ocr_texts[i] = r["text"]
+            elif ocr_pages:
 
-            def process_page_ocr_only(page_num: int) -> dict:
-                """Process a single page: OCR only (thread-safe)."""
-                if page_num in native_texts:
-                    # Routed native: page has a healthy text layer, skip OCR
-                    return {"page_num": page_num, "markdown": native_texts[page_num]}
-                try:
-                    result = ocr.recognize_pdf_page(input_path, page_num, dpi=dpi)
-                    text_content = (
-                        result.text.strip()
-                        if result.text.strip()
-                        else "*(No text detected)*"
+                def process_page_ocr_only(page_num: int) -> str:
+                    """Process a single page: OCR only (thread-safe)."""
+                    return ocr.recognize_pdf_page(
+                        input_path, page_num, dpi=dpi
+                    ).text.strip()
+
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {
+                        executor.submit(process_page_ocr_only, i): i for i in ocr_pages
+                    }
+                    for future in as_completed(futures):
+                        page_num = futures[future]
+                        try:
+                            ocr_texts[page_num] = future.result()
+                            logger.debug(
+                                f"OCR processed page {page_num + 1}/{total_pages}"
+                            )
+                        except (OCRBackendMissing, OCRLanguageError):
+                            raise
+                        except Exception as e:
+                            failures[page_num] = str(e)
+
+            if failures:
+                pages = sorted(failures)
+                raise OCRError(
+                    f"OCR failed on {len(pages)} of {total_pages} page(s) of "
+                    f"{input_path.name} (pages "
+                    f"{', '.join(str(p + 1) for p in pages)}): {failures[pages[0]]}"
+                )
+
+            empty_pages = [i + 1 for i in ocr_pages if not ocr_texts.get(i)]
+            if empty_pages:
+                user_notice(
+                    "[OCR] No text found on {} page(s) of {} (pages {}); "
+                    "they are blank in the output",
+                    len(empty_pages),
+                    input_path.name,
+                    ", ".join(str(p) for p in empty_pages),
+                )
+            page_texts.update(ocr_texts)
+
+            # Pictures on native pages (a chart or a pasted scan next to real
+            # text) are exactly what --ocr is for; read them too.
+            pictures_read = 0
+            if assets_dir is not None:
+                pictures_read = self._ocr_native_page_pictures(
+                    ocr, page_texts, native_pages, assets_dir, max_workers, input_path
+                )
+
+            ordered = list(range(total_pages))
+            texts = [page_texts.get(i, "") for i in ordered]
+
+            # Strip running headers/footers repeated across page boundaries
+            texts, stripped_lines = strip_repeated_page_lines(texts)
+            if stripped_lines:
+                logger.debug(
+                    "[PDF] Stripped {} repeated header/footer line(s): {}",
+                    len(stripped_lines),
+                    sorted(stripped_lines),
+                )
+
+            # Hidden-text / prompt-injection sanitization (warn or remove),
+            # as on the standard path. Only native text can carry a hidden
+            # span; OCR reads what is visible. Called even with no native
+            # page, so the warning still names the pages that carry one.
+            native_set = set(native_pages)
+            native_index = [i for i in ordered if i in native_set]
+            sanitized = self._sanitize_hidden_text(
+                input_path,
+                [i + 1 for i in native_index],
+                [texts[i] for i in native_index],
+            )
+            for i, text in zip(native_index, sanitized):
+                texts[i] = text
+
+            page_image_names = {info["page"]: info["name"] for info in page_images}
+            markdown_parts = []
+            for i, text in zip(ordered, texts):
+                part = text
+                name = page_image_names.get(i + 1)
+                if name:
+                    comment = f"<!-- ![Page {i + 1}]({SCREENSHOTS_REL_PATH}/{name}) -->"
+                    part = f"{part}\n\n{comment}" if part else comment
+                markdown_parts.append(f"{page_marker(i + 1)}\n\n{part}")
+
+            # Mark the page boundaries the loop above already knows. Without
+            # them an OCR'd PDF reaches every later stage as one undivided run
+            # of text: page/image alignment cannot line up, and output profiles
+            # have nothing to rewrite.
+            extracted_text = "\n\n".join(markdown_parts)
+            embedded_images: list[ExtractedImage] = []
+            if assets_dir is not None:
+                extracted_text = self._fix_image_paths(extracted_text, assets_dir)
+                if output_dir:
+                    embedded_images = self._collect_embedded_images(
+                        assets_dir,
+                        self.asset_prefix or input_path.name,
+                        extracted_text,
                     )
-                except Exception as e:
-                    logger.warning(f"OCR failed for page {page_num + 1}: {e}")
-                    text_content = f"*(OCR failed: {e})*"
-                return {"page_num": page_num, "markdown": text_content}
 
-            # Process pages in parallel
-            results: dict[int, dict] = {}
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = {
-                    executor.submit(process_page_ocr_only, i): i
-                    for i in range(total_pages)
-                }
-                for future in as_completed(futures):
-                    page_num = futures[future]
-                    try:
-                        result = future.result()
-                        results[page_num] = result
-                        logger.debug(f"OCR processed page {page_num + 1}/{total_pages}")
-                    except Exception as e:
-                        logger.error(f"Failed to process page {page_num + 1}: {e}")
-                        results[page_num] = {
-                            "page_num": page_num,
-                            "markdown": f"*(OCR failed: {e})*",
-                        }
-
-            # Collect results in order
-            for i in range(total_pages):
-                markdown_parts.append(results[i]["markdown"])
-
-        # Mark the page boundaries the loop above already knows. Without
-        # them an OCR'd PDF reaches every later stage as one undivided run
-        # of text: page/image alignment cannot line up, and output profiles
-        # have nothing to rewrite.
-        extracted_text = f"# {input_path.stem}\n\n" + "\n\n".join(
-            f"{page_marker(number)}\n\n{part}"
-            for number, part in enumerate(markdown_parts, 1)
-        )
-
-        return ConvertResult(
-            markdown=extracted_text,
-            images=images,
-            metadata={
+            metadata: dict[str, Any] = {
                 "source": str(input_path),
                 "format": "PDF",
-                "ocr_used": True,
+                "ocr_used": bool(ocr_pages) or pictures_read > 0,
                 "ocr_path": "rapidocr",
-                "pages": len(markdown_parts),
+                "pages": total_pages,
+                "images": len(embedded_images),
                 "extracted_text": extracted_text,
                 "page_images": page_images,
-            },
+            }
+            if reference_images and output_dir:
+                metadata["reference_images"] = reference_images
+            # No heading to take a title from (a scan): fall back to the
+            # PDF's own title before the filename.
+            if pdf_title and not _MARKDOWN_HEADING_RE.search(extracted_text):
+                metadata["title"] = pdf_title
+
+            return ConvertResult(
+                markdown=extracted_text,
+                images=embedded_images,
+                metadata=metadata,
+            )
+        finally:
+            if temp_assets and temp_assets.exists():
+                shutil.rmtree(temp_assets, ignore_errors=True)
+
+    def _extract_native_pages(
+        self,
+        input_path: Path,
+        pages: list[int],
+        assets_dir: Path,
+        image_format: str,
+    ) -> tuple[dict[int, str], list[dict[str, Any]]]:
+        """pymupdf4llm Markdown for the given 0-based pages.
+
+        The same extraction the standard (non-OCR) path runs, restricted to
+        the pages OCR routing left native.
+
+        Returns:
+            Tuple of (0-based page -> page markdown, demoted reference images)
+        """
+        # Same staging as the standard path: pymupdf4llm would otherwise name
+        # images after the sanitized input and overwrite another output's,
+        # and cannot write under a path with spaces or brackets at all.
+        staging_dir = self._new_image_staging_dir()
+        try:
+            texts, reference_images = self._extract_native_page_chunks(
+                input_path, pages, staging_dir, image_format
+            )
+            renames = self._move_staged_images(
+                staging_dir, assets_dir, self.asset_prefix
+            )
+            self._rename_reference_images(reference_images, renames)
+            # Staged refs point into the staging dir; make them relative
+            # first so the rename rewrite (and later stages) can see them.
+            texts = {
+                page: self._rewrite_asset_refs(
+                    self._fix_image_paths(text, staging_dir), renames
+                )
+                for page, text in texts.items()
+            }
+            return texts, reference_images
+        finally:
+            shutil.rmtree(staging_dir, ignore_errors=True)
+
+    def _extract_native_page_chunks(
+        self,
+        input_path: Path,
+        pages: list[int],
+        image_dir: Path,
+        image_format: str,
+    ) -> tuple[dict[int, str], list[dict[str, Any]]]:
+        """Run pymupdf4llm on *pages*, writing images into *image_dir*."""
+        chunks = cast(
+            list[Any],
+            pymupdf4llm.to_markdown(
+                str(input_path),
+                pages=pages,
+                write_images=True,
+                image_path=str(image_dir),
+                image_format=image_format,
+                dpi=DEFAULT_RENDER_DPI,
+                force_text=True,
+                page_chunks=True,
+                use_ocr=False,  # Markitai handles OCR separately; suppress Tesseract probing
+            ),
         )
+        if not isinstance(chunks, list):
+            chunks = [chunks]
+        texts: dict[int, str] = {}
+        reference_images: list[dict[str, Any]] = []
+        for index, chunk in enumerate(chunks):
+            fallback = pages[index] if index < len(pages) else index
+            page_num = _chunk_page_number(chunk, fallback)
+            text = _chunk_text(chunk)
+            if isinstance(chunk, dict):
+                text, refs = self._demote_reference_picture_blocks(chunk, page_num)
+                reference_images.extend(refs)
+            texts[page_num - 1] = text.strip()
+        return texts, reference_images
+
+    def _ocr_native_page_pictures(
+        self,
+        ocr: Any,
+        page_texts: dict[int, str],
+        native_pages: list[int],
+        assets_dir: Path,
+        max_workers: int,
+        input_path: Path,
+    ) -> int:
+        """OCR the sizable pictures referenced on native pages, in place.
+
+        Recognized text goes right under the picture's reference. Pictures
+        smaller than ``_PICTURE_OCR_MIN_PIXELS`` (icons, logos, rules) are
+        skipped. A picture that cannot be read keeps its bare reference
+        and raises a notice; the page's own text is unaffected.
+
+        Returns:
+            Number of pictures OCR was run on
+        """
+        from urllib.parse import unquote
+
+        from PIL import Image
+
+        targets: list[tuple[int, str, Path]] = []
+        for page in native_pages:
+            for match in self._IMAGE_REF_RE.finditer(page_texts.get(page, "")):
+                # Adopted names are percent-encoded in the refs ("报告 1.pdf"
+                # -> "%E6%8A%A5%E5%91%8A%201.pdf-0001-01.png")
+                path = assets_dir / unquote(match.group(1))
+                if not path.is_file():
+                    continue
+                try:
+                    with Image.open(path) as picture:
+                        width, height = picture.size
+                except Exception:
+                    continue
+                if width * height >= _PICTURE_OCR_MIN_PIXELS:
+                    targets.append((page, match.group(0), path))
+        if not targets:
+            return 0
+
+        def read(target: tuple[int, str, Path]) -> str:
+            return ocr.recognize(target[2]).text.strip()
+
+        unreadable: list[str] = []
+        recognized: dict[tuple[int, str, Path], str] = {}
+        try:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {executor.submit(read, t): t for t in targets}
+                for future in as_completed(futures):
+                    target = futures[future]
+                    try:
+                        recognized[target] = future.result()
+                    except (OCRBackendMissing, OCRLanguageError):
+                        raise
+                    except Exception as e:
+                        logger.debug(
+                            "[PDF] Picture OCR failed for {}: {}", target[2], e
+                        )
+                        unreadable.append(target[2].name)
+        except OCRBackendMissing as e:
+            # Every page here has a real text layer, so the document converts
+            # fine without OCR; only the pictures go unread. Say so instead of
+            # failing a PDF that never needed the backend before.
+            user_notice("[OCR] Pictures in {} were not read: {}", input_path.name, e)
+            return 0
+
+        for (page, ref, _path), text in recognized.items():
+            if text:
+                page_texts[page] = page_texts[page].replace(ref, f"{ref}\n\n{text}", 1)
+        if unreadable:
+            user_notice(
+                "[OCR] Could not read {} picture(s) in {}: {}",
+                len(unreadable),
+                input_path.name,
+                ", ".join(sorted(unreadable)),
+            )
+        return len(targets)
 
     def _degrade_vlm_ocr(
         self, input_path: Path, output_dir: Path | None
@@ -1317,6 +1719,15 @@ class PdfConverter(BaseConverter):
                 "falling back to local RapidOCR for {}",
                 input_path.name,
             )
+            if self.config is not None and self.config.screenshot.enabled:
+                # The switch covers OCR only. --screenshot --llm is its own
+                # explicit request to show the model the rendered pages.
+                user_notice(
+                    "[VLM OCR] {}: MARKITAI_NO_VLM_OCR keeps OCR local, but "
+                    "--screenshot --llm still sends the page screenshots to the "
+                    "vision model. Drop --screenshot to keep page images local.",
+                    input_path.name,
+                )
             return self._convert_with_ocr(input_path, output_dir)
         raise OCRBackendMissing(
             "VLM OCR is disabled by MARKITAI_NO_VLM_OCR=1 and the local "
@@ -1362,32 +1773,41 @@ class PdfConverter(BaseConverter):
         # page's content under its own marker and aligned with that page's
         # image, which it cannot do for text that arrives as one long run.
         logger.debug("Extracting text with pymupdf4llm...")
-        page_chunks = cast(
-            list[Any],
-            pymupdf4llm.to_markdown(
-                str(input_path),
-                write_images=True,
-                image_path=str(assets_dir),
-                image_format=image_format,
-                dpi=DEFAULT_RENDER_DPI,
-                force_text=True,
-                page_chunks=True,
-                use_ocr=False,  # Markitai handles OCR separately; suppress Tesseract probing
-            ),
-        )
-        # page_chunks=True returns a list; anything else is one whole page.
-        # Iterating a bare string here would mark up every character as its
-        # own page rather than fail, so the shape is checked, not assumed.
-        chunks = page_chunks if isinstance(page_chunks, list) else [page_chunks]
-        extracted_text = "\n\n".join(
-            f"{page_marker(_chunk_page_number(chunk, index))}\n\n{_chunk_text(chunk)}"
-            for index, chunk in enumerate(chunks)
-        )
-        extracted_text = self._fix_image_paths(extracted_text, assets_dir)
+        # Staged like the other paths: pymupdf4llm cannot write under a path
+        # with spaces or brackets, and names images after the input.
+        staging_dir = self._new_image_staging_dir()
+        try:
+            page_chunks = cast(
+                list[Any],
+                pymupdf4llm.to_markdown(
+                    str(input_path),
+                    write_images=True,
+                    image_path=str(staging_dir),
+                    image_format=image_format,
+                    dpi=DEFAULT_RENDER_DPI,
+                    force_text=True,
+                    page_chunks=True,
+                    use_ocr=False,  # Markitai handles OCR separately; suppress Tesseract probing
+                ),
+            )
+            # page_chunks=True returns a list; anything else is one whole page.
+            # Iterating a bare string here would mark up every character as its
+            # own page rather than fail, so the shape is checked, not assumed.
+            chunks = page_chunks if isinstance(page_chunks, list) else [page_chunks]
+            extracted_text = "\n\n".join(
+                f"{page_marker(_chunk_page_number(chunk, index))}\n\n{_chunk_text(chunk)}"
+                for index, chunk in enumerate(chunks)
+            )
+            extracted_text = self._fix_image_paths(extracted_text, staging_dir)
+            extracted_text, _adopted = self._adopt_staged_images(
+                extracted_text, [], staging_dir, assets_dir, self.asset_prefix
+            )
+        finally:
+            shutil.rmtree(staging_dir, ignore_errors=True)
 
         # Collect embedded images extracted by pymupdf4llm
         embedded_images = self._collect_embedded_images(
-            assets_dir, input_path.name, extracted_text
+            assets_dir, self.asset_prefix or input_path.name, extracted_text
         )
 
         images: list[ExtractedImage] = list(embedded_images)
@@ -1400,9 +1820,9 @@ class PdfConverter(BaseConverter):
             page_results = self._render_pages_parallel(
                 input_path, screenshots_dir, image_format, dpi=DEFAULT_RENDER_DPI
             )
-            for extracted_img, page_info in page_results:
-                images.append(extracted_img)
-                page_images.append(page_info)
+            # Page renders are screenshots, not embedded images: they are
+            # counted from page_images, like the standard path does
+            page_images.extend(page_info for _image, page_info in page_results)
 
             if page_images:
                 logger.debug(f"Rendered {len(page_images)} page screenshots")

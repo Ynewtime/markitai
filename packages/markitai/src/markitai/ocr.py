@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import math
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -18,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from markitai.constants import DEFAULT_OCR_SAMPLE_PAGES, DEFAULT_RENDER_DPI
+from markitai.ocr_layout import layout_ocr_text
 from markitai.utils.errors import MissingDependencyError, extra_install_command
 
 if TYPE_CHECKING:
@@ -127,6 +130,205 @@ class OCRResult:
     boxes: list[list[float]]
 
 
+class OCRError(RuntimeError):
+    """OCR ran and could not read the input (undecodable image, engine error).
+
+    Converters raise it instead of writing the failure into the Markdown:
+    an error message in the body is not content, and reporting the item as
+    converted would hide that nothing was read.
+    """
+
+
+class OCRLanguageError(ValueError):
+    """``ocr.lang`` names a language no installed RapidOCR model reads."""
+
+
+# markitai's short codes (the documented ``ocr.lang`` values) and common
+# spellings -> RapidOCR recognition language.
+_LANG_ALIASES = {
+    "zh": "ch",
+    "zh_cn": "ch",
+    "zh-cn": "ch",
+    "cn": "ch",
+    "zh_tw": "chinese_cht",
+    "zh-tw": "chinese_cht",
+    "cht": "chinese_cht",
+    "ja": "japan",
+    "jp": "japan",
+    "ko": "korean",
+    "ar": "arabic",
+}
+
+# Languages the default PP-OCRv6 multilingual model does not read. RapidOCR
+# 3.9 ships a PP-OCRv5 mobile recognizer for each, selected explicitly;
+# without that, every page failed with "Unsupported rec.lang_type".
+_PPOCRV5_REC_LANGS = frozenset(
+    {
+        "korean",
+        "arabic",
+        "th",
+        "latin",
+        "cyrillic",
+        "eslav",
+        "el",
+        "devanagari",
+        "ta",
+        "te",
+    }
+)
+
+# Languages the default PP-OCRv6 multilingual recognizer reads: RapidOCR
+# 3.9's ``rapidocr.utils.model_resolver.PP_OCRV6_LANGS`` (a unit test keeps
+# the two in step). Copied rather than imported so validating ocr.lang --
+# `markitai doctor` does it -- never imports rapidocr, which drags in cv2.
+_PPOCRV6_REC_LANGS = frozenset(
+    {
+        "ch", "chinese_cht", "en", "japan", "af", "az", "bs", "ca", "cs",
+        "cy", "da", "de", "es", "et", "eu", "fi", "fr", "ga", "gl", "hr",
+        "hu", "id", "is", "it", "ku", "la", "lb", "lt", "lv", "mi", "ms",
+        "mt", "nl", "no", "oc", "pl", "pt", "qu", "rm", "ro", "rs_latin",
+        "sk", "sl", "sq", "sv", "sw", "tl", "tr", "uz", "vi", "french",
+        "german",
+    }
+)  # fmt: skip
+
+
+def resolve_ocr_language(lang: str) -> tuple[str, bool]:
+    """Map an ``ocr.lang`` value to a RapidOCR recognition language.
+
+    Args:
+        lang: The configured language (``en``, ``zh``, ``ko``, ``fr``, ...)
+
+    Returns:
+        Tuple of (RapidOCR ``Rec.lang_type`` value, whether it needs the
+        PP-OCRv5 recognizer instead of the default PP-OCRv6 one)
+
+    Raises:
+        OCRLanguageError: No RapidOCR model reads this language. Silently
+            falling back to the Chinese model, as before, turned a typo or
+            an unsupported script into confidently wrong text.
+    """
+    key = lang.strip().lower()
+    rec_lang = _LANG_ALIASES.get(key, key)
+    if rec_lang in _PPOCRV5_REC_LANGS:
+        return rec_lang, True
+    if rec_lang in _PPOCRV6_REC_LANGS:
+        return rec_lang, False
+    # Short enough to survive the error truncation in reports and --json
+    raise OCRLanguageError(
+        f"Unsupported ocr.lang {lang!r}: use en, zh, zh_tw, ja, ko, ar, th, "
+        "latin, or a code such as fr/de/es (see the OCR configuration docs)"
+    )
+
+
+class _EngineGate:
+    """Shared/exclusive gate around the process-wide RapidOCR engine.
+
+    Plain recognition calls only read the engine's thresholds and run
+    concurrently (shared). The sparse-tile retry must lower them, and
+    RapidOCR's ``__call__`` writes them into the engine in place; it holds
+    the gate exclusively so no concurrent page is recognized with the
+    lowered thresholds, and restores them before releasing. Waiting
+    exclusive holders block new shared ones, so a retry cannot starve.
+    """
+
+    def __init__(self) -> None:
+        self._cond = threading.Condition()
+        self._readers = 0
+        self._writer = False
+        self._writers_waiting = 0
+
+    @contextmanager
+    def shared(self) -> Iterator[None]:
+        with self._cond:
+            while self._writer or self._writers_waiting:
+                self._cond.wait()
+            self._readers += 1
+        try:
+            yield
+        finally:
+            with self._cond:
+                self._readers -= 1
+                if not self._readers:
+                    self._cond.notify_all()
+
+    @contextmanager
+    def exclusive(self) -> Iterator[None]:
+        with self._cond:
+            self._writers_waiting += 1
+            try:
+                while self._writer or self._readers:
+                    self._cond.wait()
+            finally:
+                self._writers_waiting -= 1
+            self._writer = True
+        try:
+            yield
+        finally:
+            with self._cond:
+                self._writer = False
+                self._cond.notify_all()
+
+
+# Page orientation: the widest lines of each half of the page are asked. Only
+# confident answers count, and at least this share of the sample must give
+# one; the page counts as upside down when this share of those say 180°, and
+# they outvote 0° in each half. A pasted-up page whose two halves face
+# opposite ways must not be turned over as a whole.
+_ORIENTATION_SAMPLE = 8
+_ORIENTATION_MIN_CONFIDENT = 0.5
+_ORIENTATION_SHARE = 0.8
+_ORIENTATION_MIN_SCORE = 0.8
+
+
+def _orientation_vote(label: Any) -> bool | None:
+    """A classifier answer: True for 180°, False for 0°, None when unsure."""
+    try:
+        angle, score = str(label[0]), float(label[1])
+    except (TypeError, ValueError, IndexError):
+        return None
+    if score < _ORIENTATION_MIN_SCORE or angle not in ("0", "180"):
+        return None
+    return angle == "180"
+
+
+def _orientation_sample(polygons: list[Any]) -> list[list[Any]]:
+    """The widest line polygons of the top and of the bottom half of the text.
+
+    Up to half of ``_ORIENTATION_SAMPLE`` from each half; a half with fewer
+    lines leaves its share to the other.
+    """
+
+    def width(poly: Any) -> float:
+        return float(poly[:, 0].max() - poly[:, 0].min())
+
+    centers = [float(poly[:, 1].mean()) for poly in polygons]
+    middle = (min(centers) + max(centers)) / 2
+    top = sorted(
+        (p for p, c in zip(polygons, centers) if c < middle), key=width, reverse=True
+    )
+    bottom = sorted(
+        (p for p, c in zip(polygons, centers) if c >= middle), key=width, reverse=True
+    )
+    share = _ORIENTATION_SAMPLE // 2
+    top_count = min(len(top), max(share, _ORIENTATION_SAMPLE - len(bottom)))
+    bottom_count = min(len(bottom), _ORIENTATION_SAMPLE - top_count)
+    return [top[:top_count], bottom[:bottom_count]]
+
+
+def _polygon_bounds(box: Any) -> tuple[float, float, float, float] | None:
+    """Axis-aligned bound of one RapidOCR polygon, or None when malformed."""
+    try:
+        points = box.tolist() if hasattr(box, "tolist") else list(box)
+        xs = [float(point[0]) for point in points]
+        ys = [float(point[1]) for point in points]
+    except (TypeError, ValueError, IndexError):
+        return None
+    if not xs or not ys:
+        return None
+    return min(xs), min(ys), max(xs), max(ys)
+
+
 def _capture_engine_thresholds(engine: Any) -> dict[str, Any]:
     """Snapshot RapidOCR's mutable detection thresholds before a scoped call.
 
@@ -165,6 +367,8 @@ class OCRProcessor:
     _global_engine: Any = None
     _global_config: OCRConfig | None = None
     _init_lock = threading.Lock()
+    # Guards the shared engine's mutable thresholds (see _EngineGate)
+    _gate = _EngineGate()
 
     def __init__(self, config: OCRConfig | None = None) -> None:
         """
@@ -281,27 +485,44 @@ class OCRProcessor:
             "Global.log_level": "error",
         }
 
-        # Set language if configured (must use LangRec enum)
+        # Set language if configured. Validated before RapidOCR sees it: an
+        # unknown value used to fall back to the Chinese model silently.
         if config and config.lang:
-            from rapidocr import LangRec
+            params.update(cls._language_params(config.lang))
 
-            lang_map = {
-                "zh": LangRec.CH,
-                "ch": LangRec.CH,
-                "en": LangRec.EN,
-                "ja": LangRec.JAPAN,
-                "japan": LangRec.JAPAN,
-                "ko": LangRec.KOREAN,
-                "korean": LangRec.KOREAN,
-                "ar": LangRec.ARABIC,
-                "arabic": LangRec.ARABIC,
-                "th": LangRec.TH,
-                "latin": LangRec.LATIN,
-            }
-            lang_enum = lang_map.get(config.lang.lower(), LangRec.CH)
-            params["Rec.lang_type"] = lang_enum
+        try:
+            return RapidOCR(params=params)
+        except (ValueError, TypeError) as e:
+            # RapidOCR rejects a language/model combination at construction
+            # ("Unsupported rec.lang_type"); say which setting caused it.
+            lang = config.lang if config else None
+            raise OCRLanguageError(
+                f"RapidOCR cannot build a recognizer for ocr.lang={lang!r}: {e}"
+            ) from e
 
-        return RapidOCR(params=params)
+    @staticmethod
+    def _language_params(lang: str) -> dict[str, Any]:
+        """RapidOCR params selecting the recognizer for ``lang``.
+
+        Raises:
+            OCRLanguageError: ``lang`` is not a language RapidOCR reads.
+        """
+        from rapidocr import LangRec
+
+        rec_lang, needs_v5 = resolve_ocr_language(lang)
+        try:
+            lang_value: Any = LangRec(rec_lang)
+        except ValueError:
+            # PP-OCRv6 reads many ISO codes LangRec has no member for (fr,
+            # de, ...); RapidOCR accepts those as plain strings.
+            lang_value = rec_lang
+        params: dict[str, Any] = {"Rec.lang_type": lang_value}
+        if needs_v5:
+            from rapidocr import ModelType, OCRVersion
+
+            params["Rec.ocr_version"] = OCRVersion.PPOCRV5
+            params["Rec.model_type"] = ModelType.MOBILE
+        return params
 
     @property
     def engine(self) -> Any:
@@ -313,11 +534,17 @@ class OCRProcessor:
         # Use global shared engine for better performance
         return self.get_shared_engine(self.config)
 
+    def _run_engine(self, image: Any) -> Any:
+        """One full-image recognition pass with the engine's own thresholds."""
+        engine = self.engine
+        with self._gate.shared():
+            return engine(image)
+
     def _build_ocr_result(self, raw_result: Any) -> OCRResult:
         """Build OCRResult from raw RapidOCR engine output.
 
-        Extracts texts, scores, and boxes from the engine result,
-        joins text blocks, and calculates average confidence.
+        Extracts texts, scores, and boxes from the engine result, lays the
+        text out in reading order, and calculates average confidence.
 
         Args:
             raw_result: Raw result from RapidOCR engine call
@@ -331,7 +558,14 @@ class OCRProcessor:
         scores = list(raw_result.scores) if raw_result.scores is not None else []
         boxes = list(raw_result.boxes) if raw_result.boxes is not None else []
 
-        full_text = "\n".join(texts)
+        full_text = layout_ocr_text(
+            [str(text) for text in texts],
+            [
+                _polygon_bounds(boxes[index]) if index < len(boxes) else None
+                for index in range(len(texts))
+            ],
+            upside_down=self._is_upside_down(raw_result),
+        )
         avg_confidence = sum(scores) / len(scores) if scores else 0.0
 
         logger.debug(
@@ -346,6 +580,49 @@ class OCRProcessor:
                 box.tolist() if hasattr(box, "tolist") else list(box) for box in boxes
             ],
         )
+
+    def _is_upside_down(self, raw_result: Any) -> bool:
+        """Whether the page was scanned rotated by 180 degrees.
+
+        RapidOCR's line classifier turns each upside-down line the right way
+        up before recognition, so the text reads fine, but the boxes keep
+        the scan's coordinates and come out bottom line first. The same
+        classifier, asked about the widest lines of the top and the bottom
+        half, tells the page's orientation apart from the odd flipped label
+        and from a page pasted up from two halves facing opposite ways.
+        """
+        image = getattr(raw_result, "img", None)
+        boxes = raw_result.boxes
+        classify = getattr(self.engine, "text_cls", None)
+        if image is None or boxes is None or classify is None or len(boxes) < 2:
+            return False
+        try:
+            import numpy as np
+            from rapidocr.utils.process_img import get_rotate_crop_image
+
+            polygons = [np.asarray(box, dtype=np.float32) for box in boxes]
+            halves = _orientation_sample(polygons)
+            sample = [poly for half in halves for poly in half]
+            crops = [get_rotate_crop_image(image, poly.copy()) for poly in sample]
+            with self._gate.shared():
+                labels = list(classify(crops).cls_res or [])
+        except Exception as e:  # orientation is a refinement; never fail OCR
+            logger.debug(f"OCR orientation check skipped: {e}")
+            return False
+        if not labels or len(labels) != len(sample):
+            return False
+        votes = [_orientation_vote(label) for label in labels]
+        confident = [vote for vote in votes if vote is not None]
+        if len(confident) < max(2, len(votes) * _ORIENTATION_MIN_CONFIDENT):
+            return False
+        if sum(confident) < len(confident) * _ORIENTATION_SHARE:
+            return False
+        for half in (votes[: len(halves[0])], votes[len(halves[0]) :]):
+            flipped = sum(vote is True for vote in half)
+            upright = sum(vote is False for vote in half)
+            if (flipped or upright) and flipped <= upright:
+                return False
+        return True
 
     @staticmethod
     def _load_rgb_array(image_path: Path) -> Any:
@@ -418,17 +695,49 @@ class OCRProcessor:
         if columns == 1 and rows == 1:
             return OCRResult(text="", confidence=0.0, boxes=[])
 
-        tile_width = math.ceil(width / columns)
-        tile_height = math.ceil(height / rows)
-        overlap_x = max(16, round(tile_width * 0.06))
-        overlap_y = max(16, round(tile_height * 0.06))
-        blocks: list[dict[str, Any]] = []
+        overlap_x = max(16, round(math.ceil(width / columns) * 0.06))
+        overlap_y = max(16, round(math.ceil(height / rows) * 0.06))
 
         # RapidOCR's engine is a process-wide singleton and __call__ mutates
         # its box_thresh/text_score in place (update_params), never restoring
         # them. Passing the low tile thresholds would otherwise leak into every
-        # later full-image pass across the whole batch. Snapshot and restore.
-        saved_thresholds = _capture_engine_thresholds(self.engine)
+        # later full-image pass across the whole batch. Snapshot and restore,
+        # holding the engine exclusively: PDF pages are recognized in a
+        # thread pool, and a concurrent page must neither run with the tile
+        # thresholds nor have its own snapshot restored over ours.
+        engine = self.engine
+        with self._gate.exclusive():
+            blocks = self._recognize_tiles_locked(
+                engine, image_array, rows, columns, overlap_x, overlap_y
+            )
+
+        blocks.sort(key=lambda block: (block["bounds"][1], block["bounds"][0]))
+        if not blocks:
+            return OCRResult(text="", confidence=0.0, boxes=[])
+        return OCRResult(
+            text=layout_ocr_text(
+                [block["text"] for block in blocks],
+                [block["bounds"] for block in blocks],
+            ),
+            confidence=sum(block["score"] for block in blocks) / len(blocks),
+            boxes=[list(block["bounds"]) for block in blocks],
+        )
+
+    def _recognize_tiles_locked(
+        self,
+        engine: Any,
+        image_array: Any,
+        rows: int,
+        columns: int,
+        overlap_x: int,
+        overlap_y: int,
+    ) -> list[dict[str, Any]]:
+        """Run the tiled pass; the caller holds the engine gate exclusively."""
+        height, width = image_array.shape[:2]
+        tile_width = math.ceil(width / columns)
+        tile_height = math.ceil(height / rows)
+        blocks: list[dict[str, Any]] = []
+        saved_thresholds = _capture_engine_thresholds(engine)
         try:
             for row in range(rows):
                 for column in range(columns):
@@ -437,7 +746,7 @@ class OCRProcessor:
                     x1 = min(width, (column + 1) * tile_width + overlap_x)
                     y1 = min(height, (row + 1) * tile_height + overlap_y)
                     tile = image_array[y0:y1, x0:x1]
-                    raw: Any = self.engine(tile, box_thresh=0.35, text_score=0.45)
+                    raw: Any = engine(tile, box_thresh=0.35, text_score=0.45)
                     texts = list(raw.txts) if raw.txts is not None else []
                     scores = list(raw.scores) if raw.scores is not None else []
                     boxes = list(raw.boxes) if raw.boxes is not None else []
@@ -478,16 +787,8 @@ class OCRProcessor:
                         elif score > duplicate["score"]:
                             duplicate.update(candidate)
         finally:
-            _restore_engine_thresholds(self.engine, saved_thresholds)
-
-        blocks.sort(key=lambda block: (block["bounds"][1], block["bounds"][0]))
-        if not blocks:
-            return OCRResult(text="", confidence=0.0, boxes=[])
-        return OCRResult(
-            text="\n".join(block["text"] for block in blocks),
-            confidence=sum(block["score"] for block in blocks) / len(blocks),
-            boxes=[list(block["bounds"]) for block in blocks],
-        )
+            _restore_engine_thresholds(engine, saved_thresholds)
+        return blocks
 
     def recognize(self, image_path: Path | str) -> OCRResult:
         """Perform OCR on an image file, retrying sparse layouts by tile."""
@@ -497,7 +798,7 @@ class OCRProcessor:
             raise FileNotFoundError(f"Image not found: {image_path}")
 
         logger.debug(f"Running OCR on: {image_path.name}")
-        result = self._build_ocr_result(self.engine(str(image_path)))
+        result = self._build_ocr_result(self._run_engine(str(image_path)))
         if result.text.strip():
             return result
         logger.debug("OCR full-image pass was empty; retrying overlapping tiles")
@@ -511,7 +812,7 @@ class OCRProcessor:
             raise TypeError(f"Expected numpy array, got {type(image_array)}")
 
         logger.debug(f"Running OCR on numpy array: shape={image_array.shape}")
-        result = self._build_ocr_result(self.engine(image_array))
+        result = self._build_ocr_result(self._run_engine(image_array))
         if result.text.strip():
             return result
         return self._recognize_sparse_tiles(image_array)
@@ -661,35 +962,43 @@ class OCRProcessor:
             doc.close()
 
     def recognize_to_markdown(self, image_path: Path | str) -> str:
-        """
-        Perform OCR and format result as markdown.
-
-        Uses RapidOCR's built-in to_markdown() method if available.
+        """Perform OCR and lay the result out as Markdown in reading order.
 
         Args:
             image_path: Path to the image file
 
         Returns:
-            Markdown formatted text if RapidOCR supports to_markdown(),
-            otherwise plain text joined by double newlines
+            Markdown text (see :func:`markitai.ocr_layout.layout_ocr_text`)
         """
         image_path = Path(image_path)
-
-        result: Any = self.engine(
-            str(image_path),
-            return_word_box=True,
-            return_single_char_box=True,
+        return self._result_to_markdown(
+            self._run_engine(str(image_path)),
+            lambda: self._load_rgb_array(image_path),
         )
+
+    def recognize_array_to_markdown(self, image_array: Any) -> str:
+        """Like :meth:`recognize_to_markdown`, for an already decoded RGB array.
+
+        Used for inputs RapidOCR cannot open from a path itself: the frames
+        of a multi-page TIFF and rasterized SVGs.
+        """
+        return self._result_to_markdown(
+            self._run_engine(image_array), lambda: image_array
+        )
+
+    def _result_to_markdown(self, result: Any, load_array: Any) -> str:
+        """Markdown for one full-image pass, retrying empty ones by tile."""
         texts = list(result.txts) if result.txts is not None else []
 
-        # Preserve RapidOCR's table/layout Markdown when the full-image pass
-        # succeeded. Its empty-result Markdown is intentionally not returned:
-        # a sparse tiled retry may still recover small text.
-        if texts and hasattr(result, "to_markdown"):
-            return result.to_markdown()
+        # Laid out by markitai rather than RapidOCR's to_markdown(), which
+        # has no notion of columns, vertical text or page orientation. An
+        # empty pass goes on to a sparse tiled retry, which may still recover
+        # small text. No return_word_box/return_single_char_box on the pass:
+        # only line boxes are read, and RapidOCR would store those flags in
+        # the shared engine for every later call.
         if texts:
-            return "\n\n".join(str(text) for text in texts)
+            return self._build_ocr_result(result).text
 
         logger.debug("OCR Markdown pass was empty; retrying overlapping tiles")
-        fallback = self._recognize_sparse_tiles(self._load_rgb_array(image_path))
-        return "\n\n".join(fallback.text.splitlines())
+        # The tiled result is already laid out in paragraphs by line gaps
+        return self._recognize_sparse_tiles(load_array()).text
