@@ -18,6 +18,7 @@ from markitai.cli.processors.batch_llm import (
     _batch_usage,
     _prepare_pending,
     _single_batch_model,
+    shell_arg,
 )
 from markitai.config import LiteLLMParams, MarkitaiConfig, ModelConfig
 from markitai.llm.batch_api import (
@@ -712,7 +713,7 @@ class TestRealProcessorCollect:
         assert handoff is not None
         assert handoff.batch_id == "batch_2p"
         assert handoff.to_json()["collect_command"] == (
-            f"markitai --llm-batch-collect batch_2p -o {out}"
+            f"markitai --llm-batch-collect batch_2p -o {shell_arg(str(out))}"
         )
         assert items[0].status == "pending", "in flight is not failed"
         assert items[0].error is None
@@ -1419,7 +1420,10 @@ class TestResumeAndUncollectedBatches:
 
         assert count == 1
         text = buffer.getvalue()
-        assert f"markitai --llm-batch-collect batch_open -o {out} -c my.json" in text
+        assert (
+            f"markitai --llm-batch-collect batch_open -o {shell_arg(str(out))} "
+            "-c my.json"
+        ) in text
         assert "batch_done" not in text
 
     async def test_a_batch_that_ended_without_results_is_marked(
@@ -1632,3 +1636,16 @@ async def test_collect_applies_images_the_way_the_submitting_run_asked(
     llm_md = base.with_suffix(".llm.md").read_text(encoding="utf-8")
     assert f"![A revenue chart](.markitai/assets/{image.name})" in llm_md
     assert (out / ".markitai" / "assets" / "images.json").is_file()
+
+
+class TestShellArg:
+    """The printed collect command must paste into the user's own shell."""
+
+    def test_posix_quotes_only_what_the_shell_would_split(self) -> None:
+        assert shell_arg("/tmp/out", windows=False) == "/tmp/out"
+        assert shell_arg("/tmp/my out", windows=False) == "'/tmp/my out'"
+
+    def test_windows_uses_double_quotes_cmd_understands(self) -> None:
+        # shlex.quote gave 'C:\out', whose single quotes cmd.exe keeps
+        assert shell_arg(r"C:\Users\me\out", windows=True) == r"C:\Users\me\out"
+        assert shell_arg(r"C:\My Docs\out", windows=True) == r'"C:\My Docs\out"'

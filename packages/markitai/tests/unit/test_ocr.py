@@ -893,13 +893,19 @@ class TestUpsideDownDetection:
         top_wide = [900] * 5 + [300] * 5
         assert self._detect(ocr_config, {0, 1, 2, 3, 4}, top_wide) is False
 
-    def test_unsure_answers_do_not_count(self, ocr_config: OCRConfig):
+    def test_answers_weigh_as_much_as_the_classifier_is_sure(
+        self, ocr_config: OCRConfig
+    ):
         """The real classifier is often unsure on a turned-over scan."""
         unsure = frozenset({1, 6})
         assert self._detect(ocr_config, {0, 2, 3, 4, 5, 7}, None, unsure) is True
-        # ... but too few sure answers decide nothing
+        # Unanimous but unsure (wide sans-serif faces such as Verdana or
+        # DejaVu Sans): counting only sure answers left these unturned
         unsure = frozenset({0, 1, 2, 4, 5})
-        assert self._detect(ocr_config, set(range(8)), None, unsure) is False
+        assert self._detect(ocr_config, set(range(8)), None, unsure) is True
+        # ... while two sure 0° answers outweigh six unsure 180° ones
+        unsure = frozenset({0, 1, 2, 4, 5, 6})
+        assert self._detect(ocr_config, set(range(8)) - {3, 7}, None, unsure) is False
 
     def test_a_sixty_percent_vote_no_longer_flips(self, ocr_config: OCRConfig):
         assert self._detect(ocr_config, {0, 1, 2, 4, 5}) is False

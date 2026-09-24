@@ -270,26 +270,40 @@ class _EngineGate:
                 self._cond.notify_all()
 
 
-# Page orientation: the widest lines of each half of the page are asked. Only
-# confident answers count, and at least this share of the sample must give
-# one; the page counts as upside down when this share of those say 180°, and
-# they outvote 0° in each half. A pasted-up page whose two halves face
-# opposite ways must not be turned over as a whole.
+# Page orientation: the widest lines of each half of the page are asked, and
+# each answer weighs as much as the classifier is sure of it. The page counts
+# as upside down when 180° carries this share of the total weight and
+# outweighs 0° in each half: a pasted-up page whose two halves face opposite
+# ways must not be turned over as a whole. The classifier is often unsure of
+# wide sans-serif faces (Verdana, DejaVu Sans); counting only its confident
+# answers left such pages bottom line first.
 _ORIENTATION_SAMPLE = 8
-_ORIENTATION_MIN_CONFIDENT = 0.5
-_ORIENTATION_SHARE = 0.8
-_ORIENTATION_MIN_SCORE = 0.8
+_ORIENTATION_SHARE = 0.7
 
 
-def _orientation_vote(label: Any) -> bool | None:
-    """A classifier answer: True for 180°, False for 0°, None when unsure."""
+def _orientation_vote(label: Any) -> tuple[bool, float] | None:
+    """A classifier answer: (True for 180°, its score), None when unusable."""
     try:
         angle, score = str(label[0]), float(label[1])
     except (TypeError, ValueError, IndexError):
         return None
-    if score < _ORIENTATION_MIN_SCORE or angle not in ("0", "180"):
+    if angle not in ("0", "180") or not 0.0 <= score <= 1.0:
         return None
-    return angle == "180"
+    return angle == "180", score
+
+
+def _flipped_weight(votes: list[tuple[bool, float] | None]) -> tuple[float, float]:
+    """Total score of the 180° and of the 0° answers."""
+    flipped = upright = 0.0
+    for vote in votes:
+        if vote is None:
+            continue
+        is_flipped, score = vote
+        if is_flipped:
+            flipped += score
+        else:
+            upright += score
+    return flipped, upright
 
 
 def _orientation_sample(polygons: list[Any]) -> list[list[Any]]:
@@ -612,15 +626,14 @@ class OCRProcessor:
         if not labels or len(labels) != len(sample):
             return False
         votes = [_orientation_vote(label) for label in labels]
-        confident = [vote for vote in votes if vote is not None]
-        if len(confident) < max(2, len(votes) * _ORIENTATION_MIN_CONFIDENT):
+        if sum(vote is not None for vote in votes) < 2:
             return False
-        if sum(confident) < len(confident) * _ORIENTATION_SHARE:
+        flipped, upright = _flipped_weight(votes)
+        if flipped < (flipped + upright) * _ORIENTATION_SHARE:
             return False
         for half in (votes[: len(halves[0])], votes[len(halves[0]) :]):
-            flipped = sum(vote is True for vote in half)
-            upright = sum(vote is False for vote in half)
-            if (flipped or upright) and flipped <= upright:
+            half_flipped, half_upright = _flipped_weight(half)
+            if (half_flipped or half_upright) and half_flipped <= half_upright:
                 return False
         return True
 

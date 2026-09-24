@@ -398,13 +398,18 @@ class TestConfigParity:
 
         monkeypatch.setattr(server_module, "_convert_source", fake_convert)
         started = await batch_convert(
-            [f"/abs/item-{i}.md" for i in range(6)], concurrency=2
+            [_abs(f"item-{i}.md") for i in range(6)], concurrency=2
         )
         status = await _wait_for_completion(started["job_id"])
 
         assert status["done"] == 6
         assert status["failed"] == 0
         assert peak == 2, f"expected 2 in flight, saw {peak}"
+
+
+def _abs(name: str) -> str:
+    """An absolute path on any OS (``/abs/x`` is relative on Windows)."""
+    return str(Path(Path.cwd().anchor, "abs", name))
 
 
 class TestBatchResultOrder:
@@ -417,7 +422,7 @@ class TestBatchResultOrder:
 
         async def fake_convert(source: str, workdir: Path, **kwargs: object) -> dict:
             # The first source is the slowest, so completion order is reversed.
-            await asyncio.sleep(0.05 if source == "/abs/slow" else 0.0)
+            await asyncio.sleep(0.05 if source == _abs("slow") else 0.0)
             return {
                 "source": source,
                 "markdown_file": None,
@@ -426,12 +431,12 @@ class TestBatchResultOrder:
             }
 
         monkeypatch.setattr(server_module, "_convert_source", fake_convert)
-        started = await batch_convert(["/abs/slow", "/abs/fast"], concurrency=2)
+        started = await batch_convert([_abs("slow"), _abs("fast")], concurrency=2)
         status = await _wait_for_completion(started["job_id"])
 
         assert [entry["source"] for entry in status["results"]] == [
-            "/abs/slow",
-            "/abs/fast",
+            _abs("slow"),
+            _abs("fast"),
         ]
 
 
