@@ -241,6 +241,17 @@ async def process_single_file(
         # Finalize the last active stage (the loguru bridge may have advanced
         # it past "convert") and stop the list before printing the result
         # (transient in stdout mode; rich erases its frame)
+        # The file the run produced: the core pipeline sets llm_output_file
+        # only after a successful LLM write, so a missing one means the
+        # enhancement did not happen. Never report (or print) a path that is
+        # not on disk.
+        produced_file = ctx.llm_output_file if cfg.llm.enabled else ctx.output_file
+        if produced_file is None or not produced_file.is_file():
+            raise ConversionError(
+                f"No output was produced for {input_path.name}"
+                + (" (LLM enhancement wrote no .llm.md)" if cfg.llm.enabled else "")
+            )
+
         stages.finalize(_file_final_stage_text(stages.active_key, input_path.name))
         stages.stop()
 
@@ -266,15 +277,14 @@ async def process_single_file(
                     kind="file",
                     source=input_path.name,
                     status="completed",
-                    output_path=(
-                        ctx.output_file.with_suffix(".llm.md")
-                        if cfg.llm.enabled and ctx.output_file
-                        else ctx.output_file
-                    ),
+                    output_path=produced_file,
+                    warnings=list(ctx.warnings),
                     images=ctx.embedded_images_count,
                     screenshots=ctx.screenshots_count,
                     cost_usd=ctx.llm_cost,
                     llm_usage=ctx.llm_usage,
+                    cache_hit=ctx.cache_hit,
+                    llm_cache_hit=ctx.cache_hit,
                     duration=duration,
                 ),
                 log_file_path=log_file_path,
@@ -297,25 +307,13 @@ async def process_single_file(
             atomic_write_json(report_path, report, order_func=order_report)
             logger.debug(f"Report saved: {report_path}")
 
-        # Determine final output file
-        final_output_file = None
-        if ctx.output_file:
-            final_output_file = (
-                ctx.output_file.with_suffix(".llm.md")
-                if cfg.llm.enabled
-                else ctx.output_file
-            )
-            # Fallback to .md file if .llm.md doesn't exist
-            if not final_output_file.exists() and cfg.llm.enabled:
-                final_output_file = ctx.output_file
-
-            # Explicit -o file target: the final content must land exactly
-            # at the requested path (moves `.llm.md` onto the requested
-            # `.md` path in LLM mode without --keep-base)
-            final_output_file = finalize_explicit_output(
-                final_output_file,
-                ctx.output_file if output_file_name is not None else None,
-            )
+        # Explicit -o file target: the final content must land exactly at
+        # the requested path (moves `.llm.md` onto the requested `.md` path
+        # in LLM mode without --keep-base)
+        final_output_file = finalize_explicit_output(
+            produced_file,
+            ctx.output_file if output_file_name is not None else None,
+        )
 
         if history is not None:
             history.append(
@@ -324,10 +322,13 @@ async def process_single_file(
                     source=input_path.name,
                     status="completed",
                     output_path=final_output_file,
+                    warnings=list(ctx.warnings),
                     images=ctx.embedded_images_count,
                     screenshots=ctx.screenshots_count,
                     cost_usd=ctx.llm_cost,
                     llm_usage=ctx.llm_usage,
+                    cache_hit=ctx.cache_hit,
+                    llm_cache_hit=ctx.cache_hit,
                     duration=duration,
                 )
             )

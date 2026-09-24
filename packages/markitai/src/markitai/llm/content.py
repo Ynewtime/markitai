@@ -661,3 +661,196 @@ __all__ = [
     "smart_truncate",
     "split_text_by_pages",
 ]
+
+
+_FENCE_LINE_RE = re.compile(r"^\s*(?:```|~~~)")
+
+
+def _markdown_blocks(text: str) -> list[str]:
+    """Split markdown into blank-line separated blocks.
+
+    A blank line inside a fenced code block does not end the block, so a
+    code sample is never cut in two by the chunker.
+    """
+    blocks: list[str] = []
+    current: list[str] = []
+    in_fence = False
+    for line in text.split("\n"):
+        if _FENCE_LINE_RE.match(line):
+            in_fence = not in_fence
+        if not line.strip() and not in_fence:
+            if current:
+                blocks.append("\n".join(current))
+                current = []
+            continue
+        current.append(line)
+    if current:
+        blocks.append("\n".join(current))
+    return blocks
+
+
+def _split_oversized_block(block: str, max_chars: int) -> list[str]:
+    """Break one block longer than *max_chars* at line boundaries.
+
+    A single line longer than the limit (a minified table row, a wall of
+    text without newlines) is cut at the limit as a last resort.
+    """
+    if len(block) <= max_chars:
+        return [block]
+    pieces: list[str] = []
+    current: list[str] = []
+    size = 0
+    for line in block.split("\n"):
+        if len(line) > max_chars:
+            if current:
+                pieces.append("\n".join(current))
+                current, size = [], 0
+            cut = len(line) - len(line) % max_chars
+            pieces.extend(line[i : i + max_chars] for i in range(0, cut, max_chars))
+            line = line[cut:]
+            if not line:
+                continue
+        added = len(line) + (1 if current else 0)
+        if current and size + added > max_chars:
+            pieces.append("\n".join(current))
+            current, size, added = [], 0, len(line)
+        current.append(line)
+        size += added
+    if current:
+        pieces.append("\n".join(current))
+    return pieces
+
+
+def split_markdown_chunks(text: str, max_chars: int) -> list[str]:
+    """Split markdown into chunks of at most *max_chars* characters.
+
+    Cuts only between blocks (paragraphs, tables, code blocks, page
+    markers), packing as many whole blocks into each chunk as fit; a block
+    that alone exceeds the limit is broken at line boundaries. Joining the
+    chunks with a blank line restores the document's content.
+
+    Args:
+        text: Markdown to split.
+        max_chars: Maximum characters per chunk.
+
+    Returns:
+        The chunks in document order; ``[text]`` when it already fits.
+    """
+    if len(text) <= max_chars:
+        return [text]
+
+    chunks: list[str] = []
+    current: list[str] = []
+    size = 0
+    for block in _markdown_blocks(text):
+        for piece in _split_oversized_block(block, max_chars):
+            added = len(piece) + (2 if current else 0)
+            if current and size + added > max_chars:
+                chunks.append("\n\n".join(current))
+                current, size, added = [], 0, len(piece)
+            current.append(piece)
+            size += added
+    if current:
+        chunks.append("\n\n".join(current))
+    return chunks
+
+
+# A cleaned document is the source minus formatting noise, so it keeps most
+# of the source's length and characters. An answer far below either floor
+# is not a cleanup but a replacement: a refusal ("I'm sorry, but I can't
+# help with that request."), a summary, or an unrelated reply. Short inputs
+# are exempt, since dropping a stray nav line there moves the ratios a lot.
+_REWRITE_CHECK_MIN_CHARS = 200
+_REWRITE_MIN_LENGTH_RATIO = 0.2
+_REWRITE_MIN_BIGRAM_RECALL = 0.3
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def implausible_cleaning_reason(
+    source: str, cleaned: str, *, check_overlap: bool = True
+) -> str | None:
+    """Explain why *cleaned* cannot be a cleanup of *source*, if it cannot.
+
+    Two independent signals: the answer's length relative to the source
+    (whitespace ignored), and the share of the source's distinct character
+    bigrams the answer still contains. Character bigrams work the same for
+    space-delimited and CJK text.
+
+    Args:
+        source: Text sent to the model.
+        cleaned: The model's cleaned version.
+        check_overlap: Also apply the bigram floor. Vision calls turn it
+            off: the model reads the page images, so it legitimately
+            replaces a garbled text layer (broken font maps, OCR noise)
+            with what the page says, and only the length floor still
+            separates a cleanup from a refusal there.
+
+    Returns:
+        A short reason when the answer fails either floor, else None.
+    """
+    source_chars = _WHITESPACE_RE.sub("", source).lower()
+    if len(source_chars) < _REWRITE_CHECK_MIN_CHARS:
+        return None
+    cleaned_chars = _WHITESPACE_RE.sub("", cleaned).lower()
+
+    length_ratio = len(cleaned_chars) / len(source_chars)
+    if length_ratio < _REWRITE_MIN_LENGTH_RATIO:
+        return (
+            f"answer is {length_ratio:.0%} of the input length "
+            f"(floor {_REWRITE_MIN_LENGTH_RATIO:.0%})"
+        )
+    if not check_overlap:
+        return None
+
+    source_bigrams = {source_chars[i : i + 2] for i in range(len(source_chars) - 1)}
+    cleaned_bigrams = {cleaned_chars[i : i + 2] for i in range(len(cleaned_chars) - 1)}
+    recall = len(source_bigrams & cleaned_bigrams) / len(source_bigrams)
+    if recall < _REWRITE_MIN_BIGRAM_RECALL:
+        return (
+            f"answer shares {recall:.0%} of the input's character pairs "
+            f"(floor {_REWRITE_MIN_BIGRAM_RECALL:.0%})"
+        )
+    return None
+
+
+# A chunk of a long document can legitimately clean down to next to nothing:
+# a trailing chunk that is all navigation, link lists or footer. The length
+# and recall floors above cannot tell that apart from a refusal, but what is
+# left can: a cleanup keeps pieces of its input, a refusal or a summary
+# writes its own text. So a chunk answer below the floors is rejected only
+# when most of its character 4-grams do not occur in the chunk.
+_CHUNK_ANSWER_NGRAM = 4
+_CHUNK_MIN_ANSWER_PRECISION = 0.5
+
+
+def implausible_chunk_cleaning_reason(source: str, cleaned: str) -> str | None:
+    """Lenient :func:`implausible_cleaning_reason` for one chunk of a document.
+
+    An answer that keeps little of the chunk passes as long as what it
+    keeps comes from the chunk (a mostly-boilerplate chunk cleaned away);
+    only an answer that is short *and* made of text the chunk does not
+    contain (a refusal, an unrelated reply) is rejected. The whole-document
+    floors still apply to the merged result.
+
+    Args:
+        source: The chunk sent to the model.
+        cleaned: The model's cleaned version of the chunk.
+
+    Returns:
+        A short reason when the answer is not drawn from the chunk, else None.
+    """
+    reason = implausible_cleaning_reason(source, cleaned)
+    if reason is None:
+        return None
+    n = _CHUNK_ANSWER_NGRAM
+    cleaned_chars = _WHITESPACE_RE.sub("", cleaned).lower()
+    if len(cleaned_chars) < n:
+        # Nothing (or next to nothing) kept: the chunk was all boilerplate
+        return None
+    source_chars = _WHITESPACE_RE.sub("", source).lower()
+    answer_grams = {cleaned_chars[i : i + n] for i in range(len(cleaned_chars) - n + 1)}
+    source_grams = {source_chars[i : i + n] for i in range(len(source_chars) - n + 1)}
+    precision = len(answer_grams & source_grams) / len(answer_grams)
+    if precision < _CHUNK_MIN_ANSWER_PRECISION:
+        return f"{reason}; only {precision:.0%} of the answer comes from the input"
+    return None

@@ -41,7 +41,7 @@ from markitai.utils.cli_helpers import (
     get_report_file_path,
     url_to_filename,
 )
-from markitai.utils.output import resolve_output_path
+from markitai.utils.output import resolve_output_path, split_markdown_name
 from markitai.utils.paths import ensure_dir, ensure_screenshots_dir
 from markitai.utils.text import format_error_message, markdown_image_reference
 from markitai.utils.url_redaction import redact_url as _safe_url_for_display
@@ -92,6 +92,82 @@ def _print_url_error(url: str, message: str, console: Any) -> None:
         f"{_safe_url_for_display(url)}: {_redact_urls_in_message(message)}",
         console,
     )
+
+
+def _screenshot_status(
+    cfg: MarkitaiConfig, fetch_result: FetchResult
+) -> tuple[bool, list[str], str | None]:
+    """Check the screenshot a URL run asked for.
+
+    Returns:
+        ``(has_screenshot, warnings, failure)``. ``warnings`` says why a
+        requested screenshot is missing (or that the text layer was replaced
+        by the screenshot); ``failure`` is set when ``--screenshot-only`` has
+        no screenshot to deliver.
+    """
+    path = fetch_result.screenshot_path
+    has_screenshot = path is not None and path.exists()
+    warnings: list[str] = []
+    metadata = fetch_result.metadata if isinstance(fetch_result.metadata, dict) else {}
+    if cfg.screenshot.enabled and not has_screenshot:
+        reason = metadata.get("screenshot_error") or (
+            "the page was not rendered in a browser"
+        )
+        warnings.append(f"Screenshot not captured: {reason}")
+    if _reads_screenshot_only(cfg) and not has_screenshot:
+        detail = warnings[0] if warnings else "Screenshot not captured"
+        return has_screenshot, warnings, f"--screenshot-only: {detail}"
+    if metadata.get("extraction_error"):
+        warnings.append("Text extraction failed; continuing from the screenshot only")
+    return has_screenshot, warnings, None
+
+
+def _reads_screenshot_only(cfg: MarkitaiConfig) -> bool:
+    """--screenshot-only takes content from the capture, not the text layer."""
+    return cfg.screenshot.screenshot_only and not (cfg.llm.enabled and cfg.llm.pure)
+
+
+def _print_warnings(warnings: list[str], *, quiet: bool, console: Any) -> None:
+    """Show non-fatal problems of a finished URL (stderr)."""
+    if quiet:
+        return
+    for warning in warnings:
+        ui.warning(warning, console=console)
+
+
+def _finish_screenshot_only(
+    url: str,
+    fetch_result: FetchResult,
+    *,
+    screenshots_count: int,
+    warnings: list[str],
+    history: list[Outcome] | None,
+    duration: float,
+    quiet: bool,
+    diag_console: Any,
+) -> None:
+    """Record and report a --screenshot-only run without LLM (no .md output)."""
+    screenshot_path = fetch_result.screenshot_path
+    if history is not None:
+        history.append(
+            Outcome(
+                kind="url",
+                source=url,
+                status="completed",
+                output_path=screenshot_path,
+                screenshots=screenshots_count,
+                fetch_cache_hit=fetch_result.cache_hit,
+                fetch_strategy=fetch_result.strategy_used,
+                duration=duration,
+                warnings=list(warnings),
+            )
+        )
+    _print_warnings(warnings, quiet=quiet, console=diag_console)
+    if not quiet:
+        tiles_note = (
+            f" (+{screenshots_count - 1} tile(s))" if screenshots_count > 1 else ""
+        )
+        console.print(f"[green]Screenshot saved:[/green] {screenshot_path}{tiles_note}")
 
 
 async def process_url(
@@ -306,7 +382,22 @@ async def process_url(
             _print_url_error(url, str(e), diag_console)
             raise SystemExit(1)
 
-        if not original_markdown.strip():
+        # A requested screenshot that was not captured is never silent:
+        # --screenshot-only cannot do its job without one (failure), a plain
+        # --screenshot run still has its text (visible warning, --json too).
+        has_screenshot, url_warnings, screenshot_failure = _screenshot_status(
+            cfg, fetch_result
+        )
+        if screenshot_failure is not None:
+            stages.fail("No screenshot captured")
+            stages.stop()
+            record_failure(screenshot_failure)
+            _print_url_error(url, screenshot_failure, diag_console)
+            raise SystemExit(1)
+
+        # --screenshot-only reads the page from its screenshot, so an empty
+        # text layer (canvas apps, image-only pages) is not a failure there.
+        if not original_markdown.strip() and not _reads_screenshot_only(cfg):
             stages.fail("No content extracted")
             stages.stop()
             record_failure("No content extracted")
@@ -349,14 +440,12 @@ async def process_url(
         downloaded_images: list[Path] = []
         images_count = 0
         screenshots_count = (
-            len(screenshot_tiles)
-            if screenshot_tiles
-            else (1 if screenshot_path and screenshot_path.exists() else 0)
+            len(screenshot_tiles) if screenshot_tiles else (1 if has_screenshot else 0)
         )
         img_analysis: ImageAnalysisResult | None = None
 
         # Log screenshot capture if successful
-        if screenshot_path and screenshot_path.exists():
+        if screenshot_path and has_screenshot:
             if len(screenshot_tiles) > 1:
                 stages.note(
                     f"Screenshot captured: {screenshot_path.name} "
@@ -375,9 +464,13 @@ async def process_url(
             download_result = await download_url_images(
                 markdown=original_markdown,
                 output_dir=effective_output_dir,
-                base_url=url,
+                # Relative image paths are relative to where the page ended
+                # up after redirects (/docs -> /docs/, short links).
+                base_url=fetch_result.final_url or url,
                 config=cfg.image,
-                source_name=url_to_filename(url).replace(".md", ""),
+                # Named after the resolved output (page.v2.md -> page.v2.*),
+                # so a renamed run never overwrites another page's images
+                source_name=split_markdown_name(output_file.name)[0],
                 concurrency=5,
                 timeout=30,
             )
@@ -398,27 +491,19 @@ async def process_url(
 
         # Check for screenshot-only mode without LLM
         # --screenshot-only without --llm: just save screenshot, no .md output
-        has_screenshot = screenshot_path is not None and screenshot_path.exists()
+        # (a missing screenshot already failed the run above)
         if cfg.screenshot.screenshot_only and not cfg.llm.enabled:
             stages.stop()
-            if history is not None:
-                history.append(
-                    Outcome(
-                        kind="url",
-                        source=url,
-                        status="completed",
-                        output_path=screenshot_path if has_screenshot else None,
-                        screenshots=1 if has_screenshot else 0,
-                        duration=(datetime.now() - started_at).total_seconds(),
-                    )
-                )
-            if has_screenshot and screenshot_path is not None:
-                if not quiet:
-                    console.print(f"[green]Screenshot saved:[/green] {screenshot_path}")
-            else:
-                diag_console.print(
-                    "[yellow]Warning: --screenshot-only but no screenshot captured[/yellow]"
-                )
+            _finish_screenshot_only(
+                url,
+                fetch_result,
+                screenshots_count=screenshots_count,
+                warnings=url_warnings,
+                history=history,
+                duration=(datetime.now() - started_at).total_seconds(),
+                quiet=quiet,
+                diag_console=diag_console,
+            )
             return
 
         # Standard path — no screenshot-only, no vision enhancement, no
@@ -708,6 +793,9 @@ async def process_url(
         # Stop the live stage list before printing the final result
         # (transient in stdout mode; rich erases its frame)
         stages.stop()
+        # After the stage list, so the warning survives its transient frame;
+        # stderr, so stdout stays the Markdown payload.
+        _print_warnings(url_warnings, quiet=quiet, console=diag_console)
 
         if stdout_mode:
             assert temp_dir is not None  # guaranteed when stdout_mode is True
@@ -853,6 +941,7 @@ async def process_url(
                         llm_usage=llm_usage,
                         fetch_strategy=used_strategy,
                         duration=duration,
+                        warnings=list(url_warnings),
                     )
                 )
 
@@ -900,11 +989,18 @@ async def process_url_batch(
     explicit_fetch_strategy: bool = False,
     quiet: bool = False,
     history: list[Outcome] | None = None,
+    resume: bool = False,
+    source_file: Path | None = None,
 ) -> None:
     """Batch process multiple URLs from a URL list file.
 
     Shows progress bar similar to file batch processing.
     Each URL is processed concurrently up to the concurrency limit.
+
+    Progress is kept in the same resumable state file as a directory batch
+    (``.markitai/states/``, one ``UrlState`` per URL): ``--resume`` skips
+    URLs that completed, redoes failed and interrupted ones over their own
+    earlier output, and an interrupt saves the state before it propagates.
 
     Args:
         url_entries: List of UrlEntry objects from parse_url_list()
@@ -921,6 +1017,10 @@ async def process_url_batch(
         history: Optional list collecting each URL's Outcome for serve
             history recording (append-only; the caller decides whether to
             record).
+        resume: Continue from the state a previous run of the same list
+            (same list file, output directory and key options) left.
+        source_file: The ``.urls`` file the entries came from; part of the
+            state's identity and recorded as each URL's source.
     """
     # Batch output must be a directory; reject file-like -o values early
     if output_dir.suffix == ".md" and not output_dir.is_dir():
@@ -940,15 +1040,25 @@ async def process_url_batch(
         TimeElapsedColumn,
     )
 
+    from markitai.batch import BatchProcessor, FileStatus, UrlState, url_state_key
     from markitai.cli.logging_config import LoggingContext
-    from markitai.cli.processors.batch import create_url_processor
+    from markitai.cli.processors.batch import (
+        batch_item_claim_scope,
+        create_url_processor,
+        drop_duplicate_url_entries,
+    )
     from markitai.fetch import FetchStrategy
     from markitai.security import check_symlink_safety
+    from markitai.utils.output import OutputNameReservations
 
     # Default to auto strategy if not specified
     if fetch_strategy is None:
         fetch_strategy = FetchStrategy(cfg.fetch.strategy)
     assert fetch_strategy is not None  # for type checker
+
+    # Each (url, output_name) is one work item with its own state entry; an
+    # exact repeat is skipped (the same URL under another name is kept)
+    url_entries = drop_duplicate_url_entries(list(url_entries), set(), source_file)
 
     # Dry run: just show what would be done
     if dry_run:
@@ -986,15 +1096,14 @@ async def process_url_batch(
     # Single-URL processing cascade shared with the directory batch
     # (fetch -> images -> base .md -> LLM -> ProcessResult). The factory
     # also initializes the fetch cache and the screenshots directory.
-    # Flags preserve URL-list batch behavior: --screenshot-only handling,
-    # base .md written from the image-localized markdown, and actionable
-    # multi-line fetch errors kept intact (800 chars instead of 200).
+    # Flags preserve URL-list batch behavior: base .md written from the
+    # image-localized markdown, and actionable multi-line fetch errors kept
+    # intact (800 chars instead of 200).
     process_one_url = create_url_processor(
         cfg=cfg,
         output_dir=output_dir,
         fetch_strategy=fetch_strategy,
         explicit_fetch_strategy=explicit_fetch_strategy,
-        honor_screenshot_only=True,
         localized_base_md=True,
         fetch_error_max_length=800,
     )
@@ -1008,6 +1117,88 @@ async def process_url_batch(
     active_urls: dict[str, str] = {}
     image_analyses: list[ImageAnalysisResult] = []
     diag_console = get_stderr_console()
+
+    # Resumable state, shared with the directory batch (BatchProcessor)
+    state_options: dict[str, Any] = {
+        "llm": cfg.llm.enabled,
+        "ocr": cfg.ocr.enabled,
+        "screenshot": cfg.screenshot.enabled,
+        "alt": cfg.image.alt_enabled,
+        "desc": cfg.image.desc_enabled,
+    }
+    batch = BatchProcessor(
+        cfg.batch,
+        output_dir,
+        input_path=source_file,
+        log_file=log_file_path,
+        on_conflict=cfg.output.on_conflict,
+        task_options=state_options,
+    )
+    # One output-name reservation table for the whole list: two URLs that
+    # derive the same filename must not both write it
+    reservations = OutputNameReservations()
+    requeued: set[str] = set()
+    source_label = str(source_file) if source_file is not None else ""
+    entries_to_process = list(url_entries)
+    resumed_state = batch.load_state() if resume else None
+    if resumed_state is not None:
+        # Named entries used to share their URL's state; give them their own
+        resumed_state.adopt_legacy_url_keys(
+            (url_state_key(entry.url, entry.output_name), entry.url)
+            for entry in url_entries
+        )
+        for key, url_state in resumed_state.urls.items():
+            if url_state.status == FileStatus.FAILED:
+                requeued.add(key)
+            elif url_state.status == FileStatus.COMPLETED and url_state.output:
+                reservations.reserve(Path(url_state.output))
+        for entry in url_entries:
+            key = url_state_key(entry.url, entry.output_name)
+            if key not in resumed_state.urls:
+                resumed_state.urls[key] = UrlState(
+                    url=entry.url, source_file=source_label
+                )
+        entries_to_process = []
+        for entry in url_entries:
+            key = url_state_key(entry.url, entry.output_name)
+            url_state = resumed_state.urls[key]
+            if url_state.status == FileStatus.COMPLETED:
+                # Done in an earlier run: keep it in this run's report
+                results[key] = {
+                    "status": "completed",
+                    "error": None,
+                    "output": url_state.output,
+                    "fetch_strategy": url_state.fetch_strategy,
+                    "images": url_state.images,
+                    "screenshots": url_state.screenshots,
+                }
+                completed += 1
+            else:
+                entries_to_process.append(entry)
+        resumed_state.started_at = datetime.now().astimezone().isoformat()
+        batch.state = resumed_state
+        if not quiet:
+            console.print(
+                f"[dim]Resuming batch: {completed} completed, "
+                f"{len(entries_to_process)} remaining[/dim]"
+            )
+    else:
+        if resume:
+            logger.debug("No previous URL batch state found; starting fresh")
+        batch.state = batch.init_state(
+            input_dir=source_file.parent if source_file is not None else output_dir,
+            files=[],
+            options=state_options,
+            started_at=started_at.astimezone().isoformat(),
+        )
+        for entry in url_entries:
+            batch.state.urls[url_state_key(entry.url, entry.output_name)] = UrlState(
+                url=entry.url, source_file=source_label
+            )
+    if source_file is not None:
+        batch.state.url_sources = sorted(set(batch.state.url_sources) | {source_label})
+    # Base state on disk before any work, so an interrupt is resumable
+    batch.save_state(force=True)
 
     semaphore = asyncio.Semaphore(concurrency)
 
@@ -1036,6 +1227,8 @@ async def process_url_batch(
         nonlocal completed, failed, total_llm_cost
 
         url = entry.url
+        # State, report and progress key: the same URL may be listed twice
+        key = url_state_key(url, entry.output_name)
         item_start = time.perf_counter()
         extra_info: dict[str, Any] = {}
 
@@ -1071,32 +1264,70 @@ async def process_url_batch(
                     llm_usage=result.llm_usage if result is not None else {},
                     fetch_strategy=extra_info.get("fetch_strategy"),
                     duration=time.perf_counter() - item_start,
+                    warnings=list(extra_info.get("warnings") or []),
                 )
             )
 
+        assert batch.state is not None
+        url_state = batch.state.urls[key]
+
+        def record_target(path: Path) -> None:
+            url_state.target = str(path)
+            batch._dirty_keys.add(key)
+
+        def record_state(
+            result: ProcessResult | None, error: str | None = None
+        ) -> None:
+            """Mirror this URL's result into the resumable batch state."""
+            url_state.completed_at = datetime.now().astimezone().isoformat()
+            url_state.duration = time.perf_counter() - item_start
+            url_state.fetch_strategy = extra_info.get("fetch_strategy")
+            if result is not None and result.success:
+                url_state.status = FileStatus.COMPLETED
+                url_state.output = result.output_path
+                url_state.images = result.images
+                url_state.screenshots = result.screenshots
+                url_state.cost_usd = result.cost_usd
+                url_state.llm_usage = result.llm_usage
+                url_state.cache_hit = result.cache_hit
+            else:
+                url_state.status = FileStatus.FAILED
+                url_state.error = error or (result.error if result else None)
+            batch._dirty_keys.add(key)
+
         async with semaphore:
+            url_state.status = FileStatus.IN_PROGRESS
+            url_state.started_at = datetime.now().astimezone().isoformat()
+            batch._dirty_keys.add(key)
             try:
                 logger.info(
                     f"Processing URL: {_safe_url_for_display(url)} "
                     f"(strategy: {fetch_strategy.value})"
                 )
-                active_urls[url] = format_url_label(url)
+                active_urls[key] = format_url_label(url)
                 update_progress_label(progress_obj, progress_task)
 
-                result, extra_info = await process_one_url(
-                    url, custom_name=entry.output_name
-                )
+                with batch_item_claim_scope(
+                    reservations,
+                    url_state,
+                    requeued=key in requeued,
+                    on_claimed=record_target,
+                ):
+                    result, extra_info = await process_one_url(
+                        url, custom_name=entry.output_name
+                    )
                 url_fetch_strategy = extra_info.get("fetch_strategy", "unknown")
+                record_state(result)
 
                 if not result.success:
-                    results[url] = {"status": "failed", "error": result.error}
+                    results[key] = {"status": "failed", "error": result.error}
                     record_outcome("failed", result, error=result.error)
                     _print_url_error(url, result.error or "Unknown error", diag_console)
                     failed += 1
                     return
 
                 if result.error and result.error.startswith("skipped ("):
-                    results[url] = {"status": "skipped", "error": "Output exists"}
+                    results[key] = {"status": "skipped", "error": "Output exists"}
                     record_outcome("skipped", result)
                     return
 
@@ -1105,7 +1336,7 @@ async def process_url_batch(
                 if result.image_analysis_result is not None:
                     image_analyses.append(result.image_analysis_result)
 
-                results[url] = {
+                results[key] = {
                     "status": "completed",
                     "error": None,
                     "output": result.output_path,
@@ -1114,6 +1345,12 @@ async def process_url_batch(
                     "screenshots": result.screenshots,
                 }
                 record_outcome("completed", result)
+                for warning in extra_info.get("warnings") or []:
+                    logger.warning(f"{_safe_url_for_display(url)}: {warning}")
+                    ui.warning(
+                        f"{_safe_url_for_display(url)}: {warning}",
+                        console=diag_console,
+                    )
                 completed += 1
                 logger.info(
                     f"Completed via {url_fetch_strategy}: {_safe_url_for_display(url)}"
@@ -1125,34 +1362,48 @@ async def process_url_batch(
                     f"Failed to process {_safe_url_for_display(url)}: "
                     f"{_redact_urls_in_message(err_msg)}"
                 )
-                results[url] = {"status": "failed", "error": err_msg}
+                results[key] = {"status": "failed", "error": err_msg}
+                record_state(None, error=err_msg)
                 record_outcome("failed", None, error=err_msg)
                 _print_url_error(url, err_msg, diag_console)
                 failed += 1
 
             finally:
-                active_urls.pop(url, None)
+                active_urls.pop(key, None)
                 progress_obj.advance(progress_task)
                 update_progress_label(progress_obj, progress_task)
 
+        # Throttled incremental save (a forced one follows the whole batch)
+        await asyncio.to_thread(batch.save_state)
+
     # Process all URLs with progress bar
     logging_ctx = LoggingContext(console_handler_id, verbose)
-    with (
-        logging_ctx.suspend_console(),
-        Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            MofNCompleteColumn(),
-            TimeElapsedColumn(),
-            console=console,
-            disable=quiet,
-        ) as progress,
-    ):
-        task = progress.add_task("[cyan]URLs", total=len(url_entries))
+    try:
+        with (
+            logging_ctx.suspend_console(),
+            Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                TimeElapsedColumn(),
+                console=console,
+                disable=quiet,
+            ) as progress,
+        ):
+            task = progress.add_task("[cyan]URLs", total=len(entries_to_process))
 
-        tasks = [process_single_url(entry, task, progress) for entry in url_entries]
-        await asyncio.gather(*tasks)
+            tasks = [
+                process_single_url(entry, task, progress)
+                for entry in entries_to_process
+            ]
+            await asyncio.gather(*tasks)
+    except BaseException:
+        # Ctrl-C or an unexpected error: keep what finished since the last
+        # throttled save, so --resume does not redo (and re-pay for) it
+        batch.persist_state_on_abort()
+        raise
+    batch.compact_state()
 
     # Write image descriptions collected across URLs (if enabled)
     if image_analyses and cfg.image.desc_enabled:

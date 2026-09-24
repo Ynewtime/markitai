@@ -48,7 +48,7 @@ print(out.frontmatter["title"])  # 解析后的 YAML frontmatter
 print(out.usage.cost_usd)  # 这次转换的 LLM 花费
 ```
 
-模型的解析方式和 CLI 一样：先看[配置](/zh/guide/configuration)里的 `llm.model_list`，再看环境变量 `MODEL`。默认加载和 CLI 相同的配置文件。要完全自己控制，传一个 `markitai.MarkitaiConfig`：
+模型的解析方式和 CLI 一样：先看[配置](/zh/guide/configuration)里的 `llm.model_list`，再看环境变量 `MODEL`，最后[自动检测](/zh/guide/configuration#markitai-自动选用的默认模型)环境里的提供商 API key 和已登录的订阅制提供商。检测到多个提供商时它们共用一个模型池，每个进程会用一条 loguru 警告（默认输出到 stderr）列出一次；想只用一个就设 `MODEL`。默认加载和 CLI 相同的配置文件。和 CLI 不同，库不读取 `.env` 文件，调用前先把 key 导出到环境变量。要完全自己控制，传一个 `markitai.MarkitaiConfig`：
 
 ```python
 from markitai import MarkitaiConfig
@@ -101,5 +101,6 @@ asyncio.run(main())
 | `usage` | `ConversionUsage` | `cost_usd`、token 总量、按模型的明细 |
 | `skip_reason` | `str \| None` | 因冲突策略跳过时为 `"exists"` |
 | `duration` | `float` | 耗时（秒） |
+| `warnings` | `list[str]` | 没有让调用失败、但值得处理的提示：页面疑似扫描件（可加 `ocr=True` 重试）、PDF 隐藏文字（可能是提示注入）、OCR 没识别出文字、幻灯片无法渲染、URL 截图没拍到。按调用收集，并发的 `aconvert` 调用不会互相串；这些提示同时也会写进日志 |
 
-失败时直接抛异常，不返回半成品：管线失败抛 `ConversionError`，URL 不可达抛 `FetchError`，开了 LLM 却没有模型抛 `ValueError`。一次调用转一个文件或 URL，目录批量仍由 CLI 负责。
+失败时直接抛异常，不返回半成品：管线失败抛 `ConversionError`，URL 不可达抛 `FetchError`，开了 LLM 却解析不出模型抛 `NoModelConfiguredError`（`ValueError` 的子类）。这三个异常都可以从 `markitai.api` 导入。一次调用转一个文件或 URL，目录批量仍由 CLI 负责。

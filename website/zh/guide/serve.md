@@ -53,6 +53,7 @@ markitai serve --host 0.0.0.0
 - **实时进度**：每个条目实时推送状态，任务在后台标签页完成时会发通知。
 - **单条操作**：重试失败的条目，或对已完成的条目单独做 LLM 增强，不用重转其他条目。
 - **预览**：渲染后的 Markdown，可对比基础版和增强版，还能打印成 PDF，页眉页脚可选。
+- **提示**：不会让条目失败、但值得处理的提示（页面疑似扫描件、PDF 隐藏文字可能是提示注入、OCR 没识别出文字、幻灯片无法渲染、URL 截图没拍到）会显示在条目行上，预览顶部列出全文。每个条目只收到自己的提示，任务进入历史后也会保留。
 - **下载**：单个文件、按任务打包的 zip，或整段历史打包成一个压缩包。
 - **限制**：每个任务最多 50 个条目，单个上传文件最大 100 MB。
 
@@ -78,7 +79,9 @@ markitai serve --host 0.0.0.0
 
 完成的任务在 `~/.markitai/serve/jobs/` 下保留 7 天。在历史页面可以重新打开任务、再次下载输出、删除单条，或把全部历史打包下载。
 
-用 [`--record-history`](/zh/guide/cli#record-history) 启动的 CLI 运行也会出现在这里，带一个 CLI 徽标，行为和其他任务一样。
+用 [`--record-history`](/zh/guide/cli#record-history) 启动的 CLI 运行也会出现在这里，带一个 CLI 徽标。它们和其他任务一样可以打开、下载和删除，其中的 URL 条目也能重试或做 LLM 增强。CLI 运行里的文件条目不能在这里重试或增强：CLI 只保留了输出，没有保留原文件；需要的话请用 CLI 重新转换该文件。
+
+`--llm-batch` 运行如果在提供商批处理仍在进行时停止等待，这些条目会记为跳过，原因显示为 *LLM 批处理仍在进行*，历史里暂时只有基础 Markdown。请用那次运行打印的 `markitai --llm-batch-collect` 命令收取结果，不要在这里再做增强，否则同一份增强会付两次费。
 
 ## API 概览
 
@@ -88,10 +91,10 @@ markitai serve --host 0.0.0.0
 |------|------|
 | `GET /api/capabilities` | 服务版本、预设、LLM 与 extras 状态 |
 | `POST /api/jobs` | 创建任务（multipart 表单：`files`、`urls` JSON 数组、`options` JSON） |
-| `GET /api/jobs/{job_id}` | 任务状态与条目 |
+| `GET /api/jobs/{job_id}` | 任务状态与条目（每个条目带 `warnings` 列表） |
 | `GET /api/jobs/{job_id}/events` | 实时进度流（SSE） |
 | `POST /api/jobs/{job_id}/items/{item_id}/retry` | 重试条目，或以 `operation: "enhance"` 做 LLM 增强 |
-| `DELETE /api/jobs/{job_id}/items/{item_id}` | 从任务中移除条目 |
+| `DELETE /api/jobs/{job_id}/items/{item_id}` | 永久移除条目，连同其上传原件、输出、图片与截图 |
 | `GET /api/jobs/{job_id}/items/{item_id}/result` | 条目结果；配套资源经 `GET /api/jobs/{job_id}/files/{path}` 获取 |
 | `GET /api/jobs/{job_id}/archive` | 整个任务打包为 zip 下载 |
 | `GET /api/history` | 列出历史条目 |

@@ -14,13 +14,21 @@ import socket
 import threading
 import time
 import webbrowser
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 import rich_click as click
 
 from markitai.cli.console import get_stderr_console
 
+if TYPE_CHECKING:
+    from types import FrameType
+
 _BROWSER_READY_TIMEOUT_S = 30.0
+# Upper bound on how long Ctrl-C waits for in-flight requests before
+# uvicorn cancels them and runs the lifespan shutdown (which cancels
+# running jobs and persists them to history). SSE streams end at once.
+_GRACEFUL_SHUTDOWN_TIMEOUT_S = 5
 _BROWSER_POLL_INTERVAL_S = 0.05
 _EXPOSED_BIND_HELP = (
     "The default 127.0.0.1 is reachable only from this machine; any other "
@@ -28,6 +36,45 @@ _EXPOSED_BIND_HELP = (
     "needs the access token printed at startup (unless --no-auth)."
 )
 _WILDCARD_HOSTS = frozenset({"0.0.0.0", "::", "[::]", ""})  # nosec B104 - literal comparison for banner URLs, not a bind
+
+
+def _run_server(app: Any, host: str, port: int) -> None:
+    """Run uvicorn, ending open SSE streams as soon as shutdown begins.
+
+    Plain ``uvicorn.run`` waits for every open response before the lifespan
+    shutdown, and an SSE stream following a long job stays open until the
+    job ends; a second Ctrl-C then force-quits past the lifespan shutdown,
+    so the job never writes its meta.json and vanishes from history.
+    """
+    import uvicorn
+    from uvicorn.config import STARTUP_FAILURE
+
+    from markitai.serve.app import request_shutdown
+
+    class _Server(uvicorn.Server):
+        def handle_exit(self, sig: int, frame: FrameType | None) -> None:
+            super().handle_exit(sig, frame)
+            request_shutdown(app)
+
+    config = uvicorn.Config(
+        app,
+        host=host,
+        port=port,
+        log_level="info",
+        # log_config=None keeps uvicorn from reconfiguring the logging it
+        # inherited: its default config replaces the handlers markitai
+        # installed, which is why its lines used to print in uvicorn's own
+        # format while markitai's carried a timestamp.
+        log_config=None,
+        timeout_graceful_shutdown=_GRACEFUL_SHUTDOWN_TIMEOUT_S,
+    )
+    server = _Server(config)
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        pass
+    if not server.started:
+        raise SystemExit(STARTUP_FAILURE)
 
 
 def _browser_address(host: str) -> tuple[str, str]:
@@ -267,8 +314,6 @@ def serve(
         get_stderr_console().print(f"[red]Error:[/red] {escape(SERVE_INSTALL_HINT)}")
         raise SystemExit(1)
 
-    import uvicorn
-
     from markitai.serve import create_app
 
     token = _resolve_token(no_auth)
@@ -300,11 +345,7 @@ def serve(
         browser_thread.start()
 
     try:
-        # log_config=None keeps uvicorn from reconfiguring the logging it
-        # inherited: its default config replaces the handlers markitai
-        # installed, which is why its lines used to print in uvicorn's own
-        # format while markitai's carried a timestamp.
-        uvicorn.run(app, host=host, port=port, log_level="info", log_config=None)
+        _run_server(app, host, port)
     finally:
         browser_stop.set()
         if browser_thread is not None:

@@ -792,12 +792,38 @@ class TestPlaywrightRenderer:
             "playwright.async_api.async_playwright",
             return_value=mock_starter,
         ):
-            renderer = PlaywrightRenderer(proxy="http://proxy:8080")
+            renderer = PlaywrightRenderer(
+                proxy="http://proxy:8080", proxy_bypass=["internal.corp", "fd00::1"]
+            )
             await renderer._ensure_browser()
 
+            # Playwright proxies loopback by default (<-loopback>); the
+            # renderer bypasses it plus the NO_PROXY patterns it was given
             mock_chromium.launch.assert_called_once_with(
-                headless=True, proxy={"server": "http://proxy:8080"}
+                headless=True,
+                proxy={
+                    "server": "http://proxy:8080",
+                    "bypass": "localhost,*.localhost,127.0.0.0/8,[::1],"
+                    "internal.corp,[fd00::1]",
+                },
             )
+
+    def test_chromium_proxy_bypass_translates_no_proxy_patterns(self):
+        """NO_PROXY syntax becomes Chromium bypass rules; loopback always."""
+        from markitai.fetch_playwright import chromium_proxy_bypass
+
+        assert chromium_proxy_bypass([]) == "localhost,*.localhost,127.0.0.0/8,[::1]"
+        rules = chromium_proxy_bypass(
+            [".corp.example", "10.0.0.0/8", "::1", "localhost", " ", "a b"]
+        ).split(",")
+        assert rules == [
+            "localhost",
+            "*.localhost",
+            "127.0.0.0/8",
+            "[::1]",
+            ".corp.example",
+            "10.0.0.0/8",
+        ]
 
     @requires_playwright
     @pytest.mark.asyncio
@@ -1505,7 +1531,9 @@ class TestFetchWithPlaywrightFunction:
                 proxy="http://proxy:8080",
             )
 
-            MockRendererClass.assert_called_once_with(proxy="http://proxy:8080")
+            MockRendererClass.assert_called_once_with(
+                proxy="http://proxy:8080", proxy_bypass=None
+            )
             assert result.content == "Standalone content"
 
 

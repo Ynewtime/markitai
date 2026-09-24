@@ -136,6 +136,8 @@ export MARKITAI_STATIC_HTTP=curl_cffi
 
 没装 curl-cffi 时，markitai 会静默使用 httpx。
 
+静态策略按浏览器的方式解码页面：先看字节序标记（BOM），再看 `Content-Type` 里的 `charset`，再看前 1024 字节里的 `<meta charset>`，最后才靠检测。旧编码标签映射到浏览器实际使用的超集（`gb2312`/`gbk` 按 GB18030，`shift_jis` 按 Windows-31J，`iso-8859-1` 按 Windows-1252）。相对链接和图片按重定向之后的 URL 解析。不是 HTML 的响应按 `Content-Type`（或 `Content-Disposition` 里的文件名）像本地文件一样转换：PDF、Word、Excel、PowerPoint 等文档交给 markitai 自己的转换器，纯文本、CSV 和 JSON 走文本转换器。
+
 ## 工作原理
 
 markitai 逐个尝试策略，最多 `max_strategy_hops` 次。第一个通过校验的结果就是最终结果，运行到此结束。
@@ -146,4 +148,4 @@ markitai 逐个尝试策略，最多 `max_strategy_hops` 次。第一个通过�
 
 ### SPA 学习
 
-静态抓取成功但页面说需要 JavaScript 时，markitai 把该域名记入 SPA 缓存 30 天，之后的请求直接上浏览器。只有这个信号会写入缓存，验证码、登录墙和网络错误都不会。用 `markitai cache spa-domains` 查看或清除。
+静态抓取成功但页面说需要 JavaScript 时，markitai 把该域名记入 SPA 缓存 30 天，之后的请求直接上浏览器。只有这个信号会写入缓存，验证码、登录墙和网络错误都不会。只检查 HTML 页面：短文本文件、CSV 或 PDF 本身就是文档，不会被判成"需要 JavaScript"，也不会写入缓存。用 `markitai cache spa-domains` 查看或清除。

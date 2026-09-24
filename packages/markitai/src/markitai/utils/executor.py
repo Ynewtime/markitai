@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import os
 import platform
 import threading
@@ -187,7 +188,13 @@ async def run_in_converter_thread(
     """
     loop = asyncio.get_running_loop()
     executor = get_converter_executor()
-    return await loop.run_in_executor(executor, lambda: func(*args, **kwargs))
+    # Run on a copy of the caller's context, as ``asyncio.to_thread`` does:
+    # per-task context variables (the task's user-notice capture, its
+    # network policy) must still apply inside the converter thread.
+    context = contextvars.copy_context()
+    return await loop.run_in_executor(
+        executor, lambda: context.run(func, *args, **kwargs)
+    )
 
 
 def shutdown_converter_executor() -> None:

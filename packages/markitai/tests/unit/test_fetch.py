@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re
 import tempfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -292,8 +293,40 @@ class TestUrlToScreenshotFilename:
         filename = _url_to_screenshot_filename(
             "https://example.com/page?query=1&foo=bar"
         )
-        # Query string is not included in the path parts
-        assert filename == "example.com_page.full.jpg"
+        # The query string contributes a short hash, never its raw characters
+        assert re.fullmatch(r"example\.com_page_q[0-9a-f]{8}\.full\.jpg", filename)
+
+    def test_query_strings_get_distinct_filenames(self) -> None:
+        """?n=5 and ?n=300 are different pages and must not share a file."""
+        short = _url_to_screenshot_filename("http://127.0.0.1:19401/text-long?n=5")
+        long = _url_to_screenshot_filename("http://127.0.0.1:19401/text-long?n=300")
+        plain = _url_to_screenshot_filename("http://127.0.0.1:19401/text-long")
+        assert len({short, long, plain}) == 3
+        assert short == _url_to_screenshot_filename(
+            "http://127.0.0.1:19401/text-long?n=5"
+        )
+        assert plain == "127.0.0.1_19401_text-long.full.jpg"
+
+    def test_anchor_fragment_is_ignored(self) -> None:
+        """#intro and #usage scroll the same page: one screenshot file."""
+        plain = _url_to_screenshot_filename("https://example.com/docs")
+        assert _url_to_screenshot_filename("https://example.com/docs#intro") == plain
+        assert _url_to_screenshot_filename("https://example.com/docs#usage") == plain
+        with_query = _url_to_screenshot_filename("https://example.com/docs?v=2")
+        assert (
+            _url_to_screenshot_filename("https://example.com/docs?v=2#intro")
+            == with_query
+        )
+
+    def test_hash_routes_get_distinct_filenames(self) -> None:
+        """#/settings and #!/about are different views of a hash-routed app."""
+        names = {
+            _url_to_screenshot_filename("https://app.example.com/"),
+            _url_to_screenshot_filename("https://app.example.com/#/settings"),
+            _url_to_screenshot_filename("https://app.example.com/#/profile"),
+            _url_to_screenshot_filename("https://app.example.com/#!/about"),
+        }
+        assert len(names) == 4
 
     def test_root_path(self) -> None:
         """Test URL with root path only."""
@@ -2051,15 +2084,39 @@ class TestCloseSharedClients:
         from markitai import fetch
         from markitai.fetch import close_shared_clients
 
-        # Create a mock renderer
-        mock_renderer = AsyncMock()
-        mock_renderer.close = AsyncMock()
-        fetch.get_default_session().playwright_renderer = mock_renderer
+        # One renderer per proxy configuration; close() releases them all
+        proxied = AsyncMock()
+        direct = AsyncMock()
+        fetch.get_default_session().playwright_renderers = {
+            "http://proxy:8080:None:": proxied,
+            "None:None:": direct,
+        }
 
         await close_shared_clients()
 
-        mock_renderer.close.assert_called_once()
-        assert fetch.get_default_session().playwright_renderer is None
+        proxied.close.assert_called_once()
+        direct.close.assert_called_once()
+        assert fetch.get_default_session().playwright_renderers == {}
+
+    @pytest.mark.asyncio
+    async def test_close_continues_after_a_renderer_fails_to_close(self) -> None:
+        """One browser failing to close must not leak the ones after it."""
+        from markitai import fetch
+        from markitai.fetch import close_shared_clients
+
+        broken = AsyncMock()
+        broken.close.side_effect = RuntimeError("browser crashed")
+        healthy = AsyncMock()
+        fetch.get_default_session().playwright_renderers = {
+            "a": broken,
+            "b": healthy,
+        }
+
+        await close_shared_clients()
+
+        broken.close.assert_called_once()
+        healthy.close.assert_called_once()
+        assert fetch.get_default_session().playwright_renderers == {}
 
     @pytest.mark.asyncio
     async def test_close_shared_clients_none_clients(self) -> None:
@@ -2069,7 +2126,7 @@ class TestCloseSharedClients:
 
         fetch.get_default_session().jina_client = None
         fetch.get_default_session().fetch_cache = None
-        fetch.get_default_session().playwright_renderer = None
+        fetch.get_default_session().playwright_renderers = {}
 
         # Should not raise any errors
         await close_shared_clients()
@@ -3505,14 +3562,23 @@ class TestFetchCacheThreadSafety:
 class TestGetPlaywrightRenderer:
     """Tests for _get_playwright_renderer function."""
 
+    @pytest.fixture(autouse=True)
+    def _no_renderers(self, monkeypatch: pytest.MonkeyPatch):
+        from markitai import fetch
+
+        monkeypatch.delenv("NO_PROXY", raising=False)
+        monkeypatch.delenv("no_proxy", raising=False)
+        session = fetch.get_default_session()
+        session.playwright_renderers = {}
+        session.detected_proxy_bypass = ""
+        yield
+        session.playwright_renderers = {}
+        session.detected_proxy_bypass = None
+
     @pytest.mark.asyncio
     async def test_get_playwright_renderer_creates_instance(self) -> None:
         """Test that _get_playwright_renderer creates instance."""
-        from markitai import fetch
         from markitai.fetch import _get_playwright_renderer
-
-        fetch.get_default_session().playwright_renderer = None
-        fetch.get_default_session().playwright_renderer_fingerprint = ""
 
         with patch(
             "markitai.fetch_playwright.PlaywrightRenderer"
@@ -3523,28 +3589,87 @@ class TestGetPlaywrightRenderer:
             result = await _get_playwright_renderer(proxy="http://proxy:8080")
 
             assert result is mock_instance
-            mock_renderer_class.assert_called_once_with(proxy="http://proxy:8080")
+            mock_renderer_class.assert_called_once_with(
+                proxy="http://proxy:8080", proxy_bypass=[]
+            )
 
-        fetch.get_default_session().playwright_renderer = None
-        fetch.get_default_session().playwright_renderer_fingerprint = ""
+    @pytest.mark.asyncio
+    async def test_get_playwright_renderer_passes_no_proxy_bypass(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A proxied browser learns the NO_PROXY list; a direct one needs none."""
+        from markitai.fetch import _get_playwright_renderer
+
+        monkeypatch.setenv("NO_PROXY", "internal.corp,10.0.0.0/8")
+        with patch(
+            "markitai.fetch_playwright.PlaywrightRenderer"
+        ) as mock_renderer_class:
+            await _get_playwright_renderer(proxy="http://proxy:8080")
+            await _get_playwright_renderer(proxy=None)
+
+        assert mock_renderer_class.call_args_list[0].kwargs == {
+            "proxy": "http://proxy:8080",
+            "proxy_bypass": ["internal.corp", "10.0.0.0/8"],
+        }
+        assert mock_renderer_class.call_args_list[1].kwargs == {
+            "proxy": None,
+            "proxy_bypass": [],
+        }
 
     @pytest.mark.asyncio
     async def test_get_playwright_renderer_reuses_instance(self) -> None:
         """Test that _get_playwright_renderer reuses existing instance."""
-        from markitai import fetch
         from markitai.fetch import _get_playwright_renderer
 
-        mock_instance = MagicMock()
-        fetch.get_default_session().playwright_renderer = mock_instance
-        # Set fingerprint to match default call args (proxy=None, config=None)
-        fetch.get_default_session().playwright_renderer_fingerprint = "None:None"
+        first = await _get_playwright_renderer()
+        assert await _get_playwright_renderer() is first
 
-        result = await _get_playwright_renderer()
+    @pytest.mark.asyncio
+    async def test_other_proxy_gets_its_own_renderer_and_keeps_the_first_open(
+        self,
+    ) -> None:
+        """Regression: a NO_PROXY-exempt URL next to proxied ones used to
+        rebuild the one shared renderer, closing a browser a concurrent
+        fetch was still using (TargetClosedError)."""
+        from markitai.fetch import _get_playwright_renderer
 
-        assert result is mock_instance
+        with patch("markitai.fetch_playwright.PlaywrightRenderer") as renderer_class:
+            proxied_mock, direct_mock = AsyncMock(), AsyncMock()
+            renderer_class.side_effect = [proxied_mock, direct_mock]
 
-        fetch.get_default_session().playwright_renderer = None
-        fetch.get_default_session().playwright_renderer_fingerprint = ""
+            proxied = await _get_playwright_renderer(proxy="http://proxy:8080")
+            direct = await _get_playwright_renderer(proxy=None)
+            again = await _get_playwright_renderer(proxy="http://proxy:8080")
+
+        assert proxied is proxied_mock and direct is direct_mock
+        assert again is proxied
+        proxied_mock.close.assert_not_called()
+        direct_mock.close.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_changed_session_ttl_gets_a_new_renderer(self) -> None:
+        """The context cache TTL is fixed at creation; a new TTL needs a new
+        renderer instead of silently reusing the old one."""
+        from markitai.config import FetchConfig
+        from markitai.fetch import _get_playwright_renderer
+
+        def config(ttl: int) -> FetchConfig:
+            cfg = FetchConfig()
+            cfg.playwright.session_mode = "domain_persistent"
+            cfg.playwright.session_ttl_seconds = ttl
+            return cfg
+
+        with patch("markitai.fetch_playwright.PlaywrightRenderer") as renderer_class:
+            renderer_class.side_effect = [MagicMock(), MagicMock()]
+            first = await _get_playwright_renderer(config=config(600))
+            same = await _get_playwright_renderer(config=config(600))
+            other = await _get_playwright_renderer(config=config(60))
+
+        assert same is first
+        assert other is not first
+        other.enable_domain_session_cache.assert_called_once_with(
+            ttl_seconds=60, max_contexts=8
+        )
 
 
 class TestUrlToScreenshotFilenameEdgeCases:

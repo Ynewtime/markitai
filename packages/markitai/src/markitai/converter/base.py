@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -176,6 +177,53 @@ def unsupported_format_message(path: Path | str) -> str:
     )
 
 
+def append_screenshot_comments(
+    markdown: str,
+    screenshots: list[dict],
+    marker_re: re.Pattern[str],
+    label: str,
+) -> str:
+    """Reference each page's or slide's screenshot, commented, after its content.
+
+    The base ``.md`` points at the rendered screenshots without displaying
+    them (``<!-- ![Page 2](.markitai/screenshots/...) -->``). A section is
+    found by *marker_re*, whose first group is the 1-based number; a
+    screenshot the text has no marker for is referenced at the end, so none
+    goes unmentioned.
+
+    Args:
+        markdown: Converted markdown carrying page or slide markers.
+        screenshots: ``{"page": N, "name": file name}`` entries.
+        marker_re: Pattern matching one section marker.
+        label: ``"Page"`` or ``"Slide"``, the comment's alt text.
+    """
+    from markitai.constants import SCREENSHOTS_REL_PATH
+
+    names = {info["page"]: info["name"] for info in screenshots if info.get("name")}
+    if not names:
+        return markdown
+
+    def comment(number: int) -> str:
+        return f"<!-- ![{label} {number}]({SCREENSHOTS_REL_PATH}/{names[number]}) -->"
+
+    markers = list(marker_re.finditer(markdown))
+    parts: list[str] = [markdown[: markers[0].start()]] if markers else [markdown]
+    placed: set[int] = set()
+    for index, marker in enumerate(markers):
+        end = markers[index + 1].start() if index + 1 < len(markers) else len(markdown)
+        section = markdown[marker.start() : end].rstrip()
+        number = int(marker.group(1))
+        if number in names and number not in placed:
+            section = f"{section}\n\n{comment(number)}"
+            placed.add(number)
+        parts.append(section + ("\n\n" if index + 1 < len(markers) else ""))
+    rest = [comment(n) for n in sorted(names) if n not in placed]
+    result = "".join(parts).rstrip()
+    if rest:
+        result = "\n\n".join([result, *rest]) if result else "\n\n".join(rest)
+    return result
+
+
 @dataclass
 class ExtractedImage:
     """Represents an image extracted from a document."""
@@ -220,6 +268,12 @@ class BaseConverter(ABC):
 
     # Formats this converter can handle
     supported_formats: list[FileFormat] = []
+
+    # Prefix for asset files the converter writes itself, derived from the
+    # resolved output name (``report.pdf.v2``); set by the conversion
+    # pipeline before ``convert`` runs. None keeps the converter's own
+    # input-name based naming.
+    asset_prefix: str | None = None
 
     def __init__(self, config: MarkitaiConfig | None = None) -> None:
         """Initialize converter with optional configuration."""

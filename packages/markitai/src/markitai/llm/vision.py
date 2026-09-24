@@ -480,14 +480,24 @@ class VisionAnalyzer:
         )
 
     def finalize_image_plan(
-        self, plan: ImagePlan, result: ImageAnalysis
+        self, plan: ImagePlan, result: ImageAnalysis | ImageAnalysisResult
     ) -> ImageAnalysis:
         """Guard the answer and persist it. Pure local work.
 
         Runs identically on the live path and on a batch result collected
         hours later. A degenerate answer is returned but never cached, so
         the next run asks again instead of serving the damage forever.
+
+        A batch hands over the raw parsed ``ImageAnalysisResult``; it is
+        normalized here, so every caller gets the same ``ImageAnalysis``
+        (with ``llm_usage``) the live path returns.
         """
+        if isinstance(result, ImageAnalysisResult):
+            result = ImageAnalysis(
+                caption=result.caption.strip(),
+                description=result.description,
+                extracted_text=result.extracted_text,
+            )
         if not _guard_degenerate_extracted_text(result, plan.image_path.name):
             self._engine.persistent_cache.set(
                 plan.cache_key,
@@ -527,7 +537,12 @@ class VisionAnalyzer:
             image_path, context=context, document_context=document_context
         )
         if plan.answer is not None:
+            # An empty cache key marks the unsupported-format answer, which
+            # was never looked up
+            if plan.cache_key:
+                self._engine.record_cache_hit()
             return plan.answer
+        self._engine.record_cache_miss()
 
         # "default" lets the router pick a vision-capable deployment: the
         # messages carry image content.
@@ -608,7 +623,9 @@ class VisionAnalyzer:
             document_context: Short text snippet for language hinting.
 
         Returns:
-            List of ImageAnalysis results in same order as input
+            List of ImageAnalysis results in same order as input. An image
+            whose analysis failed gets a placeholder with ``failed=True``
+            (see ``markitai.workflow.helpers.image_analysis_failed``).
         """
         if not image_paths:
             return []
@@ -661,6 +678,7 @@ class VisionAnalyzer:
                             ImageAnalysis(
                                 caption=f"Image {i + 1}",
                                 description="Analysis failed",
+                                failed=True,
                             )
                             for i in range(len(batch_paths))
                         ],
@@ -755,12 +773,14 @@ class VisionAnalyzer:
             )
             if cached is not None:
                 logger.debug(f"[{image_path.name}] Cache hit in batch analysis")
+                self._engine.record_cache_hit()
                 cached_results[orig_idx] = ImageAnalysis(
                     caption=cached.get("caption", ""),
                     description=cached.get("description", ""),
                     extracted_text=cached.get("extracted_text"),
                 )
             else:
+                self._engine.record_cache_miss()
                 uncached_indices.append(orig_idx)
 
         # If all supported images are cached, return merged results
@@ -914,6 +934,7 @@ class VisionAnalyzer:
                             description="Image analysis failed",
                             extracted_text=None,
                             llm_usage=per_image_llm_usage,
+                            failed=True,
                         )
                     )
                     continue
@@ -995,6 +1016,7 @@ class VisionAnalyzer:
                         caption="Image",
                         description="Image analysis failed",
                         extracted_text=None,
+                        failed=True,
                     )
 
             fallback_results = list(

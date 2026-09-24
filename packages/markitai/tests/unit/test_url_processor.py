@@ -21,6 +21,22 @@ from markitai.cli.processors.url import (
 from markitai.config import MarkitaiConfig
 
 
+def _writes_llm_md(result: tuple) -> object:
+    """``process_with_llm`` side effect that writes ``.llm.md`` like the real one.
+
+    The batch never reports a URL completed without its output on disk, so
+    a double that returns without writing now reads as a failed URL.
+    """
+
+    async def _process(
+        _markdown: str, _source: str, _cfg: object, output_file: Path, *_a, **_kw
+    ) -> tuple:
+        output_file.with_suffix(".llm.md").write_text("# Cleaned")
+        return result
+
+    return _process
+
+
 class TestBuildMultiSourceContent:
     """Tests for build_multi_source_content function."""
 
@@ -1098,7 +1114,7 @@ class TestImageAnalysisBranchCoverage:
             patch(
                 "markitai.cli.processors.llm.process_with_llm",
                 new_callable=AsyncMock,
-                return_value=("cleaned", 0.01, {}),
+                side_effect=_writes_llm_md(("cleaned", 0.01, {})),
             ),
             patch(
                 "markitai.cli.processors.llm.analyze_images_with_llm",
@@ -1158,7 +1174,7 @@ class TestImageAnalysisBranchCoverage:
             patch(
                 "markitai.cli.processors.llm.process_with_llm",
                 new_callable=AsyncMock,
-                return_value=("cleaned", 0.01, {}),
+                side_effect=_writes_llm_md(("cleaned", 0.01, {})),
             ),
             patch(
                 "markitai.cli.processors.llm.analyze_images_with_llm",
@@ -1176,6 +1192,59 @@ class TestImageAnalysisBranchCoverage:
         analyze_mock.assert_awaited_once()
         assert analyze_mock.await_args is not None
         assert analyze_mock.await_args.args[0] == download_result.downloaded_paths
+
+    @pytest.mark.asyncio
+    async def test_renamed_single_url_output_names_its_images_after_itself(
+        self, tmp_path: Path
+    ) -> None:
+        """``1.md`` taken on disk: the page goes to ``1.v2.md``, so do its images.
+
+        The images were named from the URL-derived default, so a renamed
+        run overwrote the ``1.*`` images of the page already there.
+        """
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        cfg.cache.enabled = False
+        cfg.image.alt_enabled = True
+        (tmp_path / "1.md").write_text("earlier page")
+
+        screenshot = tmp_path / ".markitai" / "screenshots" / "post.full.jpg"
+        screenshot.parent.mkdir(parents=True)
+        screenshot.write_bytes(b"screenshot-data")
+        mock_result = self._make_extractor_fetch_result(
+            "https://x.com/user/status/1", screenshot
+        )
+        download_mock = AsyncMock(return_value=self._make_download_result(tmp_path))
+
+        with (
+            patch(
+                "markitai.fetch.fetch_url",
+                new_callable=AsyncMock,
+                return_value=mock_result,
+            ),
+            patch("markitai.image.download_url_images", download_mock),
+            patch(
+                "markitai.cli.processors.llm.process_with_llm",
+                new_callable=AsyncMock,
+                side_effect=_writes_llm_md(("cleaned", 0.01, {})),
+            ),
+            patch(
+                "markitai.cli.processors.llm.analyze_images_with_llm",
+                AsyncMock(return_value=("md", 0.0, {}, None)),
+            ),
+        ):
+            await process_url(
+                url="https://x.com/user/status/1",
+                output_dir=tmp_path,
+                cfg=cfg,
+                dry_run=False,
+                verbose=False,
+            )
+
+        download_mock.assert_awaited_once()
+        assert download_mock.await_args is not None
+        assert download_mock.await_args.kwargs["source_name"] == "1.v2"
+        assert (tmp_path / "1.md").read_text() == "earlier page"
 
 
 class TestProcessUrlBatchSuccessPath:
@@ -1426,6 +1495,7 @@ class TestProcessUrlBatchSuccessPath:
         async def mock_process_with_llm(*args, **kwargs):
             logger.info("[Router] Vision router (1): test-model")
             logger.info("Written LLM version: /tmp/test.llm.md")
+            args[3].with_suffix(".llm.md").write_text("# Cleaned")
             return "# Cleaned", 0.01, {}
 
         console_handler_id, log_file_path = setup_logging(
@@ -2027,7 +2097,7 @@ class TestProcessUrlPureModeBypassesVision:
             patch(
                 "markitai.cli.processors.llm.process_with_llm",
                 new_callable=AsyncMock,
-                return_value=("# Cleaned", 0.01, {}),
+                side_effect=_writes_llm_md(("# Cleaned", 0.01, {})),
             ) as mock_process_llm,
         ):
             await process_url_batch(
@@ -2079,7 +2149,7 @@ class TestProcessUrlBatchPureMode:
             patch(
                 "markitai.cli.processors.llm.process_with_llm",
                 new_callable=AsyncMock,
-                return_value=("# Cleaned", 0.01, {}),
+                side_effect=_writes_llm_md(("# Cleaned", 0.01, {})),
             ),
         ):
             await process_url_batch(

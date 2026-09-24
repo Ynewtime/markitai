@@ -26,6 +26,8 @@ Supported profiles:
 
 from __future__ import annotations
 
+import filecmp
+import os
 import re
 from datetime import UTC, datetime
 from importlib import metadata
@@ -227,7 +229,9 @@ def _relocate_referenced_assets(body: str, output_dir: Path) -> str:
 
     Files are moved from ``<output_dir>/.markitai/assets/`` to
     ``<output_dir>/assets/``; a file another output of the same run already
-    moved is only re-referenced. Emptied hidden directories are removed.
+    moved (same bytes) is only re-referenced, while a differing file left
+    by an earlier run is replaced by the fresh extraction. Emptied hidden
+    directories are removed.
 
     Args:
         body: Markdown body containing ``.markitai/assets/`` references.
@@ -247,16 +251,29 @@ def _relocate_referenced_assets(body: str, output_dir: Path) -> str:
         if not src.is_file():
             continue
         visible_dir.mkdir(parents=True, exist_ok=True)
-        if dst.exists():
-            # Same-run sibling output already moved this file
+        if dst.is_file() and _same_bytes(src, dst):
+            # Same-run sibling output already moved this very file
             src.unlink()
         else:
-            src.rename(dst)
+            # A differing dst is a stale copy from an earlier run of this
+            # output (re-run, on_conflict=overwrite): asset names derive
+            # from the output name, so the fresh extraction is the one this
+            # document references. Keeping dst would pair the new text with
+            # the old image and delete the new one.
+            os.replace(src, dst)
 
     _prune_empty_meta_dirs(output_dir)
 
     body = body.replace(f"]({ASSETS_REL_PATH}/", f"]({VISIBLE_ASSETS_REL_PATH}/")
     return body.replace(f"]({ASSETS_REL_PATH}\\", f"]({VISIBLE_ASSETS_REL_PATH}\\")
+
+
+def _same_bytes(a: Path, b: Path) -> bool:
+    """Whether two files hold identical content (unreadable counts as not)."""
+    try:
+        return filecmp.cmp(a, b, shallow=False)
+    except OSError:
+        return False
 
 
 def _prune_empty_meta_dirs(output_dir: Path) -> None:

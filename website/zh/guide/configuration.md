@@ -13,7 +13,7 @@
 
 markitai 按下面的顺序找到第一个配置文件就用：
 
-1. `--config` 指定的路径
+1. `--config` 指定的路径（必须存在；`config set` 与 `config edit` 会创建它）
 2. `MARKITAI_CONFIG`
 3. 当前目录的 `./markitai.json`
 4. `~/.markitai/config.json`
@@ -104,6 +104,7 @@ markitai config validate
     "enabled": true,
     "no_cache": false,
     "no_cache_patterns": [],
+    "fetch_ttl_seconds": 86400,
     "max_size_bytes": 536870912,
     "global_dir": "~/.markitai"
   },
@@ -196,7 +197,7 @@ markitai config validate
 
 ::::
 
-`llm.model_list` 默认为空。用了 `--llm` 又没有条目时，markitai 会自己挑一个：先 `MODEL`，再是已登录的 CLI（Claude Code、Copilot、ChatGPT），最后是提供商 API 密钥。三者都没有就报告未配置模型。各自对应的模型见[markitai 自动选用的默认模型](#markitai-自动选用的默认模型)。
+`llm.model_list` 默认为空。用了 `--llm` 又没有条目时，markitai 会自己填：设了 `MODEL` 就只用这一个模型；否则把找到的所有已登录 CLI（Claude Code、Copilot、ChatGPT）和所有提供商 API 密钥都用上。三者都没有就报告未配置模型。各自对应的模型见[markitai 自动选用的默认模型](#markitai-自动选用的默认模型)。
 
 `markitai init` 会为检测到的提供商写入一条；网页工作台的设置对话框写入 `llm.providers`。
 
@@ -229,7 +230,7 @@ markitai config validate
 | `MARKITAI_PURE` | 开启 pure 模式（`1`、`true`、`yes`） |
 | `MARKITAI_RECORD_HISTORY` | 把 CLI 运行记入网页工作台历史（`1`、`true`、`yes`、`on`） |
 | `MARKITAI_NO_REMOTE_FETCH` | 绝不把 URL 发给远程服务，显式 `-s` 也不行（`1`、`true`、`yes`） |
-| `MARKITAI_NO_VLM_OCR` | `--ocr --llm` 时用本地 RapidOCR 而不是视觉模型（`1`、`true`、`yes`） |
+| `MARKITAI_NO_VLM_OCR` | `--ocr --llm` 时用本地 RapidOCR 而不是视觉模型（`1`、`true`、`yes`）。只管 OCR：`--screenshot --llm` 仍会把页面截图发给视觉模型 |
 | `MARKITAI_STATIC_HTTP` | 静态抓取客户端：`httpx`（默认）或 `curl_cffi` |
 | `MARKITAI_SERVE_TOKEN` | `markitai serve` 的固定访问令牌 |
 | `MARKITAI_INSTALL_OPTIONAL` | 安装脚本：不询问直接装可选组件 |
@@ -285,6 +286,8 @@ Gemini 没有订阅登录。用 API key（`gemini/`）或走 OpenRouter（`openr
 | OpenRouter | `openrouter/google/gemini-3.1-flash-lite` |
 
 想用别的就设 `model_list`。配了已被提供商下线的模型只会在启动时警告一句，markitai 不会替你改。
+
+检测到不止一个提供商时，markitai 不会只挑一个。找到的提供商都进同一个模型池，请求分摊到池里各个模型，所以一次运行里不同文档、甚至同一篇长文档的不同分块，可能交给不同厂商处理。启动时 markitai 会在 stderr 列出这些模型，不加 `-v` 也能看到，只有 `--quiet` 会隐藏。想只用一个模型，设 `MODEL=<provider/model>` 或 `llm.model_list`。
 
 图片分析（`--alt`、`--desc`）需要支持视觉的模型。订阅制提供商通过文件附件支持。
 
@@ -368,7 +371,7 @@ markitai 会从 LiteLLM 检测模型的视觉能力。要手动指定，在模�
 | `timeout` | `120` | 请求超时（秒） |
 | `fallbacks` | `[]` | 分组回退，如 `[{"default": ["backup"]}]`。不在回退组里的模型只通过回退接收流量 |
 | `concurrency` | `10` | 同时发出的 LLM 请求数 |
-| `max_requests_per_document` | `50` | 一份文档的请求数到这个值就停止增强，保留基础输出。`0` 不限 |
+| `max_requests_per_document` | `50` | 一份文档的请求数到这个值就停止增强，保留基础输出。分块文档所需的请求数超过剩余额度时，一个请求都不发就直接失败。`0` 不限 |
 | `max_cost_per_document_usd` | `0` | 一份文档花到这个金额就停止增强。`0` 不限 |
 | `max_vision_pages_per_document` | `0` | 一份文档最多发给视觉模型的页面图片数。超出的文档不做视觉增强。`0` 不限 |
 
@@ -443,7 +446,7 @@ Claude Code 会自动缓存 4 KB 以上的系统提示词。无需配置，`mark
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
 | `enabled` | `false` | 等同 `--ocr` |
-| `lang` | `en` | 语言：`en`、`zh`、`ja`、`ko`、`ar`、`th` 或 `latin` |
+| `lang` | `en` | 语言：`en`、`zh`、`zh_tw`、`ja`、`ko`、`ar`、`th`、`latin`、`cyrillic`、`el`、`devanagari`、`ta`、`te`，或多语言模型能读的代码（`fr`、`de`、`es`、`it`、`pt`、`nl`、`pl`、`tr`、`vi` 等）。其他值直接报错 |
 | `per_page_routing` | `true` | 看起来正常的页面保留原生文本层，只对其余页面做 OCR。`false` 则每页都 OCR |
 
 本地 OCR 用 `ocr` extra 里的 [RapidOCR](https://github.com/RapidAI/RapidOCR)：
@@ -513,7 +516,7 @@ X/Twitter 的补充抓取（FxTwitter、Twitter oEmbed）和其他远程服务�
 
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
-| `timeout` | `30000` | 页面加载超时（毫秒） |
+| `timeout` | `30000` | 页面加载超时（毫秒）。加载后的页面操作也受同一预算约束（外加自动滚动时间），卡在脚本死循环里的页面会报错，而不是让整次运行挂住 |
 | `wait_for` | `domcontentloaded` | `load`、`domcontentloaded` 或 `networkidle` |
 | `extra_wait_ms` | `3000` | 加载事件后再等 JavaScript 的时间 |
 | `session_mode` | `isolated` | `isolated`（每个请求新上下文）或 `domain_persistent`（按域名复用） |
@@ -588,21 +591,26 @@ markitai 认 `HTTPS_PROXY`、`HTTP_PROXY` 和 `ALL_PROXY`，`NO_PROXY` 是绕过
 
 ## 缓存配置
 
-markitai 把 LLM 结果缓存在 `~/.markitai/cache.db`，同一份文档再转一次不花钱。
+markitai 在缓存目录里放两份缓存：
+
+- `cache.db` 存 LLM 结果，同一份文档再转一次不花钱。
+- `fetch_cache.db` 存抓取过的 URL 页面。带 `ETag` 或 `Last-Modified` 的页面每次运行都用条件请求重新验证（`304` 直接复用缓存；内容变了就走和新抓取一样的检查，所以变成挑战页或 JavaScript 空壳的页面不会覆盖原来的好缓存）。没有这两个头的页面在 `fetch_ttl_seconds` 内直接复用，过期后重新抓取。
 
 | 设置 | 默认值 | 说明 |
 |------|--------|------|
-| `enabled` | `true` | 缓存 LLM 结果 |
+| `enabled` | `true` | 缓存 LLM 结果和抓取的页面 |
 | `no_cache` | `false` | 跳过读取但照常写入（同 `--no-cache`） |
-| `no_cache_patterns` | `[]` | 绕过缓存的 glob |
-| `max_size_bytes` | `536870912` | 缓存上限（512 MB） |
+| `no_cache_patterns` | `[]` | 绕过缓存的 glob，匹配文件路径和 URL（同 `--no-cache-for`） |
+| `fetch_ttl_seconds` | `86400` | 没有 `ETag`/`Last-Modified` 的页面复用多久（24 小时）。`0` 表示每次都重新抓取 |
+| `max_size_bytes` | `536870912` | 每个缓存文件的上限（512 MB） |
 | `global_dir` | `~/.markitai` | 缓存目录 |
 
 ```bash
-markitai cache stats --verbose         # 缓存了什么，按模型列出
-markitai cache clear
+markitai cache stats --verbose         # 按模型列出 LLM 条目，外加抓取的页面
+markitai cache clear                   # 清空 cache.db 和 fetch_cache.db
 markitai document.pdf --no-cache       # 这一次绕过缓存
 markitai ./docs --no-cache-for "*.pdf"
+markitai urls.urls --no-cache-for "news.example.com"
 ```
 
 ## 输出配置

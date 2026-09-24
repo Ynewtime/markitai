@@ -100,7 +100,7 @@ class TestOcrExtra:
 
     def test_declared_ocr_extra_matches_the_documented_floor(self) -> None:
         data = tomllib.loads(_PKG_PYPROJECT.read_text(encoding="utf-8"))
-        assert data["project"]["optional-dependencies"]["ocr"] == ["rapidocr>=3.7.0"]
+        assert data["project"]["optional-dependencies"]["ocr"] == ["rapidocr>=3.9.0"]
 
     def test_every_package_extra_is_forwarded_by_the_workspace_root(self) -> None:
         package_extras = set(

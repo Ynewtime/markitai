@@ -58,6 +58,14 @@ class BatchDocItem:
     base_md: str  # base .md path, relative to output_dir (.llm.md derives)
     kind: str = "doc"  # "doc" | "image"; absent in states written before images
     image: str = ""  # kind="image": image path relative to output_dir
+    # kind="image": the document snippet the request was built with. It
+    # feeds both the cache key and the language hint, so the collector must
+    # rebuild the plan from the same text rather than from nothing.
+    document_context: str = ""
+    # kind="image" answered from the cache when the batch was built: its
+    # images.json entry, kept here because no request was sent for it. It
+    # still has to wait for its document's .llm.md, which the batch writes.
+    answer: dict[str, Any] | None = None
 
 
 @dataclass
@@ -75,6 +83,18 @@ class BatchRunState:
     provider: str  # litellm custom_llm_provider
     created_at: str
     items: list[BatchDocItem] = field(default_factory=list)
+    # Set once every result was written: a second collect then reports the
+    # batch as done instead of downloading and rewriting the outputs again.
+    collected_at: str | None = None
+    # Set when the batch ended without results (failed / expired /
+    # cancelled): nothing is left to collect, so ``--resume`` may submit its
+    # documents again instead of waiting on it forever.
+    ended_status: str | None = None
+    # The submitting run's --alt / --desc. Collection applies the image
+    # answers the way that run asked: the collect command's own config may
+    # not repeat the flags. None (older states): the collect config decides.
+    alt_enabled: bool | None = None
+    desc_enabled: bool | None = None
 
     def save(self, state_dir: Path) -> Path:
         state_dir.mkdir(parents=True, exist_ok=True)
@@ -94,6 +114,29 @@ class BatchRunState:
     @staticmethod
     def state_dir_for(output_dir: Path, batch_id: str) -> Path:
         return output_dir / ".markitai" / f"batch-{batch_id}"
+
+
+@dataclass(frozen=True)
+class BatchCredentials:
+    """The key and endpoint a batch job talks to.
+
+    Resolved from the pool's ``model_list`` entry the same way the live
+    router resolves it, so a configured ``api_key``/``api_base`` wins over
+    the provider's environment variables. A ``None`` field falls back to the
+    SDK's own environment lookup.
+    """
+
+    api_key: str | None = None
+    api_base: str | None = None
+
+    def litellm_kwargs(self) -> dict[str, Any]:
+        """litellm files/batches kwargs for this credential (unset ones omitted)."""
+        kwargs: dict[str, Any] = {}
+        if self.api_key:
+            kwargs["api_key"] = self.api_key
+        if self.api_base:
+            kwargs["api_base"] = self.api_base
+        return kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +253,44 @@ def build_anthropic_batch_request(
         "max_tokens": max_tokens,
         **mode_kwargs,
     }
+    # instructor lifts the system prompt out but leaves content blocks alone,
+    # and the plans build OpenAI-shaped image blocks, which the Messages API
+    # rejects ("Input tag 'image_url' ... does not match any of the expected
+    # tags"). The live path gets this translation from litellm.
+    params["messages"] = [
+        _anthropic_message(message) for message in params.get("messages", [])
+    ]
     return {"custom_id": custom_id, "params": params}
+
+
+def _anthropic_message(message: dict[str, Any]) -> dict[str, Any]:
+    """One chat message with its OpenAI image blocks in Anthropic's shape."""
+    content = message.get("content")
+    if not isinstance(content, list):
+        return message
+    return {**message, "content": [_anthropic_block(block) for block in content]}
+
+
+def _anthropic_block(block: Any) -> Any:
+    """Translate an ``image_url`` block; every other block passes through.
+
+    A ``data:`` URI becomes an inline base64 source, anything else a URL
+    source the API fetches itself.
+    """
+    if not isinstance(block, dict) or block.get("type") != "image_url":
+        return block
+    image_url = block.get("image_url")
+    url = str(
+        (image_url.get("url") if isinstance(image_url, dict) else image_url) or ""
+    )
+    if url.startswith("data:") and ";base64," in url:
+        header, data = url.split(",", 1)
+        media_type = header.removeprefix("data:").split(";", 1)[0]
+        return {
+            "type": "image",
+            "source": {"type": "base64", "media_type": media_type, "data": data},
+        }
+    return {"type": "image", "source": {"type": "url", "url": url}}
 
 
 def write_batch_jsonl(requests: list[dict[str, Any]], path: Path) -> None:
@@ -301,30 +381,60 @@ def parse_batch_result(
 
 
 async def submit_openai_batch(
-    jsonl_path: Path, *, custom_llm_provider: str = "openai"
+    jsonl_path: Path,
+    *,
+    custom_llm_provider: str = "openai",
+    credentials: BatchCredentials | None = None,
 ) -> str:
     """Upload + submit a batch job via litellm. Returns the batch id."""
     import litellm
 
+    auth = (credentials or BatchCredentials()).litellm_kwargs()
     file_obj = await litellm.acreate_file(
         file=jsonl_path,
         purpose="batch",
         custom_llm_provider=cast("Any", custom_llm_provider),
+        **auth,
     )
     batch = await litellm.acreate_batch(
         completion_window="24h",
         endpoint="/v1/chat/completions",
         input_file_id=file_obj.id,
         custom_llm_provider=cast("Any", custom_llm_provider),
+        **auth,
     )
     logger.info(f"[Batch] Submitted {jsonl_path.name} as {batch.id}")
     return batch.id
+
+
+async def _retrieve_openai_batch(
+    batch_id: str, custom_llm_provider: str, auth: dict[str, Any]
+) -> Any:
+    """``aretrieve_batch`` without litellm's batch-cost logging hook.
+
+    On a completed batch litellm's success logger downloads the whole output
+    file to price it, as a background task of every retrieve. That doubles
+    the download for each status check and, when the event loop closes
+    before the task runs, leaves ``OpenAIFilesAPI.afile_content`` never
+    awaited (the RuntimeWarning a repeated collect printed). markitai prices
+    the results itself from the file it downloads, so the hook is switched
+    off with litellm's own opt-out for polling callers.
+    """
+    import litellm
+
+    return await litellm.aretrieve_batch(
+        batch_id,
+        custom_llm_provider=cast("Any", custom_llm_provider),
+        litellm_metadata={"batch_ignore_default_logging": True},
+        **auth,
+    )
 
 
 async def poll_openai_batch(
     batch_id: str,
     *,
     custom_llm_provider: str = "openai",
+    credentials: BatchCredentials | None = None,
     timeout_s: float = 3600.0,
     interval_s: float = 30.0,
     on_progress: Callable[[str, int, int], None] | None = None,
@@ -334,6 +444,7 @@ async def poll_openai_batch(
     Args:
         batch_id: Provider batch id.
         custom_llm_provider: litellm provider name.
+        credentials: The pool entry's key/endpoint (environment otherwise).
         timeout_s: Give up after this many seconds (TimeoutError; the batch
             keeps running server-side — collect it later by id).
         interval_s: Seconds between status polls.
@@ -346,13 +457,10 @@ async def poll_openai_batch(
     Raises:
         TimeoutError: Still in flight after ``timeout_s``.
     """
-    import litellm
-
+    auth = (credentials or BatchCredentials()).litellm_kwargs()
     elapsed = 0.0
     while True:
-        batch = await litellm.aretrieve_batch(
-            batch_id, custom_llm_provider=cast("Any", custom_llm_provider)
-        )
+        batch = await _retrieve_openai_batch(batch_id, custom_llm_provider, auth)
         status = batch.status
         counts = getattr(batch, "request_counts", None)
         completed = int(getattr(counts, "completed", 0) or 0)
@@ -371,7 +479,11 @@ async def poll_openai_batch(
 
 
 async def download_openai_batch_output(
-    batch_id: str, output_path: Path, *, custom_llm_provider: str = "openai"
+    batch_id: str,
+    output_path: Path,
+    *,
+    custom_llm_provider: str = "openai",
+    credentials: BatchCredentials | None = None,
 ) -> Path:
     """Download a completed batch's output file. NETWORK CALL.
 
@@ -382,9 +494,8 @@ async def download_openai_batch_output(
     """
     import litellm
 
-    batch = await litellm.aretrieve_batch(
-        batch_id, custom_llm_provider=cast("Any", custom_llm_provider)
-    )
+    auth = (credentials or BatchCredentials()).litellm_kwargs()
+    batch = await _retrieve_openai_batch(batch_id, custom_llm_provider, auth)
     if batch.status != "completed":
         raise RuntimeError(f"batch {batch_id} is {batch.status!r}, not completed")
     file_id = batch.output_file_id or batch.error_file_id
@@ -398,7 +509,7 @@ async def download_openai_batch_output(
             "fall back to live re-runs"
         )
     content = await litellm.afile_content(
-        file_id, custom_llm_provider=cast("Any", custom_llm_provider)
+        file_id, custom_llm_provider=cast("Any", custom_llm_provider), **auth
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(cast("Any", content).content)
@@ -410,26 +521,38 @@ async def download_openai_batch_output(
 # ---------------------------------------------------------------------------
 
 
-def _anthropic_client() -> Any:
-    """An async Anthropic client, or a readable error about the missing key."""
+def _anthropic_client(credentials: BatchCredentials | None = None) -> Any:
+    """An async Anthropic client, or a readable error about the missing key.
+
+    A configured ``api_key``/``api_base`` wins; the SDK reads
+    ``ANTHROPIC_API_KEY``/``ANTHROPIC_BASE_URL`` for whatever is left unset.
+    """
     import anthropic
 
+    kwargs: dict[str, Any] = {}
+    if credentials is not None and credentials.api_key:
+        kwargs["api_key"] = credentials.api_key
+    if credentials is not None and credentials.api_base:
+        kwargs["base_url"] = credentials.api_base
     try:
-        return anthropic.AsyncAnthropic()
+        return anthropic.AsyncAnthropic(**kwargs)
     except Exception as e:  # anthropic raises when it finds no credential
         raise RuntimeError(
-            "--llm-batch on an Anthropic pool needs ANTHROPIC_API_KEY "
-            f"(set it in the environment or ~/.markitai/.env): {e}"
+            "--llm-batch on an Anthropic pool needs an API key: set api_key "
+            "on the model_list entry, or ANTHROPIC_API_KEY in the environment "
+            f"or ~/.markitai/.env ({e})"
         ) from e
 
 
-async def submit_anthropic_batch(requests: list[dict[str, Any]]) -> str:
+async def submit_anthropic_batch(
+    requests: list[dict[str, Any]], *, credentials: BatchCredentials | None = None
+) -> str:
     """Create a Message Batch from inline requests. Returns the batch id.
 
     Unlike the OpenAI path there is no file to upload: the requests travel
     in the create call itself.
     """
-    async with _anthropic_client() as client:
+    async with _anthropic_client(credentials) as client:
         batch = await client.messages.batches.create(requests=cast("Any", requests))
     logger.info(f"[Batch] Submitted {len(requests)} request(s) as {batch.id}")
     return batch.id
@@ -438,6 +561,7 @@ async def submit_anthropic_batch(requests: list[dict[str, Any]]) -> str:
 async def poll_anthropic_batch(
     batch_id: str,
     *,
+    credentials: BatchCredentials | None = None,
     timeout_s: float = 3600.0,
     interval_s: float = 30.0,
     on_progress: Callable[[str, int, int], None] | None = None,
@@ -455,7 +579,7 @@ async def poll_anthropic_batch(
             running server-side; collect it later by id.
     """
     elapsed = 0.0
-    async with _anthropic_client() as client:
+    async with _anthropic_client(credentials) as client:
         while True:
             batch = await client.messages.batches.retrieve(batch_id)
             status = batch.processing_status
@@ -475,7 +599,9 @@ async def poll_anthropic_batch(
             elapsed += interval_s
 
 
-async def download_anthropic_batch_output(batch_id: str, output_path: Path) -> Path:
+async def download_anthropic_batch_output(
+    batch_id: str, output_path: Path, *, credentials: BatchCredentials | None = None
+) -> Path:
     """Stream a Message Batch's results into the OpenAI output-file shape.
 
     Writing the same jsonl envelope both paths already read
@@ -485,7 +611,7 @@ async def download_anthropic_batch_output(batch_id: str, output_path: Path) -> P
     ``parse_batch_result`` needs to know whose body it is holding.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    async with _anthropic_client() as client:
+    async with _anthropic_client(credentials) as client:
         with output_path.open("w", encoding="utf-8") as f:
             async for entry in await client.messages.batches.results(batch_id):
                 result = entry.result

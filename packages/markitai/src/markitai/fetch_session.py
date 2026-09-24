@@ -19,9 +19,13 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from markitai.constants import (
+    DEFAULT_FETCH_CACHE_DB_FILENAME,
+    DEFAULT_FETCH_CACHE_TTL_SECONDS,
+)
 from markitai.fetch_cache import FetchCache, SPADomainCache
 from markitai.fetch_consent import ConsentState, set_consent_state_provider
-from markitai.fetch_http import set_proxy_bypass_provider
+from markitai.fetch_http import is_loopback_url, set_proxy_bypass_provider
 
 if TYPE_CHECKING:
     from markitai.config import FetchConfig
@@ -354,6 +358,10 @@ class FetchSession:
         self.spa_domain_cache: SPADomainCache | None = None
         self.fetch_cache: FetchCache | None = None
         self.fetch_cache_fingerprint: str = ""
+        # Fetch-cache read policy for fetch_url calls that do not pass their
+        # own (the CLI registers cfg.cache here once per run).
+        self.fetch_cache_ttl_seconds: int = DEFAULT_FETCH_CACHE_TTL_SECONDS
+        self.fetch_cache_skip_patterns: list[str] = []
 
         # Shared MarkItDown instance (reused for static fetching).
         # Note: MarkItDown's requests.Session is NOT thread-safe. However,
@@ -374,14 +382,36 @@ class FetchSession:
         self.jina_rate_limiter: _SlidingWindowRateLimiter | None = None
         self.defuddle_rate_limiter: _SlidingWindowRateLimiter | None = None
 
-        # Shared Playwright renderer (reused to avoid browser cold starts).
-        self.playwright_renderer: Any = None
-        self.playwright_renderer_fingerprint: str = ""
+        # Shared Playwright renderers (reused to avoid browser cold starts),
+        # one per proxy/session configuration. A browser carries its proxy
+        # for its whole life, so URLs that need different proxies get
+        # different browsers, and none is closed while the session lives:
+        # a concurrent fetch may still be using it.
+        self.playwright_renderers: dict[str, Any] = {}
 
         # Cached proxy detection result
         # (None = not checked, "" = no proxy, "http://..." = proxy URL).
         self.detected_proxy: str | None = None
         self.detected_proxy_bypass: str | None = None
+
+    def configure_fetch_cache(
+        self,
+        *,
+        ttl_seconds: int | None = None,
+        no_cache_patterns: list[str] | None = None,
+    ) -> None:
+        """Set the fetch-cache read policy used when a caller passes none.
+
+        Args:
+            ttl_seconds: Reuse window for entries without HTTP validators
+                (``cache.fetch_ttl_seconds``).
+            no_cache_patterns: URL globs whose cached fetches are never read
+                (``cache.no_cache_patterns`` / ``--no-cache-for``).
+        """
+        if isinstance(ttl_seconds, int) and ttl_seconds >= 0:
+            self.fetch_cache_ttl_seconds = ttl_seconds
+        if isinstance(no_cache_patterns, list | tuple):
+            self.fetch_cache_skip_patterns = [str(p) for p in no_cache_patterns]
 
     def get_cf_semaphore(self) -> asyncio.Semaphore:
         """Get or create the CF BR rate-limiting semaphore.
@@ -426,7 +456,7 @@ class FetchSession:
                     "[FetchCache] Rebuilding: config changed "
                     f"(was {self.fetch_cache_fingerprint!r}, now {fingerprint!r})"
                 )
-            db_path = cache_dir / "fetch_cache.db"
+            db_path = cache_dir / DEFAULT_FETCH_CACHE_DB_FILENAME
             self.fetch_cache = FetchCache(db_path, max_size_bytes)
             self.fetch_cache_fingerprint = fingerprint
         return self.fetch_cache
@@ -565,9 +595,12 @@ class FetchSession:
     async def get_playwright_renderer(
         self, proxy: str | None = None, config: FetchConfig | None = None
     ) -> Any:
-        """Get or create the shared PlaywrightRenderer.
+        """Get or create the shared PlaywrightRenderer for a configuration.
 
-        Rebuilds when ``proxy`` or session-mode configuration changes.
+        Renderers are cached per ``proxy``/bypass/session-mode fingerprint and
+        coexist: asking for another configuration never closes a renderer a
+        concurrent fetch may still be using (a batch that mixes NO_PROXY-exempt
+        and proxied URLs needs both). They are closed by :meth:`close`.
 
         Args:
             proxy: Optional proxy URL
@@ -577,33 +610,38 @@ class FetchSession:
             PlaywrightRenderer instance
         """
         session_mode = config.playwright.session_mode if config else None
-        fingerprint = f"{proxy}:{session_mode}"
-        if (
-            self.playwright_renderer is None
-            or self.playwright_renderer_fingerprint != fingerprint
-        ):
-            if self.playwright_renderer is not None:
-                logger.debug(
-                    "[Playwright] Rebuilding renderer: config changed "
-                    f"(was {self.playwright_renderer_fingerprint!r}, "
-                    f"now {fingerprint!r})"
-                )
-                await self.playwright_renderer.close()
-
+        # The context cache is built with the TTL, so a renderer made under
+        # another session_ttl_seconds must not be reused for this config
+        session_ttl = (
+            config.playwright.session_ttl_seconds
+            if config and session_mode == "domain_persistent"
+            else None
+        )
+        # The browser applies the bypass list itself (subresources, redirects
+        # and loopback hosts of a proxied page), so it is part of the identity
+        proxy_bypass = self.proxy_bypass_patterns() if proxy else []
+        fingerprint = f"{proxy}:{session_mode}:{session_ttl}:{','.join(proxy_bypass)}"
+        renderer = self.playwright_renderers.get(fingerprint)
+        if renderer is None:
             from markitai.fetch_playwright import PlaywrightRenderer
 
-            self.playwright_renderer = PlaywrightRenderer(proxy=proxy)
+            if self.playwright_renderers:
+                logger.debug(
+                    "[Playwright] Adding a renderer for another configuration "
+                    f"({fingerprint!r}); existing ones stay open"
+                )
+            renderer = PlaywrightRenderer(proxy=proxy, proxy_bypass=proxy_bypass)
 
             # Enable domain-persistent session cache if configured
             if config and config.playwright.session_mode == "domain_persistent":
-                self.playwright_renderer.enable_domain_session_cache(
+                renderer.enable_domain_session_cache(
                     ttl_seconds=config.playwright.session_ttl_seconds,
                     max_contexts=8,  # Default limit
                 )
 
-            self.playwright_renderer_fingerprint = fingerprint
+            self.playwright_renderers[fingerprint] = renderer
 
-        return self.playwright_renderer
+        return renderer
 
     def detect_proxy(self, force_recheck: bool = False) -> str:
         """Detect proxy settings from the environment or system configuration.
@@ -691,10 +729,14 @@ class FetchSession:
             url: URL being fetched.
 
         Returns:
-            True when the host matches a NO_PROXY bypass pattern.
+            True when the host is loopback (always direct, as in the
+            browser) or matches a NO_PROXY bypass pattern.
         """
         from markitai.fetch_policy import host_bypasses_proxy
 
+        if is_loopback_url(url):
+            logger.debug("[Proxy] Loopback host, no proxy for {}", url)
+            return True
         if host_bypasses_proxy(url, self.proxy_bypass_patterns()):
             logger.debug("[Proxy] NO_PROXY bypass for {}", url)
             return True
@@ -726,10 +768,14 @@ class FetchSession:
             self.fetch_cache.close()
             self.fetch_cache = None
         self.fetch_cache_fingerprint = ""
-        if self.playwright_renderer is not None:
-            await self.playwright_renderer.close()
-            self.playwright_renderer = None
-        self.playwright_renderer_fingerprint = ""
+        renderers = list(self.playwright_renderers.values())
+        self.playwright_renderers = {}
+        for renderer in renderers:
+            # One browser failing to close must not leak the others
+            try:
+                await renderer.close()
+            except Exception as e:
+                logger.warning(f"[Playwright] Failed to close a renderer: {e}")
         self.jina_rate_limiter = None
         self.defuddle_rate_limiter = None
 

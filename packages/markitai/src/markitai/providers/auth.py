@@ -398,7 +398,7 @@ def _store_claude_oauth_credentials(credentials: dict[str, Any]) -> bool:
             payload["claudeAiOauth"] = credentials
             from markitai.security import atomic_write_json
 
-            atomic_write_json(credentials_path, payload)
+            atomic_write_json(credentials_path, payload, private=True)
             return True
         except Exception:
             return False

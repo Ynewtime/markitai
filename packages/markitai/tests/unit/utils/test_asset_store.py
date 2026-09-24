@@ -44,13 +44,13 @@ class TestAssetStoreSave:
         store = AssetStore(tmp_path / "store")
         img = self._make_image(tmp_path, "test.jpg", b"image-data-123")
 
-        ref_path = store.save(img, "sample.pdf")
+        blob_path = store.save(img, "sample.pdf")
 
-        assert ref_path.is_symlink()
-        assert ref_path.resolve().exists()
-        assert ref_path.read_bytes() == b"image-data-123"
-        assert "refs" in str(ref_path)
-        assert "sample.pdf" in str(ref_path)
+        assert blob_path.read_bytes() == b"image-data-123"
+        # The browse index still gets a ref symlink to the blob
+        ref = store.persist_dir / "refs" / "sample.pdf" / "test.jpg"
+        assert ref.is_symlink()
+        assert ref.resolve() == blob_path.resolve()
 
     def test_dedup_same_content(self, tmp_path: Path) -> None:
         store = AssetStore(tmp_path / "store")
@@ -77,15 +77,16 @@ class TestAssetStoreSave:
         assert ref1.resolve() != ref2.resolve()
 
     def test_overwrites_existing_symlink(self, tmp_path: Path) -> None:
-        """Re-processing same file should update the symlink."""
+        """Re-processing same file should update the browse-index symlink."""
         store = AssetStore(tmp_path / "store")
         img1 = self._make_image(tmp_path, "test.jpg", b"version-1")
-        img2 = self._make_image(tmp_path, "test.jpg", b"version-2")
 
         store.save(img1, "doc.pdf")
         img2 = self._make_image(tmp_path, "test.jpg", b"version-2")
-        ref = store.save(img2, "doc.pdf")
+        blob = store.save(img2, "doc.pdf")
 
+        assert blob.read_bytes() == b"version-2"
+        ref = store.persist_dir / "refs" / "doc.pdf" / "test.jpg"
         assert ref.read_bytes() == b"version-2"
 
     def test_returns_absolute_path(self, tmp_path: Path) -> None:
@@ -95,16 +96,44 @@ class TestAssetStoreSave:
         ref_path = store.save(img, "source.pdf")
         assert ref_path.is_absolute()
 
-    def test_ref_path_under_refs_not_blobs(self, tmp_path: Path) -> None:
-        """Returned path must be under refs/, not blobs/."""
+    def test_returns_blob_path_not_ref(self, tmp_path: Path) -> None:
+        """Returned path is the content-addressed blob, not the mutable ref."""
         store = AssetStore(tmp_path / "store")
         img = self._make_image(tmp_path, "chart.png", b"chart-data")
 
-        ref_path = store.save(img, "report.docx")
-        assert "refs" in str(ref_path)
-        assert "blobs" not in str(ref_path)
-        assert "report.docx" in str(ref_path)
-        assert ref_path.name == "chart.png"
+        path = store.save(img, "report.docx")
+        assert path.parent == store.persist_dir / "blobs"
+        assert not path.is_symlink()
+        assert path.suffix == ".png"
+
+    def test_same_named_source_does_not_change_earlier_link(
+        self, tmp_path: Path
+    ) -> None:
+        """Regression: links handed out earlier must keep their image.
+
+        ``a/report.pdf`` and ``b/report.pdf`` (or two versions of one
+        document) share ``refs/report.pdf/<image name>``; the second save
+        re-points that ref. The path returned by the first save must still
+        show the first image.
+        """
+        store = AssetStore(tmp_path / "store")
+        (tmp_path / "a").mkdir()
+        (tmp_path / "b").mkdir()
+        img_a = self._make_image(tmp_path / "a", "report.pdf-0001-01.jpg", b"red")
+        img_b = self._make_image(tmp_path / "b", "report.pdf-0001-01.jpg", b"blue")
+
+        first = store.save(img_a, "report.pdf")
+        second = store.save(img_b, "report.pdf")
+
+        assert first.read_bytes() == b"red"
+        assert second.read_bytes() == b"blue"
+        assert first != second
+
+    def test_to_markdown_uri_percent_encodes(self, tmp_path: Path) -> None:
+        store = AssetStore(tmp_path / "store")
+        uri = store.to_markdown_uri(tmp_path / "a b.png")
+        assert uri.startswith("file://")
+        assert "a%20b.png" in uri
 
 
 class TestAssetStoreHashCollision:
@@ -148,15 +177,16 @@ class TestAssetStoreSourceNameSanitization:
         store = AssetStore(tmp_path / "store")
         img = self._make_image(tmp_path, "img.jpg", b"data")
 
-        ref_path = store.save(img, "https://example.com/path?q=1")
+        blob_path = store.save(img, "https://example.com/path?q=1")
 
-        # Symlink must be valid and readable
-        assert ref_path.read_bytes() == b"data"
+        assert blob_path.read_bytes() == b"data"
         # refs dir must be flat (no nested https:/example.com/...)
         refs_dir = tmp_path / "store" / "refs"
-        subdirs = [p.name for p in refs_dir.iterdir()]
+        subdirs = list(refs_dir.iterdir())
         assert len(subdirs) == 1
-        assert "/" not in subdirs[0]
+        assert "/" not in subdirs[0].name
+        # Symlink must be valid and readable
+        assert (subdirs[0] / "img.jpg").read_bytes() == b"data"
 
     def test_windows_path_source_name(self, tmp_path: Path) -> None:
         store = AssetStore(tmp_path / "store")
@@ -169,8 +199,8 @@ class TestAssetStoreSourceNameSanitization:
         store = AssetStore(tmp_path / "store")
         img = self._make_image(tmp_path, "img.jpg", b"data")
 
-        ref_path = store.save(img, "sample.pdf")
-        assert "sample.pdf" in str(ref_path)
+        store.save(img, "sample.pdf")
+        assert (store.persist_dir / "refs" / "sample.pdf" / "img.jpg").is_symlink()
 
 
 class TestAssetStoreErrorHandling:

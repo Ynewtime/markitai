@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import yaml
 from loguru import logger
@@ -71,6 +72,13 @@ Generate the following fields:
 **Output language MUST match the source document** — English content → English metadata, Chinese content → Chinese metadata, etc.
 """
 
+# Share of a chunked document's calls kept in reserve for retries when
+# checking it against the request budget up front: every chunk is one
+# request when all goes well, but a transport retry or a structured-mode
+# fallback spends another, and a budget that fits the chunks exactly would
+# trip on the first retry after most of them were paid for.
+CHUNK_RETRY_RESERVE = 0.2
+
 # Prompt-instruction headings an LLM sometimes copies verbatim into
 # cleaned_markdown. Every marker here must still appear in a live prompt
 # template or in-code prompt constant — test_prompt_leakage_sync.py fails
@@ -88,7 +96,14 @@ from markitai.llm.content import (
     restore_image_positions as _shared_restore_image_positions,
 )
 from markitai.llm.degeneration import truncate_degenerate_tail
-from markitai.llm.engine import EmptyLLMResponseError, LLMCall
+from markitai.llm.engine import (
+    EmptyLLMResponseError,
+    LLMCall,
+    LLMEnhancementDegradedError,
+    LLMRequestBudgetExceededError,
+    RequestBudget,
+    find_fatal_document_error,
+)
 
 # Moved to markitai.llm.engine (Phase 2.1); alias keeps the internal
 # reference in process_document() working unchanged.
@@ -252,6 +267,12 @@ class DocumentPlan:
     identical plan when results come back. The live path runs the call
     immediately; the offline path collects ``call`` into a Batch API job
     and applies ``finalize_document_plan`` hours later.
+
+    A document longer than ``DEFAULT_MAX_CONTENT_CHARS`` is enhanced in
+    chunks: ``call`` covers the first chunk (whose metadata becomes the
+    document's) and ``chunk_calls`` the rest, each cached on its own. A
+    result for ``call`` alone covers only the first chunk, so an offline
+    caller must not finalize a plan that has ``chunk_calls`` from it.
     """
 
     call: LLMCall
@@ -264,6 +285,7 @@ class DocumentPlan:
     original_title: str
     fetch_strategy: str | None
     extra_meta: dict[str, Any] | None
+    chunk_calls: list[LLMCall] = field(default_factory=list)
 
 
 class DocumentEnhancer:
@@ -484,6 +506,17 @@ class DocumentEnhancer:
         result = self._restore_images_or_fallback(
             result, content, image_mapping, context or "cleaner", "clean_markdown"
         )
+
+        # A refusal or an unrelated reply is not a cleanup: keep the input and
+        # cache nothing, like an empty answer (the persistent cache has no
+        # TTL, so a cached refusal would come back on every later run).
+        rejection = content_utils.implausible_cleaning_reason(content, result)
+        if rejection is not None:
+            logger.error(
+                f"[{context or 'cleaner'}] clean_markdown answer rejected "
+                f"({rejection}), keeping the original content"
+            )
+            return content
 
         # Cache the result in both layers
         self._engine.memory_cache.set(cache_key, content, result)
@@ -738,6 +771,20 @@ class DocumentEnhancer:
                 missing.append(original)
         return missing
 
+    def _boundary_placeholder_loss(
+        self, llm_output: str, mapping: dict[str, str]
+    ) -> str | None:
+        """Which page/slide markers the LLM dropped (None when it kept all)."""
+        missing = self._find_missing_boundary_placeholders(llm_output, mapping)
+        if not missing:
+            return None
+        marker_nums = [
+            match.group(1)
+            for marker in missing
+            if (match := _BOUNDARY_MARKER_EXTRACT_RE.search(marker))
+        ]
+        return ", ".join(marker_nums) if marker_nums else str(len(missing))
+
     def _fallback_if_boundary_placeholders_missing(
         self,
         llm_output: str,
@@ -747,16 +794,10 @@ class DocumentEnhancer:
         stage: str,
     ) -> str | None:
         """Use original paginated content when LLM drops structural placeholders."""
-        missing = self._find_missing_boundary_placeholders(llm_output, mapping)
-        if not missing:
+        detail = self._boundary_placeholder_loss(llm_output, mapping)
+        if detail is None:
             return None
 
-        marker_nums = [
-            match.group(1)
-            for marker in missing
-            if (match := _BOUNDARY_MARKER_EXTRACT_RE.search(marker))
-        ]
-        detail = ", ".join(marker_nums) if marker_nums else str(len(missing))
         logger.warning(
             f"[{source}] {stage} dropped structural placeholders "
             f"(markers: {detail}); using original paginated content"
@@ -1065,6 +1106,11 @@ class DocumentEnhancer:
 
         Returns:
             Cleaned markdown content (same content, cleaner format)
+
+        Raises:
+            LLMEnhancementDegradedError: The model returned nothing, or an
+                answer that cannot be a cleanup of the text (a refusal).
+                Nothing is cached; the extracted text rides on the error.
         """
         if not page_images:
             return extracted_text
@@ -1090,7 +1136,9 @@ class DocumentEnhancer:
             # No hit-path repair needed: the key is prompt-scoped, so every
             # reachable entry was written below with the echo strip and the
             # image-ref fix already applied.
+            self._engine.record_cache_hit()
             return cached
+        self._engine.record_cache_miss()
 
         # Extract and protect content before LLM processing
         protected = content_utils.extract_protected_content(extracted_text)
@@ -1149,12 +1197,11 @@ class DocumentEnhancer:
                 require_content=True,
             )
         except EmptyLLMResponseError as exc:
-            # Keep the extracted text and cache nothing (see clean_markdown)
-            logger.error(
-                f"[{context or 'vision'}] document vision enhancement got an "
-                f"empty LLM response, keeping the extracted text: {exc}"
-            )
-            return extracted_text
+            # Cache nothing (see clean_markdown). Returning the extracted
+            # text would pass unenhanced pages off as enhanced ones.
+            raise LLMEnhancementDegradedError(
+                format_error_message(exc), cleaned_markdown=extracted_text
+            ) from exc
 
         # Restore protected content from placeholders, with fallback for removed items
         result = content_utils.unprotect_content(
@@ -1169,6 +1216,17 @@ class DocumentEnhancer:
         result, degenerated = truncate_degenerate_tail(
             result, context=context, stage="document_vision_enhance"
         )
+
+        # A refusal is not a cleanup: fail and cache nothing (the persistent
+        # cache has no TTL, so a cached refusal would come back every run)
+        rejection = content_utils.implausible_cleaning_reason(
+            extracted_text, result, check_overlap=False
+        )
+        if rejection is not None:
+            raise LLMEnhancementDegradedError(
+                f"LLM answer is not a cleanup ({rejection})",
+                cleaned_markdown=extracted_text,
+            )
 
         # Store in persistent cache
         # Skip persisting degenerate responses so a clean retry isn't poisoned
@@ -1208,6 +1266,10 @@ class DocumentEnhancer:
 
         Returns:
             Tuple of (cleaned_markdown, frontmatter_yaml)
+
+        Raises:
+            LLMEnhancementDegradedError: The combined call or any page batch
+                failed; the partially enhanced result rides on the error.
         """
         from markitai.utils.frontmatter import resolve_document_title
 
@@ -1255,30 +1317,19 @@ class DocumentEnhancer:
                     original_title=resolved_title,
                 )
             except Exception as e:
-                # Log succinct warning instead of full exception trace
+                # The item fails either way, so a cleaner-only retry would be
+                # paid for and thrown away: the extracted text rides along.
+                reason = _find_non_retryable_provider_error(e) or e
                 logger.warning(
-                    f"[{source}] Combined call failed: {format_error_message(e)}, "
-                    "falling back to separate calls"
+                    f"[{source}] Combined call failed: {format_error_message(reason)}"
                 )
-                # Fallback to separate calls with error handling
-                try:
-                    cleaned = await self.enhance_document_with_vision(
-                        extracted_text, page_images, context=source
-                    )
-                except Exception as clean_err:
-                    logger.warning(
-                        f"[{source}] Vision cleaning also failed: {format_error_message(clean_err)}"
-                    )
-                    cleaned = extracted_text
-
-                # Use _build_fallback_frontmatter for consistent structure
-                frontmatter = self._build_fallback_frontmatter(
-                    source,
-                    cleaned,
-                    title=resolved_title,
-                )
-
-                return cleaned, frontmatter
+                raise LLMEnhancementDegradedError(
+                    format_error_message(reason),
+                    cleaned_markdown=extracted_text,
+                    frontmatter=self._build_fallback_frontmatter(
+                        source, extracted_text, title=resolved_title
+                    ),
+                ) from e
 
         # Multi batch: first batch uses _enhance_with_frontmatter for Instructor-based
         # frontmatter generation, remaining batches clean only
@@ -1293,11 +1344,25 @@ class DocumentEnhancer:
             extracted_text, page_images, max_pages_per_batch
         )
 
+        def _degraded(
+            failure: BaseException, parts: list[str], frontmatter: str
+        ) -> LLMEnhancementDegradedError:
+            # Pages left unenhanced are a failed enhancement, not a quieter
+            # success: the caller falls back to the base output.
+            reason = _find_non_retryable_provider_error(failure) or failure
+            return LLMEnhancementDegradedError(
+                format_error_message(reason),
+                cleaned_markdown="\n\n".join(parts),
+                frontmatter=frontmatter,
+            )
+
         # First batch: use _enhance_with_frontmatter to generate frontmatter with Instructor
         logger.info(
             f"[{source}] Batch 1/{len(image_batches)}: "
             f"pages 1-{len(image_batches[0])} (with frontmatter)"
         )
+        # The first failure seen; any failed batch fails the document
+        failure: BaseException | None = None
         try:
             cleaned_first, frontmatter = await self._enhance_with_frontmatter(
                 text_batches[0],
@@ -1306,29 +1371,27 @@ class DocumentEnhancer:
                 original_title=resolved_title,
             )
         except Exception as e:
-            logger.warning(
-                f"[{source}] First batch failed: {format_error_message(e)}, "
-                "falling back to vision-only cleaning"
-            )
-            try:
-                cleaned_first = await self.enhance_document_with_vision(
-                    text_batches[0], image_batches[0], context=source
-                )
-            except Exception as clean_err:
-                logger.warning(
-                    f"[{source}] Vision cleaning also failed: {format_error_message(clean_err)}"
-                )
-                cleaned_first = text_batches[0]
+            failure = e
+            logger.warning(f"[{source}] First batch failed: {format_error_message(e)}")
+            # No cleaner-only retry of the batch: the document fails anyway,
+            # so its answer would be paid for and discarded
+            cleaned_first = text_batches[0]
             frontmatter = self._build_fallback_frontmatter(
                 source,
                 extracted_text,
                 title=resolved_title,
             )
+            if find_fatal_document_error(e) is not None:
+                # An invalid key or a missing model fails every batch the
+                # same way: sending the rest would only add failed requests
+                raise _degraded(
+                    e, [cleaned_first, *text_batches[1:]], frontmatter
+                ) from e
 
         # Remaining batches: parallel cleaning without frontmatter
         cleaned_parts = [cleaned_first]
         if len(image_batches) > 1:
-            remaining_tasks = []
+            remaining_tasks: list[asyncio.Task[str]] = []
             for i in range(1, len(image_batches)):
                 logger.info(
                     f"[{source}] Batch {i + 1}/{len(image_batches)}: "
@@ -1336,31 +1399,70 @@ class DocumentEnhancer:
                     f"{min((i + 1) * max_pages_per_batch, len(page_images))}"
                 )
                 remaining_tasks.append(
-                    self.enhance_document_with_vision(
-                        text_batches[i], image_batches[i], context=source
+                    asyncio.ensure_future(
+                        self.enhance_document_with_vision(
+                            text_batches[i], image_batches[i], context=source
+                        )
                     )
                 )
 
-            # Process remaining batches in parallel
-            remaining_results = await asyncio.gather(
-                *remaining_tasks, return_exceptions=True
-            )
-
-            # Merge results with fallbacks for failed batches
-            for i, result in enumerate(remaining_results):
-                if isinstance(result, BaseException):
-                    logger.warning(
-                        f"[{source}] Batch {i + 2} failed: {format_error_message(result)}, "
-                        "using original text"
+            # Process remaining batches in parallel, but stop sending the
+            # queued ones as soon as a batch fails with an error every batch
+            # would repeat (invalid key, missing model)
+            pending: set[asyncio.Task[str]] = set(remaining_tasks)
+            try:
+                while pending:
+                    done, pending = await asyncio.wait(
+                        pending, return_when=asyncio.FIRST_EXCEPTION
                     )
+                    fatal = any(
+                        not task.cancelled()
+                        and task.exception() is not None
+                        and find_fatal_document_error(
+                            cast(BaseException, task.exception())
+                        )
+                        is not None
+                        for task in done
+                    )
+                    if fatal and pending:
+                        logger.warning(
+                            f"[{source}] Non-retryable error: skipping "
+                            f"{len(pending)} remaining batches"
+                        )
+                        break
+            finally:
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
+
+            # Merge results with the original text for failed batches
+            for i, task in enumerate(remaining_tasks):
+                if task.cancelled():
+                    cleaned_parts.append(text_batches[i + 1])
+                    continue
+                error = task.exception()
+                if error is not None:
+                    logger.warning(
+                        f"[{source}] Batch {i + 2} failed: "
+                        f"{format_error_message(error)}"
+                    )
+                    # Report the error every batch repeats over a
+                    # transient one seen first
+                    if failure is None or (
+                        find_fatal_document_error(error) is not None
+                        and find_fatal_document_error(failure) is None
+                    ):
+                        failure = error
                     cleaned_parts.append(text_batches[i + 1])
                 else:
-                    cleaned_parts.append(result)
+                    cleaned_parts.append(task.result())
+
+        if failure is not None:
+            raise _degraded(failure, cleaned_parts, frontmatter) from failure
 
         # Merge all cleaned parts
-        cleaned = "\n\n".join(cleaned_parts)
-
-        return cleaned, frontmatter
+        return "\n\n".join(cleaned_parts), frontmatter
 
     def prepare_vision_plan(
         self,
@@ -1447,27 +1549,33 @@ class DocumentEnhancer:
         ]
 
         def _postprocess(result: EnhancedDocumentResult) -> EnhancedDocumentResult:
-            """Post-process a fresh LLM result (runs before the cache write)."""
+            """Post-process a fresh LLM result (runs before the cache write).
+
+            Raises ValueError (nothing is cached, the call fails) for an
+            answer that dropped page/slide boundaries or is a refusal:
+            falling back to the extracted text would report unenhanced
+            output as enhanced.
+            """
             response_markdown = content_utils.strip_prompt_echo(result.cleaned_markdown)
-            fallback = self._fallback_if_boundary_placeholders_missing(
-                response_markdown,
-                extracted_text,
-                mapping,
-                source,
-                "vision_enhance",
-            )
-            if fallback is not None:
-                cleaned = fallback
-            else:
-                # Restore protected content from placeholders.
-                # Pass protected dict for fallback restoration if LLM removed placeholders.
-                cleaned = content_utils.unprotect_content(
-                    response_markdown, mapping, protected
+            lost = self._boundary_placeholder_loss(response_markdown, mapping)
+            if lost is not None:
+                raise ValueError(
+                    f"LLM answer dropped page/slide boundaries (markers: {lost})"
                 )
+            # Restore protected content from placeholders.
+            # Pass protected dict for fallback restoration if LLM removed placeholders.
+            cleaned = content_utils.unprotect_content(
+                response_markdown, mapping, protected
+            )
 
             # Fix malformed image references (e.g., extra closing parentheses)
             cleaned = content_utils.fix_malformed_image_refs(cleaned)
             cleaned = self._stabilize_paged_markdown(extracted_text, cleaned, source)
+            rejection = content_utils.implausible_cleaning_reason(
+                extracted_text, cleaned, check_overlap=False
+            )
+            if rejection is not None:
+                raise ValueError(f"LLM answer is not a cleanup ({rejection})")
             return EnhancedDocumentResult(
                 cleaned_markdown=cleaned, frontmatter=result.frontmatter
             )
@@ -1642,6 +1750,13 @@ class DocumentEnhancer:
 
         Returns:
             Tuple of (cleaned_markdown, frontmatter_yaml)
+
+        Raises:
+            LLMEnhancementDegradedError: The structured call failed, the
+                answer fell back to the input, or a chunked document needs
+                more requests than its budget has left (refused before
+                anything is sent). The input and a fallback frontmatter
+                ride on the error; callers keep the base output.
         """
         plan = self._prepare_document_plan(
             markdown,
@@ -1651,60 +1766,73 @@ class DocumentEnhancer:
             title=title,
         )
 
-        # Try combined approach with Instructor first
         try:
-            result = await self._run_document_call(plan.call)
-            return self.finalize_document_plan(plan, result)
+            self._check_chunk_budget(plan)
+            result = await self._run_document_plan(plan)
+            return self.finalize_document_plan(plan, result, strict=True)
         except Exception as e:
-            fatal_provider_error = _find_non_retryable_provider_error(e)
-            if fatal_provider_error is not None:
-                logger.warning(
-                    f"[LLM:{source}] Structured document processing failed with "
-                    f"non-retryable provider error, skipping cleaner fallback: "
-                    f"{format_error_message(fatal_provider_error)}"
-                )
-                frontmatter = self._build_fallback_frontmatter(
-                    source,
-                    markdown,
-                    plan.original_title,
-                    fetch_strategy,
-                    extra_meta,
-                )
-                return markdown, frontmatter
-
+            # A failed structured call fails the item (callers keep the base
+            # output), so a cleaner-only retry would be paid for and thrown
+            # away: the degraded result carries the input unchanged.
+            reason = _find_non_retryable_provider_error(e) or e
             logger.warning(
-                f"[LLM:{source}] Structured document processing failed, "
-                f"falling back to cleaner: {format_error_message(e)}"
+                f"[LLM:{source}] Structured document processing failed: "
+                f"{format_error_message(reason)}"
             )
+            frontmatter = self._build_fallback_frontmatter(
+                source,
+                markdown,
+                plan.original_title,
+                fetch_strategy,
+                extra_meta,
+            )
+            raise LLMEnhancementDegradedError(
+                format_error_message(reason),
+                cleaned_markdown=markdown,
+                frontmatter=frontmatter,
+            ) from e
 
-        # Fallback: Run cleaning only (no longer use generate_frontmatter)
-        # Use clean_markdown which has its own protection mechanism
-        if plan.body_verbatim:
-            cleaned = markdown
-        else:
-            try:
-                cleaned = await self.clean_markdown(markdown, context=source)
-            except Exception as clean_err:
-                logger.warning(
-                    f"Markdown cleaning failed: {format_error_message(clean_err)}"
-                )
-                cleaned = markdown
+    def _check_chunk_budget(self, plan: DocumentPlan) -> None:
+        """Refuse a chunked document its request budget cannot cover.
 
-        # Build fallback frontmatter — prefer title from cleaned content so it
-        # stays consistent with any heading corrections made by the cleaner.
-        from markitai.utils.frontmatter import extract_title_from_content
+        Checked before anything is sent: a document split into more chunks
+        than the per-document budget allows would otherwise pay for most of
+        them and then trip the breaker, failing anyway. Chunks already in
+        the cache cost no request and are not counted.
 
-        cleaned_title = extract_title_from_content(cleaned)
-        fallback_title = cleaned_title if cleaned_title else plan.original_title
-        frontmatter = self._build_fallback_frontmatter(
-            source,
-            cleaned,
-            fallback_title,
-            fetch_strategy,
-            extra_meta,
+        Raises:
+            LLMRequestBudgetExceededError: The chunks plus a retry reserve
+                (``CHUNK_RETRY_RESERVE``) exceed what the budget has left.
+        """
+        if not plan.chunk_calls:
+            return
+        budget = self._engine.request_budget
+        if not isinstance(budget, RequestBudget):
+            return
+        remaining = budget.remaining(plan.source)
+        if remaining is None:
+            return
+
+        def needed(calls: int) -> int:
+            return calls + math.ceil(calls * CHUNK_RETRY_RESERVE) if calls else 0
+
+        calls = [plan.call, *plan.chunk_calls]
+        if needed(len(calls)) <= remaining:
+            return
+        uncached = sum(1 for call in calls if self._engine.try_cached(call) is None)
+        if needed(uncached) <= remaining:
+            return
+        # Short enough to survive the 200-char error formatting intact
+        logger.warning(
+            f"[LLM:{plan.source}] {len(calls)} chunks of up to "
+            f"{DEFAULT_MAX_CONTENT_CHARS} chars ({uncached} uncached) exceed the "
+            "request budget; nothing was sent"
         )
-
-        return cleaned, frontmatter
+        raise LLMRequestBudgetExceededError(
+            f"{uncached} chunks need about {needed(uncached)} requests with "
+            f"retries; llm.max_requests_per_document leaves {remaining} of "
+            f"{budget.limit}. Nothing was sent: raise it (0 disables)"
+        )
 
     def _prepare_document_plan(
         self,
@@ -1749,9 +1877,36 @@ class DocumentEnhancer:
         protected = content_utils.extract_protected_content(image_protected)
         protected_content, mapping = content_utils.protect_content(image_protected)
 
-        call = self._build_document_call(protected_content, source)
+        # A document over the per-call limit is enhanced chunk by chunk
+        # instead of being truncated: every chunk is cleaned, none dropped.
+        chunks = content_utils.split_markdown_chunks(
+            protected_content, DEFAULT_MAX_CONTENT_CHARS
+        )
+        if len(chunks) > 1:
+            logger.info(
+                f"[LLM:{source}] {len(protected_content)} chars exceed the "
+                f"{DEFAULT_MAX_CONTENT_CHARS}-char call limit: enhancing in "
+                f"{len(chunks)} chunks"
+            )
+        # Placeholders the answer must keep: dropping one would make
+        # finalize_document_plan fall back to the unenhanced input
+        structural = [
+            placeholder
+            for placeholder in mapping
+            if "PAGENUM" in placeholder or "SLIDENUM" in placeholder
+        ] + list(image_mapping)
+        calls = [
+            self._build_document_call(
+                chunk,
+                source,
+                check_rewrite=not body_verbatim,
+                chunked=len(chunks) > 1,
+                required_placeholders=tuple(p for p in structural if p in chunk),
+            )
+            for chunk in chunks
+        ]
         return DocumentPlan(
-            call=call,
+            call=calls[0],
             source=source,
             original_markdown=markdown,
             body_verbatim=body_verbatim,
@@ -1761,18 +1916,44 @@ class DocumentEnhancer:
             original_title=original_title,
             fetch_strategy=fetch_strategy,
             extra_meta=extra_meta,
+            chunk_calls=calls[1:],
         )
 
     def finalize_document_plan(
-        self, plan: DocumentPlan, result: DocumentProcessResult
+        self,
+        plan: DocumentPlan,
+        result: DocumentProcessResult,
+        *,
+        strict: bool = False,
     ) -> tuple[str, str]:
         """Post-process a structured result into (cleaned, frontmatter_yaml).
 
         Pure local work — the same code runs on the live path and when a
         batch result comes back hours later.
+
+        The call's ``validate`` hook already rejects answers that dropped a
+        structural placeholder, so the fallbacks below only fire for cache
+        entries written before it did.
+
+        Args:
+            plan: The plan the result answers.
+            result: The (validated) structured result.
+            strict: Raise instead of falling back to the unenhanced input
+                (the live path: a fallback there is a failed enhancement).
+
+        Raises:
+            LLMEnhancementDegradedError: ``strict`` and the result lost a
+                page/slide boundary or an image placeholder.
         """
         markdown = plan.original_markdown
         source = plan.source
+
+        def degraded(what: str) -> LLMEnhancementDegradedError:
+            return LLMEnhancementDegradedError(
+                f"LLM answer dropped {what}; the input was kept unenhanced",
+                cleaned_markdown=markdown,
+            )
+
         if plan.body_verbatim:
             logger.info(
                 f"[LLM:{source}] social_post profile: body kept verbatim, "
@@ -1780,6 +1961,20 @@ class DocumentEnhancer:
             )
             cleaned = markdown
         else:
+            if strict:
+                lost = self._boundary_placeholder_loss(
+                    result.cleaned_markdown, plan.mapping
+                )
+                if lost is not None:
+                    raise degraded(f"page/slide boundaries (markers: {lost})")
+                lost_images = [
+                    p for p in plan.image_mapping if p not in result.cleaned_markdown
+                ]
+                if lost_images:
+                    raise degraded(
+                        f"{len(lost_images)}/{len(plan.image_mapping)} "
+                        "image placeholders"
+                    )
             fallback = self._fallback_if_boundary_placeholders_missing(
                 result.cleaned_markdown,
                 markdown,
@@ -1832,16 +2027,20 @@ class DocumentEnhancer:
 
         Nothing is cached here, but the answer is written straight to the
         user's ``.llm.md``: an empty one would replace the document with a
-        blank file. So the same rule as :meth:`clean_markdown` applies — an
-        empty answer is a failed call, and the input is returned untouched.
+        blank file, a refusal would replace it with the refusal. Both are
+        failed calls, and returning the input instead would report the
+        unenhanced text as enhanced, so both raise.
 
         Args:
             markdown: Raw markdown content
             source: Source file name for logging context
 
         Returns:
-            LLM response content as-is, or *markdown* if the model returned
-            nothing.
+            LLM response content as-is.
+
+        Raises:
+            LLMEnhancementDegradedError: The model returned nothing, or an
+                answer that cannot be a cleanup of *markdown*.
         """
         system_prompt = self._prompt_manager.get_prompt(
             "cleaner_system", mode_rules=PURE_MODE_RULES
@@ -1858,20 +2057,52 @@ class DocumentEnhancer:
                 require_content=True,
             )
         except EmptyLLMResponseError as exc:
-            logger.error(
-                f"[{source or 'cleaner'}] clean_document_pure got an empty LLM "
-                f"response, keeping the original content: {exc}"
+            raise LLMEnhancementDegradedError(
+                format_error_message(exc), cleaned_markdown=markdown
+            ) from exc
+        rejection = content_utils.implausible_cleaning_reason(
+            markdown, response.content
+        )
+        if rejection is not None:
+            raise LLMEnhancementDegradedError(
+                f"LLM answer is not a cleanup ({rejection})",
+                cleaned_markdown=markdown,
             )
-            return markdown
         return response.content
 
-    def _build_document_call(self, markdown: str, source: str) -> LLMCall:
+    def _build_document_call(
+        self,
+        markdown: str,
+        source: str,
+        *,
+        check_rewrite: bool = True,
+        chunked: bool = False,
+        required_placeholders: tuple[str, ...] = (),
+    ) -> LLMCall:
         """Build the combined cleaner+frontmatter structured call.
 
         Content-addressed: cache_content is the full markdown, so the
         source file name is deliberately NOT part of the key (a renamed
         file with identical content must still hit). The prompt digest is,
         so a reworded prompt re-runs instead of replaying stale output.
+
+        Args:
+            markdown: The (protected) text of one call; at most
+                ``DEFAULT_MAX_CONTENT_CHARS`` long, longer documents are
+                split into several calls by ``_prepare_document_plan``.
+            source: Source name for the prompt and usage tracking.
+            check_rewrite: Reject an answer that cannot be a cleanup of
+                *markdown* (see ``implausible_cleaning_reason``) or that
+                dropped one of *required_placeholders*. Off where the
+                cleaned body is discarded anyway (verbatim social posts).
+            chunked: *markdown* is one chunk of a longer document: judge it
+                with the lenient ``implausible_chunk_cleaning_reason`` (a
+                chunk may be all boilerplate); ``_run_document_plan`` applies
+                the full check to the merged document.
+            required_placeholders: Structural placeholders in *markdown*
+                (page/slide boundaries, image positions) the answer must
+                keep; losing one would make the result fall back to the
+                unenhanced input.
         """
         extra_rules = self._extra_cleaning_rules
         cache_key = self._prompt_scoped_key(
@@ -1880,17 +2111,6 @@ class DocumentEnhancer:
             "document_process_user",
             extra=(extra_rules,) if extra_rules else (),
         )
-
-        # Truncate content if needed (with warning)
-        original_len = len(markdown)
-        truncated_content = content_utils.smart_truncate(
-            markdown, DEFAULT_MAX_CONTENT_CHARS
-        )
-        if len(truncated_content) < original_len:
-            logger.warning(
-                f"[LLM:{source}] Content truncated: {original_len} -> {len(truncated_content)} chars "
-                f"(limit: {DEFAULT_MAX_CONTENT_CHARS}). Some content may be lost."
-            )
 
         # Get separated system and user prompts
         system_prompt = self._prompt_manager.get_prompt(
@@ -1901,7 +2121,7 @@ class DocumentEnhancer:
             system_prompt += extra_rules
         user_prompt = self._prompt_manager.get_prompt(
             "document_process_user",
-            content=truncated_content,
+            content=markdown,
         )
 
         messages: list[dict[str, Any]] = [
@@ -1910,14 +2130,33 @@ class DocumentEnhancer:
         ]
 
         def _validate(response: DocumentProcessResult) -> DocumentProcessResult:
-            """Detect prompt leakage before the cache write.
+            """Detect prompt leakage and refusals before the cache write.
 
             Recoverable leakage returns a corrected result; unrecoverable
-            leakage raises ValueError (nothing is cached, error propagates).
+            leakage, or an answer that replaced the document instead of
+            cleaning it, raises ValueError (nothing is cached, error
+            propagates).
             """
             validated_markdown = self._validate_no_prompt_leakage(
                 response.cleaned_markdown, source
             )
+            if check_rewrite:
+                missing = [
+                    p for p in required_placeholders if p not in validated_markdown
+                ]
+                if missing:
+                    raise ValueError(
+                        f"LLM answer dropped {len(missing)}/"
+                        f"{len(required_placeholders)} structural placeholders"
+                    )
+                judge = (
+                    content_utils.implausible_chunk_cleaning_reason
+                    if chunked
+                    else content_utils.implausible_cleaning_reason
+                )
+                rejection = judge(markdown, validated_markdown)
+                if rejection is not None:
+                    raise ValueError(f"LLM answer is not a cleanup ({rejection})")
             if validated_markdown != response.cleaned_markdown:
                 return DocumentProcessResult(
                     cleaned_markdown=validated_markdown,
@@ -1944,6 +2183,48 @@ class DocumentEnhancer:
         """Run a prepared document call (the engine handles caching)."""
         response, _raw_response = await self._engine.complete_structured(call)
         return response
+
+    async def _run_document_plan(self, plan: DocumentPlan) -> DocumentProcessResult:
+        """Run every call of a plan and merge the chunks into one result.
+
+        Chunks run concurrently (the engine's semaphore bounds them) and
+        each is cached on its own, so a rerun after a failure only pays for
+        the chunks that did not come back. The first chunk's metadata is the
+        document's.
+
+        Raises:
+            Exception: The first chunk failure, after every chunk settled.
+            ValueError: The merged chunks fail the whole-document
+                plausibility check (``implausible_cleaning_reason``).
+        """
+        if not plan.chunk_calls:
+            return await self._run_document_call(plan.call)
+
+        results = await asyncio.gather(
+            *(self._run_document_call(call) for call in (plan.call, *plan.chunk_calls)),
+            return_exceptions=True,
+        )
+        chunks: list[DocumentProcessResult] = []
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+            chunks.append(result)
+        merged = "\n\n".join(chunk.cleaned_markdown.strip() for chunk in chunks)
+        if not plan.body_verbatim:
+            # Each chunk was judged leniently (one may be all boilerplate);
+            # the document as a whole must still pass the full check
+            rejection = content_utils.implausible_cleaning_reason(
+                "\n\n".join(
+                    call.cache_content for call in (plan.call, *plan.chunk_calls)
+                ),
+                merged,
+            )
+            if rejection is not None:
+                raise ValueError(f"LLM answer is not a cleanup ({rejection})")
+        return DocumentProcessResult.model_construct(
+            cleaned_markdown=merged,
+            frontmatter=chunks[0].frontmatter,
+        )
 
     def _validate_no_prompt_leakage(self, cleaned: str, source: str) -> str:
         """Detect and handle prompt leakage.

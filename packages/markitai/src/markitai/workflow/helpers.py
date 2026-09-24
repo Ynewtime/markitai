@@ -411,6 +411,43 @@ def merge_llm_usage(
         )
 
 
+# Placeholder description older call sites put on a failed analysis entry
+# (the vision batch fallback, the Batch API collector), so entries built by
+# code that predates the ``failed`` flag are recognized as failures too.
+IMAGE_ANALYSIS_FAILED_DESC = "Image analysis failed"
+# Every placeholder description a failed analysis has carried: the per-batch
+# failure in ``analyze_images_batch`` used the shorter one.
+IMAGE_ANALYSIS_FAILED_DESCS = frozenset({IMAGE_ANALYSIS_FAILED_DESC, "Analysis failed"})
+
+
+def is_failed_image_entry(asset: Mapping[str, Any]) -> bool:
+    """Whether an image-analysis entry records a failure, not an answer.
+
+    A failed entry carries no caption worth writing: it must neither replace
+    the author's alt text nor land in images.json. Recognized by an explicit
+    ``failed`` flag or by a legacy placeholder description.
+    """
+    return bool(asset.get("failed")) or asset.get("desc") in IMAGE_ANALYSIS_FAILED_DESCS
+
+
+def image_analysis_failed(analysis: Any) -> bool:
+    """Whether an ``ImageAnalysis`` answer is a failure placeholder.
+
+    The object-level twin of :func:`is_failed_image_entry`, for callers that
+    still hold the analysis rather than an images.json entry: ``None``, a
+    placeholder flagged ``failed``, or one carrying a legacy failure
+    description.
+    """
+    if analysis is None or getattr(analysis, "failed", False) is True:
+        return True
+    return getattr(analysis, "description", None) in IMAGE_ANALYSIS_FAILED_DESCS
+
+
+def image_analysis_failure_warning(image_name: str) -> str:
+    """The item warning recorded for one image whose analysis failed."""
+    return f"image analysis failed for {image_name}; its original alt text was kept"
+
+
 def write_images_json(
     output_dir: Path,
     analysis_results: list[ImageAnalysisResult],
@@ -445,6 +482,8 @@ def write_images_json(
             continue
 
         for asset in result.assets:
+            if is_failed_image_entry(asset):
+                continue
             # Determine assets directory from the image path
             # Note: asset dict uses "asset" key internally, will be renamed to "path" in output
             if visible_assets and "asset" in asset:

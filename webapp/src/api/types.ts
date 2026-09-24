@@ -62,8 +62,15 @@ export interface ItemPayload {
   operation: "convert" | "retry" | "enhance";
   /** Completed as a skip — status stays "done" but there is no new result. */
   skipped: boolean;
-  /** Skip reason, e.g. "exists" | "image_only"; null unless skipped. */
+  /** Skip reason, e.g. "exists" | "image_only" | "pending_batch" (a CLI
+   * --llm-batch run still waiting on its batch); null unless skipped. */
   skip_reason: string | null;
+  /** False when the item cannot be retried or enhanced (a file recorded
+   * from a CLI run keeps no original to convert again). */
+  retryable: boolean;
+  /** Actionable notices raised while the item converted (scanned pages,
+   * hidden text, OCR found nothing, screenshot not captured, ...). */
+  warnings: string[];
 }
 
 /** Payload of `event: job`. */
@@ -242,4 +249,6 @@ export interface HistoryEntry {
   size_bytes: number;
   /** Where the conversion ran: browser UI/API or a local CLI run. */
   origin: "web" | "cli";
+  /** Every item can be retried or LLM-enhanced. */
+  retryable: boolean;
 }

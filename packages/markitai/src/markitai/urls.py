@@ -64,7 +64,9 @@ def parse_url_list(file_path: Path) -> list[UrlEntry]:
     if not file_path.exists():
         raise FileNotFoundError(f"URL list file not found: {file_path}")
 
-    content = file_path.read_text(encoding="utf-8").strip()
+    # utf-8-sig drops the BOM Windows editors prepend; left in place it hides
+    # the first URL and the JSON array's opening bracket.
+    content = file_path.read_text(encoding="utf-8-sig").strip()
 
     if not content:
         return []

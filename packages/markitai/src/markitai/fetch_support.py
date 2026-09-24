@@ -100,6 +100,9 @@ def _get_playwright_fetch_kwargs(
     profile_overrides = _resolve_playwright_profile_overrides(
         url, config.domain_profiles
     )
+    # The browser is launched with this proxy, so the NO_PROXY bypass has
+    # to be applied here — a launched context has no per-request escape.
+    proxy = resolve_proxy_for_url(url, _detect_proxy())
 
     kwargs = {
         "remote_consent": (
@@ -114,9 +117,11 @@ def _get_playwright_fetch_kwargs(
         "extra_wait_ms": profile_overrides.get(
             "extra_wait_ms", config.playwright.extra_wait_ms
         ),
-        # The browser is launched with this proxy, so the NO_PROXY bypass has
-        # to be applied here — a launched context has no per-request escape.
-        "proxy": resolve_proxy_for_url(url, _detect_proxy()),
+        "proxy": proxy,
+        # A proxied one-off browser still reaches exempt subresources directly
+        "proxy_bypass": (
+            get_default_session().proxy_bypass_patterns() if proxy else None
+        ),
         "screenshot_config": screenshot_config,
         "output_dir": output_dir,
         "renderer": renderer,

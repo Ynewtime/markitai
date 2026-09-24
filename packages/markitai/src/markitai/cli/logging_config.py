@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
 # Import version for print_version
 from markitai import __version__
+from markitai.notices import is_user_notice
 from markitai.utils.suppress import suppress_parser_noise
 from markitai.utils.url_redaction import redact_urls_in_text
 
@@ -224,14 +225,22 @@ def _console_sink(message: Any) -> None:
     )
 
 
-def _should_show_quiet_log(record: Any) -> bool:
-    """Filter for the quiet-mode console sink (ERROR+ only).
+def _should_show_quiet_log(record: Any, show_notices: bool = False) -> bool:
+    """Filter for the quiet-mode console sink (ERROR+, plus user notices).
 
     Even in quiet mode, third-party retry-loop noise duplicates markitai's
     own [LLM:...] failure summaries and must stay off the console (see
     _is_third_party_retry_noise). This is the sink active in single-URL
     stdout mode, where unfiltered instructor errors previously leaked.
+
+    With ``show_notices`` (every quiet console except an explicit
+    ``--quiet``), WARNING records tagged as actionable user notices
+    (:func:`markitai.notices.user_notice`) get through as well: "these
+    pages look scanned, re-run with --ocr" is the one line a default
+    single-file run must not swallow. Plain warnings stay hidden.
     """
+    if record["level"].no < logging.ERROR:
+        return show_notices and is_user_notice(record)
     return not _is_third_party_retry_noise(record, _get_record_field(record, "name"))
 
 
@@ -262,6 +271,7 @@ def setup_logging(
     rotation: str = "10 MB",
     retention: str = "7 days",
     quiet: bool = False,
+    show_notices: bool = False,
 ) -> tuple[int | None, Path | None]:
     """Configure logging based on configuration.
 
@@ -282,6 +292,9 @@ def setup_logging(
         retention: Log file retention period.
         quiet: If True, disable console logging entirely (for single file mode).
                Logs will still be written to file if log_dir is configured.
+        show_notices: With ``quiet``, still show actionable user notices
+               (see :func:`markitai.notices.user_notice`). False only for an
+               explicit ``--quiet``.
 
     Returns:
         Tuple of (console_handler_id, log_file_path).
@@ -304,13 +317,14 @@ def setup_logging(
     # DEBUG goes to file only; console shows INFO+ (or ERROR+ in quiet) with filter
     console_handler_id: int | None = None
     if quiet:
-        # In quiet mode, still surface errors so LLM failures aren't invisible
+        # In quiet mode, still surface errors so LLM failures aren't invisible,
+        # and (unless --quiet) the actionable user notices
         console_handler_id = logger.add(
             _console_sink,
-            level="ERROR",
+            level="WARNING" if show_notices else "ERROR",
             format="<level>{message}</level>",
             colorize=True,
-            filter=_should_show_quiet_log,
+            filter=lambda record: _should_show_quiet_log(record, show_notices),
         )
     else:
         console_handler_id = logger.add(

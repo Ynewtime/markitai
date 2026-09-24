@@ -14,6 +14,8 @@ markitai <input> [options]
 
 用 LLM 清洗格式并生成 frontmatter。默认只写 `.llm.md`，加 `--keep-base` 可以同时保留原始 `.md`。
 
+增强失败即该条目失败，包括 key 无效、服务端报错、超时、模型拒答，以及退回未增强文本的结果。markitai 仍会写出原始 `.md`，内容不会丢，但条目记为 `failed`：单个输入以 `1` 退出，批量以 `10` 退出，`--json` 给出 `ok: false` 和错误信息。一次 LLM 调用装不下的长文档会分块增强，全文都会被清洗。
+
 ```bash
 markitai document.docx --llm
 ```
@@ -31,7 +33,9 @@ markitai docs/ --llm --llm-batch -o out/         # 最多等 --llm-batch-timeout
 markitai --llm-batch-collect <batch-id> -o out/  # 稍后收取转为后台的批次
 ```
 
-需要单个 OpenAI 或 Anthropic 模型。图片分析和截图走同一个批次。`--ocr` 暂时不能用在批量模式。增强失败时，markitai 照常写出基础输出。
+需要单个 OpenAI 或 Anthropic 模型，在开始转换前就会检查。批次和实时运行一样，使用 `llm.model_list` 里这个模型的 `api_key` 和 `api_base`（支持 `env:` 引用），没配置时才回退到提供商的环境变量。`--llm-batch-collect` 时请传同一个 `-c` 配置；图片结果按提交那次运行的 `--alt`/`--desc` 写入，即使配置里没有重复这两个选项。图片分析和截图走同一个批次，一次请求装不下的长文档也一样（它的正文改为实时分块增强，图片照样进批次）。缓存里已有答案的图片不会再发送，它的 alt 文本和 `images.json` 条目照常写出。`--ocr` 暂时不能用在批量模式。用 `--screenshot-only` 抓取的 URL 在批量模式下没有可增强的 Markdown：原样保留，并在该条目的 `warnings` 里说明。
+
+增强失败时，markitai 照常写出基础输出，并把该条目记为失败。提交失败（网络、凭据或提供商报错）时只打印一行错误并以 `1` 退出，不会留下需要收取的东西。等待超时或与 API 失联时，批次仍在服务端运行：markitai 打印收取命令（`--quiet` 或 `--json` 下也会打印）并以 `2` 退出。等待中按 Ctrl-C 也会打印同样的收取命令。同时有条目失败时退出码仍是 `2`，因为批次还需要收取；失败的条目体现在 `--json` 里（`ok: false`、`totals.failed`），stderr 也会报出数量。`--resume` 会跳过仍在已提交、未收取批次里的文档，避免重复付费，并打印该批次的收取命令。没有结果就结束的批次（failed、expired 或 cancelled）不再占着它的文档。批次没能分析的图片保留原来的 alt 文本，并在该条目的 `warnings` 里说明。同一个批次再次收取时，只提示已经收取过，不会改动输出。
 
 ### `-p, --preset <name>`
 
@@ -92,7 +96,7 @@ markitai document.pdf --screenshot
 markitai https://example.com --screenshot
 ```
 
-对 URL，`--screenshot` 会在需要时把抓取策略切到 `playwright`。
+对 URL，`--screenshot` 会在需要时把抓取策略切到 `playwright`。截图拍的是渲染好的页面，在 markitai 为抽取文本去掉导航和样式之前；长页面会切成多块（`name.full.jpg`、`name.full--1.jpg`……）。只有查询串不同的 URL 各有各的截图文件。拍不到截图时（没装 Playwright 或 Chromium、站点拒绝无头浏览器），Markdown 照常写出，markitai 会打印一条警告，`--json` 也会在该条目的 `warnings` 里列出。
 
 ### `--screenshot-only`
 
@@ -108,7 +112,7 @@ markitai https://example.com --screenshot-only
 markitai https://example.com --llm --screenshot-only
 ```
 
-`--llm --screenshot-only` 是文本抽取失败时的兜底，比如重 JavaScript 的站点。对 PDF 和 PPTX 文件，不带 `--llm` 的 `--screenshot-only` 仍会在截图旁写出正常抽取的 `.md`。配置文件开了这个模式时，用 `--no-screenshot-only` 关掉。
+`--llm --screenshot-only` 是文本抽取失败时的兜底，比如重 JavaScript 的站点或 canvas 应用：所有文本策略都失败时，页面照样会被截图，这次运行靠截图完成。没有截图就什么都交不出来，所以截图失败的 URL 算失败（退出码 `1`，批量里是一条失败条目）。对 PDF 和 PPTX 文件，不带 `--llm` 的 `--screenshot-only` 仍会在截图旁写出正常抽取的 `.md`。配置文件开了这个模式时，用 `--no-screenshot-only` 关掉。
 
 ### `--ocr`
 
@@ -119,6 +123,8 @@ markitai scanned.pdf --ocr
 ```
 
 不带 `--llm` 时，用 RapidOCR 在本地识别（需要 `markitai[ocr]`）。带 `--llm` 时改由视觉模型直接读页面图片，你不用装 OCR extra，但页面会发给模型。`MARKITAI_NO_VLM_OCR=1` 强制走本地。
+
+PDF 中本来就有文字层的页面保留原文（标题、列表、表格、图片都在），OCR 只读扫描页和其他页上的图片。PPTX 的幻灯片文字直接取自文件，OCR 读幻灯片里的图片。OCR 读不了的文件直接失败，不会报一次空成功；空白图片照常转换，并提示没有识别到文字。
 
 单张图片作为输入时需要 `--ocr` 或 `--llm`，两者都没有时 markitai 以状态码 1 退出，而不是报告一次空成功。
 
@@ -183,21 +189,23 @@ markitai ./docs -o ./output --json
 markitai document.pdf -o ./output --json | jq '.items[] | select(.status == "failed")'
 ```
 
-文档结构是 `{version, ok, error, items[], totals}`：
+文档结构是 `{version, ok, error, batch, items[], totals}`：
 
-- `items[]`：每个输入一条，含 `source`、`status`（`completed`、`failed`、`skipped`）、`output`、`error`、`cost_usd`、`duration_s`、`fetch_strategy` 和 `llm_usage`。
+- `items[]`：每个输入一条，含 `source`、`status`（`completed`、`failed`、`skipped`、`pending`）、`output`、`error`、`warnings`、`cost_usd`、`duration_s`、`fetch_strategy`、`screenshots` 和 `llm_usage`。`pending` 只出现在不再等待的 `--llm-batch` 运行里：基础 `.md` 已写出，增强还在批次里运行。`warnings` 列出没让条目失败的问题，比如某张图片分析失败，或要求的截图没拍到。
 - `error`：没产生任何条目的运行级错误，否则为 `null`。
+- `batch`：`--llm-batch` 转为后台后，是仍在运行的批次 `{id, status, collect_command}`；否则为 `null`。
 - `totals`：按状态计数，加 `cost_usd` 和 `duration_s`。
-- `ok`：任一条目失败或设了 `error` 时为 `false`。
+- `ok`：任一条目失败或仍在 pending，或设了 `error` 时为 `false`。
 
 退出码含义不变（见[退出码](#退出码)）；部分失败的批量仍以 `10` 退出并打印 JSON，脚本要同时看 `ok`。用法错误只在 stderr 报，不输出 JSON。`--json` 不能和 `--dry-run` 或 `--llm-batch-collect` 一起用。
 
 ### `--resume`
 
-继续被中断的批量。它跳过已完成的文件，重试失败和中断的，新增的文件也捡起来。只对批量输入有效。
+继续被中断的批量。它跳过已完成的文件，重试失败和中断的，新增的文件也捡起来。重试的条目覆盖自己之前的输出，不会再多出一份 `.v2`；状态里没记下输出名的条目（在占用输出名之前就失败，或状态来自旧版本）和新条目一样按 `output.on_conflict` 处理，不会覆盖不是这次批量写的文件。目录和 `.urls` 列表都适用；按 Ctrl-C 中断时进度同样会保存。状态里记的是输出的绝对路径，所以换个工作目录也能继续（`markitai ../docs -o ../output --resume`）。
 
 ```bash
 markitai ./docs -o ./output --resume
+markitai links.urls -o ./output --resume
 ```
 
 ### `--record-history` {#record-history}
@@ -232,7 +240,7 @@ markitai ./docs -o ./output -j 4
 
 ### `--no-cache`
 
-跳过缓存的 LLM 结果，重新调用 API。配置文件关了缓存读取时，用 `--cache` 重新打开。
+跳过缓存的 LLM 结果和抓取过的页面，重新调用 API、重新抓取 URL。结果仍会写入缓存。配置文件关了缓存读取时，用 `--cache` 重新打开。
 
 ```bash
 markitai document.docx --llm --no-cache
@@ -240,10 +248,11 @@ markitai document.docx --llm --no-cache
 
 ### `--no-cache-for <patterns>`
 
-对特定文件或 glob 跳过缓存，逗号分隔。
+对特定文件、URL 或 glob 跳过缓存，逗号分隔。对 URL，模式会依次匹配完整 URL、去掉协议的 URL、主机名和最后一段路径，所以 `"https://example.com/*"`、`"example.com/docs/*"`、`"*.example.com"` 和 `"*.pdf"` 都能用。
 
 ```bash
 markitai ./docs --no-cache-for "*.pdf,reports/**"
+markitai urls.urls --no-cache-for "news.example.com"
 ```
 
 ## URL 选项
@@ -262,6 +271,8 @@ markitai urls.urls -o ./output
 https://example.com/page1
 https://example.com/page2 custom_name
 ```
+
+每一行都是独立的条目，`--resume` 也按行记录：同一个 URL 用不同的输出名出现两次，两个文件都会生成。URL 和输出名都与前面某行相同的重复行会被跳过，并给出警告。
 
 一个 URL 失败，成功的照样保留；部分成功的运行以状态码 10 退出。
 
@@ -356,7 +367,7 @@ markitai https://example.com -o ./output --no-remote-fetch
 |----|------|
 | `0` | 成功，包括 `--dry-run` |
 | `1` | 单个条目失败，或运行时错误 |
-| `2` | 用法错误，或 Batch API 等待超时、需要 `--llm-batch-collect` |
+| `2` | 用法错误，或 Batch API 等待超时（或失联）、需要 `--llm-batch-collect`。它优先于 `10`：同时失败的条目在 `--json` 和 stderr 里报出 |
 | `10` | 批量部分失败；成功的条目保留 |
 
 ## 初始化命令
@@ -430,6 +441,8 @@ markitai config validate ./markitai.json
 
 ### `markitai cache stats`
 
+LLM 缓存（`cache.db`）和 URL 抓取缓存（`fetch_cache.db`）的条目数和大小。
+
 ```bash
 markitai cache stats
 markitai cache stats --verbose --limit 50   # 按模型列出条目（-v；默认显示 20 条）
@@ -437,6 +450,8 @@ markitai cache stats --json
 ```
 
 ### `markitai cache clear`
+
+同时清空 LLM 缓存和 URL 抓取缓存。
 
 ```bash
 markitai cache clear
@@ -575,10 +590,16 @@ markitai ./docs --dry-run
 
 ### `-c, --config <path>`
 
-使用指定的配置文件。
+使用指定的配置文件。文件必须存在；路径不存在时报用法错误，不会悄悄退回默认配置。
 
 ```bash
 markitai document.docx --config ./my-config.json
+```
+
+写在子命令前面时同样作用于该子命令，`config set` 会写入这个文件。`config set` 和 `config edit` 也接受尚不存在的路径，并创建这个文件：
+
+```bash
+markitai -c ./my-config.json config set llm.enabled true
 ```
 
 ### `--config-json <json>`
@@ -588,6 +609,8 @@ markitai document.docx --config ./my-config.json
 ```bash
 markitai document.docx --config-json '{"llm": {"concurrency": 4}}'
 ```
+
+读取配置的子命令（`config list`/`get`/`path`、`cache`、`doctor`）也会使用这些覆盖。`config set` 与 `config edit` 会拒绝它们，因为内联 JSON 没有可以写回的文件。
 
 ### `-V, --version`
 
