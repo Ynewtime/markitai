@@ -247,6 +247,65 @@ class TestCacheLayers:
         assert harness.persistent.set_calls == []
 
 
+class TestCacheTally:
+    """Per-item cache tally: the signal behind a batch item's "cache hit".
+
+    Regression: the batch marked an item a cache hit whenever LLM was on and
+    its usage dict was empty, which is also what a total LLM failure looks
+    like, so a run whose every call failed summarized as "Cache: N".
+    """
+
+    async def test_hit_and_miss_are_counted_per_active_tally(self) -> None:
+        from markitai.llm.engine import track_cache_hits
+
+        harness = Harness(FakeRouter([make_model_response('{"text": "fresh"}')]))
+        harness.memory.store[(CACHE_KEY, CACHE_CONTENT)] = {"text": "cached"}
+
+        with track_cache_hits() as hit_tally:
+            await harness.engine.complete_structured(make_call())
+        with track_cache_hits() as miss_tally:
+            await harness.engine.complete_structured(
+                make_call(cache_content="other content")
+            )
+        # Outside any tally the engine still counts, but no tally changes
+        await harness.engine.complete_structured(make_call())
+
+        assert (hit_tally.hits, hit_tally.misses) == (1, 0)
+        assert (miss_tally.hits, miss_tally.misses) == (0, 1)
+
+    async def test_concurrent_items_keep_separate_tallies(self) -> None:
+        from markitai.llm.engine import track_cache_hits
+
+        harness = Harness(FakeRouter([make_model_response('{"text": "fresh"}')]))
+        harness.memory.store[(CACHE_KEY, CACHE_CONTENT)] = {"text": "cached"}
+
+        async def item(content: str) -> Any:
+            with track_cache_hits() as tally:
+                await asyncio.sleep(0)
+                await harness.engine.complete_structured(
+                    make_call(cache_content=content)
+                )
+                return tally
+
+        cached, fresh = await asyncio.gather(item(CACHE_CONTENT), item("new"))
+
+        assert (cached.hits, cached.misses) == (1, 0)
+        assert (fresh.hits, fresh.misses) == (0, 1)
+
+    def test_served_from_cache_needs_hits_and_no_requests(self) -> None:
+        from markitai.llm.engine import CacheTally
+
+        no_usage: dict[str, dict[str, Any]] = {}
+        spent = {"openai/gpt-test": {"requests": 1}}
+
+        # Nothing looked up: a total failure also leaves usage empty
+        assert CacheTally().served_from_cache(no_usage) is False
+        assert CacheTally(hits=2).served_from_cache(no_usage) is True
+        assert CacheTally(hits=1, misses=1).served_from_cache(no_usage) is False
+        # An uncached call (pure cleaning, language rewrite) still cost money
+        assert CacheTally(hits=1).served_from_cache(spent) is False
+
+
 class TestTransportRetry:
     @pytest.mark.usefixtures("no_retry_delay")
     async def test_rate_limit_retried_then_succeeds(self) -> None:

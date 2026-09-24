@@ -1016,6 +1016,28 @@ class TestUrlPipeline:
         assert f"{SCREENSHOTS_REL_PATH}/{screenshot.name}" in text
         assert "Text layer must not become output" not in text
 
+    async def test_process_url_item_notices_a_missing_screenshot(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from markitai.notices import capture_task_notices
+        from markitai.serve.jobs import process_url_item
+
+        monkeypatch.setattr("markitai.fetch.fetch_url", self._canned_fetch())
+        url_ctx, cfg, out_dir = self._url_ctx_and_cfg(tmp_path)
+        cfg.screenshot.enabled = True
+        with capture_task_notices() as notices:
+            result = await process_url_item(
+                "https://example.com/page.html?token=secret",
+                cfg,
+                out_dir,
+                None,
+                url_ctx,
+            )
+        assert result.success is True
+        assert len(notices) == 1
+        assert notices[0].startswith("[URL] Screenshot not captured for ")
+        assert "secret" not in notices[0]
+
     async def test_capture_only_job_exposes_screenshot_artifact(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1355,6 +1377,7 @@ class TestRetry:
                 success=True,
                 output_path=str(output),
                 cost_usd=0.0123 if cfg.llm.enabled else 0.0,
+                llm_enhanced=cfg.llm.enabled,
             )
 
         cfg = MarkitaiConfig()
@@ -1416,6 +1439,143 @@ class TestRetry:
         assert history["cost_usd"] == pytest.approx(0.0123)
         assert history["duration_ms"] == item["duration_ms"]
         assert attempts == [False, True, True]
+
+    async def test_failed_enhance_keeps_the_previous_llm_result(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: serve judged enhancement by the .llm.md suffix, so a
+        degraded rerun that rewrote .llm.md counted as enhanced, replaced
+        the previous good file and never rolled back."""
+        from markitai.batch import ProcessResult
+        from markitai.config import LiteLLMParams, ModelConfig
+
+        runs: list[str] = []
+
+        async def convert(file_path: Path, cfg: Any, out_dir: Path, shared: Any):
+            runs.append("x")
+            output = out_dir / f"{file_path.name}.llm.md"
+            if len(runs) == 1:
+                output.write_text("good enhancement", encoding="utf-8")
+                return ProcessResult(
+                    success=True, output_path=str(output), llm_enhanced=True
+                )
+            # A rerun whose LLM failed: whatever it left on disk, the
+            # pipeline reports no real enhancement
+            output.write_text("degraded rewrite", encoding="utf-8")
+            (out_dir / f"{file_path.name}.md").write_text("base", encoding="utf-8")
+            return ProcessResult(
+                success=True, output_path=str(output), llm_enhanced=False
+            )
+
+        cfg = MarkitaiConfig()
+        cfg.llm.model_list = [
+            ModelConfig(
+                model_name="default",
+                litellm_params=LiteLLMParams(model="openai/test", api_key="test"),
+            )
+        ]
+        monkeypatch.setattr("markitai.serve.jobs.process_file_item", convert)
+        monkeypatch.setattr(
+            "markitai.workflow.helpers.create_llm_processor",
+            lambda *_args, **_kwargs: object(),
+        )
+        app = _make_app(tmp_path, cfg)
+        async with _serve_client(app) as client:
+            created = await client.post(
+                "/api/jobs",
+                files=_multipart(
+                    files=[("doc.txt", b"hello")],
+                    options={"preset": "minimal", "llm": True},
+                ),
+            )
+            job_id = created.json()["job_id"]
+            first = await _wait_job_done(client, job_id)
+            assert first["items"][0]["llm_enhanced"] is True
+
+            queued = await client.post(
+                f"/api/jobs/{job_id}/items/i1/retry",
+                json={
+                    "operation": "enhance",
+                    "options": {"preset": "minimal", "llm": True},
+                },
+            )
+            assert queued.status_code == 202
+            after = await _wait_job_done(client, job_id)
+            result = await client.get(f"/api/jobs/{job_id}/items/i1/result")
+
+        item = after["items"][0]
+        assert item["status"] == "done"
+        assert item["llm_enhanced"] is True
+        assert item["output"] == "doc.txt.llm.md"
+        assert len(runs) == 2
+        # The previous files are back byte for byte; the base .md the failed
+        # rerun created is not left behind
+        out_dir = next((tmp_path / "jobs").glob("*/out"))
+        assert (out_dir / "doc.txt.llm.md").read_text(encoding="utf-8") == (
+            "good enhancement"
+        )
+        assert not (out_dir / "doc.txt.md").exists()
+        assert "good enhancement" in result.text
+
+    async def test_failed_url_enhance_restores_the_base_markdown(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An Enhance of a plain URL result re-fetches the page and rewrites
+        the base .md before the LLM step; when the LLM then fails, the base
+        .md must go back to what the row showed before the rerun."""
+        from markitai.batch import ProcessResult
+        from markitai.config import LiteLLMParams, ModelConfig
+
+        runs: list[str] = []
+
+        async def fake_process_url_item(
+            url: str,
+            cfg: Any,
+            out_dir: Path,
+            shared: Any,
+            url_ctx: Any,
+            output_name: str | None = None,
+        ):
+            out = out_dir / (output_name or "x.md")
+            runs.append(url)
+            if len(runs) == 1:
+                out.write_text("ORIGINAL-V1", encoding="utf-8")
+                return ProcessResult(success=True, output_path=str(out))
+            out.write_text("CHANGED-V2", encoding="utf-8")
+            return ProcessResult(success=False, error="LLM processing failed: 500")
+
+        cfg = MarkitaiConfig()
+        cfg.llm.model_list = [
+            ModelConfig(
+                model_name="default",
+                litellm_params=LiteLLMParams(model="openai/test", api_key="test"),
+            )
+        ]
+        monkeypatch.setattr(
+            "markitai.serve.jobs.process_url_item", fake_process_url_item
+        )
+        monkeypatch.setattr(
+            "markitai.workflow.helpers.create_llm_processor",
+            lambda *_args, **_kwargs: object(),
+        )
+        url = "https://example.com/page.html"
+        async with _serve_client(_make_app(tmp_path, cfg)) as client:
+            created = await client.post("/api/jobs", files=_multipart(urls=[url]))
+            job_id = created.json()["job_id"]
+            await _wait_job_done(client, job_id)
+            queued = await client.post(
+                f"/api/jobs/{job_id}/items/i1/retry",
+                json={"operation": "enhance", "options": {"llm": True}},
+            )
+            assert queued.status_code == 202
+            after = await _wait_job_done(client, job_id)
+            result = await client.get(f"/api/jobs/{job_id}/items/i1/result")
+
+        item = after["items"][0]
+        assert len(runs) == 2
+        assert item["status"] == "done"
+        assert item["output"] == "page.html.md"
+        assert result.json()["markdown"] == "ORIGINAL-V1"
 
     async def test_explicit_llm_enhancement_requires_an_llm_result(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1696,6 +1856,99 @@ class TestRetry:
             assert retry_order == ["first.txt", "second.txt"]
             assert max_active == 1
 
+    @pytest.mark.parametrize(
+        ("retried", "gated"),
+        [("notes.llm", "notes"), ("notes", "notes.llm")],
+    )
+    async def test_failed_rerun_never_deletes_a_sibling_output(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        retried: str,
+        gated: str,
+    ) -> None:
+        """Regression: the rollback snapshot reverse-engineered the stem from
+        the previous output, so ``notes.llm.md`` (upload ``notes.llm``) was
+        read as stem ``notes`` and a failed rerun unlinked sibling ``notes``'s
+        ``notes.md``. Conversely a file a sibling claims (``notes.llm.md`` of
+        upload ``notes.llm``) must survive ``notes``'s rollback."""
+        from markitai.batch import ProcessResult
+
+        attempts: dict[str, int] = {}
+        gate = asyncio.Event()
+        rerun_started = asyncio.Event()
+        fail_rerun = asyncio.Event()
+
+        async def convert(file_path: Path, cfg: Any, out_dir: Path, shared: Any):
+            name = file_path.name
+            attempts[name] = attempts.get(name, 0) + 1
+            if name == gated:
+                await gate.wait()
+            if attempts[name] == 2:
+                rerun_started.set()
+                await fail_rerun.wait()
+                return ProcessResult(success=False, error="rerun failed")
+            output = out_dir / f"{name}.md"
+            output.write_text(f"# {name}", encoding="utf-8")
+            return ProcessResult(success=True, output_path=str(output))
+
+        monkeypatch.setattr("markitai.serve.jobs.process_file_item", convert)
+        app = _make_app(tmp_path)
+        async with _serve_client(app) as client:
+            created = await client.post(
+                "/api/jobs",
+                files=_multipart(files=[("notes", b"a"), ("notes.llm", b"b")]),
+            )
+            job_id = created.json()["job_id"]
+            job = app.state.markitai.registry.get(job_id)
+            ids = {item.name: item.item_id for item in job.items}
+            retried_item = job.get_item(ids[retried])
+            gated_item = job.get_item(ids[gated])
+            for _ in range(500):
+                if retried_item.status == "done":
+                    break
+                await asyncio.sleep(0.01)
+            assert retried_item.status == "done"
+
+            queued = await client.post(f"/api/jobs/{job_id}/items/{ids[retried]}/retry")
+            assert queued.status_code == 202
+            await asyncio.wait_for(rerun_started.wait(), 5)
+            # The sibling writes its output while the rerun is in flight.
+            gate.set()
+            for _ in range(500):
+                if gated_item.status == "done":
+                    break
+                await asyncio.sleep(0.01)
+            fail_rerun.set()
+            final = await _wait_job_done(client, job_id)
+
+        assert final["done"] == 2 and final["failed"] == 0
+        out_dir = tmp_path / "jobs" / job_id / "out"
+        assert (out_dir / "notes.md").read_text(encoding="utf-8") == "# notes"
+        assert (out_dir / "notes.llm.md").read_text(encoding="utf-8") == ("# notes.llm")
+
+    async def test_result_never_serves_a_sibling_markdown(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Upload ``notes.llm`` writes base ``notes.llm.md``; its result must
+        not be resolved as sibling ``notes``'s pair and serve ``notes.md``."""
+        monkeypatch.setattr(
+            "markitai.serve.jobs.process_file_item", self._stub_converter()
+        )
+        async with _serve_client(_make_app(tmp_path)) as client:
+            created = await client.post(
+                "/api/jobs",
+                files=_multipart(files=[("notes", b"a"), ("notes.llm", b"b")]),
+            )
+            job_id = created.json()["job_id"]
+            await _wait_job_done(client, job_id)
+            first = (await client.get(f"/api/jobs/{job_id}/items/i1/result")).json()
+            second = (await client.get(f"/api/jobs/{job_id}/items/i2/result")).json()
+
+        assert first["markdown"] == "# converted notes\n"
+        assert second["markdown"] == "# converted notes.llm\n"
+        assert [a["relpath"] for a in second["artifacts"]] == ["notes.llm.md"]
+
     async def test_retry_archived_job_after_restart(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1791,6 +2044,175 @@ class TestDeleteJobItem:
             gate.set()
             await _wait_job_done(client, job_id)
 
+    async def test_concurrent_deletes_are_idempotent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: the row check and the off-thread file work ran before
+        the row was removed, so a repeated DELETE crashed with a 500 and
+        deleting the last two rows at once left an empty job in history."""
+
+        async def convert(file_path: Path, cfg: Any, out_dir: Path, shared: Any):
+            from markitai.batch import ProcessResult
+
+            output = out_dir / f"{file_path.name}.md"
+            output.write_text(f"# {file_path.name}\n", encoding="utf-8")
+            return ProcessResult(success=True, output_path=str(output))
+
+        monkeypatch.setattr("markitai.serve.jobs.process_file_item", convert)
+        app = _make_app(tmp_path)
+        async with _serve_client(app) as client:
+            created = await client.post(
+                "/api/jobs",
+                files=_multipart(
+                    files=[("a.txt", b"a"), ("b.txt", b"b"), ("c.txt", b"c")]
+                ),
+            )
+            job_id = created.json()["job_id"]
+            await _wait_job_done(client, job_id)
+
+            same_row = await asyncio.gather(
+                client.delete(f"/api/jobs/{job_id}/items/i1"),
+                client.delete(f"/api/jobs/{job_id}/items/i1"),
+            )
+            assert sorted(r.status_code for r in same_row) == [204, 404]
+            snapshot = (await client.get(f"/api/jobs/{job_id}")).json()
+            assert [item["item_id"] for item in snapshot["items"]] == ["i2", "i3"]
+
+            last_rows = await asyncio.gather(
+                client.delete(f"/api/jobs/{job_id}/items/i2"),
+                client.delete(f"/api/jobs/{job_id}/items/i3"),
+            )
+            assert [r.status_code for r in last_rows] == [204, 204]
+            assert (await client.get(f"/api/jobs/{job_id}")).status_code == 404
+            assert (await client.get("/api/history")).json() == []
+            assert not (tmp_path / "jobs" / job_id).exists()
+            again = await client.delete(f"/api/jobs/{job_id}/items/i3")
+            assert again.status_code == 404
+
+        # Nothing empty comes back after a restart either.
+        async with _serve_client(_make_app(tmp_path)) as client:
+            assert (await client.get("/api/history")).json() == []
+
+    async def test_concurrent_history_and_item_delete(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def convert(file_path: Path, cfg: Any, out_dir: Path, shared: Any):
+            from markitai.batch import ProcessResult
+
+            output = out_dir / f"{file_path.name}.md"
+            output.write_text("done", encoding="utf-8")
+            return ProcessResult(success=True, output_path=str(output))
+
+        monkeypatch.setattr("markitai.serve.jobs.process_file_item", convert)
+        async with _serve_client(_make_app(tmp_path)) as client:
+            created = await client.post(
+                "/api/jobs",
+                files=_multipart(files=[("a.txt", b"a"), ("b.txt", b"b")]),
+            )
+            job_id = created.json()["job_id"]
+            await _wait_job_done(client, job_id)
+            responses = await asyncio.gather(
+                client.delete(f"/api/history/{job_id}"),
+                client.delete(f"/api/jobs/{job_id}/items/i1"),
+            )
+            # Whichever runs second sees the other's result: a row delete
+            # behind the history delete finds no job (404) instead of
+            # writing meta.json into the removed directory (500).
+            assert responses[0].status_code == 204
+            assert responses[1].status_code in (204, 404)
+            assert not (tmp_path / "jobs" / job_id).exists()
+            assert (await client.get("/api/history")).json() == []
+
+
+class TestItemWarnings:
+    """User notices raised while an item converts land on that item."""
+
+    @staticmethod
+    def _noticing_converter(
+        both_running: asyncio.Barrier | None = None, fail_rerun: bool = False
+    ):
+        attempts: dict[str, int] = {}
+
+        async def convert(file_path: Path, cfg: Any, out_dir: Path, shared: Any):
+            from markitai.batch import ProcessResult
+            from markitai.notices import user_notice
+            from markitai.utils.executor import run_in_converter_thread
+
+            name = file_path.name
+            attempts[name] = attempts.get(name, 0) + 1
+            if both_running is not None:
+                await both_running.wait()
+            # Raised from the converter thread pool, like the real converters
+            await run_in_converter_thread(
+                user_notice,
+                "[PDF] {}: 2 page(s) look scanned/garbled (run {})",
+                name,
+                attempts[name],
+            )
+            if both_running is not None:
+                await both_running.wait()
+            if fail_rerun and attempts[name] > 1:
+                return ProcessResult(success=False, error="rerun failed")
+            output = out_dir / f"{name}.md"
+            output.write_text(f"# {name}", encoding="utf-8")
+            return ProcessResult(success=True, output_path=str(output))
+
+        return convert
+
+    async def test_concurrent_items_keep_their_own_warnings(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "markitai.serve.jobs.process_file_item",
+            self._noticing_converter(asyncio.Barrier(2)),
+        )
+        async with _serve_client(_make_app(tmp_path)) as client:
+            created = await client.post(
+                "/api/jobs",
+                files=_multipart(files=[("a.pdf", b"a"), ("b.pdf", b"b")]),
+            )
+            job_id = created.json()["job_id"]
+            done = await _wait_job_done(client, job_id)
+            events = _parse_sse((await client.get(f"/api/jobs/{job_id}/events")).text)
+
+        assert [item["warnings"] for item in done["items"]] == [
+            ["[PDF] a.pdf: 2 page(s) look scanned/garbled (run 1)"],
+            ["[PDF] b.pdf: 2 page(s) look scanned/garbled (run 1)"],
+        ]
+        assert events[0][0] == "snapshot"
+        assert events[0][1]["items"][0]["warnings"] == done["items"][0]["warnings"]
+        meta = json.loads((tmp_path / "jobs" / job_id / "meta.json").read_text())
+        assert meta["items"][1]["warnings"] == done["items"][1]["warnings"]
+
+        # Rehydrated history keeps them.
+        async with _serve_client(_make_app(tmp_path)) as client:
+            snapshot = (await client.get(f"/api/jobs/{job_id}")).json()
+        assert snapshot["items"][0]["warnings"] == done["items"][0]["warnings"]
+
+    async def test_rerun_replaces_warnings_and_a_rollback_restores_them(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "markitai.serve.jobs.process_file_item",
+            self._noticing_converter(fail_rerun=True),
+        )
+        async with _serve_client(_make_app(tmp_path)) as client:
+            created = await client.post(
+                "/api/jobs", files=_multipart(files=[("a.pdf", b"a")])
+            )
+            job_id = created.json()["job_id"]
+            first = await _wait_job_done(client, job_id)
+            queued = await client.post(f"/api/jobs/{job_id}/items/i1/retry")
+            assert queued.status_code == 202
+            after = await _wait_job_done(client, job_id)
+
+        assert first["items"][0]["warnings"] == [
+            "[PDF] a.pdf: 2 page(s) look scanned/garbled (run 1)"
+        ]
+        # The failed rerun rolled back to the first result, warnings included.
+        assert after["items"][0]["status"] == "done"
+        assert after["items"][0]["warnings"] == first["items"][0]["warnings"]
+
 
 class TestKeepBase:
     """serve forces llm.keep_base: LLM jobs keep .md next to .llm.md."""
@@ -1826,6 +2248,8 @@ class TestKeepBase:
         async def fake_standard_llm(ctx: Any) -> ConversionStepResult:
             llm_out = ctx.output_file.with_suffix(".llm.md")
             llm_out.write_text("# llm enhanced\n", encoding="utf-8")
+            # Like the real step: only a successful LLM write sets it
+            ctx.llm_output_file = llm_out
             return ConversionStepResult(success=True)
 
         monkeypatch.setattr(
@@ -1931,3 +2355,78 @@ class TestValidationErrorContract:
         body = resp.json()
         assert body["code"] == "invalid_request"
         assert isinstance(body["detail"], list)
+
+
+class TestItemEnhancedSignal:
+    """Serve reads "enhanced" from the pipeline, not from the file suffix."""
+
+    async def test_url_llm_failure_fails_the_item(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: a URL whose LLM stage failed was reported done."""
+        from markitai.serve.jobs import UrlJobContext, process_url_item
+        from markitai.workflow.url import UrlCascadeResult
+
+        base = tmp_path / "page.md"
+        base.write_text("base", encoding="utf-8")
+
+        async def cascade(*_args: Any, **_kwargs: Any) -> UrlCascadeResult:
+            return UrlCascadeResult(
+                markdown="base",
+                output_path=base,
+                llm_output_path=None,
+                target_file=base,
+                llm_error="AuthenticationError: invalid api key",
+            )
+
+        monkeypatch.setattr("markitai.workflow.url.convert_url_cascade", cascade)
+        result = await process_url_item(
+            "https://example.com/page",
+            MarkitaiConfig(),
+            tmp_path,
+            None,
+            UrlJobContext(strategy=None, cache=None, screenshot_dir=None),
+        )
+
+        assert result.success is False
+        assert result.error is not None and "invalid api key" in result.error
+        assert result.llm_enhanced is False
+        assert base.exists()  # the base fallback stays on disk
+
+    async def test_file_item_reports_the_pipeline_signal(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from markitai.serve.jobs import process_file_item
+        from markitai.workflow.core import ConversionStepResult
+
+        source = tmp_path / "doc.txt"
+        source.write_text("hello", encoding="utf-8")
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+
+        async def core(ctx: Any, _max_size: int) -> ConversionStepResult:
+            ctx.output_file = out_dir / "doc.txt.md"
+            ctx.llm_output_file = out_dir / "doc.txt.llm.md"
+            ctx.llm_output_file.write_text("enhanced", encoding="utf-8")
+            return ConversionStepResult(success=True)
+
+        async def core_without_llm_write(
+            ctx: Any, _max_size: int
+        ) -> ConversionStepResult:
+            ctx.output_file = out_dir / "doc.txt.md"
+            return ConversionStepResult(success=True)
+
+        cfg = MarkitaiConfig()
+        cfg.llm.enabled = True
+        monkeypatch.setattr("markitai.workflow.core.convert_document_core", core)
+        enhanced = await process_file_item(source, cfg, out_dir, None)
+        monkeypatch.setattr(
+            "markitai.workflow.core.convert_document_core", core_without_llm_write
+        )
+        missing = await process_file_item(source, cfg, out_dir, None)
+
+        assert enhanced.success is True
+        assert enhanced.llm_enhanced is True
+        assert enhanced.output_path == str(out_dir / "doc.txt.llm.md")
+        assert missing.success is False
+        assert missing.llm_enhanced is False

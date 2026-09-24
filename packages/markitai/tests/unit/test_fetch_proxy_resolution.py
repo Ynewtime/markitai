@@ -415,6 +415,47 @@ class TestResolveProxyForUrlFallback:
         finally:
             fetch_http._proxy_bypass_provider = saved
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://localhost:20031/page",
+            "http://LOCALHOST/page",
+            "http://app.localhost/page",
+            "http://127.0.0.1:20031/page",
+            "http://127.1.2.3/page",
+            "http://[::1]:20031/page",
+            "http://[::ffff:127.0.0.1]/page",
+        ],
+    )
+    def test_loopback_is_never_proxied(self, url: str, clean_session: None) -> None:
+        """Static clients match the browser, which bypasses loopback."""
+        from markitai import fetch_http
+        from markitai.fetch import get_proxy_for_url
+
+        get_default_session().detected_proxy = "http://10.0.0.1:8080"
+        with patch.dict(os.environ, {}, clear=True):
+            assert fetch_http.resolve_proxy_for_url(url, "http://10.0.0.1:8080") is None
+            assert get_proxy_for_url(url) == ""
+            assert get_proxy_for_url("https://example.com/") == "http://10.0.0.1:8080"
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/x",
+            "http://10.0.0.5/x",
+            "http://localhost.example.com/x",
+            "http://127.example.com/x",
+        ],
+    )
+    def test_non_loopback_still_uses_proxy(self, url: str) -> None:
+        from markitai import fetch_http
+
+        with patch.dict(os.environ, {}, clear=True):
+            assert (
+                fetch_http.resolve_proxy_for_url(url, "http://10.0.0.1:8080")
+                == "http://10.0.0.1:8080"
+            )
+
     def test_no_candidate_proxy_stays_none(self) -> None:
         from markitai.fetch_http import resolve_proxy_for_url
 
@@ -424,6 +465,53 @@ class TestResolveProxyForUrlFallback:
 
 class TestStaticHttpClientsHonourNoProxy:
     """The HTTP backends must not tunnel bypassed hosts through the proxy."""
+
+    def test_direct_httpx_client_ignores_env_proxies(self) -> None:
+        """A bypassed host gets proxy=None; httpx must not re-read
+        HTTP(S)_PROXY from the environment and proxy it anyway."""
+        import httpx
+
+        from markitai.fetch_http import HttpxClient
+
+        env = {
+            "HTTP_PROXY": "http://10.0.0.1:8080",
+            "HTTPS_PROXY": "http://10.0.0.1:8080",
+            "ALL_PROXY": "http://10.0.0.1:8080",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            direct = HttpxClient()._get_or_create_client(5.0, None)
+            proxied = HttpxClient()._get_or_create_client(5.0, "http://10.0.0.2:3128")
+        for url in ("http://127.0.0.1:20031/", "https://example.com/"):
+            assert direct._transport_for_url(httpx.URL(url)) is direct._transport
+            assert proxied._transport_for_url(httpx.URL(url)) is not proxied._transport
+
+    def test_direct_curl_session_disables_env_proxies(self) -> None:
+        """libcurl reads http_proxy itself unless the proxy is set to ''."""
+        import sys
+        import types
+
+        from markitai.fetch_http import CurlCffiClient
+
+        created: list[dict[str, Any]] = []
+
+        class _Session:
+            def __init__(self, **kwargs: Any) -> None:
+                created.append(kwargs)
+
+        requests_module = types.ModuleType("curl_cffi.requests")
+        requests_module.AsyncSession = _Session  # type: ignore[attr-defined]
+        package = types.ModuleType("curl_cffi")
+        package.requests = requests_module  # type: ignore[attr-defined]
+        with patch.dict(
+            sys.modules, {"curl_cffi": package, "curl_cffi.requests": requests_module}
+        ):
+            CurlCffiClient()._get_or_create_session(None)
+            CurlCffiClient()._get_or_create_session("http://10.0.0.2:3128")
+        assert created[0]["proxies"] == {"all": ""}
+        assert created[1]["proxies"] == {
+            "http": "http://10.0.0.2:3128",
+            "https": "http://10.0.0.2:3128",
+        }
 
     @pytest.mark.asyncio
     async def test_httpx_client_drops_proxy_for_bypassed_host(
@@ -665,45 +753,100 @@ class TestCloudflareConverterHonoursNoProxy:
         assert await self._proxy_used(src, "internal.corp") == "http://127.0.0.1:7890"
 
 
-class TestBatchSharedRendererProxy:
-    """One browser is shared by a whole batch; its proxy is a batch decision."""
+class TestBatchRendererFollowsEachUrlsProxy:
+    """A URL batch keeps one browser per proxy, not one for the whole batch.
 
-    @staticmethod
-    def _resolve(urls: list[str]) -> str | None:
-        from markitai.cli.processors.batch import _shared_renderer_proxy
+    Regression: the directory batch launched a single browser with the
+    proxy even for NO_PROXY-exempt URLs, and the URL-list batch rebuilt the
+    session's only renderer whenever the next URL wanted another proxy,
+    closing the browser a concurrent fetch was using (TargetClosedError).
+    """
 
-        return _shared_renderer_proxy(urls)
+    @pytest.fixture
+    def renderers(self, proxy_detected: None) -> Iterator[None]:
+        session = get_default_session()
+        session.playwright_renderers = {}
+        yield
+        session.playwright_renderers = {}
 
-    def test_all_urls_bypassed_means_no_proxy(self, proxy_detected: None) -> None:
-        with patch.dict(os.environ, {"NO_PROXY": "internal.corp"}, clear=True):
-            assert (
-                self._resolve(
-                    ["https://internal.corp/a", "https://internal.corp/b"],
+    async def _renderers_used(self, urls: list[str], tmp_path: Any) -> dict[str, Any]:
+        import asyncio
+
+        from markitai.cli.processors.batch import create_url_processor
+        from markitai.config import MarkitaiConfig
+        from markitai.fetch_types import FetchResult, FetchStrategy
+
+        seen: dict[str, Any] = {}
+
+        async def fake_fetch_url(url: str, *args: Any, **kwargs: Any) -> Any:
+            seen[url] = kwargs["renderer"]
+            await asyncio.sleep(0.01)  # every URL is in flight at once
+            return FetchResult(
+                content="# Page\n\nEnough text to count as content.",
+                strategy_used="playwright",
+                url=url,
+            )
+
+        cfg = MarkitaiConfig()
+        cfg.cache.enabled = False
+        process_url = create_url_processor(
+            cfg=cfg,
+            output_dir=tmp_path,
+            fetch_strategy=FetchStrategy.PLAYWRIGHT,
+            explicit_fetch_strategy=True,
+        )
+        with patch("markitai.fetch.fetch_url", side_effect=fake_fetch_url):
+            results = await asyncio.gather(
+                *(
+                    process_url(url, custom_name=f"page{i}")
+                    for i, url in enumerate(urls)
                 )
-                is None
             )
+        assert all(result.success for result, _extra in results)
+        return seen
 
-    def test_no_url_bypassed_keeps_proxy(self, proxy_detected: None) -> None:
-        with patch.dict(os.environ, {"NO_PROXY": "internal.corp"}, clear=True):
-            assert (
-                self._resolve(["https://example.com/a", "https://other.com/b"])
-                == "http://127.0.0.1:7890"
-            )
-
-    def test_mixed_batch_keeps_proxy_for_the_shared_browser(
-        self, proxy_detected: None
+    @pytest.mark.asyncio
+    async def test_mixed_batch_gets_a_direct_and_a_proxied_browser(
+        self, renderers: None, tmp_path: Any
     ) -> None:
-        """A single browser cannot be proxied per URL; the majority case wins."""
         with patch.dict(os.environ, {"NO_PROXY": "internal.corp"}, clear=True):
-            assert (
-                self._resolve(["https://internal.corp/a", "https://example.com/b"])
-                == "http://127.0.0.1:7890"
+            seen = await self._renderers_used(
+                [
+                    "https://internal.corp/a",
+                    "https://example.com/b",
+                    "https://internal.corp/c",
+                    "https://example.com/d",
+                ],
+                tmp_path,
             )
 
-    def test_no_detected_proxy_stays_none(self, clean_session: None) -> None:
+        exempt = seen["https://internal.corp/a"]
+        proxied = seen["https://example.com/b"]
+        assert exempt is not proxied
+        assert exempt.proxy is None
+        assert proxied.proxy == "http://127.0.0.1:7890"
+        # The proxied browser still reaches exempt hosts directly
+        assert proxied.proxy_bypass == ["internal.corp"]
+        # One browser per proxy for the whole batch, and both stay open
+        assert seen["https://internal.corp/c"] is exempt
+        assert seen["https://example.com/d"] is proxied
+        assert set(get_default_session().playwright_renderers.values()) == {
+            exempt,
+            proxied,
+        }
+
+    @pytest.mark.asyncio
+    async def test_no_detected_proxy_shares_one_direct_browser(
+        self, renderers: None, tmp_path: Any
+    ) -> None:
         session = get_default_session()
         session.detected_proxy = ""
         session.detected_proxy_bypass = ""
 
         with patch.dict(os.environ, {}, clear=True):
-            assert self._resolve(["https://example.com/a"]) is None
+            seen = await self._renderers_used(
+                ["https://example.com/a", "https://example.com/b"], tmp_path
+            )
+
+        assert seen["https://example.com/a"] is seen["https://example.com/b"]
+        assert seen["https://example.com/a"].proxy is None

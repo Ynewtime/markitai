@@ -19,6 +19,7 @@ from markitai.config import LiteLLMParams, LLMConfig, ModelConfig, RouterSetting
 from markitai.llm.engine import (
     LLMCall,
     LLMEngine,
+    LLMEnhancementDegradedError,
     LLMRequestBudgetExceededError,
     RequestBudget,
 )
@@ -235,12 +236,13 @@ class TestProcessorBudgetEndToEnd:
         processor, router = self._processor(limit=1)
         markdown = "# Title\n\nOriginal body."
 
-        cleaned, frontmatter = await processor.process_document(markdown, "doc.pdf")
+        with pytest.raises(LLMEnhancementDegradedError) as exc_info:
+            await processor.process_document(markdown, "doc.pdf")
 
         # The structured call consumed the budget; the cleaner fallback was
         # refused without issuing a request, so the original text survives.
-        assert cleaned == markdown
-        assert frontmatter  # fallback frontmatter still generated
+        assert exc_info.value.cleaned_markdown == markdown
+        assert exc_info.value.frontmatter  # fallback frontmatter still generated
         assert router.acompletion.call_count == 1
 
     @pytest.mark.asyncio
@@ -248,7 +250,8 @@ class TestProcessorBudgetEndToEnd:
         """The usage report carries an all-zero marker entry for the trip."""
         processor, _router = self._processor(limit=1)
 
-        await processor.process_document("# T\n\nBody.", "doc.pdf")
+        with pytest.raises(LLMEnhancementDegradedError):
+            await processor.process_document("# T\n\nBody.", "doc.pdf")
 
         usage = processor.get_context_usage("doc.pdf")
         assert REQUEST_BUDGET_EXCEEDED_MARKER in usage
@@ -261,11 +264,13 @@ class TestProcessorBudgetEndToEnd:
         """The next document reusing the context key gets a fresh budget."""
         processor, router = self._processor(limit=1)
 
-        await processor.process_document("# T\n\nBody.", "doc.pdf")
+        with pytest.raises(LLMEnhancementDegradedError):
+            await processor.process_document("# T\n\nBody.", "doc.pdf")
         assert processor._request_budget.exceeded("doc.pdf") is True
 
         processor.clear_context_usage("doc.pdf")
         assert processor._request_budget.exceeded("doc.pdf") is False
 
-        await processor.process_document("# T\n\nBody.", "doc.pdf")
+        with pytest.raises(LLMEnhancementDegradedError):
+            await processor.process_document("# T\n\nBody.", "doc.pdf")
         assert router.acompletion.call_count == 2  # one fresh request allowed

@@ -135,6 +135,8 @@ function seedItem(jobId: string, seed: StoredSeed): SessionItem {
     operation: "convert",
     skipped: false,
     skipReason: null,
+    retryable: true,
+    warnings: [],
     sizeBytes: seed.sizeBytes,
     startedAt: null,
   };
@@ -159,6 +161,11 @@ export interface SessionItem {
   /** Completed as a skip (neutral chip, non-selectable). */
   skipped: boolean;
   skipReason: string | null;
+  /** Retry / LLM enhance are offered (false for CLI-recorded files). */
+  retryable: boolean;
+  /** Notices raised while the item converted (shown on the row and in the
+   * preview; the server log is not the user's to read). */
+  warnings: string[];
   /** Client-known upload size (files only; URLs have none). */
   sizeBytes: number | null;
   /** Wall-clock ms when we first observed the item running (live timer). */
@@ -229,6 +236,9 @@ function mergeItem(prev: SessionItem, p: ItemPayload, now: number): SessionItem 
     operation: p.operation,
     skipped: p.skipped,
     skipReason: p.skip_reason,
+    retryable: p.retryable,
+    // Older servers (and hand-built fixtures) may omit the field.
+    warnings: p.warnings ?? [],
     startedAt:
       p.status === "running"
         ? prev.status === "running"
@@ -510,6 +520,7 @@ export function useJobs() {
                   operation: "retry",
                   skipped: false,
                   skipReason: null,
+                  warnings: [],
                   startedAt: null,
                 }
               : candidate,
@@ -552,6 +563,7 @@ export function useJobs() {
                   operation: "enhance",
                   skipped: false,
                   skipReason: null,
+                  warnings: [],
                   startedAt: null,
                 }
               : candidate,
@@ -597,6 +609,7 @@ export function useJobs() {
                 operation: "retry" as const,
                 skipped: false,
                 skipReason: null,
+                warnings: [],
                 startedAt: null,
               }
             : item;
@@ -664,6 +677,7 @@ export function useJobs() {
                 operation: "enhance" as const,
                 skipped: false,
                 skipReason: null,
+                warnings: [],
                 startedAt: null,
               }
             : item;

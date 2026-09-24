@@ -8,7 +8,7 @@ HTML->markdown conversion, and supports HTTP conditional requests
 from __future__ import annotations
 
 import asyncio
-import codecs
+import functools
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -18,6 +18,7 @@ from loguru import logger
 from markitai.fetch_http import get_static_http_client
 from markitai.fetch_strategies._shared import (
     _build_native_fetch_result,
+    _convert_document_bytes,
     _markitdown_convert_bytes,
 )
 from markitai.fetch_support import _detect_proxy
@@ -60,41 +61,241 @@ def _get_header_value(
     return default
 
 
+_HTML_SUFFIXES = frozenset({".html", ".htm", ".xhtml"})
+
+# Content-Type -> file suffix. The suffix picks the converter, the same way
+# a local file's extension does.
+_MIME_SUFFIXES: dict[str, str] = {
+    "text/html": ".html",
+    "application/xhtml+xml": ".html",
+    "application/pdf": ".pdf",
+    "application/x-pdf": ".pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": (
+        ".docx"
+    ),
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": (
+        ".pptx"
+    ),
+    "application/msword": ".doc",
+    "application/vnd.ms-excel": ".xls",
+    "application/vnd.ms-powerpoint": ".ppt",
+    "application/vnd.oasis.opendocument.text": ".odt",
+    "application/vnd.oasis.opendocument.spreadsheet": ".ods",
+    "application/epub+zip": ".epub",
+    "application/rtf": ".rtf",
+    "text/rtf": ".rtf",
+    "message/rfc822": ".eml",
+    "application/vnd.ms-outlook": ".msg",
+    "text/plain": ".txt",
+    "text/csv": ".csv",
+    "application/csv": ".csv",
+    "text/tab-separated-values": ".tsv",
+    "text/markdown": ".md",
+    "text/x-markdown": ".md",
+    "application/json": ".json",
+    "text/json": ".json",
+    "application/x-ipynb+json": ".ipynb",
+    "application/xml": ".xml",
+    "text/xml": ".xml",
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+    "image/svg+xml": ".svg",
+}
+
+# Types that say nothing specific about the format: the file name or the
+# bytes decide (text/plain is how many servers label a raw .md or .csv).
+_GENERIC_MIME_TYPES = frozenset(
+    {
+        "",
+        "application/octet-stream",
+        "binary/octet-stream",
+        "application/download",
+        "application/force-download",
+        "application/x-download",
+        "application/unknown",
+        "application/zip",
+        "application/x-zip-compressed",
+        "text/plain",
+    }
+)
+
+# Binary documents markitai converts with its own local-file converters,
+# instead of handing them to markitdown.
+_DOCUMENT_SUFFIXES = frozenset(
+    {
+        ".pdf",
+        ".docx",
+        ".doc",
+        ".xlsx",
+        ".xls",
+        ".pptx",
+        ".ppt",
+        ".odt",
+        ".ods",
+        ".epub",
+        ".rtf",
+        ".eml",
+        ".msg",
+    }
+)
+
+# Text formats: decoded with the response charset and re-encoded as UTF-8
+# before conversion, so a GBK CSV or a Shift_JIS text file is not mojibake.
+_TEXT_SUFFIXES = frozenset(
+    {".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".ipynb", ".xml"}
+)
+
+
+def _mime_type(content_type: str | None) -> str:
+    """Return the lowercase media type of a Content-Type header value."""
+    if not content_type:
+        return ""
+    return content_type.split(";", 1)[0].strip().lower()
+
+
+def _is_html_content_type(content_type: str | None) -> bool:
+    """HTML, or no declared type at all (browsers sniff those as HTML)."""
+    mime = _mime_type(content_type)
+    return not mime or mime in {"text/html", "application/xhtml+xml"}
+
+
+def _content_disposition_filename(value: str | None) -> str | None:
+    """Return the file name a Content-Disposition header suggests."""
+    if not value:
+        return None
+    from email.message import Message
+
+    message = Message()
+    message["content-disposition"] = value
+    try:
+        filename = message.get_filename()
+    except Exception:
+        return None
+    if not filename:
+        return None
+    return Path(str(filename).replace("\\", "/")).name or None
+
+
+#: Upper bound for an OpenDocument/EPUB ``mimetype`` entry read while sniffing.
+_MIMETYPE_MAX_BYTES = 256
+
+
+def _sniff_document_suffix(body: bytes) -> str | None:
+    """Recognise common document containers by their leading bytes."""
+    if body.startswith(b"%PDF-"):
+        return ".pdf"
+    if body.startswith(b"{\\rtf"):
+        return ".rtf"
+    if body.startswith(b"PK\x03\x04"):
+        import io
+        import zipfile
+
+        try:
+            with zipfile.ZipFile(io.BytesIO(body)) as archive:
+                names = set(archive.namelist())
+                if "word/document.xml" in names:
+                    return ".docx"
+                if "xl/workbook.xml" in names:
+                    return ".xlsx"
+                if "ppt/presentation.xml" in names:
+                    return ".pptx"
+                if "mimetype" in names:
+                    # A real mimetype entry is a few dozen bytes. Never inflate
+                    # more than that: the header's size can lie, and a zip
+                    # bomb must not blow up memory while only sniffing.
+                    if archive.getinfo("mimetype").file_size > _MIMETYPE_MAX_BYTES:
+                        return None
+                    with archive.open("mimetype") as entry:
+                        raw = entry.read(_MIMETYPE_MAX_BYTES + 1)
+                    if len(raw) > _MIMETYPE_MAX_BYTES:
+                        return None
+                    kind = raw.decode("ascii", "ignore")
+                    return _MIME_SUFFIXES.get(kind.strip().lower())
+        except Exception:
+            return None
+    return None
+
+
+def _url_suffix(url: str | None) -> str:
+    """Return the lowercase extension of a URL's path ('' when none)."""
+    from urllib.parse import unquote, urlparse
+
+    if not url:
+        return ""
+    return Path(unquote(urlparse(url).path)).suffix.lower()
+
+
+def _url_filename(url: str | None) -> str | None:
+    """Return the last path segment of a URL, if it has one."""
+    from urllib.parse import unquote, urlparse
+
+    if not url:
+        return None
+    return Path(unquote(urlparse(url).path)).name or None
+
+
+def _response_suffix(
+    content_type: str | None,
+    content_disposition: str | None,
+    urls: tuple[str | None, ...],
+    body: bytes,
+) -> tuple[str, str | None]:
+    """Choose the converter suffix for a response body.
+
+    Order: a specific Content-Type, the Content-Disposition file name, the
+    (final, then requested) URL path, the body's magic bytes, the generic
+    type's own default (``text/plain`` -> ``.txt``), then HTML.
+
+    Returns:
+        (suffix, file name suggested by Content-Disposition or None)
+    """
+    from markitai.converter.base import EXTENSION_MAP
+
+    mime = _mime_type(content_type)
+    filename = _content_disposition_filename(content_disposition)
+    if mime not in _GENERIC_MIME_TYPES and mime in _MIME_SUFFIXES:
+        return _MIME_SUFFIXES[mime], filename
+
+    known = set(EXTENSION_MAP) | set(_MIME_SUFFIXES.values())
+    candidates = [Path(filename).suffix.lower()] if filename else []
+    candidates.extend(_url_suffix(url) for url in urls)
+    for candidate in candidates:
+        if candidate in known:
+            return candidate, filename
+
+    sniffed = _sniff_document_suffix(body)
+    if sniffed:
+        return sniffed, filename
+    if mime in _MIME_SUFFIXES:
+        return _MIME_SUFFIXES[mime], filename
+    return ".html", filename
+
+
 def _get_response_text(response: Any) -> str:
-    """Decode a static HTTP response body into text."""
+    """Decode a static HTTP response body into text.
+
+    BOM, then the Content-Type charset, then (HTML only) the ``<meta>``
+    prescan, then detection; every label is widened to the superset a
+    browser decodes it with. See :mod:`markitai.utils.charset`.
+    """
+    from markitai.utils.charset import decode_body
+
     content = getattr(response, "content", b"")
     if isinstance(content, bytes | bytearray):
-        declared_encoding = getattr(response, "encoding", None)
-        if not isinstance(declared_encoding, str) or not declared_encoding.strip():
-            content_type = _get_header_value(
-                getattr(response, "headers", {}),
-                "content-type",
-                "content_type",
-            )
-            if isinstance(content_type, str):
-                match = re.search(r"charset=([^\s;]+)", content_type, re.IGNORECASE)
-                if match:
-                    declared_encoding = match.group(1).strip().strip("\"'")
-                else:
-                    declared_encoding = None
-
-        if isinstance(declared_encoding, str) and declared_encoding.strip():
-            try:
-                codecs.lookup(declared_encoding)
-                return bytes(content).decode(declared_encoding)
-            except (LookupError, UnicodeDecodeError):
-                logger.debug(
-                    "Failed to decode response with declared charset "
-                    f"{declared_encoding!r}, falling back"
-                )
-
-        for fallback_encoding in ("utf-8", "utf-8-sig"):
-            try:
-                return bytes(content).decode(fallback_encoding)
-            except UnicodeDecodeError:
-                continue
-
-        return bytes(content).decode("utf-8", errors="replace")
+        content_type = _get_header_value(
+            getattr(response, "headers", {}),
+            "content-type",
+            "content_type",
+        )
+        text, _ = decode_body(
+            bytes(content),
+            content_type,
+            html=_is_html_content_type(content_type),
+        )
+        return text
 
     text = getattr(response, "text", None)
     if isinstance(text, str):
@@ -213,6 +414,7 @@ async def fetch_with_static_conditional(
             "content_type",
             default="",
         )
+        final_url = str(response.url) or url
         if content_type_header and "text/markdown" in content_type_header:
             markdown_content = _get_response_text(response)
             token_hint = _get_header_value(
@@ -231,12 +433,17 @@ async def fetch_with_static_conditional(
                 strategy_used="static",
                 title=title,
                 url=url,
-                final_url=str(response.url),
+                final_url=final_url,
                 metadata={
                     "converter": "server-markdown",
                     "conditional": True,
                     "token_hint": int(token_hint) if token_hint else None,
                     "client": client.name,
+                    # Markdown for Agents (token hint present) is a converted
+                    # HTML page and can still be a JavaScript shell; a plain
+                    # .md file served as text/markdown is a document.
+                    "content_kind": "html" if token_hint else "text",
+                    "content_type": "text/markdown",
                 },
             )
 
@@ -247,22 +454,34 @@ async def fetch_with_static_conditional(
                 last_modified=response_last_modified,
             )
 
-        # Determine file extension from Content-Type or URL
-        content_type = _get_header_value(
-            response.headers,
-            "content-type",
-            "Content-Type",
-            "content_type",
-            default="",
+        # The suffix picks the converter, exactly like a local file's
+        # extension: Content-Type, then Content-Disposition, then the URL,
+        # then the body's magic bytes.
+        content_type = content_type_header or ""
+        body = bytes(response.content)
+        suffix, suggested_name = _response_suffix(
+            content_type,
+            _get_header_value(
+                response.headers, "content-disposition", "Content-Disposition"
+            ),
+            (final_url, url),
+            body,
         )
-        response_text = _get_response_text(response)
-        if content_type and "text/html" in content_type:
+        mime = _mime_type(content_type) or None
+
+        if suffix in _HTML_SUFFIXES:
+            response_text = _get_response_text(response)
             native_result = await _build_native_fetch_result(
                 html=response_text,
                 url=url,
-                final_url=str(response.url),
+                final_url=final_url,
                 strategy_used="static",
-                base_metadata={"conditional": True, "client": client.name},
+                base_metadata={
+                    "conditional": True,
+                    "client": client.name,
+                    "content_kind": "html",
+                    "content_type": mime,
+                },
             )
             if native_result is not None:
                 return ConditionalFetchResult(
@@ -271,26 +490,50 @@ async def fetch_with_static_conditional(
                     etag=response_etag,
                     last_modified=response_last_modified,
                 )
-
-        if content_type and "text/html" in content_type:
-            suffix = ".html"
-        elif content_type and "application/pdf" in content_type:
-            suffix = ".pdf"
+            # markitdown sniffs the charset from the bytes and would believe
+            # a <meta charset> over the header; hand it the text as decoded
+            # above, BOM-marked so the BOM wins over any <meta>.
+            convert_bytes = b"\xef\xbb\xbf" + response_text.encode("utf-8")
+            content_kind = "html"
+        elif suffix in _TEXT_SUFFIXES:
+            convert_bytes = _get_response_text(response).encode("utf-8")
+            content_kind = "text"
         else:
-            # Fallback to URL extension
-            from urllib.parse import urlparse
+            convert_bytes = body
+            content_kind = "document" if suffix in _DOCUMENT_SUFFIXES else "binary"
 
-            path = urlparse(url).path
-            suffix = Path(path).suffix or ".html"
-
-        # Save response to temp file and run sync markitdown in executor
-        # to avoid blocking the event loop
         loop = asyncio.get_running_loop()
-        text_content, title = await loop.run_in_executor(
-            None, _markitdown_convert_bytes, response.content, suffix
-        )
+        if content_kind == "document":
+            # Binary documents go to markitai's own converters (the PDF
+            # converter for PDFs), the same path a downloaded file takes.
+            try:
+                text_content, title = await loop.run_in_executor(
+                    None,
+                    functools.partial(
+                        _convert_document_bytes,
+                        convert_bytes,
+                        suffix,
+                        filename=suggested_name or _url_filename(final_url),
+                    ),
+                )
+            except Exception as e:
+                raise FetchError(
+                    f"Failed to convert {suffix} document from {url}: "
+                    f"{format_error_message(e)}"
+                ) from e
+            converter_name = "markitai"
+            title = title or _extract_markdown_title(text_content)
+            if not title and suggested_name:
+                title = Path(suggested_name).stem
+        else:
+            # Save response to temp file and run sync markitdown in executor
+            # to avoid blocking the event loop
+            text_content, title = await loop.run_in_executor(
+                None, _markitdown_convert_bytes, convert_bytes, suffix
+            )
+            converter_name = "markitdown"
 
-        if not text_content:
+        if not text_content or not text_content.strip():
             raise FetchError(f"No content extracted from URL: {url}")
 
         fetch_result = FetchResult(
@@ -298,8 +541,14 @@ async def fetch_with_static_conditional(
             strategy_used="static",
             title=title,
             url=url,
-            final_url=str(response.url),
-            metadata={"converter": "markitdown", "conditional": True},
+            final_url=final_url,
+            metadata={
+                "converter": converter_name,
+                "conditional": True,
+                "content_kind": content_kind,
+                "content_type": mime,
+                "document_suffix": suffix,
+            },
         )
 
         return ConditionalFetchResult(

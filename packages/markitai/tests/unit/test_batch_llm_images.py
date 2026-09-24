@@ -45,7 +45,7 @@ def _processor(plan_answer: ImageAnalysis | None = None) -> MagicMock:
     processor = MagicMock()
     processor._engine.try_cached.return_value = None
     processor.documents._prepare_document_plan.side_effect = lambda *_args, **_kwargs: (
-        MagicMock()
+        MagicMock(chunk_calls=[])
     )
     plan = MagicMock()
     plan.answer = plan_answer
@@ -94,6 +94,8 @@ class TestPreparePendingWithImages:
         assert image_item.base_md == "a.md", "an image must name its document"
         assert image_item.custom_id.startswith("img_")
         assert Path(image_item.image).name == "a-0001.png"
+        # Persisted so the collector rebuilds the identical plan
+        assert image_item.document_context.startswith("# a")
 
     def test_no_image_requests_when_analysis_is_off(self, tmp_path: Path) -> None:
         out = tmp_path / "out"
@@ -120,6 +122,65 @@ class TestPreparePendingWithImages:
 
         assert [item.kind for item, _ in pending] == ["doc"]
         assert cached == 1
+
+    def test_a_cached_image_answer_is_kept_for_its_document(
+        self, tmp_path: Path
+    ) -> None:
+        """The cache hit used to be counted and dropped: a re-run with
+        overwrite rewrote the .llm.md without the alt text it had, and
+        images.json never heard of the image again."""
+        out = tmp_path / "out"
+        out.mkdir()
+        _write_doc_with_image(out, "a", "a-0001.png")
+        answered: list[BatchDocItem] = []
+
+        pending, cached, _oversized = _prepare_pending(
+            _processor(
+                plan_answer=ImageAnalysis(caption="known", description="from cache")
+            ),
+            out,
+            analyze_images=True,
+            cached_images=answered,
+        )
+
+        assert [item.kind for item, _ in pending] == ["doc"]
+        assert cached == 1
+        assert len(answered) == 1
+        assert answered[0].base_md == "a.md"
+        assert answered[0].answer is not None
+        assert answered[0].answer["alt"] == "known"
+        assert answered[0].answer["desc"] == "from cache"
+        assert answered[0].answer["asset"] == str(
+            (out / ASSETS_REL_PATH / "a-0001.png").resolve()
+        )
+
+    def test_image_context_is_the_live_path_snippet(self, tmp_path: Path) -> None:
+        """The batch sent the first 500 raw characters (image refs included)
+        where the live path sends extract_document_context's snippet; the
+        context is part of the cache key, so neither path hit the other's
+        entries."""
+        from markitai.workflow.helpers import extract_document_context
+
+        out = tmp_path / "out"
+        out.mkdir()
+        base = _write_doc_with_image(out, "a", "a-0001.png")
+        base.write_text(
+            "---\ntitle: a\n---\n"
+            f"![]({ASSETS_REL_PATH}/a-0001.png)\n\n# Report\n\n" + "word " * 200,
+            encoding="utf-8",
+        )
+        processor = _processor()
+
+        pending, _cached, _oversized = _prepare_pending(
+            processor, out, analyze_images=True
+        )
+
+        expected = extract_document_context(base.read_text(encoding="utf-8"))
+        call = processor.vision.prepare_image_plan.call_args
+        assert call.kwargs["document_context"] == expected
+        image_item = next(item for item, _ in pending if item.kind == "image")
+        assert image_item.document_context == expected
+        assert "![" not in expected and len(expected) <= 200
 
     def test_custom_ids_stay_unique_across_kinds(self, tmp_path: Path) -> None:
         """Both APIs key their answers by custom_id; a collision loses one."""
@@ -160,8 +221,9 @@ class TestCollectImage:
     async def test_a_failed_image_degrades_instead_of_raising(
         self, tmp_path: Path
     ) -> None:
-        """The live path treats image analysis as non-critical — the document
-        keeps its alt-less markdown. A batch must not be stricter."""
+        """The live path treats image analysis as non-critical. A batch must
+        not be stricter — and must not be worse either: no placeholder entry
+        that would overwrite the author's alt text with "Image"."""
         out = tmp_path / "out"
         (out / ASSETS_REL_PATH).mkdir(parents=True)
         (out / ASSETS_REL_PATH / "a-0001.png").write_bytes(b"x")
@@ -174,8 +236,7 @@ class TestCollectImage:
             _processor(), self._state(), out, self._item(), line, MagicMock()
         )
 
-        assert entry["alt"] == "Image"
-        assert entry["desc"] == "Image analysis failed"
+        assert entry is None
 
     @pytest.mark.asyncio
     async def test_a_missing_output_line_degrades_too(self, tmp_path: Path) -> None:
@@ -187,7 +248,31 @@ class TestCollectImage:
             _processor(), self._state(), out, self._item(), None, MagicMock()
         )
 
-        assert entry["desc"] == "Image analysis failed"
+        assert entry is None
+
+    @pytest.mark.asyncio
+    async def test_the_plan_is_rebuilt_with_the_submitted_context(
+        self, tmp_path: Path
+    ) -> None:
+        """The document snippet feeds the cache key and the language hint; a
+        collector that rebuilt the plan without it cached the answer under a
+        key the next run never looks up."""
+        out = tmp_path / "out"
+        (out / ASSETS_REL_PATH).mkdir(parents=True)
+        (out / ASSETS_REL_PATH / "a-0001.png").write_bytes(b"x")
+        processor = _processor(
+            plan_answer=ImageAnalysis(caption="cached", description="known")
+        )
+        item = self._item()
+        item.document_context = "# 季度报告\n\n收入增长"
+
+        await _collect_image(processor, self._state(), out, item, None, MagicMock())
+
+        processor.vision.prepare_image_plan.assert_called_once_with(
+            out / item.image,
+            context="a.pdf",
+            document_context="# 季度报告\n\n收入增长",
+        )
 
     @pytest.mark.asyncio
     async def test_an_already_answered_image_costs_nothing(
@@ -204,6 +289,7 @@ class TestCollectImage:
             processor, self._state(), out, self._item(), None, MagicMock()
         )
 
+        assert entry is not None
         assert entry["alt"] == "cached"
         processor._track_usage.assert_not_called()
 
@@ -298,6 +384,26 @@ class TestPreparePendingWithPages:
             "a.pdf.page0003.jpg",
         ]
 
+    def test_pptx_slide_screenshots_are_found_too(self, tmp_path: Path) -> None:
+        """PPTX renders slides as ``.slideNNNN``; the page lookup used to know
+        only ``.pageNNNN``, so --llm-batch never sent slides to the model."""
+        from markitai.cli.processors.batch_llm import _document_pages
+        from markitai.constants import SCREENSHOTS_REL_PATH
+
+        out = tmp_path / "out"
+        shots = out / SCREENSHOTS_REL_PATH
+        shots.mkdir(parents=True)
+        (out / "deck.pptx.md").write_text("# deck", encoding="utf-8")
+        for n in (2, 1):
+            (shots / f"deck.pptx.slide{n:04d}.jpg").write_bytes(b"\xff\xd8\xff")
+
+        found = _document_pages(out / "deck.pptx.md")
+
+        assert [p.name for p in found] == [
+            "deck.pptx.slide0001.jpg",
+            "deck.pptx.slide0002.jpg",
+        ]
+
     def test_a_screenshot_document_becomes_one_vision_request(
         self, tmp_path: Path
     ) -> None:
@@ -346,3 +452,36 @@ class TestPreparePendingWithPages:
         assert base_md.name == "a.pdf.md"
         assert source == "a.pdf"
         assert len(pages) == 40
+
+    def test_a_long_document_still_sends_its_images(self, tmp_path: Path) -> None:
+        """The oversized branch skipped the image loop, and the live re-run
+        only enhances the text: --alt/--desc were silently lost for every
+        long document."""
+        out = tmp_path / "out"
+        _write_doc_with_image(out, "a.pdf", "a.pdf-0001.png")
+        self._write_pages(out, "a.pdf", 40)
+
+        pending, _cached, oversized = _prepare_pending(
+            _processor(), out, analyze_pages=True, analyze_images=True, max_pages=10
+        )
+
+        assert len(oversized) == 1
+        assert [item.kind for item, _ in pending] == ["image"]
+        assert pending[0][0].base_md == "a.pdf.md"
+
+    def test_a_chunked_document_still_sends_its_images(self, tmp_path: Path) -> None:
+        out = tmp_path / "out"
+        out.mkdir()
+        _write_doc_with_image(out, "a", "a-0001.png")
+        processor = _processor()
+        processor.documents._prepare_document_plan.side_effect = None
+        processor.documents._prepare_document_plan.return_value = MagicMock(
+            chunk_calls=[MagicMock(), MagicMock()]
+        )
+
+        pending, _cached, oversized = _prepare_pending(
+            processor, out, analyze_images=True
+        )
+
+        assert [base.name for base, _source, _pages in oversized] == ["a.md"]
+        assert [item.kind for item, _ in pending] == ["image"]

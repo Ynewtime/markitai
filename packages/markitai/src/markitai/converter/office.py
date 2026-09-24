@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -19,15 +20,35 @@ from markitai.converter.base import (
     ConvertResult,
     ExtractedImage,
     FileFormat,
+    append_screenshot_comments,
     register_converter,
+)
+from markitai.notices import user_notice
+from markitai.ocr import (
+    OCR_INSTALL_HINT,
+    OCRBackendMissing,
+    OCRLanguageError,
+    is_ocr_available,
 )
 from markitai.utils import office_mac
 from markitai.utils.mime import get_mime_type, normalize_image_extension
 from markitai.utils.office import find_libreoffice, has_ms_office
 from markitai.utils.paths import create_tracked_temp_dir, ensure_screenshots_dir
+from markitai.vision_consent import ensure_vlm_ocr_disclosed, vlm_ocr_allowed
 
 if TYPE_CHECKING:
     from markitai.config import MarkitaiConfig
+
+# A picture embedded in a slide as a data URI (python-pptx reader output).
+_DATA_URI_IMAGE_RE = re.compile(
+    r"!\[[^\]]*\]\(data:(?P<mime>image/[\w.+-]+);base64,(?P<data>[A-Za-z0-9+/=]+)\)"
+)
+
+# Pictures smaller than this many pixels (icons, logos) are not OCR'd.
+_PICTURE_OCR_MIN_PIXELS = 40_000
+
+# The slide boundary the PPTX readers emit (``<!-- Slide number: N -->``).
+_SLIDE_MARKER_RE = re.compile(r"<!--\s*Slide number:\s*(\d+)\s*-->")
 
 
 class OfficeConverter(BaseConverter):
@@ -158,11 +179,16 @@ class PptxConverter(OfficeConverter):
         use_llm = self.config and self.config.llm.enabled
 
         if use_ocr and use_llm:
-            # --ocr --llm: Extract text + render slides for LLM
+            # --ocr --llm: Extract text + render slides for LLM Vision.
+            # With MARKITAI_NO_VLM_OCR set, never send slide images to a
+            # remote model: degrade to local OCR (the PDF path's rule).
+            if not vlm_ocr_allowed():
+                return self._degrade_vlm_ocr(input_path, output_dir)
             logger.info("PPTX OCR+LLM mode: extracting text and rendering slides")
             return self._render_slides_for_llm(input_path, output_dir)
         elif use_ocr:
-            # --ocr only: Extract text + commented slide images
+            # --ocr only: text layer + local OCR of the pictures on the
+            # slides + commented slide images
             logger.info("PPTX OCR mode: extracting text with slide images (commented)")
             return self._convert_with_slide_images(input_path, output_dir)
 
@@ -180,19 +206,110 @@ class PptxConverter(OfficeConverter):
             if self.config:
                 image_format = normalize_image_extension(self.config.image.format)
 
-            images, slide_images = self._render_slides_to_images(
+            _slides, slide_images = self._render_slides_to_images(
                 input_path, screenshots_dir, image_format
             )
 
-            # Update metadata with page_images for LLM processing
+            # Update metadata with page_images for LLM processing.
+            # Screenshots are counted from page_images, never as images:
+            # ConvertResult.images holds embedded pictures only.
             result.metadata["page_images"] = slide_images
             result.metadata["pages"] = len(slide_images)
             result.metadata["extracted_text"] = result.markdown
-            result.images = images
+            if not use_llm:
+                # Without the LLM the .md is the whole output: reference each
+                # slide's screenshot in a comment after its content, as the
+                # PDF path does per page. With it, the vision step feeds on
+                # the plain text and adds the page comments to .llm.md itself.
+                result.markdown = append_screenshot_comments(
+                    result.markdown, slide_images, _SLIDE_MARKER_RE, "Slide"
+                )
 
             logger.debug(f"Rendered {len(slide_images)} slide screenshots")
 
         return result
+
+    def _degrade_vlm_ocr(
+        self, input_path: Path, output_dir: Path | None
+    ) -> ConvertResult:
+        """Fall back to local OCR when MARKITAI_NO_VLM_OCR blocks the VLM path.
+
+        Privacy-preserving degrade, identical to the PDF path: slide images
+        never reach a remote model. Uses RapidOCR when installed, otherwise
+        fails with an error naming both ways out.
+        """
+        if is_ocr_available():
+            logger.warning(
+                "[VLM OCR] Disabled by MARKITAI_NO_VLM_OCR; "
+                "falling back to local RapidOCR for {}",
+                input_path.name,
+            )
+            return self._convert_with_slide_images(input_path, output_dir)
+        raise OCRBackendMissing(
+            "VLM OCR is disabled by MARKITAI_NO_VLM_OCR=1 and the local "
+            "RapidOCR backend is not installed. Either unset "
+            "MARKITAI_NO_VLM_OCR to use the vision LLM, or install "
+            f"RapidOCR ({OCR_INSTALL_HINT})."
+        )
+
+    def _ocr_pictures(self, markdown: str, input_path: Path) -> tuple[str, int]:
+        """OCR the raster pictures embedded in the slides, in place.
+
+        The slide text layer is already exact; what it cannot carry is text
+        inside pictures (a pasted screenshot, a scanned page, a chart
+        exported as an image). Each sizable picture is read locally and the
+        recognized text goes right under its reference. Tiny pictures
+        (icons, logos) and vector (SVG) ones are skipped; one that cannot
+        be read keeps its bare reference and raises a notice.
+
+        Returns:
+            Tuple of (markdown, number of pictures OCR was run on)
+        """
+        import base64
+        import io
+
+        from PIL import Image
+
+        from markitai.ocr import OCRProcessor
+
+        processor: OCRProcessor | None = None
+        read = 0
+        unreadable = 0
+
+        def replace(match: re.Match[str]) -> str:
+            nonlocal processor, read, unreadable
+            ref = match.group(0)
+            if match.group("mime") == "image/svg+xml":
+                return ref
+            try:
+                data = base64.b64decode(match.group("data"), validate=False)
+                with Image.open(io.BytesIO(data)) as picture:
+                    width, height = picture.size
+            except Exception:
+                return ref
+            if width * height < _PICTURE_OCR_MIN_PIXELS:
+                return ref
+            if processor is None:
+                processor = OCRProcessor(self.config.ocr if self.config else None)
+            read += 1
+            try:
+                text = processor.recognize_bytes(data).text.strip()
+            except (OCRBackendMissing, OCRLanguageError):
+                raise
+            except Exception as e:
+                logger.debug("[PPTX] Picture OCR failed in {}: {}", input_path.name, e)
+                unreadable += 1
+                return ref
+            return f"{ref}\n\n{text}" if text else ref
+
+        markdown = _DATA_URI_IMAGE_RE.sub(replace, markdown)
+        if unreadable:
+            user_notice(
+                "[OCR] Could not read {} picture(s) in {}",
+                unreadable,
+                input_path.name,
+            )
+        return markdown, read
 
     def _convert_with_slide_images(
         self, input_path: Path, output_dir: Path | None = None
@@ -200,7 +317,9 @@ class PptxConverter(OfficeConverter):
         """Convert PPTX with text extraction + commented slide images.
 
         OCR mode always renders slides — the ``screenshot`` flag only controls
-        extra screenshots in the default (non-OCR) path.
+        extra screenshots in the default (non-OCR) path. Pictures embedded in
+        the slides are read with local OCR (see :meth:`_ocr_pictures`);
+        ``ocr_used`` reports whether any were.
 
         Args:
             input_path: Path to the PPTX file
@@ -211,7 +330,14 @@ class PptxConverter(OfficeConverter):
         """
         # First, extract text using MarkItDown
         text_result = self._convert_with_markitdown(input_path)
-        extracted_text = text_result.markdown
+        extracted_text, pictures_read = self._ocr_pictures(
+            text_result.markdown, input_path
+        )
+        if not pictures_read:
+            logger.debug(
+                "[PPTX] {}: no pictures to OCR; text comes from the text layer",
+                input_path.name,
+            )
 
         # Setup screenshots directory for slide images
         if output_dir:
@@ -224,8 +350,9 @@ class PptxConverter(OfficeConverter):
         if self.config:
             image_format = normalize_image_extension(self.config.image.format)
 
-        # OCR path: always render slides (independent of screenshot flag)
-        images, slide_images = self._render_slides_to_images(
+        # OCR path: always render slides (independent of screenshot flag).
+        # The slide images are screenshots (page_images), not embedded images.
+        _slides, slide_images = self._render_slides_to_images(
             input_path, screenshots_dir, image_format
         )
 
@@ -242,12 +369,17 @@ class PptxConverter(OfficeConverter):
 
         return ConvertResult(
             markdown=markdown,
-            images=images,
+            images=text_result.images,
             metadata={
                 "source": str(input_path),
                 "format": "PPTX",
-                "ocr_used": True,
-                "slides": len(images),
+                "ocr_used": pictures_read > 0,
+                "ocr_path": "rapidocr" if pictures_read else "none",
+                "slides": len(slide_images),
+                # Counted as screenshots, not images. Deliberately not
+                # page_images: this path also serves the MARKITAI_NO_VLM_OCR
+                # degrade, whose slides must never reach a vision model.
+                "screenshot_count": len(slide_images),
             },
         )
 
@@ -320,7 +452,8 @@ class PptxConverter(OfficeConverter):
             export_format = "JPG" if image_format == "jpg" else image_format.upper()
 
             for i, slide in enumerate(presentation.Slides, 1):
-                image_name = f"{input_path.name}.slide{i:04d}.{image_format}"
+                prefix = self.asset_prefix or input_path.name
+                image_name = f"{prefix}.slide{i:04d}.{image_format}"
                 image_path = screenshots_dir / image_name
 
                 slide.Export(str(image_path.resolve()), export_format)
@@ -412,8 +545,9 @@ class PptxConverter(OfficeConverter):
             ):
                 pass  # fall through to the PowerPoint branch below
             elif platform.system() == "Windows":
-                logger.warning(
-                    "[PPTX] Cannot render slides: Neither MS Office nor LibreOffice found. "
+                user_notice(
+                    f"[PPTX] Cannot render slides of {input_path.name}: "
+                    "Neither MS Office nor LibreOffice found. "
                     "Install Microsoft Office (recommended) or LibreOffice "
                     "(winget install TheDocumentFoundation.LibreOffice) "
                     "to enable slide rendering."
@@ -421,23 +555,26 @@ class PptxConverter(OfficeConverter):
                 return [], []
             elif platform.system() == "Darwin":
                 if self.config is not None and not self.config.office.macos_fallback:
-                    logger.warning(
-                        "[PPTX] Cannot render slides: LibreOffice not found and "
+                    user_notice(
+                        f"[PPTX] Cannot render slides of {input_path.name}: "
+                        "LibreOffice not found and "
                         "office.macos_fallback is disabled. Install LibreOffice "
                         "(brew install --cask libreoffice), or enable "
                         "office.macos_fallback to use Microsoft PowerPoint."
                     )
                 else:
-                    logger.warning(
-                        "[PPTX] Cannot render slides: Neither LibreOffice nor "
+                    user_notice(
+                        f"[PPTX] Cannot render slides of {input_path.name}: "
+                        "Neither LibreOffice nor "
                         "Microsoft PowerPoint found. Install LibreOffice "
                         "(brew install --cask libreoffice) or Microsoft Office "
                         "to enable slide rendering."
                     )
                 return [], []
             else:
-                logger.warning(
-                    "[PPTX] Cannot render slides: LibreOffice not found. Install "
+                user_notice(
+                    f"[PPTX] Cannot render slides of {input_path.name}: "
+                    "LibreOffice not found. Install "
                     "LibreOffice (e.g. apt-get install libreoffice / dnf install "
                     "libreoffice) to enable slide rendering."
                 )
@@ -453,11 +590,29 @@ class PptxConverter(OfficeConverter):
                     office_mac.pptx_to_pdf(input_path, temp_path)
                     pp_time = time.perf_counter() - pp_start
                     logger.info(f"[PPTX] PowerPoint PDF export: {pp_time:.2f}s")
-                except RuntimeError as e:
-                    logger.warning(f"[PPTX] PowerPoint PDF export failed: {e}")
+                except (RuntimeError, OSError) as e:
+                    # OSError: the Office staging folder is not writable (macOS
+                    # App Data protection); the text layer still converts.
+                    if office_mac.is_container_permission_error(e):
+                        user_notice(
+                            "[PPTX] Cannot render slides of {}: {}",
+                            input_path.name,
+                            office_mac.CONTAINER_BLOCKED_HINT,
+                        )
+                        return [], []
+                    user_notice(
+                        "[PPTX] Cannot render slides of {}: PowerPoint PDF "
+                        "export failed: {}",
+                        input_path.name,
+                        e,
+                    )
                     return [], []
                 if not pdf_path.exists():
-                    logger.warning("[PPTX] PowerPoint did not produce a PDF")
+                    user_notice(
+                        "[PPTX] Cannot render slides of {}: PowerPoint did not "
+                        "produce a PDF",
+                        input_path.name,
+                    )
                     return [], []
             else:
                 # Create isolated user profile for concurrent LibreOffice execution
@@ -485,7 +640,11 @@ class PptxConverter(OfficeConverter):
                     lo_time = time.perf_counter() - lo_start
                     logger.info(f"[PPTX] LibreOffice conversion: {lo_time:.2f}s")
                     if result.returncode != 0 or not pdf_path.exists():
-                        logger.warning(f"[PPTX] LibreOffice failed: {result.stderr}")
+                        user_notice(
+                            "[PPTX] Cannot render slides of {}: LibreOffice failed: {}",
+                            input_path.name,
+                            result.stderr,
+                        )
                         return [], []
                 except subprocess.TimeoutExpired:
                     logger.error("[PPTX] LibreOffice timeout (>600s)")
@@ -516,9 +675,10 @@ class PptxConverter(OfficeConverter):
                     mat = pymupdf.Matrix(dpi / 72, dpi / 72)
                     pix = page.get_pixmap(matrix=mat)
 
-                    image_name = (
-                        f"{input_path.name}.slide{page_num + 1:04d}.{image_format}"
-                    )
+                    # Named after the resolved output (BaseConverter.asset_prefix)
+                    # so a renamed re-run keeps the older output's slides.
+                    prefix = self.asset_prefix or input_path.name
+                    image_name = f"{prefix}.slide{page_num + 1:04d}.{image_format}"
                     image_path = screenshots_dir / image_name
                     # Save with compression (ensures < 5MB for LLM)
                     final_size, actual_path = img_processor.save_screenshot(
@@ -590,18 +750,26 @@ class PptxConverter(OfficeConverter):
         if self.config:
             image_format = normalize_image_extension(self.config.image.format)
 
-        # OCR+LLM path: always render slides (independent of screenshot flag)
-        images, slide_images = self._render_slides_to_images(
+        # OCR+LLM path: always render slides (independent of screenshot flag).
+        # They travel as page_images; images holds embedded pictures only.
+        _slides, slide_images = self._render_slides_to_images(
             input_path, screenshots_dir, image_format
         )
 
+        # One-time privacy disclosure: the rendered slide images are about to
+        # be handed to the vision LLM for OCR reading. Nothing rendered means
+        # nothing is sent, and nothing to disclose.
+        if slide_images:
+            ensure_vlm_ocr_disclosed(self.config, page_count=len(slide_images))
+
         return ConvertResult(
             markdown=extracted_text,
-            images=images,
+            images=text_result.images,
             metadata={
                 "source": str(input_path),
                 "format": "PPTX",
-                "slides": len(images),
+                "ocr_path": "vlm",
+                "slides": len(slide_images),
                 "extracted_text": extracted_text,
                 "page_images": slide_images,
             },

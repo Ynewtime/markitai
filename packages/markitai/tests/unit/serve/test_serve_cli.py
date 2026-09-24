@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -53,37 +54,33 @@ class TestServeCommand:
     def test_runs_uvicorn_with_host_and_port(self, cli_runner: CliRunner) -> None:
         import pytest
 
-        uvicorn = pytest.importorskip("uvicorn")
+        pytest.importorskip("uvicorn")
 
         from markitai.cli.commands.serve import serve
 
         sentinel_app = object()
         with (
-            patch.object(uvicorn, "run") as mock_run,
+            patch("markitai.cli.commands.serve._run_server") as mock_run,
             patch("markitai.serve.create_app", return_value=sentinel_app),
         ):
             result = cli_runner.invoke(
                 serve, ["--host", "0.0.0.0", "--port", "3611", "--no-open"]
             )
         assert result.exit_code == 0, result.output
-        mock_run.assert_called_once()
-        args, kwargs = mock_run.call_args
-        assert args[0] is sentinel_app
-        assert kwargs["host"] == "0.0.0.0"
-        assert kwargs["port"] == 3611
+        mock_run.assert_called_once_with(sentinel_app, "0.0.0.0", 3611)
 
     def test_allowed_host_option_threads_through_to_create_app(
         self, cli_runner: CliRunner
     ) -> None:
         import pytest
 
-        uvicorn = pytest.importorskip("uvicorn")
+        pytest.importorskip("uvicorn")
 
         from markitai.cli.commands.serve import serve
 
         sentinel_app = object()
         with (
-            patch.object(uvicorn, "run"),
+            patch("markitai.cli.commands.serve._run_server"),
             patch(
                 "markitai.serve.create_app", return_value=sentinel_app
             ) as mock_create,
@@ -156,13 +153,13 @@ def _invoke_serve(
     """Invoke serve with uvicorn and create_app mocked, env token cleared."""
     import pytest
 
-    uvicorn = pytest.importorskip("uvicorn")
+    pytest.importorskip("uvicorn")
 
     from markitai.cli.commands.serve import serve
 
     monkeypatch.delenv("MARKITAI_SERVE_TOKEN", raising=False)
     with (
-        patch.object(uvicorn, "run"),
+        patch("markitai.cli.commands.serve._run_server"),
         patch("markitai.serve.create_app", return_value=object()) as mock_create,
     ):
         result = cli_runner.invoke(serve, ["--no-open", *args])
@@ -241,13 +238,13 @@ class TestServeToken:
     ) -> None:
         import pytest
 
-        uvicorn = pytest.importorskip("uvicorn")
+        pytest.importorskip("uvicorn")
 
         from markitai.cli.commands.serve import serve
 
         monkeypatch.setenv("MARKITAI_SERVE_TOKEN", "pinned-secret")
         with (
-            patch.object(uvicorn, "run"),
+            patch("markitai.cli.commands.serve._run_server"),
             patch("markitai.serve.create_app", return_value=object()) as mock_create,
         ):
             result = cli_runner.invoke(serve, ["--no-open"])
@@ -389,3 +386,67 @@ class TestNonLoopbackBindWarning:
 
         help_text = _squeeze(cli_runner.invoke(serve, ["--help"]).output)
         assert "not authentication" in help_text
+
+
+class TestRunServer:
+    """_run_server: bounded graceful shutdown that ends SSE streams first."""
+
+    def test_config_bounds_graceful_shutdown(self) -> None:
+        uvicorn = pytest.importorskip("uvicorn")
+
+        from markitai.cli.commands.serve import (
+            _GRACEFUL_SHUTDOWN_TIMEOUT_S,
+            _run_server,
+        )
+
+        captured: dict[str, Any] = {}
+
+        def fake_run(server: Any) -> None:
+            captured["server"] = server
+            server.started = True
+
+        with patch.object(uvicorn.Server, "run", fake_run):
+            _run_server(object(), "127.0.0.1", 3611)
+        server = captured["server"]
+        assert isinstance(server, uvicorn.Server)
+        config = server.config
+        assert config.host == "127.0.0.1"
+        assert config.port == 3611
+        assert config.log_config is None
+        assert config.timeout_graceful_shutdown == _GRACEFUL_SHUTDOWN_TIMEOUT_S
+        assert 0 < _GRACEFUL_SHUTDOWN_TIMEOUT_S <= 10
+
+    def test_exit_signal_requests_app_shutdown(self) -> None:
+        """The first Ctrl-C tells the app, which ends its SSE streams, so the
+        lifespan shutdown (job cancel + meta.json) is not blocked behind them."""
+        import signal
+
+        uvicorn = pytest.importorskip("uvicorn")
+
+        from markitai.cli.commands.serve import _run_server
+
+        app = object()
+
+        def fake_run(server: Any) -> None:
+            server.handle_exit(signal.SIGINT, None)
+            server.started = True
+            assert server.should_exit is True
+
+        with (
+            patch.object(uvicorn.Server, "run", fake_run),
+            patch("markitai.serve.app.request_shutdown") as mock_request,
+        ):
+            _run_server(app, "127.0.0.1", 3611)
+        mock_request.assert_called_once_with(app)
+
+    def test_startup_failure_exits_nonzero(self) -> None:
+        uvicorn = pytest.importorskip("uvicorn")
+
+        from markitai.cli.commands.serve import _run_server
+
+        with (
+            patch.object(uvicorn.Server, "run", lambda _server: None),
+            pytest.raises(SystemExit) as excinfo,
+        ):
+            _run_server(object(), "127.0.0.1", 3611)
+        assert excinfo.value.code != 0

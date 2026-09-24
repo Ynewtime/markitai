@@ -28,6 +28,7 @@ import markitai
 from markitai.api import (
     ConversionOutput,
     ConversionUsage,
+    NoModelConfiguredError,
     _resolve_config,
     aconvert,
     convert,
@@ -161,7 +162,8 @@ class TestResolveConfig:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("MODEL", raising=False)
-        with pytest.raises(ValueError, match="MODEL"):
+        monkeypatch.setattr("markitai.providers.detect.detect_all_providers", list)
+        with pytest.raises(NoModelConfiguredError, match="MODEL"):
             _resolve_config(
                 MarkitaiConfig(),
                 llm=True,
@@ -170,6 +172,138 @@ class TestResolveConfig:
                 alt=None,
                 desc=None,
             )
+
+    def test_no_model_error_is_still_a_value_error(self) -> None:
+        """The documented ``ValueError`` contract keeps holding."""
+        assert issubclass(NoModelConfiguredError, ValueError)
+
+    @staticmethod
+    def _detected(*models: str) -> list[Any]:
+        from markitai.providers.detect import ProviderDetectionResult
+
+        return [
+            ProviderDetectionResult(
+                provider=model.split("/")[0],
+                model=model,
+                authenticated=True,
+                source="env",
+            )
+            for model in models
+        ]
+
+    def test_provider_key_auto_detection_populates_models(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: the API only fell back to MODEL, so a provider key in
+        the environment — enough for the CLI — raised "no models" here."""
+        monkeypatch.delenv("MODEL", raising=False)
+        monkeypatch.setattr(
+            "markitai.providers.detect.detect_all_providers",
+            lambda: self._detected("openai/gpt-5.6-luna"),
+        )
+        cfg = _resolve_config(
+            MarkitaiConfig(), llm=True, ocr=None, screenshot=None, alt=None, desc=None
+        )
+        assert [m.litellm_params.model for m in cfg.llm.model_list] == [
+            "openai/gpt-5.6-luna"
+        ]
+
+    def test_real_env_key_is_detected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """End to end through the real detector: an API key is enough."""
+        monkeypatch.delenv("MODEL", raising=False)
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+        monkeypatch.setattr(
+            "markitai.providers.detect.shutil.which", lambda _name: None
+        )
+        monkeypatch.setattr(
+            "markitai.providers.detect._check_chatgpt_auth", lambda: False
+        )
+        cfg = _resolve_config(
+            MarkitaiConfig(), llm=True, ocr=None, screenshot=None, alt=None, desc=None
+        )
+        assert [m.litellm_params.model for m in cfg.llm.model_list] == [
+            "deepseek/deepseek-v4-flash"
+        ]
+
+    def test_model_env_beats_detection(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MODEL", "openai/gpt-test")
+
+        def fail() -> list[Any]:
+            raise AssertionError("detection must not run when MODEL is set")
+
+        monkeypatch.setattr("markitai.providers.detect.detect_all_providers", fail)
+        cfg = _resolve_config(
+            MarkitaiConfig(), llm=True, ocr=None, screenshot=None, alt=None, desc=None
+        )
+        assert cfg.llm.model_list[0].litellm_params.model == "openai/gpt-test"
+
+    def test_configured_model_list_skips_detection(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def fail() -> list[Any]:
+            raise AssertionError("detection must not run with a model_list")
+
+        monkeypatch.setattr("markitai.providers.detect.detect_all_providers", fail)
+        cfg = _resolve_config(
+            _llm_config(), llm=None, ocr=None, screenshot=None, alt=None, desc=None
+        )
+        assert cfg.llm.model_list[0].litellm_params.model == "openai/test"
+
+    def test_pooled_providers_warn_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Several detected providers share a pool: say so, like the CLI."""
+        from loguru import logger
+
+        monkeypatch.delenv("MODEL", raising=False)
+        monkeypatch.setattr("markitai.api._POOLED_NOTICES_SHOWN", set())
+        monkeypatch.setattr(
+            "markitai.providers.detect.detect_all_providers",
+            lambda: self._detected("anthropic/claude-haiku-4-5", "openai/gpt-5.6-luna"),
+        )
+        messages: list[str] = []
+        handler_id = logger.add(lambda m: messages.append(str(m)), level="WARNING")
+        try:
+            for _ in range(2):
+                cfg = _resolve_config(
+                    MarkitaiConfig(),
+                    llm=True,
+                    ocr=None,
+                    screenshot=None,
+                    alt=None,
+                    desc=None,
+                )
+        finally:
+            logger.remove(handler_id)
+
+        assert len(cfg.llm.model_list) == 2
+        [notice] = messages
+        assert "requests are spread" in notice
+        assert "anthropic/claude-haiku-4-5" in notice
+        assert "openai/gpt-5.6-luna" in notice
+        assert "MODEL=" in notice
+
+    async def test_aconvert_detects_off_the_event_loop(
+        self, sample_txt: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Detection probes CLI auth with asyncio.run, which raises inside a
+        running loop — aconvert must resolve config in a worker thread."""
+        monkeypatch.delenv("MODEL", raising=False)
+
+        def detect() -> list[Any]:
+            async def probe() -> bool:
+                return True
+
+            assert asyncio.run(probe())
+            return self._detected("openai/gpt-5.6-luna")
+
+        monkeypatch.setattr("markitai.providers.detect.detect_all_providers", detect)
+        processor = FakeLLMProcessor()
+        monkeypatch.setattr(
+            "markitai.workflow.helpers.create_llm_processor",
+            lambda *_args, **_kwargs: processor,
+        )
+        out = await aconvert(sample_txt, config=MarkitaiConfig(), llm=True)
+        assert out.llm_markdown is not None
+        assert processor.document_calls == ["sample.txt"]
 
     def test_none_config_loads_the_cli_hierarchy(
         self, monkeypatch: pytest.MonkeyPatch
@@ -367,6 +501,60 @@ class TestConvertUrl:
 # =============================================================================
 # Hard constraint: aconvert must not block the event loop
 # =============================================================================
+
+
+class TestConversionWarnings:
+    """User notices come back on ConversionOutput.warnings, per call."""
+
+    async def test_concurrent_calls_get_only_their_own_notices(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from markitai.notices import user_notice
+        from markitai.utils.executor import run_in_converter_thread
+
+        both_running = asyncio.Barrier(2)
+
+        async def fake_convert_file(
+            path: Path, cfg: Any, workdir: Path, *, in_memory: bool
+        ) -> ConversionOutput:
+            await both_running.wait()
+            # Raised from the converter pool, as the real converters do
+            await run_in_converter_thread(
+                user_notice, "[PDF] {}: 1 page(s) look scanned/garbled", path.name
+            )
+            await both_running.wait()
+            return ConversionOutput(source=str(path), markdown="# x")
+
+        monkeypatch.setattr("markitai.api._aconvert_file", fake_convert_file)
+        first, second = tmp_path / "a.pdf", tmp_path / "b.pdf"
+        first.write_bytes(b"a")
+        second.write_bytes(b"b")
+        a, b = await asyncio.gather(
+            aconvert(first, config=MarkitaiConfig()),
+            aconvert(second, config=MarkitaiConfig()),
+        )
+        assert a.warnings == ["[PDF] a.pdf: 1 page(s) look scanned/garbled"]
+        assert b.warnings == ["[PDF] b.pdf: 1 page(s) look scanned/garbled"]
+
+    def test_clean_conversion_has_no_warnings(self, sample_txt: Path) -> None:
+        assert convert(sample_txt, config=MarkitaiConfig()).warnings == []
+
+    async def test_missing_url_screenshot_is_reported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("markitai.fetch.fetch_url", _fake_fetch())
+        cfg = MarkitaiConfig()
+        cfg.cache.enabled = False
+        out = await aconvert(
+            "https://example.com/page.html",
+            output_dir=tmp_path,
+            config=cfg,
+            screenshot=True,
+        )
+        assert out.warnings == [
+            "[URL] Screenshot not captured for https://example.com/page.html; "
+            "the page was converted without it"
+        ]
 
 
 class TestAconvertNonBlocking:
@@ -575,6 +763,7 @@ async def test_profile_assets_survive_api_batch_and_history(
     )
     processor = MagicMock()
     processor._engine.try_cached.return_value = None
+    processor.documents._prepare_document_plan.return_value.chunk_calls = []
     processor.vision.prepare_image_plan.return_value.answer = None
     pending, cached, oversized = _prepare_pending(
         processor,

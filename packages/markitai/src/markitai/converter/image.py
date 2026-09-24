@@ -5,10 +5,11 @@ from __future__ import annotations
 import hashlib
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from markitai.constants import ASSETS_REL_PATH
+from markitai.constants import ASSETS_REL_PATH, page_marker
 from markitai.converter.base import (
     BaseConverter,
     ConvertResult,
@@ -16,14 +17,58 @@ from markitai.converter.base import (
     register_converter,
 )
 from markitai.converter.heif import HEIF_SUFFIXES, decode_to_png, ensure_heif_ready
+from markitai.notices import user_notice
 from markitai.ocr import (
     OCR_INSTALL_HINT,
     OCRBackendMissing,
+    OCRError,
+    OCRLanguageError,
     is_ocr_available,
 )
 from markitai.utils.paths import ensure_assets_dir
 from markitai.utils.text import markdown_image_reference
 from markitai.vision_consent import ensure_vlm_ocr_disclosed, vlm_ocr_allowed
+
+if TYPE_CHECKING:
+    from markitai.ocr import OCRProcessor
+
+# Formats whose frames are pages of one document (fax/scan TIFFs), as opposed
+# to animation frames (GIF/WebP), where the first frame stands for the image.
+_MULTI_PAGE_SUFFIXES = {".tif", ".tiff"}
+
+# Rasterization scale for SVG before OCR (1 SVG px -> 2 bitmap px), so text
+# drawn at ordinary sizes is tall enough for the recognizer.
+_SVG_OCR_SCALE = 2.0
+
+
+def _rasterize_svg(path: Path) -> Any:
+    """Render an SVG to an RGB array (PyMuPDF opens SVG as a document)."""
+    import numpy as np
+    import pymupdf
+
+    doc = pymupdf.open(path)
+    try:
+        if len(doc) == 0:
+            raise OCRError(f"{path.name} has nothing to render")
+        pix = doc[0].get_pixmap(
+            matrix=pymupdf.Matrix(_SVG_OCR_SCALE, _SVG_OCR_SCALE), alpha=False
+        )
+        return (
+            np.frombuffer(pix.samples, dtype=np.uint8)
+            .reshape((pix.height, pix.width, pix.n))[:, :, :3]
+            .copy()
+        )
+    finally:
+        doc.close()
+
+
+def _frame_rgb_array(image: Any, index: int) -> Any:
+    """One frame of a multi-frame PIL image as an RGB array."""
+    import numpy as np
+    from PIL import ImageOps
+
+    image.seek(index)
+    return np.asarray(ImageOps.exif_transpose(image).convert("RGB"))
 
 
 class ImageConverter(BaseConverter):
@@ -187,12 +232,27 @@ class ImageConverter(BaseConverter):
             return f"{ASSETS_REL_PATH}/{dest_path.name}"
 
         # Copy image to assets directory
-        dest_path = assets_dir / input_path.name
+        dest_path = assets_dir / self._asset_name(input_path)
         if not dest_path.exists():
             shutil.copy2(input_path, dest_path)
             logger.debug(f"Copied {input_path.name} to {dest_path}")
 
-        return f"{ASSETS_REL_PATH}/{input_path.name}"
+        return f"{ASSETS_REL_PATH}/{dest_path.name}"
+
+    def _asset_name(self, input_path: Path) -> str:
+        """Name of the image's copy in the shared assets directory.
+
+        Derived from the resolved output name (``BaseConverter.asset_prefix``)
+        so a renamed re-run (``photo.jpg.v2.md``) gets its own copy instead of
+        sharing the one ``photo.jpg.md`` references. The image's extension is
+        kept so the copy stays viewable; the default output keeps the plain
+        input name.
+        """
+        prefix = self.asset_prefix or input_path.name
+        suffix = input_path.suffix
+        if suffix and prefix.lower().endswith(suffix.lower()):
+            return prefix
+        return f"{prefix}{suffix}"
 
     def _transcode_to_png(self, input_path: Path, dest_path: Path) -> None:
         """Transcode less-compatible image formats to PNG for markdown previews."""
@@ -237,7 +297,12 @@ class ImageConverter(BaseConverter):
         source_id = hashlib.sha256(
             str(input_path.resolve()).encode("utf-8")
         ).hexdigest()[:12]
-        return f"{input_path.stem}-{source_id}.png"
+        # A renamed output (asset_prefix other than the input name) gets its
+        # own preview rather than sharing the older output's.
+        stem = input_path.stem
+        if self.asset_prefix and self.asset_prefix != input_path.name:
+            stem = self.asset_prefix
+        return f"{stem}-{source_id}.png"
 
     def _convert_with_ocr(
         self,
@@ -254,33 +319,83 @@ class ImageConverter(BaseConverter):
                 PNG transcoded from a HEIF file); defaults to input_path
 
         Returns:
-            Markdown with OCR extracted text
+            Markdown with OCR extracted text; the plain image reference
+            (with a user notice) when the image holds no readable text
+
+        Raises:
+            OCRError: The image could not be decoded or the OCR engine
+                failed. The item fails: a text-free placeholder reported as
+                a successful conversion hid that nothing was read.
         """
         from markitai.ocr import OCRProcessor
 
         try:
             processor = OCRProcessor(self.config.ocr if self.config else None)
-            result = processor.recognize_to_markdown(ocr_source or input_path)
-
-            if result.strip():
-                logger.debug(f"OCR extracted text from {input_path.name}")
-                return (
-                    f"# {input_path.stem}\n\n"
-                    f"{markdown_image_reference(input_path.stem, image_ref_path)}\n\n"
-                    f"{result}"
-                )
-            else:
-                logger.warning(f"OCR found no text in {input_path.name}")
-                return self._create_image_placeholder(input_path, image_ref_path)
-
-        except OCRBackendMissing:
-            # The user asked for OCR and it is one command away. Degrading to
-            # a text-free placeholder here would report success for a file
-            # from which nothing was read.
+            result = self._recognize(processor, input_path, ocr_source or input_path)
+        except (OCRBackendMissing, OCRLanguageError, OCRError):
+            # Missing backend: the user asked for OCR and it is one command
+            # away. Bad ocr.lang: a setting to fix. Both already say what to
+            # do, and neither is this image's fault.
             raise
         except Exception as e:
-            logger.warning(f"OCR failed for {input_path.name}: {e}")
-            return self._create_image_placeholder(input_path, image_ref_path)
+            raise OCRError(f"OCR failed for {input_path.name}: {e}") from e
+
+        if result.strip():
+            logger.debug(f"OCR extracted text from {input_path.name}")
+            return (
+                f"# {input_path.stem}\n\n"
+                f"{markdown_image_reference(input_path.stem, image_ref_path)}\n\n"
+                f"{result}"
+            )
+        # A blank image is a legitimate input, not a failure -- but the user
+        # asked for its text, so say that there was none.
+        user_notice(
+            "[OCR] No text found in {}; the output only references the image",
+            input_path.name,
+        )
+        return self._create_image_placeholder(input_path, image_ref_path)
+
+    def _recognize(
+        self, processor: OCRProcessor, input_path: Path, source: Path
+    ) -> str:
+        """Run OCR on every page of the image and return its Markdown.
+
+        RapidOCR opens ordinary raster files itself. SVG is vector and is
+        rasterized first (PyMuPDF reads SVG). A multi-page TIFF is read
+        frame by frame, each frame under its own page marker: RapidOCR alone
+        only ever saw the first frame and dropped the rest silently. One
+        frame is decoded at a time, and recognized before the next: decoded
+        all at once, a 300-page A4 scan at 300 dpi took about 8 GB.
+        """
+        if source.suffix.lower() == ".svg":
+            return processor.recognize_array_to_markdown(_rasterize_svg(source))
+
+        from PIL import Image
+
+        # Opening parses the header only: an empty, unidentifiable or
+        # decompression-bomb file fails here with PIL's own explanation;
+        # undecodable pixel data fails in RapidOCR's decoder below.
+        with Image.open(source) as image:
+            frame_count = getattr(image, "n_frames", 1)
+            if source.suffix.lower() not in _MULTI_PAGE_SUFFIXES or frame_count < 2:
+                pages = None
+            else:
+                logger.debug(
+                    f"OCR reading {frame_count} TIFF pages of {input_path.name}"
+                )
+                pages = [
+                    processor.recognize_array_to_markdown(_frame_rgb_array(image, i))
+                    for i in range(frame_count)
+                ]
+
+        if pages is None:
+            return processor.recognize_to_markdown(source)
+        if not any(page.strip() for page in pages):
+            return ""
+        return "\n\n".join(
+            f"{page_marker(number)}\n\n{page}".rstrip()
+            for number, page in enumerate(pages, 1)
+        )
 
     def _create_image_placeholder(self, input_path: Path, image_ref_path: str) -> str:
         """Create a placeholder markdown for the image.

@@ -28,6 +28,8 @@ function item(status: SessionItem["status"]): SessionItem {
     operation: "convert",
     skipped: false,
     skipReason: null,
+    retryable: true,
+    warnings: [],
     sizeBytes: 100,
     startedAt: null,
   };
@@ -117,6 +119,21 @@ describe("ItemRow terminal actions", () => {
     expect(container.querySelector(".c-skip")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Retry doc.pdf" }));
     expect(onRetry).toHaveBeenCalledOnce();
+  });
+
+  it("offers neither retry nor enhance for a non-retryable (CLI-recorded) file", () => {
+    const failed = renderRow({ ...item("error"), retryable: false });
+    expect(screen.queryByRole("button", { name: "Retry doc.pdf" })).not.toBeInTheDocument();
+    failed.unmount();
+
+    renderRow({ ...item("done"), retryable: false }, { llmAvailable: true });
+    expect(
+      screen.queryByRole("button", { name: "Enhance doc.pdf with LLM" }),
+    ).not.toBeInTheDocument();
+    // Deleting stays available.
+    expect(
+      screen.getByRole("button", { name: "Permanently delete doc.pdf" }),
+    ).toBeInTheDocument();
   });
 
   it("is not aria-disabled while it hosts an enabled Retry (skipped, job running)", () => {
@@ -343,6 +360,52 @@ describe("ItemRow terminal actions", () => {
       `doc.pdf, 100 B, ${dicts.en.statusSkipped}`,
     );
     expect(screen.getByText(dicts.en.skipExists)).toBeVisible();
+  });
+
+  it("names a pending LLM batch and carries its collect note", () => {
+    const note = "LLM enhancement is still running as a provider batch";
+    const { container } = renderRow({
+      ...item("done"),
+      kind: "url",
+      name: "https://example.com/page",
+      skipped: true,
+      skipReason: "pending_batch",
+      error: note,
+    });
+
+    const reason = container.querySelector(".c-skip");
+    expect(reason).toHaveTextContent(dicts.en.skipPendingBatch);
+    expect(reason).toHaveAttribute("title", note);
+    expect(screen.getByTitle(dicts.en.skipPendingBatch)).toHaveAttribute(
+      "data-tooltip",
+      dicts.en.skipPendingBatch,
+    );
+    // Not an ordinary base result: no download or enhance for it.
+    expect(screen.queryByRole("button", { name: /Enhance/ })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Download/ })).toBeNull();
+  });
+
+  it("surfaces conversion warnings on the row", () => {
+    const warnings = [
+      "[PDF] doc.pdf: 2 page(s) look scanned/garbled (pages 1, 2)",
+      "[PDF] doc.pdf: 1 hidden text span(s) detected on page(s) 3",
+    ];
+    renderRow({ ...item("done"), warnings });
+
+    const row = screen.getByRole("option");
+    expect(row).toHaveAccessibleName(
+      `doc.pdf, 100 B, 0.1 Seconds, Done, ${dicts.en.itemWarnings(2)}`,
+    );
+    const line = screen.getByText(`${dicts.en.itemWarnings(2)}: ${warnings[0]}`);
+    expect(line.closest(".c-warn")).toHaveAttribute("title", warnings.join("\n"));
+    expect(row.getAttribute("aria-describedby")).toContain(
+      line.closest(".c-warn")!.id,
+    );
+  });
+
+  it("shows no warning line while an item is still running", () => {
+    const { container } = renderRow({ ...item("running"), warnings: ["stale"] });
+    expect(container.querySelector(".c-warn")).toBeNull();
   });
 
   it("hands focus to the neighboring row after a delete", async () => {

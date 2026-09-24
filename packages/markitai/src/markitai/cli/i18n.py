@@ -97,6 +97,11 @@ TEXTS: dict[str, dict[str, str]] = {
     # Cache command
     "cache.title": {"en": "Cache Statistics", "zh": "缓存统计"},
     "cache.llm": {"en": "LLM responses", "zh": "LLM 响应"},
+    "cache.fetch": {"en": "URL fetches", "zh": "URL 抓取"},
+    "cache.fetch_ttl": {
+        "en": "Pages without ETag/Last-Modified are refetched after {hours}h",
+        "zh": "无 ETag/Last-Modified 的页面 {hours} 小时后重新抓取",
+    },
     "cache.spa": {"en": "SPA domains", "zh": "SPA 域名"},
     "cache.proxy": {"en": "Proxy detection", "zh": "代理检测"},
     "cache.entries": {"en": "entries", "zh": "条"},

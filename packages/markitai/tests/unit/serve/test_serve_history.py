@@ -322,6 +322,7 @@ class TestHistory:
             "duration_ms": newest["duration_ms"],
             "size_bytes": newest["size_bytes"],
             "origin": "web",
+            "retryable": True,
         }
         assert newest["duration_ms"] >= 0
         assert newest["size_bytes"] > 0
@@ -577,6 +578,256 @@ class TestCliRecordedHistory:
 
         origins = {h["job_id"]: h["origin"] for h in history}
         assert origins == {web["job_id"]: "web", cli_job.name: "cli"}
+
+
+class TestCliRecordedRetry:
+    """What serve may re-run from a CLI-recorded (--record-history) job."""
+
+    def _record_llm_url(self, jobs_root: Path, work: Path) -> Path:
+        from markitai.runs.history import record_cli_job
+        from markitai.runs.types import Outcome
+
+        work.mkdir(exist_ok=True)
+        enhanced = work / "page.html.llm.md"
+        enhanced.write_text("# enhanced\n", encoding="utf-8")
+        job_dir = record_cli_job(
+            [
+                Outcome(
+                    kind="url",
+                    source="https://example.com/page.html",
+                    status="completed",
+                    output_path=enhanced,
+                )
+            ],
+            options={"preset": None, "llm": True, "ocr": False, "origin": "cli"},
+            jobs_root=jobs_root,
+        )
+        assert job_dir is not None
+        return job_dir
+
+    @staticmethod
+    def _fake_url(calls: list[str | None]):
+        async def fake_url(
+            url: str,
+            cfg: Any,
+            out_dir: Path,
+            shared: Any,
+            url_ctx: Any,
+            output_name: str | None = None,
+        ):
+            from markitai.batch import ProcessResult
+
+            calls.append(output_name)
+            out = out_dir / (output_name or "x.md")
+            out.write_text("# base again\n", encoding="utf-8")
+            return ProcessResult(success=True, output_path=str(out))
+
+        return fake_url
+
+    def test_recorder_keeps_base_output_name(self, tmp_path: Path) -> None:
+        job_dir = self._record_llm_url(tmp_path / "jobs", tmp_path / "work")
+        meta = json.loads((job_dir / "meta.json").read_text(encoding="utf-8"))
+        (item,) = meta["items"]
+        assert item["output"] == "page.html.llm.md"
+        assert item["output_name"] == "page.html.md"
+        assert item["llm_enhanced"] is True
+        assert item["retryable"] is True
+
+    async def test_retry_of_recorded_llm_url_writes_base_pair(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Legacy meta stored the .llm.md as output_name; a non-LLM retry
+        then wrote x.llm.md (clobbering the enhanced result) and got flagged
+        enhanced. It must write x.md and report a base result."""
+        job_dir = self._record_llm_url(tmp_path / "jobs", tmp_path / "work")
+        meta_path = job_dir / "meta.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["items"][0]["output_name"] = "page.html.llm.md"  # legacy recorder
+        meta["items"][0].pop("retryable")
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+        calls: list[str | None] = []
+        monkeypatch.setattr(
+            "markitai.serve.jobs.process_url_item", self._fake_url(calls)
+        )
+        async with _serve_client(_make_app(tmp_path)) as client:
+            snapshot = (await client.get(f"/api/jobs/{job_dir.name}")).json()
+            assert snapshot["items"][0]["output_name"] == "page.html.md"
+            assert snapshot["items"][0]["retryable"] is True
+            retried = await client.post(
+                f"/api/jobs/{job_dir.name}/items/i1/retry",
+                json={"operation": "retry", "options": {"llm": False}},
+            )
+            assert retried.status_code == 202, retried.text
+            data = await _wait_job_done(client, job_dir.name)
+            result = (
+                await client.get(f"/api/jobs/{job_dir.name}/items/i1/result")
+            ).json()
+
+        assert calls == ["page.html.md"]
+        item = data["items"][0]
+        assert item["output"] == "page.html.md"
+        assert item["llm_enhanced"] is False
+        assert result["variant"] == "base"
+        assert not (job_dir / "out" / "page.html.llm.llm.md").exists()
+
+    async def test_recorded_file_item_is_not_retryable(self, tmp_path: Path) -> None:
+        from markitai.runs.history import record_cli_job
+        from markitai.runs.types import Outcome
+
+        work = tmp_path / "work"
+        work.mkdir()
+        out = work / "report.pdf.md"
+        out.write_text("# report\n", encoding="utf-8")
+        job_dir = record_cli_job(
+            [
+                Outcome(
+                    kind="file",
+                    source="q1/report.pdf",
+                    status="failed",
+                    error="boom",
+                ),
+                Outcome(
+                    kind="file",
+                    source="report.pdf",
+                    status="completed",
+                    output_path=out,
+                ),
+            ],
+            options={"preset": None, "llm": False, "ocr": False, "origin": "cli"},
+            jobs_root=tmp_path / "jobs",
+        )
+        assert job_dir is not None
+
+        async with _serve_client(_make_app(tmp_path)) as client:
+            snapshot = (await client.get(f"/api/jobs/{job_dir.name}")).json()
+            history = (await client.get("/api/history")).json()
+            for item_id, operation in (("i1", "retry"), ("i2", "enhance")):
+                response = await client.post(
+                    f"/api/jobs/{job_dir.name}/items/{item_id}/retry",
+                    json={"operation": operation},
+                )
+                assert response.status_code == 409
+                detail = response.json()["detail"]
+                assert "CLI run" in detail
+                assert "cleaned up" not in detail
+            # Still readable and deletable.
+            result = await client.get(f"/api/jobs/{job_dir.name}/items/i2/result")
+            assert result.status_code == 200
+
+        assert [item["retryable"] for item in snapshot["items"]] == [False, False]
+        assert history[0]["retryable"] is False
+
+    async def test_legacy_cli_meta_file_items_default_to_not_retryable(
+        self, tmp_path: Path
+    ) -> None:
+        job_dir = tmp_path / "jobs" / "legacyclijob1"
+        (job_dir / "out").mkdir(parents=True)
+        (job_dir / "meta.json").write_text(
+            json.dumps(
+                {
+                    "job_id": job_dir.name,
+                    "created_at": "2026-07-01T00:00:00+00:00",
+                    "finished_at": "2026-07-01T00:00:01+00:00",
+                    "status": "done",
+                    "options": {"origin": "cli"},
+                    "items": [
+                        {"item_id": "i1", "name": "a.pdf", "kind": "file"},
+                        {"item_id": "i2", "name": "https://e.com", "kind": "url"},
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        async with _serve_client(_make_app(tmp_path)) as client:
+            snapshot = (await client.get(f"/api/jobs/{job_dir.name}")).json()
+        assert [item["retryable"] for item in snapshot["items"]] == [False, True]
+
+    async def test_mixed_cli_job_retries_only_its_url_items(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """History-level ``retryable`` is any(item.retryable): a CLI job that
+        mixes files and URLs stays retryable for its URL items, while its
+        file items keep refusing a rerun."""
+        from markitai.runs.history import record_cli_job
+        from markitai.runs.types import Outcome
+
+        work = tmp_path / "work"
+        work.mkdir()
+        (work / "report.pdf.md").write_text("# report\n", encoding="utf-8")
+        (work / "page.html.md").write_text("# page\n", encoding="utf-8")
+        job_dir = record_cli_job(
+            [
+                Outcome(
+                    kind="file",
+                    source="report.pdf",
+                    status="completed",
+                    output_path=work / "report.pdf.md",
+                ),
+                Outcome(
+                    kind="url",
+                    source="https://example.com/page.html",
+                    status="failed",
+                    error="fetch boom",
+                ),
+            ],
+            options={"preset": None, "llm": False, "ocr": False, "origin": "cli"},
+            jobs_root=tmp_path / "jobs",
+        )
+        assert job_dir is not None
+
+        calls: list[str | None] = []
+        monkeypatch.setattr(
+            "markitai.serve.jobs.process_url_item",
+            self._fake_url(calls),
+        )
+        async with _serve_client(_make_app(tmp_path)) as client:
+            history = (await client.get("/api/history")).json()
+            assert [entry["retryable"] for entry in history] == [True]
+            file_retry = await client.post(f"/api/jobs/{job_dir.name}/items/i1/retry")
+            assert file_retry.status_code == 409
+            url_retry = await client.post(f"/api/jobs/{job_dir.name}/items/i2/retry")
+            assert url_retry.status_code == 202, url_retry.text
+            data = await _wait_job_done(client, job_dir.name)
+
+        assert len(calls) == 1
+        assert [(i["status"], i["retryable"]) for i in data["items"]] == [
+            ("done", False),
+            ("done", True),
+        ]
+
+    async def test_pending_llm_batch_item_reads_as_a_pending_skip(
+        self, tmp_path: Path
+    ) -> None:
+        from markitai.runs.history import record_cli_job
+        from markitai.runs.types import Outcome
+
+        work = tmp_path / "work"
+        work.mkdir()
+        (work / "page.html.md").write_text("# base\n", encoding="utf-8")
+        job_dir = record_cli_job(
+            [
+                Outcome(
+                    kind="url",
+                    source="https://example.com/page.html",
+                    status="pending",
+                    output_path=work / "page.html.md",
+                )
+            ],
+            options={"preset": None, "llm": True, "ocr": False, "origin": "cli"},
+            jobs_root=tmp_path / "jobs",
+        )
+        assert job_dir is not None
+        async with _serve_client(_make_app(tmp_path)) as client:
+            snapshot = (await client.get(f"/api/jobs/{job_dir.name}")).json()
+            history = (await client.get("/api/history")).json()
+        (item,) = snapshot["items"]
+        assert item["skipped"] is True
+        assert item["skip_reason"] == "pending_batch"
+        assert item["llm_enhanced"] is False
+        assert "--llm-batch-collect" in item["error"]
+        assert history[0]["skipped"] == 1
+        assert history[0]["llm_enhanced"] == 0
 
 
 class TestHistoryTTL:

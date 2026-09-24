@@ -34,6 +34,7 @@ def _item(outcome: Outcome) -> dict[str, Any]:
         "status": outcome.status,
         "output": str(outcome.output_path) if outcome.output_path else None,
         "error": outcome.error,
+        "warnings": list(outcome.warnings),
         "skip_reason": outcome.skip_reason,
         "images": outcome.images,
         "screenshots": outcome.screenshots,
@@ -51,7 +52,10 @@ def _item(outcome: Outcome) -> dict[str, Any]:
 
 
 def build_envelope(
-    outcomes: list[Outcome], *, error: str | None = None
+    outcomes: list[Outcome],
+    *,
+    error: str | None = None,
+    batch: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the top-level ``--json`` document from collected outcomes.
 
@@ -61,26 +65,32 @@ def build_envelope(
             path, an unsupported format, an interrupt). Without it, a run that
             died before its first item would report ``ok: true`` with an empty
             list while exiting non-zero.
+        batch: The ``--llm-batch`` job the run handed off
+            (``{"id", "status", "collect_command"}``), or None. It is the
+            only record of the batch id a script needs to collect it.
 
     Returns:
-        ``{"version", "ok", "error", "items", "totals"}`` where ``ok`` is False
-        when any item failed or a run-level error was reported (partial batch
-        failure included).
+        ``{"version", "ok", "error", "batch", "items", "totals"}`` where
+        ``ok`` is False when any item failed or is still pending, or a
+        run-level error was reported (partial batch failure included).
     """
     items = [_item(outcome) for outcome in outcomes]
     completed = sum(1 for i in items if i["status"] == "completed")
     failed = sum(1 for i in items if i["status"] == "failed")
     skipped = sum(1 for i in items if i["status"] == "skipped")
+    pending = sum(1 for i in items if i["status"] == "pending")
     return {
         "version": ENVELOPE_VERSION,
-        "ok": failed == 0 and error is None,
+        "ok": failed == 0 and pending == 0 and error is None,
         "error": error,
+        "batch": batch,
         "items": items,
         "totals": {
             "total": len(items),
             "completed": completed,
             "failed": failed,
             "skipped": skipped,
+            "pending": pending,
             "cost_usd": round(sum(i["cost_usd"] for i in items), 6),
             "duration_s": round(
                 sum(i["duration_s"] or 0.0 for i in items),
@@ -90,7 +100,12 @@ def build_envelope(
     }
 
 
-def render(outcomes: list[Outcome], *, error: str | None = None) -> str:
+def render(
+    outcomes: list[Outcome],
+    *,
+    error: str | None = None,
+    batch: dict[str, Any] | None = None,
+) -> str:
     """Render the envelope as pretty JSON with a trailing newline.
 
     ``ensure_ascii`` stays on: a CJK source name written raw raises
@@ -98,7 +113,11 @@ def render(outcomes: list[Outcome], *, error: str | None = None) -> str:
     Windows pipe), and escaped JSON is still valid UTF-8 JSON for ``jq``.
     """
     return (
-        json.dumps(build_envelope(outcomes, error=error), indent=2, ensure_ascii=True)
+        json.dumps(
+            build_envelope(outcomes, error=error, batch=batch),
+            indent=2,
+            ensure_ascii=True,
+        )
         + "\n"
     )
 

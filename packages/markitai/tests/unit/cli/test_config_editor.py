@@ -291,3 +291,46 @@ class TestEditorValidatesBeforeSave:
 
         saved = json.loads(config_file.read_text())
         assert saved["image"]["quality"] == 60
+
+
+class TestEditorEditsTheRootConfigFile:
+    """``markitai -c alt.json config edit`` edits alt.json, not the default."""
+
+    def test_explicit_path_is_loaded_and_saved(self, tmp_path, monkeypatch) -> None:
+        import json
+
+        import markitai.cli.config_editor as ce
+        from markitai.config import ConfigManager
+
+        user = ConfigManager.DEFAULT_USER_CONFIG_DIR / "config.json"
+        user.parent.mkdir(parents=True, exist_ok=True)
+        user.write_text(json.dumps({"image": {"quality": 80}}))
+        alt = tmp_path / "alt.json"
+        alt.write_text(json.dumps({"image": {"quality": 70}}))
+        labels: list[str] = []
+
+        selections = iter(["image.quality", None])
+
+        def select(_settings, label):
+            labels.append(label)
+            return next(selections)
+
+        monkeypatch.setattr(ce, "_select_setting", select)
+        monkeypatch.setattr(ce, "_prompt_new_value", lambda *_args: 55)
+        monkeypatch.setattr(ce, "_get_cursor_row", lambda: 0)
+
+        ce.run_config_editor(alt)
+
+        assert json.loads(alt.read_text())["image"]["quality"] == 55
+        assert json.loads(user.read_text())["image"]["quality"] == 80
+        assert labels[0] == str(alt)
+
+    def test_config_edit_refuses_config_json(self) -> None:
+        from click.testing import CliRunner
+
+        from markitai.cli.main import app
+
+        result = CliRunner().invoke(app, ["--config-json", "{}", "config", "edit"])
+
+        assert result.exit_code == 2
+        assert "cannot be saved" in result.output

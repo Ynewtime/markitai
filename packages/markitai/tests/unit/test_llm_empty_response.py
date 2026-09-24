@@ -20,7 +20,7 @@ import markitai.llm.engine as engine_module
 from markitai.config import PromptsConfig
 from markitai.llm.cache import ContentCache, PersistentCache
 from markitai.llm.document import DocumentEnhancer
-from markitai.llm.engine import EmptyLLMResponseError
+from markitai.llm.engine import EmptyLLMResponseError, LLMEnhancementDegradedError
 from markitai.llm.types import LLMResponse
 from markitai.prompts import PromptManager
 from tests.unit.test_llm_engine import FakeRouter, Harness, make_model_response
@@ -213,9 +213,11 @@ class TestCleanMarkdownEmptyResponse:
         assert persistent.stats()["cache"]["count"] == 1
 
     @pytest.mark.asyncio
-    async def test_enhance_document_with_vision_keeps_extracted_text_on_empty(
+    async def test_enhance_document_with_vision_fails_on_empty(
         self, tmp_path: Path
     ) -> None:
+        """An empty answer fails the batch (the extracted text rides on the
+        error) instead of passing unenhanced pages off as enhanced."""
         memory = ContentCache()
         persistent = PersistentCache(global_dir=tmp_path / "cache", enabled=True)
         enhancer = _make_enhancer(memory, persistent)
@@ -223,11 +225,10 @@ class TestCleanMarkdownEmptyResponse:
         page.write_bytes(b"png")
         extracted = "# Doc\n\nExtracted body."
 
-        result = await enhancer.enhance_document_with_vision(
-            extracted, [page], "doc.pdf"
-        )
+        with pytest.raises(LLMEnhancementDegradedError) as exc_info:
+            await enhancer.enhance_document_with_vision(extracted, [page], "doc.pdf")
 
-        assert result == extracted
+        assert exc_info.value.cleaned_markdown == extracted
         assert persistent.stats()["cache"]["count"] == 0
 
 
@@ -236,10 +237,12 @@ class TestCleanDocumentPureEmptyResponse:
 
     ``clean_document_pure`` caches nothing, so an empty answer cannot poison
     a cache; it goes somewhere worse, straight into the user's ``.llm.md``.
+    It fails the item instead: writing the input as ``.llm.md`` would report
+    unenhanced text as enhanced.
     """
 
     @pytest.mark.asyncio
-    async def test_empty_response_returns_the_original_markdown(
+    async def test_empty_response_fails_with_the_original_markdown(
         self, tmp_path: Path
     ) -> None:
         enhancer = _make_enhancer(
@@ -247,7 +250,9 @@ class TestCleanDocumentPureEmptyResponse:
         )
         content = "# Doc\n\nOriginal body."
 
-        assert await enhancer.clean_document_pure(content, "doc.md") == content
+        with pytest.raises(LLMEnhancementDegradedError) as exc_info:
+            await enhancer.clean_document_pure(content, "doc.md")
+        assert exc_info.value.cleaned_markdown == content
         # ...and the failure is not sticky: the next run calls the model again
         assert (
             await enhancer.clean_document_pure(content, "doc.md")
@@ -255,7 +260,7 @@ class TestCleanDocumentPureEmptyResponse:
         )
 
     @pytest.mark.asyncio
-    async def test_single_file_workflow_writes_original_not_empty_file(
+    async def test_single_file_workflow_writes_no_llm_file(
         self, tmp_path: Path
     ) -> None:
         from markitai.config import MarkitaiConfig
@@ -273,14 +278,15 @@ class TestCleanDocumentPureEmptyResponse:
         output_file = tmp_path / "doc.md"
         content = "# Doc\n\nOriginal body."
 
-        await workflow.process_document_pure(content, "doc.md", output_file)
+        with pytest.raises(LLMEnhancementDegradedError):
+            await workflow.process_document_pure(content, "doc.md", output_file)
 
-        assert (tmp_path / "doc.llm.md").read_text(encoding="utf-8") == content
+        assert not (tmp_path / "doc.llm.md").exists()
+        # The failed call's usage/budget does not leak to the next same-named file
+        processor.clear_context_usage.assert_called_with("doc.md")
 
     @pytest.mark.asyncio
-    async def test_cli_pure_path_writes_original_not_empty_file(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_cli_pure_path_writes_no_llm_file(self, tmp_path: Path) -> None:
         from markitai.cli.processors.llm import process_with_llm
         from markitai.config import MarkitaiConfig
 
@@ -297,6 +303,10 @@ class TestCleanDocumentPureEmptyResponse:
         output_file = tmp_path / "doc.md"
         content = "# Doc\n\nOriginal body."
 
-        await process_with_llm(content, "doc.md", cfg, output_file, processor=processor)
+        with pytest.raises(LLMEnhancementDegradedError):
+            await process_with_llm(
+                content, "doc.md", cfg, output_file, processor=processor
+            )
 
-        assert (tmp_path / "doc.llm.md").read_text(encoding="utf-8") == content
+        assert not (tmp_path / "doc.llm.md").exists()
+        processor.clear_context_usage.assert_called_with("doc.md")

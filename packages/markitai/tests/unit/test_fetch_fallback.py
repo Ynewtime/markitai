@@ -465,6 +465,68 @@ class TestExplicitStrategyCaptchaDetection:
 
         assert "logged in" in result.content
 
+    CAPTCHA_NOTES = (
+        "How the widgets load: <div class='g-recaptcha'>, the script from "
+        "hcaptcha.com, and Cloudflare's cf_chl_ query parameters."
+    )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind", ["text", "document"])
+    async def test_explicit_static_document_quoting_captcha_is_kept(self, kind) -> None:
+        """A text/plain note or PDF that mentions CAPTCHA markers is the
+        document itself; only HTML pages can be challenge pages."""
+        doc = FetchResult(
+            content=self.CAPTCHA_NOTES,
+            strategy_used="static",
+            url="https://example.com/notes",
+            metadata={"content_kind": kind},
+        )
+        runner = MagicMock()
+        runner.fetch = AsyncMock(return_value=doc)
+        with patch("markitai.fetch.get_runner", return_value=runner):
+            result = await fetch_url(
+                "https://example.com/notes",
+                FetchStrategy.STATIC,
+                FetchConfig(),
+                explicit_strategy=True,
+            )
+        assert result.content == self.CAPTCHA_NOTES
+
+    @pytest.mark.asyncio
+    async def test_auto_document_quoting_captcha_is_kept(self) -> None:
+        doc = FetchResult(
+            content=self.CAPTCHA_NOTES,
+            strategy_used="static",
+            url="https://example.com/notes.txt",
+            metadata={"content_kind": "text"},
+        )
+        with patch("markitai.fetch._fetch_with_fallback", AsyncMock(return_value=doc)):
+            result = await fetch_url(
+                "https://example.com/notes.txt", FetchStrategy.AUTO, FetchConfig()
+            )
+        assert result.content == self.CAPTCHA_NOTES
+
+    @pytest.mark.asyncio
+    async def test_explicit_static_html_challenge_still_raises(self) -> None:
+        page = FetchResult(
+            content=self.CAPTCHA_NOTES,
+            strategy_used="static",
+            url="https://example.com/",
+            metadata={"content_kind": "html"},
+        )
+        runner = MagicMock()
+        runner.fetch = AsyncMock(return_value=page)
+        with (
+            patch("markitai.fetch.get_runner", return_value=runner),
+            pytest.raises(FetchError, match="captcha_"),
+        ):
+            await fetch_url(
+                "https://example.com/",
+                FetchStrategy.STATIC,
+                FetchConfig(),
+                explicit_strategy=True,
+            )
+
 
 class TestAutoChainFxTwitterIntercept:
     """AUTO chain uses playwright with oEmbed enricher for tweet URLs.

@@ -141,13 +141,41 @@ def finalize_explicit_output(result_file: Path, explicit_target: Path | None) ->
     return result_file
 
 
-# Pattern matches markdown image references to .markitai/assets/ or
-# .markitai/screenshots/. Supports both forward slash and backslash for
-# Windows compatibility.
-# Groups: 1=alt text, 2=subdir (assets|screenshots), 3=filename
+# Pattern matches image references to extracted assets in all the forms a
+# stdout run can emit:
+#
+# - ``![alt](.markitai/assets/x)`` / ``![alt](.markitai/screenshots/x)``
+#   (default layout)
+# - ``![alt](assets/x)`` (asset-visible profiles ``rag``/``obsidian``
+#   relocate hidden assets to a visible ``assets/`` dir)
+# - ``![[assets/x]]`` / ``![[assets/x|alt]]`` (obsidian wikilinks)
+#
+# Supports both forward slash and backslash for Windows compatibility.
+# Named groups: ``alt``/``dir``/``name`` for markdown links,
+# ``walt``/``wname`` for wikilinks; use :func:`_asset_ref_parts` to read a
+# match uniformly.
 ASSET_REF_PATTERN = re.compile(
-    r"!\[([^\]]*)\]\(\.markitai[/\\](assets|screenshots)[/\\]([^)]+)\)"
+    r"!\[(?P<alt>(?:[^\]\\]|\\.)*)\]"
+    r"\((?P<dir>\.markitai[/\\](?:assets|screenshots)|assets)[/\\](?P<name>[^)]+)\)"
+    r"|!\[\[assets[/\\](?P<wname>[^|\]]+)(?:\|(?P<walt>[^\]]*))?\]\]"
 )
+
+
+def _asset_ref_parts(match: re.Match[str]) -> tuple[str, str, str]:
+    """Return ``(alt, rel_dir, filename)`` for an :data:`ASSET_REF_PATTERN` match.
+
+    ``alt`` is ready to embed in a markdown image (a wikilink's raw alias is
+    escaped; a markdown link's alt is already escaped). ``rel_dir`` is the
+    asset directory relative to the run's working directory
+    (``.markitai/assets``, ``.markitai/screenshots`` or ``assets``) with
+    forward slashes; ``filename`` is percent-decoded.
+    """
+    if match.group("wname") is not None:
+        raw_alt = (match.group("walt") or "").strip()
+        alt = raw_alt.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+        return alt, "assets", unquote(match.group("wname"))
+    rel_dir = match.group("dir").replace("\\", "/")
+    return match.group("alt"), rel_dir, unquote(match.group("name"))
 
 
 def warn_ephemeral_links() -> None:
@@ -183,6 +211,7 @@ def normalize_temp_asset_refs(markdown: str, temp_dir: Path) -> str:
     """
     for base in {temp_dir.as_posix(), temp_dir.resolve().as_posix()}:
         markdown = markdown.replace(f"]({base}/.markitai/", "](.markitai/")
+        markdown = markdown.replace(f"]({base}/assets/", "](assets/")
     return markdown
 
 
@@ -193,16 +222,28 @@ def resolve_asset_references(
     asset_store: Any = None,
     source_name: str = "unknown",
 ) -> str:
-    """Resolve .markitai/assets/ and .markitai/screenshots/ image references.
+    """Resolve image references to the run's extracted assets.
+
+    Handles every form :data:`ASSET_REF_PATTERN` matches: hidden
+    ``.markitai/(assets|screenshots)/`` refs, visible ``assets/`` refs
+    written under the ``rag``/``obsidian`` profiles, and obsidian
+    ``![[assets/x]]`` wikilinks. All of them point into ``temp_dir``,
+    which is deleted at exit.
 
     Priority cascade:
     1. If protocol is set: replace with terminal inline image escape sequence.
-    2. If asset_store is set: persist image, replace with absolute-path URI.
+    2. If asset_store is set: persist image, replace with absolute-path URI
+       (a wikilink becomes a regular markdown image: wikilinks cannot carry
+       an absolute ``file://`` target).
     3. Fallback: replace with ``![image: filename]()`` placeholder.
+
+    A visible ``assets/`` ref whose file is not in ``temp_dir`` is not one
+    of ours (e.g. a relative image in a converted source document) and is
+    left untouched.
 
     Args:
         markdown: Markdown content with asset references.
-        temp_dir: Path to the temp directory containing .markitai/ assets.
+        temp_dir: Path to the temp directory containing the run's assets.
         protocol: Detected terminal image protocol, or None.
         asset_store: Configured asset store, or None.
         source_name: Source document name for asset store grouping.
@@ -211,18 +252,16 @@ def resolve_asset_references(
         Markdown with asset references resolved.
     """
 
-    def _resolve_image_path(subdir: str, filename: str) -> Path:
-        """Resolve the actual image file path from captured regex groups."""
-        filename_normalized = filename.replace("\\", "/")
-        return temp_dir / ".markitai" / subdir / filename_normalized
-
     def _replace(match: re.Match[str]) -> str:
-        subdir = match.group(2)  # "assets" or "screenshots" — captured group
-        filename = unquote(match.group(3))
+        alt, rel_dir, filename = _asset_ref_parts(match)
+        image_path = temp_dir / rel_dir / filename.replace("\\", "/")
+
+        if rel_dir == "assets" and not image_path.is_file():
+            # Not an extracted asset of this run: keep the source's own ref
+            return match.group(0)
 
         if protocol is not None:
             # Tier 1: terminal inline image
-            image_path = _resolve_image_path(subdir, filename)
             if image_path.exists():
                 from markitai.utils.terminal_image import render_inline_image
 
@@ -233,13 +272,12 @@ def resolve_asset_references(
 
         if asset_store is not None:
             # Tier 2: persistent asset store
-            image_path = _resolve_image_path(subdir, filename)
             if image_path.exists():
                 try:
-                    ref_path = asset_store.save(image_path, source_name)
-                    uri = asset_store.ref_path_to_markdown_uri(ref_path)
+                    stored_path = asset_store.save(image_path, source_name)
+                    uri = asset_store.to_markdown_uri(stored_path)
                     # Keep LLM-generated alt text; fall back to the filename
-                    alt_text = match.group(1) or filename
+                    alt_text = alt or filename
                     return f"![{alt_text}]({uri})"
                 except Exception as e:
                     logger.warning(f"Asset store save failed for {filename}: {e}")

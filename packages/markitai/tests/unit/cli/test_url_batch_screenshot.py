@@ -178,9 +178,14 @@ class TestBatchScreenshotOnlyMode:
         async def mock_fetch(url, strategy, fetch_cfg, **kwargs):
             return _make_fetch_result(url, screenshot_path=fake_screenshot)
 
-        mock_screenshot_only = AsyncMock(
-            return_value=("", 0.01, {"gpt-4-vision": {"requests": 1}})
-        )
+        async def _extract(
+            _shot: Path, _url: str, _cfg: object, output_file: Path, **_kw: object
+        ) -> tuple:
+            # The real extraction writes .llm.md; the batch checks for it
+            output_file.with_suffix(".llm.md").write_text("# From screenshot")
+            return ("", 0.01, {"gpt-4-vision": {"requests": 1}})
+
+        mock_screenshot_only = AsyncMock(side_effect=_extract)
 
         with (
             patch("markitai.fetch.fetch_url", side_effect=mock_fetch),

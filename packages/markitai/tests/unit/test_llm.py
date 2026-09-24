@@ -152,12 +152,14 @@ class TestLLMProcessorAsync:
     async def test_process_document(
         self, llm_config: LLMConfig, prompts_config: PromptsConfig
     ):
-        """Test full document processing with fallback to parallel mode.
+        """A failed structured call raises LLMEnhancementDegradedError.
 
-        When combined Instructor call fails, fallback uses:
-        - clean_markdown() for cleaning (one LLM call)
-        - _build_fallback_frontmatter() for programmatic frontmatter (no LLM call)
+        The caller fails the item and keeps the base output, so no cleaner
+        call is made: the input and a programmatic frontmatter ride on the
+        error.
         """
+        from markitai.llm.engine import LLMEnhancementDegradedError
+
         processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
 
         # Set response for clean_markdown only (frontmatter is generated programmatically)
@@ -181,13 +183,17 @@ class TestLLMProcessorAsync:
             )
             mock_from_litellm.return_value = mock_client
 
-            cleaned, frontmatter = await processor.process_document(
-                "# Test Heading\n\nSome content", "test.md"
-            )
+            with pytest.raises(LLMEnhancementDegradedError) as exc_info:
+                await processor.process_document(
+                    "# Test Heading\n\nSome content", "test.md"
+                )
+            cleaned = exc_info.value.cleaned_markdown
+            frontmatter = exc_info.value.frontmatter
 
-            # Cleaned content should be from LLM
-            assert "Cleaned content" in cleaned
-            # Frontmatter is now generated programmatically (title extracted from content)
+            # The input rides on the error unchanged; no cleaner call is paid for
+            assert cleaned == "# Test Heading\n\nSome content"
+            mock_router.acompletion.assert_not_called()
+            # Frontmatter is generated programmatically (title extracted from content)
             assert "title: Test Heading" in frontmatter
             assert "source: test.md" in frontmatter
             assert "markitai_processed:" in frontmatter
@@ -236,7 +242,9 @@ class TestLLMProcessorAsync:
     async def test_process_document_with_combined_fallback(
         self, llm_config: LLMConfig, prompts_config: PromptsConfig
     ):
-        """Test that process_document falls back to parallel when combined fails."""
+        """A failed combined call makes no further (cleaner/frontmatter) calls."""
+        from markitai.llm.engine import LLMEnhancementDegradedError
+
         processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
 
         # Mock instructor to fail
@@ -270,13 +278,13 @@ class TestLLMProcessorAsync:
                 )
                 processor._router = mock_router
 
-                cleaned, frontmatter = await processor.process_document(
-                    "# Test", "test.md"
-                )
+                with pytest.raises(LLMEnhancementDegradedError) as exc_info:
+                    await processor.process_document("# Test", "test.md")
 
-                # Should use fallback values
-                assert cleaned == "Fallback cleaned"
-                assert "title: Fallback" in frontmatter
+                # The input and a programmatic frontmatter ride on the error
+                assert exc_info.value.cleaned_markdown == "# Test"
+                assert "source: test.md" in exc_info.value.frontmatter
+                mock_router.acompletion.assert_not_called()
 
 
 class TestCacheModelScope:
@@ -1137,10 +1145,12 @@ class TestParallelImageBatchAnalysis:
                 image_paths, max_images_per_batch=10, context="test"
             )
 
-        # Should return placeholder results
+        # Should return placeholder results, flagged so no caller mistakes
+        # "Image N" for a caption
         assert len(results) == 5
         for result in results:
             assert result.description == "Analysis failed"
+            assert result.failed is True
 
 
 class TestImageCacheSize:

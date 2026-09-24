@@ -370,8 +370,8 @@ def _wizard_init(target: Path, *, prompt_path: bool = False) -> None:
 
 
 def _detect_providers() -> list[tuple[str, bool]]:
-    """Adapt the shared CLI detector to the init wizard's status rows."""
-    from markitai.cli.providers_detect import detect_all_providers
+    """Adapt the shared provider detector to the init wizard's status rows."""
+    from markitai.providers.detect import detect_all_providers
 
     detected = {result.provider for result in detect_all_providers()}
     provider_rows = (
@@ -481,10 +481,10 @@ def _ensure_env_template() -> Path | None:
     env_path = ConfigManager.DEFAULT_USER_CONFIG_DIR / ".env"
     if env_path.exists():
         return None
-    atomic_write_text(env_path, _ENV_TEMPLATE)
+    atomic_write_text(env_path, _ENV_TEMPLATE, private=True)
     return env_path
 
 
 def _write_config(target: Path, config_data: dict) -> None:
-    """Write config data to file atomically."""
-    atomic_write_json(target, config_data)
+    """Write config data to file atomically (owner-only: it may hold API keys)."""
+    atomic_write_json(target, config_data, private=True)

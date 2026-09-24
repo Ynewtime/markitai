@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import types as _types
 import typing
+from pathlib import Path
 from typing import Any, get_args, get_origin
 
 from pydantic import BaseModel, ValidationError
@@ -523,21 +524,26 @@ def _get_cursor_row() -> int:
         return 0
 
 
-def run_config_editor() -> None:
-    """Run the interactive config editor loop."""
+def run_config_editor(config_path: Path | None = None) -> None:
+    """Run the interactive config editor loop.
+
+    Args:
+        config_path: The file to edit (the root ``-c``); None follows the
+            default config search chain.
+    """
     from rich.console import Console
 
     from markitai.config import ConfigManager
 
     console = Console(stderr=True)
     manager = ConfigManager()
-    manager.load()
+    manager.load(config_path=config_path)
     cfg = manager.config
-    config_path = str(manager.config_path or "defaults")
+    config_label = str(manager.config_path or "defaults")
 
     while True:
         settings = extract_editable_settings(cfg)
-        selected_key = _select_setting(settings, config_path)
+        selected_key = _select_setting(settings, config_label)
         # _select_setting erases its own UI on exit
 
         if selected_key is None:
@@ -574,7 +580,7 @@ def run_config_editor() -> None:
                 )
                 console.print(f"  [red]✗[/] Invalid value: {errors}")
             else:
-                manager.save()
+                manager.save(config_path)
                 console.print(
                     f"  [green]✓[/] {selected_key} = {format_display_value(new_value)}"
                 )

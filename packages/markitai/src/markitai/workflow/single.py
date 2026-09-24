@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -27,10 +27,16 @@ if TYPE_CHECKING:
 
 @dataclass
 class ImageAnalysisResult:
-    """Result of image analysis for a single source file."""
+    """Result of image analysis for a single source file.
+
+    ``warnings`` names the images whose analysis failed (they kept their
+    original alt text and have no entry in ``assets``); the pipeline copies
+    them into the item's warnings.
+    """
 
     source_file: str
     assets: list[dict[str, Any]]
+    warnings: list[str] = field(default_factory=list)
 
 
 def _read_markdown_body(output_file: Path, fallback: str) -> str:
@@ -171,14 +177,17 @@ class SingleFileWorkflow:
             # Use context-based tracking for accurate per-file usage in concurrent scenarios
             cost = self.processor.get_context_cost(source)
             usage = self.processor.get_context_usage(source)
-            # Clear context so files with the same basename don't accumulate
-            # usage from previous files on the shared batch processor
-            self.processor.clear_context_usage(source)
             return markdown, cost, usage
 
         except Exception as e:
             logger.error(f"LLM processing failed: {format_error_message(e)}")
             raise
+        finally:
+            # Clear the context on every exit, failures included: the key is
+            # the basename, so a same-named file later in the batch would
+            # otherwise inherit this one's usage and its tripped request
+            # budget on the shared processor
+            self.processor.clear_context_usage(source)
 
     async def process_document_pure(
         self,
@@ -205,11 +214,14 @@ class SingleFileWorkflow:
             logger.info(f"Written LLM version (pure): {llm_output}")
             cost = self.processor.get_context_cost(source)
             usage = self.processor.get_context_usage(source)
-            self.processor.clear_context_usage(source)
             return markdown, cost, usage
         except Exception as e:
             logger.error(f"Pure LLM processing failed: {format_error_message(e)}")
             raise
+        finally:
+            # Same as process_document_with_llm: never leave a failed file's
+            # usage or tripped budget behind for a same-named file
+            self.processor.clear_context_usage(source)
 
     async def analyze_images(
         self,
@@ -227,7 +239,13 @@ class SingleFileWorkflow:
             input_path: Source input file path
 
         Returns:
-            Tuple of (updated markdown, cost_usd, llm_usage, image_analysis_result)
+            Tuple of (updated markdown, cost_usd, llm_usage, image_analysis_result).
+            Images whose analysis failed keep their alt text, are left out
+            of the result's assets and are named in its ``warnings``.
+
+        Raises:
+            ConversionError: A standalone image's analysis failed (it has no
+                other enhanced output).
         """
         from markitai.llm import ImageAnalysis
 
@@ -250,8 +268,8 @@ class SingleFileWorkflow:
 
             async def analyze_single_image(
                 image_path: Path,
-            ) -> tuple[Path, ImageAnalysis | None, str]:
-                """Analyze a single image."""
+            ) -> tuple[Path, ImageAnalysis | None, str, str | None]:
+                """Analyze a single image (the last element is the error)."""
                 timestamp = datetime.now(UTC).astimezone().isoformat()
                 try:
                     analysis = await self.processor.analyze_image(
@@ -259,36 +277,58 @@ class SingleFileWorkflow:
                         context=context,
                         document_context=doc_context,
                     )
-                    return image_path, analysis, timestamp
+                    return image_path, analysis, timestamp, None
                 except Exception as e:
+                    error = format_error_message(e)
                     logger.warning(
-                        f"Failed to analyze image {image_path.name}: "
-                        f"{format_error_message(e)}"
+                        f"Failed to analyze image {image_path.name}: {error}"
                     )
-                    return image_path, None, timestamp
+                    return image_path, None, timestamp, error
 
             # Analyze all images concurrently (concurrency controlled by processor.semaphore)
             logger.info(f"Analyzing {len(image_paths)} images...")
             tasks = [analyze_single_image(p) for p in image_paths]
             results = await asyncio.gather(*tasks)
 
+            # Check if this is a standalone image file
+            from markitai.constants import IMAGE_EXTENSIONS
+
+            is_standalone_image = (
+                input_path is not None
+                and input_path.suffix.lower() in IMAGE_EXTENSIONS
+                and len(image_paths) == 1
+            )
+
+            # A standalone image's analysis IS its enhanced output: without it
+            # there is no .llm.md, so the file failed (the caller writes the
+            # base .md with the image reference as the fallback)
+            if is_standalone_image and results[0][1] is None:
+                from markitai.utils.errors import ConversionError
+
+                raise ConversionError(
+                    f"Image analysis failed for {image_paths[0].name}: {results[0][3]}"
+                )
+
             # Collect asset descriptions for JSON output
             asset_descriptions: list[dict[str, Any]] = []
+            failures: list[str] = []
+
+            from markitai.workflow.helpers import (
+                image_analysis_failed,
+                image_analysis_failure_warning,
+            )
 
             # Process results
-            for image_path, analysis, timestamp in results:
-                # Use default values if analysis failed
-                # This ensures the image is still recorded in images.json
-                if analysis is None:
-                    analysis_caption = "Image"
-                    analysis_desc = "Image analysis failed"
-                    analysis_text = ""
-                    analysis_usage: dict[str, Any] = {}
-                else:
-                    analysis_caption = analysis.caption or "Image"
-                    analysis_desc = analysis.description
-                    analysis_text = analysis.extracted_text or ""
-                    analysis_usage = analysis.llm_usage or {}
+            for image_path, analysis, timestamp, _error in results:
+                # A failed analysis has no caption to offer: the author's alt
+                # text stays, and no placeholder entry reaches images.json
+                if analysis is None or image_analysis_failed(analysis):
+                    failures.append(image_analysis_failure_warning(image_path.name))
+                    continue
+                analysis_caption = analysis.caption or "Image"
+                analysis_desc = analysis.description
+                analysis_text = analysis.extracted_text or ""
+                analysis_usage = analysis.llm_usage or {}
 
                 # Collect for JSON output and alt text updates
                 # Need to collect when either alt_enabled or desc_enabled
@@ -314,25 +354,16 @@ class SingleFileWorkflow:
                     )
                     markdown = re.sub(old_pattern, new_ref, markdown)
 
-            # Check if this is a standalone image file
-            from markitai.constants import IMAGE_EXTENSIONS
-
-            is_standalone_image = (
-                input_path is not None
-                and input_path.suffix.lower() in IMAGE_EXTENSIONS
-                and len(image_paths) == 1
-            )
-
             # Update/create .llm.md file
             llm_output = output_file.with_suffix(".llm.md")
-            if is_standalone_image and results and results[0][1] is not None:
+            if is_standalone_image:
                 # For standalone images, create rich formatted content with frontmatter
                 from markitai.utils.text import normalize_markdown_whitespace
                 from markitai.workflow.helpers import format_standalone_image_markdown
 
                 # input_path is guaranteed non-None by is_standalone_image check
                 assert input_path is not None
-                _, analysis, _ = results[0]
+                _, analysis, _, _ = results[0]
                 if analysis:
                     # Use actual asset filename (may differ from input for
                     # transcoded formats like BMP/TIFF→PNG)
@@ -356,13 +387,14 @@ class SingleFileWorkflow:
             # Need result when either alt_enabled (for apply_alt_text_updates)
             # or desc_enabled (for images.json output)
             analysis_result: ImageAnalysisResult | None = None
-            if (alt_enabled or desc_enabled) and asset_descriptions:
+            if (alt_enabled or desc_enabled) and (asset_descriptions or failures):
                 source_path = (
                     str(input_path.resolve()) if input_path else output_file.stem
                 )
                 analysis_result = ImageAnalysisResult(
                     source_file=source_path,
                     assets=asset_descriptions,
+                    warnings=failures,
                 )
 
             # Use context-based tracking for accurate per-file usage in concurrent scenarios
@@ -373,6 +405,8 @@ class SingleFileWorkflow:
 
         except Exception as e:
             logger.error(f"Image analysis failed: {format_error_message(e)}")
+            # Drop partial usage so a later file reusing the context is clean
+            self.processor.clear_context_usage(context)
             raise
 
     async def enhance_with_vision(
@@ -428,14 +462,11 @@ class SingleFileWorkflow:
             logger.error(f"Document enhancement failed: {format_error_message(e)}")
 
             # Drop any partial usage so it isn't attributed to the next
-            # file that reuses this context key
+            # file that reuses this context key. The failure propagates: the
+            # caller writes the base .md as the fallback and fails the file,
+            # rather than passing the unenhanced text off as .llm.md.
             self.processor.clear_context_usage(source)
-            return (
-                extracted_text,
-                _fallback_frontmatter(source, original_title),
-                0.0,
-                {},
-            )
+            raise
 
     async def extract_from_screenshots(
         self,
@@ -456,6 +487,9 @@ class SingleFileWorkflow:
         Returns:
             Tuple of (extracted_markdown, frontmatter_yaml, cost_usd, llm_usage)
         """
+        # Each page is its own LLM context ("<source>:pageN"); the usage of
+        # all of them is the document's
+        page_sources: list[str] = []
         try:
             # Sort images by page number
             def get_page_num(img_info: dict) -> int:
@@ -463,6 +497,7 @@ class SingleFileWorkflow:
 
             sorted_images = sorted(page_images, key=get_page_num)
             image_paths = [Path(img["path"]) for img in sorted_images]
+            page_sources = [f"{source}:page{i}" for i in range(1, len(image_paths) + 1)]
 
             if not image_paths:
                 logger.warning(
@@ -472,10 +507,9 @@ class SingleFileWorkflow:
 
             # Process all pages in parallel using asyncio.gather
             async def _extract_page(i: int, image_path: Path) -> str:
-                page_source = f"{source}:page{i}"
                 cleaned, _ = await self.processor.extract_from_screenshot(
                     image_path,
-                    context=page_source,
+                    context=page_sources[i - 1],
                     original_title=original_title,
                 )
                 if cleaned.strip():
@@ -503,9 +537,15 @@ class SingleFileWorkflow:
             )
             frontmatter = frontmatter_to_yaml(frontmatter_dict).strip()
 
-            cost = self.processor.get_context_cost(source)
-            usage = self.processor.get_context_usage(source)
-            self.processor.clear_context_usage(source)
+            # The calls were recorded under the page contexts, not *source*
+            from markitai.workflow.helpers import merge_llm_usage
+
+            cost = 0.0
+            usage: dict[str, dict[str, Any]] = {}
+            for context in (source, *page_sources):
+                cost += self.processor.get_context_cost(context)
+                merge_llm_usage(usage, self.processor.get_context_usage(context))
+                self.processor.clear_context_usage(context)
             return (merged_content, frontmatter, cost, usage)
 
         except Exception as e:
@@ -514,6 +554,8 @@ class SingleFileWorkflow:
             )
 
             # Drop any partial usage so it isn't attributed to the next
-            # file that reuses this context key
-            self.processor.clear_context_usage(source)
-            return "", _fallback_frontmatter(source, original_title), 0.0, {}
+            # file that reuses these context keys; the caller falls back to
+            # the base .md (see enhance_with_vision)
+            for context in (source, *page_sources):
+                self.processor.clear_context_usage(context)
+            raise

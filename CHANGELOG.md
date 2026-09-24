@@ -7,10 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--resume` works for `.urls` lists, and Ctrl-C now saves the batch state in every mode, so an interrupted run resumes from what actually finished.
+- `--json` reports a handed-off `--llm-batch` run: a top-level `batch` object with the id and the `--llm-batch-collect` command, a `pending` item status, a `pending` total, and per-item `warnings`. Items also report `cache_hit` correctly.
+- `cache.fetch_ttl_seconds` (default 24 hours) expires fetched pages that carry no ETag/Last-Modified. `cache stats`/`cache clear` include the URL fetch cache, and a `--no-cache-for` pattern that matches a URL bypasses the fetch cache for it.
+- Actionable notices show in default mode (not only with `-v`): scanned PDF pages without `--ocr`, OCR failures, hidden PDF text, PPTX slides that cannot be rendered, and URL screenshots that could not be captured. Batches list them in the summary.
+- `markitai doctor` warns when PowerPoint is installed but macOS blocks markitai from its container, and says how to grant access.
+- The Python API exports `ConversionError`, `FetchError` and `NoModelConfiguredError` (a `ValueError` subclass raised when LLM is enabled without a usable model).
+- `--screenshot` without LLM references each rendered PDF page and PPTX slide in the base `.md` (as HTML comments).
+
 ### Changed
 
+- **A failed LLM enhancement fails the item.** An invalid key, a provider error, a timeout or a refusal used to report success; now the base `.md` is still written, the item is `failed`, and the run exits `1` (single file) or `10` (batch).
+- Documents longer than one LLM request are enhanced chunk by chunk instead of being cut at 32,000 characters. A document that needs more requests than `max_requests_per_document` leaves fails before anything is sent.
+- When several provider keys are found and no model is configured, markitai says which models it will spread requests across and how to pin one. The Python API and the MCP server now resolve models the same way as the CLI.
+- Outputs follow the umask (usually `0644`) instead of always `0600`; config files and `.env` written by markitai stay private.
+- OCR text is laid out in reading order: two-column pages read column by column, vertical CJK reads right to left, upside-down scans are detected, and spaced rows become Markdown tables. Margin stamps and side notes no longer merge into body lines, centered titles and address blocks are not mistaken for columns, and label/value forms and numbered lists stay as text.
+- `--ocr` keeps headings, lists, tables and images on pages that have a real text layer, and still runs the hidden-text sanitizer there. Unsupported `ocr.lang` values are rejected, and the RapidOCR requirement is now `>=3.9`.
+- Extracted images and page/slide screenshots are named after the resolved output (`report.pdf.v2-0001-01.jpg`), so a renamed re-run no longer overwrites the files an earlier version references.
+- `-c`/`--config-json` apply to subcommands: `config get/set/path`, `cache` and `doctor` read, and `config set` writes, the file you pass. `config set`/`config edit` create a `-c` file that does not exist yet; every other command rejects a missing `-c` path (exit `2`).
+- `markitai-mcp` loads `./.env` and `~/.markitai/.env` like `markitai mcp`.
+- `--screenshot-only` falls back to the screenshot when text extraction fails, and fails when no screenshot was captured. Directory batches honor it for `.urls` files too.
+- Warnings reach every surface: the web workspace shows them per item, the Python API returns them in `ConversionOutput.warnings`, and MCP results include `warnings`.
+- `MARKITAI_NO_VLM_OCR` is documented as covering OCR only; with `--screenshot --llm`, markitai says that page screenshots still go to the vision model.
+- Web workspace: deleting an item also removes its upload, images and screenshots. File items recorded from the CLI are marked not retryable (the retry endpoint answers `409`); their URL items can still be retried or enhanced. Items stopped by a server shutdown report `cancelled (server shutdown)` instead of `cancelled`.
 - Sync the defuddle parity corpus to upstream 0.19.4 and port its extraction changes: code fences grow past backtick runs instead of escaping them, `<sub>`/`<sup>` stay as inline HTML hugging their neighbours (`2021<sub>5ya</sub>` no longer flattens to `20215ya`), dates inside labeled rows such as email-style `Date:` headers are kept with their label, arXiv hidden footnote-mark duplicates are dropped, and closed, legacy (`shadowroot`) and nested declarative shadow roots are extracted.
 - Strip inert `<template>` fragments and SVG SMIL animation elements from extracted web content.
+
+### Fixed
+
+- Batch runs no longer pick up their own output directory or `.markitai/` assets as input, and find mixed-case extensions such as `.Docx`.
+- Resumed items overwrite their own earlier output instead of writing `.v2` copies. Output names are reserved per batch, so same-named URLs, and a URL next to a same-named file, no longer overwrite each other.
+- `--profile rag`/`obsidian` re-runs no longer keep stale images in `assets/`; `--record-history` no longer merges same-named assets from different subdirectories.
+- Standalone images whose vision analysis fails no longer report success without output. Failed image analysis keeps the author's alt text.
+- A model refusal is no longer accepted as the document body and cached, including with `--pure` and in the vision paths.
+- After a failed enhancement the fallback `.md` holds this run's conversion, and an overwrite run removes its own stale `.llm.md`. A failed document call no longer pays for an extra cleanup call, and an authentication error stops the document's remaining requests.
+- Failed image analyses no longer overwrite the alt text or land in `images.json`; they are reported as item warnings (stderr and `--json`).
+- `--resume` from a different working directory writes into the original output directory. Listing one URL twice under different names keeps a state entry for each, and exact duplicate lines are skipped with a warning. A resumed item with no recorded output honors `--on-conflict`. Directory batches report URL warnings (such as a screenshot that was not captured) on stderr and in `--json`.
+- Images downloaded from a URL are named after the output the item actually gets (`docs.v2.*`, or `custom.*` with `-o custom.md`). A batch with `--llm --pure --screenshot-only` reads the text layer, as a single URL does.
+- Overwriting a read-only output (`0444`) no longer fails.
+- `--llm-batch`: cached image answers are kept, and documents too long for one request still get their images analyzed. `--resume` no longer resubmits documents whose batch was never collected; it prints the collect command instead. Ctrl-C after submission prints the collect command, `--screenshot-only` URLs are left out of enhancement, and collecting honors the `--alt`/`--desc` given at submission. A handoff that also has failed items still exits `2` and reports the failures.
+- `--llm-batch`: collecting a batch with `--alt`/`--desc` no longer crashes; Anthropic image requests use the Messages API format; the batch uses the `api_key`/`api_base` from `llm.model_list`; an unsupported pool is refused before converting; a failed submission ends with one error line; documents converted before an interrupted or failed submission are enhanced on `--resume`; a partial conversion failure no longer skips enhancement.
+- Web pages decode with their `<meta charset>` (GBK, Shift_JIS, CP1252 and similar); relative links resolve against the final URL after redirects; PDF and Office URLs are converted with markitai's own converters.
+- A conditional fetch that returns a challenge page or a JavaScript shell no longer replaces a good cached result; if the full fetch then fails too, the cached copy is returned with `stale` and `fetch_warning` in its metadata. Short plain-text responses are no longer mistaken for single-page apps, and only HTML responses are checked for challenge pages.
+- One invalid byte no longer garbles a whole page: the declared charset (even past the first 1 KiB) or UTF-8 is decoded with replacement, and undeclared Western text falls back to CP1252 instead of a mis-detected code page.
+- Playwright takes screenshots before cleaning the DOM, keeps all screenshot tiles, gives each query string its own screenshot file, times out on pages that hang after load, gives the screenshot its own time budget so a busy page still returns its text, and no longer closes a shared browser when URLs in one batch use different proxies. NO_PROXY and loopback addresses bypass the proxy, including a `HTTP(S)_PROXY` set in the environment. `--no-cache-for` matches host names case-insensitively, and a plain `#anchor` no longer gives a URL its own screenshot file.
+- OCR failures (corrupt, empty or oversized images, unsupported languages) fail the item instead of being written into the output. Multi-frame TIFFs read every frame, concurrent OCR no longer lowers the shared engine's thresholds, and local OCR counts as a heavy task.
+- PPTX `--ocr --llm` respects `MARKITAI_NO_VLM_OCR`, and PDF/PPTX page renders are no longer counted as extracted images.
+- stdout image links point at immutable copies, including with `--profile rag`/`obsidian`.
+- PDF images are written correctly when the output path contains spaces or brackets (for example iCloud's `Mobile Documents`), pictures whose names contain spaces or CJK are OCR'd, and a sibling PDF's same-prefixed images are no longer claimed or recompressed. `--ocr --screenshot` no longer counts page renders as images.
+- An unmatched quote in a CSV/TSV only affects its own row. Multi-frame TIFFs are decoded one frame at a time.
+- `.urls` files with a UTF-8 BOM, quoted multi-line TSV cells, and `.msg` emails whose body is only HTML or ANSI now convert correctly.
+- An output directory that cannot be created ends with one error line (and `error` in `--json`) instead of a traceback. MCP tools return the failure reason, and `batch_convert` rejects relative paths.
+- Web workspace: Ctrl-C with an open event stream shuts down promptly and keeps the job in history; output and upload names are de-duplicated case-insensitively; results list PDF images; retrying a CLI-recorded `--llm` URL no longer writes `.llm.llm.md`; a failed Enhance restores the previous result, and so does a server shutdown during a re-run. Deleting the same item twice at once answers `404` instead of `500`. Items whose names differ only by a suffix (`notes` and `notes.llm`) no longer share outputs. `--llm-batch` items still waiting for collection show as pending, and Retry all failed only retries items that can be retried.
 
 ## [1.1.0] - 2026-09-14
 

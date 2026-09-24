@@ -15,10 +15,17 @@ class Outcome:
     Attributes:
         kind: Whether the work item is a local file or a URL.
         source: File name/path or URL identifying the item.
-        status: Final item status as written to reports.
+        status: Final item status as written to reports. ``"pending"`` is
+            the ``--llm-batch`` handoff: the base output is written and the
+            enhancement is submitted, but the batch was still running when
+            the run stopped waiting (``--llm-batch-collect`` finishes it).
         output_path: Path to the produced output file (``.llm.md`` when LLM
             enhancement is enabled), or None when nothing was written.
         error: Error message when status is "failed".
+        warnings: Problems that did not fail the item but left it short of
+            what was asked (e.g. an image whose analysis failed and kept its
+            original alt text, or a requested screenshot that was not
+            captured).
         skip_reason: Why the item was skipped (file paths only, e.g.
             "exists", "image_only").
         images: Count of images extracted/downloaded for the item.
@@ -40,9 +47,10 @@ class Outcome:
 
     kind: Literal["file", "url"]
     source: str
-    status: Literal["completed", "failed", "skipped"]
+    status: Literal["completed", "failed", "skipped", "pending"]
     output_path: Path | None = None
     error: str | None = None
+    warnings: list[str] = field(default_factory=list)
     skip_reason: str | None = None
     images: int = 0
     screenshots: int = 0

@@ -80,12 +80,17 @@ class ImageAnalysis:
         llm_usage: LLM usage statistics in format:
             {"<model-name>": {"requests": N, "input_tokens": N,
              "output_tokens": N, "cost_usd": N}}
+        failed: The analysis failed and this is a positional placeholder
+            (batch analysis keeps one entry per input image). Its caption
+            must not replace the author's alt text and it must not reach
+            images.json.
     """
 
     caption: str  # Short alt text
     description: str  # Detailed description
     extracted_text: str | None = None  # Text extracted from image
     llm_usage: LLMUsageByModel | None = None  # LLM usage stats
+    failed: bool = False
 
 
 class _CleanedStringMixin(BaseModel):

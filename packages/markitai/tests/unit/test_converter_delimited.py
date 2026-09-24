@@ -65,3 +65,45 @@ class TestTsvConverter:
 
         assert isinstance(result.markdown, str)
         assert "error" not in result.metadata or result.markdown.startswith(">")
+
+    def test_quoted_multiline_cell_keeps_its_line_break(self, tmp_path: Path) -> None:
+        path = tmp_path / "multiline.tsv"
+        path.write_text(
+            'name\tcommand\nbuild\t"echo a\necho b"\nlast\tone\n', encoding="utf-8"
+        )
+
+        lines = TsvConverter().convert(path).markdown.splitlines()
+
+        assert lines[2] == "| build | echo a<br>echo b |"
+        assert lines[3] == "| last | one |"
+
+    def test_crlf_multiline_cell_uses_br_without_carriage_return(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "crlf.tsv"
+        path.write_bytes(b'a\tb\r\n"x\r\ny"\tz\r\n')
+
+        lines = TsvConverter().convert(path).markdown.splitlines()
+
+        assert lines[0] == "| a | b |"
+        assert lines[2] == "| x<br>y | z |"
+
+    def test_utf8_bom_does_not_stick_to_first_header(self, tmp_path: Path) -> None:
+        path = tmp_path / "bom.tsv"
+        path.write_bytes("﻿a\tb\n1\t2\n".encode())
+
+        assert TsvConverter().convert(path).markdown.splitlines()[0] == "| a | b |"
+
+    def test_unpaired_quote_spoils_one_row_not_the_rest(self, tmp_path: Path) -> None:
+        """Stream parsing let one stray quote swallow every later row."""
+        path = tmp_path / "stray.tsv"
+        path.write_text(
+            'name\tnote\nalpha\t"unclosed note\nbeta\ttwo\ngamma\tthree\n',
+            encoding="utf-8",
+        )
+
+        lines = TsvConverter().convert(path).markdown.splitlines()
+
+        assert lines[0] == "| name | note |"
+        assert lines[2] == "| alpha | unclosed note |"
+        assert lines[3:] == ["| beta | two |", "| gamma | three |"]

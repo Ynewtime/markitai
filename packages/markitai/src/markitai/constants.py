@@ -117,6 +117,9 @@ DEFAULT_CACHE_TTL_SECONDS = 300  # Cache TTL (5 minutes)
 DEFAULT_CACHE_SIZE_LIMIT = 512 * 1024 * 1024  # 512 MB per cache file
 DEFAULT_GLOBAL_CACHE_DIR = "~/.markitai"  # Global cache directory
 DEFAULT_CACHE_DB_FILENAME = "cache.db"  # SQLite database filename
+DEFAULT_FETCH_CACHE_DB_FILENAME = "fetch_cache.db"  # URL fetch cache database
+# Fetched pages without ETag/Last-Modified are reused this long, then refetched
+DEFAULT_FETCH_CACHE_TTL_SECONDS = 24 * 60 * 60
 DEFAULT_CACHE_CONTENT_TRUNCATE = 50000  # Truncate content for hash key (chars)
 
 # =============================================================================

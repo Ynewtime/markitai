@@ -25,6 +25,8 @@ function item(itemId: string, skipped = false): SessionItem {
     operation: "convert",
     skipped,
     skipReason: skipped ? "image_only" : null,
+    retryable: true,
+    warnings: [],
     sizeBytes: 10,
     startedAt: null,
   };
@@ -84,6 +86,7 @@ function history(jobId: string, createdAt: string): HistoryEntry {
     duration_ms: 10,
     size_bytes: 10,
     origin: "web",
+    retryable: true,
   };
 }
 

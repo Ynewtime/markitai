@@ -45,6 +45,73 @@ def _make_json_safe(value: Any) -> Any:
     return str(value)
 
 
+def _is_stale(row: sqlite3.Row, now: int, max_age_seconds: int | None) -> bool:
+    """True when a cache row is older than ``max_age_seconds``."""
+    if max_age_seconds is None:
+        return False
+    return now - int(row["created_at"]) >= max_age_seconds
+
+
+def _lower_authority(text: str) -> str:
+    """Lowercase the scheme and host of a URL or URL glob, keeping the path.
+
+    Scheme and host are case-insensitive; the path, query and file name
+    are not, so only the part before the first ``/`` after the scheme is
+    folded.
+    """
+    scheme, sep, rest = text.partition("://")
+    if not sep:
+        scheme, rest = "", text
+    authority, slash, path = rest.partition("/")
+    return f"{scheme.lower()}{sep}{authority.lower()}{slash}{path}"
+
+
+def url_matches_cache_patterns(url: str, patterns: list[str] | None) -> bool:
+    """Whether a ``--no-cache-for`` / ``cache.no_cache_patterns`` glob covers a URL.
+
+    A pattern is tried against the full URL, the URL without its scheme
+    (``example.com/docs/page``), the host, and the last path segment, so
+    ``https://example.com/*``, ``example.com/docs/*``, ``*.example.com`` and
+    ``*.pdf`` all do what they read like. Scheme and host compare
+    case-insensitively (``Example.COM`` is ``example.com``); the path does
+    not.
+    """
+    import fnmatch
+
+    if not patterns:
+        return False
+    parsed = urlparse(url)
+    normalized = _lower_authority(url)
+    without_scheme = (
+        normalized.split("://", 1)[1] if "://" in normalized else normalized
+    )
+    last_segment = parsed.path.rstrip("/").rsplit("/", 1)[-1]
+    hosts = [parsed.netloc.lower(), (parsed.hostname or "").lower()]
+    for raw in patterns:
+        pattern = raw.strip()
+        if not pattern:
+            continue
+        variants = {pattern}
+        if pattern.startswith("**/"):
+            variants.add(pattern[3:])
+        checks = [
+            (candidate, {_lower_authority(v) for v in variants})
+            for candidate in (normalized, without_scheme)
+        ]
+        checks += [(host, {v.lower() for v in variants}) for host in hosts]
+        checks.append((last_segment, variants))
+        for candidate, candidate_variants in checks:
+            if candidate and any(
+                fnmatch.fnmatchcase(candidate, variant)
+                for variant in candidate_variants
+            ):
+                logger.debug(
+                    f"[FetchCache] Skipping cache for URL (matched pattern: {raw})"
+                )
+                return True
+    return False
+
+
 class FetchCache:
     """SQLite-based cache for fetch results.
 
@@ -195,7 +262,10 @@ class FetchCache:
         return json.dumps(_make_json_safe(metadata))
 
     def _get_unlocked(
-        self, url: str, strategy: str | None = None
+        self,
+        url: str,
+        strategy: str | None = None,
+        max_age_seconds: int | None = None,
     ) -> FetchResult | None:
         """Get cached fetch result (no lock). Caller must hold a lock."""
         key = self._compute_hash(url, strategy)
@@ -203,6 +273,10 @@ class FetchCache:
 
         conn = self._get_connection()
         row = conn.execute("SELECT * FROM fetch_cache WHERE key = ?", (key,)).fetchone()
+
+        if row and _is_stale(row, now, max_age_seconds):
+            logger.debug(f"[FetchCache] Entry expired (TTL) for URL: {url}")
+            return None
 
         if row:
             # Update accessed_at for LRU tracking
@@ -233,23 +307,35 @@ class FetchCache:
 
         return None
 
-    def get(self, url: str, strategy: str | None = None) -> FetchResult | None:
+    def get(
+        self,
+        url: str,
+        strategy: str | None = None,
+        max_age_seconds: int | None = None,
+    ) -> FetchResult | None:
         """Get cached fetch result if exists.
 
         Args:
             url: URL to look up
             strategy: Optional strategy to scope cache lookup
+            max_age_seconds: Treat entries written longer ago than this as
+                missing (None: no expiry)
 
         Returns:
-            Cached FetchResult or None if not found
+            Cached FetchResult or None if not found (or expired)
         """
         with self._lock:
-            return self._get_unlocked(url, strategy)
+            return self._get_unlocked(url, strategy, max_age_seconds)
 
-    async def aget(self, url: str, strategy: str | None = None) -> FetchResult | None:
+    async def aget(
+        self,
+        url: str,
+        strategy: str | None = None,
+        max_age_seconds: int | None = None,
+    ) -> FetchResult | None:
         """Async version of get() using asyncio.Lock."""
         async with self._async_lock:
-            return self._get_unlocked(url, strategy)
+            return self._get_unlocked(url, strategy, max_age_seconds)
 
     def _set_unlocked(
         self, url: str, result: FetchResult, strategy: str | None = None
@@ -310,7 +396,10 @@ class FetchCache:
         return count
 
     def _get_with_validators_unlocked(
-        self, url: str, strategy: str | None = None
+        self,
+        url: str,
+        strategy: str | None = None,
+        max_age_seconds: int | None = None,
     ) -> tuple[FetchResult | None, str | None, str | None]:
         """Get cached result with HTTP validators (no lock). Caller must hold a lock."""
         key = self._compute_hash(url, strategy)
@@ -318,6 +407,16 @@ class FetchCache:
 
         conn = self._get_connection()
         row = conn.execute("SELECT * FROM fetch_cache WHERE key = ?", (key,)).fetchone()
+
+        # An entry with validators is always revalidated by the caller, so
+        # only an unvalidated one can go stale.
+        if (
+            row
+            and not (row["etag"] or row["last_modified"])
+            and _is_stale(row, now, max_age_seconds)
+        ):
+            logger.debug(f"[FetchCache] Entry expired (TTL) for URL: {url}")
+            return None, None, None
 
         if row:
             # Update accessed_at for LRU tracking, same as regular cache hits.
@@ -347,13 +446,19 @@ class FetchCache:
         return None, None, None
 
     def get_with_validators(
-        self, url: str, strategy: str | None = None
+        self,
+        url: str,
+        strategy: str | None = None,
+        max_age_seconds: int | None = None,
     ) -> tuple[FetchResult | None, str | None, str | None]:
         """Get cached result with HTTP validators for conditional requests.
 
         Args:
             url: URL to look up
             strategy: Optional strategy to scope cache lookup
+            max_age_seconds: An entry *without* validators written longer ago
+                than this is treated as missing (None: no expiry). Entries
+                with validators are returned for revalidation regardless.
 
         Returns:
             Tuple of (cached_result, etag, last_modified)
@@ -362,14 +467,17 @@ class FetchCache:
             - last_modified: Last-Modified header from previous fetch (for If-Modified-Since)
         """
         with self._lock:
-            return self._get_with_validators_unlocked(url, strategy)
+            return self._get_with_validators_unlocked(url, strategy, max_age_seconds)
 
     async def aget_with_validators(
-        self, url: str, strategy: str | None = None
+        self,
+        url: str,
+        strategy: str | None = None,
+        max_age_seconds: int | None = None,
     ) -> tuple[FetchResult | None, str | None, str | None]:
         """Async version of get_with_validators() using asyncio.Lock."""
         async with self._async_lock:
-            return self._get_with_validators_unlocked(url, strategy)
+            return self._get_with_validators_unlocked(url, strategy, max_age_seconds)
 
     def _set_with_validators_unlocked(
         self,

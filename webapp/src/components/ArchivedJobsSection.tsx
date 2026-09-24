@@ -164,6 +164,7 @@ export function ArchivedJobRows({
         // The wand turns a base result into an LLM one; a job whose only
         // item is already enhanced has nothing left to offer.
         const enhanceable =
+          entry.retryable &&
           entry.total === 1 &&
           entry.done === 1 &&
           entry.failed === 0 &&
@@ -336,7 +337,9 @@ export function ArchivedJobRows({
                     )}
                   </button>
                 )}
-                {entry.total === 1 && (entry.failed === 1 || entry.skipped === 1) && (
+                {entry.retryable &&
+                  entry.total === 1 &&
+                  (entry.failed === 1 || entry.skipped === 1) && (
                   <button
                     type="button"
                     className="rowicon retry"

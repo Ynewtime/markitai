@@ -475,6 +475,11 @@ class ItemPayload(BaseModel):
     operation: str  # "convert" | "retry" | "enhance"
     skipped: bool
     skip_reason: str | None
+    # False when the item cannot be retried/enhanced (CLI-recorded files)
+    retryable: bool
+    # Actionable notices raised while the item converted (scanned pages,
+    # hidden text, OCR found nothing, screenshot not captured, ...)
+    warnings: list[str]
 
 
 class JobPayload(BaseModel):
@@ -554,6 +559,7 @@ class HistoryEntry(BaseModel):
     duration_ms: int | None
     size_bytes: int
     origin: str  # "web" | "cli"
+    retryable: bool  # at least one item can be retried/enhanced
 
 
 class RootInfo(BaseModel):
