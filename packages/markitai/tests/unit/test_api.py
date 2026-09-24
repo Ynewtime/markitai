@@ -488,6 +488,7 @@ class TestConvertUrl:
             lambda *_args, **_kwargs: ExplodingProcessor(),
         )
         cfg = _llm_config()
+        cfg.llm.on_failure = "fail"  # the raise under test
         cfg.cache.enabled = False
         with pytest.raises(ConversionError, match="LLM processing failed"):
             await aconvert(
