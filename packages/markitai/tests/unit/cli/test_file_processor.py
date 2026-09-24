@@ -628,10 +628,12 @@ class TestVisibleAssetRefs:
                 )
             )
 
-        from urllib.parse import unquote, urlparse
+        from urllib.parse import urlparse
+        from urllib.request import url2pathname
 
         def _target(md: str) -> Path:
-            return Path(unquote(urlparse(md[md.index("(") + 1 : -1]).path))
+            # url2pathname: file:///C:/x is C:\x on Windows, not \C:\x
+            return Path(url2pathname(urlparse(md[md.index("(") + 1 : -1]).path))
 
         assert _target(outputs[0]).read_bytes() == b"red"
         assert _target(outputs[1]).read_bytes() == b"blue"
@@ -667,7 +669,8 @@ class TestStdoutProfileAssets:
         profile: str,
         wikilinks: bool,
     ) -> None:
-        from urllib.parse import unquote, urlparse
+        from urllib.parse import urlparse
+        from urllib.request import url2pathname
 
         from markitai.cli.processors.file import process_single_file
 
@@ -690,6 +693,6 @@ class TestStdoutProfileAssets:
             for line in out.splitlines()
             if line.startswith("![")
         ]
-        target = Path(unquote(urlparse(uri).path))
+        target = Path(url2pathname(urlparse(uri).path))
         assert target.parent == (tmp_path / "store" / "blobs").resolve()
         assert target.is_file()

@@ -28,9 +28,11 @@ the message names the ``--llm-batch-collect`` command that resumes it.
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
 import shutil
+import subprocess  # nosec B404 - list2cmdline only quotes, runs nothing
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -79,6 +81,20 @@ _RERUN_HINT = (
 )
 
 
+def shell_arg(value: str, *, windows: bool | None = None) -> str:
+    """Quote *value* for a command the user copies into their shell.
+
+    POSIX shells get ``shlex.quote``; on Windows its single quotes are
+    literal to cmd.exe, so arguments are quoted the way Windows parses
+    them (double quotes, only when needed).
+    """
+    if windows is None:
+        windows = os.name == "nt"
+    if windows:
+        return subprocess.list2cmdline([value])
+    return shlex.quote(value)
+
+
 @dataclass(frozen=True)
 class BatchHandoff:
     """A submitted batch the run stopped waiting for.
@@ -98,11 +114,11 @@ class BatchHandoff:
     @property
     def collect_command(self) -> str:
         command = (
-            f"markitai --llm-batch-collect {shlex.quote(self.batch_id)} "
-            f"-o {shlex.quote(str(self.output_dir))}"
+            f"markitai --llm-batch-collect {shell_arg(self.batch_id)} "
+            f"-o {shell_arg(str(self.output_dir))}"
         )
         if self.config_path is not None:
-            command += f" -c {shlex.quote(str(self.config_path))}"
+            command += f" -c {shell_arg(str(self.config_path))}"
         return command
 
     def to_json(self) -> dict[str, str]:
