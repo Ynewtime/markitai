@@ -1044,11 +1044,18 @@ class TestRealEngineOrientation:
         raw = processor._run_engine(np.asarray(page))
 
         assert processor._is_upside_down(raw) is True
-        # Top line first. (RapidOCR's own line classifier leaves some of
-        # these lines unturned and misreads them; the legible ones count.)
+        # Top line first: the box lowest in the scan leads the text.
+        # RapidOCR's own line classifier leaves some of these lines unturned
+        # and misreads them (with DejaVu Sans, all of them), so the order is
+        # checked on the geometry, and on whichever lines stayed legible.
         text = processor._build_ocr_result(raw).text
+        placed = [
+            (float(np.asarray(box)[:, 1].mean()), str(txt).strip())
+            for box, txt in zip(raw.boxes, raw.txts)
+            if str(txt).strip()
+        ]
+        assert text.splitlines()[0] == max(placed)[1]
         numbers = [int(n) for n in re.findall(r"line (\d) was scanned", text)]
-        assert len(numbers) >= 2
         assert numbers == sorted(numbers)
 
 
