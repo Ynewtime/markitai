@@ -1,5 +1,6 @@
 """Tests for batch processing module."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -896,3 +897,343 @@ class TestBatchProcessor:
         # documents keys are now relative paths (renamed from 'files')
         assert len(report["documents"]) == 1
         assert "test.pdf" in report["documents"]
+
+
+class TestDiscoveryNeverFeedsOnItsOwnOutput:
+    """discover_files prunes what markitai wrote and matches suffixes loosely."""
+
+    @staticmethod
+    def _tree(root: Path, *names: str) -> None:
+        for name in names:
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("x")
+
+    def test_output_dir_inside_input_is_pruned(self, tmp_path: Path) -> None:
+        """`markitai in -o in/out` run twice must not convert out/*.md."""
+        inp = tmp_path / "in"
+        self._tree(
+            inp,
+            "doc.txt",
+            "out/doc.txt.md",
+            "out/.markitai/assets/doc.txt.0001.jpg",
+            "out/sub/x.pdf.md",
+        )
+        processor = BatchProcessor(BatchConfig(), inp / "out", input_path=inp)
+
+        files = processor.discover_files(inp, {".txt", ".md", ".jpg", ".pdf"})
+
+        assert files == [inp / "doc.txt"]
+
+    def test_default_output_dir_under_cwd_is_pruned(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`markitai init` (output.dir=./output) followed by `markitai .`."""
+        self._tree(tmp_path, "a.docx", "output/a.docx.md")
+        monkeypatch.chdir(tmp_path)
+        processor = BatchProcessor(BatchConfig(), Path("output"), input_path=Path("."))
+
+        files = processor.discover_files(Path("."), {".docx", ".md"})
+
+        assert files == [Path("a.docx")]
+
+    def test_meta_dir_is_always_skipped(self, tmp_path: Path) -> None:
+        """.markitai/ holds assets/states/reports wherever it sits."""
+        self._tree(
+            tmp_path,
+            "keep.png",
+            ".markitai/assets/a.jpg",
+            "nested/.markitai/screenshots/b.jpg",
+            "nested/keep2.png",
+        )
+        processor = BatchProcessor(BatchConfig(), tmp_path, input_path=tmp_path)
+
+        files = processor.discover_files(tmp_path, {".png", ".jpg"})
+
+        assert files == [tmp_path / "keep.png", tmp_path / "nested" / "keep2.png"]
+
+    def test_profile_assets_dir_of_the_output_tree_is_skipped(
+        self, tmp_path: Path
+    ) -> None:
+        """--profile rag/obsidian writes visible assets/ next to outputs."""
+        self._tree(tmp_path, "a.pdf", "assets/a.pdf-0001-01.jpg", "sub/assets/b.jpg")
+        processor = BatchProcessor(BatchConfig(), tmp_path, input_path=tmp_path)
+
+        with_profile = processor.discover_files(
+            tmp_path, {".pdf", ".jpg"}, visible_assets=True
+        )
+        without_profile = processor.discover_files(tmp_path, {".pdf", ".jpg"})
+
+        assert with_profile == [tmp_path / "a.pdf"]
+        # Without an asset-visible profile an assets/ folder is ordinary input
+        assert tmp_path / "assets" / "a.pdf-0001-01.jpg" in without_profile
+
+    def test_input_assets_dir_outside_the_output_tree_is_kept(
+        self, tmp_path: Path
+    ) -> None:
+        inp = tmp_path / "in"
+        self._tree(inp, "assets/diagram.png")
+        processor = BatchProcessor(BatchConfig(), tmp_path / "out", input_path=inp)
+
+        files = processor.discover_files(inp, {".png"}, visible_assets=True)
+
+        assert files == [inp / "assets" / "diagram.png"]
+
+    def test_mixed_case_suffixes_match(self, tmp_path: Path) -> None:
+        """Single-file mode lowercases the suffix; batch must too."""
+        self._tree(tmp_path, "Mixed.Docx", "Report.Pdf", "skip.xyz")
+        processor = BatchProcessor(BatchConfig(), tmp_path / "out")
+
+        files = processor.discover_files(tmp_path, {".docx", ".pdf"})
+
+        assert files == [tmp_path / "Mixed.Docx", tmp_path / "Report.Pdf"]
+
+    def test_tree_is_walked_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One walk, not two per extension (39 extensions = 78 walks)."""
+        import os
+
+        import markitai.batch as batch_module
+
+        self._tree(tmp_path, "a/b/c.pdf", "d.docx")
+        calls: list[object] = []
+        real_walk = os.walk
+
+        def counting_walk(*args, **kwargs):
+            calls.append(args[0])
+            return real_walk(*args, **kwargs)
+
+        monkeypatch.setattr(batch_module.os, "walk", counting_walk)
+        processor = BatchProcessor(BatchConfig(), tmp_path / "out")
+
+        files = processor.discover_files(
+            tmp_path, {".pdf", ".docx", ".txt", ".md", ".png"}
+        )
+
+        assert len(calls) == 1
+        assert files == [tmp_path / "a" / "b" / "c.pdf", tmp_path / "d.docx"]
+
+    def test_scan_max_files_keeps_the_first_sorted_paths(self, tmp_path: Path) -> None:
+        """Truncation must not depend on set hash order (PYTHONHASHSEED)."""
+        self._tree(tmp_path, "z.pdf", "b.docx", "a.txt", "m/c.pdf", "c.png")
+        processor = BatchProcessor(BatchConfig(scan_max_files=3), tmp_path / "out")
+
+        files = processor.discover_files(tmp_path, {".pdf", ".docx", ".txt", ".png"})
+
+        assert files == sorted(
+            [tmp_path / "a.txt", tmp_path / "b.docx", tmp_path / "c.png"]
+        )
+
+    def test_scan_max_files_subset_is_stable_across_hash_seeds(
+        self, tmp_path: Path
+    ) -> None:
+        import subprocess
+        import sys
+
+        for i in range(12):
+            (tmp_path / f"f{i:02d}{['.pdf', '.docx', '.txt'][i % 3]}").write_text("x")
+        script = (
+            "import sys; from pathlib import Path;"
+            "from markitai.batch import BatchProcessor;"
+            "from markitai.config import BatchConfig;"
+            "from markitai.converter.base import EXTENSION_MAP;"
+            "p = BatchProcessor(BatchConfig(scan_max_files=4), Path(sys.argv[1]) / 'o');"
+            "print([f.name for f in p.discover_files("
+            "Path(sys.argv[1]), set(EXTENSION_MAP))])"
+        )
+        outputs = {
+            subprocess.run(
+                [sys.executable, "-c", script, str(tmp_path)],
+                env={**__import__("os").environ, "PYTHONHASHSEED": seed},
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+            for seed in ("1", "2", "3")
+        }
+        assert len(outputs) == 1
+
+
+class TestReservedTargetSurvivesTheState:
+    """The output an unfinished item reserved is what --resume overwrites."""
+
+    def test_target_round_trips_through_the_sidecar_and_base_file(
+        self, tmp_path: Path
+    ) -> None:
+        from markitai.batch import UrlState
+
+        input_dir = tmp_path / "in"
+        input_dir.mkdir()
+        processor = BatchProcessor(BatchConfig(), tmp_path / "out")
+        processor.state = processor.init_state(input_dir, [], {})
+        done = FileState(
+            path=str(input_dir / "done.pdf"),
+            status=FileStatus.COMPLETED,
+            output="out/done.pdf.llm.md",
+            target="out/done.pdf.md",
+        )
+        busy = FileState(
+            path=str(input_dir / "busy.pdf"),
+            status=FileStatus.IN_PROGRESS,
+            target="out/busy.pdf.v2.md",
+        )
+        processor.state.files = {done.path: done, busy.path: busy}
+        processor.state.urls["https://x/y"] = UrlState(
+            url="https://x/y",
+            source_file="l.urls",
+            status=FileStatus.FAILED,
+            error="boom",
+            target="out/y.md",
+        )
+        processor.save_state(force=True)
+
+        # Stored absolute (a resume may run from another cwd)
+        minimal = processor.state.to_minimal_dict()
+        assert "target" not in minimal["documents"]["done.pdf"]
+        assert minimal["documents"]["done.pdf"]["output"] == os.path.abspath(
+            "out/done.pdf.llm.md"
+        )
+        assert minimal["documents"]["busy.pdf"]["target"] == os.path.abspath(
+            "out/busy.pdf.v2.md"
+        )
+        assert minimal["urls"]["https://x/y"]["target"] == os.path.abspath("out/y.md")
+
+        # A later incremental (sidecar) save changes the target
+        busy.target = "out/busy.pdf.v3.md"
+        processor._dirty_keys.add(busy.path)
+        processor._last_state_save = None  # past the flush interval
+        processor.save_state()
+        assert processor.state_file.with_suffix(".jsonl").exists()
+
+        loaded = processor.load_state()
+        assert loaded is not None
+        resumed = loaded.files[str(input_dir / "busy.pdf")]
+        assert resumed.status == FileStatus.FAILED  # interrupted -> re-queued
+        assert resumed.target == os.path.abspath("out/busy.pdf.v3.md")
+        assert loaded.urls["https://x/y"].target == os.path.abspath("out/y.md")
+
+    def test_paths_stay_valid_when_resumed_from_another_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A relative -o recorded in one cwd must not move with the next one.
+
+        The state hash uses absolute paths, so ``--resume`` from another
+        directory finds the same state; its cwd-relative targets/outputs
+        then pointed the resumed items at ``<new cwd>/out``.
+        """
+        (tmp_path / "other").mkdir()
+        input_dir = tmp_path / "in"
+        input_dir.mkdir()
+        monkeypatch.chdir(tmp_path)
+        processor = BatchProcessor(BatchConfig(), Path("out"), input_path=Path("in"))
+        processor.state = processor.init_state(Path("in"), [], {})
+        processor.state.files[str(input_dir / "a.pdf")] = FileState(
+            path=str(input_dir / "a.pdf"),
+            status=FileStatus.COMPLETED,
+            output="out/a.pdf.md",
+        )
+        processor.state.files[str(input_dir / "b.pdf")] = FileState(
+            path=str(input_dir / "b.pdf"),
+            status=FileStatus.IN_PROGRESS,
+            target="out/b.pdf.md",
+        )
+        processor.save_state(force=True)
+
+        monkeypatch.chdir(tmp_path / "other")
+        resumer = BatchProcessor(
+            BatchConfig(), Path("../out"), input_path=Path("../in")
+        )
+        loaded = resumer.load_state()
+
+        assert loaded is not None
+        files = {Path(k).name: v for k, v in loaded.files.items()}
+        assert files["a.pdf"].output == str(tmp_path / "out" / "a.pdf.md")
+        assert files["b.pdf"].target == str(tmp_path / "out" / "b.pdf.md")
+
+    def test_legacy_cwd_relative_paths_are_read_back_unchanged(
+        self, tmp_path: Path
+    ) -> None:
+        """States written before paths were anchored keep their old values."""
+        state = BatchState.from_dict(
+            {
+                "options": {"input_dir": str(tmp_path), "output_dir": "out"},
+                "documents": {
+                    "a.pdf": {"status": "completed", "output": "out/a.pdf.md"}
+                },
+                "urls": {},
+            }
+        )
+
+        (file_state,) = state.files.values()
+        assert file_state.output == "out/a.pdf.md"
+
+
+class TestUrlStateKeys:
+    """Each (url, output_name) of a URL list is its own resumable item."""
+
+    def test_named_entries_get_their_own_key(self) -> None:
+        from markitai.batch import url_state_key
+
+        assert url_state_key("https://x/y") == "https://x/y"
+        assert url_state_key("https://x/y", None) == "https://x/y"
+        assert url_state_key("https://x/y", "first") == "https://x/y first"
+        assert url_state_key("https://x/y", "first") != url_state_key(
+            "https://x/y", "second"
+        )
+
+    def test_named_key_round_trips_with_its_url(self, tmp_path: Path) -> None:
+        from markitai.batch import UrlState, url_state_key
+
+        processor = BatchProcessor(BatchConfig(), tmp_path / "out")
+        processor.state = processor.init_state(tmp_path, [], {})
+        for name in ("first", "second"):
+            key = url_state_key("https://x/y", name)
+            processor.state.urls[key] = UrlState(
+                url="https://x/y",
+                source_file="l.urls",
+                status=FileStatus.COMPLETED if name == "first" else FileStatus.FAILED,
+                output=str(tmp_path / "out" / f"{name}.md"),
+                error=None if name == "first" else "boom",
+            )
+        processor.save_state(force=True)
+
+        loaded = processor.load_state()
+
+        assert loaded is not None
+        assert set(loaded.urls) == {"https://x/y first", "https://x/y second"}
+        assert {u.url for u in loaded.urls.values()} == {"https://x/y"}
+        assert loaded.urls["https://x/y first"].status == FileStatus.COMPLETED
+        assert loaded.urls["https://x/y second"].status == FileStatus.FAILED
+
+    def test_legacy_bare_url_state_is_adopted_by_a_named_entry(self) -> None:
+        from markitai.batch import UrlState
+
+        state = BatchState()
+        state.urls["https://x/y"] = UrlState(
+            url="https://x/y", source_file="l.urls", status=FileStatus.COMPLETED
+        )
+
+        state.adopt_legacy_url_keys(
+            [
+                ("https://x/y first", "https://x/y"),
+                ("https://x/y second", "https://x/y"),
+            ]
+        )
+
+        # The first named entry takes the old shared state; the other one is
+        # new work (the old state never said it was done)
+        assert set(state.urls) == {"https://x/y first"}
+        assert state.urls["https://x/y first"].status == FileStatus.COMPLETED
+
+    def test_bare_key_stays_with_an_unnamed_entry(self) -> None:
+        from markitai.batch import UrlState
+
+        state = BatchState()
+        state.urls["https://x/y"] = UrlState(url="https://x/y", source_file="")
+
+        state.adopt_legacy_url_keys(
+            [("https://x/y", "https://x/y"), ("https://x/y named", "https://x/y")]
+        )
+
+        assert set(state.urls) == {"https://x/y"}

@@ -8,6 +8,7 @@ of command modules to minimize startup cost.
 from __future__ import annotations
 
 import importlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,83 @@ _LAZY_COMMANDS: dict[str, tuple[str, str, str]] = {
         "Run the Markitai MCP server (stdio) for AI agents.",
     ),
 }
+
+
+# ctx.obj keys under which the root command hands its -c/--config and
+# --config-json to subcommands (``markitai -c alt.json config get ...``).
+ROOT_CONFIG_PATH_KEY = "_config_path"
+ROOT_CONFIG_OVERRIDES_KEY = "_config_overrides"
+
+
+def parse_config_json(config_json: str | None) -> dict[str, Any] | None:
+    """Parse ``--config-json`` into a partial config dict (None when absent).
+
+    Raises:
+        click.BadParameter: If the value is not a JSON object.
+    """
+    if not config_json:
+        return None
+    try:
+        parsed = json.loads(config_json)
+    except json.JSONDecodeError as e:
+        raise click.BadParameter(
+            f"invalid JSON at line {e.lineno} column {e.colno}: {e.msg}",
+            param_hint="'--config-json'",
+        ) from e
+    if not isinstance(parsed, dict):
+        raise click.BadParameter(
+            f"expected a JSON object of config overrides, got {type(parsed).__name__}",
+            param_hint="'--config-json'",
+        )
+    return parsed
+
+
+def require_existing_config(config_path: Path | None) -> None:
+    """Reject a ``-c`` path that does not exist, as a usage error.
+
+    ``-c`` accepts a missing path so ``config set``/``config edit`` can
+    create the file it names; everything that only reads the config
+    (conversions, ``config get``, ``cache``, ``doctor``) still requires it,
+    instead of silently running on defaults.
+
+    Raises:
+        click.BadParameter: If *config_path* is given and does not exist.
+    """
+    if config_path is not None and not config_path.exists():
+        raise click.BadParameter(
+            f"Path '{config_path}' does not exist. Only 'config set' and "
+            "'config edit' create a new config file.",
+            param_hint="'-c' / '--config'",
+        )
+
+
+def root_config_options(
+    *, allow_missing: bool = False
+) -> tuple[Path | None, dict[str, Any] | None]:
+    """The root command's ``-c`` path and ``--config-json`` overrides.
+
+    Subcommands load their configuration through this so the root options
+    apply to them exactly as they do to a conversion. Outside a root
+    invocation (a subcommand invoked on its own) both are None.
+
+    Args:
+        allow_missing: Accept a ``-c`` path that does not exist yet (the
+            commands that write the file); readers leave it False.
+
+    Raises:
+        click.BadParameter: If ``-c`` names a missing file and
+            *allow_missing* is False.
+    """
+    ctx = click.get_current_context(silent=True)
+    if ctx is None:
+        return None, None
+    obj = ctx.find_root().obj
+    if not isinstance(obj, dict):
+        return None, None
+    config_path = obj.get(ROOT_CONFIG_PATH_KEY)
+    if not allow_missing:
+        require_existing_config(config_path)
+    return config_path, obj.get(ROOT_CONFIG_OVERRIDES_KEY)
 
 
 # Removed option name -> the spelling that replaced it, or None when nothing

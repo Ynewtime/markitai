@@ -11,6 +11,7 @@ This module provides CLI commands for managing Markitai configuration:
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ from rich.syntax import Syntax
 
 from markitai.cli import ui
 from markitai.cli.console import get_console
+from markitai.cli.framework import root_config_options
 from markitai.cli.i18n import t
 from markitai.config import ConfigManager, MarkitaiConfig
 from markitai.utils.text import normalize_identifier_key
@@ -223,6 +225,29 @@ def _coerce_value(value: str, key: str) -> bool | int | float | str:
             return value
 
 
+def _load_effective(manager: ConfigManager) -> MarkitaiConfig:
+    """Load what a conversion would use: the root ``-c`` and ``--config-json``."""
+    config_path, overrides = root_config_options()
+    return manager.load(config_path=config_path, overrides=overrides)
+
+
+def _writable_config_path() -> Path | None:
+    """The root ``-c`` file a write command saves to (None: the default chain).
+
+    Raises:
+        click.UsageError: Under ``--config-json``, whose overrides live only on
+            the command line and cannot be written back.
+    """
+    # -c may name a file that does not exist yet: saving creates it
+    config_path, overrides = root_config_options(allow_missing=True)
+    if overrides is not None:
+        raise click.UsageError(
+            "--config-json overrides are inline JSON and cannot be saved. "
+            "Drop --config-json to write to the config file (choose it with -c)."
+        )
+    return config_path
+
+
 @click.group()
 def config() -> None:
     """Configuration management commands.
@@ -264,7 +289,7 @@ def config_list(output_format: str, show_secrets: bool) -> None:
         markitai config list -f yaml    # YAML (requires PyYAML)
     """
     manager = ConfigManager()
-    cfg = manager.load()
+    cfg = _load_effective(manager)
 
     config_dict = cfg.model_dump(mode="json", exclude_none=True)
     if not show_secrets:
@@ -319,32 +344,47 @@ def config_path_cmd() -> None:
     Examples:
         markitai config path            # Which config file is in use?
     """
+    cli_path, overrides = root_config_options()
     manager = ConfigManager()
-    manager.load()
+    manager.load(config_path=cli_path, overrides=overrides)
 
     ui.title(t("config.title"))
 
-    # Check which config is loaded
-    local_loaded = bool(
+    loaded = f"[green]{ui.MARK_SUCCESS} {t('config.loaded')}[/]"
+    # Which source supplied the file: -c wins, then MARKITAI_CONFIG, then the
+    # search locations (matching ConfigManager's resolution order).
+    cli_loaded = cli_path is not None
+    env_loaded = not cli_loaded and bool(os.environ.get("MARKITAI_CONFIG"))
+    searched = not cli_loaded and not env_loaded
+    local_loaded = searched and bool(
         manager.config_path and "markitai.json" in str(manager.config_path)
     )
     user_config_path = manager.DEFAULT_USER_CONFIG_DIR / "config.json"
-    user_loaded = bool(
+    user_loaded = searched and bool(
         manager.config_path and str(user_config_path) in str(manager.config_path)
     )
     user_config_display = "~/.markitai/config.json"
 
+    cli_sources = []
+    if cli_loaded:
+        cli_sources.append("-c")
+    if overrides is not None:
+        cli_sources.append("--config-json")
+    cli_annotation = t("config.highest")
+    if cli_sources:
+        cli_annotation += f" {loaded} [dim]({', '.join(cli_sources)})[/]"
+
     # Build rows: (label, annotation)
     rows = [
-        (t("config.cli_args"), t("config.highest")),
-        (t("config.env_vars"), ""),
+        (t("config.cli_args"), cli_annotation),
+        (t("config.env_vars"), loaded if env_loaded else ""),
         (
             "./markitai.json",
-            f"[green]{ui.MARK_SUCCESS} {t('config.loaded')}[/]" if local_loaded else "",
+            loaded if local_loaded else "",
         ),
         (
             user_config_display,
-            f"[green]{ui.MARK_SUCCESS} {t('config.loaded')}[/]" if user_loaded else "",
+            loaded if user_loaded else "",
         ),
         (t("config.defaults"), t("config.lowest")),
     ]
@@ -363,6 +403,8 @@ def config_path_cmd() -> None:
         ui.success(f"Currently using: {manager.config_path}")
     else:
         ui.warning("Using default configuration (no config file found)")
+    if overrides is not None:
+        console.print("[dim]With --config-json overrides merged on top[/dim]")
 
 
 @config.command("validate")
@@ -381,9 +423,10 @@ def config_validate(config_file: Path | None) -> None:
         markitai config validate ./markitai.json
     """
     manager = ConfigManager()
+    root_path, overrides = root_config_options()
 
     try:
-        manager.load(config_path=config_file)
+        manager.load(config_path=config_file or root_path, overrides=overrides)
 
         ui.summary(t("config.valid"))
 
@@ -415,7 +458,7 @@ def config_get(key: str, show_secrets: bool) -> None:
         markitai config get cache.global_dir
     """
     manager = ConfigManager()
-    manager.load()
+    _load_effective(manager)
 
     value = manager.get(key, _MISSING)
     if value is _MISSING:
@@ -469,8 +512,9 @@ def config_set(key: str, value: str, show_secrets: bool) -> None:
     """
     from pydantic import ValidationError
 
+    target = _writable_config_path()
     manager = ConfigManager()
-    manager.load()
+    manager.load(config_path=target)
 
     # Parse value based on the target field's declared type
     parsed_value = _coerce_value(value, key)
@@ -498,7 +542,9 @@ def config_set(key: str, value: str, show_secrets: bool) -> None:
                 console.print(f"[red]{error}[/red]")
             raise SystemExit(1)
 
-        saved_path = manager.save()
+        # -c names the file to write even when it does not exist yet
+        # (root_config_options(allow_missing=True) above).
+        saved_path = manager.save(target)
         shown = (
             parsed_value if show_secrets else _redact_value_for_key(key, parsed_value)
         )
@@ -524,7 +570,7 @@ def config_edit() -> None:
     """
     from markitai.cli.config_editor import run_config_editor
 
-    run_config_editor()
+    run_config_editor(_writable_config_path())
 
 
 __all__ = ["config"]

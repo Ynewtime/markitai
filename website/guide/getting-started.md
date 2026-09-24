@@ -133,7 +133,7 @@ The output name is the full input name plus `.md`, so `report.pdf` and `report.d
 Everything works on Windows, Linux and macOS, with two things to know:
 
 - **EMF/WMF images** only convert on Windows, because the format itself is Windows-only.
-- **PPTX slide screenshots** need a renderer. Windows uses Microsoft Office or LibreOffice. Linux needs LibreOffice (`apt-get install libreoffice`). macOS prefers LibreOffice (`brew install --cask libreoffice`) and otherwise drives an installed PowerPoint, which pops a one-time permission dialog and needs a desktop session. Set `"office": { "macos_fallback": false }` in the config to disable that on headless Macs.
+- **PPTX slide screenshots** need a renderer. Windows uses Microsoft Office or LibreOffice. Linux needs LibreOffice (`apt-get install libreoffice`). macOS prefers LibreOffice (`brew install --cask libreoffice`) and otherwise drives an installed PowerPoint, which pops a one-time permission dialog and needs a desktop session. Recent macOS versions also refuse the terminal's writes to PowerPoint's container (`Operation not permitted`, with no dialog): give the terminal app Full Disk Access in System Settings → Privacy & Security, or install LibreOffice. Set `"office": { "macos_fallback": false }` in the config to disable that on headless Macs.
 
 Legacy `.doc` and `.ppt` files need `markitai[legacy]` and no Office install on any platform.
 

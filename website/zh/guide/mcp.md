@@ -22,7 +22,7 @@ claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp
 }
 ```
 
-其他 MCP 客户端同理：command 填 `uvx`，参数填 `["--from", "markitai[mcp]", "markitai-mcp"]`。没有 uv 时，`pip install "markitai[mcp]"` 提供同名的 `markitai-mcp` 命令。`markitai mcp` 从 CLI 启动的是同一个服务，[MCP Registry](https://registry.modelcontextprotocol.io) 条目用的就是这种写法。
+其他 MCP 客户端同理：command 填 `uvx`，参数填 `["--from", "markitai[mcp]", "markitai-mcp"]`。没有 uv 时，`pip install "markitai[mcp]"` 提供同名的 `markitai-mcp` 命令。`markitai mcp` 从 CLI 启动的是同一个服务，[MCP Registry](https://registry.modelcontextprotocol.io) 条目用的就是这种写法。两种写法都和 CLI 一样，先加载 `./.env`（服务的工作目录），再加载 `~/.markitai/.env`；已经设置的变量（比如下面的 `env` 块）优先。
 
 ## 工具
 
@@ -35,11 +35,13 @@ claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp
 
 每次转换都写出真实文件，写进 Agent 传入的 `output_dir`，或一个新建的临时目录（路径随结果返回）。结果默认内联 Markdown，超过约 40 KB 时改为预览加 `markdown_file`（完整输出的路径），大文档不会灌爆模型上下文。转换工具还接受 `profile`（`rag`、`obsidian` 或 `okf`）为下游消费者塑形输出。
 
+结果里还有 `warnings`：没有让转换失败、但值得处理的提示，例如页面疑似扫描件（可加 `ocr: true` 重试）、PDF 隐藏文字可能是提示注入、OCR 没识别出文字、URL 截图没拍到。`job_status` 里每个成功条目也带自己的 `warnings`。
+
 批量任务在服务进程内执行。轮询 `job_status` 直到 `status` 为 `"completed"`，再读取各项的 `markdown_file`。每项写入 `output_dir/batch-<job_id>/<item_number>/`，同名文件不会互相覆盖。`concurrency`（默认 10）限制同时转换的数量。服务重启后任务记录会丢失，已写出的文件仍在。
 
 ## LLM 增强
 
-传 `llm: true` 开启增强（可能产生提供商费用）。在 `~/.markitai/config.json` 里配置模型（[与 CLI 共用](/zh/guide/configuration)），或在服务条目里设置环境变量：
+传 `llm: true` 开启增强（可能产生提供商费用）。模型的解析方式和 CLI 一样：先看 `~/.markitai/config.json` 里的 `llm.model_list`（[与 CLI 共用](/zh/guide/configuration)），再看 `MODEL`，最后自动检测提供商 API key（比如 `markitai init` 写进 `~/.markitai/.env` 的 key）和已登录的订阅制提供商。检测到多个提供商时它们共用一个模型池，服务会在 stderr 打一条警告；想只用一个就设 `MODEL`。也可以在服务条目里设置环境变量：
 
 ```json
 {
@@ -56,6 +58,6 @@ claude mcp add markitai -- uvx --from "markitai[mcp]" markitai-mcp
 }
 ```
 
-省略 `llm` 时跟随服务自己的配置（`llm.enabled`，默认关闭），传 `llm: false` 则强制关闭。`alt` 和 `desc` 控制图片分析，`ocr` 和 `screenshot` 对应各自能力。没配模型却传了 `llm: true`，会得到一条把上面配置方法原样带上的错误，Agent 可以直接转述。
+省略 `llm` 时跟随服务自己的配置（`llm.enabled`，默认关闭），传 `llm: false` 则强制关闭。`alt` 和 `desc` 控制图片分析，`ocr` 和 `screenshot` 对应各自能力。没配模型却传了 `llm: true`，会得到一条把上面配置方法原样带上的错误，Agent 可以直接转述。其他失败（文件不存在、传了目录、相对路径、URL 不可达、转换失败）都以写明原因的工具错误返回。`batch_convert` 和 `convert_document` 一样，一开始就拒绝相对路径。
 
 可选能力沿用 markitai 的 extras：OCR 需要 `markitai[ocr]`，URL 截图需要 `markitai[browser]`。uvx 场景这样加：`"args": ["--from", "markitai[mcp]", "--with", "markitai[ocr]", "markitai-mcp"]`。

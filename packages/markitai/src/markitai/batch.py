@@ -6,6 +6,7 @@ import asyncio
 import fnmatch
 import glob as glob_module
 import json
+import os
 import re
 from collections.abc import Callable, Coroutine, Iterable
 from dataclasses import dataclass, field
@@ -28,8 +29,14 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 
-from markitai.constants import REPORTS_REL_PATH, STATES_REL_PATH
+from markitai.constants import (
+    MARKITAI_META_DIR,
+    REPORTS_REL_PATH,
+    STATES_REL_PATH,
+    VISIBLE_ASSETS_REL_PATH,
+)
 from markitai.json_order import order_report, order_state
+from markitai.notices import UserNoticeCollector
 from markitai.runs.report import build_llm_usage_block, build_report_shell
 from markitai.security import atomic_write_json
 from markitai.utils import term
@@ -64,7 +71,8 @@ class FileState:
     Attributes:
         path: Relative path to source file from input_dir
         status: Current processing status
-        output: Relative path to output .md file from output_dir
+        output: Path of the produced .md file (output_dir-prefixed; the
+            state file stores it absolute, see ``_state_path``)
         error: Error message if status is FAILED
         started_at: ISO timestamp when processing started
         completed_at: ISO timestamp when processing completed
@@ -74,6 +82,12 @@ class FileState:
         cost_usd: Total LLM API cost for this file
         llm_usage: Per-model usage stats {model: {requests, input_tokens, output_tokens, cost_usd}}
         cache_hit: Whether LLM results were served from cache (no API calls made)
+        target: Output path reserved when processing started (the base
+            ``.md`` name, before the LLM suffix); kept for unfinished items so
+            a resumed run overwrites its own earlier output instead of
+            writing a ``.v2`` copy next to it
+        warnings: Non-fatal problems of this run (an image whose analysis
+            failed); in memory only, never written to the state file
     """
 
     path: str
@@ -89,6 +103,8 @@ class FileState:
     cost_usd: float = 0.0
     llm_usage: dict[str, dict[str, Any]] = field(default_factory=dict)
     cache_hit: bool = False
+    target: str | None = None
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -140,7 +156,7 @@ class UrlState:
         url: The URL being processed
         source_file: Path to the .urls file containing this URL
         status: Current processing status
-        output: Relative path to output .md file from output_dir
+        output: Path of the produced .md file (see FileState)
         error: Error message if status is FAILED
         fetch_strategy: The fetch strategy that was used (static/browser/jina)
         images: Count of images downloaded from the URL
@@ -151,6 +167,10 @@ class UrlState:
         cost_usd: Total LLM API cost for this URL
         llm_usage: Per-model usage stats {model: {requests, input_tokens, output_tokens, cost_usd}}
         cache_hit: Whether LLM results were served from cache (no API calls made)
+        target: Output path reserved when processing started (see FileState)
+        warnings: Non-fatal problems of this run (a requested screenshot
+            that was not captured); in memory only, never written to the
+            state file
     """
 
     url: str
@@ -167,6 +187,55 @@ class UrlState:
     cost_usd: float = 0.0
     llm_usage: dict[str, dict[str, Any]] = field(default_factory=dict)
     cache_hit: bool = False
+    target: str | None = None
+    warnings: list[str] = field(default_factory=list)
+
+
+def url_state_key(url: str, output_name: str | None = None) -> str:
+    """Batch-state key of one URL-list entry.
+
+    The same URL may appear twice in a list under different output names;
+    each line is its own work item and needs its own state, or a resumed
+    run reports the second one done when only the first was. An entry
+    without a name keeps the bare URL as its key, which is also how every
+    entry was keyed before (see ``BatchState.adopt_legacy_url_keys``). The
+    named form mirrors the list line (``<url> <name>``).
+    """
+    return f"{url} {output_name}" if output_name else url
+
+
+def _state_path(value: str) -> str:
+    """Anchor a recorded output path for the state file.
+
+    Paths recorded during a run are output_dir-prefixed and, for a relative
+    ``-o``, relative to the process cwd. The state outlives that cwd: its
+    hash uses absolute paths, so ``--resume`` run from another directory
+    finds the same state, and a cwd-relative value would then point the
+    resumed item at a different directory. The state therefore stores them
+    absolute. States written before kept the cwd-relative value; it is read
+    back unchanged (resolved against the cwd, as before).
+    """
+    return os.path.abspath(value)
+
+
+def _minimal_entry(state: FileState | UrlState) -> dict[str, Any]:
+    """Resume-relevant fields of one item (shared by state file and sidecar).
+
+    Completed items keep their output, failed ones their error; unfinished
+    ones also keep the output path they had reserved, so ``--resume``
+    redoes them over their own earlier output. Both paths are stored
+    absolute (see ``_state_path``).
+    """
+    entry: dict[str, Any] = {"status": state.status.value}
+    if isinstance(state, UrlState):
+        entry["source_file"] = state.source_file
+    if state.status == FileStatus.COMPLETED and state.output:
+        entry["output"] = _state_path(state.output)
+    elif state.status == FileStatus.FAILED and state.error:
+        entry["error"] = state.error
+    if state.status != FileStatus.COMPLETED and state.target:
+        entry["target"] = _state_path(state.target)
+    return entry
 
 
 @dataclass
@@ -181,7 +250,8 @@ class BatchState:
     log_file: str | None = None  # Path to log file for this run
     options: dict = field(default_factory=dict)
     files: dict[str, FileState] = field(default_factory=dict)
-    urls: dict[str, UrlState] = field(default_factory=dict)  # key: URL string
+    # key: url_state_key() -- the URL, or "<url> <output_name>" for a named entry
+    urls: dict[str, UrlState] = field(default_factory=dict)
     url_sources: list[str] = field(default_factory=list)  # .urls file paths
 
     @property
@@ -240,6 +310,22 @@ class BatchState:
             for u in self.urls.values()
             if u.status in (FileStatus.PENDING, FileStatus.FAILED)
         )
+
+    def adopt_legacy_url_keys(self, entries: Iterable[tuple[str, str]]) -> None:
+        """Re-key URL states an older markitai stored under the bare URL.
+
+        Named list entries used to share one state keyed by their URL. A
+        named entry (``(key, url)`` pair) this run wants but the state lacks
+        takes over that bare-URL state, unless an unnamed entry of this run
+        still claims the bare key itself.
+        """
+        wanted = list(entries)
+        wanted_keys = {key for key, _url in wanted}
+        for key, url in wanted:
+            if key in self.urls or key == url or url in wanted_keys:
+                continue
+            if url in self.urls:
+                self.urls[key] = self.urls.pop(url)
 
     def get_pending_files(self) -> list[Path]:
         """Get list of files that need processing."""
@@ -337,25 +423,15 @@ class BatchState:
                 rel_path = file_path.name
 
             # Minimal state: only what's needed for resume
-            entry: dict[str, Any] = {"status": state.status.value}
-            if state.status == FileStatus.COMPLETED and state.output:
-                entry["output"] = state.output
-            elif state.status == FileStatus.FAILED and state.error:
-                entry["error"] = state.error
-            files_dict[rel_path] = entry
+            files_dict[rel_path] = _minimal_entry(state)
 
-        # Convert URLs to minimal dict
-        urls_dict = {}
-        for url, state in self.urls.items():
-            entry: dict[str, Any] = {
-                "status": state.status.value,
-                "source_file": state.source_file,
-            }
-            if state.status == FileStatus.COMPLETED and state.output:
-                entry["output"] = state.output
-            elif state.status == FileStatus.FAILED and state.error:
-                entry["error"] = state.error
-            urls_dict[url] = entry
+        # Convert URLs to minimal dict (a named entry's key is not its URL)
+        urls_dict: dict[str, dict[str, Any]] = {}
+        for key, state in self.urls.items():
+            entry = _minimal_entry(state)
+            if key != state.url:
+                entry["url"] = state.url
+            urls_dict[key] = entry
 
         return {
             "version": self.version,
@@ -414,6 +490,7 @@ class BatchState:
                 cost_usd=file_data.get("cost_usd", 0.0),
                 llm_usage=file_data.get("llm_usage", {}),
                 cache_hit=file_data.get("cache_hit", False),
+                target=file_data.get("target"),
             )
 
         # Reconstruct URL states
@@ -422,7 +499,7 @@ class BatchState:
             if url_status == FileStatus.IN_PROGRESS:
                 url_status = FileStatus.FAILED
             state.urls[url] = UrlState(
-                url=url,
+                url=url_data.get("url") or url,
                 source_file=url_data.get("source_file", ""),
                 status=url_status,
                 output=url_data.get("output"),
@@ -436,6 +513,7 @@ class BatchState:
                 cost_usd=url_data.get("cost_usd", 0.0),
                 llm_usage=url_data.get("llm_usage", {}),
                 cache_hit=url_data.get("cache_hit", False),
+                target=url_data.get("target"),
             )
 
         return state
@@ -455,6 +533,10 @@ class ProcessResult:
         llm_usage: Per-model usage {model: {requests, input_tokens, output_tokens, cost_usd}}
         image_analysis_result: Aggregated image analysis for JSON output (None if disabled)
         cache_hit: Whether LLM results were served entirely from cache
+        llm_enhanced: Whether ``output_path`` is a real LLM-enhanced result,
+            as reported by the pipeline (not inferred from the file suffix)
+        warnings: Problems that did not fail the file (e.g. an image whose
+            analysis failed and kept its original alt text)
     """
 
     success: bool
@@ -466,6 +548,8 @@ class ProcessResult:
     llm_usage: dict[str, dict[str, Any]] = field(default_factory=dict)
     image_analysis_result: ImageAnalysisResult | None = None
     cache_hit: bool = False
+    llm_enhanced: bool = False
+    warnings: list[str] = field(default_factory=list)
 
 
 # Type alias for process function
@@ -537,6 +621,10 @@ class BatchProcessor:
         self._active_file_items: dict[str, str] = {}
         self._active_url_items: dict[str, str] = {}
         self._dirty_keys: set[str] = set()
+        # Actionable user notices ("pages look scanned, re-run with --ocr")
+        # logged while the progress bar owns the terminal; the console log
+        # handler is detached then, so they are listed in the summary.
+        self._notice_collector = UserNoticeCollector()
 
     def _compute_task_hash(self) -> str:
         """Compute hash from task input parameters.
@@ -679,6 +767,7 @@ class BatchProcessor:
                 logger.remove(console_handler_id)
             except ValueError:
                 pass  # Handler already removed
+        self._notice_collector.start()
 
         # Start Live display (progress bar only, no panel)
         self._live = Live(self._progress, console=self.console, refresh_per_second=4)
@@ -691,6 +780,7 @@ class BatchProcessor:
         if self._live is not None:
             self._live.stop()
             self._live = None
+        self._notice_collector.stop()
 
         # Re-add console handler (restore original state)
         if self._console_handler_id is not None:
@@ -753,16 +843,21 @@ class BatchProcessor:
                 current=self._render_active_items(self._active_file_items),
             )
 
-    def update_url_status(self, url: str, completed: bool = False) -> None:
+    def update_url_status(
+        self, url: str, completed: bool = False, *, key: str | None = None
+    ) -> None:
         """Update URL processing status in progress display.
 
         Args:
             url: The URL being processed (displayed in progress bar)
             completed: If True, advance the URL progress counter and clear current
+            key: The item's state key when it differs from the URL (a named
+                list entry; the same URL can be in flight twice)
         """
+        item_key = key or url
         if self._progress is not None and self._url_task_id is not None:
             if completed:
-                self._active_url_items.pop(url, None)
+                self._active_url_items.pop(item_key, None)
                 self._completed_urls += 1
                 self._progress.advance(self._url_task_id)
                 self._progress.update(
@@ -774,7 +869,7 @@ class BatchProcessor:
                 path_parts = [part for part in parsed.path.split("/") if part]
                 tail = "/".join(path_parts[-2:]) if path_parts else ""
                 label = parsed.netloc if not tail else f"{parsed.netloc}/{tail}"
-                self._active_url_items[url] = label
+                self._active_url_items[item_key] = label
                 self._progress.update(
                     self._url_task_id,
                     current=self._render_active_items(self._active_url_items),
@@ -785,18 +880,33 @@ class BatchProcessor:
         input_path: Path,
         extensions: set[str],
         glob_patterns: list[str] | None = None,
+        *,
+        visible_assets: bool = False,
     ) -> list[Path]:
         """
         Discover files to process.
+
+        One pruned walk of the tree; extensions match case-insensitively
+        (``Report.Pdf`` is found, as in single-file mode). What markitai
+        writes itself is never fed back in: ``.markitai/`` metadata
+        directories (assets, screenshots, states, reports) are always
+        skipped, the output directory is skipped whole when it lies inside
+        the input, and with ``visible_assets`` an output profile's
+        ``assets/`` directory is skipped where it belongs to the output
+        tree. When ``scan_max_files`` truncates the result, the first files
+        in sorted path order are kept, so a dry run and the real run pick
+        the same subset.
 
         Args:
             input_path: Input file or directory
             extensions: Set of valid file extensions (e.g., {".docx", ".pdf"})
             glob_patterns: Optional pathspec-like globs relative to input_path.
                 Prefix a pattern with ! to exclude after inclusions match.
+            visible_assets: The active output profile writes assets to a
+                visible ``assets/`` directory next to the outputs.
 
         Returns:
-            List of file paths
+            List of file paths, sorted
 
         Raises:
             ValueError: If any discovered file is outside the input directory
@@ -807,10 +917,19 @@ class BatchProcessor:
             return [input_path]
 
         input_resolved = input_path.resolve()
-        files: list[Path] = []
+        output_resolved = self.output_dir.resolve()
+        wanted = {ext.lower() for ext in extensions}
         max_depth = max(0, self.config.scan_max_depth)
         max_files = max(1, self.config.scan_max_files)
         positive_globs, negative_globs = self._compile_glob_patterns(glob_patterns)
+        # Outputs mirror the input tree under output_dir, so the output tree
+        # overlaps the input whenever one contains the other.
+        output_inside_input = input_resolved in output_resolved.parents
+        output_overlaps_input = (
+            output_inside_input
+            or output_resolved == input_resolved
+            or output_resolved in input_resolved.parents
+        )
 
         def should_include(path: Path) -> bool:
             try:
@@ -834,36 +953,51 @@ class BatchProcessor:
                 return False
             return True
 
-        for ext in extensions:
-            # Search both lowercase and uppercase variants (Linux glob is case-sensitive)
-            ext_variants = [ext, ext.upper()]
-            candidates = []
+        def is_markitai_output_dir(directory: Path, name: str, rel_dir: Path) -> bool:
+            if name == MARKITAI_META_DIR:
+                return True
+            if not output_overlaps_input:
+                return False
+            if output_inside_input and directory.resolve() == output_resolved:
+                return True
+            # Profile assets sit next to the outputs of rel_dir's files
+            return (
+                visible_assets
+                and name == VISIBLE_ASSETS_REL_PATH
+                and directory.resolve()
+                == (output_resolved / rel_dir / VISIBLE_ASSETS_REL_PATH).resolve()
+            )
 
-            for ext_variant in ext_variants:
-                if max_depth == 0:
-                    candidates.extend(input_path.glob(f"*{ext_variant}"))
-                else:
-                    # Use rglob for recursive search, then filter by depth
-                    for f in input_path.rglob(f"*{ext_variant}"):
-                        # Calculate relative depth
-                        try:
-                            rel_path = f.relative_to(input_path)
-                            depth = len(rel_path.parts) - 1  # -1 for filename itself
-                            if depth <= max_depth:
-                                candidates.append(f)
-                        except ValueError:
-                            continue
+        candidates: list[Path] = []
+        for dirpath, dirnames, filenames in os.walk(input_path):
+            current = Path(dirpath)
+            rel_dir = current.relative_to(input_path)
+            depth = len(rel_dir.parts)
+            if depth < max_depth:
+                dirnames[:] = [
+                    name
+                    for name in dirnames
+                    if not is_markitai_output_dir(current / name, name, rel_dir)
+                ]
+            else:
+                dirnames[:] = []
+            candidates.extend(
+                current / name
+                for name in filenames
+                if os.path.splitext(name)[1].lower() in wanted
+            )
 
-            for f in candidates:
-                if len(files) >= max_files:
-                    logger.warning(
-                        f"Reached scan_max_files={max_files}, stopping file discovery"
-                    )
-                    return sorted(set(files))
-                if should_include(f):
-                    files.append(f)
+        files: list[Path] = []
+        for f in sorted(candidates):
+            if len(files) >= max_files:
+                logger.warning(
+                    f"Reached scan_max_files={max_files}, stopping file discovery"
+                )
+                break
+            if should_include(f):
+                files.append(f)
 
-        return sorted(set(files))
+        return files
 
     @staticmethod
     def _compile_glob_patterns(
@@ -969,6 +1103,8 @@ class BatchProcessor:
                                     fs.output = entry_data["output"]
                                 if "error" in entry_data:
                                     fs.error = entry_data["error"]
+                                if "target" in entry_data:
+                                    fs.target = entry_data["target"]
                         elif entry_type == "url":
                             if key in state.urls:
                                 us = state.urls[key]
@@ -979,6 +1115,8 @@ class BatchProcessor:
                                     us.output = entry_data["output"]
                                 if "error" in entry_data:
                                     us.error = entry_data["error"]
+                                if "target" in entry_data:
+                                    us.target = entry_data["target"]
             except Exception as e:
                 logger.warning(f"Failed to replay .jsonl sidecar, ignoring: {e}")
 
@@ -1093,32 +1231,24 @@ class BatchProcessor:
                 except ValueError:
                     rel_path = file_path.name
 
-                entry: dict[str, Any] = {"status": file_state.status.value}
-                if file_state.status == FileStatus.COMPLETED and file_state.output:
-                    entry["output"] = file_state.output
-                elif file_state.status == FileStatus.FAILED and file_state.error:
-                    entry["error"] = file_state.error
-
                 lines.append(
                     json.dumps(
-                        {"type": "file", "key": rel_path, "data": entry},
+                        {
+                            "type": "file",
+                            "key": rel_path,
+                            "data": _minimal_entry(file_state),
+                        },
                         separators=(",", ":"),
                     )
                 )
             elif key in self.state.urls:
-                url_state = self.state.urls[key]
-                entry = {
-                    "status": url_state.status.value,
-                    "source_file": url_state.source_file,
-                }
-                if url_state.status == FileStatus.COMPLETED and url_state.output:
-                    entry["output"] = url_state.output
-                elif url_state.status == FileStatus.FAILED and url_state.error:
-                    entry["error"] = url_state.error
-
                 lines.append(
                     json.dumps(
-                        {"type": "url", "key": key, "data": entry},
+                        {
+                            "type": "url",
+                            "key": key,
+                            "data": _minimal_entry(self.state.urls[key]),
+                        },
                         separators=(",", ":"),
                     )
                 )
@@ -1135,6 +1265,22 @@ class BatchProcessor:
         Called at the end of batch processing.
         """
         self.save_state(force=True)
+
+    def persist_state_on_abort(self) -> None:
+        """Force-save the in-memory state on an abnormal exit.
+
+        Saves are throttled to one per ``state_flush_interval_seconds``, so
+        items finished inside the last interval exist only in memory. A
+        Ctrl-C (task cancellation) or an unexpected error skips the normal
+        end-of-run compaction; without this they are lost and ``--resume``
+        redoes — and re-pays for — them. Interrupted items are written as
+        in progress, which ``load_state`` re-queues. Never raises: the
+        original exception is what the caller must propagate.
+        """
+        try:
+            self.save_state(force=True)
+        except Exception as e:
+            logger.warning(f"Could not save batch state on exit: {e}")
 
     def _compute_summary(self) -> dict[str, Any]:
         """Compute summary statistics for report."""
@@ -1445,30 +1591,38 @@ class BatchProcessor:
             workers = [asyncio.create_task(worker()) for _ in range(worker_count)]
             await asyncio.gather(producer_task, *workers)
 
-        # If Live display was already started, just run the workers without creating new Live
-        if live_already_started:
-            await _run_with_workers(files, concurrency)
-        else:
-            # No external Live display provided - create one here
-            # Disable console handler to avoid conflict with progress bar
-            if console_handler_id is not None:
-                try:
-                    logger.remove(console_handler_id)
-                except ValueError:
-                    pass  # Handler already removed
+        try:
+            # If Live display was already started, just run the workers without creating new Live
+            if live_already_started:
+                await _run_with_workers(files, concurrency)
+            else:
+                # No external Live display provided - create one here
+                # Disable console handler to avoid conflict with progress bar
+                if console_handler_id is not None:
+                    try:
+                        logger.remove(console_handler_id)
+                    except ValueError:
+                        pass  # Handler already removed
 
-            try:
-                # Progress bar only (verbose logs handled by loguru)
-                with Live(progress, console=self.console, refresh_per_second=4):
-                    await _run_with_workers(files, concurrency)
-            finally:
-                # Re-add console handler (restore original state)
-                if console_handler_id is not None and (
-                    self._console_log_restorer is not None
-                ):
-                    self._restored_console_handler_id = self._console_log_restorer(
-                        verbose
-                    )
+                self._notice_collector.start()
+                try:
+                    # Progress bar only (verbose logs handled by loguru)
+                    with Live(progress, console=self.console, refresh_per_second=4):
+                        await _run_with_workers(files, concurrency)
+                finally:
+                    self._notice_collector.stop()
+                    # Re-add console handler (restore original state)
+                    if console_handler_id is not None and (
+                        self._console_log_restorer is not None
+                    ):
+                        self._restored_console_handler_id = self._console_log_restorer(
+                            verbose
+                        )
+        except BaseException:
+            # Ctrl-C arrives as CancelledError/KeyboardInterrupt; keep what
+            # finished since the last throttled save before propagating.
+            self.persist_state_on_abort()
+            raise
 
         # Final save — compact WAL into base state
         self.compact_state()
@@ -1641,6 +1795,9 @@ class BatchProcessor:
             hint = skip_hints.get(reason, "")
             hint_str = f" {hint}" if hint else ""
             warnings.append(f"{n} {label} skipped ({reason}): {examples}{hint_str}")
+
+        # Actionable notices raised while the progress bar hid the log
+        warnings.extend(self._notice_collector.notices)
 
         # Warnings (failed and skipped items). Never truncated: the useful
         # part of a warning is usually its tail (the install command, the

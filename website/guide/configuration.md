@@ -13,7 +13,7 @@ Highest to lowest:
 
 markitai reads the first config file it finds:
 
-1. The path given with `--config`
+1. The path given with `--config` (it must exist; `config set` and `config edit` create it)
 2. `MARKITAI_CONFIG`
 3. `./markitai.json` in the current directory
 4. `~/.markitai/config.json`
@@ -104,6 +104,7 @@ Every setting, with the value it takes when nothing sets it. The values come str
     "enabled": true,
     "no_cache": false,
     "no_cache_patterns": [],
+    "fetch_ttl_seconds": 86400,
     "max_size_bytes": 536870912,
     "global_dir": "~/.markitai"
   },
@@ -196,7 +197,7 @@ Every setting, with the value it takes when nothing sets it. The values come str
 
 ::::
 
-`llm.model_list` starts empty. With `--llm` and no entry, markitai picks one itself: `MODEL`, then a signed-in CLI (Claude Code, Copilot, ChatGPT), then a provider API key. With none of them the run reports that no model is configured. [Defaults markitai picks for you](#defaults-markitai-picks-for-you) lists what each yields.
+`llm.model_list` starts empty. With `--llm` and no entry, markitai fills it itself: with `MODEL` set it uses that one model; otherwise it takes every signed-in CLI (Claude Code, Copilot, ChatGPT) and every provider API key it finds. With none of them the run reports that no model is configured. [Defaults markitai picks for you](#defaults-markitai-picks-for-you) lists what each yields.
 
 `markitai init` writes an entry for the provider it detects; the web workspace's settings dialog fills `llm.providers`.
 
@@ -229,7 +230,7 @@ Any string value can reference an environment variable with `env:VAR_NAME`. mark
 | `MARKITAI_PURE` | Enable pure mode (`1`, `true`, `yes`) |
 | `MARKITAI_RECORD_HISTORY` | Record CLI runs to the web workspace history (`1`, `true`, `yes`, `on`) |
 | `MARKITAI_NO_REMOTE_FETCH` | Never send URLs to remote services, even with an explicit `-s` (`1`, `true`, `yes`) |
-| `MARKITAI_NO_VLM_OCR` | With `--ocr --llm`, use local RapidOCR instead of the vision model (`1`, `true`, `yes`) |
+| `MARKITAI_NO_VLM_OCR` | With `--ocr --llm`, use local RapidOCR instead of the vision model (`1`, `true`, `yes`). It covers OCR only: `--screenshot --llm` still sends page screenshots to the vision model |
 | `MARKITAI_STATIC_HTTP` | Static fetch client: `httpx` (default) or `curl_cffi` |
 | `MARKITAI_SERVE_TOKEN` | Fixed access token for `markitai serve` |
 | `MARKITAI_INSTALL_OPTIONAL` | Setup script: install optional components without prompting |
@@ -285,6 +286,8 @@ Model names follow LiteLLM's `provider/model` form:
 | OpenRouter | `openrouter/google/gemini-3.1-flash-lite` |
 
 Set `model_list` to use anything else. A model the provider has retired only produces a startup warning; markitai never rewrites your choice.
+
+When the detection finds more than one provider, markitai does not pick one. Every provider it finds joins one pool, and requests are spread across the pool, so one run can send documents, or chunks of a long document, to different vendors. markitai lists the models on stderr at startup, even without `-v`; only `--quiet` hides that notice. To use a single model, set `MODEL=<provider/model>` or `llm.model_list`.
 
 Image analysis (`--alt`, `--desc`) needs a vision-capable model. The subscription providers support it through file attachments.
 
@@ -368,7 +371,7 @@ markitai detects vision capability from LiteLLM. To override that, set `model_in
 | `timeout` | `120` | Request timeout in seconds |
 | `fallbacks` | `[]` | Group fallbacks, e.g. `[{"default": ["backup"]}]`. Models not in a fallback group only receive traffic through fallback |
 | `concurrency` | `10` | Concurrent LLM requests |
-| `max_requests_per_document` | `50` | Stop enhancing a document after this many requests and keep the plain output. `0` disables |
+| `max_requests_per_document` | `50` | Stop enhancing a document after this many requests and keep the plain output. A chunked document that needs more requests than are left fails before anything is sent. `0` disables |
 | `max_cost_per_document_usd` | `0` | Stop enhancing a document once it has spent this much. `0` disables |
 | `max_vision_pages_per_document` | `0` | Max page images sent to a vision model per document. Oversized documents convert without vision. `0` disables |
 
@@ -443,7 +446,7 @@ Each of the five keys defaults to `false`. Use it with `markitai document.pdf --
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `enabled` | `false` | Same as `--ocr` |
-| `lang` | `en` | Language: `en`, `zh`, `ja`, `ko`, `ar`, `th` or `latin` |
+| `lang` | `en` | Language: `en`, `zh`, `zh_tw`, `ja`, `ko`, `ar`, `th`, `latin`, `cyrillic`, `el`, `devanagari`, `ta`, `te`, or a code the multilingual model reads (`fr`, `de`, `es`, `it`, `pt`, `nl`, `pl`, `tr`, `vi`, ...). Any other value is an error |
 | `per_page_routing` | `true` | Keep the native text layer on pages that look fine and OCR only the rest. `false` OCRs every page |
 
 Local OCR uses [RapidOCR](https://github.com/RapidAI/RapidOCR) from the `ocr` extra:
@@ -513,7 +516,7 @@ The X/Twitter enrichment path (FxTwitter, Twitter oEmbed) follows the same conse
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `timeout` | `30000` | Page load timeout in ms |
+| `timeout` | `30000` | Page load timeout in ms. The same budget (plus the auto-scroll time) bounds the work on the loaded page, so a page stuck in a script loop fails instead of hanging the run |
 | `wait_for` | `domcontentloaded` | `load`, `domcontentloaded` or `networkidle` |
 | `extra_wait_ms` | `3000` | Extra wait for JavaScript after the load event |
 | `session_mode` | `isolated` | `isolated` (fresh context per request) or `domain_persistent` (reuse per domain) |
@@ -588,21 +591,26 @@ markitai honours `HTTPS_PROXY`, `HTTP_PROXY` and `ALL_PROXY`, with `NO_PROXY` as
 
 ## Cache Configuration
 
-markitai caches LLM results in `~/.markitai/cache.db`, so converting the same document again costs nothing.
+markitai keeps two caches in the cache directory:
+
+- `cache.db` holds LLM results, so converting the same document again costs nothing.
+- `fetch_cache.db` holds fetched URL pages. A page that sent an `ETag` or `Last-Modified` header is revalidated with a conditional request on every run (a `304` reuses the cached copy; changed content goes through the same checks as a fresh fetch, so a page that turned into a challenge page or a JavaScript shell never replaces a good entry). A page without those headers is reused for `fetch_ttl_seconds` and fetched again after that.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `enabled` | `true` | Cache LLM results |
+| `enabled` | `true` | Cache LLM results and fetched pages |
 | `no_cache` | `false` | Skip reads but keep writing (like `--no-cache`) |
-| `no_cache_patterns` | `[]` | Globs that bypass the cache |
-| `max_size_bytes` | `536870912` | Max cache size (512 MB) |
+| `no_cache_patterns` | `[]` | Globs that bypass the cache, matched against file paths and URLs (like `--no-cache-for`) |
+| `fetch_ttl_seconds` | `86400` | How long a fetched page without `ETag`/`Last-Modified` is reused (24 hours). `0` refetches it every run |
+| `max_size_bytes` | `536870912` | Max size of each cache file (512 MB) |
 | `global_dir` | `~/.markitai` | Cache directory |
 
 ```bash
-markitai cache stats --verbose         # what is cached, by model
-markitai cache clear
+markitai cache stats --verbose         # LLM entries by model, plus fetched pages
+markitai cache clear                   # empties cache.db and fetch_cache.db
 markitai document.pdf --no-cache       # bypass for one run
 markitai ./docs --no-cache-for "*.pdf"
+markitai urls.urls --no-cache-for "news.example.com"
 ```
 
 ## Output Configuration

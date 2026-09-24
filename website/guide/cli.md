@@ -14,6 +14,8 @@ The input is a file (`document.docx`), a directory (`./docs`) or a URL (`https:/
 
 Clean up formatting and generate frontmatter with an LLM. By default markitai writes only `.llm.md`; add `--keep-base` to keep the plain `.md` as well.
 
+A failed enhancement fails the item. That covers an invalid key, a provider error, a timeout, a refusal, and a result that fell back to unenhanced text. markitai still writes the plain `.md` so no content is lost, but the item is reported `failed`: a single input exits with `1`, a batch with `10`, and `--json` reports `ok: false` with the error. A document too long for one LLM call is enhanced in chunks, so the whole text is cleaned.
+
 ```bash
 markitai document.docx --llm
 ```
@@ -31,7 +33,9 @@ markitai docs/ --llm --llm-batch -o out/         # waits up to --llm-batch-timeo
 markitai --llm-batch-collect <batch-id> -o out/  # finish a handed-off batch later
 ```
 
-It needs a single OpenAI or Anthropic model. Image analysis and screenshots ride the same batch job. `--ocr` does not work in batch mode yet. If enhancement fails, markitai still writes the base output.
+It needs a single OpenAI or Anthropic model, checked before anything is converted. The batch uses that model's `api_key` and `api_base` from `llm.model_list` (including `env:` references), like a real-time run; without them it falls back to the provider's environment variables. Pass the same `-c` config to `--llm-batch-collect`; image answers are applied the way the submitting run's `--alt`/`--desc` asked, even when that config does not repeat them. Image analysis and screenshots ride the same batch job, including the images of a document too long for one request (that document's text is enhanced live, in chunks). An image the cache already answers is not sent again, and its alt text and `images.json` entry are still written. `--ocr` does not work in batch mode yet. A `--screenshot-only` URL capture has no Markdown to enhance in batch mode: it is kept as is, and the item says so under `warnings`.
+
+If enhancement fails, markitai still writes the base output and fails the item. A submission that fails (network, credentials, provider error) ends with a one-line error and exit `1`, and nothing is left behind to collect. If the wait times out or loses contact with the API, the batch keeps running: markitai prints the collect command, even under `--quiet` or `--json`, and exits `2`. Ctrl-C during the wait prints the same collect command. If some items also failed, the exit code is still `2`, because the batch has to be collected; the failures show in `--json` (`ok: false`, `totals.failed`) and are counted on stderr. `--resume` leaves out documents that are still in a batch submitted but never collected, so they are not paid for twice, and prints that batch's collect command. A batch that ended without results (failed, expired or cancelled) no longer holds its documents back. An image the batch could not analyze keeps its original alt text, and the item reports it under `warnings`. Collecting a batch a second time prints that it was already collected and leaves the outputs alone.
 
 ### `-p, --preset <name>`
 
@@ -92,7 +96,7 @@ markitai document.pdf --screenshot
 markitai https://example.com --screenshot
 ```
 
-For URLs, `--screenshot` switches the fetch strategy to `playwright` when needed.
+For URLs, `--screenshot` switches the fetch strategy to `playwright` when needed. The capture shows the page as rendered, before markitai strips navigation and styling for text extraction; a long page is split into tiles (`name.full.jpg`, `name.full--1.jpg`, ...). URLs that differ only in their query string get separate files. When no screenshot can be taken (Playwright or Chromium missing, the site refuses the headless browser), the Markdown is still written and markitai prints a warning, which `--json` also reports in the item's `warnings`.
 
 ### `--screenshot-only`
 
@@ -108,7 +112,7 @@ markitai https://example.com --screenshot-only
 markitai https://example.com --llm --screenshot-only
 ```
 
-`--llm --screenshot-only` is the fallback for pages where text extraction fails, such as heavy JavaScript sites. For PDF and PPTX files, `--screenshot-only` without `--llm` still writes the normal extracted `.md` next to the screenshots. `--no-screenshot-only` turns the mode off when a config file enables it.
+`--llm --screenshot-only` is the fallback for pages where text extraction fails, such as heavy JavaScript sites or canvas apps: when every text strategy fails, the page is still captured and the run completes from the screenshot. Without a screenshot there is nothing to deliver, so a URL whose capture fails is a failed item (exit code `1`, or a failed entry in a batch). For PDF and PPTX files, `--screenshot-only` without `--llm` still writes the normal extracted `.md` next to the screenshots. `--no-screenshot-only` turns the mode off when a config file enables it.
 
 ### `--ocr`
 
@@ -119,6 +123,8 @@ markitai scanned.pdf --ocr
 ```
 
 Without `--llm`, OCR runs locally with RapidOCR (`markitai[ocr]`). With `--llm`, the vision model reads the page images instead, so you need no OCR extra, but the pages go to the model. `MARKITAI_NO_VLM_OCR=1` forces the local path.
+
+PDF pages that already have a text layer keep it (headings, lists, tables and images included); OCR reads the scanned pages and the pictures on the others. For PPTX, the slide text comes from the file and OCR reads the pictures on the slides. A file OCR cannot read fails instead of producing an empty success; a blank image converts with a notice that no text was found.
 
 A single image input needs `--ocr` or `--llm`; with neither, markitai exits with status 1 rather than reporting an empty success.
 
@@ -183,21 +189,23 @@ markitai ./docs -o ./output --json
 markitai document.pdf -o ./output --json | jq '.items[] | select(.status == "failed")'
 ```
 
-The document is `{version, ok, error, items[], totals}`:
+The document is `{version, ok, error, batch, items[], totals}`:
 
-- `items[]`: one entry per input with `source`, `status` (`completed`, `failed`, `skipped`), `output`, `error`, `cost_usd`, `duration_s`, `fetch_strategy` and `llm_usage`.
+- `items[]`: one entry per input with `source`, `status` (`completed`, `failed`, `skipped`, `pending`), `output`, `error`, `warnings`, `cost_usd`, `duration_s`, `fetch_strategy`, `screenshots` and `llm_usage`. `pending` only comes from an `--llm-batch` run that stopped waiting: the base `.md` is written and the enhancement is still running in the batch. `warnings` lists problems that did not fail the item, such as an image whose analysis failed or a requested screenshot that could not be captured.
 - `error`: a run-level failure that produced no item, otherwise `null`.
+- `batch`: after an `--llm-batch` handoff, `{id, status, collect_command}` for the batch still running; otherwise `null`.
 - `totals`: counts by status plus `cost_usd` and `duration_s`.
-- `ok`: `false` when any item failed or `error` is set.
+- `ok`: `false` when any item failed or is pending, or `error` is set.
 
 The exit code keeps its usual meaning (see [Exit codes](#exit-codes)); a partial batch exits `10` while still printing JSON, so scripts should check `ok` too. Usage errors go to stderr without JSON. You cannot combine `--json` with `--dry-run` or `--llm-batch-collect`.
 
 ### `--resume`
 
-Resume an interrupted batch. It skips completed files, retries failed and interrupted ones, and picks up new files. Batch input only.
+Resume an interrupted batch. It skips completed files, retries failed and interrupted ones, and picks up new files. Retried items overwrite their own earlier output instead of adding a `.v2` copy; an item with no recorded output name (it failed before claiming one, or the state comes from an older version) follows `output.on_conflict` like a new item, so it never overwrites a file the batch did not write. Works for a directory and for a `.urls` list; progress is saved on Ctrl-C too. The state records absolute output paths, so you can resume from another working directory (`markitai ../docs -o ../output --resume`).
 
 ```bash
 markitai ./docs -o ./output --resume
+markitai links.urls -o ./output --resume
 ```
 
 ### `--record-history` {#record-history}
@@ -232,7 +240,7 @@ markitai ./docs -o ./output -j 4
 
 ### `--no-cache`
 
-Skip cached LLM results and call the API again. `--cache` re-enables reads when a config file disables them.
+Skip cached LLM results and fetched pages, and call the API or fetch the URL again. Results are still written to the cache. `--cache` re-enables reads when a config file disables them.
 
 ```bash
 markitai document.docx --llm --no-cache
@@ -240,10 +248,11 @@ markitai document.docx --llm --no-cache
 
 ### `--no-cache-for <patterns>`
 
-Skip the cache for specific files or globs, comma-separated.
+Skip the cache for specific files, URLs or globs, comma-separated. A pattern is matched against a URL in full, without its scheme, against its host and against its last path segment, so `"https://example.com/*"`, `"example.com/docs/*"`, `"*.example.com"` and `"*.pdf"` all work.
 
 ```bash
 markitai ./docs --no-cache-for "*.pdf,reports/**"
+markitai urls.urls --no-cache-for "news.example.com"
 ```
 
 ## URL Options
@@ -262,6 +271,8 @@ The file is plain text with one URL per line and an optional output name after a
 https://example.com/page1
 https://example.com/page2 custom_name
 ```
+
+Each line is its own item, also for `--resume`: the same URL may appear twice under different output names and both files are written. A line that repeats an earlier URL *and* name is skipped with a warning.
 
 When one URL fails, the successful ones stay; a partially successful run exits with status 10.
 
@@ -356,7 +367,7 @@ markitai https://example.com -o ./output --no-remote-fetch
 |------|---------|
 | `0` | Success, including `--dry-run` |
 | `1` | A single item failed, or a runtime error |
-| `2` | Usage error, or a Batch API wait timed out and needs `--llm-batch-collect` |
+| `2` | Usage error, or a Batch API wait timed out (or lost contact) and needs `--llm-batch-collect`. This wins over `10`: items that failed alongside it are reported in `--json` and on stderr |
 | `10` | Batch finished with partial failures; successful items are kept |
 
 ## Setup Commands
@@ -430,6 +441,8 @@ markitai config validate ./markitai.json
 
 ### `markitai cache stats`
 
+Entries and size of the LLM cache (`cache.db`) and the URL fetch cache (`fetch_cache.db`).
+
 ```bash
 markitai cache stats
 markitai cache stats --verbose --limit 50   # entries by model (-v; default limit 20)
@@ -437,6 +450,8 @@ markitai cache stats --json
 ```
 
 ### `markitai cache clear`
+
+Empties both the LLM cache and the URL fetch cache.
 
 ```bash
 markitai cache clear
@@ -575,10 +590,16 @@ markitai ./docs --dry-run
 
 ### `-c, --config <path>`
 
-Use a specific config file.
+Use a specific config file. The file must exist; a missing path is a usage error rather than a silent fall back to defaults.
 
 ```bash
 markitai document.docx --config ./my-config.json
+```
+
+Before a subcommand it applies to that subcommand too, so `config set` writes to that file. `config set` and `config edit` also accept a path that does not exist yet and create the file:
+
+```bash
+markitai -c ./my-config.json config set llm.enabled true
 ```
 
 ### `--config-json <json>`
@@ -588,6 +609,8 @@ Inline config overrides, merged over the config file. Explicit flags still win. 
 ```bash
 markitai document.docx --config-json '{"llm": {"concurrency": 4}}'
 ```
+
+Subcommands that read the config (`config list`/`get`/`path`, `cache`, `doctor`) see the overrides too. `config set` and `config edit` refuse them, because inline JSON has no file to save to.
 
 ### `-V, --version`
 

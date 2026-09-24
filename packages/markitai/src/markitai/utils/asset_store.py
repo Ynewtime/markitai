@@ -2,6 +2,12 @@
 
 Stores image blobs keyed by content hash (SHA-256, first 16 hex chars).
 Provides human-navigable symlink refs grouped by source file name.
+
+Markdown links point at the immutable blob, never at a ref: refs are keyed
+by source basename + image filename, so converting another document with
+the same name (``a/report.pdf`` then ``b/report.pdf``) or a new version of
+the same document re-points the ref, which would silently swap the image
+behind every earlier stdout output.
 """
 
 from __future__ import annotations
@@ -42,7 +48,11 @@ class AssetStore:
 
         <persist_dir>/
           blobs/<hash>.<ext>          # actual image data, deduped
-          refs/<source>/<filename>    # symlinks to blobs
+          refs/<source>/<filename>    # symlinks to blobs (browse index)
+
+    :meth:`save` returns the blob path: it is content-addressed and never
+    rewritten, so links to it stay valid. The mutable refs are a
+    convenience index only.
     """
 
     def __init__(self, persist_dir: Path) -> None:
@@ -53,14 +63,19 @@ class AssetStore:
         self._refs_dir.mkdir(parents=True, exist_ok=True)
 
     def save(self, image_path: Path, source_name: str) -> Path:
-        """Persist an image and return the absolute ref symlink path.
+        """Persist an image and return the absolute, immutable blob path.
+
+        Also (re)points the browse-index symlink
+        ``refs/<source_name>/<filename>`` at the blob.
 
         Args:
             image_path: Path to the image file. Must exist.
             source_name: Source document name (e.g., "sample.pdf").
 
         Returns:
-            Absolute path to the symlink in refs/<source_name>/.
+            Absolute path to the content-addressed blob in ``blobs/``. Link
+            to this, not to the ref: a later conversion of a same-named
+            source re-points the ref.
 
         Raises:
             FileNotFoundError: If image_path does not exist.
@@ -108,12 +123,13 @@ class AssetStore:
             ref_path.unlink()
         ref_path.symlink_to(rel_target)
 
-        # Return absolute path of the symlink itself (not following it)
-        return ref_dir.resolve() / image_path.name
+        # Link target is the immutable blob: the ref above is re-pointed by
+        # any later same-named source, the blob never changes
+        return blob_path
 
-    def ref_path_to_markdown_uri(self, ref_path: Path) -> str:
-        """Convert a ref path to a safe markdown-embeddable URI.
+    def to_markdown_uri(self, path: Path) -> str:
+        """Convert a stored asset path to a safe markdown-embeddable URI.
 
         Handles spaces and special characters via percent-encoding.
         """
-        return ref_path.as_uri()
+        return path.as_uri()

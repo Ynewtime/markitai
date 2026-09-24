@@ -31,6 +31,8 @@ from markitai.utils.text import (
 from markitai.workflow.helpers import (
     create_llm_processor,
     extract_document_context,
+    image_analysis_failed,
+    image_analysis_failure_warning,
 )
 from markitai.workflow.single import ImageAnalysisResult
 
@@ -172,6 +174,10 @@ async def process_with_llm(
 
     except Exception as e:
         logger.error(f"LLM processing failed: {format_error_message(e)}")
+        # Drop the failed call's usage and request budget, so the next item
+        # sharing this context key does not inherit a tripped breaker
+        if processor is not None:
+            processor.clear_context_usage(source)
         raise
 
 
@@ -279,7 +285,15 @@ async def analyze_images_with_llm(
 
         # Process results (analyses is in same order as image_paths)
         results: list[tuple[Path, ImageAnalysis | None, str]] = []
+        failures: list[str] = []
         for image_path, analysis in zip(image_paths, analyses):
+            # A failed analysis is a positional placeholder ("Image N" /
+            # "Analysis failed"): the author's alt text stays and no
+            # placeholder entry reaches images.json
+            if image_analysis_failed(analysis):
+                failures.append(image_analysis_failure_warning(image_path.name))
+                results.append((image_path, None, timestamp))
+                continue
             results.append((image_path, analysis, timestamp))
 
             # Collect for JSON output (if desc_enabled)
@@ -361,11 +375,12 @@ async def analyze_images_with_llm(
 
         # Build analysis result for caller to aggregate
         analysis_result: ImageAnalysisResult | None = None
-        if desc_enabled and asset_descriptions:
+        if (desc_enabled and asset_descriptions) or failures:
             source_path = str(input_path.resolve()) if input_path else output_file.stem
             analysis_result = ImageAnalysisResult(
                 source_file=source_path,
-                assets=asset_descriptions,
+                assets=asset_descriptions if desc_enabled else [],
+                warnings=failures,
             )
 
         # Get usage for THIS file only using context-based tracking

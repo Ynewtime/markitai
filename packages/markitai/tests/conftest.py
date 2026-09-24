@@ -141,6 +141,23 @@ def _reset_remote_fetch_consent(monkeypatch: pytest.MonkeyPatch):
     fetch.reset_explicit_fallback_decision()
 
 
+@pytest.fixture(autouse=True)
+def _reset_fetch_cache_policy():
+    """The CLI registers cfg.cache's fetch-cache policy on the process-wide
+    session; keep one test's --no-cache-for/TTL from leaking into the next."""
+    from markitai.constants import DEFAULT_FETCH_CACHE_TTL_SECONDS
+    from markitai.fetch_session import get_default_session
+
+    def reset() -> None:
+        get_default_session().configure_fetch_cache(
+            ttl_seconds=DEFAULT_FETCH_CACHE_TTL_SECONDS, no_cache_patterns=[]
+        )
+
+    reset()
+    yield
+    reset()
+
+
 # =============================================================================
 # CLI Fixtures
 # =============================================================================

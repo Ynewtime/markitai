@@ -52,7 +52,12 @@ async def _build_native_fetch_result(
     strategy_used: str,
     base_metadata: dict[str, Any] | None = None,
 ) -> FetchResult | None:
-    """Try native HTML extraction and return a FetchResult when acceptable."""
+    """Try native HTML extraction and return a FetchResult when acceptable.
+
+    Relative links and images resolve against ``final_url`` (the URL after
+    redirects, which is what the page's own links are relative to) and fall
+    back to ``url`` when there was no redirect information.
+    """
     if extract_web_content is None:
         return None
     # If extract_web_content is available, the other webextract functions are too
@@ -62,7 +67,7 @@ async def _build_native_fetch_result(
     try:
         # CPU-bound (BeautifulSoup parsing + deepcopies); run in a thread
         # to avoid blocking the event loop
-        extracted = await asyncio.to_thread(extract_web_content, html, url)
+        extracted = await asyncio.to_thread(extract_web_content, html, final_url or url)
     except Exception as exc:
         logger.debug(f"Native webextract failed, falling back to markitdown: {exc}")
         return None
@@ -121,3 +126,44 @@ def _markitdown_convert_bytes(
         return md_result.text_content or "", md_result.title
     finally:
         temp_path.unlink(missing_ok=True)
+
+
+def _convert_document_bytes(
+    content_bytes: bytes, suffix: str, *, filename: str | None = None
+) -> tuple[str, str | None]:
+    """Convert a downloaded binary document with markitai's own converter.
+
+    The same converter a local file with ``suffix`` gets (PDF through
+    pymupdf4llm, DOCX/XLSX/PPTX through the office readers, ...), so a URL
+    to a document converts exactly like the downloaded file would. A fetch
+    has no output directory, so references to extracted images (files
+    nobody keeps) are dropped from the Markdown.
+
+    Returns:
+        (markdown, title) tuple.
+
+    Raises:
+        ValueError: No converter handles ``suffix``.
+    """
+    import re
+
+    from markitai.constants import ASSETS_REL_PATH
+    from markitai.converter import get_converter
+
+    stem = Path(filename).stem if filename else "download"
+    safe_stem = re.sub(r"[^\w.-]+", "_", stem).strip("._") or "download"
+    with tempfile.TemporaryDirectory(prefix="markitai-fetch-") as tmp:
+        temp_path = Path(tmp) / f"{safe_stem}{suffix}"
+        temp_path.write_bytes(content_bytes)
+        converter = get_converter(temp_path)
+        if converter is None:
+            raise ValueError(f"No converter for {suffix} documents")
+        result = converter.convert(temp_path)
+
+    markdown = re.sub(
+        rf"!\[[^\]]*\]\({re.escape(ASSETS_REL_PATH)}[/\\][^)]*\)\n?",
+        "",
+        result.markdown or "",
+    )
+    title = (result.metadata or {}).get("title")
+    return markdown, str(title) if title else None

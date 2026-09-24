@@ -632,17 +632,17 @@ Tail.
 
         page_images = [{"path": str(img1), "page": 1}]
 
-        markdown, frontmatter, cost, usage = await workflow.enhance_with_vision(
-            extracted_text="Original text",
-            page_images=page_images,
-            source="doc.pdf",
-        )
+        # The failure propagates so the caller writes the base .md and fails
+        # the file, instead of passing the unenhanced text off as .llm.md
+        with pytest.raises(RuntimeError, match="LLM API error"):
+            await workflow.enhance_with_vision(
+                extracted_text="Original text",
+                page_images=page_images,
+                source="doc.pdf",
+            )
 
-        # Should return original text on error
-        assert markdown == "Original text"
-        assert "doc.pdf" in frontmatter
-        assert cost == 0.0
-        assert usage == {}
+        # Partial usage is dropped so the next file on this context starts clean
+        mock_processor.clear_context_usage.assert_called_once_with("doc.pdf")
 
 
 class TestSingleFileWorkflowExtractFromScreenshots:
@@ -666,8 +666,16 @@ class TestSingleFileWorkflowExtractFromScreenshots:
         processor.extract_from_screenshot = AsyncMock(
             return_value=("# Page content", "title: Test")
         )
-        processor.get_context_cost = MagicMock(return_value=0.05)
-        processor.get_context_usage = MagicMock(return_value={"gpt-4": {"requests": 1}})
+        # Like the real processor: each page's call is recorded under the
+        # page context it was made with, nothing under the bare source
+        processor.get_context_cost = MagicMock(
+            side_effect=lambda context: 0.05 if ":page" in context else 0.0
+        )
+        processor.get_context_usage = MagicMock(
+            side_effect=lambda context: (
+                {"gpt-4": {"requests": 1}} if ":page" in context else {}
+            )
+        )
         return processor
 
     @pytest.mark.asyncio
@@ -736,7 +744,59 @@ class TestSingleFileWorkflowExtractFromScreenshots:
         )
         assert "Page content" in markdown
         assert cost == 0.05
-        assert usage == {"gpt-4": {"requests": 1}}
+        assert usage["gpt-4"]["requests"] == 1
+
+    @pytest.mark.asyncio
+    async def test_extract_from_screenshots_totals_every_page_context(
+        self, mock_config, tmp_path: Path
+    ) -> None:
+        """Page calls are recorded under <source>:pageN; the document's cost
+        is their sum (reading only <source> reported $0 for
+        --screenshot-only --llm), and every page context is cleared."""
+        recorded: dict[str, dict[str, dict[str, Any]]] = {}
+
+        async def extract(image_path, context="", original_title=None):
+            recorded[context] = {
+                "m": {
+                    "requests": 1,
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cost_usd": 0.01,
+                }
+            }
+            return (f"text of {image_path.name}", "")
+
+        processor = MagicMock()
+        processor.extract_from_screenshot = extract
+        processor.get_context_cost = MagicMock(
+            side_effect=lambda c: sum(
+                u["cost_usd"] for u in recorded.get(c, {}).values()
+            )
+        )
+        processor.get_context_usage = MagicMock(
+            side_effect=lambda c: dict(recorded.get(c, {}))
+        )
+        processor.clear_context_usage = MagicMock(
+            side_effect=lambda c: recorded.pop(c, None)
+        )
+        workflow = SingleFileWorkflow(mock_config, processor=processor)
+
+        page_images = []
+        for i in (1, 2, 3):
+            img = tmp_path / f"page{i}.png"
+            img.write_bytes(b"fake image")
+            page_images.append({"path": str(img), "page": i})
+
+        _markdown, _frontmatter, cost, usage = await workflow.extract_from_screenshots(
+            page_images=page_images, source="doc.pdf"
+        )
+
+        assert cost == pytest.approx(0.03)
+        assert usage["m"]["requests"] == 3
+        assert usage["m"]["input_tokens"] == 30
+        assert usage["m"]["cost_usd"] == pytest.approx(0.03)
+        # Nothing left behind for the next file with the same name
+        assert recorded == {}
 
     @pytest.mark.asyncio
     async def test_extract_from_screenshots_multiple_pages(
@@ -793,15 +853,13 @@ class TestSingleFileWorkflowExtractFromScreenshots:
 
         page_images = [{"path": str(img1), "page": 1}]
 
-        markdown, frontmatter, cost, _usage = await workflow.extract_from_screenshots(
-            page_images=page_images,
-            source="doc.pdf",
-        )
-
-        # Should return empty on error
-        assert markdown == ""
-        assert "doc.pdf" in frontmatter
-        assert cost == 0.0
+        # Propagates like enhance_with_vision: an empty "success" would
+        # write a blank .llm.md
+        with pytest.raises(RuntimeError, match="Vision API error"):
+            await workflow.extract_from_screenshots(
+                page_images=page_images,
+                source="doc.pdf",
+            )
 
 
 class TestSingleFileWorkflowNoCacheOptions:
@@ -925,17 +983,88 @@ class TestSingleFileWorkflowAnalyzeImagesAltTextUpdate:
         output_file = tmp_path / "output.md"
         output_file.write_text("# Content\n\n![](.markitai/assets/broken.png)")
 
-        _markdown, _cost, _usage, result = await workflow.analyze_images(
+        markdown, _cost, _usage, result = await workflow.analyze_images(
             markdown="# Content\n\n![](.markitai/assets/broken.png)",
             image_paths=[image_file],
             output_file=output_file,
         )
 
-        # Should still return result with default values
+        # A failed analysis contributes no placeholder entry and no alt text,
+        # only a warning for the item
         assert result is not None
-        assert len(result.assets) == 1
-        # Default caption should be used
-        assert result.assets[0]["alt"] == "Image"
+        assert result.assets == []
+        assert result.warnings == [
+            "image analysis failed for broken.png; its original alt text was kept"
+        ]
+        assert "![](.markitai/assets/broken.png)" in markdown
+
+    @pytest.mark.asyncio
+    async def test_failed_analysis_keeps_author_alt(
+        self, mock_config, mock_processor, tmp_path: Path
+    ):
+        """Regression: a failed analysis overwrote the author's alt text with
+        the "Image" placeholder and wrote an "Image analysis failed" entry
+        into images.json."""
+        from markitai.llm.types import ImageAnalysis
+
+        async def _analyze(image_path: Path, **_kwargs: Any) -> ImageAnalysis:
+            if image_path.name == "chart.png":
+                raise RuntimeError("provider timeout")
+            return ImageAnalysis(caption="A red logo", description="Logo.")
+
+        mock_processor.analyze_image = AsyncMock(side_effect=_analyze)
+        workflow = SingleFileWorkflow(mock_config, processor=mock_processor)
+
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
+        chart = assets_dir / "chart.png"
+        chart.write_bytes(b"fake")
+        logo = assets_dir / "logo.png"
+        logo.write_bytes(b"fake")
+        source = (
+            "# Content\n\n![Quarterly revenue by region](.markitai/assets/chart.png)"
+            "\n\n![](.markitai/assets/logo.png)"
+        )
+
+        markdown, _cost, _usage, result = await workflow.analyze_images(
+            markdown=source,
+            image_paths=[chart, logo],
+            output_file=tmp_path / "output.md",
+        )
+
+        assert "![Quarterly revenue by region](.markitai/assets/chart.png)" in markdown
+        assert "![A red logo](.markitai/assets/logo.png)" in markdown
+        assert result is not None
+        assert [Path(a["asset"]).name for a in result.assets] == ["logo.png"]
+
+    @pytest.mark.asyncio
+    async def test_standalone_image_failure_raises(
+        self, mock_config, mock_processor, tmp_path: Path
+    ):
+        """A standalone image has no enhanced output without its analysis:
+        the failure propagates instead of returning with no .llm.md."""
+        mock_processor.analyze_image = AsyncMock(
+            side_effect=RuntimeError("invalid api key")
+        )
+        workflow = SingleFileWorkflow(mock_config, processor=mock_processor)
+
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
+        asset = assets_dir / "photo.jpg"
+        asset.write_bytes(b"fake")
+        input_path = tmp_path / "photo.jpg"
+        input_path.write_bytes(b"fake")
+        output_file = tmp_path / "photo.jpg.md"
+
+        with pytest.raises(Exception, match="invalid api key"):
+            await workflow.analyze_images(
+                markdown="![photo](.markitai/assets/photo.jpg)",
+                image_paths=[asset],
+                output_file=output_file,
+                input_path=input_path,
+            )
+
+        assert not output_file.with_suffix(".llm.md").exists()
 
     @pytest.mark.asyncio
     async def test_empty_caption_falls_back_to_default(
@@ -1188,10 +1317,11 @@ class TestLLMFailureErrorLogging:
         )
         workflow = SingleFileWorkflow(mock_config, mock_processor)
         with patch("markitai.workflow.single.logger") as mock_logger:
-            await workflow.extract_from_screenshots(
-                page_images=[{"path": "/tmp/page1.png", "page": 1}],
-                source="test.pdf",
-            )
+            with pytest.raises(RuntimeError, match="Screenshot extraction error"):
+                await workflow.extract_from_screenshots(
+                    page_images=[{"path": "/tmp/page1.png", "page": 1}],
+                    source="test.pdf",
+                )
             mock_logger.error.assert_called_once()
             assert "failed" in mock_logger.error.call_args[0][0].lower()
 

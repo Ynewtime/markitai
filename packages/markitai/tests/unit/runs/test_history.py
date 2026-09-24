@@ -92,6 +92,8 @@ class TestRecordCliJob:
             "operation": "convert",
             "skipped": False,
             "skip_reason": None,
+            "retryable": False,
+            "warnings": [],
         }
         assert failed["status"] == "error"
         assert failed["error"] == "fetch boom"
@@ -117,6 +119,54 @@ class TestRecordCliJob:
         # Sources are not copied and no stray dirs are left behind.
         assert not (job_dir / "uploads").exists()
         assert list((tmp_path / "jobs").glob(".tmp-*")) == []
+
+    def test_pending_llm_batch_item_is_not_recorded_as_done(
+        self, tmp_path: Path, work_dir: Path
+    ) -> None:
+        """Regression: an ``--llm-batch`` handoff (status "pending") was
+        recorded as a plain done base result, so the web UI showed it as
+        finished without LLM and offered a second, paid Enhance."""
+        job_dir = record_cli_job(
+            [
+                Outcome(
+                    kind="url",
+                    source="https://example.com/page",
+                    status="pending",
+                    output_path=work_dir / "doc.txt.md",
+                )
+            ],
+            options=OPTIONS,
+            jobs_root=tmp_path / "jobs",
+        )
+        assert job_dir is not None
+        (item,) = _read_meta(job_dir)["items"]
+        assert item["status"] == "done"
+        assert item["skipped"] is True
+        assert item["skip_reason"] == "pending_batch"
+        assert item["llm_enhanced"] is False
+        assert item["output"] == "doc.txt.md"
+        assert "--llm-batch-collect" in item["error"]
+
+    def test_item_warnings_are_recorded(self, tmp_path: Path, work_dir: Path) -> None:
+        job_dir = record_cli_job(
+            [
+                Outcome(
+                    kind="url",
+                    source="https://example.com/page",
+                    status="completed",
+                    output_path=work_dir / "doc.txt.md",
+                    warnings=[
+                        "Screenshot not captured: timeout",
+                        "Screenshot not captured: timeout",
+                    ],
+                )
+            ],
+            options=OPTIONS,
+            jobs_root=tmp_path / "jobs",
+        )
+        assert job_dir is not None
+        (item,) = _read_meta(job_dir)["items"]
+        assert item["warnings"] == ["Screenshot not captured: timeout"]
 
     def test_llm_enhanced_output_flag(self, tmp_path: Path, work_dir: Path) -> None:
         enhanced = work_dir / "doc.llm.md"
@@ -290,3 +340,86 @@ class TestRehydrateRoundtrip:
 
 def test_default_jobs_root_points_at_serve_jobs() -> None:
     assert DEFAULT_SERVE_JOBS_ROOT.parts[-3:] == (".markitai", "serve", "jobs")
+
+
+class TestNestedBatchAssetCollisions:
+    """Per-subdirectory asset roots flatten into one job out dir.
+
+    ``a/report.pdf`` and ``b/report.pdf`` both extract
+    ``report.pdf-0001-01.jpg`` into their own ``.markitai/assets``; merging
+    them with copytree(dirs_exist_ok=True) let the second overwrite the
+    first while both copied outputs kept pointing at the one name.
+    """
+
+    @staticmethod
+    def _output(root: Path, sub: str, image: bytes, body_extra: str = "") -> Path:
+        out = root / sub
+        assets = out / ".markitai" / "assets"
+        assets.mkdir(parents=True)
+        (assets / "report.pdf-0001-01.jpg").write_bytes(image)
+        shots = out / ".markitai" / "screenshots"
+        shots.mkdir(parents=True)
+        (shots / "report.pdf.page0001.jpg").write_bytes(b"shot-" + image)
+        md = out / "report.pdf.md"
+        md.write_text(
+            "---\nscreenshot: .markitai/screenshots/report.pdf.page0001.jpg\n---\n"
+            "![](.markitai/assets/report.pdf-0001-01.jpg)\n"
+            "![](.markitai/assets/report.pdf-0001-01.jpg.bak)\n" + body_extra,
+            encoding="utf-8",
+        )
+        return md
+
+    def test_clashing_assets_are_kept_apart_and_refs_follow(
+        self, tmp_path: Path
+    ) -> None:
+        batch_out = tmp_path / "out"
+        md_a = self._output(batch_out, "a", b"image-a")
+        md_b = self._output(batch_out, "b", b"image-b")
+        (batch_out / "c").mkdir()
+        items = [
+            Outcome(
+                kind="file",
+                source=f"{sub}/report.pdf",
+                status="completed",
+                output_path=md,
+            )
+            for sub, md in (("a", md_a), ("b", md_b))
+        ]
+
+        job_dir = record_cli_job(items, options=OPTIONS, jobs_root=tmp_path / "jobs")
+
+        assert job_dir is not None
+        out = job_dir / "out"
+        outputs = [item["output"] for item in _read_meta(job_dir)["items"]]
+        assert outputs == ["report.pdf.md", "report.pdf (2).md"]
+        seen: set[bytes] = set()
+        for name in outputs:
+            text = (out / name).read_text(encoding="utf-8")
+            image_ref = text.split("![](")[1].split(")")[0]
+            shot_ref = text.split("screenshot: ")[1].split("\n")[0]
+            image = (out / image_ref).read_bytes()
+            assert (out / shot_ref).read_bytes() == b"shot-" + image
+            seen.add(image)
+            # A longer name sharing the prefix is left alone
+            assert "report.pdf-0001-01.jpg.bak)" in text
+        assert seen == {b"image-a", b"image-b"}
+
+    def test_identical_assets_are_copied_once(self, tmp_path: Path) -> None:
+        batch_out = tmp_path / "out"
+        md_a = self._output(batch_out, "a", b"same")
+        md_b = self._output(batch_out, "b", b"same")
+        items = [
+            Outcome(
+                kind="file",
+                source=f"{sub}/report.pdf",
+                status="completed",
+                output_path=md,
+            )
+            for sub, md in (("a", md_a), ("b", md_b))
+        ]
+
+        job_dir = record_cli_job(items, options=OPTIONS, jobs_root=tmp_path / "jobs")
+
+        assert job_dir is not None
+        assets = job_dir / "out" / ".markitai" / "assets"
+        assert [p.name for p in assets.iterdir()] == ["report.pdf-0001-01.jpg"]

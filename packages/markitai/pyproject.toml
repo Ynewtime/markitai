@@ -84,7 +84,7 @@ mcp = ["mcp>=2.0.0"]
 # born-digital documents ever executes. The extra name `ocr` is a public
 # contract — install scripts and the CLI's own error messages print
 # `markitai[ocr]` verbatim; renaming it breaks both.
-ocr = ["rapidocr>=3.7.0"]
+ocr = ["rapidocr>=3.9.0"]
 serve = [
     "fastapi>=0.115",
     "uvicorn>=0.32",
@@ -99,7 +99,7 @@ all = [
     "pillow-heif>=1.0",
     "firecrawl-anydoc>=0.2.3",
     "mcp>=2.0.0",
-    "rapidocr>=3.7.0",
+    "rapidocr>=3.9.0",
     "fastapi>=0.115",
     "uvicorn>=0.32",
     "python-multipart>=0.0.18",

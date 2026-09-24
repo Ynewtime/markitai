@@ -70,6 +70,13 @@
           "title": "No Cache Patterns",
           "type": "array"
         },
+        "fetch_ttl_seconds": {
+          "default": 86400,
+          "description": "How long a fetched URL without ETag/Last-Modified is reused from fetch_cache.db before it is fetched again (seconds). Pages with validators are revalidated on every run instead. 0 never reuses an unvalidated entry.",
+          "minimum": 0,
+          "title": "Fetch Ttl Seconds",
+          "type": "integer"
+        },
         "max_size_bytes": {
           "default": 536870912,
           "description": "Max cache size in bytes",

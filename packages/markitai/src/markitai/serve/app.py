@@ -37,11 +37,19 @@ from markitai import __version__
 from markitai.constants import PROVIDER_API_KEY_ENV
 from markitai.providers.discovery import provider_default_api_base
 from markitai.runs.history import DEFAULT_SERVE_JOBS_ROOT
+from markitai.serve.artifacts import (
+    item_asset_files,
+    markdown_pair,
+    split_output_name,
+)
 from markitai.serve.jobs import (
+    SHUTDOWN_EVENT,
     Job,
+    JobItem,
     JobRegistry,
     RetryWork,
     cleanup_stale_jobs,
+    item_base_name,
     job_cached_dir_size,
     job_duration_ms,
     rehydrate_jobs,
@@ -103,14 +111,6 @@ _WINDOWS_RESERVED_BASENAMES = frozenset(
     | {f"COM{i}" for i in range(1, 10)}
     | {f"LPT{i}" for i in range(1, 10)}
 )
-# Names an item may claim inside .markitai/assets|screenshots, after the
-# "<base_name>." prefix: numbered assets ("0001.png"), paged screenshots
-# ("page0001.png" / "slide0001.png") and full-page URL shots ("full.jpg").
-_META_ARTIFACT_SUFFIX_RE = re.compile(
-    r"^(?:\d{1,6}|page\d{1,6}|slide\d{1,6}|full)"
-    r"\.(?:png|jpe?g|gif|webp|bmp|tiff?|svg|ico|avif|heic|heif)$",
-    re.IGNORECASE,
-)
 
 
 @dataclass
@@ -139,6 +139,8 @@ class ServeState:
     detected_models: list[ModelConfig]
     settings_revision: str
     settings_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # The loop the app runs on, for request_shutdown() from a signal handler.
+    loop: asyncio.AbstractEventLoop | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -627,11 +629,18 @@ def _sanitize_upload_name(raw: str | None) -> str:
 
 
 async def _save_upload(upload: UploadFile, dest_dir: Path) -> Path:
-    """Stream one upload to disk, enforcing the per-file size limit."""
+    """Stream one upload to disk, enforcing the per-file size limit.
+
+    Names are de-duplicated case-insensitively: on macOS/Windows file
+    systems ``Report.pdf`` and ``report.pdf`` are one file, and even on a
+    case-sensitive one their outputs would collide once the job archive is
+    unpacked there.
+    """
     name = _sanitize_upload_name(upload.filename)
+    taken = {entry.name.casefold() for entry in dest_dir.iterdir()}
     target = dest_dir / name
     counter = 2
-    while target.exists():
+    while target.name.casefold() in taken or target.exists():
         target = dest_dir / f"{Path(name).stem} ({counter}){Path(name).suffix}"
         counter += 1
     size = 0
@@ -1002,7 +1011,8 @@ def _mutate_config_model_list(
         LLMProviderConfig.model_validate(provider) for provider in provider_list
     ]
     revision = _settings_revision(model_list, provider_list)
-    atomic_write_json(config_path, data)
+    # The model list can hold literal API keys: keep the file owner-only
+    atomic_write_json(config_path, data, private=True)
     return merged, merged_providers, revision
 
 
@@ -1369,16 +1379,67 @@ def _job_archive_folder(job: Job) -> str:
     output = next((item.output for item in job.items if item.output), None)
     if output is None:
         return f"job-{job.job_id}"
-    return _sanitize_upload_name(_split_output_name(Path(output).name))
+    return _sanitize_upload_name(split_output_name(Path(output).name))
 
 
-def _split_output_name(name: str) -> str:
-    """Strip the markitai markdown suffix: 'a.pdf.llm.md' -> 'a.pdf'."""
-    if name.endswith(".llm.md"):
-        return name[: -len(".llm.md")]
-    if name.endswith(".md"):
-        return name[: -len(".md")]
-    return name
+def _item_claimed_files(out_dir: Path, item: JobItem) -> set[Path]:
+    """Markdown outputs and asset files of *item* inside *out_dir*."""
+    base_name = item_base_name(item)
+    if base_name is None:
+        return set()
+    pair = markdown_pair(out_dir, base_name)
+    claimed = {path for path in pair if path.is_file()}
+    claimed.update(item_asset_files(out_dir, base_name, pair))
+    return claimed
+
+
+def _item_owned_files(job: Job, item: JobItem) -> list[Path]:
+    """Files that deleting *item* removes, never a sibling's.
+
+    The item's outputs and assets (``serve.artifacts``) minus anything a
+    remaining item also claims, plus its original upload. Rehydrated meta is
+    untrusted on-disk state, so every path stays inside the job directory.
+    """
+    out_dir = job.out_dir.resolve()
+    claimed = _item_claimed_files(out_dir, item)
+    if claimed:
+        for sibling in job.items:
+            if sibling is not item:
+                claimed -= _item_claimed_files(out_dir, sibling)
+    owned = [path for path in claimed if path.resolve().is_relative_to(out_dir)]
+    if item.kind == "file" and item.name:
+        uploads_dir = job.uploads_dir.resolve()
+        upload = (uploads_dir / item.name).resolve()
+        if upload.is_relative_to(uploads_dir) and upload != uploads_dir:
+            owned.append(upload)
+    return sorted(owned)
+
+
+def _unlink_all(paths: Sequence[Path]) -> None:
+    """Delete *paths*, tolerating ones already gone (best effort)."""
+    for path in paths:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as e:
+            logger.warning("[Serve] Could not delete {}: {}", path, e)
+
+
+def request_shutdown(app: Any) -> None:
+    """Tell a running app its server has begun shutting down.
+
+    Ends every open SSE stream so the server's wait for open responses
+    finishes and the lifespan shutdown (which cancels running jobs and
+    persists them to history) runs promptly. Safe to call from a signal
+    handler or another thread; a no-op before startup or after shutdown.
+    """
+    state: ServeState | None = getattr(getattr(app, "state", None), "markitai", None)
+    loop = state.loop if state is not None else None
+    if state is None or loop is None or loop.is_closed():
+        return
+    try:
+        loop.call_soon_threadsafe(state.registry.begin_shutdown)
+    except RuntimeError:  # the loop closed in between
+        pass
 
 
 def _sse_frame(event: str, data: dict[str, Any]) -> str:
@@ -1545,6 +1606,7 @@ def create_app(
                 resolved_config_path, configured_models, configured_providers
             ),
         )
+        state.loop = asyncio.get_running_loop()
         app.state.markitai = state
         restored = rehydrate_jobs(state.registry, cfg)
         if restored:
@@ -2558,7 +2620,6 @@ def create_app(
         job.public_network_only = not _is_trusted_request(request)
         cfg.output.dir = str(job.out_dir)
 
-        from markitai.serve.jobs import JobItem
         from markitai.utils.cli_helpers import url_to_filename
         from markitai.utils.paths import derive_output_name
 
@@ -2581,18 +2642,20 @@ def create_app(
             # url_to_filename results (or a URL colliding with an upload's
             # derived output) would otherwise silently overwrite each other
             # in LLM mode, where only the .llm.md sibling is written.
-            taken = {derive_output_name(item.name) for item in job.items}
+            # Compared case-insensitively: on macOS/Windows file systems
+            # "Page.html.md" and "page.html.md" are one file.
+            taken = {derive_output_name(item.name).casefold() for item in job.items}
             for offset, url in enumerate(url_list, start=len(files) + 1):
                 clean_url = url.strip()
                 base_name = url_to_filename(clean_url)
                 output_name = base_name
                 counter = 2
-                while output_name in taken:
+                while output_name.casefold() in taken:
                     output_name = (
                         f"{Path(base_name).stem} ({counter}){Path(base_name).suffix}"
                     )
                     counter += 1
-                taken.add(output_name)
+                taken.add(output_name.casefold())
                 job.items.append(
                     JobItem(
                         item_id=f"i{offset}",
@@ -2648,6 +2711,16 @@ def create_app(
             raise HTTPException(
                 status_code=409,
                 detail="item has not reached a terminal state yet; retry when done",
+            )
+        if not item.retryable:
+            # A CLI run (--record-history) keeps only the outputs: there is
+            # no original under uploads/ to convert again.
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "file items recorded from a CLI run cannot be retried or "
+                    "enhanced here; run the markitai CLI on the file again"
+                ),
             )
 
         operation = body.operation if body is not None else "retry"
@@ -2728,6 +2801,7 @@ def create_app(
             prior_finished_at=item.finished_at if protect else None,
             prior_operation=item.operation if protect else "convert",
             prior_llm_enhanced=item.llm_enhanced if protect else False,
+            prior_warnings=list(item.warnings) if protect else [],
         )
 
         # Reset only this item. The job keeps its identity and item ordering;
@@ -2744,6 +2818,7 @@ def create_app(
         item.operation = operation
         item.skipped = False
         item.skip_reason = None
+        item.warnings = []
         job.status = "running"
         job.generation += 1
         job.finished_at = None
@@ -2765,37 +2840,39 @@ def create_app(
 
     @app.delete("/api/jobs/{job_id}/items/{item_id}", status_code=204)
     async def delete_job_item(request: Request, job_id: str, item_id: str) -> None:
-        """Permanently remove one terminal ledger item and its direct output."""
+        """Permanently remove one terminal ledger item and all its files.
+
+        Its markdown pair, its original upload and the assets/screenshots it
+        owns (``serve.artifacts``) go with it; files a remaining sibling
+        also claims are kept.
+        """
         state = _state(request)
         job = _get_job(request, job_id)
-        item = job.get_item(item_id)
-        if item is None:
-            raise HTTPException(status_code=404, detail="item not found")
-        if job.status == "running" or item.status not in ("done", "error"):
-            raise HTTPException(
-                status_code=409, detail="job is still running; retry when done"
-            )
+        async with job.delete_lock:
+            # Re-resolved under the lock: a concurrent delete may already
+            # have removed this row, or the job with its last row. A repeat
+            # delete is then a plain 404, never a 500 or an empty job.
+            if state.registry.get(job_id) is not job:
+                raise HTTPException(status_code=404, detail="job not found")
+            item = job.get_item(item_id)
+            if item is None:
+                raise HTTPException(status_code=404, detail="item not found")
+            if job.status == "running" or item.status not in ("done", "error"):
+                raise HTTPException(
+                    status_code=409, detail="job is still running; retry when done"
+                )
 
-        if len(job.items) == 1:
-            await asyncio.to_thread(state.registry.discard_job, job)
-            logger.info("[Serve] Job {} deleted with its last item", job_id)
-            return
+            if len(job.items) == 1:
+                await asyncio.to_thread(state.registry.discard_job, job)
+                logger.info("[Serve] Job {} deleted with its last item", job_id)
+                return
 
-        output = item.output
-        job.items.remove(item)
-        if output:
-            candidate = (job.out_dir / output).resolve()
-            if candidate.is_relative_to(job.out_dir.resolve()):
-                candidate.unlink(missing_ok=True)
-                if candidate.name.endswith(".llm.md"):
-                    base = candidate.with_name(
-                        f"{candidate.name.removesuffix('.llm.md')}.md"
-                    )
-                    base.unlink(missing_ok=True)
-        (job.job_dir / "archive.zip").unlink(missing_ok=True)
-        await asyncio.to_thread(write_job_meta, job)
-        state.registry.publish_job(job)
-        logger.info("[Serve] Job {} item {} deleted", job_id, item_id)
+            doomed = await asyncio.to_thread(_item_owned_files, job, item)
+            job.items.remove(item)
+            await asyncio.to_thread(_unlink_all, [*doomed, job.job_dir / "archive.zip"])
+            await asyncio.to_thread(write_job_meta, job)
+            state.registry.publish_job(job)
+            logger.info("[Serve] Job {} item {} deleted", job_id, item_id)
 
     @app.get("/api/jobs/{job_id}", response_model=JobSnapshot)
     async def get_job(request: Request, job_id: str) -> dict[str, Any]:
@@ -2810,6 +2887,10 @@ def create_app(
             queue = registry.subscribe(job)
             try:
                 yield _sse_frame("snapshot", job.snapshot())
+                if registry.closing:
+                    # Shutting down: a stream opened now would hold the
+                    # server open until the job ends (see begin_shutdown).
+                    return
                 if job.status != "running":
                     # The job may have reached its terminal state while the
                     # snapshot frame was being sent: drain events already
@@ -2817,7 +2898,8 @@ def create_app(
                     # duration updates) before the final `job` frame.
                     while not queue.empty():
                         event, data = queue.get_nowait()
-                        yield _sse_frame(event, data)
+                        if event != SHUTDOWN_EVENT:
+                            yield _sse_frame(event, data)
                     yield _sse_frame("job", job.progress_payload())
                     return
                 while True:
@@ -2828,6 +2910,8 @@ def create_app(
                     except TimeoutError:
                         yield ": ping\n\n"
                         continue
+                    if event == SHUTDOWN_EVENT:
+                        return
                     yield _sse_frame(event, data)
                     if event == "job" and data.get("status") != "running":
                         return
@@ -2856,9 +2940,11 @@ def create_app(
         if not output_path.is_relative_to(out_dir):
             raise HTTPException(status_code=404, detail="item result not available")
 
-        base_name = _split_output_name(output_path.name)
-        llm_path = output_path.parent / f"{base_name}.llm.md"
-        base_path = output_path.parent / f"{base_name}.md"
+        # The item's known base, not split_output_name(output): an upload
+        # named "notes.llm" writes notes.llm.md, which stripping would read
+        # as sibling "notes"'s enhanced output and serve notes.md instead.
+        base_name = item_base_name(item) or split_output_name(output_path.name)
+        base_path, llm_path = markdown_pair(output_path.parent, base_name)
         # Honor the item's selected variant rather than probing llm-first: a
         # non-LLM retry after an earlier enhance leaves a stale .llm.md on disk
         # (pruned on success, but this stays correct even if it lingers).
@@ -2889,22 +2975,15 @@ def create_app(
         # stale sibling never makes the UI offer a spurious base↔llm diff.
         if item.llm_enhanced:
             add_artifact(llm_path)
-        from markitai.constants import ASSETS_REL_PATH, SCREENSHOTS_REL_PATH
-
-        # Plain string prefix match (not glob: metacharacters in upload names
-        # like "report[2024].pdf" must stay literal), and the remainder must
-        # look like an asset index / screenshot suffix so item "a" never
-        # claims "a.txt.0001.png" belonging to sibling item "a.txt".
-        prefix = f"{base_name}."
-        for rel in (ASSETS_REL_PATH, SCREENSHOTS_REL_PATH):
-            meta_dir = out_dir / rel
-            if meta_dir.is_dir():
-                for artifact in sorted(meta_dir.iterdir()):
-                    remainder = artifact.name.removeprefix(prefix)
-                    if remainder != artifact.name and _META_ARTIFACT_SUFFIX_RE.match(
-                        remainder
-                    ):
-                        add_artifact(artifact)
+        # Same ownership rule item deletion uses (serve.artifacts): the
+        # asset prefix is the output base name, and references tie URL
+        # screenshots (named after the URL) to their item.
+        for artifact in item_asset_files(
+            out_dir,
+            base_name,
+            (base_path, llm_path) if item.llm_enhanced else (base_path,),
+        ):
+            add_artifact(artifact)
 
         return {
             "name": item.name,
@@ -2993,6 +3072,8 @@ def create_app(
                     "duration_ms": job_duration_ms(job),
                     "size_bytes": job_cached_dir_size(job),
                     "origin": job.options.get("origin") or "web",
+                    # A mixed CLI job still offers retry for its URL items
+                    "retryable": any(i.retryable for i in job.items),
                 }
                 for job in jobs
             ]
@@ -3050,12 +3131,16 @@ def create_app(
 
     @app.delete("/api/history/{job_id}", status_code=204)
     async def delete_history_job(request: Request, job_id: str) -> None:
+        registry = _state(request).registry
         job = _get_job(request, job_id)
-        if job.status == "running":
-            raise HTTPException(
-                status_code=409, detail="job is still running; retry when done"
-            )
-        await asyncio.to_thread(_state(request).registry.discard_job, job)
+        async with job.delete_lock:
+            if registry.get(job_id) is not job:
+                raise HTTPException(status_code=404, detail="job not found")
+            if job.status == "running":
+                raise HTTPException(
+                    status_code=409, detail="job is still running; retry when done"
+                )
+            await asyncio.to_thread(registry.discard_job, job)
         logger.info("[Serve] History job {} deleted", job_id)
 
     # --------------------------------------------------------------- static

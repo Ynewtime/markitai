@@ -251,6 +251,49 @@ class TestWriteImagesJson:
         assert created_files[0] == assets_dir / "images.json"
         assert created_files[0].exists()
 
+    def test_skips_failed_analysis_entries(self, tmp_path: Path):
+        """Regression: a failed analysis landed in images.json as an
+        "Image" / "Image analysis failed" pseudo entry."""
+        import json
+
+        from markitai.workflow.single import ImageAnalysisResult
+
+        assets_dir = tmp_path / ".markitai" / "assets"
+        assets_dir.mkdir(parents=True)
+        results = [
+            ImageAnalysisResult(
+                source_file="/path/to/file.pdf",
+                assets=[
+                    {
+                        "asset": str(assets_dir / "ok.png"),
+                        "alt": "Chart",
+                        "desc": "A bar chart",
+                        "text": "",
+                    },
+                    {
+                        "asset": str(assets_dir / "legacy.png"),
+                        "alt": "Image",
+                        "desc": "Image analysis failed",
+                        "text": "",
+                    },
+                    {
+                        "asset": str(assets_dir / "flagged.png"),
+                        "alt": "Image",
+                        "desc": "",
+                        "failed": True,
+                    },
+                ],
+            )
+        ]
+
+        created = write_images_json(tmp_path, results)
+
+        data = json.loads(created[0].read_text(encoding="utf-8"))
+        written = json.dumps(data)
+        assert "ok.png" in written
+        assert "legacy.png" not in written
+        assert "flagged.png" not in written
+
     def test_merges_with_existing(self, tmp_path: Path):
         """Test merging with existing images.json."""
         import json

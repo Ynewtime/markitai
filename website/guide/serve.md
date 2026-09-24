@@ -53,6 +53,7 @@ The token URL is a credential. Anyone holding it can run conversions with your L
 - **Live progress**: each item streams its status, and a notification fires when a job finishes in a background tab.
 - **Per-item actions**: retry a failed item, or LLM-enhance a finished one without reconverting the rest.
 - **Preview**: rendered Markdown with a base vs enhanced comparison, plus a print-to-PDF menu with optional header and footer.
+- **Warnings**: notices that don't fail an item but are worth acting on (pages that look scanned, hidden PDF text that may be a prompt injection, OCR that found no text, slides that couldn't be rendered, a URL screenshot that wasn't captured) show on the item's row and in full at the top of its preview. Each item gets only its own notices, and they stay with the job in history.
 - **Downloads**: single files, a per-job zip, or the whole history as one archive.
 - **Limits**: 50 items per job and 100 MB per uploaded file.
 
@@ -78,7 +79,9 @@ The settings dialog edits the same configuration as `markitai config`: discover 
 
 Finished jobs stay under `~/.markitai/serve/jobs/` for 7 days. From the history page you can reopen a job, download its outputs again, delete it, or download everything as one zip.
 
-CLI runs started with [`--record-history`](/guide/cli#record-history) show up here too, marked with a CLI badge, and behave like any other job.
+CLI runs started with [`--record-history`](/guide/cli#record-history) show up here too, marked with a CLI badge. You can open, download and delete them like any other job, and retry or LLM-enhance their URL items. File items from a CLI run can't be retried or enhanced here, because the run keeps only the outputs and not the original file; run the CLI on the file again instead.
+
+An `--llm-batch` run that stopped waiting while its provider batch was still running records those items as skipped with the reason *LLM batch still running*. Only the base Markdown is in history so far. Finish them with the `markitai --llm-batch-collect` command the run printed, instead of enhancing them here, which would pay for the same enhancement twice.
 
 ## API Overview
 
@@ -88,10 +91,10 @@ The UI runs on a small REST + SSE API that scripts can call directly:
 |----------|-------------|
 | `GET /api/capabilities` | Server version, presets, LLM and extras status |
 | `POST /api/jobs` | Create a job (multipart form: `files`, `urls` JSON array, `options` JSON) |
-| `GET /api/jobs/{job_id}` | Job status and items |
+| `GET /api/jobs/{job_id}` | Job status and items (each item carries its `warnings` list) |
 | `GET /api/jobs/{job_id}/events` | Live progress stream (SSE) |
 | `POST /api/jobs/{job_id}/items/{item_id}/retry` | Retry an item, or LLM-enhance it with `operation: "enhance"` |
-| `DELETE /api/jobs/{job_id}/items/{item_id}` | Remove an item from a job |
+| `DELETE /api/jobs/{job_id}/items/{item_id}` | Permanently remove an item with its upload, outputs, images and screenshots |
 | `GET /api/jobs/{job_id}/items/{item_id}/result` | Item result; sibling assets via `GET /api/jobs/{job_id}/files/{path}` |
 | `GET /api/jobs/{job_id}/archive` | Download the job as a zip |
 | `GET /api/history` | List history entries |

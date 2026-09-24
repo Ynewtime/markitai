@@ -66,6 +66,9 @@ class UrlCascadeResult:
     screenshot_tiles: list[Path] = field(default_factory=list)
     extra_meta: dict[str, Any] | None = None
     cache_hit: bool = False
+    #: Problems that did not fail the URL (an image whose analysis failed
+    #: and kept its original alt text).
+    warnings: list[str] = field(default_factory=list)
 
 
 async def convert_url_cascade(
@@ -131,7 +134,7 @@ async def convert_url_cascade(
     from markitai.security import atomic_write_text
     from markitai.utils.cli_helpers import url_to_filename
     from markitai.utils.errors import ConversionError
-    from markitai.utils.output import resolve_output_path
+    from markitai.utils.output import resolve_item_output_path
     from markitai.utils.paths import ensure_screenshots_dir
     from markitai.workflow.helpers import (
         add_basic_frontmatter,
@@ -155,6 +158,8 @@ async def convert_url_cascade(
             screenshot=cfg.screenshot.enabled,
             screenshot_dir=screenshot_dir,
             screenshot_config=cfg.screenshot if cfg.screenshot.enabled else None,
+            cache_ttl_seconds=cfg.cache.fetch_ttl_seconds,
+            no_cache_patterns=cfg.cache.no_cache_patterns,
         )
 
     markdown = fetch_result.content
@@ -167,7 +172,9 @@ async def convert_url_cascade(
             or not fetch_result.screenshot_path.is_file()
         ):
             raise ConversionError(f"No screenshot captured from {url}")
-    elif not markdown.strip():
+    elif not markdown.strip() and not uses_screenshot_only(cfg, fetch_result):
+        # Screenshot-only extraction reads the capture, so an empty text
+        # layer (canvas app, image-only page) is expected there.
         raise ConversionError(f"No content extracted from {url}")
 
     filename = output_name or url_to_filename(url)
@@ -183,14 +190,15 @@ async def convert_url_cascade(
         download_result = await download_url_images(
             markdown=markdown,
             output_dir=workdir,
-            base_url=url,
+            # Relative image paths resolve against the post-redirect URL
+            base_url=fetch_result.final_url or url,
             config=cfg.image,
             source_name=filename.removesuffix(".md"),
         )
         markdown = download_result.updated_markdown
         downloaded_images = download_result.downloaded_paths
 
-    output_file = resolve_output_path(workdir / filename, cfg.output.on_conflict)
+    output_file = resolve_item_output_path(workdir / filename, cfg.output.on_conflict)
     if output_file is None:
         return UrlCascadeResult(
             markdown=markdown,
@@ -299,7 +307,9 @@ async def convert_url_cascade(
                 title=title,
                 extra_meta=extra_meta,
             )
-        elif cfg.llm.pure and not cfg.llm.enabled:
+        elif cfg.llm.pure:
+            # --pure never adds frontmatter: not without LLM, and not to the
+            # keep_base copy or the LLM-failure fallback either
             base_content = fetch_result.content
         else:
             base_markdown = markdown if base_from_localized else fetch_result.content
@@ -319,6 +329,7 @@ async def convert_url_cascade(
 
     # Image analysis (alt/desc) on the written .llm.md — previously a CLI
     # only capability; the cascade runs it serially after the LLM stage.
+    warnings: list[str] = []
     if (
         llm_output_path is not None
         and llm_output_path.exists()
@@ -327,14 +338,19 @@ async def convert_url_cascade(
         and llm_error is None
     ):
         try:
-            image_cost, image_usage = await _analyze_url_images_stage(
+            image_cost, image_usage, image_failures = await _analyze_url_images_stage(
                 cfg, workdir, llm_output_path, downloaded_images, proc, url
             )
             cost_usd += image_cost
             merge_llm_usage(llm_usage, image_usage)
+            warnings.extend(image_failures)
         except Exception as e:
             logger.warning(
                 f"[URL] Image analysis failed for {url}: {format_error_message(e)}"
+            )
+            warnings.append(
+                f"image analysis failed ({format_error_message(e)}); "
+                "the original alt text was kept"
             )
 
     # The profile moves assets and rewrites their references, so it runs
@@ -361,6 +377,7 @@ async def convert_url_cascade(
         screenshot_tiles=list(fetch_result.screenshot_tiles or []),
         extra_meta=extra_meta,
         cache_hit=fetch_result.cache_hit,
+        warnings=warnings,
     )
 
 
@@ -574,12 +591,17 @@ async def _analyze_url_images_stage(
     image_paths: list[Path],
     proc: LLMProcessor,
     url: str,
-) -> tuple[float, dict[str, dict[str, Any]]]:
+) -> tuple[float, dict[str, dict[str, Any]], list[str]]:
     """Analyze downloaded images: update alt text in the .llm.md and write
     ``images.json`` when descriptions are enabled.
 
     Serial counterpart of the CLI's concurrent image-analysis branches —
     correct first, fast enough for the serve/API surfaces that reach it.
+
+    Returns:
+        (cost, usage, warnings): one warning per image whose analysis
+        failed; such an image keeps its alt text and gets no images.json
+        entry.
     """
     from datetime import UTC, datetime
 
@@ -588,6 +610,8 @@ async def _analyze_url_images_stage(
     from markitai.utils.text import image_ref_pattern, markdown_image_reference
     from markitai.workflow.helpers import (
         extract_document_context,
+        image_analysis_failed,
+        image_analysis_failure_warning,
         write_images_json,
     )
 
@@ -600,9 +624,13 @@ async def _analyze_url_images_stage(
     timestamp = datetime.now(UTC).astimezone().isoformat()
 
     asset_descriptions: list[dict[str, Any]] = []
+    failures: list[str] = []
     llm_content = llm_md.read_text(encoding="utf-8")
     for image_path, analysis in zip(image_paths, analyses):
-        if analysis is None:
+        # A failed analysis is a positional placeholder ("Image N" /
+        # "Analysis failed"), never an answer: keep the alt text
+        if image_analysis_failed(analysis):
+            failures.append(image_analysis_failure_warning(image_path.name))
             continue
         if cfg.image.desc_enabled:
             asset_descriptions.append(
@@ -639,4 +667,4 @@ async def _analyze_url_images_stage(
     cost = proc.get_context_cost(context)
     usage = proc.get_context_usage(context)
     proc.clear_context_usage(context)
-    return cost, usage
+    return cost, usage, failures

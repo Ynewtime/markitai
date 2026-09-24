@@ -31,7 +31,8 @@ import copy
 import threading
 import time
 from collections.abc import Awaitable, Callable, Iterator, Sequence
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -56,6 +57,7 @@ from markitai.llm.router import MODEL_LEVEL_ERROR_PATTERNS, POOL_EXHAUSTED_PATTE
 from markitai.llm.structured import router_structured_ladder
 from markitai.llm.types import LLMResponse
 from markitai.providers.errors import ProviderError
+from markitai.utils.errors import SelfExplanatoryError
 from markitai.utils.text import format_error_message, repair_json_string
 
 
@@ -69,6 +71,33 @@ class EmptyLLMResponseError(RuntimeError):
     """
 
 
+class LLMEnhancementDegradedError(SelfExplanatoryError, RuntimeError):
+    """Enhancement fell back to unenhanced or partially enhanced output.
+
+    Raised by the document service instead of returning a fallback result
+    (the one whose frontmatter carries ``llm_enhanced: false``), so every
+    surface fails the item the same way it does for any other LLM error:
+    the base ``.md`` is written as the fallback and the item is reported
+    failed. The best-effort result rides along for callers that still want
+    to show it.
+
+    The message is the formatted cause (``AuthenticationError: ...``), so
+    this class opts out of the class-name prefix: the cause's type is the
+    useful one.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        cleaned_markdown: str = "",
+        frontmatter: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.cleaned_markdown = cleaned_markdown
+        self.frontmatter = frontmatter
+
+
 class LLMRequestBudgetExceededError(RuntimeError):
     """A document context hit its LLM request budget (circuit breaker).
 
@@ -77,6 +106,48 @@ class LLMRequestBudgetExceededError(RuntimeError):
     any other LLM failure: their existing fallbacks keep the unenhanced
     output for the remaining work.
     """
+
+
+@dataclass
+class CacheTally:
+    """Content-cache hits and misses seen while a tally is active."""
+
+    hits: int = 0
+    misses: int = 0
+
+    def served_from_cache(self, usage: dict[str, dict[str, Any]]) -> bool:
+        """Whether every cached call hit and no request reached a model.
+
+        ``usage`` is the item's per-model usage: an uncached call (pure
+        cleaning, a language rewrite) records no miss but still spends a
+        request, so a hit alone does not mean the item cost nothing.
+        """
+        requests = sum(stats.get("requests", 0) for stats in usage.values())
+        return self.hits > 0 and self.misses == 0 and requests == 0
+
+
+# The tally of the work item currently being processed. A context variable,
+# not a processor attribute: batch items share one processor, and the tasks
+# an item spawns (asyncio.gather) inherit the item's context, so every cache
+# lookup made on its behalf lands in its own tally.
+_cache_tally: ContextVar[CacheTally | None] = ContextVar(
+    "markitai_llm_cache_tally", default=None
+)
+
+
+@contextmanager
+def track_cache_hits() -> Iterator[CacheTally]:
+    """Count the content-cache hits/misses of one work item.
+
+    Yields:
+        The tally, updated in place until the block exits.
+    """
+    tally = CacheTally()
+    token = _cache_tally.set(tally)
+    try:
+        yield tally
+    finally:
+        _cache_tally.reset(token)
 
 
 class RequestBudget:
@@ -188,6 +259,25 @@ class RequestBudget:
         with self._lock:
             return context in self._tripped
 
+    @property
+    def limit(self) -> int:
+        """Max requests per context (``<= 0`` means unlimited)."""
+        return self._limit
+
+    def remaining(self, context: str) -> int | None:
+        """Requests the context may still issue, or None when unlimited.
+
+        Lets a caller that knows its request count up front (a document
+        split into chunks) refuse before spending anything, instead of
+        tripping the breaker halfway through.
+        """
+        if not context or self._limit <= 0:
+            return None
+        with self._lock:
+            if context in self._tripped:
+                return 0
+            return max(self._limit - self._counts.get(context, 0), 0)
+
     def clear(self, context: str) -> None:
         """Reset the budget for a context (called between documents)."""
         with self._lock:
@@ -290,6 +380,26 @@ def find_non_retryable_provider_error(exc: BaseException) -> ProviderError | Non
     """Find a wrapped non-retryable ProviderError inside nested exceptions."""
     for nested in _iter_exception_chain(exc):
         if isinstance(nested, ProviderError) and not nested.retryable:
+            return nested
+    return None
+
+
+def find_fatal_document_error(exc: BaseException) -> BaseException | None:
+    """Find an error that every further call for the same document repeats.
+
+    A non-retryable provider error (see
+    :func:`find_non_retryable_provider_error`) or a rejected credential
+    (litellm ``AuthenticationError`` / ``PermissionDeniedError``): the key
+    or the model is the same for every page batch of the document, so a
+    caller splitting it into several calls stops sending the rest.
+    """
+    from litellm.exceptions import AuthenticationError, PermissionDeniedError
+
+    provider_error = find_non_retryable_provider_error(exc)
+    if provider_error is not None:
+        return provider_error
+    for nested in _iter_exception_chain(exc):
+        if isinstance(nested, (AuthenticationError, PermissionDeniedError)):
             return nested
     return None
 
@@ -557,10 +667,16 @@ class LLMEngine:
     def record_cache_hit(self) -> None:
         """Count one content-cache hit (for call-site managed caches)."""
         self._cache_hits += 1
+        tally = _cache_tally.get()
+        if tally is not None:
+            tally.hits += 1
 
     def record_cache_miss(self) -> None:
         """Count one content-cache miss (for call-site managed caches)."""
         self._cache_misses += 1
+        tally = _cache_tally.get()
+        if tally is not None:
+            tally.misses += 1
 
     def reset_cache_counters(self) -> None:
         """Reset the hit/miss counters (used by cache clearing)."""
@@ -650,10 +766,10 @@ class LLMEngine:
         if call.cache_key is not None:
             cached_result = self.try_cached(call)
             if cached_result is not None:
-                self._cache_hits += 1
+                self.record_cache_hit()
                 return cached_result, None
 
-            self._cache_misses += 1
+            self.record_cache_miss()
 
         # 2. Cache miss: one structured call occupies one concurrency slot
         # for its whole duration (transport retries included), matching the

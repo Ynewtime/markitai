@@ -112,6 +112,8 @@ function sessionItem(jobId: string, itemId: string, name: string): SessionItem {
     operation: "convert",
     skipped: false,
     skipReason: null,
+    retryable: true,
+    warnings: [],
     sizeBytes: 1,
     startedAt: null,
   };
@@ -151,6 +153,8 @@ function itemPayload(
     operation: "convert",
     skipped: false,
     skip_reason: null,
+    retryable: true,
+    warnings: [],
     ...overrides,
   };
 }
@@ -248,6 +252,8 @@ describe("useJobs retry identity", () => {
               operation: "convert",
               skipped: false,
               skip_reason: null,
+              retryable: true,
+              warnings: [],
             },
           ],
         },

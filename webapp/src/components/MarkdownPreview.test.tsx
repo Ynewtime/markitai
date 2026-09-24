@@ -30,6 +30,8 @@ const item: SessionItem = {
   operation: "convert",
   skipped: false,
   skipReason: null,
+  retryable: true,
+  warnings: [],
   sizeBytes: 8,
   startedAt: null,
 };

@@ -381,3 +381,109 @@ Second page content
         assert "<!-- Page number: 2 -->" in restored
         assert "First page content" in restored
         assert "Second page content" in restored
+
+
+class TestSplitMarkdownChunks:
+    """Chunking of documents longer than one LLM call."""
+
+    def test_short_text_is_one_chunk(self) -> None:
+        from markitai.llm.content import split_markdown_chunks
+
+        assert split_markdown_chunks("# T\n\nBody.", 100) == ["# T\n\nBody."]
+
+    def test_splits_only_between_blocks_and_keeps_everything(self) -> None:
+        from markitai.llm.content import split_markdown_chunks
+
+        paragraphs = [f"Paragraph {i}: " + "word " * 20 for i in range(50)]
+        text = "\n\n".join(paragraphs)
+
+        chunks = split_markdown_chunks(text, 1000)
+
+        assert len(chunks) > 1
+        assert all(len(chunk) <= 1000 for chunk in chunks)
+        # Nothing dropped, nothing duplicated, order kept
+        assert "\n\n".join(chunks) == text
+        # Every chunk starts at a paragraph boundary
+        assert all(chunk.startswith("Paragraph ") for chunk in chunks)
+
+    def test_fenced_code_block_is_not_cut_at_its_blank_lines(self) -> None:
+        from markitai.llm.content import split_markdown_chunks
+
+        code = "```python\nline_a = 1\n\nline_b = 2\n```"
+        text = "intro " * 30 + "\n\n" + code + "\n\n" + "outro " * 30
+
+        chunks = split_markdown_chunks(text, 200)
+
+        assert any(code in chunk for chunk in chunks)
+
+    def test_oversized_block_breaks_at_lines(self) -> None:
+        from markitai.llm.content import split_markdown_chunks
+
+        table = "\n".join(f"| row {i} | value {i} |" for i in range(100))
+
+        chunks = split_markdown_chunks(table, 300)
+
+        assert all(len(chunk) <= 300 for chunk in chunks)
+        assert "\n".join(chunks) == table
+
+    def test_single_overlong_line_is_cut_at_the_limit(self) -> None:
+        from markitai.llm.content import split_markdown_chunks
+
+        text = "x" * 250
+
+        chunks = split_markdown_chunks(text, 100)
+
+        assert chunks == ["x" * 100, "x" * 100, "x" * 50]
+
+
+class TestImplausibleCleaningReason:
+    """An answer that replaced the document instead of cleaning it."""
+
+    SOURCE = (
+        "# Quarterly report\n\n"
+        + (
+            "Revenue grew in every region this quarter, led by the northern "
+            "division, while operating costs stayed flat. "
+        )
+        * 20
+    )
+
+    def test_refusal_is_rejected(self) -> None:
+        from markitai.llm.content import implausible_cleaning_reason
+
+        reason = implausible_cleaning_reason(
+            self.SOURCE, "I'm sorry, but I can't help with that request."
+        )
+
+        assert reason is not None
+        assert "length" in reason
+
+    def test_unrelated_answer_of_similar_length_is_rejected(self) -> None:
+        from markitai.llm.content import implausible_cleaning_reason
+
+        unrelated = "0123456789 " * (len(self.SOURCE) // 11)
+
+        reason = implausible_cleaning_reason(self.SOURCE, unrelated)
+
+        assert reason is not None
+        assert "character pairs" in reason
+
+    def test_real_cleanup_passes(self) -> None:
+        from markitai.llm.content import implausible_cleaning_reason
+
+        cleaned = self.SOURCE.replace("# Quarterly report", "# Quarterly Report")
+
+        assert implausible_cleaning_reason(self.SOURCE, cleaned) is None
+
+    def test_short_input_is_exempt(self) -> None:
+        from markitai.llm.content import implausible_cleaning_reason
+
+        assert implausible_cleaning_reason("# Hi\n\nShort.", "Sorry.") is None
+
+    def test_cjk_cleanup_passes(self) -> None:
+        from markitai.llm.content import implausible_cleaning_reason
+
+        source = "本季度各地区收入均有增长，北方事业部领涨，运营成本保持平稳。" * 10
+        cleaned = source.replace("。", "。\n")
+
+        assert implausible_cleaning_reason(source, cleaned) is None

@@ -14,8 +14,10 @@ def _isolated_markitai_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
     The suite-wide fixture redirects ``~/.markitai`` to an empty temp home;
     this additionally pins ``MARKITAI_CONFIG`` to a minimal file (so
-    ``aconvert(config=None)`` never picks up defaults we don't control) and
-    scrubs ``MODEL``, which would defeat the "no model configured" tests.
+    ``aconvert(config=None)`` never picks up defaults we don't control),
+    scrubs ``MODEL`` and stubs provider auto-detection to find nothing: a
+    logged-in Claude/Copilot CLI on the developer's machine would otherwise
+    defeat the "no model configured" tests.
     """
     config_path = tmp_path / "markitai-config.json"
     config_path.write_text(
@@ -24,6 +26,7 @@ def _isolated_markitai_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     )
     monkeypatch.setenv("MARKITAI_CONFIG", str(config_path))
     monkeypatch.delenv("MODEL", raising=False)
+    monkeypatch.setattr("markitai.providers.detect.detect_all_providers", lambda: [])
 
     from markitai.mcp import server
 

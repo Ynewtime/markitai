@@ -18,6 +18,9 @@ const mocks = vi.hoisted(() => ({
   restoreFailed: null as null | string[],
   retryRestore: vi.fn(),
   activeCount: 0,
+  retryArchived: vi.fn(),
+  // Per-test overrides of the single archived history entry.
+  archivedEntry: null as null | Record<string, unknown>,
 }));
 const MAX_JOB_ITEMS = mocks.maxJobItems;
 
@@ -39,6 +42,8 @@ function failedRow(itemId: string): Record<string, unknown> {
     operation: "convert",
     skipped: false,
     skipReason: null,
+    retryable: true,
+    warnings: [],
     sizeBytes: null,
     startedAt: null,
   };
@@ -60,8 +65,8 @@ function archivedSnapshot() {
         name: "archived.pdf",
         kind: "file",
         status: "done",
-        error: null,
-        output: "archived.md",
+        error: null as string | null,
+        output: "archived.md" as string | null,
         output_name: null,
         duration_ms: 100,
         finished_at: "2026-07-12T10:01:00Z",
@@ -70,6 +75,8 @@ function archivedSnapshot() {
         operation: "convert",
         skipped: false,
         skip_reason: null,
+        retryable: true,
+        warnings: [],
       },
     ],
   };
@@ -109,6 +116,8 @@ vi.mock("./hooks/useArchivedJobs", () => ({
         duration_ms: 60_000,
         size_bytes: 100,
         origin: "web",
+        retryable: true,
+        ...mocks.archivedEntry,
       },
     ],
     error: null,
@@ -140,6 +149,8 @@ vi.mock("./hooks/useJobs", () => ({
         operation: "convert",
         skipped: false,
         skipReason: null,
+        retryable: true,
+        warnings: [],
         sizeBytes: 8,
         startedAt: null,
       },
@@ -167,7 +178,7 @@ vi.mock("./hooks/useJobs", () => ({
     retry: mocks.retry,
     enhance: vi.fn().mockResolvedValue(null),
     enhanceArchived: mocks.enhanceArchived,
-    retryArchived: vi.fn().mockResolvedValue(null),
+    retryArchived: mocks.retryArchived,
     deleteItem: vi.fn().mockResolvedValue(null),
     submitError: mocks.submitError,
     clear: vi.fn(),
@@ -199,6 +210,9 @@ describe("App workspace", () => {
     mocks.retryRestore.mockReset();
     mocks.retryRestore.mockResolvedValue(0);
     mocks.activeCount = 0;
+    mocks.retryArchived.mockReset();
+    mocks.retryArchived.mockResolvedValue(null);
+    mocks.archivedEntry = null;
   });
 
   it("names an unreachable server instead of printing HTTP 0", async () => {
@@ -345,6 +359,106 @@ describe("App workspace", () => {
     fireEvent.click(retryAll);
 
     await waitFor(() => expect(mocks.retry).toHaveBeenCalledTimes(2));
+  });
+
+  it("leaves rows the server cannot rerun out of retry-all", async () => {
+    // A CLI-recorded file keeps no original: retrying it is a sure 409 that
+    // used to be sent anyway and then counted as "failed again".
+    window.history.replaceState(null, "", "/jobs");
+    mocks.failedItems = [
+      failedRow("item-a"),
+      { ...failedRow("item-b"), retryable: false },
+    ];
+    render(<App />);
+
+    const retryAll = await screen.findByRole("button", {
+      name: dicts.en.retryAllFailed(1),
+    });
+    fireEvent.click(retryAll);
+
+    await waitFor(() =>
+      expect(document.querySelector(".sr-only[role='status']")).toHaveTextContent(
+        dicts.en.announceRetryAll(1),
+      ),
+    );
+    expect(mocks.retry).toHaveBeenCalledTimes(1);
+    expect(mocks.retry.mock.calls[0]![0]).toMatchObject({ itemId: "item-a" });
+  });
+
+  it("hides retry-all when only non-retryable rows failed", async () => {
+    window.history.replaceState(null, "", "/jobs");
+    mocks.failedItems = [{ ...failedRow("item-a"), retryable: false }];
+    render(<App />);
+
+    await screen.findByRole("listbox");
+    expect(
+      screen.queryByRole("button", { name: /Retry all failed/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("retries the retryable failed item of a mixed archived CLI job", async () => {
+    window.history.replaceState(null, "", "/jobs");
+    mocks.archivedEntry = { done: 0, failed: 1, origin: "cli" };
+    const snapshot = archivedSnapshot();
+    snapshot.options = { ...snapshot.options, origin: "cli" } as typeof snapshot.options;
+    snapshot.items = [
+      {
+        ...snapshot.items[0]!,
+        item_id: "i1",
+        name: "report.pdf",
+        status: "error",
+        error: "boom",
+        output: null,
+        retryable: false,
+      },
+      {
+        ...snapshot.items[0]!,
+        item_id: "i2",
+        name: "https://example.com/page",
+        kind: "url",
+        status: "error",
+        error: "fetch boom",
+        output: null,
+        retryable: true,
+      },
+    ];
+    mocks.openJob.mockResolvedValue(snapshot);
+    render(<App />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: dicts.en.retryAria("archived.pdf") }),
+    );
+
+    await waitFor(() => expect(mocks.retryArchived).toHaveBeenCalledOnce());
+    expect(mocks.retryArchived.mock.calls[0]![1]).toBe("i2");
+  });
+
+  it("enhances the retryable item of a mixed archived CLI job", async () => {
+    window.history.replaceState(null, "", "/jobs");
+    const snapshot = archivedSnapshot();
+    snapshot.items = [
+      { ...snapshot.items[0]!, item_id: "i1", name: "report.pdf", retryable: false },
+      {
+        ...snapshot.items[0]!,
+        item_id: "i2",
+        name: "https://example.com/page",
+        kind: "url",
+        output: "page.md",
+        retryable: true,
+      },
+    ];
+    mocks.openJob.mockResolvedValue(snapshot);
+    render(<App />);
+
+    await screen.findByRole("listbox");
+    fireEvent.click(await screen.findByRole("button", { name: "Options" }));
+    fireEvent.click(await screen.findByRole("switch", { name: "LLM Enhancement" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Enhance archived.pdf with LLM" }),
+    );
+
+    await waitFor(() => expect(mocks.enhanceArchived).toHaveBeenCalledOnce());
+    expect(mocks.enhanceArchived.mock.calls[0]![1]).toBe("i2");
   });
 
   it("shows a failed session restore under the home composer too", async () => {

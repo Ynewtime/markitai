@@ -30,7 +30,6 @@ from markitai.converter.base import (
 from markitai.security import (
     atomic_write_text,
     check_symlink_safety,
-    escape_glob_pattern,
     validate_file_size,
 )
 from markitai.utils.frontmatter import split_frontmatter
@@ -39,6 +38,7 @@ from markitai.utils.text import format_error_message, markdown_image_reference
 from markitai.workflow.helpers import (
     add_basic_frontmatter,
     append_reference_image_comments,
+    is_failed_image_entry,
     merge_llm_usage,
 )
 
@@ -76,6 +76,9 @@ class ConversionContext:
     conversion_result: ConvertResult | None = None
     output_file: Path | None = None
     llm_output_file: Path | None = None  # set only by a successful LLM write
+    # Whether this run wrote the base .md: a file already on disk may be a
+    # previous run's output (on_conflict=overwrite), not this conversion's
+    base_written: bool = False
     embedded_images_count: int = 0
     screenshots_count: int = 0
 
@@ -83,6 +86,9 @@ class ConversionContext:
     llm_cost: float = 0.0
     llm_usage: dict[str, dict[str, Any]] = field(default_factory=dict)
     image_analysis: ImageAnalysisResult | None = None
+    # Problems that did not fail the item (an image whose analysis failed
+    # and kept its alt text); surfaced as the item's result warnings
+    warnings: list[str] = field(default_factory=list)
 
     # Additional tracking (for caller use)
     duration: float = 0.0
@@ -220,18 +226,40 @@ async def convert_document(ctx: ConversionContext) -> ConversionStepResult:
         # - Legacy formats (.ppt, .doc) that need an Office app or LibreOffice
         #   (.xls converts in-process via xlrd and is not heavy)
         # - PDF/PPTX/DOCX with screenshots enabled (page rendering)
-        # - PDF with OCR+LLM (renders page images for Vision analysis)
+        # - PDF with OCR, local or +LLM (renders every page; local RapidOCR
+        #   holds a full-page bitmap per worker, several GB for a long scan)
+        # - Images with local OCR (RapidOCR inference on the full bitmap;
+        #   with --llm the vision model reads them instead, unless
+        #   MARKITAI_NO_VLM_OCR sends them back to RapidOCR)
         # - PPTX with OCR (renders slide images)
+        from markitai.vision_consent import vlm_ocr_allowed
+
         ext = ctx.input_path.suffix.lower()
         legacy_formats = {".ppt", ".doc"}
         heavy_extensions = {".ppt", ".pptx", ".pdf", ".doc", ".docx"}
+        ocr_image_extensions = {
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".webp",
+            ".gif",
+            ".bmp",
+            ".tif",
+            ".tiff",
+            ".svg",
+            ".heic",
+            ".heif",
+            ".avif",
+        }
         use_ocr = ctx.config.ocr.enabled
         use_llm = ctx.config.llm.enabled
+        local_image_ocr = use_ocr and (not use_llm or not vlm_ocr_allowed())
 
         is_heavy = (
             ext in legacy_formats
             or (ext in heavy_extensions and ctx.config.screenshot.enabled)
-            or (ext == ".pdf" and use_ocr and use_llm)
+            or (ext == ".pdf" and use_ocr)
+            or (ext in ocr_image_extensions and local_image_ocr)
             or (ext == ".pptx" and use_ocr)
         )
 
@@ -287,7 +315,15 @@ def resolve_output_file(ctx: ConversionContext) -> ConversionStepResult:
 
     Output naming appends ``.md`` to the input filename (``sample.pdf`` ->
     ``sample.pdf.md``); ``ctx.output_name`` overrides it (explicit ``-o``
-    file targets, URL entries with custom names).
+    file targets, URL entries with custom names). Inside a batch the name
+    is claimed from the batch's reservation table (see
+    ``utils.output.output_claim_scope``), so no other item of the batch can
+    pick it while this one converts.
+
+    Once the name is known, the converter is told the asset prefix derived
+    from it (see :func:`asset_base_name`), so a renamed ``report.pdf.v2.md``
+    extracts ``report.pdf.v2-…`` images instead of overwriting the ones
+    ``report.pdf.md`` still references.
 
     Args:
         ctx: Conversion context
@@ -295,7 +331,7 @@ def resolve_output_file(ctx: ConversionContext) -> ConversionStepResult:
     Returns:
         ConversionStepResult - may have skip_reason if file exists
     """
-    from markitai.utils.output import resolve_output_path
+    from markitai.utils.output import resolve_item_output_path
     from markitai.utils.paths import derive_output_name
 
     output_name = ctx.output_name
@@ -303,7 +339,7 @@ def resolve_output_file(ctx: ConversionContext) -> ConversionStepResult:
         output_name = derive_output_name(ctx.input_path.name)
 
     base_output_file = ctx.output_dir / output_name
-    ctx.output_file = resolve_output_path(
+    ctx.output_file = resolve_item_output_path(
         base_output_file, ctx.config.output.on_conflict
     )
 
@@ -311,7 +347,26 @@ def resolve_output_file(ctx: ConversionContext) -> ConversionStepResult:
         logger.debug(f"[SKIP] Output exists: {base_output_file}")
         return ConversionStepResult(success=True, skip_reason="exists")
 
+    if ctx.converter is not None:
+        ctx.converter.asset_prefix = asset_base_name(ctx)
+
     return ConversionStepResult(success=True)
+
+
+def asset_base_name(ctx: ConversionContext) -> str:
+    """Prefix for the asset files this conversion writes.
+
+    Derived from the resolved output name (``report.pdf.v2.md`` ->
+    ``report.pdf.v2``), not the input name: assets live in one shared
+    ``.markitai/assets/`` directory, so an input-named prefix let a renamed
+    re-run overwrite images an older output still references. Before the
+    output is resolved, the input filename is used.
+    """
+    from markitai.utils.output import split_markdown_name
+
+    if ctx.output_file is None:
+        return ctx.input_path.name
+    return split_markdown_name(ctx.output_file.name)[0]
 
 
 async def process_embedded_images(ctx: ConversionContext) -> ConversionStepResult:
@@ -327,7 +382,12 @@ async def process_embedded_images(ctx: ConversionContext) -> ConversionStepResul
         return ConversionStepResult(success=False, error="No conversion result")
 
     conversion_result = ctx.conversion_result
-    ctx.screenshots_count = len(conversion_result.metadata.get("page_images", []))
+    # Rendered pages/slides are screenshots, never embedded images. A path
+    # that must not expose page_images (the local-OCR slide render) reports
+    # its count as screenshot_count instead.
+    ctx.screenshots_count = len(
+        conversion_result.metadata.get("page_images", [])
+    ) or int(conversion_result.metadata.get("screenshot_count", 0))
     ctx.embedded_images_count = len(conversion_result.images)
     if "data:image" not in conversion_result.markdown:
         return ConversionStepResult(success=True)
@@ -354,14 +414,14 @@ async def process_embedded_images(ctx: ConversionContext) -> ConversionStepResul
             image_result = await image_processor.process_and_save_multiprocess(
                 base64_images,
                 output_dir=ctx.output_dir,
-                base_name=ctx.input_path.name,
+                base_name=asset_base_name(ctx),
             )
         else:
             image_result = await asyncio.to_thread(
                 lambda: image_processor.process_and_save(
                     base64_images,
                     output_dir=ctx.output_dir,
-                    base_name=ctx.input_path.name,
+                    base_name=asset_base_name(ctx),
                 )
             )
 
@@ -390,12 +450,34 @@ async def process_embedded_images(ctx: ConversionContext) -> ConversionStepResul
     return ConversionStepResult(success=True)
 
 
+def _base_markdown_content(ctx: ConversionContext) -> str:
+    """The base ``.md`` content: raw in pure mode, with frontmatter otherwise.
+
+    ``--pure`` means "no frontmatter" for every base file markitai writes —
+    with or without LLM, the ``--keep-base`` copy and the LLM-failure
+    fallback alike.
+    """
+    assert ctx.conversion_result is not None
+    base_markdown = append_reference_image_comments(
+        ctx.conversion_result.markdown,
+        ctx.conversion_result.metadata.get("reference_images"),
+    )
+    if ctx.config.llm.pure:
+        return base_markdown
+    title = ctx.conversion_result.metadata.get("title")
+    return add_basic_frontmatter(
+        base_markdown,
+        ctx.input_path.name,
+        title=title if isinstance(title, str) else None,
+    )
+
+
 def write_base_markdown(ctx: ConversionContext) -> ConversionStepResult:
     """Write base markdown file with basic frontmatter.
 
     Decision tree:
     1. LLM enabled without --keep-base: skip writing (in-memory only)
-    2. Pure mode without LLM: write raw markdown without frontmatter
+    2. Pure mode (with or without LLM): write raw markdown without frontmatter
     3. Default: write with frontmatter
 
     Args:
@@ -417,28 +499,8 @@ def write_base_markdown(ctx: ConversionContext) -> ConversionStepResult:
         )
         return ConversionStepResult(success=True)
 
-    # Pure mode without LLM: write raw markdown without frontmatter
-    if ctx.config.llm.pure and not ctx.config.llm.enabled:
-        raw_markdown = append_reference_image_comments(
-            ctx.conversion_result.markdown,
-            ctx.conversion_result.metadata.get("reference_images"),
-        )
-        atomic_write_text(ctx.output_file, raw_markdown)
-        logger.debug(f"[Core] Written raw output (pure mode): {ctx.output_file}")
-        return ConversionStepResult(success=True)
-
-    # Default: write with frontmatter
-    title = ctx.conversion_result.metadata.get("title")
-    base_markdown = append_reference_image_comments(
-        ctx.conversion_result.markdown,
-        ctx.conversion_result.metadata.get("reference_images"),
-    )
-    base_md_content = add_basic_frontmatter(
-        base_markdown,
-        ctx.input_path.name,
-        title=title if isinstance(title, str) else None,
-    )
-    atomic_write_text(ctx.output_file, base_md_content)
+    atomic_write_text(ctx.output_file, _base_markdown_content(ctx))
+    ctx.base_written = True
     logger.debug(f"Written output: {ctx.output_file}")
 
     return ConversionStepResult(success=True)
@@ -450,27 +512,34 @@ def _write_base_md_fallback(ctx: ConversionContext) -> None:
     Called when LLM mode is active but LLM processing fails. Ensures the user
     gets at least the base conversion result instead of nothing.
 
+    The base is written unless this run already wrote it (``--keep-base``):
+    a file merely present on disk may be a previous run's output that
+    ``on_conflict=overwrite`` is replacing, and keeping it would hand the
+    user stale content next to a failed item. Under ``overwrite`` the
+    entry's own ``.llm.md`` goes too — the failed run produced none, so a
+    leftover one is the previous run's. Under ``rename`` the resolved name
+    is fresh, so a same-named ``.llm.md`` is another output's and stays.
+
     Args:
         ctx: Conversion context
     """
     if ctx.conversion_result is None or ctx.output_file is None:
         return
-    if not ctx.output_file.exists():  # may already exist under --keep-base
-        title = ctx.conversion_result.metadata.get("title")
-        base_markdown = append_reference_image_comments(
-            ctx.conversion_result.markdown,
-            ctx.conversion_result.metadata.get("reference_images"),
-        )
-        base_md_content = add_basic_frontmatter(
-            base_markdown,
-            ctx.input_path.name,
-            title=title if isinstance(title, str) else None,
-        )
-        atomic_write_text(ctx.output_file, base_md_content)
+    if not ctx.base_written:
+        atomic_write_text(ctx.output_file, _base_markdown_content(ctx))
+        ctx.base_written = True
         logger.warning(
             f"[Core] LLM processing failed, wrote base .md as fallback: "
             f"{ctx.output_file}"
         )
+    if ctx.config.output.on_conflict == "overwrite" and ctx.llm_output_file is None:
+        stale_llm_output = ctx.output_file.with_suffix(".llm.md")
+        try:
+            stale_llm_output.unlink(missing_ok=True)
+        except OSError as e:
+            logger.warning(f"[Core] Could not remove stale {stale_llm_output}: {e}")
+        else:
+            logger.debug(f"[Core] Removed stale LLM output: {stale_llm_output}")
 
     # Every failure path returns before the pipeline's profile step, so
     # without this the one document whose LLM call failed keeps the default
@@ -488,8 +557,10 @@ def get_saved_images(ctx: ConversionContext) -> list[Path]:
     ``reference_images`` metadata): refs are written by the converter, so
     they always match on-disk names even when the extractor sanitizes the
     source filename (pymupdf4llm rewrites spaces/parentheses, so a prefix
-    glob on the input name would match nothing). Falls back to the legacy
-    input-name prefix glob when the markdown references no assets.
+    glob on the input name would match nothing). Falls back to the assets
+    named after this output when the markdown references none: exactly the
+    names markitai's converters write (see :func:`_own_asset_pattern`), so
+    ``a.pdf`` never claims a renamed sibling's ``a.pdf.v2-0001-01.jpg``.
 
     Args:
         ctx: Conversion context
@@ -532,9 +603,31 @@ def get_saved_images(ctx: ConversionContext) -> list[Path]:
                 f"{assets_dir}"
             )
 
-    escaped_name = escape_glob_pattern(ctx.input_path.name)
-    saved_images = list(assets_dir.glob(f"{escaped_name}*"))
-    return [p for p in saved_images if p.suffix.lower() in IMAGE_EXTENSIONS]
+    prefix = asset_base_name(ctx)
+    pattern = _own_asset_pattern(prefix)
+    try:
+        candidates = sorted(assets_dir.iterdir())
+    except OSError:
+        return []
+    return [
+        p
+        for p in candidates
+        if (p.name == prefix or pattern.match(p.name))
+        and p.suffix.lower() in IMAGE_EXTENSIONS
+        and p.is_file()
+    ]
+
+
+def _own_asset_pattern(prefix: str) -> re.Pattern[str]:
+    """Numbered asset names one output with this *prefix* writes.
+
+    ``<prefix>.0001.<ext>`` (embedded Office/EPUB images),
+    ``<prefix>-0001-01.<ext>`` (PDF images) and ``<prefix>-0001.<ext>``
+    (PDF images named by position); an image's own copy is found through
+    ``asset_path`` or as the bare prefix. A plain prefix glob also matched
+    every renamed sibling output (``a.pdf`` -> ``a.pdf.v2-0001-01.jpg``).
+    """
+    return re.compile(rf"^{re.escape(prefix)}(?:\.\d+|-\d+-\d+|-\d+)\.[A-Za-z0-9]+$")
 
 
 def apply_alt_text_updates(
@@ -545,6 +638,10 @@ def apply_alt_text_updates(
 
     This is called after document processing completes to update alt text
     in the .llm.md file with results from parallel image analysis.
+
+    Entries that record a failed analysis (see ``is_failed_image_entry``)
+    are skipped: their placeholder caption must not replace the author's
+    alt text.
 
     Args:
         llm_file: Path to the .llm.md file
@@ -562,7 +659,9 @@ def apply_alt_text_updates(
         replacements = {
             Path(asset.get("asset", "")).name: asset["alt"]
             for asset in image_analysis.assets
-            if asset.get("alt") and Path(asset.get("asset", "")).name
+            if asset.get("alt")
+            and Path(asset.get("asset", "")).name
+            and not is_failed_image_entry(asset)
         }
         pattern = re.compile(
             r"!\[(?:[^\]\\]|\\.)*\]\((?P<markdown>[^)]+)\)"
@@ -629,9 +728,13 @@ def stabilize_written_llm_output(
     from markitai.workflow.helpers import maybe_stabilize_markdown
     from markitai.workflow.single import _read_markdown_body
 
-    baseline_markdown = _read_markdown_body(
-        ctx.output_file,
-        ctx.conversion_result.markdown,
+    # Only a base written by this run is a baseline: under
+    # on_conflict=overwrite without --keep-base the file on disk is the
+    # previous run's output
+    baseline_markdown = (
+        _read_markdown_body(ctx.output_file, ctx.conversion_result.markdown)
+        if ctx.base_written
+        else ctx.conversion_result.markdown
     )
     llm_content = llm_output.read_text(encoding="utf-8")
     frontmatter, llm_body = split_frontmatter(llm_content)
@@ -734,15 +837,21 @@ async def process_image_with_vision_pure(
     if processor is None:
         processor = create_llm_processor(ctx.config)
 
+    # Keyed by the full path, not the basename: same-named images in one
+    # batch share the processor, and a shared key would pool their request
+    # budgets and usage (same scheme as SingleFileWorkflow.analyze_images)
+    context = f"{ctx.input_path.resolve()}:images"
     try:
-        analysis = await processor.analyze_image(
-            image_path, context=ctx.input_path.name
-        )
+        analysis = await processor.analyze_image(image_path, context=context)
+        ctx.llm_cost += processor.get_context_cost(context)
+        merge_llm_usage(ctx.llm_usage, processor.get_context_usage(context))
     except Exception as e:
         return ConversionStepResult(
             success=False,
             error=f"Vision analysis failed: {format_error_message(e)}",
         )
+    finally:
+        processor.clear_context_usage(context)
 
     # Format output: # {filename}\n\n{description}\n\n{extracted_text}
     sections = [f"# {ctx.input_path.stem}\n"]
@@ -760,10 +869,6 @@ async def process_image_with_vision_pure(
     atomic_write_text(llm_output, content)
     ctx.llm_output_file = llm_output
     logger.info(f"[Core] Written pure Vision output: {llm_output}")
-
-    # Track cost if available
-    if analysis.llm_usage:
-        merge_llm_usage(ctx.llm_usage, analysis.llm_usage)
 
     return ConversionStepResult(success=True)
 
@@ -930,6 +1035,7 @@ async def process_with_standard_llm(
         )
         ctx.llm_cost += image_cost
         merge_llm_usage(ctx.llm_usage, image_usage)
+        _record_image_warnings(ctx)
     else:
         # Standard LLM processing
         logger.info(f"[LLM] {ctx.input_path.name}: Starting standard LLM processing")
@@ -985,10 +1091,15 @@ async def process_with_standard_llm(
                     f"Image analysis failed (continuing without alt text): {img_result}"
                 )
                 ctx.image_analysis = None
+                ctx.warnings.append(
+                    f"image analysis failed ({format_error_message(img_result)}); "
+                    "the original alt text was kept"
+                )
             else:
                 _, image_cost, image_usage, ctx.image_analysis = img_result
                 ctx.llm_cost += image_cost
                 merge_llm_usage(ctx.llm_usage, image_usage)
+                _record_image_warnings(ctx)
 
             # Apply alt text updates to .llm.md after document processing completes
             # This ensures no race condition - .llm.md is guaranteed to exist
@@ -1024,7 +1135,15 @@ async def process_with_standard_llm(
             llm_output = ctx.output_file.with_suffix(".llm.md")
             apply_alt_text_updates(llm_output, ctx.image_analysis)
 
-    ctx.llm_output_file = ctx.output_file.with_suffix(".llm.md")
+    # Success means the enhanced file is on disk: a branch that wrote
+    # nothing is a failed enhancement, not a completed one
+    llm_output = ctx.output_file.with_suffix(".llm.md")
+    if not llm_output.is_file():
+        return ConversionStepResult(
+            success=False,
+            error=f"LLM enhancement produced no output for {ctx.input_path.name}",
+        )
+    ctx.llm_output_file = llm_output
     return ConversionStepResult(success=True)
 
 
@@ -1088,6 +1207,118 @@ async def analyze_embedded_images(ctx: ConversionContext) -> ConversionStepResul
     )
     ctx.llm_cost += image_cost
     merge_llm_usage(ctx.llm_usage, image_usage)
+    _record_image_warnings(ctx)
+
+    return ConversionStepResult(success=True)
+
+
+def _record_image_warnings(ctx: ConversionContext) -> None:
+    """Copy the images whose analysis failed into the item's warnings."""
+    if ctx.image_analysis is not None:
+        ctx.warnings.extend(ctx.image_analysis.warnings)
+
+
+async def run_llm_enhancement(ctx: ConversionContext) -> ConversionStepResult:
+    """Run the LLM step of the pipeline (pure, vision or standard branch).
+
+    Every failure — an exception, a failed step, or an enhancement that
+    degraded to unenhanced output (``LLMEnhancementDegradedError``) — writes
+    the base ``.md`` as the fallback and returns a failed result, so the
+    caller reports the file failed instead of passing base output off as
+    enhanced.
+
+    Args:
+        ctx: Conversion context (LLM enabled, conversion result set)
+
+    Returns:
+        ConversionStepResult indicating success or failure
+    """
+    assert ctx.conversion_result is not None
+    # Ensure shared processor exists for all LLM operations
+    # This is critical for:
+    # 1. Sharing semaphore (concurrency control)
+    # 2. Sharing Router instances (avoid duplicate creation)
+    # 3. Sharing cache connections
+    if ctx.shared_processor is None:
+        from markitai.workflow.helpers import create_llm_processor
+
+        ctx.shared_processor = create_llm_processor(ctx.config)
+
+    if ctx.config.llm.pure and not ctx.config.screenshot.screenshot_only:
+        # Pure mode: --screenshot-only takes precedence (mutually exclusive)
+        from markitai.converter.base import IMAGE_ONLY_FORMATS
+
+        if ctx.detected_format in IMAGE_ONLY_FORMATS:
+            # Image input: use Vision model to analyze the actual image
+            result = await process_image_with_vision_pure(ctx)
+        else:
+            # Non-image: raw MD → LLM text cleaning → .llm.md
+            result = await process_with_pure_llm(ctx)
+        if not result.success:
+            _write_base_md_fallback(ctx)
+            return result
+    else:
+        page_images = ctx.conversion_result.metadata.get("page_images", [])
+        has_page_images = len(page_images) > 0
+
+        if has_page_images:
+            # Vision mode with screenshots — run sequentially to avoid race
+            # condition. process_with_vision_llm writes ctx.conversion_result.markdown,
+            # and analyze_embedded_images reads it, so embed must run after vision.
+            try:
+                vision_result: ConversionStepResult = await process_with_vision_llm(ctx)
+            except Exception as e:
+                _write_base_md_fallback(ctx)
+                return ConversionStepResult(
+                    success=False,
+                    error=f"Vision LLM failed: {format_error_message(e)}",
+                )
+            if not vision_result.success:
+                _write_base_md_fallback(ctx)
+                return vision_result
+
+            # Embedded image analysis (non-critical, log warning on failure)
+            try:
+                embed_result: ConversionStepResult = await analyze_embedded_images(ctx)
+                if not embed_result.success:
+                    logger.warning(
+                        f"Embedded image analysis failed: {embed_result.error}"
+                    )
+                    ctx.warnings.append(
+                        f"image analysis failed ({embed_result.error}); "
+                        "the original alt text was kept"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"Embedded image analysis failed: {format_error_message(e)}"
+                )
+                ctx.warnings.append(
+                    f"image analysis failed ({format_error_message(e)}); "
+                    "the original alt text was kept"
+                )
+
+            stabilize_written_llm_output(ctx, ctx.shared_processor)
+            ctx.paged_stabilized = True
+
+            # Apply alt text updates AFTER stabilization — stabilize may rewrite
+            # .llm.md from the baseline .md (which has no alt text), so alt text
+            # updates must come last to avoid being overwritten
+            if ctx.config.image.alt_enabled and ctx.image_analysis and ctx.output_file:
+                llm_output = ctx.output_file.with_suffix(".llm.md")
+                apply_alt_text_updates(llm_output, ctx.image_analysis)
+        else:
+            # Standard LLM mode
+            try:
+                result = await process_with_standard_llm(ctx)
+            except Exception as e:
+                _write_base_md_fallback(ctx)
+                return ConversionStepResult(
+                    success=False,
+                    error=f"LLM processing failed: {format_error_message(e)}",
+                )
+            if not result.success:
+                _write_base_md_fallback(ctx)
+                return result
 
     return ConversionStepResult(success=True)
 
@@ -1172,91 +1403,16 @@ async def convert_document_core(
 
     # Step 7: LLM processing (if enabled)
     if ctx.config.llm.enabled and ctx.conversion_result is not None:
-        # Ensure shared processor exists for all LLM operations
-        # This is critical for:
-        # 1. Sharing semaphore (concurrency control)
-        # 2. Sharing Router instances (avoid duplicate creation)
-        # 3. Sharing cache connections
-        if ctx.shared_processor is None:
-            from markitai.workflow.helpers import create_llm_processor
+        from markitai.llm.engine import track_cache_hits
 
-            ctx.shared_processor = create_llm_processor(ctx.config)
-
-        if ctx.config.llm.pure and not ctx.config.screenshot.screenshot_only:
-            # Pure mode: --screenshot-only takes precedence (mutually exclusive)
-            from markitai.converter.base import IMAGE_ONLY_FORMATS
-
-            if ctx.detected_format in IMAGE_ONLY_FORMATS:
-                # Image input: use Vision model to analyze the actual image
-                result = await process_image_with_vision_pure(ctx)
-            else:
-                # Non-image: raw MD → LLM text cleaning → .llm.md
-                result = await process_with_pure_llm(ctx)
-            if not result.success:
-                _write_base_md_fallback(ctx)
-                return result
-        else:
-            page_images = ctx.conversion_result.metadata.get("page_images", [])
-            has_page_images = len(page_images) > 0
-
-            if has_page_images:
-                # Vision mode with screenshots — run sequentially to avoid race
-                # condition. process_with_vision_llm writes ctx.conversion_result.markdown,
-                # and analyze_embedded_images reads it, so embed must run after vision.
-                try:
-                    vision_result: ConversionStepResult = await process_with_vision_llm(
-                        ctx
-                    )
-                except Exception as e:
-                    _write_base_md_fallback(ctx)
-                    return ConversionStepResult(
-                        success=False,
-                        error=f"Vision LLM failed: {format_error_message(e)}",
-                    )
-                if not vision_result.success:
-                    _write_base_md_fallback(ctx)
-                    return vision_result
-
-                # Embedded image analysis (non-critical, log warning on failure)
-                try:
-                    embed_result: ConversionStepResult = await analyze_embedded_images(
-                        ctx
-                    )
-                    if not embed_result.success:
-                        logger.warning(
-                            f"Embedded image analysis failed: {embed_result.error}"
-                        )
-                except Exception as e:
-                    logger.warning(
-                        f"Embedded image analysis failed: {format_error_message(e)}"
-                    )
-
-                stabilize_written_llm_output(ctx, ctx.shared_processor)
-                ctx.paged_stabilized = True
-
-                # Apply alt text updates AFTER stabilization — stabilize may rewrite
-                # .llm.md from the baseline .md (which has no alt text), so alt text
-                # updates must come last to avoid being overwritten
-                if (
-                    ctx.config.image.alt_enabled
-                    and ctx.image_analysis
-                    and ctx.output_file
-                ):
-                    llm_output = ctx.output_file.with_suffix(".llm.md")
-                    apply_alt_text_updates(llm_output, ctx.image_analysis)
-            else:
-                # Standard LLM mode
-                try:
-                    result = await process_with_standard_llm(ctx)
-                except Exception as e:
-                    _write_base_md_fallback(ctx)
-                    return ConversionStepResult(
-                        success=False,
-                        error=f"LLM processing failed: {format_error_message(e)}",
-                    )
-                if not result.success:
-                    _write_base_md_fallback(ctx)
-                    return result
+        # Tally this file's own cache lookups: the processor is shared
+        # across a batch, so its global counters cannot say whether this
+        # file was served from cache
+        with track_cache_hits() as cache_tally:
+            result = await run_llm_enhancement(ctx)
+        if not result.success:
+            return result
+        ctx.cache_hit = cache_tally.served_from_cache(ctx.llm_usage)
 
     # Step 8: output profile post-processing (no-op without a profile)
     apply_output_profile(ctx)

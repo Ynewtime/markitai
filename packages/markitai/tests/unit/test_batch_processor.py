@@ -80,6 +80,41 @@ def mock_llm_processor() -> MagicMock:
     return processor
 
 
+def _llm_writer(
+    content: str = "# Enhanced", *, cache_hit: bool | None = None
+) -> AsyncMock:
+    """A ``process_with_llm`` double that writes ``.llm.md`` like the real one.
+
+    ``cache_hit`` True/False records one cache hit/miss in the running
+    item's tally (what the engine does on a lookup); None records nothing.
+    """
+    import asyncio as _asyncio
+
+    from markitai.llm.engine import LLMEngine
+
+    engine = LLMEngine(
+        router=MagicMock(),
+        semaphore=_asyncio.Semaphore(1),
+        memory_cache=MagicMock(),
+        persistent_cache=MagicMock(),
+        track_usage=MagicMock(),
+        calculate_max_tokens=MagicMock(),
+        get_primary_model=MagicMock(),
+    )
+
+    async def _process(
+        markdown: str, _source: str, _cfg: Any, output_file: Path, **_kw: Any
+    ) -> tuple[str, float, dict[str, Any]]:
+        if cache_hit is True:
+            engine.record_cache_hit()
+        elif cache_hit is False:
+            engine.record_cache_miss()
+        output_file.with_suffix(".llm.md").write_text(content)
+        return markdown, 0.0, {}
+
+    return AsyncMock(side_effect=_process)
+
+
 # =============================================================================
 # create_process_file Tests
 # =============================================================================
@@ -225,6 +260,76 @@ class TestCreateProcessFile:
         assert result.cache_hit is False
         # No .llm.md output should exist
         assert not (sample_output_dir / "test.txt.llm.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_comes_from_the_core_signal(
+        self,
+        default_config: MarkitaiConfig,
+        sample_input_dir: Path,
+        sample_output_dir: Path,
+    ) -> None:
+        """Regression: ``cache_hit = llm.enabled and not usage`` also marked
+        a file whose every LLM call failed; the core's tally decides now."""
+        from markitai.cli.processors.batch import create_process_file
+
+        default_config.llm.enabled = True
+        txt_file = sample_input_dir / "test.txt"
+        txt_file.write_text("# Test Document\n\nSome content here.")
+
+        async def fake_core(ctx: Any, _max_size: int) -> Any:
+            from markitai.workflow.core import ConversionStepResult
+
+            ctx.output_file = sample_output_dir / "test.txt.md"
+            ctx.llm_output_file = sample_output_dir / "test.txt.llm.md"
+            ctx.llm_output_file.write_text("# Enhanced")
+            ctx.cache_hit = True
+            return ConversionStepResult(success=True)
+
+        # The factory binds convert_document_core when it is created
+        with patch("markitai.workflow.core.convert_document_core", fake_core):
+            process_file = create_process_file(
+                cfg=default_config,
+                input_dir=sample_input_dir,
+                output_dir=sample_output_dir,
+                shared_processor=MagicMock(),
+            )
+            result = await process_file(txt_file)
+
+        assert result.success is True
+        assert result.cache_hit is True
+        assert result.output_path == str(sample_output_dir / "test.txt.llm.md")
+
+    @pytest.mark.asyncio
+    async def test_missing_llm_output_is_a_failure(
+        self,
+        default_config: MarkitaiConfig,
+        sample_input_dir: Path,
+        sample_output_dir: Path,
+    ) -> None:
+        """A file is never completed pointing at an output not on disk."""
+        from markitai.cli.processors.batch import create_process_file
+
+        default_config.llm.enabled = True
+        txt_file = sample_input_dir / "test.txt"
+        txt_file.write_text("# Test")
+
+        async def fake_core(ctx: Any, _max_size: int) -> Any:
+            from markitai.workflow.core import ConversionStepResult
+
+            ctx.output_file = sample_output_dir / "test.txt.md"
+            return ConversionStepResult(success=True)
+
+        with patch("markitai.workflow.core.convert_document_core", fake_core):
+            process_file = create_process_file(
+                cfg=default_config,
+                input_dir=sample_input_dir,
+                output_dir=sample_output_dir,
+                shared_processor=MagicMock(),
+            )
+            result = await process_file(txt_file)
+
+        assert result.success is False
+        assert result.error is not None and "No output" in result.error
 
     @pytest.mark.asyncio
     async def test_process_file_skips_existing_when_configured(
@@ -588,24 +693,79 @@ class TestCreateUrlProcessor:
         mock_fetch_result.screenshot_path = None
         mock_fetch_result.title = "Test"
 
+        results = {}
+        for label, hit in (("hit", True), ("miss", False), ("none", None)):
+            with (
+                patch(
+                    "markitai.fetch.fetch_url",
+                    new=AsyncMock(return_value=mock_fetch_result),
+                ),
+                patch(
+                    "markitai.cli.processors.llm.process_with_llm",
+                    new=_llm_writer(cache_hit=hit),
+                ),
+            ):
+                results[label], _extra_info = await process_url(
+                    f"https://example.com/{label}",
+                    sample_input_dir / "urls.txt",
+                    None,
+                )
+
+        # Only a URL whose lookups all hit counts; empty usage alone is not
+        # a cache hit (it is also what a total LLM failure looks like)
+        assert results["hit"].cache_hit is True
+        assert results["miss"].cache_hit is False
+        assert results["none"].cache_hit is False
+        assert all(r.success for r in results.values())
+
+    @pytest.mark.asyncio
+    async def test_url_processor_fails_when_llm_md_is_missing(
+        self,
+        default_config: MarkitaiConfig,
+        sample_output_dir: Path,
+        sample_input_dir: Path,
+    ) -> None:
+        """A URL is never completed with an output that is not on disk."""
+        from markitai.cli.processors.batch import create_url_processor
+
+        default_config.llm.enabled = True
+        default_config.cache.enabled = False
+        default_config.image.alt_enabled = True
+
+        fetch_result = MagicMock()
+        fetch_result.content = "# Test Content"
+        fetch_result.strategy_used = "static"
+        fetch_result.cache_hit = False
+        fetch_result.screenshot_path = None
+        fetch_result.title = "T"
+        fetch_result.static_content = None
+        fetch_result.browser_content = None
+        fetch_result.metadata = {}
+        download = MagicMock(
+            updated_markdown="# Test Content", downloaded_paths=[Path("x.png")]
+        )
+
         with (
+            patch("markitai.fetch.fetch_url", new=AsyncMock(return_value=fetch_result)),
             patch(
-                "markitai.fetch.fetch_url",
-                new=AsyncMock(return_value=mock_fetch_result),
+                "markitai.image.download_url_images",
+                new=AsyncMock(return_value=download),
             ),
             patch(
-                "markitai.cli.processors.llm.process_with_llm",
-                return_value=("# Enhanced", 0.0, {}),
+                "markitai.cli.processors.url.run_url_llm_with_images",
+                new=AsyncMock(return_value=(0.0, {}, None)),
             ),
         ):
-            result, _extra_info = await process_url(
-                "https://example.com",
-                sample_input_dir / "urls.txt",
-                None,
+            process_url = create_url_processor(
+                cfg=default_config,
+                output_dir=sample_output_dir,
+                fetch_strategy=None,
+                explicit_fetch_strategy=False,
             )
+            result, _ = await process_url("https://example.com/a", None, None)
 
-            # When LLM is enabled but no usage, it's a cache hit
-            assert result.cache_hit is True
+        assert result.success is False
+        assert result.error is not None and "No output" in result.error
 
     @pytest.mark.asyncio
     async def test_url_processor_vision_forwards_source_metadata(
@@ -641,6 +801,18 @@ class TestCreateUrlProcessor:
             }
         }
 
+        async def _vision_writes_llm_md(
+            content: str,
+            _shot: Path,
+            _url: str,
+            _cfg: Any,
+            output_file: Path,
+            **_kw: Any,
+        ) -> tuple[str, float, dict[str, Any]]:
+            # The real vision step writes .llm.md next to the base path
+            output_file.with_suffix(".llm.md").write_text("# Enhanced")
+            return content, 0.0, {}
+
         with (
             patch(
                 "markitai.fetch.fetch_url",
@@ -648,7 +820,7 @@ class TestCreateUrlProcessor:
             ),
             patch(
                 "markitai.cli.processors.url.process_url_with_vision",
-                new=AsyncMock(return_value=("# Test Content", 0.0, {})),
+                new=AsyncMock(side_effect=_vision_writes_llm_md),
             ) as mock_vision,
         ):
             process_url = create_url_processor(
@@ -892,7 +1064,7 @@ class TestUrlProcessorPureMode:
             ),
             patch(
                 "markitai.cli.processors.llm.process_with_llm",
-                new=AsyncMock(return_value=("# Enhanced", 0.0, {})),
+                new=_llm_writer(),
             ),
         ):
             process_url = create_url_processor(

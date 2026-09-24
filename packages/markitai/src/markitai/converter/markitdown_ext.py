@@ -18,6 +18,7 @@ from markitai.converter.base import (
     FileFormat,
     register_converter,
 )
+from markitai.notices import user_notice
 
 if TYPE_CHECKING:
     from markitdown import MarkItDown
@@ -168,16 +169,131 @@ class EpubConverter(BaseConverter):
         return _convert(input_path)
 
 
+# MAPI property streams of an Outlook .msg (OLE compound file). markitdown
+# only reads the Unicode plain-text body; many messages carry the body only
+# as 8-bit text or as HTML.
+_MSG_BODY_UNICODE = "__substg1.0_1000001F"
+_MSG_BODY_ANSI = "__substg1.0_1000001E"
+_MSG_BODY_HTML = "__substg1.0_10130102"
+_MSG_BODY_RTF = "__substg1.0_10090102"
+_MSG_PROPERTIES = "__properties_version1.0"
+# PR_INTERNET_CPID (HTML body charset) and PR_MESSAGE_CODEPAGE (8-bit text).
+_PR_INTERNET_CPID = 0x3FDE0003
+_PR_MESSAGE_CODEPAGE = 0x3FFD0003
+# The top-level message's property stream has a 32-byte header, then fixed
+# 16-byte entries: tag (4), flags (4), value (8).
+_MSG_PROPERTIES_HEADER = 32
+_MSG_PROPERTY_ENTRY = 16
+_MSG_CODEPAGE_ALIASES = {
+    20127: "ascii",
+    28591: "latin-1",
+    50220: "iso2022_jp",
+    51932: "euc_jp",
+    54936: "gb18030",
+    65001: "utf-8",
+}
+
+
+def _msg_codepage(properties: bytes, tag: int) -> str | None:
+    """Python codec for a code-page property, or None when absent/unknown."""
+    import codecs
+
+    for offset in range(
+        _MSG_PROPERTIES_HEADER, len(properties) - _MSG_PROPERTY_ENTRY + 1, 16
+    ):
+        if int.from_bytes(properties[offset : offset + 4], "little") != tag:
+            continue
+        codepage = int.from_bytes(properties[offset + 8 : offset + 12], "little")
+        name = _MSG_CODEPAGE_ALIASES.get(codepage, f"cp{codepage}")
+        try:
+            return codecs.lookup(name).name
+        except LookupError:
+            return None
+    return None
+
+
+def _decode_msg_bytes(data: bytes, codec: str | None) -> str:
+    """Decode 8-bit body bytes: declared code page, then UTF-8, then cp1252."""
+    for candidate in (codec, "utf-8"):
+        if candidate is None:
+            continue
+        try:
+            return data.decode(candidate)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return data.decode("cp1252", errors="replace")
+
+
+def _msg_fallback_body(input_path: Path) -> tuple[str, str | None]:
+    """Recover a .msg body markitdown missed.
+
+    Returns ``(markdown, reason)``: the body (8-bit plain text, else HTML
+    converted to Markdown) and ``None``, or ``""`` and a user-facing reason
+    when the message holds no body markitai can read.
+    """
+    import olefile
+
+    from markitai.converter.eml import _html_to_markdown
+
+    with olefile.OleFileIO(str(input_path)) as msg:
+
+        def read(stream: str) -> bytes:
+            return msg.openstream(stream).read() if msg.exists(stream) else b""
+
+        if read(_MSG_BODY_UNICODE).decode("utf-16-le", errors="replace").strip():
+            # markitdown already rendered it; nothing to recover.
+            return "", None
+        properties = read(_MSG_PROPERTIES)
+        ansi = read(_MSG_BODY_ANSI).rstrip(b"\x00")
+        if ansi.strip():
+            codec = _msg_codepage(properties, _PR_MESSAGE_CODEPAGE)
+            return _decode_msg_bytes(ansi, codec).strip(), None
+        html_bytes = read(_MSG_BODY_HTML).rstrip(b"\x00")
+        if html_bytes.strip():
+            codec = _msg_codepage(properties, _PR_INTERNET_CPID)
+            html = _decode_msg_bytes(html_bytes, codec)
+            try:
+                return _html_to_markdown(
+                    html, input_path.resolve().as_uri()
+                ).strip(), None
+            except Exception as exc:
+                logger.warning("[MsgConverter] HTML body conversion failed: {}", exc)
+                return html.strip(), None
+        if read(_MSG_BODY_RTF):
+            return "", "its body is only stored as RTF, which markitai cannot read"
+        return "", "it has no plain-text or HTML body"
+
+
 @register_converter(FileFormat.MSG)
 class MsgConverter(BaseConverter):
-    """Converter for Outlook MSG email files using markitdown."""
+    """Converter for Outlook MSG email files.
+
+    markitdown renders the headers and the Unicode plain-text body; a body
+    stored only as 8-bit text or as HTML is recovered here, and a message
+    whose body cannot be read says so instead of converting silently empty.
+    """
 
     supported_formats = [FileFormat.MSG]
 
     def convert(
         self, input_path: Path, output_dir: Path | None = None
     ) -> ConvertResult:
-        return _convert(input_path)
+        input_path = Path(input_path)
+        result = _convert(input_path)
+        try:
+            body, reason = _msg_fallback_body(input_path)
+        except Exception as exc:  # a damaged OLE stream must not lose the headers
+            logger.debug("[MsgConverter] body fallback failed: {}", exc)
+            body, reason = "", None
+        if body:
+            result.markdown = f"{result.markdown.rstrip()}\n\n{body}"
+        elif reason:
+            user_notice(
+                "[MSG] No readable body in {}: {}; only the headers were converted",
+                input_path.name,
+                reason,
+            )
+        return result
 
 
 @register_converter(FileFormat.IPYNB)

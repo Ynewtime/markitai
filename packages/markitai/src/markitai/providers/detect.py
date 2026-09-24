@@ -1,7 +1,13 @@
 """Shared LLM provider detection module.
 
 Provides auto-detection of available LLM providers via CLI tools,
-OAuth authentication, and environment variables.
+OAuth authentication, and environment variables, and the default-model
+resolution built on it (``MODEL`` env var first, then detection).
+
+Lives below ``markitai.cli`` so every entry point resolves models the same
+way: the CLI, the Python API (``markitai.convert``/``aconvert``) and the
+MCP server (through the API). The import-linter contracts forbid the API
+and MCP layers from importing ``markitai.cli``.
 """
 
 from __future__ import annotations
@@ -10,8 +16,8 @@ import asyncio
 import importlib.util
 import os
 import shutil
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Literal
 
 from markitai.constants import (
     DEFAULT_MODEL_WEIGHT,
@@ -192,6 +198,84 @@ def detect_first_provider() -> ProviderDetectionResult | None:
     """
     providers = detect_all_providers()
     return providers[0] if providers else None
+
+
+@dataclass
+class AutoModelResolution:
+    """Models chosen for an LLM run whose ``llm.model_list`` is empty.
+
+    Attributes:
+        model_list: Model entries to install as ``llm.model_list`` (empty
+            when nothing was found).
+        source: ``"env"`` for the ``MODEL`` environment variable,
+            ``"detected"`` for provider auto-detection, None when neither
+            yielded a model.
+        detected: The detected providers (empty unless ``source`` is
+            ``"detected"``).
+    """
+
+    model_list: list[ModelConfig] = field(default_factory=list)
+    source: Literal["env", "detected"] | None = None
+    detected: list[ProviderDetectionResult] = field(default_factory=list)
+
+    @property
+    def pooled(self) -> bool:
+        """Whether several detected providers share one router pool."""
+        return len(self.detected) > 1
+
+
+def resolve_auto_models() -> AutoModelResolution:
+    """Resolve default models: ``MODEL`` env var, then provider detection.
+
+    The single precedence rule for an empty ``llm.model_list`` shared by
+    the CLI, the Python API and the MCP server. ``MODEL`` is an explicit
+    single-model override and wins outright; otherwise every provider
+    :func:`detect_all_providers` finds joins one pool.
+
+    Detection may probe CLI auth with ``asyncio.run``, so call this from
+    synchronous code (``asyncio.to_thread`` inside an event loop).
+    """
+    model_env = os.environ.get("MODEL")
+    if model_env:
+        from markitai.config import LiteLLMParams, ModelConfig
+
+        return AutoModelResolution(
+            model_list=[
+                ModelConfig(
+                    model_name="default",
+                    litellm_params=LiteLLMParams(model=model_env),
+                )
+            ],
+            source="env",
+        )
+
+    detected = detect_all_providers()
+    if not detected:
+        return AutoModelResolution()
+    return AutoModelResolution(
+        model_list=providers_to_model_configs(detected),
+        source="detected",
+        detected=detected,
+    )
+
+
+def pooled_providers_notice(
+    detected: list[ProviderDetectionResult],
+) -> tuple[str, str]:
+    """Return ``(message, fix)`` for the several-providers-pooled notice.
+
+    Every detected provider joins one pool and the router spreads requests
+    across them, so one document can be cleaned by several vendors. Each
+    entry point shows this where its user looks (CLI: stderr warning;
+    API/MCP: a loguru warning, stderr by default).
+    """
+    names = ", ".join(d.model for d in detected)
+    return (
+        f"Auto-detected {len(detected)} LLM providers; requests are spread "
+        f"across all of them: {names}",
+        "Pin one model with MODEL=<provider/model> or llm.model_list in the "
+        "config file.",
+    )
 
 
 def format_model_list(models: list[str], max_show: int = 3) -> str:

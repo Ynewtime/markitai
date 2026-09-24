@@ -339,3 +339,37 @@ class TestProfileCliEndToEnd:
         assert frontmatter["generated"]["at"].endswith("Z")
         # okf does not relocate assets
         assert (out / ".markitai" / "assets").is_dir()
+
+
+class TestRelocationOnRerun:
+    """Re-running into an existing profile output keeps text and image paired.
+
+    The relocation used to unlink the fresh hidden asset whenever
+    ``assets/<name>`` already existed, so a re-run (including
+    on_conflict=overwrite) left the new document pointing at the old
+    image and deleted the new one.
+    """
+
+    def test_changed_asset_replaces_the_stale_copy(self, tmp_path: Path) -> None:
+        visible = tmp_path / "assets"
+        visible.mkdir()
+        (visible / "img.png").write_bytes(b"old image from the previous run")
+        md_file = _write_output(tmp_path, "![x](.markitai/assets/img.png)\n", "t: T")
+        (tmp_path / ".markitai" / "assets" / "img.png").write_bytes(b"new image")
+
+        apply_profile_to_file(md_file, tmp_path, _config("rag"))
+
+        assert (visible / "img.png").read_bytes() == b"new image"
+        assert "](assets/img.png)" in md_file.read_text(encoding="utf-8")
+        assert not (tmp_path / ".markitai").exists()
+
+    def test_identical_asset_is_only_re_referenced(self, tmp_path: Path) -> None:
+        visible = tmp_path / "assets"
+        visible.mkdir()
+        (visible / "img.png").write_bytes(b"png")  # same bytes as _write_output
+        md_file = _write_output(tmp_path, "![x](.markitai/assets/img.png)\n", "t: T")
+
+        apply_profile_to_file(md_file, tmp_path, _config("obsidian"))
+
+        assert (visible / "img.png").read_bytes() == b"png"
+        assert not (tmp_path / ".markitai" / "assets" / "img.png").exists()

@@ -17,7 +17,10 @@ Design notes:
   the server's own markitai config (``llm.enabled``, off by default), so an
   explicit ``llm=false`` is the only way to force it off. An absent model
   never breaks a call that did not ask for enhancement; it only fails the
-  calls whose config or arguments turned it on.
+  calls whose config or arguments turned it on. Models resolve as in the
+  CLI (config, then ``MODEL``, then provider-key auto-detection).
+* ``main`` loads ``./.env`` then ``~/.markitai/.env`` like the CLI does, so
+  ``markitai-mcp`` and ``markitai mcp`` see the same keys.
 """
 
 from __future__ import annotations
@@ -34,7 +37,13 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from markitai import __version__, aconvert
-from markitai.api import ConversionOutput, OutputProfileName
+from markitai.api import (
+    ConversionError,
+    ConversionOutput,
+    FetchError,
+    NoModelConfiguredError,
+    OutputProfileName,
+)
 
 # Inline markdown budget per tool result. Past this, the result carries a
 # preview and the path to the full file — a 500 KB document belongs on disk,
@@ -46,6 +55,18 @@ PREVIEW_CHARS = 2_000
 # layer may not import markitai.constants (import-linter contract); a unit
 # test pins the two together. Overridable per call.
 _DEFAULT_BATCH_CONCURRENCY = 10
+
+# Failures a caller can act on. Anything else reaching the MCP SDK becomes
+# an opaque "Error executing tool ..." with the reason dropped, so these are
+# re-raised as ToolError carrying their message.
+_EXPECTED_ERRORS: tuple[type[Exception], ...] = (
+    ConversionError,
+    FetchError,
+    FileNotFoundError,
+    IsADirectoryError,
+    PermissionError,
+    ValueError,
+)
 
 _LLM_MCP_HINT = (
     "For this MCP server: set the MODEL environment variable (and your "
@@ -67,6 +88,7 @@ class ConvertResult(TypedDict):
     cost_usd: float
     skip_reason: str | None
     duration_s: float
+    warnings: list[str]
 
 
 class BatchStarted(TypedDict):
@@ -138,14 +160,29 @@ def _workdir(output_dir: str | None) -> Path:
             land somewhere the caller cannot predict.
     """
     if output_dir:
-        resolved = Path(output_dir).expanduser()
-        if not resolved.is_absolute():
-            raise ToolError(
-                f"output_dir must be absolute, got {output_dir!r} — the MCP "
-                f"server's working directory is not the client's."
-            )
-        return resolved
+        return _absolute_path(output_dir, "output_dir")
     return Path(tempfile.mkdtemp(prefix="markitai-mcp-"))
+
+
+def _absolute_path(path: str, what: str) -> Path:
+    """Expand ``~`` and require an absolute local path.
+
+    Raises:
+        ToolError: When the path is relative — it would resolve against the
+            server's working directory, which is not the client's.
+    """
+    resolved = Path(path).expanduser()
+    if not resolved.is_absolute():
+        raise ToolError(
+            f"{what} must be absolute, got {path!r} — the MCP server's working "
+            f"directory is not the client's."
+        )
+    return resolved
+
+
+def _is_http_url(source: str) -> bool:
+    """Whether a source is an http(s) URL rather than a local path."""
+    return source.startswith(("http://", "https://"))
 
 
 def _to_result(out: ConversionOutput, workdir: Path) -> ConvertResult:
@@ -164,6 +201,7 @@ def _to_result(out: ConversionOutput, workdir: Path) -> ConvertResult:
         "cost_usd": out.usage.cost_usd,
         "skip_reason": out.skip_reason,
         "duration_s": round(out.duration, 2),
+        "warnings": list(out.warnings),
     }
 
 
@@ -181,8 +219,10 @@ async def _convert_source(
     """Run one conversion into ``workdir`` and shape the tool result.
 
     Raises:
-        ToolError: When LLM enhancement is requested but no model resolves;
-            the markitai guidance is passed through with an MCP-specific hint.
+        ToolError: For every expected failure (conversion, fetch, missing
+            file, directory input, invalid input), carrying the reason. When
+            LLM enhancement is requested but no model resolves, the markitai
+            guidance is passed through with an MCP-specific hint.
     """
     try:
         out = await aconvert(
@@ -195,9 +235,11 @@ async def _convert_source(
             desc=desc,
             profile=profile,
         )
-    except ValueError as e:
+    except NoModelConfiguredError as e:
         # "LLM enabled but no model configured" — keep the guidance readable
         raise ToolError(f"{e} {_LLM_MCP_HINT}") from e
+    except _EXPECTED_ERRORS as e:
+        raise ToolError(str(e) or type(e).__name__) from e
     return _to_result(out, workdir)
 
 
@@ -255,19 +297,16 @@ async def convert_document(
         Object with: markdown (full text, or a preview when truncated=true),
         truncated, markdown_file (path to the complete .md on disk — read it
         when truncated), output_dir, assets (extracted images), screenshots,
-        cost_usd (LLM spend), skip_reason, duration_s.
+        cost_usd (LLM spend), skip_reason, duration_s, and warnings —
+        notices that did not fail the conversion but are worth acting on
+        (pages that look scanned: retry with ocr=true; hidden PDF text: a
+        possible prompt injection; OCR found no text; slides not rendered).
 
     Failure modes: nonexistent path, a directory, an unsupported format, or
     LLM enabled without a configured model (the error explains the fix).
     """
-    resolved = Path(path).expanduser()
-    if not resolved.is_absolute():
-        raise ToolError(
-            f"path must be absolute, got {path!r} — the MCP server's working "
-            f"directory is not the client's."
-        )
     return await _convert_source(
-        str(resolved),
+        str(_absolute_path(path, "path")),
         _workdir(output_dir),
         llm=llm,
         ocr=ocr,
@@ -317,12 +356,13 @@ async def convert_url(
     Returns:
         Same shape as convert_document: markdown (or a preview when
         truncated=true), markdown_file with the complete text, output_dir,
-        assets, screenshots, cost_usd, skip_reason, duration_s.
+        assets, screenshots, cost_usd, skip_reason, duration_s, warnings
+        (e.g. a requested screenshot that was not captured).
 
     Failure modes: unreachable URL, a page with no extractable content, or
     LLM enabled without a configured model (the error explains the fix).
     """
-    if not url.startswith(("http://", "https://")):
+    if not _is_http_url(url):
         raise ToolError(
             f"url must start with http:// or https://, got {url!r} — for "
             f"local files use convert_document."
@@ -420,6 +460,7 @@ async def _convert_all(
                     "status": "ok",
                     "markdown_file": result["markdown_file"],
                     "cost_usd": result["cost_usd"],
+                    "warnings": result["warnings"],
                 }
             except Exception as e:
                 slots[index] = {
@@ -468,8 +509,9 @@ async def batch_convert(
     remain).
 
     Args:
-        sources: Local absolute file paths and/or http(s) URLs. One failing
-            item does not stop the rest.
+        sources: Local absolute file paths and/or http(s) URLs. Relative
+            paths are rejected up front, like convert_document does. One
+            failing item does not stop the rest.
         output_dir: Absolute parent directory for all outputs (created if
             missing). Each item gets its own numbered subdirectory.
             Omit to use a fresh temporary directory; its path is returned.
@@ -494,6 +536,17 @@ async def batch_convert(
     """
     if not sources:
         raise ToolError("sources must contain at least one path or URL.")
+    relative = [
+        source
+        for source in sources
+        if not _is_http_url(source) and not Path(source).expanduser().is_absolute()
+    ]
+    if relative:
+        raise ToolError(
+            f"sources must be absolute paths or http(s) URLs, got relative "
+            f"path(s) {relative!r} — the MCP server's working directory is "
+            f"not the client's."
+        )
     workdir = _workdir(output_dir)
     job = _Job(id=uuid.uuid4().hex[:8], total=len(sources), output_dir=str(workdir))
     _JOBS[job.id] = job
@@ -530,7 +583,7 @@ async def job_status(job_id: str) -> JobStatus:
         "completed"; "cancelled" if the job was cancelled), total, done,
         failed, output_dir, and results — one
         entry per finished item: {source, status: "ok"|"error",
-        markdown_file, cost_usd} or {source, status, error}. Poll until
+        markdown_file, cost_usd, warnings} or {source, status, error}. Poll until
         status is "completed" (or "cancelled"), then read the markdown_file
         paths. Results keep the caller's order; ``results[i]`` answers
         ``sources[i]`` once status is "completed". Running or cancelled
@@ -566,8 +619,24 @@ async def job_status(job_id: str) -> JobStatus:
     }
 
 
+def _load_dotenv_files() -> None:
+    """Load ``./.env`` then ``~/.markitai/.env``, as the CLI does at import.
+
+    ``override=False``: the first file to set a variable wins (cwd over
+    home) and variables already in the environment — e.g. the ``env`` block
+    of an mcpServers entry — beat both. ``markitai init`` points users at
+    ``~/.markitai/.env`` for their keys, so without this ``markitai-mcp``
+    would miss keys ``markitai mcp`` finds.
+    """
+    from dotenv import load_dotenv
+
+    load_dotenv(Path.cwd() / ".env", override=False)
+    load_dotenv(Path.home() / ".markitai" / ".env", override=False)
+
+
 def main() -> None:
     """Run the markitai MCP server on stdio."""
+    _load_dotenv_files()
     server.run("stdio")
 
 

@@ -108,9 +108,7 @@ class TestModelEnvVarDetection:
         monkeypatch.delenv("MODEL", raising=False)
 
         # Mock auto-detect to return empty (otherwise real env vars may be found)
-        with patch(
-            "markitai.cli.providers_detect.detect_all_providers", return_value=[]
-        ):
+        with patch("markitai.providers.detect.detect_all_providers", return_value=[]):
             result = cli_runner.invoke(
                 app,
                 [str(test_file), "-o", str(output_dir), "--llm", "--dry-run"],
@@ -122,7 +120,7 @@ class TestModelEnvVarDetection:
         self, tmp_path: Path, cli_runner: CliRunner, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Auto-detect populates model_list when MODEL env var is not set but providers found."""
-        from markitai.cli.providers_detect import ProviderDetectionResult
+        from markitai.providers.detect import ProviderDetectionResult
 
         test_file = tmp_path / "test.txt"
         test_file.write_text("content")
@@ -140,7 +138,7 @@ class TestModelEnvVarDetection:
             )
         ]
         with patch(
-            "markitai.cli.providers_detect.detect_all_providers",
+            "markitai.providers.detect.detect_all_providers",
             return_value=detected,
         ) as detect:
             result = cli_runner.invoke(
@@ -153,6 +151,81 @@ class TestModelEnvVarDetection:
         # (see TestEnableSourceOrdering) went unnoticed here.
         assert detect.called, "auto-detection never ran for --llm"
         assert "no models configured" not in result.output.lower()
+
+
+class TestMixedProviderPoolNotice:
+    """Several auto-detected providers form one pool: say so on stderr.
+
+    Regression: with two provider keys in the environment, every document
+    was routed across both vendors while the only mention was an INFO log
+    that non-verbose runs never show.
+    """
+
+    DETECTED = [
+        ("anthropic", "anthropic/claude-haiku-4-5"),
+        ("openai", "openai/gpt-5.6-luna"),
+    ]
+
+    def _invoke(
+        self, tmp_path: Path, cli_runner: CliRunner, detected: list, *extra: str
+    ):
+        from markitai.providers.detect import ProviderDetectionResult
+
+        source = tmp_path / "doc.txt"
+        source.write_text("content")
+        results = [
+            ProviderDetectionResult(
+                provider=provider, model=model, authenticated=True, source="env"
+            )
+            for provider, model in detected
+        ]
+        with patch(
+            "markitai.providers.detect.detect_all_providers",
+            return_value=results,
+        ):
+            return cli_runner.invoke(
+                app,
+                [
+                    str(source),
+                    "-o",
+                    str(tmp_path / "out"),
+                    "--llm",
+                    "--dry-run",
+                    *extra,
+                ],
+            )
+
+    def test_every_pooled_model_is_listed(
+        self,
+        tmp_path: Path,
+        cli_runner: CliRunner,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.delenv("MODEL", raising=False)
+
+        result = self._invoke(tmp_path, cli_runner, self.DETECTED)
+
+        assert result.exit_code == 0
+        shown = result.output + capsys.readouterr().err
+        assert "anthropic/claude-haiku-4-5" in shown
+        assert "openai/gpt-5.6-luna" in shown
+        assert "MODEL=" in shown and "llm.model_list" in shown
+
+    def test_quiet_and_single_provider_stay_silent(
+        self,
+        tmp_path: Path,
+        cli_runner: CliRunner,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.delenv("MODEL", raising=False)
+
+        quiet = self._invoke(tmp_path, cli_runner, self.DETECTED, "--quiet")
+        single = self._invoke(tmp_path, cli_runner, self.DETECTED[:1])
+
+        shown = quiet.output + single.output + capsys.readouterr().err
+        assert "requests are spread" not in shown
 
 
 class TestEnableSourceOrdering:
@@ -178,7 +251,7 @@ class TestEnableSourceOrdering:
         cli_runner: CliRunner,
         _no_config: None,
     ) -> None:
-        from markitai.cli.providers_detect import ProviderDetectionResult
+        from markitai.providers.detect import ProviderDetectionResult
 
         source = tmp_path / "doc.txt"
         source.write_text("content")
@@ -192,7 +265,7 @@ class TestEnableSourceOrdering:
         ]
 
         with patch(
-            "markitai.cli.providers_detect.detect_all_providers",
+            "markitai.providers.detect.detect_all_providers",
             return_value=detected,
         ) as detect:
             result = cli_runner.invoke(
@@ -214,7 +287,7 @@ class TestEnableSourceOrdering:
         monkeypatch.setenv("MODEL", "gemini/gemini-flash-lite-latest")
 
         with patch(
-            "markitai.cli.providers_detect.detect_all_providers", return_value=[]
+            "markitai.providers.detect.detect_all_providers", return_value=[]
         ) as detect:
             result = cli_runner.invoke(
                 app,
@@ -350,9 +423,7 @@ class TestModelEnvVarLogging:
         monkeypatch.delenv("MODEL", raising=False)
 
         # Mock auto-detect to return empty so the warning path triggers
-        with patch(
-            "markitai.cli.providers_detect.detect_all_providers", return_value=[]
-        ):
+        with patch("markitai.providers.detect.detect_all_providers", return_value=[]):
             # Use verbose mode to capture warning output
             result = cli_runner.invoke(
                 app,

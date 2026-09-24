@@ -25,7 +25,6 @@ import-linter contracts in the root ``pyproject.toml``).
 from __future__ import annotations
 
 import asyncio
-import os
 import shutil
 import sys
 import tempfile
@@ -36,6 +35,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from loguru import logger
 
+from markitai.fetch_types import FetchError
 from markitai.types import LLMUsageByModel
 from markitai.utils.errors import ConversionError
 from markitai.utils.suppress import suppress_parser_noise
@@ -45,8 +45,11 @@ if TYPE_CHECKING:
     from markitai.workflow.core import ConversionContext
 
 __all__ = [
+    "ConversionError",
     "ConversionOutput",
     "ConversionUsage",
+    "FetchError",
+    "NoModelConfiguredError",
     "OutputProfileName",
     "aconvert",
     "convert",
@@ -54,6 +57,20 @@ __all__ = [
 
 # Output profile names accepted by the ``profile`` keyword
 OutputProfileName = Literal["rag", "obsidian", "okf"]
+
+# Pooled-provider notices already shown by this process (one per model set:
+# a long-lived host such as the MCP server resolves config on every call)
+_POOLED_NOTICES_SHOWN: set[tuple[str, ...]] = set()
+
+
+class NoModelConfiguredError(ValueError):
+    """LLM enhancement is enabled but no model could be resolved.
+
+    Raised when ``llm.model_list`` is empty, ``MODEL`` is unset and provider
+    auto-detection found nothing. A ``ValueError`` subclass, so callers
+    catching the documented ``ValueError`` keep working; the distinct type
+    lets hosts (the MCP server) add setup guidance to exactly this error.
+    """
 
 
 @dataclass
@@ -117,6 +134,13 @@ class ConversionOutput:
         skip_reason: Why the conversion was skipped (currently only
             ``"exists"`` under ``output.on_conflict = "skip"``), else None.
         duration: Wall-clock conversion time in seconds.
+        warnings: Actionable notices raised during this conversion that did
+            not fail it — pages that look scanned (re-run with OCR), hidden
+            PDF text (possible prompt injection), OCR that found no text,
+            slides that could not be rendered, a requested URL screenshot
+            that was not captured, and similar. Also logged as loguru
+            warnings; collected per call, so concurrent conversions never
+            see each other's. Empty when there were none.
 
     Note:
         In in-memory mode (``output_dir=None``) intermediate files live in a
@@ -137,6 +161,7 @@ class ConversionOutput:
     usage: ConversionUsage = field(default_factory=ConversionUsage)
     skip_reason: str | None = None
     duration: float = 0.0
+    warnings: list[str] = field(default_factory=list)
 
 
 def _resolve_config(
@@ -152,8 +177,15 @@ def _resolve_config(
     """Resolve the effective config for one conversion.
 
     Follows the CLI's precedence: config file (or the given config object)
-    first, explicit keyword overrides on top, then the ``MODEL`` environment
-    variable to auto-populate an empty model list when LLM is enabled.
+    first, explicit keyword overrides on top, then — for an empty model list
+    with LLM enabled — the ``MODEL`` environment variable, then provider
+    auto-detection (API keys in the environment, authenticated subscription
+    CLIs), exactly as ``markitai.providers.detect.resolve_auto_models``
+    does for the CLI. Several detected providers form one pool; a warning
+    says so once per process.
+
+    Synchronous and possibly slow (detection may probe CLI auth with
+    ``asyncio.run``): inside an event loop run it via ``asyncio.to_thread``.
 
     Args:
         config: Base configuration. None loads the same file hierarchy the
@@ -170,7 +202,8 @@ def _resolve_config(
         A private config copy; the caller's object is never mutated.
 
     Raises:
-        ValueError: If LLM is enabled but no model can be resolved.
+        NoModelConfiguredError: If LLM is enabled but no model can be
+            resolved (a ``ValueError``).
     """
     from markitai.config import ConfigManager
 
@@ -192,26 +225,36 @@ def _resolve_config(
     if profile is not None:
         cfg.output.profile = profile
 
-    # Mirror the CLI's MODEL env var fallback for an empty model list
+    # Same resolution as the CLI for an empty model list: MODEL env var,
+    # then provider auto-detection
     if cfg.llm.enabled and not cfg.llm.model_list:
-        model_env = os.environ.get("MODEL")
-        if model_env:
-            from markitai.config import LiteLLMParams, ModelConfig
+        from markitai.providers.detect import (
+            pooled_providers_notice,
+            resolve_auto_models,
+        )
 
-            cfg.llm.model_list = [
-                ModelConfig(
-                    model_name="default",
-                    litellm_params=LiteLLMParams(model=model_env),
-                )
-            ]
-            logger.debug("[API] Using MODEL env var: {}", model_env)
-        else:
-            raise ValueError(
-                "LLM enhancement is enabled but no models are configured. "
-                "Set the MODEL environment variable (e.g. MODEL=openai/gpt-4o-mini), "
-                "add models to llm.model_list in your markitai config file, or "
-                "pass a config with llm.model_list set."
+        resolution = resolve_auto_models()
+        if not resolution.model_list:
+            raise NoModelConfiguredError(
+                "LLM enhancement is enabled but no models are configured and "
+                "none were auto-detected. Set the MODEL environment variable "
+                "(e.g. MODEL=openai/gpt-4o-mini), export a provider API key "
+                "(e.g. OPENAI_API_KEY), add models to llm.model_list in your "
+                "markitai config file, or pass a config with llm.model_list set."
             )
+        cfg.llm.model_list = resolution.model_list
+        models = tuple(m.litellm_params.model for m in resolution.model_list)
+        if resolution.source == "env":
+            logger.debug("[API] Using MODEL env var: {}", models[0])
+        else:
+            logger.debug("[API] Auto-detected provider(s): {}", ", ".join(models))
+            if resolution.pooled and models not in _POOLED_NOTICES_SHOWN:
+                # The CLI prints this on stderr even without -v; a library
+                # has no console, so it is a loguru warning (stderr by
+                # default), once per process and model set.
+                _POOLED_NOTICES_SHOWN.add(models)
+                message, fix = pooled_providers_notice(resolution.detected)
+                logger.warning("[API] {}. {}", message, fix)
 
     return cfg
 
@@ -441,6 +484,15 @@ async def _aconvert_url(
     else:
         assets = _referenced_assets(markdown, workdir)
     screenshots = [result.screenshot_path] if result.screenshot_path else []
+    if cfg.screenshot.enabled and not screenshots:
+        from markitai.notices import user_notice
+        from markitai.utils.url_redaction import redact_url
+
+        # The fetch layer logged why; the caller needs to know it happened.
+        user_notice(
+            "[URL] Screenshot not captured for {}; the page was converted without it",
+            redact_url(url),
+        )
 
     if in_memory:
         output_path = None
@@ -506,13 +558,17 @@ async def aconvert(
         FileNotFoundError: The source path does not exist.
         IsADirectoryError: The source is a directory (batch conversion is
             CLI-only for now).
-        ValueError: LLM was enabled with no resolvable model.
+        NoModelConfiguredError: LLM was enabled with no resolvable model
+            (a ``ValueError``).
     """
     # Native noise suppression must precede converter imports; run it off
     # the loop because it may import pymupdf (a slow C extension import)
     await asyncio.to_thread(suppress_parser_noise)
 
-    cfg = _resolve_config(
+    # Off the loop: config loading reads files and provider detection may
+    # probe CLI auth with asyncio.run, which cannot nest in a running loop
+    cfg = await asyncio.to_thread(
+        _resolve_config,
         config,
         llm=llm,
         ocr=ocr,
@@ -522,7 +578,7 @@ async def aconvert(
         profile=profile,
     )
 
-    from markitai.utils.cli_helpers import is_url
+    from markitai.notices import capture_task_notices
 
     src = str(source)
     started = time.time()
@@ -534,29 +590,48 @@ async def aconvert(
         workdir = Path(output_dir).expanduser()
 
     try:
-        if is_url(src):
-            from markitai.security import check_symlink_safety
-            from markitai.utils.paths import ensure_dir
-
-            check_symlink_safety(workdir, allow_symlinks=cfg.output.allow_symlinks)
-            ensure_dir(workdir)
-            result = await _aconvert_url(src, cfg, workdir, in_memory=in_memory)
-        else:
-            path = Path(source).expanduser()
-            if not path.exists():
-                raise FileNotFoundError(f"Source path does not exist: {path}")
-            if path.is_dir():
-                raise IsADirectoryError(
-                    f"{path} is a directory; the programmatic API converts one "
-                    f"file or URL per call (use the CLI for directory batches)."
-                )
-            result = await _aconvert_file(path, cfg, workdir, in_memory=in_memory)
+        # Per-call capture: a library has no console, and concurrent
+        # aconvert calls each collect only their own notices.
+        with capture_task_notices() as notices:
+            result = await _aconvert_source(
+                src, source, cfg, workdir, in_memory=in_memory
+            )
     finally:
         if in_memory:
             shutil.rmtree(workdir, ignore_errors=True)
 
     result.duration = time.time() - started
+    result.warnings = list(notices)
     return result
+
+
+async def _aconvert_source(
+    src: str,
+    source: str | Path,
+    cfg: MarkitaiConfig,
+    workdir: Path,
+    *,
+    in_memory: bool,
+) -> ConversionOutput:
+    """Dispatch one source to the URL or file path (see :func:`aconvert`)."""
+    from markitai.utils.cli_helpers import is_url
+
+    if is_url(src):
+        from markitai.security import check_symlink_safety
+        from markitai.utils.paths import ensure_dir
+
+        check_symlink_safety(workdir, allow_symlinks=cfg.output.allow_symlinks)
+        ensure_dir(workdir)
+        return await _aconvert_url(src, cfg, workdir, in_memory=in_memory)
+    path = Path(source).expanduser()
+    if not path.exists():
+        raise FileNotFoundError(f"Source path does not exist: {path}")
+    if path.is_dir():
+        raise IsADirectoryError(
+            f"{path} is a directory; the programmatic API converts one "
+            f"file or URL per call (use the CLI for directory batches)."
+        )
+    return await _aconvert_file(path, cfg, workdir, in_memory=in_memory)
 
 
 def convert(

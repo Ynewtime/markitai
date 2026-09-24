@@ -13,6 +13,7 @@ from markitai.llm.document import (
     STANDARD_MODE_RULES,
     DocumentEnhancer,
 )
+from markitai.llm.engine import LLMEnhancementDegradedError
 from markitai.llm.models import get_response_cost
 from markitai.llm.types import (
     DocumentProcessResult,
@@ -733,13 +734,14 @@ class TestSocialPostVerbatimBody:
             )
             mock_instructor.return_value = mock_client
 
-            cleaned, _frontmatter = await processor.process_document(
-                self.SOCIAL_BODY,
-                "https://x.com/user/status/1",
-                extra_meta={"content_profile": "social_post"},
-            )
+            with pytest.raises(LLMEnhancementDegradedError) as exc_info:
+                await processor.process_document(
+                    self.SOCIAL_BODY,
+                    "https://x.com/user/status/1",
+                    extra_meta={"content_profile": "social_post"},
+                )
 
-        assert cleaned == self.SOCIAL_BODY
+        assert exc_info.value.cleaned_markdown == self.SOCIAL_BODY
         mock_router.acompletion.assert_not_called()
 
 
@@ -970,6 +972,84 @@ class TestCleanMarkdownAsync:
         assert "<!-- Page number: 1 -->" in result
 
 
+class TestRefusalIsNotACleanup:
+    """A refusal must neither replace the document nor reach the cache.
+
+    Regression: after the structured call failed, clean_markdown accepted
+    any non-empty answer for a document without placeholders, so "I'm
+    sorry, but I can't help with that request." replaced the whole body
+    (and the title derived from it) and was written to the TTL-less
+    persistent cache, replaying on every later run.
+    """
+
+    REFUSAL = "I'm sorry, but I can't help with that request."
+    DOCUMENT = (
+        "# Field Notes\n\n"
+        + (
+            "The survey covered twelve sites along the river, recording water "
+            "temperature, turbidity and the species seen at each stop. "
+        )
+        * 12
+    )
+
+    @pytest.mark.asyncio
+    async def test_clean_markdown_keeps_input_and_caches_nothing(
+        self,
+        llm_config: LLMConfig,
+        prompts_config: PromptsConfig,
+        mock_llm_response_factory,
+        tmp_path: Path,
+    ) -> None:
+        from markitai.llm import LLMProcessor
+
+        processor = LLMProcessor(llm_config, prompts_config, cache_global_dir=tmp_path)
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock(
+            return_value=mock_llm_response_factory(content=self.REFUSAL)
+        )
+        processor._router = mock_router
+
+        result = await processor.clean_markdown(self.DOCUMENT, "notes.md")
+
+        assert result == self.DOCUMENT
+        assert processor._cache.size == 0
+        assert processor._persistent_cache.stats()["cache"]["count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_structured_refusal_fails_the_document_uncached(
+        self,
+        llm_config: LLMConfig,
+        prompts_config: PromptsConfig,
+        mock_instructor_result_factory,
+        mock_llm_response_factory,
+        tmp_path: Path,
+    ) -> None:
+        """The refusal can also arrive inside a valid structured answer."""
+        from markitai.llm import LLMProcessor
+
+        processor = LLMProcessor(llm_config, prompts_config, cache_global_dir=tmp_path)
+        mock_router = MagicMock()
+        mock_router.acompletion = AsyncMock(
+            return_value=mock_llm_response_factory(content=self.REFUSAL)
+        )
+        processor._router = mock_router
+
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create_with_completion = AsyncMock(
+                return_value=mock_instructor_result_factory(
+                    cleaned_markdown=self.REFUSAL
+                )
+            )
+            mock_instructor.return_value = mock_client
+
+            with pytest.raises(LLMEnhancementDegradedError, match="not a cleanup"):
+                await processor.process_document(self.DOCUMENT, "notes.md")
+
+        assert processor._cache.size == 0
+        assert processor._persistent_cache.stats()["cache"]["count"] == 0
+
+
 class TestProcessDocumentAsync:
     """Async tests for process_document method."""
 
@@ -1038,13 +1118,16 @@ class TestProcessDocumentAsync:
             )
             mock_instructor.return_value = mock_client
 
-            cleaned, frontmatter = await processor.process_document(
-                "# Raw\n\nContent", "test.md"
-            )
+            # A failed structured call fails the item; no cleaner-only call
+            # is paid for, the input rides on the error unchanged
+            with pytest.raises(LLMEnhancementDegradedError) as exc_info:
+                await processor.process_document("# Raw\n\nContent", "test.md")
 
-        assert "Fallback Cleaned" in cleaned
+        assert exc_info.value.cleaned_markdown == "# Raw\n\nContent"
+        mock_router.acompletion.assert_not_called()
         # Frontmatter is generated programmatically
-        assert "source: test.md" in frontmatter
+        assert "source: test.md" in exc_info.value.frontmatter
+        assert "llm_enhanced: false" in exc_info.value.frontmatter
 
     @pytest.mark.asyncio
     async def test_process_document_preserves_original_when_page_markers_are_lost(
@@ -1053,7 +1136,10 @@ class TestProcessDocumentAsync:
         prompts_config: PromptsConfig,
         mock_instructor_result_factory,
     ) -> None:
-        """Paged documents should fall back when the cleaned output loses markers."""
+        """Paged documents whose cleaned output loses markers fail the item.
+
+        Falling back to the original would report unenhanced text as
+        enhanced; the original rides on the error instead."""
         from markitai.llm import LLMProcessor
 
         processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
@@ -1085,9 +1171,11 @@ Original second page.
             )
             mock_instructor.return_value = mock_client
 
-            cleaned, _ = await processor.process_document(original, "test.pdf")
+            with pytest.raises(LLMEnhancementDegradedError) as exc_info:
+                await processor.process_document(original, "test.pdf")
 
-        assert cleaned.strip() == original.strip()
+        assert exc_info.value.cleaned_markdown.strip() == original.strip()
+        assert "structural placeholders" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_process_document_logs_warning_on_instructor_failure(
@@ -1116,7 +1204,8 @@ Original second page.
             )
             mock_instr.return_value = mock_client
 
-            await processor.process_document("# Raw", "test.md")
+            with pytest.raises(LLMEnhancementDegradedError):
+                await processor.process_document("# Raw", "test.md")
 
         # Verify warning was logged (not silently swallowed)
         warning_calls = [
@@ -1169,7 +1258,7 @@ Original second page.
         prompts_config: PromptsConfig,
         mock_instructor_result_factory,
     ) -> None:
-        """Paginated content should fall back to the original when markers are lost."""
+        """Paginated content that loses markers fails; the original rides along."""
         from markitai.llm import LLMProcessor
 
         processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
@@ -1212,15 +1301,15 @@ Gamma
             )
             mock_instructor.return_value = mock_client
 
-            cleaned, frontmatter = await processor.process_document(
-                original_content, "test.pdf"
-            )
+            with pytest.raises(LLMEnhancementDegradedError) as exc_info:
+                await processor.process_document(original_content, "test.pdf")
 
+        cleaned = exc_info.value.cleaned_markdown
         assert cleaned.rstrip() == original_content.rstrip()
         assert "# Summary" not in cleaned
         assert "<!-- Page number: 3 -->" in cleaned
-        assert "description: Preserved pagination" in frontmatter
-        assert "source: test.pdf" in frontmatter
+        assert "source: test.pdf" in exc_info.value.frontmatter
+        assert "llm_enhanced: false" in exc_info.value.frontmatter
 
     def test_stabilize_paged_markdown_restores_slide_text_when_cleaned_drops_body(
         self,
@@ -1422,7 +1511,10 @@ Slide body
         prompts_config: PromptsConfig,
         mock_instructor_result_factory,
     ) -> None:
-        """Image at start must stay at start even if LLM moves it to end."""
+        """An answer that replaced the image placeholder fails the item.
+
+        The original (image at the start) rides on the error; it is never
+        written as if it were the enhanced output."""
         from markitai.llm import LLMProcessor
 
         processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
@@ -1445,10 +1537,12 @@ Slide body
             )
             mock_instructor.return_value = mock_client
 
-            cleaned, _ = await processor.process_document(original, "article.md")
+            with pytest.raises(LLMEnhancementDegradedError) as exc_info:
+                await processor.process_document(original, "article.md")
 
         # Image must remain at the beginning, not drift to the end
-        assert cleaned.splitlines()[0].startswith("![cover]")
+        assert exc_info.value.cleaned_markdown.splitlines()[0].startswith("![cover]")
+        assert "placeholders" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_process_document_does_not_append_missing_image_to_end(
@@ -1457,7 +1551,7 @@ Slide body
         prompts_config: PromptsConfig,
         mock_instructor_result_factory,
     ) -> None:
-        """When LLM drops an image, it must be restored at its original position, not appended."""
+        """When LLM drops an image the item fails; nothing is appended to the end."""
         from markitai.llm import LLMProcessor
 
         processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
@@ -1480,9 +1574,11 @@ Slide body
             )
             mock_instructor.return_value = mock_client
 
-            cleaned, _ = await processor.process_document(original, "article.md")
+            with pytest.raises(LLMEnhancementDegradedError) as exc_info:
+                await processor.process_document(original, "article.md")
 
         # Image must be at start, not end
+        cleaned = exc_info.value.cleaned_markdown
         assert cleaned.splitlines()[0].startswith("![cover]")
         assert cleaned.rstrip().endswith("第二段。")
 
@@ -1865,7 +1961,10 @@ Tail.
         sample_test_image: Path,
         mock_llm_response_factory,
     ) -> None:
-        """Test enhance_document_complete falls back when combined call fails."""
+        """A failed combined call fails the item without a paid cleaner retry.
+
+        The vision cleaner's answer would be thrown away with the item, so
+        it is never requested: the extracted text rides on the error."""
         from markitai.llm import LLMProcessor
 
         processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
@@ -1887,14 +1986,16 @@ Tail.
             )
             mock_instructor.return_value = mock_client
 
-            cleaned, frontmatter = await processor.enhance_document_complete(
-                "# Test\n\nContent",
-                [sample_test_image],
-                "test.md",
-            )
+            with pytest.raises(LLMEnhancementDegradedError) as exc_info:
+                await processor.enhance_document_complete(
+                    "# Test\n\nContent",
+                    [sample_test_image],
+                    "test.md",
+                )
 
-        assert "Fallback Vision" in cleaned
-        assert "source: test.md" in frontmatter
+        assert exc_info.value.cleaned_markdown == "# Test\n\nContent"
+        assert "source: test.md" in exc_info.value.frontmatter
+        mock_router.acompletion.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_enhance_document_complete_multi_batch(
@@ -1926,8 +2027,11 @@ Tail.
         )
 
         # First batch uses instructor (combined), remaining use vision only
+        # The combined call must keep the page boundaries it was sent
         first_result, first_raw = mock_enhanced_result_factory(
-            cleaned_markdown="# Batch 1 Enhanced"
+            cleaned_markdown="\n".join(
+                f"__MARKITAI_PAGENUM_{i}__\n# Page {i + 1} Enhanced" for i in range(3)
+            )
         )
         remaining_response = mock_llm_response_factory(content="# Batch 2 Enhanced")
 
@@ -2244,40 +2348,123 @@ class TestExtractFromScreenshotAsync:
 class TestProcessDocumentCombinedAsync:
     """Async tests for the structured document call."""
 
+    @staticmethod
+    def _echo_paragraphs(mock_instructor_result_factory, calls: list[str]):
+        """Structured-call double that "cleans" by echoing the paragraphs sent.
+
+        Records each call's user message and tags the answer's description
+        with the call's position, so a test can tell which chunk the
+        document's metadata came from.
+        """
+        import re
+
+        async def _answer(**kwargs: Any) -> tuple[Any, Any]:
+            user = kwargs["messages"][-1]["content"]
+            calls.append(user)
+            kept = re.findall(r"^(?:# Long Document|Paragraph \d+: .*)$", user, re.M)
+            return mock_instructor_result_factory(
+                cleaned_markdown="\n\n".join(kept),
+                description=f"chunk {len(calls)}",
+            )
+
+        return _answer
+
     @pytest.mark.asyncio
-    async def test_run_document_call_truncation_warning(
+    async def test_long_document_is_enhanced_in_chunks(
         self,
         llm_config: LLMConfig,
         prompts_config: PromptsConfig,
         mock_instructor_result_factory,
     ) -> None:
-        """Test that long content is truncated with warning."""
+        """A document over the per-call limit is cleaned chunk by chunk.
+
+        Regression: the single call was smart-truncated to
+        DEFAULT_MAX_CONTENT_CHARS and its answer used as the whole body, so
+        a 600-paragraph document came back with 299 paragraphs and exit 0.
+        """
+        from markitai.constants import DEFAULT_MAX_CONTENT_CHARS
         from markitai.llm import LLMProcessor
 
         processor = LLMProcessor(llm_config, prompts_config, no_cache=True)
+        paragraphs = [
+            f"Paragraph {i}: " + "lorem ipsum dolor sit amet " * 4 for i in range(600)
+        ]
+        original = "# Long Document\n\n" + "\n\n".join(paragraphs)
+        assert len(original) > 2 * DEFAULT_MAX_CONTENT_CHARS
 
-        # Create very long content
-        long_content = "# Title\n\n" + "x" * 200000
-
-        result, raw = mock_instructor_result_factory()
-
-        mock_router = MagicMock()
-        mock_router.acompletion = AsyncMock()
-        processor._router = mock_router
-
+        calls: list[str] = []
+        processor._router = MagicMock()
         with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
             mock_client = MagicMock()
             mock_client.chat.completions.create_with_completion = AsyncMock(
-                return_value=(result, raw)
+                side_effect=self._echo_paragraphs(mock_instructor_result_factory, calls)
             )
             mock_instructor.return_value = mock_client
 
-            # Should not raise, just truncate
-            doc_result = await processor.documents._run_document_call(
-                processor.documents._build_document_call(long_content, "test.md")
-            )
+            cleaned, frontmatter = await processor.process_document(original, "long.md")
 
-        assert doc_result.cleaned_markdown is not None
+        assert len(calls) >= 3
+        assert all(len(call) < DEFAULT_MAX_CONTENT_CHARS + 5000 for call in calls)
+        # Every paragraph survives, in order, exactly once
+        for i in (0, 299, 300, 599):
+            assert cleaned.count(f"Paragraph {i}: ") == 1
+        assert cleaned.index("Paragraph 298: ") < cleaned.index("Paragraph 301: ")
+        # One frontmatter, from the first chunk
+        assert frontmatter.count("description:") == 1
+        assert "chunk 1" in frontmatter
+
+    @pytest.mark.asyncio
+    async def test_chunked_rerun_only_pays_for_failed_chunks(
+        self,
+        llm_config: LLMConfig,
+        prompts_config: PromptsConfig,
+        mock_instructor_result_factory,
+        tmp_path: Path,
+    ) -> None:
+        """Chunks cache independently: a failed chunk fails the document, and
+        the rerun re-sends only that chunk."""
+        from markitai.llm import LLMProcessor
+
+        paragraphs = [
+            f"Paragraph {i}: " + "lorem ipsum dolor sit amet " * 4 for i in range(600)
+        ]
+        original = "# Long Document\n\n" + "\n\n".join(paragraphs)
+
+        calls: list[str] = []
+        echo = self._echo_paragraphs(mock_instructor_result_factory, calls)
+
+        async def _fail_last_chunk(**kwargs: Any) -> tuple[Any, Any]:
+            if "Paragraph 599: " in kwargs["messages"][-1]["content"]:
+                raise RuntimeError("server error")
+            return await echo(**kwargs)
+
+        def _processor() -> LLMProcessor:
+            processor = LLMProcessor(
+                llm_config, prompts_config, cache_global_dir=tmp_path
+            )
+            processor._router = MagicMock()
+            return processor
+
+        with patch("markitai.llm.engine.instructor.from_litellm") as mock_instructor:
+            mock_client = MagicMock()
+            mock_instructor.return_value = mock_client
+
+            mock_client.chat.completions.create_with_completion = AsyncMock(
+                side_effect=_fail_last_chunk
+            )
+            with pytest.raises(LLMEnhancementDegradedError, match="server error"):
+                await _processor().process_document(original, "long.md")
+            first_run_calls = len(calls)
+
+            calls.clear()
+            mock_client.chat.completions.create_with_completion = AsyncMock(
+                side_effect=echo
+            )
+            cleaned, _ = await _processor().process_document(original, "long.md")
+
+        assert first_run_calls >= 2  # every chunk but the failing one answered
+        assert len(calls) == 1 and "Paragraph 599: " in calls[0]
+        assert cleaned.count("Paragraph 599: ") == 1
 
     @pytest.mark.asyncio
     async def test_run_document_call_validates_prompt_leakage(
@@ -2570,14 +2757,13 @@ class TestErrorHandlingAsync:
             )
             mock_instructor.return_value = mock_client
 
-            cleaned, frontmatter = await processor.process_document(
-                original_content, "test.md"
-            )
+            with pytest.raises(LLMEnhancementDegradedError) as exc_info:
+                await processor.process_document(original_content, "test.md")
 
-        # Should return original content when everything fails
-        assert cleaned == original_content
+        # The original content rides on the error when everything fails
+        assert exc_info.value.cleaned_markdown == original_content
         # Frontmatter should still be generated programmatically
-        assert "source: test.md" in frontmatter
+        assert "source: test.md" in exc_info.value.frontmatter
 
     @pytest.mark.asyncio
     async def test_process_document_skips_cleaner_after_non_retryable_provider_error(
@@ -2610,12 +2796,13 @@ class TestErrorHandlingAsync:
             )
             mock_instructor.return_value = mock_client
 
-            cleaned, frontmatter = await processor.process_document(
-                original_content, "test.md"
-            )
+            with pytest.raises(LLMEnhancementDegradedError) as exc_info:
+                await processor.process_document(original_content, "test.md")
 
-        assert cleaned == original_content
-        assert "source: test.md" in frontmatter
+        assert exc_info.value.cleaned_markdown == original_content
+        assert "source: test.md" in exc_info.value.frontmatter
+        # The provider's own message is what the user sees
+        assert "Failed to list models" in str(exc_info.value)
         mock_router.acompletion.assert_not_called()
 
     @pytest.mark.asyncio
@@ -2657,12 +2844,11 @@ class TestErrorHandlingAsync:
             )
             mock_instructor.return_value = mock_client
 
-            cleaned, frontmatter = await processor.process_document(
-                original_content, "test.md"
-            )
+            with pytest.raises(LLMEnhancementDegradedError) as exc_info:
+                await processor.process_document(original_content, "test.md")
 
-        assert cleaned == original_content
-        assert "source: test.md" in frontmatter
+        assert exc_info.value.cleaned_markdown == original_content
+        assert "source: test.md" in exc_info.value.frontmatter
         mock_router.acompletion.assert_not_called()
 
     @pytest.mark.asyncio
@@ -2703,15 +2889,17 @@ class TestErrorHandlingAsync:
             )
             mock_instructor.return_value = mock_client
 
-            _cleaned, frontmatter = await processor.enhance_document_complete(
-                content,
-                page_images,
-                "test.pdf",
-                max_pages_per_batch=3,
-            )
+            # Unenhanced pages fail the document instead of passing as enhanced
+            with pytest.raises(LLMEnhancementDegradedError) as exc_info:
+                await processor.enhance_document_complete(
+                    content,
+                    page_images,
+                    "test.pdf",
+                    max_pages_per_batch=3,
+                )
 
         # Should have fallback frontmatter
-        assert "source: test.pdf" in frontmatter
+        assert "source: test.pdf" in exc_info.value.frontmatter
 
 
 class TestRemoveUncommentedScreenshots:
@@ -2806,38 +2994,29 @@ class TestSplitTextIntoBatches:
 
 
 class TestFallbackFrontmatterTitle:
-    """Tests for fallback frontmatter using cleaned title after cleaner succeeds."""
+    """Fallback frontmatter after a failed structured call."""
 
     @pytest.mark.asyncio
-    async def test_fallback_uses_cleaned_title_not_original(self) -> None:
-        """When structured processing fails but cleaning changes the title,
-        fallback frontmatter should reflect the cleaned title."""
+    async def test_failure_skips_the_cleaner_and_keeps_the_original_title(
+        self,
+    ) -> None:
+        """The failed item keeps its base output, so a cleaner-only retry would
+        be paid for and thrown away: no cleaner call, input and title kept."""
         mixin = _make_enhancer()
 
-        original_markdown = "# Old Tittle With Typo\n\nSome content here."
-        cleaned_markdown = "# Corrected Title\n\nSome content here."
-        original_title = "Old Tittle With Typo"
-
-        # Make the combined call fail so process_document takes the fallback
+        original_markdown = "# Original Title\n\nSome content here."
         mixin._run_document_call = AsyncMock(
             side_effect=Exception("structured processing failed")
         )
+        mixin.clean_markdown = AsyncMock(return_value="# Other\n\nx")
 
-        # Mock clean_markdown to return content with corrected title
-        mixin.clean_markdown = AsyncMock(return_value=cleaned_markdown)
+        with pytest.raises(LLMEnhancementDegradedError) as exc_info:
+            await mixin.process_document(
+                original_markdown,
+                source="test.pdf",
+                title="Original Title",
+            )
 
-        # Content protection runs for real via the content module; it is a
-        # no-op for this markdown (no images or page markers to protect).
-
-        cleaned, frontmatter = await mixin.process_document(
-            original_markdown,
-            source="test.pdf",
-            title=original_title,
-        )
-
-        assert cleaned == cleaned_markdown
-        # Frontmatter should contain the CLEANED title, not the original
-        assert "Corrected Title" in frontmatter, (
-            f"Fallback frontmatter should use cleaned title. Got: {frontmatter}"
-        )
-        assert "Old Tittle With Typo" not in frontmatter
+        mixin.clean_markdown.assert_not_called()
+        assert exc_info.value.cleaned_markdown == original_markdown
+        assert "Original Title" in exc_info.value.frontmatter
