@@ -56,7 +56,10 @@ def prewarm_litellm(after: Callable[[], None] | None = None) -> None:
 def _run() -> None:
     global _done
     try:
-        importlib.import_module("litellm")
+        litellm = importlib.import_module("litellm")
+        # The first token count loads tiktoken's encoding (the one the LLM
+        # processor sizes max_tokens with); loaded here, not on the loop
+        litellm.token_counter(model="gpt-4", text="warm up")
     except Exception:  # the real import reports any failure where it matters
         pass
     while True:

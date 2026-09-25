@@ -211,6 +211,73 @@ class TestCapabilitiesAndRoot:
         assert spa_route.status_code == 200 and "ui" in spa_route.text
         assert api.status_code == 200  # /api keeps priority over the SPA mount
 
+    async def test_hashed_assets_are_cached_and_the_index_revalidated(
+        self, tmp_path: Path
+    ) -> None:
+        static = tmp_path / "static"
+        (static / "assets").mkdir(parents=True)
+        (static / "index.html").write_text("<html>ui</html>", encoding="utf-8")
+        (static / "assets" / "index-abc123.js").write_text(
+            "console.log('ui');" * 200, encoding="utf-8"
+        )
+        cfg = MarkitaiConfig()
+        cfg.cache.enabled = False
+        app = create_app(
+            static_dir=static,
+            jobs_root=tmp_path / "jobs",
+            config=cfg,
+            configure_logging=False,
+        )
+        async with _serve_client(app) as client:
+            asset = await client.get(
+                "/assets/index-abc123.js", headers={"Accept-Encoding": "gzip"}
+            )
+            root = await client.get("/")
+            spa_route = await client.get("/jobs/some-client-route")
+        assert asset.headers["cache-control"] == "public, max-age=31536000, immutable"
+        assert asset.headers["content-encoding"] == "gzip"
+        assert asset.text.startswith("console.log")  # httpx decoded it
+        assert root.headers["cache-control"] == "no-cache"
+        assert spa_route.headers["cache-control"] == "no-cache"
+
+
+class TestCompression:
+    """JSON and Markdown compress; event streams and downloads never do."""
+
+    async def test_json_is_gzipped_when_the_client_accepts_it(
+        self, tmp_path: Path
+    ) -> None:
+        async with _serve_client(_make_app(tmp_path)) as client:
+            resp = await client.get(
+                "/api/capabilities", headers={"Accept-Encoding": "gzip"}
+            )
+        assert resp.status_code == 200
+        assert resp.headers.get("content-encoding") == "gzip"
+        assert resp.json()["version"]
+
+    def test_streams_and_downloads_bypass_the_compressor(self) -> None:
+        from markitai.serve.app import _CompressionMiddleware
+
+        seen: list[str] = []
+
+        async def inner(scope: Any, receive: Any, send: Any) -> None:
+            seen.append(scope["path"])
+
+        middleware = _CompressionMiddleware(inner)
+        middleware._gzip = None  # type: ignore[assignment]  # must not be reached
+
+        async def run(path: str) -> None:
+            await middleware({"type": "http", "path": path}, None, None)
+
+        for path in (
+            "/api/jobs/j1/events",
+            "/api/jobs/j1/archive",
+            "/api/history/archive",
+            "/api/jobs/j1/files/out/a.png",
+        ):
+            asyncio.run(run(path))
+        assert len(seen) == 4
+
 
 class TestJobCreationValidation:
     """POST /api/jobs input validation."""
@@ -252,11 +319,22 @@ class TestJobCreationValidation:
             )
         assert resp.status_code == 422
 
-    async def test_too_many_items_is_422(self, tmp_path: Path) -> None:
-        urls = [f"https://example.com/{i}" for i in range(51)]
+    async def test_too_many_items_is_422(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("markitai.serve.app.MAX_JOB_ITEMS", 3)
+        urls = [f"https://example.com/{i}" for i in range(4)]
         async with _serve_client(_make_app(tmp_path)) as client:
             resp = await client.post("/api/jobs", files=_multipart(urls=urls))
         assert resp.status_code == 422
+        assert "max 3" in resp.json()["detail"]
+
+    def test_a_folder_drop_fits_like_a_cli_directory_batch(self) -> None:
+        """The web cap follows Starlette's per-request file limit, not 50."""
+        from markitai.serve.app import MAX_JOB_ITEMS, MAX_REQUEST_BYTES
+
+        assert MAX_JOB_ITEMS == 1000
+        assert MAX_REQUEST_BYTES >= 5 * 1024**3
 
     async def test_oversized_upload_is_413(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
