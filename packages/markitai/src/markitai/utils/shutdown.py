@@ -50,6 +50,13 @@ def finalize_process(code: int = 0) -> NoReturn:
         cleanup_tracked_temp_dirs()
     except Exception:
         pass
+    # os._exit skips atexit: stop the PDF workers here (only if they ran)
+    pdf_parallel = sys.modules.get("markitai.converter.pdf_parallel")
+    if pdf_parallel is not None:
+        try:
+            pdf_parallel.shutdown_pool()
+        except Exception:
+            pass
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.flush()

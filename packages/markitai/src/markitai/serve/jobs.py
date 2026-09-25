@@ -887,12 +887,25 @@ async def run_job(
             else None
         )
 
-        file_semaphore = asyncio.Semaphore(max(1, run_cfg.batch.concurrency))
+        # File slots are handed on at the LLM step, as in a CLI batch: the
+        # next file converts while this one waits on the model
+        from contextlib import AbstractAsyncContextManager
+
+        from markitai.workflow.slots import StagedSlots
+
+        file_slots = StagedSlots(
+            run_cfg.batch.concurrency,
+            max(run_cfg.llm.concurrency, run_cfg.batch.concurrency),
+        )
         url_semaphore = asyncio.Semaphore(max(1, run_cfg.batch.url_concurrency))
 
         async def run_gated(item: JobItem) -> None:
-            semaphore = file_semaphore if item.kind == "file" else url_semaphore
-            async with semaphore:
+            gate: AbstractAsyncContextManager[object | None] = (
+                file_slots.slot(llm=run_cfg.llm.enabled)
+                if item.kind == "file"
+                else url_semaphore
+            )
+            async with gate:
                 from markitai.fetch_policy import public_network_only
 
                 token = public_network_only.set(job.public_network_only)

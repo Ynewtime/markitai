@@ -204,8 +204,11 @@ def main() -> None:
     interpreter, whose native static destructors can abort an already
     successful run with exit code 134. See ``markitai.utils.shutdown``.
     """
+    from markitai.converter.pdf_parallel import enable as enable_pdf_workers
     from markitai.utils.shutdown import finalize_process
 
+    # This process is markitai's own: PDF pages may go to worker processes
+    enable_pdf_workers()
     try:
         app()
     except SystemExit as exc:
@@ -972,8 +975,10 @@ def app(
                 f"(pure mode only does text cleaning)[/yellow]"
             )
 
-    # Validate vision model configuration if image analysis is enabled
-    _check_vision_model_config(cfg, console, verbose)
+    # Validate vision model configuration if image analysis is enabled.
+    # A real run looks models up once LiteLLM has loaded in the background
+    # (the conversion starts meanwhile); a dry run checks right away.
+    _check_vision_model_config(cfg, console, verbose, deferred=not dry_run)
 
     # Validate local provider dependencies (claude-agent, copilot)
     if cfg.llm.model_list:
@@ -1109,6 +1114,12 @@ def app(
                 abort_with_json(message)
 
         # ── Phase 2: Pre-flight auth check ──
+        # LiteLLM loads in the background while the inputs convert
+        if cfg.llm.enabled and not dry_run:
+            from markitai.utils.prewarm import prewarm_litellm
+
+            prewarm_litellm()
+
         # Now that parameter validation passed, check auth for local providers.
         # Skip when dry-run: no network operations needed for preview.
         if cfg.llm.enabled and cfg.llm.model_list and not dry_run:
