@@ -446,18 +446,14 @@ async def _aconvert_url(
     Thin API wrapper over ``workflow.url.convert_url_cascade`` — the
     cascade owns fetch/images/LLM/frontmatter/profile; this wrapper owns
     API-facing concerns: frontmatter/asset extraction from the written
-    files, in-memory mode, and the raise-on-LLM-failure policy. The CLI's
-    vision/screenshot-only URL branches are not replicated.
+    files and in-memory mode. A failed LLM enhancement follows
+    ``llm.on_failure`` like everywhere else. The CLI's vision/screenshot-only
+    URL branches are not replicated.
     """
     from markitai.output_profiles import assets_visible
     from markitai.workflow.url import convert_url_cascade
 
-    result = await convert_url_cascade(
-        url,
-        cfg,
-        workdir,
-        llm_error_policy="raise",
-    )
+    result = await convert_url_cascade(url, cfg, workdir)
 
     if result.skipped:
         assert result.skip_target is not None

@@ -690,8 +690,9 @@ async def process_url_item(
 
     Thin serve wrapper over ``workflow.url.convert_url_cascade`` — the
     cascade owns fetch/images/LLM/frontmatter/profile; this wrapper owns
-    job-facing concerns: error mapping, screenshot counting, and the
-    LLM-failure log line. ``output_name`` is the per-job pre-assigned
+    job-facing concerns: error mapping and screenshot counting (a failed
+    LLM enhancement follows ``llm.on_failure`` inside the cascade).
+    ``output_name`` is the per-job pre-assigned
     unique output filename (URLs whose derived filenames collide would
     otherwise clobber each other's ``.llm.md`` in LLM mode).
     """
@@ -709,7 +710,6 @@ async def process_url_item(
             cache=url_ctx.cache,
             screenshot_dir=url_ctx.screenshot_dir,
             output_name=output_name,
-            llm_error_policy="fallback",
         )
     except JinaRateLimitError:
         return ProcessResult(
@@ -721,20 +721,10 @@ async def process_url_item(
         # ConversionError (no content) and anything unexpected.
         return ProcessResult(success=False, error=format_error_message(e))
 
-    if result.llm_error is not None:
-        logger.error(
-            "[Serve] URL LLM processing failed for {}: {}",
-            url,
-            result.llm_error,
-        )
-        # Same policy as files: the cascade wrote the base .md as the
-        # fallback, and the item fails rather than passing it off as done
-        return ProcessResult(
-            success=False,
-            error=f"LLM processing failed: {result.llm_error}",
-            cost_usd=result.cost_usd,
-            llm_usage=result.llm_usage,
-        )
+    # A failed LLM enhancement follows llm.on_failure, as for files: under
+    # "fail" the cascade raised (ConversionError, caught above); under
+    # "fallback" the base .md is the output and the warning reached the
+    # item's notices.
 
     if result.skipped:
         return ProcessResult(

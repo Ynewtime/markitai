@@ -79,6 +79,8 @@ class ConversionContext:
     # Whether this run wrote the base .md: a file already on disk may be a
     # previous run's output (on_conflict=overwrite), not this conversion's
     base_written: bool = False
+    # The LLM step failed and llm.on_failure kept the base .md as the output
+    llm_fell_back: bool = False
     embedded_images_count: int = 0
     screenshots_count: int = 0
 
@@ -97,6 +99,18 @@ class ConversionContext:
 
     # Optional callback for stage completion (stage_name, duration)
     on_stage_complete: Callable[[str, float], None] | None = None
+
+    @property
+    def produced_file(self) -> Path | None:
+        """The file this run produced: the ``.llm.md`` in LLM mode, else the
+        base ``.md`` (also after an LLM failure kept as a fallback).
+
+        ``llm_output_file`` is set only by a successful LLM write, so None
+        in LLM mode means no enhanced output exists.
+        """
+        if self.config.llm.enabled and not self.llm_fell_back:
+            return self.llm_output_file
+        return self.output_file
 
 
 @dataclass
@@ -1223,9 +1237,10 @@ async def run_llm_enhancement(ctx: ConversionContext) -> ConversionStepResult:
 
     Every failure — an exception, a failed step, or an enhancement that
     degraded to unenhanced output (``LLMEnhancementDegradedError``) — writes
-    the base ``.md`` as the fallback and returns a failed result, so the
-    caller reports the file failed instead of passing base output off as
-    enhanced.
+    the base ``.md`` as the fallback and returns a failed result, never
+    base output passed off as enhanced. ``convert_document_core`` then
+    applies ``llm.on_failure``: fail the item, or keep the fallback as its
+    output with a warning.
 
     Args:
         ctx: Conversion context (LLM enabled, conversion result set)
@@ -1411,7 +1426,22 @@ async def convert_document_core(
         with track_cache_hits() as cache_tally:
             result = await run_llm_enhancement(ctx)
         if not result.success:
-            return result
+            from markitai.workflow.llm_failure import (
+                llm_failure_fails_item,
+                llm_fallback_warning,
+            )
+
+            if llm_failure_fails_item(ctx.config):
+                return result
+            # llm.on_failure = "fallback": the base .md the failure wrote
+            # (profile applied) is the output; the item succeeds, warned
+            ctx.llm_fell_back = True
+            ctx.warnings.append(
+                llm_fallback_warning(
+                    ctx.input_path.name, result.error or "unknown error"
+                )
+            )
+            return ConversionStepResult(success=True)
         ctx.cache_hit = cache_tally.served_from_cache(ctx.llm_usage)
 
     # Step 8: output profile post-processing (no-op without a profile)
