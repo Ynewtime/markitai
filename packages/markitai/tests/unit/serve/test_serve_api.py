@@ -241,6 +241,21 @@ class TestCapabilitiesAndRoot:
         assert spa_route.headers["cache-control"] == "no-cache"
 
 
+class TestShutdownStopsPdfWorkers:
+    async def test_the_lifespan_stops_the_extraction_pool(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """uvicorn re-raises its stop signal after the lifespan ends, which
+        skips atexit and finalize_process: the workers must stop here."""
+        from markitai.converter import pdf_parallel
+
+        monkeypatch.setattr(pdf_parallel, "_enabled", True)
+        async with _serve_client(_make_app(tmp_path)):
+            pdf_parallel._get_pool(2)
+            assert pdf_parallel._pool is not None
+        assert pdf_parallel._pool is None
+
+
 class TestCompression:
     """JSON and Markdown compress; event streams and downloads never do."""
 
