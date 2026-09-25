@@ -1378,7 +1378,11 @@ async def convert_document_core(
     Returns:
         ConversionStepResult indicating overall success or failure
     """
-    # Step 1: Validate and detect format
+    # Step 1: Validate and detect format (the converter's backend is
+    # imported off the event loop first: markitai serve keeps answering)
+    from markitai.converter.base import preload_converter_class
+
+    await preload_converter_class(ctx.input_path)
     result = validate_and_detect_format(ctx, max_document_size)
     if not result.success:
         return result

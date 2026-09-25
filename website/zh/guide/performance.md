@@ -28,7 +28,7 @@ URL 提取本地优先：短文和中日韩正文通常在 static 策略内就�
 [`2026-09-14.json`](https://github.com/Ynewtime/markitai/blob/main/scripts/benchmarks/results/2026-09-14.json)，
 复现命令见[基准指南](https://github.com/Ynewtime/markitai/blob/main/scripts/benchmarks/README.md)。
 
-## PDF 提取与 LLM 批处理（2026-09-25）
+## PDF 提取、LLM 批处理与网页工作台（2026-09-25）
 
 PDF 的文字要经过版面模型分析，这是转换中最耗时的步骤之一。CLI、`markitai serve`
 和 MCP 服务器会把 12 页及以上的 PDF，以及同时转换的多个 PDF，交给工作进程按页提取，
@@ -49,6 +49,11 @@ LLM 批处理中，文件转换完成后，在等待模型期间就把转换名�
 | 40 个 PDF（每个 5 页） | 12.1 秒 | 2.9 秒 | 4.1× |
 | 240 个混合文件（PDF、DOCX、PPTX、XLSX、HTML、CSV） | 12.9 秒 | 3.9 秒 | 3.3× |
 | 30 个文档，`--llm --alt`，模型延迟 0.5 秒 | 7.0 秒 | 4.7 秒 | 1.5× |
+
+`markitai serve` 使用同一套流程。每个任务现在最多 1000 个条目，240 个混合文件
+可以放进一个任务（1.1.0 需要拆成五个）：12.8 秒 → 4.0 秒。30 个文档使用
+`standard` 预设：6.2 秒 → 3.7 秒。转换 300 页 PDF 期间，API 响应时间的 95 分位
+从 295 毫秒降到 3 毫秒。
 
 单个小文件、OCR 和 URL 批处理的耗时与之前相同。核数和页数越多，提速越明显；单独转换的
 小 PDF 仍在本进程内提取，因为启动工作进程的开销比省下的时间还多。

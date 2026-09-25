@@ -873,6 +873,11 @@ async def run_job(
     try:
         shared_processor: LLMProcessor | None = None
         if run_cfg.llm.enabled and run_cfg.llm.model_list:
+            # The LLM stack (LiteLLM and co.) takes most of a second to
+            # import: on a worker thread, not the loop serving everyone else
+            import importlib
+
+            await asyncio.to_thread(importlib.import_module, "markitai.llm")
             from markitai.llm import LLMRuntime
             from markitai.workflow.helpers import create_llm_processor
 
@@ -886,6 +891,19 @@ async def run_job(
             if any(i.kind == "url" for i in targets)
             else None
         )
+        pdf_items = sum(
+            1
+            for i in targets
+            if i.kind == "file"
+            and isinstance(i.source, Path)
+            and i.source.suffix.lower() == ".pdf"
+        )
+        if pdf_items > 1:
+            # As a CLI batch does: the extraction workers load their models
+            # while the job starts (on a thread: it imports the PDF stack)
+            from markitai.converter.pdf_parallel import prestart
+
+            await asyncio.to_thread(prestart)
 
         # File slots are handed on at the LLM step, as in a CLI batch: the
         # next file converts while this one waits on the model

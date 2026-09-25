@@ -41,7 +41,7 @@ from loguru import logger
 if TYPE_CHECKING:
     # Imported when the pool starts: the CLI imports this module at startup
     from collections.abc import Callable
-    from concurrent.futures import ProcessPoolExecutor
+    from concurrent.futures import Future, ProcessPoolExecutor
 
 #: A document with at least this many pages is split across the workers.
 PARALLEL_MIN_PAGES = 12
@@ -218,13 +218,47 @@ def _serial(
     )
 
 
+def map_page_runs(
+    path: Path, scan: Callable[[str, list[int]], Any], page_count: int
+) -> list[Future[Any]] | None:
+    """Run ``scan(path, pages)`` over runs of pages in the workers.
+
+    For per-page checks that would otherwise run in this process while the
+    workers extract the same document (holding the GIL an event loop needs):
+    under the rules that send the extraction to the workers, the checks go
+    there too. *scan* must be a module-level function (it is pickled by
+    reference).
+
+    Returns:
+        One future per run of pages, in page order; None when the pool
+        would not serve this document (run the check in-process instead).
+    """
+    if not _enabled or page_count < 1 or not layout_engine_active():
+        return None
+    workers = worker_count()
+    if workers < 2 or not (
+        page_count >= PARALLEL_MIN_PAGES or _active > 0 or _pool is not None
+    ):
+        return None
+    pool = _get_pool(workers)
+    return [
+        pool.submit(scan, str(path), run)
+        for run in _page_runs(list(range(page_count)), workers)
+    ]
+
+
+def _page_runs(page_list: list[int], workers: int) -> list[list[int]]:
+    """Contiguous runs of pages, one per task, at least MIN_PAGES_PER_TASK."""
+    tasks = max(1, min(workers, math.ceil(len(page_list) / MIN_PAGES_PER_TASK)))
+    size = math.ceil(len(page_list) / tasks)
+    return [page_list[i : i + size] for i in range(0, len(page_list), size)]
+
+
 def _parallel(
     path: Path, page_list: list[int], options: dict[str, Any], workers: int
 ) -> list[dict[str, Any]]:
     pool = _get_pool(workers)
-    tasks = max(1, min(workers, math.ceil(len(page_list) / MIN_PAGES_PER_TASK)))
-    size = math.ceil(len(page_list) / tasks)
-    runs = [page_list[i : i + size] for i in range(0, len(page_list), size)]
+    runs = _page_runs(page_list, workers)
     futures = [pool.submit(_parse_pages, str(path), run, options) for run in runs]
     parsed = [future.result() for future in futures]
     logger.debug(
@@ -295,8 +329,12 @@ def _init_worker() -> None:
     import onnxruntime as ort
 
     # parse_document prints its messages; the parent may be writing Markdown
-    # to stdout
+    # to stdout. The parent owns logging: a worker's loguru would print its
+    # debug lines to the terminal.
     sys.stdout = sys.stderr
+    from loguru import logger as worker_logger
+
+    worker_logger.remove()
     original = ort.InferenceSession
 
     class _SingleThreadSession(original):  # type: ignore[misc,valid-type]

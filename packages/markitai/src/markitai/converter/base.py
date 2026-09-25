@@ -387,6 +387,23 @@ def load_converter_class(fmt: FileFormat) -> type[BaseConverter] | None:
     return _converter_registry.get(fmt)
 
 
+async def preload_converter_class(path: Path | str) -> None:
+    """Import *path*'s converter module on a worker thread if not yet loaded.
+
+    A converter's first use imports its backend (pymupdf4llm and its layout
+    models, python-pptx, markitdown ...), which takes up to a few hundred
+    milliseconds. Done here, an event loop serving other requests meanwhile
+    (``markitai serve``) keeps answering; ``get_converter`` then finds the
+    class registered.
+    """
+    import asyncio
+
+    fmt = detect_format(path)
+    if fmt in _converter_registry or fmt not in _CONVERTER_MODULES:
+        return
+    await asyncio.to_thread(load_converter_class, fmt)
+
+
 def get_converter(
     path: Path | str,
     config: MarkitaiConfig | None = None,

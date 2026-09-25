@@ -7,9 +7,10 @@ import os
 import re
 import shutil
 import tempfile
+from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast
 
 import pymupdf4llm
 from loguru import logger
@@ -29,7 +30,7 @@ from markitai.converter.base import (
     append_screenshot_comments,
     register_converter,
 )
-from markitai.converter.pdf_parallel import to_markdown_chunks
+from markitai.converter.pdf_parallel import map_page_runs, to_markdown_chunks
 from markitai.image import ImageProcessor
 from markitai.notices import user_notice
 from markitai.ocr import (
@@ -191,7 +192,9 @@ def _page_image_coverage(page: Any) -> float:
     return min(total / page_area, 1.0)
 
 
-def collect_page_advisories(doc: Any) -> tuple[list[int], list[int]]:
+def collect_page_advisories(
+    doc: Any, pages: Iterable[int] | None = None
+) -> tuple[list[int], list[int]]:
     """Compute cheap per-page scan/garbled signals for an open PDF document.
 
     A page with near-zero extracted text but significant image coverage
@@ -201,6 +204,7 @@ def collect_page_advisories(doc: Any) -> tuple[list[int], list[int]]:
 
     Args:
         doc: An open pymupdf Document
+        pages: 0-based pages to check (all when None)
 
     Returns:
         Tuple of (scanned-looking page numbers, garbled page numbers),
@@ -208,7 +212,8 @@ def collect_page_advisories(doc: Any) -> tuple[list[int], list[int]]:
     """
     scanned: list[int] = []
     garbled: list[int] = []
-    for i, page in enumerate(doc):
+    for i in range(doc.page_count) if pages is None else pages:
+        page = doc[i]
         text = page.get_text().strip()
         if len(text) < _SCANNED_MAX_TEXT_CHARS:
             if _page_image_coverage(page) >= _SCANNED_MIN_IMAGE_COVERAGE:
@@ -318,7 +323,9 @@ def _is_hidden_span(
     return False
 
 
-def collect_hidden_text(doc: Any) -> dict[int, list[str]]:
+def collect_hidden_text(
+    doc: Any, pages: Iterable[int] | None = None
+) -> dict[int, list[str]]:
     """Detect hidden text spans (prompt-injection vector) in an open PDF.
 
     Scans ``page.get_text("dict")`` spans using a textpage clipped to the
@@ -327,12 +334,14 @@ def collect_hidden_text(doc: Any) -> dict[int, list[str]]:
 
     Args:
         doc: An open pymupdf Document
+        pages: 0-based pages to scan (all when None)
 
     Returns:
         Mapping of 1-based page number -> list of hidden span texts
     """
     hidden: dict[int, list[str]] = {}
-    for i, page in enumerate(doc):
+    for i in range(doc.page_count) if pages is None else pages:
+        page = doc[i]
         try:
             page_rect = tuple(page.rect)
             textpage = page.get_textpage(clip=page.mediabox)
@@ -369,17 +378,26 @@ def _chunk_page_number(chunk: Any, index: int) -> int:
     return index + 1
 
 
+_T = TypeVar("_T")
+_T_co = TypeVar("_T_co", covariant=True)
+
 #: Peak memory of one page in OCR (detector on a 150 dpi render).
 _OCR_PAGE_RAM_BYTES = 1024 * 1024 * 1024
 
 
-def _scan_hidden_text(input_path: Path) -> dict[int, list[str]] | None:
-    """``collect_hidden_text`` on *input_path*; None when detection failed."""
+def _scan_hidden_text(
+    input_path: Path | str, pages: list[int] | None = None
+) -> dict[int, list[str]] | None:
+    """``collect_hidden_text`` on *input_path*; None when detection failed.
+
+    Module-level so an extraction worker can run it on a run of pages.
+    """
+    input_path = Path(input_path)
     try:
         import pymupdf
 
         with pymupdf.open(input_path) as doc:
-            return collect_hidden_text(doc)
+            return collect_hidden_text(doc, pages)
     except Exception as e:
         logger.debug(
             "[PDF] Hidden-text detection failed for {}: {}", input_path.name, e
@@ -387,13 +405,19 @@ def _scan_hidden_text(input_path: Path) -> dict[int, list[str]] | None:
         return None
 
 
-def _scan_advisories(input_path: Path) -> tuple[list[int], list[int]] | None:
-    """``collect_page_advisories`` on *input_path*; None when it failed."""
+def _scan_advisories(
+    input_path: Path | str, pages: list[int] | None = None
+) -> tuple[list[int], list[int]] | None:
+    """``collect_page_advisories`` on *input_path*; None when it failed.
+
+    Module-level so an extraction worker can run it on a run of pages.
+    """
+    input_path = Path(input_path)
     try:
         import pymupdf
 
         with pymupdf.open(input_path) as doc:
-            return collect_page_advisories(doc)
+            return collect_page_advisories(doc, pages)
     except Exception as e:
         logger.debug(
             "[PDF] Scan/garbled advisory check failed for {}: {}",
@@ -403,18 +427,89 @@ def _scan_advisories(input_path: Path) -> tuple[list[int], list[int]] | None:
         return None
 
 
+class _Pending(Protocol[_T_co]):
+    """A result still being computed (a Future, or merged Futures)."""
+
+    def result(self) -> _T_co: ...
+
+
+class _MergedRuns(Generic[_T]):
+    """The results of one check run over page runs in the workers, merged.
+
+    A run that fails is left out; the check counts as failed (None) only
+    when every run failed, as the in-process check fails as a whole.
+    """
+
+    def __init__(
+        self,
+        futures: list[Future[_T | None]],
+        merge: Callable[[list[_T]], _T],
+    ) -> None:
+        self._futures = futures
+        self._merge = merge
+
+    def result(self) -> _T | None:
+        parts: list[_T] = []
+        for future in self._futures:
+            try:
+                part = future.result()
+            except Exception as e:  # a broken pool: that run is not checked
+                logger.debug("[PDF] Page check in a worker failed: {}", e)
+                continue
+            if part is not None:
+                parts.append(part)
+        return self._merge(parts) if parts else None
+
+
+def _merge_hidden(parts: list[dict[int, list[str]]]) -> dict[int, list[str]]:
+    merged: dict[int, list[str]] = {}
+    for part in parts:
+        merged.update(part)
+    return dict(sorted(merged.items()))
+
+
+def _merge_advisories(
+    parts: list[tuple[list[int], list[int]]],
+) -> tuple[list[int], list[int]]:
+    return (
+        sorted(p for scanned, _ in parts for p in scanned),
+        sorted(p for _, garbled in parts for p in garbled),
+    )
+
+
 def _start_prescan(
     input_path: Path, *, hidden_text: bool
 ) -> tuple[
-    Future[dict[int, list[str]] | None] | None,
-    Future[tuple[list[int], list[int]] | None],
+    _Pending[dict[int, list[str]] | None] | None,
+    _Pending[tuple[list[int], list[int]] | None],
 ]:
-    """Start the hidden-text and scanned-page checks in a background thread.
+    """Start the hidden-text and scanned-page checks alongside the extraction.
 
     Both read the PDF on their own and need nothing from the extraction, so
-    they run while the pages are extracted (in worker processes, or in
-    onnxruntime, which releases the GIL) instead of after it.
+    they run while the pages are extracted instead of after it: in the
+    extraction workers when the document goes to them (so this process,
+    and an event loop it serves, keeps the GIL), else on a background
+    thread (onnxruntime releases the GIL while it runs the layout model).
     """
+    try:
+        import pymupdf
+
+        with pymupdf.open(input_path) as doc:
+            page_count = doc.page_count
+    except Exception:  # the extraction reports an unreadable file
+        page_count = 0
+    advisory_runs = map_page_runs(input_path, _scan_advisories, page_count)
+    if advisory_runs is not None:
+        hidden_runs = (
+            map_page_runs(input_path, _scan_hidden_text, page_count)
+            if hidden_text
+            else None
+        )
+        return (
+            _MergedRuns(hidden_runs, _merge_hidden) if hidden_runs else None,
+            _MergedRuns(advisory_runs, _merge_advisories),
+        )
+
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="markitai-pdf-scan")
     try:
         hidden = executor.submit(_scan_hidden_text, input_path) if hidden_text else None
@@ -958,7 +1053,7 @@ class PdfConverter(BaseConverter):
         page_numbers: list[int],
         page_texts: list[str],
         *,
-        prescanned: Future[dict[int, list[str]] | None] | None = None,
+        prescanned: _Pending[dict[int, list[str]] | None] | None = None,
     ) -> list[str]:
         """Warn about (or remove) hidden text in the composed page texts.
 
@@ -1032,7 +1127,7 @@ class PdfConverter(BaseConverter):
         self,
         input_path: Path,
         *,
-        prescanned: Future[tuple[list[int], list[int]] | None] | None = None,
+        prescanned: _Pending[tuple[list[int], list[int]] | None] | None = None,
     ) -> None:
         """Emit one consolidated warning when pages look scanned or garbled.
 
