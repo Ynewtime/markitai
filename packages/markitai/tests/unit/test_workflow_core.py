@@ -2376,6 +2376,7 @@ class TestConvertDocumentCore:
 
         config = MarkitaiConfig()
         config.llm.enabled = True
+        config.llm.on_failure = "fail"  # the failure semantics under test
 
         mock_processor = MagicMock()
         mock_processor.process_document = AsyncMock(
@@ -3324,6 +3325,7 @@ class TestLLMFailureFallback:
         output_dir.mkdir()
         cfg = MarkitaiConfig()
         cfg.llm.enabled = True
+        cfg.llm.on_failure = "fail"  # the failure semantics under test
         cfg.llm.pure = True  # Use pure mode path (failure point 1)
         ctx = ConversionContext(
             input_path=input_path, output_dir=output_dir, config=cfg
@@ -3949,6 +3951,7 @@ class TestLLMFailureIsAFailure:
 
         config = MarkitaiConfig()
         config.llm.enabled = True
+        config.llm.on_failure = "fail"  # the failure semantics under test
         mock_processor = MagicMock()
         mock_processor.process_document = AsyncMock(
             side_effect=LLMEnhancementDegradedError(
@@ -3983,6 +3986,7 @@ class TestLLMFailureIsAFailure:
 
         config = MarkitaiConfig()
         config.llm.enabled = True
+        config.llm.on_failure = "fail"  # the failure semantics under test
         mock_processor = MagicMock()
         mock_processor.analyze_image = AsyncMock(
             side_effect=RuntimeError("vision model refused")

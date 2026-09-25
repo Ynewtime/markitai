@@ -241,18 +241,26 @@ async def process_single_file(
         # Finalize the last active stage (the loguru bridge may have advanced
         # it past "convert") and stop the list before printing the result
         # (transient in stdout mode; rich erases its frame)
-        # The file the run produced: the core pipeline sets llm_output_file
-        # only after a successful LLM write, so a missing one means the
-        # enhancement did not happen. Never report (or print) a path that is
-        # not on disk.
-        produced_file = ctx.llm_output_file if cfg.llm.enabled else ctx.output_file
+        # The file the run produced: the .llm.md, or the base .md when LLM
+        # is off or its failure was kept as the fallback (llm.on_failure).
+        # Never report (or print) a path that is not on disk.
+        produced_file = ctx.produced_file
         if produced_file is None or not produced_file.is_file():
             raise ConversionError(
                 f"No output was produced for {input_path.name}"
-                + (" (LLM enhancement wrote no .llm.md)" if cfg.llm.enabled else "")
+                + (
+                    " (LLM enhancement wrote no .llm.md)"
+                    if cfg.llm.enabled and not ctx.llm_fell_back
+                    else ""
+                )
             )
 
-        stages.finalize(_file_final_stage_text(stages.active_key, input_path.name))
+        if ctx.llm_fell_back:
+            # The item succeeds on its unenhanced output; the checklist
+            # must not claim "LLM enhanced" (the warning says why)
+            stages.fail("LLM enhancement failed; kept the unenhanced output")
+        else:
+            stages.finalize(_file_final_stage_text(stages.active_key, input_path.name))
         stages.stop()
 
         # Write image descriptions (single file)

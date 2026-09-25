@@ -63,7 +63,8 @@ Every setting, with the value it takes when nothing sets it. The values come str
     "max_cost_per_document_usd": 0,
     "max_vision_pages_per_document": 0,
     "pure": false,
-    "keep_base": false
+    "keep_base": false,
+    "on_failure": "fallback"
   },
   "image": {
     "alt_enabled": false,
@@ -232,6 +233,7 @@ Any string value can reference an environment variable with `env:VAR_NAME`. mark
 | `MARKITAI_NO_REMOTE_FETCH` | Never send URLs to remote services, even with an explicit `-s` (`1`, `true`, `yes`) |
 | `MARKITAI_NO_VLM_OCR` | With `--ocr --llm`, use local RapidOCR instead of the vision model (`1`, `true`, `yes`). It covers OCR only: `--screenshot --llm` still sends page screenshots to the vision model |
 | `MARKITAI_STATIC_HTTP` | Static fetch client: `httpx` (default) or `curl_cffi` |
+| `MARKITAI_PDF_WORKERS` | Worker processes for PDF page extraction; `0` or `1` keeps it in-process. Default: the CPU count minus two, at most 12, and a quarter of the available memory at about 450 MB each |
 | `MARKITAI_SERVE_TOKEN` | Fixed access token for `markitai serve` |
 | `MARKITAI_INSTALL_OPTIONAL` | Setup script: install optional components without prompting |
 | `MARKITAI_USE_MIRROR` | Setup script: `1` always offers a package mirror, `0` never asks |
@@ -371,9 +373,10 @@ markitai detects vision capability from LiteLLM. To override that, set `model_in
 | `timeout` | `120` | Request timeout in seconds |
 | `fallbacks` | `[]` | Group fallbacks, e.g. `[{"default": ["backup"]}]`. Models not in a fallback group only receive traffic through fallback |
 | `concurrency` | `10` | Concurrent LLM requests |
-| `max_requests_per_document` | `50` | Stop enhancing a document after this many requests and keep the plain output. A chunked document that needs more requests than are left fails before anything is sent. `0` disables |
+| `max_requests_per_document` | `50` | Stop enhancing a document after this many requests and keep the plain output. A chunked document that needs more requests than are left is not enhanced at all: nothing is sent, and `on_failure` decides what the item reports. `0` disables |
 | `max_cost_per_document_usd` | `0` | Stop enhancing a document once it has spent this much. `0` disables |
 | `max_vision_pages_per_document` | `0` | Max page images sent to a vision model per document. Oversized documents convert without vision. `0` disables |
+| `on_failure` | `fallback` | What a failed enhancement does to the item. `fallback` keeps the unenhanced `.md` as its output and warns; `fail` fails the item (exit `1` for one input, `10` for a batch). The unenhanced `.md` is written either way |
 
 #### Model Weight
 

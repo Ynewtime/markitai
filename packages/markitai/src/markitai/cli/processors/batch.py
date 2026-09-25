@@ -664,6 +664,8 @@ def create_url_processor(
             # shared workflow cascade (the same code serve/api/CLI run).
             url_llm_usage: dict[str, dict[str, Any]] = {}
             llm_cost = 0.0
+            # The LLM step failed and llm.on_failure kept the base .md
+            llm_fell_back = False
             img_analysis = None
             should_analyze_images = bool(
                 (cfg.image.alt_enabled or cfg.image.desc_enabled) and downloaded_images
@@ -687,8 +689,10 @@ def create_url_processor(
                 from markitai.cli.processors.url import cli_document_llm_stage
                 from markitai.workflow.url import convert_url_cascade
 
-                # LLM failures raise ConversionError after the base file is
-                # on disk; the outer catch-all maps it to a failed result.
+                # A failed LLM enhancement follows llm.on_failure: "fail"
+                # raises ConversionError after the base file is on disk (the
+                # outer catch-all maps it to a failed result), "fallback"
+                # returns with llm_error set and a warning.
                 cascade = await convert_url_cascade(
                     url,
                     cfg,
@@ -703,13 +707,14 @@ def create_url_processor(
                     ),
                     base_from_localized=localized_base_md,
                     output_name=filename,
-                    llm_error_policy="raise",
                     llm_stage=cli_document_llm_stage,
                 )
                 assert cascade.target_file is not None  # skip handled above
                 output_file = cascade.target_file
                 llm_cost = cascade.cost_usd
                 url_llm_usage = cascade.llm_usage
+                llm_fell_back = cascade.llm_error is not None
+                extra_info.setdefault("warnings", []).extend(cascade.warnings)
             else:
                 # Write base .md file (respect --llm, --pure, --keep-base).
                 # localized_base_md: URL-list batch writes the base .md from the
@@ -768,15 +773,28 @@ def create_url_processor(
                         )
                     except Exception as e:
                         # Same policy as the shared cascade and the file
-                        # pipeline: an LLM failure fails the URL, with the
-                        # base .md on disk as the fallback output.
+                        # pipeline: the base .md on disk is the fallback
+                        # output, and llm.on_failure decides whether the
+                        # URL fails
                         if not should_write_base:
                             atomic_write_text(output_file, base_content)
-                        from markitai.utils.errors import ConversionError
+                        from markitai.workflow.llm_failure import (
+                            llm_failure_fails_item,
+                            llm_fallback_warning,
+                        )
 
-                        raise ConversionError(
-                            f"LLM processing failed: {format_error_message(e)}"
-                        ) from e
+                        if llm_failure_fails_item(cfg):
+                            from markitai.utils.errors import ConversionError
+
+                            raise ConversionError(
+                                f"LLM processing failed: {format_error_message(e)}"
+                            ) from e
+                        llm_fell_back = True
+                        extra_info.setdefault("warnings", []).append(
+                            llm_fallback_warning(
+                                redact_url(url), format_error_message(e)
+                            )
+                        )
 
             # Output profile post-processing (no-op without a profile)
             if cfg.output.profile is not None:
@@ -789,7 +807,9 @@ def create_url_processor(
 
             # Never mark a URL completed with an output that is not on disk
             produced_file = (
-                output_file.with_suffix(".llm.md") if cfg.llm.enabled else output_file
+                output_file.with_suffix(".llm.md")
+                if cfg.llm.enabled and not llm_fell_back
+                else output_file
             )
             if not produced_file.is_file():
                 error = f"No output was produced for {redact_url(url)}"
@@ -915,6 +935,13 @@ async def process_batch(
         glob_patterns=normalized_globs,
         visible_assets=assets_visible(cfg),
     )
+
+    if not dry_run and sum(f.suffix.lower() == ".pdf" for f in files) > 1:
+        # Several PDFs: the extraction workers load their models while the
+        # batch starts (see markitai.converter.pdf_parallel)
+        from markitai.converter.pdf_parallel import prestart
+
+        prestart()
 
     # Discover .urls files for URL batch processing
     url_list_files = batch.discover_files(
@@ -1147,7 +1174,12 @@ async def process_batch(
 
     # Create separate semaphores for file and URL processing
     # This allows file processing and URL fetching to run at their own concurrency levels
-    file_semaphore = asyncio.Semaphore(cfg.batch.concurrency)
+    # File slots are handed on at the LLM step: the next file converts while
+    # this one waits on the model (markitai.workflow.slots)
+    from markitai.workflow.slots import StagedSlots
+
+    llm_stage_limit = max(cfg.llm.concurrency, cfg.batch.concurrency)
+    file_slots = StagedSlots(cfg.batch.concurrency, llm_stage_limit)
     url_semaphore = asyncio.Semaphore(cfg.batch.url_concurrency)
 
     async def process_url_with_state(
@@ -1257,7 +1289,7 @@ async def process_batch(
         # Workers outnumber file slots (the pool serves URLs too): a file is
         # in_progress only once it holds a slot, so an interrupt leaves the
         # ones still waiting pending for --resume
-        async with file_semaphore:
+        async with file_slots.slot(llm=cfg.llm.enabled):
             file_state.status = FileStatus.IN_PROGRESS
             file_state.started_at = datetime.now(UTC).astimezone().isoformat()
             batch._dirty_keys.add(file_key)
@@ -1349,6 +1381,11 @@ async def process_batch(
 
             if items:
                 max_concurrency = max(cfg.batch.concurrency, cfg.batch.url_concurrency)
+                # With LLM on, files in their LLM step hold a worker too, so
+                # the conversion slots stay busy only with enough extra ones
+                worker_count = max_concurrency + (
+                    llm_stage_limit if cfg.llm.enabled and files_to_process else 0
+                )
                 queue: asyncio.Queue[tuple[str, Any] | None] = asyncio.Queue(
                     maxsize=max_concurrency * 2
                 )
@@ -1356,7 +1393,7 @@ async def process_batch(
                 async def producer() -> None:
                     for item in items:
                         await queue.put(item)
-                    for _ in range(max_concurrency):
+                    for _ in range(worker_count):
                         await queue.put(None)
 
                 async def worker() -> None:
@@ -1375,9 +1412,7 @@ async def process_batch(
                             logger.debug("Unexpected error in worker", exc_info=True)
 
                 producer_task = asyncio.create_task(producer())
-                workers = [
-                    asyncio.create_task(worker()) for _ in range(max_concurrency)
-                ]
+                workers = [asyncio.create_task(worker()) for _ in range(worker_count)]
                 await asyncio.gather(producer_task, *workers)
 
     except BaseException:

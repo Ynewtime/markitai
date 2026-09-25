@@ -53,6 +53,7 @@ __all__ = [
     "OutputProfileName",
     "aconvert",
     "convert",
+    "enable_worker_processes",
 ]
 
 # Output profile names accepted by the ``profile`` keyword
@@ -61,6 +62,21 @@ OutputProfileName = Literal["rag", "obsidian", "okf"]
 # Pooled-provider notices already shown by this process (one per model set:
 # a long-lived host such as the MCP server resolves config on every call)
 _POOLED_NOTICES_SHOWN: set[tuple[str, ...]] = set()
+
+
+def enable_worker_processes() -> None:
+    """Let PDF conversions in this process use worker processes.
+
+    Long PDFs, and PDFs converted concurrently, are then extracted page by
+    page in parallel, with the same output. Off by default in a host
+    program: the workers are spawned, and a spawned process imports the
+    host's ``__main__`` again. Call this only from a script whose work runs
+    under ``if __name__ == "__main__":``. The CLI, ``markitai serve`` and the
+    MCP server turn it on themselves.
+    """
+    from markitai.converter.pdf_parallel import enable
+
+    enable()
 
 
 class NoModelConfiguredError(ValueError):
@@ -446,18 +462,14 @@ async def _aconvert_url(
     Thin API wrapper over ``workflow.url.convert_url_cascade`` — the
     cascade owns fetch/images/LLM/frontmatter/profile; this wrapper owns
     API-facing concerns: frontmatter/asset extraction from the written
-    files, in-memory mode, and the raise-on-LLM-failure policy. The CLI's
-    vision/screenshot-only URL branches are not replicated.
+    files and in-memory mode. A failed LLM enhancement follows
+    ``llm.on_failure`` like everywhere else. The CLI's vision/screenshot-only
+    URL branches are not replicated.
     """
     from markitai.output_profiles import assets_visible
     from markitai.workflow.url import convert_url_cascade
 
-    result = await convert_url_cascade(
-        url,
-        cfg,
-        workdir,
-        llm_error_policy="raise",
-    )
+    result = await convert_url_cascade(url, cfg, workdir)
 
     if result.skipped:
         assert result.skip_target is not None

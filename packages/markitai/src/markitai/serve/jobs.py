@@ -690,8 +690,9 @@ async def process_url_item(
 
     Thin serve wrapper over ``workflow.url.convert_url_cascade`` — the
     cascade owns fetch/images/LLM/frontmatter/profile; this wrapper owns
-    job-facing concerns: error mapping, screenshot counting, and the
-    LLM-failure log line. ``output_name`` is the per-job pre-assigned
+    job-facing concerns: error mapping and screenshot counting (a failed
+    LLM enhancement follows ``llm.on_failure`` inside the cascade).
+    ``output_name`` is the per-job pre-assigned
     unique output filename (URLs whose derived filenames collide would
     otherwise clobber each other's ``.llm.md`` in LLM mode).
     """
@@ -709,7 +710,6 @@ async def process_url_item(
             cache=url_ctx.cache,
             screenshot_dir=url_ctx.screenshot_dir,
             output_name=output_name,
-            llm_error_policy="fallback",
         )
     except JinaRateLimitError:
         return ProcessResult(
@@ -721,20 +721,10 @@ async def process_url_item(
         # ConversionError (no content) and anything unexpected.
         return ProcessResult(success=False, error=format_error_message(e))
 
-    if result.llm_error is not None:
-        logger.error(
-            "[Serve] URL LLM processing failed for {}: {}",
-            url,
-            result.llm_error,
-        )
-        # Same policy as files: the cascade wrote the base .md as the
-        # fallback, and the item fails rather than passing it off as done
-        return ProcessResult(
-            success=False,
-            error=f"LLM processing failed: {result.llm_error}",
-            cost_usd=result.cost_usd,
-            llm_usage=result.llm_usage,
-        )
+    # A failed LLM enhancement follows llm.on_failure, as for files: under
+    # "fail" the cascade raised (ConversionError, caught above); under
+    # "fallback" the base .md is the output and the warning reached the
+    # item's notices.
 
     if result.skipped:
         return ProcessResult(
@@ -883,6 +873,11 @@ async def run_job(
     try:
         shared_processor: LLMProcessor | None = None
         if run_cfg.llm.enabled and run_cfg.llm.model_list:
+            # The LLM stack (LiteLLM and co.) takes most of a second to
+            # import: on a worker thread, not the loop serving everyone else
+            import importlib
+
+            await asyncio.to_thread(importlib.import_module, "markitai.llm")
             from markitai.llm import LLMRuntime
             from markitai.workflow.helpers import create_llm_processor
 
@@ -896,13 +891,39 @@ async def run_job(
             if any(i.kind == "url" for i in targets)
             else None
         )
+        pdf_items = sum(
+            1
+            for i in targets
+            if i.kind == "file"
+            and isinstance(i.source, Path)
+            and i.source.suffix.lower() == ".pdf"
+        )
+        if pdf_items > 1:
+            # As a CLI batch does: the extraction workers load their models
+            # while the job starts (on a thread: it imports the PDF stack)
+            from markitai.converter.pdf_parallel import prestart
 
-        file_semaphore = asyncio.Semaphore(max(1, run_cfg.batch.concurrency))
+            await asyncio.to_thread(prestart)
+
+        # File slots are handed on at the LLM step, as in a CLI batch: the
+        # next file converts while this one waits on the model
+        from contextlib import AbstractAsyncContextManager
+
+        from markitai.workflow.slots import StagedSlots
+
+        file_slots = StagedSlots(
+            run_cfg.batch.concurrency,
+            max(run_cfg.llm.concurrency, run_cfg.batch.concurrency),
+        )
         url_semaphore = asyncio.Semaphore(max(1, run_cfg.batch.url_concurrency))
 
         async def run_gated(item: JobItem) -> None:
-            semaphore = file_semaphore if item.kind == "file" else url_semaphore
-            async with semaphore:
+            gate: AbstractAsyncContextManager[object | None] = (
+                file_slots.slot(llm=run_cfg.llm.enabled)
+                if item.kind == "file"
+                else url_semaphore
+            )
+            async with gate:
                 from markitai.fetch_policy import public_network_only
 
                 token = public_network_only.set(job.public_network_only)
