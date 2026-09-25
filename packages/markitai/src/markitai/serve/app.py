@@ -1504,6 +1504,8 @@ class _SPAStaticFiles(StaticFiles):
             raise
         if response.status_code == 404:
             return self._cache(await super().get_response("index.html", scope))
+        # StaticFiles joins the path with os.sep ("assets\\x.js" on Windows)
+        path = path.replace("\\", "/")
         if path.startswith("assets/") and response.status_code in (200, 304):
             response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
             return response
