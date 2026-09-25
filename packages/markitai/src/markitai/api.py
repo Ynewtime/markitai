@@ -53,6 +53,7 @@ __all__ = [
     "OutputProfileName",
     "aconvert",
     "convert",
+    "enable_worker_processes",
 ]
 
 # Output profile names accepted by the ``profile`` keyword
@@ -61,6 +62,21 @@ OutputProfileName = Literal["rag", "obsidian", "okf"]
 # Pooled-provider notices already shown by this process (one per model set:
 # a long-lived host such as the MCP server resolves config on every call)
 _POOLED_NOTICES_SHOWN: set[tuple[str, ...]] = set()
+
+
+def enable_worker_processes() -> None:
+    """Let PDF conversions in this process use worker processes.
+
+    Long PDFs, and PDFs converted concurrently, are then extracted page by
+    page in parallel, with the same output. Off by default in a host
+    program: the workers are spawned, and a spawned process imports the
+    host's ``__main__`` again. Call this only from a script whose work runs
+    under ``if __name__ == "__main__":``. The CLI, ``markitai serve`` and the
+    MCP server turn it on themselves.
+    """
+    from markitai.converter.pdf_parallel import enable
+
+    enable()
 
 
 class NoModelConfiguredError(ValueError):

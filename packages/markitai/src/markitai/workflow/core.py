@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -47,6 +48,15 @@ if TYPE_CHECKING:
     from markitai.converter.base import ConvertResult
     from markitai.llm import LLMProcessor
     from markitai.workflow.single import ImageAnalysisResult
+
+
+#: Awaited by ``convert_document_core`` once a document is converted and
+#: before its LLM step. A batch sets it per file to hand the conversion slot
+#: on to the next file while this one waits on the model (the LLM calls have
+#: their own concurrency limit); unset, the pipeline runs straight through.
+LLM_STAGE_HANDOFF: ContextVar[Callable[[], Awaitable[None]] | None] = ContextVar(
+    "markitai_llm_stage_handoff", default=None
+)
 
 
 @dataclass
@@ -1419,6 +1429,12 @@ async def convert_document_core(
     # Step 7: LLM processing (if enabled)
     if ctx.config.llm.enabled and ctx.conversion_result is not None:
         from markitai.llm.engine import track_cache_hits
+
+        # A batch hands the file's conversion slot on here, so the next file
+        # converts while this one waits on the model (see LLM_STAGE_HANDOFF)
+        handoff = LLM_STAGE_HANDOFF.get()
+        if handoff is not None:
+            await handoff()
 
         # Tally this file's own cache lookups: the processor is shared
         # across a batch, so its global counters cannot say whether this

@@ -85,6 +85,26 @@ asyncio.run(main())
 
 一次性脚本偶尔会在转换成功后以退出码 134 结束，这是 onnxruntime 卸载时的一个小问题。在脚本末尾加上 `from markitai.utils.shutdown import finalize_process; finalize_process(0)` 可以避免。长期运行的宿主不要用它，它会直接结束整个进程。
 
+## 并行提取 PDF
+
+CLI、`markitai serve` 和 MCP 服务器会把长 PDF 以及同时转换的多个 PDF 交给工作进程按页并行提取，输出不变，速度快好几倍。脚本里调用 `markitai.enable_worker_processes()` 即可启用：
+
+```python
+import markitai
+
+
+def main() -> None:
+    markitai.enable_worker_processes()
+    for name in ("a.pdf", "b.pdf"):
+        markitai.convert(name, output_dir="out/")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+工作进程是新启动的进程，每个都会重新导入脚本的 `__main__` 模块，所以要像上面这样把脚本的工作放在 `if __name__ == "__main__":` 下面。工作进程数由 `MARKITAI_PDF_WORKERS` 设置。
+
 ## ConversionOutput
 
 | 字段 | 类型 | 说明 |

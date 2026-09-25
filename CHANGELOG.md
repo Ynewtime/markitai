@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `markitai.enable_worker_processes()` lets a Python script (with an `if __name__ == "__main__":` guard) use the parallel PDF extraction the CLI, `markitai serve` and the MCP server use. `MARKITAI_PDF_WORKERS` sets the number of workers; `0` or `1` turns it off.
 - `llm.on_failure` decides what a failed LLM enhancement does to its item: `"fallback"` (default) keeps the unenhanced `.md` as the output with a warning, `"fail"` fails the item (exit `1` for one input, `10` for a batch).
 - `--resume` works for `.urls` lists, and Ctrl-C now saves the batch state in every mode, so an interrupted run resumes from what actually finished.
 - `--json` reports a handed-off `--llm-batch` run: a top-level `batch` object with the id and the `--llm-batch-collect` command, a `pending` item status, a `pending` total, and per-item `warnings`. Items also report `cache_hit` correctly.
@@ -20,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Faster PDFs.** Pages of long PDFs, and of PDFs converted at the same time, are extracted in worker processes that each run the layout model on one thread, with the same output. On an 18-core Mac a 300-page PDF converts 4.1× faster, a batch of 40 PDFs 4.1× faster and a 240-file mixed batch 3.3× faster; each page takes about a third of the CPU time it did, and each worker holds about 450 MB. The hidden-text and scanned-page checks run while the pages are extracted.
+- LLM batches overlap conversion and enhancement: a converted file passes its conversion slot on while it waits on the model, in CLI batches and the web workspace. LiteLLM loads in the background while the inputs convert, and the vision-model check for `--alt`/`--desc` no longer holds up the start of a run (a missing vision model is reported as a notice).
+- The Python API and the MCP server no longer fetch LiteLLM's model cost map over the network when they load it. OCR runs fewer pages at once when memory is short.
 - **A failed LLM enhancement is no longer silent.** An invalid key, a provider error, a timeout or a refusal used to pass unenhanced text off as the result. The item still succeeds by default, but its output is the unenhanced `.md` and a warning (stderr, `--json` `warnings`, the web workspace) names the failure. Set `llm.on_failure` to `"fail"` to fail such items.
 - Documents longer than one LLM request are enhanced chunk by chunk instead of being cut at 32,000 characters. A document that needs more requests than `max_requests_per_document` leaves is not enhanced, and nothing is sent.
 - When several provider keys are found and no model is configured, markitai says which models it will spread requests across and how to pin one. The Python API and the MCP server now resolve models the same way as the CLI.

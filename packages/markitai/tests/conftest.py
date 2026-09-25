@@ -60,6 +60,21 @@ def _isolate_global_cache_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_pdf_worker_processes(monkeypatch: pytest.MonkeyPatch):
+    """Keep PDF extraction in-process unless a test turns the pool on.
+
+    ``markitai.cli.main.main()`` enables the worker pool for the whole
+    process; without this, one test calling it would make every later PDF
+    test in the same worker spawn extraction processes.
+    """
+    from markitai.converter import pdf_parallel
+
+    monkeypatch.setattr(pdf_parallel, "_enabled", False)
+    yield
+    pdf_parallel.shutdown_pool()
+
+
+@pytest.fixture(autouse=True)
 def _isolate_user_config_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Point ``Path.home()`` at a temp dir so no test reads the developer's
     real ``~/.markitai``.

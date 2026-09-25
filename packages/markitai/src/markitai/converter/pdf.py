@@ -7,7 +7,7 @@ import os
 import re
 import shutil
 import tempfile
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -29,6 +29,7 @@ from markitai.converter.base import (
     append_screenshot_comments,
     register_converter,
 )
+from markitai.converter.pdf_parallel import to_markdown_chunks
 from markitai.image import ImageProcessor
 from markitai.notices import user_notice
 from markitai.ocr import (
@@ -368,6 +369,61 @@ def _chunk_page_number(chunk: Any, index: int) -> int:
     return index + 1
 
 
+#: Peak memory of one page in OCR (detector on a 150 dpi render).
+_OCR_PAGE_RAM_BYTES = 1024 * 1024 * 1024
+
+
+def _scan_hidden_text(input_path: Path) -> dict[int, list[str]] | None:
+    """``collect_hidden_text`` on *input_path*; None when detection failed."""
+    try:
+        import pymupdf
+
+        with pymupdf.open(input_path) as doc:
+            return collect_hidden_text(doc)
+    except Exception as e:
+        logger.debug(
+            "[PDF] Hidden-text detection failed for {}: {}", input_path.name, e
+        )
+        return None
+
+
+def _scan_advisories(input_path: Path) -> tuple[list[int], list[int]] | None:
+    """``collect_page_advisories`` on *input_path*; None when it failed."""
+    try:
+        import pymupdf
+
+        with pymupdf.open(input_path) as doc:
+            return collect_page_advisories(doc)
+    except Exception as e:
+        logger.debug(
+            "[PDF] Scan/garbled advisory check failed for {}: {}",
+            input_path.name,
+            e,
+        )
+        return None
+
+
+def _start_prescan(
+    input_path: Path, *, hidden_text: bool
+) -> tuple[
+    Future[dict[int, list[str]] | None] | None,
+    Future[tuple[list[int], list[int]] | None],
+]:
+    """Start the hidden-text and scanned-page checks in a background thread.
+
+    Both read the PDF on their own and need nothing from the extraction, so
+    they run while the pages are extracted (in worker processes, or in
+    onnxruntime, which releases the GIL) instead of after it.
+    """
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="markitai-pdf-scan")
+    try:
+        hidden = executor.submit(_scan_hidden_text, input_path) if hidden_text else None
+        advisories = executor.submit(_scan_advisories, input_path)
+    finally:
+        executor.shutdown(wait=False)
+    return hidden, advisories
+
+
 @register_converter(FileFormat.PDF)
 class PdfConverter(BaseConverter):
     """Converter for PDF documents using pymupdf4llm.
@@ -397,7 +453,9 @@ class PdfConverter(BaseConverter):
     )
     _TEXT_TOKEN_RE = re.compile(r"[A-Za-z]+(?:[-'][A-Za-z]+)?|[\u4e00-\u9fff]+")
 
-    def _get_worker_count(self, input_path: Path, task_count: int) -> int:
+    def _get_worker_count(
+        self, input_path: Path, task_count: int, *, per_worker_bytes: int = 0
+    ) -> int:
         """Calculate optimal worker count based on file size and system resources.
 
         Each worker opens its own PDF copy, so memory usage scales with
@@ -406,6 +464,9 @@ class PdfConverter(BaseConverter):
         Args:
             input_path: Path to the PDF file (used to check file size).
             task_count: Number of tasks (pages) to process.
+            per_worker_bytes: Memory one task holds while it runs (OCR:
+                about a gigabyte); the workers then take at most half of
+                the available memory.
 
         Returns:
             Optimal number of workers (at least 1, at most _MAX_INTERNAL_WORKERS).
@@ -419,6 +480,15 @@ class PdfConverter(BaseConverter):
             workers = min(4, task_count)
         else:
             workers = min(2, task_count)
+
+        if per_worker_bytes:
+            try:
+                import psutil
+
+                budget = psutil.virtual_memory().available // 2
+                workers = min(workers, max(1, budget // per_worker_bytes))
+            except Exception:  # psutil unavailable: file size decides
+                pass
 
         return max(1, min(workers, self._MAX_INTERNAL_WORKERS))
 
@@ -553,17 +623,20 @@ class PdfConverter(BaseConverter):
             if self.config:
                 image_format = normalize_image_extension(self.config.image.format)
 
+            sanitize_mode = self.config.security.pdf_sanitize if self.config else "warn"
+            hidden_scan, advisory_scan = _start_prescan(
+                input_path, hidden_text=sanitize_mode != "off"
+            )
+
             # Convert using pymupdf4llm with page_chunks=True for page-level splitting
             # This allows proper text-to-screenshot alignment in batched LLM processing
-            page_results = pymupdf4llm.to_markdown(
-                str(input_path),
+            page_results = to_markdown_chunks(
+                input_path,
+                extract=pymupdf4llm.to_markdown,
                 write_images=write_images,
                 image_path=str(image_path),
                 image_format=image_format,
                 dpi=dpi,
-                force_text=True,
-                page_chunks=True,  # Return list of page chunks instead of single string
-                use_ocr=False,  # Markitai handles OCR separately; suppress Tesseract probing
             )
 
             # Merge page chunks and add page markers for proper splitting
@@ -594,7 +667,7 @@ class PdfConverter(BaseConverter):
 
             # Hidden-text / prompt-injection sanitization (warn or remove)
             page_texts = self._sanitize_hidden_text(
-                input_path, page_numbers, page_texts
+                input_path, page_numbers, page_texts, prescanned=hidden_scan
             )
 
             markdown_parts = [
@@ -606,7 +679,7 @@ class PdfConverter(BaseConverter):
 
             # Advisory only: warn when pages look scanned or garbled so the
             # user can re-run with --ocr (behavior is never changed here)
-            self._warn_scanned_or_garbled(input_path)
+            self._warn_scanned_or_garbled(input_path, prescanned=advisory_scan)
 
             # Fix image paths in markdown: pymupdf4llm uses absolute/full paths,
             # we need relative paths (assets/xxx.jpg)
@@ -884,6 +957,8 @@ class PdfConverter(BaseConverter):
         input_path: Path,
         page_numbers: list[int],
         page_texts: list[str],
+        *,
+        prescanned: Future[dict[int, list[str]] | None] | None = None,
     ) -> list[str]:
         """Warn about (or remove) hidden text in the composed page texts.
 
@@ -904,6 +979,8 @@ class PdfConverter(BaseConverter):
             input_path: Path to the PDF file being converted
             page_numbers: 1-based page number for each entry in page_texts
             page_texts: Per-page markdown text, parallel to page_numbers
+            prescanned: The detection already started in the background
+                (``_start_prescan``); run here when None.
 
         Returns:
             Page texts, possibly with hidden text removed
@@ -912,20 +989,11 @@ class PdfConverter(BaseConverter):
         if mode == "off":
             return page_texts
 
-        try:
-            import pymupdf
-
-            doc = pymupdf.open(input_path)
-            try:
-                hidden = collect_hidden_text(doc)
-            finally:
-                doc.close()
-        except Exception as e:
-            logger.debug(
-                "[PDF] Hidden-text detection failed for {}: {}", input_path.name, e
-            )
-            return page_texts
-
+        hidden = (
+            prescanned.result()
+            if prescanned is not None
+            else _scan_hidden_text(input_path)
+        )
         if not hidden:
             return page_texts
 
@@ -960,7 +1028,12 @@ class PdfConverter(BaseConverter):
                 result[idx] = result[idx].replace(text, "")
         return result
 
-    def _warn_scanned_or_garbled(self, input_path: Path) -> None:
+    def _warn_scanned_or_garbled(
+        self,
+        input_path: Path,
+        *,
+        prescanned: Future[tuple[list[int], list[int]] | None] | None = None,
+    ) -> None:
         """Emit one consolidated warning when pages look scanned or garbled.
 
         Advisory only: conversion behavior is unchanged and OCR is never
@@ -969,22 +1042,17 @@ class PdfConverter(BaseConverter):
 
         Args:
             input_path: Path to the PDF file being converted
+            prescanned: The check already started in the background
+                (``_start_prescan``); run here when None.
         """
-        try:
-            import pymupdf
-
-            doc = pymupdf.open(input_path)
-            try:
-                scanned_pages, garbled_pages = collect_page_advisories(doc)
-            finally:
-                doc.close()
-        except Exception as e:
-            logger.debug(
-                "[PDF] Scan/garbled advisory check failed for {}: {}",
-                input_path.name,
-                e,
-            )
+        advisories = (
+            prescanned.result()
+            if prescanned is not None
+            else _scan_advisories(input_path)
+        )
+        if advisories is None:
             return
+        scanned_pages, garbled_pages = advisories
 
         flagged = sorted(set(scanned_pages) | set(garbled_pages))
         if not flagged:
@@ -1341,7 +1409,11 @@ class PdfConverter(BaseConverter):
         ocr_pages = [i for i in range(total_pages) if i not in page_texts]
 
         try:
-            max_workers = self._get_worker_count(input_path, total_pages)
+            # A page in recognition holds about a gigabyte (the detector runs
+            # on the full-resolution render): memory bounds the parallelism
+            max_workers = self._get_worker_count(
+                input_path, total_pages, per_worker_bytes=_OCR_PAGE_RAM_BYTES
+            )
             ocr_texts: dict[int, str] = {}
             failures: dict[int, str] = {}
 
@@ -1599,16 +1671,14 @@ class PdfConverter(BaseConverter):
         """Run pymupdf4llm on *pages*, writing images into *image_dir*."""
         chunks = cast(
             list[Any],
-            pymupdf4llm.to_markdown(
-                str(input_path),
+            to_markdown_chunks(
+                input_path,
+                extract=pymupdf4llm.to_markdown,
                 pages=pages,
                 write_images=True,
                 image_path=str(image_dir),
                 image_format=image_format,
                 dpi=DEFAULT_RENDER_DPI,
-                force_text=True,
-                page_chunks=True,
-                use_ocr=False,  # Markitai handles OCR separately; suppress Tesseract probing
             ),
         )
         if not isinstance(chunks, list):
@@ -1779,15 +1849,13 @@ class PdfConverter(BaseConverter):
         try:
             page_chunks = cast(
                 list[Any],
-                pymupdf4llm.to_markdown(
-                    str(input_path),
+                to_markdown_chunks(
+                    input_path,
+                    extract=pymupdf4llm.to_markdown,
                     write_images=True,
                     image_path=str(staging_dir),
                     image_format=image_format,
                     dpi=DEFAULT_RENDER_DPI,
-                    force_text=True,
-                    page_chunks=True,
-                    use_ocr=False,  # Markitai handles OCR separately; suppress Tesseract probing
                 ),
             )
             # page_chunks=True returns a list; anything else is one whole page.

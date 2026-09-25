@@ -17,7 +17,13 @@ from typing import TYPE_CHECKING, Any
 __version__ = "1.1.0"  # single source of truth — bump before tagging vX.Y.Z
 
 if TYPE_CHECKING:
-    from markitai.api import ConversionOutput, ConversionUsage, aconvert, convert
+    from markitai.api import (
+        ConversionOutput,
+        ConversionUsage,
+        aconvert,
+        convert,
+        enable_worker_processes,
+    )
     from markitai.config import MarkitaiConfig
 
 __all__ = [
@@ -27,12 +33,19 @@ __all__ = [
     "__version__",
     "aconvert",
     "convert",
+    "enable_worker_processes",
 ]
 
 
 def __getattr__(name: str) -> Any:
     """Lazy exports (PEP 562): defer heavy imports until first use."""
-    if name in {"ConversionOutput", "ConversionUsage", "aconvert", "convert"}:
+    if name in {
+        "ConversionOutput",
+        "ConversionUsage",
+        "aconvert",
+        "convert",
+        "enable_worker_processes",
+    }:
         from markitai import api as _api
 
         return getattr(_api, name)
