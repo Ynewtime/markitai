@@ -1400,6 +1400,14 @@ def app(
         """Run workflow with explicit resource cleanup on exit."""
         try:
             await run_workflow()
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            # Ctrl-C: stop the PDF workers first, so a converter thread
+            # waiting on them ends now instead of finishing its document
+            # (shutdown_converter_executor below waits for that thread)
+            from markitai.converter.pdf_parallel import shutdown_pool
+
+            shutdown_pool()
+            raise
         finally:
             # Cleanup shared resources
             await get_default_session().close()

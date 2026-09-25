@@ -1678,6 +1678,11 @@ def create_app(
 
             await close_shared_clients()
             shutdown_converter_executor()
+            # Before uvicorn re-raises the stop signal, which ends the process
+            # without running atexit or finalize_process
+            from markitai.converter.pdf_parallel import shutdown_pool
+
+            shutdown_pool()
             # Only a LiteLLM that was loaded has clients to close; importing
             # it here just to clean up would hold shutdown for most of a second
             if "litellm" in sys.modules:

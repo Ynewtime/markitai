@@ -247,3 +247,57 @@ def test_page_checks_stay_in_process_without_the_pool(tmp_path: Path) -> None:
     from markitai.converter.pdf import _scan_advisories
 
     assert pdf_parallel.map_page_runs(pdf, _scan_advisories, 20) is None
+
+
+def _fail_the_pool(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    calls: list[str] = []
+
+    def broken(*_args: Any, **_kwargs: Any) -> Any:
+        calls.append("parallel")
+        raise RuntimeError("worker died")
+
+    monkeypatch.setattr(pdf_parallel, "_parallel", broken)
+    monkeypatch.setattr(pdf_parallel, "PARALLEL_MIN_PAGES", 1)
+    return calls
+
+
+def test_a_broken_pool_falls_back_to_in_process_extraction(
+    tmp_path: Path, workers: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _fail_the_pool(monkeypatch)
+    monkeypatch.setattr(pdf_parallel, "_stopping", False)
+    pdf = _make_pdf(tmp_path / "doc.pdf", pages=4)
+
+    chunks = pdf_parallel.to_markdown_chunks(
+        pdf, extract=pymupdf4llm.to_markdown, **_options(tmp_path)
+    )
+
+    assert calls == ["parallel"]
+    assert len(chunks) == 4
+
+
+def test_a_stopped_pool_ends_the_extraction_instead_of_redoing_it(
+    tmp_path: Path, workers: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ctrl-C (or a server stop) stops the pool: the waiting extraction
+    must fail now, not start the document over in-process."""
+    calls = _fail_the_pool(monkeypatch)
+    monkeypatch.setattr(pdf_parallel, "_stopping", True)
+    pdf = _make_pdf(tmp_path / "doc.pdf", pages=4)
+
+    with pytest.raises(RuntimeError, match="worker died"):
+        pdf_parallel.to_markdown_chunks(
+            pdf, extract=pymupdf4llm.to_markdown, **_options(tmp_path)
+        )
+    assert calls == ["parallel"]
+
+
+def test_shutdown_pool_marks_the_stop_and_a_new_pool_clears_it(
+    workers: None,
+) -> None:
+    pdf_parallel._get_pool(2)
+    pdf_parallel.shutdown_pool()
+    assert pdf_parallel._pool is None and pdf_parallel._stopping is True
+
+    pdf_parallel._get_pool(2)
+    assert pdf_parallel._stopping is False

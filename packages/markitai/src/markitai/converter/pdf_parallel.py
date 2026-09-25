@@ -57,6 +57,9 @@ _pool: ProcessPoolExecutor | None = None
 _lock = threading.Lock()
 _active = 0
 _enabled = False
+# Set by shutdown_pool: an extraction the stop interrupted must end, not
+# start over in-process
+_stopping = False
 
 
 def enable() -> None:
@@ -148,6 +151,8 @@ def to_markdown_chunks(
         try:
             return _parallel(path, page_list, options, workers)
         except Exception as e:  # a broken pool must not fail the conversion
+            if _stopping:
+                raise  # shutdown_pool stopped it (Ctrl-C, server stop)
             logger.warning(
                 "[PDF] Parallel extraction failed ({}); extracting in-process", e
             )
@@ -326,6 +331,7 @@ def _init_worker() -> None:
     """Run onnxruntime on one thread and keep stdout free for the parent."""
     import sys
 
+    _exit_with_parent()
     import onnxruntime as ort
 
     # parse_document prints its messages; the parent may be writing Markdown
@@ -354,10 +360,32 @@ def _init_worker() -> None:
     importlib.import_module("pymupdf4llm")
 
 
+def _exit_with_parent() -> None:
+    """End this worker as soon as the process that spawned it is gone.
+
+    The pool's queues hand every worker both ends of their pipes, so a
+    worker whose parent was killed (a signal, a crash, ``os._exit`` without
+    ``shutdown_pool``) never sees EOF and would wait forever. The parent's
+    sentinel does close with it.
+    """
+    import multiprocessing
+
+    parent = multiprocessing.parent_process()
+    if parent is None:
+        return
+
+    def watch() -> None:
+        parent.join()
+        os._exit(0)
+
+    threading.Thread(target=watch, name="markitai-parent-watch", daemon=True).start()
+
+
 def _get_pool(workers: int) -> ProcessPoolExecutor:
-    global _pool
+    global _pool, _stopping
     with _lock:
         if _pool is None:
+            _stopping = False
             import multiprocessing
             from concurrent.futures import ProcessPoolExecutor
 
@@ -381,20 +409,37 @@ def _discard_pool() -> None:
 
 
 def shutdown_pool() -> None:
-    """Stop the workers (idempotent). Called on exit; the CLI's ``os._exit``
-    skips ``atexit``, so ``finalize_process`` calls it too."""
-    global _pool
+    """Stop the workers now, cancelling what they have not finished.
+
+    Idempotent. Called on exit (the CLI's ``os._exit`` skips ``atexit``, so
+    ``finalize_process`` calls it too), on Ctrl-C (an extraction waiting on
+    the workers then fails instead of finishing the document first), and
+    by ``markitai serve`` before uvicorn re-raises its stop signal.
+    """
+    global _pool, _stopping
     with _lock:
         pool, _pool = _pool, None
+        _stopping = True
     if pool is None:
         return
-    processes = list(getattr(pool, "_processes", {}).values())
+    processes = list((getattr(pool, "_processes", None) or {}).values())
     pool.shutdown(wait=False, cancel_futures=True)
     for process in processes:
         try:
             process.terminate()
         except Exception:
             pass
+    for process in processes:
+        try:
+            process.join(timeout=1)
+        except Exception:
+            pass
+    # With its workers gone the pool's manager thread ends and releases the
+    # queues; their semaphores would otherwise be reported leaked at exit.
+    # Bounded: a stop must never hang on it.
+    closer = threading.Thread(target=pool.shutdown, kwargs={"wait": True}, daemon=True)
+    closer.start()
+    closer.join(timeout=2)
 
 
 atexit.register(shutdown_pool)
