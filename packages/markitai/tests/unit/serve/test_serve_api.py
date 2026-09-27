@@ -439,7 +439,9 @@ class TestJobCreationValidation:
     ) -> None:
         """Non-HTTPException failures must not leave a zombie 'running' job."""
 
-        async def exploding_save(upload: Any, dest_dir: Path) -> Path:
+        async def exploding_save(
+            upload: Any, dest_dir: Path, taken: set[str] | None = None
+        ) -> Path:
             raise OSError(63, "File name too long")
 
         monkeypatch.setattr("markitai.serve.app._save_upload", exploding_save)
@@ -452,6 +454,88 @@ class TestJobCreationValidation:
             registry = app.state.markitai.registry
             assert registry.jobs == {}  # no zombie registry entry
             assert list(registry.jobs_root.iterdir()) == []  # job dir removed
+
+    async def test_a_big_submit_names_uploads_without_relisting_them(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Listing the uploads dir for every file made a 1000-file submit
+        quadratic (about a second with the loop held); the names, collisions
+        included, must come out as before."""
+        from markitai.batch import ProcessResult
+
+        async def convert(file_path: Path, cfg: Any, out_dir: Path, shared: Any):
+            return ProcessResult(success=True, error="skipped (exists)")
+
+        listings: list[Path] = []
+        list_dir = Path.iterdir
+
+        def counting_iterdir(self: Path) -> Any:
+            if self.name == "uploads":
+                listings.append(self)
+            return list_dir(self)
+
+        monkeypatch.setattr("markitai.serve.jobs.process_file_item", convert)
+        monkeypatch.setattr(Path, "iterdir", counting_iterdir)
+        uploads = [
+            ("a.txt", b"1"),
+            ("a.txt", b"2"),
+            ("A.TXT", b"3"),
+            ("a (2).txt", b"4"),
+            *((f"doc{i}.txt", b"x") for i in range(40)),
+        ]
+        async with _serve_client(_make_app(tmp_path)) as client:
+            created = await client.post("/api/jobs", files=_multipart(files=uploads))
+            assert created.status_code == 201
+            await _wait_job_done(client, created.json()["job_id"])
+
+        names = [item["name"] for item in created.json()["items"]]
+        assert names[:4] == ["a.txt", "a (2).txt", "A (3).TXT", "a (2) (2).txt"]
+        assert names[4:] == [f"doc{i}.txt" for i in range(40)]
+        assert len(listings) == 1
+
+    async def test_saving_uploads_lets_other_requests_in_between_files(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A small upload is read from memory without ever suspending, so
+        without a yield a folder of them holds every other request."""
+        from markitai.batch import ProcessResult
+        from markitai.serve import app as app_module
+
+        async def convert(file_path: Path, cfg: Any, out_dir: Path, shared: Any):
+            return ProcessResult(success=True, error="skipped (exists)")
+
+        ticks = 0
+        seen_at_save: list[int] = []
+        save = app_module._save_upload
+
+        async def recording_save(
+            upload: Any, dest_dir: Path, taken: set[str] | None = None
+        ) -> Path:
+            seen_at_save.append(ticks)
+            return await save(upload, dest_dir, taken)
+
+        async def ticker() -> None:
+            nonlocal ticks
+            while True:
+                ticks += 1
+                await asyncio.sleep(0)
+
+        monkeypatch.setattr("markitai.serve.jobs.process_file_item", convert)
+        monkeypatch.setattr(app_module, "_save_upload", recording_save)
+        async with _serve_client(_make_app(tmp_path)) as client:
+            ticking = asyncio.create_task(ticker())
+            try:
+                created = await client.post(
+                    "/api/jobs",
+                    files=_multipart(files=[(f"f{i}.txt", b"x") for i in range(5)]),
+                )
+                await _wait_job_done(client, created.json()["job_id"])
+            finally:
+                ticking.cancel()
+
+        assert len(seen_at_save) == 5
+        # The other task ran between every two saves
+        assert all(b > a for a, b in zip(seen_at_save, seen_at_save[1:]))
 
     async def test_oversized_content_length_is_413_before_parsing(
         self, tmp_path: Path

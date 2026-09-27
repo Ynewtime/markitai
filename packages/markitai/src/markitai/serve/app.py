@@ -661,21 +661,30 @@ def _sanitize_upload_name(raw: str | None) -> str:
     return name
 
 
-async def _save_upload(upload: UploadFile, dest_dir: Path) -> Path:
+async def _save_upload(
+    upload: UploadFile, dest_dir: Path, taken: set[str] | None = None
+) -> Path:
     """Stream one upload to disk, enforcing the per-file size limit.
 
     Names are de-duplicated case-insensitively: on macOS/Windows file
     systems ``Report.pdf`` and ``report.pdf`` are one file, and even on a
     case-sensitive one their outputs would collide once the job archive is
     unpacked there.
+
+    *taken* holds the casefolded names already in *dest_dir* and receives
+    the name chosen here. A caller saving many uploads passes one set for
+    all of them: listing the directory again for every file made a
+    1000-file submit quadratic. Without it the directory is listed.
     """
     name = _sanitize_upload_name(upload.filename)
-    taken = {entry.name.casefold() for entry in dest_dir.iterdir()}
+    if taken is None:
+        taken = {entry.name.casefold() for entry in dest_dir.iterdir()}
     target = dest_dir / name
     counter = 2
     while target.name.casefold() in taken or target.exists():
         target = dest_dir / f"{Path(name).stem} ({counter}){Path(name).suffix}"
         counter += 1
+    taken.add(target.name.casefold())
     size = 0
     try:
         with target.open("wb") as fh:
@@ -692,6 +701,7 @@ async def _save_upload(upload: UploadFile, dest_dir: Path) -> Path:
                 fh.write(chunk)
     except HTTPException:
         target.unlink(missing_ok=True)
+        taken.discard(target.name.casefold())
         raise
     return target
 
@@ -2738,8 +2748,16 @@ def create_app(
         # entry + job dir), or it stays a permanent "running" zombie whose
         # SSE stream never emits the terminal `job` event.
         try:
+            taken_uploads = {
+                entry.name.casefold() for entry in job.uploads_dir.iterdir()
+            }
             for index, upload in enumerate(files, start=1):
-                saved = await _save_upload(upload, job.uploads_dir)
+                if index > 1:
+                    # Reading an upload spooled in memory never suspends: a
+                    # folder of small files would hold the loop, and every
+                    # other request, until the last one is saved.
+                    await asyncio.sleep(0)
+                saved = await _save_upload(upload, job.uploads_dir, taken_uploads)
                 job.items.append(
                     JobItem(
                         item_id=f"i{index}",
