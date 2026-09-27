@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Batches and resume**: a batch no longer converts its own output or `.markitai/` assets, finds `.Docx`-style extensions, and keeps same-named files and URLs apart. A resumed item overwrites its own earlier output (no `.v2` copies), even when resumed from another directory.
-- **LLM output**: a refusal is never accepted or cached, failed image analysis keeps the original alt text, and a failed run leaves this run's `.md` and no stale `.llm.md`.
+- **LLM output**: the cleanup prompt names every page, slide and image placeholder, so models such as Gemini Flash-Lite keep page boundaries instead of having their cleanup discarded. A refusal is never accepted or cached, failed image analysis keeps the original alt text, and a failed run leaves this run's `.md` and no stale `.llm.md`.
 - **`--llm-batch`**: cached image answers are kept, `--resume` no longer resubmits an uncollected batch (it prints the collect command), `--alt`/`--desc` are applied at collection, Anthropic image requests work, and credentials come from `llm.model_list`.
 - **Web fetching**: pages decode with their declared charset (GBK, Shift_JIS, CP1252) and survive a stray invalid byte, relative links resolve after redirects, a challenge page never replaces a good cached copy, and loopback and NO_PROXY hosts bypass the proxy.
 - **Screenshots**: taken before the DOM is cleaned, with every tile kept and their own time budget; a page that hangs after load times out.
