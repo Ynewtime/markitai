@@ -2374,6 +2374,84 @@ class TestItemWarnings:
         assert after["items"][0]["status"] == "done"
         assert after["items"][0]["warnings"] == first["items"][0]["warnings"]
 
+    _IMAGE_WARNING = (
+        "image analysis failed for img1.png; its original alt text was kept"
+    )
+
+    async def test_a_file_items_pipeline_warnings_join_its_notices(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The CLI shows the pipeline's own warnings (a failed image
+        analysis); so must the web item. The LLM fallback is both a notice
+        ("<file>: <warning>") and an item warning, and is shown once."""
+        from markitai.notices import user_notice
+        from markitai.workflow import core
+        from markitai.workflow.llm_failure import llm_fallback_warning
+
+        # The process-wide "how to fail such items" hint is not under test
+        monkeypatch.setattr("markitai.workflow.llm_failure._hinted", True)
+
+        async def fake_core(
+            ctx: core.ConversionContext, max_size: int
+        ) -> core.ConversionStepResult:
+            ctx.output_file = ctx.output_dir / f"{ctx.input_path.name}.md"
+            ctx.output_file.write_text("# doc", encoding="utf-8")
+            user_notice("[PDF] {}: 2 page(s) look scanned", ctx.input_path.name)
+            ctx.warnings.append(self._IMAGE_WARNING)
+            ctx.warnings.append(
+                llm_fallback_warning(ctx.input_path.name, "LLM processing failed: boom")
+            )
+            ctx.warnings.append(self._IMAGE_WARNING)  # repeated by a later stage
+            return core.ConversionStepResult(success=True)
+
+        monkeypatch.setattr(core, "convert_document_core", fake_core)
+        async with _serve_client(_make_app(tmp_path)) as client:
+            created = await client.post(
+                "/api/jobs", files=_multipart(files=[("a.pdf", b"%PDF")])
+            )
+            done = await _wait_job_done(client, created.json()["job_id"])
+
+        item = done["items"][0]
+        assert item["status"] == "done"
+        assert item["warnings"] == [
+            "[PDF] a.pdf: 2 page(s) look scanned",
+            "a.pdf: LLM enhancement failed (boom); kept the unenhanced output",
+            self._IMAGE_WARNING,
+        ]
+
+    async def test_a_url_items_cascade_warnings_join_its_notices(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from markitai.workflow import url as url_workflow
+        from markitai.workflow.llm_failure import llm_fallback_warning
+
+        monkeypatch.setattr("markitai.workflow.llm_failure._hinted", True)
+        page = "https://example.com/page"
+
+        async def fake_cascade(
+            url: str, cfg: Any, workdir: Path, **kwargs: Any
+        ) -> url_workflow.UrlCascadeResult:
+            output = workdir / (kwargs.get("output_name") or "page.md")
+            output.write_text("# page", encoding="utf-8")
+            return url_workflow.UrlCascadeResult(
+                markdown="# page",
+                output_path=output,
+                llm_output_path=None,
+                warnings=[self._IMAGE_WARNING, llm_fallback_warning(url, "boom")],
+            )
+
+        monkeypatch.setattr(url_workflow, "convert_url_cascade", fake_cascade)
+        async with _serve_client(_make_app(tmp_path)) as client:
+            created = await client.post("/api/jobs", files=_multipart(urls=[page]))
+            done = await _wait_job_done(client, created.json()["job_id"])
+
+        item = done["items"][0]
+        assert item["status"] == "done"
+        assert item["warnings"] == [
+            f"{page}: LLM enhancement failed (boom); kept the unenhanced output",
+            self._IMAGE_WARNING,
+        ]
+
 
 class TestKeepBase:
     """serve forces llm.keep_base: LLM jobs keep .md next to .llm.md."""
