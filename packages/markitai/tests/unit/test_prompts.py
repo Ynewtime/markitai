@@ -235,3 +235,17 @@ class TestVisionUserPromptStructure:
         pm = PromptManager()
         prompt = pm.get_prompt("document_vision_user", content="test content")
         assert "REMINDER:" not in prompt
+
+
+def test_document_prompt_names_every_placeholder_the_answer_must_keep() -> None:
+    """The document call rejects an answer that drops a page/slide boundary
+    or an image placeholder, so its prompt must say to keep each of them.
+
+    It named only __MARKITAI_IMG_N__: Gemini Flash-Lite then removed every
+    __MARKITAI_PAGENUM_N__ as noise, and the whole cleanup was discarded.
+    """
+    from markitai.prompts import PromptManager
+
+    system = PromptManager().get_prompt("document_process_system")
+    for kind in ("IMG", "PAGENUM", "SLIDENUM", "PAGE"):
+        assert f"__MARKITAI_{kind}_N__" in system, kind
