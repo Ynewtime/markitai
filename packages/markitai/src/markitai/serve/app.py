@@ -7,6 +7,7 @@ Requires the ``markitai[serve]`` extra (fastapi, uvicorn, python-multipart).
 from __future__ import annotations
 
 import asyncio
+import errno
 import hashlib
 import ipaddress
 import json
@@ -521,6 +522,35 @@ def _http_error_code(status_code: int) -> str:
     }.get(status_code, "server_error" if status_code >= 500 else "request_failed")
 
 
+_OPEN_FILES_EXHAUSTED_DETAIL = (
+    "the server ran out of open files while receiving this upload (each "
+    "upload over 1 MB is held open until the request ends); submit fewer "
+    "files per job, or raise the open-file limit (ulimit -n) before starting "
+    "markitai serve"
+)
+
+
+def _ran_out_of_open_files(exc: BaseException) -> bool:
+    """Whether *exc* was caused by the process running out of file descriptors.
+
+    FastAPI turns any error while parsing a form into a generic 400 ("There
+    was an error parsing the body") raised from the original error. Starlette
+    spools each large upload to an open temporary file for the life of the
+    request, so a big folder can exhaust the open-file limit there.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, OSError) and current.errno in (
+            errno.EMFILE,
+            errno.ENFILE,
+        ):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def _url_rejection_detail(url: str, reason: str | None) -> str:
     """Explain why a remote caller's URL was refused, and what to do instead."""
     shown = url if len(url) <= 120 else f"{url[:117]}..."
@@ -631,21 +661,30 @@ def _sanitize_upload_name(raw: str | None) -> str:
     return name
 
 
-async def _save_upload(upload: UploadFile, dest_dir: Path) -> Path:
+async def _save_upload(
+    upload: UploadFile, dest_dir: Path, taken: set[str] | None = None
+) -> Path:
     """Stream one upload to disk, enforcing the per-file size limit.
 
     Names are de-duplicated case-insensitively: on macOS/Windows file
     systems ``Report.pdf`` and ``report.pdf`` are one file, and even on a
     case-sensitive one their outputs would collide once the job archive is
     unpacked there.
+
+    *taken* holds the casefolded names already in *dest_dir* and receives
+    the name chosen here. A caller saving many uploads passes one set for
+    all of them: listing the directory again for every file made a
+    1000-file submit quadratic. Without it the directory is listed.
     """
     name = _sanitize_upload_name(upload.filename)
-    taken = {entry.name.casefold() for entry in dest_dir.iterdir()}
+    if taken is None:
+        taken = {entry.name.casefold() for entry in dest_dir.iterdir()}
     target = dest_dir / name
     counter = 2
     while target.name.casefold() in taken or target.exists():
         target = dest_dir / f"{Path(name).stem} ({counter}){Path(name).suffix}"
         counter += 1
+    taken.add(target.name.casefold())
     size = 0
     try:
         with target.open("wb") as fh:
@@ -662,6 +701,7 @@ async def _save_upload(upload: UploadFile, dest_dir: Path) -> Path:
                 fh.write(chunk)
     except HTTPException:
         target.unlink(missing_ok=True)
+        taken.discard(target.name.casefold())
         raise
     return target
 
@@ -1673,16 +1713,19 @@ def create_app(
         finally:
             await app.state.markitai.registry.shutdown()
 
+            from markitai.converter.pdf_parallel import shutdown_pool
             from markitai.fetch import close_shared_clients
             from markitai.utils.executor import shutdown_converter_executor
 
             await close_shared_clients()
-            shutdown_converter_executor()
-            # Before uvicorn re-raises the stop signal, which ends the process
-            # without running atexit or finalize_process
-            from markitai.converter.pdf_parallel import shutdown_pool
-
+            # The PDF workers stop first, as on the CLI's Ctrl-C: the job
+            # tasks are cancelled by now, but a converter thread waiting on
+            # the workers would otherwise finish its whole document before
+            # shutdown_converter_executor (which waits for it) returns. Also
+            # before uvicorn re-raises the stop signal, which ends the process
+            # without running atexit or finalize_process.
             shutdown_pool()
+            shutdown_converter_executor()
             # Only a LiteLLM that was loaded has clients to close; importing
             # it here just to clean up would hold shutdown for most of a second
             if "litellm" in sys.modules:
@@ -1754,6 +1797,18 @@ def create_app(
         Clients keep reading ``detail`` unchanged; a script can branch on
         ``code`` without string-matching prose that may be translated.
         """
+        if exc.status_code == 400 and _ran_out_of_open_files(exc):
+            # Not a malformed body: the server lacked the file descriptors
+            logger.warning(
+                "[Serve] Upload to {} failed: too many open files", request.url.path
+            )
+            return JSONResponse(
+                {
+                    "detail": _OPEN_FILES_EXHAUSTED_DETAIL,
+                    "code": _http_error_code(503),
+                },
+                status_code=503,
+            )
         return JSONResponse(
             {
                 "detail": exc.detail,
@@ -2693,8 +2748,16 @@ def create_app(
         # entry + job dir), or it stays a permanent "running" zombie whose
         # SSE stream never emits the terminal `job` event.
         try:
+            taken_uploads = {
+                entry.name.casefold() for entry in job.uploads_dir.iterdir()
+            }
             for index, upload in enumerate(files, start=1):
-                saved = await _save_upload(upload, job.uploads_dir)
+                if index > 1:
+                    # Reading an upload spooled in memory never suspends: a
+                    # folder of small files would hold the loop, and every
+                    # other request, until the last one is saved.
+                    await asyncio.sleep(0)
+                saved = await _save_upload(upload, job.uploads_dir, taken_uploads)
                 job.items.append(
                     JobItem(
                         item_id=f"i{index}",

@@ -255,6 +255,35 @@ class TestShutdownStopsPdfWorkers:
             assert pdf_parallel._pool is not None
         assert pdf_parallel._pool is None
 
+    async def test_the_workers_stop_before_the_converter_threads_are_joined(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """shutdown_converter_executor waits for its threads; one extracting
+        a PDF finishes the whole document unless the workers it waits on are
+        stopped first (Ctrl-C took 18 s with the order reversed)."""
+        from markitai.converter import pdf_parallel
+        from markitai.utils import executor
+
+        calls: list[str] = []
+        stop_pool = pdf_parallel.shutdown_pool
+        join_threads = executor.shutdown_converter_executor
+
+        def recording_stop_pool() -> None:
+            calls.append("pool")
+            stop_pool()
+
+        def recording_join_threads() -> None:
+            calls.append("executor")
+            join_threads()
+
+        monkeypatch.setattr(pdf_parallel, "shutdown_pool", recording_stop_pool)
+        monkeypatch.setattr(
+            executor, "shutdown_converter_executor", recording_join_threads
+        )
+        async with _serve_client(_make_app(tmp_path)):
+            pass
+        assert calls == ["pool", "executor"]
+
 
 class TestCompression:
     """JSON and Markdown compress; event streams and downloads never do."""
@@ -366,12 +395,53 @@ class TestJobCreationValidation:
             jobs_root = app.state.markitai.registry.jobs_root
             assert list(jobs_root.iterdir()) == []
 
+    @pytest.mark.parametrize(
+        ("error_number", "status", "code"),
+        [
+            ("EMFILE", 503, "unavailable"),
+            ("ENFILE", 503, "unavailable"),
+            ("EIO", 400, "bad_request"),
+        ],
+    )
+    async def test_running_out_of_open_files_while_parsing_says_so(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        error_number: str,
+        status: int,
+        code: str,
+    ) -> None:
+        """Starlette holds each large upload in an open temp file: a big
+        folder over the open-file limit must not read as a malformed body."""
+        import errno
+
+        from starlette.formparsers import MultiPartParser
+
+        async def failing_parse(self: Any) -> Any:
+            raise OSError(getattr(errno, error_number), "simulated")
+
+        monkeypatch.setattr(MultiPartParser, "parse", failing_parse)
+        async with _serve_client(_make_app(tmp_path)) as client:
+            resp = await client.post(
+                "/api/jobs", files=_multipart(files=[("doc.txt", b"hi")])
+            )
+        assert resp.status_code == status
+        body = resp.json()
+        assert body["code"] == code
+        if status == 503:
+            assert "open files" in body["detail"]
+            assert "ulimit -n" in body["detail"]
+        else:
+            assert body["detail"] == "There was an error parsing the body"
+
     async def test_creation_failure_rolls_back_job(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Non-HTTPException failures must not leave a zombie 'running' job."""
 
-        async def exploding_save(upload: Any, dest_dir: Path) -> Path:
+        async def exploding_save(
+            upload: Any, dest_dir: Path, taken: set[str] | None = None
+        ) -> Path:
             raise OSError(63, "File name too long")
 
         monkeypatch.setattr("markitai.serve.app._save_upload", exploding_save)
@@ -384,6 +454,88 @@ class TestJobCreationValidation:
             registry = app.state.markitai.registry
             assert registry.jobs == {}  # no zombie registry entry
             assert list(registry.jobs_root.iterdir()) == []  # job dir removed
+
+    async def test_a_big_submit_names_uploads_without_relisting_them(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Listing the uploads dir for every file made a 1000-file submit
+        quadratic (about a second with the loop held); the names, collisions
+        included, must come out as before."""
+        from markitai.batch import ProcessResult
+
+        async def convert(file_path: Path, cfg: Any, out_dir: Path, shared: Any):
+            return ProcessResult(success=True, error="skipped (exists)")
+
+        listings: list[Path] = []
+        list_dir = Path.iterdir
+
+        def counting_iterdir(self: Path) -> Any:
+            if self.name == "uploads":
+                listings.append(self)
+            return list_dir(self)
+
+        monkeypatch.setattr("markitai.serve.jobs.process_file_item", convert)
+        monkeypatch.setattr(Path, "iterdir", counting_iterdir)
+        uploads = [
+            ("a.txt", b"1"),
+            ("a.txt", b"2"),
+            ("A.TXT", b"3"),
+            ("a (2).txt", b"4"),
+            *((f"doc{i}.txt", b"x") for i in range(40)),
+        ]
+        async with _serve_client(_make_app(tmp_path)) as client:
+            created = await client.post("/api/jobs", files=_multipart(files=uploads))
+            assert created.status_code == 201
+            await _wait_job_done(client, created.json()["job_id"])
+
+        names = [item["name"] for item in created.json()["items"]]
+        assert names[:4] == ["a.txt", "a (2).txt", "A (3).TXT", "a (2) (2).txt"]
+        assert names[4:] == [f"doc{i}.txt" for i in range(40)]
+        assert len(listings) == 1
+
+    async def test_saving_uploads_lets_other_requests_in_between_files(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A small upload is read from memory without ever suspending, so
+        without a yield a folder of them holds every other request."""
+        from markitai.batch import ProcessResult
+        from markitai.serve import app as app_module
+
+        async def convert(file_path: Path, cfg: Any, out_dir: Path, shared: Any):
+            return ProcessResult(success=True, error="skipped (exists)")
+
+        ticks = 0
+        seen_at_save: list[int] = []
+        save = app_module._save_upload
+
+        async def recording_save(
+            upload: Any, dest_dir: Path, taken: set[str] | None = None
+        ) -> Path:
+            seen_at_save.append(ticks)
+            return await save(upload, dest_dir, taken)
+
+        async def ticker() -> None:
+            nonlocal ticks
+            while True:
+                ticks += 1
+                await asyncio.sleep(0)
+
+        monkeypatch.setattr("markitai.serve.jobs.process_file_item", convert)
+        monkeypatch.setattr(app_module, "_save_upload", recording_save)
+        async with _serve_client(_make_app(tmp_path)) as client:
+            ticking = asyncio.create_task(ticker())
+            try:
+                created = await client.post(
+                    "/api/jobs",
+                    files=_multipart(files=[(f"f{i}.txt", b"x") for i in range(5)]),
+                )
+                await _wait_job_done(client, created.json()["job_id"])
+            finally:
+                ticking.cancel()
+
+        assert len(seen_at_save) == 5
+        # The other task ran between every two saves
+        assert all(b > a for a, b in zip(seen_at_save, seen_at_save[1:]))
 
     async def test_oversized_content_length_is_413_before_parsing(
         self, tmp_path: Path
@@ -2305,6 +2457,84 @@ class TestItemWarnings:
         # The failed rerun rolled back to the first result, warnings included.
         assert after["items"][0]["status"] == "done"
         assert after["items"][0]["warnings"] == first["items"][0]["warnings"]
+
+    _IMAGE_WARNING = (
+        "image analysis failed for img1.png; its original alt text was kept"
+    )
+
+    async def test_a_file_items_pipeline_warnings_join_its_notices(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The CLI shows the pipeline's own warnings (a failed image
+        analysis); so must the web item. The LLM fallback is both a notice
+        ("<file>: <warning>") and an item warning, and is shown once."""
+        from markitai.notices import user_notice
+        from markitai.workflow import core
+        from markitai.workflow.llm_failure import llm_fallback_warning
+
+        # The process-wide "how to fail such items" hint is not under test
+        monkeypatch.setattr("markitai.workflow.llm_failure._hinted", True)
+
+        async def fake_core(
+            ctx: core.ConversionContext, max_size: int
+        ) -> core.ConversionStepResult:
+            ctx.output_file = ctx.output_dir / f"{ctx.input_path.name}.md"
+            ctx.output_file.write_text("# doc", encoding="utf-8")
+            user_notice("[PDF] {}: 2 page(s) look scanned", ctx.input_path.name)
+            ctx.warnings.append(self._IMAGE_WARNING)
+            ctx.warnings.append(
+                llm_fallback_warning(ctx.input_path.name, "LLM processing failed: boom")
+            )
+            ctx.warnings.append(self._IMAGE_WARNING)  # repeated by a later stage
+            return core.ConversionStepResult(success=True)
+
+        monkeypatch.setattr(core, "convert_document_core", fake_core)
+        async with _serve_client(_make_app(tmp_path)) as client:
+            created = await client.post(
+                "/api/jobs", files=_multipart(files=[("a.pdf", b"%PDF")])
+            )
+            done = await _wait_job_done(client, created.json()["job_id"])
+
+        item = done["items"][0]
+        assert item["status"] == "done"
+        assert item["warnings"] == [
+            "[PDF] a.pdf: 2 page(s) look scanned",
+            "a.pdf: LLM enhancement failed (boom); kept the unenhanced output",
+            self._IMAGE_WARNING,
+        ]
+
+    async def test_a_url_items_cascade_warnings_join_its_notices(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from markitai.workflow import url as url_workflow
+        from markitai.workflow.llm_failure import llm_fallback_warning
+
+        monkeypatch.setattr("markitai.workflow.llm_failure._hinted", True)
+        page = "https://example.com/page"
+
+        async def fake_cascade(
+            url: str, cfg: Any, workdir: Path, **kwargs: Any
+        ) -> url_workflow.UrlCascadeResult:
+            output = workdir / (kwargs.get("output_name") or "page.md")
+            output.write_text("# page", encoding="utf-8")
+            return url_workflow.UrlCascadeResult(
+                markdown="# page",
+                output_path=output,
+                llm_output_path=None,
+                warnings=[self._IMAGE_WARNING, llm_fallback_warning(url, "boom")],
+            )
+
+        monkeypatch.setattr(url_workflow, "convert_url_cascade", fake_cascade)
+        async with _serve_client(_make_app(tmp_path)) as client:
+            created = await client.post("/api/jobs", files=_multipart(urls=[page]))
+            done = await _wait_job_done(client, created.json()["job_id"])
+
+        item = done["items"][0]
+        assert item["status"] == "done"
+        assert item["warnings"] == [
+            f"{page}: LLM enhancement failed (boom); kept the unenhanced output",
+            self._IMAGE_WARNING,
+        ]
 
 
 class TestKeepBase:

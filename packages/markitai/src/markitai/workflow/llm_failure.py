@@ -27,6 +27,9 @@ _ERROR_PREFIXES = (
     "Vision LLM failed: ",
 )
 
+_FALLBACK_WARNING = "LLM enhancement failed ({}); kept the unenhanced output"
+_FALLBACK_HEAD, _FALLBACK_TAIL = _FALLBACK_WARNING.split("{}")
+
 _hinted = False
 
 
@@ -50,7 +53,7 @@ def llm_fallback_warning(source: str, error: str) -> str:
     reason = error
     for prefix in _ERROR_PREFIXES:
         reason = reason.removeprefix(prefix)
-    warning = f"LLM enhancement failed ({reason}); kept the unenhanced output"
+    warning = _FALLBACK_WARNING.format(reason)
     user_notice("{}: {}", source, warning)
     if not _hinted:
         _hinted = True
@@ -59,3 +62,12 @@ def llm_fallback_warning(source: str, error: str) -> str:
             'set llm.on_failure to "fail" to fail them instead.'
         )
     return warning
+
+
+def is_llm_fallback_warning(warning: str) -> bool:
+    """Whether ``warning`` came from :func:`llm_fallback_warning`.
+
+    Such a warning already went out as a user notice, which a console run
+    shows, so a caller printing the item's warnings skips it.
+    """
+    return warning.startswith(_FALLBACK_HEAD) and warning.endswith(_FALLBACK_TAIL)

@@ -28,13 +28,15 @@ spawned child imports its parent's ``__main__``: in a host script without an
 from __future__ import annotations
 
 import atexit
+import functools
 import importlib
 import inspect
 import math
 import os
+import sys
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from loguru import logger
 
@@ -52,20 +54,31 @@ _WORKER_RAM_BYTES = 450 * 1024 * 1024
 #: The workers together use at most this share of the available memory.
 _RAM_SHARE = 0.25
 _MAX_WORKERS = 12
+#: ProcessPoolExecutor refuses more workers than this on Windows.
+_MAX_WINDOWS_WORKERS = 61
+_WINDOWS = sys.platform == "win32"
+
+_R = TypeVar("_R")
 
 _pool: ProcessPoolExecutor | None = None
 _lock = threading.Lock()
 _active = 0
 _enabled = False
 # Set by shutdown_pool: an extraction the stop interrupted must end, not
-# start over in-process
+# start over in-process, and no new pool starts until enable()
 _stopping = False
 
 
 def enable() -> None:
-    """Allow worker processes in this process (entry points markitai owns)."""
-    global _enabled
-    _enabled = True
+    """Allow worker processes in this process (entry points markitai owns).
+
+    Also ends a stop (:func:`shutdown_pool`): the workers start again when
+    a conversion needs them.
+    """
+    global _enabled, _stopping
+    with _lock:
+        _enabled = True
+        _stopping = False
 
 
 def layout_engine_active() -> bool:
@@ -82,16 +95,17 @@ def worker_count() -> int:
     workers take at most a quarter of the available memory (about 450 MB
     each).
 
-    ``MARKITAI_PDF_WORKERS`` overrides it; ``0`` or ``1`` disables the pool.
+    ``MARKITAI_PDF_WORKERS`` overrides it, up to the same maximum; ``1`` or
+    less disables the pool.
     """
+    maximum = _max_workers()
     override = os.environ.get("MARKITAI_PDF_WORKERS")
     if override is not None:
-        try:
-            return max(0, int(override))
-        except ValueError:
-            logger.warning("Ignoring MARKITAI_PDF_WORKERS={!r}", override)
+        workers = _workers_override(override, maximum)
+        if workers is not None:
+            return workers
     cpus = os.cpu_count() or 1
-    workers = min(_MAX_WORKERS, max(1, cpus - 2))
+    workers = min(maximum, max(1, cpus - 2))
     try:
         import psutil
 
@@ -100,6 +114,32 @@ def worker_count() -> int:
     except Exception:  # psutil missing or unsupported: cores decide
         pass
     return workers
+
+
+def _max_workers() -> int:
+    if _WINDOWS:
+        return min(_MAX_WORKERS, _MAX_WINDOWS_WORKERS)
+    return _MAX_WORKERS
+
+
+@functools.cache
+def _workers_override(value: str, maximum: int) -> int | None:
+    """``MARKITAI_PDF_WORKERS`` as a worker count; None when it is no number.
+
+    Cached: worker_count runs up to three times per PDF, and a bad value is
+    reported once per process, not on every call.
+    """
+    try:
+        workers = int(value)
+    except ValueError:
+        logger.warning("Ignoring MARKITAI_PDF_WORKERS={!r} (not a number)", value)
+        return None
+    if workers > maximum:
+        logger.warning(
+            "MARKITAI_PDF_WORKERS={} is above the maximum; using {}", workers, maximum
+        )
+        return maximum
+    return max(0, workers)
 
 
 def to_markdown_chunks(
@@ -148,15 +188,32 @@ def to_markdown_chunks(
         )
         if not use_pool or not page_list:
             return _serial(extract, path, pages, options)
+        pool: ProcessPoolExecutor | None = None
         try:
-            return _parallel(path, page_list, options, workers)
-        except Exception as e:  # a broken pool must not fail the conversion
+            pool = _get_pool(workers)
+            return _parallel(pool, path, page_list, options, workers)
+        except Exception as e:  # a failed worker must not fail the conversion
             if _stopping:
-                raise  # shutdown_pool stopped it (Ctrl-C, server stop)
-            logger.warning(
-                "[PDF] Parallel extraction failed ({}); extracting in-process", e
-            )
-            _discard_pool()
+                # shutdown_pool stopped the workers (Ctrl-C, server stop),
+                # before or during this extraction: end now, do not redo it
+                raise
+            if pool is None or _pool_failed(pool, e):
+                logger.warning(
+                    "[PDF] The extraction workers failed ({}); extracting {} "
+                    "in-process, new workers start with the next document",
+                    e,
+                    path.name,
+                )
+                if pool is not None:
+                    _discard_pool(pool)
+            else:
+                # The document's own error (encrypted, a page out of range):
+                # the pool, and other documents' work in it, are fine
+                logger.warning(
+                    "[PDF] A worker could not extract {} ({}); retrying in-process",
+                    path.name,
+                    e,
+                )
             return _serial(extract, path, pages, options)
     finally:
         with _lock:
@@ -170,14 +227,20 @@ def prestart() -> None:
     are ready by the time the batch reaches its PDFs instead of stalling
     the first of them. No-op where the pool would not be used.
     """
-    if not _enabled or not layout_engine_active():
+    if not _enabled or _stopping or not layout_engine_active():
         return
     workers = worker_count()
     if workers < 2:
         return
-    pool = _get_pool(workers)
-    for _ in range(workers):  # one task per worker spawns them all
-        pool.submit(_warm)
+    pool: ProcessPoolExecutor | None = None
+    try:
+        pool = _get_pool(workers)
+        for _ in range(workers):  # one task per worker spawns them all
+            pool.submit(_warm)
+    except Exception as e:  # stopped, or the pool broke: the conversions decide
+        if pool is not None and not _stopping:
+            _discard_pool(pool)
+        logger.debug("[PDF] Extraction workers not started ahead: {}", e)
 
 
 def _warm() -> None:
@@ -224,8 +287,8 @@ def _serial(
 
 
 def map_page_runs(
-    path: Path, scan: Callable[[str, list[int]], Any], page_count: int
-) -> list[Future[Any]] | None:
+    path: Path, scan: Callable[[str, list[int]], _R], page_count: int
+) -> list[PageRun[_R]] | None:
     """Run ``scan(path, pages)`` over runs of pages in the workers.
 
     For per-page checks that would otherwise run in this process while the
@@ -235,8 +298,13 @@ def map_page_runs(
     reference).
 
     Returns:
-        One future per run of pages, in page order; None when the pool
-        would not serve this document (run the check in-process instead).
+        One pending result per run of pages, in page order (a run the
+        workers do not finish is checked in this process instead); None
+        when the pool would not serve this document, or cannot (run the
+        check in-process instead).
+
+    Raises:
+        BrokenProcessPool: :func:`shutdown_pool` stopped the workers.
     """
     if not _enabled or page_count < 1 or not layout_engine_active():
         return None
@@ -245,11 +313,72 @@ def map_page_runs(
         page_count >= PARALLEL_MIN_PAGES or _active > 0 or _pool is not None
     ):
         return None
-    pool = _get_pool(workers)
+    runs = _page_runs(list(range(page_count)), workers)
+    pool: ProcessPoolExecutor | None = None
+    futures: list[Future[_R]] = []
+    try:
+        pool = _get_pool(workers)
+        for run in runs:
+            futures.append(pool.submit(scan, str(path), run))
+    except Exception as e:  # the pool broke, or was shut down, meanwhile
+        if _stopping:
+            raise  # no new work after a stop, in the workers or here
+        for future in futures:
+            future.cancel()
+        if pool is not None:
+            _discard_pool(pool)
+        logger.debug(
+            "[PDF] Extraction workers unavailable ({}); checking {} in-process",
+            e,
+            path.name,
+        )
+        return None
     return [
-        pool.submit(scan, str(path), run)
-        for run in _page_runs(list(range(page_count)), workers)
+        PageRun(future, scan, str(path), run)
+        for future, run in zip(futures, runs, strict=True)
     ]
+
+
+class PageRun(Generic[_R]):
+    """A check of one run of pages, running in a worker (see map_page_runs).
+
+    A run the workers do not finish (a worker died, or a discarded pool
+    cancelled it) is checked in this process instead, so a check always
+    covers every page: the hidden-text scan is a security check.
+    """
+
+    def __init__(
+        self,
+        future: Future[_R],
+        scan: Callable[[str, list[int]], _R],
+        path: str,
+        pages: list[int],
+    ) -> None:
+        self._future = future
+        self._scan = scan
+        self._path = path
+        self._pages = pages
+
+    def result(self) -> _R:
+        """The check's result for these pages, from the worker or from here.
+
+        Raises:
+            BrokenProcessPool: :func:`shutdown_pool` stopped the workers.
+        """
+        try:
+            return self._future.result()
+        except Exception as e:
+            if _stopping:
+                raise  # the stop ends the conversion; nothing is redone here
+            logger.debug(
+                "[PDF] Page check in a worker failed ({}); checking pages {}-{} "
+                "of {} in-process",
+                e,
+                self._pages[0] + 1,
+                self._pages[-1] + 1,
+                Path(self._path).name,
+            )
+            return self._scan(self._path, self._pages)
 
 
 def _page_runs(page_list: list[int], workers: int) -> list[list[int]]:
@@ -260,12 +389,22 @@ def _page_runs(page_list: list[int], workers: int) -> list[list[int]]:
 
 
 def _parallel(
-    path: Path, page_list: list[int], options: dict[str, Any], workers: int
+    pool: ProcessPoolExecutor,
+    path: Path,
+    page_list: list[int],
+    options: dict[str, Any],
+    workers: int,
 ) -> list[dict[str, Any]]:
-    pool = _get_pool(workers)
     runs = _page_runs(page_list, workers)
-    futures = [pool.submit(_parse_pages, str(path), run, options) for run in runs]
-    parsed = [future.result() for future in futures]
+    futures: list[Future[Any]] = []
+    try:
+        for run in runs:
+            futures.append(pool.submit(_parse_pages, str(path), run, options))
+        parsed = [future.result() for future in futures]
+    except BaseException:
+        for future in futures:  # this document's runs still queued: drop them
+            future.cancel()
+        raise
     logger.debug(
         "[PDF] {} page(s) of {} parsed in {} worker task(s)",
         len(page_list),
@@ -328,9 +467,15 @@ def _parse_pages(path: str, pages: list[int], options: dict[str, Any]) -> Any:
 
 
 def _init_worker() -> None:
-    """Run onnxruntime on one thread and keep stdout free for the parent."""
-    import sys
+    """Ignore Ctrl-C, run onnxruntime on one thread, keep stdout for the parent."""
+    import signal
 
+    # A terminal's Ctrl-C reaches every process in its foreground group. The
+    # parent stops the workers itself (shutdown_pool, or the watch below when
+    # it dies); a worker's own KeyboardInterrupt would print a traceback
+    # when idle, and come back as a busy task's exception, which escapes the
+    # parent's error handling. SIGINT and SIG_IGN exist on Windows too.
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     _exit_with_parent()
     import onnxruntime as ort
 
@@ -382,10 +527,25 @@ def _exit_with_parent() -> None:
 
 
 def _get_pool(workers: int) -> ProcessPoolExecutor:
-    global _pool, _stopping
+    """The shared pool, started on first use; a broken one is replaced.
+
+    Raises:
+        BrokenProcessPool: :func:`shutdown_pool` stopped the workers (what
+            an extraction the stop interrupts gets from them too); none
+            start again until :func:`enable`.
+    """
+    global _pool
+    stale: ProcessPoolExecutor | None = None
     with _lock:
+        if _stopping:
+            from concurrent.futures.process import BrokenProcessPool
+
+            raise BrokenProcessPool("the PDF extraction workers were stopped")
+        if _pool is not None and _unusable(_pool):
+            # A worker died while the pool was idle (the OOM killer, a kill):
+            # the pool refuses every task from then on
+            stale, _pool = _pool, None
         if _pool is None:
-            _stopping = False
             import multiprocessing
             from concurrent.futures import ProcessPoolExecutor
 
@@ -397,15 +557,46 @@ def _get_pool(workers: int) -> ProcessPoolExecutor:
                 initializer=_init_worker,
             )
             logger.debug("[PDF] Started {} extraction worker(s)", workers)
-        return _pool
+        pool = _pool
+    if stale is not None:
+        logger.warning(
+            "[PDF] The extraction workers failed ({}); starting new ones",
+            getattr(stale, "_broken", None) or "shut down",
+        )
+        stale.shutdown(wait=False, cancel_futures=True)
+    return pool
 
 
-def _discard_pool() -> None:
+def _unusable(pool: ProcessPoolExecutor) -> bool:
+    """Whether *pool* refuses tasks: broken (a worker died) or shut down."""
+    return bool(
+        getattr(pool, "_broken", False) or getattr(pool, "_shutdown_thread", False)
+    )
+
+
+def _pool_failed(pool: ProcessPoolExecutor, error: BaseException) -> bool:
+    """Whether *error* is the pool's failure rather than the task's own.
+
+    A worker that died breaks the whole pool, and a pool that was shut down
+    cancels what it still held; an exception the task raised itself (an
+    encrypted PDF, a page out of range) leaves the pool usable.
+    """
+    from concurrent.futures import BrokenExecutor, CancelledError
+
+    return isinstance(error, (BrokenExecutor, CancelledError)) or _unusable(pool)
+
+
+def _discard_pool(pool: ProcessPoolExecutor) -> None:
+    """Drop *pool*, which failed; the next conversion starts a new one.
+
+    Only that pool: one another thread has already put in its place stays,
+    with the other documents' work in it.
+    """
     global _pool
     with _lock:
-        pool, _pool = _pool, None
-    if pool is not None:
-        pool.shutdown(wait=False, cancel_futures=True)
+        if _pool is pool:
+            _pool = None
+    pool.shutdown(wait=False, cancel_futures=True)
 
 
 def shutdown_pool() -> None:
@@ -415,6 +606,10 @@ def shutdown_pool() -> None:
     ``finalize_process`` calls it too), on Ctrl-C (an extraction waiting on
     the workers then fails instead of finishing the document first), and
     by ``markitai serve`` before uvicorn re-raises its stop signal.
+
+    The stop lasts until :func:`enable`: meanwhile a conversion that needs
+    the workers fails at once, instead of starting new ones or extracting
+    the document in-process while the process exits.
     """
     global _pool, _stopping
     with _lock:

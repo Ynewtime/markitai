@@ -70,6 +70,9 @@ def _no_pdf_worker_processes(monkeypatch: pytest.MonkeyPatch):
     from markitai.converter import pdf_parallel
 
     monkeypatch.setattr(pdf_parallel, "_enabled", False)
+    # shutdown_pool below (and in tests) marks a stop that lasts until
+    # enable(): each test starts with the pool not stopped
+    monkeypatch.setattr(pdf_parallel, "_stopping", False)
     yield
     pdf_parallel.shutdown_pool()
 

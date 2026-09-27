@@ -540,6 +540,53 @@ class TestConversionWarnings:
     def test_clean_conversion_has_no_warnings(self, sample_txt: Path) -> None:
         assert convert(sample_txt, config=MarkitaiConfig()).warnings == []
 
+    async def test_the_results_own_warnings_are_added_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An image whose analysis failed is no notice, but the caller must
+        hear of it; the LLM fallback is both, and is listed once."""
+        from markitai.notices import user_notice
+
+        fallback = "LLM enhancement failed (boom); kept the unenhanced output"
+        image = "image analysis failed for a.png; its original alt text was kept"
+
+        async def fake_convert_file(
+            path: Path, cfg: Any, workdir: Path, *, in_memory: bool
+        ) -> ConversionOutput:
+            user_notice("{}: {}", path.name, fallback)
+            return ConversionOutput(
+                source=str(path), markdown="# x", warnings=[fallback, image]
+            )
+
+        monkeypatch.setattr("markitai.api._aconvert_file", fake_convert_file)
+        source = tmp_path / "doc.pdf"
+        source.write_bytes(b"x")
+
+        out = await aconvert(source, config=MarkitaiConfig())
+
+        assert out.warnings == [f"doc.pdf: {fallback}", image]
+
+    async def test_a_file_conversion_carries_the_pipelines_warnings(
+        self, sample_txt: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from types import SimpleNamespace
+
+        from markitai.converter.base import ConvertResult
+        from markitai.workflow.core import ConversionContext
+
+        image = "image analysis failed (timeout); the original alt text was kept"
+
+        async def fake_core(ctx: ConversionContext, _max_size: int) -> Any:
+            ctx.conversion_result = ConvertResult(markdown="# x\n")
+            ctx.warnings.append(image)
+            return SimpleNamespace(success=True, skip_reason=None, error=None)
+
+        monkeypatch.setattr("markitai.workflow.core.convert_document_core", fake_core)
+
+        out = await aconvert(sample_txt, output_dir=tmp_path, config=MarkitaiConfig())
+
+        assert out.warnings == [image]
+
     async def test_missing_url_screenshot_is_reported(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
