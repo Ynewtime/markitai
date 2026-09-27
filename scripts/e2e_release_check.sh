@@ -980,7 +980,7 @@ else
     BATCH_DONE=$(ls 25-batch-api/output/*.llm.md 2>/dev/null | wc -l | tr -d ' ')
     check "every document came back enhanced ($BATCH_DONE of 3)" test "$BATCH_DONE" -eq 3
     check "and the run says the work was billed at half price" \
-      grep -qE '50%' 25-batch-api/submit.log 25-batch-api/collect.log
+      grep -qE '50%' 25-batch-api/*.log
   fi
   file "submission" 25-batch-api/submit.log
   [ -f 25-batch-api/collect.log ] && file "collection" 25-batch-api/collect.log
