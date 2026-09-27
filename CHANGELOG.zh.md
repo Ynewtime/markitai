@@ -14,7 +14,7 @@
 - **`.urls` 列表支持 `--resume`**，各种模式下按 Ctrl-C 都会保存批处理状态。
 - `--json` 描述交接出去的 `--llm-batch` 运行（带收取命令的 `batch` 对象、`pending` 状态）以及逐项警告。
 - `cache.fetch_ttl_seconds`（默认 24 小时）让没有 ETag/Last-Modified 的已抓取页面过期；`cache stats`/`cache clear` 覆盖抓取缓存。
-- `markitai.enable_worker_processes()` 和 `MARKITAI_PDF_WORKERS` 用于并行提取 PDF；Python API 导出 `ConversionError`、`FetchError` 和 `NoModelConfiguredError`。
+- `markitai.enable_worker_processes()` 和 `MARKITAI_PDF_WORKERS` 用于并行提取 PDF；`markitai.api` 导出 `ConversionError`、`FetchError` 和 `NoModelConfiguredError`。
 
 ### 变更
 
@@ -22,10 +22,10 @@
 - **LLM 批处理让转换和模型调用重叠进行**（30 个文档加 `--alt`：快 1.5 倍）；一次请求装不下的文档改为分块增强，不再在 32,000 字符处截断。
 - **网页工作台与 CLI 对齐**：每个任务最多 1000 个条目（原为 50），240 个文件快 3.2 倍，任务运行期间 API 保持响应。静态资源由浏览器缓存，响应启用压缩。
 - **OCR 按阅读顺序输出**：分栏、竖排中日文、倒置扫描页和表格。`--ocr` 保留有真实文字层页面的结构；RapidOCR 最低版本为 `>=3.9`。
-- 输出文件跟随 umask（通常为 `0644`），不再一律是 `0600`；配置文件和 `.env` 仍保持私有。
+- 新写出的文件跟随 umask（通常为 `0644`），不再一律是 `0600`，覆盖已有文件时保留原权限；配置文件和 `.env` 仍保持私有。
 - `-c`/`--config-json` 对子命令生效，`config set`/`config edit` 可以创建新的 `-c` 文件。
-- Python API 和 MCP 服务器与 CLI 一样确定模型、加载 `.env`，并且不再联网获取 LiteLLM 的价格表。
-- 提取的图片和截图按最终输出名命名，改名重跑不会覆盖旧版本引用的文件。
+- Python API 和 MCP 服务器与 CLI 一样确定模型，不再联网获取 LiteLLM 的价格表；`markitai-mcp` 与 `markitai mcp` 一样加载 `.env`。
+- 提取的图片和截图按最终输出名命名（`report.pdf.v2-0001-01.jpg`），重跑写出 `report.pdf.v2.md` 时不再覆盖 `report.pdf.md` 引用的图片。
 - 网页提取跟进 defuddle 0.19.4：代码块围栏、`<sub>`/`<sup>`、带标签的日期和 Shadow DOM 内容。
 
 ### 修复

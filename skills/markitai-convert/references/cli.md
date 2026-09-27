@@ -23,7 +23,7 @@ Authoritative long-form docs: <https://markitai.dev/guide/cli>. This file keeps 
 | Flag | Effect |
 |---|---|
 | `-o, --output <path>` | Directory, or a `.md` file target for one input. Without it, one input prints Markdown to stdout; directory/`.urls` batches require an output directory |
-| `--json` | One `{version, ok, error, items[], totals}` result on stdout; requires `-o`, excludes `--dry-run` and `--llm-batch-collect`. Includes final paths, usage and timing; argument/usage errors can exit without JSON |
+| `--json` | One `{version, ok, error, batch, items[], totals}` result on stdout; items carry `status` (`completed`, `failed`, `skipped`, `pending`) and `warnings`, and an `--llm-batch` handoff fills `batch` with `{id, status, collect_command}`; requires `-o`, excludes `--dry-run` and `--llm-batch-collect`. Includes final paths, usage and timing; argument/usage errors can exit without JSON |
 | `--resume` | Batch only: skip completed, retry failed/interrupted, pick up new files; prints `Resuming batch: N completed, M remaining` |
 | `-g, --glob <pat>` | Restrict directory discovery; repeatable; `!` prefix excludes (`-g '!drafts/**'`, single-quote in zsh) |
 | `--max-depth <n>` | Directory scan depth (default 5; 0 = no recursion) |
