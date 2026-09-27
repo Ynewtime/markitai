@@ -35,7 +35,7 @@ Any other MCP client works the same way: command `uvx`, arguments `["--from", "m
 
 Every conversion writes real files, into the `output_dir` the agent passes or into a fresh temporary directory, and the result carries that path. Results inline the Markdown; past about 40 KB they switch to a preview plus `markdown_file`, the path to the full output, so a huge document never floods the model context. The conversion tools also accept `profile` (`rag`, `obsidian` or `okf`) to shape the output for a downstream consumer.
 
-Results also carry `warnings`: notices that didn't fail the conversion but are worth acting on, such as pages that look scanned (retry with `ocr: true`), hidden PDF text that may be a prompt injection, OCR that found no text, or a URL screenshot that wasn't captured. Each successful `job_status` result has its own `warnings` too.
+Results also carry `warnings`: notices that didn't fail the conversion but are worth acting on, such as pages that look scanned (retry with `ocr: true`), hidden PDF text that may be a prompt injection, OCR that found no text, a URL screenshot that wasn't captured, or an LLM enhancement that failed (the result is then the unenhanced conversion; with `llm.on_failure = "fail"` in the server's config the call fails instead). Each successful `job_status` result has its own `warnings` too.
 
 Batch jobs run inside the server process. Poll `job_status` until `status` is `"completed"`, then read the `markdown_file` paths. Each item lands in `output_dir/batch-<job_id>/<item_number>/`, so same-named files never collide. `concurrency` (default 10) bounds how many conversions run at once. A server restart forgets the jobs; the written files remain.
 

@@ -16,6 +16,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import getpass
 import importlib.util
@@ -727,12 +728,16 @@ class AuthManager:
         Returns:
             AuthStatus with authentication result
         """
+        # The checks read credential files and may run a CLI (`claude auth
+        # status`, up to 10 s): off the event loop, so a server answering
+        # other requests meanwhile (markitai serve) does not stall, and
+        # checks gathered together run concurrently
         if provider == "copilot":
-            return self._check_copilot()
+            return await asyncio.to_thread(self._check_copilot)
         elif provider == "claude-agent":
-            return self._check_claude()
+            return await asyncio.to_thread(self._check_claude)
         elif provider == "chatgpt":
-            return _check_chatgpt_auth()
+            return await asyncio.to_thread(_check_chatgpt_auth)
         else:
             return AuthStatus(
                 provider=provider,

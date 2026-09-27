@@ -636,7 +636,10 @@ def _load_dotenv_files() -> None:
 
 def main() -> None:
     """Run the markitai MCP server on stdio."""
+    from markitai.api import enable_worker_processes
+
     _load_dotenv_files()
+    enable_worker_processes()  # a process markitai owns
     server.run("stdio")
 
 

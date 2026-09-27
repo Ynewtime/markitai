@@ -936,6 +936,13 @@ async def process_batch(
         visible_assets=assets_visible(cfg),
     )
 
+    if not dry_run and sum(f.suffix.lower() == ".pdf" for f in files) > 1:
+        # Several PDFs: the extraction workers load their models while the
+        # batch starts (see markitai.converter.pdf_parallel)
+        from markitai.converter.pdf_parallel import prestart
+
+        prestart()
+
     # Discover .urls files for URL batch processing
     url_list_files = batch.discover_files(
         input_dir,
@@ -1167,7 +1174,12 @@ async def process_batch(
 
     # Create separate semaphores for file and URL processing
     # This allows file processing and URL fetching to run at their own concurrency levels
-    file_semaphore = asyncio.Semaphore(cfg.batch.concurrency)
+    # File slots are handed on at the LLM step: the next file converts while
+    # this one waits on the model (markitai.workflow.slots)
+    from markitai.workflow.slots import StagedSlots
+
+    llm_stage_limit = max(cfg.llm.concurrency, cfg.batch.concurrency)
+    file_slots = StagedSlots(cfg.batch.concurrency, llm_stage_limit)
     url_semaphore = asyncio.Semaphore(cfg.batch.url_concurrency)
 
     async def process_url_with_state(
@@ -1277,7 +1289,7 @@ async def process_batch(
         # Workers outnumber file slots (the pool serves URLs too): a file is
         # in_progress only once it holds a slot, so an interrupt leaves the
         # ones still waiting pending for --resume
-        async with file_semaphore:
+        async with file_slots.slot(llm=cfg.llm.enabled):
             file_state.status = FileStatus.IN_PROGRESS
             file_state.started_at = datetime.now(UTC).astimezone().isoformat()
             batch._dirty_keys.add(file_key)
@@ -1369,6 +1381,11 @@ async def process_batch(
 
             if items:
                 max_concurrency = max(cfg.batch.concurrency, cfg.batch.url_concurrency)
+                # With LLM on, files in their LLM step hold a worker too, so
+                # the conversion slots stay busy only with enough extra ones
+                worker_count = max_concurrency + (
+                    llm_stage_limit if cfg.llm.enabled and files_to_process else 0
+                )
                 queue: asyncio.Queue[tuple[str, Any] | None] = asyncio.Queue(
                     maxsize=max_concurrency * 2
                 )
@@ -1376,7 +1393,7 @@ async def process_batch(
                 async def producer() -> None:
                     for item in items:
                         await queue.put(item)
-                    for _ in range(max_concurrency):
+                    for _ in range(worker_count):
                         await queue.put(None)
 
                 async def worker() -> None:
@@ -1395,9 +1412,7 @@ async def process_batch(
                             logger.debug("Unexpected error in worker", exc_info=True)
 
                 producer_task = asyncio.create_task(producer())
-                workers = [
-                    asyncio.create_task(worker()) for _ in range(max_concurrency)
-                ]
+                workers = [asyncio.create_task(worker()) for _ in range(worker_count)]
                 await asyncio.gather(producer_task, *workers)
 
     except BaseException:

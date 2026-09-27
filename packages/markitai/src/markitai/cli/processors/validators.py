@@ -13,6 +13,7 @@ from loguru import logger
 
 from markitai.cli import ui
 from markitai.cli.console import get_console, get_stderr_console
+from markitai.notices import user_notice
 from markitai.utils.errors import extra_install_command
 
 if TYPE_CHECKING:
@@ -22,7 +23,7 @@ console = get_console()
 
 
 def check_vision_model_config(
-    cfg: Any, console: Console, verbose: bool = False
+    cfg: Any, console: Console, verbose: bool = False, *, deferred: bool = False
 ) -> None:
     """Check vision model configuration when image analysis is enabled.
 
@@ -31,6 +32,10 @@ def check_vision_model_config(
         console: Rich console for output (unused for warnings; diagnostics
             always go to stderr so piped stdout content stays clean)
         verbose: Whether to show extra details
+        deferred: Look models up in LiteLLM on the prewarm thread instead
+            of importing it here (see ``markitai.utils.prewarm``): the run
+            starts converting at once, and a missing vision model is still
+            reported, as a notice, once LiteLLM has loaded.
     """
     # Diagnostic notices must not pollute stdout (piped content in stdout
     # mode), so always emit them on the stderr console.
@@ -59,11 +64,10 @@ def check_vision_model_config(
         return
 
     # Check if vision-capable models are configured (auto-detect from litellm)
-    from markitai.llm import get_model_info_cached
     from markitai.providers import is_local_provider_model
 
-    def is_vision_model(model_config: Any) -> bool:
-        """Check if model supports vision (config override or auto-detect)."""
+    def known_vision_support(model_config: Any) -> bool | None:
+        """Vision support without LiteLLM: config override, local provider."""
         model_id = model_config.litellm_params.model
 
         # Config override takes priority
@@ -76,9 +80,26 @@ def check_vision_model_config(
         # Local providers (claude-agent/, copilot/) always support vision
         if is_local_provider_model(model_id):
             return True
+        return None
 
-        # Auto-detect from litellm
-        info = get_model_info_cached(model_id)
+    known = [(m, known_vision_support(m)) for m in cfg.llm.model_list]
+    unknown = [m.litellm_params.model for m, support in known if support is None]
+    if deferred and unknown and not any(support for _, support in known):
+        # Only LiteLLM can tell; the answer comes as a notice when it loads
+        from markitai.utils.prewarm import prewarm_litellm
+
+        model_ids = [m.litellm_params.model for m in cfg.llm.model_list]
+        prewarm_litellm(after=lambda: _notice_if_no_vision_model(model_ids, unknown))
+        return
+
+    from markitai.llm import get_model_info_cached
+
+    def is_vision_model(model_config: Any) -> bool:
+        """Check if model supports vision (config override or auto-detect)."""
+        support = known_vision_support(model_config)
+        if support is not None:
+            return support
+        info = get_model_info_cached(model_config.litellm_params.model)
         return info.get("supports_vision", False)
 
     vision_models = [m for m in cfg.llm.model_list if is_vision_model(m)]
@@ -109,6 +130,32 @@ def check_vision_model_config(
         else:
             preview = ", ".join(model_names[:3])
             logger.debug(f"Vision models configured: {count} ({preview}, ...)")
+
+
+def _notice_if_no_vision_model(model_ids: list[str], unknown: list[str]) -> None:
+    """Prewarm-thread half of ``check_vision_model_config(deferred=True)``.
+
+    Runs once LiteLLM is imported and calls only LiteLLM itself (never a
+    markitai module, see ``markitai.utils.prewarm``); reports through the
+    thread-safe notice channel.
+    """
+    import litellm
+
+    for model_id in unknown:
+        try:
+            if litellm.get_model_info(model_id).get("supports_vision"):
+                return
+        except Exception:
+            continue
+    configured = ", ".join(model_ids[:3])
+    if len(model_ids) > 3:
+        configured += f" (+{len(model_ids) - 3} more)"
+    user_notice(
+        "No vision-capable models detected (current models: {}); --alt/--desc "
+        "need one. Vision models are auto-detected from litellm; add "
+        "`supports_vision: true` to a model's model_info to override.",
+        configured,
+    )
 
 
 def _check_copilot_unsupported_models(model_list: list[Any], console: Console) -> None:
