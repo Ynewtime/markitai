@@ -510,6 +510,8 @@ def url_fakes(monkeypatch: pytest.MonkeyPatch) -> dict:
 def _llm_cfg() -> MarkitaiConfig:
     cfg = MarkitaiConfig()
     cfg.llm.enabled = True
+    # Resume redoes failed items; an LLM failure is one only under "fail"
+    cfg.llm.on_failure = "fail"
     cfg.cache.enabled = False
     cfg.batch.state_flush_interval_seconds = 3600
     return cfg
