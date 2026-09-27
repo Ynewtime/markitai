@@ -85,6 +85,26 @@ Calling the sync `convert()` from a running loop raises `RuntimeError`. Long-liv
 
 A short-lived script can occasionally end with exit code 134 after a successful conversion, an onnxruntime teardown quirk. End such scripts with `from markitai.utils.shutdown import finalize_process; finalize_process(0)` to avoid it. Do not use it in a long-lived host, since it takes the whole process down.
 
+## Parallel PDF Extraction
+
+The CLI, `markitai serve` and the MCP server extract the pages of long PDFs, and of PDFs converted at the same time, in worker processes. The output is the same, several times faster. A script opts in with `markitai.enable_worker_processes()`:
+
+```python
+import markitai
+
+
+def main() -> None:
+    markitai.enable_worker_processes()
+    for name in ("a.pdf", "b.pdf"):
+        markitai.convert(name, output_dir="out/")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+The workers are started as new processes, and each one imports the script's `__main__` module again, so keep the script's work under `if __name__ == "__main__":` as shown. `MARKITAI_PDF_WORKERS` sets the number of workers.
+
 ## ConversionOutput
 
 | Field | Type | Description |
@@ -101,6 +121,6 @@ A short-lived script can occasionally end with exit code 134 after a successful 
 | `usage` | `ConversionUsage` | `cost_usd`, token totals, per-model breakdown |
 | `skip_reason` | `str \| None` | `"exists"` when skipped by the conflict policy |
 | `duration` | `float` | Wall-clock seconds |
-| `warnings` | `list[str]` | Notices that didn't fail the call but are worth acting on: pages that look scanned (retry with `ocr=True`), hidden PDF text (a possible prompt injection), OCR that found no text, slides that couldn't be rendered, a URL screenshot that wasn't captured. Collected per call, so concurrent `aconvert` calls never mix them up. They're also logged as warnings |
+| `warnings` | `list[str]` | Notices that didn't fail the call but are worth acting on: pages that look scanned (retry with `ocr=True`), hidden PDF text (a possible prompt injection), OCR that found no text, slides that couldn't be rendered, a URL screenshot that wasn't captured, an LLM enhancement that failed (`llm_markdown` is then `None` and the result is the unenhanced conversion; with `llm.on_failure = "fail"` the call raises `ConversionError` instead). Collected per call, so concurrent `aconvert` calls never mix them up. They're also logged as warnings |
 
 Failures raise instead of returning partial results: `ConversionError` for pipeline failures, `FetchError` for unreachable URLs, `NoModelConfiguredError` (a `ValueError` subclass) when LLM is enabled and no model resolves. All three can be imported from `markitai.api`. One call converts one file or URL; directory batches stay with the CLI.

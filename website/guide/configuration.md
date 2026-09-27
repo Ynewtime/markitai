@@ -233,6 +233,7 @@ Any string value can reference an environment variable with `env:VAR_NAME`. mark
 | `MARKITAI_NO_REMOTE_FETCH` | Never send URLs to remote services, even with an explicit `-s` (`1`, `true`, `yes`) |
 | `MARKITAI_NO_VLM_OCR` | With `--ocr --llm`, use local RapidOCR instead of the vision model (`1`, `true`, `yes`). It covers OCR only: `--screenshot --llm` still sends page screenshots to the vision model |
 | `MARKITAI_STATIC_HTTP` | Static fetch client: `httpx` (default) or `curl_cffi` |
+| `MARKITAI_PDF_WORKERS` | Worker processes for PDF page extraction; `0` or `1` keeps it in-process. Default: the CPU count minus two, at most 12, and a quarter of the available memory at about 450 MB each |
 | `MARKITAI_SERVE_TOKEN` | Fixed access token for `markitai serve` |
 | `MARKITAI_INSTALL_OPTIONAL` | Setup script: install optional components without prompting |
 | `MARKITAI_USE_MIRROR` | Setup script: `1` always offers a package mirror, `0` never asks |

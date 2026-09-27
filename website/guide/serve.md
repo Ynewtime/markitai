@@ -53,9 +53,9 @@ The token URL is a credential. Anyone holding it can run conversions with your L
 - **Live progress**: each item streams its status, and a notification fires when a job finishes in a background tab.
 - **Per-item actions**: retry a failed item, or LLM-enhance a finished one without reconverting the rest.
 - **Preview**: rendered Markdown with a base vs enhanced comparison, plus a print-to-PDF menu with optional header and footer.
-- **Warnings**: notices that don't fail an item but are worth acting on (pages that look scanned, hidden PDF text that may be a prompt injection, OCR that found no text, slides that couldn't be rendered, a URL screenshot that wasn't captured) show on the item's row and in full at the top of its preview. Each item gets only its own notices, and they stay with the job in history.
+- **Warnings**: notices that don't fail an item but are worth acting on (pages that look scanned, hidden PDF text that may be a prompt injection, OCR that found no text, slides that couldn't be rendered, a URL screenshot that wasn't captured, an LLM enhancement that failed and left the unenhanced result) show on the item's row and in full at the top of its preview. Each item gets only its own notices, and they stay with the job in history.
 - **Downloads**: single files, a per-job zip, or the whole history as one archive.
-- **Limits**: 50 items per job and 100 MB per uploaded file.
+- **Limits**: 1000 items per job, 100 MB per uploaded file and 5 GB per upload.
 
 ### Presets, Overrides and Commands
 

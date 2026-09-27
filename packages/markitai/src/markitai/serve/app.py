@@ -88,10 +88,13 @@ if TYPE_CHECKING:
 DEFAULT_JOBS_ROOT = DEFAULT_SERVE_JOBS_ROOT
 DEFAULT_CONFIG_PATH = Path.home() / ".markitai" / "config.json"
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB per file
-MAX_JOB_ITEMS = 50
-# Hard cap on a whole request body (declared Content-Length): the largest
-# legitimate job plus generous multipart framing slack.
-MAX_REQUEST_BYTES = MAX_JOB_ITEMS * MAX_UPLOAD_BYTES + 64 * 1024 * 1024
+# A folder drop converts like the CLI's directory batch; the job's own
+# concurrency limits bound the work, and 1000 is Starlette's default
+# per-request file limit for multipart forms
+MAX_JOB_ITEMS = 1000
+# Hard cap on a whole request body (declared Content-Length), whatever the
+# number of files: 5 GB of uploads plus multipart framing slack.
+MAX_REQUEST_BYTES = 5 * 1024 * 1024 * 1024 + 64 * 1024 * 1024
 _UPLOAD_CHUNK = 1024 * 1024
 _SSE_PING_INTERVAL = 15.0
 # Per-request timeout handed to litellm for POST /api/settings/llm/test, plus
@@ -1485,18 +1488,65 @@ def _initial_settings_revision(
 
 
 class _SPAStaticFiles(StaticFiles):
-    """Static files with SPA fallback: unknown paths serve index.html."""
+    """Static files with SPA fallback: unknown paths serve index.html.
+
+    The build names ``assets/`` files after their content hash, so a
+    browser may keep them for good; ``index.html`` (which names the current
+    hashes) is revalidated on every load (its ETag makes that a 304).
+    """
 
     async def get_response(self, path: str, scope: Any) -> Any:
         try:
             response = await super().get_response(path, scope)
         except StarletteHTTPException as e:
             if e.status_code == 404:
-                return await super().get_response("index.html", scope)
+                return self._cache(await super().get_response("index.html", scope))
             raise
         if response.status_code == 404:
-            return await super().get_response("index.html", scope)
+            return self._cache(await super().get_response("index.html", scope))
+        # StaticFiles joins the path with os.sep ("assets\\x.js" on Windows)
+        path = path.replace("\\", "/")
+        if path.startswith("assets/") and response.status_code in (200, 304):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            return response
+        if path in ("", ".", "index.html"):
+            return self._cache(response)
         return response
+
+    @staticmethod
+    def _cache(response: Any) -> Any:
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+class _CompressionMiddleware:
+    """Gzip responses, except event streams and file downloads.
+
+    The API's JSON and Markdown results and the UI's scripts compress well,
+    which matters on a LAN (``--host``). Streams must reach the browser
+    event by event, and downloads are served as files (archives are already
+    compressed); those paths bypass the compressor whatever Starlette's own
+    exclusions are in the installed version.
+    """
+
+    _BYPASS_SUFFIXES = ("/events", "/archive")
+
+    def __init__(self, app: Any) -> None:
+        from starlette.middleware.gzip import GZipMiddleware
+
+        self._app = app
+        self._gzip = GZipMiddleware(app, minimum_size=1024, compresslevel=6)
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        path = scope.get("path", "") if scope["type"] == "http" else ""
+        if (
+            scope["type"] != "http"
+            or path.endswith(self._BYPASS_SUFFIXES)
+            or "/files/" in path
+        ):
+            await self._app(scope, receive, send)
+            return
+        await self._gzip(scope, receive, send)
 
 
 # ---------------------------------------------------------------------------
@@ -1612,6 +1662,12 @@ def create_app(
         if restored:
             logger.info("[Serve] Rehydrated {} archived job(s)", restored)
         logger.info("[Serve] markitai {} ready (jobs root: {})", __version__, root)
+        if cfg.llm.model_list or detected_models:
+            # LiteLLM loads in the background, not on the loop when the first
+            # LLM job (or settings test) needs it
+            from markitai.utils.prewarm import prewarm_litellm
+
+            prewarm_litellm()
         try:
             yield
         finally:
@@ -1622,14 +1678,22 @@ def create_app(
 
             await close_shared_clients()
             shutdown_converter_executor()
-            try:
-                from litellm.llms.custom_httpx.async_client_cleanup import (
-                    close_litellm_async_clients,
-                )
+            # Before uvicorn re-raises the stop signal, which ends the process
+            # without running atexit or finalize_process
+            from markitai.converter.pdf_parallel import shutdown_pool
 
-                await close_litellm_async_clients()
-            except Exception as e:
-                logger.debug("[Serve] LiteLLM client cleanup failed: {}", e)
+            shutdown_pool()
+            # Only a LiteLLM that was loaded has clients to close; importing
+            # it here just to clean up would hold shutdown for most of a second
+            if "litellm" in sys.modules:
+                try:
+                    from litellm.llms.custom_httpx.async_client_cleanup import (
+                        close_litellm_async_clients,
+                    )
+
+                    await close_litellm_async_clients()
+                except Exception as e:
+                    logger.debug("[Serve] LiteLLM client cleanup failed: {}", e)
 
     app = FastAPI(title="markitai serve", version=__version__, lifespan=lifespan)
     app.state.serve_token = token
@@ -1719,6 +1783,8 @@ def create_app(
     # Added after the middlewares above so it runs outermost: a remote peer
     # without the token gets one uniform 401 before any other guard answers.
     app.add_middleware(_TokenAuthMiddleware, token=token)
+    # Outermost: compresses whatever the inner layers answer
+    app.add_middleware(_CompressionMiddleware)
 
     # ------------------------------------------------------------------ API
 

@@ -233,6 +233,7 @@ markitai config validate
 | `MARKITAI_NO_REMOTE_FETCH` | 绝不把 URL 发给远程服务，显式 `-s` 也不行（`1`、`true`、`yes`） |
 | `MARKITAI_NO_VLM_OCR` | `--ocr --llm` 时用本地 RapidOCR 而不是视觉模型（`1`、`true`、`yes`）。只管 OCR：`--screenshot --llm` 仍会把页面截图发给视觉模型 |
 | `MARKITAI_STATIC_HTTP` | 静态抓取客户端：`httpx`（默认）或 `curl_cffi` |
+| `MARKITAI_PDF_WORKERS` | PDF 页面提取用的工作进程数；`0` 或 `1` 表示在本进程内提取。默认取 CPU 核数减二，最多 12 个，并且合计不超过可用内存的四分之一（每个约 450 MB） |
 | `MARKITAI_SERVE_TOKEN` | `markitai serve` 的固定访问令牌 |
 | `MARKITAI_INSTALL_OPTIONAL` | 安装脚本：不询问直接装可选组件 |
 | `MARKITAI_USE_MIRROR` | 安装脚本：`1` 总是提供镜像，`0` 从不询问 |

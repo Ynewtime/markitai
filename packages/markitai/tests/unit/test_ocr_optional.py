@@ -146,7 +146,10 @@ class TestScannedPdfAdvisory:
         import markitai.converter.pdf as pdf_module
 
         monkeypatch.setattr(
-            pdf_module, "collect_page_advisories", lambda _doc: pages, raising=False
+            pdf_module,
+            "collect_page_advisories",
+            lambda _doc, _pages=None: pages,
+            raising=False,
         )
         captured: list[str] = []
         sink_id = logger.add(lambda message: captured.append(message), level="WARNING")
