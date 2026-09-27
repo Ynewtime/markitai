@@ -7,6 +7,7 @@ Requires the ``markitai[serve]`` extra (fastapi, uvicorn, python-multipart).
 from __future__ import annotations
 
 import asyncio
+import errno
 import hashlib
 import ipaddress
 import json
@@ -519,6 +520,35 @@ def _http_error_code(status_code: int) -> str:
         500: "server_error",
         503: "unavailable",
     }.get(status_code, "server_error" if status_code >= 500 else "request_failed")
+
+
+_OPEN_FILES_EXHAUSTED_DETAIL = (
+    "the server ran out of open files while receiving this upload (each "
+    "upload over 1 MB is held open until the request ends); submit fewer "
+    "files per job, or raise the open-file limit (ulimit -n) before starting "
+    "markitai serve"
+)
+
+
+def _ran_out_of_open_files(exc: BaseException) -> bool:
+    """Whether *exc* was caused by the process running out of file descriptors.
+
+    FastAPI turns any error while parsing a form into a generic 400 ("There
+    was an error parsing the body") raised from the original error. Starlette
+    spools each large upload to an open temporary file for the life of the
+    request, so a big folder can exhaust the open-file limit there.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, OSError) and current.errno in (
+            errno.EMFILE,
+            errno.ENFILE,
+        ):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def _url_rejection_detail(url: str, reason: str | None) -> str:
@@ -1757,6 +1787,18 @@ def create_app(
         Clients keep reading ``detail`` unchanged; a script can branch on
         ``code`` without string-matching prose that may be translated.
         """
+        if exc.status_code == 400 and _ran_out_of_open_files(exc):
+            # Not a malformed body: the server lacked the file descriptors
+            logger.warning(
+                "[Serve] Upload to {} failed: too many open files", request.url.path
+            )
+            return JSONResponse(
+                {
+                    "detail": _OPEN_FILES_EXHAUSTED_DETAIL,
+                    "code": _http_error_code(503),
+                },
+                status_code=503,
+            )
         return JSONResponse(
             {
                 "detail": exc.detail,

@@ -36,6 +36,38 @@ _EXPOSED_BIND_HELP = (
     "needs the access token printed at startup (unless --no-auth)."
 )
 _WILDCARD_HOSTS = frozenset({"0.0.0.0", "::", "[::]", ""})  # nosec B104 - literal comparison for banner URLs, not a bind
+# Soft open-file limit the server asks for. macOS rejects a soft limit above
+# OPEN_MAX (10240) even when the hard limit is RLIM_INFINITY.
+_OPEN_FILES_TARGET = 10240
+
+
+def _raise_open_file_limit() -> None:
+    """Raise the soft open-file limit toward the hard one (POSIX only).
+
+    Starlette keeps every upload over 1 MB in an open temporary file until
+    the request ends, so a folder of a few hundred PDFs exhausts macOS's
+    default soft limit of 256 and the whole submit fails, well below the
+    1000 items a job accepts. Never lowers a limit that is already higher;
+    a refusal is not fatal (the server then keeps the limit it inherited).
+    """
+    try:
+        import resource
+    except ImportError:  # Windows has no rlimits (nor this limit)
+        return
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        target = (
+            _OPEN_FILES_TARGET
+            if hard == resource.RLIM_INFINITY
+            else min(hard, _OPEN_FILES_TARGET)
+        )
+        if soft == resource.RLIM_INFINITY or soft >= target:
+            return
+        resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+    except (OSError, ValueError) as e:
+        from loguru import logger
+
+        logger.debug("[Serve] Could not raise the open-file limit: {}", e)
 
 
 def _run_server(app: Any, host: str, port: int) -> None:
@@ -50,6 +82,8 @@ def _run_server(app: Any, host: str, port: int) -> None:
     from uvicorn.config import STARTUP_FAILURE
 
     from markitai.serve.app import request_shutdown
+
+    _raise_open_file_limit()
 
     class _Server(uvicorn.Server):
         def handle_exit(self, sig: int, frame: FrameType | None) -> None:

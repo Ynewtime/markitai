@@ -395,6 +395,45 @@ class TestJobCreationValidation:
             jobs_root = app.state.markitai.registry.jobs_root
             assert list(jobs_root.iterdir()) == []
 
+    @pytest.mark.parametrize(
+        ("error_number", "status", "code"),
+        [
+            ("EMFILE", 503, "unavailable"),
+            ("ENFILE", 503, "unavailable"),
+            ("EIO", 400, "bad_request"),
+        ],
+    )
+    async def test_running_out_of_open_files_while_parsing_says_so(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        error_number: str,
+        status: int,
+        code: str,
+    ) -> None:
+        """Starlette holds each large upload in an open temp file: a big
+        folder over the open-file limit must not read as a malformed body."""
+        import errno
+
+        from starlette.formparsers import MultiPartParser
+
+        async def failing_parse(self: Any) -> Any:
+            raise OSError(getattr(errno, error_number), "simulated")
+
+        monkeypatch.setattr(MultiPartParser, "parse", failing_parse)
+        async with _serve_client(_make_app(tmp_path)) as client:
+            resp = await client.post(
+                "/api/jobs", files=_multipart(files=[("doc.txt", b"hi")])
+            )
+        assert resp.status_code == status
+        body = resp.json()
+        assert body["code"] == code
+        if status == 503:
+            assert "open files" in body["detail"]
+            assert "ulimit -n" in body["detail"]
+        else:
+            assert body["detail"] == "There was an error parsing the body"
+
     async def test_creation_failure_rolls_back_job(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
