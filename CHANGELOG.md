@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`--resume` for `.urls` lists**, and Ctrl-C saves the batch state in every mode.
 - `--json` reports an `--llm-batch` handoff (a `batch` object with the collect command, a `pending` status) and per-item warnings.
 - `cache.fetch_ttl_seconds` (default 24 hours) expires fetched pages without ETag/Last-Modified; `cache stats`/`cache clear` cover the fetch cache.
-- `markitai.enable_worker_processes()` and `MARKITAI_PDF_WORKERS` for parallel PDF extraction; the Python API exports `ConversionError`, `FetchError` and `NoModelConfiguredError`.
+- `markitai.enable_worker_processes()` and `MARKITAI_PDF_WORKERS` for parallel PDF extraction; `markitai.api` exports `ConversionError`, `FetchError` and `NoModelConfiguredError`.
 
 ### Changed
 
@@ -22,10 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **LLM batches overlap conversion with the model calls** (30 documents with `--alt`: 1.5× faster), and a document longer than one request is enhanced in chunks instead of being cut at 32,000 characters.
 - **The web workspace matches the CLI**: up to 1000 items per job (was 50), 3.2× faster on 240 files, and the API stays responsive while a job runs. Assets are cached by the browser and responses compressed.
 - **OCR reads in reading order**: columns, vertical CJK, upside-down scans and tables. `--ocr` keeps the structure of pages that have a real text layer; RapidOCR `>=3.9` is required.
-- Outputs follow the umask (usually `0644`) instead of `0600`; config files and `.env` stay private.
+- New outputs follow the umask (usually `0644`) instead of `0600`, and an overwritten file keeps its permissions; config files and `.env` stay private.
 - `-c`/`--config-json` apply to subcommands, and `config set`/`config edit` can create a new `-c` file.
-- The Python API and the MCP server resolve models and load `.env` like the CLI, and no longer fetch LiteLLM's cost map over the network.
-- Extracted images and screenshots are named after the resolved output, so a renamed re-run keeps the files an earlier version references.
+- The Python API and the MCP server resolve models like the CLI and no longer fetch LiteLLM's cost map over the network; `markitai-mcp` loads `.env` like `markitai mcp`.
+- Extracted images and screenshots are named after the resolved output (`report.pdf.v2-0001-01.jpg`), so a re-run written as `report.pdf.v2.md` no longer overwrites the images `report.pdf.md` references.
 - Web extraction follows defuddle 0.19.4: code fences, `<sub>`/`<sup>`, labeled dates and shadow DOM content.
 
 ### Fixed
