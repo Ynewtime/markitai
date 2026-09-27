@@ -154,7 +154,8 @@ class ConversionOutput:
             not fail it — pages that look scanned (re-run with OCR), hidden
             PDF text (possible prompt injection), OCR that found no text,
             slides that could not be rendered, a requested URL screenshot
-            that was not captured, and similar. Also logged as loguru
+            that was not captured, an image whose analysis failed (its
+            original alt text was kept), and similar. Also logged as loguru
             warnings; collected per call, so concurrent conversions never
             see each other's. Empty when there were none.
 
@@ -389,6 +390,7 @@ def _build_file_output(
         screenshots=screenshots,
         images=images,
         usage=ConversionUsage.from_usage_dict(ctx.llm_cost, ctx.llm_usage),
+        warnings=list(ctx.warnings),
     )
 
 
@@ -522,6 +524,7 @@ async def _aconvert_url(
         assets=assets,
         screenshots=screenshots,
         usage=ConversionUsage.from_usage_dict(result.cost_usd, result.llm_usage),
+        warnings=list(result.warnings),
     )
 
 
@@ -590,7 +593,7 @@ async def aconvert(
         profile=profile,
     )
 
-    from markitai.notices import capture_task_notices
+    from markitai.notices import capture_task_notices, merge_item_warnings
 
     src = str(source)
     started = time.time()
@@ -613,7 +616,9 @@ async def aconvert(
             shutil.rmtree(workdir, ignore_errors=True)
 
     result.duration = time.time() - started
-    result.warnings = list(notices)
+    # The notices, plus the problems only the pipeline's result carries
+    # (an image whose analysis failed kept its alt text)
+    result.warnings = merge_item_warnings(list(notices), result.warnings)
     return result
 
 
