@@ -141,7 +141,9 @@ async def convert_url_cascade(
     from markitai.workflow.helpers import (
         add_basic_frontmatter,
         create_llm_processor,
+        image_analysis_error_warning,
         merge_llm_usage,
+        remove_stale_llm_output,
     )
 
     if fetch_result is None:
@@ -350,10 +352,7 @@ async def convert_url_cascade(
             logger.warning(
                 f"[URL] Image analysis failed for {url}: {format_error_message(e)}"
             )
-            warnings.append(
-                f"image analysis failed ({format_error_message(e)}); "
-                "the original alt text was kept"
-            )
+            warnings.append(image_analysis_error_warning(format_error_message(e)))
 
     # The profile moves assets and rewrites their references, so it runs
     # after every stage that writes image links. Profile failures are not
@@ -367,6 +366,12 @@ async def convert_url_cascade(
             llm_failure_fails_item,
             llm_fallback_warning,
         )
+
+        # The base .md above is the item's output: a same-named .llm.md
+        # left by an earlier run must not sit next to it (file pipeline
+        # parity, whichever way the policy goes)
+        if llm_output_path is None:
+            remove_stale_llm_output(output_file, cfg.output.on_conflict)
 
         policy = llm_error_policy or (
             "raise" if llm_failure_fails_item(cfg) else "fallback"

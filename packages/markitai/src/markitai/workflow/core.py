@@ -39,8 +39,10 @@ from markitai.utils.text import format_error_message, markdown_image_reference
 from markitai.workflow.helpers import (
     add_basic_frontmatter,
     append_reference_image_comments,
+    image_analysis_error_warning,
     is_failed_image_entry,
     merge_llm_usage,
+    remove_stale_llm_output,
 )
 
 if TYPE_CHECKING:
@@ -556,14 +558,8 @@ def _write_base_md_fallback(ctx: ConversionContext) -> None:
             f"[Core] LLM processing failed, wrote base .md as fallback: "
             f"{ctx.output_file}"
         )
-    if ctx.config.output.on_conflict == "overwrite" and ctx.llm_output_file is None:
-        stale_llm_output = ctx.output_file.with_suffix(".llm.md")
-        try:
-            stale_llm_output.unlink(missing_ok=True)
-        except OSError as e:
-            logger.warning(f"[Core] Could not remove stale {stale_llm_output}: {e}")
-        else:
-            logger.debug(f"[Core] Removed stale LLM output: {stale_llm_output}")
+    if ctx.llm_output_file is None:
+        remove_stale_llm_output(ctx.output_file, ctx.config.output.on_conflict)
 
     # Every failure path returns before the pipeline's profile step, so
     # without this the one document whose LLM call failed keeps the default
@@ -1116,8 +1112,7 @@ async def process_with_standard_llm(
                 )
                 ctx.image_analysis = None
                 ctx.warnings.append(
-                    f"image analysis failed ({format_error_message(img_result)}); "
-                    "the original alt text was kept"
+                    image_analysis_error_warning(format_error_message(img_result))
                 )
             else:
                 _, image_cost, image_usage, ctx.image_analysis = img_result
@@ -1310,16 +1305,14 @@ async def run_llm_enhancement(ctx: ConversionContext) -> ConversionStepResult:
                         f"Embedded image analysis failed: {embed_result.error}"
                     )
                     ctx.warnings.append(
-                        f"image analysis failed ({embed_result.error}); "
-                        "the original alt text was kept"
+                        image_analysis_error_warning(str(embed_result.error))
                     )
             except Exception as e:
                 logger.warning(
                     f"Embedded image analysis failed: {format_error_message(e)}"
                 )
                 ctx.warnings.append(
-                    f"image analysis failed ({format_error_message(e)}); "
-                    "the original alt text was kept"
+                    image_analysis_error_warning(format_error_message(e))
                 )
 
             stabilize_written_llm_output(ctx, ctx.shared_processor)

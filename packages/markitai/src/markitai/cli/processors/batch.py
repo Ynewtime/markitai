@@ -37,6 +37,7 @@ from markitai.workflow.helpers import (
 )
 from markitai.workflow.helpers import (
     create_llm_processor,
+    remove_stale_llm_output,
     write_images_json,
 )
 
@@ -771,6 +772,11 @@ def create_url_processor(
                             vision=use_vision_enhancement,
                             processor=shared_processor,
                         )
+                        # Images whose analysis failed kept their alt text
+                        if img_analysis is not None and img_analysis.warnings:
+                            extra_info.setdefault("warnings", []).extend(
+                                img_analysis.warnings
+                            )
                     except Exception as e:
                         # Same policy as the shared cascade and the file
                         # pipeline: the base .md on disk is the fallback
@@ -778,6 +784,7 @@ def create_url_processor(
                         # URL fails
                         if not should_write_base:
                             atomic_write_text(output_file, base_content)
+                        remove_stale_llm_output(output_file, cfg.output.on_conflict)
                         from markitai.workflow.llm_failure import (
                             llm_failure_fails_item,
                             llm_fallback_warning,
@@ -1233,6 +1240,7 @@ async def process_batch(
                                 f"{redact_url(url)}: {warning}",
                                 console=batch.console,
                             )
+                            batch.announced_warnings.add(warning)
                     url_state.status = FileStatus.COMPLETED
                     url_state.output = result.output_path
                     url_state.fetch_strategy = extra_info.get("fetch_strategy")
@@ -1331,6 +1339,7 @@ async def process_batch(
                             ui.warning(
                                 f"{display_name}: {warning}", console=batch.console
                             )
+                            batch.announced_warnings.add(warning)
                     # Extract skip reason from ProcessResult error field
                     if result.error and result.error.startswith("skipped ("):
                         file_state.skip_reason = result.error[9:-1]
