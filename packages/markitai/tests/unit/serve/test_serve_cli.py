@@ -450,3 +450,108 @@ class TestRunServer:
         ):
             _run_server(object(), "127.0.0.1", 3611)
         assert excinfo.value.code != 0
+
+    def test_the_server_raises_the_open_file_limit_before_it_starts(self) -> None:
+        uvicorn = pytest.importorskip("uvicorn")
+
+        from markitai.cli.commands.serve import _run_server
+
+        order: list[str] = []
+
+        def fake_run(server: Any) -> None:
+            order.append("run")
+            server.started = True
+
+        with (
+            patch.object(uvicorn.Server, "run", fake_run),
+            patch(
+                "markitai.cli.commands.serve._raise_open_file_limit",
+                side_effect=lambda: order.append("limit"),
+            ),
+        ):
+            _run_server(object(), "127.0.0.1", 3611)
+        assert order == ["limit", "run"]
+
+
+class _FakeResource:
+    """Stand-in for the POSIX ``resource`` module (absent on Windows)."""
+
+    RLIMIT_NOFILE = 8
+    RLIM_INFINITY = -1
+
+    def __init__(self, soft: int, hard: int, refuse: bool = False) -> None:
+        self.limits = (soft, hard)
+        self.refuse = refuse
+        self.set_calls: list[tuple[int, tuple[int, int]]] = []
+
+    def getrlimit(self, which: int) -> tuple[int, int]:
+        assert which == self.RLIMIT_NOFILE
+        return self.limits
+
+    def setrlimit(self, which: int, limits: tuple[int, int]) -> None:
+        self.set_calls.append((which, limits))
+        if self.refuse:
+            raise ValueError("current limit exceeds maximum limit")
+        self.limits = limits
+
+
+class TestRaiseOpenFileLimit:
+    """Large uploads stay open until the request ends: a big folder needs
+    more descriptors than macOS's default soft limit of 256."""
+
+    def _raise_with(
+        self, monkeypatch: pytest.MonkeyPatch, fake: _FakeResource | None
+    ) -> None:
+        import sys
+
+        from markitai.cli.commands.serve import _raise_open_file_limit
+
+        # None in sys.modules makes `import resource` raise ImportError
+        monkeypatch.setitem(sys.modules, "resource", fake)
+        _raise_open_file_limit()
+
+    def test_an_unlimited_hard_limit_raises_the_soft_one_to_open_max(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake = _FakeResource(256, _FakeResource.RLIM_INFINITY)
+        self._raise_with(monkeypatch, fake)
+        # macOS refuses a soft limit above OPEN_MAX even under an unlimited
+        # hard limit, so the target is capped there
+        assert fake.set_calls == [(8, (10240, _FakeResource.RLIM_INFINITY))]
+
+    def test_a_finite_hard_limit_is_the_ceiling(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake = _FakeResource(1024, 4096)
+        self._raise_with(monkeypatch, fake)
+        assert fake.set_calls == [(8, (4096, 4096))]
+
+    @pytest.mark.parametrize(
+        ("soft", "hard"),
+        [
+            (65536, _FakeResource.RLIM_INFINITY),  # already higher
+            (_FakeResource.RLIM_INFINITY, _FakeResource.RLIM_INFINITY),
+            (1024, 1024),  # already at the hard limit
+            (20000, 1048576),
+        ],
+    )
+    def test_a_limit_that_is_already_high_enough_is_left_alone(
+        self, monkeypatch: pytest.MonkeyPatch, soft: int, hard: int
+    ) -> None:
+        fake = _FakeResource(soft, hard)
+        self._raise_with(monkeypatch, fake)
+        assert fake.set_calls == []
+        assert fake.limits == (soft, hard)
+
+    def test_a_refused_raise_is_not_fatal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake = _FakeResource(256, _FakeResource.RLIM_INFINITY, refuse=True)
+        self._raise_with(monkeypatch, fake)
+        assert len(fake.set_calls) == 1
+        assert fake.limits == (256, _FakeResource.RLIM_INFINITY)
+
+    def test_no_resource_module_is_a_no_op(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._raise_with(monkeypatch, None)  # Windows: must not raise

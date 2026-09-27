@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 from pydantic import ValidationError
 
+from markitai.notices import merge_item_warnings
 from markitai.serve.schemas import JobOptions
 from markitai.utils.clock import now_iso
 
@@ -86,7 +87,8 @@ class JobItem:
     # recorded from a CLI run (--record-history) has no uploaded original.
     retryable: bool = True
     # Actionable notices raised while this item converted ("pages look
-    # scanned", "hidden text detected", ...): the web user has no console.
+    # scanned", "hidden text detected", ...), then the pipeline's own result
+    # warnings ("image analysis failed ..."): the web user has no console.
     warnings: list[str] = field(default_factory=list)
 
     def to_payload(self) -> dict[str, Any]:
@@ -755,6 +757,7 @@ async def process_url_item(
         cost_usd=result.cost_usd,
         llm_usage=result.llm_usage,
         llm_enhanced=result.llm_output_path is not None,
+        warnings=list(result.warnings),
     )
 
 
@@ -841,6 +844,7 @@ async def _run_item(
         from markitai.utils.text import format_error_message
 
         result = ProcessResult(success=False, error=format_error_message(e))
+    item.warnings = merge_item_warnings(item.warnings, result.warnings)
     if require_llm and result.success:
         if not (result.output_path and result.llm_enhanced):
             result.success = False
