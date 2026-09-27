@@ -7,8 +7,8 @@ import os
 import re
 import shutil
 import tempfile
-from collections.abc import Callable, Iterable
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from collections.abc import Callable, Iterable, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast
 
@@ -428,7 +428,7 @@ def _scan_advisories(
 
 
 class _Pending(Protocol[_T_co]):
-    """A result still being computed (a Future, or merged Futures)."""
+    """A result still being computed (a Future, or merged page runs)."""
 
     def result(self) -> _T_co: ...
 
@@ -436,28 +436,24 @@ class _Pending(Protocol[_T_co]):
 class _MergedRuns(Generic[_T]):
     """The results of one check run over page runs in the workers, merged.
 
-    A run that fails is left out; the check counts as failed (None) only
-    when every run failed, as the in-process check fails as a whole.
+    Every page is checked: a run the workers do not finish (a worker died,
+    a discarded pool cancelled it) is checked in this process instead
+    (``PageRun.result``), so hidden text is never let through unscanned.
+    A run whose check failed is left out; the check counts as failed (None)
+    only when it failed on every run, as the in-process check fails as a
+    whole.
     """
 
     def __init__(
         self,
-        futures: list[Future[_T | None]],
+        runs: Sequence[_Pending[_T | None]],
         merge: Callable[[list[_T]], _T],
     ) -> None:
-        self._futures = futures
+        self._runs = runs
         self._merge = merge
 
     def result(self) -> _T | None:
-        parts: list[_T] = []
-        for future in self._futures:
-            try:
-                part = future.result()
-            except Exception as e:  # a broken pool: that run is not checked
-                logger.debug("[PDF] Page check in a worker failed: {}", e)
-                continue
-            if part is not None:
-                parts.append(part)
+        parts = [part for run in self._runs if (part := run.result()) is not None]
         return self._merge(parts) if parts else None
 
 
