@@ -255,6 +255,35 @@ class TestShutdownStopsPdfWorkers:
             assert pdf_parallel._pool is not None
         assert pdf_parallel._pool is None
 
+    async def test_the_workers_stop_before_the_converter_threads_are_joined(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """shutdown_converter_executor waits for its threads; one extracting
+        a PDF finishes the whole document unless the workers it waits on are
+        stopped first (Ctrl-C took 18 s with the order reversed)."""
+        from markitai.converter import pdf_parallel
+        from markitai.utils import executor
+
+        calls: list[str] = []
+        stop_pool = pdf_parallel.shutdown_pool
+        join_threads = executor.shutdown_converter_executor
+
+        def recording_stop_pool() -> None:
+            calls.append("pool")
+            stop_pool()
+
+        def recording_join_threads() -> None:
+            calls.append("executor")
+            join_threads()
+
+        monkeypatch.setattr(pdf_parallel, "shutdown_pool", recording_stop_pool)
+        monkeypatch.setattr(
+            executor, "shutdown_converter_executor", recording_join_threads
+        )
+        async with _serve_client(_make_app(tmp_path)):
+            pass
+        assert calls == ["pool", "executor"]
+
 
 class TestCompression:
     """JSON and Markdown compress; event streams and downloads never do."""

@@ -1673,16 +1673,19 @@ def create_app(
         finally:
             await app.state.markitai.registry.shutdown()
 
+            from markitai.converter.pdf_parallel import shutdown_pool
             from markitai.fetch import close_shared_clients
             from markitai.utils.executor import shutdown_converter_executor
 
             await close_shared_clients()
-            shutdown_converter_executor()
-            # Before uvicorn re-raises the stop signal, which ends the process
-            # without running atexit or finalize_process
-            from markitai.converter.pdf_parallel import shutdown_pool
-
+            # The PDF workers stop first, as on the CLI's Ctrl-C: the job
+            # tasks are cancelled by now, but a converter thread waiting on
+            # the workers would otherwise finish its whole document before
+            # shutdown_converter_executor (which waits for it) returns. Also
+            # before uvicorn re-raises the stop signal, which ends the process
+            # without running atexit or finalize_process.
             shutdown_pool()
+            shutdown_converter_executor()
             # Only a LiteLLM that was loaded has clients to close; importing
             # it here just to clean up would hold shutdown for most of a second
             if "litellm" in sys.modules:
