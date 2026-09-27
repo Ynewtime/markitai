@@ -54,12 +54,18 @@ from markitai.workflow.helpers import (
 )
 from markitai.workflow.helpers import (
     create_llm_processor,
+    image_analysis_error_warning,
+    remove_stale_llm_output,
     write_images_json,
 )
 from markitai.workflow.helpers import (
     merge_llm_usage as _merge_llm_usage,
 )
-from markitai.workflow.llm_failure import llm_failure_fails_item, llm_fallback_warning
+from markitai.workflow.llm_failure import (
+    is_llm_fallback_warning,
+    llm_failure_fails_item,
+    llm_fallback_warning,
+)
 from markitai.workflow.single import ImageAnalysisResult
 
 if TYPE_CHECKING:
@@ -130,11 +136,16 @@ def _reads_screenshot_only(cfg: MarkitaiConfig) -> bool:
 
 
 def _print_warnings(warnings: list[str], *, quiet: bool, console: Any) -> None:
-    """Show non-fatal problems of a finished URL (stderr)."""
+    """Show non-fatal problems of a finished URL (stderr).
+
+    An LLM fallback warning is left out: it went out as a user notice,
+    which this console already showed.
+    """
     if quiet:
         return
     for warning in warnings:
-        ui.warning(warning, console=console)
+        if not is_llm_fallback_warning(warning):
+            ui.warning(warning, console=console)
 
 
 def _finish_screenshot_only(
@@ -212,7 +223,6 @@ async def process_url(
             history recording (append-only; the caller decides whether to
             record).
     """
-    from markitai.cli.processors.llm import analyze_images_with_llm
     from markitai.fetch import (
         FetchError,
         FetchStrategy,
@@ -680,16 +690,15 @@ async def process_url(
                             # Run image analysis if needed
                             if should_analyze_images:
                                 (
-                                    _,
                                     image_cost,
                                     image_usage,
                                     img_analysis,
-                                ) = await analyze_images_with_llm(
+                                ) = await analyze_url_images(
                                     downloaded_images,
                                     multi_source_content,
                                     output_file,
                                     cfg,
-                                    Path(url),
+                                    url,
                                 )
                                 llm_cost += image_cost
                                 _merge_llm_usage(llm_usage, image_usage)
@@ -715,16 +724,15 @@ async def process_url(
                             # to skip analysis entirely, leaving empty alt text
                             if should_analyze_images:
                                 (
-                                    _,
                                     image_cost,
                                     image_usage,
                                     img_analysis,
-                                ) = await analyze_images_with_llm(
+                                ) = await analyze_url_images(
                                     downloaded_images,
                                     markdown_for_llm,
                                     output_file,
                                     cfg,
-                                    Path(url),
+                                    url,
                                 )
                                 llm_cost += image_cost
                                 _merge_llm_usage(llm_usage, image_usage)
@@ -781,6 +789,7 @@ async def process_url(
                     # The base .md is the fallback output either way; then
                     # llm.on_failure decides whether the URL fails
                     atomic_write_text(output_file, fallback_content)
+                    remove_stale_llm_output(output_file, cfg.output.on_conflict)
                     if llm_failure_fails_item(cfg):
                         raise
                     stages.fail("LLM enhancement failed; kept the unenhanced output")
@@ -790,6 +799,10 @@ async def process_url(
                         )
                     )
                     llm_fell_back = True
+                # Images whose analysis failed kept their alt text; the
+                # item says so, as the file pipeline and the cascade do
+                if img_analysis is not None and not llm_fell_back:
+                    url_warnings.extend(img_analysis.warnings)
 
                 # Read the LLM-processed content for stdout output
                 llm_output_file = output_file.with_suffix(".llm.md")
@@ -805,7 +818,7 @@ async def process_url(
             llm_output_file = output_file.with_suffix(".llm.md")
             for candidate in (output_file, llm_output_file):
                 apply_profile_to_file(candidate, effective_output_dir, cfg)
-            if llm_output_file.exists():
+            if llm_output_file.exists() and not llm_fell_back:
                 final_content = llm_output_file.read_text(encoding="utf-8")
             elif output_file.exists():
                 final_content = output_file.read_text(encoding="utf-8")
@@ -828,7 +841,7 @@ async def process_url(
         if stdout_mode:
             assert temp_dir is not None  # guaranteed when stdout_mode is True
             stdout_content = final_content
-            if cfg.llm.enabled:
+            if cfg.llm.enabled and not llm_fell_back:
                 llm_file = output_file.with_suffix(".llm.md")
                 if llm_file.exists():
                     stdout_content = llm_file.read_text(encoding="utf-8")
@@ -1918,6 +1931,48 @@ async def cli_document_llm_stage(
     return output_file.with_suffix(".llm.md"), cost, usage, None
 
 
+async def analyze_url_images(
+    downloaded_images: list[Path],
+    image_context: str,
+    output_file: Path,
+    cfg: MarkitaiConfig,
+    url: str,
+    *,
+    processor: LLMProcessor | None = None,
+    llm_ready_event: asyncio.Event | None = None,
+) -> tuple[float, dict[str, dict[str, Any]], ImageAnalysisResult | None]:
+    """Analyze a URL's downloaded images (alt/desc); a failure is a warning.
+
+    Same policy as the file pipeline and the shared cascade: the page's own
+    enhancement stands and the images keep their original alt text. The
+    returned result carries the warning, so it reaches the item the way a
+    single image's failure does.
+
+    Returns:
+        Tuple of (cost, usage stats, image analysis result or None).
+    """
+    from markitai.cli.processors.llm import analyze_images_with_llm
+
+    try:
+        _, cost, usage, analysis = await analyze_images_with_llm(
+            downloaded_images,
+            image_context,
+            output_file,
+            cfg,
+            Path(url),  # URL stands in for the source path
+            processor=processor,
+            llm_ready_event=llm_ready_event,
+        )
+    except Exception as e:
+        warning = image_analysis_error_warning(format_error_message(e))
+        logger.warning(f"[URL] {_safe_url_for_display(url)}: {warning}")
+        failed = ImageAnalysisResult(
+            source_file=_safe_url_for_display(url), assets=[], warnings=[warning]
+        )
+        return 0.0, {}, failed
+    return cost, usage, analysis
+
+
 async def run_url_llm_with_images(
     doc_task: Callable[[], Awaitable[tuple[str, float, dict[str, dict[str, Any]]]]],
     *,
@@ -1944,8 +1999,6 @@ async def run_url_llm_with_images(
     Returns:
         Tuple of (combined cost, merged usage stats, image analysis result).
     """
-    from markitai.cli.processors.llm import analyze_images_with_llm
-
     llm_ready_event = asyncio.Event()
 
     async def _doc_with_signal() -> tuple[str, float, dict[str, dict[str, Any]]]:
@@ -1954,12 +2007,13 @@ async def run_url_llm_with_images(
         finally:
             llm_ready_event.set()
 
-    img_task = analyze_images_with_llm(
+    # Never raises: a failed image analysis must not cancel the document task
+    img_task = analyze_url_images(
         downloaded_images,
         image_context,
         output_file,
         cfg,
-        Path(url),  # URL stands in for the source path
+        url,
         processor=processor,
         llm_ready_event=llm_ready_event,
     )
@@ -1972,7 +2026,7 @@ async def run_url_llm_with_images(
     )
 
     _, doc_cost, doc_usage = doc_result
-    _, image_cost, image_usage, img_analysis = img_result
+    image_cost, image_usage, img_analysis = img_result
 
     _merge_llm_usage(doc_usage, image_usage)
     return doc_cost + image_cost, doc_usage, img_analysis
@@ -2000,8 +2054,6 @@ async def run_url_screenshot_only_llm(
     Returns:
         Tuple of (combined cost, merged usage stats, image analysis result).
     """
-    from markitai.cli.processors.llm import analyze_images_with_llm
-
     _, cost, usage = await process_url_screenshot_only(
         screenshot_path,
         url,
@@ -2017,17 +2069,12 @@ async def run_url_screenshot_only_llm(
         cfg.image.alt_enabled or cfg.image.desc_enabled
     ) and downloaded_images
     if should_analyze_images:
-        (
-            _,
-            image_cost,
-            image_usage,
-            img_analysis,
-        ) = await analyze_images_with_llm(
+        image_cost, image_usage, img_analysis = await analyze_url_images(
             downloaded_images,
             image_context,
             output_file,
             cfg,
-            Path(url),
+            url,
             processor=processor,
         )
         _merge_llm_usage(usage, image_usage)

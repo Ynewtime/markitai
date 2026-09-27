@@ -448,6 +448,31 @@ def image_analysis_failure_warning(image_name: str) -> str:
     return f"image analysis failed for {image_name}; its original alt text was kept"
 
 
+def image_analysis_error_warning(error: str) -> str:
+    """The item warning recorded when a whole image-analysis call failed."""
+    return f"image analysis failed ({error}); the original alt text was kept"
+
+
+def remove_stale_llm_output(output_file: Path, on_conflict: str) -> None:
+    """Remove the ``.llm.md`` beside a base ``.md`` whose LLM run failed.
+
+    Under ``overwrite`` that file is the previous run's: the failed run
+    produced none, and leaving it would hand anything reading ``*.llm.md``
+    stale content next to an item that kept its unenhanced output. Under
+    ``rename`` the resolved name is fresh, so a same-named ``.llm.md`` is
+    another output's and stays.
+    """
+    if on_conflict != "overwrite":
+        return
+    stale = output_file.with_suffix(".llm.md")
+    try:
+        stale.unlink(missing_ok=True)
+    except OSError as e:
+        logger.warning(f"Could not remove stale {stale}: {e}")
+    else:
+        logger.debug(f"Removed stale LLM output: {stale}")
+
+
 def write_images_json(
     output_dir: Path,
     analysis_results: list[ImageAnalysisResult],

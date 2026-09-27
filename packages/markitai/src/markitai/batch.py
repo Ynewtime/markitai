@@ -625,6 +625,9 @@ class BatchProcessor:
         # logged while the progress bar owns the terminal; the console log
         # handler is detached then, so they are listed in the summary.
         self._notice_collector = UserNoticeCollector()
+        # Item warnings already printed while the batch ran; the summary
+        # leaves out the notices that repeat one ("<item>: <warning>")
+        self.announced_warnings: set[str] = set()
 
     def _compute_task_hash(self) -> str:
         """Compute hash from task input parameters.
@@ -1796,8 +1799,15 @@ class BatchProcessor:
             hint_str = f" {hint}" if hint else ""
             warnings.append(f"{n} {label} skipped ({reason}): {examples}{hint_str}")
 
-        # Actionable notices raised while the progress bar hid the log
-        warnings.extend(self._notice_collector.notices)
+        # Actionable notices raised while the progress bar hid the log,
+        # except those an item already printed as its own warning
+        warnings.extend(
+            notice
+            for notice in self._notice_collector.notices
+            if not any(
+                notice.endswith(f": {warning}") for warning in self.announced_warnings
+            )
+        )
 
         # Warnings (failed and skipped items). Never truncated: the useful
         # part of a warning is usually its tail (the install command, the
