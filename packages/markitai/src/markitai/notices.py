@@ -124,6 +124,27 @@ def capture_task_notices() -> Iterator[list[str]]:
         _TASK_NOTICES.reset(token)
 
 
+def merge_item_warnings(notices: list[str], own: list[str]) -> list[str]:
+    """A conversion's notices, then its own result warnings they do not repeat.
+
+    For hosts without a console (``markitai serve``, the Python API, MCP).
+    Most problems reach them as user notices, but some only ride on the
+    result (an image whose analysis failed and kept its alt text), as the
+    CLI shows them. A failed LLM enhancement is reported both ways: as the
+    notice ``"<source>: <warning>"`` and as the result warning
+    ``"<warning>"``; a notice ending with the warning is the same problem,
+    listed once.
+    """
+    merged = list(notices)
+    for warning in own:
+        if warning in merged or any(
+            notice.endswith(f": {warning}") for notice in notices
+        ):
+            continue
+        merged.append(warning)
+    return merged
+
+
 def is_user_notice(record: Any) -> bool:
     """Loguru filter: True for records logged through :func:`user_notice`."""
     extra = record.get("extra", {}) if isinstance(record, dict) else {}

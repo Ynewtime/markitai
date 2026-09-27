@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 from pydantic import ValidationError
 
+from markitai.notices import merge_item_warnings
 from markitai.serve.schemas import JobOptions
 from markitai.utils.clock import now_iso
 
@@ -765,26 +766,6 @@ async def process_url_item(
 # ---------------------------------------------------------------------------
 
 
-def _merge_item_warnings(notices: list[str], own: list[str]) -> list[str]:
-    """The item's notices, then the pipeline's own warnings they do not repeat.
-
-    Most of a conversion's problems reach the item as user notices, but some
-    only ride on its result (an image whose analysis failed and kept its alt
-    text), as the CLI shows them. A failed LLM enhancement is reported both
-    ways: as the notice ``"<source>: <warning>"`` and as the item warning
-    ``"<warning>"``; a notice ending with the warning is the same problem,
-    shown once.
-    """
-    merged = list(notices)
-    for warning in own:
-        if warning in merged or any(
-            notice.endswith(f": {warning}") for notice in notices
-        ):
-            continue
-        merged.append(warning)
-    return merged
-
-
 def _apply_result(job: Job, item: JobItem, result: ProcessResult) -> None:
     """Map a ProcessResult onto the item (skip strings are non-errors)."""
     item.cost_usd = result.cost_usd
@@ -863,7 +844,7 @@ async def _run_item(
         from markitai.utils.text import format_error_message
 
         result = ProcessResult(success=False, error=format_error_message(e))
-    item.warnings = _merge_item_warnings(item.warnings, result.warnings)
+    item.warnings = merge_item_warnings(item.warnings, result.warnings)
     if require_llm and result.success:
         if not (result.output_path and result.llm_enhanced):
             result.success = False
