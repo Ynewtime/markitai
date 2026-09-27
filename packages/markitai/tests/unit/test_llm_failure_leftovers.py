@@ -47,6 +47,7 @@ def _failing_processor() -> MagicMock:
 def _config(on_conflict: str, *, keep_base: bool = False) -> MarkitaiConfig:
     config = MarkitaiConfig()
     config.llm.enabled = True
+    config.llm.on_failure = "fail"  # the failed item's leftovers under test
     config.llm.keep_base = keep_base
     config.output.on_conflict = on_conflict  # type: ignore[assignment]
     return config

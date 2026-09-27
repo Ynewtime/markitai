@@ -80,7 +80,7 @@ async def convert_url_cascade(
     cache: FetchCache | None = None,
     screenshot_dir: Path | None = None,
     output_name: str | None = None,
-    llm_error_policy: Literal["raise", "fallback"] = "fallback",
+    llm_error_policy: Literal["raise", "fallback"] | None = None,
     fetch_result: FetchResult | None = None,
     markdown_override: str | None = None,
     base_from_localized: bool = True,
@@ -106,8 +106,10 @@ async def convert_url_cascade(
             names so colliding URLs never clobber each other); falls back
             to the URL-derived filename.
         llm_error_policy: ``"fallback"`` records the error on the result
-            and still writes the base file; ``"raise"`` additionally raises
-            ``ConversionError`` after the base file is on disk.
+            (``llm_error``, plus a warning) and still writes the base file;
+            ``"raise"`` additionally raises ``ConversionError`` after the
+            base file is on disk. None (the default) follows
+            ``llm.on_failure``.
         fetch_result: Pre-fetched result (callers that branch on fetch
             metadata — the CLI's vision/screenshot-only paths — fetch
             themselves); skips the fetch stage when given.
@@ -360,8 +362,20 @@ async def convert_url_cascade(
     if llm_output_path is not None and llm_output_path.exists():
         _apply_profile(llm_output_path, workdir, cfg)
 
-    if llm_error is not None and llm_error_policy == "raise":
-        raise ConversionError(f"LLM processing failed: {llm_error}")
+    if llm_error is not None:
+        from markitai.workflow.llm_failure import (
+            llm_failure_fails_item,
+            llm_fallback_warning,
+        )
+
+        policy = llm_error_policy or (
+            "raise" if llm_failure_fails_item(cfg) else "fallback"
+        )
+        if policy == "raise":
+            raise ConversionError(f"LLM processing failed: {llm_error}")
+        from markitai.utils.url_redaction import redact_url
+
+        warnings.append(llm_fallback_warning(redact_url(url), llm_error))
 
     return UrlCascadeResult(
         markdown=markdown,

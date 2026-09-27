@@ -63,7 +63,8 @@ Every setting, with the value it takes when nothing sets it. The values come str
     "max_cost_per_document_usd": 0,
     "max_vision_pages_per_document": 0,
     "pure": false,
-    "keep_base": false
+    "keep_base": false,
+    "on_failure": "fallback"
   },
   "image": {
     "alt_enabled": false,
@@ -371,9 +372,10 @@ markitai detects vision capability from LiteLLM. To override that, set `model_in
 | `timeout` | `120` | Request timeout in seconds |
 | `fallbacks` | `[]` | Group fallbacks, e.g. `[{"default": ["backup"]}]`. Models not in a fallback group only receive traffic through fallback |
 | `concurrency` | `10` | Concurrent LLM requests |
-| `max_requests_per_document` | `50` | Stop enhancing a document after this many requests and keep the plain output. A chunked document that needs more requests than are left fails before anything is sent. `0` disables |
+| `max_requests_per_document` | `50` | Stop enhancing a document after this many requests and keep the plain output. A chunked document that needs more requests than are left is not enhanced at all: nothing is sent, and `on_failure` decides what the item reports. `0` disables |
 | `max_cost_per_document_usd` | `0` | Stop enhancing a document once it has spent this much. `0` disables |
 | `max_vision_pages_per_document` | `0` | Max page images sent to a vision model per document. Oversized documents convert without vision. `0` disables |
+| `on_failure` | `fallback` | What a failed enhancement does to the item. `fallback` keeps the unenhanced `.md` as its output and warns; `fail` fails the item (exit `1` for one input, `10` for a batch). The unenhanced `.md` is written either way |
 
 #### Model Weight
 

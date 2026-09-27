@@ -63,7 +63,8 @@ markitai config validate
     "max_cost_per_document_usd": 0,
     "max_vision_pages_per_document": 0,
     "pure": false,
-    "keep_base": false
+    "keep_base": false,
+    "on_failure": "fallback"
   },
   "image": {
     "alt_enabled": false,
@@ -371,9 +372,10 @@ markitai 会从 LiteLLM 检测模型的视觉能力。要手动指定，在模�
 | `timeout` | `120` | 请求超时（秒） |
 | `fallbacks` | `[]` | 分组回退，如 `[{"default": ["backup"]}]`。不在回退组里的模型只通过回退接收流量 |
 | `concurrency` | `10` | 同时发出的 LLM 请求数 |
-| `max_requests_per_document` | `50` | 一份文档的请求数到这个值就停止增强，保留基础输出。分块文档所需的请求数超过剩余额度时，一个请求都不发就直接失败。`0` 不限 |
+| `max_requests_per_document` | `50` | 一份文档的请求数到这个值就停止增强，保留基础输出。分块文档所需的请求数超过剩余额度时，一个请求都不发，整篇不做增强，条目怎么算由 `on_failure` 决定。`0` 不限 |
 | `max_cost_per_document_usd` | `0` | 一份文档花到这个金额就停止增强。`0` 不限 |
 | `max_vision_pages_per_document` | `0` | 一份文档最多发给视觉模型的页面图片数。超出的文档不做视觉增强。`0` 不限 |
+| `on_failure` | `fallback` | 增强失败时条目怎么算。`fallback` 把未增强的 `.md` 作为输出并给出警告；`fail` 把条目记为失败（单个输入以 `1` 退出，批量以 `10` 退出）。两种设置下都会写出未增强的 `.md` |
 
 #### 模型权重
 

@@ -967,6 +967,7 @@ class TestProcessUrlSuccessPath:
         """Document LLM failures should not leak the paired image-analysis task."""
         cfg = MarkitaiConfig()
         cfg.llm.enabled = True
+        cfg.llm.on_failure = "fail"  # the failure semantics under test
         cfg.cache.enabled = False
         cfg.image.alt_enabled = True
 

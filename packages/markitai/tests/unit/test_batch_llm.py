@@ -607,6 +607,13 @@ def _real_cfg() -> MarkitaiConfig:
     return cfg
 
 
+def _failing_cfg() -> MarkitaiConfig:
+    """``_real_cfg`` with ``llm.on_failure = "fail"``: failed statuses."""
+    cfg = _real_cfg()
+    cfg.llm.on_failure = "fail"
+    return cfg
+
+
 def _doc_with_image(out: Path, png: bytes) -> tuple[Path, Path]:
     from markitai.constants import ASSETS_REL_PATH
 
@@ -917,7 +924,9 @@ class TestApiFailures:
                 ConversionError, match="submission failed.*connection refused"
             ),
         ):
-            await run_batch_llm_enhancement(_real_cfg(), out, items=items, quiet=True)
+            await run_batch_llm_enhancement(
+                _failing_cfg(), out, items=items, quiet=True
+            )
 
         assert not (out / ".markitai" / "batch-pending").exists()
         assert (out / "a.txt.md").exists()
@@ -1285,6 +1294,7 @@ class TestLongDocuments:
         (out / "long.txt.md").write_text("# Long\n\nbody", encoding="utf-8")
         (out / "short.txt.md").write_text("# Short\n\nbody", encoding="utf-8")
         cfg = _real_cfg()
+        cfg.llm.on_failure = "fail"  # the failed status under test
         cfg.image.alt_enabled = cfg.image.desc_enabled = False
         processor = create_llm_processor(cfg)
         real_plan = processor.documents._prepare_document_plan

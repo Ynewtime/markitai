@@ -668,6 +668,16 @@
           "title": "Keep Base",
           "type": "boolean"
         },
+        "on_failure": {
+          "default": "fallback",
+          "description": "What a failed LLM enhancement (invalid key, provider error, timeout, refusal, request budget) does to the item. \"fallback\" (default): the item still succeeds with the unenhanced .md as its output, and a warning names the failure. \"fail\": the item fails (exit 1 for a single input, 10 for a batch); the unenhanced .md is still written.",
+          "enum": [
+            "fallback",
+            "fail"
+          ],
+          "title": "On Failure",
+          "type": "string"
+        },
         "model_list": {
           "items": {
             "$ref": "#/$defs/ModelConfig"

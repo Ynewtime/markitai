@@ -697,7 +697,22 @@ async def run_batch_llm_enhancement(
         return handoff
     except Exception as exc:
         error = str(exc)
-        raise
+        from markitai.workflow.llm_failure import llm_failure_fails_item
+
+        if (
+            submitted
+            or llm_failure_fails_item(cfg)
+            or not isinstance(exc, ConversionError)
+        ):
+            raise
+        # Nothing reached the Batch API: nothing is paid for and there is
+        # nothing to collect, so under llm.on_failure = "fallback" every item
+        # keeps its base .md like any other failed enhancement (see below)
+        if not quiet:
+            get_stderr_console().print(
+                f"Warning: {exc}", style="yellow", markup=False, highlight=False
+            )
+        return None
     finally:
         duration = time.perf_counter() - started
         # Ctrl-C (CancelledError/KeyboardInterrupt) after submission: the
@@ -720,13 +735,41 @@ async def run_batch_llm_enhancement(
             elif base in failures:
                 # Already failed live (an oversized document): a handoff
                 # does not make it pending, nothing in the batch covers it.
-                item.status = "failed"
-                item.error = failures[base]
+                _fail_or_fall_back(cfg, item, source, failures[base])
             elif in_flight:
                 item.status = "pending"
-            elif error is not None:
+            elif error is not None and submitted:
+                # Paid for server-side: the error says how to collect it,
+                # so the item fails whatever llm.on_failure says
                 item.status = "failed"
                 item.error = error
+            elif error is not None:
+                # The run-wide error was printed once; each item names it
+                _fail_or_fall_back(
+                    cfg, item, source, error, reason="the batch submission failed"
+                )
+
+
+def _fail_or_fall_back(
+    cfg: Any, item: Outcome, source: str, error: str, *, reason: str | None = None
+) -> None:
+    """Apply ``llm.on_failure`` to an item the batch could not enhance.
+
+    Its base ``.md`` is already on disk (the batch enhances converted
+    output): ``"fallback"`` keeps it as the completed item's output with a
+    warning (naming *reason*, when given, instead of the full *error*),
+    ``"fail"`` fails the item with *error*.
+    """
+    from markitai.workflow.llm_failure import (
+        llm_failure_fails_item,
+        llm_fallback_warning,
+    )
+
+    if llm_failure_fails_item(cfg):
+        item.status = "failed"
+        item.error = error
+    else:
+        item.warnings.append(llm_fallback_warning(source, reason or error))
 
 
 async def _run_batch_llm_enhancement(
@@ -1354,14 +1397,17 @@ async def _finish_batch(
             "original alt text was kept.[/yellow]"
         )
     if doc_failures:
+        from markitai.workflow.llm_failure import llm_failure_fails_item
+
+        fatal = llm_failure_fails_item(cfg)
         # Printed under --quiet too, like any other error: these documents
         # have no .llm.md.
         console.print(
-            f"[red]{len(doc_failures)} document(s) could not be enhanced; "
-            "their base .md is kept. Re-run --llm-batch-collect to retry "
-            "them.[/red]"
+            f"[{'red' if fatal else 'yellow'}]{len(doc_failures)} document(s) "
+            "could not be enhanced; their base .md is kept. Re-run "
+            f"--llm-batch-collect to retry them.[/{'red' if fatal else 'yellow'}]"
         )
-        return 10
+        return 10 if fatal else 0
     return 0
 
 
@@ -1375,8 +1421,10 @@ async def collect_batch_llm(
     """Collect a previously submitted batch (two-phase recovery).
 
     Returns:
-        0 when finished (or already collected); 2 when the batch is still in
-        flight; 10 when some documents could not be enhanced.
+        0 when finished (or already collected, or some documents could not
+        be enhanced under ``llm.on_failure = "fallback"``); 2 when the batch
+        is still in flight; 10 when some documents could not be enhanced
+        under ``llm.on_failure = "fail"``.
 
     Raises:
         ConversionError: No run state found, the batch failed, or a Batch
