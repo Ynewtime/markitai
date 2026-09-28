@@ -382,6 +382,29 @@ def _project_version() -> str:
     return match.group(1)
 
 
+def test_release_versions_match_the_package() -> None:
+    """The release commit bumps every copy of the version with `__version__`.
+
+    The Release workflow publishes `server.json` to the MCP Registry right
+    after PyPI; it corrects a stale version on the fly, but the committed
+    entry should already name the release. The root `pyproject.toml`
+    version is the workspace identity (shell prompts read it).
+    """
+    import json
+
+    version = _project_version()
+    server = json.loads((_REPO_ROOT / "server.json").read_text(encoding="utf-8"))
+    assert [server["version"]] + [p["version"] for p in server["packages"]] == [
+        version
+    ] * (1 + len(server["packages"])), "bump both versions in server.json"
+    workspace = tomllib.loads(
+        (_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    assert workspace["project"]["version"] == version, (
+        "bump the version in the root pyproject.toml"
+    )
+
+
 def test_docs_do_not_describe_the_project_as_pre_1_0() -> None:
     """markitai is 1.x; a stale "0.x" makes a stable API look provisional."""
     assert not _project_version().startswith("0."), (

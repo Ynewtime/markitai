@@ -1,7 +1,8 @@
 name: Release
 
 # Manual release flow (no release-please). To cut a release:
-#   1. bump __version__ in packages/markitai/src/markitai/__init__.py
+#   1. bump __version__ in packages/markitai/src/markitai/__init__.py, and the
+#      version in the root pyproject.toml and (twice) in server.json
 #   2. add a `## [X.Y.Z]` section to CHANGELOG.md
 #   3. if the webapp changed, run scripts/sync_webapp_static.sh so the packaged
 #      serve/static matches webapp/src (the `webapp` job below re-checks this
@@ -9,7 +10,8 @@ name: Release
 #   4. commit + push to main
 #   5. git tag vX.Y.Z && git push origin vX.Y.Z
 # Pushing the tag runs this workflow: tests -> build -> tag/version check ->
-# publish to PyPI -> create the GitHub Release (notes from the CHANGELOG section).
+# publish to PyPI -> create the GitHub Release (notes from the CHANGELOG section)
+# -> publish server.json to the MCP Registry.
 on:
   push:
     tags:
@@ -182,3 +184,73 @@ jobs:
             echo "No CHANGELOG section for $version — generating notes."
             gh release create "$TAG" --title "$TAG" --generate-notes
           fi
+
+  # The MCP Registry entry (server.json) points at the PyPI package, so it goes
+  # out once PyPI has it: the registry reads that version's README from PyPI
+  # and checks its `mcp-name:` marker. GitHub OIDC proves the io.github.Ynewtime
+  # namespace (granted to this repository's owner); no token is stored.
+  mcp-registry:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # mcp-publisher login github-oidc
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      SERVER_NAME: io.github.Ynewtime/markitai
+      REGISTRY: https://registry.modelcontextprotocol.io
+      # Pinned and checksummed: this job holds an identity that can publish
+      # to the registry. Bump both together (digest from the release assets).
+      MCP_PUBLISHER_VERSION: v1.8.1
+      MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.1.0
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL -o mcp-publisher.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
+          tar xzf mcp-publisher.tar.gz mcp-publisher
+          rm mcp-publisher.tar.gz
+
+      # The published entry always names this release, whatever the tagged
+      # server.json says: a re-publish of an older tag (workflow_dispatch)
+      # would otherwise send a stale version. A mismatch is a missed bump.
+      - name: Point server.json at this release
+        run: |
+          version="${TAG#v}"
+          committed="$(jq -r '[.version, (.packages[].version)] | unique | join(", ")' server.json)"
+          if [ "$committed" != "$version" ]; then
+            echo "::warning::server.json at $TAG says $committed; publishing it as $version. Bump server.json in the release commit."
+          fi
+          jq --arg v "$version" '.version = $v | .packages |= map(.version = $v)' server.json > server.json.tmp
+          mv server.json.tmp server.json
+          ./mcp-publisher validate server.json
+
+      - name: Log in to the MCP Registry
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish to the MCP Registry
+        run: |
+          version="${TAG#v}"
+          entry="${REGISTRY}/v0/servers/${SERVER_NAME//\//%2F}/versions/${version}"
+          if [ "$(curl -s -o /dev/null -w '%{http_code}' "$entry")" = "200" ]; then
+            echo "The MCP Registry already lists $SERVER_NAME $version — skipping."
+            exit 0
+          fi
+          # PyPI's JSON API can lag the upload by a little; the registry reads it
+          for _ in $(seq 1 30); do
+            curl -fsS -o /dev/null "https://pypi.org/pypi/markitai/${version}/json" && break
+            sleep 10
+          done
+          for attempt in 1 2 3; do
+            ./mcp-publisher publish server.json && exit 0
+            echo "Publish attempt $attempt failed; retrying in 30 s."
+            sleep 30
+          done
+          echo "::error::Could not publish $SERVER_NAME $version to the MCP Registry. Re-run this job once the cause is fixed."
+          exit 1
