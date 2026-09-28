@@ -155,7 +155,9 @@ auto-generated release PR, so you cut a release only when you mean to.
 1. Bump `__version__` in `packages/markitai/src/markitai/__init__.py`. That is
    the **single source of truth** for the published package; hatch reads it
    at build time. Also bump the workspace `version` in the root
-   `pyproject.toml` (unpublished, but shell prompts like starship read it).
+   `pyproject.toml` (unpublished, but shell prompts like starship read it) and
+   both `version` fields in the root `server.json` (the MCP Registry entry). A
+   unit test fails while any of them disagrees with `__version__`.
 2. Add a `## [X.Y.Z] - YYYY-MM-DD` section to `CHANGELOG.md` (this becomes the
    GitHub Release notes verbatim) and mirror it in `CHANGELOG.zh.md`. The docs
    build copies both files in, so the website publishes whatever you write.
@@ -169,13 +171,14 @@ auto-generated release PR, so you cut a release only when you mean to.
 Pushing the `vX.Y.Z` tag runs `.github/workflows/publish.yml`. It runs the
 test suite, builds the package, verifies the tag matches `__version__` (and
 fails loudly if you forgot to bump), publishes to PyPI via trusted publishing,
-and creates the GitHub Release with the matching `CHANGELOG.md` section as
-notes.
-
-Once PyPI shows the new version, publish the MCP Registry entry: bump `version`
-in both places in the root `server.json`, then `mcp-publisher validate`,
-`login github` and `publish`. The registry reads that exact version's README
-from PyPI and looks for the `mcp-name:` marker in it.
+creates the GitHub Release with the matching `CHANGELOG.md` section as
+notes, and then publishes `server.json` to the MCP Registry. The registry
+reads that exact version's README from PyPI and looks for the `mcp-name:`
+marker in it; GitHub OIDC proves the `io.github.Ynewtime` namespace, so no
+token is stored. If only that last job fails on a transient error, re-run it
+from the run's page. If the registry refuses the tagged `server.json`, fix it on
+`main` and publish by hand: `mcp-publisher validate server.json`,
+`mcp-publisher login github`, `mcp-publisher publish server.json`.
 
 To re-publish an existing tag (e.g. after a transient failure), run the
 **Release** workflow manually from the Actions tab with the tag as input.
