@@ -1,10 +1,11 @@
 import {marked} from './marked.js';
 import DOMPurify from './purify.js';
 import {artifactPath, authenticatedURL, fileURL} from './api.js';
+import {previewBody} from './result-tools.js';
 
 export function preview(markdown, job, documentPath, artifacts, target) {
   const allowed = new Set(artifacts.map(item => item.relpath));
-  const fragment = DOMPurify.sanitize(marked.parse(markdown, {async: false, gfm: true}), {
+  const fragment = DOMPurify.sanitize(marked.parse(previewBody(markdown), {async: false, gfm: true}), {
     RETURN_DOM_FRAGMENT: true, USE_PROFILES: {html: true},
     FORBID_TAGS: ['style','script','iframe','object','embed','form','input','button','textarea','select','video','audio','source','picture','link','meta','base'],
     FORBID_ATTR: ['style','srcset','poster','ping','target','id','name'],

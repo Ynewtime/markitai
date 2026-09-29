@@ -398,7 +398,7 @@ fn convert_inner(
         && config::enabled(&cfg, "/screenshot/screenshot_only")
         && !(config::enabled(&cfg, "/llm/enabled") && config::enabled(&cfg, "/llm/pure"));
     if !screenshot_only {
-        image_enrichment::prepare(&mut doc, source, &cfg)?;
+        image_enrichment::prepare(&mut doc, source, &cfg, output_dir.is_some())?;
     }
     if !image_input {
         images::prepare_assets(&mut doc, &cfg);

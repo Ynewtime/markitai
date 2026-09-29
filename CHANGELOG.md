@@ -99,6 +99,14 @@
 
 ### Fixed
 
+- Include the required `ttlMs`/`cacheScope` cache directives in 2026-07-28 MCP tool listings, which the official Python SDK client otherwise rejects, and accept integral numbers such as `2.0` for `batch_convert` concurrency.
+- Quote frontmatter strings that YAML 1.1 readers would type as timestamps, booleans, numbers or null, matching the reference output bytes for the processing time.
+- Create output documents, assets, image sidecars and reports with the process umask instead of private 0600, keeping ownership records and recovery state private.
+
+- Render only the document body in Web previews and prints, leaving YAML frontmatter to the Source view as in the reference workspace.
+
+- Save complete inline base64 images in converted Markdown as owned assets when an output directory is used, and keep an alt-text placeholder for HTML images whose source is inline data instead of dropping them, matching the reference.
+
 - Terminate official subscription runtimes, Chromium and LibreOffice process groups started by the Unix CLI before it exits on an interrupt, termination or hangup, so they no longer outlive a conversion.
 
 - Keep the current supplemental-license unresolved list consistent with verified package records, preserving the original collection list separately as history.

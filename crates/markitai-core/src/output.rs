@@ -60,6 +60,62 @@ pub fn split_frontmatter(text: &str) -> (Map<String, Value>, &str) {
     (Map::new(), text)
 }
 
+/// Whether a YAML 1.1 loader (the reference's PyYAML) would resolve this plain
+/// scalar as a boolean, number, null, timestamp, merge or value key instead of
+/// a string. The reference writer quotes these, so readers keep strings.
+fn yaml11_implicit(text: &str) -> bool {
+    static PATTERN: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(concat!(
+            r"^(?:yes|Yes|YES|no|No|NO|true|True|TRUE|false|False|FALSE|on|On|ON|off|Off|OFF",
+            r"|[-+]?(?:[0-9][0-9_]*)\.[0-9_]*(?:[eE][-+][0-9]+)?|\.[0-9][0-9_]*(?:[eE][-+][0-9]+)?",
+            r"|[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\.[0-9_]*|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN)",
+            r"|[-+]?0b[0-1_]+|[-+]?0[0-7_]+|[-+]?(?:0|[1-9][0-9_]*)|[-+]?0x[0-9a-fA-F_]+",
+            r"|[-+]?[1-9][0-9_]*(?::[0-5]?[0-9])+|~|null|Null|NULL|<<|=",
+            r"|[0-9]{4}-[0-9]{2}-[0-9]{2}",
+            r"|[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}(?:[Tt]|[ \t]+)[0-9]{1,2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]*)?",
+            r"(?:[ \t]*(?:Z|[-+][0-9]{1,2}(?::[0-9]{2})?))?)$",
+        ))
+        .expect("valid YAML 1.1 resolver pattern")
+    });
+    text.is_empty() || PATTERN.is_match(text)
+}
+
+fn yaml_entry(key: &str, value: &Value) -> Result<String> {
+    let failure = |e: serde_yaml::Error| Error::Conversion(e.to_string());
+    let quoted = |text: &str| format!("'{}'", text.replace('\'', "''"));
+    let plain_key = key
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        && !key.is_empty()
+        && !yaml11_implicit(key);
+    match value {
+        Value::String(text) if plain_key && yaml11_implicit(text) => {
+            Ok(format!("{key}: {}\n", quoted(text)))
+        }
+        Value::Array(items)
+            if plain_key
+                && items
+                    .iter()
+                    .all(|item| item.as_str().is_some_and(|text| !text.contains('\n')))
+                && items
+                    .iter()
+                    .any(|item| item.as_str().is_some_and(yaml11_implicit)) =>
+        {
+            let mut entry = format!("{key}:\n");
+            for text in items.iter().filter_map(Value::as_str) {
+                if yaml11_implicit(text) {
+                    entry.push_str(&format!("- {}\n", quoted(text)));
+                } else {
+                    entry.push_str("- ");
+                    entry.push_str(&serde_yaml::to_string(text).map_err(failure)?);
+                }
+            }
+            Ok(entry)
+        }
+        _ => serde_yaml::to_string(&json!({key:value})).map_err(failure),
+    }
+}
+
 pub fn render(frontmatter: &Map<String, Value>, markdown: &str) -> Result<String> {
     let mut yaml = String::new();
     for key in [
@@ -71,10 +127,7 @@ pub fn render(frontmatter: &Map<String, Value>, markdown: &str) -> Result<String
         "fetch_strategy",
     ] {
         if let Some(value) = frontmatter.get(key) {
-            yaml.push_str(
-                &serde_yaml::to_string(&json!({key:value}))
-                    .map_err(|e| Error::Conversion(e.to_string()))?,
-            );
+            yaml.push_str(&yaml_entry(key, value)?);
         }
     }
     for (key, value) in frontmatter {
@@ -88,10 +141,7 @@ pub fn render(frontmatter: &Map<String, Value>, markdown: &str) -> Result<String
         ]
         .contains(&key.as_str())
         {
-            yaml.push_str(
-                &serde_yaml::to_string(&json!({key:value}))
-                    .map_err(|e| Error::Conversion(e.to_string()))?,
-            );
+            yaml.push_str(&yaml_entry(key, value)?);
         }
     }
     Ok(format!("---\n{yaml}---\n\n{markdown}"))
@@ -371,11 +421,26 @@ pub fn should_skip(dir: &Path, name: &str, cfg: &Value) -> Result<bool> {
     Ok(base.exists() || llm.exists())
 }
 
+/// Staging for user-facing outputs: documents, assets, sidecars and reports.
+/// Like an ordinary new file and the reference writer, the final mode follows
+/// the process umask rather than tempfile's private 0600. Ownership records,
+/// receipts, locks and service state keep their own restrictive modes.
+#[doc(hidden)]
+pub fn deliverable_builder<'a, 'b>() -> tempfile::Builder<'a, 'b> {
+    let mut builder = tempfile::Builder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        builder.permissions(std::fs::Permissions::from_mode(0o666));
+    }
+    builder
+}
+
 fn atomic_write(path: &Path, bytes: &[u8], overwrite: bool) -> Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| Error::InvalidInput("Output has no parent".into()))?;
-    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    let mut temp = deliverable_builder().tempfile_in(parent)?;
     temp.write_all(bytes)?;
     temp.as_file().sync_all()?;
     if overwrite {
@@ -796,6 +861,54 @@ fn screenshot_matches(path: &Path, expected: &[u8]) -> Result<Option<bool>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn frontmatter_quotes_yaml11_implicit_strings_like_the_reference_writer() {
+        // Expected spellings were produced by PyYAML safe_dump, the reference writer.
+        for (value, expected) in [
+            (
+                "2026-09-29T22:30:13.781+08:00",
+                "'2026-09-29T22:30:13.781+08:00'",
+            ),
+            ("2026-09-29", "'2026-09-29'"),
+            ("2026-9-9 1:02:03", "'2026-9-9 1:02:03'"),
+            ("yes", "'yes'"),
+            ("Off", "'Off'"),
+            ("1:30", "'1:30'"),
+            ("0x1F", "'0x1F'"),
+            ("1_000", "'1_000'"),
+            ("0755", "'0755'"),
+            ("+1", "'+1'"),
+            ("3.", "'3.'"),
+            (".inf", "'.inf'"),
+            ("~", "'~'"),
+            ("null", "'null'"),
+            ("", "''"),
+            ("=", "'='"),
+            ("<<", "'<<'"),
+            ("plain text", "plain text"),
+            ("y", "y"),
+        ] {
+            let mut frontmatter = Map::new();
+            frontmatter.insert("markitai_processed".into(), json!(value));
+            let rendered = render(&frontmatter, "Body\n").unwrap();
+            assert_eq!(
+                rendered,
+                format!("---\nmarkitai_processed: {expected}\n---\n\nBody\n"),
+                "{value:?}"
+            );
+            let parsed: serde_json::Value =
+                serde_yaml::from_str(rendered.split("---\n").nth(1).unwrap()).unwrap();
+            assert_eq!(parsed["markitai_processed"], json!(value), "{value:?}");
+        }
+        let mut frontmatter = Map::new();
+        frontmatter.insert("tags".into(), json!(["2026", "o'clock", "on", "topic"]));
+        frontmatter.insert("title".into(), json!("It's 2026-01-02"));
+        let rendered = render(&frontmatter, "").unwrap();
+        assert_eq!(
+            rendered,
+            "---\ntitle: It's 2026-01-02\ntags:\n- '2026'\n- o'clock\n- 'on'\n- topic\n---\n\n"
+        );
+    }
     #[test]
     fn screenshot_comparison_rejects_special_files_and_large_existing_payloads() {
         let root = tempfile::tempdir().unwrap();

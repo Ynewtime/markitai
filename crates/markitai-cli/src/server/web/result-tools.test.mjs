@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {markdownPair, compareLines, renderComparison, waitForPrintImages, printPreview} from './result-tools.js';
+import {markdownPair, compareLines, renderComparison, waitForPrintImages, printPreview, previewBody} from './result-tools.js';
 import {api} from './api.js';
 
 const restored = (result, side) => result.rows.filter(row => row.kind !== (side === 'base' ? 'add' : 'remove')).map(row => row.text).join('');
@@ -114,4 +114,11 @@ test('comparison file reads enforce declared and streamed byte limits on the aut
     assert.equal(await api('/api/jobs/test/files/base.md',{text:true,maxTextBytes:3}),'文');
     assert.equal(calls[0].options.redirect,'error');assert.equal(calls[0].options.cache,'no-store');
   }finally{globalThis.fetch=oldFetch;globalThis.location=oldLocation;}
+});
+
+test('rendered body omits only a leading YAML frontmatter block, as the reference preview does', () => {
+  assert.equal(previewBody('---\ntitle: A\ntags:\n- x\n---\n\n# A\n\nBody\n'), '\n\n# A\n\nBody\n');
+  assert.equal(previewBody('---\ntitle: only\n---'), '');
+  for (const text of ['# No frontmatter\n\n---\nnot: yaml\n---\n', ' ---\nx: 1\n---\n', '---\nunterminated\n', '']) assert.equal(previewBody(text), text);
+  assert.equal(previewBody('---\na: 1\n---\n---\nb: 2\n---\n'), '\n---\nb: 2\n---\n');
 });

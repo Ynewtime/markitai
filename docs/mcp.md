@@ -100,7 +100,8 @@ bodies are not added to diagnostics.
 
 `batch_convert` requires a nonempty `sources` array of absolute local paths and/or
 HTTP(S) URLs, with the same optional conversion flags. It accepts `concurrency`:
-null/omitted means 10, and values at or below zero mean one. Relative sources are
+null/omitted means 10, and values at or below zero mean one. As JSON Schema
+`integer` allows, an integral number such as `2.0` is accepted; `2.5` is not. Relative sources are
 rejected before a job is created. Missing files and other conversion failures
 are recorded per item and do not stop the remaining items.
 
@@ -174,6 +175,11 @@ Module tests cover
 finished-job retention and forgotten-ID bounds. Executed gate results belong in
 the project control record; this document does not claim a completed reference
 wire differential or live-provider validation.
+
+A 2026-07-28 `tools/list` result carries the required `ttlMs: 0` and
+`cacheScope: "private"`, the reference SDK's defaults; 2025-11-25 listings keep
+their original shape. The actual Python SDK 2.2.0 differential and its recorded
+differences are summarized in the project validation records.
 
 Protocol references: [MCP 2025-11-25 lifecycle](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle),
 [MCP 2026-07-28 versioning](https://modelcontextprotocol.io/specification/2026-07-28/basic/versioning),

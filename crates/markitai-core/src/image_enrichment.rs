@@ -25,11 +25,24 @@ pub(crate) fn enabled(source: &str, cfg: &Value) -> bool {
 
 /// Run before shared embedded-image filtering/compression, so downloaded and
 /// already-owned images obey the same policy and final reference spelling.
-pub(crate) fn prepare(doc: &mut Document, source: &str, cfg: &Value) -> Result<()> {
-    if enabled(source, cfg) {
-        resources::prepare(doc, source, cfg)?;
-    }
-    Ok(())
+/// With an output directory, inline data images always become owned assets,
+/// as in the reference workflow; without one they stay self-contained rather
+/// than naming unwritten files. Other references are localized only for image
+/// enrichment.
+pub(crate) fn prepare(
+    doc: &mut Document,
+    source: &str,
+    cfg: &Value,
+    persistent: bool,
+) -> Result<()> {
+    let scope = if enabled(source, cfg) {
+        resources::Scope::All
+    } else if persistent && doc.markdown.contains("data:image/") {
+        resources::Scope::Data
+    } else {
+        return Ok(());
+    };
+    resources::prepare(doc, source, cfg, scope)
 }
 
 /// Run after document enhancement and before profile/publication transforms.

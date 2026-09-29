@@ -9,7 +9,8 @@ assets; it does not search for image-like text inside code or comments.
 ## Conversion order
 
 Referenced local, HTTP(S), and image data-URI resources are first localized into
-owned assets. Existing embedded assets, including EPUB images, use their
+owned assets. Data-URI images are also localized without enrichment whenever an
+output directory exists; see [embedded assets](images.md#embedded-assets). Existing embedded assets, including EPUB images, use their
 already-owned bytes. The ordinary embedded-image filter, deduplication and
 compression policy then runs before document enhancement. URL query parameters
 are part of the original target identity: two URLs with different queries are

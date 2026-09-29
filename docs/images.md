@@ -158,6 +158,13 @@ the archive. Symlinked index/lock leaves are rejected.
 
 ## Embedded assets
 
+With an output directory, complete inline `data:image/...` references in any
+converted Markdown become owned assets first, as the reference workflow saves
+embedded base64 images; they then follow the rules below. Undecodable data keeps
+its original reference with a warning. Without an output directory (stdout or
+in-memory calls) the data URI stays inline instead of naming an unwritten file.
+Local and remote image references are localized only by image enrichment.
+
 After document extraction and before output profiles, the core processes raster
 assets already held in memory. It applies EXIF orientation, configured minimum
 width/height/area filters and raw-byte deduplication. All references to a duplicate

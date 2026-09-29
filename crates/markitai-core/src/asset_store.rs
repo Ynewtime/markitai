@@ -101,7 +101,7 @@ fn publish_new(path: &Path, bytes: &[u8]) -> Result<()> {
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let mut staged = tempfile::NamedTempFile::new_in(parent)?;
+    let mut staged = crate::output::deliverable_builder().tempfile_in(parent)?;
     staged.write_all(bytes)?;
     staged.as_file().sync_all()?;
     match staged.persist_noclobber(path) {

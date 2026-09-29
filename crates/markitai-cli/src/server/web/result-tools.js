@@ -1,6 +1,13 @@
 // Comparison and printing consume only the current item's enumerated artifacts.
 export const DIFF_LIMITS = Object.freeze({characters: 2 * 1024 * 1024, lines: 6000, cells: 1_000_000});
 
+// Like the reference preview, rendered views show only the document body;
+// Source keeps the complete text including the YAML frontmatter.
+export function previewBody(markdown) {
+  const match = /^---\n[\s\S]*?\n---(?=\n|$)/.exec(markdown);
+  return match ? markdown.slice(match[0].length) : markdown;
+}
+
 export function markdownPair(artifacts) {
   const paths = new Set(artifacts.map(value => value.relpath));
   const pairs = [...paths].filter(path => path.endsWith('.llm.md'))

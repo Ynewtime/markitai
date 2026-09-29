@@ -14,7 +14,8 @@ events, and reconnects by refreshing the authoritative snapshot. A selected job
 is retained in the address bar so reloading can restore it.
 
 Results expose base/enhanced Markdown variants, safe rendered preview, original
-source text, copying, per-file downloads and job ZIPs. Retry inherits the item's
+source text (the rendered preview and print omit a leading YAML frontmatter
+block, as the reference preview does; Source shows the complete text), copying, per-file downloads and job ZIPs. Retry inherits the item's
 stored options; Enhance explicitly submits the current job options with LLM
 enabled. Both use the existing service operation routes. Item and history removal
 ask for confirmation and report service failures; the UI does not invent a

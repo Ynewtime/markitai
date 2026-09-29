@@ -87,6 +87,84 @@ fn memory_and_disk_outputs_share_content_and_metadata() {
 }
 
 #[test]
+fn inline_data_images_become_assets_only_with_an_output_directory() {
+    use base64::Engine;
+    let dir = tempfile::tempdir().unwrap();
+    let png = |color: [u8; 3]| {
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::RgbImage::from_pixel(120, 80, image::Rgb(color))
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .unwrap();
+        base64::engine::general_purpose::STANDARD.encode(bytes.into_inner())
+    };
+    let (red, blue) = (png([200, 40, 40]), png([40, 40, 200]));
+    // Enrichment is off: the local file and URL must be neither read nor fetched.
+    image::RgbImage::new(120, 80)
+        .save(dir.path().join("local.png"))
+        .unwrap();
+    let text = format!(
+        "# Inline\n\n![red](data:image/png;base64,{red})\n\n![again](data:image/png;base64,{red})\n\n\
+         ![blue](data:image/png;base64,{blue})\n\n![broken](data:image/png;base64,@@@)\n\n\
+         ![local](local.png)\n\n![remote](http://127.0.0.1:9/remote.png)\n"
+    );
+    let input = dir.path().join("inline.md");
+    std::fs::write(&input, &text).unwrap();
+    let memory = convert(input.to_str().unwrap(), options()).unwrap();
+    assert!(
+        memory
+            .markdown
+            .contains(&format!("![red](data:image/png;base64,{red})"))
+    );
+    assert!(memory.assets.is_empty());
+
+    let out = dir.path().join("out");
+    let disk = convert(
+        input.to_str().unwrap(),
+        ConvertOptions {
+            output_dir: Some(out.clone()),
+            ..options()
+        },
+    )
+    .unwrap();
+    assert!(!disk.markdown.contains(&red) && !disk.markdown.contains(&blue));
+    // Duplicate bytes share one asset; both kept images are real files.
+    assert_eq!(disk.assets.len(), 2, "{:?}", disk.assets);
+    for asset in &disk.assets {
+        let relative = asset
+            .strip_prefix(&out)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert!(relative.starts_with(".markitai/assets/"), "{relative}");
+        assert!(disk.markdown.contains(&relative), "{}", disk.markdown);
+        image::open(asset).unwrap();
+    }
+    let red_target = disk
+        .markdown
+        .split("![red](")
+        .nth(1)
+        .unwrap()
+        .split(')')
+        .next()
+        .unwrap();
+    assert!(disk.markdown.contains(&format!("![again]({red_target})")));
+    assert!(
+        disk.markdown
+            .contains("![broken](data:image/png;base64,@@@)")
+    );
+    assert!(
+        disk.warnings
+            .iter()
+            .any(|w| w.contains("embedded data image"))
+    );
+    assert!(disk.markdown.contains("![local](local.png)"));
+    assert!(
+        disk.markdown
+            .contains("![remote](http://127.0.0.1:9/remote.png)")
+    );
+}
+
+#[test]
 fn native_request_rejects_unknown_options_and_preserves_error_codes() {
     let missing: Value = serde_json::from_str(&convert_json(
         r#"{"source":"/missing-markitai-fixture.md","options":{"config":{}}}"#,

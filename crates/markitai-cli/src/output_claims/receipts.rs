@@ -506,7 +506,7 @@ fn prepare<'a>(
             "output member already exists",
         )));
     }
-    let mut stage = tempfile::Builder::new()
+    let mut stage = markitai_core::output::deliverable_builder()
         .prefix(STAGE_PREFIX)
         .tempfile_in(leases.parent())?;
     stage.write_all(bytes)?;

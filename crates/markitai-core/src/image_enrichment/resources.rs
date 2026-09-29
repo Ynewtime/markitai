@@ -25,7 +25,21 @@ pub(super) fn asset_name(target: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-pub(super) fn prepare(doc: &mut Document, source: &str, cfg: &serde_json::Value) -> Result<()> {
+/// Which image references become owned assets.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Scope {
+    /// Inline data images only; nothing is read or downloaded.
+    Data,
+    /// Data, local and HTTP(S) images, for image enrichment.
+    All,
+}
+
+pub(super) fn prepare(
+    doc: &mut Document,
+    source: &str,
+    cfg: &serde_json::Value,
+    scope: Scope,
+) -> Result<()> {
     let references = output_profiles::image_references(&doc.markdown);
     if references.len() > MAX_REFERENCES {
         return Err(failure(
@@ -42,6 +56,9 @@ pub(super) fn prepare(doc: &mut Document, source: &str, cfg: &serde_json::Value)
         .filter(|url| matches!(url.scheme(), "http" | "https"));
     let allow_private = base.as_ref().is_some_and(private_origin);
     for target in references {
+        if scope == Scope::Data && !target.starts_with("data:image/") {
+            continue;
+        }
         if asset_name(&target).is_some_and(|name| owned.contains(&name))
             || !attempted.insert(target.clone())
         {

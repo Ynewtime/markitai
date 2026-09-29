@@ -260,6 +260,15 @@ fn both_protocol_eras_list_the_four_typed_tools_and_continue_after_errors() {
     for modern in [false, true] {
         let mut client = Client::start(modern);
         let list = client.request("tools/list", json!({}));
+        // 2026-07-28 clients reject a listing without its required cache
+        // directives; the earlier era keeps the original result shape.
+        if modern {
+            assert_eq!(list["result"]["ttlMs"], 0, "{list}");
+            assert_eq!(list["result"]["cacheScope"], "private", "{list}");
+        } else {
+            assert!(list["result"].get("ttlMs").is_none(), "{list}");
+            assert!(list["result"].get("cacheScope").is_none(), "{list}");
+        }
         let tools = list["result"]["tools"].as_array().unwrap();
         let names: Vec<_> = tools
             .iter()

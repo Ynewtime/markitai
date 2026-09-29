@@ -322,7 +322,7 @@ fn stage_report(
     directory: &Path,
     write: impl FnOnce(&mut File) -> io::Result<()>,
 ) -> io::Result<NamedTempFile> {
-    let mut temp = tempfile::Builder::new()
+    let mut temp = markitai_core::output::deliverable_builder()
         .prefix(".markitai-report-")
         .suffix(".tmp")
         .tempfile_in(directory)?;

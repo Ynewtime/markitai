@@ -7,7 +7,9 @@ normalizes ordinary Markdown, reserves paired filenames and writes files atomica
 ## Ordinary and pure output
 
 Ordinary local output has generated `title`, `source` and `markitai_processed`
-fields. Reader metadata does not automatically become local frontmatter. URL
+fields. Frontmatter strings that a YAML 1.1 loader such as the reference's PyYAML
+would read as a timestamp, boolean, number or null, including the processing
+time, are single-quoted exactly as the reference writer does, so they stay strings. Reader metadata does not automatically become local frontmatter. URL
 output can retain trusted fetch metadata; canonical fields and unreliable language
 metadata are excluded from that merge.
 
@@ -37,6 +39,10 @@ Profiles run after enhancement on both outputs so restored page markers and
 image references receive the same transformations as reader-produced content.
 
 ## Files and assets
+
+Documents, assets, image sidecars and reports are created with the process
+umask (commonly 0644), like ordinary files and the reference writer. Ownership
+records, receipts, recovery state and locks keep their private modes.
 
 Output names preserve the source extension: `report.pdf.md` and
 `report.pdf.llm.md`. Both share a conflict namespace; renamed results begin with

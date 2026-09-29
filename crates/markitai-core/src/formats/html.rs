@@ -205,6 +205,38 @@ fn safe_url(value: &str, base: Option<&Url>) -> Option<String> {
     (!value.contains(':')).then(|| destination(value))
 }
 
+/// Inline image data is not an addressable resource. Like the reference, keep
+/// a `data:<type>...` placeholder so alt text and position survive; active
+/// document types are removed, and the payload itself is never retained.
+fn image_source(value: &str, base: Option<&Url>) -> Option<String> {
+    let value = value.trim();
+    if !value
+        .get(..5)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("data:"))
+    {
+        return safe_url(value, base);
+    }
+    let lower = value.to_ascii_lowercase();
+    if [
+        "data:text/html",
+        "data:image/svg+xml",
+        "data:text/javascript",
+    ]
+    .iter()
+    .any(|prefix| lower.starts_with(prefix))
+    {
+        return None;
+    }
+    let meta = value.split(',').next().unwrap_or(value);
+    (meta.len() <= 256
+        && !meta.chars().any(|ch| {
+            ch.is_control()
+                || ch.is_whitespace()
+                || matches!(ch, '(' | ')' | '<' | '>' | '"' | '\\')
+        }))
+    .then(|| format!("{meta}..."))
+}
+
 fn block_tag(name: &str) -> bool {
     matches!(
         name,
@@ -1061,7 +1093,7 @@ fn note_has_content(
             .value()
             .attr("data-src")
             .or_else(|| element.value().attr("src"))
-            .is_some_and(|src| safe_url(src, None).is_some());
+            .is_some_and(|src| image_source(src, None).is_some());
     }
     if name == "a"
         && element
@@ -1911,7 +1943,9 @@ fn serialize_clean(
             value.attr(attribute)
         };
         if let Some(raw) = raw {
-            let normalized = if matches!(attribute, "href" | "src") {
+            let normalized = if attribute == "src" && name == "img" {
+                image_source(raw, base)
+            } else if matches!(attribute, "href" | "src") {
                 safe_url(raw, base)
             } else {
                 Some(raw.to_owned())
@@ -2798,6 +2832,34 @@ mod tests {
         ] {
             assert!(safe_url(value, Some(&base)).is_none());
         }
+    }
+
+    #[test]
+    fn inline_image_data_keeps_reference_placeholder_without_payload() {
+        let doc = extract_html(
+            "<main><p>Before</p><p><img alt=\"blue box\" src=\"data:image/png;base64,iVBORw0KGgo=\"></p>\
+             <p><img alt=\"vector\" src=\"DATA:image/svg+xml;base64,PHN2Zz4=\"></p>\
+             <p><img alt=\"page\" src=\"data:text/html,<b>x</b>\"></p><p>After</p></main>",
+            None,
+        )
+        .unwrap();
+        assert!(
+            doc.markdown
+                .contains("![blue box](data:image/png;base64...)"),
+            "{}",
+            doc.markdown
+        );
+        assert!(!doc.markdown.contains("iVBOR"));
+        assert!(!doc.markdown.contains("vector") && !doc.markdown.contains("svg"));
+        assert!(!doc.markdown.contains("text/html"));
+        assert_eq!(
+            image_source("data:image/png;base64", None).as_deref(),
+            Some("data:image/png;base64...")
+        );
+        assert!(image_source(&format!("data:{}", "a".repeat(300)), None).is_none());
+        assert!(image_source("data:image/png;x=(1),AAAA", None).is_none());
+        // Links never accept data URLs, only image sources do.
+        assert!(safe_url("data:image/png;base64,AAAA", None).is_none());
     }
 
     #[test]

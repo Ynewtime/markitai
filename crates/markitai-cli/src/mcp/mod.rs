@@ -8,8 +8,9 @@ use failure::Failure;
 use rmcp::{
     ErrorData, RoleServer, ServerHandler, ServiceExt,
     model::{
-        CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
-        ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
+        CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock,
+        Implementation, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
+        ServerCapabilities, ServerConfig, Tool,
     },
     service::RequestContext,
 };
@@ -101,12 +102,22 @@ impl ServerHandler for Handler {
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        Ok(ListToolsResult {
+        let mut result = ListToolsResult {
             tools: tools::definitions(),
             ..Default::default()
-        })
+        };
+        // 2026-07-28 requires cache directives on tools/list. Like the
+        // reference SDK default, the listing is immediately stale and private;
+        // earlier protocol versions keep their original result shape.
+        if context
+            .protocol_version()
+            .is_some_and(|version| version.as_str() >= ProtocolVersion::V_2026_07_28.as_str())
+        {
+            result = result.with_ttl_ms(0).with_cache_scope(CacheScope::Private);
+        }
+        Ok(result)
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {

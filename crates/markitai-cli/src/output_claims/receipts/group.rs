@@ -84,10 +84,14 @@ struct StagedFile {
     proof: Proof,
 }
 impl StagedFile {
-    fn create(parent: &Path, prefix: &str, bytes: &[u8]) -> Result<Self> {
-        let mut file = tempfile::Builder::new()
-            .prefix(prefix)
-            .tempfile_in(parent)?;
+    /// Documents follow the umask like other outputs; receipts stay private.
+    fn create(parent: &Path, prefix: &str, bytes: &[u8], deliverable: bool) -> Result<Self> {
+        let mut builder = if deliverable {
+            markitai_core::output::deliverable_builder()
+        } else {
+            tempfile::Builder::new()
+        };
+        let mut file = builder.prefix(prefix).tempfile_in(parent)?;
         file.write_all(bytes)?;
         let proof = observe_regular_bounded(file.path(), bytes.len() as u64)?
             .ok_or_else(|| mismatch("prepared file disappeared"))?;
@@ -251,7 +255,7 @@ impl PreparedDocument {
                 )
                 .into());
             }
-            let stage = StagedFile::create(leases.parent(), STAGE_PREFIX, &rendered.bytes)?;
+            let stage = StagedFile::create(leases.parent(), STAGE_PREFIX, &rendered.bytes, true)?;
             let authority = if claim.policy == Policy::Overwrite
                 || expected.as_ref().is_some_and(|proof| {
                     member.prior.as_ref().is_some_and(|prior| {
@@ -284,7 +288,7 @@ impl PreparedDocument {
         let mut encoded = Bounded::new(RECEIPT_LIMIT);
         serde_json::to_writer(&mut encoded, &receipt)
             .map_err(|_| mismatch("publication receipt exceeds its size limit"))?;
-        let stage = StagedFile::create(&directory, ".markitai-receipt-", &encoded.bytes)?;
+        let stage = StagedFile::create(&directory, ".markitai-receipt-", &encoded.bytes, false)?;
         check_record(
             &fs::symlink_metadata(stage.file().path())?,
             &fs::metadata(&directory)?,

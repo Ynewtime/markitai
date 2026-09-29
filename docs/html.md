@@ -51,6 +51,10 @@ documented article heuristic; ordinary hidden descendants remain hidden.
   escapes. Literal angle brackets and double quotes are percent-encoded before
   Markdown emission. Relative URLs resolve against a supplied page URL. Local extraction
   without a base retains relative destinations.
+- An image whose source is inline `data:` content keeps its alt text and
+  position as the reference's `![alt](data:<type>...)` placeholder; the payload
+  is never retained. `data:text/html`, `data:image/svg+xml` and
+  `data:text/javascript` images are removed, and links never accept `data:`.
 - URL attributes with control characters or unsafe schemes are removed. Event
   handlers and arbitrary styles are not emitted. Script, form, frame, template,
   hidden and navigation content is excluded. A hidden ancestor also disqualifies

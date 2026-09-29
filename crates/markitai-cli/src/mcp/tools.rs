@@ -38,6 +38,7 @@ struct Url {
 struct Batch {
     sources: Vec<String>,
     output_dir: Option<String>,
+    #[serde(default, deserialize_with = "integral")]
     concurrency: Option<i64>,
     #[serde(flatten)]
     options: Options,
@@ -45,6 +46,26 @@ struct Batch {
 #[derive(Deserialize)]
 struct Status {
     job_id: String,
+}
+
+/// JSON Schema `integer` admits any number with a zero fractional part, such
+/// as `2.0`, as the published schema and the reference validator do.
+fn integral<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<i64>, D::Error> {
+    use serde::de::Error;
+    let Some(number) = Option::<serde_json::Number>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    if let Some(value) = number.as_i64() {
+        return Ok(Some(value));
+    }
+    match number.as_f64() {
+        Some(value) if value.fract() == 0.0 && value.abs() < 9_007_199_254_740_992.0 => {
+            Ok(Some(value as i64))
+        }
+        _ => Err(D::Error::custom(format!(
+            "expected an integer, got {number}"
+        ))),
+    }
 }
 
 fn arguments<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, String> {
@@ -485,5 +506,29 @@ mod pricing_tests {
         let empty = project(ConversionOutput::default(), Path::new("/isolated/output"));
         assert!(empty.get("pricing").is_none());
         assert!(empty.get("diagnostics").is_none());
+    }
+}
+
+#[cfg(test)]
+mod argument_tests {
+    use super::*;
+
+    #[test]
+    fn batch_concurrency_follows_json_schema_integer_semantics() {
+        let parse = |value: Value| {
+            arguments::<Batch>(json!({"sources":["/a.md"],"concurrency":value}))
+                .map(|batch| batch.concurrency)
+        };
+        assert_eq!(parse(json!(2)), Ok(Some(2)));
+        assert_eq!(parse(json!(2.0)), Ok(Some(2)));
+        assert_eq!(parse(json!(-3.0)), Ok(Some(-3)));
+        assert_eq!(parse(Value::Null), Ok(None));
+        assert_eq!(
+            arguments::<Batch>(json!({"sources":["/a.md"]})).map(|b| b.concurrency),
+            Ok(None)
+        );
+        for rejected in [json!(2.5), json!("2"), json!(true), json!(1e300)] {
+            assert!(parse(rejected.clone()).is_err(), "{rejected}");
+        }
     }
 }
