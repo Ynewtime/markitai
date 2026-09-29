@@ -350,7 +350,7 @@ pub(crate) fn prepare_namespace_parent(parent: &Path, allow_symlinks: bool) -> R
     let original_parent = std::path::absolute(parent)?;
     check_policy(&original_parent, allow_symlinks)?;
     let planned_parent = crate::report_store::resolve_path(&original_parent)?;
-    create_output_directory(&planned_parent)?;
+    create_output_directory(&planned_parent, &mut sync_new_directory)?;
     check_policy(&original_parent, allow_symlinks)?;
     let parent = fs::canonicalize(&original_parent)?;
     if parent != planned_parent {
@@ -375,7 +375,100 @@ fn create_metadata_directory(path: &Path) -> Result<()> {
     }
 }
 
-fn create_output_directory(path: &Path) -> Result<()> {
+/// Create every missing output ancestor of these parents before any name probe,
+/// claim or dispatch. Each newly created directory and its parent receive the
+/// same host synchronization as the immediate path, but one media fence per
+/// volume covers the whole set. Existing directories keep their original
+/// treatment, and each parent's policy and resolved identity are rechecked. An
+/// error, including a failed commit, acknowledges nothing and admits no work.
+pub(crate) fn prepare_output_ancestors<'a>(
+    parents: impl IntoIterator<Item = &'a Path>,
+    allow_symlinks: bool,
+) -> Result<()> {
+    let mut group = super::sync_group::SyncGroup::new();
+    stage_output_ancestors(parents, allow_symlinks, |path| {
+        let mut options = fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW);
+        }
+        Ok(group.stage(&options.open(path)?)?)
+    })?;
+    group.commit()?;
+    Ok(())
+}
+
+fn stage_output_ancestors<'a>(
+    parents: impl IntoIterator<Item = &'a Path>,
+    allow_symlinks: bool,
+    mut stage: impl FnMut(&Path) -> Result<()>,
+) -> Result<()> {
+    let mut created = Vec::new();
+    let mut planned_parents = Vec::new();
+    let mut prepared = std::collections::HashSet::new();
+    for parent in parents {
+        let original = std::path::absolute(parent)?;
+        if !prepared.insert(original.clone()) {
+            continue;
+        }
+        check_policy(&original, allow_symlinks)?;
+        let planned = crate::report_store::resolve_path(&original)?;
+        create_output_directory(&planned, &mut |directory| {
+            created.push(directory.to_owned());
+            Ok(())
+        })?;
+        check_policy(&original, allow_symlinks)?;
+        if fs::canonicalize(&original)? != planned {
+            return Err(Error::Invalid(
+                "output parent changed while preparing ancestors".into(),
+            ));
+        }
+        planned_parents.push(planned);
+    }
+    // Stage only after every creation, so each directory's synchronization
+    // covers all entries created in it, including later nested children.
+    // Existing directories on each chain below the parents' common prefix are
+    // staged too: a crash before an earlier commit could have left them
+    // unfenced, and their existence alone is not durability.
+    if cfg!(unix) {
+        let common = planned_parents.split_first().map(|(first, rest)| {
+            rest.iter().fold(first.clone(), |prefix, path| {
+                prefix
+                    .components()
+                    .zip(path.components())
+                    .take_while(|(a, b)| a == b)
+                    .map(|(a, _)| a)
+                    .collect::<PathBuf>()
+            })
+        });
+        let mut staged = std::collections::BTreeSet::new();
+        for directory in &created {
+            staged.insert(directory.clone());
+            staged.extend(directory.parent().map(Path::to_owned));
+        }
+        if let Some(common) = &common {
+            for parent in &planned_parents {
+                staged.extend(
+                    parent
+                        .ancestors()
+                        .take_while(|path| path.starts_with(common))
+                        .map(Path::to_owned),
+                );
+            }
+        }
+        for path in &staged {
+            stage(path)?;
+        }
+    }
+    Ok(())
+}
+
+fn create_output_directory(
+    path: &Path,
+    created: &mut dyn FnMut(&Path) -> Result<()>,
+) -> Result<()> {
     let mut missing = Vec::new();
     let mut current = path;
     loop {
@@ -393,7 +486,7 @@ fn create_output_directory(path: &Path) -> Result<()> {
     }
     for directory in missing.into_iter().rev() {
         match fs::create_dir(&directory) {
-            Ok(()) => sync_new_directory(&directory)?,
+            Ok(()) => created(&directory)?,
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 directory_metadata(&directory, false)?;
             }
@@ -422,6 +515,118 @@ mod tests {
     use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
     use std::process::{Child, Command, Stdio};
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn grouped_ancestors_stage_each_new_directory_and_parent_once_then_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(dir.path()).unwrap();
+        fs::create_dir(root.join("existing")).unwrap();
+        let parents = [
+            root.join("a/b/c"),
+            root.join("a/b/d"),
+            root.join("existing"),
+            root.join("existing/new"),
+            root.join("a/b/c"),
+        ];
+        let mut staged = Vec::new();
+        stage_output_ancestors(parents.iter().map(PathBuf::as_path), false, |path| {
+            // Every directory already exists: staging follows all creation.
+            assert!(parents.iter().all(|parent| parent.is_dir()));
+            staged.push(path.to_owned());
+            Ok(())
+        })
+        .unwrap();
+        let count = staged.len();
+        staged.sort();
+        staged.dedup();
+        assert_eq!(staged.len(), count, "a directory was staged twice");
+        let expected: std::collections::BTreeSet<_> =
+            ["", "a", "a/b", "a/b/c", "a/b/d", "existing", "existing/new"]
+                .iter()
+                .map(|name| {
+                    if name.is_empty() {
+                        root.clone()
+                    } else {
+                        root.join(name)
+                    }
+                })
+                .collect();
+        assert_eq!(
+            staged
+                .into_iter()
+                .collect::<std::collections::BTreeSet<_>>(),
+            expected
+        );
+        for parent in &parents {
+            assert!(parent.is_dir());
+        }
+        // A later run finds everything established and stages nothing.
+        // A later run re-stages the established chains below the common
+        // prefix: existence after a possible crash is not durability.
+        let mut again = std::collections::BTreeSet::new();
+        stage_output_ancestors(parents.iter().map(PathBuf::as_path), false, |path| {
+            assert!(again.insert(path.to_owned()), "staged twice");
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(again, expected);
+        // The chain stops at the parents' common prefix inside the output tree.
+        let deep = [root.join("x/y/p1"), root.join("x/y/p2/q")];
+        let mut bounded = std::collections::BTreeSet::new();
+        stage_output_ancestors(deep.iter().map(PathBuf::as_path), false, |path| {
+            bounded.insert(path.to_owned());
+            Ok(())
+        })
+        .unwrap();
+        let expected_deep: std::collections::BTreeSet<_> =
+            ["x", "x/y", "x/y/p1", "x/y/p2", "x/y/p2/q"]
+                .iter()
+                .map(|name| root.join(name))
+                .chain([root.clone()])
+                .collect();
+        // Newly created x and its parent root are staged; above the prefix
+        // x/y nothing pre-existing is added on a rerun.
+        assert_eq!(bounded, expected_deep);
+        let mut rerun = std::collections::BTreeSet::new();
+        stage_output_ancestors(deep.iter().map(PathBuf::as_path), false, |path| {
+            rerun.insert(path.to_owned());
+            Ok(())
+        })
+        .unwrap();
+        let expected_rerun: std::collections::BTreeSet<_> = ["x/y", "x/y/p1", "x/y/p2", "x/y/p2/q"]
+            .iter()
+            .map(|name| root.join(name))
+            .collect();
+        assert_eq!(rerun, expected_rerun);
+        // The real group completes its media fence for new directories.
+        let real = root.join("real-group/x");
+        prepare_output_ancestors([real.as_path()], false).unwrap();
+        assert!(real.is_dir());
+    }
+
+    #[test]
+    fn grouped_ancestors_fail_on_policy_file_or_staging_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(dir.path()).unwrap();
+        fs::create_dir(root.join("real")).unwrap();
+        symlink(root.join("real"), root.join("link")).unwrap();
+        fs::write(root.join("file"), b"x").unwrap();
+        let linked = root.join("link/child");
+        assert!(stage_output_ancestors([linked.as_path()], false, |_| Ok(())).is_err());
+        assert!(!root.join("real/child").exists());
+        assert!(prepare_output_ancestors([linked.as_path()], false).is_err());
+        // Allowed symlinks resolve first, so staging never opens a link itself.
+        prepare_output_ancestors([linked.as_path()], true).unwrap();
+        assert!(root.join("real/child").is_dir());
+        let under_file = root.join("file/child");
+        assert!(stage_output_ancestors([under_file.as_path()], false, |_| Ok(())).is_err());
+        let staging = root.join("staging-fails");
+        let error = stage_output_ancestors([staging.as_path()], false, |_| {
+            Err(Error::Invalid("injected host sync failure".into()))
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("injected host sync failure"));
+    }
 
     fn names(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_owned()).collect()

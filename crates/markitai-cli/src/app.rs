@@ -833,6 +833,13 @@ fn reserve_batch_names(tasks: &mut [Task], cfg: &Value) -> CliResult<()> {
     let mut case_rules = HashMap::<PathBuf, bool>::new();
     let mut next_versions = HashMap::<(PathBuf, String), u64>::new();
     let mode = cfg["output"]["on_conflict"].as_str().unwrap_or("rename");
+    // Durable creation of every missing output directory shares one media
+    // fence per volume; the per-task preparation below then finds them.
+    crate::output_claims::prepare_output_ancestors(
+        tasks.iter().filter_map(|task| task.output.as_deref()),
+        config::enabled(cfg, "/output/allow_symlinks"),
+    )
+    .map_err(runtime)?;
     for task in tasks {
         let Some(directory) = task.output.as_deref() else {
             continue;

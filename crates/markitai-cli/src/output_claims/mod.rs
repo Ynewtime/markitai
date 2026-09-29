@@ -5,7 +5,9 @@ mod receipts;
 mod sync_group;
 pub(crate) use receipts::group::{PreparedDocument, PublicationGroup, RenderedMember};
 
-pub(crate) use leases::{MemberLeases, prepare_namespace_parent, reserve_keys};
+pub(crate) use leases::{
+    MemberLeases, prepare_namespace_parent, prepare_output_ancestors, reserve_keys,
+};
 pub(crate) use namespace::{MAX_NAMESPACE_PARENTS, NamespaceBatch, PreparedNamespaces};
 pub(crate) use receipts::{adopt_owner, reservation_members};
 use serde::{Deserialize, Serialize};

@@ -70,7 +70,19 @@ verified local macOS volumes. Name reservation now uses the same durable output-
 acquisition before its case-sensitivity probe. Its previous create_dir_all could
 pre-create nested output paths without their parent-entry fences, causing later
 claim acquisition to see only already existing paths. Each newly created output
-directory and its containing parent now receive the original immediate fences. The skip policy retains its original path.
+directory and its containing parent receive host synchronization, and before any
+name probe, claim or dispatch one media fence per verified local volume covers
+all output parents of the run (per-object durable synchronization elsewhere).
+Staging follows every creation, so a directory's synchronization covers entries
+made later in the same pass. Existing directories on each parent's chain below
+the parents' common prefix are staged as well: after a crash before an earlier
+commit their existence is not durability. Directories above that prefix (the
+output root established by recovery state, and its ancestors) are not touched
+here. Staging opens resolved paths with `O_DIRECTORY|O_NOFOLLOW`. A staging,
+commit, policy or identity failure admits no work, and claim acquisition keeps
+its immediate creator for any directory still missing. For the 24-file corpus
+this replaces 24 of 45 full-cache flushes with one. The skip policy retains its
+original path.
 
 Ordinary parent preparation failures fail only the affected items. A failed
 namespace fence stops new dispatch; earlier unsent reservations are restored.

@@ -92,6 +92,8 @@
 
 ### Changed
 
+- Durably create a run's missing output directories with one shared macOS full-cache flush per volume before name reservation, instead of two flushes per directory, keeping every host synchronization and the no-work-before-commit rule.
+
 - Verify and report three historical upstream MIT texts separately from legal review, preserving the original license bytes and exact-version notices.
 
 - Group controlled output metadata initialization in bounded admission windows while retaining directory identities, durability fences and the original skip path.
