@@ -54,6 +54,7 @@ impl Drop for Permit {
 pub(super) struct Process {
     child: Child,
     _permit: Permit,
+    group: crate::process_groups::Slot,
     incoming: Option<Receiver<FrameResult>>,
     outgoing: Option<SyncSender<Vec<u8>>>,
     workers: Vec<JoinHandle<()>>,
@@ -82,6 +83,7 @@ impl Process {
         }
         let deadline = Instant::now().checked_add(timeout).ok_or_else(limit)?;
         let permit = Permit::acquire(deadline, cancel)?;
+        let group = crate::process_groups::Slot::reserve().ok_or_else(limit)?;
         let mut directory = tempfile::Builder::new();
         directory.prefix("markitai-copilot-");
         #[cfg(unix)]
@@ -131,9 +133,11 @@ impl Process {
                 "Cannot start the official Copilot runtime",
             )
         })?;
+        group.publish(&child);
         let mut process = Self {
             child,
             _permit: permit,
+            group,
             incoming: None,
             outgoing: None,
             workers: Vec::new(),
@@ -315,6 +319,7 @@ impl Drop for Process {
                 }
             }
         }
+        self.group.retire();
         let _ = self.child.kill();
         let _ = self.child.wait();
         self.incoming.take();

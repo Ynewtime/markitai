@@ -80,6 +80,7 @@ pub(super) struct Process {
     events: usize,
     _workspace: tempfile::TempDir,
     _permit: Permit,
+    group: crate::process_groups::Slot,
 }
 impl Process {
     pub(super) fn spawn(
@@ -96,6 +97,7 @@ impl Process {
             ));
         }
         let permit = Permit::acquire(deadline, cancel)?;
+        let group = crate::process_groups::Slot::reserve().ok_or_else(limit)?;
         let mut command = Command::new(&config.executable);
         command
             .args(args)
@@ -111,6 +113,7 @@ impl Process {
             command.process_group(0);
         }
         let child = command.spawn().map_err(|_| transport())?;
+        group.publish(&child);
         let overflow = Arc::new(AtomicBool::new(false));
         let stderr_done = Arc::new(AtomicBool::new(false));
         let stderr_bytes = Arc::new(Mutex::new(Vec::new()));
@@ -126,6 +129,7 @@ impl Process {
             events: 0,
             _workspace: workspace,
             _permit: permit,
+            group,
         };
         let stdout = process.child.stdout.take().ok_or_else(transport)?;
         let mut stdin = process.child.stdin.take().ok_or_else(transport)?;
@@ -267,7 +271,11 @@ impl Process {
     pub(super) fn finish(&mut self, cancel: Option<&AtomicBool>) -> Result<ExitStatus, Failure> {
         loop {
             self.check(cancel)?;
-            if let Some(status) = self.child.try_wait().map_err(|_| transport())? {
+            if let Some(status) = self
+                .group
+                .try_reap(&mut self.child)
+                .map_err(|_| transport())?
+            {
                 return Ok(status);
             }
             std::thread::sleep(TICK);
@@ -287,6 +295,7 @@ impl Drop for Process {
                 }
             }
         }
+        self.group.retire();
         let _ = self.child.kill();
         let _ = self.child.wait();
         self.outgoing.take();

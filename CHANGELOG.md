@@ -99,6 +99,8 @@
 
 ### Fixed
 
+- Terminate official subscription runtimes, Chromium and LibreOffice process groups started by the Unix CLI before it exits on an interrupt, termination or hangup, so they no longer outlive a conversion.
+
 - Keep the current supplemental-license unresolved list consistent with verified package records, preserving the original collection list separately as history.
 
 - Synchronize newly created output ancestors before batch filename probing so later ownership checks cannot bypass their directory-entry durability.

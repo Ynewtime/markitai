@@ -39,6 +39,7 @@ pub(super) fn acquire(deadline: Instant) -> Result<Permit> {
 
 struct Running {
     child: Child,
+    group: crate::process_groups::Slot,
     reaped: bool,
 }
 impl Drop for Running {
@@ -59,6 +60,7 @@ impl Drop for Running {
                 .stderr(Stdio::null())
                 .status();
         }
+        self.group.retire();
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -157,10 +159,15 @@ fn wait(mut command: Command, output: Option<(&Path, u64)>, deadline: Instant) -
     if Instant::now() >= deadline {
         return Err(failure("Office export timed out"));
     }
+    let group = crate::process_groups::Slot::reserve()
+        .ok_or_else(|| failure("too many external runtime process groups are active"))?;
+    let child = command
+        .spawn()
+        .map_err(|_| failure("LibreOffice could not be started"))?;
+    group.publish(&child);
     let mut running = Running {
-        child: command
-            .spawn()
-            .map_err(|_| failure("LibreOffice could not be started"))?,
+        child,
+        group,
         reaped: false,
     };
     loop {
@@ -168,8 +175,8 @@ fn wait(mut command: Command, output: Option<(&Path, u64)>, deadline: Instant) -
             check_output(directory, limit)?;
         }
         if let Some(status) = running
-            .child
-            .try_wait()
+            .group
+            .try_reap(&mut running.child)
             .map_err(|_| failure("LibreOffice process status is unavailable"))?
         {
             running.reaped = true;

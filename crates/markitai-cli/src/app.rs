@@ -306,6 +306,13 @@ pub fn run() -> i32 {
         return 2;
     }
     let cli = Cli::parse_from(arguments);
+    // Serve and MCP drain active work on the signals their asynchronous
+    // runtime owns; the remaining terminating signals kill external runtimes.
+    crate::signals::install_fatal_cleanup(match cli.command {
+        Some(Command::Serve { .. }) => crate::signals::Owned::InterruptAndTerminate,
+        Some(Command::Mcp) => crate::signals::Owned::Interrupt,
+        _ => crate::signals::Owned::None,
+    });
     let code = match execute(&cli) {
         Ok(code) => code,
         Err((code, message)) => {

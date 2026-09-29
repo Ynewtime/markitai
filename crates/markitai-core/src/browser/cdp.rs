@@ -29,6 +29,7 @@ fn private_profile() -> Result<TempDir> {
 
 struct Process {
     child: Child,
+    group: crate::process_groups::Slot,
     _profile: TempDir,
 }
 impl Drop for Process {
@@ -36,20 +37,20 @@ impl Drop for Process {
         #[cfg(unix)]
         {
             // The child owns a new process group; Chromium renderers belong to it.
+            // Polling does not reap the leader, so its group id stays valid for
+            // the final SIGKILL and for a concurrent fatal-signal cleanup.
             unsafe {
                 libc::kill(-(self.child.id() as i32), libc::SIGTERM);
             }
             let deadline = Instant::now() + Duration::from_millis(500);
-            while Instant::now() < deadline {
-                if self.child.try_wait().ok().flatten().is_some() {
-                    break;
-                }
+            while Instant::now() < deadline && !self.group.exited(&self.child) {
                 std::thread::sleep(Duration::from_millis(20));
             }
             unsafe {
                 libc::kill(-(self.child.id() as i32), libc::SIGKILL);
             }
         }
+        self.group.retire();
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -114,14 +115,18 @@ impl Process {
             use std::os::unix::process::CommandExt;
             command.process_group(0);
         }
+        let group = crate::process_groups::Slot::reserve()
+            .ok_or_else(|| failure("Too many external runtime process groups are active"))?;
         let child = command.spawn().map_err(|_| failure("Cannot launch Chromium; check MARKITAI_BROWSER_EXECUTABLE or install Chrome/Chromium"))?;
+        group.publish(&child);
         let mut process = Self {
             child,
+            group,
             _profile: profile,
         };
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
-            if process.child.try_wait()?.is_some() {
+            if process.group.try_reap(&mut process.child)?.is_some() {
                 return Err(failure(
                     "Chromium exited before its debugging endpoint became ready",
                 ));

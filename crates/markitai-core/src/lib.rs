@@ -21,6 +21,7 @@ mod pdf_media;
 mod pdf_raster;
 mod preparation;
 mod pricing;
+mod process_groups;
 #[doc(hidden)]
 pub use preparation::{PreparedConversion, prepare_with_publication};
 #[doc(hidden)]
@@ -33,6 +34,10 @@ mod types;
 pub use browser_runtime::BrowserRuntime;
 pub use images::is_image_extension;
 pub use llm_runtime::LlmRuntime;
+/// Kill every external runtime process group this library started (Chromium,
+/// LibreOffice, official subscription runtimes). Async-signal-safe, for a host
+/// that is about to terminate; caller-held browser sessions are untouched.
+pub use process_groups::terminate_all as terminate_child_process_groups;
 pub use types::*;
 /// Available optional local capabilities; probing never launches a backend.
 pub fn browser_available() -> bool {

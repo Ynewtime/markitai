@@ -108,6 +108,15 @@ reads retry within that original deadline. Stdout EOF waits for the bounded stde
 drain, so a late flood cannot become a successful response. Other platforms remain
 unsupported until equivalent process cleanup is implemented.
 
+Because each runtime has its own process group, a terminal interrupt does not
+reach it. The Unix CLI therefore kills every runtime, Chromium and LibreOffice
+group it started before terminating on SIGINT, SIGTERM or SIGHUP; conversion
+keeps its default signal exit, and a batch's second interrupt does the same before
+exit 130. `markitai serve` keeps its SIGINT/SIGTERM drain and MCP its SIGINT
+drain; their remaining terminating signals clean up. SIGKILL and host processes
+embedding the bindings cannot run this cleanup. The core exposes the
+async-signal-safe `terminate_child_process_groups` for Rust hosts.
+
 Actual assistant message IDs count observed requests. Terminal usage and per-model
 usage overlap with those calls; they are reconciled, never added twice. Per-model
 terminal totals include more than main-loop totals. Aggregate-only tokens remain

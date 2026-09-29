@@ -47,7 +47,7 @@ markitai -c isolated.json doctor --json
 - 目录/URL 列表普通转换项失败退出 10；单项失败退出 1，成功退出 0；状态存储致命错误退出 1，中断退出 130/143。`--quiet` 仍显示错误。
 - 四种输入模式支持持久 JSON 报告。`output.report` 为 null 或省略时，目录/URL 列表默认启用，单文件/URL 默认关闭；true/false 显式覆盖。报告写入输出目录的 `.markitai/reports/`，各模式的字段和计数差异见 [reports.md](reports.md)。
 - 报告发布失败保留已完成文件及 stdout JSON 条目，并退出非零；报告不替代 stdout envelope。stdout 转换、dry run、无可恢复状态的空目录和失败/跳过的单项不生成报告；批量部分失败仍可生成报告。报告的 skip 冲突策略保留已有报告。
-- Unix 目录/URL 列表每次保存恢复状态；`--resume` 合并新发现任务、保留完成项并重试未完成项。输出归属凭证保护隐式重试，旧状态按普通冲突策略升级，升级前私有保存原始 base/journal 及存在性；备份仅是状态回退材料，不撤销输出或模型请求。首次 Ctrl-C 停止派发、同步状态并等待在途转换，退出 130；再次中断立即退出。详见 [恢复状态](state-storage.md) 与 [输出归属](output-ownership.md)。
+- Unix 目录/URL 列表每次保存恢复状态；`--resume` 合并新发现任务、保留完成项并重试未完成项。输出归属凭证保护隐式重试，旧状态按普通冲突策略升级，升级前私有保存原始 base/journal 及存在性；备份仅是状态回退材料，不撤销输出或模型请求。首次 Ctrl-C 停止派发、同步状态并等待在途转换，退出 130；再次中断先终止本进程启动的订阅运行时、Chromium 和 LibreOffice 进程组后立即退出。单输入转换收到 SIGINT/SIGTERM/SIGHUP 时同样先终止这些进程组，再按原信号默认方式退出；它们位于独立进程组，终端中断本身不会到达。详见 [恢复状态](state-storage.md) 与 [输出归属](output-ownership.md)。
 - `--record-history` 将本次实际处理项保存到隔离 home 下的 `serve/jobs/`，包含独立的最终文档、资产和兼容元数据；归档失败只警告，stdout/dry-run/中断不归档。开关覆盖环境和配置，详见 [历史归档](history.md)。
 - 配置优先级由核心解析；根级 `-c` 和 `--config-json` 对子命令同样生效。布尔参数支持显式否定；重复正反开关以最后一个为准，preset 名称按小写查找，应用后显式参数覆盖。没有 INPUT/子命令且未指定 `-I` 时显示帮助并退出 0，包括只给转换选项的情况；参数本身非法仍退出 2。
 - `config list/get/path/validate/set/edit` 可用；list 支持 JSON/YAML/table；默认隐藏凭据。set/edit 原子更新配置，保留未知字段，不写入临时 `--config-json` 内容。
