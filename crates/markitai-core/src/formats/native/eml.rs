@@ -324,6 +324,125 @@ fn html_body(
     ))
 }
 
+/// The reference's header block, `## Content` and body; an empty body leaves
+/// the bare heading.
+fn message_head(message: &Message<'_>, body: &str) -> String {
+    let mut headers = Vec::new();
+    for name in ["From", "To", "Cc", "Date", "Subject"] {
+        for value in message.header_as(name, mail_parser::HeaderForm::Text) {
+            if let Some(value) = value.as_text() {
+                let date = (name == "Date")
+                    .then(|| message.date())
+                    .flatten()
+                    .map(|date| {
+                        date.to_rfc822().replacen(
+                            &format!(", {} ", date.day),
+                            &format!(", {:02} ", date.day),
+                            1,
+                        )
+                    });
+                let value = safe_header(date.as_deref().unwrap_or(value));
+                if !value.is_empty() {
+                    headers.push(format!("**{name}:** {value}"));
+                }
+            }
+        }
+    }
+    let mut markdown = "# Email Message".to_owned();
+    if !headers.is_empty() {
+        markdown.push_str(&format!("\n\n{}", headers.join("\n")));
+    }
+    let body = body.trim();
+    if body.is_empty() {
+        markdown.push_str("\n\n## Content");
+    } else {
+        markdown.push_str(&format!("\n\n## Content\n\n{body}"));
+    }
+    markdown
+}
+
+/// The reference's attachment label: its filename, else `attachment_N`
+/// counted from zero, with controls collapsed.
+fn attachment_label(part: &MessagePart<'_>, position: usize) -> String {
+    let label = part
+        .attachment_name()
+        .map(|name| {
+            name.chars()
+                .map(|ch| if ch.is_control() { ' ' } else { ch })
+                .collect::<String>()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .filter(|name| !name.is_empty());
+    label.unwrap_or_else(|| format!("attachment_{position}"))
+}
+
+/// Safe inside `[...]` and `![...]`, as the reference sanitizes alt text.
+fn link_text(label: &str) -> String {
+    safe_header(label).replace(['[', ']', '(', ')'], "_")
+}
+
+/// The reference's human-readable attachment size.
+fn size(bytes: usize) -> String {
+    if bytes >= 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else if bytes >= 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+fn quote(markdown: &str) -> String {
+    markdown
+        .lines()
+        .map(|line| {
+            if line.trim().is_empty() {
+                ">".to_owned()
+            } else {
+                format!("> {line}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// One nested message at the reference's depth limit: headers, body without
+/// Content-ID binding, and attachment names only. It owns no assets; the
+/// original message stays downloadable.
+fn nested_message(message: &Message<'_>) -> Result<String> {
+    let body_id = body_part(message, &mut Vec::new());
+    let body = match body_id
+        .and_then(|id| message.parts.get(id))
+        .map(|part| &part.body)
+    {
+        Some(PartType::Html(html)) => crate::formats::html::fragment(html)?,
+        Some(PartType::Text(text)) => text.to_string(),
+        _ => String::new(),
+    };
+    let mut markdown = message_head(message, &body);
+    let names: Vec<String> = message
+        .attachments
+        .iter()
+        .map(|&id| id as usize)
+        .filter(|id| Some(*id) != body_id)
+        .enumerate()
+        .filter_map(|(position, id)| {
+            message
+                .parts
+                .get(id)
+                .map(|part| attachment_label(part, position))
+        })
+        .map(|label| format!("- {}", safe_header(&label)))
+        .collect();
+    if !names.is_empty() {
+        markdown.push_str("\n\n## Attachments\n\n");
+        markdown.push_str(&names.join("\n"));
+    }
+    Ok(markdown)
+}
+
 pub(super) fn extract(bytes: &[u8]) -> Result<Document> {
     if bytes.len() > MAX_INPUT {
         return Err(error("input exceeds 100 MiB"));
@@ -336,7 +455,7 @@ pub(super) fn extract(bytes: &[u8]) -> Result<Document> {
     let selected = body_part(&message, &mut warnings);
     let mut assets = Vec::new();
     let mut names = HashMap::new();
-    let mut links = Vec::new();
+    let mut listed = Vec::new();
     for &id in &message.attachments {
         let id = id as usize;
         if Some(id) == selected {
@@ -353,7 +472,7 @@ pub(super) fn extract(bytes: &[u8]) -> Result<Document> {
             name: name.clone(),
             bytes: part.contents().to_vec(),
         });
-        links.push(format!("[Attachment {index}](.markitai/assets/{name})"));
+        listed.push((id, name));
         if part.is_encoding_problem {
             warnings.push(format!("EML attachment {index} has malformed transfer encoding; its recovered bytes were retained without CID image binding."));
         }
@@ -387,35 +506,40 @@ pub(super) fn extract(bytes: &[u8]) -> Result<Document> {
         }
         None => String::new(),
     };
-    let mut headers = Vec::new();
-    for name in ["From", "To", "Cc", "Date", "Subject"] {
-        for value in message.header_as(name, mail_parser::HeaderForm::Text) {
-            if let Some(value) = value.as_text() {
-                let date = (name == "Date")
-                    .then(|| message.date())
-                    .flatten()
-                    .map(|date| {
-                        date.to_rfc822().replacen(
-                            &format!(", {} ", date.day),
-                            &format!(", {:02} ", date.day),
-                            1,
-                        )
-                    });
-                let value = safe_header(date.as_deref().unwrap_or(value));
-                if !value.is_empty() {
-                    headers.push(format!("**{name}:** {value}"));
-                }
-            }
+    let mut markdown = message_head(&message, &body);
+    let mut listing = Vec::new();
+    let mut sections = Vec::new();
+    for (position, (id, name)) in listed.iter().enumerate() {
+        let part = &message.parts[*id];
+        let label = attachment_label(part, position);
+        let target = format!(".markitai/assets/{name}");
+        if let PartType::Message(nested) = &part.body {
+            // As in the reference, one nested level is quoted; the original
+            // message also stays downloadable below.
+            sections.push(format!(
+                "### Attached message: {}\n\n{}",
+                safe_header(&label),
+                quote(&nested_message(nested)?)
+            ));
         }
+        // Malformed transfer encoding keeps the recovered bytes as a download
+        // instead of presenting them as an image.
+        listing.push(if image_part(part) {
+            format!("![{}]({target})", link_text(&label))
+        } else {
+            format!(
+                "- [{}]({target}) ({})",
+                link_text(&label),
+                size(part.contents().len())
+            )
+        });
     }
-    let mut markdown = "# Email Message".to_owned();
-    if !headers.is_empty() {
-        markdown.push_str(&format!("\n\n{}", headers.join("\n")));
+    if !listing.is_empty() {
+        sections.insert(0, listing.join("\n\n"));
     }
-    markdown.push_str(&format!("\n\n## Content\n\n{}", body.trim()));
-    for link in links {
-        markdown.push_str("\n\n");
-        markdown.push_str(&link);
+    if !sections.is_empty() {
+        markdown.push_str("\n\n## Attachments\n\n");
+        markdown.push_str(&sections.join("\n\n"));
     }
     let mut metadata = serde_json::Map::new();
     let title = message.subject().unwrap_or("");
@@ -467,7 +591,7 @@ mod tests {
     }
 
     #[test]
-    fn no_cid_plain_body_and_attachment_keep_previous_shape() {
+    fn plain_body_and_ordinary_attachment_use_the_reference_listing_with_a_download_link() {
         let bytes = message(multipart(
             "mixed",
             "outer",
@@ -485,11 +609,72 @@ mod tests {
         let doc = extract(&bytes).unwrap();
         assert_eq!(
             doc.markdown,
-            "# Email Message\n\n**Subject:** Fixture\n\n## Content\n\nFirst line\nSecond line\n\n[Attachment 1](.markitai/assets/email-1-notes.bin)"
+            "# Email Message\n\n**Subject:** Fixture\n\n## Content\n\nFirst line\nSecond line\n\n## Attachments\n\n- [notes.bin](.markitai/assets/email-1-notes.bin) (19 B)"
         );
         assert_eq!(doc.assets.len(), 1);
         assert_eq!(doc.assets[0].bytes, b"original attachment");
         assert!(refs(&doc).is_empty());
+    }
+
+    #[test]
+    fn attachment_section_follows_the_reference_labels_sizes_and_nesting_limit() {
+        let inner = multipart(
+            "mixed",
+            "inner",
+            &[
+                part(
+                    "Content-Type: text/plain",
+                    b"Inner body\n\nsecond paragraph",
+                ),
+                part(
+                    "Content-Type: image/png\r\nContent-Disposition: attachment; filename=deep.png",
+                    &image([7, 8, 9]),
+                ),
+            ],
+        );
+        let nested = format!(
+            "Content-Type: message/rfc822\r\nContent-Disposition: attachment; filename=\"fw (1).eml\"\r\n\r\nSubject: Inner\r\n{inner}"
+        );
+        let doc = extract(&message(multipart(
+            "mixed",
+            "outer",
+            &[
+                part("Content-Type: text/plain", b"  "),
+                part(
+                    "Content-Type: image/png\r\nContent-Disposition: attachment; filename=\"chart [v2] (final).png\"",
+                    &image([1, 1, 1]),
+                ),
+                part("Content-Type: application/octet-stream", &vec![0; 1536]),
+                part(
+                    "Content-Type: application/pdf\r\nContent-Disposition: attachment; filename=\"a<b>.pdf\"",
+                    &vec![0; 3 * 1024 * 1024 / 2],
+                ),
+                nested,
+            ],
+        )))
+        .unwrap();
+        let (head, attachments) = doc.markdown.split_once("\n\n## Attachments\n\n").unwrap();
+        assert!(head.ends_with("\n\n## Content"), "{head}");
+        let listing: Vec<_> = attachments.split("\n\n").take(4).collect();
+        assert_eq!(
+            listing[0],
+            "![chart _v2_ _final_.png](.markitai/assets/email-1-chart__v2___final_.png)"
+        );
+        assert_eq!(
+            listing[1],
+            "- [attachment_1](.markitai/assets/email-2-attachment.bin) (1.5 KB)"
+        );
+        assert_eq!(
+            listing[2],
+            "- [a\\<b\\>.pdf](.markitai/assets/email-3-a_b_.pdf) (1.5 MB)"
+        );
+        assert!(listing[3].starts_with("- [fw _1_.eml](.markitai/assets/email-4-fw__1_.eml) ("));
+        assert!(attachments.ends_with(
+            "### Attached message: fw (1).eml\n\n> # Email Message\n>\n> **Subject:** Inner\n>\n> ## Content\n>\n> Inner body\n>\n> second paragraph\n>\n> ## Attachments\n>\n> - deep.png"
+        ), "{attachments}");
+        // Only the outer message's attachments become assets; the nested
+        // image stays inside its downloadable message.
+        assert_eq!(doc.assets.len(), 4);
     }
 
     #[test]
@@ -523,9 +708,21 @@ mod tests {
             "{}",
             doc.markdown
         );
+        let (content, attachments) = doc.markdown.split_once("\n## Attachments\n").unwrap();
         for absent in ["Not outer body", "Not body attachment", "Plain fallback"] {
-            assert!(!doc.markdown.contains(absent));
+            assert!(!content.contains(absent));
         }
+        // The attached message is quoted one level, as in the reference, and
+        // an HTML attachment is only listed.
+        assert!(
+            attachments.contains("### Attached message: forward.eml\n\n> # Email Message\n>\n> **Subject:** Nested\n>\n> ## Content\n>\n> Not outer body"),
+            "{attachments}"
+        );
+        assert!(!attachments.contains("Not body attachment"));
+        assert!(
+            attachments.contains("- [example.html](.markitai/assets/email-2-example.html) (26 B)")
+        );
+        assert!(attachments.contains("- [forward.eml](.markitai/assets/email-1-forward.eml) ("));
         assert!(
             doc.assets
                 .iter()
@@ -624,7 +821,16 @@ mod tests {
             part("Content-Type: image/png\r\nContent-ID: <duplicate>\r\nContent-Disposition: inline; filename=two.png", &pixels),
             part("Content-Type: application/octet-stream\r\nContent-ID: <download>\r\nContent-Disposition: attachment; filename=looks-like-image.png", &pixels),
         ]))).unwrap();
-        assert_eq!(refs(&doc), ["cid:duplicate", "cid:missing", "cid:download"]);
+        assert_eq!(
+            refs(&doc),
+            [
+                "cid:duplicate",
+                "cid:missing",
+                "cid:download",
+                ".markitai/assets/email-1-one.png",
+                ".markitai/assets/email-2-two.png"
+            ]
+        );
         for label in ["Duplicate", "Missing", "Ordinary"] {
             assert!(doc.markdown.contains(&format!("![{label}]")));
         }
@@ -636,7 +842,13 @@ mod tests {
             3
         );
         assert_eq!(doc.assets.len(), 3);
-        assert!(doc.markdown.contains("[Attachment 3]"));
+        assert!(doc.markdown.contains(&format!(
+            "- [looks-like-image.png](.markitai/assets/email-3-looks-like-image.png) ({:.1} KB)",
+            pixels.len() as f64 / 1024.0
+        )) || doc.markdown.contains(&format!(
+            "- [looks-like-image.png](.markitai/assets/email-3-looks-like-image.png) ({} B)",
+            pixels.len()
+        )));
     }
 
     #[test]
@@ -707,6 +919,10 @@ mod tests {
         ]))).unwrap();
         assert!(doc.markdown.contains("Surviving body."));
         assert_eq!(refs(&doc), ["cid:bad", "cid:%0Aevil", "cid:bad%XZ"]);
+        assert!(
+            doc.markdown
+                .contains("- [bad.png](.markitai/assets/email-1-bad.png) (")
+        );
         assert!(
             doc.warnings
                 .iter()

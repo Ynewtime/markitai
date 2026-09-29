@@ -92,6 +92,7 @@
 
 ### Changed
 
+- Render EML attachments in the reference's `## Attachments` section: image attachments as images, other attachments with their size, and attached messages quoted one level deep with nested attachments listed by name; an empty body leaves a bare `## Content`. Every attachment keeps its download link and body Content-ID images stay bound.
 - Use `sha2` 0.11, whose SHA-256 selects the CPU's SHA instructions at run time on aarch64 and x86, for content proofs, cache keys and asset names; digests and their spelling are unchanged, and the duplicate `sha2` 0.10 is gone.
 - Reuse one filesystem observation per recovery-state validation operation instead of re-walking the same path ancestors for every saved path, halving the directory run's `lstat` calls without changing any check; recovery-state directory creation also shares one full-cache flush.
 - Durably create a run's missing output directories with one shared macOS full-cache flush per volume before name reservation, instead of two flushes per directory, keeping every host synchronization and the no-work-before-commit rule.

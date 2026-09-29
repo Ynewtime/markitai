@@ -694,9 +694,11 @@ fn real_eml_cid_references_reach_alt_description_and_published_metadata_in_both_
         )
         .unwrap();
         assert_eq!(output.images.len(), 1, "{output:#?}");
+        // Both cid references and the reference-style attachment listing
+        // name the same analyzed asset.
         assert_eq!(
             body(&output).matches("![A \\[safe\\] chart]").count(),
-            2,
+            3,
             "{}",
             body(&output)
         );
@@ -710,8 +712,8 @@ fn real_eml_cid_references_reach_alt_description_and_published_metadata_in_both_
                 .any(|warning| warning.contains("Content-ID") && warning.contains("ordinary"))
         );
         assert!(output.markdown.contains("![Original one]"));
-        assert!(output.markdown.contains("[Attachment 1]"));
-        assert!(output.markdown.contains("[Attachment 2]"));
+        assert!(output.markdown.contains("## Attachments"));
+        assert!(output.markdown.contains("- [not-a-picture.png]("));
         let asset = Path::new(output.images[0]["asset"].as_str().unwrap());
         assert!(asset.is_absolute());
         assert_eq!(std::fs::read(asset).unwrap(), bytes);
@@ -743,8 +745,8 @@ fn real_eml_cid_references_reach_alt_description_and_published_metadata_in_both_
 }
 
 #[test]
-fn ambiguous_eml_content_ids_never_choose_an_arbitrary_image_or_call_vision() {
-    if isolated("ambiguous_eml_content_ids_never_choose_an_arbitrary_image_or_call_vision") {
+fn ambiguous_eml_content_ids_never_choose_an_arbitrary_image() {
+    if isolated("ambiguous_eml_content_ids_never_choose_an_arbitrary_image") {
         return;
     }
     let dir = tempfile::tempdir().unwrap();
@@ -756,14 +758,17 @@ fn ambiguous_eml_content_ids_never_choose_an_arbitrary_image_or_call_vision() {
         mime_part("Content-Type: image/png\r\nContent-ID: <duplicate>\r\nContent-Disposition: inline; filename=first.png", &png()),
         mime_part("Content-Type: image/png\r\nContent-ID: <duplicate>\r\nContent-Disposition: inline; filename=second.png", &png()),
     ])).unwrap();
-    let server = Server::new(vec![Reply::echo()]);
+    let server = Server::new(vec![Reply::echo(), analysis()]);
     let output = run(
         source.to_str().unwrap(),
         cfg(&server),
         Some(dir.path().join("out")),
     )
     .unwrap();
-    assert!(output.images.is_empty(), "{output:#?}");
+    // Neither ambiguous reference binds. The listed attachments, identical
+    // bytes, are one asset analyzed once, as the reference analyzes attachment
+    // images.
+    assert_eq!(output.images.len(), 1, "{output:#?}");
     assert!(body(&output).contains("![Ambiguous author alt](cid:duplicate)"));
     assert!(body(&output).contains("![Missing author alt](cid:missing)"));
     assert_eq!(
@@ -774,9 +779,18 @@ fn ambiguous_eml_content_ids_never_choose_an_arbitrary_image_or_call_vision() {
             .count(),
         2
     );
-    assert_eq!(requests(&server).len(), 1);
-    assert_eq!(output.usage.requests, 1);
-    assert!(!dir.path().join("out/.markitai/assets/images.json").exists());
+    assert_eq!(requests(&server).len(), 2);
+    assert_eq!(output.usage.requests, 2);
+    assert_eq!(vision_bytes(&requests(&server)[1]), vec![png()]);
+    assert_eq!(
+        body(&output)
+            .split_once("## Attachments")
+            .unwrap()
+            .1
+            .matches("![A \\[safe\\] chart](.markitai/assets/")
+            .count(),
+        2
+    );
 }
 
 #[test]

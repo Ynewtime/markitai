@@ -1201,7 +1201,7 @@ fn nonzero_png_attachment_report_matches_persisted_asset_and_markdown_reference(
         ".markitai/assets/{}",
         assets[0].file_name().unwrap().to_str().unwrap()
     );
-    assert!(markdown.contains(&format!("[Attachment 1]({target})")));
+    assert!(markdown.contains(&format!("## Attachments\n\n![pixel.png]({target})")));
     assert!(!markdown.contains(".markitai/assets/email-1-pixel.png"));
     zero_usage(&saved["llm_usage"]);
 }

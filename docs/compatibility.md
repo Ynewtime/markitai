@@ -137,6 +137,7 @@ CLI 在启动时按当前 `.env`、用户 `~/.markitai/.env` 顺序补充环境�
 - 基础 Markdown frontmatter 按序含 `title, source, markitai_processed`；完整增强 frontmatter 在 source 后含 `description`，有标签时再含 `tags`。URL 可含 `fetch_strategy` 与可信附加元数据。不要传播抽取器错误 language，也不要让附加元数据覆盖这些规范字段。正文页标记为 `<!-- Page number: N -->`。来源：`src/markitai/workflow/helpers.py:313`、`src/markitai/utils/frontmatter.py:370-449`、`src/markitai/constants.py:89`。
 - `rag` 将资产移到可见 `assets/`，页标记改为 `<!-- page: N -->`，检查管道表格列数；`obsidian` 同样移资产，`output.wikilinks=true` 时输出 `![[assets/name]]`；`okf` 注入 `type: Document`，source→resource，markitai_processed→generated.at，并含 generated.by。来源：`src/markitai/output_profiles.py`。
 - `images.json` schema 1.0 顶层固定 `version, created, updated, images`；图像项字段 `path, alt, desc, text, created, source`；不得泄漏内部 `llm_usage`。资产按路径合并，每个输出目录分别维护。来源：`src/markitai/workflow/helpers.py:476`、`tests/unit/test_images_json_schema.py:19`。
+- 已接受差异（用户于 2026-09-30 决定）：资产文件名采用内容哈希（例 `93e62bacfce62672e95d86d1.png`），不沿用参考的 `<文档名>.<NNNN>.<ext>` 序号命名。相同字节只保存一份、重复运行名称稳定；引用、`images.json` 路径与各输出配置同步使用该名称。依赖参考序号文件名的下游需按 Markdown 引用或 `images.json` 定位资产。
 - 输出采用原子写入；默认拒绝不安全 symlink；路径穿越、归档炸弹、HTML 外部引用、远程抓取与视觉上传同意策略不能因 Rust 改写而退化。来源：`src/markitai/security.py`、`fetch_policy.py`、`fetch_consent.py`、`vision_consent.py`。
 
 `.urls` 是 UTF-8（允许 BOM）文本：空行/`#` 注释忽略，每行 `URL [自定义输出名]`，名称可带引号；也支持字符串 JSON 数组或 `{"url": "...", "output_name": "..."}` 对象数组。非法条目当前警告并跳过，格式损坏整体报错。URL 路径末段用于文件名；带 query 时加域名前缀，不能把凭据写进文件名或日志。来源：`src/markitai/urls.py:35-177`、`src/markitai/utils/cli_helpers.py:59`。
@@ -169,6 +170,8 @@ Node.js 与 Go 没有既存接口需要逐字兼容；围绕同一 options/resul
 参考实现扩展名注册共 39 项（别名计入）：`docx/doc/pptx/ppt/xlsx/xls/pdf/txt/md/markdown/jpeg/jpg/png/webp/svg/csv/xml/ods/odt/numbers/gif/bmp/tiff/tif/heic/heif/avif/tsv/epub/rtf/rst/org/tex/html/htm/xhtml/eml/msg/ipynb`。检测按小写扩展名。来源：`src/markitai/converter/base.py:109-149`。
 
 单独图片没有 LLM/OCR 时没有可提取正文，单项应失败并提供开启建议；不能写空文档报告成功。Office 图表、公式、合并表格、页/幻灯片几何布局、PDF 隐藏文字与扫描判断、邮箱 MIME/附件、EPUB 阅读顺序是语义验收重点。HEIF/SVG、旧 Office、本地 OCR、浏览器是参考实现的可选能力，Rust 单 binary 的核心体积预算与完整能力的外部运行时/模型依赖需明确区分。
+
+EML 采用参考结构（`## Attachments`：图片附件为图片，其它附件带大小，附带邮件引用展开一层；空正文仅保留 `## Content` 标题），并保留两项增强（用户于 2026-09-30 选择）：每个附件（含附带邮件）保留下载链接，正文内 Content-ID 图片绑定到本地资产而非保留 `cid:`。细节见 [EML](eml.md)。
 
 `serve` 还有既存 HTTP/OpenAPI/SSE 契约与 Web UI；定义位于 `src/markitai/serve/schemas.py`、路由 `serve/app.py:1846+`，前端镜像 `webapp/src/api/types.ts`，同步测试 `tests/unit/serve/test_contract_sync.py`。MCP 公开工具是 `convert_document, convert_url, batch_convert, job_status`（`src/markitai/mcp/server.py:258,320,490,574`）。这些接口须登记为后续兼容工作，不能因 CLI 首发而从迁移清单消失。
 

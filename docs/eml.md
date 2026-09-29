@@ -23,11 +23,33 @@ are reported when the MIME parser supplies recovered content. MIME parsing remai
 tolerant of recoverable mail transport damage; this is not a strict validator for
 every RFC grammar rule.
 
-The existing native `# Email Message`, header order, `## Content`, date formatting,
-and ordinary `[Attachment N](...)` layout remain. Header angle brackets are escaped
-and controls are collapsed. Ordinary attachments keep download links, including
-unreferenced image attachments. A filename alone never promotes an attachment
-into an inline image.
+## Layout
+
+Output follows the reference's layout: `# Email Message`, the From/To/Cc/Date/
+Subject header block, `## Content` (a bare heading when the body is empty), and an
+`## Attachments` section when the message has attachments. Header angle brackets are
+escaped and controls are collapsed.
+
+The attachment section lists, in MIME order and joined by blank lines:
+
+- image attachments as images, `![label](.markitai/assets/...)`;
+- every other attachment as `- [label](.markitai/assets/...) (size)`, with the
+  reference's size spelling (`N B`, `N.N KB`, `N.N MB`);
+- then each attached `message/rfc822` as `### Attached message: label` followed
+  by that message rendered one level deep as a quotation (`> ` lines, `>` for blank
+  lines). Inside it, attachments are listed by name only and nothing nests further.
+
+The label is the decoded filename, or `attachment_N` counted from zero when there
+is none. Brackets and parentheses in labels become `_`, as the reference does for
+image alt text.
+
+Two enhancements over the reference remain. Every attachment, including attached
+messages, stays downloadable through its own asset link, where the reference shows
+only a name and size. Content-ID images are bound inside the body (below), where the
+reference leaves `cid:` references in place. An image attachment counts as an image
+only when it declares an `image/*` type and decoded without a transfer-encoding
+error; a filename alone never makes a part an image, and damaged bytes stay a
+download. The nested quotation does not bind Content-IDs and owns no assets.
 
 ## Content-ID binding
 
@@ -73,7 +95,9 @@ apply to owned images, and final content-addressed paths replace their reference
 Repeated references to one image share one analysis and asset. With LLM image
 caption/description options enabled, successful analysis changes enhanced captions
 and contributes `ConversionOutput.images` and the published `images.json` entry.
-Base author captions and attachment download links remain available. Profile
+Image attachments listed under `## Attachments` are ordinary image references, so
+they are analyzed like any other document image, as the reference's data-URI images
+are. Base author captions and attachment download links remain available. Profile
 changes, such as the visible `assets/` directory in RAG, apply to both references
 and metadata paths.
 
@@ -88,19 +112,18 @@ Input is rejected above 100 MiB before MIME parsing. Parsed messages are limited
 4,096 total parts, 64 levels of multipart/nested-message structure and 128 MiB of
 decoded MIME content. These checks bound admitted documents; they do not claim a
 streaming parser or a measured peak-memory ceiling. Image decoding has its own
-pixel and payload limits downstream. Nested messages remain downloadable `.eml`
-attachments; this implementation does not expand them recursively into the body.
+pixel and payload limits downstream. Nested messages are quoted one level and
+remain downloadable `.eml` attachments.
 
 The reference Python reader also prefers HTML bodies and uses the email library's
-related-root selection. It renders image attachments as data-URI images, ordinary
-attachments as a name/size list, and one level of attached messages as quotations.
-It does not supply the scoped CID-to-owned-asset association implemented here.
-The Rust change intentionally preserves its established attachment download-link
-interface instead of adopting those unrelated output differences. Unreferenced
-image-attachment promotion and nested-message quotation remain separate parity
-items; CID support does not claim that all EML output matches the reference.
+related-root selection. It renders image attachments as data-URI images, which its
+image pipeline then saves as `<document>.<NNNN>` assets; native assets use
+content-addressed names (an accepted difference, see
+[compatibility](compatibility.md)). On the frozen corpus message the remaining
+differences are exactly the bound Content-ID image and the asset names.
 
-Focused tests cover unchanged no-CID output, body versus attachment selection,
+Focused tests cover the reference listing (labels, sizes, nesting limit), body
+versus attachment selection,
 related roots and scope isolation, exact/case-folded IDs, percent and entity
 boundaries, duplicate/missing/non-image IDs, malformed encodings, safe filenames,
 charsets, literal HTML boundaries and depth rejection. Public conversion tests use
