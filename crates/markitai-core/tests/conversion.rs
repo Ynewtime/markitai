@@ -49,6 +49,9 @@ mod browser_identity;
 #[path = "conversion/terminal_usage.rs"]
 mod terminal_usage;
 
+#[path = "conversion/proxy.rs"]
+mod proxy;
+
 fn options() -> ConvertOptions {
     ConvertOptions {
         config: Some(json!({})),

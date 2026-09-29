@@ -256,11 +256,15 @@ caller-surface coverage and measured performance require their own validation.
   caller-owned runtime, with a fresh page for each request. No session survives
   runtime shutdown or a new process. Scoped Server Basic and Digest authentication retain
   its exact-origin challenge policy.
-- Proxy configuration comes from scheme-appropriate `HTTP_PROXY`, `HTTPS_PROXY`
-  or `ALL_PROXY` environment variables and their lowercase forms. `NO_PROXY`
-  rules and loopback bypasses are passed to Chromium. Only unauthenticated
-  HTTP(S)/SOCKS5 proxies are supported. Operating-system proxy discovery,
-  automatic/PAC configuration and proxy-port probing are not implemented.
+- The browser uses the same [proxy decision](fetch.md#proxies) as static fetch:
+  one environment or manual system proxy, `NO_PROXY` and, for a system proxy,
+  its exception list, projected into Chromium's bypass syntax with loopback
+  always direct (`.name` for subdomains, bracketed IPv6 hosts, unbracketed IPv6
+  CIDR, per Chromium's documented rules). Unsupported exception entries are left
+  out rather than approximated, so browser and static fetch agree; the reference
+  passes raw patterns to Chromium, where `<local>` or `host:port` take Chromium's
+  own meaning. Chromium additionally bypasses link-local addresses implicitly. Only unauthenticated HTTP(S)/SOCKS5 proxies are passed to
+  Chromium; credentials fail explicitly and never enter process arguments.
 - Resource rejection accepts literal URL characters, `*` within a path component
   and `**` across components. Brace expansion, bracket groups and backslash
   patterns fail explicitly. Filtering is implemented through the attached page's

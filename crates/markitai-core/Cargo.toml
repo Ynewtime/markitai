@@ -49,6 +49,9 @@ objc2-core-graphics = { version = "0.3.2", default-features = false, features = 
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSError", "NSString", "NSObject"] }
 objc2-vision = { version = "0.3.2", default-features = false, features = ["std", "VNRecognizeTextRequest", "VNRequestHandler", "VNRequest", "VNObservation", "VNTypes", "objc2-core-foundation"] }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Registry"] }
+
 [dev-dependencies]
 md-5 = "0.11"
 tempfile.workspace = true

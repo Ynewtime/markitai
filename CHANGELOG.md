@@ -4,6 +4,7 @@
 
 ### Added
 
+- Manual operating-system proxy discovery for static fetch and the native browser (macOS, Windows, KDE and GNOME), with the reference's single environment proxy order, exception semantics and loopback bypass.
 - Optional pinned official Codex CLI adapter for ChatGPT subscription conversion, authentication and Unix login, with bounded process cleanup and aggregate usage accounting.
 - Base/enhanced Markdown difference preview and printing of the sanitized selected document in the embedded Web UI.
 - Complete Unix CLI archive with one executable, relative command aliases and bundled project, dependency, pricing and model-catalog notices.

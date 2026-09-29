@@ -11,13 +11,15 @@ use url::Url;
 const MAX_RESPONSE: u64 = 100 * 1024 * 1024;
 
 pub(crate) fn client(timeout: u64) -> Result<Client> {
-    Client::builder()
-        .timeout(Duration::from_secs(timeout))
-        .connect_timeout(Duration::from_secs(15))
-        .redirect(reqwest::redirect::Policy::limited(10))
-        .user_agent(concat!("markitai/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|e| Error::Fetch(e.without_url().to_string()))
+    crate::proxy::http(
+        Client::builder()
+            .timeout(Duration::from_secs(timeout))
+            .connect_timeout(Duration::from_secs(15))
+            .redirect(reqwest::redirect::Policy::limited(10))
+            .user_agent(concat!("markitai/", env!("CARGO_PKG_VERSION"))),
+    )?
+    .build()
+    .map_err(|e| Error::Fetch(e.without_url().to_string()))
 }
 
 pub(crate) fn body(response: Response) -> Result<Vec<u8>> {

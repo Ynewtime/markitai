@@ -133,62 +133,9 @@ fn cookies(value: &Value, url: &Url) -> Result<Vec<Value>> {
     Ok(output)
 }
 
-fn proxy(env: &HashMap<String, String>, url: &Url) -> Result<(Option<String>, String)> {
-    let keys: &[&str] = if url.scheme() == "https" {
-        &["https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"]
-    } else {
-        &["http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"]
-    };
-    let raw = keys
-        .iter()
-        .find_map(|key| env.get(*key).filter(|value| !value.trim().is_empty()));
-    let mut bypass = vec![
-        "localhost".to_owned(),
-        "*.localhost".into(),
-        "127.0.0.0/8".into(),
-        "[::1]".into(),
-    ];
-    if let Some(raw) = env.get("no_proxy").or_else(|| env.get("NO_PROXY")) {
-        for pattern in raw
-            .split(',')
-            .map(str::trim)
-            .filter(|part| !part.is_empty())
-        {
-            if pattern.chars().any(char::is_whitespace) || pattern.contains(';') {
-                return Err(Error::Config(
-                    "Native browser NO_PROXY contains an unsupported rule".into(),
-                ));
-            }
-            let rule = match pattern.parse::<std::net::Ipv6Addr>() {
-                Ok(ip) => format!("[{ip}]"),
-                Err(_) => pattern.to_owned(),
-            };
-            if !bypass.contains(&rule) {
-                bypass.push(rule);
-            }
-        }
-    }
-    let proxy = raw
-        .map(|raw| {
-            let parsed =
-                Url::parse(raw).map_err(|_| Error::Config("Invalid browser proxy URL".into()))?;
-            if !["http", "https", "socks5"].contains(&parsed.scheme())
-                || parsed.host_str().is_none()
-                || !parsed.username().is_empty()
-                || parsed.password().is_some()
-                || parsed.query().is_some()
-                || parsed.fragment().is_some()
-                || !["", "/"].contains(&parsed.path())
-            {
-                return Err(Error::Unsupported(
-                    "Native browser proxy must be an unauthenticated HTTP(S) or SOCKS5 endpoint"
-                        .into(),
-                ));
-            }
-            Ok(parsed.as_str().trim_end_matches('/').to_owned())
-        })
-        .transpose()?;
-    Ok((proxy, bypass.join(";")))
+/// The shared static-fetch proxy decision, projected into Chromium arguments.
+fn proxy(env: &HashMap<String, String>) -> Result<(Option<String>, String)> {
+    crate::proxy::browser(env)
 }
 
 impl Options {
@@ -320,7 +267,7 @@ impl Options {
             ));
         }
         let screenshot = cfg.get("screenshot").cloned().unwrap_or_else(|| json!({}));
-        let (proxy, bypass) = proxy(&config::environment(), url)?;
+        let (proxy, bypass) = proxy(&config::environment())?;
         Ok(Self {
             persistent,
             session_ttl: std::time::Duration::from_secs(session_ttl),
@@ -402,17 +349,16 @@ mod tests {
     }
     #[test]
     fn proxy_credentials_are_not_put_in_process_arguments() {
-        let url = Url::parse("https://example.test/").unwrap();
         let env = HashMap::from([(
             "HTTPS_PROXY".into(),
             "http://user:secret@proxy.test:8080".into(),
         )]);
-        assert!(proxy(&env, &url).is_err());
+        assert!(proxy(&env).is_err());
         let env = HashMap::from([
             ("HTTPS_PROXY".into(), "http://proxy.test:8080".into()),
             ("NO_PROXY".into(), "example.test,::1".into()),
         ]);
-        let (server, bypass) = proxy(&env, &url).unwrap();
+        let (server, bypass) = proxy(&env).unwrap();
         assert_eq!(server.as_deref(), Some("http://proxy.test:8080"));
         assert!(bypass.contains("example.test") && bypass.contains("[::1]"));
     }

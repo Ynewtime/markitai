@@ -240,3 +240,31 @@ authenticated path intentionally selects its configured identity first. Initial
 PDF document responses, including redirects and extensionless attachments, stream
 from that session without a second GET and retain `playwright` strategy metadata.
 Proxy authentication and persistent sessions remain separate capabilities. See [browser contracts](browser.md).
+
+## Proxies
+
+Static fetch, remote extraction requests and the native browser share one
+decision, following the reference. The first nonempty of `HTTPS_PROXY`,
+`HTTP_PROXY`, `ALL_PROXY`, `https_proxy`, `http_proxy` and `all_proxy` is used
+for every scheme; a value without a scheme means HTTP. An environment proxy
+prevents any operating-system read. Otherwise the manual system proxy is read
+once per process, only when a request is not already direct or when a browser
+launches: macOS `scutil --proxy` by key (the reference's line-order parser misses
+the usual sorted output), the Windows user Internet Settings registry values,
+and on Linux KDE (`kreadconfig6`/`kreadconfig5`, preferred for mixed markers) or
+GNOME/Unity through individual `gsettings get` keys that exclude stored
+passwords. Automatic/PAC/WPAD modes, SOCKS-only and authenticated desktop
+proxies, network probes and credential stores are never used. One second bounds
+all setting subprocesses, whose output is limited and process group reaped.
+
+`NO_PROXY` (or `no_proxy` when it is unset or empty) always applies; a system
+exception list applies only with its system proxy. `*` matches everything,
+`.name`/`*.name` match subdomains only, other names and addresses match exactly,
+and CIDR blocks match addresses. Each unsupported entry, such as `<local>`, a
+port-qualified host, another wildcard or malformed CIDR, is ignored on its own,
+as the reference ignores it. Loopback hosts are always direct. Proxy settings
+above 64 KiB are rejected. Static fetch accepts credentials in an environment
+proxy URL; a SOCKS proxy there is an explicit unsupported error, because only
+the browser can use it. Model and Provider Batch clients keep their provider
+environment handling. The Windows registry reader follows the documented API but
+has not been compiled or executed on Windows in this project.

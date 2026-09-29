@@ -22,6 +22,7 @@ mod pdf_raster;
 mod preparation;
 mod pricing;
 mod process_groups;
+mod proxy;
 #[doc(hidden)]
 pub use preparation::{PreparedConversion, prepare_with_publication};
 #[doc(hidden)]
