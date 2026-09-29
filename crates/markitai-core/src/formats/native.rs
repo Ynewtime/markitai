@@ -219,7 +219,11 @@ impl Renderer<'_> {
     }
 
     fn blocks(&mut self, blocks: &[Block]) -> String {
-        let mut output = Vec::new();
+        // The reference spreadsheet converters write each sheet as a heading
+        // line immediately followed by its table.
+        let sheet_layout = matches!(self.extension, "xlsx" | "xlsm" | "xls");
+        let mut joined = String::new();
+        let mut previous_heading = false;
         for block in blocks {
             let rendered = match block {
                 Block::Heading {
@@ -348,10 +352,19 @@ impl Renderer<'_> {
                 }
             };
             if !rendered.is_empty() {
-                output.push(rendered);
+                let table = matches!(block, Block::Table(_));
+                if !joined.is_empty() {
+                    joined.push_str(if sheet_layout && previous_heading && table {
+                        "\n"
+                    } else {
+                        "\n\n"
+                    });
+                }
+                joined.push_str(&rendered);
+                previous_heading = matches!(block, Block::Heading { .. });
             }
         }
-        output.join("\n\n")
+        joined
     }
 }
 
@@ -446,6 +459,35 @@ pub(super) fn extract(bytes: &[u8], extension: &str) -> Result<Document> {
 mod tests {
     use super::*;
     use anydoc::model::{AssetId, Cell, Style, Table, TableKind};
+    #[test]
+    fn spreadsheet_sheet_heading_is_followed_directly_by_its_table_like_the_reference() {
+        for (extension, bytes, separator) in [
+            (
+                "xlsx",
+                &include_bytes!("../office_render/fixtures/whole-workbook.xlsx")[..],
+                "\n",
+            ),
+            (
+                "xls",
+                &include_bytes!("../office_render/fixtures/whole-workbook.xls")[..],
+                "\n",
+            ),
+            // ODS is not one of the reference's XLSX/XLS converters.
+            (
+                "ods",
+                &include_bytes!("../office_render/fixtures/whole-workbook.ods")[..],
+                "\n\n",
+            ),
+        ] {
+            let doc = extract(bytes, extension).unwrap();
+            assert!(
+                doc.markdown
+                    .starts_with(&format!("## Wide 宽表{separator}| ")),
+                "{extension}: {}",
+                &doc.markdown[..doc.markdown.len().min(80)]
+            );
+        }
+    }
     #[test]
     fn document_renderer_keeps_assets_math_notes_and_styles() {
         let names = vec!["asset-1.png".into()];

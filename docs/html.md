@@ -43,6 +43,8 @@ documented article heuristic; ordinary hidden descendants remain hidden.
   soft Markdown line breaks outside code; structural block elements establish
   paragraph boundaries. This follows the source renderer's line behavior, which
   can differ from a browser's visual whitespace collapse.
+- Tables with a header use the reference's compact spelling: `| a | b |` rows and
+  one `---` per column, without width padding. Tables kept as HTML are unchanged.
 - Preformatted code keeps indentation and empty lines. A `<code>` element with
   inline `white-space: pre` styling is treated as a code block. Chemical and
   mathematical `<sub>`/`<sup>` text retains those tags.

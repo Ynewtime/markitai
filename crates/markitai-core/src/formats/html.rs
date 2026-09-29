@@ -237,6 +237,50 @@ fn image_source(value: &str, base: Option<&Url>) -> Option<String> {
     .then(|| format!("{meta}..."))
 }
 
+/// htmd pads every cell to its column width. The reference writes compact GFM
+/// rows (`| a | b |`) with one `---` per column, so a table with a header
+/// separator is rewritten to that spelling. Cell text is unchanged (htmd has
+/// already replaced literal pipes with `&#124;`); any other output, such as a
+/// table kept as HTML, is left alone.
+fn compact_table(markdown: &str) -> Option<String> {
+    let cells = |line: &str| -> Option<Vec<String>> {
+        let inner = line.strip_prefix('|')?.strip_suffix('|')?;
+        Some(
+            inner
+                .split('|')
+                .map(|cell| cell.trim().to_owned())
+                .collect(),
+        )
+    };
+    let separator = |line: &str| {
+        cells(line).is_some_and(|row| {
+            !row.is_empty()
+                && row
+                    .iter()
+                    .all(|cell| !cell.is_empty() && cell.bytes().all(|b| b == b'-'))
+        })
+    };
+    let lines: Vec<&str> = markdown.split('\n').collect();
+    let header = lines.iter().position(|line| line.starts_with("| "))?;
+    if !lines.get(header + 1).is_some_and(|line| separator(line)) {
+        return None;
+    }
+    let mut output = Vec::with_capacity(lines.len());
+    for (index, line) in lines.iter().enumerate() {
+        if index < header || !line.starts_with("| ") {
+            output.push((*line).to_owned());
+            continue;
+        }
+        let row = cells(line)?;
+        output.push(if index == header + 1 {
+            format!("| {} |", vec!["---"; row.len()].join(" | "))
+        } else {
+            format!("| {} |", row.join(" | "))
+        });
+    }
+    Some(output.join("\n"))
+}
+
 fn block_tag(name: &str) -> bool {
     matches!(
         name,
@@ -2138,6 +2182,16 @@ fn render_sanitized(cleaned: &str) -> Result<String> {
                 )
             },
         )
+        .add_handler(
+            vec!["table"],
+            |handlers: &dyn htmd::element_handler::Handlers, element: htmd::Element| {
+                let mut result = handlers.fallback(element)?;
+                if let Some(compact) = compact_table(&result.content) {
+                    result.content = compact;
+                }
+                Some(result)
+            },
+        )
         .build()
         .convert(cleaned)
         .map(|markdown| markdown.trim().to_owned())
@@ -2832,6 +2886,33 @@ mod tests {
         ] {
             assert!(safe_url(value, Some(&base)).is_none());
         }
+    }
+
+    #[test]
+    fn tables_use_the_reference_compact_row_spelling() {
+        let doc = extract_html(
+            "<main><table><thead><tr><th>Station</th><th>Count</th></tr></thead>\
+             <tbody><tr><td>North-12</td><td>7</td></tr><tr><td>a|b</td><td></td></tr></tbody></table>\
+             <pre><code>| keep   | padded |\n| ------ | ------ |</code></pre></main>",
+            None,
+        )
+        .unwrap();
+        assert!(
+            doc.markdown
+                .contains("| Station | Count |\n| --- | --- |\n| North-12 | 7 |\n| a&#124;b |  |"),
+            "{}",
+            doc.markdown
+        );
+        assert!(
+            doc.markdown.contains("| keep   | padded |"),
+            "{}",
+            doc.markdown
+        );
+        assert_eq!(
+            compact_table("\n\n| only | rows |\n| no | header |\n"),
+            None
+        );
+        assert_eq!(compact_table("<table><tr><td>x</td></tr></table>"), None);
     }
 
     #[test]
