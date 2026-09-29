@@ -120,6 +120,8 @@ a broken or stalled image prevents printing with an explicit notice. Untrusted
 scripts, external images and embedded media remain blocked as in Preview. Link
 URLs are removed from the printed clone so authenticated download URLs are not
 embedded in generated PDFs. This also removes external clickable PDF links.
+A direct browser print of the workspace itself hides every link that carries
+the service token, so such a PDF embeds no authenticated URL either.
 
 Print styling includes wrapping code, repeating table headers and constrained
 images. It does not promise paginated Office fidelity or a deterministic PDF

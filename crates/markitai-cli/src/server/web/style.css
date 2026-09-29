@@ -16,4 +16,6 @@
   .result-print .prose thead{display:table-header-group}
   .result-print .prose tr{break-inside:avoid;page-break-inside:avoid}
   .result-print a{color:inherit;text-decoration:none}
+  /* A direct browser print of the workspace must not embed authenticated URLs as PDF links. */
+  a[href*="token="]{display:none!important}
 }

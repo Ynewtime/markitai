@@ -103,6 +103,7 @@
 - Quote frontmatter strings that YAML 1.1 readers would type as timestamps, booleans, numbers or null, matching the reference output bytes for the processing time.
 - Create output documents, assets, image sidecars and reports with the process umask instead of private 0600, keeping ownership records and recovery state private.
 
+- Hide links carrying the service token when the Web workspace itself is printed, so browser-generated PDFs never embed authenticated URLs.
 - Render only the document body in Web previews and prints, leaving YAML frontmatter to the Source view as in the reference workspace.
 
 - Save complete inline base64 images in converted Markdown as owned assets when an output directory is used, and keep an alt-text placeholder for HTML images whose source is inline data instead of dropping them, matching the reference.
