@@ -632,7 +632,7 @@ pub(crate) fn write_document_mode(
             .filter(char::is_ascii_alphanumeric)
             .take(12)
             .collect();
-        let digest = format!("{:x}", Sha256::digest(&asset.bytes));
+        let digest = crate::hex(Sha256::digest(&asset.bytes));
         let filename = format!("{}.{}", &digest[..24], safe_extension);
         let path = dir.join(asset_prefix).join(&filename);
         check_path(&path, allow_symlinks)?;
@@ -1042,8 +1042,8 @@ mod tests {
     fn css_resources_publish_exact_assets_in_both_outputs_and_visible_profiles() {
         let first = b"first css resource".to_vec();
         let second = b"second css resource".to_vec();
-        let first_digest = format!("{:x}", Sha256::digest(&first));
-        let second_digest = format!("{:x}", Sha256::digest(&second));
+        let first_digest = crate::hex(Sha256::digest(&first));
+        let second_digest = crate::hex(Sha256::digest(&second));
         let first_name = format!("{}.bin", &first_digest[..24]);
         let second_name = format!("{}.bin", &second_digest[..24]);
         let source = format!(
@@ -1120,8 +1120,8 @@ mod tests {
     fn asset_publication_rewrites_original_paths_once_in_base_and_enhanced_outputs() {
         let first = b"first asset".to_vec();
         let second = b"different asset".to_vec();
-        let first_digest = format!("{:x}", Sha256::digest(&first));
-        let second_digest = format!("{:x}", Sha256::digest(&second));
+        let first_digest = crate::hex(Sha256::digest(&first));
+        let second_digest = crate::hex(Sha256::digest(&second));
         let first_name = format!("{}.bin", &first_digest[..24]);
         let second_name = format!("{}.bin", &second_digest[..24]);
         for profile in ["default", "rag", "obsidian"] {

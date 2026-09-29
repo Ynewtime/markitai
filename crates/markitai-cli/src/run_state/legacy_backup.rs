@@ -186,7 +186,7 @@ fn fingerprint(
             output.write_all(&buffer[..read])?;
         }
     }
-    Ok((bytes, format!("{:x}", digest.finalize())))
+    Ok((bytes, markitai_core::hex(digest.finalize())))
 }
 
 fn copy(source: &Path, directory: &Path, maximum: usize) -> Result<Option<Copy>> {
@@ -283,11 +283,11 @@ mod tests {
         let record = manifest(&target);
         assert_eq!(
             record["base"]["sha256"],
-            format!("{:x}", Sha256::digest(original.as_bytes()))
+            markitai_core::hex(Sha256::digest(original.as_bytes()))
         );
         assert_eq!(
             record["journal"]["sha256"],
-            format!("{:x}", Sha256::digest(lines))
+            markitai_core::hex(Sha256::digest(lines))
         );
         #[cfg(unix)]
         {

@@ -65,16 +65,16 @@ fn now() -> i64 {
 
 /// Cache keys do not persist raw prompts, input paths, endpoints or credentials.
 pub(crate) fn key(content: &str, prompt_scope: &str, model_scope: &str) -> String {
-    let content_hash = format!("{:x}", Sha256::digest(content.as_bytes()));
+    let content_hash = crate::hex(Sha256::digest(content.as_bytes()));
     let combined = format!("native-markdown-v1:{prompt_scope}|{model_scope}|{content_hash}");
-    format!("{:x}", Sha256::digest(combined.as_bytes()))[..32].to_owned()
+    crate::hex(Sha256::digest(combined.as_bytes()))[..32].to_owned()
 }
 
 /// Typed document rows cannot collide with legacy Markdown-only answers.
 pub(crate) fn document_key(content: &str, prompt_scope: &str, model_scope: &str) -> String {
-    let content_hash = format!("{:x}", Sha256::digest(content.as_bytes()));
+    let content_hash = crate::hex(Sha256::digest(content.as_bytes()));
     let combined = format!("native-document-v1:{prompt_scope}|{model_scope}|{content_hash}");
-    format!("{:x}", Sha256::digest(combined.as_bytes()))[..32].to_owned()
+    crate::hex(Sha256::digest(combined.as_bytes()))[..32].to_owned()
 }
 
 /// Framed bytes make page order, MIME and changed pixels part of cache identity.
@@ -96,7 +96,7 @@ pub(crate) fn vision_key<'a>(
         digest.update((bytes.len() as u64).to_le_bytes());
         digest.update(bytes);
     }
-    format!("{:x}", digest.finalize())[..32].to_owned()
+    crate::hex(digest.finalize())[..32].to_owned()
 }
 
 pub(crate) fn model_scope<'a>(models: impl IntoIterator<Item = &'a str>) -> String {
@@ -109,7 +109,7 @@ pub(crate) fn model_scope<'a>(models: impl IntoIterator<Item = &'a str>) -> Stri
     if models.is_empty() {
         "pool:none".into()
     } else {
-        let digest = format!("{:x}", Sha256::digest(models.join("\n").as_bytes()));
+        let digest = crate::hex(Sha256::digest(models.join("\n").as_bytes()));
         format!("pool:{}", &digest[..16])
     }
 }
@@ -121,7 +121,7 @@ pub(crate) fn prompt_scope(parts: &[&str]) -> String {
         digest.update((part.len() as u64).to_le_bytes());
         digest.update(part.as_bytes());
     }
-    format!("{:x}", digest.finalize())
+    crate::hex(digest.finalize())
 }
 
 // fnmatch-style patterns treat slashes as ordinary characters and braces as

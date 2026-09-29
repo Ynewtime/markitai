@@ -94,7 +94,7 @@ pub(super) fn prepare(
                     .ok()
                     .and_then(|format| format.extensions_str().first().copied())
                     .unwrap_or("img");
-                let digest = format!("{:x}", Sha256::digest(&bytes));
+                let digest = crate::hex(Sha256::digest(&bytes));
                 let mut index = 0;
                 let name = loop {
                     let name = format!("image-{}-{index}.{suffix}", &digest[..20]);

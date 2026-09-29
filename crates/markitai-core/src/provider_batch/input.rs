@@ -141,6 +141,6 @@ pub(super) fn snapshot(path: &Path, limits: Limits) -> Result<Input, Error> {
         model: model.expect("validated request"),
         custom_ids: ids,
         bytes: bytes as u64,
-        sha256: format!("{:x}", hash.finalize()),
+        sha256: crate::hex(hash.finalize()),
     })
 }

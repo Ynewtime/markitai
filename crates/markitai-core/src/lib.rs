@@ -35,6 +35,19 @@ mod types;
 pub use browser_runtime::BrowserRuntime;
 pub use images::is_image_extension;
 pub use llm_runtime::LlmRuntime;
+/// Lowercase hexadecimal spelling of digest bytes, as `{:x}` rendered them
+/// before `sha2` 0.11 (whose output arrays do not implement `LowerHex`).
+#[doc(hidden)]
+pub fn hex(bytes: impl AsRef<[u8]>) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let bytes = bytes.as_ref();
+    let mut text = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        text.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        text.push(char::from(DIGITS[usize::from(byte & 15)]));
+    }
+    text
+}
 /// Kill every external runtime process group this library started (Chromium,
 /// LibreOffice, official subscription runtimes). Async-signal-safe, for a host
 /// that is about to terminate; caller-held browser sessions are untouched.
@@ -833,5 +846,20 @@ mod routing_tests {
         for value in ["", " ", "0", " false ", "No"] {
             assert!(!super::vlm_ocr_disabled(value), "{value}");
         }
+    }
+}
+
+#[cfg(test)]
+mod hex_tests {
+    #[test]
+    fn hex_matches_the_previous_lower_hex_digest_spelling() {
+        use sha2::{Digest, Sha256};
+        assert_eq!(super::hex([0x00, 0x0f, 0xab, 0xff]), "000fabff");
+        assert_eq!(super::hex([]), "");
+        // FIPS 180-2 test vector for "abc".
+        assert_eq!(
+            super::hex(Sha256::digest(b"abc")),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 }

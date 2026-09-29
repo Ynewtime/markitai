@@ -63,7 +63,7 @@ fn observe_regular_bounded(path: &Path, limit: u64) -> Result<Option<Proof>> {
         identity: identity(&before),
         kind: Kind::Regular,
         bytes,
-        sha256: format!("{:x}", digest.finalize()),
+        sha256: markitai_core::hex(digest.finalize()),
     }))
 }
 fn record_proof(leases: &MemberLeases, path: &Path) -> Result<Option<Proof>> {
@@ -97,7 +97,7 @@ impl StagedFile {
             .ok_or_else(|| mismatch("prepared file disappeared"))?;
         if proof.kind != Kind::Regular
             || proof.bytes != bytes.len() as u64
-            || proof.sha256 != format!("{:x}", Sha256::digest(bytes))
+            || proof.sha256 != markitai_core::hex(Sha256::digest(bytes))
         {
             return Err(mismatch("prepared file differs from its rendered bytes"));
         }

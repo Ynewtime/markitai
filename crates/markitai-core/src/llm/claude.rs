@@ -97,7 +97,7 @@ pub(super) fn deployment(
         hash.update((value.len() as u64).to_le_bytes());
         hash.update(value.as_bytes());
     }
-    let endpoint = format!("claude-cli://{:x}", hash.finalize());
+    let endpoint = format!("claude-cli://{}", crate::hex(hash.finalize()));
     Ok(Deployment {
         id: id.into(),
         explicit_id: nonempty(entry.pointer("/model_info/id")).map(str::to_owned),

@@ -285,7 +285,7 @@ fn streaming_download_checks_actual_bytes_and_records_digest() {
     let mut body = Vec::new();
     assert_eq!(
         download(&client, &url, 7, &mut body).unwrap(),
-        format!("{:x}", Sha256::digest(b"browser"))
+        crate::hex(Sha256::digest(b"browser"))
     );
     task.join().unwrap();
     assert_eq!(body, b"browser");

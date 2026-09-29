@@ -243,7 +243,7 @@ fn image_bytes_reach_runtime_as_ordered_png_blobs() {
     let data = std::fs::read(&path).unwrap();
     let mut fixture: Value =
         serde_json::from_slice(&std::fs::read(root().join("fixture.json")).unwrap()).unwrap();
-    fixture["image_sha256"] = json!(format!("{:x}", Sha256::digest(&data)));
+    fixture["image_sha256"] = json!(markitai_core::hex(Sha256::digest(&data)));
     std::fs::write(root().join("fixture.json"), fixture.to_string()).unwrap();
     let result = convert_detailed(path.to_str().unwrap(), options(config())).unwrap();
     assert!(result.llm_markdown.is_some());

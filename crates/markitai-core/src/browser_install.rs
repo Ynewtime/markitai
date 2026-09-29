@@ -257,7 +257,7 @@ fn download(client: &Client, url: &str, limit: u64, output: &mut impl Write) -> 
             .write_all(&buffer[..len])
             .map_err(|_| failure("cannot save browser download"))?;
     }
-    Ok(format!("{:x}", hash.finalize()))
+    Ok(crate::hex(hash.finalize()))
 }
 
 fn extract(reader: impl Read + Seek, output: &Path, platform: &str, limit: u64) -> Result<()> {
@@ -354,7 +354,7 @@ fn hash_file(path: &Path) -> Result<String> {
         }
         hash.update(&buffer[..len]);
     }
-    Ok(format!("{:x}", hash.finalize()))
+    Ok(crate::hex(hash.finalize()))
 }
 
 /// Network/install work happens only when this API is explicitly requested.

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 pub(super) fn revision(models: &[Value], providers: &[Value]) -> String {
     let bytes = canonical(&json!({"models":models,"providers":providers}));
-    format!("{:x}", Sha256::digest(bytes.as_bytes()))
+    markitai_core::hex(Sha256::digest(bytes.as_bytes()))
 }
 
 pub(super) fn id(entry: &Value, index: usize) -> String {
@@ -29,7 +29,11 @@ pub(super) fn id(entry: &Value, index: usize) -> String {
             }
         }
     }
-    format!("legacy-{:x}", Sha256::digest(ascii.as_bytes()))[..27].to_owned()
+    format!(
+        "legacy-{}",
+        markitai_core::hex(Sha256::digest(ascii.as_bytes()))
+    )[..27]
+        .to_owned()
 }
 
 pub(super) fn backfill(models: &mut [Value]) -> HashMap<String, String> {

@@ -239,10 +239,7 @@ fn filename(url: &Url) -> String {
     let suffix = if variant.is_empty() {
         String::new()
     } else {
-        format!(
-            "_q{}",
-            &format!("{:x}", Sha256::digest(variant.as_bytes()))[..8]
-        )
+        format!("_q{}", &crate::hex(Sha256::digest(variant.as_bytes()))[..8])
     };
     let mut name = String::new();
     for ch in parts.join("_").chars() {

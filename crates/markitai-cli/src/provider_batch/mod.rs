@@ -17,7 +17,7 @@ use std::time::Duration;
 const MEMBER_LIMIT: u64 = 100 * 1024 * 1024;
 
 fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    markitai_core::hex(Sha256::digest(bytes))
 }
 
 fn member(path: &Path) -> CliResult<Vec<u8>> {

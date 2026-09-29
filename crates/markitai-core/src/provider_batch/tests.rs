@@ -255,7 +255,7 @@ fn upload_submits_the_validated_snapshot_even_if_original_is_replaced() {
     use sha2::{Digest, Sha256};
     assert_eq!(
         uploaded.sha256,
-        format!("{:x}", Sha256::digest(original.as_bytes()))
+        crate::hex(Sha256::digest(original.as_bytes()))
     );
     assert!(!format!("{uploaded:?}").contains("Private source"));
 }

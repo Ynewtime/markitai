@@ -26,7 +26,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 md-5 = "0.11"
 uuid = { version = "1", features = ["v4"] }
 indexmap = { version = "2", features = ["serde"] }
-sha2 = "0.10"
+sha2 = "0.11"
 caseless = "0.2.2"
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "multipart", "query", "tokio"] }
 rmcp = { version = "3.5", default-features = false, features = ["server", "transport-io"] }

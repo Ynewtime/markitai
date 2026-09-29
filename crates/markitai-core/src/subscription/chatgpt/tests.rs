@@ -104,8 +104,8 @@ fn text_and_ordered_images_use_private_files_custom_system_and_terminal_totals()
     assert_eq!(
         request["image_hashes"],
         json!([
-            format!("{:x}", Sha256::digest(&a)),
-            format!("{:x}", Sha256::digest(&b))
+            crate::hex(Sha256::digest(&a)),
+            crate::hex(Sha256::digest(&b))
         ])
     );
     assert_eq!(request["workspace_mode"], 0o700);

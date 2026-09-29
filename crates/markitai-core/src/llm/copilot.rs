@@ -77,7 +77,7 @@ pub(super) fn deployment(
         hash.update(token.len().to_le_bytes());
         hash.update(token.as_bytes());
     }
-    let endpoint = format!("copilot-cli://{:x}", hash.finalize());
+    let endpoint = format!("copilot-cli://{}", crate::hex(hash.finalize()));
     Ok(Deployment {
         id: id.into(),
         explicit_id: nonempty(entry.pointer("/model_info/id")).map(str::to_owned),

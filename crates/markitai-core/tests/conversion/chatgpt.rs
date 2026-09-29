@@ -209,7 +209,7 @@ fn png_reaches_the_official_adapter_boundary_with_original_byte_identity() {
     assert_eq!(calls.len(), 1);
     assert_eq!(
         calls[0]["image_hashes"],
-        json!([format!("{:x}", Sha256::digest(bytes))])
+        json!([markitai_core::hex(Sha256::digest(bytes))])
     );
 }
 

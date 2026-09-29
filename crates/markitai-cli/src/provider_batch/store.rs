@@ -1217,7 +1217,7 @@ fn hash_file(path: &Path, limit: usize) -> Result<(u64, String)> {
     {
         return Err(Error::Conflict);
     }
-    Ok((bytes, format!("{:x}", hash.finalize())))
+    Ok((bytes, markitai_core::hex(hash.finalize())))
 }
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path, limit: usize) -> Result<T> {
     serde_json::from_slice(&read_private(path, limit)?)
@@ -1310,7 +1310,7 @@ fn write_blob(
     let blob = Blob {
         path: relative.into(),
         bytes: output.bytes,
-        sha256: format!("{:x}", output.hash.finalize()),
+        sha256: markitai_core::hex(output.hash.finalize()),
     };
     if destination.try_exists()? {
         let (bytes, hash) = hash_file(&destination, limit)?;
@@ -1406,7 +1406,7 @@ fn uuid(value: &str) -> bool {
     uuid::Uuid::parse_str(value).is_ok_and(|parsed| parsed.hyphenated().to_string() == value)
 }
 fn hex(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    markitai_core::hex(Sha256::digest(bytes))
 }
 fn hash(value: &str) -> bool {
     value.len() == 64

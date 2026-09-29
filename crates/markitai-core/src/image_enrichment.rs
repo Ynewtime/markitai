@@ -86,7 +86,7 @@ pub(crate) fn analyze(
     };
     let mut attempted = 0;
     for (index, asset) in selected.iter().enumerate() {
-        let digest = format!("{:x}", Sha256::digest(&asset.bytes));
+        let digest = crate::hex(Sha256::digest(&asset.bytes));
         let answer = if let Some(answer) = &standalone_answer {
             let mut answer = answer.clone();
             if index > 0 {

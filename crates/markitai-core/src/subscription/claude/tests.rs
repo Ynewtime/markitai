@@ -127,7 +127,7 @@ fn terminal_text_and_ordered_images_preserve_bytes_and_do_not_add_cost_estimates
         assert_eq!(sent["images"][i]["mime"], *mime);
         assert_eq!(
             sent["images"][i]["sha256"],
-            format!("{:x}", sha2::Sha256::digest(data))
+            crate::hex(sha2::Sha256::digest(data))
         );
     }
     f.clean();

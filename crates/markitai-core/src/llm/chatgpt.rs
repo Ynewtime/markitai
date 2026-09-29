@@ -63,7 +63,7 @@ pub(super) fn deployment(
         provider: "chatgpt".into(),
         weight: params.get("weight").and_then(Value::as_u64).unwrap_or(1),
         key: None,
-        endpoint: format!("codex-cli://{:x}", hash.finalize()),
+        endpoint: format!("codex-cli://{}", crate::hex(hash.finalize())),
         protocol: Protocol::Chat,
         max_tokens: None,
         supports_vision: entry

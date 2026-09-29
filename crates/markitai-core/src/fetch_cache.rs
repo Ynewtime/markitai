@@ -91,7 +91,7 @@ fn key(url: &str, explicit_strategy: Option<&str>) -> String {
         hash.update(b"\0");
         hash.update(strategy.as_bytes());
     }
-    format!("{:x}", hash.finalize())[..32].to_owned()
+    crate::hex(hash.finalize())[..32].to_owned()
 }
 
 fn lower_authority(value: &str) -> String {
@@ -553,7 +553,7 @@ mod tests {
             key(url, None),
             key(&url.replace("Example", "example"), None)
         );
-        let reference = format!("{:x}", Sha256::digest(format!("2\0{url}").as_bytes()));
+        let reference = crate::hex(Sha256::digest(format!("2\0{url}").as_bytes()));
         assert_ne!(key(url, None), reference[..32]);
         assert_eq!(key(url, None).len(), 32);
     }

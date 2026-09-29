@@ -160,7 +160,10 @@ fn locator_path(
         },
     )
     .map_err(|_| Error::Invalid("publication owner exceeds the receipt limit".into()))?;
-    let name = format!("{:x}.json", Sha256::digest(&encoded.bytes));
+    let name = format!(
+        "{}.json",
+        markitai_core::hex(Sha256::digest(&encoded.bytes))
+    );
     Ok(parent.join(".markitai/ownership/records").join(name))
 }
 
@@ -257,7 +260,7 @@ pub(crate) fn evidence_digest(leases: &MemberLeases, owner: &Owner) -> Result<St
     verify_members(&paths, Some(&receipt))?;
     let bytes = serde_json::to_vec(&receipt)
         .map_err(|_| mismatch("publication receipt cannot be encoded"))?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
+    Ok(markitai_core::hex(Sha256::digest(bytes)))
 }
 
 /// Persist a bare-URL adoption before the checkpoint switches to its named key.
@@ -514,7 +517,7 @@ fn prepare<'a>(
     let staged = observe(stage.path())?.ok_or_else(|| mismatch("staged document disappeared"))?;
     if staged.kind != Kind::Regular
         || staged.bytes != bytes.len() as u64
-        || staged.sha256 != format!("{:x}", Sha256::digest(bytes))
+        || staged.sha256 != markitai_core::hex(Sha256::digest(bytes))
     {
         return Err(mismatch(
             "staged document does not match the rendered bytes",

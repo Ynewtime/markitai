@@ -14,7 +14,7 @@ pub(super) struct Protected {
 
 impl Protected {
     pub fn new(source: &str) -> Self {
-        let digest = format!("{:x}", Sha256::digest(source.as_bytes()));
+        let digest = crate::hex(Sha256::digest(source.as_bytes()));
         let mut prefix = format!("⟦MKTI:{}:", &digest[..16]);
         while source.contains(&prefix) {
             prefix.push('_');
