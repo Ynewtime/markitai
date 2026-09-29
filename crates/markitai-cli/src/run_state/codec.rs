@@ -162,8 +162,8 @@ fn check_scope(scope: &Scope, allow_symlinks: bool) -> Result<()> {
     if !scope.input.is_absolute() || !scope.output.is_absolute() {
         return Err(foreign("expected scope must use resolved absolute paths"));
     }
-    if crate::report_store::resolve_path(&scope.input)? != scope.input
-        || crate::report_store::resolve_path(&scope.output)? != scope.output
+    if super::paths::resolve(&scope.input)? != scope.input
+        || super::paths::resolve(&scope.output)? != scope.output
     {
         return Err(foreign(
             "expected scope no longer resolves to its recorded paths",
@@ -173,8 +173,10 @@ fn check_scope(scope: &Scope, allow_symlinks: bool) -> Result<()> {
 }
 
 fn check_symlinks(path: &Path, allow_symlinks: bool) -> Result<()> {
-    markitai_core::output::check_path(path, allow_symlinks)
-        .map_err(|_| foreign("saved path violates the symlink policy"))
+    match super::paths::symlinks_permitted(path, allow_symlinks) {
+        Ok(true) => Ok(()),
+        _ => Err(foreign("saved path violates the symlink policy")),
+    }
 }
 
 fn validate_options(options: &IndexMap<String, Value>, scope: &Scope) -> Result<()> {
@@ -193,7 +195,7 @@ fn validate_options(options: &IndexMap<String, Value>, scope: &Scope) -> Result<
         ("output_dir", scope.output.as_path()),
     ] {
         if let Some(text) = optional_text(options.get(field), field)?
-            && crate::report_store::resolve_path(Path::new(&text))? != expected
+            && super::paths::resolve(Path::new(&text))? != expected
         {
             return Err(foreign("legacy options identify another input or output"));
         }
@@ -226,7 +228,7 @@ fn file_key(key: &str, scope: &Scope, allow_symlinks: bool) -> Result<String> {
     }
     let relative = if path.is_absolute() {
         check_symlinks(path, allow_symlinks)?;
-        crate::report_store::resolve_path(path)?
+        super::paths::resolve(path)?
             .strip_prefix(&scope.input)
             .map_err(|_| foreign("absolute document key is outside input"))?
             .to_owned()
@@ -245,7 +247,7 @@ fn file_key(key: &str, scope: &Scope, allow_symlinks: bool) -> Result<String> {
     }
     let original = scope.input.join(&normalized);
     check_symlinks(&original, allow_symlinks)?;
-    if !crate::report_store::resolve_path(&original)?.starts_with(&scope.input) {
+    if !super::paths::resolve(&original)?.starts_with(&scope.input) {
         return Err(foreign("document key resolves outside input"));
     }
     normalized
@@ -277,6 +279,8 @@ pub(crate) fn entry_parent(
     scope: &Scope,
     allow_symlinks: bool,
 ) -> Result<PathBuf> {
+    // One consistent filesystem observation for this pure validation.
+    let _paths = super::paths::Scope::enter();
     let relative_parent = match key {
         ItemKey::File(key) => {
             let normalized = file_key(key, scope, allow_symlinks)?;
@@ -294,7 +298,7 @@ pub(crate) fn entry_parent(
             {
                 let source = Path::new(source);
                 check_symlinks(source, allow_symlinks)?;
-                let source = crate::report_store::resolve_path(source)?;
+                let source = super::paths::resolve(source)?;
                 match scope.mode {
                     Mode::UrlList => {
                         if source != scope.input {
@@ -320,7 +324,7 @@ pub(crate) fn entry_parent(
     };
     let parent = scope.output.join(relative_parent);
     check_symlinks(&parent, allow_symlinks)?;
-    let parent = crate::report_store::resolve_path(&parent)?;
+    let parent = super::paths::resolve(&parent)?;
     if !parent.starts_with(&scope.output) {
         return Err(foreign("mirrored output parent resolves outside output"));
     }
@@ -337,9 +341,9 @@ fn destination(
         return Err(foreign("saved destination is empty"));
     }
     check_symlinks(path, allow_symlinks)?;
-    let resolved = crate::report_store::resolve_path(path)?;
+    let resolved = super::paths::resolve(path)?;
     let spelling = lexical_absolute(path)?;
-    if crate::report_store::resolve_path(&spelling)? != resolved {
+    if super::paths::resolve(&spelling)? != resolved {
         return Err(foreign(
             "lexical destination changes the resolved symlink target",
         ));
@@ -459,6 +463,8 @@ pub(crate) fn decode(
     allow_symlinks: bool,
     limits: Limits,
 ) -> Result<Snapshot> {
+    // One consistent filesystem observation for this pure validation.
+    let _paths = super::paths::Scope::enter();
     if bytes.len() > limits.base_bytes {
         return Err(Error::Limit("base bytes"));
     }
@@ -695,6 +701,8 @@ pub(crate) fn encode(
     allow_symlinks: bool,
     limits: Limits,
 ) -> Result<Vec<u8>> {
+    // One consistent filesystem observation for this pure validation.
+    let _paths = super::paths::Scope::enter();
     check_scope(scope, allow_symlinks)?;
     count(snapshot, limits)?;
     validate_options(&snapshot.options, scope)?;
@@ -906,8 +914,8 @@ fn updated_entry(
             };
             entry_parent(&event.key, &probe, scope, allow_symlinks)?;
             if let Some(old) = entry.source_file.as_deref().filter(|old| !old.is_empty())
-                && crate::report_store::resolve_path(Path::new(old))?
-                    != crate::report_store::resolve_path(Path::new(&source))?
+                && super::paths::resolve(Path::new(old))?
+                    != super::paths::resolve(Path::new(&source))?
             {
                 return Err(foreign("journal event changes URL source provenance"));
             }
@@ -924,6 +932,8 @@ pub(crate) fn prepare_event(
     scope: &Scope,
     allow_symlinks: bool,
 ) -> Result<Event> {
+    // One consistent filesystem observation for this pure validation.
+    let _paths = super::paths::Scope::enter();
     let entry = updated_entry(snapshot, &event, scope, allow_symlinks)?
         .ok_or_else(|| invalid("journal mutation is stale or has no known item"))?;
     let data = event
@@ -952,9 +962,7 @@ pub(crate) fn prepare_event(
     {
         let source = Path::new(source);
         let spelling = lexical_absolute(source)?;
-        if crate::report_store::resolve_path(&spelling)?
-            != crate::report_store::resolve_path(source)?
-        {
+        if super::paths::resolve(&spelling)? != super::paths::resolve(source)? {
             return Err(foreign(
                 "lexical source path changes the resolved symlink target",
             ));
@@ -973,6 +981,8 @@ pub(crate) fn prepare_checkpoint(
     scope: &Scope,
     allow_symlinks: bool,
 ) -> Result<Snapshot> {
+    // One consistent filesystem observation for this pure validation.
+    let _paths = super::paths::Scope::enter();
     check_scope(scope, allow_symlinks)?;
     validate_options(&snapshot.options, scope)?;
     if let Some(checkpoint) = &snapshot.checkpoint {
@@ -989,9 +999,9 @@ pub(crate) fn prepare_checkpoint(
             .filter(|source| !source.is_empty())
         {
             let source = Path::new(source);
-            let resolved = crate::report_store::resolve_path(source)?;
+            let resolved = super::paths::resolve(source)?;
             let spelling = lexical_absolute(source)?;
-            if crate::report_store::resolve_path(&spelling)? != resolved {
+            if super::paths::resolve(&spelling)? != resolved {
                 return Err(foreign(
                     "lexical source path changes the resolved symlink target",
                 ));
@@ -1009,7 +1019,7 @@ pub(crate) fn prepare_checkpoint(
     // the working directory in which it was first opened.
     for field in ["input_dir", "output_dir"] {
         if let Some(text) = optional_text(snapshot.options.get(field), field)? {
-            let resolved = crate::report_store::resolve_path(Path::new(&text))?;
+            let resolved = super::paths::resolve(Path::new(&text))?;
             let text = resolved
                 .into_os_string()
                 .into_string()
@@ -1026,6 +1036,8 @@ pub(crate) fn apply_event(
     scope: &Scope,
     allow_symlinks: bool,
 ) -> Result<bool> {
+    // One consistent filesystem observation for this pure validation.
+    let _paths = super::paths::Scope::enter();
     let Some(entry) = updated_entry(snapshot, event, scope, allow_symlinks)? else {
         return Ok(false);
     };
@@ -1056,6 +1068,8 @@ pub(crate) fn normalize_interrupted(snapshot: &mut Snapshot) {
 }
 
 pub(crate) fn task_hash(scope: &Scope, options: &Value) -> Result<String> {
+    // One consistent filesystem observation for this pure validation.
+    let _paths = super::paths::Scope::enter();
     let options = object(options, "task options must be an object")?;
     let directory_keys = [
         "llm",
@@ -1091,6 +1105,8 @@ pub(crate) fn merge(
     url_order: &[String],
     limits: Limits,
 ) -> Result<()> {
+    // One consistent filesystem observation for this pure validation.
+    let _paths = super::paths::Scope::enter();
     count(snapshot, limits)?;
     count(discovered, limits)?;
     let wanted: BTreeSet<_> = url_order.iter().collect();

@@ -2,7 +2,7 @@
 mod leases;
 mod namespace;
 mod receipts;
-mod sync_group;
+pub(crate) mod sync_group;
 pub(crate) use receipts::group::{PreparedDocument, PublicationGroup, RenderedMember};
 
 pub(crate) use leases::{

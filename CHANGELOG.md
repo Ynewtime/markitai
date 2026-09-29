@@ -92,6 +92,7 @@
 
 ### Changed
 
+- Reuse one filesystem observation per recovery-state validation operation instead of re-walking the same path ancestors for every saved path, halving the directory run's `lstat` calls without changing any check; recovery-state directory creation also shares one full-cache flush.
 - Durably create a run's missing output directories with one shared macOS full-cache flush per volume before name reservation, instead of two flushes per directory, keeping every host synchronization and the no-work-before-commit rule.
 
 - Verify and report three historical upstream MIT texts separately from legal review, preserving the original license bytes and exact-version notices.

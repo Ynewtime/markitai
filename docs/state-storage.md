@@ -45,6 +45,10 @@ New journal mutations also store validated absolute destinations. The codec inte
 old relative destinations against the process cwd. It checks resolved containment,
 mirrored parents and the metadata boundary independently of serialized path
 spelling. It does not turn an edited path into permission to overwrite a document.
+Each codec operation (decode, encode, event preparation or application) is pure
+and observes each ancestor's `lstat`/`readlink` once, reusing it for every saved
+path in that operation; the rules equal the core symlink policy and the report
+path resolver, and each new operation observes the filesystem again.
 The existing core path policy is reused; hostile parent-directory replacement
 races are not closed by these path checks.
 

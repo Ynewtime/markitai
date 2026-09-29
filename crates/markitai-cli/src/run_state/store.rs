@@ -698,12 +698,17 @@ fn create_directory(path: &Path) -> Result<()> {
     }
     fs::create_dir_all(path)?;
     // Sync each new parent entry too: syncing only `states` does not make a
-    // previously absent output/.markitai/states chain durable on Unix.
-    for directory in &missing {
-        sync_directory(directory)?;
-    }
-    if let Some(parent) = missing.last().and_then(|directory| directory.parent()) {
-        sync_directory(parent)?;
+    // previously absent output/.markitai/states chain durable on Unix. All
+    // creation precedes synchronization; one media fence per verified local
+    // volume then covers the chain (per-object durable sync elsewhere).
+    #[cfg(unix)]
+    {
+        let mut group = crate::output_claims::sync_group::SyncGroup::new();
+        let parent = missing.last().and_then(|directory| directory.parent());
+        for directory in missing.iter().copied().chain(parent) {
+            group.stage(&File::open(directory)?)?;
+        }
+        group.commit()?;
     }
     Ok(())
 }

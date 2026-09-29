@@ -8,12 +8,12 @@ const MAX_VOLUMES: usize = 32;
 /// Hold one descriptor per eligible volume until every staged object crosses a
 /// media fence. Dropping this value does not imply that anything was committed.
 #[must_use = "staged synchronization must be committed before publication is acknowledged"]
-pub(super) struct SyncGroup {
+pub(crate) struct SyncGroup {
     inner: Group<System>,
 }
 
 impl SyncGroup {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             inner: Group::new(System),
         }
@@ -21,13 +21,13 @@ impl SyncGroup {
 
     /// Flush this object's data/attributes to the device. The group still needs
     /// commit() before a later phase may depend on stable media contents.
-    pub(super) fn stage(&mut self, file: &File) -> io::Result<()> {
+    pub(crate) fn stage(&mut self, file: &File) -> io::Result<()> {
         self.inner.stage(file)
     }
 
     /// Complete all staged volume fences, or fail without issuing a success
     /// acknowledgement. Some earlier volumes may already be durable on failure.
-    pub(super) fn commit(self) -> io::Result<()> {
+    pub(crate) fn commit(self) -> io::Result<()> {
         self.inner.commit()
     }
 }
