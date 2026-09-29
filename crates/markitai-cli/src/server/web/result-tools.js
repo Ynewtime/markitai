@@ -96,7 +96,9 @@ export function waitForPrintImages(images, {signal, timeoutMs = 10_000} = {}) {
     if (signal?.aborted) { cancel(); return; }
     Promise.all(images.map(async image => {
       image.loading = 'eager';
-      if (!image.complete) await image.decode();
+      // A failed load rejects decode() with the browser's own wording; report
+      // the same explicit reason as any other image that yields no pixels.
+      if (!image.complete) await image.decode().catch(() => {});
       if (!image.naturalWidth) throw new Error('A preview image could not load. Printing stopped so the document is not silently incomplete.');
     })).then(() => finish(), error => finish(error));
   });

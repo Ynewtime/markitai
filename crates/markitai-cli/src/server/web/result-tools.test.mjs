@@ -122,3 +122,11 @@ test('rendered body omits only a leading YAML frontmatter block, as the referenc
   for (const text of ['# No frontmatter\n\n---\nnot: yaml\n---\n', ' ---\nx: 1\n---\n', '---\nunterminated\n', '']) assert.equal(previewBody(text), text);
   assert.equal(previewBody('---\na: 1\n---\n---\nb: 2\n---\n'), '\n---\nb: 2\n---\n');
 });
+
+test('an image whose load fails reports the explicit print reason, not the decoder wording',async()=>{
+  const broken={complete:false,naturalWidth:0,decode:async()=>{throw new DOMException('The source image cannot be decoded.','EncodingError');}};
+  await assert.rejects(waitForPrintImages([broken]),/preview image could not load/);
+  const ready={complete:false,naturalWidth:0,decode:async()=>{ready.naturalWidth=3;}};
+  await waitForPrintImages([ready]);
+  assert.equal(ready.loading,'eager');
+});
