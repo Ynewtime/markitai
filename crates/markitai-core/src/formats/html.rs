@@ -1375,6 +1375,8 @@ struct Footnotes<'a> {
     removed: HashSet<usize>,
     markers: HashSet<usize>,
     text_markers: HashMap<usize, String>,
+    /// In-page tables of contents of a full page, left out.
+    contents: HashSet<usize>,
 }
 
 impl<'a> Footnotes<'a> {
@@ -1422,6 +1424,14 @@ impl<'a> Footnotes<'a> {
     ) -> Self {
         let mut notes = Self {
             prune_chrome,
+            contents: if prune_chrome {
+                article::contents(root, document)
+                    .into_iter()
+                    .map(element_key)
+                    .collect()
+            } else {
+                HashSet::new()
+            },
             ..Self::default()
         };
         let references = root
@@ -2077,6 +2087,9 @@ fn serialize_clean(
         return Ok(());
     }
     let key = element_key(element);
+    if notes.contents.contains(&key) {
+        return Ok(());
+    }
     if !definition && let Some(number) = notes.references.get(&key) {
         let visible_text = element
             .descendants()
@@ -2172,6 +2185,11 @@ fn serialize_clean(
             | "template"
             | "noscript"
     ) {
+        return Ok(());
+    }
+    // A link that shows nothing (an icon drawn by a style sheet, a vote
+    // arrow) would be written as `[](url)`.
+    if name == "a" && value.attr("href").is_some() && shows_nothing(element, notes.prune_chrome) {
         return Ok(());
     }
     if name == "table" && serialize_table(element, base, output, depth, notes, definition)? {
@@ -2300,13 +2318,16 @@ fn table_span(cell: ElementRef<'_>, attribute: &str) -> usize {
         .map_or(1, |value| value.min(MAX_SPAN))
 }
 
-/// A cell that shows nothing: no text and no image that is kept.
-fn empty_cell(cell: ElementRef<'_>, prune_chrome: bool) -> bool {
-    is_hidden(cell)
-        || (cell.text().all(|text| text.trim().is_empty())
-            && !cell.descendants().filter_map(ElementRef::wrap).any(|node| {
-                node.value().name() == "img" && !(prune_chrome && small_image(node).is_some())
-            }))
+/// An element that shows nothing: no text and no image that is kept.
+fn shows_nothing(element: ElementRef<'_>, prune_chrome: bool) -> bool {
+    is_hidden(element)
+        || (element.text().all(|text| text.trim().is_empty())
+            && !element
+                .descendants()
+                .filter_map(ElementRef::wrap)
+                .any(|node| {
+                    node.value().name() == "img" && !(prune_chrome && small_image(node).is_some())
+                }))
 }
 
 /// Whether a table is written as a Markdown table: it has header cells, or it
@@ -2333,7 +2354,7 @@ fn table_grid(table: ElementRef<'_>, rows: &[(ElementRef<'_>, bool)], prune_chro
         for cell in table_cells(*row) {
             row_width += table_span(cell, "colspan");
             cells += 1;
-            if empty_cell(cell, prune_chrome) {
+            if shows_nothing(cell, prune_chrome) {
                 empty += 1;
                 continue;
             }
@@ -2429,7 +2450,7 @@ fn serialize_table(
         })
     } else {
         rows.iter().position(|(row, _)| {
-            !table_cells(*row).all(|cell| empty_cell(cell, notes.prune_chrome))
+            !table_cells(*row).all(|cell| shows_nothing(cell, notes.prune_chrome))
         })
     };
     if !headed && let Some(index) = header {
@@ -2476,7 +2497,7 @@ fn serialize_table(
                 line.get(*column)
                     .copied()
                     .flatten()
-                    .is_some_and(|cell| !empty_cell(cell, notes.prune_chrome))
+                    .is_some_and(|cell| !shows_nothing(cell, notes.prune_chrome))
             })
         })
         .collect();
@@ -2512,7 +2533,7 @@ fn serialize_table(
         !line
             .iter()
             .flatten()
-            .all(|cell| empty_cell(*cell, notes.prune_chrome))
+            .all(|cell| shows_nothing(*cell, notes.prune_chrome))
     }) {
         output.push_str("<tr>");
         for column in &columns {
@@ -3749,6 +3770,50 @@ mod tests {
             let plain = markdown(&format!("<main>{table}</main>"));
             assert!(!plain.contains('|'), "{plain}");
         }
+    }
+
+    #[test]
+    fn in_page_tables_of_contents_and_mediawiki_edit_links_are_left_out() {
+        let markdown = |html: &str| extract_html(html, None).unwrap().markdown;
+        let page = markdown(
+            r##"<main><h1>Guide</h1><p>Intro.</p><hr><ul><li><a href="#one">1. One</a><ul><li><a href="#two">Two</a></li></ul></li><li>3. <a href="#%C3%A9t%C3%A9">Été</a></li><li><a href="#three">Three</a></li></ul><hr>
+            <div class="box"><div><h2>Contents</h2><span><label></label></span></div><div><ol><li><a href="#one">One</a></li><li><a href="#two">Two</a></li><li><a href="#été">Été</a></li></ol></div></div>
+            <div><p>These are the parts of this long guide in order.</p><ul><li><a href="#one">One</a></li><li><a href="#two">Two</a></li><li><a href="#three">Three</a></li></ul></div>
+            <div><p><a href="/all">All</a></p><ul><li><a href="#one">One</a></li><li><a href="#two">Two</a></li><li><a href="#three">Three</a></li></ul></div>
+            <ul><li><a href="#one">One</a> explains the setup</li><li><a href="#two">Two</a></li><li><a href="#été">Été</a></li></ul>
+            <ul><li><a href="#one">One</a></li><li><a href="#two">Two</a></li><li><a href="#note">Note</a></li></ul>
+            <ol><li><a href="#one">One</a></li><li><a href="#two">Two</a></li></ol>
+            <h2 id="one">One</h2><p>First.</p><section id="two"><h2>Two</h2><p>Second.</p></section><a name="été"></a><h2>Été</h2><p id="note">Third.</p><h3><span id="three">Three</span></h3></main>"##,
+        );
+        assert!(
+            page.contains("Intro.\n\nThese are the parts of this long guide in order.\n\n[All](/all)\n\n* [One](#one) explains the setup"),
+            "{page}"
+        );
+        assert!(page.contains("* [Note](#note)"), "{page}");
+        assert!(
+            !page.contains("Contents") && !page.contains("---"),
+            "{page}"
+        );
+        assert_eq!(page.matches("[Two](#two)").count(), 3, "{page}");
+        let wiki = markdown(
+            r#"<main><h1>Obsidian</h1><div id="siteSub">From Wikipedia, the free encyclopedia</div><div id="contentSub"><span>(Redirected from Obs)</span></div><h2><span class="mw-headline" id="History">History</span><span class="mw-editsection"><span class="mw-editsection-bracket">[</span><a href="/w/index.php?action=edit&amp;section=1">edit</a><span class="mw-editsection-bracket">]</span></span></h2><p>Text.</p></main>"#,
+        );
+        assert!(wiki.contains("# Obsidian\n\n## History\n\nText."), "{wiki}");
+    }
+
+    #[test]
+    fn links_that_show_nothing_are_left_out() {
+        let markdown = extract_html(
+            r#"<main><p>See <a href="/vote"></a><a href="/share"><i class="icon"></i> </a><a href="/pixel"><img src="p.gif" width="1" height="1"></a>the <a href="/site">site</a> and <a href="/home"><img src="logo.png" alt="Logo"></a>.</p></main>"#,
+            None,
+        )
+        .unwrap()
+        .markdown;
+        assert!(
+            markdown.contains("See the [site](/site) and [![Logo](logo.png)](/home)."),
+            "{markdown}"
+        );
+        assert!(!markdown.contains("[]("), "{markdown}");
     }
 
     #[test]

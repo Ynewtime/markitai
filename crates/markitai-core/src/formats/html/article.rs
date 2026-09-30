@@ -197,6 +197,20 @@ fn related_cards(element: ElementRef<'_>) -> bool {
 /// Full-page chrome only. Fragment conversion must leave this policy disabled:
 /// the same table of contents can be essential text in a book or email.
 pub(super) fn excluded(element: ElementRef<'_>) -> bool {
+    // MediaWiki's section edit links, "From Wikipedia" tagline, redirect
+    // note and skip links.
+    if named(
+        element,
+        &[
+            "mw-editsection",
+            "mw-jump-link",
+            "siteSub",
+            "contentSub",
+            "jump-to-nav",
+        ],
+    ) {
+        return true;
+    }
     if note(element)
         || !matches!(
             element.value().name(),
@@ -425,6 +439,154 @@ fn outward(link: ElementRef<'_>) -> bool {
 
 static TEASER_LINK: std::sync::LazyLock<scraper::Selector> =
     std::sync::LazyLock::new(|| scraper::Selector::parse("a[href]").expect("static selector"));
+
+/// In-page tables of contents under `root`: each outermost list whose links
+/// all point to headings of the page, with no other text than numbering,
+/// taken together with the wrappers that hold nothing else than a short
+/// title for it, and with a pair of rules framing it. The headings already
+/// carry that structure, and the links would not resolve in Markdown.
+pub(super) fn contents<'a>(root: ElementRef<'a>, document: ElementRef<'a>) -> Vec<ElementRef<'a>> {
+    const MIN_LINKS: usize = 3;
+    let mut targets = std::collections::HashSet::new();
+    for node in document.descendants().filter_map(ElementRef::wrap) {
+        let value = node.value();
+        let Some(id) = value
+            .attr("id")
+            .or_else(|| (value.name() == "a").then(|| value.attr("name")).flatten())
+        else {
+            continue;
+        };
+        let labels_heading = heading(node)
+            || node
+                .ancestors()
+                .filter_map(ElementRef::wrap)
+                .take(4)
+                .any(heading)
+            || first_heading(node).is_some()
+            || (node.text().all(|text| text.trim().is_empty())
+                && node
+                    .next_siblings()
+                    .find_map(ElementRef::wrap)
+                    .is_some_and(heading));
+        if labels_heading {
+            targets.insert(id);
+        }
+    }
+    if targets.is_empty() {
+        return Vec::new();
+    }
+    let mut found = Vec::new();
+    for list in root.descendants().filter_map(ElementRef::wrap) {
+        if !matches!(list.value().name(), "ul" | "ol")
+            || list
+                .ancestors()
+                .filter_map(ElementRef::wrap)
+                .any(|parent| matches!(parent.value().name(), "ul" | "ol" | "li"))
+        {
+            continue;
+        }
+        let mut links = 0usize;
+        let only_heading_links = list.descendants().all(|node| match node.value() {
+            Node::Element(element) if element.name() == "a" => {
+                links += 1;
+                element
+                    .attr("href")
+                    .and_then(|href| href.trim().strip_prefix('#'))
+                    .is_some_and(|fragment| targets.contains(decoded(fragment).as_ref()))
+            }
+            Node::Text(text) => {
+                !text.chars().any(char::is_alphabetic)
+                    || node
+                        .ancestors()
+                        .filter_map(ElementRef::wrap)
+                        .take_while(|parent| *parent != list)
+                        .any(|parent| parent.value().name() == "a")
+            }
+            _ => true,
+        });
+        if !only_heading_links || links < MIN_LINKS {
+            continue;
+        }
+        let mut wrapper = list;
+        while let Some(parent) = wrapper.parent().and_then(ElementRef::wrap) {
+            if parent == root
+                || matches!(parent.value().name(), "body" | "html" | "main" | "article")
+            {
+                break;
+            }
+            let titles_only = parent
+                .children()
+                .filter(|child| child.id() != wrapper.id())
+                .all(|child| match child.value() {
+                    Node::Text(text) => text.trim().is_empty(),
+                    Node::Element(_) => ElementRef::wrap(child).is_some_and(|element| {
+                        super::is_hidden(element) || contents_title(element)
+                    }),
+                    _ => true,
+                });
+            if !titles_only {
+                break;
+            }
+            wrapper = parent;
+        }
+        let rule = |element: Option<ElementRef<'a>>| {
+            element.filter(|element| element.value().name() == "hr")
+        };
+        if let (Some(before), Some(after)) = (
+            rule(wrapper.prev_siblings().find_map(ElementRef::wrap)),
+            rule(wrapper.next_siblings().find_map(ElementRef::wrap)),
+        ) {
+            found.extend([before, after]);
+        }
+        found.push(wrapper);
+    }
+    found
+}
+
+/// A table of contents' title: a few words without links to other places,
+/// images, lists or tables ("Contents", a hide toggle).
+fn contents_title(element: ElementRef<'_>) -> bool {
+    const MAX_WORDS: usize = 6;
+    element
+        .text()
+        .flat_map(str::split_whitespace)
+        .nth(MAX_WORDS)
+        .is_none()
+        && !element
+            .descendants()
+            .filter_map(ElementRef::wrap)
+            .any(|node| {
+                matches!(node.value().name(), "img" | "ul" | "ol" | "table")
+                    || (node.value().name() == "a" && outward(node))
+            })
+}
+
+/// A link fragment with `%XX` escapes decoded, as ids are compared unescaped.
+fn decoded(fragment: &str) -> std::borrow::Cow<'_, str> {
+    if !fragment.contains('%') {
+        return fragment.into();
+    }
+    let bytes = fragment.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let hex = |offset: usize| {
+            bytes
+                .get(index + offset)
+                .and_then(|byte| (*byte as char).to_digit(16))
+        };
+        if bytes[index] == b'%'
+            && let (Some(high), Some(low)) = (hex(1), hex(2))
+        {
+            output.push((high * 16 + low) as u8);
+            index += 3;
+        } else {
+            output.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8_lossy(&output).into_owned().into()
+}
 
 struct Scored<'a> {
     element: ElementRef<'a>,
