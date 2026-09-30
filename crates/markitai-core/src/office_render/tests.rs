@@ -2,6 +2,7 @@ use super::*;
 use lopdf::{Object, Stream, dictionary};
 
 const PRESENTATION: &[u8] = include_bytes!("fixtures/hidden-blank-three.pptx");
+#[cfg_attr(not(unix), allow(dead_code))]
 const WORD: &[u8] = include_bytes!("fixtures/blank-middle-three.docx");
 
 pub(super) fn pdf(count: usize) -> Vec<u8> {

@@ -1,4 +1,5 @@
 use super::*;
+#[cfg_attr(not(unix), allow(unused_imports))]
 use serde_json::{Value, json};
 use std::io::Cursor;
 

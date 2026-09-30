@@ -696,6 +696,7 @@ fn records_directory_at(parent: &Path, create: bool) -> Result<Option<PathBuf>> 
                 if !create {
                     return Ok(None);
                 }
+                #[cfg_attr(not(unix), allow(unused_mut))] // Only Unix sets a mode.
                 let mut builder = fs::DirBuilder::new();
                 #[cfg(unix)]
                 {

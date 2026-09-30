@@ -809,6 +809,7 @@ fn execute_conversion(
     )
 }
 
+#[cfg_attr(not(unix), allow(dead_code))] // Read by the Unix batch path.
 struct BatchDestination<'a> {
     mode: RunMode,
     output: &'a Path,

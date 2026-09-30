@@ -53,6 +53,8 @@ pub(crate) enum Owned {
 /// asynchronous runtime owns are excluded, because its registration chains to
 /// a previously installed handler.
 pub(crate) fn install_fatal_cleanup(owned: Owned) {
+    #[cfg(not(unix))]
+    let _ = owned;
     #[cfg(unix)]
     for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
         let skip = match owned {

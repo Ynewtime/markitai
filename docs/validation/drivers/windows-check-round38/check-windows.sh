@@ -18,4 +18,7 @@ export SQLITE3_LIB_DIR="$work/sqlite-placeholder" SQLITE3_INCLUDE_DIR="$work/sql
 export CC_x86_64_pc_windows_msvc=clang AR_x86_64_pc_windows_msvc="$(cd "$(dirname "$0")" && pwd)/lib-ar.sh"
 export CFLAGS_x86_64_pc_windows_msvc="--target=x86_64-pc-windows-msvc -ffreestanding -Wno-ignored-pragma-intrinsic -I$stub"
 cd "$root"
-cargo "${1:-check}" --workspace --all-targets --target x86_64-pc-windows-msvc --target-dir "$work/target"
+command=${1:-check}
+[ $# -gt 0 ] && shift
+# 例：check-windows.sh clippy -- -D warnings
+cargo "$command" --workspace --all-targets --target x86_64-pc-windows-msvc --target-dir "$work/target" "$@"

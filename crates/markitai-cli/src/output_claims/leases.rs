@@ -362,6 +362,7 @@ pub(crate) fn prepare_namespace_parent(parent: &Path, allow_symlinks: bool) -> R
 }
 
 fn create_metadata_directory(path: &Path) -> Result<()> {
+    #[cfg_attr(not(unix), allow(unused_mut))] // Only Unix sets a mode.
     let mut builder = fs::DirBuilder::new();
     #[cfg(unix)]
     {

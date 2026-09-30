@@ -391,6 +391,7 @@ fn available_name(parent: &Path, name: &str, budget: &mut Budget) -> io::Result<
 }
 
 fn mkdir(path: &Path) -> io::Result<()> {
+    #[cfg_attr(not(unix), allow(unused_mut))] // Only Unix sets a mode.
     let mut options = fs::DirBuilder::new();
     #[cfg(unix)]
     {

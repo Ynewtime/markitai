@@ -439,6 +439,7 @@ impl Store {
     }
 
     #[cfg(test)]
+    #[cfg_attr(not(unix), allow(dead_code))] // Used by Unix-only tests.
     pub(crate) fn open_by_id(
         output: &Path,
         id: &str,
@@ -1124,6 +1125,7 @@ fn physical_output(output: &Path, allow_symlinks: bool) -> Result<PathBuf> {
     crate::report_store::resolve_path(output).map_err(Into::into)
 }
 fn new_directory(path: &Path) -> Result<()> {
+    #[cfg_attr(not(unix), allow(unused_mut))] // Only Unix sets a mode.
     let mut builder = fs::DirBuilder::new();
     #[cfg(unix)]
     {

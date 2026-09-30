@@ -185,6 +185,7 @@ fn private_directory(path: &Path) -> Result<()> {
     {
         private_directory(parent)?;
     }
+    #[cfg_attr(not(unix), allow(unused_mut))] // Only Unix sets a mode.
     let mut builder = fs::DirBuilder::new();
     #[cfg(unix)]
     {

@@ -45,6 +45,7 @@ impl Slot {
     }
 
     /// Whether the leader has exited, without reaping it.
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn exited(&self, child: &Child) -> bool {
         leader_exited(child)
     }

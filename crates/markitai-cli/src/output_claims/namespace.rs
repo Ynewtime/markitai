@@ -175,6 +175,7 @@ impl PreparedNamespaces {
 }
 
 fn create_metadata_directory(path: &Path) -> Result<()> {
+    #[cfg_attr(not(unix), allow(unused_mut))] // Only Unix sets a mode.
     let mut builder = fs::DirBuilder::new();
     #[cfg(unix)]
     {

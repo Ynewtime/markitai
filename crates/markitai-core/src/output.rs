@@ -427,6 +427,7 @@ pub fn should_skip(dir: &Path, name: &str, cfg: &Value) -> Result<bool> {
 /// receipts, locks and service state keep their own restrictive modes.
 #[doc(hidden)]
 pub fn deliverable_builder<'a, 'b>() -> tempfile::Builder<'a, 'b> {
+    #[cfg_attr(not(unix), allow(unused_mut))] // Only Unix sets a mode.
     let mut builder = tempfile::Builder::new();
     #[cfg(unix)]
     {
