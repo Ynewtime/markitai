@@ -6,7 +6,7 @@ upstream commit and every copied file's original checksum. The original MIT
 license and `external/bcmaps/LICENSE` remain in place. No Cargo registry source
 was modified. The workspace coordinator owns the path patch and lockfile.
 
-The local changes are limited to five upstream files:
+The local changes are limited to eleven upstream files:
 
 - `src/text_utils.rs`: page-number recognition requires a complete folio
   expression, preserving paragraphs such as `Page 42 explains the result` and
@@ -15,6 +15,8 @@ The local changes are limited to five upstream files:
 - `src/markdown/postprocess.rs`: require complete folios after reader-generated
   heading/emphasis wrappers, while preserving code and HTML literal blocks.
   Update the old tests that intentionally deleted substantive `Page N` prose.
+  URL linking and space/punctuation tidying skip fenced code, which is kept
+  verbatim (a URL in a string literal, alignment spaces).
 - `src/extractor/content_stream.rs`: keep the graphics-state rendering mode
   across text objects; reject invalid `Tr` values; suppress nonpainting runs
   without changing their cursor advances. All-nonpainting `ActualText` glyphs
@@ -29,9 +31,29 @@ The local changes are limited to five upstream files:
   only evidence; baseline lookups use a per-page index. Page-selected extraction
   fetches document context for such numbers. The added unit test fails on the
   unmodified file and on a variant without the spread rules. Run in an isolated copy with
-  optional and dev dependencies removed, the crate's unit tests give 1,596
+  optional and dev dependencies removed, the crate's unit tests gave 1,596
   passed and 21 failed; the same 21 fail without this change (17 need fixture
   files outside the copied scope, 4 assert upstream behavior).
+- `src/extractor/fonts.rs`: a Type3 font's mirrored `FontMatrix` flips its
+  runs' glyph side only when its glyphs are drawn above the glyph-space origin
+  (`FontBBox`). Chrome/Skia mirrors the matrix over glyphs drawn y-down, so its
+  runs stood one font size below their baseline and interleaved with the
+  embedded fonts of the same line; dvips/PK fonts keep the old handling.
+- `src/extractor/mod.rs`, `src/extractor/scripts.rs`: a run 5% or more smaller
+  or larger and at least 0.2 em off the baseline is not merged into its
+  neighbour, and a run clearly off the baseline (0.2 em) is a script up to 0.86
+  of the anchor size: browsers print `<sup>`/`<sub>` at 0.83 em.
+- `src/markdown/convert.rs`, `src/markdown/classify.rs`,
+  `src/markdown/analysis.rs`: a fixed-pitch line set off from the text above
+  by more than 1.7 em opens a code block even when the page's median-based
+  paragraph threshold kept the paragraph open; inside a block a URL line is
+  code, blank lines are restored from the block's line pitch, the first run's
+  leading spaces are kept and fixed-pitch runs are indented by their offset in
+  glyph advances. A run is a mono-set link only when it is a bare URL.
+  Fixed-pitch lines do not set the body size unless nothing else does.
+
+  With these changes, the isolated copy's unit tests give 1,603 passed and the
+  same 21 failed. Each added test fails on the unmodified code it covers.
 
 The page-level OCR, font decoding, repair, limits and reliability routing remain
 the upstream paths. Markitai's own visibility warnings and layout agreement

@@ -299,11 +299,17 @@ pub(crate) fn build_type3_scales(
     scales
 }
 
-/// Resource names of Type3 fonts whose `FontMatrix` mirrors the y axis
-/// (`d < 0`). dvips/PK bitmap fonts declare `[1 0 0 -1 0 0]` and pair it with
-/// a y-flipped text matrix so the glyphs render upright; the run geometry
-/// must undo the flip when deciding which side of the baseline the glyph box
-/// lies on (see `geometry::run_geometry`).
+/// Resource names of Type3 fonts whose glyphs, carried through the
+/// `FontMatrix`, stand below the text-space baseline. dvips/PK bitmap fonts
+/// declare `[1 0 0 -1 0 0]` over glyphs drawn above the glyph-space origin
+/// and pair it with a y-flipped text matrix so the glyphs render upright; the
+/// run geometry must undo the flip when deciding which side of the baseline
+/// the glyph box lies on (see `geometry::run_geometry`). Chrome (Skia) also
+/// mirrors the matrix, `[.001 0 0 -.001 0 0]`, but draws its glyphs y-down
+/// — its `FontBBox` reaches far below the origin, `[4 233 933 -829]` — so
+/// the two mirrors cancel and its runs stand on the baseline like any other.
+/// A missing or empty `FontBBox` says nothing and leaves the matrix alone
+/// to decide.
 pub(crate) fn build_type3_y_flips(
     doc: &Document,
     fonts: &std::collections::BTreeMap<Vec<u8>, &lopdf::Dictionary>,
@@ -328,11 +334,20 @@ pub(crate) fn build_type3_y_flips(
         let Some(d) = matrix.get(3) else {
             continue;
         };
-        let d = match d {
+        let number = |o: &Object| match o {
             Object::Reference(r) => doc.get_object(*r).ok().and_then(|o| o.as_float().ok()),
             other => other.as_float().ok(),
         };
-        if d.is_some_and(|d| d < 0.0) {
+        let Some(d) = number(d) else {
+            continue;
+        };
+        let drawn_below = font_dict
+            .get(b"FontBBox")
+            .ok()
+            .and_then(|o| resolve_array(doc, o))
+            .and_then(|bbox| Some((number(bbox.get(1)?)?, number(bbox.get(3)?)?)))
+            .is_some_and(|(y0, y1)| y0 != y1 && y0 + y1 < 0.0);
+        if d != 0.0 && (d < 0.0) != drawn_below {
             flipped.insert(String::from_utf8_lossy(font_name).to_string());
         }
     }

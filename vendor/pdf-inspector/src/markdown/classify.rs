@@ -211,6 +211,17 @@ pub(crate) fn is_code_like(text: &str) -> bool {
 /// names that never matched the monospace patterns; items now carry real
 /// family names.
 pub(crate) fn line_is_monospace(line: &crate::types::TextLine) -> bool {
+    monospace_share_reaches_code(line, true)
+}
+
+/// [`line_is_monospace`] for a line inside an open code block: a URL in the
+/// code (`baseUrl="https://…"`) is code there, not a mono-set link, and must
+/// not cut the block in two.
+pub(crate) fn line_continues_code(line: &crate::types::TextLine) -> bool {
+    monospace_share_reaches_code(line, false)
+}
+
+fn monospace_share_reaches_code(line: &crate::types::TextLine, links_are_prose: bool) -> bool {
     let mut monospace_chars = 0usize;
     let mut total_chars = 0usize;
     for item in &line.items {
@@ -218,16 +229,23 @@ pub(crate) fn line_is_monospace(line: &crate::types::TextLine) -> bool {
         let chars = text.chars().count();
         total_chars += chars;
         // Hyperlinks and underlined text set in a mono face are link
-        // styling, not code — a URL sidebar must not fence lyric lines.
-        let looks_like_link = item.is_underline
-            || matches!(item.item_type, crate::types::ItemType::Link(_))
-            || text.contains("://")
-            || text.starts_with("www.");
+        // styling, not code — a URL sidebar must not fence lyric lines. A
+        // run that merely contains a URL (`curl http://localhost/paid`) is
+        // a command, not a link.
+        let looks_like_link = links_are_prose
+            && (item.is_underline
+                || matches!(item.item_type, crate::types::ItemType::Link(_))
+                || is_bare_url(text));
         if is_monospace_font(&item.font) && !looks_like_link {
             monospace_chars += chars;
         }
     }
     total_chars > 0 && monospace_chars * 10 >= total_chars * 9
+}
+
+/// Whether a run is nothing but a URL: one word naming a scheme or `www.`.
+pub(crate) fn is_bare_url(text: &str) -> bool {
+    !text.contains(char::is_whitespace) && (text.contains("://") || text.starts_with("www."))
 }
 
 /// Check if font name indicates monospace

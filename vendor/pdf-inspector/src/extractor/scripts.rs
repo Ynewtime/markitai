@@ -67,6 +67,12 @@ pub(crate) fn merge_subscript_items(items: Vec<TextItem>) -> Vec<TextItem> {
 /// 0.5–0.7 of the body size; 0.75 leaves room for producers that shrink less
 /// while keeping small caps (≈0.8) and ordinary size changes out.
 const SCRIPT_MAX_RATIO: f32 = 0.75;
+/// Largest ratio for a run clearly off the baseline (at least
+/// `SCRIPT_CLEAR_SHIFT` of the anchor size): browsers set `<sup>`/`<sub>`
+/// at 0.83 em, raised 0.4 em or dropped 0.26 em, where small caps and a
+/// smaller label stay on the baseline.
+const SCRIPT_MAX_SHIFTED_RATIO: f32 = 0.86;
+const SCRIPT_CLEAR_SHIFT: f32 = 0.2;
 /// Smallest ratio: body text beside a drop cap or a display figure is far
 /// smaller than this, and never a script of it.
 const SCRIPT_MIN_RATIO: f32 = 0.4;
@@ -192,10 +198,15 @@ fn script_anchor_gap(
     body: &TextItem,
 ) -> Option<(f32, bool)> {
     let ratio = run_fs / body.font_size;
-    if !(SCRIPT_MIN_RATIO..=SCRIPT_MAX_RATIO).contains(&ratio) {
+    let dy = first.y - body.y;
+    let max_ratio = if dy.abs() >= body.font_size * SCRIPT_CLEAR_SHIFT {
+        SCRIPT_MAX_SHIFTED_RATIO
+    } else {
+        SCRIPT_MAX_RATIO
+    };
+    if !(SCRIPT_MIN_RATIO..=max_ratio).contains(&ratio) {
         return None;
     }
-    let dy = first.y - body.y;
     if dy.abs() < body.font_size * SCRIPT_MIN_SHIFT
         || dy > body.font_size * SCRIPT_MAX_RAISE
         || dy < -body.font_size * SCRIPT_MAX_DROP
@@ -528,6 +539,28 @@ mod tests {
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].text, "A¹");
         assert!(merged[0].legacy_symbol_rewrite);
+    }
+
+    #[test]
+    fn a_browser_superscript_at_five_sixths_size_is_a_script() {
+        // Chrome prints `<sup>` at 0.83 em raised 0.4 em: a 10pt "1" whose
+        // baseline is 4.75pt above its 12pt word's.
+        let items = vec![
+            make_item_fs("essay", 100.0, 700.0, 30.0, 12.0),
+            make_item_fs("1", 130.0, 704.75, 5.0, 10.0),
+            make_item_fs(",", 135.0, 700.0, 3.0, 12.0),
+        ];
+        assert_eq!(texts(&merge_subscript_items(items)), ["essay¹", ","]);
+    }
+
+    #[test]
+    fn a_five_sixths_run_barely_off_the_baseline_is_not_a_script() {
+        // The same size step with a 0.1 em offset is a smaller label.
+        let items = vec![
+            make_item_fs("Total", 100.0, 700.0, 30.0, 12.0),
+            make_item_fs("2", 130.0, 701.2, 5.0, 10.0),
+        ];
+        assert_eq!(texts(&merge_subscript_items(items)), ["Total", "2"]);
     }
 
     // ---- fusion behaviour carried over from the fusion-only pass ----

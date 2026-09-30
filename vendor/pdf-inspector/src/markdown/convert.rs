@@ -843,8 +843,9 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
     let mut last_list_x: Option<f32> = None;
     // Code lines accumulate here and the fence is emitted only when the
     // block flushes with content — an empty ``` ``` pair can never appear.
-    fn flush_code_block(output: &mut String, pending_code: &mut String) {
-        let trimmed = pending_code.trim();
+    fn flush_code_block(output: &mut String, pending_code: &mut Vec<CodeLine>) {
+        let text = render_code_lines(pending_code);
+        let trimmed = text.trim();
         // A fragment too short to be code — a lone ® or stray glyph set in
         // a mono face — reads better as plain text than as a fenced block.
         if trimmed.chars().count() < 3 {
@@ -854,14 +855,16 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
             }
         } else {
             output.push_str("```\n");
-            output.push_str(pending_code);
-            output.push_str("```\n");
+            output.push_str(&text);
+            output.push_str("```\n\n");
         }
         pending_code.clear();
     }
 
     let mut in_code_block = false;
-    let mut pending_code = String::new();
+    let mut pending_code: Vec<CodeLine> = Vec::new();
+    let mut prev_size = 0.0f32;
+    let mut code_pitch: Option<f32> = None;
     let mut prev_had_dot_leaders = false;
     let mut paragraph_in_wrapped_bold_run = false;
     let mut toc_suppress_page: Option<u32> = None;
@@ -1012,9 +1015,11 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
         }
         // Don't immediately end list on paragraph break
         // Let the continuation check below decide if we're still in a list
-        let (prior_y, prior_x) = (prev_y, prev_x);
+        let (prior_y, prior_x, prior_size) = (prev_y, prev_x, prev_size);
+        let line_size = line_font_size(line);
         prev_y = line.y;
         prev_x = line_x;
+        prev_size = line_size;
 
         // Get text with optional bold/italic formatting
         let text = line.text_with_formatting(
@@ -1041,13 +1046,22 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
         // paragraph boundary: a mono-set line that continues an open prose
         // paragraph is the producer smearing an inline code literal's style
         // across a wrapped line (HTML-to-PDF exports do this), and fencing
-        // it would cut the sentence in three.
+        // it would cut the sentence in three. A mono line set off from the
+        // text above by more than prose leading is at a boundary even when
+        // the page's paragraph threshold — a median, which a short page
+        // takes from its paragraph gaps — kept the paragraph open: a
+        // browser prints a `<pre>` about two line heights below the
+        // sentence introducing it, a wrapped literal sits at the leading.
+        let set_off_as_code = y_gap > prior_size.max(line_size) * CODE_BLOCK_SET_OFF;
         let is_code_line = struct_role
             .as_ref()
             .is_some_and(|r| matches!(r, StructRole::Code))
             || (options.detect_code
-                && (in_code_block || !in_paragraph)
-                && super::classify::line_is_monospace(line));
+                && if in_code_block {
+                    super::classify::line_continues_code(line)
+                } else {
+                    (!in_paragraph || set_off_as_code) && super::classify::line_is_monospace(line)
+                });
         if !in_code_block
             && !is_code_line
             && !is_para_break
@@ -1066,6 +1080,7 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
             // band from the text line, not from the tail.
             prev_y = prior_y;
             prev_x = prior_x;
+            prev_size = prior_size;
             continue;
         }
 
@@ -1306,9 +1321,25 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
                 in_paragraph = false;
                 paragraph_in_wrapped_bold_run = false;
             }
+            // A blank line inside the code leaves an empty line's height
+            // between two runs of it: half again the block's line pitch
+            // once one is known, two em before (the first gap can be the
+            // blank line, and a loosely set block's pitch is 1.75 em).
+            if in_code_block && y_gap > 0.0 {
+                let blank = match code_pitch {
+                    Some(pitch) => y_gap > pitch * 1.5,
+                    None => y_gap > line_size * 2.0,
+                };
+                if blank {
+                    pending_code.push(CodeLine::blank());
+                } else {
+                    code_pitch = Some(code_pitch.map_or(y_gap, |pitch| pitch.min(y_gap)));
+                }
+            } else if !in_code_block {
+                code_pitch = None;
+            }
             in_code_block = true;
-            pending_code.push_str(plain_trimmed);
-            pending_code.push('\n');
+            pending_code.push(CodeLine::of(line, plain_trimmed));
             continue;
         }
 
@@ -1374,6 +1405,96 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
 const MARKUP_TOKENS: [&str; 10] = [
     "**", "*", "<u>", "</u>", "<s>", "</s>", "<sup>", "</sup>", "<sub>", "</sub>",
 ];
+
+/// Gap between baselines, in the larger line's font size, beyond which a
+/// line stands apart from the text above instead of continuing it: prose
+/// leading runs 1.2–1.5 em, a paragraph or `<pre>` gap two line heights.
+const CODE_BLOCK_SET_OFF: f32 = 1.7;
+
+/// The largest font size on a line.
+fn line_font_size(line: &TextLine) -> f32 {
+    line.items
+        .iter()
+        .map(|item| item.font_size)
+        .fold(0.0, f32::max)
+}
+
+/// One line of a code block, with where it starts and its glyph advance so
+/// the block can restore the indentation the text lost to trimming.
+struct CodeLine {
+    x: f32,
+    advance: f32,
+    text: String,
+}
+
+impl CodeLine {
+    /// `text` is the line trimmed; the spaces its first run starts with are
+    /// the code's own and are put back.
+    fn of(line: &TextLine, text: &str) -> Self {
+        let first = line.items.iter().find(|item| !item.text.trim().is_empty());
+        let (x, advance, leading) = first.map_or((0.0, 0.0, 0), |item| {
+            // Only a fixed-pitch face advances every glyph alike, so only
+            // there does a run's width give the column width.
+            let glyphs = item.text.trim_end().chars().count();
+            let fixed =
+                item.fixed_pitch == Some(true) || super::classify::is_monospace_font(&item.font);
+            let advance = if fixed && glyphs > 0 && item.width > 0.0 {
+                item.width / glyphs as f32
+            } else {
+                0.0
+            };
+            let leading = item.text.chars().take_while(|c| *c == ' ').count();
+            (item.x, advance, leading)
+        });
+        let mut indented = " ".repeat(leading);
+        indented.push_str(text);
+        Self {
+            x,
+            advance,
+            text: indented,
+        }
+    }
+
+    fn blank() -> Self {
+        Self {
+            x: 0.0,
+            advance: 0.0,
+            text: String::new(),
+        }
+    }
+}
+
+/// Indentation deeper than this many columns is a layout artefact (a
+/// right-aligned gutter, a second column), not the code's own.
+const MAX_CODE_INDENT: usize = 32;
+
+/// The block's text, each line indented by how many glyph advances it
+/// starts to the right of the block's leftmost line.
+fn render_code_lines(lines: &[CodeLine]) -> String {
+    let written = lines.iter().filter(|line| !line.text.is_empty());
+    let left = written
+        .clone()
+        .map(|line| line.x)
+        .fold(f32::INFINITY, f32::min);
+    let mut advances: Vec<f32> = written
+        .map(|line| line.advance)
+        .filter(|a| *a > 0.0)
+        .collect();
+    advances.sort_by(f32::total_cmp);
+    let advance = advances.get(advances.len() / 2).copied().unwrap_or(0.0);
+    let mut text = String::new();
+    for line in lines {
+        if !line.text.is_empty() && advance > 0.0 {
+            let columns = ((line.x - left) / advance).round();
+            if columns >= 1.0 && columns <= MAX_CODE_INDENT as f32 {
+                text.extend(std::iter::repeat_n(' ', columns as usize));
+            }
+        }
+        text.push_str(&line.text);
+        text.push('\n');
+    }
+    text
+}
 
 /// A line made only of dots is the tail of the previous line's leader,
 /// painted as a separate run. When the line emitted just before it (one
@@ -2539,6 +2660,79 @@ mod tests {
         assert!(md.contains("## so that anyone"), "{md}");
     }
 
+    /// A line of fixed-pitch text at `x`, one 6pt advance per glyph.
+    fn mono_line(text: &str, x: f32, y: f32) -> TextLine {
+        let mut item = make_item(text, 1, None);
+        item.font = "Menlo-Regular".into();
+        item.fixed_pitch = Some(true);
+        item.font_size = 10.0;
+        item.height = 10.0;
+        item.x = x;
+        item.y = y;
+        item.width = text.chars().count() as f32 * 6.0;
+        make_line(vec![item])
+    }
+
+    fn prose_line(text: &str, y: f32) -> TextLine {
+        let mut item = make_item(text, 1, None);
+        item.y = y;
+        make_line(vec![item])
+    }
+
+    #[test]
+    fn a_printed_pre_block_is_fenced_with_its_blank_lines_and_indentation() {
+        // Chrome prints a `<pre>` about two line heights below the sentence
+        // that introduces it; on a short page the paragraph threshold, a
+        // median of mostly paragraph gaps, keeps that sentence's paragraph
+        // open. The block's URL line, blank line and indented line are code.
+        let lines = vec![
+            prose_line("Here is a script that fetches a page:", 700.0),
+            mono_line("#!/bin/sh", 72.0, 675.0),
+            mono_line("curl https://example.com/a", 72.0, 663.0),
+            mono_line("if true; then", 72.0, 639.0),
+            mono_line("echo done", 96.0, 627.0),
+            mono_line("fi", 72.0, 603.0),
+            prose_line("The script prints one line when the page answers.", 576.0),
+            prose_line("It needs no arguments and leaves no files behind.", 549.0),
+        ];
+        let md = to_markdown_from_lines_with_tables_and_images(
+            lines,
+            MarkdownOptions::default(),
+            HashMap::new(),
+            HashMap::new(),
+            &HashMap::new(),
+            &std::collections::HashSet::new(),
+            None,
+        );
+        assert!(
+            md.contains(
+                "Here is a script that fetches a page:\n\n```\n#!/bin/sh\ncurl https://example.com/a\n\nif true; then\n    echo done\n\nfi\n```\n\nThe script prints one line when"
+            ),
+            "{md}"
+        );
+        assert_eq!(md.matches('#').count(), 1, "no line is a heading: {md}");
+    }
+
+    #[test]
+    fn a_mono_line_at_prose_leading_continues_its_paragraph() {
+        // An inline literal wrapped onto a line of its own is not a block.
+        let lines = vec![
+            prose_line("Run the command named", 700.0),
+            mono_line("configure --prefix=/usr", 72.0, 686.0),
+            prose_line("before building.", 672.0),
+        ];
+        let md = to_markdown_from_lines_with_tables_and_images(
+            lines,
+            MarkdownOptions::default(),
+            HashMap::new(),
+            HashMap::new(),
+            &HashMap::new(),
+            &std::collections::HashSet::new(),
+            None,
+        );
+        assert!(!md.contains("```"), "{md}");
+    }
+
     #[test]
     fn test_struct_role_code_multiline_accumulation() {
         let mut line1 = make_item("fn main() {", 1, Some(0));
@@ -2571,9 +2765,10 @@ mod tests {
             Some(&roles),
         );
 
-        // Should produce a single fenced block, not three separate ones
+        // Should produce a single fenced block, not three separate ones,
+        // with the code's own indentation.
         assert!(
-            md.contains("```\nfn main() {\nprintln!(\"hello\");\n}\n```"),
+            md.contains("```\nfn main() {\n    println!(\"hello\");\n}\n```"),
             "Should accumulate consecutive code lines into one block: {md}"
         );
         // Should NOT have adjacent fences

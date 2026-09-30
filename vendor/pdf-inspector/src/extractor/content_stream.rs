@@ -4749,15 +4749,27 @@ BT /F1 12 Tf 72 672 Td (Body line three) Tj ET
     /// [1 0 0 -1 0 0]`, glyphs measured in device pixels (a 100-unit em,
     /// 50-unit advances), shown at 0.12pt per pixel through the text matrix.
     fn type3_doc_with_content(content: &[u8]) -> (lopdf::Document, lopdf::ObjectId) {
+        type3_doc(content, [1.0, -1.0], [0, -25, 60, 75], 50)
+    }
+
+    /// A one-font page whose Type3 font scales glyph space by `matrix`
+    /// (`[a, d]` of the `FontMatrix`) inside `bbox`, every glyph `width`
+    /// units wide.
+    fn type3_doc(
+        content: &[u8],
+        matrix: [f32; 2],
+        bbox: [i64; 4],
+        width: i64,
+    ) -> (lopdf::Document, lopdf::ObjectId) {
         use lopdf::{Object, Stream, dictionary};
 
         let mut doc = lopdf::Document::new();
-        let widths: Vec<Object> = (0..=255).map(|_| 50.into()).collect();
+        let widths: Vec<Object> = (0..=255).map(|_| width.into()).collect();
         let font_id = doc.add_object(dictionary! {
             "Type" => "Font",
             "Subtype" => "Type3",
-            "FontMatrix" => vec![1.into(), 0.into(), 0.into(), Object::Real(-1.0), 0.into(), 0.into()],
-            "FontBBox" => vec![0.into(), Object::Integer(-25), 60.into(), 75.into()],
+            "FontMatrix" => vec![Object::Real(matrix[0]), 0.into(), 0.into(), Object::Real(matrix[1]), 0.into(), 0.into()],
+            "FontBBox" => bbox.iter().map(|&v| Object::Integer(v)).collect::<Vec<_>>(),
             "CharProcs" => dictionary! {},
             "Encoding" => dictionary! {
                 "Type" => "Encoding",
@@ -4822,6 +4834,41 @@ BT /F1 12 Tf 72 672 Td (Body line three) Tj ET
         assert_eq!(hello.rotation, 0.0);
         assert_close(hello.x, 100.0, "x");
         assert_close(hello.y, 500.0, "y");
+        assert_close(hello.width, 30.0, "width");
+        assert_close(hello.height, 12.0, "height");
+    }
+
+    #[test]
+    fn chrome_type3_text_stands_on_its_baseline() {
+        // Chrome (Skia) prints a web font it cannot embed as Type3: a mirrored
+        // `[.001 0 0 -.001]` FontMatrix over glyphs drawn y-down (the bbox
+        // reaches 829 units below the origin), in a text matrix and a page
+        // CTM that are both y-flipped. The glyphs render upright, standing
+        // on the baseline: 16pt at 0.75 is 12pt tall above y = 792 - 0.75 ×
+        // 105; 5 glyphs × 500 units × 16pt × 0.75 = 30pt of advance.
+        use crate::tounicode::FontCMaps;
+
+        let (doc, page_id) = type3_doc(
+            b"0.75 0 0 -0.75 0 792 cm BT /T1 16 Tf 1 0 0 -1 8 105 Tm (HELLO) Tj ET",
+            [0.001, -0.001],
+            [4, 233, 933, -829],
+            500,
+        );
+        let font_cmaps = FontCMaps::from_doc(&doc);
+        let ((items, _, _), _, _, _) = extract_page_text_items(
+            &doc,
+            page_id,
+            1,
+            &font_cmaps,
+            false,
+            &mut FontStyleCache::new(),
+            &mut FormWalkBudget::new(),
+        )
+        .unwrap();
+        let hello = find_item(&items, "HELLO");
+        assert_eq!(hello.rotation, 0.0);
+        assert_close(hello.x, 6.0, "x");
+        assert_close(hello.y, 713.25, "y");
         assert_close(hello.width, 30.0, "width");
         assert_close(hello.height, 12.0, "height");
     }

@@ -61,7 +61,16 @@ pub(crate) fn calculate_font_stats_from_items(items: &[TextItem]) -> FontStats {
 pub(crate) fn calculate_font_stats(lines: &[TextLine]) -> FontStats {
     let mut size_counts: HashMap<i32, usize> = HashMap::new();
 
+    // Code set in a fixed-pitch face is not body text: on a page of short
+    // prose around long listings its smaller size would make every prose
+    // line look like a heading. It counts only when nothing else does.
+    let prose = lines
+        .iter()
+        .any(|line| !super::classify::line_is_monospace(line));
     for line in lines {
+        if prose && super::classify::line_is_monospace(line) {
+            continue;
+        }
         // Count once per line (first item) to give each line equal weight
         // Prevents small captions/footnotes from skewing the base
         if let Some(first) = line.items.first() {

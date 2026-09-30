@@ -15,7 +15,11 @@ pub(crate) fn clean_markdown(mut text: String, options: &MarkdownOptions) -> Str
 
     // Collapse runs of spaces first: double-spaced breaks ("de-  fendant")
     // must look like single-spaced ones before the hyphenation passes.
-    collapse_consecutive_spaces(&mut text);
+    text = outside_fences(&text, |prose| {
+        let mut prose = prose.to_string();
+        collapse_consecutive_spaces(&mut prose);
+        prose
+    });
 
     // Fix hyphenation (before other processing)
     if options.fix_hyphenation {
@@ -29,16 +33,21 @@ pub(crate) fn clean_markdown(mut text: String, options: &MarkdownOptions) -> Str
 
     // Format URLs as markdown links
     if options.format_urls {
-        text = format_urls(&text);
+        text = outside_fences(&text, format_urls);
     }
 
     // Collapse consecutive spaces within text lines.
     // OCR text layers and some PDF producers emit trailing spaces on each
     // text item, which combine with gap-based space insertion to produce
     // double spaces ("Vice  President" instead of "Vice President").
-    collapse_consecutive_spaces(&mut text);
-    remove_spaces_before_closing_brackets(&mut text);
-    remove_spaces_before_sentence_punctuation(&mut text);
+    // Code is verbatim: `f (x )` and a URL in a string literal stay as set.
+    text = outside_fences(&text, |prose| {
+        let mut prose = prose.to_string();
+        collapse_consecutive_spaces(&mut prose);
+        remove_spaces_before_closing_brackets(&mut prose);
+        remove_spaces_before_sentence_punctuation(&mut prose);
+        prose
+    });
 
     // Remove excessive newlines (more than 2 in a row)
     while text.contains("\n\n\n") {
@@ -52,12 +61,40 @@ pub(crate) fn clean_markdown(mut text: String, options: &MarkdownOptions) -> Str
     text
 }
 
+/// `tidy` applied to the text outside fenced code blocks; each fence and
+/// the code inside it pass through unchanged. `tidy` must keep the line
+/// count of the prose it is given.
+fn outside_fences(text: &str, tidy: impl Fn(&str) -> String) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut prose: Vec<&str> = Vec::new();
+    let mut in_code = false;
+    for line in text.split('\n') {
+        let fence = line.trim_start().starts_with("```");
+        if in_code || fence {
+            if !prose.is_empty() {
+                out.push(tidy(&prose.join("\n")));
+                prose.clear();
+            }
+            out.push(line.to_string());
+            if fence {
+                in_code = !in_code;
+            }
+        } else {
+            prose.push(line);
+        }
+    }
+    if !prose.is_empty() {
+        out.push(tidy(&prose.join("\n")));
+    }
+    out.join("\n")
+}
+
 /// Collapse runs of 2+ spaces to a single space within each line.
 /// Preserves leading indentation and markdown table pipe alignment.
 fn collapse_consecutive_spaces(text: &mut String) {
     let mut result = String::with_capacity(text.len());
-    for line in text.split('\n') {
-        if !result.is_empty() {
+    for (index, line) in text.split('\n').enumerate() {
+        if index > 0 {
             result.push('\n');
         }
         // Preserve leading whitespace
@@ -1094,6 +1131,21 @@ mod tests {
                 assert_eq!(remove_page_numbers(&input), format!("{inline}\n\n\nEnd."));
             }
         }
+    }
+
+    #[test]
+    fn fenced_code_is_left_verbatim() {
+        let text = "See https://example.com/a  now .\n\n```\nurl = \"https://example.com/b\"\nf (x )  # two  spaces\n```\n\nAfter  it .".to_string();
+        let cleaned = clean_markdown(text, &MarkdownOptions::default());
+        assert!(
+            cleaned.contains("[https://example.com/a](https://example.com/a) now."),
+            "{cleaned}"
+        );
+        assert!(
+            cleaned.contains("```\nurl = \"https://example.com/b\"\nf (x )  # two  spaces\n```"),
+            "{cleaned}"
+        );
+        assert!(cleaned.ends_with("After it.\n"), "{cleaned}");
     }
 
     // --- format_urls ---

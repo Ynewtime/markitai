@@ -110,11 +110,37 @@ fn valid(item: &TextItem) -> bool {
         })
 }
 
+/// `text` without the destinations of links the page reader made from bare
+/// URLs (`[https://a.b](https://a.b)`): the URL is page text once.
+fn without_url_destinations(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains("](") {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut output = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("](") {
+        let label = rest[..at].rfind('[').map(|open| &rest[open + 1..at]);
+        let tail = &rest[at + 2..];
+        match (label, tail.find(')')) {
+            (Some(label), Some(close)) if tail[..close] == *label => {
+                output.push_str(&rest[..at + 1]);
+                rest = &tail[close + 1..];
+            }
+            _ => {
+                output.push_str(&rest[..at + 2]);
+                rest = tail;
+            }
+        }
+    }
+    output.push_str(rest);
+    std::borrow::Cow::Owned(output)
+}
+
 fn character_counts(text: &str) -> BTreeMap<char, usize> {
     let mut counts = BTreeMap::new();
     // These are generated decorations in the original native Markdown, not
     // arbitrary source HTML to interpret. Unknown constructs fail agreement.
-    let text = text
+    let text = without_url_destinations(text)
         .replace("<u>", "")
         .replace("</u>", "")
         .replace("<s>", "")
@@ -314,12 +340,139 @@ fn heading_level(line: &Line, sizes: &[f32]) -> usize {
         .map_or(0, |n| (n + 1).min(6))
 }
 
+/// Gap between baselines, in the larger line's size, from which a line is
+/// set off from the text above: prose leading is 1.2–1.5 em, a paragraph
+/// or `<pre>` gap about two line heights.
+const SET_OFF: f32 = 1.7;
+/// Columns beyond which a run's position is layout, not indentation.
+const MAX_CODE_COLUMN: usize = 160;
+
+/// Whether a line is code: nine in ten of its characters set in a
+/// fixed-pitch face. Opening a block, a mono-set link or bare URL is a link
+/// style (a sidebar of references), not code — a command naming a URL is;
+/// inside a block, a URL in a string literal is code too.
+fn is_code(line: &Line, inside: bool) -> bool {
+    let (mut mono, mut all) = (0, 0);
+    for item in &line.items {
+        let text = item.text.trim();
+        let count = text.chars().count();
+        all += count;
+        let bare_url = !text.contains(char::is_whitespace)
+            && (text.contains("://") || text.starts_with("www."));
+        let link = !inside && (item.is_underline || bare_url);
+        if item.fixed_pitch == Some(true) && !link {
+            mono += count;
+        }
+    }
+    all > 0 && mono * 10 >= all * 9
+}
+
+/// A code block's lines (`None` for a blank line between them).
+#[derive(Default)]
+struct Code<'a> {
+    lines: Vec<Option<&'a Line>>,
+    pitch: Option<f32>,
+}
+
+impl<'a> Code<'a> {
+    fn push(&mut self, line: &'a Line) {
+        if let Some(Some(last)) = self.lines.last() {
+            let gap = last.y - line.y;
+            // A blank line leaves half again the block's pitch once one
+            // is known, two em before: the first gap can be the blank line,
+            // and a loosely set block's pitch is 1.75 em.
+            let blank = match self.pitch {
+                Some(pitch) => gap > pitch * 1.5,
+                None => gap > line.size * 2.,
+            };
+            if blank {
+                self.lines.push(None);
+            } else if gap > 0. {
+                self.pitch = Some(self.pitch.map_or(gap, |pitch| pitch.min(gap)));
+            }
+        }
+        self.lines.push(Some(line));
+    }
+
+    /// The fenced block, each run placed at its column: the text lost its
+    /// indentation and alignment to trimming and run splitting, and a
+    /// fixed-pitch face gives both back as glyph advances from the block's
+    /// left edge.
+    fn fence(&mut self) -> Option<String> {
+        let lines = std::mem::take(&mut self.lines);
+        self.pitch = None;
+        let written = lines.iter().flatten();
+        let left = written
+            .clone()
+            .flat_map(|line| line.items.first())
+            .map(|i| i.x)
+            .fold(f32::INFINITY, f32::min);
+        let (width, glyphs) = written
+            .flat_map(|line| &line.items)
+            .filter(|item| item.fixed_pitch == Some(true))
+            .fold((0., 0), |(width, glyphs), item| {
+                (width + item.width, glyphs + item.text.chars().count())
+            });
+        let advance = if glyphs > 0 {
+            width / glyphs as f32
+        } else {
+            0.
+        };
+        let mut text = Vec::new();
+        for line in &lines {
+            let Some(line) = line else {
+                text.push(String::new());
+                continue;
+            };
+            let mut row = String::new();
+            let mut previous: Option<&TextItem> = None;
+            for item in &line.items {
+                let columns = row.chars().count();
+                let column = if advance > 0. {
+                    ((item.x - left) / advance).round().max(0.) as usize
+                } else {
+                    0
+                };
+                if column > columns && column <= MAX_CODE_COLUMN {
+                    row.extend(std::iter::repeat_n(' ', column - columns));
+                } else if previous.is_some_and(|p| {
+                    !p.text.ends_with(char::is_whitespace)
+                        && !item.text.starts_with(char::is_whitespace)
+                        && item.x - (p.x + p.width) > item.font_size.min(p.font_size) * 0.12
+                }) {
+                    row.push(' ');
+                }
+                row.push_str(&item.text);
+                previous = Some(item);
+            }
+            text.push(row.trim_end().to_owned());
+        }
+        while text.last().is_some_and(String::is_empty) {
+            text.pop();
+        }
+        let body = text.join("\n");
+        if body.trim().is_empty() {
+            return None;
+        }
+        // A fence longer than any backtick run inside the code.
+        let mut longest = 0;
+        let mut run = 0;
+        for c in body.chars() {
+            run = if c == '`' { run + 1 } else { 0 };
+            longest = longest.max(run);
+        }
+        let fence = "`".repeat(longest.max(2) + 1);
+        Some(format!("{fence}\n{body}\n{fence}"))
+    }
+}
+
 fn flow(lines: &[Line], headings: &[f32]) -> Option<String> {
     let mut blocks = Vec::new();
     let mut paragraph = Vec::new();
     let mut previous: Option<&Line> = None;
     let mut previous_level = 0;
     let mut in_list = false;
+    let mut code = Code::default();
     let flush = |blocks: &mut Vec<String>, paragraph: &mut Vec<Run>, level: usize, list: bool| {
         if paragraph.is_empty() {
             return;
@@ -339,6 +492,31 @@ fn flow(lines: &[Line], headings: &[f32]) -> Option<String> {
         let mut current = runs(line);
         if current.is_empty() {
             continue;
+        }
+        // Code opens where a paragraph would: at the start, after a
+        // heading, or set off from the text above. A mono-set line at
+        // ordinary leading continues its paragraph — an inline literal
+        // wrapped onto a line of its own.
+        let code_line = if code.lines.is_empty() {
+            is_code(line, false)
+                && previous.is_none_or(|prev| {
+                    previous_level > 0 || prev.y - line.y > prev.size.max(line.size) * SET_OFF
+                })
+        } else {
+            is_code(line, true)
+        };
+        if code_line {
+            flush(&mut blocks, &mut paragraph, previous_level, in_list);
+            in_list = false;
+            code.push(line);
+            previous = Some(line);
+            previous_level = 0;
+            continue;
+        }
+        if !code.lines.is_empty() {
+            blocks.extend(code.fence());
+            // The prose after a block starts its own paragraph.
+            previous = None;
         }
         let is_list = list_prefix(&current[0].text).is_some();
         if is_list {
@@ -381,6 +559,7 @@ fn flow(lines: &[Line], headings: &[f32]) -> Option<String> {
         previous_level = level;
     }
     flush(&mut blocks, &mut paragraph, previous_level, in_list);
+    blocks.extend(code.fence());
     Some(blocks.join("\n\n"))
 }
 
@@ -580,7 +759,10 @@ mod tests {
         let bold = pdf.add_object(
             dictionary! {"Type"=>"Font","Subtype"=>"Type1","BaseFont"=>"Helvetica-Bold"},
         );
-        let resources = pdf.add_object(dictionary! {"Font"=>dictionary!{"F1"=>regular,"F2"=>bold}});
+        let mono =
+            pdf.add_object(dictionary! {"Type"=>"Font","Subtype"=>"Type1","BaseFont"=>"Courier"});
+        let resources =
+            pdf.add_object(dictionary! {"Font"=>dictionary!{"F1"=>regular,"F2"=>bold,"F3"=>mono}});
         let mut kids = Vec::new();
         for operations in pages {
             let content = Content { operations }.encode().unwrap();
@@ -598,6 +780,46 @@ mod tests {
         let mut bytes = Vec::new();
         pdf.save_to(&mut bytes).unwrap();
         bytes
+    }
+
+    #[test]
+    fn a_printed_listing_is_fenced_with_its_indentation_and_blank_lines() {
+        // A browser prints `<pre>` two line heights below its introduction,
+        // in a smaller fixed-pitch face: 10pt Courier advances 6pt a glyph,
+        // so a line starting 24pt further right is indented four columns.
+        let mut page = text(
+            "F1",
+            12,
+            40,
+            700,
+            "Here is a small program that prints a greeting:",
+        );
+        page.extend(text("F3", 10, 40, 675, "fn main() {"));
+        page.extend(text("F3", 10, 64, 663, "println!(\"<hi>\");"));
+        page.extend(text("F3", 10, 40, 651, "}"));
+        page.extend(text("F3", 10, 40, 627, "// see https://example.com/a"));
+        page.extend(text(
+            "F1",
+            12,
+            40,
+            600,
+            "The program takes no arguments and prints one line",
+        ));
+        page.extend(text(
+            "F1",
+            12,
+            40,
+            586,
+            "to its standard output before it exits normally.",
+        ));
+        let output = super::super::extract(&pdf(vec![page], None)).unwrap();
+        assert!(
+            output.markdown.contains(
+                "greeting:\n\n```\nfn main() {\n    println!(\"<hi>\");\n}\n\n// see https://example.com/a\n```\n\nThe program takes"
+            ),
+            "{}",
+            output.markdown
+        );
     }
 
     #[test]

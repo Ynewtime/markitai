@@ -1598,6 +1598,11 @@ fn tracked_run_space_floor(group: &[&TextItem], start: usize) -> Option<(usize, 
 /// the same size. Shared with `is_small_caps_continuation`, which exists only to
 /// rescue junctions this band would otherwise break.
 const MERGE_FONT_SIZE_BAND: f32 = 0.20;
+/// Inside the band, a size step of more than this fraction together with a
+/// baseline offset of at least `MERGE_SCRIPT_SHIFT` of the larger size keeps
+/// two runs apart for super/subscript detection (see `extractor::scripts`).
+const MERGE_SCRIPT_SIZE_STEP: f32 = 0.05;
+const MERGE_SCRIPT_SHIFT: f32 = 0.2;
 
 /// Detect a small-caps continuation: typesetters render small caps as a
 /// full-size capital immediately followed by shrunken capitals in the same
@@ -2288,6 +2293,17 @@ fn merge_text_items_with_clips(
                 // runs, where the shrunken capitals are the same word as the
                 // full-size initial (see helper).
                 if (next.font_size - first.font_size).abs() > first.font_size * MERGE_FONT_SIZE_BAND
+                    && !small_caps_join
+                {
+                    break;
+                }
+                // A smaller or larger run off the baseline is a script
+                // candidate even inside the size band: Chrome sets `<sup>`
+                // at 0.83 em, 0.4 em up. Merged here it would be glued onto
+                // its word ("essay1") before the scripts pass could see it.
+                let larger = first.font_size.max(next.font_size);
+                if (next.font_size - first.font_size).abs() > larger * MERGE_SCRIPT_SIZE_STEP
+                    && (next.y - first.y).abs() >= larger * MERGE_SCRIPT_SHIFT
                     && !small_caps_join
                 {
                     break;
@@ -5137,6 +5153,21 @@ mod tests {
         let merged = merge_text_items(items);
         assert_eq!(merged.len(), 1, "got {:?}", merged);
         assert_eq!(merged[0].text, "ROLANDO T. ACOSTA, P.J.");
+    }
+
+    #[test]
+    fn a_raised_smaller_run_inside_the_size_band_stays_its_own_item() {
+        // A browser `<sup>`: 10pt against 12pt is inside the size band, but
+        // 4.75pt off the baseline it is a script for the scripts pass, not
+        // the end of the word.
+        let items = vec![
+            make_item_fs("essay", 100.0, 700.0, 30.0, 12.0),
+            make_item_fs("1", 130.0, 704.75, 5.0, 10.0),
+            make_item_fs(", and", 135.0, 700.0, 25.0, 12.0),
+        ];
+        let merged = merge_text_items(items);
+        let texts: Vec<&str> = merged.iter().map(|i| i.text.as_str()).collect();
+        assert_eq!(texts, ["essay", "1", ", and"]);
     }
 
     /// The full two-column row: both names must merge independently and the
