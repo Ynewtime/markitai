@@ -196,9 +196,24 @@ impl From<&TextItem> for Style {
     }
 }
 
-/// Whether a run is nothing but a URL: one word naming a scheme or `www.`.
+/// Whether a run is nothing but a URL: one word starting with a scheme
+/// (`https://…`) or `www.`, optionally in angle brackets. A word that only
+/// contains one (`baseUrl="https://…"`) is code or prose, not a link.
 fn is_bare_url(text: &str) -> bool {
-    !text.contains(char::is_whitespace) && (text.contains("://") || text.starts_with("www."))
+    let text = text.strip_prefix('<').unwrap_or(text);
+    if text.contains(char::is_whitespace) {
+        return false;
+    }
+    if text.starts_with("www.") {
+        return true;
+    }
+    text.find("://").is_some_and(|at| {
+        let scheme = &text[..at];
+        scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
+    })
 }
 
 struct Run {
@@ -593,20 +608,24 @@ fn flow(lines: &[Line], headings: &[f32], marks: &[Mark]) -> Option<String> {
         blocks.push((format!("{prefix}{content}"), item.is_some()));
         paragraph.clear();
     };
-    for line in lines {
+    for (index, line) in lines.iter().enumerate() {
         let mut current = runs(line);
         if current.is_empty() {
             continue;
         }
         // Code opens where a paragraph would: at the start, after a
-        // heading, or set off from the text above. A mono-set line at
-        // ordinary leading continues its paragraph — an inline literal
-        // wrapped onto a line of its own.
+        // heading, or set off from the text above. A single mono-set line
+        // at ordinary leading continues its paragraph — an inline literal
+        // wrapped onto a line of its own — but a run of two or more is a
+        // block set without margins (AppKit prints `<pre>` that way).
         let code_line = if code.lines.is_empty() {
             is_code(line, false)
-                && previous.is_none_or(|prev| {
+                && (previous.is_none_or(|prev| {
                     previous_level > 0 || prev.y - line.y > prev.size.max(line.size) * SET_OFF
-                })
+                }) || lines.get(index + 1).is_some_and(|next| {
+                    let gap = line.y - next.y;
+                    is_code(next, true) && gap > 0. && gap <= line.size.max(next.size) * 2.5
+                }))
         } else {
             is_code(line, true)
         };
@@ -1134,6 +1153,31 @@ mod tests {
             output
                 .markdown
                 .contains("in the year 2. edition it counted twice"),
+            "{}",
+            output.markdown
+        );
+    }
+
+    #[test]
+    fn consecutive_listing_lines_without_margins_are_fenced() {
+        // AppKit prints `<pre>` without margins: the listing sits at the
+        // prose's own leading, so only its run of fixed-pitch lines shows it.
+        let mut page = text("F1", 12, 40, 700, "Call the setup function like this:");
+        page.extend(text("F3", 10, 40, 686, "setup({"));
+        page.extend(text("F3", 10, 52, 674, "logging = true,"));
+        page.extend(text("F3", 10, 40, 662, "})"));
+        page.extend(text(
+            "F1",
+            12,
+            40,
+            648,
+            "The call takes effect at once and returns nothing.",
+        ));
+        let output = super::super::extract(&pdf(vec![page], None)).unwrap();
+        assert!(
+            output
+                .markdown
+                .contains("like this:\n\n```\nsetup({\n  logging = true,\n})\n```\n\nThe call"),
             "{}",
             output.markdown
         );

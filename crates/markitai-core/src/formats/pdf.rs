@@ -247,6 +247,11 @@ fn image_bytes(
 struct GraphicsState {
     render_mode: i64,
     font_size: f32,
+    /// Area scale (square root of the determinant) of the transformation
+    /// in force and of the text matrix: a producer that sets `1 Tf` and
+    /// scales with `Tm` (Quartz) or `cm` still prints at the product.
+    ctm_scale: f32,
+    text_scale: f32,
     white_fill: bool,
     white_stroke: bool,
     invisible_alpha: bool,
@@ -257,6 +262,8 @@ impl Default for GraphicsState {
         Self {
             render_mode: 0,
             font_size: 12.0,
+            ctm_scale: 1.0,
+            text_scale: 1.0,
             white_fill: false,
             white_stroke: false,
             invisible_alpha: false,
@@ -270,7 +277,7 @@ impl GraphicsState {
             Some("invisible text rendering mode")
         } else if self.invisible_alpha {
             Some("transparent text graphics state")
-        } else if self.font_size.abs() <= 1.0 {
+        } else if (self.font_size * self.ctm_scale * self.text_scale).abs() <= 1.0 {
             Some("text at one point or smaller")
         } else if (matches!(self.render_mode, 0 | 4) && self.white_fill)
             || (matches!(self.render_mode, 1 | 5) && self.white_stroke)
@@ -375,6 +382,17 @@ fn inspect_operations(
                     state.font_size = size;
                 }
             }
+            "cm" => {
+                if let Some(scale) = matrix_scale(&operation.operands) {
+                    state.ctm_scale *= scale;
+                }
+            }
+            "BT" => state.text_scale = 1.0,
+            "Tm" => {
+                if let Some(scale) = matrix_scale(&operation.operands) {
+                    state.text_scale = scale;
+                }
+            }
             "g" => {
                 state.white_fill = last
                     .and_then(|obj| obj.as_float().ok())
@@ -470,13 +488,23 @@ fn inspect_operations(
                             .into_iter()
                             .chain(resources.iter().copied())
                             .collect();
+                        let mut form_state = state;
+                        if let Some(scale) = stream
+                            .dict
+                            .get(b"Matrix")
+                            .and_then(Object::as_array)
+                            .ok()
+                            .and_then(|matrix| matrix_scale(matrix))
+                        {
+                            form_state.ctm_scale *= scale;
+                        }
                         match decoded(stream) {
                             Ok(bytes) => {
                                 let _ = inspect_content(
                                     pdf,
                                     &bytes,
                                     &form_resources,
-                                    state,
+                                    form_state,
                                     seen_forms,
                                     depth + 1,
                                     out,
@@ -494,6 +522,17 @@ fn inspect_operations(
             _ => {}
         }
     }
+}
+
+/// The area scale of a six-number matrix: the square root of its 2×2
+/// determinant's magnitude.
+fn matrix_scale(operands: &[Object]) -> Option<f32> {
+    let [a, b, c, d, ..] = operands else {
+        return None;
+    };
+    let [a, b, c, d] = [a, b, c, d].map(|n| n.as_float().ok());
+    let determinant = a? * d? - b? * c?;
+    determinant.is_finite().then(|| determinant.abs().sqrt())
 }
 
 fn inspect_page(pdf: &lopdf::Document, id: ObjectId) -> (PageInspection, Option<Content>) {
@@ -1174,6 +1213,81 @@ mod tests {
         );
         assert!(!page.needs_ocr);
         assert!(page.markdown.contains("Readable native words"));
+    }
+
+    #[test]
+    fn text_size_is_judged_after_the_text_matrix_and_transformation() {
+        // Quartz writes `1 Tf` and scales with the text matrix: 12pt text.
+        // A 12pt font under a 0.05 transformation prints at 0.6pt.
+        let signals = |operations: Vec<Operation>| {
+            let mut pdf = lopdf::Document::with_version("1.7");
+            let pages_id = pdf.new_object_id();
+            let font = pdf.add_object(
+                dictionary! { "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica" },
+            );
+            let resources = pdf.add_object(dictionary! { "Font" => dictionary! { "F1" => font } });
+            let content = Content { operations }.encode().unwrap();
+            let text_id = pdf.add_object(Stream::new(Dictionary::new(), content));
+            let page = pdf.add_object(dictionary! { "Type" => "Page", "Parent" => pages_id, "Contents" => text_id, "Resources" => resources });
+            pdf.objects.insert(pages_id, dictionary! { "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1, "MediaBox" => vec![0.into(),0.into(),612.into(),792.into()] }.into());
+            inspect_page(&pdf, page).0.signals
+        };
+        let text = |size: Object, matrix: Vec<Object>| {
+            vec![
+                Operation::new("BT", vec![]),
+                Operation::new("Tf", vec![Object::Name(b"F1".to_vec()), size]),
+                Operation::new("Tm", matrix),
+                Operation::new("Tj", vec![Object::string_literal("Visible words")]),
+                Operation::new("ET", vec![]),
+            ]
+        };
+        let quartz = text(
+            1.into(),
+            vec![
+                12.into(),
+                0.into(),
+                0.into(),
+                Object::Real(-12.0),
+                72.into(),
+                700.into(),
+            ],
+        );
+        assert!(signals(quartz).is_empty());
+        let mut shrunk = vec![Operation::new(
+            "cm",
+            vec![
+                Object::Real(0.05),
+                0.into(),
+                0.into(),
+                Object::Real(0.05),
+                0.into(),
+                0.into(),
+            ],
+        )];
+        shrunk.extend(text(
+            12.into(),
+            vec![
+                1.into(),
+                0.into(),
+                0.into(),
+                1.into(),
+                72.into(),
+                700.into(),
+            ],
+        ));
+        assert!(signals(shrunk).contains("text at one point or smaller"));
+        let tiny = text(
+            Object::Real(0.5),
+            vec![
+                1.into(),
+                0.into(),
+                0.into(),
+                1.into(),
+                72.into(),
+                700.into(),
+            ],
+        );
+        assert!(signals(tiny).contains("text at one point or smaller"));
     }
 
     #[test]

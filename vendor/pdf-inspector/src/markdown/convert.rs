@@ -1054,7 +1054,17 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
         // takes from its paragraph gaps — kept the paragraph open: a
         // browser prints a `<pre>` about two line heights below the
         // sentence introducing it, a wrapped literal sits at the leading.
-        let set_off_as_code = y_gap > prior_size.max(line_size) * CODE_BLOCK_SET_OFF;
+        // Two or more consecutive mono lines are a block even at ordinary
+        // leading: AppKit prints `<pre>` without margins, while a wrapped
+        // inline literal fills one line of its own.
+        let set_off_as_code = y_gap > prior_size.max(line_size) * CODE_BLOCK_SET_OFF
+            || lines.get(line_idx + 1).is_some_and(|next| {
+                let gap = line.y - next.y;
+                next.page == line.page
+                    && super::classify::line_continues_code(next)
+                    && gap > 0.0
+                    && gap <= line_size.max(line_font_size(next)) * 2.5
+            });
         let is_code_line = struct_role
             .as_ref()
             .is_some_and(|r| matches!(r, StructRole::Code))
@@ -1299,6 +1309,11 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
             } else {
                 in_list = false;
                 last_list_x = None;
+                // A blank line ends the list: text right after an item's
+                // line would read as its lazy continuation.
+                if !output.ends_with("\n\n") {
+                    output.push('\n');
+                }
             }
         }
 
@@ -1803,6 +1818,10 @@ pub fn to_markdown_from_lines(lines: Vec<TextLine>, options: MarkdownOptions) ->
             } else {
                 in_list = false;
                 last_list_x = None;
+                // A blank line ends the list (see the positioned path).
+                if !output.ends_with("\n\n") {
+                    output.push('\n');
+                }
             }
         }
 
@@ -2715,6 +2734,61 @@ mod tests {
             "{md}"
         );
         assert_eq!(md.matches('#').count(), 1, "no line is a heading: {md}");
+    }
+
+    #[test]
+    fn consecutive_mono_lines_at_prose_leading_are_a_block() {
+        // AppKit prints `<pre>` without margins: two or more fixed-pitch
+        // lines right under the prose still form a block.
+        let lines = vec![
+            prose_line("Configure it with the following call:", 700.0),
+            mono_line("setup({", 72.0, 686.0),
+            mono_line("logging = true,", 84.0, 674.0),
+            mono_line("})", 72.0, 662.0),
+            prose_line("The call takes effect at once.", 648.0),
+        ];
+        let md = to_markdown_from_lines_with_tables_and_images(
+            lines,
+            MarkdownOptions::default(),
+            HashMap::new(),
+            HashMap::new(),
+            &HashMap::new(),
+            &std::collections::HashSet::new(),
+            None,
+        );
+        assert!(
+            md.contains("```\nsetup({\n  logging = true,\n})\n```"),
+            "{md}"
+        );
+    }
+
+    #[test]
+    fn text_after_a_list_is_a_new_paragraph() {
+        // Right after an item's line, the text would read as that item's
+        // lazy continuation.
+        let mut first = prose_line("• First point", 700.0);
+        first.items[0].x = 90.0;
+        let mut second = prose_line("• Second point", 686.0);
+        second.items[0].x = 90.0;
+        let lines = vec![
+            prose_line("Two points follow:", 714.0),
+            first,
+            second,
+            prose_line("Both points hold in general.", 672.0),
+        ];
+        let md = to_markdown_from_lines_with_tables_and_images(
+            lines,
+            MarkdownOptions::default(),
+            HashMap::new(),
+            HashMap::new(),
+            &HashMap::new(),
+            &std::collections::HashSet::new(),
+            None,
+        );
+        assert!(
+            md.contains("- Second point\n\nBoth points hold"),
+            "{md}"
+        );
     }
 
     #[test]

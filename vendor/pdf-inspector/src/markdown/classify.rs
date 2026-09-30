@@ -243,9 +243,24 @@ fn monospace_share_reaches_code(line: &crate::types::TextLine, links_are_prose: 
     total_chars > 0 && monospace_chars * 10 >= total_chars * 9
 }
 
-/// Whether a run is nothing but a URL: one word naming a scheme or `www.`.
+/// Whether a run is nothing but a URL: one word starting with a scheme
+/// (`https://…`) or `www.`, optionally in angle brackets. A word that only
+/// contains one (`baseUrl="https://…"`) is code or prose, not a link.
 pub(crate) fn is_bare_url(text: &str) -> bool {
-    !text.contains(char::is_whitespace) && (text.contains("://") || text.starts_with("www."))
+    let text = text.strip_prefix('<').unwrap_or(text);
+    if text.contains(char::is_whitespace) {
+        return false;
+    }
+    if text.starts_with("www.") {
+        return true;
+    }
+    text.find("://").is_some_and(|at| {
+        let scheme = &text[..at];
+        scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
+    })
 }
 
 /// Check if font name indicates monospace
@@ -324,6 +339,16 @@ mod tests {
     #[test]
     fn format_list_item_already_dash() {
         assert_eq!(format_list_item("- existing"), "- existing");
+    }
+
+    #[test]
+    fn a_bare_url_starts_with_its_scheme() {
+        assert!(is_bare_url("https://example.com/a"));
+        assert!(is_bare_url("<https://example.com/a>"));
+        assert!(is_bare_url("www.example.com"));
+        assert!(!is_bare_url("baseUrl=\"https://example.com/a\""));
+        assert!(!is_bare_url("curl https://example.com/a"));
+        assert!(!is_bare_url("://missing-scheme"));
     }
 
     #[test]

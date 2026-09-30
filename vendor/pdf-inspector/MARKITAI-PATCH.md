@@ -49,7 +49,11 @@ The local changes are limited to thirteen upstream files:
   paragraph threshold kept the paragraph open; inside a block a URL line is
   code, blank lines are restored from the block's line pitch, the first run's
   leading spaces are kept and fixed-pitch runs are indented by their offset in
-  glyph advances. A run is a mono-set link only when it is a bare URL.
+  glyph advances; two or more consecutive fixed-pitch lines form a block even
+  at ordinary leading (AppKit prints `<pre>` without margins). A run is a
+  mono-set link only when it is a bare URL, one word starting with a scheme or
+  `www.`. Text after a list is separated by a blank line so it cannot read as
+  the last item's lazy continuation.
   Fixed-pitch lines do not set the body size unless nothing else does.
 - `src/types.rs`, `src/markdown/mod.rs` (the `classify` module is visible to
   the crate), with `src/extractor/mod.rs` and `src/markdown/postprocess.rs`:
@@ -59,7 +63,7 @@ The local changes are limited to thirteen upstream files:
   backtick stay text). `text_with_formatting` is unchanged. A URL inside an
   inline code span is not turned into a link.
 
-  With these changes, the isolated copy's unit tests give 1,606 passed and the
+  With these changes, the isolated copy's unit tests give 1,609 passed and the
   same 21 failed. Each added test fails on the unmodified code it covers.
 
 The page-level OCR, font decoding, repair, limits and reliability routing remain
