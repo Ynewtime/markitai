@@ -1,6 +1,7 @@
 mod article;
 mod callouts;
 mod code;
+mod hacker_news;
 mod social;
 mod stream;
 
@@ -3440,6 +3441,9 @@ pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
     } else if let Some(post) = social::post(&document, base.as_ref())? {
         metadata.extend(post.metadata);
         post.markdown
+    } else if let Some(page) = hacker_news::page(&document, base.as_ref())? {
+        metadata.extend(page.metadata);
+        page.markdown
     } else {
         render_with_footnotes(root, document.root_element(), base.as_ref(), true)?
     };
