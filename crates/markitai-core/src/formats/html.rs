@@ -1,4 +1,5 @@
 mod article;
+mod callouts;
 mod code;
 mod stream;
 
@@ -739,7 +740,93 @@ fn math_container(element: ElementRef<'_>) -> bool {
         .any(|class| has_class(element, class))
 }
 
+/// Whether decoded text carries a TeX command (a backslash and two letters),
+/// the reference's test for LaTeX in image URLs and alt text.
+fn looks_like_latex(text: &str) -> bool {
+    text.as_bytes().windows(3).any(|window| {
+        window[0] == b'\\' && window[1].is_ascii_alphabetic() && window[2].is_ascii_alphabetic()
+    })
+}
+
+/// `+` as space, then percent escapes as UTF-8, as the reference decodes.
+fn url_component(raw: &str) -> String {
+    let raw = raw.replace('+', " ");
+    let bytes = raw.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let hex = |byte: u8| (byte as char).to_digit(16);
+        if bytes[index] == b'%'
+            && let (Some(high), Some(low)) = (
+                bytes.get(index + 1).and_then(|b| hex(*b)),
+                bytes.get(index + 2).and_then(|b| hex(*b)),
+            )
+        {
+            decoded.push((high * 16 + low) as u8);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+/// LaTeX an image rendered by a TeX image service carries, as the reference
+/// finds it: a named query parameter, the whole query, an escaped path
+/// segment, then TeX-looking alt text. Other images stay images.
+fn latex_image(element: ElementRef<'_>) -> Option<(String, bool)> {
+    if element.value().name() != "img" {
+        return None;
+    }
+    let src = element.value().attr("src")?;
+    let decoded = |raw: &str| Some(url_component(raw)).filter(|text| looks_like_latex(text));
+    let (path, query) = match src.split_once('?') {
+        Some((path, rest)) => (path, Some(rest.split('#').next().unwrap_or(""))),
+        None => (src, None),
+    };
+    let named = query.and_then(|query| {
+        ["latex", "chl", "tex", "eq", "math"]
+            .into_iter()
+            .find_map(|name| {
+                query.split('&').find_map(|pair| {
+                    let (key, value) = pair.split_once('=')?;
+                    (key.eq_ignore_ascii_case(name) && !value.is_empty())
+                        .then(|| decoded(value))
+                        .flatten()
+                })
+            })
+    });
+    let latex = named
+        .or_else(|| query.filter(|query| !query.is_empty()).and_then(decoded))
+        .or_else(|| {
+            path.split('/')
+                .rev()
+                .filter(|segment| segment.contains("%5C") || segment.contains("%5c"))
+                .find_map(decoded)
+        })
+        .or_else(|| {
+            element
+                .value()
+                .attr("alt")
+                .filter(|alt| looks_like_latex(alt))
+                .map(str::to_owned)
+        })?;
+    let alone = element
+        .parent()
+        .and_then(ElementRef::wrap)
+        .is_some_and(|parent| parent.value().name() == "p" && parent.children().count() == 1);
+    let latex = latex.trim().to_owned();
+    (!latex.is_empty()).then(|| {
+        let block = latex.contains("\\begin{") || alone;
+        (latex, block)
+    })
+}
+
 fn math_expression(element: ElementRef<'_>) -> Result<Option<(String, bool)>> {
+    if let Some(math) = latex_image(element) {
+        return Ok(Some(math));
+    }
     if let Some(block) = tex_script(element) {
         let text = element.text().collect::<String>();
         return Ok((!text.trim().is_empty()).then(|| (text.trim().to_owned(), block)));
@@ -1867,9 +1954,16 @@ fn serialize_clean(
     notes: &Footnotes<'_>,
     definition: bool,
 ) -> Result<()> {
-    if (is_hidden(element) || (notes.prune_chrome && article::excluded(element)))
+    // As in the reference, callouts are canonicalized before hidden and chrome
+    // removal: a collapsed body is content; hidden elements inside it are not.
+    let callout = callouts::detect(element);
+    if callout.is_none()
+        && (is_hidden(element) || (notes.prune_chrome && article::excluded(element)))
         && !(definition && depth == 0)
     {
+        return Ok(());
+    }
+    if callouts::replaced_title(element) {
         return Ok(());
     }
     let key = element_key(element);
@@ -1909,6 +2003,29 @@ fn serialize_clean(
         return Err(Error::Conversion(
             "HTML nesting exceeds 256 elements".into(),
         ));
+    }
+    if let Some(callout) = callout {
+        output.push_str("<blockquote><p><markitai-callout data-marker=\"[!");
+        escaped(&callout.kind, output);
+        output.push(']');
+        output.push_str(callout.fold);
+        output.push_str("\"></markitai-callout> ");
+        escaped_text(&callouts::marker_title(&callout), output);
+        output.push_str("</p>");
+        let content_name = callout.content.value().name();
+        serialize_children(
+            callout.content,
+            content_name,
+            false,
+            None,
+            base,
+            output,
+            depth,
+            notes,
+            definition,
+        )?;
+        output.push_str("</blockquote>");
+        return Ok(());
     }
     if code::render(element, output, depth)? {
         return Ok(());
@@ -2004,11 +2121,50 @@ fn serialize_clean(
         }
     }
     output.push('>');
-    let mut text_marker = if definition && depth == 0 {
+    let text_marker = if definition && depth == 0 {
         notes.text_markers.get(&key).map(String::as_str)
     } else {
         None
     };
+    serialize_children(
+        element,
+        name,
+        preformatted,
+        text_marker,
+        base,
+        output,
+        depth,
+        notes,
+        definition,
+    )?;
+    if styled_code {
+        output.push_str("</pre>");
+    }
+    if !matches!(
+        name,
+        "area" | "base" | "br" | "col" | "hr" | "img" | "link" | "meta" | "source" | "wbr"
+    ) {
+        output.push_str("</");
+        output.push_str(serialized_name);
+        output.push('>');
+    }
+    Ok(())
+}
+
+/// An element's children as sanitized HTML; `name` decides whether text next
+/// to block boundaries is trimmed.
+#[allow(clippy::too_many_arguments)]
+fn serialize_children(
+    element: ElementRef<'_>,
+    name: &str,
+    preformatted: bool,
+    mut text_marker: Option<&str>,
+    base: Option<&Url>,
+    output: &mut String,
+    depth: usize,
+    notes: &Footnotes<'_>,
+    definition: bool,
+) -> Result<()> {
     for child in element.children() {
         if let Some(child) = ElementRef::wrap(child) {
             serialize_clean(child, base, output, depth + 1, notes, definition)?;
@@ -2041,17 +2197,6 @@ fn serialize_clean(
                 escaped_text(text, output);
             }
         }
-    }
-    if styled_code {
-        output.push_str("</pre>");
-    }
-    if !matches!(
-        name,
-        "area" | "base" | "br" | "col" | "hr" | "img" | "link" | "meta" | "source" | "wbr"
-    ) {
-        output.push_str("</");
-        output.push_str(serialized_name);
-        output.push('>');
     }
     Ok(())
 }
@@ -2095,8 +2240,33 @@ fn render_with_footnotes<'a>(
     Ok(markdown.trim().to_owned())
 }
 
+/// Empty quoted lines as `>` (per nesting level), as the reference writes them.
+fn tight_blockquote(markdown: &str) -> String {
+    markdown
+        .split('\n')
+        .map(|line| {
+            if !line.is_empty()
+                && line.chars().all(|ch| ch == '>' || ch == ' ')
+                && line.contains('>')
+            {
+                line.trim_end()
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn render_sanitized(cleaned: &str) -> Result<String> {
     htmd::HtmlToMarkdown::builder()
+        // The reference's list and rule spelling: one space after a list
+        // marker (`* item`, `1. item`) and `---` rules.
+        .options(htmd::options::Options {
+            ul_bullet_spacing: 1,
+            ol_number_spacing: 1,
+            ..Default::default()
+        })
         .skip_tags(vec!["script", "style", "head"])
         .add_handler(
             vec!["markitai-footnote"],
@@ -2109,6 +2279,19 @@ fn render_sanitized(cleaned: &str) -> Result<String> {
                     .parse::<usize>()
                     .ok()?;
                 Some(format!("[^{number}]").into())
+            },
+        )
+        .add_handler(
+            vec!["markitai-callout"],
+            |_: &dyn htmd::element_handler::Handlers, element: htmd::Element| {
+                // Generated marker text (`[!type]fold`), never page markup.
+                let marker = element
+                    .attrs
+                    .iter()
+                    .find(|attr| attr.name.local.as_ref() == "data-marker")?
+                    .value
+                    .as_ref();
+                Some(marker.to_owned().into())
             },
         )
         .add_handler(
@@ -2189,6 +2372,18 @@ fn render_sanitized(cleaned: &str) -> Result<String> {
                 if let Some(compact) = compact_table(&result.content) {
                     result.content = compact;
                 }
+                Some(result)
+            },
+        )
+        .add_handler(
+            vec!["hr"],
+            |_: &dyn htmd::element_handler::Handlers, _: htmd::Element| Some("\n\n---\n\n".into()),
+        )
+        .add_handler(
+            vec!["blockquote"],
+            |handlers: &dyn htmd::element_handler::Handlers, element: htmd::Element| {
+                let mut result = handlers.fallback(element)?;
+                result.content = tight_blockquote(&result.content);
                 Some(result)
             },
         )
@@ -3029,6 +3224,88 @@ mod tests {
     }
 
     #[test]
+    fn callouts_and_alerts_become_obsidian_blockquotes_like_the_reference() {
+        let doc = extract_html(
+            r#"<main><p>Before.</p>
+            <div class="callout is-collapsible is-collapsed" data-callout="faq"><div class="callout-title"><div class="callout-title-inner">Is <b>this</b> foldable?</div></div><div class="callout-content" style="display:none"><p>Yes, hidden when collapsed.</p><p style="display:none">Secret aside.</p></div></div>
+            <div class="markdown-alert markdown-alert-warning"><p class="markdown-alert-title">Warning</p><p>Check the version.</p></div>
+            <div class="alert alert-dismissible alert-success"><h4 class="alert-heading">Well done!</h4>Operation completed.</div>
+            <aside class="Callout-Tip">Use shortcuts.</aside>
+            <div class="admonition tip"><p class="admonition-title">Helpful <em>tip</em></p><div class="admonition-content"><p>Save time.</p></div></div>
+            <div class="callout" data-callout="bad type!"><div class="callout-content"><p>Fallback type.</p></div></div>
+            <hr><ul><li>One</li><li>Two</li></ul><ol><li>First</li></ol><p>After.</p></main>"#,
+            None,
+        )
+        .unwrap();
+        let text = &doc.markdown;
+        // Obsidian: title text joined by spaces, fold marker, collapsed body kept,
+        // hidden elements inside the body still removed.
+        assert!(
+            text.contains("> [!faq]- Is this foldable?\n>\n> Yes, hidden when collapsed."),
+            "{text}"
+        );
+        assert!(!text.contains("Secret aside"), "{text}");
+        // GitHub, Bootstrap: the title element is replaced by the default title.
+        assert!(
+            text.contains("> [!warning] Warning\n>\n> Check the version."),
+            "{text}"
+        );
+        assert_eq!(text.matches("Warning").count(), 1, "{text}");
+        assert!(
+            text.contains("> [!success] Success\n>\n> Operation completed."),
+            "{text}"
+        );
+        assert!(!text.contains("Well done"), "{text}");
+        // Asides match case-insensitively; admonitions keep their title.
+        assert!(text.contains("> [!tip] Tip\n>\n> Use shortcuts."), "{text}");
+        assert!(
+            text.contains("> [!tip] Helpful tip\n>\n> Save time."),
+            "{text}"
+        );
+        assert!(
+            text.contains("> [!note] Note\n>\n> Fallback type."),
+            "{text}"
+        );
+        // The reference's rule and list spelling.
+        assert!(
+            text.contains("\n\n---\n\n* One\n* Two\n\n1. First\n\nAfter."),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn tex_image_services_become_math_like_the_reference() {
+        let doc = extract_html(
+            r#"<main><p>If <img src="https://s0.wp.com/latex.php?latex=%5Clambda%2C+%5Cmu+%5Cin+%5Cmathbb%7BR%7D&amp;bg=ffffff" alt="&#92;lambda, &#92;mu &#92;in &#92;mathbb{R}" class="latex"> and <img src="https://s0.wp.com/latex.php?latex=A%2C+B&amp;bg=ffffff" alt="A, B"> hold, then <img src="https://latex.codecogs.com/svg.image?%5Cfrac%7Ba%7D%7Bb%7D"> and <img src="https://i.upmath.me/svg/%5Csqrt%7Bx%7D"> and <img src="/eq.svg" alt="\operatorname{fn}(x)"> and <img src="/cat.png" alt="A cat">.</p><p><img src="https://chart.googleapis.com/chart?cht=tx&amp;chl=%5Csum_i+x_i"></p><p>Aligned: <img src="/a.svg" alt="\begin{align} a &amp;= b \end{align}"></p></main>"#,
+            None,
+        )
+        .unwrap();
+        let text = &doc.markdown;
+        // A named parameter, then the whole query, then an escaped path
+        // segment, then TeX-looking alt text.
+        assert!(
+            text.contains(r"If $\lambda, \mu \in \mathbb{R}$ and"),
+            "{text}"
+        );
+        assert!(
+            text.contains(r"then $\frac{a}{b}$ and $\sqrt{x}$ and $\operatorname{fn}(x)$ and"),
+            "{text}"
+        );
+        // Without a TeX command the image stays an image.
+        assert!(
+            text.contains("![A, B](https://s0.wp.com/latex.php?latex=A%2C+B&bg=ffffff)"),
+            "{text}"
+        );
+        assert!(text.contains("![A cat](/cat.png)"), "{text}");
+        // Display math: the sole child of a paragraph, or an environment.
+        assert!(text.contains(r"$$\sum_i x_i$$"), "{text}");
+        assert!(
+            text.contains(r"$$\begin{align} a &= b \end{align}$$"),
+            "{text}"
+        );
+    }
+
+    #[test]
     fn katex_annotations_and_data_sources_are_emitted_once() {
         let doc = extract_html(r#"<main><p>A <span class="katex"><span class="katex-mathml"><math><semantics><mrow><mi>x</mi><mo>+</mo><mi>y</mi></mrow><annotation encoding="application/x-tex">x+y</annotation></semantics></math></span><span class="katex-html">duplicate</span></span> term.</p><span class="katex-display"><span class="katex"><math><semantics><mi>z</mi><annotation encoding="application/x-tex">z^2</annotation></semantics></math><span class="katex-html">other duplicate</span></span></span><p><span class="math-inline" data-math="\forall x"><span class="katex">visual x</span></span> and <span class="hurmet-tex" data-entry="\vec{F}"><math><mi>F</mi></math></span>.</p></main>"#, None).unwrap();
         assert!(doc.markdown.contains("A $x+y$ term."));
@@ -3246,7 +3523,7 @@ mod tests {
         assert!(doc.markdown.contains("Claim[^1]."));
         assert!(
             doc.markdown
-                .contains("[^1]: First paragraph.\n\n    *   Nested item."),
+                .contains("[^1]: First paragraph.\n\n    * Nested item."),
             "{}",
             doc.markdown
         );
@@ -3334,7 +3611,7 @@ mod tests {
         );
         assert!(
             doc.markdown
-                .contains("[^1]: First evidence.\n\n    *   Detail.")
+                .contains("[^1]: First evidence.\n\n    * Detail.")
         );
         assert!(doc.markdown.ends_with("[^2]: Second evidence."));
         assert!(!doc.markdown.contains("Unrelated"));
@@ -3561,7 +3838,7 @@ mod tests {
         }
         assert!(
             doc.markdown
-                .contains("\n\n    Continuation paragraph.\n\n    *   Supporting detail.")
+                .contains("\n\n    Continuation paragraph.\n\n    * Supporting detail.")
         );
         assert!(doc.markdown.contains("\n    literal x < y\n"));
         assert!(doc.markdown.find("See also: another topic.").unwrap() < definition);

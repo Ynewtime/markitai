@@ -97,9 +97,16 @@ without Markdown backslash escaping. Literal angle brackets in a math source
 become TeX comparison commands so annotations cannot emit raw HTML. MathML depth
 is bounded at 64 elements, with an explicit conversion error beyond that limit.
 
+Images rendered by TeX image services become math as in the reference: LaTeX is
+read from a `latex`, `chl`, `tex`, `eq` or `math` query parameter, else the whole
+query, else a percent-escaped path segment, else the alt text, and is used only
+when it contains a TeX command (a backslash and two letters). It is display math
+when it contains `\begin{` or the image is its paragraph's only child. Images
+without such LaTeX (for example an alt of `A, B`) stay images.
+
 This is not a complete MathML or TeX renderer. Raw dollar/backslash-delimited
-math in ordinary text, visual-only MathJax CHTML/SVG reconstruction, TeX image
-services, arbitrary MathML layout/variants, multiscripts and exact tagged-equation
+math in ordinary text, visual-only MathJax CHTML/SVG reconstruction,
+arbitrary MathML layout/variants, multiscripts and exact tagged-equation
 layout remain outside this round. Unknown presentation elements retain their
 child text/structure where possible; specialized layout can differ. Existing
 source code blocks are kept separate from math interpretation.
@@ -205,10 +212,25 @@ quality must be checked separately. Historical audit reports are unchanged.
 
 The generic reader is not yet the source's complete web extraction pipeline.
 It does not replicate its full site resolvers, browser/CSS visibility model,
-adaptive content scoring, schema-body fallback, full footnotes, callouts, shadow
-roots or complete math standardization. Static input can therefore retain site chrome, omit
+adaptive content scoring, schema-body fallback, full footnotes, shadow roots or
+complete math standardization. Static input can therefore retain site chrome, omit
 content outside the selected article, or differ in headings, tables and images.
 Those differences must be measured rather than inferred from successful parsing.
+
+## Callouts and Markdown spelling
+
+As in the reference, Obsidian callouts, GitHub alerts, Bootstrap alerts, callout
+asides and Hugo/Docsy admonitions become blockquotes opening with an Obsidian
+marker, `> [!type]fold Title`, before hidden and chrome removal: a collapsed
+callout body is content, while hidden elements inside it are still removed.
+Types, fold markers, titles (defaulting to the capitalized type) and the title
+elements the marker replaces follow the reference rules; an admonition title
+keeps its source whitespace where the reference would join inline pieces without
+a space.
+
+Lists use one space after the marker (`* item`, `1. item`), rules are `---` and
+empty quoted lines are `>`, as the reference writes them. Nested list markers stay
+`*`, where the reference cycles `*`, `+`, `-` by depth.
 
 ## Corpus diagnostic
 
