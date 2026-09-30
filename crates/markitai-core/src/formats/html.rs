@@ -2763,9 +2763,77 @@ pub(super) fn fragment(source: &str) -> Result<String> {
     render_clean(document.root_element(), None)
 }
 
+/// Replace declarative shadow-root templates (`shadowrootmode` or legacy
+/// `shadowroot`, open or closed) with their markup before parsing, innermost
+/// first and at most ten levels deep, as the reference does: a browser would
+/// attach that markup, while a static parser leaves it inert. Other templates
+/// are unchanged.
+fn flatten_shadow_roots(source: &str) -> std::borrow::Cow<'_, str> {
+    static OPENING: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    if !source
+        .as_bytes()
+        .windows(10)
+        .any(|w| w.eq_ignore_ascii_case(b"shadowroot"))
+    {
+        return std::borrow::Cow::Borrowed(source);
+    }
+    let opening = OPENING.get_or_init(|| {
+        regex::Regex::new(
+            r#"(?is)<template\s[^>]*\bshadowroot(?:mode)?\s*=\s*["']?(?:open|closed)["']?[^>]*>"#,
+        )
+        .expect("static pattern")
+    });
+    let template_start = |lower: &str, from: usize| -> Option<usize> {
+        let mut at = from;
+        while let Some(found) = lower[at..].find("<template") {
+            let index = at + found;
+            let next = lower.as_bytes().get(index + 9);
+            if next.is_none_or(|byte| !(byte.is_ascii_alphanumeric() || *byte == b'_')) {
+                return Some(index);
+            }
+            at = index + 9;
+        }
+        None
+    };
+    let mut html = source.to_owned();
+    for _ in 0..10 {
+        let lower = html.to_ascii_lowercase();
+        let mut result = String::with_capacity(html.len());
+        let mut copied = 0;
+        let mut search = 0;
+        let mut replaced = false;
+        while let Some(open) = opening.find_at(&html, search) {
+            let body_start = open.end();
+            let Some(close) = lower[body_start..]
+                .find("</template>")
+                .map(|at| body_start + at)
+            else {
+                break;
+            };
+            if template_start(&lower, body_start).is_some_and(|inner| inner < close) {
+                // Not innermost: an inner template resolves in this or a later pass.
+                search = open.start() + 1;
+                continue;
+            }
+            result.push_str(&html[copied..open.start()]);
+            result.push_str(&html[body_start..close]);
+            copied = close + "</template>".len();
+            search = copied;
+            replaced = true;
+        }
+        if !replaced {
+            break;
+        }
+        result.push_str(&html[copied..]);
+        html = result;
+    }
+    std::borrow::Cow::Owned(html)
+}
+
 /// Extract an article candidate, metadata and Markdown without fetching links.
 pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
-    let mut document = Html::parse_document(source);
+    let source = flatten_shadow_roots(source);
+    let mut document = Html::parse_document(&source);
     stream::restore(&mut document)?;
     let base = base_url.and_then(|value| Url::parse(value).ok());
     let root = article::select(&document);
@@ -3271,6 +3339,44 @@ mod tests {
             text.contains("\n\n---\n\n* One\n* Two\n\n1. First\n\nAfter."),
             "{text}"
         );
+    }
+
+    #[test]
+    fn declarative_shadow_roots_are_content_while_other_templates_stay_inert() {
+        let doc = extract_html(
+            r#"<html><body><main><h1>Shadow</h1>
+            <div><TEMPLATE ShadowRootMode="OPEN"><p>Outer shadow text.</p><section><template shadowrootmode='closed'><p>Inner closed text.</p></template></section></TEMPLATE></div>
+            <div><template shadowroot=open><p>Legacy attribute text.</p></template></div>
+            <template><p>Inert template text.</p></template>
+            <template shadowrootmode="none"><p>Unknown mode text.</p></template>
+            <p>Regular text.</p></main></body></html>"#,
+            None,
+        )
+        .unwrap();
+        let text = &doc.markdown;
+        for kept in [
+            "Outer shadow text.",
+            "Inner closed text.",
+            "Legacy attribute text.",
+            "Regular text.",
+        ] {
+            assert!(text.contains(kept), "{kept}: {text}");
+        }
+        for inert in ["Inert template text", "Unknown mode text"] {
+            assert!(!text.contains(inert), "{inert}: {text}");
+        }
+        assert_eq!(flatten_shadow_roots("<p>plain</p>"), "<p>plain</p>");
+        // An unclosed shadow template is left for the parser, unchanged.
+        let unclosed = r#"<template shadowrootmode="open"><p>Never closed"#;
+        assert_eq!(flatten_shadow_roots(unclosed), unclosed);
+        // Hoisting is bounded at ten nested levels.
+        let deep = format!(
+            "{}core{}",
+            r#"<template shadowrootmode="open">"#.repeat(12),
+            "</template>".repeat(12)
+        );
+        let flattened = flatten_shadow_roots(&deep);
+        assert_eq!(flattened.matches("<template").count(), 2);
     }
 
     #[test]

@@ -212,8 +212,10 @@ quality must be checked separately. Historical audit reports are unchanged.
 
 The generic reader is not yet the source's complete web extraction pipeline.
 It does not replicate its full site resolvers, browser/CSS visibility model,
-adaptive content scoring, schema-body fallback, full footnotes, shadow roots or
-complete math standardization. Static input can therefore retain site chrome, omit
+adaptive content scoring, schema-body fallback, full footnotes or complete math
+standardization. Declarative shadow roots (`<template shadowrootmode>` or legacy
+`shadowroot`, open or closed, innermost first and at most ten levels) are replaced
+by their markup before parsing, as in the reference; other templates stay inert. Static input can therefore retain site chrome, omit
 content outside the selected article, or differ in headings, tables and images.
 Those differences must be measured rather than inferred from successful parsing.
 

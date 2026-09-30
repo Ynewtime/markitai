@@ -106,6 +106,7 @@
 
 ### Fixed
 
+- Keep declarative Shadow DOM content (`<template shadowrootmode>`, open or closed, nested) in HTML conversion, as the reference does, instead of dropping it with inert templates.
 - Make the whole workspace type-check and pass `clippy -D warnings` for `x86_64-pc-windows-msvc`, as the configured Windows CI job runs it: the registry proxy decoder satisfies Windows-only lints, and Unix-only batch publication, recovery-state and resumed-report code no longer warns on platforms where the batch command reports it as unimplemented.
 - Reconstruct PDF pages with link annotations, image XObjects, curved marks or rounded clips, keep a same-width bordered block from merging into a table's grid, and stop table cells and fixed-pitch code from turning ordinary prose into headings.
 - Keep the numeric cell of a table row near a page edge that PDF page-number cleanup deleted as a folio when no other page corroborates it, extract ICC-based, calibrated and indexed PDF images, and reconstruct ruled tables drawn under a neutral graphics state such as Chrome's print output.
