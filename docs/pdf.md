@@ -144,6 +144,12 @@ overlapping table regions prevents speculative reconstruction. The first row is
 represented as a Markdown table header; this representation does not establish
 that an untagged PDF declared it a semantic header.
 
+A tagged PDF's tables come from its structure tree on each page, as in the
+page reader's whole-document conversion (`8b9747d`): a table drawn without rules
+whose cells wrap and are vertically centred is otherwise read from its text's
+alignment alone, which splits it into broken rows. Untagged pages still rely on
+that alignment and on ruled grids.
+
 Before replacing page Markdown, decoded alphanumeric character counts must agree
 with the existing reader. This is a conservative agreement check, not proof that
 two decoders are independently correct. Link annotations carry targets, not page
