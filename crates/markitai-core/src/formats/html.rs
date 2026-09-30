@@ -772,6 +772,107 @@ fn url_component(raw: &str) -> String {
     String::from_utf8_lossy(&decoded).into_owned()
 }
 
+/// The smallest size, in pixels, of an image that can be content: below it
+/// on either axis an image is a spacer, a tracking pixel or an icon (the
+/// threshold defuddle uses).
+const MIN_IMAGE_SIZE: f64 = 33.0;
+
+/// For an `img` or `svg` smaller than [`MIN_IMAGE_SIZE`] on either axis by
+/// what it declares (width/height attributes, inline style, an SVG's
+/// viewBox when nothing else is given, a `1x` srcset URL's width), the text
+/// to write instead: an emoji image's character, else nothing. `None` for
+/// any other element, an image that declares no size (or only percentages)
+/// and an image rendering an equation.
+fn small_image(element: ElementRef<'_>) -> Option<String> {
+    let name = element.value().name();
+    if !matches!(name, "img" | "svg") {
+        return None;
+    }
+    let pixels = |value: &str| -> Option<f64> {
+        let value = value.trim();
+        if value.contains('%') {
+            return None;
+        }
+        let number = value.trim_end_matches("px").trim();
+        number
+            .parse::<f64>()
+            .ok()
+            .filter(|n| *n > 0.0 && n.is_finite())
+    };
+    let style = element.value().attr("style").unwrap_or("");
+    let style_size = |property: &str| {
+        style.split(';').find_map(|declaration| {
+            let (key, value) = declaration.split_once(':')?;
+            key.trim()
+                .eq_ignore_ascii_case(property)
+                .then(|| pixels(value))
+                .flatten()
+        })
+    };
+    let mut width = element
+        .value()
+        .attr("width")
+        .and_then(pixels)
+        .or_else(|| style_size("width"));
+    let mut height = element
+        .value()
+        .attr("height")
+        .and_then(pixels)
+        .or_else(|| style_size("height"));
+    if name == "svg" && width.is_none() && height.is_none() {
+        let view_box = element
+            .value()
+            .attr("viewBox")
+            .or_else(|| element.value().attr("viewbox"));
+        if let Some(parts) = view_box.map(|v| {
+            v.split(|c: char| c.is_whitespace() || c == ',')
+                .filter(|p| !p.is_empty())
+                .collect::<Vec<_>>()
+        }) && parts.len() == 4
+        {
+            width = pixels(parts[2]);
+            height = pixels(parts[3]);
+        }
+    }
+    if name == "img" && width.is_none() && height.is_none() {
+        // Images served at a tiny width through CDN parameters.
+        width = element.value().attr("srcset").and_then(|srcset| {
+            let one_x = srcset
+                .split(',')
+                .map(str::trim)
+                .find(|candidate| candidate.ends_with(" 1x"))?;
+            let url = one_x.split_whitespace().next()?;
+            ["width=", "width/", "w_", "w=", "w:"]
+                .iter()
+                .find_map(|key| {
+                    let at = url.find(key)? + key.len();
+                    let digits: String =
+                        url[at..].chars().take_while(char::is_ascii_digit).collect();
+                    digits.parse::<f64>().ok().filter(|n| *n > 0.0)
+                })
+        });
+    }
+    if width.is_none() && height.is_none() {
+        return None;
+    }
+    let small = |size: Option<f64>| size.is_some_and(|size| size < MIN_IMAGE_SIZE);
+    if !small(width) && !small(height) {
+        return None;
+    }
+    if name == "img"
+        && (latex_image(element).is_some()
+            || element.value().attr("alt").is_some_and(looks_like_latex))
+    {
+        return None;
+    }
+    let alt = element.value().attr("alt").unwrap_or("").trim();
+    let emoji = name == "img"
+        && !alt.is_empty()
+        && alt.chars().count() <= 8
+        && !alt.chars().any(|c| c.is_alphanumeric());
+    Some(if emoji { alt.to_owned() } else { String::new() })
+}
+
 /// LaTeX an image rendered by a TeX image service carries, as the reference
 /// finds it: a named query parameter, the whole query, an escaped path
 /// segment, then TeX-looking alt text. Other images stay images.
@@ -1964,6 +2065,14 @@ fn serialize_clean(
         return Ok(());
     }
     if callouts::replaced_title(element) {
+        return Ok(());
+    }
+    // A spacer, tracking pixel or icon carries no content on a page; an
+    // emoji drawn as an image keeps its character.
+    if notes.prune_chrome
+        && let Some(kept) = small_image(element)
+    {
+        escaped_text(&kept, output);
         return Ok(());
     }
     let key = element_key(element);
@@ -4065,6 +4174,36 @@ mod tests {
         );
         assert!(doc.markdown.ends_with("[^1]: Real content."));
         assert!(!doc.markdown.contains("[^2]"));
+    }
+
+    #[test]
+    fn spacer_and_icon_images_are_dropped_but_emoji_and_content_images_stay() {
+        let doc = extract_html(
+            r#"<html><body><article><h1>Thread</h1><p><img src="s.gif" height="1" width="40">First comment <img src="https://example.com/e.png" alt="😀" width="16" height="16"> text.</p>
+            <p><img src="https://example.com/avatar.png" style="width: 20px; height: 20px"> Second comment.</p>
+            <p><img src="https://example.com/photo.jpg" width="640" height="480" alt="Photo"></p>
+            <p><img src="https://example.com/banner.png" width="100%" height="20%" alt="Banner"></p>
+            <p><img src="https://example.com/eq.png" alt="\frac{a}{b}" width="20" height="12"></p>
+            <svg viewBox="0 0 16 16"><path d="M0 0h16v16z"/></svg></article></body></html>"#,
+            None,
+        )
+        .unwrap();
+        assert!(!doc.markdown.contains("s.gif"), "{}", doc.markdown);
+        assert!(!doc.markdown.contains("avatar.png"), "{}", doc.markdown);
+        assert!(
+            doc.markdown.contains("First comment 😀 text."),
+            "{}",
+            doc.markdown
+        );
+        assert!(doc.markdown.contains("photo.jpg"), "{}", doc.markdown);
+        assert!(doc.markdown.contains("banner.png"), "{}", doc.markdown);
+        assert!(doc.markdown.contains("frac"), "{}", doc.markdown);
+        // A fragment (an email body, a book) keeps what its author put in.
+        let fragment = fragment(
+            r#"<p><img src="https://example.com/icon.png" width="16" height="16"> Label</p>"#,
+        )
+        .unwrap();
+        assert!(fragment.contains("icon.png"), "{fragment}");
     }
 
     #[test]
