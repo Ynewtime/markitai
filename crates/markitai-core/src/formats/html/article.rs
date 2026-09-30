@@ -155,11 +155,7 @@ fn card(element: ElementRef<'_>) -> bool {
         if !marked && matches!(tag, "p" | "pre" | "table" | "blockquote") {
             return false;
         }
-        linked |= tag == "a"
-            && node.value().attr("href").is_some_and(|href| {
-                let href = href.trim();
-                !href.is_empty() && !href.starts_with('#') && !href.starts_with("javascript:")
-            });
+        linked |= tag == "a" && outward(node);
         title_or_image |= heading(node) || tag == "img";
         stack.extend(node.child_elements().map(|child| (child, depth + 1)));
     }
@@ -401,6 +397,35 @@ fn furniture(element: ElementRef<'_>) -> bool {
     })
 }
 
+/// Whether an article is a teaser card: its title is a link to another page
+/// (a linked heading, or a heading inside a link).
+fn teaser(element: ElementRef<'_>) -> bool {
+    element
+        .descendants()
+        .filter_map(ElementRef::wrap)
+        .any(|node| {
+            heading(node)
+                && (node.select(&TEASER_LINK).next().is_some()
+                    || node
+                        .ancestors()
+                        .filter_map(ElementRef::wrap)
+                        .take_while(|parent| *parent != element)
+                        .any(|parent| parent.value().name() == "a" && outward(parent)))
+                && node.select(&TEASER_LINK).all(outward)
+        })
+}
+
+/// A link to another page, not a fragment of this one.
+fn outward(link: ElementRef<'_>) -> bool {
+    link.value().attr("href").is_some_and(|href| {
+        let href = href.trim();
+        !href.is_empty() && !href.starts_with('#') && !href.starts_with("javascript:")
+    })
+}
+
+static TEASER_LINK: std::sync::LazyLock<scraper::Selector> =
+    std::sync::LazyLock::new(|| scraper::Selector::parse("a[href]").expect("static selector"));
+
 struct Scored<'a> {
     element: ElementRef<'a>,
     parent: Option<usize>,
@@ -499,23 +524,36 @@ pub(super) fn select(document: &Html) -> ElementRef<'_> {
     {
         return node.element;
     }
-    let mut candidates = nodes.iter().enumerate().filter(|(index, node)| {
-        in_root(*index)
-            && node.kind == Kind::Content
-            && node.score > 0
-            && node.content_parent.is_none_or(|parent| !in_root(parent))
-    });
-    let Some((_, candidate)) = candidates.next() else {
-        return nodes[root].element;
+    let candidates: Vec<&Scored<'_>> = nodes
+        .iter()
+        .enumerate()
+        .filter(|(index, node)| {
+            in_root(*index)
+                && node.kind == Kind::Content
+                && node.score > 0
+                && node.content_parent.is_none_or(|parent| !in_root(parent))
+        })
+        .map(|(_, node)| node)
+        .collect();
+    // Portfolios, indexes and discussion pages need all sibling articles;
+    // teaser cards linking to other articles beside one article do not.
+    let (teasers, articles): (Vec<&Scored<'_>>, Vec<&Scored<'_>>) = candidates
+        .iter()
+        .copied()
+        .partition(|node| teaser(node.element));
+    let (candidate, teaser_score) = match (articles.as_slice(), candidates.len()) {
+        (_, 0) => return nodes[root].element,
+        (_, 1) => (candidates[0], 0),
+        ([article], _) => (*article, teasers.iter().map(|node| node.score).sum()),
+        _ => return nodes[root].element,
     };
-    // Portfolios, indexes and discussion pages need all sibling articles.
-    if candidates.next().is_some() {
-        return nodes[root].element;
-    }
     // Keep substantial introductions/conclusions outside the named region;
     // furniture-named rails and boxes outside it are not such text.
     let outside = nodes[root].score.saturating_sub(candidate.score);
-    let outside_furniture = nodes[root].furniture.saturating_sub(candidate.furniture);
+    let outside_furniture = nodes[root]
+        .furniture
+        .saturating_sub(candidate.furniture)
+        .saturating_add(teaser_score);
     let weighed = candidate
         .score
         .saturating_add(outside.saturating_sub(outside_furniture));
@@ -592,6 +630,39 @@ mod tests {
             ));
             assert_eq!(select(&document).value().name(), wrapper);
         }
+    }
+
+    #[test]
+    fn teaser_cards_beside_one_article_do_not_keep_the_page() {
+        // An unlabeled grid of cards linking to other articles.
+        let body = "The article explains the subject in some detail. ".repeat(8);
+        let summary = "A summary of another article on this site. ".repeat(3);
+        let cards = |href: &str| {
+            (1..=3)
+                .map(|n| {
+                    format!(r#"<article><a href="{href}{n}"><figure></figure><h2>Other {n}</h2></a><section><p>{summary}</p></section></article>"#)
+                })
+                .collect::<String>()
+        };
+        let page = |cards: &str| {
+            Html::parse_document(&format!(
+                r#"<main><article id="story"><p>{body}</p></article><div class="list"><div>{cards}</div></div></main>"#
+            ))
+        };
+        assert_eq!(
+            select(&page(&cards("/article/"))).value().attr("id"),
+            Some("story")
+        );
+        // Cards linking within this page, and a second full article, are
+        // sibling content to keep.
+        assert_eq!(select(&page(&cards("#part"))).value().name(), "main");
+        let second = format!(r#"<article><h2>Second</h2><p>{summary}</p></article>"#);
+        assert_eq!(
+            select(&page(&format!("{}{second}", cards("/article/"))))
+                .value()
+                .name(),
+            "main"
+        );
     }
 
     #[test]
