@@ -151,7 +151,8 @@ text, and neither reader renders them, so they do not block refinement. The body
 size that headings must exceed ignores text inside detected table grids and
 fixed-pitch text, so a table- or code-heavy page keeps its prose as paragraphs.
 Unknown form-field semantics,
-rotated pages or text, invalid geometry and ambiguous side-by-side prose retain
+rotated pages or text, invalid geometry, right-to-left text (whose runs need the
+page reader's bidirectional ordering) and ambiguous side-by-side prose retain
 the existing page reader's output. A page can therefore remain unchanged even
 when another page gains layout fidelity.
 
