@@ -12,6 +12,36 @@ mod office_meta;
 #[path = "pdf.rs"]
 pub(super) mod pdf;
 
+/// Adjacent text runs of one style as one run. A reader can split runs per
+/// character (RTF `\\u` escapes) or wherever the source splits them (Word's
+/// revision marks); rendered apart, a bold word becomes `**a****b**`, which
+/// breaks the word and the joining of Arabic-script letters.
+fn merged_runs(values: &[Inline]) -> std::borrow::Cow<'_, [Inline]> {
+    let splits = values.windows(2).any(|pair| {
+        matches!(pair, [Inline::Text { style: a, .. }, Inline::Text { style: b, .. }] if a == b)
+    });
+    if !splits {
+        return std::borrow::Cow::Borrowed(values);
+    }
+    let mut merged: Vec<Inline> = Vec::with_capacity(values.len());
+    for value in values {
+        if let (
+            Some(Inline::Text { text, style }),
+            Inline::Text {
+                text: next,
+                style: next_style,
+            },
+        ) = (merged.last_mut(), value)
+            && style == next_style
+        {
+            text.push_str(next);
+            continue;
+        }
+        merged.push(value.clone());
+    }
+    std::borrow::Cow::Owned(merged)
+}
+
 /// Whether a block shows anything: text, an image, a rule, code.
 fn has_content(block: &Block) -> bool {
     match block {
@@ -158,8 +188,9 @@ fn heading_without_bold(content: &[Inline]) -> Vec<Inline> {
 
 impl Renderer<'_> {
     fn inlines(&self, values: &[Inline]) -> String {
+        let values = merged_runs(values);
         let mut output = String::new();
-        for value in values {
+        for value in values.iter() {
             match value {
                 Inline::Text { text, style } => {
                     if text.trim().is_empty() {
@@ -362,17 +393,29 @@ impl Renderer<'_> {
                     .iter()
                     .enumerate()
                     .filter_map(|(index, item)| {
-                        let marker = item.marker_label.clone().unwrap_or_else(|| {
-                            if list.ordered() {
-                                list.marker.label(list.start + index as u64)
-                            } else {
-                                if matches!(self.extension, "doc" | "odt") {
-                                    "-".into()
-                                } else {
-                                    "*".into()
-                                }
+                        let bullet = if matches!(self.extension, "doc" | "odt") {
+                            "-"
+                        } else {
+                            "*"
+                        };
+                        let marker = match item.marker_label.as_deref().map(str::trim) {
+                            // A source's own label must still read as a
+                            // Markdown marker: RTF list text gives `1` and
+                            // `•`, which would leave the items one paragraph.
+                            Some(label)
+                                if !label.is_empty()
+                                    && label.bytes().all(|b| b.is_ascii_digit()) =>
+                            {
+                                format!("{label}.")
                             }
-                        });
+                            Some(
+                                "•" | "◦" | "▪" | "●" | "○" | "■" | "□" | "·" | "‣" | "⁃" | "–"
+                                | "o",
+                            ) => bullet.into(),
+                            Some(label) if !label.is_empty() => label.to_owned(),
+                            _ if list.ordered() => list.marker.label(list.start + index as u64),
+                            _ => bullet.into(),
+                        };
                         let content = self.blocks(&item.blocks);
                         if content.trim().is_empty() {
                             return None;
@@ -744,6 +787,77 @@ mod tests {
         );
         renderer.extension = "ods";
         assert_eq!(renderer.blocks(&[table]), "| Name |\n| --- |\n| Value |");
+    }
+
+    #[test]
+    fn source_list_labels_render_as_markdown_markers() {
+        use anydoc::model::{List, ListItem, MarkerKind};
+        // RTF list text labels items `1`, `2` and `•`; kept verbatim, the
+        // items would read as one paragraph.
+        let item = |label: &str, text: &str| ListItem {
+            blocks: vec![Block::Paragraph(vec![Inline::plain(text)])],
+            marker_label: Some(label.into()),
+        };
+        let list = |marker, items| {
+            Block::List(List {
+                marker,
+                start: 1,
+                items,
+            })
+        };
+        let mut renderer = Renderer {
+            asset_names: &[],
+            merged_cells: false,
+            anchors: BTreeSet::new(),
+            extension: "rtf",
+        };
+        assert_eq!(
+            renderer.blocks(&[list(
+                MarkerKind::Decimal,
+                vec![
+                    item("1", "First"),
+                    item("2", "Second"),
+                    item("1-a)", "Composite")
+                ]
+            )]),
+            "1. First\n2. Second\n1-a) Composite"
+        );
+        assert_eq!(
+            renderer.blocks(&[list(MarkerKind::Bullet, vec![item("•", "Point")])]),
+            "* Point"
+        );
+    }
+
+    #[test]
+    fn runs_split_inside_a_word_render_as_one_run() {
+        // RTF writes each `\\u` character as a run of its own; the bold
+        // Persian word must not become one bold span per letter.
+        let bold = anydoc::model::Style {
+            bold: true,
+            ..Default::default()
+        };
+        let run = |text: &str, style| Inline::Text {
+            text: text.into(),
+            style,
+        };
+        let renderer = Renderer {
+            asset_names: &[],
+            merged_cells: false,
+            anchors: BTreeSet::new(),
+            extension: "rtf",
+        };
+        let plain = anydoc::model::Style::default();
+        assert_eq!(
+            renderer.inlines(&[
+                run("م", bold),
+                run("ع", bold),
+                run("رفی", bold),
+                run(" and ", plain),
+                run("Ba", bold),
+                run("ses", bold),
+            ]),
+            "**معرفی** and **Bases**"
+        );
     }
 
     #[test]
