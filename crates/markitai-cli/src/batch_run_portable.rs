@@ -125,15 +125,9 @@ pub(super) fn run(
             }
         }
         if !cli.quiet {
-            eprintln!(
-                "{} items, {} completed, {} failed",
-                records.len(),
-                records
-                    .iter()
-                    .filter(|record| record.status == ItemStatus::Completed)
-                    .count(),
-                failed,
-            );
+            for line in crate::report::batch_summary(&records, clock.elapsed()) {
+                eprintln!("{line}");
+            }
         }
     }
     Ok(if failed > 0 {

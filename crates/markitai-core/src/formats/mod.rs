@@ -24,29 +24,90 @@ pub(crate) fn extract_pdf(bytes: &[u8]) -> Result<Document> {
 }
 
 /// Extensions with an implemented local reader (leading dots are accepted).
+/// Document extensions (without the dot) that `extract` reads, including
+/// those anydoc recognizes; images are listed in `images::IMAGE_EXTENSIONS`.
+pub const DOCUMENT_EXTENSIONS: &[&str] = &[
+    "txt", "md", "markdown", "html", "htm", "xhtml", "csv", "tsv", "ipynb", "json", "xml", "eml",
+    "msg", "rst", "org", "tex", "latex", "numbers", "doc", "docx", "docm", "odt", "pdf", "pptx",
+    "pptm", "ppsx", "ppsm", "ppt", "pps", "pot", "rtf", "epub", "xlsx", "xlsm", "xlsb", "xls",
+    "ods", "odp",
+];
+
 pub fn supports_extension(extension: &str) -> bool {
     let extension = extension.trim_start_matches('.').to_ascii_lowercase();
-    matches!(
-        extension.as_str(),
-        "txt"
-            | "md"
-            | "markdown"
-            | "html"
-            | "htm"
-            | "xhtml"
-            | "csv"
-            | "tsv"
-            | "ipynb"
-            | "json"
-            | "xml"
-            | "eml"
-            | "msg"
-            | "rst"
-            | "org"
-            | "tex"
-            | "latex"
-            | "numbers"
-    ) || anydoc::Format::from_extension(&extension).is_some()
+    DOCUMENT_EXTENSIONS.contains(&extension.as_str())
+}
+
+/// One actionable line for a file whose extension cannot be converted: the
+/// extension and every supported one, documents and images, as the reference
+/// words it.
+pub fn unsupported_format_message(extension: &str) -> String {
+    let extension = extension.trim_start_matches('.').to_ascii_lowercase();
+    let shown = if extension.is_empty() {
+        "(no extension)".to_owned()
+    } else {
+        format!("'.{extension}'")
+    };
+    let mut supported: Vec<&str> = DOCUMENT_EXTENSIONS
+        .iter()
+        .chain(crate::images::IMAGE_EXTENSIONS)
+        .copied()
+        .collect();
+    supported.sort_unstable();
+    supported.dedup();
+    let supported = supported
+        .iter()
+        .map(|extension| format!(".{extension}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("Unsupported file format: {shown}. Supported extensions: {supported}.")
+}
+
+#[cfg(test)]
+mod extension_tests {
+    use super::*;
+
+    #[test]
+    fn document_extensions_cover_anydoc_and_the_message_lists_all_supported() {
+        // Every extension anydoc recognizes is a document extension here.
+        for candidate in DOCUMENT_EXTENSIONS
+            .iter()
+            .chain(["dotx", "ots", "key", "pages", "odg", "wps", "docb", "xlt"].iter())
+        {
+            if anydoc::Format::from_extension(candidate).is_some() {
+                assert!(supports_extension(candidate), "{candidate}");
+            }
+        }
+        for native in ["txt", "md", "html", "eml", "msg", "numbers", "tex", "ipynb"] {
+            assert!(
+                supports_extension(native)
+                    && supports_extension(&format!(".{}", native.to_uppercase()))
+            );
+        }
+        assert!(
+            !supports_extension("png") && !supports_extension("xyz") && !supports_extension("")
+        );
+        let message = unsupported_format_message("XYZ");
+        assert!(
+            message.starts_with(
+                "Unsupported file format: '.xyz'. Supported extensions: .avif .bmp .csv"
+            ),
+            "{message}"
+        );
+        for extension in DOCUMENT_EXTENSIONS
+            .iter()
+            .chain(crate::images::IMAGE_EXTENSIONS)
+        {
+            assert!(
+                message.contains(&format!(" .{extension} "))
+                    || message.ends_with(&format!(" .{extension}.")),
+                "{extension}"
+            );
+        }
+        assert!(
+            unsupported_format_message("").starts_with("Unsupported file format: (no extension).")
+        );
+    }
 }
 
 /// Whether a local directory is an atomic Numbers document candidate.
@@ -67,10 +128,7 @@ pub fn extract(path: &Path) -> Result<Document> {
         .unwrap_or("")
         .to_ascii_lowercase();
     if !supports_extension(&extension) {
-        return Err(Error::Unsupported(format!(
-            "Unsupported file format: '{}'. This Rust build supports text, Markdown, HTML, CSV/TSV, JSON/XML, notebooks, EML/MSG email, PDF, Word, PowerPoint, Excel, Numbers, OpenDocument, RTF, EPUB, Org, RST and TeX. Image OCR is available through the conversion API on supported platforms.",
-            extension
-        )));
+        return Err(Error::Unsupported(unsupported_format_message(&extension)));
     }
     let mut result = if is_numbers_package_path(path) {
         numbers::extract_directory(path)?

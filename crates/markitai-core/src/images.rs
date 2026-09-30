@@ -20,25 +20,14 @@ pub(crate) struct VisionImage {
     pub bytes: Vec<u8>,
 }
 
+/// Image extensions (without the dot) read as images.
+pub const IMAGE_EXTENSIONS: &[&str] = &[
+    "jpeg", "jpg", "png", "webp", "gif", "bmp", "tiff", "tif", "svg", "heic", "heif", "avif",
+];
+
 pub fn is_image_extension(extension: &str) -> bool {
-    matches!(
-        extension
-            .trim_start_matches('.')
-            .to_ascii_lowercase()
-            .as_str(),
-        "jpeg"
-            | "jpg"
-            | "png"
-            | "webp"
-            | "gif"
-            | "bmp"
-            | "tiff"
-            | "tif"
-            | "svg"
-            | "heic"
-            | "heif"
-            | "avif"
-    )
+    let extension = extension.trim_start_matches('.').to_ascii_lowercase();
+    IMAGE_EXTENSIONS.contains(&extension.as_str())
 }
 
 fn error(error: impl std::fmt::Display) -> Error {
