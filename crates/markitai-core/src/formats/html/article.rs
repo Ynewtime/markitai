@@ -194,9 +194,63 @@ fn related_cards(element: ElementRef<'_>) -> bool {
     count >= 2
 }
 
+/// Whether a page's framework classes hide an element as defuddle reads them:
+/// `hidden` or `invisible`, also behind a variant (`md:hidden`, a site's own
+/// `not-machine:hidden`), or a CSS-module `isHidden-…` name, unless a
+/// responsive class shows it again (`hidden md:block`). Arbitrary variants
+/// (`[&_.x]:hidden`) target other elements. Fragments (books, email) come
+/// without the site's style sheet, so this is full-page chrome only.
+fn hidden_class(element: ElementRef<'_>) -> bool {
+    let Some(classes) = element.value().attr("class") else {
+        return false;
+    };
+    let mut hidden = false;
+    for class in classes.split_ascii_whitespace() {
+        if let Some((variant, utility)) = class.split_once(':')
+            && (matches!(variant, "sm" | "md" | "lg" | "xl" | "2xl")
+                || ((variant.starts_with("min-[") || variant.starts_with("max-["))
+                    && variant.ends_with(']')))
+            && ["block", "flex", "grid", "inline", "table", "contents"]
+                .iter()
+                .any(|shown| utility.starts_with(shown))
+        {
+            return false;
+        }
+        if class.contains('[') {
+            continue;
+        }
+        let bare = class.rsplit(':').next().unwrap_or(class);
+        let module = bare
+            .strip_prefix("is")
+            .map(|rest| rest.strip_prefix(['-', '_']).unwrap_or(rest))
+            .and_then(|rest| {
+                rest.strip_prefix("Hidden")
+                    .or_else(|| rest.strip_prefix("hidden"))
+            })
+            .is_some_and(|rest| rest.starts_with(['-', '_']));
+        hidden |= matches!(bare, "hidden" | "invisible") || module;
+    }
+    hidden
+}
+
+/// Math keeps its hidden accessible copies (MathML beside a rendering).
+fn contains_math(element: ElementRef<'_>) -> bool {
+    element
+        .descendants()
+        .filter_map(ElementRef::wrap)
+        .any(|node| {
+            node.value().name() == "math"
+                || node.value().attr("data-mathml").is_some()
+                || token(node, "class", "katex-mathml")
+        })
+}
+
 /// Full-page chrome only. Fragment conversion must leave this policy disabled:
 /// the same table of contents can be essential text in a book or email.
 pub(super) fn excluded(element: ElementRef<'_>) -> bool {
+    if hidden_class(element) && !contains_math(element) {
+        return true;
+    }
     // MediaWiki's section edit links, "From Wikipedia" tagline, redirect
     // note and skip links.
     if named(

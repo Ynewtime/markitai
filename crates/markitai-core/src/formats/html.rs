@@ -284,6 +284,35 @@ fn compact_table(markdown: &str) -> Option<String> {
     Some(output.join("\n"))
 }
 
+/// Where a link wrapped around blocks (a card's heading and summary) is
+/// written, since a Markdown link cannot hold blocks: its first heading, else
+/// its first block with text and no block inside. `None` when the link holds
+/// no block or no such block. (An HTML parser never nests links.)
+fn block_link_target(anchor: ElementRef<'_>) -> Option<ElementRef<'_>> {
+    let inside = || {
+        anchor
+            .descendants()
+            .filter_map(ElementRef::wrap)
+            .filter(|node| *node != anchor && !is_hidden(*node))
+    };
+    let block = |node: &ElementRef<'_>| block_tag(node.value().name());
+    if !inside().any(|node| block(&node)) {
+        return None;
+    }
+    inside()
+        .find(|node| matches!(node.value().name(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6"))
+        .or_else(|| {
+            inside().find(|node| {
+                block(node)
+                    && node.text().any(|text| !text.trim().is_empty())
+                    && !node
+                        .descendants()
+                        .filter_map(ElementRef::wrap)
+                        .any(|child| child != *node && block(&child))
+            })
+        })
+}
+
 fn block_tag(name: &str) -> bool {
     matches!(
         name,
@@ -1378,6 +1407,10 @@ struct Footnotes<'a> {
     text_markers: HashMap<usize, String>,
     /// In-page tables of contents of a full page, left out.
     contents: HashSet<usize>,
+    /// Links around blocks, written as their content ...
+    block_links: HashSet<usize>,
+    /// ... with the link on the block that names them: target → link.
+    link_targets: HashMap<usize, ElementRef<'a>>,
 }
 
 impl<'a> Footnotes<'a> {
@@ -1435,6 +1468,12 @@ impl<'a> Footnotes<'a> {
             },
             ..Self::default()
         };
+        for anchor in root.select(&selector("a[href]")) {
+            if let Some(target) = block_link_target(anchor) {
+                notes.block_links.insert(element_key(anchor));
+                notes.link_targets.insert(element_key(target), anchor);
+            }
+        }
         let references = root
             .select(&selector(
                 "a[href], sup, span[data-definition], label.footref",
@@ -2220,6 +2259,19 @@ fn serialize_clean(
     if styled_code {
         output.push_str("<pre>");
     }
+    if notes.block_links.contains(&key) {
+        return serialize_children(
+            element,
+            name,
+            preformatted,
+            None,
+            base,
+            output,
+            depth,
+            notes,
+            definition,
+        );
+    }
     let serialized_name = if definition && depth == 0 && name == "li" {
         "div"
     } else {
@@ -2258,6 +2310,16 @@ fn serialize_clean(
     } else {
         None
     };
+    let link = notes
+        .link_targets
+        .get(&key)
+        .and_then(|anchor| anchor.value().attr("href"))
+        .and_then(|href| safe_url(href, base));
+    if let Some(link) = &link {
+        output.push_str("<a href=\"");
+        escaped(link, output);
+        output.push_str("\">");
+    }
     serialize_children(
         element,
         name,
@@ -2269,6 +2331,9 @@ fn serialize_clean(
         notes,
         definition,
     )?;
+    if link.is_some() {
+        output.push_str("</a>");
+    }
     if styled_code {
         output.push_str("</pre>");
     }
@@ -3803,6 +3868,61 @@ mod tests {
             r#"<main><h1>Obsidian</h1><div id="siteSub">From Wikipedia, the free encyclopedia</div><div id="contentSub"><span>(Redirected from Obs)</span></div><h2><span class="mw-headline" id="History">History</span><span class="mw-editsection"><span class="mw-editsection-bracket">[</span><a href="/w/index.php?action=edit&amp;section=1">edit</a><span class="mw-editsection-bracket">]</span></span></h2><p>Text.</p></main>"#,
         );
         assert!(wiki.contains("# Obsidian\n\n## History\n\nText."), "{wiki}");
+    }
+
+    #[test]
+    fn framework_hide_classes_hide_parts_of_a_full_page_only() {
+        let html = r#"<p>Kept <span class="hidden">gone</span> <span class="md:hidden">mobile</span> <span class="not-machine:hidden">machine</span> <span class="hidden md:inline">desktop</span> <span class="[&amp;_.x]:hidden">arbitrary</span> <span class="isHidden-vzcyV0">module</span> <span class="is-hidden-abc">dashed</span> <span class="invisible">https://</span><span class="hidden"><math><mi>x</mi></math></span> end.</p>"#;
+        let page = extract_html(&format!("<main>{html}</main>"), None)
+            .unwrap()
+            .markdown;
+        for kept in ["Kept", "desktop", "arbitrary", "$x$", "end."] {
+            assert!(page.contains(kept), "{kept}: {page}");
+        }
+        for gone in ["gone", "mobile", "machine", "module", "dashed", "https://"] {
+            assert!(!page.contains(gone), "{gone}: {page}");
+        }
+        // A book or an email comes without the site's style sheet.
+        let fragment = fragment(html).unwrap();
+        assert!(
+            fragment.contains("gone") && fragment.contains("mobile"),
+            "{fragment}"
+        );
+    }
+
+    #[test]
+    fn links_around_blocks_are_written_on_the_block_that_names_them() {
+        let markdown = extract_html(
+            r#"<article><a href="/post"><img src="cover.png" alt="Cover"><h3>Title</h3><p>Summary text.</p></a>
+            <a href="/card"><div><div>Card name</div><div>Card text</div></div></a>
+            <a href="/story"><div>Category</div><h2>Story</h2></a>
+            <a href="/media"><div class="thumb"><img src="t.png" alt="Thumb"></div><div>Media title</div></a>
+            <p><a href="/inline">inline</a> stays.</p></article>"#,
+            None,
+        )
+        .unwrap()
+        .markdown;
+        assert!(
+            markdown.contains("![Cover](cover.png)\n\n### [Title](/post)\n\nSummary text."),
+            "{markdown}"
+        );
+        assert!(
+            markdown.contains("[Card name](/card)\n\nCard text"),
+            "{markdown}"
+        );
+        assert!(markdown.contains("[inline](/inline) stays."), "{markdown}");
+        assert!(
+            markdown.contains("Category\n\n## [Story](/story)"),
+            "{markdown}"
+        );
+        assert!(
+            markdown.contains("![Thumb](t.png)\n\n[Media title](/media)"),
+            "{markdown}"
+        );
+        assert!(
+            !markdown.contains("[###") && !markdown.contains("](/post)\n\nSummary text.]"),
+            "{markdown}"
+        );
     }
 
     #[test]
