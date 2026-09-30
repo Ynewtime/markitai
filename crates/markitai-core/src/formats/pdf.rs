@@ -794,8 +794,8 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
                 && let Some(content) = content.as_ref()
             {
                 layout_pages.insert(number);
-                let neutral = geometry::neutral_states(&pdf, id);
-                page_geometry.insert(number, (frame, geometry::grids(content, frame, &neutral)));
+                let resources = geometry::rule_resources(&pdf, id);
+                page_geometry.insert(number, (frame, geometry::grids(content, frame, &resources)));
             }
         }
         // Retain only bounded table coordinates across pages, never their
@@ -805,7 +805,7 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
     let mut layout = if layout_pages.is_empty() {
         None
     } else {
-        match layout::Layout::read(bytes, &layout_pages) {
+        match layout::Layout::read(bytes, &layout_pages, &page_geometry) {
             Ok(layout) => Some(layout),
             Err(reason) => {
                 document.warnings.push(format!("PDF layout refinement was skipped ({reason}); the original page reader's output is retained."));
@@ -960,7 +960,7 @@ mod tests {
         let grids = geometry::grids(
             &content.unwrap(),
             geometry::frame(&pdf, page).unwrap(),
-            &geometry::neutral_states(&pdf, page),
+            &geometry::rule_resources(&pdf, page),
         );
         assert_eq!(grids.len(), 1);
         assert_eq!(grids[0].xs, [20., 100., 220.]);
@@ -1079,7 +1079,7 @@ mod tests {
                 geometry::grids(
                     &content.unwrap(),
                     geometry::frame(&pdf, page).unwrap(),
-                    &geometry::neutral_states(&pdf, page),
+                    &geometry::rule_resources(&pdf, page),
                 )
                 .is_empty()
             );

@@ -73,6 +73,9 @@ pub(super) fn frame(pdf: &lopdf::Document, id: ObjectId) -> Option<Frame> {
 struct State {
     matrix: [f32; 6],
     clip: [f32; 4],
+    /// Inside a curved or polygonal clip, visible rule extents are unknown;
+    /// such a scope contributes no edges until its graphics state is restored.
+    shaped_clip: bool,
     white_fill: bool,
     white_stroke: bool,
 }
@@ -121,66 +124,99 @@ fn edge(a: [f32; 2], b: [f32; 2]) -> Option<Edge> {
     }
 }
 
-/// Names of the page's graphics states that change nothing a rule verdict
-/// depends on: full opacity, normal blending, no soft mask. Line and rendering
-/// parameters are allowed; everything else keeps the page unsafe.
-pub(super) fn neutral_states(pdf: &lopdf::Document, id: ObjectId) -> HashSet<Vec<u8>> {
+/// Page resources a rule verdict may pass over: graphics states that change
+/// nothing it depends on (full opacity, normal blending, no soft mask; line and
+/// rendering parameters are allowed) and image XObjects, which paint pixels but
+/// no rules. Forms, other states and unknown names keep the page unsafe.
+#[derive(Debug, Default)]
+pub(super) struct RuleResources {
+    pub states: HashSet<Vec<u8>>,
+    pub images: HashSet<Vec<u8>>,
+}
+
+fn resolved<'a>(pdf: &'a lopdf::Document, value: &'a Object) -> Option<&'a Object> {
+    pdf.dereference(value).ok().map(|(_, value)| value)
+}
+
+fn neutral_state(pdf: &lopdf::Document, state: &lopdf::Dictionary) -> bool {
+    state.iter().all(|(key, value)| {
+        let value = resolved(pdf, value);
+        match key.as_slice() {
+            b"Type" | b"LW" | b"LC" | b"LJ" | b"ML" | b"D" | b"RI" | b"FL" | b"SM" | b"SA"
+            | b"OP" | b"op" | b"OPM" => true,
+            b"CA" | b"ca" => value
+                .and_then(|value| value.as_float().ok())
+                .is_some_and(|alpha| alpha >= 0.999),
+            b"BM" => value.is_some_and(|value| {
+                value
+                    .as_name()
+                    .is_ok_and(|name| matches!(name, b"Normal" | b"Compatible"))
+            }),
+            b"SMask" => {
+                value.is_some_and(|value| value.as_name().is_ok_and(|name| name == b"None"))
+            }
+            b"AIS" => value.is_some_and(|value| value.as_bool().is_ok_and(|flag| !flag)),
+            _ => false,
+        }
+    })
+}
+
+pub(super) fn rule_resources(pdf: &lopdf::Document, id: ObjectId) -> RuleResources {
+    let mut found = RuleResources::default();
     let Ok((direct, ids)) = pdf.get_page_resources(id) else {
-        return HashSet::new();
+        return found;
     };
-    let resolve = |value: &'_ Object| pdf.dereference(value).ok().map(|(_, value)| value.clone());
-    let mut neutral = HashSet::new();
-    let mut seen = HashSet::new();
+    let mut seen_states = HashSet::new();
+    let mut seen_objects = HashSet::new();
     for resources in direct
         .into_iter()
         .chain(ids.iter().filter_map(|id| pdf.get_dictionary(*id).ok()))
     {
-        let Some(states) = resources
+        // The nearest dictionary defining a name decides it, even when that
+        // definition is malformed; an inherited safe entry cannot mask it.
+        if let Some(states) = resources
             .get(b"ExtGState")
             .ok()
-            .and_then(&resolve)
-            .and_then(|value| value.as_dict().ok().cloned())
-        else {
-            continue;
-        };
-        for (name, value) in states.iter() {
-            // The nearest dictionary defining a name decides it, even when that
-            // definition is malformed; an inherited neutral state cannot mask it.
-            if !seen.insert(name.clone()) {
-                continue;
-            }
-            let Some(Ok(state)) = resolve(value).map(|value| value.as_dict().cloned()) else {
-                continue;
-            };
-            let safe = state.iter().all(|(key, value)| {
-                let value = resolve(value);
-                match key.as_slice() {
-                    b"Type" | b"LW" | b"LC" | b"LJ" | b"ML" | b"D" | b"RI" | b"FL" | b"SM"
-                    | b"SA" | b"OP" | b"op" | b"OPM" => true,
-                    b"CA" | b"ca" => value
-                        .and_then(|value| value.as_float().ok())
-                        .is_some_and(|alpha| alpha >= 0.999),
-                    b"BM" => value.is_some_and(|value| {
-                        value
-                            .as_name()
-                            .is_ok_and(|name| matches!(name, b"Normal" | b"Compatible"))
-                    }),
-                    b"SMask" => {
-                        value.is_some_and(|value| value.as_name().is_ok_and(|name| name == b"None"))
-                    }
-                    b"AIS" => value.is_some_and(|value| value.as_bool().is_ok_and(|flag| !flag)),
-                    _ => false,
+            .and_then(|value| resolved(pdf, value))
+            .and_then(|value| value.as_dict().ok())
+        {
+            for (name, value) in states.iter() {
+                if seen_states.insert(name.clone())
+                    && resolved(pdf, value)
+                        .and_then(|value| value.as_dict().ok())
+                        .is_some_and(|state| neutral_state(pdf, state))
+                {
+                    found.states.insert(name.clone());
                 }
-            });
-            if safe {
-                neutral.insert(name.clone());
+            }
+        }
+        if let Some(objects) = resources
+            .get(b"XObject")
+            .ok()
+            .and_then(|value| resolved(pdf, value))
+            .and_then(|value| value.as_dict().ok())
+        {
+            for (name, value) in objects.iter() {
+                if seen_objects.insert(name.clone())
+                    && resolved(pdf, value)
+                        .and_then(|value| value.as_stream().ok())
+                        .is_some_and(|stream| {
+                            stream
+                                .dict
+                                .get(b"Subtype")
+                                .and_then(Object::as_name)
+                                .is_ok_and(|kind| kind == b"Image")
+                        })
+                {
+                    found.images.insert(name.clone());
+                }
             }
         }
     }
-    neutral
+    found
 }
 
-fn edges(content: &Content, frame: Frame, neutral: &HashSet<Vec<u8>>) -> Option<Vec<Edge>> {
+fn edges(content: &Content, frame: Frame, resources: &RuleResources) -> Option<Vec<Edge>> {
     if content.operations.len() > 200_000 {
         return None;
     }
@@ -189,6 +225,7 @@ fn edges(content: &Content, frame: Frame, neutral: &HashSet<Vec<u8>>) -> Option<
         clip: [0., 0., frame.width, frame.height],
         white_fill: false,
         white_stroke: false,
+        shaped_clip: false,
     };
     let mut stack = Vec::new();
     let mut points = Vec::<[f32; 2]>::new();
@@ -197,6 +234,7 @@ fn edges(content: &Content, frame: Frame, neutral: &HashSet<Vec<u8>>) -> Option<
     let mut start = None;
     let mut rectangular = false;
     let mut pending_clip = false;
+    let mut curved = false;
     let mut output = Vec::new();
     for op in &content.operations {
         let numbers = || {
@@ -286,9 +324,18 @@ fn edges(content: &Content, frame: Frame, neutral: &HashSet<Vec<u8>>) -> Option<
                 }
             }
             "c" | "v" | "y" => {
-                // A curve's control points do not describe a table rule.
-                // Never infer a closed cell from the straight portions only.
-                return None;
+                // A curve's control points do not describe a table rule. Never
+                // infer a closed cell from the straight portions only: the
+                // whole path contributes no edges, and cannot be a clip.
+                let n = numbers()?;
+                let [.., x, y] = n.as_slice() else {
+                    return None;
+                };
+                let p = state.point(*x, *y)?;
+                current = Some(p);
+                points.push(p);
+                curved = true;
+                rectangular = false;
             }
             "W" | "W*" => {
                 pending_clip = true;
@@ -311,8 +358,8 @@ fn edges(content: &Content, frame: Frame, neutral: &HashSet<Vec<u8>>) -> Option<
                     },
                 );
                 if pending_clip {
-                    if !rectangular {
-                        return None;
+                    if !rectangular || curved {
+                        state.shaped_clip = true;
                     }
                     state.clip = [
                         state.clip[0].max(bounds[0]),
@@ -328,7 +375,7 @@ fn edges(content: &Content, frame: Frame, neutral: &HashSet<Vec<u8>>) -> Option<
                 ) && !state.white_fill;
                 let stroke = matches!(op.operator.as_str(), "S" | "s" | "B" | "B*" | "b" | "b*")
                     && !state.white_stroke;
-                if stroke {
+                if stroke && !curved && !state.shaped_clip {
                     for &(a, b) in &segments {
                         if state.inside(a)
                             && state.inside(b)
@@ -340,7 +387,8 @@ fn edges(content: &Content, frame: Frame, neutral: &HashSet<Vec<u8>>) -> Option<
                 }
                 // Office exporters often paint rules as narrow polygons,
                 // including bevelled corners, rather than stroke a line.
-                if fill && points.iter().all(|&p| state.inside(p)) {
+                if fill && !curved && !state.shaped_clip && points.iter().all(|&p| state.inside(p))
+                {
                     let [x0, y0, x1, y1] = bounds;
                     if y1 - y0 <= 1.5 && x1 - x0 >= 3.0 {
                         output.push(Edge {
@@ -367,12 +415,18 @@ fn edges(content: &Content, frame: Frame, neutral: &HashSet<Vec<u8>>) -> Option<
                 current = None;
                 start = None;
                 rectangular = false;
+                curved = false;
             }
             "gs" if op
                 .operands
                 .first()
                 .and_then(|name| name.as_name().ok())
-                .is_some_and(|name| neutral.contains(name)) => {}
+                .is_some_and(|name| resources.states.contains(name)) => {}
+            "Do" if op
+                .operands
+                .first()
+                .and_then(|name| name.as_name().ok())
+                .is_some_and(|name| resources.images.contains(name)) => {}
             // Unknown resource colours, transparency, Forms and shading make
             // a geometrical table verdict unsafe. Text can still be recovered.
             "gs" | "cs" | "CS" | "sc" | "SC" | "scn" | "SCN" | "sh" | "Do" | "BI" => return None,
@@ -429,8 +483,8 @@ pub(super) struct Grid {
     pub ys: Vec<f32>,
 }
 
-pub(super) fn grids(content: &Content, frame: Frame, neutral: &HashSet<Vec<u8>>) -> Vec<Grid> {
-    let Some(edges) = edges(content, frame, neutral).map(merge) else {
+pub(super) fn grids(content: &Content, frame: Frame, resources: &RuleResources) -> Vec<Grid> {
+    let Some(edges) = edges(content, frame, resources).map(merge) else {
         return Vec::new();
     };
     detect_grids(&edges)
@@ -456,36 +510,55 @@ fn detect_grids(edges: &[Edge]) -> Vec<Grid> {
     }
     let mut grids = Vec::new();
     for group in groups {
-        if !(3..=513).contains(&group.len()) {
-            continue;
-        }
-        let mut ys = group.iter().map(|e| e.position).collect::<Vec<_>>();
-        ys.sort_by(f32::total_cmp);
         let first = group[0];
-        let mut xs = edges
+        let verticals = edges
             .iter()
             .filter(|e| {
                 !e.horizontal
                     && e.position >= first.start - TOLERANCE
                     && e.position <= first.end + TOLERANCE
-                    && e.start <= ys[0] + TOLERANCE
-                    && e.end >= ys[ys.len() - 1] - TOLERANCE
             })
-            .map(|e| e.position)
             .collect::<Vec<_>>();
-        xs.sort_by(f32::total_cmp);
-        if !(3..=33).contains(&xs.len())
-            || (xs.len() - 1) * (ys.len() - 1) > 4096
-            || (xs[0] - first.start).abs() > TOLERANCE
-            || (xs[xs.len() - 1] - first.end).abs() > TOLERANCE
-            || xs.windows(2).any(|w| w[1] - w[0] < 4.0)
-            || ys.windows(2).any(|w| w[1] - w[0] < 4.0)
-        {
-            continue;
+        let mut ys = group.iter().map(|e| e.position).collect::<Vec<_>>();
+        ys.sort_by(f32::total_cmp);
+        // Separately ruled boxes of the same width (a table and a bordered
+        // block below it) share a width group; only rules joined by a
+        // vertical border belong to one grid.
+        let mut runs: Vec<Vec<f32>> = Vec::new();
+        for y in ys {
+            if let Some(run) = runs.last_mut()
+                && verticals
+                    .iter()
+                    .any(|e| e.start <= run[run.len() - 1] + TOLERANCE && e.end >= y - TOLERANCE)
+            {
+                run.push(y);
+            } else {
+                runs.push(vec![y]);
+            }
         }
-        grids.push(Grid { xs, ys });
-        if grids.len() > 32 {
-            return Vec::new();
+        for ys in runs {
+            if !(3..=513).contains(&ys.len()) {
+                continue;
+            }
+            let mut xs = verticals
+                .iter()
+                .filter(|e| e.start <= ys[0] + TOLERANCE && e.end >= ys[ys.len() - 1] - TOLERANCE)
+                .map(|e| e.position)
+                .collect::<Vec<_>>();
+            xs.sort_by(f32::total_cmp);
+            if !(3..=33).contains(&xs.len())
+                || (xs.len() - 1) * (ys.len() - 1) > 4096
+                || (xs[0] - first.start).abs() > TOLERANCE
+                || (xs[xs.len() - 1] - first.end).abs() > TOLERANCE
+                || xs.windows(2).any(|w| w[1] - w[0] < 4.0)
+                || ys.windows(2).any(|w| w[1] - w[0] < 4.0)
+            {
+                continue;
+            }
+            grids.push(Grid { xs, ys });
+            if grids.len() > 32 {
+                return Vec::new();
+            }
         }
     }
     grids
@@ -496,7 +569,11 @@ mod tests {
     use super::*;
 
     fn parsed_edges(bytes: &[u8], frame: Frame) -> Option<Vec<Edge>> {
-        edges(&Content::decode(bytes).unwrap(), frame, &HashSet::new())
+        edges(
+            &Content::decode(bytes).unwrap(),
+            frame,
+            &RuleResources::default(),
+        )
     }
     #[test]
     fn separate_strokes_and_thin_fills_form_one_complete_grid() {
@@ -529,8 +606,8 @@ mod tests {
         let content = pdf.add_object(Stream::new(Dictionary::new(), vec![]));
         let page =
             pdf.add_object(dictionary! {"Type"=>"Page","Contents"=>content,"Resources"=>resources});
-        let neutral = neutral_states(&pdf, page);
-        assert_eq!(neutral, HashSet::from([b"Plain".to_vec()]));
+        let neutral = rule_resources(&pdf, page);
+        assert_eq!(neutral.states, HashSet::from([b"Plain".to_vec()]));
         // A page's own unsafe or malformed definition shadows an inherited
         // neutral state of the same name.
         let inherited = pdf.add_object(dictionary! {"ExtGState"=>dictionary!{"Near"=>dictionary!{"ca"=>1},"Broken"=>dictionary!{"ca"=>1},"Far"=>dictionary!{"ca"=>1}}});
@@ -542,7 +619,7 @@ mod tests {
             dictionary! {"Type"=>"Page","Parent"=>parent,"Contents"=>content,"Resources"=>own},
         );
         assert_eq!(
-            neutral_states(&pdf, child),
+            rule_resources(&pdf, child).states,
             HashSet::from([b"Far".to_vec()])
         );
         let frame = Frame {
@@ -572,6 +649,75 @@ mod tests {
         }
     }
     #[test]
+    fn image_invocations_and_curved_marks_leave_the_rule_grid_intact() {
+        use lopdf::{Dictionary, Stream, dictionary};
+        let mut pdf = lopdf::Document::with_version("1.7");
+        let image = pdf.add_object(Stream::new(
+            dictionary! {"Subtype"=>"Image","Width"=>1,"Height"=>1},
+            vec![0],
+        ));
+        let form = pdf.add_object(Stream::new(dictionary! {"Subtype"=>"Form"}, vec![]));
+        let resources = pdf.add_object(
+            dictionary! {"XObject"=>dictionary!{"Im0"=>image,"Fm0"=>form,"Im1"=>image}},
+        );
+        let parent_resources = pdf.add_object(dictionary! {"XObject"=>dictionary!{"Fm1"=>image}});
+        let parent = pdf.add_object(dictionary! {"Type"=>"Pages","Resources"=>parent_resources});
+        let own = pdf.add_object(dictionary! {"XObject"=>dictionary!{"Fm1"=>form}});
+        let content = pdf.add_object(Stream::new(Dictionary::new(), vec![]));
+        let page =
+            pdf.add_object(dictionary! {"Type"=>"Page","Contents"=>content,"Resources"=>resources});
+        let child = pdf.add_object(
+            dictionary! {"Type"=>"Page","Parent"=>parent,"Contents"=>content,"Resources"=>own},
+        );
+        let found = rule_resources(&pdf, page);
+        assert_eq!(
+            found.images,
+            HashSet::from([b"Im0".to_vec(), b"Im1".to_vec()])
+        );
+        // A nearer Form of the same name shadows an inherited image.
+        assert!(rule_resources(&pdf, child).images.is_empty());
+        let frame = Frame {
+            x: 0.,
+            y: 0.,
+            width: 300.,
+            height: 400.,
+        };
+        let rules = "20 50 m 220 50 l S 20 100 m 220 100 l S 20 150 m 220 150 l S 20 50 m 20 150 l S 100 50 m 100 150 l S 220 50 m 220 150 l S";
+        // A bullet drawn with curves and an image beside the table.
+        let marks = "q 10 0 0 10 240 60 cm /Im0 Do Q 5 5 m 5 8 8 8 8 5 c 8 2 5 2 5 5 c f";
+        for (extra, grids) in [(marks, Some(1)), ("/Fm0 Do", None), ("/Missing Do", None)] {
+            let bytes = format!("{rules} {extra}");
+            let found = edges(
+                &Content::decode(bytes.as_bytes()).unwrap(),
+                frame,
+                &rule_resources(&pdf, page),
+            )
+            .map(|edges| detect_grids(&merge(edges)).len());
+            assert_eq!(found, grids, "{extra}");
+        }
+    }
+
+    #[test]
+    fn a_same_width_box_below_a_table_is_a_separate_region() {
+        let frame = Frame {
+            x: 0.,
+            y: 0.,
+            width: 300.,
+            height: 400.,
+        };
+        // A three-row ruled table, then a bordered block of the same width
+        // below it whose rules are not joined to the table's.
+        let table = "20 300 m 220 300 l S 20 330 m 220 330 l S 20 360 m 220 360 l S 20 390 m 220 390 l S 20 300 m 20 390 l S 120 300 m 120 390 l S 220 300 m 220 390 l S";
+        let block = "20.4 200 m 219.6 200 l S 20.4 280 m 219.6 280 l S 20.4 200 m 20.4 280 l S 219.6 200 m 219.6 280 l S";
+        let bytes = format!("{table} {block}");
+        let grids = detect_grids(&merge(parsed_edges(bytes.as_bytes(), frame).unwrap()));
+        assert_eq!(grids.len(), 1);
+        assert_eq!(grids[0].ys.len(), 4);
+        assert!((grids[0].ys[0] - 300.).abs() < 0.1);
+        assert_eq!(grids[0].xs.len(), 3);
+    }
+
+    #[test]
     fn clipped_incomplete_or_transparent_rules_do_not_invent_tables() {
         let frame = Frame {
             x: 0.,
@@ -582,7 +728,32 @@ mod tests {
         let bytes=b"0 0 10 10 re W n 20 50 m 220 50 l S 20 100 m 220 100 l S 20 150 m 220 150 l S 20 50 m 20 150 l S 100 50 m 100 150 l S 220 50 m 220 150 l S";
         assert!(detect_grids(&merge(parsed_edges(bytes, frame).unwrap())).is_empty());
         assert!(parsed_edges(b"/GS gs", frame).is_none());
-        assert!(parsed_edges(b"0 0 m 30 0 l 40 0 40 0.2 30 0.2 c h f", frame).is_none());
-        assert!(parsed_edges(b"0 0 m 30 40 l W n", frame).is_none());
+        // A curved path contributes no edges instead of declining the page,
+        // and cannot define a clip.
+        assert!(
+            parsed_edges(b"0 0 m 30 0 l 40 0 40 0.2 30 0.2 c h f", frame)
+                .unwrap()
+                .is_empty()
+        );
+        // Rules inside a curved or polygonal clip are withheld until the
+        // graphics state is restored; rules after it still count.
+        let rules = "20 50 m 220 50 l S 20 100 m 220 100 l S 20 150 m 220 150 l S 20 50 m 20 150 l S 100 50 m 100 150 l S 220 50 m 220 150 l S";
+        for clip in [
+            "0 0 m 300 0 l 300 390 300 400 290 400 c 0 400 l h W n",
+            "0 0 m 300 0 l 0 400 l h W n",
+        ] {
+            let inside = format!("q {clip} {rules} Q");
+            let edges = parsed_edges(inside.as_bytes(), frame).unwrap();
+            assert!(detect_grids(&merge(edges)).is_empty(), "{clip}");
+            let after = format!("q {clip} Q {rules}");
+            let edges = parsed_edges(after.as_bytes(), frame).unwrap();
+            assert_eq!(detect_grids(&merge(edges)).len(), 1, "{clip}");
+        }
+        assert!(parsed_edges(b"/Im0 Do", frame).is_none());
+        assert!(
+            parsed_edges(b"0 0 m 30 40 l W n", frame)
+                .unwrap()
+                .is_empty()
+        );
     }
 }

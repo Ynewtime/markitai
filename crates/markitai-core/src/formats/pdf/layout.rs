@@ -16,6 +16,7 @@ impl Layout {
     pub(super) fn read(
         bytes: &[u8],
         selected: &HashSet<u32>,
+        geometry: &BTreeMap<u32, (Frame, Vec<Grid>)>,
     ) -> std::result::Result<Self, &'static str> {
         let (items, rotations) =
             pdf_inspector::extract_text_with_positions_and_rotations_mem_with_options(
@@ -33,7 +34,20 @@ impl Layout {
             if rotations.contains_key(&item.page) {
                 continue;
             }
-            if matches!(item.item_type, ItemType::Text) && valid(&item) {
+            // Table cells often use a smaller size than prose; counting them
+            // would make ordinary paragraphs look like headings.
+            let in_table = geometry.get(&item.page).is_some_and(|(_, grids)| {
+                let (x, y) = (item.x + item.width / 2., item.y + item.height / 2.);
+                grids.iter().any(|grid| {
+                    x >= grid.xs[0]
+                        && x <= grid.xs[grid.xs.len() - 1]
+                        && y >= grid.ys[0]
+                        && y <= grid.ys[grid.ys.len() - 1]
+                })
+            });
+            // Fixed-pitch code blocks do not define the body size either.
+            let code = item.fixed_pitch == Some(true);
+            if matches!(item.item_type, ItemType::Text) && valid(&item) && !in_table && !code {
                 *sizes
                     .entry((item.font_size * 10.).round() as i32)
                     .or_default() += item.text.chars().filter(|c| !c.is_whitespace()).count();
@@ -475,10 +489,13 @@ fn render(
     grids: Vec<Grid>,
     baseline: &str,
 ) -> Option<String> {
+    // Link annotations carry a target, not page text; the existing reader
+    // does not render them either. Form-field values are page text whose
+    // semantics this reconstruction does not know.
     if items.len() > MAX_PAGE_ITEMS
         || items
             .iter()
-            .any(|i| matches!(i.item_type, ItemType::Link(_) | ItemType::FormField))
+            .any(|i| matches!(i.item_type, ItemType::FormField))
     {
         return None;
     }
@@ -815,7 +832,7 @@ mod tests {
             ops.extend(text("F1", 12, 350, y, "Right column paragraph."));
         }
         let bytes = pdf(vec![ops], None);
-        let mut layout = Layout::read(&bytes, &HashSet::from([1])).unwrap();
+        let mut layout = Layout::read(&bytes, &HashSet::from([1]), &BTreeMap::new()).unwrap();
         let doc = lopdf::Document::load_mem(&bytes).unwrap();
         let id = doc.get_pages()[&1];
         let frame = super::super::geometry::frame(&doc, id).unwrap();
@@ -823,7 +840,7 @@ mod tests {
         let grids = super::super::geometry::grids(
             &content.unwrap(),
             frame,
-            &super::super::geometry::neutral_states(&doc, id),
+            &super::super::geometry::rule_resources(&doc, id),
         );
         let baseline = pdf_inspector::extract_pages_markdown_mem(&bytes, None).unwrap();
         assert!(
@@ -936,6 +953,81 @@ mod tests {
                 .matches("|Name|Square|Notes|\n|---|---|---|")
                 .count(),
             3,
+            "{markdown}"
+        );
+    }
+
+    /// Link annotations do not block refinement, and neither table cells nor
+    /// a fixed-pitch code block define the body size that headings exceed.
+    #[test]
+    fn linked_page_with_small_table_and_code_keeps_prose_as_paragraphs() {
+        let mut pdf = lopdf::Document::with_version("1.7");
+        let pages_id = pdf.new_object_id();
+        let regular =
+            pdf.add_object(dictionary! {"Type"=>"Font","Subtype"=>"Type1","BaseFont"=>"Helvetica"});
+        let bold = pdf.add_object(
+            dictionary! {"Type"=>"Font","Subtype"=>"Type1","BaseFont"=>"Helvetica-Bold"},
+        );
+        let code =
+            pdf.add_object(dictionary! {"Type"=>"Font","Subtype"=>"Type1","BaseFont"=>"Courier"});
+        let resources =
+            pdf.add_object(dictionary! {"Font"=>dictionary!{"F1"=>regular,"F2"=>bold,"F3"=>code}});
+        let mut ops = text("F2", 24, 40, 760, "Print acceptance");
+        ops.extend(text(
+            "F1",
+            11,
+            40,
+            730,
+            "A document with a small table and a code block.",
+        ));
+        ops.extend(text(
+            "F1",
+            11,
+            40,
+            710,
+            "Visit the external site for details.",
+        ));
+        for y in [690, 680, 670, 660] {
+            ops.extend(text(
+                "F3",
+                8,
+                40,
+                y,
+                "code code code code code code code code code code code",
+            ));
+        }
+        for x in [40, 200, 360, 520] {
+            ops.push(Operation::new("m", vec![x.into(), 400.into()]));
+            ops.push(Operation::new("l", vec![x.into(), 640.into()]));
+            ops.push(Operation::new("S", vec![]));
+        }
+        for y in (400..=640).step_by(20) {
+            ops.push(Operation::new("m", vec![40.into(), y.into()]));
+            ops.push(Operation::new("l", vec![520.into(), y.into()]));
+            ops.push(Operation::new("S", vec![]));
+        }
+        for (row, y) in (0..12).map(|index| 626 - 20 * index).enumerate() {
+            ops.extend(text("F1", 9, 46, y, &format!("Row {row} label text")));
+            ops.extend(text("F1", 9, 206, y, &format!("value {row} value")));
+            ops.extend(text("F1", 9, 366, y, "long cell text long"));
+        }
+        let content = Content { operations: ops }.encode().unwrap();
+        let stream = pdf.add_object(Stream::new(Dictionary::new(), content));
+        let link = pdf.add_object(dictionary! {"Type"=>"Annot","Subtype"=>"Link","Rect"=>vec![40.into(),706.into(),240.into(),720.into()],"A"=>dictionary!{"S"=>"URI","URI"=>Object::string_literal("https://example.test/")}});
+        let page = pdf.add_object(dictionary! {"Type"=>"Page","Parent"=>pages_id,"Contents"=>stream,"Resources"=>resources,"Annots"=>vec![link.into()]});
+        pdf.objects.insert(pages_id,dictionary!{"Type"=>"Pages","Count"=>1,"Kids"=>vec![page.into()],"MediaBox"=>vec![0.into(),0.into(),600.into(),800.into()]}.into());
+        let catalog = pdf.add_object(dictionary! {"Type"=>"Catalog","Pages"=>pages_id});
+        pdf.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        pdf.save_to(&mut bytes).unwrap();
+        let markdown = super::super::extract(&bytes).unwrap().markdown;
+        assert!(markdown.contains("# **Print acceptance**"), "{markdown}");
+        for prose in ["A document with a small table", "Visit the external site"] {
+            let line = markdown.lines().find(|line| line.contains(prose)).unwrap();
+            assert!(!line.starts_with('#'), "{line}\n{markdown}");
+        }
+        assert!(
+            markdown.contains("|Row 0 label text|value 0 value|long cell text long|"),
             "{markdown}"
         );
     }

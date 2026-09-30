@@ -136,7 +136,11 @@ that an untagged PDF declared it a semantic header.
 
 Before replacing page Markdown, decoded alphanumeric character counts must agree
 with the existing reader. This is a conservative agreement check, not proof that
-two decoders are independently correct. Unknown links or form-field semantics,
+two decoders are independently correct. Link annotations carry targets, not page
+text, and neither reader renders them, so they do not block refinement. The body
+size that headings must exceed ignores text inside detected table grids and
+fixed-pitch text, so a table- or code-heavy page keeps its prose as paragraphs.
+Unknown form-field semantics,
 rotated pages or text, invalid geometry, raised/lowered runs and ambiguous
 side-by-side prose retain the existing page reader's output. A page can therefore
 remain unchanged even when another page gains layout fidelity.
@@ -174,9 +178,13 @@ PDF figure also needs font programs, Form matrices, clipping, shadings, blend
 modes and masks. Drawing table borders from a bounded subset of PDF operators
 does not establish those rendering semantics.
 
-Table geometry is deliberately disabled when curves, resource-dependent colours,
-transparency, Form/image invocations, shading or nonrectangular clipping make its
-verdict uncertain. A named graphics state is accepted only when it changes nothing
+Table geometry is deliberately disabled when resource-dependent colours,
+transparency, Form invocations, shading or inline images make its verdict
+uncertain. A path containing curves contributes no edges, image XObject
+invocations are passed over, and rules inside a curved or polygonal clip are
+withheld until its graphics state is restored. Horizontal rules of the same width
+form one grid only while vertical borders join them, so a bordered block below a
+table of the same width stays separate. A named graphics state is accepted only when it changes nothing
 the verdict depends on: full opacity, a Normal or Compatible blend mode, no soft
 mask, and otherwise only line and rendering parameters. Chrome's print output sets
 such a state around its per-cell border rectangles, so its continued tables are
