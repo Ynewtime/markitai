@@ -606,6 +606,9 @@ fn format_urls(text: &str) -> String {
         let open_brackets = prefix.matches('[').count();
         let close_brackets = prefix.matches(']').count();
         let inside_link_text = open_brackets > close_brackets;
+        // A URL in an inline code span (`` `curl https://…` ``) is code.
+        let line_start = prefix.rfind('\n').map_or(0, |i| i + 1);
+        let inside_code_span = prefix[line_start..].matches('`').count() % 2 == 1;
 
         // Ensure mat boundaries are valid char boundaries
         let safe_last_end = if text.is_char_boundary(last_end) {
@@ -636,7 +639,7 @@ fn format_urls(text: &str) -> String {
             pos
         };
 
-        if already_linked || inside_link_text {
+        if already_linked || inside_link_text || inside_code_span {
             // Already formatted, keep as-is
             if safe_last_end <= safe_end {
                 result.push_str(&text[safe_last_end..safe_end]);
@@ -1131,6 +1134,15 @@ mod tests {
                 assert_eq!(remove_page_numbers(&input), format!("{inline}\n\n\nEnd."));
             }
         }
+    }
+
+    #[test]
+    fn a_url_in_an_inline_code_span_is_not_linked() {
+        let result = format_urls("Run `curl https://example.com/a` or see https://example.com/b");
+        assert_eq!(
+            result,
+            "Run `curl https://example.com/a` or see [https://example.com/b](https://example.com/b)"
+        );
     }
 
     #[test]

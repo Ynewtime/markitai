@@ -480,9 +480,10 @@ pub struct TextItem {
     /// two advances differ but fewer than a dozen share one, and for items
     /// that don't come from a font. Many producers write `/Flags 4` whatever
     /// the face, so the
-    /// flag is only ever read as a yes. Runs are not kept apart by it: an
-    /// item merged from several runs keeps its first run's value, like
-    /// `font` and `font_weight`.
+    /// flag is only ever read as a yes. Runs known to be fixed-pitch are not
+    /// merged with runs that are not (an inline code literal keeps its own
+    /// item); otherwise an item merged from several runs keeps its first
+    /// run's value, like `font` and `font_weight`.
     pub fixed_pitch: Option<bool>,
     /// The fill (non-stroking) colour in force when the run was shown, as
     /// 8-bit sRGB `[red, green, blue]`: the colour its glyphs are filled
@@ -716,6 +717,17 @@ pub(crate) fn stacked_fraction_slash(prev: &TextItem, item: &TextItem) -> bool {
         && prev.x < item.x + item.width
 }
 
+/// Whether a run renders as inline code: set in a fixed-pitch face, and
+/// neither link styling (a link, an underline, a bare URL) nor holding a
+/// backtick of its own.
+fn is_inline_code(item: &TextItem, text: &str) -> bool {
+    (item.fixed_pitch == Some(true) || crate::markdown::classify::is_monospace_font(&item.font))
+        && !item.is_underline
+        && !matches!(item.item_type, ItemType::Link(_))
+        && !crate::markdown::classify::is_bare_url(text)
+        && !text.contains('`')
+}
+
 /// Append an item's text, wrapping a super/subscript run in its tag.
 /// Shared by line rendering and table-cell joining so both emit the same
 /// markup for a run.
@@ -752,7 +764,22 @@ impl TextLine {
         format_italic: bool,
         format_decorations: bool,
     ) -> String {
-        if !format_bold && !format_italic && !format_decorations {
+        self.text_with_markup(format_bold, format_italic, format_decorations, false)
+    }
+
+    /// [`Self::text_with_formatting`], with runs set in a fixed-pitch face
+    /// as inline code (`` `name` ``) when `format_code` is set. A code span
+    /// is exclusive like a decoration: no `**`/`*` inside it. Links,
+    /// underlined runs and bare URLs in a mono face are link styling, and a
+    /// run holding a backtick is left as text rather than escaped.
+    pub fn text_with_markup(
+        &self,
+        format_bold: bool,
+        format_italic: bool,
+        format_decorations: bool,
+        format_code: bool,
+    ) -> String {
+        if !format_bold && !format_italic && !format_decorations && !format_code {
             return self.text_plain();
         }
 
@@ -763,6 +790,7 @@ impl TextLine {
         let mut current_italic = false;
         let mut current_underline = false;
         let mut current_strikeout = false;
+        let mut current_code = false;
 
         for (i, item) in self.items.iter().enumerate() {
             let text = item.text.as_str();
@@ -803,10 +831,14 @@ impl TextLine {
             // and mixed nesting breaks that. A struck-and-underlined item is
             // emitted as struck text because deletion is the stronger semantic
             // distinction in redline documents.
-            let own_strikeout = format_decorations && item.is_strikeout;
-            let own_underline = format_decorations && item.is_underline && !own_strikeout;
-            let own_bold = format_bold && item.is_bold && !own_underline && !own_strikeout;
-            let own_italic = format_italic && item.is_italic && !own_underline && !own_strikeout;
+            let own_code = format_code && !is_script && is_inline_code(item, text_trimmed);
+            let own_strikeout = format_decorations && item.is_strikeout && !own_code;
+            let own_underline =
+                format_decorations && item.is_underline && !own_strikeout && !own_code;
+            let own_bold =
+                format_bold && item.is_bold && !own_underline && !own_strikeout && !own_code;
+            let own_italic =
+                format_italic && item.is_italic && !own_underline && !own_strikeout && !own_code;
             // A script run inherits whatever body style is open around it
             // (see above) — its own bold/italic is noise (italic math indices
             // would shatter into `*<sub>t</sub>*` fragments) — but a run
@@ -834,7 +866,12 @@ impl TextLine {
                 None
             };
 
-            // Close previous styles if they change
+            // Close previous styles if they change; a code span first, as
+            // nothing opens inside it.
+            if current_code && !own_code {
+                result.push('`');
+                current_code = false;
+            }
             if current_italic && !item_italic {
                 result.push('*');
                 current_italic = false;
@@ -874,6 +911,10 @@ impl TextLine {
                 result.push('*');
                 current_italic = true;
             }
+            if own_code && !current_code {
+                result.push('`');
+                current_code = true;
+            }
 
             if i > 0 && stacked_fraction_slash(&self.items[i - 1], item) {
                 result.push('/');
@@ -893,6 +934,9 @@ impl TextLine {
         }
 
         // Close any remaining open styles
+        if current_code {
+            result.push('`');
+        }
         if current_italic {
             result.push('*');
         }
@@ -1034,6 +1078,37 @@ mod formatting_tests {
     /// A body-text item at 12pt on the shared baseline.
     fn body(text: &str, x: f32, width: f32) -> TextItem {
         item(text, x, width, false)
+    }
+
+    /// A fixed-pitch run at 12pt on the body baseline.
+    fn mono(text: &str, x: f32, width: f32) -> TextItem {
+        let mut it = item(text, x, width, false);
+        it.font = "Menlo-Regular".into();
+        it.fixed_pitch = Some(true);
+        it
+    }
+
+    #[test]
+    fn fixed_pitch_runs_in_prose_are_inline_code() {
+        let mut bold_code = mono("SanityImage", 90.0, 60.0);
+        bold_code.is_bold = true;
+        let line = line(vec![
+            body("The", 0.0, 20.0),
+            mono("mode", 23.0, 24.0),
+            body("prop sets", 50.0, 37.0),
+            bold_code,
+            body("at", 153.0, 10.0),
+            mono("https://example.com/a", 166.0, 90.0),
+        ]);
+        assert_eq!(
+            line.text_with_markup(true, true, true, true),
+            "The `mode` prop sets `SanityImage` at https://example.com/a"
+        );
+        // Without the code flag the historical rendering is unchanged.
+        assert_eq!(
+            line.text_with_formatting(true, true, true),
+            "The mode prop sets **SanityImage** at https://example.com/a"
+        );
     }
 
     /// A script run at 8pt, `shift` points off the 12pt body baseline

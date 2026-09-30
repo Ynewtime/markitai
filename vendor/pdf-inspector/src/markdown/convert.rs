@@ -1021,11 +1021,13 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
         prev_x = line_x;
         prev_size = line_size;
 
-        // Get text with optional bold/italic formatting
-        let text = line.text_with_formatting(
+        // Get text with optional bold/italic formatting; fixed-pitch runs
+        // in prose are inline code.
+        let text = line.text_with_markup(
             options.detect_bold,
             options.detect_italic,
             options.detect_underline,
+            options.detect_code,
         );
         let trimmed = text.trim();
 
@@ -1646,11 +1648,13 @@ pub fn to_markdown_from_lines(lines: Vec<TextLine>, options: MarkdownOptions) ->
         let prior_y = prev_y;
         prev_y = line.y;
 
-        // Get text with optional bold/italic formatting
-        let text = line.text_with_formatting(
+        // Get text with optional bold/italic formatting; fixed-pitch runs
+        // in prose are inline code.
+        let text = line.text_with_markup(
             options.detect_bold,
             options.detect_italic,
             options.detect_underline,
+            options.detect_code,
         );
         let trimmed = text.trim();
 

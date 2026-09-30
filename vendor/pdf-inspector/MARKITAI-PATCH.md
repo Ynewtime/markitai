@@ -6,7 +6,7 @@ upstream commit and every copied file's original checksum. The original MIT
 license and `external/bcmaps/LICENSE` remain in place. No Cargo registry source
 was modified. The workspace coordinator owns the path patch and lockfile.
 
-The local changes are limited to eleven upstream files:
+The local changes are limited to thirteen upstream files:
 
 - `src/text_utils.rs`: page-number recognition requires a complete folio
   expression, preserving paragraphs such as `Page 42 explains the result` and
@@ -51,13 +51,21 @@ The local changes are limited to eleven upstream files:
   leading spaces are kept and fixed-pitch runs are indented by their offset in
   glyph advances. A run is a mono-set link only when it is a bare URL.
   Fixed-pitch lines do not set the body size unless nothing else does.
+- `src/types.rs`, `src/markdown/mod.rs` (the `classify` module is visible to
+  the crate), with `src/extractor/mod.rs` and `src/markdown/postprocess.rs`:
+  runs known to be fixed-pitch are not merged with proportional ones, and
+  `TextLine::text_with_markup` renders them in prose as inline code spans
+  (exclusive like a decoration; mono links, bare URLs and runs holding a
+  backtick stay text). `text_with_formatting` is unchanged. A URL inside an
+  inline code span is not turned into a link.
 
-  With these changes, the isolated copy's unit tests give 1,603 passed and the
+  With these changes, the isolated copy's unit tests give 1,606 passed and the
   same 21 failed. Each added test fails on the unmodified code it covers.
 
 The page-level OCR, font decoding, repair, limits and reliability routing remain
 the upstream paths. Markitai's own visibility warnings and layout agreement
-checks remain enabled. No new public API or optional runtime dependency is added.
+checks remain enabled. The only new public API is `TextLine::text_with_markup`; no optional runtime
+dependency is added.
 Opacity, masks, occlusion, full text clipping and mixed-visibility marked content
 are not claimed to be solved by this patch.
 

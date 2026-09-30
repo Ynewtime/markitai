@@ -1504,6 +1504,7 @@ fn tracked_run_space_floor(group: &[&TextItem], start: usize) -> Option<(usize, 
             || next.is_italic != first.is_italic
             || next.is_underline != first.is_underline
             || next.is_strikeout != first.is_strikeout
+            || is_fixed_pitch(next) != is_fixed_pitch(first)
         {
             break;
         }
@@ -2026,6 +2027,11 @@ fn glyph_run_word_gap_floor(gaps: &[f32]) -> Option<f32> {
     }
 }
 
+/// Whether a run's font is known to be fixed-pitch.
+fn is_fixed_pitch(item: &TextItem) -> bool {
+    item.fixed_pitch == Some(true)
+}
+
 /// Bold and plain runs are kept apart whatever said they were bold: with
 /// `PositionOptions::bold_from_weight` the weight class has already had its
 /// say in `is_bold` (see `content_stream::read_bold_from_weight`), so runs
@@ -2406,7 +2412,11 @@ fn merge_text_items_with_clips(
                     }
                     _ => threshold,
                 };
-                let bold_boundary = next.is_bold != first.is_bold;
+                // Fixed-pitch runs stay apart from proportional ones like
+                // bold runs from plain: an inline code literal keeps its
+                // own item for the markdown it is rendered to.
+                let bold_boundary = next.is_bold != first.is_bold
+                    || is_fixed_pitch(next) != is_fixed_pitch(first);
                 let explicit_bold_space = bold_boundary
                     && (text.ends_with(char::is_whitespace)
                         || next_text.starts_with(char::is_whitespace));
@@ -5153,6 +5163,24 @@ mod tests {
         let merged = merge_text_items(items);
         assert_eq!(merged.len(), 1, "got {:?}", merged);
         assert_eq!(merged[0].text, "ROLANDO T. ACOSTA, P.J.");
+    }
+
+    #[test]
+    fn a_fixed_pitch_run_stays_apart_from_the_prose_around_it() {
+        // An inline code literal keeps its own item, with the word spaces
+        // an unstyled merge would have given it.
+        let mut items = vec![
+            make_item_fs("The", 100.0, 700.0, 20.0, 12.0),
+            make_item_fs("mode", 123.0, 700.0, 24.0, 12.0),
+            make_item_fs("prop", 150.0, 700.0, 22.0, 12.0),
+        ];
+        for item in &mut items {
+            item.fixed_pitch = Some(false);
+        }
+        items[1].fixed_pitch = Some(true);
+        let merged = merge_text_items(items);
+        let texts: Vec<&str> = merged.iter().map(|i| i.text.trim()).collect();
+        assert_eq!(texts, ["The", "mode", "prop"]);
     }
 
     #[test]

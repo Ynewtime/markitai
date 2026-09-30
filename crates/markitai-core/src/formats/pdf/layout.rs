@@ -61,7 +61,7 @@ impl Layout {
         let mut headings = Vec::<f32>::new();
         for (&size, _) in sizes.iter().rev() {
             let size = size as f32 / 10.;
-            if size > body * 1.2
+            if size > body * 1.15
                 && headings
                     .last()
                     .is_none_or(|previous| (*previous - size).abs() > size * 0.05)
@@ -158,17 +158,31 @@ struct Style {
     italic: bool,
     underline: bool,
     strike: bool,
+    code: bool,
 }
 
 impl From<&TextItem> for Style {
     fn from(item: &TextItem) -> Self {
+        let text = item.text.trim();
         Self {
             bold: item.is_bold,
             italic: item.is_italic,
             underline: item.is_underline,
             strike: item.is_strikeout,
+            // A fixed-pitch run in prose is an inline code literal; a mono
+            // link or bare URL is link styling, and a run holding a
+            // backtick stays text rather than being escaped.
+            code: item.fixed_pitch == Some(true)
+                && !item.is_underline
+                && !is_bare_url(text)
+                && !text.contains('`'),
         }
     }
+}
+
+/// Whether a run is nothing but a URL: one word naming a scheme or `www.`.
+fn is_bare_url(text: &str) -> bool {
+    !text.contains(char::is_whitespace) && (text.contains("://") || text.starts_with("www."))
 }
 
 struct Run {
@@ -272,6 +286,16 @@ fn markdown(runs: &[Run]) -> String {
             output.push(' ');
         }
         let style = run.style;
+        // Code is verbatim and exclusive: no emphasis or escaping inside.
+        if style.code {
+            output.push('`');
+            output.push_str(text);
+            output.push('`');
+            if run.text.ends_with(char::is_whitespace) {
+                output.push(' ');
+            }
+            continue;
+        }
         if style.bold {
             output.push_str("**");
         }
@@ -357,9 +381,7 @@ fn is_code(line: &Line, inside: bool) -> bool {
         let text = item.text.trim();
         let count = text.chars().count();
         all += count;
-        let bare_url = !text.contains(char::is_whitespace)
-            && (text.contains("://") || text.starts_with("www."));
-        let link = !inside && (item.is_underline || bare_url);
+        let link = !inside && (item.is_underline || is_bare_url(text));
         if item.fixed_pitch == Some(true) && !link {
             mono += count;
         }
@@ -817,6 +839,41 @@ mod tests {
             output.markdown.contains(
                 "greeting:\n\n```\nfn main() {\n    println!(\"<hi>\");\n}\n\n// see https://example.com/a\n```\n\nThe program takes"
             ),
+            "{}",
+            output.markdown
+        );
+    }
+
+    #[test]
+    fn inline_fixed_pitch_words_are_code_and_a_browser_h3_is_a_heading() {
+        // Chrome's `<h3>` is 1.17 em; a `<code>` word in prose is set in a
+        // fixed-pitch face beside the proportional text.
+        let mut page = text("F2", 14, 40, 740, "Choosing a mode");
+        let mut line = text("F1", 12, 40, 710, "Set");
+        line.extend(text("F3", 12, 63, 710, "mode"));
+        line.extend(text(
+            "F1",
+            12,
+            95,
+            710,
+            "to contain when the whole picture must stay visible.",
+        ));
+        page.extend(line);
+        page.extend(text(
+            "F1",
+            12,
+            40,
+            696,
+            "Cover crops the picture to the box it is given instead.",
+        ));
+        let output = super::super::extract(&pdf(vec![page], None)).unwrap();
+        assert!(
+            output.markdown.contains("# **Choosing a mode**"),
+            "{}",
+            output.markdown
+        );
+        assert!(
+            output.markdown.contains("Set `mode` to contain when"),
             "{}",
             output.markdown
         );
