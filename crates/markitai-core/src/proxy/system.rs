@@ -377,13 +377,11 @@ fn read_registry() -> Option<WindowsValues> {
         Some(bytes)
     }
     fn text(bytes: Vec<u8>) -> Option<String> {
-        if bytes.len() % 2 != 0 {
+        let (pairs, rest) = bytes.as_chunks::<2>();
+        if !rest.is_empty() {
             return None;
         }
-        let mut words: Vec<u16> = bytes
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-            .collect();
+        let mut words: Vec<u16> = pairs.iter().map(|pair| u16::from_le_bytes(*pair)).collect();
         while words.last() == Some(&0) {
             words.pop();
         }
