@@ -155,6 +155,27 @@ while DOCX, XLS/XLSX and EPUB output does not; headings carry no trailing spaces
 Presentation output has no trailing whitespace on a line and collapses the blank
 runs that text-free shapes leave, as the reference's final pass does.
 
+Word 97 files saved by the macOS exporter (TextEdit, `textutil`) declare a mini
+stream no stream uses and write it inconsistently: its MiniFAT chains unused
+mini sectors to sector 0, or the FAT is one sector short so the exporter's own
+directory, MiniFAT and mini-stream sectors lie beyond it. Strict OLE readers,
+the reference's included, reject every such file. When the original fails, a
+bounded repair reads a copy that appends the missing FAT entries (extending
+the directory while its entries name siblings not yet read) and detaches the
+unused mini stream; a file whose mini stream holds a stream is never changed,
+the original error stands if the copy fails too, and a warning reports the
+repair ([record](validation/office-quality-round42.md)).
+
+Adjacent text runs of one style render as one run, so a word the source split
+into runs (RTF writes each `\u` character as its own; Word splits at revision
+marks) keeps one emphasis span. A source list label that is only digits becomes
+`1.`, a bullet glyph becomes the list's bullet, and other labels stay as the
+source wrote them. In document formats (not spreadsheets) a table whose rows
+never hold two non-empty cells, and whose cells hold a table or several blocks
+with content, lays out a saved web page: its cells are written as the document's
+blocks. A table nested in a data table's cell becomes one line per row. Tables
+of single paragraphs keep their structure even with empty columns.
+
 The renderer retains referenced anchors and omits unused ones. EPUB links within
 the assembled book keep working through these anchors; they intentionally differ
 from the reference's links to source XHTML files that are not exported. DOCX
