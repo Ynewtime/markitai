@@ -2174,6 +2174,9 @@ fn serialize_clean(
     ) {
         return Ok(());
     }
+    if name == "table" && serialize_table(element, base, output, depth, notes, definition)? {
+        return Ok(());
+    }
     // Canonicalize lazy images without retaining arbitrary event or style attributes.
     let src = value
         .attr("data-src")
@@ -2263,6 +2266,170 @@ fn serialize_clean(
 
 /// An element's children as sanitized HTML; `name` decides whether text next
 /// to block boundaries is trimmed.
+/// Writes a table with header cells as a regular grid for htmd, which keeps
+/// only the first row's `th` cells as the header and only `td` cells after it:
+/// row headers, a header row's data cells and spanned positions would be
+/// dropped or shift the columns. The grid has one header row (the first
+/// `thead` row or a first row of only `th` cells, otherwise empty cells) and
+/// body rows of `td` cells; each span's other positions are empty cells.
+/// Tables without header cells, and tables nested in a cell, keep htmd's
+/// plain rendering, which also unwraps layout tables.
+fn serialize_table(
+    table: ElementRef<'_>,
+    base: Option<&Url>,
+    output: &mut String,
+    depth: usize,
+    notes: &Footnotes<'_>,
+    definition: bool,
+) -> Result<bool> {
+    const MAX_SPAN: usize = 64;
+    const MAX_COLUMNS: usize = 256;
+    if table
+        .ancestors()
+        .filter_map(ElementRef::wrap)
+        .any(|parent| matches!(parent.value().name(), "td" | "th"))
+    {
+        return Ok(false);
+    }
+    let mut caption = None;
+    let mut rows = Vec::new();
+    for child in table.child_elements() {
+        match child.value().name() {
+            "caption" if caption.is_none() => caption = Some(child),
+            "tr" => rows.push((child, false)),
+            section @ ("thead" | "tbody" | "tfoot") => rows.extend(
+                child
+                    .child_elements()
+                    .filter(|row| row.value().name() == "tr")
+                    .map(|row| (row, section == "thead")),
+            ),
+            _ => {}
+        }
+    }
+    rows.retain(|(row, _)| !is_hidden(*row));
+    fn cells<'a>(row: ElementRef<'a>) -> impl Iterator<Item = ElementRef<'a>> {
+        row.child_elements()
+            .filter(|cell| matches!(cell.value().name(), "td" | "th"))
+    }
+    if !rows
+        .iter()
+        .any(|(row, head)| *head || cells(*row).any(|cell| cell.value().name() == "th"))
+    {
+        return Ok(false);
+    }
+    let header = rows.iter().position(|(_, head)| *head).or_else(|| {
+        rows.first()
+            .is_some_and(|(row, _)| cells(*row).all(|cell| cell.value().name() == "th"))
+            .then_some(0)
+    });
+    if let Some(index) = header {
+        let row = rows.remove(index);
+        rows.insert(0, row);
+    }
+    let span = |cell: ElementRef<'_>, attribute: &str| {
+        cell.value()
+            .attr(attribute)
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .map_or(1, |value| value.min(MAX_SPAN))
+    };
+    // `carry[column]`: rows below the current one still covered by a rowspan.
+    let mut carry: Vec<usize> = Vec::new();
+    let mut grid = Vec::with_capacity(rows.len());
+    for (row, _) in &rows {
+        let covered: Vec<bool> = carry.iter().map(|rows| *rows > 0).collect();
+        for rows in &mut carry {
+            *rows = rows.saturating_sub(1);
+        }
+        let mut line: Vec<Option<ElementRef<'_>>> = Vec::new();
+        for cell in cells(*row) {
+            while covered.get(line.len()).copied().unwrap_or(false) {
+                line.push(None);
+            }
+            let start = line.len();
+            line.push(Some(cell));
+            line.extend(std::iter::repeat_n(None, span(cell, "colspan") - 1));
+            if line.len() > MAX_COLUMNS {
+                return Ok(false);
+            }
+            if carry.len() < line.len() {
+                carry.resize(line.len(), 0);
+            }
+            let below = span(cell, "rowspan") - 1;
+            for rows in &mut carry[start..line.len()] {
+                *rows = below;
+            }
+        }
+        grid.push(line);
+    }
+    let width = grid.iter().map(Vec::len).max().unwrap_or(0);
+    if width == 0 {
+        return Ok(false);
+    }
+    let empty = |line: &[Option<ElementRef<'_>>]| {
+        line.iter().flatten().all(|cell| {
+            is_hidden(*cell)
+                || (cell.text().all(|text| text.trim().is_empty())
+                    && !cell
+                        .descendants()
+                        .filter_map(ElementRef::wrap)
+                        .any(|node| node.value().name() == "img"))
+        })
+    };
+    if let Some(caption) = caption.filter(|caption| !is_hidden(*caption)) {
+        output.push_str("<p>");
+        serialize_children(
+            caption, "caption", false, None, base, output, depth, notes, definition,
+        )?;
+        output.push_str("</p>");
+    }
+    let cell = |tag: &str, cell: Option<ElementRef<'_>>, output: &mut String| -> Result<()> {
+        output.push('<');
+        output.push_str(tag);
+        output.push('>');
+        if let Some(cell) = cell.filter(|cell| !is_hidden(*cell)) {
+            let name = cell.value().name();
+            serialize_children(
+                cell,
+                name,
+                false,
+                None,
+                base,
+                output,
+                depth + 2,
+                notes,
+                definition,
+            )?;
+        }
+        output.push_str("</");
+        output.push_str(tag);
+        output.push('>');
+        Ok(())
+    };
+    output.push_str("<table><thead><tr>");
+    let body = if header.is_some() {
+        for column in 0..width {
+            cell("th", grid[0].get(column).copied().flatten(), output)?;
+        }
+        &grid[1..]
+    } else {
+        for _ in 0..width {
+            cell("th", None, output)?;
+        }
+        &grid[..]
+    };
+    output.push_str("</tr></thead><tbody>");
+    for line in body.iter().filter(|line| !empty(line)) {
+        output.push_str("<tr>");
+        for column in 0..width {
+            cell("td", line.get(column).copied().flatten(), output)?;
+        }
+        output.push_str("</tr>");
+    }
+    output.push_str("</tbody></table>");
+    Ok(true)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn serialize_children(
     element: ElementRef<'_>,
@@ -3394,6 +3561,51 @@ mod tests {
         ] {
             assert!(safe_url(value, Some(&base)).is_none());
         }
+    }
+
+    #[test]
+    fn row_headers_header_data_cells_and_spans_keep_their_columns() {
+        let markdown = |html: &str| extract_html(html, None).unwrap().markdown;
+        let row_headers = markdown(
+            "<main><table><thead><tr><th></th><th>2023</th><th>2024</th></tr></thead>\
+             <tbody><tr><th>Revenue</th><td>10</td><td>12</td></tr><tr><th>Cost</th><td>7</td><td>8</td></tr></tbody></table></main>",
+        );
+        assert!(
+            row_headers.contains(
+                "|  | 2023 | 2024 |\n| --- | --- | --- |\n| Revenue | 10 | 12 |\n| Cost | 7 | 8 |"
+            ),
+            "{row_headers}"
+        );
+        // Key/value rows without a header row get an empty one; the caption
+        // stays a paragraph above the table.
+        let infobox = markdown(
+            "<main>Lead<table><caption>Tool</caption><tr><td colspan=\"2\">Logo</td></tr>\
+             <tr><th>Developer</th><td>Dynalist</td></tr><tr><td></td><td></td></tr><tr><th>License</th><td>Proprietary</td></tr></table></main>",
+        );
+        assert!(
+            infobox.contains("Lead\n\nTool\n\n|  |  |\n| --- | --- |\n| Logo |  |\n| Developer | Dynalist |\n| License | Proprietary |"),
+            "{infobox}"
+        );
+        let spans = markdown(
+            "<main><table><thead><tr><th rowspan=\"2\">Region</th><th colspan=\"2\">Sales</th><th>Total</th></tr><tr><th>Q1</th><th>Q2</th></tr></thead>\
+             <tbody><tr><th>North</th><td rowspan=\"2\">1</td><td>2</td><td>3</td></tr><tr><th>South</th><td>4</td><td>5</td></tr></tbody></table></main>",
+        );
+        assert!(
+            spans.contains("| Region | Sales |  | Total |\n| --- | --- | --- | --- |\n|  | Q1 | Q2 |  |\n| North | 1 | 2 | 3 |\n| South |  | 4 | 5 |"),
+            "{spans}"
+        );
+        let first_row = markdown(
+            "<main><table><tr><th>Key</th><th>Value</th></tr><tr><th>Speed</th><td>fast</td></tr></table></main>",
+        );
+        assert!(
+            first_row.contains("| Key | Value |\n| --- | --- |\n| Speed | fast |"),
+            "{first_row}"
+        );
+        // Tables without header cells keep the plain rendering.
+        let plain = markdown(
+            "<main><table><tr><td>Name</td><td>Count</td></tr><tr><td>alpha</td><td>1</td></tr></table></main>",
+        );
+        assert!(!plain.contains('|'), "{plain}");
     }
 
     #[test]
