@@ -2830,6 +2830,28 @@ fn flatten_shadow_roots(source: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(html)
 }
 
+/// Words as the reference counts them: each CJK character is a word; other
+/// text counts whitespace-separated runs after punctuation becomes space.
+fn count_words(text: &str) -> usize {
+    let cjk = |ch: char| matches!(ch as u32, 0x3040..=0x30ff | 0x3400..=0x4dbf | 0x4e00..=0x9fff | 0xac00..=0xd7af | 0xf900..=0xfaff | 0x20000..=0x2a6df);
+    let mut words = 0;
+    let mut in_word = false;
+    for ch in text.chars() {
+        if cjk(ch) {
+            words += 1;
+            in_word = false;
+        } else if ch.is_alphanumeric() || ch == '_' {
+            if !in_word {
+                words += 1;
+                in_word = true;
+            }
+        } else {
+            in_word = false;
+        }
+    }
+    words
+}
+
 /// Extract an article candidate, metadata and Markdown without fetching links.
 pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
     let source = flatten_shadow_roots(source);
@@ -2922,6 +2944,10 @@ pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
         return Err(Error::Conversion(
             "HTML contains no extractable content".into(),
         ));
+    }
+    if base.is_some() {
+        // A web page's extraction fact, as the reference reports it.
+        metadata.insert("word_count".into(), count_words(&markdown).into());
     }
     metadata.insert("converter".into(), "native-html".into());
     Ok(Document {
@@ -3339,6 +3365,21 @@ mod tests {
             text.contains("\n\n---\n\n* One\n* Two\n\n1. First\n\nAfter."),
             "{text}"
         );
+    }
+
+    #[test]
+    fn web_pages_report_the_reference_word_count() {
+        assert_eq!(count_words("Hello, world! **Bold** text_here 42"), 5);
+        assert_eq!(count_words("中文 字数 and English"), 6);
+        assert_eq!(count_words("  "), 0);
+        let page = extract_html(
+            "<main><h1>Title</h1><p>Two words.</p></main>",
+            Some("https://example.test/a"),
+        )
+        .unwrap();
+        assert_eq!(page.metadata["word_count"], 3);
+        let file = extract_html("<main><h1>Title</h1><p>Two words.</p></main>", None).unwrap();
+        assert!(!file.metadata.contains_key("word_count"));
     }
 
     #[test]

@@ -93,6 +93,7 @@
 
 ### 变更
 
+- URL 的 frontmatter 报告网页 `word_count`（与参考一致，每个中日韩字符计一个词），并不再写入内部读取器标识（`converter`）。
 - 文档结尾与间距与参考一致：旧版 DOC/PPT、RTF、ODT、ODS 的 Markdown 以换行结尾，标题不留尾随空格，演示文稿输出去掉行尾空白并压缩无文字形状留下的连续空行。参考的 20 个非 HTML 夹具中现有 16 个逐字节一致；其余为已接受的资产命名及已记录的 EPUB 锚点、ODS 合并宽度与 PDF 版面差异。
 - HTML 提示框（Obsidian、GitHub、Bootstrap、callout aside、Hugo/Docsy admonition）输出为保留折叠正文的 `> [!type] 标题` 引用块；TeX 图片服务的图片输出为 `$…$`/`$$…$$` 公式；列表、分隔线与空引用行采用参考写法（`* item`、`1. item`、`---`、`>`）。
 - EML 附件改用参考的 `## Attachments` 区块：图片附件显示为图片，其它附件标注大小，附带邮件引用展开一层，其中的附件只列名称；空正文仅保留 `## Content` 标题。每个附件仍保留下载链接，正文 Content-ID 图片仍绑定到本地资产。

@@ -284,6 +284,8 @@ pub fn prepare(source: &str, name: &str, doc: &mut Document, cfg: &Value) -> Con
                     "markitai_processed",
                     "language",
                     "format",
+                    // Internal reader identity, not user-facing page metadata.
+                    "converter",
                 ]
                 .contains(&key.as_str())
                     && !value.is_null()
@@ -1181,6 +1183,26 @@ mod tests {
                 assert_eq!(std::fs::read_to_string(path).unwrap(), expected);
             }
         }
+    }
+
+    #[test]
+    fn url_frontmatter_keeps_page_facts_but_not_reader_identity() {
+        let mut document = Document {
+            markdown: "# Page\n\nBody.".into(),
+            ..Default::default()
+        };
+        for (key, value) in [
+            ("domain", json!("example.test")),
+            ("word_count", json!(3)),
+            ("converter", json!("native-html")),
+        ] {
+            document.metadata.insert(key.into(), value);
+        }
+        let cfg = config::defaults();
+        let output = prepare("https://example.test/page", "page", &mut document, &cfg);
+        assert_eq!(output.frontmatter["domain"], "example.test");
+        assert_eq!(output.frontmatter["word_count"], 3);
+        assert!(!output.frontmatter.contains_key("converter"));
     }
 
     #[test]

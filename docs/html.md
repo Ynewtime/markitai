@@ -219,6 +219,15 @@ by their markup before parsing, as in the reference; other templates stay inert.
 content outside the selected article, or differ in headings, tables and images.
 Those differences must be measured rather than inferred from successful parsing.
 
+## Page metadata
+
+For a URL, frontmatter carries the page's user-facing metadata (title, source,
+description, author, published date, canonical URL, domain, fetch strategy) and,
+as in the reference, `word_count`: each CJK character is one word and other text
+counts whitespace-separated runs. The internal reader identity is not written.
+The reference's `content_profile` classification comes from its site resolvers,
+which this reader does not have, so it is not emitted rather than guessed.
+
 ## Callouts and Markdown spelling
 
 As in the reference, Obsidian callouts, GitHub alerts, Bootstrap alerts, callout
