@@ -6,7 +6,7 @@ upstream commit and every copied file's original checksum. The original MIT
 license and `external/bcmaps/LICENSE` remain in place. No Cargo registry source
 was modified. The workspace coordinator owns the path patch and lockfile.
 
-The local changes are limited to thirteen upstream files:
+The local changes are limited to fourteen upstream files:
 
 - `src/text_utils.rs`: page-number recognition requires a complete folio
   expression, preserving paragraphs such as `Page 42 explains the result` and
@@ -34,6 +34,11 @@ The local changes are limited to thirteen upstream files:
   optional and dev dependencies removed, the crate's unit tests gave 1,596
   passed and 21 failed; the same 21 fail without this change (17 need fixture
   files outside the copied scope, 4 assert upstream behavior).
+- `src/lib.rs`: per-page Markdown receives a tagged PDF's structure-tree tables,
+  as the whole-document conversion does. Without them a table drawn without
+  rules is found only from the alignment of its text, which splits wrapped,
+  vertically centred cells into broken rows. Structure roles are not passed;
+  on the Chrome-printed corpus they changed nothing further.
 - `src/extractor/fonts.rs`: a Type3 font's mirrored `FontMatrix` flips its
   runs' glyph side only when its glyphs are drawn above the glyph-space origin
   (`FontBBox`). Chrome/Skia mirrors the matrix over glyphs drawn y-down, so its

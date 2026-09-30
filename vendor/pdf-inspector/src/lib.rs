@@ -691,6 +691,13 @@ fn extract_pages_markdown_mem_impl(
         }
     };
 
+    // markitai: a tagged PDF's tables, as the whole-document conversion
+    // reads them from its structure tree; per-page Markdown otherwise misses
+    // every table drawn without rules.
+    let struct_tables = structure_tree::StructTree::from_doc(&doc)
+        .map(|tree| tree.extract_tables(&doc.get_pages()))
+        .unwrap_or_default();
+
     let mut results = Vec::with_capacity(pages_slice.len());
     let mut pages_needing_ocr = Vec::new();
     let mut ocr_reasons_by_page = BTreeMap::new();
@@ -794,7 +801,7 @@ fn extract_pages_markdown_mem_impl(
                 markdown::MarkdownDocumentContext {
                     page_thresholds: &page_thresholds,
                     struct_roles: None,
-                    struct_tables: &[],
+                    struct_tables: &struct_tables,
                     page_count,
                     prefiltered_page_number_pages: Some(&removed_page_number_pages),
                     prefiltered_page_number_mask: Some(&page_number_removal_mask),

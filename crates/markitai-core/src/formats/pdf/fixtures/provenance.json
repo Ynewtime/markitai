@@ -1,0 +1,18 @@
+{
+  "purpose": "A tagged PDF whose borderless table has wrapped, vertically centred cells: only its structure tree gives the rows, which the per-page reader missed.",
+  "source": {
+    "file": "borderless-table.html",
+    "bytes": 1044,
+    "sha256": "a3dbca016919533abf881fe2b4987e2be444fcd760cc3d936b243a0678551bef"
+  },
+  "authored": "written for this test in markitai-rust",
+  "generator": {
+    "script": "generate.sh",
+    "tool": "Google Chrome 154.0.8037.93 headless print-to-pdf, private profile, no network, no header or footer"
+  },
+  "output": {
+    "file": "borderless-table.pdf",
+    "bytes": 31587,
+    "sha256": "989559e21694ae6c3ab093ce9d9942637614e92cc67054e82b9143cdc659a367"
+  }
+}

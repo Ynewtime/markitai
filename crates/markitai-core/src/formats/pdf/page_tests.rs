@@ -377,3 +377,26 @@ fn shared_screenshot_reference_uses_the_same_encoded_filename_as_page_assembly()
         "<!-- ![Page 12](.markitai/screenshots/%E5%9B%BE%201%2850%25%29--%3E%3F.jpg) -->"
     );
 }
+
+#[test]
+fn a_tagged_borderless_table_is_read_from_the_structure_tree() {
+    // Wrapped, vertically centred cells drawn without rules: the text's
+    // alignment alone splits them into many broken rows.
+    let document = extract(include_bytes!("fixtures/borderless-table.pdf")).unwrap();
+    assert!(
+        document.markdown.contains(
+            "|Attribute|Northwind Cold Archive tier €4.00 per terabyte|Contoso Warm Object tier €19.00 per terabyte|Fabrikam Hot Block tier €41.00 per terabyte|\n\
+             |---|---|---|---|\n\
+             |Retrieval latency in practice|Hours|Minutes|Instant|\n\
+             |Durability guarantee|High|Higher|Available on some plans|\n\
+             |Minimum storage duration|Ninety days|Thirty days|None|"
+        ),
+        "{}",
+        document.markdown
+    );
+    assert!(
+        document
+            .markdown
+            .contains("Cold storage was chosen for records older than a year.")
+    );
+}
