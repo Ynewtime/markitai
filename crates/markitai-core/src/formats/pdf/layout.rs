@@ -138,6 +138,12 @@ fn without_url_destinations(text: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(output)
 }
 
+/// A letter of a right-to-left script: Hebrew, Arabic, Syriac, Thaana, N'Ko,
+/// Samaritan, Mandaic and their presentation forms.
+fn is_right_to_left(c: char) -> bool {
+    matches!(c as u32, 0x0590..=0x08FF | 0xFB1D..=0xFDFF | 0xFE70..=0xFEFF | 0x10800..=0x10FFF | 0x1E800..=0x1EFFF)
+}
+
 fn character_counts(text: &str) -> BTreeMap<char, usize> {
     let mut counts = BTreeMap::new();
     // These are generated decorations in the original native Markdown, not
@@ -899,6 +905,13 @@ fn render(
         return None;
     }
     let all_text = items.iter().map(|i| i.text.as_str()).collect::<String>();
+    // Lines are assembled left to right here. Right-to-left text needs the
+    // page reader's bidirectional ordering, which puts a line's runs in
+    // reading order; a reading order is worth more than list or code
+    // structure.
+    if all_text.chars().any(is_right_to_left) {
+        return None;
+    }
     if character_counts(&all_text) != character_counts(baseline) {
         return None;
     }
@@ -1435,6 +1448,10 @@ mod tests {
             )
             .is_none()
         );
+        let mut hebrew = items.clone();
+        hebrew[0].text = "שלום עולם".into();
+        let hebrew_baseline = hebrew.iter().map(|i| i.text.as_str()).collect::<String>();
+        assert!(render(hebrew, &[], frame, vec![], &[], &hebrew_baseline).is_none());
         for (bad_x, bad_rotation) in [(f32::NAN, 0.), (-100., 0.), (40., 45.)] {
             let mut bad = items.clone();
             bad[0].x = bad_x;
