@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "generator": "generate.sh",
+  "tool": "/usr/bin/textutil -convert doc (macOS 27.0.1 build 26A434), sandboxed without network",
+  "content": "authored for this repository (no reference fixture content)",
+  "files": {
+    "textedit-word97.doc": {
+      "bytes": 19456,
+      "sha256": "188f68f042a26285c2d2c95b8a486bc57359470332e0e487d45f54f0e22b2614"
+    },
+    "textedit-word97-long.doc": {
+      "bytes": 68608,
+      "sha256": "4291de83241d9628962a4b69537a00de919852e69fdd1b961ad4529573d90d63"
+    }
+  },
+  "purpose": "Word 97 files as the macOS exporter writes them: an unused mini stream with a malformed MiniFAT, and a FAT one sector short of the file"
+}

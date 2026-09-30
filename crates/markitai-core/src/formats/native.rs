@@ -5,6 +5,8 @@ use std::collections::BTreeSet;
 #[path = "office.rs"]
 mod office;
 pub(crate) use office::extract_presentation_count;
+#[path = "native/compound.rs"]
+mod compound;
 #[path = "office_meta.rs"]
 mod office_meta;
 #[path = "pdf.rs"]
@@ -377,7 +379,21 @@ pub(super) fn extract(bytes: &[u8], extension: &str) -> Result<Document> {
     if format == anydoc::Format::Pptx {
         return office::extract_presentation(bytes);
     }
-    let mut parsed = anydoc::to_document(bytes, format).map_err(conversion_error)?;
+    // A compound file that fails for an unused, malformed mini stream or a
+    // FAT one sector short (the macOS Word 97 exporter writes both) is read
+    // from a repaired copy; if the copy fails too, the original error stands.
+    let (mut parsed, repaired) = match anydoc::to_document(bytes, format) {
+        Err(error) if error.to_string().contains("not an OLE2 compound file") => {
+            match compound::repaired(bytes)
+                .and_then(|repaired| Some((anydoc::to_document(&repaired, format).ok()?, repaired)))
+            {
+                Some((parsed, repaired)) => (parsed, Some(repaired)),
+                None => return Err(conversion_error(error)),
+            }
+        }
+        result => (result.map_err(conversion_error)?, None),
+    };
+    let bytes = repaired.as_deref().unwrap_or(bytes);
     let metadata = office_meta::read(bytes, extension);
     if metadata.sheets.len() == 1 && !matches!(parsed.blocks.first(), Some(Block::Heading { .. })) {
         parsed.blocks.insert(
@@ -434,6 +450,9 @@ pub(super) fn extract(bytes: &[u8], extension: &str) -> Result<Document> {
         markdown.push('\n');
     }
     let mut warnings = metadata.warnings.clone();
+    if repaired.is_some() {
+        warnings.push("The compound file's allocation tables were malformed (an unused mini stream or a short FAT, as the macOS Word 97 exporter writes); it was read from a repaired copy.".into());
+    }
     if renderer.merged_cells {
         warnings.push("Merged table cells are represented by their origin cell with empty covered cells in Markdown.".into());
     }
