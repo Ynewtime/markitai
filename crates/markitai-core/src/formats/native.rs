@@ -487,10 +487,14 @@ impl Renderer<'_> {
                             row.truncate(width);
                         }
                     }
+                    // A sheet's first row is its header, as the reference's
+                    // spreadsheet readers take it, whether or not the source
+                    // marks it; a blank header row would only push it down.
                     let header = if matches!(self.extension, "docx" | "docm") {
                         false
                     } else {
-                        self.extension == "ods" || table.header_rows > 0
+                        matches!(self.extension, "ods" | "xlsx" | "xlsm" | "xls" | "xlsb")
+                            || table.header_rows > 0
                     };
                     super::text::table(&rows, header).trim_end().to_owned()
                 }
@@ -786,7 +790,30 @@ mod tests {
                 .starts_with("|  |  |\n| --- | --- |\n| Name |  |")
         );
         renderer.extension = "ods";
-        assert_eq!(renderer.blocks(&[table]), "| Name |\n| --- |\n| Value |");
+        assert_eq!(
+            renderer.blocks(std::slice::from_ref(&table)),
+            "| Name |\n| --- |\n| Value |"
+        );
+        // A workbook sheet's first row is its header whatever the source marks.
+        let unmarked = Block::Table(Table::from_rows(
+            vec![
+                vec![
+                    Cell::from_inlines(vec![Inline::plain("Name")]),
+                    Cell::from_inlines(vec![Inline::plain("Size")]),
+                ],
+                vec![
+                    Cell::from_inlines(vec![Inline::plain("Alpha")]),
+                    Cell::from_inlines(vec![Inline::plain("1")]),
+                ],
+            ],
+            0,
+            TableKind::Data,
+        ));
+        renderer.extension = "xlsx";
+        assert_eq!(
+            renderer.blocks(&[unmarked]),
+            "| Name | Size |\n| --- | --- |\n| Alpha | 1 |"
+        );
     }
 
     #[test]
