@@ -45,6 +45,21 @@ documented article heuristic; ordinary hidden descendants remain hidden.
   can differ from a browser's visual whitespace collapse.
 - Tables with a header use the reference's compact spelling: `| a | b |` rows and
   one `---` per column, without width padding. Tables kept as HTML are unchanged.
+- A table with header cells is written to htmd as a regular grid, since htmd
+  keeps only the first row's `th` cells as the header and only `td` cells after
+  it: one header row (the first `thead` row, a first row of only `th` cells, or
+  empty cells when only rows have header cells), `td` body rows, each span's
+  other positions as empty cells, empty rows dropped and the caption as a
+  paragraph above. A table without header cells is data when it has at least
+  two rows and two columns of short cells (at most 40 words and one paragraph,
+  no nested table, heading, list, quote or rule), fewer than two thirds of them
+  empty, and no `presentation` role; its first non-empty row is the header.
+  Other tables lay out the page and are written as their cells' content, so a
+  data table inside one is still a table. Columns empty in every row are left
+  out. Markdown cannot nest tables: a table inside a table's cell is written as
+  text in that cell.
+- A link that shows nothing (no text and no kept image) is left out instead of
+  being written as `[](url)`.
 - Preformatted code keeps indentation and empty lines. A `<code>` element with
   inline `white-space: pre` styling is treated as a code block. Chemical and
   mathematical `<sub>`/`<sup>` text retains those tags.
@@ -77,12 +92,24 @@ two recorded conversion errors remain unchanged.
 
 A full page is reduced to one content region. A named article region (the
 content names defuddle uses as entry points, among them `article-content`,
-`js-article-content`, `entry-content`, `post-body`, `role="article"`) is chosen
-over its page when it holds at least three fifths of the page's text; subtrees
-whose class or id words name page furniture (recommended, related, share,
-newsletter, subscribe, disclaimer, toc, breadcrumb, sidebar, footer ...) do
-not count as page text for that comparison. Names only weigh the choice:
-nothing is removed for its name. GitHub's Primer page sidebar is page chrome.
+`js-article-content`, `entry-content`, `post-body`, `role="article"`, and the
+plain `article` and `article-text`) is chosen over its page when it holds at
+least three fifths of the page's text; subtrees whose class or id words name
+page furniture (recommended, related, share, newsletter, subscribe,
+disclaimer, toc, breadcrumb, sidebar, footer, nocontent ...) do not count as
+page text for that comparison. One article beside teaser cards (articles
+titled by a link to another page) is chosen the same way, the cards counting
+as furniture; several full articles keep their page. Names only weigh the
+choice: nothing is removed for its name. GitHub's Primer page sidebar and
+MediaWiki's section edit links, tagline, redirect note and skip links are page
+chrome.
+
+An in-page table of contents is left out of a full page: an outermost list of
+at least three links that all point to headings of the page, with no other
+text than numbering, together with wrappers that hold only a short title for
+it and a pair of rules framing it. The headings carry that structure, and the
+fragment links would not resolve in Markdown. Fragments (books, email) keep
+their tables of contents.
 A GitHub issue keeps its complete discussion, where defuddle keeps only the
 opening post: the thread is usually what an issue link is converted for.
 
@@ -92,16 +119,22 @@ spacer, pixel or icon and is not written; an emoji image keeps its character,
 percentages are not pixels, equation images stay, and fragments keep all
 images.
 
-Two sites have their own reader. A Substack note page (by host, note
+Three sites have their own reader. A Substack note page (by host, note
 permalink container or CDN assets, without a rendered article body) is its
 main note and attached image. An X post page (an x.com or twitter.com status
 URL, or X's own test ids or media host) is its main post: text with links,
 images and video posters, and the quoted post as a block quote headed
 `**Name @handle** · date`, without avatars, player controls, counters or
-timelines, in both the `data-testid` and the 2026 `data-tweet-id` markup.
+timelines, in both the `data-testid` and the 2026 `data-tweet-id` markup. A
+Hacker News story or comment page is the story link and text (or the comment
+with its author and date) followed by its comments as blockquotes nested by
+reply level, read from each comment's indent; a story list is numbered with
+each story's source, points, submitter and comment link.
 Against defuddle's 209 expected outputs, words extra to the expected body fell
-from 3,555 to 2,658 with none lost, and all seven semantic contracts of the
-reference's captured pages hold ([record](validation/html-quality-round43.md)).
+from 3,555 to 2,658 with none lost ([R43](validation/html-quality-round43.md)),
+then to 2,192 with lost words 228 → 210 and table-row differences 71 → 24
+([R44](validation/html-quality-round44.md)); all seven semantic contracts of
+the reference's captured pages hold.
 
 ## Mathematical content
 
