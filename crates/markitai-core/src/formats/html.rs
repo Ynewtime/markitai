@@ -2264,33 +2264,9 @@ fn serialize_clean(
     Ok(())
 }
 
-/// An element's children as sanitized HTML; `name` decides whether text next
-/// to block boundaries is trimmed.
-/// Writes a table with header cells as a regular grid for htmd, which keeps
-/// only the first row's `th` cells as the header and only `td` cells after it:
-/// row headers, a header row's data cells and spanned positions would be
-/// dropped or shift the columns. The grid has one header row (the first
-/// `thead` row or a first row of only `th` cells, otherwise empty cells) and
-/// body rows of `td` cells; each span's other positions are empty cells.
-/// Tables without header cells, and tables nested in a cell, keep htmd's
-/// plain rendering, which also unwraps layout tables.
-fn serialize_table(
-    table: ElementRef<'_>,
-    base: Option<&Url>,
-    output: &mut String,
-    depth: usize,
-    notes: &Footnotes<'_>,
-    definition: bool,
-) -> Result<bool> {
-    const MAX_SPAN: usize = 64;
-    const MAX_COLUMNS: usize = 256;
-    if table
-        .ancestors()
-        .filter_map(ElementRef::wrap)
-        .any(|parent| matches!(parent.value().name(), "td" | "th"))
-    {
-        return Ok(false);
-    }
+/// A table's caption and its own rows (not those of nested tables), each with
+/// whether it is a `thead` row; hidden rows are left out.
+fn table_rows(table: ElementRef<'_>) -> (Option<ElementRef<'_>>, Vec<(ElementRef<'_>, bool)>) {
     let mut caption = None;
     let mut rows = Vec::new();
     for child in table.child_elements() {
@@ -2307,32 +2283,161 @@ fn serialize_table(
         }
     }
     rows.retain(|(row, _)| !is_hidden(*row));
-    fn cells<'a>(row: ElementRef<'a>) -> impl Iterator<Item = ElementRef<'a>> {
-        row.child_elements()
-            .filter(|cell| matches!(cell.value().name(), "td" | "th"))
-    }
-    if !rows
+    (caption, rows)
+}
+
+fn table_cells(row: ElementRef<'_>) -> impl Iterator<Item = ElementRef<'_>> {
+    row.child_elements()
+        .filter(|cell| matches!(cell.value().name(), "td" | "th"))
+}
+
+fn table_span(cell: ElementRef<'_>, attribute: &str) -> usize {
+    const MAX_SPAN: usize = 64;
+    cell.value()
+        .attr(attribute)
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .map_or(1, |value| value.min(MAX_SPAN))
+}
+
+/// A cell that shows nothing: no text and no image that is kept.
+fn empty_cell(cell: ElementRef<'_>, prune_chrome: bool) -> bool {
+    is_hidden(cell)
+        || (cell.text().all(|text| text.trim().is_empty())
+            && !cell.descendants().filter_map(ElementRef::wrap).any(|node| {
+                node.value().name() == "img" && !(prune_chrome && small_image(node).is_some())
+            }))
+}
+
+/// Whether a table is written as a Markdown table: it has header cells, or it
+/// reads as data (at least two rows and two columns of short cells, mostly
+/// filled, without nested tables or block structure). Other tables lay out a
+/// page and are written as their cells' content.
+fn table_grid(table: ElementRef<'_>, rows: &[(ElementRef<'_>, bool)], prune_chrome: bool) -> bool {
+    const MAX_CELL_WORDS: usize = 40;
+    if rows
         .iter()
-        .any(|(row, head)| *head || cells(*row).any(|cell| cell.value().name() == "th"))
+        .any(|(row, head)| *head || table_cells(*row).any(|cell| cell.value().name() == "th"))
     {
+        return true;
+    }
+    if table.value().attr("role").is_some_and(|role| {
+        let role = role.trim();
+        role.eq_ignore_ascii_case("presentation") || role.eq_ignore_ascii_case("none")
+    }) {
+        return false;
+    }
+    let (mut filled_rows, mut width, mut cells, mut empty) = (0, 0, 0, 0);
+    for (row, _) in rows {
+        let (mut row_width, mut filled) = (0, false);
+        for cell in table_cells(*row) {
+            row_width += table_span(cell, "colspan");
+            cells += 1;
+            if empty_cell(cell, prune_chrome) {
+                empty += 1;
+                continue;
+            }
+            filled = true;
+            let mut paragraphs = 0;
+            for node in cell.descendants().filter_map(ElementRef::wrap) {
+                match node.value().name() {
+                    "table" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "blockquote" | "ul"
+                    | "ol" | "hr" => return false,
+                    "p" => paragraphs += 1,
+                    _ => {}
+                }
+            }
+            if paragraphs > 1
+                || cell
+                    .text()
+                    .flat_map(str::split_whitespace)
+                    .nth(MAX_CELL_WORDS)
+                    .is_some()
+            {
+                return false;
+            }
+        }
+        width = width.max(row_width);
+        filled_rows += usize::from(filled);
+    }
+    filled_rows >= 2 && width >= 2 && empty * 3 < cells * 2
+}
+
+/// Writes a table for htmd, which keeps only the first row's `th` cells as the
+/// header and only `td` cells after it (row headers, a header row's data cells
+/// and spanned positions would be dropped or shift the columns), and flattens
+/// every table without header cells, including data tables and the data
+/// tables inside a layout table.
+///
+/// A table written as a Markdown table (see [`table_grid`]) becomes a regular
+/// grid: one header row (the first `thead` row, a first row of only `th`
+/// cells, empty cells when only rows have header cells, or a data table's
+/// first row) and body rows of `td` cells; each span's other positions are
+/// empty cells, and columns empty in every row are left out. A layout table
+/// becomes its cells' content as blocks. htmd writes the text of a table
+/// inside a Markdown table's cell into that cell.
+fn serialize_table(
+    table: ElementRef<'_>,
+    base: Option<&Url>,
+    output: &mut String,
+    depth: usize,
+    notes: &Footnotes<'_>,
+    definition: bool,
+) -> Result<bool> {
+    const MAX_COLUMNS: usize = 256;
+    let (caption, mut rows) = table_rows(table);
+    if rows.is_empty() {
         return Ok(false);
     }
-    let header = rows.iter().position(|(_, head)| *head).or_else(|| {
-        rows.first()
-            .is_some_and(|(row, _)| cells(*row).all(|cell| cell.value().name() == "th"))
-            .then_some(0)
-    });
-    if let Some(index) = header {
+    let children = |element: ElementRef<'_>, output: &mut String| {
+        let name = element.value().name();
+        serialize_children(
+            element,
+            name,
+            false,
+            None,
+            base,
+            output,
+            depth + 2,
+            notes,
+            definition,
+        )
+    };
+    if let Some(caption) = caption.filter(|caption| !is_hidden(*caption)) {
+        output.push_str("<p>");
+        children(caption, output)?;
+        output.push_str("</p>");
+    }
+    if !table_grid(table, &rows, notes.prune_chrome) {
+        for (row, _) in &rows {
+            for cell in table_cells(*row).filter(|cell| !is_hidden(*cell)) {
+                output.push_str("<div>");
+                children(cell, output)?;
+                output.push_str("</div>");
+            }
+        }
+        return Ok(true);
+    }
+    let headed = rows
+        .iter()
+        .any(|(row, head)| *head || table_cells(*row).any(|cell| cell.value().name() == "th"));
+    let header = if headed {
+        rows.iter().position(|(_, head)| *head).or_else(|| {
+            rows.first()
+                .is_some_and(|(row, _)| table_cells(*row).all(|cell| cell.value().name() == "th"))
+                .then_some(0)
+        })
+    } else {
+        rows.iter().position(|(row, _)| {
+            !table_cells(*row).all(|cell| empty_cell(cell, notes.prune_chrome))
+        })
+    };
+    if !headed && let Some(index) = header {
+        rows.drain(..index);
+    } else if let Some(index) = header {
         let row = rows.remove(index);
         rows.insert(0, row);
     }
-    let span = |cell: ElementRef<'_>, attribute: &str| {
-        cell.value()
-            .attr(attribute)
-            .and_then(|value| value.trim().parse::<usize>().ok())
-            .filter(|value| *value > 0)
-            .map_or(1, |value| value.min(MAX_SPAN))
-    };
     // `carry[column]`: rows below the current one still covered by a rowspan.
     let mut carry: Vec<usize> = Vec::new();
     let mut grid = Vec::with_capacity(rows.len());
@@ -2342,64 +2447,48 @@ fn serialize_table(
             *rows = rows.saturating_sub(1);
         }
         let mut line: Vec<Option<ElementRef<'_>>> = Vec::new();
-        for cell in cells(*row) {
+        for cell in table_cells(*row) {
             while covered.get(line.len()).copied().unwrap_or(false) {
                 line.push(None);
             }
             let start = line.len();
             line.push(Some(cell));
-            line.extend(std::iter::repeat_n(None, span(cell, "colspan") - 1));
+            line.extend(std::iter::repeat_n(None, table_span(cell, "colspan") - 1));
             if line.len() > MAX_COLUMNS {
                 return Ok(false);
             }
             if carry.len() < line.len() {
                 carry.resize(line.len(), 0);
             }
-            let below = span(cell, "rowspan") - 1;
+            let below = table_span(cell, "rowspan") - 1;
             for rows in &mut carry[start..line.len()] {
                 *rows = below;
             }
         }
         grid.push(line);
     }
+    // Spacer columns show nothing in any row; an empty column would also
+    // give htmd a separator cell without dashes.
     let width = grid.iter().map(Vec::len).max().unwrap_or(0);
-    if width == 0 {
-        return Ok(false);
-    }
-    let empty = |line: &[Option<ElementRef<'_>>]| {
-        line.iter().flatten().all(|cell| {
-            is_hidden(*cell)
-                || (cell.text().all(|text| text.trim().is_empty())
-                    && !cell
-                        .descendants()
-                        .filter_map(ElementRef::wrap)
-                        .any(|node| node.value().name() == "img"))
+    let columns: Vec<usize> = (0..width)
+        .filter(|column| {
+            grid.iter().any(|line| {
+                line.get(*column)
+                    .copied()
+                    .flatten()
+                    .is_some_and(|cell| !empty_cell(cell, notes.prune_chrome))
+            })
         })
-    };
-    if let Some(caption) = caption.filter(|caption| !is_hidden(*caption)) {
-        output.push_str("<p>");
-        serialize_children(
-            caption, "caption", false, None, base, output, depth, notes, definition,
-        )?;
-        output.push_str("</p>");
+        .collect();
+    if columns.is_empty() {
+        return Ok(false);
     }
     let cell = |tag: &str, cell: Option<ElementRef<'_>>, output: &mut String| -> Result<()> {
         output.push('<');
         output.push_str(tag);
         output.push('>');
         if let Some(cell) = cell.filter(|cell| !is_hidden(*cell)) {
-            let name = cell.value().name();
-            serialize_children(
-                cell,
-                name,
-                false,
-                None,
-                base,
-                output,
-                depth + 2,
-                notes,
-                definition,
-            )?;
+            children(cell, output)?;
         }
         output.push_str("</");
         output.push_str(tag);
@@ -2408,21 +2497,26 @@ fn serialize_table(
     };
     output.push_str("<table><thead><tr>");
     let body = if header.is_some() {
-        for column in 0..width {
-            cell("th", grid[0].get(column).copied().flatten(), output)?;
+        for column in &columns {
+            cell("th", grid[0].get(*column).copied().flatten(), output)?;
         }
         &grid[1..]
     } else {
-        for _ in 0..width {
+        for _ in &columns {
             cell("th", None, output)?;
         }
         &grid[..]
     };
     output.push_str("</tr></thead><tbody>");
-    for line in body.iter().filter(|line| !empty(line)) {
+    for line in body.iter().filter(|line| {
+        !line
+            .iter()
+            .flatten()
+            .all(|cell| empty_cell(*cell, notes.prune_chrome))
+    }) {
         output.push_str("<tr>");
-        for column in 0..width {
-            cell("td", line.get(column).copied().flatten(), output)?;
+        for column in &columns {
+            cell("td", line.get(*column).copied().flatten(), output)?;
         }
         output.push_str("</tr>");
     }
@@ -2430,6 +2524,8 @@ fn serialize_table(
     Ok(true)
 }
 
+/// An element's children as sanitized HTML; `name` decides whether text next
+/// to block boundaries is trimmed.
 #[allow(clippy::too_many_arguments)]
 fn serialize_children(
     element: ElementRef<'_>,
@@ -3601,11 +3697,58 @@ mod tests {
             first_row.contains("| Key | Value |\n| --- | --- |\n| Speed | fast |"),
             "{first_row}"
         );
-        // Tables without header cells keep the plain rendering.
-        let plain = markdown(
+        // A table of short cells without header cells is data: its first
+        // row is the header.
+        let data = markdown(
             "<main><table><tr><td>Name</td><td>Count</td></tr><tr><td>alpha</td><td>1</td></tr></table></main>",
         );
-        assert!(!plain.contains('|'), "{plain}");
+        assert!(
+            data.contains("| Name | Count |\n| --- | --- |\n| alpha | 1 |"),
+            "{data}"
+        );
+        // A leading spacer row and a spacer column show nothing.
+        let spacers = markdown(
+            "<main><table><tr><td><img src=\"s.gif\" width=\"1\" height=\"1\"></td></tr><tr><td>A</td><td></td><td>B</td></tr><tr><td>C</td><td> </td><td>D</td></tr></table></main>",
+        );
+        assert!(
+            spacers.contains("| A | B |\n| --- | --- |\n| C | D |"),
+            "{spacers}"
+        );
+        // A layout table is written as its cells' content, so a data table
+        // inside it is still a table.
+        let prose = "A long column of prose that lays out the page beside a sidebar. ".repeat(4);
+        let layout = markdown(&format!(
+            "<main><table><tr><td><p>{prose}</p><table><tr><td>Ctrl+S</td><td>Save</td></tr><tr><td>Ctrl+O</td><td>Open</td></tr></table></td><td><p>Links</p><p>More links</p></td></tr></table></main>"
+        ));
+        assert!(
+            layout.contains("sidebar.\n\n| Ctrl+S | Save |\n| --- | --- |\n| Ctrl+O | Open |\n\nLinks\n\nMore links"),
+            "{layout}"
+        );
+        assert_eq!(layout.matches("Ctrl+S").count(), 1, "{layout}");
+        // Mostly empty or single-row tables are layout too.
+        for table in [
+            "<table><tr><td>1.</td><td></td><td></td></tr><tr><td></td><td></td><td>Item</td></tr></table>",
+            "<table><tr><td>Only</td><td>row</td></tr></table>",
+            "<table role=\"presentation\"><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table>",
+        ] {
+            let plain = markdown(&format!("<main>{table}</main>"));
+            assert!(!plain.contains('|'), "{plain}");
+        }
+        // So is a table with block structure or long text in a cell.
+        let long = "word ".repeat(41);
+        for cell in [
+            "<table><tr><td>x</td></tr><tr><td>y</td></tr></table>".to_owned(),
+            "<p>one</p><p>two</p>".to_owned(),
+            "<ul><li>item</li></ul>".to_owned(),
+            "<h3>Heading</h3>".to_owned(),
+            long,
+        ] {
+            let table = format!(
+                "<table><tr><td>a</td><td>{cell}</td></tr><tr><td>c</td><td>d</td></tr></table>"
+            );
+            let plain = markdown(&format!("<main>{table}</main>"));
+            assert!(!plain.contains('|'), "{plain}");
+        }
     }
 
     #[test]
