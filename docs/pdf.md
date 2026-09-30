@@ -33,7 +33,9 @@ limitations described in [PDF rendering](pdf-rendering.md) and [OCR](ocr.md).
 
 Layout refinement runs only after the existing page checks. A page requiring
 OCR, containing suspicious hidden text, or having incomplete content inspection
-does not enter refinement. The existing narrowly guarded font-decoded recovery
+does not enter refinement. Text size for the hidden-text check is the effective
+size after the text matrix, transformation and Form matrices: Quartz writes
+`1 Tf` and scales with the text matrix, which is ordinary 12pt text. The existing narrowly guarded font-decoded recovery
 for a false scan verdict remains in place. A missing or unreadable page keeps
 its page marker and an explicit warning.
 
@@ -154,9 +156,10 @@ the existing page reader's output. A page can therefore remain unchanged even
 when another page gains layout fidelity.
 
 Fixed-pitch text becomes code. A fixed-pitch line opens a fenced block at the
-start, after a heading, or when it is set off from the text above by more than
-1.7 em; one at ordinary leading continues its paragraph, as a wrapped inline
-literal does. Inside a block a URL line stays code, a gap of half again the
+start, after a heading, when it is set off from the text above by more than
+1.7 em, or when the next line is fixed-pitch too (AppKit prints `<pre>` without
+margins); a single one at ordinary leading continues its paragraph, as a wrapped
+inline literal does. Inside a block a URL line stays code, a gap of half again the
 block's line pitch (two em before a pitch is known) restores a blank line, and
 each run is placed at its column in glyph advances from the block's left edge,
 which restores indentation and alignment. A fence is longer than any backtick
