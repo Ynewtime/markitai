@@ -118,6 +118,7 @@ impl PreparedMembers {
             return Err(unsupported());
         }
         let original_parent = std::path::absolute(parent)?;
+        prepare_claim_directories(&original_parent, allow_symlinks)?;
         let parent = prepare_namespace_parent(&original_parent, allow_symlinks)?;
         let parent_metadata = directory_metadata(&parent, false)?;
         let parent_identity = identity(&parent_metadata)?;
@@ -359,6 +360,112 @@ pub(crate) fn prepare_namespace_parent(parent: &Path, allow_symlinks: bool) -> R
         ));
     }
     Ok(parent)
+}
+
+/// Create a claim's missing output directory chain and its `.markitai`,
+/// `ownership` and `members` metadata directories, then give every created
+/// directory and its parent the immediate path's host synchronization with one
+/// media fence per volume for the whole set. The fence completes before any
+/// lock file exists or any work starts; creating nothing issues no fence, as
+/// the immediate path does. The immediate path below still covers directories
+/// that another process removes and recreates in between.
+fn prepare_claim_directories(parent: &Path, allow_symlinks: bool) -> Result<()> {
+    let mut group = super::sync_group::SyncGroup::new();
+    let mut staged = false;
+    let result = stage_claim_directories(parent, allow_symlinks, &mut |path| {
+        staged = true;
+        let mut options = fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW);
+        }
+        Ok(group.stage(&options.open(path)?)?)
+    });
+    if staged {
+        group.commit()?;
+    }
+    result
+}
+
+/// Create the claim directories, then stage every created directory and its
+/// parent. Staging follows all creation, so each directory's synchronization
+/// covers every entry created in it. It also happens when a later check
+/// rejects the claim: every directory this call created is synchronized, as
+/// the immediate path would have done.
+fn stage_claim_directories(
+    parent: &Path,
+    allow_symlinks: bool,
+    stage: &mut dyn FnMut(&Path) -> Result<()>,
+) -> Result<()> {
+    let mut created = Vec::new();
+    let result = create_claim_directories(parent, allow_symlinks, &mut created);
+    if !created.is_empty() && cfg!(unix) {
+        let mut staged = std::collections::BTreeSet::new();
+        for directory in &created {
+            staged.insert(directory.clone());
+            staged.extend(directory.parent().map(Path::to_owned));
+        }
+        for path in &staged {
+            stage(path)?;
+        }
+    }
+    result
+}
+
+/// The creation half of [`prepare_claim_directories`]: each metadata
+/// directory is checked as the immediate path checks it (a real directory,
+/// private where required, on the output's filesystem) before anything is
+/// created inside it.
+fn create_claim_directories(
+    parent: &Path,
+    allow_symlinks: bool,
+    created: &mut Vec<PathBuf>,
+) -> Result<()> {
+    check_policy(parent, allow_symlinks)?;
+    let planned = crate::report_store::resolve_path(parent)?;
+    create_output_directory(&planned, &mut |directory| {
+        created.push(directory.to_owned());
+        Ok(())
+    })?;
+    check_policy(parent, allow_symlinks)?;
+    if fs::canonicalize(parent)? != planned {
+        return Err(Error::Invalid(
+            "output parent changed while acquiring a claim".into(),
+        ));
+    }
+    let device = identity(&directory_metadata(&planned, false)?)?.device;
+    let mut metadata = planned;
+    for (name, private) in [(".markitai", false), ("ownership", true), ("members", true)] {
+        metadata.push(name);
+        if create_metadata_entry(&metadata)? {
+            created.push(metadata.clone());
+        }
+        if identity(&directory_metadata(&metadata, private)?)?.device != device {
+            return Err(Error::Invalid(
+                "output claim metadata must share the output filesystem".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Create one private metadata directory without synchronizing it; true when
+/// this call created it.
+fn create_metadata_entry(path: &Path) -> Result<bool> {
+    #[cfg_attr(not(unix), allow(unused_mut))] // Only Unix sets a mode.
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    match builder.create(path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(false),
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn create_metadata_directory(path: &Path) -> Result<()> {
@@ -726,6 +833,100 @@ mod tests {
             lease.validate_member(&alias.join("a.md")).unwrap(),
             lease.parent().join("a.md")
         );
+    }
+
+    fn staged_set(parent: &Path) -> (Result<()>, Vec<PathBuf>) {
+        let mut staged = Vec::new();
+        let result = stage_claim_directories(parent, false, &mut |path| {
+            // Every creation precedes staging: the deepest level already exists.
+            assert!(parent.join(".markitai/ownership/members").is_dir());
+            staged.push(path.to_owned());
+            Ok(())
+        });
+        (result, staged)
+    }
+
+    #[test]
+    fn claim_directories_stage_created_directories_and_parents_after_all_creation() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        let parent = root.join("new/out");
+        let (result, staged) = staged_set(&parent);
+        result.unwrap();
+        let expected: Vec<PathBuf> = [
+            "",
+            "new",
+            "new/out",
+            "new/out/.markitai",
+            "new/out/.markitai/ownership",
+            "new/out/.markitai/ownership/members",
+        ]
+        .iter()
+        .map(|suffix| {
+            if suffix.is_empty() {
+                root.clone()
+            } else {
+                root.join(suffix)
+            }
+        })
+        .collect();
+        assert_eq!(staged, expected);
+        // Everything exists now: nothing is created, nothing staged, no fence.
+        let (result, staged) = staged_set(&parent);
+        result.unwrap();
+        assert!(staged.is_empty());
+        // Only the deeper levels are new.
+        fs::remove_dir(parent.join(".markitai/ownership/members")).unwrap();
+        fs::remove_dir(parent.join(".markitai/ownership")).unwrap();
+        let (result, staged) = staged_set(&parent);
+        result.unwrap();
+        assert_eq!(
+            staged,
+            [
+                ".markitai",
+                ".markitai/ownership",
+                ".markitai/ownership/members"
+            ]
+            .iter()
+            .map(|suffix| parent.join(suffix))
+            .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_fresh_nested_parent_gets_its_chain_and_private_metadata_in_one_step() {
+        let temp = tempfile::tempdir().unwrap();
+        let parent = temp.path().join("new/deeper/out");
+        let lease = MemberLeases::acquire(&parent, &names(&["a.md"]), false).unwrap();
+        assert!(lease.parent().ends_with("new/deeper/out"));
+        for (suffix, mode) in [
+            (".markitai/ownership", 0o700),
+            (".markitai/ownership/members", 0o700),
+        ] {
+            assert_eq!(
+                fs::metadata(parent.join(suffix))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                mode
+            );
+        }
+        assert!(lock_path(&parent, "a.md").is_file());
+        drop(lease);
+        // A second acquisition finds everything in place.
+        MemberLeases::acquire(&parent, &names(&["a.md"]), false).unwrap();
+    }
+
+    #[test]
+    fn a_symlinked_private_metadata_level_is_rejected_before_anything_is_created_in_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::create_dir(temp.path().join(".markitai")).unwrap();
+        symlink(outside.path(), temp.path().join(".markitai/ownership")).unwrap();
+        assert!(MemberLeases::acquire(temp.path(), &names(&["a.md"]), true).is_err());
+        assert!(!outside.path().join("members").exists());
+        assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
     }
 
     #[test]

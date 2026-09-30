@@ -84,6 +84,22 @@ its immediate creator for any directory still missing. For the 24-file corpus
 this replaces 24 of 45 full-cache flushes with one. The skip policy retains its
 original path.
 
+A single conversion's claim acquisition groups its own directory creation the
+same way: the missing output chain and the `.markitai`, `ownership` and `members`
+metadata directories are created first, each metadata level checked as before (a
+real directory, private where required, on the output's filesystem) before
+anything is created inside it; then every created directory and its parent are
+staged and one media fence per volume completes before any lock file exists.
+Directories this call created are staged even when a later check rejects the
+claim. Creating nothing stages nothing and issues no fence, exactly as the
+immediate path synchronized only directories it created. The immediate path
+still follows and covers a directory removed and recreated in between. As
+before, a directory another process created concurrently is not fenced by this
+call, and a failed commit leaves the created directories unfenced for a retry
+that finds them existing. A fresh single-file conversion issues 3 full-cache
+flushes instead of 10 (the two remaining ones belong to receipt publication); an
+existing output directory still issues 2.
+
 Ordinary parent preparation failures fail only the affected items. A failed
 namespace fence stops new dispatch; earlier unsent reservations are restored.
 Several namespace subwindows may feed one durable admission journal flush, so a

@@ -92,6 +92,7 @@
 
 ### Changed
 
+- Make a single conversion into a fresh output directory issue 3 full-cache flushes instead of 10: its claim directories are created first and share one media fence per volume, with the same per-level checks and host synchronization, before any lock or work. Single-file conversions on corpus-r4 run 23–36% faster; existing output directories are unchanged.
 - Report a web page's `word_count` in URL frontmatter (each CJK character one word, as the reference counts), and keep the internal reader identity (`converter`) out of user-facing URL frontmatter.
 - Match the reference's document tails and spacing: legacy DOC/PPT, RTF, ODT and ODS Markdown ends with a newline, headings drop trailing spaces, and presentation output collapses blank runs from text-free shapes and trailing whitespace. On the reference's 20 non-HTML fixtures, 16 now match byte for byte; the rest are the accepted asset names and the recorded EPUB-anchor, ODS-span and PDF-layout differences.
 - Render HTML callouts and alerts (Obsidian, GitHub, Bootstrap, callout asides, Hugo/Docsy admonitions) as `> [!type] Title` blockquotes keeping collapsed bodies, TeX image-service images as `$…$`/`$$…$$` math, and lists, rules and empty quote lines in the reference's spelling (`* item`, `1. item`, `---`, `>`).
