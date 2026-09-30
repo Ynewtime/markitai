@@ -148,7 +148,11 @@ A tagged PDF's tables come from its structure tree on each page, as in the
 page reader's whole-document conversion (`8b9747d`): a table drawn without rules
 whose cells wrap and are vertically centred is otherwise read from its text's
 alignment alone, which splits it into broken rows. Untagged pages still rely on
-that alignment and on ruled grids.
+that alignment and on ruled grids. Text extraction keeps the runs of two
+structure-tree cells apart (`03deb93`): cells a few pixels apart, as in the
+browser's default table style, would otherwise merge into one item that keeps
+only the first cell's marked content. A fully tagged table among long
+paragraphs is used when it holds 80% of the text inside its own bounds.
 
 Before replacing page Markdown, decoded alphanumeric character counts must agree
 with the existing reader. This is a conservative agreement check, not proof that
