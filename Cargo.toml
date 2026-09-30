@@ -17,10 +17,98 @@ serde_json = "1"
 thiserror = "2"
 tempfile = "3"
 
+# Workspace crates and the conversion hot path are optimized for speed; every
+# other dependency (server, network/TLS, CLI parsing, fonts/SVG, ...) for size.
+# Measured on corpus-r4 against uniform opt-level 3: 16% smaller CLI, conversion
+# medians within noise (docs/validation/binary-size-round39.md).
 [profile.release]
-lto = "thin"
+lto = "fat"
 codegen-units = 1
 strip = true
+
+[profile.release.package."*"]
+opt-level = "z"
+
+[profile.release.package.pdf-inspector]
+opt-level = 3
+
+[profile.release.package.lopdf]
+opt-level = 3
+
+[profile.release.package.anydoc]
+opt-level = 3
+
+[profile.release.package.quick-xml]
+opt-level = 3
+
+[profile.release.package.zip]
+opt-level = 3
+
+[profile.release.package.miniz_oxide]
+opt-level = 3
+
+[profile.release.package.flate2]
+opt-level = 3
+
+[profile.release.package.html5ever]
+opt-level = 3
+
+[profile.release.package.markup5ever]
+opt-level = 3
+
+[profile.release.package.scraper]
+opt-level = 3
+
+[profile.release.package.selectors]
+opt-level = 3
+
+[profile.release.package.cssparser]
+opt-level = 3
+
+[profile.release.package.htmd]
+opt-level = 3
+
+[profile.release.package.regex]
+opt-level = 3
+
+[profile.release.package.regex-automata]
+opt-level = 3
+
+[profile.release.package.regex-syntax]
+opt-level = 3
+
+[profile.release.package.aho-corasick]
+opt-level = 3
+
+[profile.release.package.memchr]
+opt-level = 3
+
+[profile.release.package.image]
+opt-level = 3
+
+[profile.release.package.zune-jpeg]
+opt-level = 3
+
+[profile.release.package.png]
+opt-level = 3
+
+[profile.release.package.fdeflate]
+opt-level = 3
+
+[profile.release.package.serde_json]
+opt-level = 3
+
+[profile.release.package.sha2]
+opt-level = 3
+
+[profile.release.package.csv]
+opt-level = 3
+
+[profile.release.package.encoding_rs]
+opt-level = 3
+
+[profile.release.package.mail-parser]
+opt-level = 3
 
 [profile.dist]
 inherits = "release"
