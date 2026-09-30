@@ -820,12 +820,123 @@ mod tests {
         let id = doc.get_pages()[&1];
         let frame = super::super::geometry::frame(&doc, id).unwrap();
         let (_, content) = super::super::inspect_page(&doc, id);
-        let grids = super::super::geometry::grids(&content.unwrap(), frame);
+        let grids = super::super::geometry::grids(
+            &content.unwrap(),
+            frame,
+            &super::super::geometry::neutral_states(&doc, id),
+        );
         let baseline = pdf_inspector::extract_pages_markdown_mem(&bytes, None).unwrap();
         assert!(
             layout
                 .page(1, frame, grids, &baseline.pages[0].markdown)
                 .is_none()
+        );
+    }
+
+    /// A browser-printed ruled table continuing across pages, drawn like
+    /// Chrome's print: a page background, per-cell border rectangles under a
+    /// neutral graphics state, two-line notes around each row's baseline, and
+    /// each page's last row reaching the bottom band where running folios live.
+    #[test]
+    fn printed_table_across_pages_keeps_every_row_and_edge_value() {
+        let mut pdf = lopdf::Document::with_version("1.7");
+        let pages_id = pdf.new_object_id();
+        let font =
+            pdf.add_object(dictionary! {"Type"=>"Font","Subtype"=>"Type1","BaseFont"=>"Helvetica"});
+        let neutral = pdf.add_object(dictionary! {"ca"=>1,"BM"=>"Normal"});
+        let resources = pdf.add_object(
+            dictionary! {"Font"=>dictionary!{"F1"=>font},"ExtGState"=>dictionary!{"G3"=>neutral}},
+        );
+        let fill = |ops: &mut Vec<Operation>, color: f32, [x, y, w, h]: [f32; 4]| {
+            ops.push(Operation::new(
+                "rg",
+                vec![color.into(), color.into(), color.into()],
+            ));
+            ops.push(Operation::new(
+                "re",
+                vec![x.into(), y.into(), w.into(), h.into()],
+            ));
+            ops.push(Operation::new("f", vec![]));
+        };
+        let words = |ops: &mut Vec<Operation>, x: f32, y: f32, value: &str| {
+            ops.extend([
+                Operation::new("BT", vec![]),
+                Operation::new("Tf", vec![Object::Name(b"F1".to_vec()), 9.into()]),
+                Operation::new("Td", vec![x.into(), y.into()]),
+                Operation::new("Tj", vec![Object::string_literal(value)]),
+                Operation::new("ET", vec![]),
+            ]);
+        };
+        let columns = [(51., 165.), (216., 165.), (381., 164.25)];
+        let mut kids = Vec::new();
+        let mut row = 0;
+        for _ in 0..3 {
+            let mut ops = vec![
+                Operation::new("q", vec![]),
+                Operation::new("gs", vec![Object::Name(b"G3".to_vec())]),
+            ];
+            fill(&mut ops, 0.96, [51., 48.63, 494.25, 743.25]);
+            fill(&mut ops, 1., [51., 48.63, 494.25, 743.25]);
+            let mut rows = vec![(764.88f32, 791.88f32)];
+            rows.extend(
+                (0..18).map(|n| (764.88 - 39.75 * (n + 1) as f32, 764.88 - 39.75 * n as f32)),
+            );
+            for (index, &(bottom, top)) in rows.iter().enumerate() {
+                for (x, width) in columns {
+                    if index == 0 {
+                        fill(
+                            &mut ops,
+                            0.96,
+                            [x + 0.75, bottom, width - 0.75, top - bottom - 0.75],
+                        );
+                    }
+                    fill(&mut ops, 0.88, [x, bottom, 0.75, top - bottom]);
+                    fill(&mut ops, 0.88, [x, top - 0.75, width, 0.75]);
+                }
+                fill(&mut ops, 0.88, [544.5, bottom, 0.75, top - bottom]);
+            }
+            for (x, width) in columns {
+                fill(&mut ops, 0.88, [x, rows[rows.len() - 1].0, width, 0.75]);
+            }
+            ops.push(Operation::new("Q", vec![]));
+            ops.push(Operation::new("rg", vec![0.into(), 0.into(), 0.into()]));
+            for (x, value) in [(120.6, "Name"), (282.1, "Square"), (449.3, "Notes")] {
+                words(&mut ops, x, 773., value);
+            }
+            for &(bottom, top) in &rows[1..] {
+                row += 1;
+                let baseline = (bottom + top) / 2. - 3.;
+                words(&mut ops, 60.8, baseline, &format!("Row {row}"));
+                words(&mut ops, 225.2, baseline, &(row * row).to_string());
+                words(&mut ops, 389.7, baseline + 6.7, "long cell text long");
+                words(&mut ops, 389.7, baseline - 6.7, "cell text");
+            }
+            let content = Content { operations: ops }.encode().unwrap();
+            let stream = pdf.add_object(Stream::new(Dictionary::new(), content));
+            let id = pdf.add_object(dictionary! {"Type"=>"Page","Parent"=>pages_id,"Contents"=>stream,"Resources"=>resources});
+            kids.push(Object::Reference(id));
+        }
+        pdf.objects.insert(pages_id,dictionary!{"Type"=>"Pages","Count"=>3,"Kids"=>kids,"MediaBox"=>vec![0.into(),0.into(),595.92.into(),842.88.into()]}.into());
+        let catalog = pdf.add_object(dictionary! {"Type"=>"Catalog","Pages"=>pages_id});
+        pdf.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        pdf.save_to(&mut bytes).unwrap();
+        let markdown = super::super::extract(&bytes).unwrap().markdown;
+        for row in 1..=54 {
+            assert!(
+                markdown.contains(&format!(
+                    "|Row {row}|{}|long cell text long<br>cell text|",
+                    row * row
+                )),
+                "row {row}: {markdown}"
+            );
+        }
+        assert_eq!(
+            markdown
+                .matches("|Name|Square|Notes|\n|---|---|---|")
+                .count(),
+            3,
+            "{markdown}"
         );
     }
 

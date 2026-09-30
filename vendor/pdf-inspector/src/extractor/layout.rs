@@ -1752,8 +1752,120 @@ fn page_number_context_masks(
         document_page_count,
         &mut explicit_folio,
     );
+    protect_unsequenced_row_values(items, candidate_values, &mut contextual, &explicit_folio);
 
     (contextual, explicit_folio)
+}
+
+/// Markitai: indices of each page's text that is not an edge-number candidate
+/// and carries a non-numeric character, for baseline lookups.
+fn row_text_by_page(items: &[TextItem], candidate_values: &[Option<u32>]) -> HashMap<u32, Vec<usize>> {
+    let mut rows: HashMap<u32, Vec<usize>> = HashMap::new();
+    for (index, item) in items.iter().enumerate() {
+        if candidate_values[index].is_none()
+            && item
+                .text
+                .chars()
+                .any(|character| !character.is_numeric() && !character.is_whitespace())
+        {
+            rows.entry(item.page).or_default().push(index);
+        }
+    }
+    rows
+}
+
+/// Whether an isolated edge number shares its baseline with other text.
+///
+/// Markitai: a table's last or first row near a page edge puts a lone numeric
+/// cell far from its row label, so the gap test above finds no context.
+fn shares_row_with_text(items: &[TextItem], rows: &HashMap<u32, Vec<usize>>, index: usize) -> bool {
+    let item = &items[index];
+    rows.get(&item.page).is_some_and(|indices| {
+        indices
+            .iter()
+            .any(|&other| other != index && (items[other].y - item.y).abs() < PAGE_NUMBER_Y_TOLERANCE)
+    })
+}
+
+/// Keep isolated edge numbers that the document's other edge numbers do not
+/// corroborate as folios.
+///
+/// Markitai: running folios keep one value per page step (one or two printed
+/// pages per PDF page) or repeat one value, and a spread's two folios sit side
+/// by side one apart. A number sharing its baseline with other text that no
+/// folio-like edge number in the same band corroborates is row content, for
+/// example the square column of a printed table continuing across pages. Only
+/// explicit folios and isolated numbers are evidence; numbers already attached
+/// to neighbouring content are not. Without other pages in the band there is
+/// no evidence either way and the upstream decision stands.
+fn protect_unsequenced_row_values(
+    items: &[TextItem],
+    candidate_values: &[Option<u32>],
+    contextual: &mut [bool],
+    explicit_folio: &[bool],
+) {
+    let band = |index: usize| items[index].y < PAGE_NUMBER_BOTTOM_Y;
+    let folio_like = |index: usize| explicit_folio[index] || !contextual[index];
+    // (band, step, value - step * page) -> pages; step 0 is an equal value.
+    let mut sequences: HashMap<(bool, i64, i64), HashSet<u32>> = HashMap::new();
+    let mut band_pages: HashMap<bool, HashSet<u32>> = HashMap::new();
+    let mut by_value: HashMap<(u32, u32), Vec<usize>> = HashMap::new();
+    for (index, value) in candidate_values.iter().enumerate() {
+        let Some(value) = *value else {
+            continue;
+        };
+        if !folio_like(index) {
+            continue;
+        }
+        let page = items[index].page;
+        for step in 0..=2 {
+            sequences
+                .entry((band(index), step, i64::from(value) - step * i64::from(page)))
+                .or_default()
+                .insert(page);
+        }
+        band_pages.entry(band(index)).or_default().insert(page);
+        by_value.entry((page, value)).or_default().push(index);
+    }
+    let elsewhere = |pages: &HashSet<u32>, page: u32| pages.len() > 1 || !pages.contains(&page);
+    let mut rows = None;
+    let mut protect = Vec::new();
+    for (index, value) in candidate_values.iter().enumerate() {
+        let Some(value) = *value else {
+            continue;
+        };
+        if contextual[index] || explicit_folio[index] {
+            continue;
+        }
+        let page = items[index].page;
+        let observed = band_pages
+            .get(&band(index))
+            .is_some_and(|pages| elsewhere(pages, page));
+        if !observed {
+            continue;
+        }
+        let sequenced = (0..=2).any(|step| {
+            sequences
+                .get(&(band(index), step, i64::from(value) - step * i64::from(page)))
+                .is_some_and(|pages| elsewhere(pages, page))
+        });
+        let spread_partner = [value.checked_sub(1), value.checked_add(1)]
+            .into_iter()
+            .flatten()
+            .filter_map(|partner| by_value.get(&(page, partner)))
+            .flatten()
+            .any(|&partner| (items[partner].y - items[index].y).abs() < PAGE_NUMBER_Y_TOLERANCE);
+        if sequenced || spread_partner {
+            continue;
+        }
+        let rows = rows.get_or_insert_with(|| row_text_by_page(items, candidate_values));
+        if shares_row_with_text(items, rows, index) {
+            protect.push(index);
+        }
+    }
+    for index in protect {
+        contextual[index] = true;
+    }
 }
 
 /// Decide which digit-only page-edge items can be removed before layout.
@@ -1776,8 +1888,8 @@ fn page_number_removal_mask(items: &[TextItem], document_page_count: usize) -> V
 
 /// Return whether selected-page extraction contains a page-edge number whose
 /// folio status depends on evidence from other pages. Isolated and explicitly
-/// labeled folios can be decided locally; only contextual candidates require
-/// a document-wide extraction pass.
+/// labeled folios can be decided locally; contextual candidates, and isolated
+/// candidates on a text row (Markitai), require a document-wide extraction pass.
 pub(super) fn needs_document_page_number_context(
     items: &[TextItem],
     document_page_count: usize,
@@ -1786,10 +1898,12 @@ pub(super) fn needs_document_page_number_context(
     let (contextual, explicit_folio) =
         page_number_context_masks(items, &candidate_values, document_page_count);
 
-    candidate_values
-        .iter()
-        .enumerate()
-        .any(|(index, value)| value.is_some() && contextual[index] && !explicit_folio[index])
+    let rows = row_text_by_page(items, &candidate_values);
+    candidate_values.iter().enumerate().any(|(index, value)| {
+        value.is_some()
+            && !explicit_folio[index]
+            && (contextual[index] || shares_row_with_text(items, &rows, index))
+    })
 }
 
 /// Remove numeric folios using complete document context before downstream
@@ -3133,6 +3247,65 @@ mod tests {
             mcid: None,
             baseline_shift: 0.0,
         }
+    }
+
+    /// Markitai: a printed table continues across pages, so each page's last
+    /// row carries a lone numeric cell far from its row label in the bottom
+    /// band. Running folios, and a single page without other-page evidence,
+    /// keep the upstream decision.
+    #[test]
+    fn unsequenced_table_values_on_text_rows_are_kept_while_folio_sequences_are_removed() {
+        let mut items = Vec::new();
+        for (page, value) in [(2, "361"), (3, "1296"), (4, "2809"), (5, "4900")] {
+            items.push(make_item(page, 60.0, 97.0, "Row"));
+            items.push(make_item(page, 225.0, 97.0, value));
+            // The running folio of the same page, alone on its own baseline.
+            items.push(make_item(page, 290.0, 40.0, &(page + 10).to_string()));
+            // A footer whose folio is far from its text still reads as a folio.
+            items.push(make_item(page, 60.0, 20.0, "Quarterly report"));
+            items.push(make_item(page, 520.0, 20.0, &(page + 40).to_string()));
+        }
+        let filtered = filter_markdown_page_numbers(items, 6);
+        let texts: Vec<&str> = filtered.iter().map(|item| item.text.as_str()).collect();
+        for kept in ["361", "1296", "2809", "4900"] {
+            assert!(texts.contains(&kept), "{kept} was removed: {texts:?}");
+        }
+        for removed in ["12", "13", "14", "15", "42", "43", "44", "45"] {
+            assert!(!texts.contains(&removed), "{removed} was kept: {texts:?}");
+        }
+
+        // A two-up spread: each PDF page shows two printed folios one apart
+        // beside footer text, so values advance two per PDF page.
+        let mut spread = Vec::new();
+        for page in 1..=2 {
+            let left = 2 * page + 324;
+            spread.push(make_item(page, 40.0, 30.0, &left.to_string()));
+            spread.push(make_item(page, 200.0, 30.0, "Annual review"));
+            spread.push(make_item(page, 540.0, 30.0, &(left + 1).to_string()));
+        }
+        let filtered = filter_markdown_page_numbers(spread, 2);
+        assert!(
+            filtered.iter().all(|item| item.text == "Annual review"),
+            "{:?}",
+            filtered.iter().map(|item| &item.text).collect::<Vec<_>>()
+        );
+        // The top band is judged separately from the bottom band.
+        let mut top = Vec::new();
+        for (page, value) in [(2, "9"), (3, "400"), (4, "1369")] {
+            top.push(make_item(page, 60.0, 733.0, "Row"));
+            top.push(make_item(page, 225.0, 733.0, value));
+        }
+        let filtered = filter_markdown_page_numbers(top, 6);
+        for kept in ["9", "400", "1369"] {
+            assert!(filtered.iter().any(|item| item.text == kept), "{kept}");
+        }
+
+        // One page offers no evidence, so the upstream decision stands.
+        let single = vec![make_item(2, 60.0, 97.0, "Row"), make_item(2, 225.0, 97.0, "361")];
+        let filtered = filter_markdown_page_numbers(single.clone(), 6);
+        assert!(!filtered.iter().any(|item| item.text == "361"));
+        // Selected-page extraction must fetch the other pages to decide.
+        assert!(needs_document_page_number_context(&single, 6));
     }
 
     /// A dense block of single-column prose lines at `x` starting from

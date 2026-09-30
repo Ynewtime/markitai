@@ -33,7 +33,90 @@ fn decoded(stream: &Stream) -> std::result::Result<Vec<u8>, String> {
         .map_err(|e| e.to_string())
 }
 
-fn image_bytes(stream: &Stream) -> std::result::Result<(&'static str, Vec<u8>), String> {
+/// Colour spaces encoded without colour conversion. ICC-based and calibrated
+/// spaces use their component count, as their alternate device space would;
+/// the profile itself is not embedded.
+#[derive(Debug, PartialEq)]
+enum Space {
+    Gray,
+    Rgb,
+    /// RGB palette of `hival + 1` entries.
+    Indexed(Vec<u8>),
+}
+
+fn resolved<'a>(
+    pdf: &'a lopdf::Document,
+    value: &'a Object,
+) -> std::result::Result<&'a Object, String> {
+    pdf.dereference(value)
+        .map(|(_, value)| value)
+        .map_err(|e| e.to_string())
+}
+
+fn color_space(
+    pdf: &lopdf::Document,
+    value: &Object,
+    indexed: bool,
+) -> std::result::Result<Space, String> {
+    let value = resolved(pdf, value)?;
+    if let Ok(name) = value.as_name() {
+        return match name {
+            b"DeviceRGB" => Ok(Space::Rgb),
+            b"DeviceGray" => Ok(Space::Gray),
+            _ => Err("image color space requires color conversion".into()),
+        };
+    }
+    let items = value
+        .as_array()
+        .map_err(|_| "image color space is malformed")?;
+    let family = items
+        .first()
+        .and_then(|family| family.as_name().ok())
+        .ok_or("image color space is malformed")?;
+    match (family, items.len()) {
+        (b"ICCBased", 2) => {
+            let profile = resolved(pdf, &items[1])?
+                .as_stream()
+                .map_err(|_| "ICC profile is not a stream")?;
+            match profile.dict.get(b"N").and_then(Object::as_i64) {
+                Ok(1) => Ok(Space::Gray),
+                Ok(3) => Ok(Space::Rgb),
+                _ => Err("image color space requires color conversion".into()),
+            }
+        }
+        (b"CalGray", 2) => Ok(Space::Gray),
+        (b"CalRGB", 2) => Ok(Space::Rgb),
+        (b"Indexed", 4) if !indexed => {
+            let base = color_space(pdf, &items[1], true)?;
+            let hival = resolved(pdf, &items[2])?
+                .as_i64()
+                .ok()
+                .and_then(|n| usize::try_from(n).ok())
+                .filter(|n| *n <= 255)
+                .ok_or("indexed color space has an invalid maximum index")?;
+            let lookup = match resolved(pdf, &items[3])? {
+                Object::String(bytes, _) => bytes.clone(),
+                Object::Stream(stream) => decoded(stream)?,
+                _ => return Err("indexed color space lookup is malformed".into()),
+            };
+            let channels = if base == Space::Gray { 1 } else { 3 };
+            let entries = lookup
+                .get(..(hival + 1) * channels)
+                .ok_or("indexed color space lookup is shorter than its entries")?;
+            Ok(Space::Indexed(if channels == 1 {
+                entries.iter().flat_map(|&v| [v, v, v]).collect()
+            } else {
+                entries.to_vec()
+            }))
+        }
+        _ => Err("image color space requires color conversion".into()),
+    }
+}
+
+fn image_bytes(
+    pdf: &lopdf::Document,
+    stream: &Stream,
+) -> std::result::Result<(&'static str, Vec<u8>), String> {
     let dict = &stream.dict;
     if dict.has(b"SMask")
         || dict.has(b"Mask")
@@ -93,30 +176,42 @@ fn image_bytes(stream: &Stream) -> std::result::Result<(&'static str, Vec<u8>), 
         .ok()
         .filter(|n| *n > 0)
         .ok_or("invalid image height")?;
-    let pixels = (width as usize)
+    (width as usize)
         .checked_mul(height as usize)
         .filter(|n| *n <= MAX_IMAGE_PIXELS)
         .ok_or("image dimensions exceed the pixel limit")?;
-    if dict
+    let bits = dict
         .get(b"BitsPerComponent")
         .and_then(Object::as_i64)
-        .unwrap_or(0)
-        != 8
-    {
-        return Err("only 8-bit image samples are currently encoded".into());
-    }
-    let (color, channels) = match dict
-        .get(b"ColorSpace")
-        .and_then(Object::as_name)
-        .map_err(|_| "indirect, indexed or calibrated image color space is not implemented")?
-    {
-        b"DeviceRGB" => (png::ColorType::Rgb, 3),
-        b"DeviceGray" => (png::ColorType::Grayscale, 1),
-        _ => return Err("image color space requires color conversion".into()),
+        .unwrap_or(0);
+    let space = color_space(
+        pdf,
+        dict.get(b"ColorSpace")
+            .map_err(|_| "image color space is missing")?,
+        false,
+    )?;
+    let (color, channels, depth) = match (&space, bits) {
+        (Space::Rgb, 8) => (png::ColorType::Rgb, 3, png::BitDepth::Eight),
+        (Space::Gray, 8) => (png::ColorType::Grayscale, 1, png::BitDepth::Eight),
+        (Space::Indexed(_), 1) => (png::ColorType::Indexed, 1, png::BitDepth::One),
+        (Space::Indexed(_), 2) => (png::ColorType::Indexed, 1, png::BitDepth::Two),
+        (Space::Indexed(_), 4) => (png::ColorType::Indexed, 1, png::BitDepth::Four),
+        (Space::Indexed(_), 8) => (png::ColorType::Indexed, 1, png::BitDepth::Eight),
+        _ => {
+            return Err(
+                "only 8-bit direct and 1/2/4/8-bit indexed image samples are currently encoded"
+                    .into(),
+            );
+        }
     };
     let samples = decoded(stream)?;
-    let expected = pixels
-        .checked_mul(channels)
+    // PDF and PNG rows both start on a byte boundary.
+    let row = (width as usize)
+        .checked_mul(channels * bits as usize)
+        .map(|bits| bits.div_ceil(8))
+        .ok_or("image sample count overflow")?;
+    let expected = row
+        .checked_mul(height as usize)
         .ok_or("image sample count overflow")?;
     if samples.len() != expected {
         return Err(format!(
@@ -128,7 +223,18 @@ fn image_bytes(stream: &Stream) -> std::result::Result<(&'static str, Vec<u8>), 
     {
         let mut encoder = png::Encoder::new(&mut bytes, width, height);
         encoder.set_color(color);
-        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_depth(depth);
+        if let Space::Indexed(palette) = &space {
+            // Indices above the maximum take its colour, as PDF clamps them;
+            // entries the sample depth cannot address are not written.
+            let mut palette = palette.clone();
+            let last = palette[palette.len() - 3..].to_vec();
+            while palette.len() < 3 << bits {
+                palette.extend_from_slice(&last);
+            }
+            palette.truncate(3 << bits);
+            encoder.set_palette(palette);
+        }
         let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
         writer
             .write_image_data(&samples)
@@ -688,7 +794,8 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
                 && let Some(content) = content.as_ref()
             {
                 layout_pages.insert(number);
-                page_geometry.insert(number, (frame, geometry::grids(content, frame)));
+                let neutral = geometry::neutral_states(&pdf, id);
+                page_geometry.insert(number, (frame, geometry::grids(content, frame, &neutral)));
             }
         }
         // Retain only bounded table coordinates across pages, never their
@@ -745,7 +852,7 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
                     .get_object(image_id)
                     .and_then(Object::as_stream)
                     .map_err(|e| e.to_string())
-                    .and_then(image_bytes);
+                    .and_then(|stream| image_bytes(&pdf, stream));
                 match extracted {
                     Ok((extension, bytes))
                         if total_asset_bytes + bytes.len() <= MAX_ASSET_BYTES =>
@@ -850,7 +957,11 @@ mod tests {
         assert!(inspection.signals.is_empty());
         assert_eq!(inspection.inspected_bytes, expanded_bytes);
         assert_eq!(inspection.inspected_streams, 1);
-        let grids = geometry::grids(&content.unwrap(), geometry::frame(&pdf, page).unwrap());
+        let grids = geometry::grids(
+            &content.unwrap(),
+            geometry::frame(&pdf, page).unwrap(),
+            &geometry::neutral_states(&pdf, page),
+        );
         assert_eq!(grids.len(), 1);
         assert_eq!(grids[0].xs, [20., 100., 220.]);
         assert_eq!(grids[0].ys, [50., 100., 150.]);
@@ -965,7 +1076,12 @@ mod tests {
             }
             // Root geometry never treats a Form's partial graphics as a table.
             assert!(
-                geometry::grids(&content.unwrap(), geometry::frame(&pdf, page).unwrap()).is_empty()
+                geometry::grids(
+                    &content.unwrap(),
+                    geometry::frame(&pdf, page).unwrap(),
+                    &geometry::neutral_states(&pdf, page),
+                )
+                .is_empty()
             );
         }
     }
@@ -1133,7 +1249,7 @@ mod tests {
             dictionary! { "Width" => 2, "Height" => 1, "BitsPerComponent" => 8, "ColorSpace" => "DeviceRGB" },
             vec![255, 0, 0, 0, 0, 255],
         );
-        let (extension, bytes) = image_bytes(&stream).unwrap();
+        let (extension, bytes) = image_bytes(&lopdf::Document::new(), &stream).unwrap();
         assert_eq!(extension, "png");
         let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
         let mut reader = decoder.read_info().unwrap();
@@ -1141,8 +1257,126 @@ mod tests {
         reader.next_frame(&mut decoded).unwrap();
         assert_eq!(decoded, stream.content);
         stream.dict.set("SMask", Object::Reference((99, 0)));
-        assert!(image_bytes(&stream).unwrap_err().contains("compositing"));
+        assert!(
+            image_bytes(&lopdf::Document::new(), &stream)
+                .unwrap_err()
+                .contains("compositing")
+        );
     }
+    fn decode_png(bytes: Vec<u8>) -> (png::ColorType, Vec<u8>) {
+        let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+        decoder.set_transformations(png::Transformations::EXPAND);
+        let mut reader = decoder.read_info().unwrap();
+        let mut decoded = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut decoded).unwrap();
+        decoded.truncate(info.buffer_size());
+        (reader.info().color_type, decoded)
+    }
+
+    #[test]
+    fn icc_calibrated_and_indexed_images_keep_their_samples_without_conversion() {
+        let mut pdf = lopdf::Document::with_version("1.7");
+        let rgb_profile = pdf.add_object(Stream::new(dictionary! { "N" => 3 }, vec![0; 4]));
+        let gray_profile = pdf.add_object(Stream::new(dictionary! { "N" => 1 }, vec![0; 4]));
+        let cmyk_profile = pdf.add_object(Stream::new(dictionary! { "N" => 4 }, vec![0; 4]));
+        let icc = |profile| Object::Array(vec!["ICCBased".into(), Object::Reference(profile)]);
+        let image = |space: Object, bits: i64, width: i64, samples: Vec<u8>| {
+            Stream::new(
+                dictionary! { "Width" => width, "Height" => 1, "BitsPerComponent" => bits, "ColorSpace" => space },
+                samples,
+            )
+        };
+        // Indirect ICC profiles use their component count.
+        let (kind, bytes) = image_bytes(
+            &pdf,
+            &image(icc(rgb_profile), 8, 2, vec![200, 60, 40, 1, 2, 3]),
+        )
+        .unwrap();
+        assert_eq!(kind, "png");
+        assert_eq!(
+            decode_png(bytes),
+            (png::ColorType::Rgb, vec![200, 60, 40, 1, 2, 3])
+        );
+        let (_, bytes) = image_bytes(&pdf, &image(icc(gray_profile), 8, 2, vec![7, 9])).unwrap();
+        assert_eq!(decode_png(bytes), (png::ColorType::Grayscale, vec![7, 9]));
+        let calibrated = Object::Array(vec!["CalRGB".into(), Object::Dictionary(dictionary! {})]);
+        let (_, bytes) = image_bytes(&pdf, &image(calibrated, 8, 1, vec![4, 5, 6])).unwrap();
+        assert_eq!(decode_png(bytes), (png::ColorType::Rgb, vec![4, 5, 6]));
+        // A two-bit RGB palette of two colours: index 3 exceeds the maximum
+        // index and is clamped to it; rows are byte-aligned.
+        let palette = Object::Array(vec![
+            "Indexed".into(),
+            "DeviceRGB".into(),
+            1.into(),
+            Object::string_literal(vec![10, 20, 30, 40, 50, 60]),
+        ]);
+        let (_, bytes) = image_bytes(&pdf, &image(palette, 2, 3, vec![0b0001_1100])).unwrap();
+        assert_eq!(
+            decode_png(bytes).1,
+            vec![10, 20, 30, 40, 50, 60, 40, 50, 60]
+        );
+        // A gray base expands to RGB entries; the lookup may be a stream.
+        let lookup = pdf.add_object(Stream::new(dictionary! {}, vec![0, 255]));
+        let gray_palette = Object::Array(vec![
+            "Indexed".into(),
+            icc(gray_profile),
+            1.into(),
+            Object::Reference(lookup),
+        ]);
+        let (_, bytes) = image_bytes(&pdf, &image(gray_palette, 8, 2, vec![1, 0])).unwrap();
+        assert_eq!(decode_png(bytes).1, vec![255, 255, 255, 0, 0, 0]);
+        // A palette longer than the sample depth can address keeps only the
+        // addressable entries.
+        let long = Object::Array(vec![
+            "Indexed".into(),
+            "DeviceRGB".into(),
+            3.into(),
+            Object::string_literal((0..12).collect::<Vec<u8>>()),
+        ]);
+        let (_, bytes) = image_bytes(&pdf, &image(long, 1, 2, vec![0b0100_0000])).unwrap();
+        let reader = png::Decoder::new(std::io::Cursor::new(bytes.clone()))
+            .read_info()
+            .unwrap();
+        assert_eq!(
+            reader.info().palette.as_deref(),
+            Some(&[0, 1, 2, 3, 4, 5][..])
+        );
+        assert_eq!(decode_png(bytes).1, vec![0, 1, 2, 3, 4, 5]);
+        // Colour conversion and malformed palettes remain explicit errors.
+        for (space, bits, samples) in [
+            (icc(cmyk_profile), 8, vec![0; 8]),
+            ("DeviceCMYK".into(), 8, vec![0; 8]),
+            (icc(rgb_profile), 4, vec![0; 3]),
+            (
+                Object::Array(vec![
+                    "Indexed".into(),
+                    "DeviceRGB".into(),
+                    2.into(),
+                    Object::string_literal(vec![0; 6]),
+                ]),
+                8,
+                vec![0, 1],
+            ),
+            (
+                Object::Array(vec![
+                    "Indexed".into(),
+                    Object::Array(vec![
+                        "Indexed".into(),
+                        "DeviceRGB".into(),
+                        0.into(),
+                        Object::string_literal(vec![0; 3]),
+                    ]),
+                    0.into(),
+                    Object::string_literal(vec![0]),
+                ]),
+                8,
+                vec![0, 0],
+            ),
+        ] {
+            assert!(image_bytes(&pdf, &image(space, bits, 2, samples)).is_err());
+        }
+    }
+
     #[test]
     fn invisible_text_and_used_images_are_inspected_inside_forms() {
         let mut pdf = lopdf::Document::with_version("1.7");

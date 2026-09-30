@@ -1,5 +1,6 @@
 //! Conservative geometry for complete, axis-aligned ruled tables.
 use lopdf::{Object, ObjectId, content::Content};
+use std::collections::HashSet;
 
 const TOLERANCE: f32 = 1.5;
 const MAX_EDGES: usize = 8192;
@@ -120,7 +121,66 @@ fn edge(a: [f32; 2], b: [f32; 2]) -> Option<Edge> {
     }
 }
 
-fn edges(content: &Content, frame: Frame) -> Option<Vec<Edge>> {
+/// Names of the page's graphics states that change nothing a rule verdict
+/// depends on: full opacity, normal blending, no soft mask. Line and rendering
+/// parameters are allowed; everything else keeps the page unsafe.
+pub(super) fn neutral_states(pdf: &lopdf::Document, id: ObjectId) -> HashSet<Vec<u8>> {
+    let Ok((direct, ids)) = pdf.get_page_resources(id) else {
+        return HashSet::new();
+    };
+    let resolve = |value: &'_ Object| pdf.dereference(value).ok().map(|(_, value)| value.clone());
+    let mut neutral = HashSet::new();
+    let mut seen = HashSet::new();
+    for resources in direct
+        .into_iter()
+        .chain(ids.iter().filter_map(|id| pdf.get_dictionary(*id).ok()))
+    {
+        let Some(states) = resources
+            .get(b"ExtGState")
+            .ok()
+            .and_then(&resolve)
+            .and_then(|value| value.as_dict().ok().cloned())
+        else {
+            continue;
+        };
+        for (name, value) in states.iter() {
+            // The nearest dictionary defining a name decides it, even when that
+            // definition is malformed; an inherited neutral state cannot mask it.
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            let Some(Ok(state)) = resolve(value).map(|value| value.as_dict().cloned()) else {
+                continue;
+            };
+            let safe = state.iter().all(|(key, value)| {
+                let value = resolve(value);
+                match key.as_slice() {
+                    b"Type" | b"LW" | b"LC" | b"LJ" | b"ML" | b"D" | b"RI" | b"FL" | b"SM"
+                    | b"SA" | b"OP" | b"op" | b"OPM" => true,
+                    b"CA" | b"ca" => value
+                        .and_then(|value| value.as_float().ok())
+                        .is_some_and(|alpha| alpha >= 0.999),
+                    b"BM" => value.is_some_and(|value| {
+                        value
+                            .as_name()
+                            .is_ok_and(|name| matches!(name, b"Normal" | b"Compatible"))
+                    }),
+                    b"SMask" => {
+                        value.is_some_and(|value| value.as_name().is_ok_and(|name| name == b"None"))
+                    }
+                    b"AIS" => value.is_some_and(|value| value.as_bool().is_ok_and(|flag| !flag)),
+                    _ => false,
+                }
+            });
+            if safe {
+                neutral.insert(name.clone());
+            }
+        }
+    }
+    neutral
+}
+
+fn edges(content: &Content, frame: Frame, neutral: &HashSet<Vec<u8>>) -> Option<Vec<Edge>> {
     if content.operations.len() > 200_000 {
         return None;
     }
@@ -308,6 +368,11 @@ fn edges(content: &Content, frame: Frame) -> Option<Vec<Edge>> {
                 start = None;
                 rectangular = false;
             }
+            "gs" if op
+                .operands
+                .first()
+                .and_then(|name| name.as_name().ok())
+                .is_some_and(|name| neutral.contains(name)) => {}
             // Unknown resource colours, transparency, Forms and shading make
             // a geometrical table verdict unsafe. Text can still be recovered.
             "gs" | "cs" | "CS" | "sc" | "SC" | "scn" | "SCN" | "sh" | "Do" | "BI" => return None,
@@ -364,8 +429,8 @@ pub(super) struct Grid {
     pub ys: Vec<f32>,
 }
 
-pub(super) fn grids(content: &Content, frame: Frame) -> Vec<Grid> {
-    let Some(edges) = edges(content, frame).map(merge) else {
+pub(super) fn grids(content: &Content, frame: Frame, neutral: &HashSet<Vec<u8>>) -> Vec<Grid> {
+    let Some(edges) = edges(content, frame, neutral).map(merge) else {
         return Vec::new();
     };
     detect_grids(&edges)
@@ -431,7 +496,7 @@ mod tests {
     use super::*;
 
     fn parsed_edges(bytes: &[u8], frame: Frame) -> Option<Vec<Edge>> {
-        edges(&Content::decode(bytes).unwrap(), frame)
+        edges(&Content::decode(bytes).unwrap(), frame, &HashSet::new())
     }
     #[test]
     fn separate_strokes_and_thin_fills_form_one_complete_grid() {
@@ -447,6 +512,64 @@ mod tests {
         assert_eq!(grids[0].xs.len(), 3);
         assert_eq!(grids[0].ys.len(), 3);
         assert!((grids[0].xs[0] - 20.).abs() < 0.1);
+    }
+    #[test]
+    fn only_neutral_graphics_states_keep_rule_geometry() {
+        use lopdf::{Dictionary, Stream, dictionary};
+        let mut pdf = lopdf::Document::with_version("1.7");
+        let soft_mask = pdf.add_object(dictionary! {"Type"=>"Mask","S"=>"Luminosity"});
+        let states = dictionary! {
+            "Plain"=>dictionary!{"Type"=>"ExtGState","ca"=>1,"CA"=>1.0,"BM"=>"Normal","LW"=>2,"SA"=>true,"SMask"=>"None"},
+            "Faded"=>dictionary!{"ca"=>0.5},
+            "Multiply"=>dictionary!{"BM"=>"Multiply"},
+            "Masked"=>dictionary!{"SMask"=>soft_mask},
+            "Font"=>dictionary!{"Font"=>vec![]},
+        };
+        let resources = pdf.add_object(dictionary! {"ExtGState"=>states});
+        let content = pdf.add_object(Stream::new(Dictionary::new(), vec![]));
+        let page =
+            pdf.add_object(dictionary! {"Type"=>"Page","Contents"=>content,"Resources"=>resources});
+        let neutral = neutral_states(&pdf, page);
+        assert_eq!(neutral, HashSet::from([b"Plain".to_vec()]));
+        // A page's own unsafe or malformed definition shadows an inherited
+        // neutral state of the same name.
+        let inherited = pdf.add_object(dictionary! {"ExtGState"=>dictionary!{"Near"=>dictionary!{"ca"=>1},"Broken"=>dictionary!{"ca"=>1},"Far"=>dictionary!{"ca"=>1}}});
+        let parent = pdf.add_object(dictionary! {"Type"=>"Pages","Resources"=>inherited});
+        let own = pdf.add_object(
+            dictionary! {"ExtGState"=>dictionary!{"Near"=>dictionary!{"ca"=>0.2},"Broken"=>3}},
+        );
+        let child = pdf.add_object(
+            dictionary! {"Type"=>"Page","Parent"=>parent,"Contents"=>content,"Resources"=>own},
+        );
+        assert_eq!(
+            neutral_states(&pdf, child),
+            HashSet::from([b"Far".to_vec()])
+        );
+        let frame = Frame {
+            x: 0.,
+            y: 0.,
+            width: 300.,
+            height: 400.,
+        };
+        let rules = b"20 50 m 220 50 l S 20 100 m 220 100 l S 20 150 m 220 150 l S 20 50 m 20 150 l S 100 50 m 100 150 l S 220 50 m 220 150 l S";
+        for (state, kept) in [
+            ("Plain", true),
+            ("Faded", false),
+            ("Multiply", false),
+            ("Masked", false),
+            ("Font", false),
+            ("Missing", false),
+        ] {
+            let mut bytes = format!("/{state} gs ").into_bytes();
+            bytes.extend_from_slice(rules);
+            let found = edges(&Content::decode(&bytes).unwrap(), frame, &neutral)
+                .map(merge)
+                .map(|edges| detect_grids(&edges).len());
+            assert_eq!(found.is_some(), kept, "{state}");
+            if kept {
+                assert_eq!(found, Some(1));
+            }
+        }
     }
     #[test]
     fn clipped_incomplete_or_transparent_rules_do_not_invent_tables() {

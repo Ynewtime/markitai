@@ -105,6 +105,7 @@
 
 ### Fixed
 
+- Keep the numeric cell of a table row near a page edge that PDF page-number cleanup deleted as a folio when no other page corroborates it, extract ICC-based, calibrated and indexed PDF images, and reconstruct ruled tables drawn under a neutral graphics state such as Chrome's print output.
 - Write HTML tables in the reference's compact row spelling (`| a | b |` with one `---` per column) instead of padding cells to column width, and place an XLSX/XLS sheet table directly under its heading as the reference does.
 - Include the required `ttlMs`/`cacheScope` cache directives in 2026-07-28 MCP tool listings, which the official Python SDK client otherwise rejects, and accept integral numbers such as `2.0` for `batch_convert` concurrency.
 - Quote frontmatter strings that YAML 1.1 readers would type as timestamps, booleans, numbers or null, matching the reference output bytes for the processing time.

@@ -46,7 +46,22 @@ Page-number cleanup recognizes complete folio expressions such as `Page 3 of 10`
 and retains substantive paragraphs beginning `Page N`, including prose following
 `Page 3 of 10`. Reader-generated headings and emphasis around complete folios
 do not prevent cleanup; code and HTML literal blocks are preserved. Positional
-running-furniture detection remains separate. The
+running-furniture detection remains separate.
+
+A lone one-to-four-digit number in the top or bottom page band is still removed
+as a folio, except when it shares its baseline with other text and no folio-like
+edge number in the same band corroborates it. Corroboration is another page with
+the same value or the same value per page step (one or two printed pages per PDF
+page), or a same-page neighbour one apart on its baseline (a two-up spread). Only
+explicit folios and isolated edge numbers are evidence. That keeps the numeric
+cell of a table's first or last row on each page of a printed table (for example
+`361` beside `Row 19`), which was previously deleted. Running and spread folios
+are removed as before. A number that only one page offers is still decided by the
+upstream rule, as is a table value that happens to repeat across pages. Folios of
+non-contiguous excerpts that share their baseline with footer text can now remain
+as text; this errs toward keeping content. Page-selected extraction in the
+dependency reads other pages to decide; Markitai's reader analyses the whole
+document. The
 [historical two/40-page reproduction](validation/pdf-page-prefix-round15.json)
 retains the original inputs and old outputs with 72/1,440 missing paragraphs;
 new authored regressions require every paragraph in source order.
@@ -146,7 +161,13 @@ inspection retain the original warning and fallback behavior.
 ## Images and remaining work
 
 Executed embedded raster images retain their existing extraction path and are
-appended to the corresponding page. Exact placement and reference JPEG encoding
+appended to the corresponding page. Samples are encoded without colour
+conversion: DeviceGray/DeviceRGB, ICC-based profiles with one or three components
+and CalGray/CalRGB use their component count (the profile is not embedded), and
+Indexed images with a gray or RGB base become palette PNGs at 1, 2, 4 or 8 bits,
+clamping indices above the maximum. CMYK, Lab, nested or malformed palettes,
+decode arrays, masks and other depths remain explicit warnings. JPEG streams are
+passed through unchanged. Exact placement and reference JPEG encoding
 remain different. There is no screenshot or vector-figure renderer in this
 reader. `resvg` renders SVG but does not interpret PDF graphics state: a faithful
 PDF figure also needs font programs, Form matrices, clipping, shadings, blend
@@ -155,7 +176,12 @@ does not establish those rendering semantics.
 
 Table geometry is deliberately disabled when curves, resource-dependent colours,
 transparency, Form/image invocations, shading or nonrectangular clipping make its
-verdict uncertain. Text extraction can still proceed. Borderless or merged-cell
+verdict uncertain. A named graphics state is accepted only when it changes nothing
+the verdict depends on: full opacity, a Normal or Compatible blend mode, no soft
+mask, and otherwise only line and rendering parameters. Chrome's print output sets
+such a state around its per-cell border rectangles, so its continued tables are
+reconstructed with every row; a page with links, images or curves (such as its
+first page) keeps the existing reader. Text extraction can still proceed. Borderless or merged-cell
 tables, complex columns, mathematical layout and structured vector charts remain
 open. Explicit [page media processing](pdf-ocr.md) provides rendering and local
 OCR separately from this text reader, with its own accuracy limits.
