@@ -198,6 +198,14 @@ fn safe_url(value: &str, base: Option<&Url>) -> Option<String> {
         return matches!(url.scheme(), "http" | "https" | "mailto" | "tel")
             .then(|| destination(value));
     }
+    // A scheme-relative address (`//host/path`) names another host; without a
+    // page to take the scheme from, Markdown would read it as a local path.
+    if base.is_none() && value.starts_with("//") {
+        return Url::parse(&format!("https:{value}"))
+            .ok()
+            .filter(|url| url.host_str().is_some())
+            .map(|_| destination(&format!("https:{value}")));
+    }
     if let Some(base) = base {
         return base
             .join(value)
@@ -206,6 +214,54 @@ fn safe_url(value: &str, base: Option<&Url>) -> Option<String> {
             .map(|url| url.to_string());
     }
     (!value.contains(':')).then(|| destination(value))
+}
+
+/// A saved page's own address for its relative links: an absolute
+/// `<base href>` (which also names the directory), else a canonical link
+/// (whose directory is known unless it is only the home page).
+fn saved_page_base(document: ElementRef<'_>) -> Option<(Url, bool)> {
+    let web = |value: &str| {
+        Url::parse(value.trim())
+            .ok()
+            .filter(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
+    };
+    if let Some(base) = document
+        .select(&selector("base[href]"))
+        .next()
+        .and_then(|node| web(node.value().attr("href")?))
+    {
+        return Some((base, true));
+    }
+    document
+        .select(&selector("link[rel][href]"))
+        .find(|node| {
+            node.value().attr("rel").is_some_and(|rel| {
+                rel.split_whitespace()
+                    .any(|token| token.eq_ignore_ascii_case("canonical"))
+            })
+        })
+        .and_then(|node| web(node.value().attr("href")?))
+        .map(|canonical| {
+            let directory = !canonical.path().trim_matches('/').is_empty();
+            (canonical, directory)
+        })
+}
+
+/// A link of a page read without its URL: relative links resolve against the
+/// saved page's own address when it has one (root-relative ones only, when
+/// that is its home page); fragments stay in the page.
+fn saved_page_link(value: &str, link_base: Option<&(Url, bool)>) -> Option<String> {
+    let trimmed = value.trim();
+    match link_base {
+        Some((base, directory))
+            if !trimmed.starts_with('#')
+                && Url::parse(trimmed).is_err()
+                && (*directory || trimmed.starts_with('/')) =>
+        {
+            safe_url(trimmed, Some(base))
+        }
+        _ => safe_url(trimmed, None),
+    }
 }
 
 /// Inline image data is not an addressable resource. Like the reference, keep
@@ -1407,6 +1463,10 @@ struct Footnotes<'a> {
     text_markers: HashMap<usize, String>,
     /// In-page tables of contents of a full page, left out.
     contents: HashSet<usize>,
+    /// Where a saved page's relative links point when no page URL is given:
+    /// its `<base href>`, else its canonical address; `false` when that is only
+    /// the site's home page, which resolves only root-relative links.
+    link_base: Option<(Url, bool)>,
     /// Links around blocks, written as their content ...
     block_links: HashSet<usize>,
     /// ... with the link on the block that names them: target → link.
@@ -1468,6 +1528,9 @@ impl<'a> Footnotes<'a> {
             },
             ..Self::default()
         };
+        if prune_chrome && base.is_none() {
+            notes.link_base = saved_page_base(document);
+        }
         for anchor in root.select(&selector("a[href]")) {
             if let Some(target) = block_link_target(anchor) {
                 notes.block_links.insert(element_key(anchor));
@@ -2290,6 +2353,8 @@ fn serialize_clean(
         if let Some(raw) = raw {
             let normalized = if attribute == "src" && name == "img" {
                 image_source(raw, base)
+            } else if attribute == "href" && base.is_none() {
+                saved_page_link(raw, notes.link_base.as_ref())
             } else if matches!(attribute, "href" | "src") {
                 safe_url(raw, base)
             } else {
@@ -3923,6 +3988,51 @@ mod tests {
             !markdown.contains("[###") && !markdown.contains("](/post)\n\nSummary text.]"),
             "{markdown}"
         );
+    }
+
+    #[test]
+    fn saved_pages_resolve_links_against_their_own_address() {
+        let body = r##"<main><p><a href="/about">About</a> <a href="next.html">Next</a> <a href="#part">Part</a> <a href="//cdn.example.net/file.pdf">File</a> <img src="page_files/a.png" alt="A"> <img src="//img.example.net/b.png" alt="B"></p></main>"##;
+        let page = |head: &str| {
+            extract_html(
+                &format!("<html><head>{head}</head><body>{body}</body></html>"),
+                None,
+            )
+            .unwrap()
+            .markdown
+        };
+        let canonical = page(r#"<link rel="canonical" href="https://example.org/blog/post/">"#);
+        for expected in [
+            "[About](https://example.org/about)",
+            "[Next](https://example.org/blog/post/next.html)",
+            "[Part](#part)",
+            "[File](https://cdn.example.net/file.pdf)",
+            "![A](page_files/a.png)",
+            "![B](https://img.example.net/b.png)",
+        ] {
+            assert!(canonical.contains(expected), "{expected}: {canonical}");
+        }
+        // A home-page canonical does not say which directory the page is in.
+        let home = page(r#"<link rel="canonical" href="https://example.org/">"#);
+        assert!(
+            home.contains("[About](https://example.org/about)")
+                && home.contains("[Next](next.html)"),
+            "{home}"
+        );
+        let base = page(
+            r#"<base href="https://docs.example.org/guide/"><link rel="canonical" href="https://example.org/x/">"#,
+        );
+        assert!(
+            base.contains("[Next](https://docs.example.org/guide/next.html)"),
+            "{base}"
+        );
+        // Without a saved address, and in fragments, links stay as written.
+        assert!(page("").contains("[Next](next.html)"));
+        let fragment = fragment(
+            r#"<link rel="canonical" href="https://example.org/a/"><a href="next.html">Next</a>"#,
+        )
+        .unwrap();
+        assert!(fragment.contains("[Next](next.html)"), "{fragment}");
     }
 
     #[test]
