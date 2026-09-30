@@ -69,8 +69,14 @@ documented article heuristic; ordinary hidden descendants remain hidden.
 - Valid absolute HTTP, HTTPS, mail and telephone URLs retain their spelling.
   URL validation does not add a slash to a hostname-only link or change percent
   escapes. Literal angle brackets and double quotes are percent-encoded before
-  Markdown emission. Relative URLs resolve against a supplied page URL. Local extraction
-  without a base retains relative destinations.
+  Markdown emission. Relative URLs resolve against a supplied page URL. A full
+  page read from a local file resolves relative links against its absolute
+  `<base href>`, else its canonical link (only root-relative links when that is
+  the home page, whose directory is unknown); images keep their relative paths,
+  which a page saved with its files points at those files. Without such an
+  address, and in fragments, relative destinations stay as written. A
+  scheme-relative address (`//host/path`) takes `https:` when no page URL is
+  given, since Markdown would read it as a local path.
 - An image whose source is inline `data:` content keeps its alt text and
   position as the reference's `![alt](data:<type>...)` placeholder; the payload
   is never retained. `data:text/html`, `data:image/svg+xml` and

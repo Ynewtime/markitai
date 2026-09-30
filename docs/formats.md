@@ -195,8 +195,9 @@ layout and PDF image placement require further compatibility work.
   never persisted as a successful Markdown document.
 - Native document parsers do not call remote OCR automatically.
 - HTML links are restricted to ordinary HTTP(S), mail and telephone references.
-  Relative references remain relative for a local file and become absolute when
-  the caller supplies a source URL. Script links lose the destination while
+  Relative references become absolute when the caller supplies a source URL; a
+  saved web page's links resolve against its `<base href>` or canonical link,
+  while its image paths and other local files' references stay relative. Script links lose the destination while
   keeping their visible label.
 - Format adapters return embedded bytes rather than downloading remote images.
 - Text readers retain original Markdown frontmatter for the output layer to
