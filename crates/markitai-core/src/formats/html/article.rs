@@ -296,6 +296,7 @@ fn kind(element: ElementRef<'_>) -> Kind {
     }
     if tag == "article"
         || token(element, "itemprop", "articleBody")
+        || token(element, "role", "article")
         || matches!(tag, "div" | "section")
             && named(
                 element,
@@ -308,6 +309,12 @@ fn kind(element: ElementRef<'_>) -> Kind {
                     "blog-post-content",
                     "story-body",
                     "story-content",
+                    // The rest of defuddle's specific entry points.
+                    "js-article-content",
+                    "article_post",
+                    "article-wrapper",
+                    "content-article",
+                    "instapaper_body",
                 ],
             )
     {
@@ -339,12 +346,65 @@ fn discarded(element: ElementRef<'_>) -> bool {
         )
 }
 
+/// Words of class and id names that mark page furniture around an article:
+/// recommendation and share rails, newsletter and cookie boxes, tables of
+/// contents, disclaimers. They only weigh the choice of region; nothing is
+/// removed for its name.
+const FURNITURE_WORDS: &[&str] = &[
+    "recommend",
+    "recommended",
+    "recommendations",
+    "related",
+    "share",
+    "sharing",
+    "social",
+    "newsletter",
+    "newsletters",
+    "subscribe",
+    "subscription",
+    "disclaimer",
+    "disclaimers",
+    "promo",
+    "sponsor",
+    "sponsored",
+    "advert",
+    "advertisement",
+    "cookie",
+    "cookies",
+    "toc",
+    "breadcrumb",
+    "breadcrumbs",
+    "pagination",
+    "sidebar",
+    "widget",
+    "footer",
+    "signup",
+];
+
+/// Whether a class or id name, split into words at `-`, `_` and spaces,
+/// names page furniture.
+fn furniture(element: ElementRef<'_>) -> bool {
+    ["class", "id"].iter().any(|attribute| {
+        element.value().attr(attribute).is_some_and(|value| {
+            value
+                .split(|c: char| c.is_ascii_whitespace() || matches!(c, '-' | '_'))
+                .any(|word| {
+                    FURNITURE_WORDS
+                        .iter()
+                        .any(|furniture| word.eq_ignore_ascii_case(furniture))
+                })
+        })
+    })
+}
+
 struct Scored<'a> {
     element: ElementRef<'a>,
     parent: Option<usize>,
     content_parent: Option<usize>,
     end: usize,
     score: usize,
+    /// Score inside furniture-named subtrees, counted once per outermost one.
+    furniture: usize,
     kind: Kind,
 }
 
@@ -379,6 +439,7 @@ pub(super) fn select(document: &Html) -> ElementRef<'_> {
             content_parent,
             end: index + 1,
             score,
+            furniture: 0,
             kind,
         });
         if element.value().name() == "body" {
@@ -398,8 +459,15 @@ pub(super) fn select(document: &Html) -> ElementRef<'_> {
         );
     }
     for index in (0..nodes.len()).rev() {
+        // Children come after their parent, so each subtree is complete here.
+        if furniture(nodes[index].element) {
+            nodes[index].furniture = nodes[index].score;
+        }
         if let Some(parent) = nodes[index].parent {
             nodes[parent].score = nodes[parent].score.saturating_add(nodes[index].score);
+            nodes[parent].furniture = nodes[parent]
+                .furniture
+                .saturating_add(nodes[index].furniture);
             nodes[parent].end = nodes[parent].end.max(nodes[index].end);
         }
     }
@@ -440,8 +508,14 @@ pub(super) fn select(document: &Html) -> ElementRef<'_> {
     if candidates.next().is_some() {
         return nodes[root].element;
     }
-    // Keep substantial introductions/conclusions outside the named region.
-    if candidate.score.saturating_mul(5) >= nodes[root].score.saturating_mul(3) {
+    // Keep substantial introductions/conclusions outside the named region;
+    // furniture-named rails and boxes outside it are not such text.
+    let outside = nodes[root].score.saturating_sub(candidate.score);
+    let outside_furniture = nodes[root].furniture.saturating_sub(candidate.furniture);
+    let weighed = candidate
+        .score
+        .saturating_add(outside.saturating_sub(outside_furniture));
+    if candidate.score.saturating_mul(5) >= weighed.saturating_mul(3) {
         candidate.element
     } else {
         nodes[root].element
@@ -479,6 +553,22 @@ mod tests {
         assert_eq!(select(&document).value().attr("id"), Some("story"));
         assert!(excluded(element(&document, ".injected-story-block")));
         assert!(!excluded(element(&document, "#story")));
+    }
+
+    #[test]
+    fn furniture_rails_do_not_keep_the_page_around_a_named_article() {
+        // A short article beside long recommendation, newsletter and
+        // disclaimer rails: the rails are not an introduction to keep.
+        let rail = "Recommended reading about other subjects entirely. ".repeat(12);
+        let document = Html::parse_document(&format!(
+            r#"<body><div class="js-article-content" id="story"><h2>Section</h2><p>The article itself is short.</p></div><div class="recommended-footer"><p>{rail}</p></div><div class="newsletter-box"><p>{rail}</p></div><div class="site-disclaimers"><p>{rail}</p></div></body>"#
+        ));
+        assert_eq!(select(&document).value().attr("id"), Some("story"));
+        // The same rails' text in unnamed blocks is page text to keep.
+        let document = Html::parse_document(&format!(
+            r#"<body><div class="js-article-content" id="story"><h2>Section</h2><p>The article itself is short.</p></div><div><p>{rail}</p></div></body>"#
+        ));
+        assert_eq!(select(&document).value().name(), "body");
     }
 
     #[test]
