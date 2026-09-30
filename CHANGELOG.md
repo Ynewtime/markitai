@@ -107,6 +107,7 @@
 
 ### Fixed
 
+- Rejoin PDF bold spans that the page reader closed and reopened at each line wrap (`**wrapped** **text**`), leaving bold-italic markers and code fences unchanged.
 - Keep declarative Shadow DOM content (`<template shadowrootmode>`, open or closed, nested) in HTML conversion, as the reference does, instead of dropping it with inert templates.
 - Make the whole workspace type-check and pass `clippy -D warnings` for `x86_64-pc-windows-msvc`, as the configured Windows CI job runs it: the registry proxy decoder satisfies Windows-only lints, and Unix-only batch publication, recovery-state and resumed-report code no longer warns on platforms where the batch command reports it as unimplemented.
 - Reconstruct PDF pages with link annotations, image XObjects, curved marks or rounded clips, keep a same-width bordered block from merging into a table's grid, and stop table cells and fixed-pitch code from turning ordinary prose into headings.

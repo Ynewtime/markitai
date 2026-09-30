@@ -108,6 +108,7 @@
 
 ### 修复
 
+- 合并 PDF 页面读取器在每次换行处关闭又重开的粗体（`**wrapped** **text**`），粗斜体标记与代码块保持不变。
 - HTML 转换保留声明式 Shadow DOM 内容（`<template shadowrootmode>`，open 或 closed，可嵌套），与参考一致，不再随惰性模板一起丢弃。
 - 整个 workspace 可按 `x86_64-pc-windows-msvc` 通过类型检查与 `clippy -D warnings`（与已配置的 Windows CI 任务一致）：注册表代理解码满足 Windows 专有规则；只在 Unix 启用的批量发布、恢复状态与续跑报告代码，在批量命令会明确报告未实现的平台上不再产生警告。
 - 含链接注释、图片 XObject、曲线标记或圆角裁剪的 PDF 页面也能重建；宽度相同的边框块不再并入表格网格；表格单元格与等宽代码不再使普通段落被识别为标题。

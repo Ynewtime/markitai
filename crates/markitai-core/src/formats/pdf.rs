@@ -647,6 +647,44 @@ fn screenshot_destination(name: &str) -> String {
     output
 }
 
+/// One bold span across a line wrap: the page reader closes and reopens bold
+/// at each physical line (`**wrapped** **text**`). Bold-italic markers,
+/// whitespace-adjacent markers and fenced code are left alone.
+fn join_bold_runs(markdown: &str) -> std::borrow::Cow<'_, str> {
+    if !markdown.contains("** **") {
+        return std::borrow::Cow::Borrowed(markdown);
+    }
+    let mut output = String::with_capacity(markdown.len());
+    let mut fenced = false;
+    for (index, line) in markdown.split('\n').enumerate() {
+        if index > 0 {
+            output.push('\n');
+        }
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+        }
+        if fenced || !line.contains("** **") {
+            output.push_str(line);
+            continue;
+        }
+        let mut rest = line;
+        while let Some(at) = rest.find("** **") {
+            let before = rest[..at].chars().next_back();
+            let after = rest[at + 5..].chars().next();
+            let joinable = |ch: Option<char>| ch.is_some_and(|ch| !ch.is_whitespace() && ch != '*');
+            output.push_str(&rest[..at]);
+            output.push_str(if joinable(before) && joinable(after) {
+                " "
+            } else {
+                "** **"
+            });
+            rest = &rest[at + 5..];
+        }
+        output.push_str(rest);
+    }
+    std::borrow::Cow::Owned(output)
+}
+
 fn page_markdown(page: &PdfPage, warnings: &mut Vec<String>) -> String {
     let number = page.number;
     let marker = format!("<!-- Page number: {number} -->");
@@ -661,7 +699,7 @@ fn page_markdown(page: &PdfPage, warnings: &mut Vec<String>) -> String {
         warnings.push(format!("PDF page {number}: native text was not recovered ({reason}); OCR is required for this page."));
         marker
     } else {
-        format!("{marker}\n\n{}", page.markdown.trim())
+        format!("{marker}\n\n{}", join_bold_runs(page.markdown.trim()))
     }
 }
 
@@ -1271,6 +1309,22 @@ mod tests {
         let info = reader.next_frame(&mut decoded).unwrap();
         decoded.truncate(info.buffer_size());
         (reader.info().color_type, decoded)
+    }
+
+    #[test]
+    fn bold_spans_split_at_line_wraps_are_rejoined() {
+        assert_eq!(
+            join_bold_runs("Text **Vivamus ipsum cursus** **convallis. Maecenas.** More"),
+            "Text **Vivamus ipsum cursus convallis. Maecenas.** More"
+        );
+        for kept in [
+            "***bold italic*** ***next***",
+            "**a** ** b**",
+            "```\n**code** **stays**\n```",
+            "plain text",
+        ] {
+            assert_eq!(join_bold_runs(kept), kept);
+        }
     }
 
     #[test]
