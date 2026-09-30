@@ -397,6 +397,25 @@ fn placeholder_family(value: &str) -> &str {
     }
 }
 
+/// The reference presentation writer's final pass: no trailing whitespace on
+/// a line, and runs of blank lines (from text-free shapes) collapsed to one.
+fn tidy(markdown: &str) -> String {
+    let mut output = String::with_capacity(markdown.len());
+    let mut blank = false;
+    for (index, line) in markdown.split('\n').enumerate() {
+        let line = line.trim_end();
+        if line.is_empty() && blank {
+            continue;
+        }
+        blank = line.is_empty();
+        if index > 0 {
+            output.push('\n');
+        }
+        output.push_str(line);
+    }
+    output
+}
+
 fn position(shape: &Node, layout: Option<&Node>, master: Option<&Node>) -> (i64, i64) {
     let (mut top, mut left) = own_position(shape);
     if let Some(base) = base_placeholder(shape, layout, true) {
@@ -958,7 +977,7 @@ pub(super) fn extract_presentation(bytes: &[u8]) -> Result<Document> {
     if readable == 0 {
         return Err(error("no slide could be read"));
     }
-    reader.document.markdown = pages.join("\n\n");
+    reader.document.markdown = tidy(&pages.join("\n\n"));
     reader
         .document
         .metadata
@@ -968,6 +987,14 @@ pub(super) fn extract_presentation(bytes: &[u8]) -> Result<Document> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn presentation_output_drops_trailing_spaces_and_collapses_blank_runs_like_the_reference() {
+        assert_eq!(
+            super::tidy("<!-- Slide number: 2 -->\n\n\n\n# Title  \n\nBody\n\n\n\nFooter"),
+            "<!-- Slide number: 2 -->\n\n# Title\n\nBody\n\nFooter"
+        );
+    }
+
     use super::*;
     use std::io::Write;
 

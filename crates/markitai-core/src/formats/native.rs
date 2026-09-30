@@ -241,7 +241,7 @@ impl Renderer<'_> {
                     let heading = format!(
                         "{} {}",
                         "#".repeat(usize::from((*level).clamp(1, 6))),
-                        self.inlines(content)
+                        self.inlines(content).trim_end()
                     );
                     if let Some(anchor) = anchor
                         .as_ref()
@@ -428,6 +428,11 @@ pub(super) fn extract(bytes: &[u8], extension: &str) -> Result<Document> {
             markdown.push_str(&format!("\n    {line}"));
         }
     }
+    // The reference's legacy Word/PowerPoint (anydoc), RTF and OpenDocument
+    // output ends with a newline; its DOCX, XLS/XLSX and EPUB output does not.
+    if matches!(extension, "doc" | "ppt" | "rtf" | "odt" | "ods") && !markdown.is_empty() {
+        markdown.push('\n');
+    }
     let mut warnings = metadata.warnings.clone();
     if renderer.merged_cells {
         warnings.push("Merged table cells are represented by their origin cell with empty covered cells in Markdown.".into());
@@ -459,6 +464,32 @@ pub(super) fn extract(bytes: &[u8], extension: &str) -> Result<Document> {
 mod tests {
     use super::*;
     use anydoc::model::{AssetId, Cell, Style, Table, TableKind};
+    #[test]
+    fn rtf_ends_with_a_newline_and_headings_drop_trailing_spaces_like_the_reference() {
+        let rtf = br"{\rtf1\ansi{\stylesheet{\s1 heading 1;}}{\pard\s1 Title with space \par}{\pard Body text.\par}}";
+        let document = extract(rtf, "rtf").unwrap();
+        assert!(
+            document.markdown.ends_with("Body text.\n"),
+            "{:?}",
+            document.markdown
+        );
+        assert!(
+            !document.markdown.contains(" \n"),
+            "{:?}",
+            document.markdown
+        );
+        let mut renderer = Renderer {
+            asset_names: &[],
+            merged_cells: false,
+            anchors: BTreeSet::new(),
+            extension: "docx",
+        };
+        assert_eq!(
+            renderer.blocks(&[Block::heading(1, vec![Inline::plain("Heading ")])]),
+            "# Heading"
+        );
+    }
+
     #[test]
     fn spreadsheet_sheet_heading_is_followed_directly_by_its_table_like_the_reference() {
         for (extension, bytes, separator) in [

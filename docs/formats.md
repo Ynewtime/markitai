@@ -150,6 +150,11 @@ Office conversion can differ in whitespace, table header selection, numbering,
 anchors, font-driven headings and metadata. Such differences must remain visible
 in differential reports rather than being normalized away.
 
+As in the reference, legacy DOC/PPT, RTF, ODT and ODS output ends with a newline
+while DOCX, XLS/XLSX and EPUB output does not; headings carry no trailing spaces.
+Presentation output has no trailing whitespace on a line and collapses the blank
+runs that text-free shapes leave, as the reference's final pass does.
+
 The renderer retains referenced anchors and omits unused ones. EPUB links within
 the assembled book keep working through these anchors; they intentionally differ
 from the reference's links to source XHTML files that are not exported. DOCX

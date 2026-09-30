@@ -92,6 +92,7 @@
 
 ### Changed
 
+- Match the reference's document tails and spacing: legacy DOC/PPT, RTF, ODT and ODS Markdown ends with a newline, headings drop trailing spaces, and presentation output collapses blank runs from text-free shapes and trailing whitespace. On the reference's 20 non-HTML fixtures, 16 now match byte for byte; the rest are the accepted asset names and the recorded EPUB-anchor, ODS-span and PDF-layout differences.
 - Render HTML callouts and alerts (Obsidian, GitHub, Bootstrap, callout asides, Hugo/Docsy admonitions) as `> [!type] Title` blockquotes keeping collapsed bodies, TeX image-service images as `$…$`/`$$…$$` math, and lists, rules and empty quote lines in the reference's spelling (`* item`, `1. item`, `---`, `>`).
 - Render EML attachments in the reference's `## Attachments` section: image attachments as images, other attachments with their size, and attached messages quoted one level deep with nested attachments listed by name; an empty body leaves a bare `## Content`. Every attachment keeps its download link and body Content-ID images stay bound.
 - Use `sha2` 0.11, whose SHA-256 selects the CPU's SHA instructions at run time on aarch64 and x86, for content proofs, cache keys and asset names; digests and their spelling are unchanged, and the duplicate `sha2` 0.10 is gone.
