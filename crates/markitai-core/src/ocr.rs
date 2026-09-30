@@ -199,14 +199,152 @@ fn assemble(mut lines: Vec<Line>, width: u32, height: u32) -> Result<OcrResult> 
             .filter(|total| *total <= MAX_TEXT)
             .ok_or_else(|| failure("recognized text exceeds the safety limit"))?;
     }
+    let mut text = String::with_capacity(bytes);
+    let mut boxes = Vec::with_capacity(lines.len());
+    let mut confidence = 0.0;
+    for block in columns(lines, 0) {
+        if !text.is_empty() {
+            text.push_str("\n\n");
+        }
+        rows(block, &mut text, &mut boxes, &mut confidence);
+    }
+    let confidence = if boxes.is_empty() {
+        0.0
+    } else {
+        confidence / boxes.len() as f32
+    };
+    let result = OcrResult {
+        text,
+        confidence,
+        boxes,
+    };
+    // Keep diagnostics private to the native API, while validating the engine's
+    // blank-image distinction before exposing text to the conversion pipeline.
+    if (result.text.is_empty() != result.boxes.is_empty()) || !result.confidence.is_finite() {
+        return Err(failure(
+            "recognizer returned inconsistent text observations",
+        ));
+    }
+    Ok(result)
+}
+
+/// Lines in reading order as blocks: a page of text columns is read column
+/// by column. A column gutter is the widest horizontal gap between the lines
+/// narrower than three fifths of the text, at least one line height wide,
+/// with at least three lines of prose (a median of 12 characters) on each side
+/// overlapping by two line heights; short cells side by side, such as a
+/// receipt's items and prices, stay rows. Lines crossing the gutter (a title)
+/// separate sections, each read left column first. Nested columns are found
+/// in each side, a few levels deep.
+#[cfg(any(target_os = "macos", test))]
+fn columns(mut lines: Vec<Line>, depth: usize) -> Vec<Vec<Line>> {
+    const MAX_DEPTH: usize = 4;
+    const MIN_COLUMN_LINES: usize = 3;
+    const MIN_PROSE_CHARS: usize = 12;
+    const SPANNING: f32 = 0.6;
     lines.sort_by(|a, b| {
         a.bounds[1]
             .total_cmp(&b.bounds[1])
             .then_with(|| a.bounds[0].total_cmp(&b.bounds[0]))
     });
-    let mut text = String::with_capacity(bytes);
-    let mut boxes = Vec::with_capacity(lines.len());
-    let mut confidence = 0.0;
+    if depth >= MAX_DEPTH || lines.len() < 2 * MIN_COLUMN_LINES {
+        return vec![lines];
+    }
+    let height = |line: &Line| line.bounds[3] - line.bounds[1];
+    let mut heights: Vec<f32> = lines.iter().map(height).collect();
+    heights.sort_by(f32::total_cmp);
+    let line_height = heights[heights.len() / 2];
+    let left = lines
+        .iter()
+        .map(|line| line.bounds[0])
+        .fold(f32::INFINITY, f32::min);
+    let right = lines
+        .iter()
+        .map(|line| line.bounds[2])
+        .fold(f32::NEG_INFINITY, f32::max);
+    let spanning = |line: &Line| line.bounds[2] - line.bounds[0] > SPANNING * (right - left);
+    let mut spans: Vec<(f32, f32)> = lines
+        .iter()
+        .filter(|line| !spanning(line))
+        .map(|line| (line.bounds[0], line.bounds[2]))
+        .collect();
+    spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut gutter: Option<(f32, f32)> = None;
+    let mut reach = f32::NEG_INFINITY;
+    for (start, end) in spans {
+        if reach.is_finite()
+            && start - reach >= line_height
+            && gutter.is_none_or(|(a, b)| start - reach > b - a)
+        {
+            gutter = Some((reach, start));
+        }
+        reach = reach.max(end);
+    }
+    let Some((gap_left, gap_right)) = gutter else {
+        return vec![lines];
+    };
+    let side = |on_left: bool| -> Vec<&Line> {
+        lines
+            .iter()
+            .filter(|line| {
+                if on_left {
+                    line.bounds[2] <= gap_left
+                } else {
+                    line.bounds[0] >= gap_right
+                }
+            })
+            .collect()
+    };
+    let prose = |side: &[&Line]| {
+        let mut lengths: Vec<usize> = side.iter().map(|line| line.text.chars().count()).collect();
+        lengths.sort_unstable();
+        side.len() >= MIN_COLUMN_LINES && lengths[lengths.len() / 2] >= MIN_PROSE_CHARS
+    };
+    let (on_left, on_right) = (side(true), side(false));
+    let band = |side: &[&Line]| {
+        side.iter()
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(top, bottom), line| {
+                (top.min(line.bounds[1]), bottom.max(line.bounds[3]))
+            })
+    };
+    let ((left_top, left_bottom), (right_top, right_bottom)) = (band(&on_left), band(&on_right));
+    let overlap = left_bottom.min(right_bottom) - left_top.max(right_top);
+    if !prose(&on_left) || !prose(&on_right) || overlap < 2.0 * line_height {
+        return vec![lines];
+    }
+    let mut blocks = Vec::new();
+    let (mut left_lines, mut right_lines) = (Vec::new(), Vec::new());
+    let flush =
+        |left_lines: &mut Vec<Line>, right_lines: &mut Vec<Line>, blocks: &mut Vec<Vec<Line>>| {
+            for side in [std::mem::take(left_lines), std::mem::take(right_lines)] {
+                if !side.is_empty() {
+                    blocks.extend(columns(side, depth + 1));
+                }
+            }
+        };
+    for line in lines {
+        if line.bounds[2] <= gap_left {
+            left_lines.push(line);
+        } else if line.bounds[0] >= gap_right {
+            right_lines.push(line);
+        } else {
+            flush(&mut left_lines, &mut right_lines, &mut blocks);
+            blocks.push(vec![line]);
+        }
+    }
+    flush(&mut left_lines, &mut right_lines, &mut blocks);
+    blocks
+}
+
+/// Appends one block's lines as text rows: lines sharing most of a vertical
+/// band form a left-to-right row, and a wide vertical gap starts a paragraph.
+#[cfg(any(target_os = "macos", test))]
+fn rows(mut lines: Vec<Line>, text: &mut String, boxes: &mut Vec<[f32; 4]>, confidence: &mut f32) {
+    lines.sort_by(|a, b| {
+        a.bounds[1]
+            .total_cmp(&b.bounds[1])
+            .then_with(|| a.bounds[0].total_cmp(&b.bounds[0]))
+    });
     let mut index = 0;
     let mut previous: Option<[f32; 4]> = None;
     while index < lines.len() {
@@ -237,31 +375,13 @@ fn assemble(mut lines: Vec<Line>, width: u32, height: u32) -> Result<OcrResult> 
             }
             text.push_str(&line.text);
             boxes.push(line.bounds);
-            confidence += line.confidence;
+            *confidence += line.confidence;
             row[1] = row[1].min(line.bounds[1]);
             row[3] = row[3].max(line.bounds[3]);
         }
         previous = Some(row);
         index = end;
     }
-    let confidence = if boxes.is_empty() {
-        0.0
-    } else {
-        confidence / boxes.len() as f32
-    };
-    let result = OcrResult {
-        text,
-        confidence,
-        boxes,
-    };
-    // Keep diagnostics private to the native API, while validating the engine's
-    // blank-image distinction before exposing text to the conversion pipeline.
-    if (result.text.is_empty() != result.boxes.is_empty()) || !result.confidence.is_finite() {
-        return Err(failure(
-            "recognizer returned inconsistent text observations",
-        ));
-    }
-    Ok(result)
 }
 
 #[cfg(test)]
@@ -324,6 +444,107 @@ mod tests {
         assert_eq!(blank.confidence, 0.0);
         assert!(assemble(vec![line("bad", [0., 0., 1000., 1.], 1.)], 10, 10).is_err());
         assert!(assemble(vec![line("bad", [0., 0., 1., 1.], f32::NAN)], 10, 10).is_err());
+    }
+
+    #[test]
+    fn text_columns_are_read_column_by_column_and_short_cells_stay_rows() {
+        let line = |text: &str, left: f32, top: f32, right: f32| Line {
+            text: text.into(),
+            bounds: [left, top, right, top + 10.],
+            confidence: 1.0,
+        };
+        let prose = |column: &str, row: usize| format!("{column} column prose line {row}");
+        let mut page = vec![line(
+            "A title across both columns of the page",
+            0.,
+            0.,
+            300.,
+        )];
+        for row in 0..4 {
+            let top = 20. + 14. * row as f32;
+            page.push(line(&prose("Left", row), 0., top, 140.));
+            page.push(line(&prose("Right", row), 160., top, 300.));
+        }
+        page.push(line("A closing line across both columns", 0., 80., 300.));
+        let text = assemble(page, 300, 100).unwrap().text;
+        let left = (0..4)
+            .map(|row| prose("Left", row))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let right = (0..4)
+            .map(|row| prose("Right", row))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(
+            text,
+            format!(
+                "A title across both columns of the page\n\n{left}\n\n{right}\n\nA closing line across both columns"
+            )
+        );
+        // Three columns: each gutter is found in turn.
+        let mut three = Vec::new();
+        for row in 0..3 {
+            let top = 14. * row as f32;
+            for (index, name) in ["First", "Second", "Third"].iter().enumerate() {
+                let x = 110. * index as f32;
+                three.push(line(&prose(name, row), x, top, x + 90.));
+            }
+        }
+        let text = assemble(three, 330, 60).unwrap().text;
+        let order: Vec<&str> = text
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| l.split(' ').next().unwrap())
+            .collect();
+        assert_eq!(
+            order,
+            [
+                "First", "First", "First", "Second", "Second", "Second", "Third", "Third", "Third"
+            ]
+        );
+        // A receipt's items and prices, and two short prose lines, stay rows.
+        let mut receipt = Vec::new();
+        for (row, item) in ["Coffee beans", "Oat milk", "Sourdough loaf", "Delivery"]
+            .iter()
+            .enumerate()
+        {
+            let top = 14. * row as f32;
+            receipt.push(line(item, 0., top, 100.));
+            receipt.push(line("$4.50", 200., top, 240.));
+        }
+        let text = assemble(receipt, 240, 60).unwrap().text;
+        assert!(
+            text.starts_with("Coffee beans $4.50\nOat milk $4.50"),
+            "{text}"
+        );
+        let short = vec![
+            line(&prose("Left", 0), 0., 0., 140.),
+            line(&prose("Right", 0), 160., 0., 300.),
+            line(&prose("Left", 1), 0., 14., 140.),
+            line(&prose("Right", 1), 160., 14., 300.),
+        ];
+        let text = assemble(short, 300, 30).unwrap().text;
+        assert_eq!(text.lines().count(), 2, "{text}");
+        // A gap narrower than a line is a word space, not a gutter.
+        let mut narrow = Vec::new();
+        for row in 0..4 {
+            let top = 14. * row as f32;
+            narrow.push(line(&prose("Left", row), 0., top, 140.));
+            narrow.push(line(&prose("Right", row), 145., top, 300.));
+        }
+        let text = assemble(narrow, 300, 60).unwrap().text;
+        assert!(
+            text.starts_with(&format!("{} {}", prose("Left", 0), prose("Right", 0))),
+            "{text}"
+        );
+        // Blocks stacked rather than side by side keep top-to-bottom order.
+        let mut stacked = Vec::new();
+        for row in 0..3 {
+            stacked.push(line(&prose("Right", row), 160., 14. * row as f32, 300.));
+            stacked.push(line(&prose("Left", row), 0., 60. + 14. * row as f32, 140.));
+        }
+        let text = assemble(stacked, 300, 100).unwrap().text;
+        assert!(text.starts_with(&prose("Right", 0)), "{text}");
     }
 
     #[cfg(target_os = "macos")]

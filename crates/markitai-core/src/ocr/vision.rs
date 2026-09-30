@@ -14,8 +14,13 @@ pub(super) fn recognize(image: &Prepared, requested: &str) -> Result<Vec<Line>> 
         request.setUsesLanguageCorrection(true);
         // SAFETY: The caller checks macOS >= 11, the request is initialized and
         // confined to this call, and the selector has no additional preconditions.
-        let languages = unsafe { request.supportedRecognitionLanguagesAndReturnError() }
-            .map_err(|_| failure("cannot obtain supported recognition languages"))?;
+        let languages =
+            unsafe { request.supportedRecognitionLanguagesAndReturnError() }.map_err(|error| {
+                failure(&format!(
+                    "cannot obtain supported recognition languages: {}",
+                    error.localizedDescription()
+                ))
+            })?;
         let supported: Vec<String> = (0..languages.len())
             .map(|index| languages.objectAtIndex(index).to_string())
             .collect();
@@ -29,9 +34,12 @@ pub(super) fn recognize(image: &Prepared, requested: &str) -> Result<Vec<Line>> 
             &NSDictionary::new(),
         );
         let requests = NSArray::<VNRequest>::from_slice(&[&request]);
-        handler
-            .performRequests_error(&requests)
-            .map_err(|_| failure("Vision text recognition failed"))?;
+        handler.performRequests_error(&requests).map_err(|error| {
+            failure(&format!(
+                "Vision text recognition failed: {}",
+                error.localizedDescription()
+            ))
+        })?;
         let observations = request
             .results()
             .ok_or_else(|| failure("Vision returned no recognition result"))?;
