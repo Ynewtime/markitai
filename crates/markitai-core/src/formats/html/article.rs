@@ -315,8 +315,10 @@ fn kind(element: ElementRef<'_>) -> Kind {
             && named(
                 element,
                 &[
+                    "article",
                     "article-body",
                     "article-content",
+                    "article-text",
                     "entry-content",
                     "post-content",
                     "post-body",
@@ -393,6 +395,8 @@ const FURNITURE_WORDS: &[&str] = &[
     "widget",
     "footer",
     "signup",
+    // Google's and Yahoo's markers for text that is not the page's content.
+    "nocontent",
 ];
 
 /// Whether a class or id name, split into words at `-`, `_` and spaces,
@@ -782,6 +786,21 @@ mod tests {
             r#"<body><div class="js-article-content" id="story"><h2>Section</h2><p>The article itself is short.</p></div><div><p>{rail}</p></div></body>"#
         ));
         assert_eq!(select(&document).value().name(), "body");
+    }
+
+    #[test]
+    fn plain_article_names_and_nocontent_rails_choose_the_article() {
+        let rail = "Other stories from this site this week. ".repeat(12);
+        for name in ["article", "article-text"] {
+            let document = Html::parse_document(&format!(
+                r#"<body><div class="hero"><a href="/story">Story</a></div><div class="{name}" id="story"><p>The article itself is short.</p></div><div class="panel nocontent"><p>{rail}</p></div></body>"#
+            ));
+            assert_eq!(
+                select(&document).value().attr("id"),
+                Some("story"),
+                "{name}"
+            );
+        }
     }
 
     #[test]
