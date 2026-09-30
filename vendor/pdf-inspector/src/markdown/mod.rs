@@ -1796,7 +1796,7 @@ fn convert_items_with_rects_lines_and_table_output(
                 let st_tables = detect_tables_from_struct_tree(band_items, struct_tables, page);
                 for table in &st_tables {
                     let coverage = table.item_indices.len() as f32 / band_items.len().max(1) as f32;
-                    if coverage < 0.5 {
+                    if coverage < 0.5 && !struct_table_fills_its_region(band_items, table) {
                         continue;
                     }
                     for &idx in &table.item_indices {
@@ -2409,6 +2409,34 @@ fn convert_items_with_rects_lines_and_table_output(
         #[cfg(feature = "ocr")]
         detected_tables,
     }
+}
+
+/// Whether a structure-tree table holds nearly every text item inside its own
+/// bounds (markitai). A table beside other text on its page is fully tagged
+/// when it does; partial tagging leaves untagged cells in that region, and
+/// such a table still falls through to geometry detection.
+fn struct_table_fills_its_region(items: &[TextItem], table: &crate::tables::Table) -> bool {
+    const MIN_REGION_SHARE: f32 = 0.8;
+    let members: Vec<&TextItem> = table.item_indices.iter().filter_map(|&idx| items.get(idx)).collect();
+    if members.len() < 4 {
+        return false;
+    }
+    let (mut left, mut right) = (f32::INFINITY, f32::NEG_INFINITY);
+    let (mut bottom, mut top) = (f32::INFINITY, f32::NEG_INFINITY);
+    for item in &members {
+        left = left.min(item.x);
+        right = right.max(item.x + item.width);
+        bottom = bottom.min(item.y);
+        top = top.max(item.y + item.height);
+    }
+    let inside = items
+        .iter()
+        .filter(|item| {
+            let (cx, cy) = (item.x + item.width / 2.0, item.y + item.height / 2.0);
+            cx >= left && cx <= right && cy >= bottom && cy <= top
+        })
+        .count();
+    members.len() as f32 >= MIN_REGION_SHARE * inside as f32
 }
 
 #[cfg(test)]

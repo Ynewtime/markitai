@@ -1505,6 +1505,7 @@ fn tracked_run_space_floor(group: &[&TextItem], start: usize) -> Option<(usize, 
             || next.is_underline != first.is_underline
             || next.is_strikeout != first.is_strikeout
             || is_fixed_pitch(next) != is_fixed_pitch(first)
+            || separate_cells(first, next)
         {
             break;
         }
@@ -2027,6 +2028,36 @@ fn glyph_run_word_gap_floor(gaps: &[f32]) -> Option<f32> {
     }
 }
 
+thread_local! {
+    /// markitai: the `(page, MCID)` pairs of a tagged PDF's table cells while
+    /// per-page Markdown extracts its text (see `with_table_cells`).
+    static TABLE_CELL_MCIDS: std::cell::RefCell<HashSet<(u32, i64)>> =
+        std::cell::RefCell::new(HashSet::new());
+}
+
+/// Run a text extraction knowing the structure tree's table cells
+/// (markitai), so the runs of two adjacent cells are not merged into one
+/// item: a merged item keeps only the first run's MCID, and the structure
+/// tree would find the next cell empty.
+pub(crate) fn with_table_cells<T>(cells: HashSet<(u32, i64)>, run: impl FnOnce() -> T) -> T {
+    let previous = TABLE_CELL_MCIDS.with(|set| set.replace(cells));
+    let result = run();
+    TABLE_CELL_MCIDS.with(|set| set.replace(previous));
+    result
+}
+
+/// Whether two runs belong to two different table cells of the structure
+/// tree (markitai).
+fn separate_cells(first: &TextItem, next: &TextItem) -> bool {
+    match (first.mcid, next.mcid) {
+        (Some(a), Some(b)) if a != b => TABLE_CELL_MCIDS.with(|set| {
+            let set = set.borrow();
+            set.contains(&(first.page, a)) && set.contains(&(next.page, b))
+        }),
+        _ => false,
+    }
+}
+
 /// Whether a run's font is known to be fixed-pitch.
 fn is_fixed_pitch(item: &TextItem) -> bool {
     item.fixed_pitch == Some(true)
@@ -2319,6 +2350,7 @@ fn merge_text_items_with_clips(
                 if next.is_italic != first.is_italic
                     || next.is_underline != first.is_underline
                     || next.is_strikeout != first.is_strikeout
+                    || separate_cells(first, next)
                 {
                     break;
                 }

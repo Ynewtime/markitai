@@ -1,18 +1,46 @@
 {
-  "purpose": "A tagged PDF whose borderless table has wrapped, vertically centred cells: only its structure tree gives the rows, which the per-page reader missed.",
-  "source": {
-    "file": "borderless-table.html",
-    "bytes": 1044,
-    "sha256": "a3dbca016919533abf881fe2b4987e2be444fcd760cc3d936b243a0678551bef"
-  },
-  "authored": "written for this test in markitai-rust",
+  "purpose": "Tagged PDFs whose tables are drawn without rules: wrapped, vertically centred cells (borderless-table), and the browser default style with cells a few pixels apart (default-table). Only the structure tree gives their rows and cells. table-beside-prose puts a small table among long paragraphs, so the table holds far less than half of its band.",
+  "authored": "written for these tests in markitai-rust",
   "generator": {
     "script": "generate.sh",
     "tool": "Google Chrome 154.0.8037.93 headless print-to-pdf, private profile, no network, no header or footer"
   },
-  "output": {
-    "file": "borderless-table.pdf",
-    "bytes": 31587,
-    "sha256": "989559e21694ae6c3ab093ce9d9942637614e92cc67054e82b9143cdc659a367"
-  }
+  "fixtures": [
+    {
+      "source": {
+        "file": "borderless-table.html",
+        "bytes": 1044,
+        "sha256": "a3dbca016919533abf881fe2b4987e2be444fcd760cc3d936b243a0678551bef"
+      },
+      "output": {
+        "file": "borderless-table.pdf",
+        "bytes": 31587,
+        "sha256": "ef68fd178efb797407c1a6b3d0610672226245f22e664b4b51c7ee3c3948bade"
+      }
+    },
+    {
+      "source": {
+        "file": "default-table.html",
+        "bytes": 626,
+        "sha256": "b1b0cc4a60d49328b5b714ebc41d50283ad73296295408372b87ee3dd27a7b74"
+      },
+      "output": {
+        "file": "default-table.pdf",
+        "bytes": 50024,
+        "sha256": "d2275bf808c7cdb7bc5053b6a76a40b84da1da7580bff25606e70af2090f929c"
+      }
+    },
+    {
+      "source": {
+        "file": "table-beside-prose.html",
+        "bytes": 4723,
+        "sha256": "57fe888d1d3939817b744609dd39e522b59a0c5d2a2da1b71a05d36461775322"
+      },
+      "output": {
+        "file": "table-beside-prose.pdf",
+        "bytes": 58322,
+        "sha256": "a018f01d274c977a31b947faef5786cec275fceaa7adf9ca191cedfe81a382a7"
+      }
+    }
+  ]
 }

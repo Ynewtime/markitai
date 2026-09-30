@@ -644,16 +644,31 @@ fn extract_pages_markdown_mem_impl(
             .filter_map(|page| page.checked_add(1))
             .collect()
     });
+    // markitai: a tagged PDF's tables, as the whole-document conversion
+    // reads them from its structure tree; per-page Markdown otherwise misses
+    // every table drawn without rules. Their cells also keep text extraction
+    // from merging adjacent cells' runs.
+    let struct_tables = structure_tree::StructTree::from_doc(&doc)
+        .map(|tree| tree.extract_tables(&doc.get_pages()))
+        .unwrap_or_default();
+    let table_cells: HashSet<(u32, i64)> = struct_tables
+        .iter()
+        .flat_map(|table| &table.rows)
+        .flat_map(|row| &row.cells)
+        .flat_map(|cell| cell.mcids.iter().map(|&(mcid, page)| (page, mcid)))
+        .collect();
     let ((all_items, all_rects, all_lines), page_thresholds, gid_pages, _page_rotations, _) =
-        if let Some(required_pages) = required_pages.as_ref() {
-            extractor::extract_positioned_text_for_document_analysis(
-                &doc,
-                &font_cmaps,
-                required_pages,
-            )?
-        } else {
-            extractor::extract_positioned_text_from_doc(&doc, &font_cmaps, None)?
-        };
+        extractor::with_table_cells(table_cells, || {
+            if let Some(required_pages) = required_pages.as_ref() {
+                extractor::extract_positioned_text_for_document_analysis(
+                    &doc,
+                    &font_cmaps,
+                    required_pages,
+                )
+            } else {
+                extractor::extract_positioned_text_from_doc(&doc, &font_cmaps, None)
+            }
+        })?;
     let text_quality = analyze_text_quality(&all_items);
 
     // Resolve page numbers with full-document context before partitioning.
@@ -690,13 +705,6 @@ fn extract_pages_markdown_mem_impl(
             &all_pages
         }
     };
-
-    // markitai: a tagged PDF's tables, as the whole-document conversion
-    // reads them from its structure tree; per-page Markdown otherwise misses
-    // every table drawn without rules.
-    let struct_tables = structure_tree::StructTree::from_doc(&doc)
-        .map(|tree| tree.extract_tables(&doc.get_pages()))
-        .unwrap_or_default();
 
     let mut results = Vec::with_capacity(pages_slice.len());
     let mut pages_needing_ocr = Vec::new();

@@ -400,3 +400,31 @@ fn a_tagged_borderless_table_is_read_from_the_structure_tree() {
             .contains("Cold storage was chosen for records older than a year.")
     );
 }
+
+#[test]
+fn a_tagged_default_style_table_keeps_each_cell_apart() {
+    // Cells a few pixels apart: their runs would merge into one text item
+    // that keeps only the first cell's marked content.
+    let document = extract(include_bytes!("fixtures/default-table.pdf")).unwrap();
+    assert!(
+        document.markdown.contains(
+            "|Language|Year|Typing|Primary Use|\n|---|---|---|---|\n|Python|1991|Dynamic|General purpose|\n|Rust|2015|Static|Systems programming|\n|TypeScript|2012|Static|Web development|"
+        ),
+        "{}",
+        document.markdown
+    );
+}
+
+#[test]
+fn a_tagged_table_among_long_paragraphs_keeps_its_header() {
+    // The table holds far less than half of its band's text, and the rest of
+    // its own region is its cells: it is fully tagged.
+    let document = extract(include_bytes!("fixtures/table-beside-prose.pdf")).unwrap();
+    assert!(
+        document.markdown.contains(
+            "|Service|Peak (MB)|Idle (MB)|\n|---|---|---|\n|Alpha|45|12|\n|Bravo|120|38|\n|Charlie|200|95|"
+        ),
+        "{}",
+        document.markdown
+    );
+}

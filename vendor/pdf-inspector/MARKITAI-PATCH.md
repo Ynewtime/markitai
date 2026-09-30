@@ -6,7 +6,7 @@ upstream commit and every copied file's original checksum. The original MIT
 license and `external/bcmaps/LICENSE` remain in place. No Cargo registry source
 was modified. The workspace coordinator owns the path patch and lockfile.
 
-The local changes are limited to fourteen upstream files:
+The local changes are limited to fifteen upstream files:
 
 - `src/text_utils.rs`: page-number recognition requires a complete folio
   expression, preserving paragraphs such as `Page 42 explains the result` and
@@ -38,7 +38,18 @@ The local changes are limited to fourteen upstream files:
   as the whole-document conversion does. Without them a table drawn without
   rules is found only from the alignment of its text, which splits wrapped,
   vertically centred cells into broken rows. Structure roles are not passed;
-  on the Chrome-printed corpus they changed nothing further.
+  on the Chrome-printed corpus they changed nothing further. The tables' cell
+  MCIDs are known to text extraction while it runs (`with_table_cells`).
+- `src/extractor/mod.rs` (also listed below): the runs of two different
+  structure-tree table cells are not merged into one item, which would keep
+  only the first cell's MCID and leave the next cell empty (a table in the
+  browser's default style, cells a few pixels apart). Other runs merge as
+  before; refusing every MCID boundary turned a sidenoted essay into a false
+  table.
+- `src/markdown/mod.rs` (also listed below): a structure-tree table is used
+  when it holds at least 80% of the text items inside its own bounds, besides
+  the upstream rule of half its band, so a fully tagged table among long
+  paragraphs is kept; partial tagging still falls through to geometry.
 - `src/extractor/fonts.rs`: a Type3 font's mirrored `FontMatrix` flips its
   runs' glyph side only when its glyphs are drawn above the glyph-space origin
   (`FontBBox`). Chrome/Skia mirrors the matrix over glyphs drawn y-down, so its
