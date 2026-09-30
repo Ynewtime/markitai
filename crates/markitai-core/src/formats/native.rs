@@ -12,6 +12,31 @@ mod office_meta;
 #[path = "pdf.rs"]
 pub(super) mod pdf;
 
+/// Whether a block shows anything: text, an image, a rule, code.
+fn has_content(block: &Block) -> bool {
+    match block {
+        Block::Heading { content, .. } | Block::Paragraph(content) => {
+            content.iter().any(|inline| match inline {
+                Inline::Anchor(_) | Inline::LineBreak => false,
+                Inline::Text { text, .. } => !text.trim().is_empty(),
+                Inline::Link { content, .. } => !anydoc::model::inlines_to_plain_text(content)
+                    .trim()
+                    .is_empty(),
+                _ => true,
+            })
+        }
+        Block::List(list) => list
+            .items
+            .iter()
+            .any(|item| item.blocks.iter().any(has_content)),
+        Block::BlockQuote(blocks) => blocks.iter().any(has_content),
+        Block::Table(table) => table.grid.iter().flatten().any(
+            |slot| matches!(slot, CellSlot::Origin(cell) if cell.blocks.iter().any(has_content)),
+        ),
+        _ => true,
+    }
+}
+
 fn conversion_error(error: anydoc::ConvertError) -> Error {
     Error::Conversion(format!("Native document conversion failed: {error}"))
 }
@@ -220,6 +245,69 @@ impl Renderer<'_> {
         output
     }
 
+    /// Whether a document table only lays out content: no row holds two
+    /// non-empty cells, and a cell holds a table or several blocks with
+    /// content (a web page saved as a document, spacing its comments with
+    /// empty columns). Its cells are then the document's blocks. A table of
+    /// single paragraphs stays a table even with empty columns (a form to
+    /// fill in), and spreadsheets keep every table as a table.
+    fn is_layout_table(&self, table: &anydoc::model::Table) -> bool {
+        if !matches!(
+            self.extension,
+            "doc" | "docx" | "docm" | "odt" | "rtf" | "epub"
+        ) {
+            return false;
+        }
+        let filled = |slot: &CellSlot| matches!(slot, CellSlot::Origin(cell) if cell.blocks.iter().any(has_content));
+        if table
+            .grid
+            .iter()
+            .any(|row| row.iter().filter(|slot| filled(slot)).count() > 1)
+        {
+            return false;
+        }
+        table.grid.iter().flatten().any(|slot| {
+            matches!(slot, CellSlot::Origin(cell)
+                if cell.blocks.iter().filter(|block| has_content(block)).count() > 1
+                    || cell.blocks.iter().any(|block| matches!(block, Block::Table(_))))
+        })
+    }
+
+    /// A cell's blocks as the text of one Markdown table cell. A table
+    /// nested in the cell cannot be written as a Markdown table: each of its
+    /// rows becomes a line of its cells' text.
+    fn cell_text(&mut self, blocks: &[Block]) -> String {
+        let mut parts = Vec::new();
+        for block in blocks {
+            let text = match block {
+                Block::Table(table) => table
+                    .grid
+                    .iter()
+                    .filter_map(|row| {
+                        let cells = row
+                            .iter()
+                            .filter_map(|slot| match slot {
+                                CellSlot::Origin(cell) => Some(self.cell_text(&cell.blocks)),
+                                CellSlot::Covered { .. } => None,
+                            })
+                            .map(|text| text.trim().to_owned())
+                            .filter(|text| !text.is_empty())
+                            .collect::<Vec<_>>();
+                        (!cells.is_empty()).then(|| cells.join(" "))
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                other => self.blocks(std::slice::from_ref(other)),
+            };
+            // A block keeps its own leading spaces (code indentation); the
+            // caller trims the cell as a whole.
+            if !text.trim().is_empty() {
+                parts.push(text.trim_end().to_owned());
+            }
+        }
+        parts.join("\n\n")
+    }
+
     fn blocks(&mut self, blocks: &[Block]) -> String {
         // The reference spreadsheet converters write each sheet as a heading
         // line immediately followed by its table.
@@ -299,6 +387,17 @@ impl Renderer<'_> {
                     })
                     .collect::<Vec<_>>()
                     .join("\n"),
+                Block::Table(table) if self.is_layout_table(table) => table
+                    .grid
+                    .iter()
+                    .flatten()
+                    .filter_map(|slot| match slot {
+                        CellSlot::Origin(cell) => Some(self.blocks(&cell.blocks)),
+                        CellSlot::Covered { .. } => None,
+                    })
+                    .filter(|text| !text.trim().is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n\n"),
                 Block::Table(table) => {
                     let mut rows = table
                         .grid
@@ -310,7 +409,7 @@ impl Renderer<'_> {
                                     CellSlot::Origin(cell) => {
                                         self.merged_cells |= cell.row_span > 1 || cell.col_span > 1;
                                         // Keep inline Markdown, escape table syntax only.
-                                        self.blocks(&cell.blocks)
+                                        self.cell_text(&cell.blocks)
                                             .trim()
                                             .replace('|', "\\|")
                                             .replace('\n', "<br>")
@@ -645,6 +744,70 @@ mod tests {
         );
         renderer.extension = "ods";
         assert_eq!(renderer.blocks(&[table]), "| Name |\n| --- |\n| Value |");
+    }
+
+    #[test]
+    fn a_layout_table_is_unwrapped_and_a_nested_table_becomes_cell_lines() {
+        let paragraph = |text: &str| Block::Paragraph(vec![Inline::plain(text)]);
+        // A web page saved as a document: an empty spacer column beside a
+        // comment of two paragraphs, wrapped in a one-column container.
+        let comment = Block::Table(Table::from_rows(
+            vec![vec![
+                Cell::default(),
+                Cell::new(vec![
+                    paragraph("commenter 2 hours ago"),
+                    paragraph("A reply."),
+                ]),
+            ]],
+            0,
+            TableKind::Data,
+        ));
+        let container = Block::Table(Table::from_rows(
+            vec![vec![Cell::new(vec![comment])]],
+            0,
+            TableKind::Data,
+        ));
+        let mut renderer = Renderer {
+            asset_names: &[],
+            merged_cells: false,
+            anchors: BTreeSet::new(),
+            extension: "odt",
+        };
+        assert_eq!(
+            renderer.blocks(std::slice::from_ref(&container)),
+            "commenter 2 hours ago\n\nA reply."
+        );
+        // A data table holding a small table keeps its rows; the nested
+        // table's rows become lines of the cell.
+        let nested = Block::Table(Table::from_rows(
+            vec![
+                vec![
+                    Cell::from_inlines(vec![Inline::plain("x")]),
+                    Cell::from_inlines(vec![Inline::plain("1")]),
+                ],
+                vec![
+                    Cell::from_inlines(vec![Inline::plain("y")]),
+                    Cell::from_inlines(vec![Inline::plain("2")]),
+                ],
+            ],
+            0,
+            TableKind::Data,
+        ));
+        let data = Block::Table(Table::from_rows(
+            vec![vec![
+                Cell::from_inlines(vec![Inline::plain("Point")]),
+                Cell::new(vec![nested]),
+            ]],
+            0,
+            TableKind::Data,
+        ));
+        assert_eq!(
+            renderer.blocks(std::slice::from_ref(&data)),
+            "|  |  |\n| --- | --- |\n| Point | x 1<br>y 2 |"
+        );
+        // Spreadsheets keep their tables whatever they hold.
+        renderer.extension = "ods";
+        assert!(renderer.blocks(&[container]).starts_with('|'));
     }
 
     #[test]
