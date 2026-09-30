@@ -73,6 +73,36 @@ escaped property names, external stylesheets or the browser's complete cascade.
 The correction follows the r1 corpus audit; that historical artifact and its
 two recorded conversion errors remain unchanged.
 
+## Content region and site readers
+
+A full page is reduced to one content region. A named article region (the
+content names defuddle uses as entry points, among them `article-content`,
+`js-article-content`, `entry-content`, `post-body`, `role="article"`) is chosen
+over its page when it holds at least three fifths of the page's text; subtrees
+whose class or id words name page furniture (recommended, related, share,
+newsletter, subscribe, disclaimer, toc, breadcrumb, sidebar, footer ...) do
+not count as page text for that comparison. Names only weigh the choice:
+nothing is removed for its name. GitHub's Primer page sidebar is page chrome.
+A GitHub issue keeps its complete discussion, where defuddle keeps only the
+opening post: the thread is usually what an issue link is converted for.
+
+On a full page an image smaller than 33px on either axis by what it declares
+(attributes, inline style, an SVG viewBox, a `1x` srcset URL's width) is a
+spacer, pixel or icon and is not written; an emoji image keeps its character,
+percentages are not pixels, equation images stay, and fragments keep all
+images.
+
+Two sites have their own reader. A Substack note page (by host, note
+permalink container or CDN assets, without a rendered article body) is its
+main note and attached image. An X post page (an x.com or twitter.com status
+URL, or X's own test ids or media host) is its main post: text with links,
+images and video posters, and the quoted post as a block quote headed
+`**Name @handle** · date`, without avatars, player controls, counters or
+timelines, in both the `data-testid` and the 2026 `data-tweet-id` markup.
+Against defuddle's 209 expected outputs, words extra to the expected body fell
+from 3,555 to 2,658 with none lost, and all seven semantic contracts of the
+reference's captured pages hold ([record](validation/html-quality-round43.md)).
+
 ## Mathematical content
 
 Mathematics is recovered as TeX data before ordinary script removal. Only an
