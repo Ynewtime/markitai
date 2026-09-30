@@ -833,7 +833,8 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
             {
                 layout_pages.insert(number);
                 let resources = geometry::rule_resources(&pdf, id);
-                page_geometry.insert(number, (frame, geometry::grids(content, frame, &resources)));
+                let (grids, marks) = geometry::page_shapes(content, frame, &resources);
+                page_geometry.insert(number, (frame, grids, marks));
             }
         }
         // Retain only bounded table coordinates across pages, never their
@@ -866,10 +867,10 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
         let inspection = inspections
             .remove(&number)
             .expect("every page was inspected");
-        if let Some((frame, grids)) = page_geometry.remove(&number)
+        if let Some((frame, grids, marks)) = page_geometry.remove(&number)
             && let Some(refined) = layout
                 .as_mut()
-                .and_then(|layout| layout.page(number, frame, grids, &page.markdown))
+                .and_then(|layout| layout.page(number, frame, grids, &marks, &page.markdown))
         {
             page.markdown = refined;
         }

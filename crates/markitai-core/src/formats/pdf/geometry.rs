@@ -216,7 +216,27 @@ pub(super) fn rule_resources(pdf: &lopdf::Document, id: ObjectId) -> RuleResourc
     found
 }
 
-fn edges(content: &Content, frame: Frame, resources: &RuleResources) -> Option<Vec<Edge>> {
+/// A small painted shape — the disc, ring or square a browser draws as a
+/// list bullet instead of a bullet character — in frame coordinates.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Mark {
+    pub x0: f32,
+    pub y0: f32,
+    pub x1: f32,
+    pub y1: f32,
+}
+
+const MAX_MARKS: usize = 4096;
+/// Extent, in points, of a shape that can be a list bullet: a browser's
+/// disc is about 0.35 em, so this spans 5–20pt type.
+const MARK_MIN: f32 = 1.0;
+const MARK_MAX: f32 = 8.0;
+
+fn shapes(
+    content: &Content,
+    frame: Frame,
+    resources: &RuleResources,
+) -> Option<(Vec<Edge>, Vec<Mark>)> {
     if content.operations.len() > 200_000 {
         return None;
     }
@@ -236,6 +256,7 @@ fn edges(content: &Content, frame: Frame, resources: &RuleResources) -> Option<V
     let mut pending_clip = false;
     let mut curved = false;
     let mut output = Vec::new();
+    let mut marks = Vec::new();
     for op in &content.operations {
         let numbers = || {
             op.operands
@@ -357,6 +378,7 @@ fn edges(content: &Content, frame: Frame, resources: &RuleResources) -> Option<V
                         ]
                     },
                 );
+                let clipping = pending_clip;
                 if pending_clip {
                     if !rectangular || curved {
                         state.shaped_clip = true;
@@ -407,6 +429,19 @@ fn edges(content: &Content, frame: Frame, resources: &RuleResources) -> Option<V
                         });
                     }
                 }
+                // A compact painted shape, curved or not, may be a bullet.
+                let [x0, y0, x1, y1] = bounds;
+                let (width, height) = (x1 - x0, y1 - y0);
+                if (fill || stroke)
+                    && !clipping
+                    && marks.len() < MAX_MARKS
+                    && (MARK_MIN..=MARK_MAX).contains(&width)
+                    && (MARK_MIN..=MARK_MAX).contains(&height)
+                    && width.max(height) <= width.min(height) * 1.5
+                    && points.iter().all(|&p| state.inside(p))
+                {
+                    marks.push(Mark { x0, y0, x1, y1 });
+                }
                 if output.len() > MAX_EDGES {
                     return None;
                 }
@@ -436,7 +471,12 @@ fn edges(content: &Content, frame: Frame, resources: &RuleResources) -> Option<V
             return None;
         }
     }
-    Some(output)
+    Some((output, marks))
+}
+
+#[cfg(test)]
+fn edges(content: &Content, frame: Frame, resources: &RuleResources) -> Option<Vec<Edge>> {
+    shapes(content, frame, resources).map(|(edges, _)| edges)
 }
 
 fn merge(mut edges: Vec<Edge>) -> Vec<Edge> {
@@ -483,11 +523,22 @@ pub(super) struct Grid {
     pub ys: Vec<f32>,
 }
 
+#[cfg(test)]
 pub(super) fn grids(content: &Content, frame: Frame, resources: &RuleResources) -> Vec<Grid> {
-    let Some(edges) = edges(content, frame, resources).map(merge) else {
-        return Vec::new();
+    page_shapes(content, frame, resources).0
+}
+
+/// The page's complete ruled tables and its bullet-sized marks, from one
+/// walk of its content. A page whose paint cannot be judged has neither.
+pub(super) fn page_shapes(
+    content: &Content,
+    frame: Frame,
+    resources: &RuleResources,
+) -> (Vec<Grid>, Vec<Mark>) {
+    let Some((edges, marks)) = shapes(content, frame, resources) else {
+        return (Vec::new(), Vec::new());
     };
-    detect_grids(&edges)
+    (detect_grids(&merge(edges)), marks)
 }
 
 fn detect_grids(edges: &[Edge]) -> Vec<Grid> {

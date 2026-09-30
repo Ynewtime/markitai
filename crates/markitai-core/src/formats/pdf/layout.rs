@@ -1,5 +1,5 @@
 //! Layout improvements only for pages with a reliable, upright text layer.
-use super::geometry::{Frame, Grid};
+use super::geometry::{Frame, Grid, Mark};
 use pdf_inspector::{TextItem, types::ItemType};
 use std::collections::{BTreeMap, HashSet};
 
@@ -16,7 +16,7 @@ impl Layout {
     pub(super) fn read(
         bytes: &[u8],
         selected: &HashSet<u32>,
-        geometry: &BTreeMap<u32, (Frame, Vec<Grid>)>,
+        geometry: &BTreeMap<u32, (Frame, Vec<Grid>, Vec<Mark>)>,
     ) -> std::result::Result<Self, &'static str> {
         let (items, rotations) =
             pdf_inspector::extract_text_with_positions_and_rotations_mem_with_options(
@@ -36,7 +36,7 @@ impl Layout {
             }
             // Table cells often use a smaller size than prose; counting them
             // would make ordinary paragraphs look like headings.
-            let in_table = geometry.get(&item.page).is_some_and(|(_, grids)| {
+            let in_table = geometry.get(&item.page).is_some_and(|(_, grids, _)| {
                 let (x, y) = (item.x + item.width / 2., item.y + item.height / 2.);
                 grids.iter().any(|grid| {
                     x >= grid.xs[0]
@@ -77,10 +77,11 @@ impl Layout {
         number: u32,
         frame: Frame,
         grids: Vec<Grid>,
+        marks: &[Mark],
         baseline: &str,
     ) -> Option<String> {
         let items = self.pages.remove(&number)?;
-        render(items, &self.headings, frame, grids, baseline)
+        render(items, &self.headings, frame, grids, marks, baseline)
     }
 }
 
@@ -101,7 +102,8 @@ fn valid(item: &TextItem) -> bool {
         && item.font_size > 1.
         && item.font_size < 1000.
         && item.rotation.abs() < 0.1
-        && item.baseline_shift.abs() < 0.1
+        // A super/subscript run is measured from its anchor's baseline.
+        && item.baseline_shift.abs() < item.font_size * 1.5
         && !matches!(item.render_mode, Some(3 | 7))
         && !item.text.chars().any(|c| {
             c == '\u{fffd}'
@@ -145,6 +147,10 @@ fn character_counts(text: &str) -> BTreeMap<char, usize> {
         .replace("</u>", "")
         .replace("<s>", "")
         .replace("</s>", "")
+        .replace("<sup>", "")
+        .replace("</sup>", "")
+        .replace("<sub>", "")
+        .replace("</sub>", "")
         .replace("<br>", "");
     for c in text.chars().filter(|c| c.is_alphanumeric()) {
         *counts.entry(c).or_default() += 1;
@@ -159,6 +165,8 @@ struct Style {
     underline: bool,
     strike: bool,
     code: bool,
+    /// Raised (`1`) or lowered (`-1`) off the anchor's baseline.
+    script: i8,
 }
 
 impl From<&TextItem> for Style {
@@ -175,7 +183,15 @@ impl From<&TextItem> for Style {
             code: item.fixed_pitch == Some(true)
                 && !item.is_underline
                 && !is_bare_url(text)
-                && !text.contains('`'),
+                && !text.contains('`')
+                && item.baseline_shift == 0.,
+            script: if item.baseline_shift > 0. {
+                1
+            } else if item.baseline_shift < 0. {
+                -1
+            } else {
+                0
+            },
         }
     }
 }
@@ -195,18 +211,24 @@ struct Line {
     size: f32,
 }
 
+/// The baseline an item's line is set on: a script run's is its anchor's.
+fn line_y(item: &TextItem) -> f32 {
+    item.y - item.baseline_shift
+}
+
 fn lines(mut items: Vec<TextItem>) -> Vec<Line> {
-    items.sort_by(|a, b| b.y.total_cmp(&a.y).then(a.x.total_cmp(&b.x)));
+    items.sort_by(|a, b| line_y(b).total_cmp(&line_y(a)).then(a.x.total_cmp(&b.x)));
     let mut result: Vec<Line> = Vec::new();
     for item in items {
+        let y = line_y(&item);
         if let Some(line) = result.last_mut()
-            && (line.y - item.y).abs() <= (line.size.min(item.font_size) * 0.2).min(2.)
+            && (line.y - y).abs() <= (line.size.min(item.font_size) * 0.2).min(2.)
         {
             line.size = line.size.max(item.font_size);
             line.items.push(item);
         } else {
             result.push(Line {
-                y: item.y,
+                y,
                 size: item.font_size,
                 items: vec![item],
             });
@@ -308,11 +330,22 @@ fn markdown(runs: &[Run]) -> String {
         if style.strike {
             output.push_str("<s>");
         }
+        let tag = match style.script {
+            1 => Some("sup"),
+            -1 => Some("sub"),
+            _ => None,
+        };
+        if let Some(tag) = tag {
+            output.push_str(&format!("<{tag}>"));
+        }
         output.push_str(
             &super::super::escape(text)
                 .replace('<', "&lt;")
                 .replace('>', "&gt;"),
         );
+        if let Some(tag) = tag {
+            output.push_str(&format!("</{tag}>"));
+        }
         if style.strike {
             output.push_str("</s>");
         }
@@ -488,26 +521,76 @@ impl<'a> Code<'a> {
     }
 }
 
-fn flow(lines: &[Line], headings: &[f32]) -> Option<String> {
-    let mut blocks = Vec::new();
+/// A list item's marker: a bullet character, a painted bullet or a number.
+struct Marker {
+    /// Where the marker starts, for nesting.
+    x: f32,
+    /// `None` for a bullet, else the number with its delimiter (`3.`).
+    number: Option<String>,
+}
+
+/// The painted bullet of a line: a compact shape of at most half the line's
+/// size, ending no more than two em before the line's first run, centred on
+/// the lower part of its text (a browser centres its disc near the x-height).
+fn painted_bullet(line: &Line, marks: &[Mark]) -> Option<f32> {
+    let first = line.items.first()?;
+    let size = line.size;
+    marks
+        .iter()
+        .find(|m| {
+            let (width, height) = (m.x1 - m.x0, m.y1 - m.y0);
+            let centre = (m.y0 + m.y1) / 2.;
+            width.max(height) <= size * 0.5
+                && width.min(height) >= size * 0.15
+                && m.x1 <= first.x + 0.5
+                && first.x - m.x1 <= size * 2.
+                && centre >= line.y
+                && centre <= line.y + size * 0.8
+        })
+        .map(|m| m.x0)
+}
+
+/// `1.`/`1)` (up to three digits) and the text after it, when a run starts
+/// with a number followed by a space or nothing more.
+fn number_prefix(text: &str) -> Option<(&str, &str)> {
+    let text = text.trim_start();
+    let digits = text.bytes().take_while(u8::is_ascii_digit).count();
+    if !(1..=3).contains(&digits) {
+        return None;
+    }
+    let rest = &text[digits..];
+    let delimiter = rest.chars().next().filter(|c| matches!(c, '.' | ')'))?;
+    let after = &rest[1..];
+    (after.is_empty() || after.starts_with(char::is_whitespace))
+        .then(|| (&text[..digits + delimiter.len_utf8()], after.trim_start()))
+}
+
+fn flow(lines: &[Line], headings: &[f32], marks: &[Mark]) -> Option<String> {
+    // Blocks with whether each is a list item: consecutive items are one
+    // tight list.
+    let mut blocks: Vec<(String, bool)> = Vec::new();
     let mut paragraph = Vec::new();
     let mut previous: Option<&Line> = None;
     let mut previous_level = 0;
-    let mut in_list = false;
+    let mut item: Option<String> = None;
+    let mut list_left = 0f32;
+    // A marker set on a line of its own, waiting for its item's text.
+    let mut pending: Option<Marker> = None;
     let mut code = Code::default();
-    let flush = |blocks: &mut Vec<String>, paragraph: &mut Vec<Run>, level: usize, list: bool| {
+    let flush = |blocks: &mut Vec<(String, bool)>,
+                 paragraph: &mut Vec<Run>,
+                 level: usize,
+                 item: Option<&str>| {
         if paragraph.is_empty() {
             return;
         }
         let content = markdown(paragraph);
         let prefix = if level > 0 {
             format!("{} ", "#".repeat(level))
-        } else if list {
-            "- ".into()
         } else {
-            String::new()
+            item.unwrap_or_default().to_owned()
         };
-        blocks.push(format!("{prefix}{content}"));
+        blocks.push((format!("{prefix}{content}"), item.is_some()));
         paragraph.clear();
     };
     for line in lines {
@@ -528,22 +611,80 @@ fn flow(lines: &[Line], headings: &[f32]) -> Option<String> {
             is_code(line, true)
         };
         if code_line {
-            flush(&mut blocks, &mut paragraph, previous_level, in_list);
-            in_list = false;
+            flush(&mut blocks, &mut paragraph, previous_level, item.as_deref());
+            item = None;
+            if let Some(marker) = pending.take() {
+                blocks.push((marker.number.unwrap_or_else(|| "-".into()), false));
+            }
             code.push(line);
             previous = Some(line);
             previous_level = 0;
             continue;
         }
         if !code.lines.is_empty() {
-            blocks.extend(code.fence());
+            blocks.extend(code.fence().map(|fence| (fence, false)));
             // The prose after a block starts its own paragraph.
             previous = None;
         }
-        let is_list = list_prefix(&current[0].text).is_some();
-        if is_list {
-            current[0].text = list_prefix(&current[0].text).unwrap().to_owned();
+        let first_x = line.items[0].x;
+        // A numbered or painted marker never turns a heading into an item
+        // ("## 1. Start Here" keeps its level).
+        let heading = heading_level(line, headings);
+        let marker = if heading == 0
+            && let Some(marker) = pending.take()
+        {
+            Some(marker)
+        } else if let Some(rest) = list_prefix(&current[0].text) {
+            current[0].text = rest.to_owned();
+            if current[0].text.is_empty() {
+                current.remove(0);
+            }
+            Some(Marker {
+                x: first_x,
+                number: None,
+            })
+        } else if heading > 0 {
+            None
+        } else if let Some(x) = painted_bullet(line, marks) {
+            Some(Marker { x, number: None })
+        } else if let Some((number, rest)) = number_prefix(&current[0].text)
+            // A number opens an item only where a new line of the text
+            // could: at the start, in a list, after a gap or a heading, or
+            // shifted off the text above. A wrapped line of prose that
+            // happens to start with "2. " stays prose.
+            && previous.is_none_or(|prev| {
+                item.is_some()
+                    || previous_level > 0
+                    || prev.y - line.y > prev.size.max(line.size) * 1.8
+                    || (first_x - prev.items[0].x).abs() > line.size * 0.75
+            })
+        {
+            let number = number.to_owned();
+            current[0].text = rest.to_owned();
+            if current[0].text.is_empty() {
+                current.remove(0);
+            }
+            Some(Marker {
+                x: first_x,
+                number: Some(number),
+            })
+        } else {
+            None
+        };
+        if let Some(marker) = pending.take() {
+            // The line after a lone marker was a heading.
+            blocks.push((marker.number.unwrap_or_else(|| "-".into()), false));
         }
+        if current.is_empty() {
+            // Only the marker: its item's text is on the next line.
+            flush(&mut blocks, &mut paragraph, previous_level, item.as_deref());
+            item = None;
+            pending = marker;
+            previous = Some(line);
+            previous_level = 0;
+            continue;
+        }
+        let is_list = marker.is_some();
         // Side-by-side prose and unruled tables need a reading-order model.
         // Keep the previous reader instead of concatenating their columns.
         if !is_list
@@ -554,11 +695,8 @@ fn flow(lines: &[Line], headings: &[f32]) -> Option<String> {
         {
             return None;
         }
-        let level = if is_list {
-            0
-        } else {
-            heading_level(line, headings)
-        };
+        let level = if is_list { 0 } else { heading };
+        let in_list = item.is_some();
         let new_block = previous.is_some_and(|prev| {
             let gap = prev.y - line.y;
             level != previous_level
@@ -570,19 +708,47 @@ fn flow(lines: &[Line], headings: &[f32]) -> Option<String> {
                     && (line.items[0].x - prev.items[0].x).abs() > line.size * 2.5)
         });
         if new_block {
-            flush(&mut blocks, &mut paragraph, previous_level, in_list);
-            in_list = false;
+            flush(&mut blocks, &mut paragraph, previous_level, item.as_deref());
+            item = None;
         }
-        if is_list {
-            in_list = true;
+        if let Some(marker) = marker {
+            // Nesting is measured from the list's leftmost marker; a list
+            // starts again after any other block.
+            let continuing = blocks.last().is_some_and(|(_, list)| *list);
+            list_left = if continuing {
+                list_left.min(marker.x)
+            } else {
+                marker.x
+            };
+            // A browser indents each nested list by 40px (2.5 em at 12pt);
+            // right-aligned numbers stay within half an em of their column.
+            let depth = (((marker.x - list_left) + line.size * 0.5) / (line.size * 2.))
+                .floor()
+                .clamp(0., 5.) as usize;
+            let indent = "    ".repeat(depth);
+            item = Some(match marker.number {
+                Some(number) => format!("{indent}{number} "),
+                None => format!("{indent}- "),
+            });
         }
         append_runs(&mut paragraph, current);
         previous = Some(line);
         previous_level = level;
     }
-    flush(&mut blocks, &mut paragraph, previous_level, in_list);
-    blocks.extend(code.fence());
-    Some(blocks.join("\n\n"))
+    flush(&mut blocks, &mut paragraph, previous_level, item.as_deref());
+    blocks.extend(code.fence().map(|fence| (fence, false)));
+    if let Some(marker) = pending {
+        blocks.push((marker.number.unwrap_or_else(|| "-".into()), false));
+    }
+    let mut output = String::new();
+    for (index, (block, list)) in blocks.iter().enumerate() {
+        if index > 0 {
+            let tight = *list && blocks[index - 1].1;
+            output.push_str(if tight { "\n" } else { "\n\n" });
+        }
+        output.push_str(block);
+    }
+    Some(output)
 }
 
 struct Table {
@@ -688,6 +854,7 @@ fn render(
     headings: &[f32],
     frame: Frame,
     grids: Vec<Grid>,
+    marks: &[Mark],
     baseline: &str,
 ) -> Option<String> {
     // Link annotations carry a target, not page text; the existing reader
@@ -732,7 +899,7 @@ fn render(
     for table in tables {
         let end = start + all_lines[start..].partition_point(|line| line.y > table.top);
         if end > start {
-            blocks.push(flow(&all_lines[start..end], headings)?);
+            blocks.push(flow(&all_lines[start..end], headings, marks)?);
         }
         // Any non-table text beside it is ambiguous multi-column layout.
         if all_lines
@@ -745,7 +912,7 @@ fn render(
         start = end;
     }
     if start < all_lines.len() {
-        blocks.push(flow(&all_lines[start..], headings)?);
+        blocks.push(flow(&all_lines[start..], headings, marks)?);
     }
     let output = blocks.join("\n\n");
     (!output.is_empty()).then_some(output)
@@ -839,6 +1006,134 @@ mod tests {
             output.markdown.contains(
                 "greeting:\n\n```\nfn main() {\n    println!(\"<hi>\");\n}\n\n// see https://example.com/a\n```\n\nThe program takes"
             ),
+            "{}",
+            output.markdown
+        );
+    }
+
+    /// A filled `size`-point square with its lower left corner at (x, y):
+    /// the bullet a browser paints for a `square` list item.
+    fn bullet(x: f32, y: f32, size: f32) -> Vec<Operation> {
+        vec![
+            Operation::new("re", vec![x.into(), y.into(), size.into(), size.into()]),
+            Operation::new("f", vec![]),
+        ]
+    }
+
+    #[test]
+    fn painted_bullets_and_numbers_make_lists() {
+        // A browser paints list bullets as shapes, not characters: a
+        // 4.5pt mark centred near the x-height, 0.75 em before the text. A
+        // nested list is indented 30pt; a number may sit on a line of its
+        // own above its item's text.
+        let mut page = text("F1", 12, 40, 740, "Use contain when:");
+        page.extend(bullet(56.5, 712.0, 4.5));
+        page.extend(text(
+            "F1",
+            12,
+            70,
+            710,
+            "You want to preserve the full image",
+        ));
+        page.extend(bullet(56.5, 695.5, 4.5));
+        page.extend(text(
+            "F1",
+            12,
+            70,
+            693,
+            "The image might have a different ratio",
+        ));
+        page.extend(bullet(86.5, 679.0, 4.5));
+        page.extend(text("F1", 12, 100, 677, "Even inside a narrow card"));
+        page.extend(text("F1", 12, 40, 645, "The steps are:"));
+        page.extend(text("F1", 12, 52, 620, "1. Measure the box"));
+        page.extend(text("F1", 12, 52, 604, "2."));
+        page.extend(text(
+            "F1",
+            12,
+            64,
+            588,
+            "Pick a mode that keeps what matters",
+        ));
+        page.extend(text(
+            "F1",
+            12,
+            40,
+            556,
+            "Both modes keep the original file unchanged.",
+        ));
+        let output = super::super::extract(&pdf(vec![page], None)).unwrap();
+        assert!(
+            output.markdown.contains(
+                "Use contain when:\n\n- You want to preserve the full image\n- The image might have a different ratio\n    - Even inside a narrow card\n\nThe steps are:\n\n1. Measure the box\n2. Pick a mode that keeps what matters\n\nBoth modes keep"
+            ),
+            "{}",
+            output.markdown
+        );
+    }
+
+    #[test]
+    fn a_raised_marker_stays_on_its_line_as_a_superscript() {
+        // A browser `<sup>` (0.83 em, raised 0.4 em) holding a letter is a
+        // script run of its own; a digit would fuse into its word.
+        let mut page = text("F1", 12, 40, 740, "The claim holds");
+        page.extend(text("F1", 10, 125, 745, "a"));
+        page.extend(text("F1", 12, 131, 740, " in every case we measured."));
+        page.extend(text(
+            "F1",
+            12,
+            40,
+            726,
+            "A second sentence closes the paragraph.",
+        ));
+        // The painted bullet below needs the native layout, so the page
+        // cannot pass through the page reader's own script rendering.
+        page.extend(bullet(56.5, 697.0, 4.5));
+        page.extend(text(
+            "F1",
+            12,
+            70,
+            695,
+            "One listed point follows the paragraph",
+        ));
+        let output = super::super::extract(&pdf(vec![page], None)).unwrap();
+        assert!(
+            output.markdown.contains(
+                "The claim holds<sup>a</sup> in every case we measured. A second sentence closes the paragraph.\n\n- One listed point"
+            ),
+            "{}",
+            output.markdown
+        );
+    }
+
+    #[test]
+    fn a_line_starting_with_a_number_inside_prose_is_not_an_item() {
+        let mut page = text(
+            "F1",
+            12,
+            40,
+            740,
+            "The report counts every visitor, and in the year",
+        );
+        page.extend(text(
+            "F1",
+            12,
+            40,
+            726,
+            "2. edition it counted twice as many as the first.",
+        ));
+        page.extend(text(
+            "F1",
+            12,
+            40,
+            712,
+            "The third edition repeats the method unchanged.",
+        ));
+        let output = super::super::extract(&pdf(vec![page], None)).unwrap();
+        assert!(
+            output
+                .markdown
+                .contains("in the year 2. edition it counted twice"),
             "{}",
             output.markdown
         );
@@ -1091,6 +1386,7 @@ mod tests {
                 &[],
                 frame,
                 vec![],
+                &[],
                 "Different text from another decoder."
             )
             .is_none()
@@ -1099,7 +1395,7 @@ mod tests {
             let mut bad = items.clone();
             bad[0].x = bad_x;
             bad[0].rotation = bad_rotation;
-            assert!(render(bad, &[], frame, vec![], &baseline).is_none());
+            assert!(render(bad, &[], frame, vec![], &[], &baseline).is_none());
         }
     }
 
@@ -1124,7 +1420,7 @@ mod tests {
         let baseline = pdf_inspector::extract_pages_markdown_mem(&bytes, None).unwrap();
         assert!(
             layout
-                .page(1, frame, grids, &baseline.pages[0].markdown)
+                .page(1, frame, grids, &[], &baseline.pages[0].markdown)
                 .is_none()
         );
     }
