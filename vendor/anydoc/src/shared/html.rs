@@ -427,7 +427,7 @@ impl Builder<'_> {
                 self.flush_paragraph();
                 let text = elem.text();
                 if !text.trim().is_empty() {
-                    self.blocks.push(Block::CodeBlock { lang: None, text });
+                    self.blocks.push(Block::CodeBlock { lang: code_language(elem), text });
                 }
             }
             "hr" => {
@@ -773,6 +773,22 @@ fn is_block_tag(name: &str) -> bool {
         )
 }
 
+/// The language a code block's markup names (markitai): a `language-…` or
+/// `lang-…` class on the `pre` or its `code` child, the HTML convention that
+/// Markdown renderers write for a fence's info string.
+fn code_language(pre: &Element) -> Option<String> {
+    std::iter::once(pre)
+        .chain(pre.child_elems().filter(|e| e.local == "code"))
+        .filter_map(|e| e.attr_unqualified("class"))
+        .flat_map(str::split_whitespace)
+        .find_map(|class| class.strip_prefix("language-").or_else(|| class.strip_prefix("lang-")))
+        .filter(|lang| {
+            !lang.is_empty()
+                && lang.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '#' | '.' | '_'))
+        })
+        .map(str::to_owned)
+}
+
 fn has_block_children(elem: &Element) -> bool {
     elem.child_elems().any(|e| is_block_tag(&e.local))
 }
@@ -809,6 +825,25 @@ mod tests {
 
     fn blocks(html: &str) -> Vec<Block> {
         blocks_with_css(html, "")
+    }
+
+    #[test]
+    fn code_blocks_keep_the_language_their_class_names() {
+        let langs: Vec<Option<String>> = blocks(
+            r#"<body><pre><code class="language-rust">fn main() {}</code></pre><pre class="lang-python">print(1)</pre><pre class="highlight"><code class="hljs language-c++">int x;</code></pre><pre><code class="language-a b">x</code></pre><pre><code>plain</code></pre></body>"#,
+        )
+        .into_iter()
+        .map(|block| match block {
+            Block::CodeBlock { lang, .. } => lang,
+            other => panic!("expected code: {other:?}"),
+        })
+        .collect();
+        assert_eq!(
+            langs,
+            [Some("rust".into()), Some("python".into()), Some("c++".into()), Some("a".into()), None]
+        );
+        let odd = blocks(r#"<body><pre><code class="language-x`y">x</code></pre></body>"#);
+        assert!(matches!(&odd[0], Block::CodeBlock { lang: None, .. }));
     }
 
     fn para_text(block: &Block) -> String {

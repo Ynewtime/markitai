@@ -94,11 +94,17 @@ fn format_float(f: f64) -> String {
     }
 }
 
-/// Render a time-of-day serial (a fraction of a day) as `hh:mm:ss`.
-fn format_time_of_day(days: f64) -> String {
+/// Render a time-of-day serial (a fraction of a day) as `hh:mm:ss`, or as
+/// `hh:mm` when its format shows no seconds (markitai; they are dropped, as a
+/// spreadsheet displays them, not rounded into the minute).
+fn format_time_of_day(days: f64, seconds: bool) -> String {
     let total_secs = (days.abs() * 86_400.0).round() as u64 % 86_400;
     let (h, m, s) = (total_secs / 3600, (total_secs % 3600) / 60, total_secs % 60);
-    format!("{h:02}:{m:02}:{s:02}")
+    if seconds {
+        format!("{h:02}:{m:02}:{s:02}")
+    } else {
+        format!("{h:02}:{m:02}")
+    }
 }
 
 /// Render an Excel duration (stored in days) as `[h]:mm:ss`.
@@ -152,8 +158,9 @@ mod tests {
     fn time_of_day_serials_carry_no_date() {
         // 09:04:54 as a fraction of a day, with the float noise a serial
         // carries in practice.
-        assert_eq!(format_time_of_day(32_694.184 / 86_400.0), "09:04:54");
-        assert_eq!(format_time_of_day(0.0), "00:00:00");
+        assert_eq!(format_time_of_day(32_694.184 / 86_400.0, true), "09:04:54");
+        assert_eq!(format_time_of_day(0.0, true), "00:00:00");
+        assert_eq!(format_time_of_day(32_694.184 / 86_400.0, false), "09:04");
     }
 
     #[test]

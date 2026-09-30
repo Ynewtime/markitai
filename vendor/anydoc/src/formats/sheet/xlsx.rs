@@ -580,12 +580,12 @@ fn render_serial(serial: f64, parts: DateParts, date1904: bool) -> String {
         return format_duration_days(serial);
     }
     if !parts.date {
-        return format_time_of_day(serial.fract());
+        return format_time_of_day(serial.fract(), parts.seconds);
     }
     // A serial carrying no whole day has no date for a date format to show;
     // the clock a combined format also names still renders.
     if serial.abs() < 1.0 {
-        return if parts.time { format_time_of_day(serial) } else { format_float(serial) };
+        return if parts.time { format_time_of_day(serial, parts.seconds) } else { format_float(serial) };
     }
     // Out of the representable date range (through 9999-12-31): the serial
     // is not a date, show the number.
@@ -617,7 +617,8 @@ fn render_serial(serial: f64, parts: DateParts, date1904: bool) -> String {
     }
     let mut out = format!("{y:04}-{m:02}-{d:02}");
     if parts.time && secs != 0 {
-        out.push_str(&format!(" {:02}:{:02}:{:02}", secs / 3600, (secs % 3600) / 60, secs % 60));
+        out.push(' ');
+        out.push_str(&format_time_of_day(secs as f64 / 86_400.0, parts.seconds));
     }
     out
 }
@@ -1010,7 +1011,7 @@ mod tests {
         );
     }
 
-    const DATE_ONLY: DateParts = DateParts { date: true, time: false, elapsed: false };
+    const DATE_ONLY: DateParts = DateParts { date: true, time: false, elapsed: false, seconds: false };
 
     #[test]
     fn the_fictitious_leap_day_keeps_its_own_value() {
@@ -1027,8 +1028,12 @@ mod tests {
 
     #[test]
     fn a_sub_day_serial_keeps_the_clock_a_combined_format_names() {
-        let both = DateParts { date: true, time: true, elapsed: false };
+        let both = DateParts { date: true, time: true, elapsed: false, seconds: true };
         assert_eq!(render_serial(0.5, both, false), "12:00:00");
+        // A clock without seconds drops them (markitai).
+        let minutes = DateParts { seconds: false, ..both };
+        assert_eq!(render_serial(46_095.396_5, minutes, false), "2026-03-14 09:30");
+        assert_eq!(render_serial(0.396_5, minutes, false), "09:30");
         // A date-only format still has nothing to show but the number.
         assert_eq!(render_serial(0.5, DATE_ONLY, false), "0.5");
     }

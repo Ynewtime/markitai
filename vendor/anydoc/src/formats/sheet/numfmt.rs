@@ -69,6 +69,8 @@ pub(super) struct DateParts {
     pub(super) time: bool,
     /// `[h]`, `[m]` or `[s]`: a span rather than a point in time.
     pub(super) elapsed: bool,
+    /// Whether a time shows its seconds (markitai): `h:mm` shows none.
+    pub(super) seconds: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -348,7 +350,11 @@ fn date_parts(runs: &[char], elapsed: bool) -> DateParts {
     for (i, &run) in runs.iter().enumerate() {
         match run {
             'y' | 'd' => parts.date = true,
-            'h' | 's' | 'a' => parts.time = true,
+            'h' | 'a' => parts.time = true,
+            's' => {
+                parts.time = true;
+                parts.seconds = true;
+            }
             'm' => {
                 if runs[..i].last() == Some(&'h') || runs.get(i + 1) == Some(&'s') {
                     parts.time = true;
@@ -365,6 +371,7 @@ fn date_parts(runs: &[char], elapsed: bool) -> DateParts {
     if elapsed || (!parts.date && !parts.time) {
         parts.date = false;
         parts.time = true;
+        parts.seconds = true;
     }
     parts
 }
@@ -1206,17 +1213,22 @@ mod tests {
         let f = NumberFormat::parse("yyyy\\-mm\\-dd").unwrap();
         assert_eq!(
             f.format_number(45000.0),
-            Rendered::DateTime(DateParts { date: true, time: false, elapsed: false })
+            Rendered::DateTime(DateParts { date: true, time: false, elapsed: false, seconds: false })
         );
         let f = NumberFormat::parse("[hh]:mm:ss").unwrap();
         assert_eq!(
             f.format_number(1.5),
-            Rendered::DateTime(DateParts { date: false, time: true, elapsed: true })
+            Rendered::DateTime(DateParts { date: false, time: true, elapsed: true, seconds: true })
         );
         let f = NumberFormat::parse("h:mm AM/PM").unwrap();
         assert_eq!(
             f.format_number(0.5),
-            Rendered::DateTime(DateParts { date: false, time: true, elapsed: false })
+            Rendered::DateTime(DateParts { date: false, time: true, elapsed: false, seconds: false })
+        );
+        let f = NumberFormat::parse("h:mm:ss").unwrap();
+        assert_eq!(
+            f.format_number(0.5),
+            Rendered::DateTime(DateParts { date: false, time: true, elapsed: false, seconds: true })
         );
     }
 
