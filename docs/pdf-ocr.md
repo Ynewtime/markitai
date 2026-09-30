@@ -119,7 +119,9 @@ Its expected transcript and exact-match test remain unchanged; that test is
 explicitly ignored in the ordinary routing gate and exercised by the separate
 quality acceptance driver, which reports a partial result. This is an unresolved
 recognizer error, not successful transcription. No character substitution is
-applied to hide it.
+applied to hide it. The fixture's bitmap font draws its zero with a stroke
+across the whole glyph, like `ø`; Menlo's slashed zeros in the rendered number
+set are all read correctly ([R45](validation/ocr-quality-round45.md)).
 Static/automatic URL fetches and initial browser PDF responses hand requested
 PDF media directly to this pipeline,
 including redirects and extensionless downloads. The original URL remains the

@@ -59,7 +59,10 @@ documented article heuristic; ordinary hidden descendants remain hidden.
   out. Markdown cannot nest tables: a table inside a table's cell is written as
   text in that cell.
 - A link that shows nothing (no text and no kept image) is left out instead of
-  being written as `[](url)`.
+  being written as `[](url)`. A link wrapped around blocks (a card's cover,
+  heading and summary) cannot be one Markdown link: it is written as its
+  content, with the link on its first heading, else on its first block with text
+  and no block inside.
 - Preformatted code keeps indentation and empty lines. A `<code>` element with
   inline `white-space: pre` styling is treated as a code block. Chemical and
   mathematical `<sub>`/`<sup>` text retains those tags.
@@ -110,6 +113,13 @@ text than numbering, together with wrappers that hold only a short title for
 it and a pair of rules framing it. The headings carry that structure, and the
 fragment links would not resolve in Markdown. Fragments (books, email) keep
 their tables of contents.
+
+On a full page, framework classes that hide an element are honored as defuddle
+reads them: `hidden` or `invisible`, also behind a variant (`md:hidden`, a site's
+own `not-machine:hidden`), or a CSS-module `isHidden-…` name, unless a responsive
+class shows it again (`hidden md:block`). Arbitrary variants (`[&_.x]:hidden`)
+target other elements, and math keeps its hidden accessible copies. Fragments
+come without the site's style sheet and keep such elements.
 A GitHub issue keeps its complete discussion, where defuddle keeps only the
 opening post: the thread is usually what an issue link is converted for.
 

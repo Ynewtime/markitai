@@ -81,10 +81,17 @@ public conversion JSON.
 
 Lines are ordered top to bottom; observations sharing at least 60% of the shorter
 vertical band form a left-to-right row. A vertical gap greater than 80% of the
-taller adjacent row separates paragraphs. This handles ordinary upright text;
-the reference's column, table, vertical-writing and marginal-note reconstruction
-is not reproduced. A wide multi-column document can therefore have a different
-reading order. Vision inference itself has no wall-clock cancellation deadline
+taller adjacent row separates paragraphs. Text columns are read column by column:
+the widest gutter, at least one line height wide, between the lines narrower
+than three fifths of the text splits the page when both sides hold at least
+three lines of prose (a median of 12 characters) side by side. Lines crossing
+the gutter, such as a title, separate sections read left column first, and
+nested columns are found in each side. Short cells side by side, such as a
+receipt's items and prices, stay rows. The reference's table, vertical-writing
+and marginal-note reconstruction is not reproduced. On a rendered corpus
+([R45](validation/ocr-quality-round45.md)) English and number text is read more
+accurately than by the reference's RapidOCR, two-column pages in order, and
+Chinese with two to three times its character error rate. Vision inference itself has no wall-clock cancellation deadline
 in this slice, and recognition quality is not guaranteed for handwriting, small
 text or every supported language.
 
