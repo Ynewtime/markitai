@@ -2867,6 +2867,109 @@ fn structured_announcement(document: &Html, base: Option<&Url>) -> Result<Option
     Ok(None)
 }
 
+/// A Substack note: the main note's text and its attached image. The feed,
+/// recommendations and app promotion around a note are not its content.
+/// A page is a Substack page by its host, its permalink container or its
+/// CDN assets; an article with its own rendered body is left to the
+/// ordinary reader.
+fn substack_note(document: &Html, base: Option<&Url>) -> Result<Option<Announcement>> {
+    let substack_host = |host: &str| host == "substack.com" || host.ends_with(".substack.com");
+    let cdn_host = |host: &str| host == "substackcdn.com" || host.ends_with(".substackcdn.com");
+    let permalink = document
+        .select(&selector(r#"[class*="feedPermalinkUnit"]"#))
+        .next();
+    let substack = base.and_then(Url::host_str).is_some_and(substack_host)
+        || permalink.is_some()
+        || document
+            .select(&selector("link[href], script[src]"))
+            .any(|asset| {
+                asset
+                    .value()
+                    .attr("href")
+                    .or_else(|| asset.value().attr("src"))
+                    .and_then(|source| Url::parse(source).ok())
+                    .is_some_and(|url| url.host_str().is_some_and(cdn_host))
+            });
+    if !substack
+        || document
+            .select(&selector("div.body.markup"))
+            .next()
+            .is_some()
+    {
+        return Ok(None);
+    }
+    let note_selector = selector("div.ProseMirror.FeedProseMirror");
+    let note = match permalink {
+        Some(unit) => unit.select(&note_selector).next(),
+        None => document.select(&note_selector).next(),
+    };
+    let Some(note) = note else {
+        return Ok(None);
+    };
+    let mut html = note.html();
+    if let Some(image) = meta(document, &["og:image"]).or_else(|| substack_note_image(note)) {
+        html.push_str("<img alt=\"\" src=\"");
+        escaped(&image, &mut html);
+        html.push_str("\">");
+    }
+    let tree = Html::parse_fragment(&html);
+    let markdown = render_clean(tree.root_element(), base)?;
+    if markdown.is_empty() {
+        return Ok(None);
+    }
+    let mut metadata = Map::new();
+    metadata.insert("site".into(), "Substack".into());
+    if let Some(title) = meta(document, &["og:title"]) {
+        // "Test User (@testuser)" names the note's author before the handle.
+        let author = match title.rfind(" (@") {
+            Some(at) if title.ends_with(')') => title[..at].trim().to_owned(),
+            _ => title.trim().to_owned(),
+        };
+        if !author.is_empty() {
+            metadata.insert("author".into(), author.into());
+        }
+        metadata.insert("title".into(), title.into());
+    }
+    Ok(Some(Announcement { markdown, metadata }))
+}
+
+/// The image attached to a note: the largest `srcset` entry of the image
+/// grid right after the note's comment body (or after its wrapper).
+fn substack_note_image<'a>(note: ElementRef<'a>) -> Option<String> {
+    let classes = |element: ElementRef<'_>| element.value().attr("class").unwrap_or("").to_owned();
+    let body = note
+        .ancestors()
+        .filter_map(ElementRef::wrap)
+        .find(|parent| {
+            let classes = classes(*parent);
+            classes.contains("feedCommentBody") && !classes.contains("feedCommentBodyInner")
+        })?;
+    let next_element = |element: ElementRef<'a>| element.next_siblings().find_map(ElementRef::wrap);
+    let grid = [
+        next_element(body),
+        body.parent()
+            .and_then(ElementRef::wrap)
+            .and_then(next_element),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|element| classes(*element).contains("imageGrid"))?;
+    let image = grid.select(&selector("img")).next()?;
+    let largest = image.value().attr("srcset").and_then(|srcset| {
+        srcset
+            .split(',')
+            .filter_map(|candidate| {
+                let mut parts = candidate.split_whitespace();
+                let url = parts.next()?;
+                let width = parts.next()?.strip_suffix('w')?.parse::<f64>().ok()?;
+                Some((url, width))
+            })
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(url, _)| url.to_owned())
+    });
+    largest.or_else(|| image.value().attr("src").map(str::to_owned))
+}
+
 pub(super) fn fragment(source: &str) -> Result<String> {
     let document = Html::parse_fragment(source);
     render_clean(document.root_element(), None)
@@ -3046,6 +3149,9 @@ pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
     let markdown = if let Some(announcement) = structured_announcement(&document, base.as_ref())? {
         metadata.extend(announcement.metadata);
         announcement.markdown
+    } else if let Some(note) = substack_note(&document, base.as_ref())? {
+        metadata.extend(note.metadata);
+        note.markdown
     } else {
         render_with_footnotes(root, document.root_element(), base.as_ref(), true)?
     };
@@ -4174,6 +4280,42 @@ mod tests {
         );
         assert!(doc.markdown.ends_with("[^1]: Real content."));
         assert!(!doc.markdown.contains("[^2]"));
+    }
+
+    #[test]
+    fn a_substack_note_permalink_keeps_the_note_and_its_image_only() {
+        let note = |text: &str| {
+            format!(
+                r#"<div class="feedCommentBody-x"><div class="feedCommentBodyInner-y"><div class="ProseMirror FeedProseMirror"><p>{text}</p></div></div></div>"#
+            )
+        };
+        let page = format!(
+            r#"<html><head><meta property="og:title" content="Test User (@testuser)"><meta property="og:image" content="https://example.com/full.jpg"></head><body><div class="promo"><h4>The app for independent voices</h4><p>Promotion copy.</p></div><div class="feedPermalinkUnit-z">{}</div><div class="feed">{}</div></body></html>"#,
+            note("The main note."),
+            note("Another unrelated note.")
+        );
+        let doc = extract_html(&page, Some("https://substack.com/@testuser/note/c-1")).unwrap();
+        assert_eq!(
+            doc.markdown,
+            "The main note.\n\n![](https://example.com/full.jpg)"
+        );
+        assert_eq!(doc.metadata["author"], "Test User");
+        assert_eq!(doc.metadata["site"], "Substack");
+        // The same classes on a page that is not Substack's are ordinary markup.
+        let elsewhere = page.replace("feedPermalinkUnit-z", "unit");
+        let doc = extract_html(&elsewhere, Some("https://example.org/notes")).unwrap();
+        assert!(doc.markdown.contains("Promotion copy"), "{}", doc.markdown);
+        // An article with its own rendered body is left to the ordinary reader.
+        let article = page.replace(
+            r#"<div class="feed">"#,
+            r#"<div class="body markup"><p>Rendered article body.</p></div><div class="feed">"#,
+        );
+        let doc = extract_html(&article, Some("https://substack.com/p/post")).unwrap();
+        assert!(
+            doc.markdown.contains("Rendered article body."),
+            "{}",
+            doc.markdown
+        );
     }
 
     #[test]
