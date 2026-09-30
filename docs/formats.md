@@ -20,10 +20,10 @@ network policy and optional model enhancement belong to the orchestration layer.
 | RST, Org, TeX | native markup readers | Structured sections, lists, code, math, links and tables; unsupported constructs retained with warnings |
 | JPEG, PNG, GIF, BMP, TIFF, WebP | image + native LLM transport + macOS Vision | Standalone vision inputs, shared raster assets and complete TIFF page OCR/vision with bounded decoding |
 | DOC, DOCX, DOCM | anydoc document model | Headings, styled text, lists, tables, links, formulas, notes and embedded assets |
-| PPT, PPS, POT | anydoc document model | Legacy presentation content through the shared Markdown renderer |
+| PPT, PPS, POT | anydoc document model | Legacy presentation content through the shared Markdown renderer, behind a numbered slide marker per slide |
 | PPTX, PPTM, PPSX, PPSM | bounded ZIP + PresentationML reader | Ordered slide markers, title placeholders, plain text frames, grouped shapes, tables, referenced images, cached chart data and speaker notes |
 | XLS, XLSX, XLSM, XLSB | anydoc document model | Native sheet content; XLS/XLSX/XLSM single-sheet names are recovered from package metadata; exact cell-format compatibility has not been established |
-| ODT, ODS, ODP, RTF | anydoc document model | Native structured documents through the same Markdown renderer |
+| ODT, ODS, ODP, RTF | anydoc document model | Native structured documents through the same Markdown renderer; ODP slides carry numbered slide markers |
 | NUMBERS | bounded ZIP/directory IWA preflight + iwork | Ordered sheets/tables, rectangular saved values and explicit formatting/unsupported-content warnings; see [Numbers](numbers.md) |
 | EPUB | anydoc + OPF metadata | Spine content and the original title/authors/language/publisher/date/description/identifier preamble |
 | PDF | pdf-inspector + lopdf; optional macOS CoreGraphics/Vision | Per-page text/layout, partial recovery and embedded images; explicit local-file page OCR and screenshots through the shared media pipeline |
@@ -58,6 +58,15 @@ retain their numbered marker with a warning, while readable slides survive; a
 package with no readable slide fails. Unknown shapes retain available DrawingML
 text with a warning, and unsupported charts are explicitly identified. These
 fallbacks do not imply complete drawing, chart-type or SmartArt support.
+
+The vendored anydoc records where each slide of an ODP or a legacy PPT begins
+(`slide_starts`, see its `MARKITAI-PATCH.md`), and the renderer writes the same
+`<!-- Slide number: N -->` line before each slide, blank slides included, with a
+blank line between slides. This differs from the reference, whose legacy PPT
+output has no slide markers and which does not read ODP. In these formats a
+slide's speaker notes keep their place after it as a quote. A legacy PPT whose persist directory is
+unusable is read in raw stream order, where slides cannot be told apart, and
+carries no markers.
 
 The presentation reader limits packages to 16,384 entries and 10,000 slides,
 each XML part to 16 MiB, each asset to 64 MiB and total decompressed parts to
@@ -186,7 +195,7 @@ when its body data occupies only three; this differs from the reference's
 three-column rendering of the ODS fixture. RTF heading bold markers are omitted while other emphasis is
 retained. Hidden XLS/XLSX worksheets are currently omitted by the upstream parser
 and reported explicitly. XLSB sheet metadata, older XLS code pages other than
-Windows-1252, legacy/ODP slide-boundary markers, exact presentation image encoding, PDF table
+Windows-1252, exact presentation image encoding, PDF table
 layout and PDF image placement require further compatibility work.
 
 ## Error and output principles

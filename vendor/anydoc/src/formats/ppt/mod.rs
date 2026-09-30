@@ -48,7 +48,8 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
         return Err(ConvertError::Encrypted);
     }
     let assets = collect_pictures(&mut ole)?;
-    Ok(Document { blocks: ex.into_blocks(), notes: Vec::new(), assets })
+    let (blocks, slide_starts) = ex.into_blocks();
+    Ok(Document { blocks, notes: Vec::new(), assets, slide_starts })
 }
 
 /// Retain the deck's embedded pictures from the `Pictures` stream (OfficeArt
@@ -106,10 +107,22 @@ struct PendingShape {
     styles: Option<StyleRuns>,
 }
 
+// markitai: segments record what they belong to, so slide boundaries reach
+// `Document::slide_starts`.
+/// What a finished segment of text belongs to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SegmentKind {
+    /// One slide of the slide list, kept even when it holds no text.
+    Slide,
+    Notes,
+    /// Text that no slide of the slide list owns (raw-order recovery).
+    Loose,
+}
+
 #[derive(Default)]
 struct Extractor {
-    /// Finished segments: (blocks, pairing id, is_notes).
-    segments: Vec<(Vec<Block>, Option<u32>, bool)>,
+    /// Finished segments: (blocks, pairing id, kind).
+    segments: Vec<(Vec<Block>, Option<u32>, SegmentKind)>,
     current: Vec<Block>,
     current_is_notes: bool,
     list_run: Vec<ListEntry>,
@@ -269,9 +282,10 @@ impl Extractor {
             match rec_type {
                 // SlidePersistAtom: the next slide/notes page begins.
                 0x03F3 => {
+                    let page = pending.is_some();
                     let id =
                         self.finish_slide(pending.take(), persist, data, container_type, is_notes)?;
-                    self.end_segment(id);
+                    self.close_segment(id, page);
                     self.current_is_notes = is_notes;
                     pending = get_u32(body, 0).map(|p| (p, get_u32(body, 12).unwrap_or(0)));
                     if !is_notes {
@@ -281,8 +295,9 @@ impl Extractor {
                 _ => self.record(ver_inst, rec_type, body)?,
             }
         }
+        let page = pending.is_some();
         let id = self.finish_slide(pending, persist, data, container_type, is_notes)?;
-        self.end_segment(id);
+        self.close_segment(id, page);
         Ok(())
     }
 
@@ -318,23 +333,41 @@ impl Extractor {
     }
 
     fn end_segment(&mut self, id: Option<u32>) {
+        self.close_segment(id, false);
+    }
+
+    /// Finish the segment being accumulated. `slide` says a page of the slide
+    /// list ends here: unless it is a notes page, the segment is kept even
+    /// when empty (markitai: a blank slide still counts); any other empty
+    /// segment is dropped.
+    fn close_segment(&mut self, id: Option<u32>, slide: bool) {
         self.flush_shape();
         flush_list(&mut self.current, &mut self.list_run);
-        if !self.current.is_empty() {
+        let kind = if self.current_is_notes {
+            SegmentKind::Notes
+        } else if slide {
+            SegmentKind::Slide
+        } else {
+            SegmentKind::Loose
+        };
+        if !self.current.is_empty() || kind == SegmentKind::Slide {
             let blocks = std::mem::take(&mut self.current);
-            self.segments.push((blocks, id, self.current_is_notes));
+            self.segments.push((blocks, id, kind));
         }
     }
 
-    fn into_blocks(mut self) -> Vec<Block> {
+    /// The blocks in presentation order and, for each slide of the slide
+    /// list, the index of its first block (markitai).
+    fn into_blocks(mut self) -> (Vec<Block>, Vec<usize>) {
         self.end_segment(None);
-        let mut slides: Vec<(Option<u32>, Vec<Block>)> = Vec::new();
+        // (pairing id, blocks, whether the segment is a slide of the list)
+        let mut slides: Vec<(Option<u32>, Vec<Block>, bool)> = Vec::new();
         let mut notes: Vec<(Option<u32>, Vec<Block>)> = Vec::new();
-        for (blocks, id, is_notes) in self.segments {
-            if is_notes {
-                notes.push((id, blocks));
-            } else {
-                slides.push((id, blocks));
+        for (blocks, id, kind) in self.segments {
+            match kind {
+                SegmentKind::Notes => notes.push((id, blocks)),
+                SegmentKind::Slide => slides.push((id, blocks, true)),
+                SegmentKind::Loose => slides.push((id, blocks, false)),
             }
         }
         // Notes pages pair to slides by their stored slide id, not by list
@@ -342,7 +375,11 @@ impl Extractor {
         // slides), which order-based zipping would misattribute.
         let mut used = vec![false; notes.len()];
         let mut out = Vec::new();
-        for (sid, blocks) in slides {
+        let mut slide_starts = Vec::new();
+        for (sid, blocks, is_slide) in slides {
+            if is_slide {
+                slide_starts.push(out.len());
+            }
             out.extend(blocks);
             for (i, (nid, nblocks)) in notes.iter_mut().enumerate() {
                 if !used[i] && sid.is_some() && *nid == sid {
@@ -357,7 +394,7 @@ impl Extractor {
                 out.push(Block::BlockQuote(nblocks));
             }
         }
-        out
+        (out, slide_starts)
     }
 
     /// Pick the master the slide references (SlideAtom.masterIdRef at
@@ -632,5 +669,116 @@ impl Extractor {
                 self.current.push(Block::Paragraph(inlines));
             }
         }
+    }
+}
+
+// markitai: tests for the slide boundaries recorded in `Document::slide_starts`.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn record(ver: u16, instance: u16, rec_type: u16, body: &[u8]) -> Vec<u8> {
+        let mut out = (ver | instance << 4).to_le_bytes().to_vec();
+        out.extend(rec_type.to_le_bytes());
+        out.extend((body.len() as u32).to_le_bytes());
+        out.extend(body);
+        out
+    }
+
+    /// A text shape: TextHeaderAtom of the given text type, then its text.
+    fn text(tx_type: u32, chars: &str) -> Vec<u8> {
+        let units: Vec<u8> = chars.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let mut out = record(0, 0, 0x0F9F, &tx_type.to_le_bytes());
+        out.extend(record(0, 0, 0x0FA0, &units));
+        out
+    }
+
+    /// A SlidePersistAtom: persistIdRef at 0 and slideId at 12.
+    fn slide_atom(persist_ref: u32, slide_id: u32) -> Vec<u8> {
+        let mut body = [0u8; 20];
+        body[..4].copy_from_slice(&persist_ref.to_le_bytes());
+        body[12..16].copy_from_slice(&slide_id.to_le_bytes());
+        record(0, 0, 0x03F3, &body)
+    }
+
+    /// A deck of five slides: a titled one, a blank one, a blank one with
+    /// speaker notes, one with a body, and a blank last one. Slide text is
+    /// outline text in the slide list. With `usable_directory` false the
+    /// "Current User" stream names no edit, which leaves the persist
+    /// directory unusable.
+    fn deck(usable_directory: bool) -> Vec<u8> {
+        // The notes container of slide 3 comes first, persisted as id 2; its
+        // NotesAtom names slide id 258.
+        let mut notes_body = record(0, 0, 0x03F1, &[2, 1, 0, 0, 0, 0, 0, 0]);
+        notes_body.extend(text(2, "Note three"));
+        let notes = record(0xF, 0, 0x03F0, &notes_body);
+
+        let mut slides = Vec::new();
+        slides.extend(slide_atom(10, 256));
+        slides.extend(text(0, "First slide"));
+        slides.extend(text(1, "First body"));
+        slides.extend(slide_atom(11, 257));
+        slides.extend(slide_atom(12, 258));
+        slides.extend(slide_atom(13, 259));
+        slides.extend(text(1, "Fourth body"));
+        slides.extend(slide_atom(14, 260));
+        let notes_list = slide_atom(2, 0);
+        let mut document_body = record(0xF, 0, 0x0FF0, &slides);
+        document_body.extend(record(0xF, 2, 0x0FF0, &notes_list));
+        let document = record(0xF, 0, 0x03E8, &document_body);
+
+        let mut stream = notes;
+        let document_at = stream.len() as u32;
+        stream.extend(document);
+        // Persist ids 1 (the document) and 2 (the notes container).
+        let mut directory = (1u32 | 2 << 20).to_le_bytes().to_vec();
+        directory.extend(document_at.to_le_bytes());
+        directory.extend(0u32.to_le_bytes());
+        let directory_at = stream.len() as u32;
+        stream.extend(record(0, 0, 0x1772, &directory));
+        let mut edit = [0u8; 28];
+        edit[12..16].copy_from_slice(&directory_at.to_le_bytes());
+        edit[16..20].copy_from_slice(&1u32.to_le_bytes());
+        let edit_at = stream.len() as u32;
+        stream.extend(record(0, 0, 0x0FF5, &edit));
+
+        let mut user = Vec::new();
+        user.extend(20u32.to_le_bytes());
+        user.extend(0xE391_C05Fu32.to_le_bytes());
+        user.extend(if usable_directory { edit_at } else { 0 }.to_le_bytes());
+        let current_user = record(0, 0, 0x0FF6, &user);
+
+        let mut ole = cfb::CompoundFile::create(Cursor::new(Vec::new())).unwrap();
+        ole.create_stream("PowerPoint Document").unwrap().write_all(&stream).unwrap();
+        ole.create_stream("Current User").unwrap().write_all(&current_user).unwrap();
+        ole.into_inner().into_inner()
+    }
+
+    #[test]
+    fn every_slide_starts_at_its_first_block_and_blank_slides_keep_their_place() {
+        let doc = parse(&deck(true)).unwrap();
+        let [
+            Block::Heading { .. },
+            Block::Paragraph(_),
+            Block::BlockQuote(notes),
+            Block::Paragraph(fourth),
+        ] = &doc.blocks[..]
+        else {
+            panic!("unexpected blocks: {:?}", doc.blocks);
+        };
+        assert_eq!(notes.len(), 1);
+        assert_eq!(crate::model::inlines_to_plain_text(fourth), "Fourth body");
+        // Slide 2 has no blocks, so it starts where slide 3 does, and the
+        // notes of the otherwise blank slide 3 stay in it; slide 5 has none
+        // and is last, so it starts at the end.
+        assert_eq!(doc.slide_starts, [0, 2, 2, 3, 4]);
+    }
+
+    #[test]
+    fn a_deck_read_in_raw_stream_order_has_no_slide_boundaries() {
+        let doc = parse(&deck(false)).unwrap();
+        assert!(!doc.blocks.is_empty());
+        assert!(doc.slide_starts.is_empty(), "{:?}", doc.slide_starts);
     }
 }

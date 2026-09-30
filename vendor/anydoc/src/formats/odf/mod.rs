@@ -38,12 +38,13 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
     let assets = RefCell::new(AssetSink::new());
     let ctx = Ctx::new(&styles, &pkg, &assets);
 
+    let mut slide_starts = Vec::new();
     let blocks = if let Some(text) = body.find(ns::OFFICE, "text") {
         parse_container(text, &ctx)?
     } else if let Some(sheet) = body.find(ns::OFFICE, "spreadsheet") {
         table::parse_spreadsheet(sheet, &ctx)?
     } else if let Some(pres) = body.find(ns::OFFICE, "presentation") {
-        parse_presentation(pres, &ctx)?
+        parse_presentation(pres, &ctx, &mut slide_starts)?
     } else {
         return Err(ConvertError::malformed_part(
             "content.xml",
@@ -53,7 +54,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
 
     let notes = ctx.notes.into_inner();
     let assets = std::mem::take(&mut assets.borrow_mut().assets);
-    Ok(Document { blocks, notes, assets })
+    Ok(Document { blocks, notes, assets, slide_starts })
 }
 
 /// Encrypted ODF packages carry `manifest:encryption-data` elements on file
@@ -68,9 +69,15 @@ fn is_encrypted(pkg: &RefCell<Package>) -> Result<bool, ConvertError> {
     Ok(tree.first_descendant(ns::MANIFEST, "encryption-data").is_some())
 }
 
-fn parse_presentation(pres: &Element, ctx: &Ctx) -> Result<Vec<Block>, ConvertError> {
+fn parse_presentation(
+    pres: &Element,
+    ctx: &Ctx,
+    slide_starts: &mut Vec<usize>,
+) -> Result<Vec<Block>, ConvertError> {
     let mut blocks = Vec::new();
     for page in pres.find_all(ns::DRAW, "page") {
+        // markitai: every `draw:page` is a slide, blank ones included.
+        slide_starts.push(blocks.len());
         let mut title = Vec::new();
         let mut body = Vec::new();
         let mut notes = Vec::new();
@@ -321,5 +328,52 @@ mod tests {
         let doc = parse(&odt_with_content(content)).unwrap();
         let md = crate::render::markdown::document_to_markdown(&doc);
         assert_eq!(md, "|  |  |  |\n| --- | --- | --- |\n| 14 | L/R [x] Roof | [ ] Wall |\n");
+    }
+
+    // markitai: slide boundaries reach `Document::slide_starts`.
+    #[test]
+    fn every_slide_starts_at_its_first_block_and_blank_slides_keep_their_place() {
+        let content = r#"<office:document-content
+            xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+            xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+            xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
+            xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0">
+            <office:body><office:presentation>
+              <draw:page>
+                <draw:frame presentation:class="title"><draw:text-box>
+                  <text:p>First</text:p></draw:text-box></draw:frame>
+                <draw:frame><draw:text-box><text:p>First body</text:p></draw:text-box></draw:frame>
+              </draw:page>
+              <draw:page/>
+              <draw:page>
+                <presentation:notes><draw:frame><draw:text-box>
+                  <text:p>Note three</text:p></draw:text-box></draw:frame></presentation:notes>
+              </draw:page>
+              <draw:page>
+                <draw:frame><draw:text-box><text:p>Fourth body</text:p></draw:text-box></draw:frame>
+              </draw:page>
+              <draw:page/>
+            </office:presentation></office:body>
+            </office:document-content>"#;
+        let doc = parse(&odt_with_content(content)).unwrap();
+        let [
+            Block::Heading { .. },
+            Block::Paragraph(_),
+            Block::BlockQuote(_),
+            Block::Paragraph(fourth),
+        ] = &doc.blocks[..]
+        else {
+            panic!("unexpected blocks: {:?}", doc.blocks);
+        };
+        assert_eq!(crate::model::inlines_to_plain_text(fourth), "Fourth body");
+        // Slide 2 has no blocks, so it starts where slide 3 does, and the
+        // notes of the otherwise blank slide 3 stay in it; slide 5 has none
+        // and is last, so it starts at the end.
+        assert_eq!(doc.slide_starts, [0, 2, 2, 3, 4]);
+    }
+
+    #[test]
+    fn only_presentations_record_slide_boundaries() {
+        assert!(parse(&odt(b"<manifest:manifest/>")).unwrap().slide_starts.is_empty());
     }
 }

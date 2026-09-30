@@ -11,6 +11,9 @@ mod compound;
 mod office_meta;
 #[path = "pdf.rs"]
 pub(super) mod pdf;
+#[cfg(test)]
+#[path = "native/slides_tests.rs"]
+mod slides_tests;
 
 /// Adjacent text runs of one style as one run. A reader can split runs per
 /// character (RTF `\\u` escapes) or wherever the source splits them (Word's
@@ -514,6 +517,36 @@ impl Renderer<'_> {
         }
         joined
     }
+
+    /// A presentation's slides as the PPTX reader writes them: each slide
+    /// behind a `<!-- Slide number: N -->` line, blank slides included, and a
+    /// blank line between slides. `starts` holds the index in `blocks` where
+    /// each slide begins; blocks before the first start belong to no slide
+    /// and come first, unnumbered.
+    fn slides(&mut self, blocks: &[Block], starts: &[usize]) -> String {
+        let bounded = |index: usize| {
+            starts
+                .get(index)
+                .map_or(blocks.len(), |&at| at.min(blocks.len()))
+        };
+        let mut pages = Vec::with_capacity(starts.len() + 1);
+        let head = self.blocks(&blocks[..bounded(0)]);
+        if !head.is_empty() {
+            pages.push(head);
+        }
+        for index in 0..starts.len() {
+            let start = bounded(index);
+            let end = bounded(index + 1).max(start);
+            let content = self.blocks(&blocks[start..end]);
+            let mut page = format!("<!-- Slide number: {} -->", index + 1);
+            if !content.is_empty() {
+                page.push('\n');
+                page.push_str(&content);
+            }
+            pages.push(page);
+        }
+        pages.join("\n\n")
+    }
 }
 
 pub(super) fn extract(bytes: &[u8], extension: &str) -> Result<Document> {
@@ -573,7 +606,11 @@ pub(super) fn extract(bytes: &[u8], extension: &str) -> Result<Document> {
         anchors,
         extension,
     };
-    let mut markdown = renderer.blocks(&parsed.blocks);
+    let mut markdown = if parsed.slide_starts.is_empty() {
+        renderer.blocks(&parsed.blocks)
+    } else {
+        renderer.slides(&parsed.blocks, &parsed.slide_starts)
+    };
     let preamble = metadata.preamble();
     if !preamble.is_empty() {
         markdown = format!("{preamble}\n\n{markdown}");

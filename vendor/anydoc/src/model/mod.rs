@@ -35,6 +35,15 @@ pub struct Document {
     pub notes: Vec<Note>,
     /// Every embedded asset, indexed by [`AssetId`].
     pub assets: Vec<Asset>,
+    // markitai: presentations carry their slide boundaries; upstream joined
+    // every slide into one run of blocks with no page edges.
+    /// For a presentation whose slide boundaries are known (ODP, PPT), the
+    /// index in [`Document::blocks`] where each slide begins, one entry per
+    /// slide in slide order. A slide with no blocks repeats the index of the
+    /// next slide, or `blocks.len()` when it is last. Empty for every other
+    /// format, and for a legacy PPT read in raw stream order, where slides
+    /// cannot be told apart.
+    pub slide_starts: Vec<usize>,
 }
 
 /// Footnote or endnote body, referenced from text by [`Inline::NoteRef`].

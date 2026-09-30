@@ -103,7 +103,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
     }
 
     let assets = std::mem::take(&mut assets.borrow_mut().assets);
-    Ok(Document { blocks, notes, assets })
+    Ok(Document { blocks, notes, assets, slide_starts: Vec::new() })
 }
 
 /// Path of a typed related part, resolved against the main part; falls back

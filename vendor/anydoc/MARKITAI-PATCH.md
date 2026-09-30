@@ -21,6 +21,17 @@ upstream files:
   it does not (`h:mm`, `yyyy-mm-dd hh:mm`); seconds are dropped as a
   spreadsheet displays them, not rounded into the minute. Elapsed durations
   are unchanged.
+- `src/model/mod.rs`, `src/formats/odf/mod.rs`, `src/formats/ppt/mod.rs`, and
+  the other places that build a `Document` (`docx`, `doc`, `rtf`, `pptx`, the
+  Markdown renderer's tests): `Document` gains `slide_starts`, the index in
+  `blocks` where each slide of an ODP or a legacy PPT begins, so a consumer can
+  mark slide boundaries (upstream joined the slides into one run of blocks).
+  A blank slide keeps its entry: ODP records every `draw:page`, and PPT now
+  keeps an empty slide's segment, so its speaker notes also stay with it
+  instead of falling to the end. A PPT read in raw stream order (unusable
+  persist directory) has no slide boundaries and leaves the field empty, as do
+  all other formats, including PPTX. Notes without a resolvable owner still
+  come last, inside the last slide's range.
 
-Tests covering both changes were added beside the upstream ones; the upstream
-suite passes in an isolated copy (287 tests).
+Tests covering these changes were added beside the upstream ones; the upstream
+suite passes in an isolated copy (291 tests).
