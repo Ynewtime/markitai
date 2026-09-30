@@ -42,6 +42,14 @@ The pinned dependency has a small, tracked policy patch under
 per-file upstream hashes are retained. This patch changes extraction policy;
 it does not weaken the layout character-agreement or page reliability gates.
 
+Chrome (Skia) prints web fonts it cannot embed as Type3 fonts whose mirrored
+`FontMatrix` is paired with glyphs drawn y-down. Their glyph side is now read
+from the `FontBBox` as well as the matrix, so such runs stand on their baseline
+instead of one font size below it, where they interleaved with the embedded
+fonts of the same line. On 108 Chrome-printed reference fixtures, readable words
+missing against the reference fell from 309 to 95 of 25,684 with this and the
+code, list and heading changes below ([record](validation/pdf-quality-round41.md)).
+
 Page-number cleanup recognizes complete folio expressions such as `Page 3 of 10`
 and retains substantive paragraphs beginning `Page N`, including prose following
 `Page 3 of 10`. Reader-generated headings and emphasis around complete folios
@@ -141,9 +149,32 @@ text, and neither reader renders them, so they do not block refinement. The body
 size that headings must exceed ignores text inside detected table grids and
 fixed-pitch text, so a table- or code-heavy page keeps its prose as paragraphs.
 Unknown form-field semantics,
-rotated pages or text, invalid geometry, raised/lowered runs and ambiguous
-side-by-side prose retain the existing page reader's output. A page can therefore
-remain unchanged even when another page gains layout fidelity.
+rotated pages or text, invalid geometry and ambiguous side-by-side prose retain
+the existing page reader's output. A page can therefore remain unchanged even
+when another page gains layout fidelity.
+
+Fixed-pitch text becomes code. A fixed-pitch line opens a fenced block at the
+start, after a heading, or when it is set off from the text above by more than
+1.7 em; one at ordinary leading continues its paragraph, as a wrapped inline
+literal does. Inside a block a URL line stays code, a gap of half again the
+block's line pitch (two em before a pitch is known) restores a blank line, and
+each run is placed at its column in glyph advances from the block's left edge,
+which restores indentation and alignment. A fence is longer than any backtick
+run inside the code. Fixed-pitch runs in prose become inline code spans; mono
+links, bare URLs and runs holding a backtick stay text.
+
+Browsers paint list bullets as shapes rather than characters. The geometry pass
+also collects compact painted marks of 1–8pt; a mark of at most half the line's
+size, ending no more than two em before its first run and centred on the lower
+part of its text, makes the line a list item. Bullet characters remain list
+markers. A number (`3.`/`3)`, up to three digits) opens an item where a new line
+could start: first in the flow, inside a list, after a gap or heading, or offset
+from the line above. A number on a line of its own marks the next line. Items
+nest by their marker's offset (a browser indents 40px), consecutive items form
+one tight list, and a heading keeps its level. Super/subscript runs keep their
+anchor's line and render as `<sup>`/`<sub>`; digits the page reader fuses into
+their word stay Unicode superscripts. Headings need more than 1.15 times the body
+size, so a browser `<h3>` (1.17 em) is one.
 
 The refinement limits are 250,000 positioned items and 16 MiB decoded text across
 the selected document, 20,000 items per page, 200,000 operations and 8,192 rule
@@ -188,8 +219,8 @@ table of the same width stays separate. A named graphics state is accepted only 
 the verdict depends on: full opacity, a Normal or Compatible blend mode, no soft
 mask, and otherwise only line and rendering parameters. Chrome's print output sets
 such a state around its per-cell border rectangles, so its continued tables are
-reconstructed with every row; a page with links, images or curves (such as its
-first page) keeps the existing reader. Text extraction can still proceed. Borderless or merged-cell
+reconstructed with every row, as are pages with links, images or curved marks.
+Text extraction can still proceed. Borderless or merged-cell
 tables, complex columns, mathematical layout and structured vector charts remain
 open. Explicit [page media processing](pdf-ocr.md) provides rendering and local
 OCR separately from this text reader, with its own accuracy limits.
