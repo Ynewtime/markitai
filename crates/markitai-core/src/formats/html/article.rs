@@ -243,6 +243,10 @@ pub(super) fn excluded(element: ElementRef<'_>) -> bool {
             "article-share",
             "cookie-banner",
             "cookie-consent-banner",
+            // GitHub's (Primer) page sidebar: assignees, labels,
+            // notifications and sign-up prompts beside an issue.
+            "Layout-sidebar",
+            "discussion-sidebar",
         ],
     ) {
         return true;
@@ -553,6 +557,15 @@ mod tests {
         assert_eq!(select(&document).value().attr("id"), Some("story"));
         assert!(excluded(element(&document, ".injected-story-block")));
         assert!(!excluded(element(&document, "#story")));
+    }
+
+    #[test]
+    fn a_github_page_sidebar_is_page_chrome() {
+        let document = Html::parse_document(
+            r#"<body><div class="Layout-main"><p>The issue.</p></div><div class="Layout-sidebar"><div class="sidebar-section"><p>Subscribe</p></div></div></body>"#,
+        );
+        assert!(excluded(element(&document, ".Layout-sidebar")));
+        assert!(!excluded(element(&document, ".Layout-main")));
     }
 
     #[test]

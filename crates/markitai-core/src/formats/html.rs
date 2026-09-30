@@ -1,6 +1,7 @@
 mod article;
 mod callouts;
 mod code;
+mod social;
 mod stream;
 
 use crate::{Document, Error, Result};
@@ -3152,6 +3153,9 @@ pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
     } else if let Some(note) = substack_note(&document, base.as_ref())? {
         metadata.extend(note.metadata);
         note.markdown
+    } else if let Some(post) = social::post(&document, base.as_ref())? {
+        metadata.extend(post.metadata);
+        post.markdown
     } else {
         render_with_footnotes(root, document.root_element(), base.as_ref(), true)?
     };
