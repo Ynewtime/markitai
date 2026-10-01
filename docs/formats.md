@@ -56,6 +56,16 @@ on it; four or more leading spaces therefore render as a code block. Tab-aligned
 columns are not turned into tables (tabs read as single spaces), fields keep
 their last computed result, and floating shapes appear where their anchor
 paragraph is.
+Text set in a monospaced font (Courier, Consolas, Menlo, or a family named
+`… Mono`, by the run's own font, else its character style's, else its paragraph
+style's or the document default) is code: a paragraph that is all such text is
+a line of a fenced code block, blank lines of the listing included, and such
+text inside prose is inline code. A heading set in it stays a plain heading and
+a table cell keeps it inline. When monospace carries more than three quarters of
+the document's visible characters it is the document's typeface (a typewriter
+manuscript) and marks nothing. A code block whose lines carry their own numbers,
+as a column before them or alternating with them (a web page's numbered listing
+saved as a document), loses the numbers.
 
 OOXML presentations have a separate reader because the generic document model
 flattens slide boundaries. The package's presentation relationships and

@@ -45,13 +45,22 @@ pub struct Styles<'a> {
     chains: StyleChains<'a, Element>,
     /// docDefaults as absolute values (the base the toggles flip over).
     pub doc_defaults: Style,
+    /// markitai: the docDefaults font, and the paragraph style a paragraph
+    /// naming none takes (`w:default`, Word's "Normal").
+    pub default_font: Option<&'a str>,
+    pub default_paragraph: Option<&'a str>,
 }
 
 impl<'a> Styles<'a> {
     pub fn parse_opt(root: Option<&'a Element>) -> Styles<'a> {
         match root {
             Some(root) => Styles::parse(root),
-            None => Styles { chains: StyleChains::default(), doc_defaults: Style::PLAIN },
+            None => Styles {
+                chains: StyleChains::default(),
+                doc_defaults: Style::PLAIN,
+                default_font: None,
+                default_paragraph: None,
+            },
         }
     }
 
@@ -63,13 +72,24 @@ impl<'a> Styles<'a> {
                 chains.insert(id, style, parent);
             }
         }
-        let doc_defaults = root
+        let default_rpr = root
             .find(ns::W, "docDefaults")
             .and_then(|d| d.find(ns::W, "rPrDefault"))
-            .and_then(|d| d.find(ns::W, "rPr"))
-            .map(|rpr| rpr_delta(rpr).resolve())
-            .unwrap_or(Style::PLAIN);
-        Styles { chains, doc_defaults }
+            .and_then(|d| d.find(ns::W, "rPr"));
+        let doc_defaults = default_rpr.map(|rpr| rpr_delta(rpr).resolve()).unwrap_or(Style::PLAIN);
+        let default_paragraph = root
+            .find_all(ns::W, "style")
+            .find(|style| {
+                style.attr(ns::W, "type") == Some("paragraph")
+                    && matches!(style.attr(ns::W, "default"), Some("1" | "true" | "on"))
+            })
+            .and_then(|style| style.attr(ns::W, "styleId"));
+        Styles {
+            chains,
+            doc_defaults,
+            default_font: default_rpr.and_then(run_font),
+            default_paragraph,
+        }
     }
 
     /// The parity of `true` toggle specifications along a style's `basedOn`
@@ -97,6 +117,14 @@ impl<'a> Styles<'a> {
     /// it hides is left out of the document.
     pub fn run_hidden(&self, id: &str) -> Result<Option<bool>, ConvertError> {
         self.chains.walk(id, |style| on_off(style.find(ns::W, "rPr")?, "vanish"))
+    }
+
+    /// The font a style sets its text in (`w:rFonts`), inherited through
+    /// `basedOn`; the nearest specification wins.
+    ///
+    /// markitai: see [`crate::formats::docx::code`].
+    pub fn style_font(&self, id: &str) -> Result<Option<&'a str>, ConvertError> {
+        self.chains.walk(id, |style| run_font(style.find(ns::W, "rPr")?))
     }
 
     /// The raised or lowered position a style gives its text (`w:vertAlign`),
@@ -207,6 +235,13 @@ pub fn rpr_delta(rpr: &Element) -> StyleDelta {
         },
         code: None,
     }
+}
+
+/// markitai: the Latin font a run property set names (`w:rFonts`, its
+/// `ascii` face, else `hAnsi`). Theme font references name no face here.
+pub fn run_font(rpr: &Element) -> Option<&str> {
+    let fonts = rpr.find(ns::W, "rFonts")?;
+    fonts.attr(ns::W, "ascii").or_else(|| fonts.attr(ns::W, "hAnsi"))
 }
 
 /// ST_OnOff: `1`/`true`/`on` (or no value) are true; `0`/`false`/`off` are

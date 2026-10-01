@@ -3,6 +3,7 @@
 //! Resolution pipeline: package parts -> style/numbering models ->
 //! spec-order property resolution -> document model.
 
+mod code;
 mod content;
 mod numbering;
 mod numerals;
@@ -73,6 +74,8 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
         numbering: &numbering,
         counters: &counters,
         assets: &assets,
+        code_fonts: code::sets_code_apart(body, &styles)?,
+        cell_depth: Default::default(),
     };
     let blocks = content::parse_blocks(body, &ctx)?;
 

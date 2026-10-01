@@ -1,9 +1,10 @@
 //! Block and inline walking for WordprocessingML parts.
 
 use crate::error::ConvertError;
+use crate::formats::docx::code::{is_monospace, without_line_gutter};
 use crate::formats::docx::numbering::{Counters, Numbering};
 use crate::formats::docx::scripts::Script;
-use crate::formats::docx::styles::{Styles, on_off, rpr_delta};
+use crate::formats::docx::styles::{Styles, on_off, rpr_delta, run_font};
 use crate::model::{
     Block, Cell, GridBuilder, ImageSource, Inline, LinkTarget, Style, TableKind, inlines_are_empty,
 };
@@ -45,6 +46,26 @@ pub(super) struct Ctx<'a, 'b> {
     pub numbering: &'b Numbering,
     pub counters: &'b RefCell<Counters>,
     pub assets: &'b RefCell<AssetSink>,
+    /// markitai: whether monospaced runs are code (see `super::code`), and
+    /// how many table cells deep the content being read sits.
+    pub code_fonts: bool,
+    pub cell_depth: std::cell::Cell<u32>,
+}
+
+/// markitai: content read inside a table cell, for as long as it lives.
+struct InCell<'c>(&'c std::cell::Cell<u32>);
+
+impl<'c> InCell<'c> {
+    fn enter(depth: &'c std::cell::Cell<u32>) -> Self {
+        depth.set(depth.get() + 1);
+        InCell(depth)
+    }
+}
+
+impl Drop for InCell<'_> {
+    fn drop(&mut self) {
+        self.0.set(self.0.get() - 1);
+    }
 }
 
 impl<'a, 'b> Ctx<'a, 'b> {
@@ -59,6 +80,8 @@ impl<'a, 'b> Ctx<'a, 'b> {
             numbering: self.numbering,
             counters: self.counters,
             assets: self.assets,
+            code_fonts: self.code_fonts,
+            cell_depth: Default::default(),
         }
     }
 
@@ -133,6 +156,14 @@ pub(super) fn parse_blocks(parent: &Element, ctx: &Ctx) -> Result<Vec<Block>, Co
     let mut runs = Runs::default();
     collect_blocks(parent, ctx, &mut blocks, &mut runs)?;
     runs.flush(&mut blocks);
+    // markitai: a numbered listing keeps its code, not its line numbers.
+    for block in &mut blocks {
+        if let Block::CodeBlock { text, .. } = block
+            && let Some(code) = without_line_gutter(text)
+        {
+            *text = code;
+        }
+    }
     Ok(blocks)
 }
 
@@ -187,6 +218,11 @@ fn emit_paragraph(kind: ParaKind, pieces: Vec<Piece>, blocks: &mut Vec<Block>, r
         }
         ParaKind::Styled(style) => {
             flush_list(blocks, &mut runs.list);
+            // markitai: an empty paragraph of a code block is a blank line of
+            // it (upstream dropped it, joining the lines around it).
+            if !pieces.iter().any(|piece| matches!(piece, Piece::Inlines(_))) {
+                runs.styled.push(style, Vec::new(), blocks);
+            }
             for piece in pieces {
                 match piece {
                     Piece::Inlines(inlines) => runs.styled.push(style, inlines, blocks),
@@ -288,8 +324,96 @@ fn parse_paragraph(p: &Element, ctx: &Ctx) -> Result<(ParaKind, Vec<Piece>), Con
         Some(id) => ctx.styles.run_hidden(id)?.unwrap_or(false),
         None => false,
     };
+    // markitai: the font the paragraph's style, or the default one, sets
+    // its runs in.
+    walker.font = match pstyle_id.or(ctx.styles.default_paragraph) {
+        Some(id) => ctx.styles.style_font(id)?,
+        None => None,
+    }
+    .or(ctx.styles.default_font);
     walker.walk(p)?;
-    Ok((kind, walker.finish()))
+    // markitai: a paragraph whose text is all monospaced is a line of code,
+    // except in a table cell, where no code block can go. Without text the
+    // paragraph mark's font decides (a blank line of a listing). A heading
+    // set in such a font is typography, not code.
+    let mono = walker.fonts.all_mono().unwrap_or_else(|| {
+        ctx.code_fonts
+            && ppr
+                .and_then(|pr| pr.find(ns::W, "rPr"))
+                .and_then(run_font)
+                .or(walker.font)
+                .is_some_and(is_monospace)
+    });
+    let mut pieces = walker.finish();
+    let kind = match kind {
+        ParaKind::Plain if mono && ctx.cell_depth.get() == 0 => ParaKind::Styled(BlockStyle::Code),
+        ParaKind::Heading { .. } if mono => {
+            for piece in &mut pieces {
+                if let Piece::Inlines(inlines) = piece {
+                    without_code(inlines);
+                }
+            }
+            kind
+        }
+        kind => kind,
+    };
+    Ok((kind, pieces))
+}
+
+/// markitai: inline content with no code styling.
+fn without_code(inlines: &mut [Inline]) {
+    for inline in inlines {
+        match inline {
+            Inline::Text { style, .. } => style.code = false,
+            Inline::Link { content, .. } => without_code(content),
+            _ => {}
+        }
+    }
+}
+
+/// markitai: the runs of a paragraph that carry text, and how many of them
+/// are set in a monospaced font; runs of only spaces are counted apart.
+#[derive(Debug, Default, Clone, Copy)]
+struct RunFonts {
+    text: usize,
+    mono: usize,
+    blank: usize,
+    blank_mono: usize,
+}
+
+impl RunFonts {
+    fn count(&mut self, run: &Element, mono: bool) {
+        let mut texts = run.child_elems().filter(|c| c.is(ns::W, "t")).peekable();
+        if texts.peek().is_none() {
+            return;
+        }
+        if texts.any(|t| !t.text().trim().is_empty()) {
+            self.text += 1;
+            self.mono += usize::from(mono);
+        } else {
+            self.blank += 1;
+            self.blank_mono += usize::from(mono);
+        }
+    }
+
+    fn add(&mut self, other: RunFonts) {
+        self.text += other.text;
+        self.mono += other.mono;
+        self.blank += other.blank;
+        self.blank_mono += other.blank_mono;
+    }
+
+    /// Whether every run with text, or with none every blank run, is
+    /// monospaced; `None` without either.
+    fn all_mono(self) -> Option<bool> {
+        if self.text > 0 {
+            Some(self.mono == self.text)
+        } else if self.blank > 0 {
+            Some(self.blank_mono == self.blank)
+        } else {
+            None
+        }
+    }
 }
 
 /// Resolve a paragraph's effective numbering per ECMA-376: the direct
@@ -356,6 +480,10 @@ struct InlineWalker<'a, 'b, 'e> {
     base: Style,
     /// markitai: whether the paragraph style hides the text of its runs.
     hidden: bool,
+    /// markitai: the font the paragraph style sets runs in, and the fonts of
+    /// the runs read so far.
+    font: Option<&'b str>,
+    fonts: RunFonts,
     pieces: Vec<Piece>,
     current: Vec<Inline>,
     fields: Vec<FieldFrame>,
@@ -367,6 +495,8 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
             ctx,
             base,
             hidden: false,
+            font: None,
+            fonts: RunFonts::default(),
             pieces: Vec::new(),
             current: Vec::new(),
             fields: Vec::new(),
@@ -378,6 +508,7 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
     fn nested(&self) -> Self {
         let mut inner = InlineWalker::new(self.ctx, self.base);
         inner.hidden = self.hidden;
+        inner.font = self.font;
         inner
     }
 
@@ -430,6 +561,7 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
                     let target = self.hyperlink_link_target(child);
                     let mut inner = self.nested();
                     inner.walk(child)?;
+                    self.fonts.add(inner.fonts);
                     let (content, attachments) = split_pieces(inner.finish());
                     if let Some(target) = target {
                         // An empty label still keeps a resolved target: the
@@ -446,6 +578,7 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
                     let instr = child.attr(ns::W, "instr").unwrap_or("").to_string();
                     let mut inner = self.nested();
                     inner.walk(child)?;
+                    self.fonts.add(inner.fonts);
                     let (content, attachments) = split_pieces(inner.finish());
                     self.push_field_result(&instr, content);
                     self.push_blocks(attachments);
@@ -517,6 +650,26 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
             }
             None => self.base,
         };
+        // markitai: a run set in a monospaced font is code: its own font,
+        // else its character style's, else the paragraph's.
+        let mut style = style;
+        if self.ctx.code_fonts && !hidden {
+            let rpr = run.find(ns::W, "rPr");
+            let font = match rpr.and_then(run_font) {
+                Some(font) => Some(font),
+                None => match rpr
+                    .and_then(|rpr| rpr.find(ns::W, "rStyle"))
+                    .and_then(|e| e.attr(ns::W, "val"))
+                {
+                    Some(id) => self.ctx.styles.style_font(id)?,
+                    None => None,
+                }
+                .or(self.font),
+            };
+            let mono = font.is_some_and(is_monospace);
+            self.fonts.count(run, mono);
+            style.code |= mono;
+        }
         self.walk_run_content(run, style, hidden, script)
     }
 
@@ -904,6 +1057,7 @@ pub(super) fn parse_table(tbl: &Element, ctx: &Ctx) -> Result<Vec<Block>, Conver
         .count();
 
     let mut builder = GridBuilder::new();
+    let _in_cell = InCell::enter(&ctx.cell_depth);
     for row in &matrix {
         builder.next_row();
         for tc in row {

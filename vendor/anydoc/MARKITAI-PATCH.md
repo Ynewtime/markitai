@@ -68,6 +68,18 @@ upstream files:
   - a run raised or lowered with `w:vertAlign` is written in Unicode
     superscript or subscript forms when every character has one ("10⁻³",
     "H₂O"; `scripts.rs`), and left at the baseline otherwise ("1st").
+- `src/formats/docx/content.rs`, `src/formats/docx/styles.rs`,
+  `src/formats/docx/mod.rs` and the added `src/formats/docx/code.rs`: a run in
+  a monospaced font (its `w:rFonts`, else its character style's, else its
+  paragraph style's, the `w:default` paragraph style's or `docDefaults`) is
+  code (`Style::code`, which upstream never set for Word); a paragraph whose
+  text runs are all monospaced, or a blank one whose runs or paragraph mark are,
+  is a `BlockStyle::Code` paragraph outside table cells, and a heading in such a
+  font drops the code style. Code is not marked when monospace sets more than
+  75% of the body's visible characters. An empty code-style paragraph is a
+  blank line of its block (upstream dropped it, also for `HTML Preformatted`),
+  and a code block whose lines carry their numbers (as a leading column or
+  alternating) loses them.
 
 `Cargo.toml` asks `zip` for `deflate-flate2-zlib-rs` instead of `deflate`, as
 the workspace crates do: the same deflate backend without the zopfli encoder,
@@ -78,4 +90,4 @@ package; it reproduces upstream's formatting, so `cargo fmt` in this directory
 changes nothing upstream wrote.
 
 Tests covering these changes were added beside the upstream ones; the upstream
-suite passes in an isolated copy (322 tests).
+suite passes in an isolated copy (324 tests).

@@ -369,3 +369,148 @@ fn review_comments_are_reported_as_left_out_of_the_markdown() {
     // The comment text itself stays out of the Markdown.
     assert_eq!(markdown(&body, &[comments(2)]), "Reviewed text.");
 }
+
+/// A run set in `font`.
+fn run_in(font: &str, text: &str) -> String {
+    format!(
+        r#"<w:r><w:rPr><w:rFonts w:ascii="{font}" w:hAnsi="{font}"/></w:rPr><w:t xml:space="preserve">{text}</w:t></w:r>"#
+    )
+}
+
+fn code_line(text: &str) -> String {
+    format!("<w:p>{}</w:p>", run_in("Menlo", text))
+}
+
+#[test]
+fn text_set_in_a_monospaced_font_is_code() {
+    // Paragraphs all in Menlo, a blank one among them, are one code block; a
+    // Consolas run in prose is inline code; a heading set in Courier is not.
+    let body = [
+        heading(1, &run_in("Courier New", "Setup")),
+        format!(
+            "<w:p>{}{}{}</w:p>",
+            run_in("Times", "Run "),
+            run_in("Consolas", "make_all"),
+            run_in("Times", " first.")
+        ),
+        code_line("fn main() {"),
+        code_line("    let x = 1;"),
+        code_line(""),
+        // A space in the body font and hidden text do not break a code line,
+        // and a line that is all link is still one.
+        format!(
+            r#"<w:p>{}{}<w:r><w:rPr><w:vanish/></w:rPr><w:t>hidden</w:t></w:r>{}</w:p>"#,
+            run_in("Menlo", "    let y"),
+            run_in("Times", " "),
+            run_in("Menlo", "= 2;")
+        ),
+        format!(
+            r#"<w:p><w:hyperlink w:anchor="top">{}</w:hyperlink></w:p>"#,
+            run_in("Menlo", "    go();")
+        ),
+        code_line("}"),
+        paragraph("After."),
+    ]
+    .concat();
+    assert_eq!(
+        markdown(&body, &[styles()]),
+        "# Setup\n\nRun `make_all` first.\n\n```\nfn main() {\n    let x = 1;\n\n    let y = 2;\n    go();\n}\n```\n\nAfter."
+    );
+}
+
+#[test]
+fn a_document_set_in_a_monospaced_font_is_not_code() {
+    let body = [
+        code_line("INT. KITCHEN - NIGHT"),
+        code_line("She opens the door."),
+        format!("<w:p>{}</w:p>", run_in("Times", "Page 1")),
+    ]
+    .concat();
+    assert_eq!(
+        markdown(&body, &[styles()]),
+        "INT. KITCHEN - NIGHT\n\nShe opens the door.\n\nPage 1"
+    );
+}
+
+#[test]
+fn the_normal_style_decides_whether_a_monospaced_font_marks_code() {
+    let styles = |defaults: &str, normal: &str| {
+        (
+            "word/styles.xml",
+            format!(
+                r#"<w:styles {W}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="{defaults}"/>
+                </w:rPr></w:rPrDefault></w:docDefaults>
+                <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/>
+                <w:rPr><w:rFonts w:ascii="{normal}"/></w:rPr></w:style></w:styles>"#
+            ),
+        )
+    };
+    let body = [
+        paragraph("Plain words in the body face."),
+        format!(
+            "<w:p>{}{}</w:p>",
+            run_in("Menlo", "cargo"),
+            run_in("Times", " builds.")
+        ),
+    ]
+    .concat();
+    // Over a monospaced default, the Normal style's face is the body's.
+    assert_eq!(
+        markdown(&body, &[styles("Courier New", "Times")]),
+        "Plain words in the body face.\n\n`cargo` builds."
+    );
+    // A document whose Normal style is monospaced is set in it, not coded,
+    // and so is one whose Normal style leaves a monospaced default alone.
+    assert_eq!(
+        markdown(&body, &[styles("Times", "Courier New")]),
+        "Plain words in the body face.\n\ncargo builds."
+    );
+    let unset = styles("Courier New", "Times")
+        .1
+        .replace(r#"<w:rFonts w:ascii="Times"/>"#, "");
+    assert_eq!(
+        markdown(&body, &[("word/styles.xml", unset)]),
+        "Plain words in the body face.\n\ncargo builds."
+    );
+}
+
+#[test]
+fn a_style_sets_the_font_of_runs_that_name_none() {
+    let styles = format!(
+        r#"<w:styles {W}>
+        <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/>
+          <w:rPr><w:rFonts w:ascii="Times"/></w:rPr></w:style>
+        <w:style w:type="paragraph" w:styleId="Listing"><w:name w:val="Listing"/>
+          <w:basedOn w:val="Normal"/><w:rPr><w:rFonts w:ascii="Consolas"/></w:rPr></w:style>
+        <w:style w:type="character" w:styleId="Code"><w:name w:val="Code"/>
+          <w:rPr><w:rFonts w:hAnsi="Menlo"/></w:rPr></w:style>
+        </w:styles>"#
+    );
+    let body = r#"<w:p><w:pPr><w:pStyle w:val="Listing"/></w:pPr><w:r><w:t>ls -la</w:t></w:r></w:p>
+        <w:p><w:r><w:t xml:space="preserve">Call </w:t></w:r><w:r><w:rPr><w:rStyle w:val="Code"/></w:rPr><w:t>open()</w:t></w:r><w:r><w:t xml:space="preserve"> now, then read on in this sentence.</w:t></w:r></w:p>"#;
+    assert_eq!(
+        markdown(body, &[("word/styles.xml", styles)]),
+        "```\nls -la\n```\n\nCall `open()` now, then read on in this sentence."
+    );
+}
+
+#[test]
+fn a_listing_loses_its_line_numbers_and_a_cell_keeps_code_inline() {
+    let body = [
+        paragraph("Example:"),
+        code_line("1"),
+        code_line("echo hello"),
+        code_line("2"),
+        code_line("exit 0"),
+        table(&[format!(
+            "<w:tr>{}{}</w:tr>",
+            cell(&code_line("make")),
+            cell(&paragraph("builds it"))
+        )]),
+    ]
+    .concat();
+    assert_eq!(
+        markdown(&body, &[styles()]),
+        "Example:\n\n```\necho hello\nexit 0\n```\n\n|  |  |\n| --- | --- |\n| `make` | builds it |"
+    );
+}
