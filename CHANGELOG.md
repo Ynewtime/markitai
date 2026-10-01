@@ -125,6 +125,7 @@
 ### Fixed
 
 - Write the data of charts and worksheets embedded in legacy PPT slides as tables (LibreOffice charts, Excel worksheets and charts, MS Graph), where the slide showed only its title; the reference sample deck's chart now gives its 4×3 data.
+- Keep repeated table rows, quotes, fences and comments at the end of pages or slides instead of removing them as page footers, which broke tables that ended several slides.
 - Explain an OCR failure under Rosetta 2 (Vision text recognition is unavailable to a translated process) and suggest the arm64 build, and show it as a `doctor` warning; the x86_64 macOS build was checked under Rosetta with 2,345 corpus outputs identical to arm64.
 - Exit 1 from `cache clear` without `--yes` when no answer can be read (a script), as the reference does, instead of reporting success; an explicit “no” still exits 0.
 - Report a model as routable in the workspace settings whenever conversion can route it (subscription runtimes, models detected from the environment), instead of saying no model is routable while conversions use one.

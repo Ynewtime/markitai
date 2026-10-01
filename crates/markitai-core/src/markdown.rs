@@ -50,8 +50,11 @@ fn clean_footers(source: String) -> String {
             .rev()
             .take(4)
             .copied()
+            // Markdown structure (a table row or its separator, a quote, a
+            // fence, a comment) repeats across pages without being a footer.
             .filter(|line| {
-                line.chars().count() < 30 && !line.starts_with(['#', '!', '[', '-', '*'])
+                line.chars().count() < 30
+                    && !line.starts_with(['#', '!', '[', '-', '*', '|', '>', '`', '~', '<'])
             })
             .collect();
         if !endings.is_empty() {
@@ -360,6 +363,16 @@ mod tests {
             normalize(&format!("Before  \n{block}\nAfter  \n\n\n")),
             format!("Before\n{block}\nAfter\n")
         );
+    }
+
+    #[test]
+    fn tables_that_end_several_pages_keep_their_rows() {
+        let input = (1..=3)
+            .map(|n| format!("<!-- Slide number: {n} -->\n# Slide {n}\n\n| A | B |\n| --- | --- |\n| {n} | x |\n"))
+            .collect::<String>();
+        let output = normalize(&input);
+        assert_eq!(output.matches("| --- | --- |").count(), 3, "{output}");
+        assert_eq!(output.matches("| A | B |").count(), 3, "{output}");
     }
 
     #[test]
