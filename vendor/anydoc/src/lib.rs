@@ -137,6 +137,19 @@ pub fn format_number(code: &str, value: f64, date1904: bool) -> String {
     formats::format_number(code, value, date1904)
 }
 
+/// The data an embedded OLE object's own file holds, as blocks: an Excel
+/// worksheet or chart, an MS Graph chart, an OpenDocument chart or
+/// spreadsheet (from a compound file), or a zipped OOXML workbook or
+/// OpenDocument object. Empty for any other object (an equation, a
+/// document, a picture), or when the object's content is unreadable; only a
+/// resource limit is an error.
+///
+/// markitai: exposed so an OOXML presentation's embedded objects (its
+/// `ppt/embeddings` parts) read as a legacy deck's do.
+pub fn embedded_object(bytes: &[u8]) -> Result<Vec<model::Block>, ConvertError> {
+    formats::embedded_object(bytes)
+}
+
 /// Parse an in-memory document into the document model. Pass a [`Format`] to
 /// select the parser, or `None` to detect it from the content.
 ///

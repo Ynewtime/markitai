@@ -767,6 +767,18 @@ impl Renderer<'_> {
     }
 }
 
+/// Markdown for the blocks an embedded object holds, which carry no assets,
+/// notes or anchors of the presentation around them (`office.rs`).
+fn object_markdown(blocks: &[Block]) -> String {
+    Renderer {
+        asset_names: &[],
+        merged_cells: false,
+        anchors: BTreeSet::new(),
+        extension: "pptx",
+    }
+    .blocks(blocks)
+}
+
 pub(super) fn extract(bytes: &[u8], extension: &str) -> Result<Document> {
     let format = anydoc::Format::from_extension(extension)
         .ok_or_else(|| Error::Unsupported(format!("Unsupported format: {extension}")))?;

@@ -218,6 +218,30 @@ fn read_storage(bytes: &[u8]) -> Result<Vec<Block>, ConvertError> {
         log::debug!("ppt embedded object storage holds streams {streams:?}");
         return Ok(Vec::new());
     };
+    finish(read)
+}
+
+/// An embedded object's file as an OOXML package keeps it, a part of its
+/// own: a compound file is read as a legacy deck's storage is, and a zipped
+/// object as an OpenDocument chart or spreadsheet, or else as an OOXML
+/// workbook (`Excel.Sheet.12`). Anything else contributes nothing.
+pub(crate) fn object_file(bytes: &[u8]) -> Result<Vec<Block>, ConvertError> {
+    if !bytes.starts_with(b"PK\x03\x04") {
+        return read_storage(bytes);
+    }
+    let read = odf_object(bytes).and_then(|blocks| {
+        if blocks.is_empty() {
+            crate::formats::sheet::parse(bytes).map(|doc| doc.blocks)
+        } else {
+            Ok(blocks)
+        }
+    });
+    finish(read)
+}
+
+/// An object's blocks made to stand in the deck. Readers that fail on the
+/// object's own content degrade to nothing; resource limits propagate.
+fn finish(read: Result<Vec<Block>, ConvertError>) -> Result<Vec<Block>, ConvertError> {
     match read {
         Ok(mut blocks) => {
             detach(&mut blocks);
@@ -577,6 +601,27 @@ mod tests {
         zip.finish().unwrap().into_inner()
     }
 
+    /// An OOXML workbook whose one sheet holds `Size` and 12.
+    fn ooxml_workbook() -> Vec<u8> {
+        const SML: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+        const R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+        const RELS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+        let workbook = format!(
+            r#"<workbook xmlns="{SML}" xmlns:r="{R}"><sheets><sheet name="A" sheetId="1" r:id="rId1"/></sheets></workbook>"#
+        );
+        let rels = format!(
+            r#"<Relationships xmlns="{RELS}"><Relationship Id="rId1" Type="{R}/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#
+        );
+        let sheet = format!(
+            r#"<worksheet xmlns="{SML}"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Size</t></is></c><c r="B1"><v>12</v></c></row></sheetData></worksheet>"#
+        );
+        zip(&[
+            ("xl/workbook.xml", &workbook),
+            ("xl/_rels/workbook.xml.rels", &rels),
+            ("xl/worksheets/sheet1.xml", &sheet),
+        ])
+    }
+
     const ODF: &str = concat!(
         r#"xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" "#,
         r#"xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" "#,
@@ -590,6 +635,14 @@ mod tests {
     /// A LibreOffice object: an ODF package in `package_stream`.
     fn odf_object(body: &str) -> Vec<u8> {
         odf_object_with(body, &[])
+    }
+
+    /// An ODF package whose body is `body`.
+    fn odf_package(body: &str) -> Vec<u8> {
+        let content = format!(
+            r#"<?xml version="1.0"?><office:document-content {ODF}><office:body>{body}</office:body></office:document-content>"#
+        );
+        zip(&[("content.xml", content.as_str())])
     }
 
     /// A LibreOffice object whose package holds further `parts`.
@@ -716,24 +769,7 @@ mod tests {
             row(&format!("{}{}", cell("Pen"), cell("2")))
         ));
         // An Excel 2007 object: an OOXML workbook in a `Package` stream.
-        const SML: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
-        const R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
-        const RELS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
-        let workbook = format!(
-            r#"<workbook xmlns="{SML}" xmlns:r="{R}"><sheets><sheet name="A" sheetId="1" r:id="rId1"/></sheets></workbook>"#
-        );
-        let rels = format!(
-            r#"<Relationships xmlns="{RELS}"><Relationship Id="rId1" Type="{R}/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#
-        );
-        let sheet = format!(
-            r#"<worksheet xmlns="{SML}"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Size</t></is></c><c r="B1"><v>12</v></c></row></sheetData></worksheet>"#
-        );
-        let xlsx = zip(&[
-            ("xl/workbook.xml", &workbook),
-            ("xl/_rels/workbook.xml.rels", &rels),
-            ("xl/worksheets/sheet1.xml", &sheet),
-        ]);
-        let excel = compound(&[("\u{1}CompObj", &[0; 28]), ("Package", &xlsx)]);
+        let excel = compound(&[("\u{1}CompObj", &[0; 28]), ("Package", &ooxml_workbook())]);
         let bytes = deck(
             &[object_shape(1), object_shape(2)],
             &[(1, storage(&calc, true)), (2, storage(&excel, false))],
@@ -744,6 +780,27 @@ mod tests {
         };
         assert_eq!(grid(calc), [["Name", "Qty"], ["Pen", "2"]]);
         assert_eq!(grid(excel), [["Size", "12"]]);
+    }
+
+    #[test]
+    fn an_objects_own_file_reads_as_a_deck_storage_does() {
+        // markitai: an OOXML presentation keeps each object as a part of its
+        // own, a compound file or a zipped package.
+        let blocks = object_file(&worksheet_object(&[&["Pen", "2"]])).unwrap();
+        assert_eq!(grid(&blocks[0]), [["Pen", "2"]]);
+        let blocks = object_file(&ooxml_workbook()).unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(grid(&blocks[0]), [["Size", "12"]]);
+        let blocks = object_file(&odf_package(&chart(&row(&cell("Q1"))))).unwrap();
+        assert_eq!(text(&blocks[0]), "Sales by quarter");
+        assert_eq!(grid(&blocks[1]), [["Q1"]]);
+        // A document, an equation and bytes of no known kind add nothing.
+        let writer = odf_package("<office:text><text:p>Not data</text:p></office:text>");
+        let word = zip(&[("word/document.xml", "<w:document/>")]);
+        let equation = compound(&[("\u{1}CompObj", &[0; 28]), ("Equation Native", &[0; 40])]);
+        for bytes in [&writer, &word, &equation, &b"PK\x03\x04 truncated".to_vec(), &vec![7; 64]] {
+            assert!(object_file(bytes).unwrap().is_empty());
+        }
     }
 
     #[test]

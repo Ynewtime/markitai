@@ -8,6 +8,7 @@
 
 // markitai: embedded objects read as their data.
 mod ole;
+pub(crate) use ole::object_file as embedded_object;
 mod styletext;
 
 use crate::error::ConvertError;

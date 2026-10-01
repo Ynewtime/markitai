@@ -18,6 +18,8 @@ use crate::model::Document;
 
 // markitai: see `crate::format_number`.
 pub(crate) use sheet::format_number;
+// markitai: see `crate::embedded_object`.
+pub(crate) use ppt::embedded_object;
 
 pub fn parse(bytes: &[u8], format: Format) -> Result<Document, ConvertError> {
     match format {

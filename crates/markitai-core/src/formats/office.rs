@@ -579,6 +579,30 @@ impl Reader<'_> {
         ))
     }
 
+    /// The data an embedded OLE object holds (a worksheet, an Excel or MS
+    /// Graph chart, an OpenDocument chart, a workbook package), read as a
+    /// legacy deck's embedded objects are; `None` for a linked object or one
+    /// holding nothing that reader reads (an equation, a document).
+    fn embedded_object(
+        &mut self,
+        object: &Node,
+        part: &str,
+        rels: &BTreeMap<String, Relationship>,
+    ) -> Result<Option<String>> {
+        let Some(rel) = object.relation("id").and_then(|rid| rels.get(rid)) else {
+            return Ok(None);
+        };
+        if rel.external {
+            return Ok(None);
+        }
+        let path = resolve(part, &rel.target)?;
+        let Some(bytes) = self.package.read(&path, MAX_ASSET)? else {
+            return Ok(None);
+        };
+        let blocks = anydoc::embedded_object(&bytes).map_err(super::conversion_error)?;
+        Ok((!blocks.is_empty()).then(|| super::object_markdown(&blocks)))
+    }
+
     fn table(&mut self, table: &Node, slide: usize) -> String {
         let rows = table.children.iter().filter(|node| node.is(Ns::Drawing, "tr")).map(|row| {
             row.children.iter().filter(|node| node.is(Ns::Drawing, "tc")).map(|cell| {
@@ -773,6 +797,25 @@ impl Reader<'_> {
                             Err(e) => {
                                 self.warn(slide, e);
                                 output.push_str("\n\n[unsupported chart]\n\n");
+                            }
+                        }
+                    } else if let Some(object) = shape.descendant(Ns::Presentation, "oleObj") {
+                        match self.embedded_object(object, part, rels) {
+                            Ok(Some(markdown)) => {
+                                output.push_str("\n\n");
+                                output.push_str(markdown.trim());
+                                output.push_str("\n\n");
+                            }
+                            read => {
+                                let program = object.attr("progId").unwrap_or("unnamed");
+                                match read {
+                                    Err(e) => self.warn(slide, format!("embedded object ({program}) not read: {e}; available DrawingML text retained")),
+                                    _ => self.warn(slide, format!("embedded object ({program}) holds no data this reader reads; available DrawingML text retained")),
+                                }
+                                let mut text = String::new();
+                                paragraph(shape, &mut text);
+                                output.push_str(&text);
+                                output.push('\n');
                             }
                         }
                     } else {
@@ -1411,6 +1454,95 @@ mod tests {
                 .iter()
                 .any(|warning| warning.contains("linked workbook"))
         );
+    }
+
+    #[test]
+    fn embedded_objects_read_as_their_data_and_others_keep_their_text() {
+        // An Excel 2007 worksheet object (a zipped workbook part), an object
+        // of no data this reader reads, and a linked object.
+        let frame = |y: i64, object: &str| {
+            format!(
+                r#"<p:graphicFrame><p:xfrm><a:off x="1" y="{y}"/></p:xfrm><a:graphic><a:graphicData>{object}<a:p><a:r><a:t>Preview {y}</a:t></a:r></a:p></a:graphicData></a:graphic></p:graphicFrame>"#
+            )
+        };
+        let shapes = [
+            frame(
+                1,
+                r#"<p:oleObj progId="Excel.Sheet.12" r:id="rW"><p:embed/></p:oleObj>"#,
+            ),
+            frame(
+                2,
+                r#"<p:oleObj progId="Equation.3" r:id="rE"><p:embed/></p:oleObj>"#,
+            ),
+            frame(
+                3,
+                r#"<p:oleObj progId="Excel.Sheet.8" r:id="rL"><p:link/></p:oleObj>"#,
+            ),
+        ]
+        .concat();
+        const SML: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+        let workbook = [
+            (
+                "xl/workbook.xml",
+                format!(
+                    r#"<workbook xmlns="{SML}" xmlns:r="{R}"><sheets><sheet name="A" sheetId="1" r:id="rId1"/></sheets></workbook>"#
+                ),
+            ),
+            (
+                "xl/_rels/workbook.xml.rels",
+                relationships(&[("rId1", "worksheet", "worksheets/sheet1.xml")]),
+            ),
+            (
+                "xl/worksheets/sheet1.xml",
+                format!(
+                    r#"<worksheet xmlns="{SML}"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Region</t></is></c><c r="B1" t="inlineStr"><is><t>Q1</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>North</t></is></c><c r="B2"><v>10</v></c></row></sheetData></worksheet>"#
+                ),
+            ),
+        ];
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for (name, body) in &workbook {
+            writer
+                .start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(body.as_bytes()).unwrap();
+        }
+        let xlsx = writer.finish().unwrap().into_inner();
+        let rels = relationships(&[
+            ("rW", "package", "../embeddings/sheet.xlsx"),
+            ("rE", "oleObject", "../embeddings/oleObject1.bin"),
+        ])
+        .replace(
+            "</Relationships>",
+            &format!(
+                r#"<Relationship Id="rL" Type="{R}/oleObject" Target="file:///C:/data.xls" TargetMode="External"/></Relationships>"#
+            ),
+        );
+        let bytes = package(
+            &[("rS", "slides/one.xml")],
+            vec![
+                ("ppt/slides/one.xml", slide(&shapes).into_bytes()),
+                ("ppt/slides/_rels/one.xml.rels", rels.into_bytes()),
+                ("ppt/embeddings/sheet.xlsx", xlsx),
+                ("ppt/embeddings/oleObject1.bin", b"Equation Native".to_vec()),
+            ],
+        );
+        let document = extract_presentation(&bytes).unwrap();
+        assert!(
+            document
+                .markdown
+                .contains("| Region | Q1 |\n| --- | --- |\n| North | 10 |"),
+            "{}",
+            document.markdown
+        );
+        assert!(!document.markdown.contains("Preview 1"));
+        assert!(document.markdown.contains("Preview 2"));
+        assert!(document.markdown.contains("Preview 3"));
+        let warned = |program: &str| {
+            document.warnings.iter().any(|warning| {
+                warning.contains(&format!("embedded object ({program}) holds no data"))
+            })
+        };
+        assert!(warned("Equation.3") && warned("Excel.Sheet.8") && !warned("Excel.Sheet.12"));
     }
 
     #[test]

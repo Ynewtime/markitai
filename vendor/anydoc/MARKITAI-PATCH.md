@@ -258,6 +258,13 @@ upstream files:
   `format_number(code, value, date1904)` renders a number through the sheet
   readers' number-format engine, so a PPTX chart's cached values read as the
   chart shows them (dates, percentages) instead of bare serial numbers.
+- `src/lib.rs`, `src/formats/mod.rs`, `src/formats/ppt/mod.rs`,
+  `src/formats/ppt/ole.rs`: a public `embedded_object(bytes)` reads an
+  embedded object's own file, as a PPTX keeps it in `ppt/embeddings`: a
+  compound file goes through the same storage reader as a PPT object, and a
+  zipped package is read as an ODF chart or spreadsheet, or else through
+  `sheet::parse` as an OOXML workbook, with the same detachment and sheet-name
+  handling. Anything else gives no blocks; only resource limits are errors.
 
 `Cargo.toml` asks `zip` for `deflate-flate2-zlib-rs` instead of `deflate`, as
 the workspace crates do: the same deflate backend without the zopfli encoder,
@@ -268,4 +275,4 @@ package; it reproduces upstream's formatting, so `cargo fmt` in this directory
 changes nothing upstream wrote.
 
 Tests covering these changes were added beside the upstream ones; the upstream
-suite passes in an isolated copy (401 tests).
+suite passes in an isolated copy (402 tests).

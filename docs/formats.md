@@ -301,7 +301,15 @@ PowerPoint displays. Excel and MS Graph objects are read by the [MS-XLS] chart
 cache layout and tested with objects generated from the specifications
 (`crates/markitai-core/tests/fixtures/legacy-ppt`); no object saved by Excel,
 MS Graph or PowerPoint was available, so their real-world layout is not yet
-verified. PPTX `p:oleObj` frames are not read this way.
+verified.
+
+A PPTX graphic frame holding a `p:oleObj` reads the same way: the object's own
+part (`ppt/embeddings/…`) is a compound file read as above, or a zipped package
+read as an OpenDocument chart or spreadsheet or else as an OOXML workbook (an
+`Excel.Sheet.12` object), and its tables replace the frame's text. A linked
+object, an unreadable one and one of any other kind (an equation, a document)
+keep the frame's DrawingML text, with a warning naming the object's ProgID.
+The part is read under the presentation's 64 MiB asset limit.
 
 The presentation reader limits packages to 16,384 entries and 10,000 slides,
 each XML part to 16 MiB, each asset to 64 MiB and total decompressed parts to
