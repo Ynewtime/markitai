@@ -1387,7 +1387,7 @@ fn scan(root: &Root, limits: Limits) -> Result<Vec<Job>> {
         Directory::read(&entry.path(), true)?;
         paths.push((id.to_owned(), entry.path()));
     }
-    paths.sort_by(|left, right| left.0.cmp(&right.0));
+    crate::sort::by(&mut paths, |left, right| left.0.cmp(&right.0));
     let mut jobs = Vec::new();
     for (id, path) in paths {
         // Only create() writes before this file exists, and create() performs no HTTP.

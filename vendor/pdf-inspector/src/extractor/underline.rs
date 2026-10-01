@@ -317,7 +317,7 @@ fn is_segmented_row_ruling_rule(rule: &Rule, rules: &[Rule]) -> bool {
         return false;
     }
 
-    row_rules.sort_by(|a, b| a.x1.total_cmp(&b.x1));
+    crate::sort::total(&mut row_rules, &mut |a, b| a.x1.total_cmp(&b.x1));
     let large_gaps = row_rules
         .windows(2)
         .filter(|pair| pair[1].x1 - pair[0].x2 > SEGMENTED_ROW_GAP_MIN)

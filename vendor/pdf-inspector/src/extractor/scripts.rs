@@ -241,7 +241,7 @@ fn detect_script_runs(items: &[TextItem]) -> Vec<ScriptRun> {
         }
     }
     let mut pages: Vec<(u32, Vec<usize>)> = by_page.into_iter().collect();
-    pages.sort_by_key(|(page, _)| *page);
+    crate::sort::total(&mut pages, &mut |a, b| a.0.cmp(&b.0));
 
     let mut runs = Vec::new();
     for (_, mut by_y) in pages {

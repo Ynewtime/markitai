@@ -235,7 +235,7 @@ pub(crate) fn detect_from_document(
                 .copied()
                 .filter(|&p| p >= 1 && p <= total_pages)
                 .collect();
-            valid.sort();
+            crate::sort::integers(&mut valid);
             valid.dedup();
             (valid, false)
         }
@@ -469,7 +469,7 @@ pub(crate) fn detect_from_document(
                     ocr_pages.push(page_num);
                 }
             }
-            ocr_pages.sort();
+            crate::sort::integers(&mut ocr_pages);
             ocr_pages.dedup();
             ocr_pages
         }
@@ -503,7 +503,7 @@ pub(crate) fn detect_from_document(
             }
         }
     }
-    pages_needing_ocr.sort();
+    crate::sort::integers(&mut pages_needing_ocr);
     pages_needing_ocr.dedup();
 
     // Explain each OCR-flagged page. Pages we analyzed get a signal-derived
@@ -608,7 +608,7 @@ fn distribute_pages(n: u32, total: u32) -> Vec<u32> {
         }
     }
 
-    indices.sort();
+    crate::sort::integers(&mut indices);
     indices.dedup();
     indices
 }

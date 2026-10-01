@@ -105,7 +105,7 @@ pub(super) fn run(
     if let Some(plan) = destination.history {
         plan.record(&records);
     }
-    records.sort_by_key(|record| record.index);
+    crate::sort::by_key(&mut records, |record| record.index);
     let failed = records
         .iter()
         .filter(|record| record.status == ItemStatus::Failed)

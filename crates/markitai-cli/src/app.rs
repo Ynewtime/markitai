@@ -585,7 +585,7 @@ fn conversion_config(cli: &Cli, overrides: Option<Value>) -> CliResult<Value> {
                     .as_object()
                     .map(|presets| presets.keys().cloned().collect())
                     .unwrap_or_default();
-                custom.sort();
+                crate::sort::by(&mut custom, String::cmp);
                 let mut available = vec!["minimal".to_owned(), "rich".into(), "standard".into()];
                 available.extend(custom);
                 (
@@ -1812,7 +1812,7 @@ fn discover(input: &Path, output: &Path, cli: &Cli, cfg: &Value) -> CliResult<Ve
             ));
         }
     }
-    tasks.sort_by(|a, b| a.display.cmp(&b.display));
+    crate::sort::by(&mut tasks, |a, b| a.display.cmp(&b.display));
     let mut url_keys = std::collections::HashSet::new();
     tasks.retain(|task| !is_url(&task.source) || url_keys.insert(task.report_key.clone()));
     Ok(tasks)

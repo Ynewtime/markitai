@@ -96,6 +96,48 @@ The local changes, each marked `markitai` (or, for sorts, made through
   every change listed here (1,617 before this item). Reversing `stable`'s comparator fails 183 more tests, reversing
   `f32_ascending` 64, dropping `f32_descending`'s reversal 49, and an
   unstable sort inside `stable` fails the added stability test.
+
+  A second step shares the sorts of element types that had a compiled sort
+  for a single comparator. `crate::sort::total(v, compare)` is for a
+  comparator that is a total order (integers, `total_cmp`, `Ord` keys, or the
+  column-valley scores of `validate_and_build_columns`, products of two
+  counts that cannot be NaN): it sorts the positions `0..len` through the
+  `usize` instance of `stable` and then moves the elements into that order.
+  A total order has exactly one stable order, so the result is the one
+  `sort_by` gives whichever compiled sort finds it; comparators that are not
+  shown to be total (`partial_cmp(..).unwrap_or(Equal)` on coordinates,
+  `compare_positioned_blocks`) keep `stable` or their own sort.
+  `integers(v)` replaces `v.sort()` on `u16`, `u32` and `usize` by
+  `sort_unstable`, the same order because equal integers are identical, and
+  shares the unstable instance the table detectors compile anyway;
+  `ToUnicodeCMap::mapped_runs` packs its `(u16, u16)` pairs as
+  `start << 16 | end`, whose integer order is the pairs' order. `map` and
+  `set` build a `BTreeMap`/`BTreeSet` entry by entry where `collect` sorted
+  the collected entries with a sort compiled for each iterator type (a
+  repeated key keeps its last value, as there). Calls changed in
+  `src/detector.rs`, `src/lib.rs`, `src/overlong_numerals.rs`,
+  `src/tounicode.rs`, `src/extractor/{content_stream,layout,mod,scripts,underline}.rs`
+  and `src/markdown/{convert,furniture,mod}.rs`; `src/tables/` was left as
+  it was, so element types the table detectors also sort keep their
+  instance.
+
+  Measured on `7fcdd34` with the same build: in the unstripped v0 build, the
+  sort instantiations whose v0 symbol names `pdf_inspector` as the
+  instantiating crate fell from 192,776 to 122,712 bytes (the remainder:
+  sorts of `src/tables/`, `compare_positioned_blocks`, unstable sorts with
+  ties, the shared `usize`, `u16`, `u32` and `f32` instances, and generic
+  sorts of `unicode-bidi` and `unicode-normalization` compiled here). With
+  the CLI's own sorts shared alongside, the macOS CLI is 21,731,920 bytes
+  before and 21,500,560 after, of which this step is −82,592. The 216
+  Chrome- and Quartz-printed PDFs of the R41 quality corpus give
+  byte-identical output apart from the `markitai_processed` line, and
+  paired, alternating runs over them show no slowdown (sums +0.37% and
+  +0.17%, against +0.58% and +0.32% for a byte copy of the base binary). The
+  isolated copy's unit tests give 1,621 passed and the same 21 failed (two
+  tests added). Reversing `total`'s comparator fails 16 more tests, an
+  unstable sort inside `total` 1, a permutation that stops after one swap
+  per cycle 7, a descending `integers` 17, a `map` that keeps the first
+  value 1 and a `set` that drops an element 16.
 - `src/extractor/mod.rs`, `src/extractor/scripts.rs`: a run 5% or more smaller
   or larger and at least 0.2 em off the baseline is not merged into its
   neighbour, and a run clearly off the baseline (0.2 em) is a script up to 0.86

@@ -1111,12 +1111,12 @@ impl ToUnicodeCMap {
     /// where it is wrong as a whole, thirty mended entries mend nothing; the
     /// program is not read for them.
     pub(crate) fn control_destination_codes(&self) -> Vec<u16> {
-        let mut codes: std::collections::BTreeSet<u16> = self
-            .char_map
-            .iter()
-            .filter(|(_, text)| destination_is_control(text))
-            .map(|(&code, _)| code)
-            .collect();
+        let mut codes: std::collections::BTreeSet<u16> = crate::sort::set(
+            self.char_map
+                .iter()
+                .filter(|(_, text)| destination_is_control(text))
+                .map(|(&code, _)| code),
+        );
         for &(start, end, base) in &self.ranges {
             if start > end || !destination_span_is_control_block(base, u32::from(end - start)) {
                 continue;
@@ -1389,16 +1389,20 @@ impl ToUnicodeCMap {
     /// The maximal runs of consecutive mapped codes, as `(first, last)`,
     /// in code order.
     fn mapped_runs(&self) -> Vec<(u16, u16)> {
-        let mut intervals: Vec<(u16, u16)> = self
+        // markitai: each `(start, end)` packed as `start << 16 | end`, whose
+        // integer order is the pairs' order, sorts through the crate's `u32`
+        // sort instead of a compiled sort of its own.
+        let pack = |start: u16, end: u16| (u32::from(start) << 16) | u32::from(end);
+        let mut intervals: Vec<u32> = self
             .ranges
             .iter()
             .filter(|&&(start, end, _)| start <= end)
-            .map(|&(start, end, _)| (start, end))
+            .map(|&(start, end, _)| pack(start, end))
             .collect();
-        intervals.extend(self.char_map.keys().map(|&cid| (cid, cid)));
-        intervals.sort_unstable();
+        intervals.extend(self.char_map.keys().map(|&cid| pack(cid, cid)));
+        crate::sort::integers(&mut intervals);
         let mut runs: Vec<(u16, u16)> = Vec::with_capacity(intervals.len());
-        for (start, end) in intervals {
+        for (start, end) in intervals.into_iter().map(|p| ((p >> 16) as u16, p as u16)) {
             if let Some(last) = runs.last_mut() {
                 if start <= last.1.saturating_add(1) {
                     last.1 = last.1.max(end);

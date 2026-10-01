@@ -11,11 +11,78 @@
 //! of this module is a markitai change (see `MARKITAI-PATCH.md`).
 
 use std::cmp::Ordering;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// [`slice::sort_by`], compiled once per element type.
 #[inline(never)]
 pub(crate) fn stable<T>(v: &mut [T], compare: &mut dyn FnMut(&T, &T) -> Ordering) {
     v.sort_by(|a, b| compare(a, b));
+}
+
+/// [`slice::sort_by`] for a comparator that is a total order (integers,
+/// `total_cmp`, `Ord` keys, or floats that cannot be NaN), with no compiled
+/// sort of its own: the positions `0..len` are sorted through the `usize`
+/// instance of [`stable`] and the elements are then moved into that order.
+/// A total order has exactly one stable order, so the result is the one
+/// `sort_by` gives whichever sort finds it; for any other comparator the
+/// result could depend on the compiled sort, so such callers use [`stable`].
+pub(crate) fn total<T>(v: &mut [T], compare: &mut dyn FnMut(&T, &T) -> Ordering) {
+    if v.len() < 2 {
+        return;
+    }
+    let mut order: Vec<usize> = (0..v.len()).collect();
+    stable(&mut order, &mut |&a, &b| compare(&v[a], &v[b]));
+    permute(v, order);
+}
+
+/// `v.sort()` for integers or tuples of integers. Equal values are
+/// identical, so the unstable order is the stable one, and every sort of one
+/// such type shares the unstable sort's compiled instance.
+pub(crate) fn integers<T: Integer>(v: &mut [T]) {
+    v.sort_unstable();
+}
+
+/// Types whose equal values are identical.
+pub(crate) trait Integer: Ord {}
+impl Integer for u16 {}
+impl Integer for u32 {}
+impl Integer for usize {}
+
+/// `iter.collect::<BTreeMap<_, _>>()` without its sort (compiled again for
+/// every iterator type), for keys whose equal values are identical: entry
+/// by entry, keeping the last value of a repeated key as `collect` does.
+pub(crate) fn map<K: Integer, V>(iter: impl IntoIterator<Item = (K, V)>) -> BTreeMap<K, V> {
+    let mut map = BTreeMap::new();
+    for (key, value) in iter {
+        map.insert(key, value);
+    }
+    map
+}
+
+/// `iter.collect::<BTreeSet<_>>()` without its sort, for elements whose
+/// equal values are identical.
+pub(crate) fn set<T: Integer>(iter: impl IntoIterator<Item = T>) -> BTreeSet<T> {
+    let mut set = BTreeSet::new();
+    for item in iter {
+        set.insert(item);
+    }
+    set
+}
+
+/// Moves the element at `order[i]` to position `i`, walking each cycle of
+/// the permutation once and marking its positions done.
+fn permute<T>(v: &mut [T], mut order: Vec<usize>) {
+    for start in 0..order.len() {
+        let mut current = start;
+        loop {
+            let next = std::mem::replace(&mut order[current], current);
+            if next == start {
+                break;
+            }
+            v.swap(current, next);
+            current = next;
+        }
+    }
 }
 
 /// `v.sort_by(|a, b| a.total_cmp(b))`.
@@ -90,5 +157,62 @@ mod tests {
         stable(&mut got, &mut |a, b| b.0.cmp(&a.0));
         assert_eq!(got, expected);
         assert!(got.windows(2).all(|w| w[0].0 > w[1].0 || w[0].1 < w[1].1));
+    }
+
+    #[test]
+    fn total_order_sort_matches_sort_by() {
+        // Deterministic values with many ties, at lengths around the std
+        // sorts' small-sort, eager and merge thresholds.
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for len in [0, 1, 2, 3, 8, 16, 20, 21, 33, 64, 65, 300, 4096] {
+            for range in [2u64, 7, 1000, u64::MAX] {
+                let input: Vec<(u64, f32, usize)> = (0..len)
+                    .map(|i| (next() % range, (next() % 9) as f32 - 4.0, i))
+                    .collect();
+                let mut expected = input.clone();
+                expected.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.total_cmp(&b.1)));
+                let mut got = input.clone();
+                total(&mut got, &mut |a, b| b.0.cmp(&a.0).then(a.1.total_cmp(&b.1)));
+                assert_eq!(got, expected, "len {len}, range {range}");
+
+                let mut expected = input.clone();
+                expected.sort_by_key(|item| item.0 % 3);
+                let mut got = input;
+                total(&mut got, &mut |a, b| (a.0 % 3).cmp(&(b.0 % 3)));
+                assert_eq!(got, expected, "len {len}, range {range}");
+                // Ties keep their input order.
+                assert!(got.windows(2).all(|w| w[0].0 % 3 < w[1].0 % 3 || w[0].2 < w[1].2));
+            }
+        }
+        // Elements that own memory are moved, not copied.
+        let mut words: Vec<String> = ["delta", "alpha", "charlie", "alpha", "bravo"]
+            .map(String::from)
+            .to_vec();
+        total(&mut words, &mut |a, b| b.len().cmp(&a.len()));
+        assert_eq!(words, ["charlie", "delta", "alpha", "alpha", "bravo"]);
+    }
+
+    #[test]
+    fn integer_sorts_and_collections_match_the_std_ones() {
+        let values: Vec<u32> = (0..300u32).map(|i| i.wrapping_mul(2_654_435_761) % 97).collect();
+        let mut expected = values.clone();
+        expected.sort();
+        let mut got = values.clone();
+        integers(&mut got);
+        assert_eq!(got, expected);
+
+        let pairs: Vec<(u32, usize)> = values.iter().enumerate().map(|(i, &v)| (v, i)).collect();
+        let collected = pairs.iter().copied().collect::<BTreeMap<_, _>>();
+        assert_eq!(map(pairs.iter().copied()), collected);
+        // A repeated key keeps its last value, as `collect` does.
+        assert_eq!(map([(1u32, 'a'), (2, 'b'), (1, 'c')])[&1], 'c');
+        let codes: Vec<u16> = values.iter().map(|&v| v as u16).collect();
+        assert_eq!(set(codes.iter().copied()), codes.into_iter().collect::<BTreeSet<_>>());
     }
 }

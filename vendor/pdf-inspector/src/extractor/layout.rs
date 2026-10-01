@@ -975,7 +975,9 @@ fn validate_and_build_columns(
     // Limit to at most 3 gutters (4 columns).
     // Score = width_in_bins * min(left_count, right_count)
     if valid_valleys.len() > 3 {
-        valid_valleys.sort_by(|a, b| {
+        // markitai: the scores are products of two counts, never NaN, so
+        // `partial_cmp` is a total order here.
+        crate::sort::total(&mut valid_valleys, &mut |a, b| {
             let score_a = (a.1 - a.0) as f32 * (a.2.min(a.3) as f32);
             let score_b = (b.1 - b.0) as f32 * (b.2.min(b.3) as f32);
             score_b
@@ -983,7 +985,7 @@ fn validate_and_build_columns(
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         valid_valleys.truncate(3);
-        valid_valleys.sort_by_key(|v| v.0);
+        crate::sort::total(&mut valid_valleys, &mut |a, b| a.0.cmp(&b.0));
     }
 
     // Build column regions from gutter boundaries
@@ -1032,7 +1034,7 @@ fn identify_spanning_lines(items: &[TextItem], columns: &[ColumnRegion]) -> Vec<
     // Build (original_index, y) pairs sorted by Y descending for grouping
     let mut indexed: Vec<(usize, f32)> =
         items.iter().enumerate().map(|(i, it)| (i, it.y)).collect();
-    indexed.sort_by(|a, b| b.1.total_cmp(&a.1));
+    crate::sort::total(&mut indexed, &mut |a, b| b.1.total_cmp(&a.1));
 
     // Group by Y-proximity into rough lines (as index sets)
     let mut groups: Vec<Vec<usize>> = Vec::new();
@@ -1213,7 +1215,7 @@ fn mark_repeated_folio_candidates(
                     (*page, value, index)
                 })
                 .collect();
-            values.sort_by_key(|(page, _, _)| *page);
+            crate::sort::total(&mut values, &mut |a, b| a.0.cmp(&b.0));
 
             let unique_values: HashSet<u32> = values.iter().map(|(_, value, _)| *value).collect();
             let mostly_unique = unique_values.len() * 5 >= values.len() * 4;
@@ -2310,7 +2312,7 @@ fn group_into_lines_with_thresholds_and_regions_impl(
 
     // Get unique pages
     let mut pages: Vec<u32> = items.iter().map(|i| i.page).collect();
-    pages.sort();
+    crate::sort::integers(&mut pages);
     pages.dedup();
 
     let mut all_lines = Vec::new();
@@ -2656,8 +2658,8 @@ fn order_columns_with_policy(
                     }
                 }
 
-                crate::sort::stable(&mut above, &mut |a, b| b.y.total_cmp(&a.y));
-                crate::sort::stable(&mut below_spanning, &mut |a, b| b.y.total_cmp(&a.y));
+                crate::sort::total(&mut above, &mut |a, b| b.y.total_cmp(&a.y));
+                crate::sort::total(&mut below_spanning, &mut |a, b| b.y.total_cmp(&a.y));
 
                 all_lines.extend(above);
                 for col in core_columns {
@@ -2677,7 +2679,7 @@ fn order_columns_with_policy(
                 }
 
                 // Sort by Y descending (top-first), then by X for same-Y lines
-                crate::sort::stable(&mut all_page_lines, &mut |a, b| {
+                crate::sort::total(&mut all_page_lines, &mut |a, b| {
                     b.y.total_cmp(&a.y).then(
                         a.items
                             .first()

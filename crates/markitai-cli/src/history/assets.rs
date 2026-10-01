@@ -324,7 +324,7 @@ fn names(path: &Path, budget: &mut Budget) -> io::Result<Vec<String>> {
             .map_err(|_| invalid("History asset names must be Unicode"))?;
         result.push(name);
     }
-    result.sort_unstable();
+    crate::sort::by(&mut result, String::cmp);
     Ok(result)
 }
 

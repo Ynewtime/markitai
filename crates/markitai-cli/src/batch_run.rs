@@ -779,11 +779,12 @@ fn run_with_namespace(
     }
     // Directory recovery retains pending files even when discovery no longer sees them.
     if mode == RunMode::Directory {
-        let keys: BTreeSet<_> = tasks
-            .iter()
-            .filter(|t| !is_url(&t.source))
-            .map(|t| t.report_key.clone())
-            .collect();
+        let keys = crate::sort::set(
+            tasks
+                .iter()
+                .filter(|t| !is_url(&t.source))
+                .map(|t| t.report_key.clone()),
+        );
         for (key, entry) in &snapshot.documents {
             if entry.status != Status::Completed && !keys.contains(key) {
                 tasks.push(Task {
@@ -899,7 +900,7 @@ fn run_with_namespace(
                 else {
                     continue;
                 };
-                let mut names: BTreeSet<_> = members(base).into_iter().collect();
+                let mut names = crate::sort::set(members(base));
                 if let Some(base) = base.strip_suffix(".llm") {
                     names.extend(members(base));
                 }
@@ -1299,7 +1300,7 @@ fn run_with_namespace(
         signal = Some(received);
         eprintln!("Interrupted: stopping new work and waiting for active conversions.");
     }
-    records.sort_by_key(|record| record.index);
+    crate::sort::by_key(&mut records, |record| record.index);
     let items: Vec<_> = records.iter().map(outcome).collect();
     let failed = records
         .iter()

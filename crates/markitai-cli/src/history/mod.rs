@@ -87,7 +87,9 @@ impl Plan {
             return Err(invalid("History exceeds the 100,000 item limit"));
         }
         if self.mode == RunMode::Directory {
-            records.sort_by_key(|item| (item.kind == ItemKind::Url, item.index));
+            crate::sort::by_key(&mut records, |item| {
+                (item.kind == ItemKind::Url, item.index)
+            });
         }
         let finished_at = now();
         // History metadata is always private, independent of output symlink policy.

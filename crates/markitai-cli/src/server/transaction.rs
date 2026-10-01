@@ -243,7 +243,9 @@ pub(super) fn recover(folder: &Path) -> io::Result<()> {
         }
         pending.push((stage, record));
     }
-    pending.sort_by_key(|(_, record)| std::cmp::Reverse(record.sequence));
+    crate::sort::by_key(&mut pending, |(_, record)| {
+        std::cmp::Reverse(record.sequence)
+    });
     for (stage, record) in pending {
         if !committed.contains(&record.id) {
             rollback(folder, &stage, &record)?;

@@ -63,7 +63,7 @@ fn strip_edge_furniture(lines: Vec<TextLine>) -> Vec<TextLine> {
                 sizes.push((item.font_size, item.text.chars().count()));
             }
         }
-        sizes.sort_by(|a, b| a.0.total_cmp(&b.0));
+        crate::sort::total(&mut sizes, &mut |a, b| a.0.total_cmp(&b.0));
         let total_chars: usize = sizes.iter().map(|&(_, c)| c).sum();
         let mut running = 0usize;
         let mut body_size = 12.0f32;
@@ -288,7 +288,7 @@ fn is_decorative_separator(text: &str) -> bool {
 /// frequency build and both band passes must key on identical text.
 fn coalesced_band(lines: &[TextLine], indices: &[usize]) -> (Vec<usize>, String, String) {
     let mut sorted = indices.to_vec();
-    sorted.sort();
+    crate::sort::integers(&mut sorted);
     let coalesced: String = sorted
         .iter()
         .map(|&i| lines[i].text())

@@ -389,13 +389,12 @@ pub(crate) fn reservation_members(
     }
     let mut found = None;
     for stem in stems {
-        let paths: BTreeMap<_, _> = [format!("{stem}.md"), format!("{stem}.llm.md")]
-            .into_iter()
-            .map(|member| {
+        let paths = crate::sort::map([format!("{stem}.md"), format!("{stem}.llm.md")].map(
+            |member| {
                 let target = parent.join(&member);
                 (member, target)
-            })
-            .collect();
+            },
+        ));
         let location = locator_path(&parent, owner, &paths)?;
         let Some(receipt) = read_receipt_at(&parent, &location)? else {
             continue;
@@ -556,19 +555,16 @@ fn prepare<'a>(
             version: 1,
             owner: owner.clone(),
             parent: leases.parent().to_owned(),
-            members: paths
-                .iter()
-                .map(|(name, target)| {
-                    (
-                        name.clone(),
-                        Member {
-                            target: target.clone(),
-                            prior: None,
-                            prepared: None,
-                        },
-                    )
-                })
-                .collect(),
+            members: crate::sort::map(paths.iter().map(|(name, target)| {
+                (
+                    name.clone(),
+                    Member {
+                        target: target.clone(),
+                        prior: None,
+                        prepared: None,
+                    },
+                )
+            })),
         });
         let name = pending
             .target

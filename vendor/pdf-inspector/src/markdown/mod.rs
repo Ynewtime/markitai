@@ -1616,7 +1616,7 @@ fn convert_items_with_rects_lines_and_table_output(
         .unwrap_or_else(|| chart_regions_by_page(&text_items, rects, pdf_lines));
 
     let mut pages: Vec<u32> = page_groups.keys().copied().collect();
-    pages.sort();
+    crate::sort::integers(&mut pages);
 
     // Track band splits per page so we can split non-table items later
     let mut page_band_splits: HashMap<u32, Vec<(f32, f32)>> = HashMap::new();
@@ -2279,7 +2279,7 @@ fn convert_items_with_rects_lines_and_table_output(
         // Process each split page's bands independently, then interleave
         // by Y position so paired zones (e.g. left/right months) appear together.
         let mut split_pages: Vec<u32> = split_page_items.keys().copied().collect();
-        split_pages.sort();
+        crate::sort::integers(&mut split_pages);
         for page in split_pages {
             let items = split_page_items.remove(&page).unwrap();
             let bands = &page_band_splits[&page];
@@ -2304,7 +2304,7 @@ fn convert_items_with_rects_lines_and_table_output(
             }
             // Sort by Y descending (top to bottom) so left and right
             // band lines interleave in visual reading order.
-            crate::sort::stable(&mut page_lines, &mut |a, b| b.y.total_cmp(&a.y));
+            crate::sort::total(&mut page_lines, &mut |a, b| b.y.total_cmp(&a.y));
             all_lines.extend(page_lines);
         }
 
@@ -2312,7 +2312,7 @@ fn convert_items_with_rects_lines_and_table_output(
         // prose zone, group each column independently and append columns in
         // newspaper order. Within a chart zone, group the full width normally.
         let mut chart_prose_pages: Vec<u32> = chart_prose_page_items.keys().copied().collect();
-        chart_prose_pages.sort();
+        crate::sort::integers(&mut chart_prose_pages);
         for page in chart_prose_pages {
             let mut remaining = chart_prose_page_items.remove(&page).unwrap();
             let split_x = page_chart_prose_splits[&page];
@@ -2381,7 +2381,7 @@ fn convert_items_with_rects_lines_and_table_output(
         }
         // The three processing paths above are accumulated separately. Restore
         // document page order while preserving each page's chosen line order.
-        crate::sort::stable(&mut all_lines, &mut |a, b| a.page.cmp(&b.page));
+        crate::sort::total(&mut all_lines, &mut |a, b| a.page.cmp(&b.page));
         all_lines
     };
 

@@ -2403,7 +2403,9 @@ fn merge_text_items_with_clips(
     }
 
     // Sort groups by page then Y descending (top of page first)
-    ordered_line_groups.sort_by(|a, b| a.page.cmp(&b.page).then_with(|| b.y.total_cmp(&a.y)));
+    crate::sort::total(&mut ordered_line_groups, &mut |a, b| {
+        a.page.cmp(&b.page).then_with(|| b.y.total_cmp(&a.y))
+    });
 
     let mut merged = Vec::new();
 

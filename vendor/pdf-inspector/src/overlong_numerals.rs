@@ -350,7 +350,7 @@ fn object_stream_members(
     let (pairs, _) = numbers.as_chunks::<2>();
     let mut starts: Vec<usize> = pairs.iter().map(|pair| first + pair[1] as usize).collect();
     starts.sort_unstable();
-    Some(
+    Some(crate::sort::map(
         pairs
             .iter()
             .filter_map(|pair| {
@@ -366,9 +366,8 @@ fn object_stream_members(
                     .min(content.len())
                     .min(start + MAX_OBJECT_SPAN);
                 Some((pair[0], start..end))
-            })
-            .collect(),
-    )
+            }),
+    ))
 }
 
 /// The object `id` whose bytes are `span`: the same bytes with comments and

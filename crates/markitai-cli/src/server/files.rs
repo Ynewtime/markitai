@@ -263,7 +263,7 @@ pub(super) async fn history_archive(
         .filter(|job| job.data.lock().unwrap().status == "done")
         .cloned()
         .collect::<Vec<_>>();
-    jobs.sort_by_key(|job| job.data.lock().unwrap().created_at.clone());
+    crate::sort::by_key(&mut jobs, |job| job.data.lock().unwrap().created_at.clone());
     if jobs.is_empty() {
         return Err(ApiError::new(404, "history is empty"));
     }

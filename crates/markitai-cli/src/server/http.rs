@@ -405,7 +405,9 @@ pub(super) async fn history(
             (data.status == "done").then(|| data.history())
         })
         .collect::<Vec<_>>();
-    entries.sort_by(|a, b| b["created_at"].as_str().cmp(&a["created_at"].as_str()));
+    crate::sort::by(&mut entries, |a, b| {
+        b["created_at"].as_str().cmp(&a["created_at"].as_str())
+    });
     Ok(Json(json!(entries)))
 }
 pub(super) async fn delete(

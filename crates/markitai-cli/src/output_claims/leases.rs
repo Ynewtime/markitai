@@ -155,7 +155,7 @@ impl PreparedMembers {
             });
         }
         let mut members = members.to_vec();
-        members.sort_unstable();
+        crate::sort::by(&mut members, String::cmp);
         members.dedup();
         let mut prepared = Self {
             original_parent,

@@ -17,6 +17,18 @@
 // definitions (its own template instances; dyld still delays it, as for
 // Apple's own images that delay it). rustc reports linker output as warnings,
 // so these links pass `-w`, which silences all ld warnings for them.
+//
+// On Linux with glibc the same executables pack their relative relocations
+// (`-z pack-relative-relocs`, DT_RELR). Every pointer stored in a
+// position-independent executable's data (string tables, vtables) is
+// relocated at load time; as `.rela.dyn` entries that takes 24 bytes each,
+// about 0.9 MB of the x86-64 CLI, and as DT_RELR bitmaps a few kilobytes.
+// Mach-O already stores these in place. The loader must be glibc 2.36 or
+// later, which the linker records as a `GLIBC_ABI_DT_RELR` requirement; an
+// executable linked against glibc 2.39 already requires 2.39 (the standard
+// library's pidfd functions). A probe linked by this rustc with the flag must
+// carry DT_RELR and run correctly here, so a cross build, an older C library
+// or a linker without the option keeps ordinary relocations.
 
 use std::{env, fs, path::PathBuf, process::Command};
 
@@ -32,6 +44,12 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../markitai-core/build.rs");
     println!("cargo:rerun-if-env-changed=RUSTC_LINKER");
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
+        if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("gnu") && packs_relocations() {
+            println!("cargo:rustc-link-arg=-Wl,-z,pack-relative-relocs");
+        }
+        return;
+    }
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") || !linker_delays() {
         return;
     }
@@ -61,4 +79,100 @@ fn linker_delays() -> bool {
         .arg(&source)
         .output()
         .is_ok_and(|output| output.status.success())
+}
+
+/// Whether this rustc links a native executable with packed relative
+/// relocations that the C library here applies.
+fn packs_relocations() -> bool {
+    let (Ok(host), Ok(target)) = (env::var("HOST"), env::var("TARGET")) else {
+        return false;
+    };
+    let Some(out) = env::var_os("OUT_DIR").map(PathBuf::from) else {
+        return false;
+    };
+    if host != target {
+        return false;
+    }
+    // Each string's address in the table is relocated at load time; read
+    // through an unrelocated table, the program fails.
+    let source = out.join("relr_probe.rs");
+    let probe = out.join("relr_probe");
+    let program = r#"
+static WORDS: [&str; 3] = ["packed", "relative", "relocations"];
+fn main() {
+    let word = WORDS[std::hint::black_box(2)];
+    std::process::exit(if word == "relocations" { 0 } else { 1 });
+}
+"#;
+    if fs::write(&source, program).is_err() {
+        return false;
+    }
+    let mut rustc = Command::new(env::var("RUSTC").unwrap_or_else(|_| "rustc".into()));
+    rustc.args([
+        "--edition",
+        "2021",
+        "--crate-type",
+        "bin",
+        "--target",
+        &target,
+    ]);
+    if let Ok(flags) = env::var("CARGO_ENCODED_RUSTFLAGS") {
+        rustc.args(flags.split('\x1f').filter(|flag| !flag.is_empty()));
+    }
+    if let Ok(linker) = env::var("RUSTC_LINKER") {
+        rustc.arg(format!("-Clinker={linker}"));
+    }
+    rustc
+        .arg("-Clink-arg=-Wl,-z,pack-relative-relocs")
+        .arg("-o")
+        .arg(&probe)
+        .arg(&source);
+    rustc.output().is_ok_and(|output| output.status.success())
+        && fs::read(&probe).is_ok_and(|image| has_relr(&image))
+        && Command::new(&probe)
+            .output()
+            .is_ok_and(|output| output.status.success())
+}
+
+/// Whether a 64-bit little-endian ELF image's dynamic section has DT_RELR.
+fn has_relr(image: &[u8]) -> bool {
+    const PT_DYNAMIC: u32 = 2;
+    const DT_RELR: u64 = 36;
+    let u16_at = |at: usize| {
+        image
+            .get(at..at + 2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+    };
+    let u32_at = |at: usize| {
+        image
+            .get(at..at + 4)
+            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+    };
+    let u64_at = |at: usize| {
+        image
+            .get(at..at + 8)
+            .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
+    };
+    // ELF magic, 64-bit class, little-endian data.
+    if image.get(..6) != Some(b"\x7fELF\x02\x01") {
+        return false;
+    }
+    let (Some(phoff), Some(phentsize), Some(phnum)) = (u64_at(0x20), u16_at(0x36), u16_at(0x38))
+    else {
+        return false;
+    };
+    (0..usize::from(phnum)).any(|index| {
+        let header = phoff as usize + index * usize::from(phentsize);
+        if u32_at(header) != Some(PT_DYNAMIC) {
+            return false;
+        }
+        let (Some(offset), Some(size)) = (u64_at(header + 0x08), u64_at(header + 0x20)) else {
+            return false;
+        };
+        (offset as usize..(offset + size) as usize)
+            .step_by(16)
+            .map_while(u64_at)
+            .take_while(|&tag| tag != 0)
+            .any(|tag| tag == DT_RELR)
+    })
 }

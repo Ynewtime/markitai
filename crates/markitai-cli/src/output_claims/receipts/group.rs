@@ -207,19 +207,16 @@ impl PreparedDocument {
             version: 1,
             owner: owner.clone(),
             parent: leases.parent().to_owned(),
-            members: paths
-                .iter()
-                .map(|(name, target)| {
-                    (
-                        name.clone(),
-                        Member {
-                            target: target.clone(),
-                            prior: None,
-                            prepared: None,
-                        },
-                    )
-                })
-                .collect(),
+            members: crate::sort::map(paths.iter().map(|(name, target)| {
+                (
+                    name.clone(),
+                    Member {
+                        target: target.clone(),
+                        prior: None,
+                        prepared: None,
+                    },
+                )
+            })),
         });
         let mut members = Vec::with_capacity(rendered.len());
         let mut seen = BTreeSet::new();

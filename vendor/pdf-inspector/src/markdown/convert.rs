@@ -631,7 +631,7 @@ pub(super) fn merge_continuation_tables(
     table_only_pages: &HashSet<u32>,
 ) {
     let mut sorted_pages: Vec<u32> = page_tables.keys().copied().collect();
-    sorted_pages.sort();
+    crate::sort::integers(&mut sorted_pages);
 
     if sorted_pages.len() < 2 {
         return;
@@ -911,7 +911,7 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
         .chain(page_images.keys())
         .copied()
         .collect();
-    all_content_pages.sort();
+    crate::sort::integers(&mut all_content_pages);
     all_content_pages.dedup();
     // Build the unified table/image order once per page. This is only a
     // meaningful sort on chart/prose pages; ordinary pages retain their

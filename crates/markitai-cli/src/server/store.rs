@@ -83,7 +83,7 @@ pub(super) fn files(root: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
     markitai_core::output::check_path(root, false).map_err(std::io::Error::other)?;
     let mut result = Vec::new();
     walk(root, root, &mut result, 0)?;
-    result.sort_by(|a, b| a.0.cmp(&b.0));
+    crate::sort::by(&mut result, |a, b| a.0.cmp(&b.0));
     Ok(result)
 }
 

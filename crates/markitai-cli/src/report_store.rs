@@ -135,7 +135,8 @@ fn write_json(output: &mut String, value: &Value) -> io::Result<()> {
         Value::Object(values) => {
             output.push('{');
             let mut entries: Vec<_> = values.iter().collect();
-            entries.sort_unstable_by(|left, right| left.0.cmp(right.0));
+            // A map's keys are distinct: the stable order is the unstable one.
+            crate::sort::by(&mut entries, |left, right| left.0.cmp(right.0));
             for (index, (key, value)) in entries.into_iter().enumerate() {
                 if index != 0 {
                     output.push_str(", ");

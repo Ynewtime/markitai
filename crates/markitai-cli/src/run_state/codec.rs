@@ -1090,11 +1090,14 @@ pub(crate) fn task_hash(scope: &Scope, options: &Value) -> Result<String> {
     } else {
         &directory_keys[..5]
     };
-    let selected = options
-        .iter()
-        .filter(|(key, _)| keys.contains(&key.as_str()))
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect();
+    // Entry by entry: collecting into a map sorts the pairs first, a compiled
+    // sort of its own for every iterator type (`crate::sort`).
+    let mut selected = serde_json::Map::new();
+    for (key, value) in options.iter() {
+        if keys.contains(&key.as_str()) {
+            selected.insert(key.clone(), value.clone());
+        }
+    }
     crate::report_store::task_hash(&scope.input, &scope.output, &Value::Object(selected))
         .map_err(Error::from)
 }
@@ -1109,7 +1112,7 @@ pub(crate) fn merge(
     let _paths = super::paths::Scope::enter();
     count(snapshot, limits)?;
     count(discovered, limits)?;
-    let wanted: BTreeSet<_> = url_order.iter().collect();
+    let wanted = crate::sort::set(url_order);
     if url_order.len() != discovered.urls.len()
         || wanted.len() != url_order.len()
         || !wanted.iter().all(|key| discovered.urls.contains_key(*key))

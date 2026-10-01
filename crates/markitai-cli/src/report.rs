@@ -637,12 +637,13 @@ fn summary(mode: RunMode, items: &[&RunItem], finished: &RunFinished) -> Ordered
             (
                 "url_sources",
                 value(
-                    items
-                        .iter()
-                        .filter(|item| item.kind == ItemKind::Url)
-                        .map(|item| item.source_file.as_deref().unwrap_or("unknown.urls"))
-                        .collect::<BTreeSet<_>>()
-                        .len(),
+                    crate::sort::set(
+                        items
+                            .iter()
+                            .filter(|item| item.kind == ItemKind::Url)
+                            .map(|item| item.source_file.as_deref().unwrap_or("unknown.urls")),
+                    )
+                    .len(),
                 ),
             ),
         ]);
@@ -688,7 +689,7 @@ fn terminal_diagnostics<'a>(
     if documents.is_empty() && urls.is_empty() {
         return Ok(None);
     }
-    documents.sort_by(|left, right| left.0.cmp(&right.0));
+    crate::sort::by(&mut documents, |left, right| left.0.cmp(&right.0));
     Ok(Some(object([
         ("documents", Ordered::Object(documents)),
         ("urls", Ordered::Object(urls)),
@@ -735,7 +736,7 @@ pub(crate) fn render(
         return Err("Report run duration is invalid".into());
     }
     let mut items: Vec<_> = items.iter().collect();
-    items.sort_by_key(|item| item.index);
+    crate::sort::by_key(&mut items, |item| item.index);
     let mut fields = vec![
         ("version", value("1.0")),
         ("generated_at", value(finished.updated_at.clone())),
@@ -770,7 +771,7 @@ pub(crate) fn render(
                 },
             ));
         }
-        documents.sort_by(|a, b| a.0.cmp(&b.0));
+        crate::sort::by(&mut documents, |a, b| a.0.cmp(&b.0));
         fields.push(("documents", Ordered::Object(documents)));
     }
     if mode != RunMode::SingleFile {
@@ -920,7 +921,7 @@ fn resumed_views<'a>(
             });
         }
         let mut newly_observed: Vec<_> = observed.into_values().collect();
-        newly_observed.sort_by_key(|item| item.index);
+        crate::sort::by_key(&mut newly_observed, |item| item.index);
         views.extend(newly_observed.into_iter().map(|item| ResumedView {
             key: &item.report_key,
             kind: item.kind,
@@ -1135,12 +1136,13 @@ fn resumed_summary(
             (
                 "url_sources",
                 value(
-                    views
-                        .iter()
-                        .filter(|view| view.kind == ItemKind::Url)
-                        .map(|view| view.source(mode))
-                        .collect::<BTreeSet<_>>()
-                        .len(),
+                    crate::sort::set(
+                        views
+                            .iter()
+                            .filter(|view| view.kind == ItemKind::Url)
+                            .map(|view| view.source(mode)),
+                    )
+                    .len(),
                 ),
             ),
         ]);
@@ -1201,7 +1203,7 @@ pub(crate) fn render_resumed(
             .filter(|view| view.kind == ItemKind::File)
             .map(|view| Ok((view.key.to_owned(), resumed_entry(view, mode)?)))
             .collect::<Result<Vec<_>, String>>()?;
-        documents.sort_by(|left, right| left.0.cmp(&right.0));
+        crate::sort::by(&mut documents, |left, right| left.0.cmp(&right.0));
         fields.push(("documents", Ordered::Object(documents)));
     }
     let mut groups = BTreeMap::<&str, Vec<&ResumedView<'_>>>::new();

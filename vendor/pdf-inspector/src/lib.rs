@@ -7214,7 +7214,7 @@ fn compute_layout_complexity_with_chart_regions(
 
     // --- Collect unique pages ---
     let mut seen_pages: Vec<u32> = items.iter().map(|i| i.page).collect();
-    seen_pages.sort();
+    crate::sort::integers(&mut seen_pages);
     seen_pages.dedup();
 
     let font_stats = calculate_font_stats_from_items(items);

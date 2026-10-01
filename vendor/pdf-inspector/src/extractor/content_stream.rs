@@ -3020,7 +3020,7 @@ fn dedup_rects(rects: &mut Vec<PdfRect>) {
         return;
     }
     // Round to 0.5-pt grid for tolerance, then sort and dedup.
-    rects.sort_by(|a, b| {
+    crate::sort::total(rects, &mut |a, b| {
         let ak = (
             a.page,
             (a.x * 2.0) as i32,

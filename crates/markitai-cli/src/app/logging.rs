@@ -80,7 +80,7 @@ pub(super) fn start(cfg: &Value, level: Option<&str>) -> io::Result<()> {
             secrets.push(value.clone());
         }
     }
-    secrets.sort_by_key(|value| std::cmp::Reverse(value.len()));
+    crate::sort::by_key(&mut secrets, |value| std::cmp::Reverse(value.len()));
     secrets.dedup();
     let sink = directory
         .map(|directory| {

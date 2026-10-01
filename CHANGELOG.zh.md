@@ -96,6 +96,7 @@
 
 ### 变更
 
+- 本机 Linux 构建在链接器与 C 库支持时打包相对重定位（DT_RELR），CLI 与 pdf-inspector 共享更多排序代码：Linux CLI 减少 1,174,904 字节（−4.4%），macOS 减少 231,360 字节，两个平台的所有语料输出逐字节不变。
 - `--help` 文字按终端宽度折行（clap `wrap_help`；不在终端时按 100 列），不再留下过长的行。
 - pdf-inspector 的排序改走少数几个共享入口（类型擦除的稳定排序与两种浮点顺序），不再为每个闭包单独实例化一份排序代码，Markitai 自身的几处排序改为预先计算键：排序代码 1.45 MB → 0.68 MB，release 可执行文件减少 826,176 字节（−3.6%），PDF 输出逐字节不变且没有变慢。
 - 以补丁库方式引入 htmd 0.5.5，直接在 scraper 解析好的树上用 html5ever 0.39 转换，去掉第二套 HTML 解析栈（0.38 版的 html5ever、markup5ever、markup5ever_rcdom 与 xml5ever），转换器每个进程只构建一次：release 可执行文件减少 215,088 字节（−0.93%），HTML、邮件与 EPUB 语料输出逐字节不变，目录模式的 HTML 转换略快。

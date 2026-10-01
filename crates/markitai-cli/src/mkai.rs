@@ -16,6 +16,7 @@ mod report_store;
 mod run_state;
 mod server;
 mod signals;
+mod sort;
 fn main() {
     std::process::exit(app::run());
 }
