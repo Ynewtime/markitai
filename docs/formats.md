@@ -34,6 +34,29 @@ compression. Unreferenced archive images are omitted. References use `.markitai/
 final paths. A merged table's origin contains its content; covered cells are
 empty, and a warning records this Markdown representation.
 
+Word documents (DOCX/DOCM) are read as the document looks with its tracked
+changes accepted: inserted and moved-in text is kept; deleted text and rows are
+not, and neither is hidden text (`w:vanish`). Comments, headers and footers are
+not part of the Markdown; a document with comments gets a warning naming their
+number. A table's first row is a Markdown header only when Word marks it as a
+repeated header row; otherwise the header line is blank and every row is data.
+The base text of a phonetic guide (ruby) is kept and the guide is not, and the
+words of VML WordArt are read from the shape.
+Superscript and subscript runs are written as Unicode super/subscript
+characters when every character has one (`10⁻³`, `H₂O`) and stay at the
+baseline otherwise. `w:sym` characters from the Symbol and Wingdings fonts map
+to their Unicode marks; a non-breaking hyphen is `-`. Chinese, Japanese and
+enclosed-digit numbering (`一、`, `（二）`, `①`) keeps the document's own
+characters in list and heading labels. A list label Markdown does not read as
+a marker (`a)`, `(1)`, `一、`) is kept as text, one item to a line. Emphasis
+beside a letter has its edge punctuation moved outside the markers
+(`**注意**：请`), since CommonMark would not open or close it otherwise.
+Indentation typed with spaces is kept, because code pasted into Word depends
+on it; four or more leading spaces therefore render as a code block. Tab-aligned
+columns are not turned into tables (tabs read as single spaces), fields keep
+their last computed result, and floating shapes appear where their anchor
+paragraph is.
+
 OOXML presentations have a separate reader because the generic document model
 flattens slide boundaries. The package's presentation relationships and
 `sldIdLst` determine slide order, including empty slides; filename sorting and

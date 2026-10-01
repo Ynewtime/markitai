@@ -2,10 +2,11 @@
 //! abstractNum` (with `numStyleLink` indirection) `-> level`, plus the
 //! document-order counters that produce each paragraph's effective number.
 
+use super::numerals::Numeral;
 use crate::error::ConvertError;
 use crate::package::xml::{Element, ns};
 use crate::shared::list::MarkerKind;
-use crate::shared::numbering::{NumberPattern, composite_label, parse_percent_pattern};
+use crate::shared::numbering::{NumberPattern, NumberText, composite_label, parse_percent_pattern};
 use std::collections::HashMap;
 
 pub const LEVELS: usize = 9;
@@ -14,6 +15,9 @@ pub const LEVELS: usize = 9;
 pub struct LevelDef {
     /// `None` = suppressed numbering (`numFmt` of `none`).
     pub marker: Option<MarkerKind>,
+    /// markitai: the CJK or enclosed-digit numeral system of the level, for
+    /// formats the marker kind (decimal, letters, roman) cannot write.
+    pub numeral: Option<Numeral>,
     pub start: u64,
     /// `w:lvlRestart`: `None` = restart when any shallower level appears,
     /// `Some(0)` = never restart, `Some(n)` = restart when a level with
@@ -27,6 +31,7 @@ impl Default for LevelDef {
     fn default() -> Self {
         LevelDef {
             marker: Some(MarkerKind::Bullet),
+            numeral: None,
             start: 1,
             restart: None,
             pattern: NumberPattern::default(),
@@ -191,6 +196,7 @@ fn parse_level(lvl: &Element) -> LevelDef {
         "upperRoman" => Some(MarkerKind::UpperRoman),
         _ => Some(MarkerKind::Decimal),
     };
+    let numeral = if marker.is_some() { Numeral::from_format(fmt) } else { None };
     let start = lvl
         .find(ns::W, "start")
         .and_then(|e| e.attr(ns::W, "val"))
@@ -211,7 +217,49 @@ fn parse_level(lvl: &Element) -> LevelDef {
         _ => Vec::new(),
     };
     let legal = crate::formats::docx::styles::on_off(lvl, "isLgl") == Some(true);
-    LevelDef { marker, start, restart, pattern: NumberPattern { text, legal } }
+    LevelDef { marker, numeral, start, restart, pattern: NumberPattern { text, legal } }
+}
+
+/// markitai: the number text of a level that counts in a CJK or enclosed-digit
+/// numeral system, or that shows the number of a level which does. `None`
+/// for every other level, whose text the shared pattern renders.
+fn numeral_label(
+    instance: &Instance,
+    def: &LevelDef,
+    ilvl: usize,
+    value: u64,
+    level_value: &impl Fn(usize) -> u64,
+) -> Option<String> {
+    let referenced = |l: usize| instance.levels[l.min(LEVELS - 1)].numeral;
+    let uses_numeral = def.numeral.is_some()
+        || (!def.pattern.legal
+            && def.pattern.text.iter().any(
+                |piece| matches!(piece, NumberText::Level(l) if referenced(usize::from(*l)).is_some()),
+            ));
+    if !uses_numeral {
+        return None;
+    }
+    if def.pattern.text.is_empty() {
+        return def.numeral.map(|numeral| format!("{}.", numeral.ordinal(value)));
+    }
+    let mut label = String::new();
+    for piece in &def.pattern.text {
+        match piece {
+            NumberText::Literal(text) => label.push_str(text),
+            NumberText::Level(l) => {
+                let l = usize::from(*l);
+                let number = if l == ilvl { value } else { level_value(l) };
+                let level = &instance.levels[l.min(LEVELS - 1)];
+                // Legal numbering writes every level in Arabic digits.
+                match (def.pattern.legal, level.numeral, level.marker) {
+                    (false, Some(numeral), _) => label.push_str(&numeral.ordinal(number)),
+                    (false, None, Some(marker)) => label.push_str(&marker.ordinal(number)),
+                    _ => label.push_str(&number.to_string()),
+                }
+            }
+        }
+    }
+    Some(label)
 }
 
 /// Document-order numbering state: one counter array per instance, shared
@@ -256,21 +304,24 @@ impl Counters {
             }
         }
         let value = state.value[ilvl];
+        let level_value = |l: usize| {
+            let l = l.min(LEVELS - 1);
+            if state.initialized[l] && !state.restart_pending[l] {
+                state.value[l]
+            } else {
+                instance.levels[l].start
+            }
+        };
         let label = def.marker.and_then(|marker| {
-            composite_label(
-                &def.pattern,
-                marker,
-                value,
-                |l| instance.levels[l.min(LEVELS - 1)].marker.unwrap_or(MarkerKind::Decimal),
-                |l| {
-                    let l = l.min(LEVELS - 1);
-                    if state.initialized[l] && !state.restart_pending[l] {
-                        state.value[l]
-                    } else {
-                        instance.levels[l].start
-                    }
-                },
-            )
+            numeral_label(instance, def, ilvl, value, &level_value).or_else(|| {
+                composite_label(
+                    &def.pattern,
+                    marker,
+                    value,
+                    |l| instance.levels[l.min(LEVELS - 1)].marker.unwrap_or(MarkerKind::Decimal),
+                    &level_value,
+                )
+            })
         });
         (value, label)
     }

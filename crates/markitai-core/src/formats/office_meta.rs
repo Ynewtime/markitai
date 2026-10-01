@@ -212,6 +212,33 @@ fn read_zip(bytes: &[u8], extension: &str) -> Result<Metadata, String> {
     Ok(result)
 }
 
+/// What a Word package holds that the Markdown leaves out and a reader would
+/// want to know about: its review comments, which carry text of their own.
+/// A package this cannot read says nothing; the document reader reports its
+/// own failures.
+fn read_docx(bytes: &[u8]) -> Metadata {
+    let count = (|| {
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).ok()?;
+        let xml = zip_text(&mut archive, "word/comments.xml").ok()?;
+        Some(
+            elements(&xml)
+                .ok()?
+                .iter()
+                .filter(|element| element.name == "comment")
+                .count(),
+        )
+    })()
+    .unwrap_or(0);
+    let mut result = Metadata::default();
+    if count > 0 {
+        result.warnings.push(format!(
+            "The document has {count} review comment{}; comments are not included in the Markdown.",
+            if count == 1 { "" } else { "s" }
+        ));
+    }
+    result
+}
+
 fn biff_sheet_names(bytes: &[u8]) -> Result<Metadata, String> {
     let mut result = Metadata::default();
     let mut position = 0;
@@ -281,6 +308,7 @@ fn biff_sheet_names(bytes: &[u8]) -> Result<Metadata, String> {
 
 pub(super) fn read(bytes: &[u8], extension: &str) -> Metadata {
     let parsed = match extension {
+        "docx" | "docm" => return read_docx(bytes),
         "xlsx" | "xlsm" | "epub" => read_zip(bytes, extension),
         "xls" => (|| {
             let mut compound =

@@ -189,11 +189,114 @@ fn heading_without_bold(content: &[Inline]) -> Vec<Inline> {
         .collect()
 }
 
+/// Whether CommonMark counts a character as punctuation for deciding if an
+/// emphasis marker can open or close: any Unicode punctuation or symbol.
+fn is_punctuation(c: char) -> bool {
+    if c.is_ascii() {
+        return c.is_ascii_punctuation();
+    }
+    static PUNCTUATION: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    PUNCTUATION
+        .get_or_init(|| regex::Regex::new(r"^[\p{P}\p{S}]$").expect("a fixed pattern"))
+        .is_match(c.encode_utf8(&mut [0; 4]))
+}
+
+/// The first character a rendered inline starts with, as far as it matters to
+/// the emphasis around the one before it: whitespace, or something that is
+/// punctuation (a marker, a bracket, an opening `<`).
+fn leading_char(value: &Inline) -> Option<char> {
+    match value {
+        Inline::Text { text, style } => {
+            let first = text.chars().next()?;
+            if first.is_whitespace() {
+                Some(first)
+            } else if style.code || style.bold || style.italic || style.strike {
+                Some('*')
+            } else {
+                Some(first)
+            }
+        }
+        Inline::LineBreak => Some(' '),
+        _ => Some('['),
+    }
+}
+
+/// Splits an emphasised run's text into the punctuation to leave outside its
+/// markers at either end, and the text between. CommonMark lets a marker open
+/// emphasis only where the character after it is not punctuation, unless the
+/// one before it is whitespace or punctuation, and close it only under the
+/// mirror rule. `**（注意）**后续` in Chinese text, whose words have no spaces
+/// around them, opens and closes nothing and shows its asterisks; the
+/// punctuation written outside (`（**注意**）后续`) does. Only the ends beside a
+/// letter or digit move, so `**Note:** text` is unchanged. A run of nothing
+/// but punctuation gets no emphasis, and comes back as the leading part.
+fn emphasis_edges(text: &str, before: Option<char>, after: Option<char>) -> (&str, &str, &str) {
+    let word = |c: Option<char>| c.is_some_and(|c| !c.is_whitespace() && !is_punctuation(c));
+    let mut core = text;
+    let mut lead = "";
+    if word(before) {
+        let rest = core.trim_start_matches(is_punctuation);
+        lead = &core[..core.len() - rest.len()];
+        core = rest;
+    }
+    let mut trail = "";
+    if word(after) {
+        let rest = core.trim_end_matches(is_punctuation);
+        trail = &core[rest.len()..];
+        core = rest;
+    }
+    if core.is_empty() {
+        return (text, "", "");
+    }
+    (lead, core, trail)
+}
+
+/// A heading's content on one line: a line break in the source (a Word
+/// heading with a soft return) is a space, since Markdown ends a heading at
+/// its line and the words after the break would leave it as a paragraph.
+fn heading_on_one_line(content: &[Inline]) -> Vec<Inline> {
+    content
+        .iter()
+        .map(|inline| match inline {
+            Inline::LineBreak => Inline::plain(" "),
+            Inline::Link { content, target } => Inline::Link {
+                content: heading_on_one_line(content),
+                target: target.clone(),
+            },
+            other => other.clone(),
+        })
+        .collect()
+}
+
+/// The content of a heading that cannot be one (a table cell has no block
+/// structure), emphasised so it still stands apart from the text around it.
+fn heading_as_emphasis(content: &[Inline]) -> Vec<Inline> {
+    content
+        .iter()
+        .map(|inline| match inline {
+            Inline::Text { text, style } => {
+                let mut style = *style;
+                style.bold = true;
+                Inline::Text {
+                    text: text.clone(),
+                    style,
+                }
+            }
+            Inline::LineBreak => Inline::plain(" "),
+            Inline::Link { content, target } => Inline::Link {
+                content: heading_as_emphasis(content),
+                target: target.clone(),
+            },
+            other => other.clone(),
+        })
+        .collect()
+}
+
 impl Renderer<'_> {
     fn inlines(&self, values: &[Inline]) -> String {
         let values = merged_runs(values);
         let mut output = String::new();
-        for value in values.iter() {
+        for (index, value) in values.iter().enumerate() {
             match value {
                 Inline::Text { text, style } => {
                     if text.trim().is_empty() {
@@ -203,6 +306,22 @@ impl Renderer<'_> {
                     let trimmed = text.trim();
                     let prefix = &text[..text.len() - text.trim_start().len()];
                     let suffix = &text[text.trim_end().len()..];
+                    let emphasised = !style.code && (style.bold || style.italic || style.strike);
+                    let (lead, core, trail) = if emphasised {
+                        let before = prefix
+                            .chars()
+                            .next_back()
+                            .or_else(|| output.chars().next_back());
+                        let after = suffix.chars().next().or_else(|| {
+                            values[index + 1..]
+                                .iter()
+                                .find(|next| !matches!(next, Inline::Anchor(_)))
+                                .and_then(leading_char)
+                        });
+                        emphasis_edges(trimmed, before, after)
+                    } else {
+                        ("", trimmed, "")
+                    };
                     let mut rendered = if style.code {
                         let max_ticks =
                             trimmed.split(|c| c != '`').map(str::len).max().unwrap_or(0);
@@ -213,19 +332,24 @@ impl Renderer<'_> {
                             format!("{ticks}{trimmed}{ticks}")
                         }
                     } else {
-                        escape(trimmed)
+                        escape(core)
                     };
-                    if style.bold {
-                        rendered = format!("**{rendered}**");
-                    }
-                    if style.italic {
-                        rendered = format!("*{rendered}*");
-                    }
-                    if style.strike {
-                        rendered = format!("~~{rendered}~~");
+                    // Nothing but punctuation left to emphasise: it stays plain.
+                    if !core.is_empty() {
+                        if style.bold {
+                            rendered = format!("**{rendered}**");
+                        }
+                        if style.italic {
+                            rendered = format!("*{rendered}*");
+                        }
+                        if style.strike {
+                            rendered = format!("~~{rendered}~~");
+                        }
                     }
                     output.push_str(prefix);
+                    output.push_str(&escape(lead));
                     output.push_str(&rendered);
+                    output.push_str(&escape(trail));
                     output.push_str(suffix);
                 }
                 Inline::Link { content, target } => {
@@ -314,6 +438,21 @@ impl Renderer<'_> {
         let mut parts = Vec::new();
         for block in blocks {
             let text = match block {
+                // A cell has no block structure: a heading is emphasised text
+                // (a `#` would show as text).
+                Block::Heading {
+                    anchor, content, ..
+                } => {
+                    let mut inlines = Vec::new();
+                    if let Some(anchor) = anchor
+                        .as_ref()
+                        .filter(|anchor| self.anchors.contains(*anchor))
+                    {
+                        inlines.push(Inline::Anchor(anchor.clone()));
+                    }
+                    inlines.extend(heading_as_emphasis(content));
+                    self.inlines(&inlines).trim_end().to_owned()
+                }
                 Block::Table(table) => table
                     .grid
                     .iter()
@@ -365,7 +504,7 @@ impl Renderer<'_> {
                     let heading = format!(
                         "{} {}",
                         "#".repeat(usize::from((*level).clamp(1, 6))),
-                        self.inlines(content).trim_end()
+                        self.inlines(&heading_on_one_line(content)).trim_end()
                     );
                     if let Some(anchor) = anchor
                         .as_ref()
@@ -391,11 +530,9 @@ impl Renderer<'_> {
                     .map(|line| format!("> {line}"))
                     .collect::<Vec<_>>()
                     .join("\n"),
-                Block::List(list) => list
-                    .items
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, item)| {
+                Block::List(list) => {
+                    let mut items: Vec<(String, bool)> = Vec::new();
+                    for (index, item) in list.items.iter().enumerate() {
                         let bullet = if matches!(self.extension, "doc" | "odt") {
                             "-"
                         } else {
@@ -421,18 +558,38 @@ impl Renderer<'_> {
                         };
                         let content = self.blocks(&item.blocks);
                         if content.trim().is_empty() {
-                            return None;
+                            continue;
                         }
-                        let indent = " ".repeat(marker.len() + 1);
+                        // Whether Markdown reads the marker as one (a number
+                        // and a stop, or a bullet); a label such as `a)`,
+                        // `(1)` or `一、` is only text at the head of a line.
+                        let digits = marker.bytes().take_while(u8::is_ascii_digit).count();
+                        let markdown_marker = matches!(marker.as_str(), "*" | "-" | "+")
+                            || ((1..=9).contains(&digits)
+                                && matches!(&marker[digits..], "." | ")"));
+                        // Text under a marker Markdown does not read is not
+                        // list content; indented four columns or more after a
+                        // blank line it would be a code block.
+                        let width = marker.chars().count() + 1;
+                        let indent = " ".repeat(if markdown_marker { width } else { width.min(3) });
                         let mut lines = content.lines();
                         let mut item_text = format!("{marker} {}", lines.next().unwrap_or(""));
                         for line in lines {
                             item_text.push_str(&format!("\n{indent}{line}"));
                         }
-                        Some(item_text.trim_end().to_owned())
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n"),
+                        items.push((item_text.trim_end().to_owned(), markdown_marker));
+                    }
+                    // A line that starts with such a label continues the line
+                    // before it in Markdown; the hard break keeps it a line.
+                    let mut joined = String::new();
+                    for (text, markdown_marker) in items {
+                        if !joined.is_empty() {
+                            joined.push_str(if markdown_marker { "\n" } else { "  \n" });
+                        }
+                        joined.push_str(&text);
+                    }
+                    joined
+                }
                 Block::Table(table) if self.is_layout_table(table) => table
                     .grid
                     .iter()
@@ -493,12 +650,11 @@ impl Renderer<'_> {
                     // A sheet's first row is its header, as the reference's
                     // spreadsheet readers take it, whether or not the source
                     // marks it; a blank header row would only push it down.
-                    let header = if matches!(self.extension, "docx" | "docm") {
-                        false
-                    } else {
-                        matches!(self.extension, "ods" | "xlsx" | "xlsm" | "xls" | "xlsb")
-                            || table.header_rows > 0
-                    };
+                    // A document's table has a header only when the document
+                    // declares one (Word's repeated header row); otherwise
+                    // the header line is blank and every row is data.
+                    let header = matches!(self.extension, "ods" | "xlsx" | "xlsm" | "xls" | "xlsb")
+                        || table.header_rows > 0;
                     super::text::table(&rows, header).trim_end().to_owned()
                 }
             };
@@ -618,10 +774,11 @@ pub(super) fn extract(bytes: &[u8], extension: &str) -> Result<Document> {
     for note in &parsed.notes {
         let text = renderer.blocks(&note.blocks);
         let mut lines = text.lines();
+        // The text of a note follows a space that Word writes after the mark.
         markdown.push_str(&format!(
             "\n\n[^{}]: {}",
             destination(&note.id),
-            lines.next().unwrap_or("")
+            lines.next().unwrap_or("").trim_start()
         ));
         for line in lines {
             markdown.push_str(&format!("\n    {line}"));
@@ -661,6 +818,10 @@ pub(super) fn extract(bytes: &[u8], extension: &str) -> Result<Document> {
     }
     Ok(document)
 }
+
+#[cfg(test)]
+#[path = "native/docx_tests.rs"]
+mod docx_tests;
 
 #[cfg(test)]
 mod tests {
@@ -821,9 +982,29 @@ mod tests {
             anchors: BTreeSet::new(),
             extension: "docx",
         };
+        // A document's table is headed by the row it declares as its header.
+        assert_eq!(
+            renderer.blocks(std::slice::from_ref(&table)),
+            "| Name |  |\n| --- | --- |\n| Value |  |"
+        );
+        // Without one the header line is blank and every row is data.
+        let undeclared = Block::Table(Table::from_rows(
+            vec![
+                vec![
+                    Cell::from_inlines(vec![Inline::plain("Name")]),
+                    Cell::default(),
+                ],
+                vec![
+                    Cell::from_inlines(vec![Inline::plain("Value")]),
+                    Cell::default(),
+                ],
+            ],
+            0,
+            TableKind::Data,
+        ));
         assert!(
             renderer
-                .blocks(std::slice::from_ref(&table))
+                .blocks(std::slice::from_ref(&undeclared))
                 .starts_with("|  |  |\n| --- | --- |\n| Name |  |")
         );
         renderer.extension = "ods";
@@ -884,7 +1065,9 @@ mod tests {
                     item("1-a)", "Composite")
                 ]
             )]),
-            "1. First\n2. Second\n1-a) Composite"
+            // A label Markdown does not read (`1-a)`) is text at the head of a
+            // line, which the hard break keeps from joining the line before.
+            "1. First\n2. Second  \n1-a) Composite"
         );
         assert_eq!(
             renderer.blocks(&[list(MarkerKind::Bullet, vec![item("•", "Point")])]),

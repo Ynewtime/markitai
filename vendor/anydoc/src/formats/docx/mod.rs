@@ -5,7 +5,10 @@
 
 mod content;
 mod numbering;
+mod numerals;
+mod scripts;
 mod styles;
+mod symbols;
 
 use crate::error::ConvertError;
 use crate::model::{Document, Note, NoteKind};
@@ -329,5 +332,233 @@ mod tests {
             })
             .collect();
         assert_eq!(headings, vec!["1. Intro", "2. Details"]);
+    }
+
+    /// The plain text of each paragraph block, in order.
+    fn plain_paragraphs(doc: &Document) -> Vec<String> {
+        doc.blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(inlines) => Some(crate::model::inlines_to_plain_text(inlines)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn body_doc(body: &str) -> Document {
+        let document = format!(r#"<w:document {W}><w:body>{body}</w:body></w:document>"#);
+        parse(&docx_parts(&[("word/document.xml", &document)])).unwrap()
+    }
+
+    #[test]
+    fn a_phonetic_guide_keeps_its_base_text() {
+        // markitai: the base text of a ruby is the sentence's own words; only
+        // the reading above it is annotation.
+        let doc = body_doc(
+            r#"<w:p><w:r><w:t>日本</w:t></w:r>
+            <w:r><w:ruby><w:rt><w:r><w:t>かんじ</w:t></w:r></w:rt>
+                <w:rubyBase><w:r><w:t>漢字</w:t></w:r></w:rubyBase></w:ruby></w:r>
+            <w:r><w:t>を読む</w:t></w:r></w:p>"#,
+        );
+        assert_eq!(plain_paragraphs(&doc), ["日本漢字を読む"]);
+    }
+
+    #[test]
+    fn wordart_text_is_read_from_its_text_path() {
+        // markitai: the words of VML WordArt are in the `string` attribute.
+        let doc = body_doc(
+            r##"<w:p><w:r><w:pict>
+                <v:shape xmlns:v="urn:schemas-microsoft-com:vml" id="wordart" type="#_x0000_t136">
+                    <v:textpath style="font-family:Impact" string="Grand Opening"/>
+                </v:shape></w:pict></w:r></w:p>
+            <w:p><w:r><w:t>Body.</w:t></w:r></w:p>"##,
+        );
+        assert_eq!(plain_paragraphs(&doc), ["Grand Opening", "Body."]);
+    }
+
+    #[test]
+    fn a_non_breaking_hyphen_is_a_hyphen_and_a_soft_hyphen_is_nothing() {
+        let doc = body_doc(
+            r#"<w:p><w:r><w:t>e</w:t><w:noBreakHyphen/><w:t>mail and soft</w:t><w:softHyphen/>
+            <w:t>ware</w:t></w:r></w:p>"#,
+        );
+        assert_eq!(plain_paragraphs(&doc), ["e-mail and software"]);
+    }
+
+    #[test]
+    fn symbol_characters_read_as_their_unicode_mark() {
+        let doc = body_doc(
+            r#"<w:p><w:r><w:t>Done </w:t><w:sym w:font="Wingdings" w:char="F0FC"/>
+            <w:t> alpha </w:t><w:sym w:font="Symbol" w:char="F061"/>
+            <w:t> copyright </w:t><w:sym w:font="Arial" w:char="00A9"/>
+            <w:t> unknown </w:t><w:sym w:font="Webdings" w:char="F0FC"/><w:t>.</w:t></w:r></w:p>"#,
+        );
+        assert_eq!(plain_paragraphs(&doc), ["Done ✓ alpha α copyright © unknown ."]);
+    }
+
+    #[test]
+    fn hidden_text_is_left_out_whatever_hides_it() {
+        // Direct formatting, a character style and a paragraph style hide a
+        // run; an explicit off value shows it again; a hidden run's field
+        // marks still balance the fields around it.
+        let styles = format!(
+            r#"<w:styles {W}>
+            <w:style w:type="character" w:styleId="Secret"><w:rPr><w:vanish/></w:rPr></w:style>
+            <w:style w:type="paragraph" w:styleId="Aside"><w:rPr><w:vanish/></w:rPr></w:style>
+            </w:styles>"#
+        );
+        let document = format!(
+            r#"<w:document {W}><w:body>
+            <w:p><w:r><w:t xml:space="preserve">Shown one. </w:t></w:r>
+                <w:r><w:rPr><w:vanish/></w:rPr><w:t>Direct hidden. </w:t></w:r>
+                <w:r><w:rPr><w:rStyle w:val="Secret"/></w:rPr><w:t>Styled hidden. </w:t></w:r>
+                <w:r><w:rPr><w:rStyle w:val="Secret"/><w:vanish w:val="0"/></w:rPr><w:t xml:space="preserve">Shown again. </w:t></w:r>
+                <w:r><w:rPr><w:vanish/></w:rPr><w:fldChar w:fldCharType="begin"/></w:r>
+                <w:r><w:instrText> PAGE </w:instrText></w:r>
+                <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+                <w:r><w:t>7</w:t></w:r>
+                <w:r><w:fldChar w:fldCharType="end"/></w:r>
+                <w:r><w:t xml:space="preserve"> Tail.</w:t></w:r></w:p>
+            <w:p><w:pPr><w:pStyle w:val="Aside"/></w:pPr><w:r><w:t>Paragraph hidden.</w:t></w:r></w:p>
+            <w:p><w:pPr><w:pStyle w:val="Aside"/></w:pPr>
+                <w:r><w:rPr><w:vanish w:val="0"/></w:rPr><w:t>Overridden paragraph.</w:t></w:r></w:p>
+            </w:body></w:document>"#
+        );
+        let doc =
+            parse(&docx_parts(&[("word/document.xml", &document), ("word/styles.xml", &styles)]))
+                .unwrap();
+        assert_eq!(
+            plain_paragraphs(&doc),
+            ["Shown one. Shown again. 7 Tail.", "Overridden paragraph."]
+        );
+    }
+
+    #[test]
+    fn raised_and_lowered_runs_are_written_in_unicode_script_forms() {
+        // markitai: the exponent of "10⁻³" and the "2" of "H₂O" are content;
+        // a run with no complete form ("1st") keeps its baseline text.
+        let styles = format!(
+            r#"<w:styles {W}>
+            <w:style w:type="character" w:styleId="Exp"><w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style>
+            </w:styles>"#
+        );
+        let document = format!(
+            r#"<w:document {W}><w:body>
+            <w:p><w:r><w:t>H</w:t></w:r><w:r><w:rPr><w:vertAlign w:val="subscript"/></w:rPr><w:t>2</w:t></w:r>
+                <w:r><w:t xml:space="preserve">O and 10</w:t></w:r>
+                <w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:t>-3</w:t></w:r>
+                <w:r><w:t xml:space="preserve"> and 5</w:t></w:r>
+                <w:r><w:rPr><w:rStyle w:val="Exp"/></w:rPr><w:t>2</w:t></w:r>
+                <w:r><w:rPr><w:rStyle w:val="Exp"/><w:vertAlign w:val="baseline"/></w:rPr><w:t xml:space="preserve"> flat</w:t></w:r>
+                <w:r><w:t xml:space="preserve"> and 1</w:t></w:r>
+                <w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:t>st</w:t></w:r></w:p>
+            </w:body></w:document>"#
+        );
+        let doc =
+            parse(&docx_parts(&[("word/document.xml", &document), ("word/styles.xml", &styles)]))
+                .unwrap();
+        assert_eq!(plain_paragraphs(&doc), ["H₂O and 10⁻³ and 5² flat and 1st"]);
+    }
+
+    #[test]
+    fn a_row_whose_deletion_is_tracked_leaves_the_table() {
+        let doc = body_doc(
+            r#"<w:tbl><w:tblGrid><w:gridCol w:w="1000"/></w:tblGrid>
+            <w:tr><w:tc><w:p><w:r><w:t>Kept</w:t></w:r></w:p></w:tc></w:tr>
+            <w:tr><w:trPr><w:del w:id="1" w:author="A"/></w:trPr>
+                <w:tc><w:p><w:del w:id="2" w:author="A"><w:r><w:delText>Removed</w:delText></w:r></w:del></w:p></w:tc></w:tr>
+            <w:tr><w:trPr><w:ins w:id="3" w:author="A"/></w:trPr>
+                <w:tc><w:p><w:ins w:id="4" w:author="A"><w:r><w:t>Added</w:t></w:r></w:ins></w:p></w:tc></w:tr>
+            </w:tbl>"#,
+        );
+        let [Block::Table(table)] = &doc.blocks[..] else { panic!("{:?}", doc.blocks) };
+        assert_eq!(table.grid.len(), 2, "{:?}", table.grid);
+    }
+
+    #[test]
+    fn only_declared_header_rows_make_a_header() {
+        // A table marks the rows repeated at the top of each page; the types
+        // of the columns below say nothing about a row being a header.
+        let cell = |text: &str| format!("<w:tc><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>");
+        let row = |header: bool, a: &str, b: &str| {
+            let props = if header { "<w:trPr><w:tblHeader/></w:trPr>" } else { "" };
+            format!("<w:tr>{props}{}{}</w:tr>", cell(a), cell(b))
+        };
+        let table = |first_is_header: bool| {
+            format!(
+                "<w:tbl><w:tblGrid><w:gridCol w:w=\"1000\"/><w:gridCol w:w=\"1000\"/></w:tblGrid>{}{}{}</w:tbl>",
+                row(first_is_header, "Name", "Count"),
+                row(false, "Alpha", "1"),
+                row(false, "Beta", "2"),
+            )
+        };
+        let header_rows = |body: String| match &body_doc(&body).blocks[..] {
+            [Block::Table(table)] => table.header_rows,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(header_rows(table(false)), 0);
+        assert_eq!(header_rows(table(true)), 1);
+    }
+
+    #[test]
+    fn cjk_and_enclosed_numbering_formats_count_in_their_own_characters() {
+        let numbering = format!(
+            r#"<w:numbering {W}>
+            <w:abstractNum w:abstractNumId="0">
+                <w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="chineseCounting"/><w:lvlText w:val="%1、"/></w:lvl>
+                <w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="chineseCounting"/><w:lvlText w:val="（%2）"/></w:lvl>
+                <w:lvl w:ilvl="2"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1.%2.%3"/></w:lvl>
+            </w:abstractNum>
+            <w:abstractNum w:abstractNumId="1">
+                <w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimalEnclosedCircle"/><w:lvlText w:val="%1"/></w:lvl>
+            </w:abstractNum>
+            <w:abstractNum w:abstractNumId="2">
+                <w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="chineseCounting"/><w:isLgl/><w:lvlText w:val="第%1章"/></w:lvl>
+            </w:abstractNum>
+            <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+            <w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num>
+            <w:num w:numId="3"><w:abstractNumId w:val="2"/></w:num>
+            </w:numbering>"#
+        );
+        let item = |num_id: u32, level: u32, text: &str| {
+            format!(
+                r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="{level}"/><w:numId w:val="{num_id}"/></w:numPr></w:pPr>
+                <w:r><w:t>{text}</w:t></w:r></w:p>"#
+            )
+        };
+        let document = format!(
+            r#"<w:document {W}><w:body>{}{}{}{}{}{}{}{}</w:body></w:document>"#,
+            item(1, 0, "甲"),
+            item(1, 1, "乙"),
+            item(1, 1, "丙"),
+            item(1, 2, "丁"),
+            item(1, 0, "戊"),
+            item(2, 0, "圈"),
+            item(2, 0, "圈二"),
+            item(3, 0, "法律"),
+        );
+        let doc = parse(&docx_parts(&[
+            ("word/document.xml", &document),
+            ("word/numbering.xml", &numbering),
+        ]))
+        .unwrap();
+        fn labels(blocks: &[Block], out: &mut Vec<String>) {
+            for block in blocks {
+                if let Block::List(list) = block {
+                    for item in &list.items {
+                        out.push(item.marker_label.clone().unwrap_or_else(|| "-".into()));
+                        labels(&item.blocks, out);
+                    }
+                }
+            }
+        }
+        let mut found = Vec::new();
+        labels(&doc.blocks, &mut found);
+        assert_eq!(
+            found,
+            ["一、", "（一）", "（二）", "一.二.1", "二、", "①", "②", "第1章"],
+            "{:?}",
+            doc.blocks
+        );
     }
 }

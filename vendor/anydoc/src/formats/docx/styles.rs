@@ -6,6 +6,7 @@
 //! a true-count *parity* XORed over the `docDefaults` base. Direct run
 //! formatting is absolute on/off.
 
+use super::scripts::Script;
 use crate::error::ConvertError;
 use crate::model::Style;
 use crate::package::xml::{Element, ns};
@@ -87,6 +88,27 @@ impl<'a> Styles<'a> {
             None
         })?;
         Ok(parity)
+    }
+
+    /// Whether a style hides its text (`w:vanish` in its run properties),
+    /// inherited through `basedOn`; the nearest specification wins.
+    ///
+    /// markitai: hidden text is not displayed or printed by Word, so a run
+    /// it hides is left out of the document.
+    pub fn run_hidden(&self, id: &str) -> Result<Option<bool>, ConvertError> {
+        self.chains.walk(id, |style| on_off(style.find(ns::W, "rPr")?, "vanish"))
+    }
+
+    /// The raised or lowered position a style gives its text (`w:vertAlign`),
+    /// inherited through `basedOn`; the nearest specification wins, and an
+    /// explicit `baseline` is `Some(None)`.
+    ///
+    /// markitai: see [`crate::formats::docx::scripts`].
+    pub fn run_script(&self, id: &str) -> Result<Option<Option<Script>>, ConvertError> {
+        self.chains.walk(id, |style| {
+            let value = style.find(ns::W, "rPr")?.find(ns::W, "vertAlign")?.attr(ns::W, "val")?;
+            Some(Script::from_value(value))
+        })
     }
 
     /// Heading level a paragraph style resolves to, from its name

@@ -2,6 +2,7 @@
 
 use crate::error::ConvertError;
 use crate::formats::docx::numbering::{Counters, Numbering};
+use crate::formats::docx::scripts::Script;
 use crate::formats::docx::styles::{Styles, on_off, rpr_delta};
 use crate::model::{
     Block, Cell, GridBuilder, ImageSource, Inline, LinkTarget, Style, TableKind, inlines_are_empty,
@@ -12,7 +13,6 @@ use crate::package::xml::{Element, ns};
 use crate::shared::blockstyle::{BlockStyle, StyledRun};
 use crate::shared::delta::rebase_emphasis;
 use crate::shared::fields::{FieldFrame, field_result};
-use crate::shared::header::resolve_header_rows;
 use crate::shared::list::{ListEntry, ListKey, flush_list};
 use crate::shared::math::{omath_para_to_tex, omath_to_tex};
 use crate::shared::text::clean_text;
@@ -283,6 +283,11 @@ fn parse_paragraph(p: &Element, ctx: &Ctx) -> Result<(ParaKind, Vec<Piece>), Con
     };
 
     let mut walker = InlineWalker::new(ctx, paragraph_level);
+    // markitai: a paragraph style can hide its text like a run can.
+    walker.hidden = match pstyle_id {
+        Some(id) => ctx.styles.run_hidden(id)?.unwrap_or(false),
+        None => false,
+    };
     walker.walk(p)?;
     Ok((kind, walker.finish()))
 }
@@ -349,6 +354,8 @@ fn resolve_numbering(
 struct InlineWalker<'a, 'b, 'e> {
     ctx: &'e Ctx<'a, 'b>,
     base: Style,
+    /// markitai: whether the paragraph style hides the text of its runs.
+    hidden: bool,
     pieces: Vec<Piece>,
     current: Vec<Inline>,
     fields: Vec<FieldFrame>,
@@ -356,7 +363,22 @@ struct InlineWalker<'a, 'b, 'e> {
 
 impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
     fn new(ctx: &'e Ctx<'a, 'b>, base: Style) -> Self {
-        InlineWalker { ctx, base, pieces: Vec::new(), current: Vec::new(), fields: Vec::new() }
+        InlineWalker {
+            ctx,
+            base,
+            hidden: false,
+            pieces: Vec::new(),
+            current: Vec::new(),
+            fields: Vec::new(),
+        }
+    }
+
+    /// A walker for content nested in this one (a hyperlink, a simple
+    /// field), which inherits the paragraph's formatting.
+    fn nested(&self) -> Self {
+        let mut inner = InlineWalker::new(self.ctx, self.base);
+        inner.hidden = self.hidden;
+        inner
     }
 
     fn push(&mut self, inline: Inline) {
@@ -406,7 +428,7 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
                 "r" => self.walk_run(child)?,
                 "hyperlink" => {
                     let target = self.hyperlink_link_target(child);
-                    let mut inner = InlineWalker::new(self.ctx, self.base);
+                    let mut inner = self.nested();
                     inner.walk(child)?;
                     let (content, attachments) = split_pieces(inner.finish());
                     if let Some(target) = target {
@@ -422,7 +444,7 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
                 }
                 "fldSimple" => {
                     let instr = child.attr(ns::W, "instr").unwrap_or("").to_string();
-                    let mut inner = InlineWalker::new(self.ctx, self.base);
+                    let mut inner = self.nested();
                     inner.walk(child)?;
                     let (content, attachments) = split_pieces(inner.finish());
                     self.push_field_result(&instr, content);
@@ -462,33 +484,63 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
     }
 
     fn walk_run(&mut self, run: &Element) -> Result<(), ConvertError> {
+        let mut hidden = self.hidden;
+        let mut script = None;
         let style = match run.find(ns::W, "rPr") {
             Some(rpr) => {
                 // Character-style chain: another toggle layer over the
                 // paragraph-level value. Direct formatting is absolute.
-                let char_parity = match rpr.find(ns::W, "rStyle").and_then(|e| e.attr(ns::W, "val"))
-                {
+                let char_style = rpr.find(ns::W, "rStyle").and_then(|e| e.attr(ns::W, "val"));
+                let char_parity = match char_style {
                     Some(id) => self.ctx.styles.run_toggles(id)?,
                     None => Default::default(),
+                };
+                // markitai: hidden text (`w:vanish`) follows direct
+                // formatting, then the character style, then the paragraph's.
+                hidden = match on_off(rpr, "vanish") {
+                    Some(direct) => direct,
+                    None => match char_style {
+                        Some(id) => self.ctx.styles.run_hidden(id)?.unwrap_or(hidden),
+                        None => hidden,
+                    },
+                };
+                // markitai: raised or lowered text, likewise.
+                script = match rpr.find(ns::W, "vertAlign").and_then(|e| e.attr(ns::W, "val")) {
+                    Some(value) => Script::from_value(value),
+                    None => match char_style {
+                        Some(id) => self.ctx.styles.run_script(id)?.flatten(),
+                        None => None,
+                    },
                 };
                 let with_char = char_parity.apply_over(self.base);
                 rpr_delta(rpr).apply(with_char)
             }
             None => self.base,
         };
-        self.walk_run_content(run, style)
+        self.walk_run_content(run, style, hidden, script)
     }
 
-    fn walk_run_content(&mut self, run: &Element, style: Style) -> Result<(), ConvertError> {
+    fn walk_run_content(
+        &mut self,
+        run: &Element,
+        style: Style,
+        hidden: bool,
+        script: Option<Script>,
+    ) -> Result<(), ConvertError> {
         for child in run.child_elems() {
             if child.is(ns::MC, "AlternateContent") {
                 if let Some(branch) = self.ctx.alternate_branch(child) {
-                    self.walk_run_content(branch, style)?;
+                    self.walk_run_content(branch, style, hidden, script)?;
                 }
                 continue;
             }
             let in_w = child.ns.as_deref().is_some_and(|n| n == ns::W);
             if !in_w {
+                continue;
+            }
+            // markitai: a hidden run shows nothing, but its field marks still
+            // open and close the fields around it.
+            if hidden && !matches!(child.local.as_str(), "fldChar" | "instrText") {
                 continue;
             }
             match child.local.as_str() {
@@ -497,6 +549,9 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
                     // that never mark xml:space, and XML leaves unmarked
                     // whitespace to the application, so it is kept.
                     let text = clean_text(child.text().as_ref());
+                    // markitai: a raised or lowered run in its Unicode forms
+                    // where it has them ("10⁻³", "H₂O").
+                    let text = script.and_then(|script| script.convert(&text)).unwrap_or(text);
                     if !text.is_empty() {
                         self.push(Inline::Text { text, style });
                     }
@@ -508,6 +563,27 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
                 // the end of a paragraph is trimmed when the block renders.
                 "br" => self.push(Inline::LineBreak),
                 "cr" => self.push(Inline::LineBreak),
+                // markitai: a non-breaking hyphen is a hyphen; dropping it ran
+                // "e-mail" together. A soft hyphen shows nothing unless a line
+                // breaks there, so it stays out of the text.
+                "noBreakHyphen" => self.push(Inline::Text { text: "-".into(), style }),
+                // markitai: the base text of a phonetic guide is the text; the
+                // guide (`w:rt`, furigana or pinyin) only annotates it. Leaving
+                // the whole element unread lost the words themselves.
+                "ruby" => {
+                    if let Some(base) = child.find(ns::W, "rubyBase") {
+                        self.walk(base)?;
+                    }
+                }
+                // markitai: a character picked from Word's Symbol dialog.
+                "sym" => {
+                    if let (Some(font), Some(code)) =
+                        (child.attr(ns::W, "font"), child.attr(ns::W, "char"))
+                        && let Some(symbol) = super::symbols::symbol_char(font, code)
+                    {
+                        self.push(Inline::Text { text: symbol.to_string(), style });
+                    }
+                }
                 "footnoteReference" => {
                     if let Some(id) = child.attr(ns::W, "id") {
                         self.push(Inline::NoteRef(format!("fn{id}")));
@@ -557,6 +633,20 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
                 blocks.extend(parse_blocks(tb, self.ctx)?);
             }
             self.push_blocks(blocks);
+            return Ok(());
+        }
+
+        // markitai: WordArt (a VML `v:textpath`) keeps its words in an
+        // attribute, where no text-box content is to be found; a title set in
+        // WordArt was left out of the document.
+        let word_art: Vec<String> = elem
+            .descendants(ns::VML, "textpath")
+            .filter_map(|path| path.attr_any("string"))
+            .map(clean_text)
+            .filter(|text| !text.trim().is_empty())
+            .collect();
+        if !word_art.is_empty() {
+            self.push(Inline::Text { text: word_art.join(" "), style: Style::PLAIN });
             return Ok(());
         }
 
@@ -765,7 +855,14 @@ pub(super) fn parse_table(tbl: &Element, ctx: &Ctx) -> Result<Vec<Block>, Conver
     // into row spans before the grid is built. gridBefore/gridAfter filler
     // materializes as empty cells so every cell keeps its grid column.
     let mut matrix: Vec<Vec<TcInfo>> = Vec::new();
-    for tr in tbl.find_all(ns::W, "tr") {
+    // markitai: a row whose deletion is tracked (`w:trPr/w:del`) is gone once
+    // the changes are accepted, as its text already is; keeping it left an
+    // empty row in the table.
+    let live_rows: Vec<&Element> = tbl
+        .find_all(ns::W, "tr")
+        .filter(|tr| tr.find(ns::W, "trPr").and_then(|p| p.find(ns::W, "del")).is_none())
+        .collect();
+    for &tr in &live_rows {
         let trpr = tr.find(ns::W, "trPr");
         let mut row = Vec::new();
         row.extend((0..grid_filler(trpr, "gridBefore")).map(|_| TcInfo::filler()));
@@ -801,8 +898,8 @@ pub(super) fn parse_table(tbl: &Element, ctx: &Ctx) -> Result<Vec<Block>, Conver
     }
 
     // tblHeader is ST_OnOff: an explicit false value is not a header row.
-    let header_rows = tbl
-        .find_all(ns::W, "tr")
+    let header_rows = live_rows
+        .iter()
         .take_while(|tr| tr.find(ns::W, "trPr").and_then(|p| on_off(p, "tblHeader")) == Some(true))
         .count();
 
@@ -830,7 +927,11 @@ pub(super) fn parse_table(tbl: &Element, ctx: &Ctx) -> Result<Vec<Block>, Conver
     if table.grid.is_empty() {
         return Ok(Vec::new());
     }
-    table.header_rows = resolve_header_rows(&table, header_rows);
+    // markitai: the rows the table declares as its header (`w:tblHeader`, a
+    // row repeated at the top of each page) and no others. A Word table
+    // has no other notion of a header row, and reading one from the types
+    // of the columns below made a first row of data a header.
+    table.header_rows = header_rows.min(table.grid.len());
     Ok(vec![Block::Table(table)])
 }
 
