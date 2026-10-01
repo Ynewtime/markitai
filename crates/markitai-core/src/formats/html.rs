@@ -1,6 +1,7 @@
 mod article;
 mod callouts;
 mod code;
+mod furniture;
 mod hacker_news;
 mod social;
 mod stream;
@@ -1463,6 +1464,8 @@ struct Footnotes<'a> {
     text_markers: HashMap<usize, String>,
     /// In-page tables of contents of a full page, left out.
     contents: HashSet<usize>,
+    /// Blocks after an article's body that are page furniture, left out.
+    furniture: HashSet<usize>,
     /// Where a saved page's relative links point when no page URL is given:
     /// its `<base href>`, else its canonical address; `false` when that is only
     /// the site's home page, which resolves only root-relative links.
@@ -1502,6 +1505,21 @@ impl<'a> Footnotes<'a> {
         });
     }
 
+    /// An in-page table of contents or page furniture of a full page.
+    fn left_out(&self, element: ElementRef<'_>) -> bool {
+        let key = element_key(element);
+        self.contents.contains(&key) || self.furniture.contains(&key)
+    }
+
+    /// The element or a block around it is left out.
+    fn inside_left_out(&self, element: ElementRef<'_>) -> bool {
+        (!self.contents.is_empty() || !self.furniture.is_empty())
+            && element
+                .ancestors()
+                .filter_map(ElementRef::wrap)
+                .any(|parent| self.left_out(parent))
+    }
+
     fn inside_definition(&self, element: ElementRef<'_>) -> bool {
         self.definitions.iter().any(|note| {
             note.nodes
@@ -1520,6 +1538,14 @@ impl<'a> Footnotes<'a> {
             prune_chrome,
             contents: if prune_chrome {
                 article::contents(root, document)
+                    .into_iter()
+                    .map(element_key)
+                    .collect()
+            } else {
+                HashSet::new()
+            },
+            furniture: if prune_chrome {
+                furniture::beside_body(root)
                     .into_iter()
                     .map(element_key)
                     .collect()
@@ -1582,7 +1608,11 @@ impl<'a> Footnotes<'a> {
         }
         let references = references
             .into_iter()
-            .filter(|element| !in_literal(*element) && visible_reference(*element, prune_chrome))
+            .filter(|element| {
+                !in_literal(*element)
+                    && visible_reference(*element, prune_chrome)
+                    && !notes.inside_left_out(*element)
+            })
             .collect::<Vec<_>>();
         let external = elements
             .iter()
@@ -2190,7 +2220,8 @@ fn serialize_clean(
         return Ok(());
     }
     let key = element_key(element);
-    if notes.contents.contains(&key) {
+    // A note's definition is written at the end, wherever it stood.
+    if notes.left_out(element) && !(definition && depth == 0) {
         return Ok(());
     }
     if !definition && let Some(number) = notes.references.get(&key) {
@@ -2294,6 +2325,24 @@ fn serialize_clean(
     // arrow) would be written as `[](url)`.
     if name == "a" && value.attr("href").is_some() && shows_nothing(element, notes.prune_chrome) {
         return Ok(());
+    }
+    if notes.prune_chrome {
+        // A list item that shows nothing (an icon, a share button) is an
+        // empty bullet.
+        if name == "li" && shows_nothing_kept(element) {
+            return Ok(());
+        }
+        // A heading's link to its own page (a permalink around its text or an
+        // anchor glyph beside it) would not resolve in Markdown.
+        if name == "a" && heading_permalink(element) {
+            return if plain(element).chars().any(char::is_alphanumeric) {
+                serialize_children(
+                    element, name, false, None, base, output, depth, notes, definition,
+                )
+            } else {
+                Ok(())
+            };
+        }
     }
     if name == "table" && serialize_table(element, base, output, depth, notes, definition)? {
         return Ok(());
@@ -2413,6 +2462,23 @@ fn serialize_clean(
     Ok(())
 }
 
+/// A link inside a heading to a fragment of the same page.
+fn heading_permalink(link: ElementRef<'_>) -> bool {
+    link.value()
+        .attr("href")
+        .is_some_and(|href| href.trim().starts_with('#'))
+        && link
+            .ancestors()
+            .filter_map(ElementRef::wrap)
+            .take(3)
+            .any(|parent| {
+                matches!(
+                    parent.value().name(),
+                    "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+                )
+            })
+}
+
 /// A table's caption and its own rows (not those of nested tables), each with
 /// whether it is a `thead` row; hidden rows are left out.
 fn table_rows(table: ElementRef<'_>) -> (Option<ElementRef<'_>>, Vec<(ElementRef<'_>, bool)>) {
@@ -2447,6 +2513,31 @@ fn table_span(cell: ElementRef<'_>, attribute: &str) -> usize {
         .and_then(|value| value.trim().parse::<usize>().ok())
         .filter(|value| *value > 0)
         .map_or(1, |value| value.min(MAX_SPAN))
+}
+
+/// A list item of a full page with no text and no image once the blocks that
+/// page conversion drops (buttons, forms, hidden or navigation content, an
+/// icon) are gone.
+fn shows_nothing_kept(item: ElementRef<'_>) -> bool {
+    let mut stack = vec![item];
+    while let Some(element) = stack.pop() {
+        if element != item
+            && (is_hidden(element) || article::excluded(element) || article::discarded(element))
+        {
+            continue;
+        }
+        if element.value().name() == "img" && small_image(element).is_none() {
+            return false;
+        }
+        for child in element.children() {
+            match child.value() {
+                scraper::Node::Text(text) if !text.trim().is_empty() => return false,
+                scraper::Node::Element(_) => stack.extend(ElementRef::wrap(child)),
+                _ => {}
+            }
+        }
+    }
+    true
 }
 
 /// An element that shows nothing: no text and no image that is kept.
@@ -2561,8 +2652,9 @@ fn serialize_table(
         output.push_str("</p>");
     }
     if !table_grid(table, &rows, notes.prune_chrome) {
-        for (row, _) in &rows {
-            for cell in table_cells(*row).filter(|cell| !is_hidden(*cell)) {
+        for (row, _) in rows.iter().filter(|(row, _)| !notes.left_out(*row)) {
+            for cell in table_cells(*row).filter(|cell| !is_hidden(*cell) && !notes.left_out(*cell))
+            {
                 output.push_str("<div>");
                 children(cell, output)?;
                 output.push_str("</div>");
@@ -2762,7 +2854,94 @@ fn render_with_footnotes<'a>(
             }
         }
     }
+    if prune_chrome {
+        markdown = drop_empty_sections(&markdown);
+    }
     Ok(markdown.trim().to_owned())
+}
+
+/// A heading of a full page with nothing under it: no content before the next
+/// heading of its level or a higher one, or before the end. Hidden or removed
+/// blocks leave such orphans; a heading over deeper headings is not one, unless
+/// they are orphans too. The page's first heading, when it is a title, stays
+/// even over a section of its own level. Fenced code is never read as headings.
+fn drop_empty_sections(markdown: &str) -> String {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Line {
+        Blank,
+        /// A heading's level, and whether it labels notes or sources, whose
+        /// entries may have moved to the end as footnotes.
+        Heading(usize, bool),
+        Content,
+    }
+    let mut lines: Vec<&str> = markdown.split('\n').collect();
+    loop {
+        let mut fence: Option<(char, usize)> = None;
+        let kinds: Vec<Line> = lines
+            .iter()
+            .map(|line| {
+                let trimmed = line.trim_start_matches(' ');
+                let marker = trimmed.chars().next().filter(|ch| matches!(ch, '`' | '~'));
+                let run = marker.map_or(0, |marker| {
+                    trimmed.chars().take_while(|ch| *ch == marker).count()
+                });
+                if let Some((open, length)) = fence {
+                    if marker == Some(open)
+                        && run >= length
+                        && line.len() - trimmed.len() < 4
+                        && trimmed[run..].trim().is_empty()
+                    {
+                        fence = None;
+                    }
+                    return Line::Content;
+                }
+                if run >= 3 && line.len() - trimmed.len() < 4 {
+                    fence = marker.map(|marker| (marker, run));
+                    return Line::Content;
+                }
+                let level = line.chars().take_while(|ch| *ch == '#').count();
+                if line.trim().is_empty() {
+                    Line::Blank
+                } else if (1..=6).contains(&level) && line[level..].starts_with(' ') {
+                    Line::Heading(level, furniture::scholarly_label(&line[level..]))
+                } else {
+                    Line::Content
+                }
+            })
+            .collect();
+        let title = kinds
+            .iter()
+            .position(|kind| matches!(kind, Line::Heading(..)));
+        let empty: Vec<usize> = (0..lines.len())
+            .filter(|&index| {
+                let Line::Heading(level, false) = kinds[index] else {
+                    return false;
+                };
+                if level == 1 && Some(index) == title {
+                    return false;
+                }
+                match kinds[index + 1..].iter().find(|kind| **kind != Line::Blank) {
+                    None => true,
+                    Some(Line::Heading(next, _)) => *next <= level,
+                    Some(_) => false,
+                }
+            })
+            .collect();
+        if empty.is_empty() {
+            return lines.join("\n");
+        }
+        let mut kept = Vec::with_capacity(lines.len());
+        let mut index = 0;
+        while index < lines.len() {
+            if empty.contains(&index) {
+                index += 1 + usize::from(kinds.get(index + 1) == Some(&Line::Blank));
+            } else {
+                kept.push(lines[index]);
+                index += 1;
+            }
+        }
+        lines = kept;
+    }
 }
 
 /// Empty quoted lines as `>` (per nesting level), as the reference writes them.
@@ -3935,6 +4114,119 @@ mod tests {
         assert!(wiki.contains("# Obsidian\n\n## History\n\nText."), "{wiki}");
     }
 
+    /// `words` words of running text.
+    fn prose(words: usize) -> String {
+        (0..words)
+            .map(|index| format!("word{index}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    #[test]
+    fn furniture_beside_the_body_is_left_out_of_a_full_page_only() {
+        let page = format!(
+            r##"<main><div class="post"><h1>Title</h1><p>{}</p><p>{}</p><p>{}</p></div>
+            <div><p>Jane writes about databases.</p><a href="/jane">Jane</a></div>
+            <section><h3>Related</h3><article><h3><a href="/a">Another post</a></h3></article></section></main>"##,
+            prose(40),
+            prose(40),
+            prose(40)
+        );
+        let full = extract_html(&page, None).unwrap().markdown;
+        assert!(
+            full.contains("word39") && full.contains("# Title"),
+            "{full}"
+        );
+        for gone in ["Jane", "Related", "Another post"] {
+            assert!(!full.contains(gone), "{gone}: {full}");
+        }
+        // Books and emails keep every block.
+        let book = fragment(&page).unwrap();
+        for kept in ["Jane", "Related", "Another post"] {
+            assert!(book.contains(kept), "{kept}: {book}");
+        }
+    }
+
+    #[test]
+    fn a_layout_table_loses_a_furniture_cell_and_keeps_its_article_cell() {
+        let page = format!(
+            r##"<table><tr><td><p>{}</p><p>{}</p><p>{}</p></td>
+            <td><b>Links:</b><br><a href="/a">Friend</a><br><a href="/b">Another</a></td></tr></table>"##,
+            prose(40),
+            prose(40),
+            prose(40)
+        );
+        let full = extract_html(&page, None).unwrap().markdown;
+        assert!(full.contains("word39"), "{full}");
+        assert!(
+            !full.contains("Friend") && !full.contains("Links"),
+            "{full}"
+        );
+        let book = fragment(&page).unwrap();
+        assert!(book.contains("Friend") && book.contains("Links"), "{book}");
+        // A whole row of furniture below the article's row.
+        let rows = format!(
+            r##"<table><tr><td><p>{}</p><p>{}</p><p>{}</p></td></tr>
+            <tr><td><a href="/a">Friend</a> <a href="/b">Another</a></td></tr></table>"##,
+            prose(40),
+            prose(40),
+            prose(40)
+        );
+        let full = extract_html(&rows, None).unwrap().markdown;
+        assert!(
+            full.contains("word39") && !full.contains("Friend"),
+            "{full}"
+        );
+    }
+
+    #[test]
+    fn sections_without_content_are_dropped_from_a_full_page() {
+        let page = extract_html(
+            "<main><h1>Title</h1><p>Intro text.</p><h2>Hidden</h2><p hidden>Gone.</p><h2>Full</h2><p>Body.</p><h2>Empty parent</h2><h3>Empty child</h3><h2>References</h2><h2>Last</h2></main>",
+            None,
+        )
+        .unwrap()
+        .markdown;
+        assert_eq!(
+            page,
+            "# Title\n\nIntro text.\n\n## Full\n\nBody.\n\n## References"
+        );
+        // A chapter of a book may be a title alone.
+        assert!(fragment("<h2>Chapter</h2>").unwrap().contains("## Chapter"));
+        assert_eq!(
+            drop_empty_sections("# T\n\n## A\n\n### B\n\n## C\n\ntext\n\n### D\n").trim_end(),
+            "# T\n\n## C\n\ntext"
+        );
+        assert_eq!(
+            drop_empty_sections("## A\n\n### B\n\ntext\n\n```\n# not a heading\n```\n\n## Z")
+                .trim_end(),
+            "## A\n\n### B\n\ntext\n\n```\n# not a heading\n```"
+        );
+        // A document's title stays over a section of its own level; later ones go.
+        assert_eq!(
+            drop_empty_sections("# Title\n\n# Part\n\ntext\n\n# Empty\n\n# Last\n\nmore"),
+            "# Title\n\n# Part\n\ntext\n\n# Last\n\nmore"
+        );
+        assert_eq!(drop_empty_sections("## A\n\n## B\n\ntext"), "## B\n\ntext");
+        // Comment lines of a code block are not headings, whatever follows them.
+        let code = "text\n\n```sh\n# one\n# two\n```\n\n~~~\n## three\n## four\n~~~";
+        assert_eq!(drop_empty_sections(code), code);
+    }
+
+    #[test]
+    fn a_headings_link_to_its_own_page_and_empty_bullets_are_left_out_of_a_full_page() {
+        let html = r##"<main><h2><a href="#one">One</a></h2><p>a</p><h2 id="two">Two<a class="anchor" href="#two">#</a></h2><p>b</p><h2><a href="/blog/x">Post</a></h2><p>c</p>
+            <ul><li><a href="/share"><svg viewBox="0 0 1 1"></svg></a></li><li>Real</li><li><button>Share</button></li></ul></main>"##;
+        let full = extract_html(html, None).unwrap().markdown;
+        assert_eq!(
+            full,
+            "## One\n\na\n\n## Two\n\nb\n\n## [Post](/blog/x)\n\nc\n\n* Real"
+        );
+        let book = fragment(html).unwrap();
+        assert!(book.contains("## [One](#one)"), "{book}");
+        assert!(book.contains("[#](#two)"), "{book}");
+    }
+
     #[test]
     fn framework_hide_classes_hide_parts_of_a_full_page_only() {
         let html = r#"<p>Kept <span class="hidden">gone</span> <span class="md:hidden">mobile</span> <span class="not-machine:hidden">machine</span> <span class="hidden md:inline">desktop</span> <span class="[&amp;_.x]:hidden">arbitrary</span> <span class="isHidden-vzcyV0">module</span> <span class="is-hidden-abc">dashed</span> <span class="invisible">https://</span><span class="hidden"><math><mi>x</mi></math></span> end.</p>"#;
@@ -4695,6 +4987,47 @@ mod tests {
                 .ends_with("[^1]: Aside evidence.\n\n[^2]: Word evidence.")
         );
         assert!(!doc.markdown.contains("document-guid"));
+    }
+
+    #[test]
+    fn a_definition_beside_the_body_moves_to_the_end_and_is_not_furniture() {
+        let doc = extract_html(
+            &format!(
+                r##"<div><div class="post"><p>Claim<sup><a href="#_ftn1">[1]</a></sup> {}</p><p>{}</p><p>{}</p></div>
+                <p id="ftn1"><a href="#_ftnref1">[1]</a> Word evidence.</p>
+                <div><p>Written by Jane.</p></div></div>"##,
+                prose(40),
+                prose(40),
+                prose(40)
+            ),
+            None,
+        )
+        .unwrap();
+        assert!(doc.markdown.starts_with("Claim[^1]"), "{}", doc.markdown);
+        assert!(
+            doc.markdown.ends_with("[^1]: Word evidence."),
+            "{}",
+            doc.markdown
+        );
+        assert!(!doc.markdown.contains("Jane"), "{}", doc.markdown);
+        // A reference inside furniture that is left out makes no footnote.
+        let doc = extract_html(
+            &format!(
+                r##"<div><div class="post"><p>{}</p><p>{}</p><p>{}</p></div>
+                <div><p>Written by Jane<sup><a href="#fn-9">9</a></sup>.</p></div>
+                <div class="footnotes"><ol><li id="fn-9">Bio note.</li></ol></div></div>"##,
+                prose(40),
+                prose(40),
+                prose(40)
+            ),
+            None,
+        )
+        .unwrap();
+        assert!(
+            !doc.markdown.contains("[^") && !doc.markdown.contains("Jane"),
+            "{}",
+            doc.markdown
+        );
     }
 
     #[test]

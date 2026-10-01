@@ -18,7 +18,7 @@ fn named(element: ElementRef<'_>, names: &[&str]) -> bool {
     })
 }
 
-fn note(element: ElementRef<'_>) -> bool {
+pub(super) fn note(element: ElementRef<'_>) -> bool {
     super::note_context(element)
         || [
             "doc-footnote",
@@ -65,7 +65,7 @@ fn ancillary(element: ElementRef<'_>) -> bool {
     })
 }
 
-fn heading(element: ElementRef<'_>) -> bool {
+pub(super) fn heading(element: ElementRef<'_>) -> bool {
     matches!(
         element.value().name(),
         "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
@@ -251,6 +251,10 @@ pub(super) fn excluded(element: ElementRef<'_>) -> bool {
     if hidden_class(element) && !contains_math(element) {
         return true;
     }
+    // A tooltip labels a control (a download button's "Save"); it is not text.
+    if token(element, "role", "tooltip") {
+        return true;
+    }
     // MediaWiki's section edit links, "From Wikipedia" tagline, redirect
     // note and skip links.
     if named(
@@ -393,7 +397,13 @@ fn kind(element: ElementRef<'_>) -> Kind {
     Kind::Other
 }
 
-fn discarded(element: ElementRef<'_>) -> bool {
+/// A page whose content region has its own precise boundary (a repository
+/// README, a complete issue) and needs no reading of its furniture.
+pub(super) fn structured_page(root: ElementRef<'_>) -> bool {
+    matches!(kind(root), Kind::Readme | Kind::Discussion)
+}
+
+pub(super) fn discarded(element: ElementRef<'_>) -> bool {
     super::is_hidden(element)
         || excluded(element)
         || matches!(
@@ -978,6 +988,15 @@ mod tests {
         );
         assert_eq!(select(&document).value().name(), "main");
         assert!(!excluded(element(&document, "[role='doc-endnotes']")));
+    }
+
+    #[test]
+    fn a_tooltip_labels_a_control_and_is_not_page_text() {
+        let document = Html::parse_document(
+            r#"<body><span><button aria-label="Save"></button><div role="tooltip">Save to Photos</div></span></body>"#,
+        );
+        assert!(excluded(element(&document, "[role='tooltip']")));
+        assert!(!excluded(element(&document, "span")));
     }
 
     #[test]
