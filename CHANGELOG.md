@@ -99,6 +99,7 @@
 
 ### Changed
 
+- PDF conversion reads each page's content once: Markitai's page inspection hands its expanded and parsed content to the page reader and the OCR decision, files under 256 KiB parse on one thread instead of lopdf's global pool (whose idle threads spun), and rectangle clustering skips a size lookup that cannot matter below its cap. On 406 text-layer PDFs CPU time falls 32% and wall time 6%, with every output byte-identical.
 - Build `markitai-ffi` only as `cdylib` and `staticlib`, so the release profile's link-time optimization applies to both: on macOS arm64 the static archive shrinks from 219.8 to 34.5 MB and `libmarkitai_ffi.dylib` from 18.06 to 16.94 MB, and statically linked Go programs from about 48 to 25 MB.
 - Local OCR (macOS Vision) gives Japanese the Chinese recognition aids (small text read again enlarged, characters dropped inside a stretched box recovered, kana counted as letters) and Korean the recovery of dropped syllables; a reading that comes back empty is read again enlarged when line-shaped text is found. On authored test renders Japanese errors fall from 29 to 15 and Korean small text from 7.78% to 0.97% at 96 DPI, with English, number, two-column and Chinese outputs byte-identical.
 - Python: `import markitai` takes 1.9 instead of 20.8 ms in process (12.4 instead of 34.4 ms for a whole interpreter): asyncio loads only for `aconvert` or a running loop, and dataclasses, json, pathlib and the configuration models on first use, with the public names, pickling and type stubs unchanged.

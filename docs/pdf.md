@@ -260,15 +260,25 @@ edges per geometry pass, 64 graphics-state levels, 32 tables, 32 columns and
 budgets remain. Positioned-item limits are checked after the dependency returns;
 they are not a claim of a hard allocation limit inside that dependency.
 
-Content inspection and table geometry share one bounded content decode per page.
-Inspection first applies the existing visibility, Form and warning checks; only
-an eligible page's same parsed operations are then read for table borders. Raw
-expanded page streams and parsed operations are released at the end of that
-page's preparation. Only its frame and bounded grid coordinates survive until
-the positioned-text pass completes. Form inspection retains the existing shared
-64 MiB page/Form byte budget, 256 content inspections and 32 nested Form levels;
-Form operations are not used as speculative table borders. Pages with incomplete
-inspection retain the original warning and fallback behavior.
+Each page's content streams are expanded and parsed once. Inspection expands
+them within the 64 MiB page budget, keeping where each stream lies, and parses
+their operations; it first applies the existing visibility, Form and warning
+checks, and only an eligible page's same parsed operations are then read for
+table borders and painted bullets. When the page reader's document is the one
+inspected, inspection hands it the same operations, from which the reader walks
+the page's text runs, and the same expanded streams, from which it takes the
+page's OCR signals; the reader then neither expands nor parses that page again.
+The reader still reads a page itself, with the same result, when its content
+holds a comment (the reader strips comments before it parses) or more than a
+million operators, or when the reader repaired the file on load and this module
+inspects its own load. Raw expanded page streams and parsed operations are
+released at the end of that page's preparation; the reader keeps the page's runs
+until the positioned-text pass completes, as it did when it walked them itself.
+Only the page's frame and bounded grid coordinates survive until then. Form
+inspection retains the existing shared 64 MiB page/Form byte budget, 256 content
+inspections and 32 nested Form levels; Form operations are not used as
+speculative table borders. Pages with incomplete inspection retain the original
+warning and fallback behavior.
 
 ## Images and remaining work
 
@@ -305,10 +315,14 @@ separately from this text reader, with its own accuracy limits.
 The historical five-page sample's chart must not be presented as recovered
 merely because its textual labels are extractable.
 
-The additional positioned pass still reparses the PDF. Local page-content reuse
-does not remove the dependency's separate document and font decoding. Sharing one
-decoded document with that dependency needs a future API change; no speedup or
-corpus-parity claim follows from local reuse alone. Focused tests author
+The page reader loads the file once for the page Markdown, the positioned pass and,
+when it read the bytes unchanged, this module's inspection; each page's content is
+expanded and parsed once, as described above. The reader's OCR signals still
+interpret the expanded bytes with a byte-level scan of their own, and Form XObjects
+are still expanded by each reader that follows them. A file under 256 KiB is parsed
+on one thread: lopdf parses on a pool of one thread per core, whose start and idle
+spinning cost more processor time than a small file's parse, and larger files keep
+the pool, which shortens their load. Focused tests author
 their own PDF streams for heading consistency, paragraphs, continuous emphasis,
 complete tables, hidden text, rotated/invalid geometry, compressed multi-stream
 pages, inspection budget boundaries and unreadable or deeply nested Forms; for
@@ -316,7 +330,9 @@ borderless tables, top-aligned and centred wrapped rows, a pitch a pixel off,
 and one layout each that every evidence condition above declines; for tables
 cut by page breaks, repeated, missing and empty header rows, running headers and
 footers, text or OCR between the parts and a new table at the top of a page;
-and for painted bullets, rings, swatches, checkboxes, inline squares and a
-bulleted sidebar. A Chrome-printed fixture (`fixtures/wrapped-table`)
+for painted bullets, rings, swatches, checkboxes, inline squares and a
+bulleted sidebar; and for documents (the fixtures and pages of several content
+streams, a comment and a ruled table) read with and without the page reader's
+document shared. A Chrome-printed fixture (`fixtures/wrapped-table`)
 reproduces a table tagged as layout that continues on the next page. Validation
 results are recorded by the coordinator after the source is frozen.

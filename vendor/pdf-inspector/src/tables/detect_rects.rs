@@ -58,6 +58,16 @@ impl UnionFind {
         let root = self.find(x);
         self.size[root]
     }
+
+    /// Whether `x`'s component holds [`MAX_CLUSTER_RECTS`] rects or more
+    /// (markitai). Fewer elements than that make no such component, and
+    /// the test then looks nothing up: it runs for every pair compared,
+    /// and its `find` was the function with the most samples of its own
+    /// in a profile of PDF conversion. A lookup only compresses paths; it
+    /// changes no root, so the clusters and their order are the same.
+    fn oversized(&mut self, x: usize) -> bool {
+        self.parent.len() >= MAX_CLUSTER_RECTS && self.component_size(x) >= MAX_CLUSTER_RECTS
+    }
 }
 
 /// Check if two rects overlap after expanding each by `tol` on all sides.
@@ -104,20 +114,20 @@ fn union_bucket_pairs(
     let mut pairs = 0usize;
     'cell: for a in 0..m {
         let i = bucket[a];
-        if uf.component_size(i) >= MAX_CLUSTER_RECTS {
+        if uf.oversized(i) {
             continue;
         }
         for &j in &bucket[a + 1..] {
             if pairs >= MAX_CLUSTER_PAIRS_PER_CELL {
                 break 'cell;
             }
-            if uf.component_size(j) >= MAX_CLUSTER_RECTS {
+            if uf.oversized(j) {
                 continue;
             }
             pairs += 1;
             if rects_overlap(&rects[i], &rects[j], tolerance) {
                 uf.union(i, j);
-                if uf.component_size(i) >= MAX_CLUSTER_RECTS {
+                if uf.oversized(i) {
                     break;
                 }
             }
@@ -134,7 +144,7 @@ fn union_rect_against_bands(
     hi: i32,
     tolerance: f32,
 ) {
-    if uf.component_size(i) >= MAX_CLUSTER_RECTS {
+    if uf.oversized(i) {
         return;
     }
     let mut pairs = 0usize;
@@ -147,13 +157,13 @@ fn union_rect_against_bands(
             if pairs >= MAX_CLUSTER_PAIRS_PER_CELL {
                 return;
             }
-            if i == j || uf.component_size(j) >= MAX_CLUSTER_RECTS {
+            if i == j || uf.oversized(j) {
                 continue;
             }
             pairs += 1;
             if rects_overlap(&rects[i], &rects[j], tolerance) {
                 uf.union(i, j);
-                if uf.component_size(i) >= MAX_CLUSTER_RECTS {
+                if uf.oversized(i) {
                     return;
                 }
             }
@@ -221,7 +231,7 @@ pub(crate) fn cluster_rects(
     // Oversized spans skip insert. Range-query occupied cells they cover so
     // later X-ranges are not starved and we do not scan unrelated rows.
     for &i in &large {
-        if uf.component_size(i) >= MAX_CLUSTER_RECTS {
+        if uf.oversized(i) {
             continue;
         }
         let (x, y, w, h) = rects[i];
@@ -241,22 +251,22 @@ pub(crate) fn cluster_rects(
                     if pairs >= MAX_CLUSTER_PAIRS_PER_CELL {
                         break;
                     }
-                    if uf.component_size(j) >= MAX_CLUSTER_RECTS {
+                    if uf.oversized(j) {
                         continue;
                     }
                     pairs += 1;
                     if rects_overlap(&rects[i], &rects[j], tolerance) {
                         uf.union(i, j);
-                        if uf.component_size(i) >= MAX_CLUSTER_RECTS {
+                        if uf.oversized(i) {
                             break;
                         }
                     }
                 }
-                if uf.component_size(i) >= MAX_CLUSTER_RECTS {
+                if uf.oversized(i) {
                     break;
                 }
             }
-            if uf.component_size(i) >= MAX_CLUSTER_RECTS {
+            if uf.oversized(i) {
                 break;
             }
         }
@@ -4382,6 +4392,31 @@ mod tests {
         let groups = cluster_rects(&rects, 0.0, 2);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].len(), 2);
+    }
+
+    /// markitai: a chain of overlapping rects stops growing at
+    /// `MAX_CLUSTER_RECTS`, whether or not the test of the component size
+    /// is skipped for fewer rects than that.
+    #[test]
+    fn test_cluster_rects_component_cap_holds() {
+        let chain = |n: usize| -> Vec<(f32, f32, f32, f32)> {
+            (0..n).map(|i| (i as f32 * 8.0, 0.0, 10.0, 10.0)).collect()
+        };
+        let sizes = |n: usize| -> Vec<usize> {
+            cluster_rects(&chain(n), 0.0, 1)
+                .iter()
+                .map(Vec::len)
+                .collect()
+        };
+        assert_eq!(sizes(MAX_CLUSTER_RECTS - 1), vec![MAX_CLUSTER_RECTS - 1]);
+        assert_eq!(sizes(MAX_CLUSTER_RECTS), vec![MAX_CLUSTER_RECTS]);
+        let capped = sizes(MAX_CLUSTER_RECTS + 300);
+        assert_eq!(capped.iter().sum::<usize>(), MAX_CLUSTER_RECTS + 300);
+        assert!(capped.len() > 1, "{capped:?}");
+        assert!(
+            capped.iter().all(|&size| size <= MAX_CLUSTER_RECTS + 1),
+            "{capped:?}"
+        );
     }
 
     #[test]

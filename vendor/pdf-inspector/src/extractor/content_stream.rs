@@ -37,10 +37,12 @@ use super::{get_number, image_bbox_from_ctm, multiply_matrices};
 /// Some PDF generators (e.g. PD4ML) embed comments in content streams that
 /// confuse lopdf's `Content::decode` parser.  Comments inside string literals
 /// (parentheses) are NOT stripped — only top-level comments.
-fn strip_pdf_comments(data: &[u8]) -> Vec<u8> {
+///
+/// markitai: bytes holding no comment come back borrowed, not copied.
+fn strip_pdf_comments(data: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     // Quick check: if no '%' present, return as-is (common case)
-    if !data.contains(&b'%') {
-        return data.to_vec();
+    if !data.contains(&b'%') || !has_pdf_comment(data) {
+        return std::borrow::Cow::Borrowed(data);
     }
 
     let mut result = Vec::with_capacity(data.len());
@@ -94,7 +96,40 @@ fn strip_pdf_comments(data: &[u8]) -> Vec<u8> {
         i += 1;
     }
 
-    result
+    std::borrow::Cow::Owned(result)
+}
+
+/// Whether [`strip_pdf_comments`] strips anything from `data`: a `%`
+/// outside its string literals, read with the same states (markitai).
+fn has_pdf_comment(data: &[u8]) -> bool {
+    let mut i = 0;
+    let mut in_string = 0i32;
+    let mut in_hex_string = false;
+    while i < data.len() {
+        match data[i] {
+            b'\\' if in_string > 0 => i += 1,
+            b'(' if !in_hex_string => in_string += 1,
+            b')' if !in_hex_string && in_string > 0 => in_string -= 1,
+            b'<' if in_string == 0 && !in_hex_string => in_hex_string = true,
+            b'>' if in_hex_string => in_hex_string = false,
+            b'%' if in_string == 0 && !in_hex_string => return true,
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Whether the walk of a page whose content is `data` reads it as
+/// `Content::decode(data)` reads it (markitai): no comment for it to strip
+/// first, and no more operators than it decodes (see
+/// `content_decode::decode_content_bounded`). Every operator takes a byte,
+/// so content of no more bytes than that holds no more operators.
+pub(crate) fn walk_reads_as_decoded(data: &[u8]) -> bool {
+    use super::content_decode::{MAX_PAGE_OPERATIONS, content_exceeds_operation_limit};
+    matches!(strip_pdf_comments(data), std::borrow::Cow::Borrowed(_))
+        && (data.len() <= MAX_PAGE_OPERATIONS
+            || !content_exceeds_operation_limit(data, MAX_PAGE_OPERATIONS))
 }
 
 fn transform_path_point(x: f32, y: f32, ctm: &[f32; 6]) -> (f32, f32) {
@@ -455,6 +490,7 @@ pub(crate) fn extract_page_text_items_with_options(
         options.include_invisible,
         style_cache,
         form_budget,
+        None,
     )?;
     Ok(runs.finish(options))
 }
@@ -485,6 +521,14 @@ pub(crate) struct PageRunText {
     has_gid_fonts: bool,
     page_rotation: PageRotation,
     skipped_invisible: bool,
+}
+
+#[cfg(test)]
+impl PageRunText {
+    /// No runs (markitai: for the page-run cache's tests).
+    pub(crate) fn empty() -> Self {
+        PageRuns::skipped().text
+    }
 }
 
 impl PageRuns {
@@ -583,7 +627,11 @@ impl PageRuns {
 }
 
 /// The walk of [`extract_page_text_items_with_options`] (markitai): the
-/// page's runs before the switches that only shape its result.
+/// page's runs before the switches that only shape its result. `decoded`
+/// is the page's content as the walk would decode it, when a caller that
+/// decoded it already passes it on (see [`walk_reads_as_decoded`]);
+/// otherwise the walk reads and decodes the content itself.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn read_page_runs(
     doc: &Document,
     page_id: ObjectId,
@@ -592,6 +640,7 @@ pub(crate) fn read_page_runs(
     include_invisible: bool,
     style_cache: &mut FontStyleCache,
     form_budget: &mut FormWalkBudget,
+    decoded: Option<&lopdf::content::Content>,
 ) -> Result<PageRuns, PdfError> {
     let mut items = Vec::new();
     let mut rects: Vec<PdfRect> = Vec::new();
@@ -723,40 +772,50 @@ pub(crate) fn read_page_runs(
     // Get XObjects (images) from page resources
     let xobjects = get_page_xobjects(doc, page_id);
 
-    // Get content, bounding decompression so a page-content bomb skips the
-    // page instead of exhausting memory — same degradation as the operator
-    // cap below.
-    use crate::extractor::content_decode::MAX_PAGE_CONTENT_BYTES;
-    let content_data = match doc.get_page_content_with_limit(page_id, MAX_PAGE_CONTENT_BYTES) {
-        Ok(data) => data,
-        Err(e) => {
-            log::warn!(
-                "page {}: skipping extraction — content stream exceeds {} decompressed bytes: {}",
-                page_num,
-                MAX_PAGE_CONTENT_BYTES,
-                e
-            );
-            return Ok(PageRuns::skipped());
-        }
-    };
-
-    // Strip PDF comments (% to end of line) from the content stream.
-    // Some PDF generators (e.g. PD4ML) embed comments that confuse lopdf's
-    // Content::decode parser, causing it to skip operators like ET and Q.
-    let content_data = strip_pdf_comments(&content_data);
-
-    let content = match super::content_decode::decode_content_bounded(
-        &content_data,
-        super::content_decode::MAX_PAGE_OPERATIONS,
-    )? {
+    // markitai: the content a caller decoded already is not read again.
+    let own;
+    let content = match decoded {
         Some(content) => content,
         None => {
-            log::warn!(
-                "page {}: skipping extraction — content stream exceeds {} operations",
-                page_num,
-                super::content_decode::MAX_PAGE_OPERATIONS
-            );
-            return Ok(PageRuns::skipped());
+            // Get content, bounding decompression so a page-content bomb skips the
+            // page instead of exhausting memory — same degradation as the operator
+            // cap below.
+            use crate::extractor::content_decode::MAX_PAGE_CONTENT_BYTES;
+            let content_data = match doc
+                .get_page_content_with_limit(page_id, MAX_PAGE_CONTENT_BYTES)
+            {
+                Ok(data) => data,
+                Err(e) => {
+                    log::warn!(
+                        "page {}: skipping extraction — content stream exceeds {} decompressed bytes: {}",
+                        page_num,
+                        MAX_PAGE_CONTENT_BYTES,
+                        e
+                    );
+                    return Ok(PageRuns::skipped());
+                }
+            };
+
+            // Strip PDF comments (% to end of line) from the content stream.
+            // Some PDF generators (e.g. PD4ML) embed comments that confuse lopdf's
+            // Content::decode parser, causing it to skip operators like ET and Q.
+            let content_data = strip_pdf_comments(&content_data);
+
+            own = match super::content_decode::decode_content_bounded(
+                &content_data,
+                super::content_decode::MAX_PAGE_OPERATIONS,
+            )? {
+                Some(content) => content,
+                None => {
+                    log::warn!(
+                        "page {}: skipping extraction — content stream exceeds {} operations",
+                        page_num,
+                        super::content_decode::MAX_PAGE_OPERATIONS
+                    );
+                    return Ok(PageRuns::skipped());
+                }
+            };
+            &own
         }
     };
 
@@ -4702,32 +4761,86 @@ end"#;
     fn test_strip_pdf_comments() {
         // Basic comment stripping
         let input = b"BT\n% comment\nTj\nET\n";
-        let output = strip_pdf_comments(input);
+        let output = strip_pdf_comments(input).into_owned();
         assert_eq!(output, b"BT\n \nTj\nET\n");
 
         // No comments = unchanged
         let input = b"BT\nTj\nET\n";
-        let output = strip_pdf_comments(input);
+        let output = strip_pdf_comments(input).into_owned();
         assert_eq!(output, input.to_vec());
 
         // Don't strip inside string literals
         let input = b"(text with % not a comment)\n% real comment\n";
-        let output = strip_pdf_comments(input);
+        let output = strip_pdf_comments(input).into_owned();
         assert_eq!(output, b"(text with % not a comment)\n \n");
 
         // Don't strip inside hex strings
         let input = b"<0033% not a comment>\n% real comment\n";
-        let output = strip_pdf_comments(input);
+        let output = strip_pdf_comments(input).into_owned();
         assert_eq!(output, b"<0033% not a comment>\n \n");
 
         // PD4ML style: comment between Tj and ET
         let input = b"<0033> Tj\n\t% Mission Statement\n\tET\n";
-        let output = strip_pdf_comments(input);
+        let output = strip_pdf_comments(input).into_owned();
         let output_str = String::from_utf8_lossy(&output);
         assert!(
             output_str.contains("ET"),
             "ET should be preserved after comment stripping"
         );
+    }
+
+    /// markitai: content holding no comment is passed on as it is, and
+    /// `has_pdf_comment` says exactly when stripping changes the bytes.
+    #[test]
+    fn stripping_borrows_content_without_a_comment() {
+        let cases: &[&[u8]] = &[
+            b"BT\n% comment\nTj\nET\n",
+            b"BT\nTj\nET\n",
+            b"(text with % not a comment)\n% real comment\n",
+            b"(100%) Tj",
+            b"<0033% not a comment>\n",
+            b"<< /MCID 0 >> BDC (a) Tj EMC %",
+            b"[ (a\\)b) 1 (%) 1 (c) ] TJ\n",
+            b"(x\\(y) Tj % real comment\nET\n",
+            b"(x\\\\) Tj % comment\nET\n",
+            b"(unclosed % string",
+            b"%",
+            b"",
+        ];
+        for &data in cases {
+            let stripped = strip_pdf_comments(data);
+            let changed = stripped.as_ref() != data;
+            assert_eq!(
+                has_pdf_comment(data),
+                changed,
+                "{:?}",
+                String::from_utf8_lossy(data)
+            );
+            assert_eq!(
+                matches!(stripped, std::borrow::Cow::Borrowed(_)),
+                !changed,
+                "{:?}",
+                String::from_utf8_lossy(data)
+            );
+        }
+    }
+
+    /// markitai: the walk reads content as `Content::decode` does unless it
+    /// strips a comment from it first or declines its operators.
+    #[test]
+    fn the_walk_reads_content_as_decoded_without_comments_or_too_many_operators() {
+        use super::super::content_decode::MAX_PAGE_OPERATIONS;
+        assert!(walk_reads_as_decoded(b"BT /F1 12 Tf (100%) Tj ET"));
+        assert!(!walk_reads_as_decoded(b"BT /F1 12 Tf (a) Tj % note\nET"));
+        // Over a million bytes, but a few operators: read as decoded.
+        let mut long = b"BT /F1 12 Tf (".to_vec();
+        long.extend(std::iter::repeat_n(b'a', MAX_PAGE_OPERATIONS + 1));
+        long.extend_from_slice(b") Tj ET");
+        assert!(walk_reads_as_decoded(&long));
+        // A million operators and one more are declined; a million are not.
+        let ops = |count: usize| b"q\n".repeat(count);
+        assert!(walk_reads_as_decoded(&ops(MAX_PAGE_OPERATIONS)));
+        assert!(!walk_reads_as_decoded(&ops(MAX_PAGE_OPERATIONS + 1)));
     }
 
     #[test]
@@ -4736,19 +4849,19 @@ end"#;
         // still string content, not a comment (subset fonts routinely map
         // glyphs to `%` and to escaped parens in the same TJ array).
         let input = b"[ (a\\)b) 1 (%) 1 (c) ] TJ\n";
-        let output = strip_pdf_comments(input);
+        let output = strip_pdf_comments(input).into_owned();
         assert_eq!(output, input.to_vec());
 
         // Same for an escaped `\(` — must not open a phantom string that
         // shields a real comment.
         let input = b"(x\\(y) Tj % real comment\nET\n";
-        let output = strip_pdf_comments(input);
+        let output = strip_pdf_comments(input).into_owned();
         assert_eq!(output, b"(x\\(y) Tj  \nET\n");
 
         // Escaped backslash before a real close-paren: `\\` ends the escape,
         // the `)` does close the string, and the comment is stripped.
         let input = b"(x\\\\) Tj % comment\nET\n";
-        let output = strip_pdf_comments(input);
+        let output = strip_pdf_comments(input).into_owned();
         assert_eq!(output, b"(x\\\\) Tj  \nET\n");
     }
 

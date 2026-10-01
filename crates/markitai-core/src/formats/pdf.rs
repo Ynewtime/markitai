@@ -537,7 +537,14 @@ fn matrix_scale(operands: &[Object]) -> Option<f32> {
     determinant.is_finite().then(|| determinant.abs().sqrt())
 }
 
-fn inspect_page(pdf: &lopdf::Document, id: ObjectId) -> (PageInspection, Option<Content>) {
+/// A page's content as inspection read it: the expanded streams and their
+/// parsed operations.
+struct PageContent {
+    streams: pdf_inspector::PageContent,
+    operations: Content,
+}
+
+fn inspect_page(pdf: &lopdf::Document, id: ObjectId) -> (PageInspection, Option<PageContent>) {
     let mut out = PageInspection::default();
     let (direct, ids) = match pdf.get_page_resources(id) {
         Ok(resources) => resources,
@@ -551,16 +558,22 @@ fn inspect_page(pdf: &lopdf::Document, id: ObjectId) -> (PageInspection, Option<
         .into_iter()
         .chain(ids.iter().filter_map(|id| pdf.get_dictionary(*id).ok()))
         .collect::<Vec<_>>();
-    let content = match pdf.get_page_content_with_limit(id, MAX_STREAM_BYTES) {
-        Ok(bytes) => inspect_content(
+    // Read as `get_page_content_with_limit` reads it, keeping where each
+    // stream lies for the page reader's OCR signals.
+    let content = match pdf_inspector::PageContent::read(pdf, id, MAX_STREAM_BYTES) {
+        Ok(streams) => inspect_content(
             pdf,
-            &bytes,
+            streams.bytes(),
             &resources,
             GraphicsState::default(),
             &mut BTreeSet::new(),
             0,
             &mut out,
-        ),
+        )
+        .map(|operations| PageContent {
+            streams,
+            operations,
+        }),
         Err(error) => {
             out.warnings
                 .push(format!("Page content inspection failed: {error}"));
@@ -889,12 +902,14 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
     // bytes itself, unrepaired, as it always has.
     let loaded = pdf_inspector::LoadedPdf::load_mem(bytes);
     let unrepaired;
-    let pdf = match loaded
+    // The reader whose document this module inspects: it is then given each
+    // page's content as inspection decoded it, and does not decode it again.
+    let shared = loaded
         .as_ref()
         .ok()
-        .and_then(pdf_inspector::LoadedPdf::as_loaded_by_lopdf)
-    {
-        Some(pdf) => pdf,
+        .filter(|loaded| loaded.as_loaded_by_lopdf().is_some());
+    let pdf = match shared {
+        Some(loaded) => loaded.document(),
         None => {
             unrepaired = lopdf::Document::load_mem(bytes).map_err(conversion)?;
             &unrepaired
@@ -917,13 +932,16 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
     let mut shapes = BTreeMap::new();
     for (&number, &id) in &page_ids {
         let (inspection, content) = inspect_page(pdf, id);
+        if let (Some(loaded), Some(content)) = (shared, content.as_ref()) {
+            loaded.keep_page_runs(number, id, &content.streams, &content.operations);
+        }
         if inspection.signals.is_empty()
             && inspection.warnings.is_empty()
             && let Some(frame) = geometry::frame(pdf, id)
             && let Some(content) = content.as_ref()
         {
             let resources = geometry::rule_resources(pdf, id);
-            let (grids, marks) = geometry::page_shapes(content, frame, &resources);
+            let (grids, marks) = geometry::page_shapes(&content.operations, frame, &resources);
             shapes.insert(number, (frame, grids, marks));
         }
         // Retain only bounded table coordinates across pages, never their
@@ -1160,7 +1178,7 @@ mod tests {
         assert_eq!(inspection.inspected_bytes, expanded_bytes);
         assert_eq!(inspection.inspected_streams, 1);
         let grids = geometry::grids(
-            &content.unwrap(),
+            &content.unwrap().operations,
             geometry::frame(&pdf, page).unwrap(),
             &geometry::rule_resources(&pdf, page),
         );
@@ -1279,7 +1297,7 @@ mod tests {
             // Root geometry never treats a Form's partial graphics as a table.
             assert!(
                 geometry::grids(
-                    &content.unwrap(),
+                    &content.unwrap().operations,
                     geometry::frame(&pdf, page).unwrap(),
                     &geometry::rule_resources(&pdf, page),
                 )
@@ -1771,6 +1789,97 @@ mod tests {
             format!("\nendstream\nendobj\nstartxref\n{start}\n%%EOF\n").as_bytes(),
         );
         body
+    }
+
+    /// Three pages: text in two content streams, one compressed; text after
+    /// a comment, which the page reader strips before it decodes; and a
+    /// ruled two-by-two table.
+    fn streams_comment_and_table() -> Vec<u8> {
+        let mut pdf = lopdf::Document::with_version("1.7");
+        let tree = pdf.new_object_id();
+        let font = pdf.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica"
+        });
+        let pages: [&[&[u8]]; 3] = [
+            &[
+                b"BT /F1 12 Tf 72 700 Td (The first stream sets the opening words.) Tj ET",
+                b"BT /F1 12 Tf 72 680 Td (The second stream continues the page.) Tj ET",
+            ],
+            &[b"% a producer's note\nBT /F1 12 Tf 72 700 Td (Words after a comment line.) Tj ET"],
+            &[
+                b"0 G 1 w 72 500 m 372 500 l S 72 540 m 372 540 l S 72 580 m 372 580 l S \
+                72 500 m 72 580 l S 222 500 m 222 580 l S 372 500 m 372 580 l S \
+                BT /F1 10 Tf 80 560 Td (Name) Tj 150 0 Td (Value) Tj ET \
+                BT /F1 10 Tf 80 520 Td (Alpha) Tj 150 0 Td (Seven) Tj ET",
+            ],
+        ];
+        let mut kids = Vec::new();
+        for (index, streams) in pages.into_iter().enumerate() {
+            let contents = streams
+                .iter()
+                .map(|bytes| {
+                    let mut stream = Stream::new(Dictionary::new(), bytes.to_vec());
+                    if index == 0 && bytes.starts_with(b"BT /F1 12 Tf 72 680") {
+                        stream.compress().unwrap();
+                    }
+                    Object::Reference(pdf.add_object(stream))
+                })
+                .collect::<Vec<_>>();
+            kids.push(Object::Reference(pdf.add_object(dictionary! {
+                "Type" => "Page", "Parent" => tree, "Contents" => contents,
+                "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } }
+            })));
+        }
+        pdf.objects.insert(
+            tree,
+            dictionary! {
+                "Type" => "Pages", "Count" => 3, "Kids" => kids,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()]
+            }
+            .into(),
+        );
+        let catalog = pdf.add_object(dictionary! { "Type" => "Catalog", "Pages" => tree });
+        pdf.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        pdf.save_to(&mut bytes).unwrap();
+        bytes
+    }
+
+    /// Inspection gives the page reader each page's content as it read and
+    /// decoded it; the documents are those of a file whose reader this
+    /// module does not share and inspects on its own load (bytes before
+    /// the header keep the page reader's document from being shared).
+    #[test]
+    fn the_shared_reading_of_page_content_equals_the_unshared_one() {
+        let inputs: [&[u8]; 5] = [
+            &streams_comment_and_table(),
+            include_bytes!("pdf/fixtures/borderless-table.pdf"),
+            include_bytes!("pdf/fixtures/default-table.pdf"),
+            include_bytes!("pdf/fixtures/table-beside-prose.pdf"),
+            include_bytes!("pdf/fixtures/wrapped-table.pdf"),
+        ];
+        for bytes in inputs {
+            let loaded = pdf_inspector::LoadedPdf::load_mem(bytes).unwrap();
+            assert!(loaded.as_loaded_by_lopdf().is_some());
+            let mut leading = b"%%leading bytes before the header\n".to_vec();
+            leading.extend_from_slice(bytes);
+            let loaded = pdf_inspector::LoadedPdf::load_mem(&leading).unwrap();
+            assert!(loaded.as_loaded_by_lopdf().is_none());
+            assert_eq!(
+                format!("{:?}", extract(bytes).unwrap()),
+                format!("{:?}", extract(&leading).unwrap())
+            );
+        }
+        let document = extract(&streams_comment_and_table()).unwrap();
+        for words in [
+            "The first stream sets the opening words.",
+            "The second stream continues the page.",
+            "Words after a comment line.",
+            "|Name|Value|",
+            "|Alpha|Seven|",
+        ] {
+            assert!(document.markdown.contains(words), "{}", document.markdown);
+        }
     }
 
     #[test]

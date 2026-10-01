@@ -1407,7 +1407,7 @@ mod tests {
         let frame = super::super::geometry::frame(&doc, id).unwrap();
         let (_, content) = super::super::inspect_page(&doc, id);
         let (grids, marks) = super::super::geometry::page_shapes(
-            &content.unwrap(),
+            &content.unwrap().operations,
             frame,
             &super::super::geometry::rule_resources(&doc, id),
         );
@@ -2033,7 +2033,7 @@ mod tests {
         let frame = super::super::geometry::frame(&doc, id).unwrap();
         let (_, content) = super::super::inspect_page(&doc, id);
         let grids = super::super::geometry::grids(
-            &content.unwrap(),
+            &content.unwrap().operations,
             frame,
             &super::super::geometry::rule_resources(&doc, id),
         );

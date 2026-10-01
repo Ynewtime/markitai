@@ -310,10 +310,92 @@ The local changes, each marked `markitai` (or, for sorts, made through
   candidate lines. The isolated copy's unit tests give 1,624 passed and the
   same 21 failed.
 
+- `src/lib.rs`, `src/extractor/{mod,content_stream,content_decode}.rs`,
+  `src/detector.rs`, `src/detector/content_scan.rs`: one read of a page's
+  content for every reading of it. Markitai's own inspection expands and
+  parses each page's content streams anyway (visibility, images, ruled
+  tables, painted bullets); the text walk then expanded, copied and parsed
+  the same streams again, and the OCR signals expanded them a third time
+  for their byte scan. `PageContent::read(doc, id, limit)` reads a page's
+  content as `Document::get_page_content_with_limit` does, with the same
+  bytes or the same error, and keeps where each stream lies in it.
+  `LoadedPdf::keep_page_runs(page, id, content, decoded)` is given that
+  content and its `Content::decode`: it scans the OCR signals from the
+  streams (`page_ocr_signals_from`, `analyze_page_content_from`; the
+  `scan_page_content` the scan reads them through takes them instead of
+  expanding the page's `/Contents` itself) and walks the page's runs from
+  `decoded` (`read_page_runs` takes an optional decode), keeping both in
+  the `PageRunCache` for the next readings, which then neither expand nor
+  parse the page. The runs are kept only when the walk would read the
+  same: the content was read under the walk's own 64 MiB bound, holds no
+  comment the walk strips before it parses (`has_pdf_comment` follows
+  `strip_pdf_comments`'s states exactly; `walk_reads_as_decoded`), and no
+  more operators than it decodes (a page of no more bytes than the
+  million-operator bound cannot hold more, so only longer pages are
+  counted); runs moved into the cache count against its bound as copies
+  did (`keep_text`). `id` must be the page's object, else nothing is
+  kept. `strip_pdf_comments` returns its input borrowed when it holds no
+  comment instead of copying it. `forget_page_runs` also forgets the
+  signals. The reading of the pages' Markdown takes a page's kept signals
+  instead of scanning it. Seven added tests compare `PageContent::read`
+  with lopdf's function, error for error (an unknown filter read as it
+  is; a bound cut short by a decompression, by a stream without a filter
+  and by a stream read as it is, also on a page's last stream); fed runs
+  and signals with a
+  document's own walk and scan (wrong page object, other bound, kept
+  twice, a comment); the fed scan with its own on six pages (hidden text
+  layers in streams and forms, a caption, no image, three streams of
+  which one has an unknown filter); that kept signals are read and
+  forgotten; the borrowed strip on twelve inputs; the walk's decode test
+  at the comment and operator bounds; and the cache bound for moved runs.
+
+- `src/lib.rs`: a file under 256 KiB is parsed on one thread
+  (`PARALLEL_LOAD_MIN_BYTES`). lopdf, built with its `rayon` feature,
+  parses objects on rayon's global pool: a thread per core started in the
+  process, each spinning a while whenever it runs out of work. A
+  one-thread pool of the load's own, gone with the load, runs the same
+  parse in order. In processes that load one file (the copy's release
+  build, 18-core Apple M5 Max): under 100 KB, 8.2 → 3.1 ms of CPU and a
+  0.63 → 0.39 ms load; 100–250 KB, 11.8 → 4.3 ms CPU for a 1.1 → 1.5 ms
+  load; 0.5–1 MB, 22.6 → 10.2 ms CPU, 2.2 → 7.0 ms load; 14 MB, 419 →
+  262 ms CPU, 47 → 241 ms load. Larger files keep the pool. The objects
+  loaded are the same (the lenient load fails no object and collects them
+  by number), except that an object two object streams hold and the
+  cross-reference table does not place is taken from the first stream in
+  object order instead of whichever thread read first. A test records the
+  pool size of every load and checks a small and a large file.
+
+- `src/tables/detect_rects.rs`: `UnionFind::oversized` tests a component
+  against `MAX_CLUSTER_RECTS` only when there are that many rects. The
+  test ran for every pair of rects compared, and its `find` was the
+  function with the most samples of its own in a profile of PDF
+  conversion. A lookup only compresses paths and changes no root, so the
+  clusters and their order are the same. An added test checks a chain of
+  rects below, at and above the cap.
+
+  Measured on `e0c890c` with `cargo build --release -p markitai-cli`
+  (rustc 1.98.1, macOS 27.0.1, 18-core Apple M5 Max): the CLI is
+  21,980,080 bytes before and 21,996,656 after the three items (+16,576,
+  the one-thread pool's code). The 406 PDFs of the R41 Chrome and Quartz
+  corpora and the R48 extra and stress sets, six large ones (0.2–14 MB)
+  and seven scanned or mixed PDFs converted with local OCR give
+  byte-identical Markdown, assets, JSON results (warnings included) and
+  stderr. Paired, alternating runs over the 406 text-layer PDFs, five
+  rounds: CPU −32.4% and wall −6.1% (per round −32.0..−33.7% and
+  −5.9..−6.6%), against −0.3..+0.7% and −0.1..+0.5% for a byte copy of
+  the base binary. The isolated copy's unit tests give 1,633 passed and the
+  same 21 failed. Of 25 mutations of the three items and of Markitai's use
+  of them, 21 fail tests (20 the added ones, one an existing markitai-core
+  test); two are equivalent (the byte shortcut at twice the bound, since an
+  operator takes two bytes with its delimiter; the cap shortcut at one rect
+  more) and two only lose the saving (Markitai not passing its decode on,
+  or reading under another bound).
+
 The page-level OCR, font decoding, repair, limits and reliability routing remain
 the upstream paths. Markitai's own visibility warnings and layout agreement
 checks remain enabled. The only new public APIs are `TextLine::text_with_markup`,
-`LoadedPdf` (`load_mem`, `document`, `as_loaded_by_lopdf`, `pages_markdown`,
+`PageContent` (`read`, `bytes`),
+`LoadedPdf` (`load_mem`, `document`, `as_loaded_by_lopdf`, `keep_page_runs`, `pages_markdown`,
 `pages_markdown_with_marks`, `text_with_positions_and_rotations`,
 `forget_page_runs`), `painted_bullets` (`PaintedMark`, `targets`) and
 `glyph_names::glyph_to_unicode`; no optional runtime dependency is added.

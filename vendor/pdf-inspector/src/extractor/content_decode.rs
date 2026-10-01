@@ -35,7 +35,7 @@ pub(crate) fn decode_content_bounded(
         .map_err(|e| PdfError::Parse(e.to_string()))
 }
 
-fn content_exceeds_operation_limit(data: &[u8], max_operations: usize) -> bool {
+pub(crate) fn content_exceeds_operation_limit(data: &[u8], max_operations: usize) -> bool {
     count_content_operators(data, max_operations.saturating_add(1)) > max_operations
 }
 

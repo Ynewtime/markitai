@@ -67,13 +67,19 @@ pub(super) struct ExecutedContent {
 /// Names resolve in the page's own resources first, then in those it
 /// inherits. Returns what the page executed and the streams' own counts;
 /// the text characters and font names met go to the sets given.
+///
+/// markitai: `streams` are the page's content streams when a caller has
+/// read them already, each decompressed, or as it is when it does not
+/// decompress, in the order of the page's `/Contents`, which is how the
+/// scan reads them itself when it is `None`.
 pub(super) fn scan_page_content(
     doc: &Document,
     page_id: ObjectId,
     unique_chars: &mut HashSet<u8>,
     used_font_names: &mut HashSet<Vec<u8>>,
+    streams: Option<&[&[u8]]>,
 ) -> (ExecutedContent, ContentCounts) {
-    let (state, counts) = scan_page(doc, page_id, unique_chars, used_font_names);
+    let (state, counts) = scan_page(doc, page_id, unique_chars, used_font_names, streams);
     (state.executed(), counts)
 }
 
@@ -82,7 +88,7 @@ pub(super) fn scan_page_content(
 /// `analyze_page_content`. For the pages a sample left out, whose OCR
 /// reason is reported all the same.
 pub(super) fn page_executed_content(doc: &Document, page_id: ObjectId) -> ExecutedContent {
-    scan_page(doc, page_id, &mut HashSet::new(), &mut HashSet::new())
+    scan_page(doc, page_id, &mut HashSet::new(), &mut HashSet::new(), None)
         .0
         .executed()
 }
@@ -128,12 +134,13 @@ fn resource_chain<'a>(
 }
 
 /// The scan of the page's content streams, followed through `Do`, and
-/// the streams' own counts.
+/// the streams' own counts; of `streams` when a caller has read them.
 fn scan_page<'a>(
     doc: &'a Document,
     page_id: ObjectId,
     unique_chars: &mut HashSet<u8>,
     used_font_names: &mut HashSet<Vec<u8>>,
+    streams: Option<&[&[u8]]>,
 ) -> (ContentScanState<'a>, ContentCounts) {
     let page_box = visible_page_box(doc, page_id).unwrap_or(PageBox::LETTER);
     let page_resources = doc.get_page_resources(page_id).ok();
@@ -143,6 +150,18 @@ fn scan_page<'a>(
         .unwrap_or_default();
     let mut state = ContentScanState::new(doc, page_box, true);
     let mut counts = ContentCounts::default();
+    if let Some(streams) = streams {
+        for content in streams {
+            counts.add(scan_content_stream(
+                content,
+                unique_chars,
+                used_font_names,
+                &mut state,
+                &resources,
+            ));
+        }
+        return (state, counts);
+    }
     for content_id in doc.get_page_contents(page_id) {
         if let Ok(Object::Stream(stream)) = doc.get_object(content_id) {
             let content = stream

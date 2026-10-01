@@ -868,6 +868,17 @@ fn resolve_with_shadowing(
 
 /// Analyze a page's content stream for text operators and images
 fn analyze_page_content(doc: &Document, page_id: ObjectId) -> PageAnalysis {
+    analyze_page_content_from(doc, page_id, None)
+}
+
+/// [`analyze_page_content`], scanning `streams` as the page's content
+/// streams when a caller has read them already: each decompressed, or as
+/// it is when it does not decompress, in the page's order (markitai).
+fn analyze_page_content_from(
+    doc: &Document,
+    page_id: ObjectId,
+    streams: Option<&[&[u8]]>,
+) -> PageAnalysis {
     let mut counts = ContentCounts::default();
     let mut all_unique_chars: HashSet<u8> = HashSet::new();
     // Collect font ObjectIds (not names) to avoid cross-scope name collisions.
@@ -887,8 +898,13 @@ fn analyze_page_content(doc: &Document, page_id: ObjectId) -> PageAnalysis {
     // The page's content streams, read as one and followed through `Do`
     // (see `content_scan`), with the raw font names they use.
     let mut page_font_names: HashSet<Vec<u8>> = HashSet::new();
-    let (executed, page_counts) =
-        content_scan::scan_page_content(doc, page_id, &mut all_unique_chars, &mut page_font_names);
+    let (executed, page_counts) = content_scan::scan_page_content(
+        doc,
+        page_id,
+        &mut all_unique_chars,
+        &mut page_font_names,
+        streams,
+    );
     counts.add(page_counts);
 
     // Resolve font names against the page's resource dictionaries,
@@ -2245,7 +2261,18 @@ pub(crate) fn analyze_page_images(doc: &Document, page_id: ObjectId) -> (bool, u
 /// the same gates classification needs elsewhere instead of treating the
 /// raw signals alone as sufficient — see #227/#231.
 pub(crate) fn page_ocr_signals(doc: &Document, page_id: ObjectId) -> PageOcrSignals {
-    let analysis = analyze_page_content(doc, page_id);
+    page_ocr_signals_from(doc, page_id, None)
+}
+
+/// [`page_ocr_signals`], scanning `streams` as the page's content streams
+/// when a caller has read them already (see [`analyze_page_content_from`];
+/// markitai).
+pub(crate) fn page_ocr_signals_from(
+    doc: &Document,
+    page_id: ObjectId,
+    streams: Option<&[&[u8]]>,
+) -> PageOcrSignals {
+    let analysis = analyze_page_content_from(doc, page_id, streams);
 
     let needs_ocr_for_template_image = if !analysis.has_template_image {
         false

@@ -1542,3 +1542,65 @@ fn an_invoked_form_counts_once_as_bound_and_once_per_invocation_as_executed() {
         );
     }
 }
+
+/// markitai: content streams a caller read already — each decompressed,
+/// or as it is when it does not decompress — give the analysis and the
+/// signals the scan gives reading them itself, also across a page's
+/// several streams, through forms and when one stream's filter is one
+/// lopdf cannot decode.
+#[test]
+fn streams_read_by_a_caller_give_the_scans_own_signals() {
+    use super::super::{analyze_page_content_from, page_ocr_signals_from};
+    let mut pages = vec![
+        layered_scan_page(true, Some(3), false, None),
+        layered_scan_page(true, Some(7), false, None),
+        layered_scan_page(true, Some(3), true, None),
+        layered_scan_page(true, Some(3), false, Some("Figure 1")),
+        layered_scan_page(false, Some(3), false, None),
+    ];
+    // The render mode and the matrix carry from one stream to the next,
+    // one of them filtered with a filter lopdf does not decode, which is
+    // read as it is.
+    let (mut doc, page_id, content_id) = synthetic_page(true, false, &[]);
+    set_page_content(&mut doc, content_id, "q 612 0 0 792 0 0 cm\n");
+    let unknown = doc.add_object(lopdf::Stream::new(
+        lopdf::dictionary! { "Filter" => "JBIG2Decode" },
+        b"/Im0 Do Q\n".to_vec(),
+    ));
+    let mut packed = lopdf::Stream::new(lopdf::dictionary! {}, glyph_layer(3).into_bytes());
+    packed.compress().unwrap();
+    let packed = doc.add_object(packed);
+    let contents = vec![content_id.into(), unknown.into(), packed.into()];
+    doc.get_object_mut(page_id)
+        .unwrap()
+        .as_dict_mut()
+        .unwrap()
+        .set("Contents", contents);
+    pages.push((doc, page_id));
+    let mut flagged = 0;
+    for (doc, page_id) in &pages {
+        let content = crate::PageContent::read(doc, *page_id, usize::MAX).unwrap();
+        let streams: Vec<&[u8]> = content.streams().collect();
+        assert_eq!(streams.len(), doc.get_page_contents(*page_id).len());
+        let own = analyze_page_content(doc, *page_id);
+        let fed = analyze_page_content_from(doc, *page_id, Some(&streams));
+        assert_eq!(
+            (fed.text_operator_count, fed.executed_text_operator_count),
+            (own.text_operator_count, own.executed_text_operator_count)
+        );
+        assert_eq!(
+            (fed.invisible_text_operator_count, fed.has_covering_image),
+            (own.invisible_text_operator_count, own.has_covering_image)
+        );
+        assert_eq!(fed.path_op_count, own.path_op_count);
+        assert_eq!(fed.unique_alphanum_chars, own.unique_alphanum_chars);
+        let signals = page_ocr_signals(doc, *page_id);
+        assert_eq!(
+            page_ocr_signals_from(doc, *page_id, Some(&streams)),
+            signals
+        );
+        flagged += usize::from(signals.has_invisible_text_layer);
+    }
+    // The comparison covers flagged pages and pages left alone.
+    assert_eq!(flagged, pages.len() - 2);
+}

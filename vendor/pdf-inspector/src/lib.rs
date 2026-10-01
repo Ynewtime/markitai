@@ -618,6 +618,10 @@ pub struct LoadedPdf {
     /// looks at the objects (a page count over its limit) does not pay.
     font_cmaps: std::cell::OnceCell<FontCMaps>,
     runs: extractor::PageRunCache,
+    /// The font programs read by the walks of [`LoadedPdf::keep_page_runs`].
+    styles: std::cell::RefCell<extractor::FontStyleCache>,
+    /// The document's pages, for the walks of [`LoadedPdf::keep_page_runs`].
+    pages: std::cell::OnceCell<std::collections::BTreeMap<u32, lopdf::ObjectId>>,
 }
 
 impl LoadedPdf {
@@ -638,6 +642,8 @@ impl LoadedPdf {
             as_lopdf_loads,
             font_cmaps: std::cell::OnceCell::new(),
             runs: extractor::PageRunCache::default(),
+            styles: Default::default(),
+            pages: std::cell::OnceCell::new(),
         })
     }
 
@@ -721,6 +727,103 @@ impl LoadedPdf {
     /// Forget the page runs kept for later readings of the pages' text.
     pub fn forget_page_runs(&self) {
         self.runs.clear();
+    }
+
+    /// Read page `page` (1-indexed), whose object is `id`, from content its
+    /// caller has read and decoded already, for the next reading of its
+    /// Markdown and text, which then neither reads, decompresses nor decodes
+    /// the page's content streams again: its runs are walked from `decoded`
+    /// and its OCR signals scanned from the streams of `content`. `content`
+    /// is [`PageContent::read`] of the page from [`LoadedPdf::document`]
+    /// and `decoded` is `Content::decode(content.bytes())`; with those, the
+    /// readings return what they return without this call. The runs are
+    /// not kept when the readings' own walk would read the content
+    /// otherwise (under another bound, after stripping a comment, or
+    /// declining more than a million operators), when they are kept
+    /// already or past the bound on kept runs; nothing is kept when `id` is
+    /// not that page's object. Returns whether the runs are kept.
+    pub fn keep_page_runs(
+        &self,
+        page: u32,
+        id: lopdf::ObjectId,
+        content: &PageContent,
+        decoded: &lopdf::content::Content,
+    ) -> bool {
+        if self.pages.get_or_init(|| self.doc.get_pages()).get(&page) != Some(&id) {
+            return false;
+        }
+        let streams: Vec<&[u8]> = content.streams().collect();
+        self.runs.keep_ocr_signals(
+            page,
+            detector::page_ocr_signals_from(&self.doc, id, Some(&streams)),
+        );
+        content.limit == extractor::content_decode::MAX_PAGE_CONTENT_BYTES
+            && extractor::keep_page_runs_from(
+                &self.doc,
+                id,
+                page,
+                self.font_cmaps(),
+                &mut self.styles.borrow_mut(),
+                &self.runs,
+                content.bytes(),
+                decoded,
+            )
+    }
+}
+
+/// A page's content as `Document::get_page_content_with_limit` reads it,
+/// and where each content stream's own bytes lie in it (markitai): the
+/// OCR signals of [`LoadedPdf::keep_page_runs`] scan the streams one by
+/// one.
+pub struct PageContent {
+    bytes: Vec<u8>,
+    streams: Vec<std::ops::Range<usize>>,
+    limit: usize,
+}
+
+impl PageContent {
+    /// Page `id`'s content streams read as
+    /// `doc.get_page_content_with_limit(id, limit)` reads them, with the
+    /// same bytes or the same error: each decompressed within what the
+    /// limit leaves, a stream that does not decompress for another reason
+    /// as it is, and a newline after each.
+    pub fn read(doc: &Document, id: lopdf::ObjectId, limit: usize) -> lopdf::Result<Self> {
+        let exceeded = || lopdf::Error::from(lopdf::DecompressError::MemoryLimitExceeded { limit });
+        let mut bytes = Vec::new();
+        let mut streams = Vec::new();
+        for object_id in doc.get_page_contents(id) {
+            let Ok(stream) = doc.get_object(object_id).and_then(lopdf::Object::as_stream) else {
+                continue;
+            };
+            let start = bytes.len();
+            let remaining = limit.saturating_sub(start);
+            match stream.decompressed_content_with_limit(remaining) {
+                Ok(data) if bytes.is_empty() => bytes = data,
+                Ok(data) => bytes.extend_from_slice(&data),
+                Err(lopdf::Error::Decompress(lopdf::DecompressError::MemoryLimitExceeded {
+                    ..
+                })) => return Err(exceeded()),
+                Err(_) if stream.content.len() > remaining => return Err(exceeded()),
+                Err(_) => bytes.extend_from_slice(&stream.content),
+            }
+            streams.push(start..bytes.len());
+            bytes.push(b'\n');
+        }
+        Ok(Self {
+            bytes,
+            streams,
+            limit,
+        })
+    }
+
+    /// The streams' bytes, each followed by a newline.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Each stream's bytes on its own.
+    fn streams(&self) -> impl Iterator<Item = &[u8]> {
+        self.streams.iter().map(|range| &self.bytes[range.clone()])
     }
 }
 
@@ -965,6 +1068,213 @@ mod loaded_pdf_tests {
         );
         loaded.forget_page_runs();
         assert_eq!(loaded.runs.kept(), (0, 0));
+    }
+
+    /// One page whose `/Contents` are `streams`, as given.
+    fn one_page(streams: Vec<Stream>) -> Vec<u8> {
+        let mut doc = Document::with_version("1.5");
+        let pages = doc.new_object_id();
+        let font = doc.add_object(
+            dictionary! { "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica" },
+        );
+        let contents: Vec<Object> = streams
+            .into_iter()
+            .map(|stream| Object::Reference(doc.add_object(stream)))
+            .collect();
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page", "Parent" => pages, "Contents" => contents,
+            "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } }
+        });
+        doc.objects.insert(
+            pages,
+            dictionary! {
+                "Type" => "Pages", "Count" => 1, "Kids" => vec![Object::Reference(page)],
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()]
+            }
+            .into(),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+        doc.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        bytes
+    }
+
+    fn text(words: &str) -> Vec<u8> {
+        format!("BT /F1 12 Tf 72 700 Td ({words}) Tj ET").into_bytes()
+    }
+
+    /// markitai: `PageContent::read` reads a page's content as lopdf's
+    /// `get_page_content_with_limit` does, error for error, and knows
+    /// where each stream lies in it.
+    #[test]
+    fn page_content_reads_what_lopdf_reads() {
+        let mut packed = Stream::new(dictionary! {}, text("A compressed stream."));
+        packed.compress().unwrap();
+        let plain = Stream::new(dictionary! {}, text("A plain stream."));
+        // A filter lopdf does not decode: the stream is read as it is.
+        let unknown = Stream::new(dictionary! { "Filter" => "JBIG2Decode" }, text("Unknown."));
+        let three = Document::load_mem(&one_page(vec![packed.clone(), plain, unknown])).unwrap();
+        let one = Document::load_mem(&one_page(vec![packed])).unwrap();
+        let (mut read, mut failed) = (0, 0);
+        // Ample; then short of the third stream's own bytes (it does not
+        // decompress), of the second stream and of the first's
+        // decompression, which is also the last of a page of one stream.
+        let cases = [
+            (&three, &[usize::MAX, 64 << 20, 200, 120, 80, 20, 0][..]),
+            (&one, &[usize::MAX, 20][..]),
+        ];
+        for (doc, limits) in cases {
+            let id = doc.get_pages()[&1];
+            for &limit in limits {
+                read_as_lopdf(doc, id, limit, &mut read, &mut failed);
+            }
+        }
+        assert_eq!((read, failed), (4, 5));
+    }
+
+    /// Page `id` read under `limit` by `PageContent::read` and by lopdf:
+    /// the same bytes, each stream as it decompresses on its own, or the
+    /// same error; counted in `read` or `failed`.
+    fn read_as_lopdf(
+        doc: &Document,
+        id: lopdf::ObjectId,
+        limit: usize,
+        read: &mut u32,
+        failed: &mut u32,
+    ) {
+        match (
+            PageContent::read(doc, id, limit),
+            doc.get_page_content_with_limit(id, limit),
+        ) {
+            (Ok(ours), Ok(expected)) => {
+                *read += 1;
+                assert_eq!(ours.bytes(), expected);
+                let streams: Vec<&[u8]> = ours.streams().collect();
+                let objects = doc.get_page_contents(id);
+                assert_eq!(streams.len(), objects.len());
+                for (stream, object) in streams.into_iter().zip(objects) {
+                    let object = doc.get_object(object).unwrap().as_stream().unwrap();
+                    let own = object
+                        .decompressed_content()
+                        .unwrap_or_else(|_| object.content.clone());
+                    assert_eq!(stream, own);
+                }
+            }
+            (Err(ours), Err(expected)) => {
+                *failed += 1;
+                assert_eq!(ours.to_string(), expected.to_string());
+            }
+            (ours, expected) => panic!(
+                "limit {limit}: {:?} against {:?}",
+                ours.map(|ours| ours.bytes.len()),
+                expected.map(|expected| expected.len())
+            ),
+        }
+    }
+
+    /// markitai: runs walked from a caller's decode serve the readings as
+    /// their own walk would, and a page the walk would read otherwise is
+    /// left to it.
+    #[test]
+    fn page_runs_kept_from_a_callers_decode_serve_the_readings() {
+        let decode =
+            |content: &PageContent| lopdf::content::Content::decode(content.bytes()).unwrap();
+        let bytes = two_pages();
+        let fed = LoadedPdf::load_mem(&bytes).unwrap();
+        let pages = fed.document().get_pages();
+        let read = |id| PageContent::read(fed.document(), id, 64 << 20).unwrap();
+        // Another page's object, or another bound than the walk's: nothing
+        // is kept.
+        let first = read(pages[&1]);
+        assert!(!fed.keep_page_runs(1, pages[&2], &first, &decode(&first)));
+        assert!(fed.runs.ocr_signals(1).is_none());
+        let bounded = PageContent::read(fed.document(), pages[&1], 1 << 20).unwrap();
+        assert!(!fed.keep_page_runs(1, pages[&1], &bounded, &decode(&bounded)));
+        assert_eq!(fed.runs.kept(), (0, 0));
+        for (&page, &id) in &pages {
+            let content = read(id);
+            assert!(fed.keep_page_runs(page, id, &content, &decode(&content)));
+            assert_eq!(
+                fed.runs.ocr_signals(page),
+                Some(detector::page_ocr_signals(fed.document(), id))
+            );
+        }
+        assert!(!fed.keep_page_runs(1, pages[&1], &first, &decode(&first)));
+        let kept = fed.runs.kept();
+        let walked = LoadedPdf::load_mem(&bytes).unwrap();
+        assert_eq!(
+            format!("{:?}", fed.pages_markdown(None)),
+            format!("{:?}", walked.pages_markdown(None))
+        );
+        // The readings took the runs kept rather than walking the pages,
+        // which keeps what the walk keeps.
+        assert_eq!(fed.runs.kept(), kept);
+        assert_eq!(walked.runs.kept(), kept);
+        let bold = PositionOptions::new().bold_from_weight(true);
+        assert_eq!(
+            format!("{:?}", fed.text_with_positions_and_rotations(None, bold)),
+            format!("{:?}", walked.text_with_positions_and_rotations(None, bold))
+        );
+
+        // The walk strips a comment before it decodes: not kept, and the
+        // page is walked as before.
+        let commented = one_page(vec![Stream::new(
+            dictionary! {},
+            b"BT /F1 12 Tf 72 700 Td (Words before a note.) Tj % the note\nET".to_vec(),
+        )]);
+        let loaded = LoadedPdf::load_mem(&commented).unwrap();
+        let id = loaded.document().get_pages()[&1];
+        let content = PageContent::read(loaded.document(), id, 64 << 20).unwrap();
+        assert!(!loaded.keep_page_runs(1, id, &content, &decode(&content)));
+        assert_eq!(loaded.runs.kept(), (0, 0));
+        assert_eq!(
+            format!("{:?}", loaded.pages_markdown(None)),
+            format!("{:?}", extract_pages_markdown_mem(&commented, None))
+        );
+    }
+
+    /// markitai: the reading of the pages' Markdown takes the OCR signals
+    /// kept for a page instead of scanning its content again.
+    #[test]
+    fn kept_ocr_signals_are_the_ones_read() {
+        let bytes = two_pages();
+        let loaded = LoadedPdf::load_mem(&bytes).unwrap();
+        let scan = detector::PageOcrSignals {
+            template_image_needs_ocr: true,
+            ..Default::default()
+        };
+        loaded.runs.keep_ocr_signals(2, scan);
+        let pages = loaded.pages_markdown(None).unwrap().pages;
+        assert!(!pages[0].needs_ocr);
+        assert!(pages[1].needs_ocr);
+        assert_eq!(pages[1].ocr_reason.as_deref(), Some(OCR_REASON_SCANNED));
+        loaded.forget_page_runs();
+        assert!(!loaded.pages_markdown(None).unwrap().pages[1].needs_ocr);
+    }
+
+    /// markitai: a file under `PARALLEL_LOAD_MIN_BYTES` is parsed on one
+    /// thread and a larger one on rayon's global pool, to the same objects.
+    #[test]
+    fn small_files_load_on_one_thread() {
+        let small = two_pages();
+        let mut doc = Document::load_mem(&small).unwrap();
+        doc.add_object(Stream::new(
+            dictionary! {},
+            vec![b'x'; PARALLEL_LOAD_MIN_BYTES],
+        ));
+        let mut large = Vec::new();
+        doc.save_to(&mut large).unwrap();
+        for (bytes, threads) in [(&small, 1), (&large, rayon::current_num_threads())] {
+            let doc = load_document_bytes(bytes, None).unwrap();
+            let own = Document::load_mem_with_options(bytes, bounded_load_options()).unwrap();
+            assert!(doc.objects == own.objects && doc.trailer == own.trailer);
+            let loaded = LOAD_THREADS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains(&(bytes.len(), threads));
+            assert!(loaded, "{} bytes", bytes.len());
+        }
     }
 
     #[test]
@@ -1287,9 +1597,14 @@ fn extract_pages_markdown_from_doc(
         // text layer it extracts describes the raster rather than being
         // the page's content. All three signals share one
         // analyze_page_content pass — see page_ocr_signals's doc comment.
-        let signals = lopdf_pages
-            .get(&page_1idx)
-            .map(|&page_id| detector::page_ocr_signals(doc, page_id))
+        // markitai: a loaded document may have scanned them already.
+        let signals = runs
+            .and_then(|runs| runs.ocr_signals(page_1idx))
+            .or_else(|| {
+                lopdf_pages
+                    .get(&page_1idx)
+                    .map(|&page_id| detector::page_ocr_signals(doc, page_id))
+            })
             .unwrap_or_default();
         let has_template_image = signals.template_image_needs_ocr;
         let has_vector_text = signals.has_vector_text;
@@ -4910,7 +5225,50 @@ fn bounded_load_options() -> lopdf::LoadOptions {
     }
 }
 
+/// Files below this many bytes are parsed on one thread (markitai).
+///
+/// lopdf parses a file's objects on rayon's global pool, which starts a
+/// thread per core in the process on first use, and each of them spins a
+/// while whenever it runs out of work. For a small file that costs more than
+/// the parse: processes that load one file, on an 18-core Apple M5 Max, took
+/// 8.2 ms of CPU against 3.1 ms with a one-thread pool for files under
+/// 100 KB, and the load itself 0.63 ms against 0.39 ms. From about 100 KB
+/// the pool shortens the load (1.1 against 1.5 ms at 100–250 KB, 2.2
+/// against 7.0 ms at 0.5–1 MB, 47 against 241 ms for 14 MB) for 7–160 ms
+/// more CPU; from this size it saves a millisecond or more of a
+/// conversion, so larger files keep it.
+#[cfg(not(target_arch = "wasm32"))]
+const PARALLEL_LOAD_MIN_BYTES: usize = 256 * 1024;
+
+/// [`load_document_bytes_here`], on one thread for a file below
+/// [`PARALLEL_LOAD_MIN_BYTES`] (markitai): a one-thread pool of its own runs
+/// lopdf's parallel parse in order, and is gone with the load. The objects
+/// loaded are those the global pool loads, as the lenient load fails no
+/// object and collects them by number; an object that the cross-reference
+/// table does not place and two object streams both hold comes from the
+/// first of them in object order, where the pool keeps whichever of its
+/// threads read first.
 fn load_document_bytes(buf: &[u8], password: Option<&str>) -> Result<Document, lopdf::Error> {
+    #[cfg(not(target_arch = "wasm32"))]
+    if buf.len() < PARALLEL_LOAD_MIN_BYTES {
+        if let Ok(pool) = rayon::ThreadPoolBuilder::new().num_threads(1).build() {
+            return pool.install(|| load_document_bytes_here(buf, password));
+        }
+    }
+    load_document_bytes_here(buf, password)
+}
+
+/// The size of each file loaded by the tests and the threads of the pool
+/// it was parsed on.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+static LOAD_THREADS: std::sync::Mutex<Vec<(usize, usize)>> = std::sync::Mutex::new(Vec::new());
+
+fn load_document_bytes_here(buf: &[u8], password: Option<&str>) -> Result<Document, lopdf::Error> {
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    LOAD_THREADS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push((buf.len(), rayon::current_num_threads()));
     match Document::load_mem_with_options(buf, bounded_load_options()) {
         // Some encrypted PDFs load structurally but leave their streams
         // encrypted (`is_encrypted()` stays true); reading them yields garbage

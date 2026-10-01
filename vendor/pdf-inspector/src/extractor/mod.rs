@@ -655,6 +655,10 @@ pub(crate) struct PageRunCache {
     pages: std::cell::RefCell<HashMap<u32, content_stream::PageRunText>>,
     /// Runs kept so far, against [`MAX_CACHED_RUNS`].
     kept: std::cell::Cell<usize>,
+    /// The OCR signals of pages whose content streams a caller read
+    /// already (see `LoadedPdf::keep_page_runs`), for the reading of the
+    /// pages' Markdown.
+    ocr_signals: std::cell::RefCell<HashMap<u32, crate::detector::PageOcrSignals>>,
 }
 
 /// The runs a [`PageRunCache`] keeps at most; a page past them is walked
@@ -683,10 +687,36 @@ impl PageRunCache {
         self.pages.borrow_mut().insert(page, runs.text.clone());
     }
 
-    /// Forget every page's runs.
+    /// [`PageRunCache::keep`] of runs no reading is waiting for, which are
+    /// moved rather than copied; whether they are kept.
+    fn keep_text(&self, page: u32, text: content_stream::PageRunText) -> bool {
+        let kept = self.kept.get().saturating_add(text.items.len());
+        if kept > MAX_CACHED_RUNS {
+            return false;
+        }
+        self.kept.set(kept);
+        self.pages.borrow_mut().insert(page, text);
+        true
+    }
+
+    fn contains(&self, page: u32) -> bool {
+        self.pages.borrow().contains_key(&page)
+    }
+
+    pub(crate) fn keep_ocr_signals(&self, page: u32, signals: crate::detector::PageOcrSignals) {
+        self.ocr_signals.borrow_mut().insert(page, signals);
+    }
+
+    /// The OCR signals kept for `page`.
+    pub(crate) fn ocr_signals(&self, page: u32) -> Option<crate::detector::PageOcrSignals> {
+        self.ocr_signals.borrow().get(&page).copied()
+    }
+
+    /// Forget every page's runs and OCR signals.
     pub(crate) fn clear(&self) {
         self.pages.borrow_mut().clear();
         self.kept.set(0);
+        self.ocr_signals.borrow_mut().clear();
     }
 
     /// The pages and the runs kept.
@@ -739,9 +769,48 @@ fn read_page_text(
         options.include_invisible,
         style_cache,
         &mut FormWalkBudget::new(),
+        None,
     )?;
     runs.keep(page_num, &page);
     Ok(page.finish(options))
+}
+
+/// Walk page `page_num` (`page_id`) from `decoded`, the decode of `content`,
+/// which its caller read as `Document::get_page_content_with_limit` reads
+/// it under the walk's own bound and decoded with `Content::decode`, and
+/// keep its runs in `runs` for the readings that share them, as their own
+/// walk would (markitai). Nothing is kept, and those readings walk the
+/// page themselves, when the walk would read the content otherwise (see
+/// [`content_stream::walk_reads_as_decoded`]) or the runs are already
+/// kept or past the cache's bound. Returns whether the runs are kept.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn keep_page_runs_from(
+    doc: &Document,
+    page_id: ObjectId,
+    page_num: u32,
+    font_cmaps: &FontCMaps,
+    style_cache: &mut FontStyleCache,
+    runs: &PageRunCache,
+    content: &[u8],
+    decoded: &lopdf::content::Content,
+) -> bool {
+    if runs.contains(page_num) || !content_stream::walk_reads_as_decoded(content) {
+        return false;
+    }
+    // A walk given its content fails nowhere: only the decode can.
+    let Ok(page) = content_stream::read_page_runs(
+        doc,
+        page_id,
+        page_num,
+        font_cmaps,
+        false,
+        style_cache,
+        &mut FormWalkBudget::new(),
+        Some(decoded),
+    ) else {
+        return false;
+    };
+    runs.keep_text(page_num, page.text)
 }
 
 /// The document-level reading of per-page Markdown —
@@ -2722,6 +2791,24 @@ mod tests {
     use crate::text_utils::{is_cjk_char, is_rtl_char, is_rtl_text, sort_line_items};
     use crate::types::{ItemType, PdfLine, TextLine};
     use layout::{detect_columns, is_newspaper_layout, ColumnRegion};
+
+    /// markitai: runs moved into the page-run cache count against its bound
+    /// as copied runs do, and a page past it is not kept.
+    #[test]
+    fn moved_runs_respect_the_cache_bound() {
+        let runs = |count: usize| {
+            let mut text = content_stream::PageRunText::empty();
+            text.items = vec![make_item("run", 72.0, 700.0, 20.0); count];
+            text
+        };
+        let cache = PageRunCache::default();
+        assert!(cache.keep_text(1, runs(3)));
+        cache.kept.set(MAX_CACHED_RUNS - 2);
+        assert!(cache.keep_text(2, runs(2)));
+        assert!(!cache.keep_text(3, runs(1)));
+        assert!(cache.contains(2) && !cache.contains(3));
+        assert_eq!(cache.kept(), (2, MAX_CACHED_RUNS));
+    }
 
     /// Glyph-per-item run at `fs`=12 with the given inter-glyph gap (pt).
     #[test]
