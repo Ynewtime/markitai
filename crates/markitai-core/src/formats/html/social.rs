@@ -5,6 +5,7 @@
 //! `data-testid` (`tweet`, `User-Name`, `tweetText`, `tweetPhoto`), the 2026
 //! one carries `data-tweet-id` on the post and no test ids at all.
 
+use super::Attribute;
 use super::{Announcement, render_clean, selector};
 use crate::Result;
 use scraper::{ElementRef, Html};
@@ -17,8 +18,8 @@ fn inside(element: ElementRef<'_>, container: Option<ElementRef<'_>>) -> bool {
 
 fn is_post(element: ElementRef<'_>) -> bool {
     element.value().name() == "article"
-        && (element.value().attr("data-testid") == Some("tweet")
-            || element.value().attr("data-tweet-id").is_some())
+        && (element.value().attribute("data-testid") == Some("tweet")
+            || element.value().attribute("data-tweet-id").is_some())
 }
 
 /// The quoted post inside a post: the older page's quote card, the newer
@@ -54,7 +55,7 @@ fn author(
         if inside(link, exclude) || link.select(&selector("img")).next().is_some() {
             continue;
         }
-        let href = link.value().attr("href").unwrap_or("");
+        let href = link.value().attribute("href").unwrap_or("");
         if href.contains("/status/") {
             continue;
         }
@@ -119,9 +120,9 @@ fn media(post: ElementRef<'_>, exclude: Option<ElementRef<'_>>) -> Vec<String> {
             continue;
         }
         let url = if element.value().name() == "video" {
-            element.value().attr("poster")
+            element.value().attribute("poster")
         } else {
-            element.value().attr("src")
+            element.value().attribute("src")
         };
         if let Some(url) = url.map(str::trim).filter(|url| url.starts_with("https://"))
             && !urls.iter().any(|seen| seen == url)
@@ -152,7 +153,7 @@ fn shown_date(
         .find(|element| !inside(*element, exclude))
     {
         return (
-            time.value().attr("datetime").map(str::to_owned),
+            time.value().attribute("datetime").map(str::to_owned),
             Some(text_of(time)),
         );
     }
@@ -213,8 +214,8 @@ fn is_x_page(document: &Html, base: Option<&Url>) -> bool {
         .any(|element| {
             element
                 .value()
-                .attr("src")
-                .or_else(|| element.value().attr("poster"))
+                .attribute("src")
+                .or_else(|| element.value().attribute("poster"))
                 .and_then(|source| Url::parse(source).ok())
                 .is_some_and(|url| url.host_str() == Some("pbs.twimg.com"))
         })
@@ -237,11 +238,11 @@ pub(super) fn post(document: &Html, base: Option<&Url>) -> Result<Option<Announc
                 .filter_map(ElementRef::wrap)
                 .any(|parent| {
                     parent.value().name() == "section"
-                        || parent.value().attr("data-testid") == Some("card.wrapper")
-                        || (parent.value().attr("role") == Some("link")
+                        || parent.value().attribute("data-testid") == Some("card.wrapper")
+                        || (parent.value().attribute("role") == Some("link")
                             && parent
                                 .value()
-                                .attr("data-href")
+                                .attribute("data-href")
                                 .is_some_and(|href| href.contains("/status/")))
                 })
     }) else {
@@ -289,7 +290,7 @@ pub(super) fn post(document: &Html, base: Option<&Url>) -> Result<Option<Announc
             }
         }
         lines.extend(media(quote, None).iter().map(|url| image_markdown(url)));
-        if let Some(href) = quote.value().attr("data-href")
+        if let Some(href) = quote.value().attribute("data-href")
             && let Some(url) = Url::parse("https://x.com")
                 .ok()
                 .and_then(|x| x.join(href).ok())

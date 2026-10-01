@@ -1,21 +1,25 @@
+use super::Attribute;
 use scraper::{ElementRef, Html, Node};
 
 fn token(element: ElementRef<'_>, attribute: &str, expected: &str) -> bool {
-    element.value().attr(attribute).is_some_and(|value| {
+    element.value().attribute(attribute).is_some_and(|value| {
         value
             .split_ascii_whitespace()
             .any(|part| part.eq_ignore_ascii_case(expected))
     })
 }
 
+/// Whether a class word or the id is one of `names`. The attributes are read
+/// once per element, not once per name: the lists are long and every element
+/// of a page is asked several times.
 fn named(element: ElementRef<'_>, names: &[&str]) -> bool {
-    names.iter().any(|name| {
-        token(element, "class", name)
-            || element
-                .value()
-                .attr("id")
-                .is_some_and(|id| id.eq_ignore_ascii_case(name))
-    })
+    let value = element.value();
+    value
+        .attribute("class")
+        .into_iter()
+        .flat_map(str::split_ascii_whitespace)
+        .chain(value.attribute("id"))
+        .any(|word| names.iter().any(|name| word.eq_ignore_ascii_case(name)))
 }
 
 pub(super) fn note(element: ElementRef<'_>) -> bool {
@@ -201,7 +205,7 @@ fn related_cards(element: ElementRef<'_>) -> bool {
 /// (`[&_.x]:hidden`) target other elements. Fragments (books, email) come
 /// without the site's style sheet, so this is full-page chrome only.
 fn hidden_class(element: ElementRef<'_>) -> bool {
-    let Some(classes) = element.value().attr("class") else {
+    let Some(classes) = element.value().attribute("class") else {
         return false;
     };
     let mut hidden = false;
@@ -240,7 +244,7 @@ fn contains_math(element: ElementRef<'_>) -> bool {
         .filter_map(ElementRef::wrap)
         .any(|node| {
             node.value().name() == "math"
-                || node.value().attr("data-mathml").is_some()
+                || node.value().attribute("data-mathml").is_some()
                 || token(node, "class", "katex-mathml")
         })
 }
@@ -328,15 +332,19 @@ pub(super) fn excluded(element: ElementRef<'_>) -> bool {
     {
         return true;
     }
-    if element.value().attr("data-testid").is_some_and(|value| {
-        matches!(
-            value,
-            "issue-metadata-sticky"
-                | "issue-viewer-metadata-container"
-                | "issue-viewer-metadata-pane"
-                | "comment-header-right-side-items"
-        )
-    }) {
+    if element
+        .value()
+        .attribute("data-testid")
+        .is_some_and(|value| {
+            matches!(
+                value,
+                "issue-metadata-sticky"
+                    | "issue-viewer-metadata-container"
+                    | "issue-viewer-metadata-pane"
+                    | "comment-header-right-side-items"
+            )
+        })
+    {
         return true;
     }
     matches!(element.value().name(), "div" | "section" | "aside") && related_cards(element)
@@ -353,7 +361,7 @@ enum Kind {
 
 fn kind(element: ElementRef<'_>) -> Kind {
     let tag = element.value().name();
-    if element.value().attr("data-testid") == Some("issue-viewer-container") {
+    if element.value().attribute("data-testid") == Some("issue-viewer-container") {
         return Kind::Discussion;
     }
     if tag == "article"
@@ -467,7 +475,7 @@ const FURNITURE_WORDS: &[&str] = &[
 /// names page furniture.
 fn furniture(element: ElementRef<'_>) -> bool {
     ["class", "id"].iter().any(|attribute| {
-        element.value().attr(attribute).is_some_and(|value| {
+        element.value().attribute(attribute).is_some_and(|value| {
             value
                 .split(|c: char| c.is_ascii_whitespace() || matches!(c, '-' | '_'))
                 .any(|word| {
@@ -485,7 +493,7 @@ fn furniture(element: ElementRef<'_>) -> bool {
 pub(super) fn featured_comment(element: ElementRef<'_>) -> bool {
     ["class", "id"]
         .iter()
-        .filter_map(|attribute| element.value().attr(attribute))
+        .filter_map(|attribute| element.value().attribute(attribute))
         .flat_map(str::split_ascii_whitespace)
         .any(|token| {
             let block = token.split("__").next().unwrap_or(token);
@@ -523,7 +531,7 @@ pub(super) fn teaser(element: ElementRef<'_>) -> bool {
 
 /// A link to another page, not a fragment of this one.
 fn outward(link: ElementRef<'_>) -> bool {
-    link.value().attr("href").is_some_and(|href| {
+    link.value().attribute("href").is_some_and(|href| {
         let href = href.trim();
         !href.is_empty() && !href.starts_with('#') && !href.starts_with("javascript:")
     })
@@ -542,10 +550,11 @@ pub(super) fn contents<'a>(root: ElementRef<'a>, document: ElementRef<'a>) -> Ve
     let mut targets = std::collections::HashSet::new();
     for node in document.descendants().filter_map(ElementRef::wrap) {
         let value = node.value();
-        let Some(id) = value
-            .attr("id")
-            .or_else(|| (value.name() == "a").then(|| value.attr("name")).flatten())
-        else {
+        let Some(id) = value.attribute("id").or_else(|| {
+            (value.name() == "a")
+                .then(|| value.attribute("name"))
+                .flatten()
+        }) else {
             continue;
         };
         let labels_heading = heading(node)
@@ -582,7 +591,7 @@ pub(super) fn contents<'a>(root: ElementRef<'a>, document: ElementRef<'a>) -> Ve
             Node::Element(element) if element.name() == "a" => {
                 links += 1;
                 element
-                    .attr("href")
+                    .attribute("href")
                     .and_then(|href| href.trim().strip_prefix('#'))
                     .is_some_and(|fragment| targets.contains(decoded(fragment).as_ref()))
             }
@@ -831,6 +840,20 @@ mod tests {
     }
 
     #[test]
+    fn names_match_whole_class_words_and_ids_in_any_case() {
+        let document = Html::parse_document(
+            "<main><p>Body text.</p><div class='Widget RELATED-POSTS'><p>x</p></div>\
+             <div id='SiteSub'>From Wikipedia</div><div class='related-postsx'><p>y</p></div>\
+             <div id='related-posts extra'><p>z</p></div></main>",
+        );
+        assert!(excluded(element(&document, ".Widget")));
+        assert!(excluded(element(&document, "#SiteSub")));
+        assert!(!excluded(element(&document, ".related-postsx")));
+        // An id is one name, not words.
+        assert!(!excluded(element(&document, "main > div:last-child")));
+    }
+
+    #[test]
     fn related_cards_need_both_label_and_repeated_card_structure() {
         let document = Html::parse_document(
             r#"<main><section id="widget"><div><h3>Related Posts</h3></div><div><a href="/one"><article><h3>One</h3><span>3 min</span></article></a></div><div><a href="/two"><article><h3>Two</h3></article></a></div></section><section id="prose"><h2>Related Posts</h2><p>Our article compares publishing systems.</p><a href="/one"><h3>Study one</h3></a><a href="/two"><h3>Study two</h3></a></section><section id="ordinary"><h2>Recommended architecture</h2><a href="/one"><h3>One</h3></a><a href="/two"><h3>Two</h3></a></section></main>"#,
@@ -846,7 +869,7 @@ mod tests {
         let document = Html::parse_document(
             r#"<main><article id="story"><p>Opening narrative.</p><div class="injected-story-block"><h2>Related Stories</h2><div class="story-list"><article class="o-card"><a href="/one"><img src="one.png"></a><h3><a href="/one">One</a></h3></article><article class="o-card"><h3><a href="/two">Two</a></h3></article></div></div><p>Concluding evidence.</p></article></main>"#,
         );
-        assert_eq!(select(&document).value().attr("id"), Some("story"));
+        assert_eq!(select(&document).value().attribute("id"), Some("story"));
         assert!(excluded(element(&document, ".injected-story-block")));
         assert!(!excluded(element(&document, "#story")));
     }
@@ -868,7 +891,7 @@ mod tests {
         let document = Html::parse_document(&format!(
             r#"<body><div class="js-article-content" id="story"><h2>Section</h2><p>The article itself is short.</p></div><div class="recommended-footer"><p>{rail}</p></div><div class="newsletter-box"><p>{rail}</p></div><div class="site-disclaimers"><p>{rail}</p></div></body>"#
         ));
-        assert_eq!(select(&document).value().attr("id"), Some("story"));
+        assert_eq!(select(&document).value().attribute("id"), Some("story"));
         // The same rails' text in unnamed blocks is page text to keep.
         let document = Html::parse_document(&format!(
             r#"<body><div class="js-article-content" id="story"><h2>Section</h2><p>The article itself is short.</p></div><div><p>{rail}</p></div></body>"#
@@ -884,7 +907,7 @@ mod tests {
                 r#"<body><div class="hero"><a href="/story">Story</a></div><div class="{name}" id="story"><p>The article itself is short.</p></div><div class="panel nocontent"><p>{rail}</p></div></body>"#
             ));
             assert_eq!(
-                select(&document).value().attr("id"),
+                select(&document).value().attribute("id"),
                 Some("story"),
                 "{name}"
             );
@@ -919,7 +942,7 @@ mod tests {
             ))
         };
         assert_eq!(
-            select(&page(&cards("/article/"))).value().attr("id"),
+            select(&page(&cards("/article/"))).value().attribute("id"),
             Some("story")
         );
         // Cards linking within this page, and a second full article, are
@@ -969,7 +992,7 @@ mod tests {
             let document = Html::parse_document(&format!(
                 "<article id='short'><p>A<sup>1</sup> and B<sup>2</sup>.</p></article><aside><p>Unrelated advertising exceeds the short article.</p><p>More advertising.</p></aside>{notes}"
             ));
-            assert_eq!(select(&document).value().attr("id"), Some("short"));
+            assert_eq!(select(&document).value().attribute("id"), Some("short"));
         }
     }
 
@@ -990,12 +1013,15 @@ mod tests {
         let document = Html::parse_document(
             "<main><div><p>Repository file listing and controls dominate the surrounding layout.</p></div><article class='markdown-body entry-content' itemprop='text'><h1>README</h1><p>Install the package.</p></article></main>",
         );
-        assert_eq!(select(&document).value().attr("itemprop"), Some("text"));
+        assert_eq!(
+            select(&document).value().attribute("itemprop"),
+            Some("text")
+        );
         let discussion = Html::parse_document(
             "<main><p>Repository controls.</p><div data-testid='issue-viewer-container'><h1>Issue title</h1><div class='markdown-body'><p>Problem.</p></div><div class='react-comments-container'><div class='markdown-body'><p>Maintainer's solution.</p></div></div><div data-testid='issue-viewer-metadata-container'>Sidebar controls</div></div></main>",
         );
         assert_eq!(
-            select(&discussion).value().attr("data-testid"),
+            select(&discussion).value().attribute("data-testid"),
             Some("issue-viewer-container")
         );
         assert!(!excluded(element(&discussion, ".react-comments-container")));

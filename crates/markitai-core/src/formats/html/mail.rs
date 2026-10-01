@@ -4,6 +4,7 @@
 //! message body of the client (Gmail's `a3s`) is read this way; an article or
 //! a mail fragment quoting a reply keeps it.
 
+use super::Attribute;
 use super::has_class as class;
 use scraper::ElementRef;
 
@@ -19,10 +20,10 @@ fn quoted(element: ElementRef<'_>) -> bool {
     class(element, "gmail_quote")
         || class(element, "gmail_attr")
         || class(element, "adL")
-        || value.attr("role") == Some("button")
+        || value.attribute("role") == Some("button")
         || (value.name() == "blockquote"
             && (value
-                .attr("type")
+                .attribute("type")
                 .is_some_and(|kind| kind.eq_ignore_ascii_case("cite"))
                 || element
                     .prev_siblings()
@@ -35,7 +36,7 @@ fn quoted(element: ElementRef<'_>) -> bool {
 fn reply_header(element: ElementRef<'_>) -> bool {
     element
         .value()
-        .attr("id")
+        .attribute("id")
         .is_some_and(|id| id.ends_with("divRplyFwdMsg"))
 }
 

@@ -19,6 +19,16 @@ which also pulled in xml5ever. This copy parses with scraper's own entry point
 and walks scraper's tree, so one parser instance serves both parses and those
 crates leave the dependency graph.
 
+Parsing the cleaned markup again still cost a run of html5ever over every page
+(about 9% of Markitai's HTML conversion time once its attribute lookups were
+fixed). `TreeWriter` builds the tree that markup parses into from its parts as
+Markitai writes them, so a page is parsed once. Building it with html5ever's
+own tree builder (fed tokens instead of text) would have added a second
+instance of that generic code, 132,320 bytes in a release CLI (scraper's
+instance is private to its parse functions); the writer instead applies the
+tree construction rules markup written from a tree needs and leaves the rest
+to the parser.
+
 ## Changes
 
 Each change is marked `markitai` in a comment.
@@ -65,11 +75,35 @@ Each change is marked `markitai` in a comment.
 - `tests/code_tests.rs`, `tests/basic_tests.rs`: the three tests that used the
   rcdom tree or `Attribute` directly use the scraper equivalents;
   `faithful_mode_inline` expects attributes in name order (below).
+- `src/tree_writer.rs` (added) and its export from `src/lib.rs`: `TreeWriter`
+  takes start tags, attributes, end tags and text, standing for the markup
+  `<name a="v">`, `</name>` and escaped text, and returns the `scraper::Html`
+  that `Html::parse_document` builds from that markup, or `None` where it
+  leaves the markup to the parser. It reads text and names as html5ever's
+  tokenizer does (line breaks, NUL, a leading byte order mark, lowercased
+  names, the first of two attributes with one name, the raw text of `title`,
+  `textarea`, `style`, `xmp`, `iframe`, `noembed`, `noframes`, `noscript` and
+  `plaintext`) and applies html5ever 0.39's tree construction rules for the
+  implied `html`, `head` and `body`, head elements before and after the head,
+  a second `<html>` or `<body>` lending attributes, tables, sections, rows and
+  column groups, the line feed after `<pre>`, `<listing>` and `<textarea>`,
+  and ignored end tags of elements closed at once. Markup the parser would
+  rearrange (a block, heading, list item, `<hr>`, `<xmp>` or `<plaintext>`
+  closing an open paragraph, nested headings, list items, links, buttons and
+  `nobr`, ruby annotations closing elements, text or elements moved out of a
+  table, implied table parts, an end tag that is not the current element's)
+  or read otherwise (foreign content, forms, selects, templates, frames,
+  scripts, a `meta` naming an encoding, names it would split or read as text,
+  a NUL outside the body) returns `None`.
 - `tests/markitai_tests.rs` (added): merging as upstream, including what is
   never merged, text read after a merge (math spans, faithful HTML), template
   contents, an unchanged tree after converting it twice, the scripting option
   and `Element::attr`. Each expected string is htmd 0.5.5's output for the
-  same input.
+  same input. The `TreeWriter` tests compare its trees with
+  `Html::parse_document`'s for the same markup: the rules above case by case,
+  what it leaves to the parser, and 10,000 generated trees written as markup
+  (more than 85% built) and 10,000 random part sequences (more than 20% built),
+  every built tree equal to the parsed one.
 
 ## Differences from upstream
 
@@ -83,6 +117,8 @@ Each change is marked `markitai` in a comment.
 - html5ever 0.39 reconstructs active formatting elements before an `<svg>` or
   `<math>` start tag, as the HTML standard requires and 0.38 did not, so a
   formatting element closed implicitly just before foreign content wraps it.
+- `TreeWriter` is an addition; nothing upstream calls it. A tree it builds has
+  no parse errors recorded in `Html::errors`, which this crate does not read.
 
 ## Verification
 
@@ -102,6 +138,16 @@ The upstream suite, run in an isolated copy with default features, passes
 (96 tests, one expectation updated for attribute order) with the 7 added
 tests; each of 13 mutations of the port fails an added test. `cargo clippy
 --all-targets` reports nothing, as for upstream.
+
+For `TreeWriter`, the same isolated copy passes the suite with 13 Markitai
+tests; 36 of 37 mutations of its rules fail a test, and the one that does not
+(ignoring an open `select` before `<input>`/`<hr>`) cannot change a result,
+since the writer leaves every `<select>` to the parser. On Markitai's HTML
+corpora (2,049 pages, EML and MSG files of the html-single-parse round) every
+tree it built was compared with the parsed markup in a test build and was
+equal; it left 54 conversions to the parser (52 with inline SVG, 2 with a
+block inside a paragraph). `cargo clippy --all-targets` and `cargo clippy --lib
+--no-default-features` report nothing.
 
 `rustfmt` 1.9 with default settings leaves the modified files unchanged and
 would join one call onto a line in three unmodified upstream files

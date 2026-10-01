@@ -8,6 +8,7 @@
 //! marks (a reading time, a count of likes) are read from their words, and only
 //! a featured comment inside the body is known by its class name.
 
+use super::Attribute;
 use super::article::{discarded, featured_comment, heading, note, structured_page, teaser};
 use scraper::{ElementRef, Node};
 
@@ -138,7 +139,7 @@ impl<'a> Region<'a> {
             let name = value.name();
             let title = heading(element) && plain;
             let plain =
-                plain && !heading(element) && !(name == "a" && value.attr("href").is_some());
+                plain && !heading(element) && !(name == "a" && value.attribute("href").is_some());
             let (mut text, mut total, mut paragraphs) = (0, 0, 0);
             for child in element.children() {
                 if let Node::Text(run) = child.value() {
@@ -155,7 +156,7 @@ impl<'a> Region<'a> {
                 parent,
                 text,
                 total,
-                links: usize::from(name == "a" && value.attr("href").is_some()),
+                links: usize::from(name == "a" && value.attribute("href").is_some()),
                 paragraphs,
                 keep: matches!(name, "pre" | "math")
                     || note(element)
@@ -173,9 +174,9 @@ impl<'a> Region<'a> {
                 end: index + 1,
                 dated: name == "time",
                 picture: matches!(name, "img" | "picture"),
-                author: value.attr("itemprop") == Some("author")
+                author: value.attribute("itemprop") == Some("author")
                     || (name == "a"
-                        && value.attr("rel").is_some_and(|rel| {
+                        && value.attribute("rel").is_some_and(|rel| {
                             rel.split_ascii_whitespace()
                                 .any(|token| token.eq_ignore_ascii_case("author"))
                         })),
@@ -316,7 +317,7 @@ impl<'a> Region<'a> {
         fn class<'a>(node: &Mass<'a>) -> Option<&'a str> {
             node.element
                 .value()
-                .attr("class")
+                .attribute("class")
                 .and_then(|class| class.split_ascii_whitespace().next())
         }
         let (first, next) = (&self.nodes[post], &self.nodes[reply]);
@@ -385,7 +386,7 @@ impl<'a> Region<'a> {
                 && let Some(date) = node
                     .element
                     .value()
-                    .attr("datetime")
+                    .attribute("datetime")
                     .and_then(|stamp| stamp.trim().get(..10))
             {
                 if dates.contains(&date) {
@@ -824,7 +825,7 @@ mod tests {
             .map(|element| {
                 element
                     .value()
-                    .attr("id")
+                    .attribute("id")
                     .unwrap_or(element.value().name())
                     .to_owned()
             })

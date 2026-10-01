@@ -1,3 +1,4 @@
+use super::Attribute;
 use crate::Result;
 use scraper::{ElementRef, Html, Node};
 use std::collections::{HashMap, HashSet};
@@ -31,7 +32,7 @@ fn stream_id(id: &str, prefix: &str) -> bool {
 
 fn hidden(element: ElementRef<'_>) -> bool {
     super::is_hidden(element)
-        || element.value().attr("aria-hidden") == Some("true")
+        || element.value().attribute("aria-hidden") == Some("true")
         || element
             .value()
             .classes()
@@ -60,9 +61,9 @@ fn snapshot_context(element: ElementRef<'_>) -> bool {
 
 fn segment(element: ElementRef<'_>) -> bool {
     element.value().name() == "div"
-        && element.value().attr("hidden").is_some()
-        && element.value().attr("style").is_none()
-        && element.value().attr("aria-hidden").is_none()
+        && element.value().attribute("hidden").is_some()
+        && element.value().attribute("style").is_none()
+        && element.value().attribute("aria-hidden").is_none()
         && !element
             .value()
             .classes()
@@ -90,7 +91,7 @@ fn placeholder(element: ElementRef<'_>) -> bool {
 fn executable_script(element: ElementRef<'_>) -> bool {
     element.value().name() == "script"
         && !inert_ancestor(element)
-        && element.value().attr("type").is_none_or(|kind| {
+        && element.value().attribute("type").is_none_or(|kind| {
             matches!(
                 kind.trim().to_ascii_lowercase().as_str(),
                 "" | "module"
@@ -130,7 +131,7 @@ impl<'a> Index<'a> {
             let Some(element) = ElementRef::wrap(node) else {
                 continue;
             };
-            if let Some(id) = element.value().attr("id")
+            if let Some(id) = element.value().attribute("id")
                 && ["B:", "S:", "P:"]
                     .iter()
                     .any(|prefix| stream_id(id, prefix))
@@ -144,7 +145,7 @@ impl<'a> Index<'a> {
             }
             if executable_script(element) {
                 index.has_script = true;
-                if element.value().attr("src").is_none() {
+                if element.value().attribute("src").is_none() {
                     scripts.push(element);
                 }
             }
@@ -317,15 +318,15 @@ fn semantic(element: ElementRef<'_>) -> bool {
     matches!(element.value().name(), "article" | "main")
         || element
             .value()
-            .attr("role")
+            .attribute("role")
             .is_some_and(|v| v.split_ascii_whitespace().any(|p| p == "main"))
         || element
             .value()
-            .attr("itemprop")
+            .attribute("itemprop")
             .is_some_and(|v| v.split_ascii_whitespace().any(|p| p == "articleBody"))
         || element
             .value()
-            .attr("id")
+            .attribute("id")
             .into_iter()
             .chain(element.value().classes())
             .any(|name| {
@@ -474,7 +475,7 @@ fn snapshot(document: &Html, index: &Index<'_>) -> Option<Vec<Instruction>> {
         let mut outer = None;
         for ancestor in target.ancestors().filter_map(ElementRef::wrap) {
             if hidden(ancestor) {
-                let id = ancestor.value().attr("id")?;
+                let id = ancestor.value().attribute("id")?;
                 if outer.is_some() || !stream_id(id, "S:") || !segment(ancestor) {
                     return None;
                 }
@@ -542,7 +543,7 @@ pub(super) fn restore(document: &mut Html) -> Result<()> {
         .filter_map(|element| {
             element
                 .value()
-                .attr("id")
+                .attribute("id")
                 .filter(|id| {
                     ["B:", "S:", "P:"]
                         .iter()
@@ -777,7 +778,7 @@ mod tests {
                 .root_element()
                 .descendants()
                 .filter_map(ElementRef::wrap)
-                .filter(|e| e.value().attr("id") == Some("S:7"))
+                .filter(|e| e.value().attribute("id") == Some("S:7"))
                 .count(),
             1
         );

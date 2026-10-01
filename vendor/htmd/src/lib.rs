@@ -4,6 +4,8 @@ mod html_escape;
 pub(crate) mod node_util;
 pub mod options;
 pub(crate) mod text_util;
+// markitai: builds the tree of markup from its parts as they are written.
+mod tree_writer;
 
 use dom_walker::walk_node;
 use element_handler::{ElementHandler, ElementHandlers, Walker};
@@ -14,6 +16,8 @@ use scraper::Html;
 pub use scraper::Node;
 
 use crate::element_handler::Handlers;
+// markitai: see `tree_writer`.
+pub use tree_writer::TreeWriter;
 
 /// markitai: a node of the scraper tree, the type handlers receive and walk.
 pub type NodeRef<'a> = ego_tree::NodeRef<'a, Node>;

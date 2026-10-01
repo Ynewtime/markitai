@@ -1,6 +1,7 @@
 //! Callouts and alerts as Obsidian-style blockquotes, as the reference's web
 //! extraction renders them: Obsidian callouts, GitHub alerts, Bootstrap alerts,
 //! callout asides and Hugo/Docsy admonitions.
+use super::Attribute;
 use scraper::{ElementRef, Node};
 
 const ADMONITION_TYPES: [&str; 14] = [
@@ -33,7 +34,7 @@ pub(super) struct Callout<'a> {
 fn classes<'a>(element: ElementRef<'a>) -> impl Iterator<Item = &'a str> {
     element
         .value()
-        .attr("class")
+        .attribute("class")
         .unwrap_or("")
         .split_whitespace()
 }
@@ -90,7 +91,7 @@ fn obsidian(element: ElementRef<'_>) -> Option<Callout<'_>> {
     if element.value().name() != "div" || !has_class(element, "callout") {
         return None;
     }
-    let kind = element.value().attr("data-callout")?;
+    let kind = element.value().attribute("data-callout")?;
     let content = element
         .children()
         .filter_map(ElementRef::wrap)
@@ -108,7 +109,7 @@ fn obsidian(element: ElementRef<'_>) -> Option<Callout<'_>> {
         .next()
         .map(|title| text(title, " "))
         .unwrap_or_default();
-    let fold = match element.value().attr("data-callout-fold") {
+    let fold = match element.value().attribute("data-callout-fold") {
         Some("-") => "-",
         Some("+") => "+",
         _ if has_class(element, "is-collapsed") => "-",
@@ -162,7 +163,7 @@ fn aside(element: ElementRef<'_>) -> Option<Callout<'_>> {
     if element.value().name() != "aside"
         || !element
             .value()
-            .attr("class")
+            .attribute("class")
             .is_some_and(|value| value.to_lowercase().contains("callout"))
     {
         return None;
@@ -180,7 +181,7 @@ fn aside(element: ElementRef<'_>) -> Option<Callout<'_>> {
 }
 
 fn admonition(element: ElementRef<'_>) -> Option<Callout<'_>> {
-    if !has_class(element, "admonition") || element.value().attr("data-callout").is_some() {
+    if !has_class(element, "admonition") || element.value().attribute("data-callout").is_some() {
         return None;
     }
     let kind = classes(element)

@@ -2,6 +2,7 @@
 //! stories. The pages lay everything out in nested tables, so the reply
 //! structure of a discussion is only visible in each comment's indent.
 
+use super::Attribute;
 use super::{Announcement, render_clean, selector};
 use crate::Result;
 use scraper::{ElementRef, Html};
@@ -48,7 +49,7 @@ fn escaped(text: &str) -> String {
 
 /// The date (`YYYY-MM-DD`) of an age element's timestamp title.
 fn date(age: ElementRef<'_>) -> Option<String> {
-    let stamp = age.value().attr("title")?.split_whitespace().next()?;
+    let stamp = age.value().attribute("title")?.split_whitespace().next()?;
     let day = stamp.split('T').next()?;
     (day.len() == 10 && day.as_bytes()[4] == b'-' && day.as_bytes()[7] == b'-')
         .then(|| day.to_owned())
@@ -66,13 +67,13 @@ fn depth(row: ElementRef<'_>) -> usize {
     };
     if let Some(level) = indent
         .value()
-        .attr("indent")
+        .attribute("indent")
         .and_then(|value| value.trim().parse().ok())
     {
         return level;
     }
     first(indent, "img")
-        .and_then(|image| image.value().attr("width"))
+        .and_then(|image| image.value().attribute("width"))
         .and_then(|width| width.trim().parse::<usize>().ok())
         .map_or(0, |width| width / INDENT_PIXELS)
 }
@@ -95,7 +96,7 @@ fn comment(container: ElementRef<'_>, site: &Url, linked: bool) -> Result<Option
         && let Some(day) = date(age)
     {
         let permalink = first(age, "a")
-            .and_then(|anchor| anchor.value().attr("href"))
+            .and_then(|anchor| anchor.value().attribute("href"))
             .and_then(|href| link(site, href));
         header.push(match permalink.filter(|_| linked) {
             Some(url) => format!("[{day}]({url})"),
@@ -197,7 +198,7 @@ fn item(document: &Html, item: ElementRef<'_>, site: &Url) -> Result<Announcemen
         // A text post links to itself.
         if let Some(url) = story
             .value()
-            .attr("href")
+            .attribute("href")
             .filter(|href| !href.trim_start().starts_with("item?"))
             .and_then(|href| link(site, href))
         {
@@ -260,7 +261,11 @@ fn listing(document: &Html, site: &Url) -> Option<Announcement> {
         let Some(title) = first(story, ".titleline > a") else {
             continue;
         };
-        let Some(url) = title.value().attr("href").and_then(|href| link(site, href)) else {
+        let Some(url) = title
+            .value()
+            .attribute("href")
+            .and_then(|href| link(site, href))
+        else {
             continue;
         };
         let mut line = format!("[{}]({url})", escaped(&text_of(title)));
@@ -282,7 +287,7 @@ fn listing(document: &Html, site: &Url) -> Option<Announcement> {
             }
             if let Some((label, href)) = details.select(&selector("a[href]")).find_map(|anchor| {
                 let label = text_of(anchor);
-                let href = anchor.value().attr("href")?;
+                let href = anchor.value().attribute("href")?;
                 (label.ends_with("comments") || label.ends_with("comment") || label == "discuss")
                     .then_some((label, href))
             }) && let Some(url) = link(site, href)
@@ -308,7 +313,7 @@ fn listing(document: &Html, site: &Url) -> Option<Announcement> {
     if let Some(url) = document
         .select(&selector("a.morelink"))
         .next()
-        .and_then(|more| more.value().attr("href"))
+        .and_then(|more| more.value().attribute("href"))
         .and_then(|href| link(site, href))
     {
         markdown.push_str(&format!("\n\n[More]({url})"));

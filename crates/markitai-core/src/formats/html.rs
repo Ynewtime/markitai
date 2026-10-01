@@ -17,6 +17,24 @@ fn selector(query: &str) -> Selector {
     Selector::parse(query).expect("static selector")
 }
 
+/// An element's attribute by name, compared as text. scraper's `Element::attr`
+/// gives the same answer (the attribute with this local name and no namespace)
+/// but interns the name on every call, which for a name outside html5ever's
+/// static set takes a global lock and an allocation; the cleaner asks for
+/// attributes of every element several times over.
+trait Attribute {
+    fn attribute(&self, name: &str) -> Option<&str>;
+}
+
+impl Attribute for scraper::node::Element {
+    fn attribute(&self, name: &str) -> Option<&str> {
+        self.attrs
+            .iter()
+            .find(|(key, _)| &*key.local == name && key.prefix.is_none() && key.ns.is_empty())
+            .map(|(_, value)| &**value)
+    }
+}
+
 fn plain(element: ElementRef<'_>) -> String {
     element
         .text()
@@ -31,12 +49,12 @@ fn meta(document: &Html, keys: &[&str]) -> Option<String> {
         for element in document.select(&selector("meta")) {
             let name = element
                 .value()
-                .attr("property")
-                .or_else(|| element.value().attr("name"));
+                .attribute("property")
+                .or_else(|| element.value().attribute("name"));
             if name.is_some_and(|name| name.eq_ignore_ascii_case(key))
                 && let Some(value) = element
                     .value()
-                    .attr("content")
+                    .attribute("content")
                     .map(str::trim)
                     .filter(|v| !v.is_empty())
             {
@@ -72,7 +90,7 @@ fn jsonld_documents(document: &Html) -> Vec<Value> {
     for script in document.select(&selector("script")) {
         if script
             .value()
-            .attr("type")
+            .attribute("type")
             .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("application/ld+json"))
             && let Ok(value) = serde_json::from_str(&script.text().collect::<String>())
         {
@@ -182,6 +200,106 @@ fn escaped(value: &str, output: &mut String) {
     }
 }
 
+/// The element htmd turns into a soft line break.
+const SOFT_BREAK: &str = "markitai-soft-break";
+
+/// Where the cleaner writes the sanitized page for htmd: start tags with their
+/// attributes, end tags and text, which stand for the markup `<name a="v">`,
+/// `</name>` and escaped text. By default they build htmd's tree as they are
+/// written, the tree htmd would parse from that markup; the markup itself is
+/// written only for a page the tree writer cannot build (`htmd::TreeWriter`).
+struct Out {
+    tree: Option<htmd::TreeWriter>,
+    markup: String,
+    /// A start tag is open in `markup`; attributes may follow.
+    open: bool,
+    /// The last thing written ended a soft line break.
+    soft_break: bool,
+}
+
+impl Out {
+    fn tree() -> Self {
+        Self {
+            tree: Some(htmd::TreeWriter::new()),
+            ..Self::markup()
+        }
+    }
+
+    fn markup() -> Self {
+        Self {
+            tree: None,
+            markup: String::new(),
+            open: false,
+            soft_break: false,
+        }
+    }
+
+    /// `<name`, followed by the element's attributes.
+    fn start(&mut self, name: &str) {
+        self.soft_break = false;
+        if let Some(tree) = &mut self.tree {
+            tree.start(name);
+        } else {
+            self.close();
+            self.markup.push('<');
+            self.markup.push_str(name);
+            self.open = true;
+        }
+    }
+
+    /// ` name="value"`, an attribute of the element started last.
+    fn attribute(&mut self, name: &str, value: &str) {
+        if let Some(tree) = &mut self.tree {
+            tree.attribute(name, value);
+        } else {
+            self.markup.push(' ');
+            self.markup.push_str(name);
+            self.markup.push_str("=\"");
+            escaped(value, &mut self.markup);
+            self.markup.push('"');
+        }
+    }
+
+    /// `</name>`.
+    fn end(&mut self, name: &str) {
+        self.soft_break = name == SOFT_BREAK;
+        if let Some(tree) = &mut self.tree {
+            tree.end(name);
+        } else {
+            self.close();
+            self.markup.push_str("</");
+            self.markup.push_str(name);
+            self.markup.push('>');
+        }
+    }
+
+    fn text(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        self.soft_break = false;
+        if let Some(tree) = &mut self.tree {
+            tree.text(text);
+        } else {
+            self.close();
+            escaped(text, &mut self.markup);
+        }
+    }
+
+    /// Ends the start tag open in `markup`.
+    fn close(&mut self) {
+        if std::mem::take(&mut self.open) {
+            self.markup.push('>');
+        }
+    }
+
+    /// The markup written, complete.
+    fn into_markup(mut self) -> String {
+        self.close();
+        self.markup
+    }
+}
+
 fn safe_url(value: &str, base: Option<&Url>) -> Option<String> {
     fn destination(value: &str) -> String {
         value
@@ -230,19 +348,19 @@ fn saved_page_base(document: ElementRef<'_>) -> Option<(Url, bool)> {
     if let Some(base) = document
         .select(&selector("base[href]"))
         .next()
-        .and_then(|node| web(node.value().attr("href")?))
+        .and_then(|node| web(node.value().attribute("href")?))
     {
         return Some((base, true));
     }
     document
         .select(&selector("link[rel][href]"))
         .find(|node| {
-            node.value().attr("rel").is_some_and(|rel| {
+            node.value().attribute("rel").is_some_and(|rel| {
                 rel.split_whitespace()
                     .any(|token| token.eq_ignore_ascii_case("canonical"))
             })
         })
-        .and_then(|node| web(node.value().attr("href")?))
+        .and_then(|node| web(node.value().attribute("href")?))
         .map(|canonical| {
             let directory = !canonical.path().trim_matches('/').is_empty();
             (canonical, directory)
@@ -412,7 +530,7 @@ fn block_tag(name: &str) -> bool {
     )
 }
 
-fn escaped_text(value: &str, output: &mut String) {
+fn escaped_text(value: &str, output: &mut Out) {
     // HTML source line boundaries remain soft Markdown line breaks. The marker
     // prevents the renderer from collapsing them with ordinary inline spaces.
     let mut start = 0;
@@ -422,28 +540,23 @@ fn escaped_text(value: &str, output: &mut String) {
             // The first segment can follow an inline element. Its leading
             // space separates words; only subsequent segments contain source
             // indentation following a line boundary.
-            escaped(
-                if start == 0 {
-                    segment.trim_end_matches([' ', '\t'])
-                } else {
-                    segment.trim_matches([' ', '\t'])
-                },
-                output,
-            );
-            if !output.ends_with("</markitai-soft-break>") {
-                output.push_str("<markitai-soft-break></markitai-soft-break>");
+            output.text(if start == 0 {
+                segment.trim_end_matches([' ', '\t'])
+            } else {
+                segment.trim_matches([' ', '\t'])
+            });
+            if !output.soft_break {
+                output.start(SOFT_BREAK);
+                output.end(SOFT_BREAK);
             }
             start = index + ch.len_utf8();
         }
     }
-    escaped(
-        if start > 0 {
-            value[start..].trim_start_matches([' ', '\t'])
-        } else {
-            value
-        },
-        output,
-    );
+    output.text(if start > 0 {
+        value[start..].trim_start_matches([' ', '\t'])
+    } else {
+        value
+    });
 }
 
 fn hidden_inline_style(style: &str) -> bool {
@@ -545,13 +658,13 @@ fn hidden_inline_style(style: &str) -> bool {
 
 fn is_hidden(element: ElementRef<'_>) -> bool {
     let value = element.value();
-    value.attr("hidden").is_some() || value.attr("style").is_some_and(hidden_inline_style)
+    value.attribute("hidden").is_some() || value.attribute("style").is_some_and(hidden_inline_style)
 }
 
 fn has_class(element: ElementRef<'_>, class: &str) -> bool {
     element
         .value()
-        .attr("class")
+        .attribute("class")
         .is_some_and(|classes| classes.split_whitespace().any(|value| value == class))
 }
 
@@ -559,7 +672,7 @@ fn tex_script(element: ElementRef<'_>) -> Option<bool> {
     if element.value().name() != "script" {
         return None;
     }
-    let mut parts = element.value().attr("type")?.split(';');
+    let mut parts = element.value().attribute("type")?.split(';');
     if !parts.next()?.trim().eq_ignore_ascii_case("math/tex") {
         return None;
     }
@@ -777,11 +890,11 @@ fn mathml(element: ElementRef<'_>, depth: usize) -> Result<String> {
         "mtable" => format!(r"\begin{{aligned}}{}\end{{aligned}}", parts.join(r" \\ ")),
         "mtr" | "mlabeledtr" => parts.join(" & "),
         "mfenced" => {
-            let open = element.value().attr("open").unwrap_or("(");
-            let close = element.value().attr("close").unwrap_or(")");
+            let open = element.value().attribute("open").unwrap_or("(");
+            let close = element.value().attribute("close").unwrap_or(")");
             let separators = element
                 .value()
-                .attr("separators")
+                .attribute("separators")
                 .unwrap_or(",")
                 .chars()
                 .filter(|ch| !ch.is_whitespace())
@@ -806,7 +919,7 @@ fn mathml(element: ElementRef<'_>, depth: usize) -> Result<String> {
                 delimiter(close)
             )
         }
-        "menclose" if element.value().attr("notation") == Some("top") => {
+        "menclose" if element.value().attribute("notation") == Some("top") => {
             format!(r"\overline{{{joined}}}")
         }
         "mphantom" => format!(r"\phantom{{{joined}}}"),
@@ -888,7 +1001,7 @@ fn small_image(element: ElementRef<'_>) -> Option<String> {
             .ok()
             .filter(|n| *n > 0.0 && n.is_finite())
     };
-    let style = element.value().attr("style").unwrap_or("");
+    let style = element.value().attribute("style").unwrap_or("");
     let style_size = |property: &str| {
         style.split(';').find_map(|declaration| {
             let (key, value) = declaration.split_once(':')?;
@@ -900,19 +1013,19 @@ fn small_image(element: ElementRef<'_>) -> Option<String> {
     };
     let mut width = element
         .value()
-        .attr("width")
+        .attribute("width")
         .and_then(pixels)
         .or_else(|| style_size("width"));
     let mut height = element
         .value()
-        .attr("height")
+        .attribute("height")
         .and_then(pixels)
         .or_else(|| style_size("height"));
     if name == "svg" && width.is_none() && height.is_none() {
         let view_box = element
             .value()
-            .attr("viewBox")
-            .or_else(|| element.value().attr("viewbox"));
+            .attribute("viewBox")
+            .or_else(|| element.value().attribute("viewbox"));
         if let Some(parts) = view_box.map(|v| {
             v.split(|c: char| c.is_whitespace() || c == ',')
                 .filter(|p| !p.is_empty())
@@ -925,7 +1038,7 @@ fn small_image(element: ElementRef<'_>) -> Option<String> {
     }
     if name == "img" && width.is_none() && height.is_none() {
         // Images served at a tiny width through CDN parameters.
-        width = element.value().attr("srcset").and_then(|srcset| {
+        width = element.value().attribute("srcset").and_then(|srcset| {
             let one_x = srcset
                 .split(',')
                 .map(str::trim)
@@ -950,11 +1063,14 @@ fn small_image(element: ElementRef<'_>) -> Option<String> {
     }
     if name == "img"
         && (latex_image(element).is_some()
-            || element.value().attr("alt").is_some_and(looks_like_latex))
+            || element
+                .value()
+                .attribute("alt")
+                .is_some_and(looks_like_latex))
     {
         return None;
     }
-    let alt = element.value().attr("alt").unwrap_or("").trim();
+    let alt = element.value().attribute("alt").unwrap_or("").trim();
     let emoji = name == "img"
         && !alt.is_empty()
         && alt.chars().count() <= 8
@@ -969,7 +1085,7 @@ fn latex_image(element: ElementRef<'_>) -> Option<(String, bool)> {
     if element.value().name() != "img" {
         return None;
     }
-    let src = element.value().attr("src")?;
+    let src = element.value().attribute("src")?;
     let decoded = |raw: &str| Some(url_component(raw)).filter(|text| looks_like_latex(text));
     let (path, query) = match src.split_once('?') {
         Some((path, rest)) => (path, Some(rest.split('#').next().unwrap_or(""))),
@@ -998,7 +1114,7 @@ fn latex_image(element: ElementRef<'_>) -> Option<(String, bool)> {
         .or_else(|| {
             element
                 .value()
-                .attr("alt")
+                .attribute("alt")
                 .filter(|alt| looks_like_latex(alt))
                 .map(str::to_owned)
         })?;
@@ -1031,15 +1147,15 @@ fn math_expression(element: ElementRef<'_>) -> Result<Option<(String, bool)>> {
     };
     let block = has_class(element, "katex-display")
         || has_class(element, "math-block")
-        || matches!(element.value().attr("display"), Some("block" | "true"))
-        || inner.is_some_and(|math| math.value().attr("display") == Some("block"));
+        || matches!(element.value().attribute("display"), Some("block" | "true"))
+        || inner.is_some_and(|math| math.value().attribute("display") == Some("block"));
     let attribute = |element: ElementRef<'_>| {
         ["data-latex", "data-math", "data-entry", "alttext"]
             .into_iter()
             .find_map(|key| {
                 element
                     .value()
-                    .attr(key)
+                    .attribute(key)
                     .map(str::trim)
                     .filter(|text| !text.is_empty())
                     .map(str::to_owned)
@@ -1050,7 +1166,7 @@ fn math_expression(element: ElementRef<'_>) -> Result<Option<(String, bool)>> {
         latex = element
             .select(&selector("annotation"))
             .find(|node| {
-                node.value().attr("encoding").is_some_and(|encoding| {
+                node.value().attribute("encoding").is_some_and(|encoding| {
                     matches!(
                         encoding.to_ascii_lowercase().as_str(),
                         "application/x-tex" | "application/x-latex" | "text/tex"
@@ -1070,7 +1186,7 @@ fn math_expression(element: ElementRef<'_>) -> Result<Option<(String, bool)>> {
         latex = element.select(&selector("img[alt]")).find_map(|image| {
             image
                 .value()
-                .attr("alt")
+                .attribute("alt")
                 .map(str::trim)
                 .filter(|text| !text.is_empty())
                 .map(str::to_owned)
@@ -1102,14 +1218,13 @@ fn duplicate_math_preview(element: ElementRef<'_>) -> bool {
             })
 }
 
-fn emit_math(latex: &str, block: bool, output: &mut String) {
-    output.push_str("<markitai-math data-latex=\"");
-    escaped(latex, output);
-    output.push_str(if block {
-        "\" data-display=\"block\"></markitai-math>"
-    } else {
-        "\"></markitai-math>"
-    });
+fn emit_math(latex: &str, block: bool, output: &mut Out) {
+    output.start("markitai-math");
+    output.attribute("data-latex", latex);
+    if block {
+        output.attribute("data-display", "block");
+    }
+    output.end("markitai-math");
 }
 
 // DOM element addresses serve only as stable identity keys while this immutable
@@ -1177,17 +1292,17 @@ fn leading_note_marker(element: ElementRef<'_>) -> Option<(String, ElementRef<'_
 }
 
 fn note_context(element: ElementRef<'_>) -> bool {
-    element.value().attr("role").is_some_and(|role| {
+    element.value().attribute("role").is_some_and(|role| {
         matches!(
             role,
             "doc-footnote" | "doc-endnote" | "doc-endnotes" | "doc-footnotes"
         )
     }) || element
         .value()
-        .attr("id")
+        .attribute("id")
         .is_some_and(|id| matches!(id, "footnotes" | "endnotes"))
-        || element.value().attr("data-footnotes").is_some()
-        || element.value().attr("data-type") == Some("footnote")
+        || element.value().attribute("data-footnotes").is_some()
+        || element.value().attribute("data-type") == Some("footnote")
         || element.value().classes().any(|class| {
             matches!(
                 class,
@@ -1209,7 +1324,7 @@ fn note_context(element: ElementRef<'_>) -> bool {
 }
 
 fn note_fragment(link: ElementRef<'_>, base: Option<&Url>) -> Option<String> {
-    let href = link.value().attr("href")?;
+    let href = link.value().attribute("href")?;
     let (prefix, fragment) = href.rsplit_once('#')?;
     if fragment.is_empty() || safe_url(href, base).is_none() {
         return None;
@@ -1218,7 +1333,7 @@ fn note_fragment(link: ElementRef<'_>, base: Option<&Url>) -> Option<String> {
     // HTMLBook markers and Word's generated export backlinks carry their own
     // structural evidence and are handled separately.
     if !prefix.is_empty()
-        && link.value().attr("data-type") != Some("noteref")
+        && link.value().attribute("data-type") != Some("noteref")
         && !base.is_some_and(|base| {
             base.join(href).is_ok_and(|mut target| {
                 let mut page = base.clone();
@@ -1237,11 +1352,11 @@ fn reference_candidate(element: ElementRef<'_>) -> bool {
     if element.value().name() != "a" {
         return true;
     }
-    if element.value().attr("data-footnote-ref").is_some()
-        || element.value().attr("data-type") == Some("noteref")
+    if element.value().attribute("data-footnote-ref").is_some()
+        || element.value().attribute("data-type") == Some("noteref")
         || element
             .value()
-            .attr("role")
+            .attribute("role")
             .is_some_and(|role| matches!(role, "doc-noteref" | "doc-biblioref"))
         || element
             .value()
@@ -1301,7 +1416,7 @@ fn generic_note_section(element: ElementRef<'_>) -> bool {
     };
     note_context(element)
         || ["id", "class"].iter().any(|attr| {
-            element.value().attr(attr).is_some_and(|value| {
+            element.value().attribute(attr).is_some_and(|value| {
                 value
                     .split_ascii_whitespace()
                     .any(|token| matches!(token, "note" | "notes" | "endnotes" | "bibliography"))
@@ -1319,7 +1434,7 @@ fn generic_continuation(element: ElementRef<'_>) -> bool {
     if !matches!(
         element.value().name(),
         "p" | "ul" | "ol" | "blockquote" | "pre"
-    ) || element.value().attr("id").is_some()
+    ) || element.value().attribute("id").is_some()
         || element.select(&selector("[id],a[name]")).next().is_some()
         || element
             .value()
@@ -1371,8 +1486,8 @@ fn note_has_content(
     } // The serializer reports the nesting error.
     if markers.contains(&element)
         || (depth > 0 && is_hidden(element))
-        || element.value().attr("role") == Some("doc-backlink")
-        || element.value().attr("data-footnote-backref").is_some()
+        || element.value().attribute("role") == Some("doc-backlink")
+        || element.value().attribute("data-footnote-backref").is_some()
         || element.value().classes().any(|class| {
             matches!(
                 class,
@@ -1412,14 +1527,14 @@ fn note_has_content(
     if name == "img" {
         return element
             .value()
-            .attr("data-src")
-            .or_else(|| element.value().attr("src"))
+            .attribute("data-src")
+            .or_else(|| element.value().attribute("src"))
             .is_some_and(|src| image_source(src, None).is_some());
     }
     if name == "a"
         && element
             .value()
-            .attr("href")
+            .attribute("href")
             .is_some_and(|href| href.starts_with('#'))
         && !plain(element).is_empty()
         && plain(element)
@@ -1604,7 +1719,7 @@ impl<'a> Footnotes<'a> {
         let mut ids = HashMap::new();
         for element in &elements {
             for attribute in ["id", "name"] {
-                if let Some(id) = element.value().attr(attribute) {
+                if let Some(id) = element.value().attribute(attribute) {
                     ids.entry(id.to_owned()).or_insert(*element);
                 }
             }
@@ -1639,7 +1754,7 @@ impl<'a> Footnotes<'a> {
                         })
                     && (note_context(*element)
                         || (["id", "class"].iter().any(|attr| {
-                            element.value().attr(attr).is_some_and(|value| {
+                            element.value().attribute(attr).is_some_and(|value| {
                                 value.to_ascii_lowercase().contains("footnote")
                             })
                         }) && element
@@ -1678,7 +1793,7 @@ impl<'a> Footnotes<'a> {
             }
         }
         for reference in &references {
-            if let Some(id) = reference.value().attr("data-definition")
+            if let Some(id) = reference.value().attribute("data-definition")
                 && let Some(target) = ids.get(id).copied()
                 && target.value().name() == "aside"
                 && in_scope(target)
@@ -1710,9 +1825,9 @@ impl<'a> Footnotes<'a> {
             let name = element.value().name();
             let parent = element.parent().and_then(ElementRef::wrap);
             if name == "ol"
-                && element.value().attr("start").is_some()
+                && element.value().attribute("start").is_some()
                 && parent.is_some_and(|parent| parent.value().name() == "aside")
-                && let Some(number) = element.value().attr("start").and_then(note_number)
+                && let Some(number) = element.value().attribute("start").and_then(note_number)
             {
                 let items = element
                     .child_elements()
@@ -1727,7 +1842,7 @@ impl<'a> Footnotes<'a> {
                     .filter_map(ElementRef::wrap)
                     .take_while(|parent| in_scope(*parent))
                     .any(note_context);
-            let id = element.value().attr("id").unwrap_or("");
+            let id = element.value().attribute("id").unwrap_or("");
             let known_id = ["fn:", "fn-", "fn.", "ftnt", "cite_note-", "footnote-"]
                 .iter()
                 .any(|prefix| id.starts_with(prefix))
@@ -1739,7 +1854,7 @@ impl<'a> Footnotes<'a> {
                     || (name == "p" && (context || known_id))
                     || has_class(element, "footnote-definition")
                     || has_class(element, "footnote-footer")
-                    || element.value().attr("role") == Some("doc-footnote")
+                    || element.value().attribute("role") == Some("doc-footnote")
                     || (known_id && !plain(element).is_empty()));
             if !explicit || notes.inside_definition(element) {
                 continue;
@@ -1758,8 +1873,8 @@ impl<'a> Footnotes<'a> {
                     && (plain(anchor).is_empty() || note_number(&plain(anchor)).is_some())
                     && let Some(id) = anchor
                         .value()
-                        .attr("id")
-                        .or_else(|| anchor.value().attr("name"))
+                        .attribute("id")
+                        .or_else(|| anchor.value().attribute("name"))
                 {
                     aliases.push(id.to_owned());
                     markers.push(anchor);
@@ -1775,7 +1890,7 @@ impl<'a> Footnotes<'a> {
                     .unwrap_or(0);
                 let start = list
                     .value()
-                    .attr("start")
+                    .attribute("start")
                     .and_then(|value| value.parse::<usize>().ok())
                     .unwrap_or(1);
                 if let Some(number) = start.checked_add(index) {
@@ -1800,7 +1915,7 @@ impl<'a> Footnotes<'a> {
             if let Some(link) = paragraph.select(&selector("a[href]")).next()
                 && let Some(number) = link
                     .value()
-                    .attr("href")
+                    .attribute("href")
                     .and_then(|href| href.rsplit_once('#'))
                     .and_then(|(_, fragment)| fragment.strip_prefix("_ftnref"))
                     .and_then(note_number)
@@ -2052,13 +2167,13 @@ impl<'a> Footnotes<'a> {
                 std::iter::once(*reference)
                     .chain(reference.descendants().filter_map(ElementRef::wrap))
             })
-            .filter_map(|element| element.value().attr("id").map(str::to_owned))
+            .filter_map(|element| element.value().attribute("id").map(str::to_owned))
             .collect::<HashSet<_>>();
         for note in &mut notes.definitions {
             for root in &note.nodes {
                 for element in root.descendants().filter_map(ElementRef::wrap) {
-                    let explicit = element.value().attr("role") == Some("doc-backlink")
-                        || element.value().attr("data-footnote-backref").is_some()
+                    let explicit = element.value().attribute("role") == Some("doc-backlink")
+                        || element.value().attribute("data-footnote-backref").is_some()
                         || element.value().classes().any(|class| {
                             matches!(
                                 class,
@@ -2072,7 +2187,7 @@ impl<'a> Footnotes<'a> {
                     let link_back = element.value().name() == "a"
                         && element
                             .value()
-                            .attr("href")
+                            .attribute("href")
                             .and_then(|href| href.strip_prefix('#'))
                             .is_some_and(|fragment| {
                                 reference_ids.contains(fragment)
@@ -2197,7 +2312,7 @@ impl<'a> Footnotes<'a> {
 fn serialize_clean(
     element: ElementRef<'_>,
     base: Option<&Url>,
-    output: &mut String,
+    output: &mut Out,
     depth: usize,
     notes: &Footnotes<'_>,
     definition: bool,
@@ -2248,9 +2363,9 @@ fn serialize_clean(
         let start = visible_text.len() - visible_text.trim_start().len();
         let end = visible_text.trim_end().len();
         escaped_text(&visible_text[..start], output);
-        output.push_str(&format!(
-            "<markitai-footnote data-number=\"{number}\"></markitai-footnote>"
-        ));
+        output.start("markitai-footnote");
+        output.attribute("data-number", &number.to_string());
+        output.end("markitai-footnote");
         escaped_text(&visible_text[end..], output);
         return Ok(());
     }
@@ -2265,13 +2380,17 @@ fn serialize_clean(
         ));
     }
     if let Some(callout) = callout {
-        output.push_str("<blockquote><p><markitai-callout data-marker=\"[!");
-        escaped(&callout.kind, output);
-        output.push(']');
-        output.push_str(callout.fold);
-        output.push_str("\"></markitai-callout> ");
+        output.start("blockquote");
+        output.start("p");
+        output.start("markitai-callout");
+        output.attribute(
+            "data-marker",
+            &format!("[!{}]{}", callout.kind, callout.fold),
+        );
+        output.end("markitai-callout");
+        output.text(" ");
         escaped_text(&callouts::marker_title(&callout), output);
-        output.push_str("</p>");
+        output.end("p");
         let content_name = callout.content.value().name();
         serialize_children(
             callout.content,
@@ -2284,7 +2403,7 @@ fn serialize_clean(
             notes,
             definition,
         )?;
-        output.push_str("</blockquote>");
+        output.end("blockquote");
         return Ok(());
     }
     if code::render(element, output, depth)? {
@@ -2326,7 +2445,10 @@ fn serialize_clean(
     }
     // A link that shows nothing (an icon drawn by a style sheet, a vote
     // arrow) would be written as `[](url)`.
-    if name == "a" && value.attr("href").is_some() && shows_nothing(element, notes.prune_chrome) {
+    if name == "a"
+        && value.attribute("href").is_some()
+        && shows_nothing(element, notes.prune_chrome)
+    {
         return Ok(());
     }
     if notes.prune_chrome {
@@ -2352,16 +2474,16 @@ fn serialize_clean(
     }
     // Canonicalize lazy images without retaining arbitrary event or style attributes.
     let src = value
-        .attr("data-src")
-        .or_else(|| value.attr("data-original"))
-        .or_else(|| value.attr("src"));
+        .attribute("data-src")
+        .or_else(|| value.attribute("data-original"))
+        .or_else(|| value.attribute("src"));
     let preformatted = matches!(name, "pre" | "code")
         || element
             .ancestors()
             .filter_map(ElementRef::wrap)
             .any(|parent| matches!(parent.value().name(), "pre" | "code"));
     let styled_code = name == "code"
-        && value.attr("style").is_some_and(|style| {
+        && value.attribute("style").is_some_and(|style| {
             style
                 .to_ascii_lowercase()
                 .replace(char::is_whitespace, "")
@@ -2372,7 +2494,7 @@ fn serialize_clean(
             .filter_map(ElementRef::wrap)
             .any(|parent| parent.value().name() == "pre");
     if styled_code {
-        output.push_str("<pre>");
+        output.start("pre");
     }
     if notes.block_links.contains(&key) {
         return serialize_children(
@@ -2392,15 +2514,14 @@ fn serialize_clean(
     } else {
         name
     };
-    output.push('<');
-    output.push_str(serialized_name);
+    output.start(serialized_name);
     for attribute in [
         "href", "src", "alt", "title", "colspan", "rowspan", "start", "class", "id",
     ] {
         let raw = if attribute == "src" && name == "img" {
             src
         } else {
-            value.attr(attribute)
+            value.attribute(attribute)
         };
         if let Some(raw) = raw {
             let normalized = if attribute == "src" && name == "img" {
@@ -2413,15 +2534,10 @@ fn serialize_clean(
                 Some(raw.to_owned())
             };
             if let Some(normalized) = normalized {
-                output.push(' ');
-                output.push_str(attribute);
-                output.push_str("=\"");
-                escaped(&normalized, output);
-                output.push('"');
+                output.attribute(attribute, &normalized);
             }
         }
     }
-    output.push('>');
     let text_marker = if definition && depth == 0 {
         notes.text_markers.get(&key).map(String::as_str)
     } else {
@@ -2430,12 +2546,11 @@ fn serialize_clean(
     let link = notes
         .link_targets
         .get(&key)
-        .and_then(|anchor| anchor.value().attr("href"))
+        .and_then(|anchor| anchor.value().attribute("href"))
         .and_then(|href| safe_url(href, base));
     if let Some(link) = &link {
-        output.push_str("<a href=\"");
-        escaped(link, output);
-        output.push_str("\">");
+        output.start("a");
+        output.attribute("href", link);
     }
     serialize_children(
         element,
@@ -2449,18 +2564,16 @@ fn serialize_clean(
         definition,
     )?;
     if link.is_some() {
-        output.push_str("</a>");
+        output.end("a");
     }
     if styled_code {
-        output.push_str("</pre>");
+        output.end("pre");
     }
     if !matches!(
         name,
         "area" | "base" | "br" | "col" | "hr" | "img" | "link" | "meta" | "source" | "wbr"
     ) {
-        output.push_str("</");
-        output.push_str(serialized_name);
-        output.push('>');
+        output.end(serialized_name);
     }
     Ok(())
 }
@@ -2468,7 +2581,7 @@ fn serialize_clean(
 /// A link inside a heading to a fragment of the same page.
 fn heading_permalink(link: ElementRef<'_>) -> bool {
     link.value()
-        .attr("href")
+        .attribute("href")
         .is_some_and(|href| href.trim().starts_with('#'))
         && link
             .ancestors()
@@ -2512,7 +2625,7 @@ fn table_cells(row: ElementRef<'_>) -> impl Iterator<Item = ElementRef<'_>> {
 fn table_span(cell: ElementRef<'_>, attribute: &str) -> usize {
     const MAX_SPAN: usize = 64;
     cell.value()
-        .attr(attribute)
+        .attribute(attribute)
         .and_then(|value| value.trim().parse::<usize>().ok())
         .filter(|value| *value > 0)
         .map_or(1, |value| value.min(MAX_SPAN))
@@ -2567,7 +2680,7 @@ fn table_grid(table: ElementRef<'_>, rows: &[(ElementRef<'_>, bool)], prune_chro
     {
         return true;
     }
-    if table.value().attr("role").is_some_and(|role| {
+    if table.value().attribute("role").is_some_and(|role| {
         let role = role.trim();
         role.eq_ignore_ascii_case("presentation") || role.eq_ignore_ascii_case("none")
     }) {
@@ -2625,7 +2738,7 @@ fn table_grid(table: ElementRef<'_>, rows: &[(ElementRef<'_>, bool)], prune_chro
 fn serialize_table(
     table: ElementRef<'_>,
     base: Option<&Url>,
-    output: &mut String,
+    output: &mut Out,
     depth: usize,
     notes: &Footnotes<'_>,
     definition: bool,
@@ -2635,7 +2748,7 @@ fn serialize_table(
     if rows.is_empty() {
         return Ok(false);
     }
-    let children = |element: ElementRef<'_>, output: &mut String| {
+    let children = |element: ElementRef<'_>, output: &mut Out| {
         let name = element.value().name();
         serialize_children(
             element,
@@ -2650,17 +2763,17 @@ fn serialize_table(
         )
     };
     if let Some(caption) = caption.filter(|caption| !is_hidden(*caption)) {
-        output.push_str("<p>");
+        output.start("p");
         children(caption, output)?;
-        output.push_str("</p>");
+        output.end("p");
     }
     if !table_grid(table, &rows, notes.prune_chrome) {
         for (row, _) in rows.iter().filter(|(row, _)| !notes.left_out(*row)) {
             for cell in table_cells(*row).filter(|cell| !is_hidden(*cell) && !notes.left_out(*cell))
             {
-                output.push_str("<div>");
+                output.start("div");
                 children(cell, output)?;
-                output.push_str("</div>");
+                output.end("div");
             }
         }
         return Ok(true);
@@ -2730,19 +2843,17 @@ fn serialize_table(
     if columns.is_empty() {
         return Ok(false);
     }
-    let cell = |tag: &str, cell: Option<ElementRef<'_>>, output: &mut String| -> Result<()> {
-        output.push('<');
-        output.push_str(tag);
-        output.push('>');
+    let cell = |tag: &str, cell: Option<ElementRef<'_>>, output: &mut Out| -> Result<()> {
+        output.start(tag);
         if let Some(cell) = cell.filter(|cell| !is_hidden(*cell)) {
             children(cell, output)?;
         }
-        output.push_str("</");
-        output.push_str(tag);
-        output.push('>');
+        output.end(tag);
         Ok(())
     };
-    output.push_str("<table><thead><tr>");
+    output.start("table");
+    output.start("thead");
+    output.start("tr");
     let body = if header.is_some() {
         for column in &columns {
             cell("th", grid[0].get(*column).copied().flatten(), output)?;
@@ -2754,20 +2865,23 @@ fn serialize_table(
         }
         &grid[..]
     };
-    output.push_str("</tr></thead><tbody>");
+    output.end("tr");
+    output.end("thead");
+    output.start("tbody");
     for line in body.iter().filter(|line| {
         !line
             .iter()
             .flatten()
             .all(|cell| shows_nothing(*cell, notes.prune_chrome))
     }) {
-        output.push_str("<tr>");
+        output.start("tr");
         for column in &columns {
             cell("td", line.get(*column).copied().flatten(), output)?;
         }
-        output.push_str("</tr>");
+        output.end("tr");
     }
-    output.push_str("</tbody></table>");
+    output.end("tbody");
+    output.end("table");
     Ok(true)
 }
 
@@ -2780,7 +2894,7 @@ fn serialize_children(
     preformatted: bool,
     mut text_marker: Option<&str>,
     base: Option<&Url>,
-    output: &mut String,
+    output: &mut Out,
     depth: usize,
     notes: &Footnotes<'_>,
     definition: bool,
@@ -2798,7 +2912,7 @@ fn serialize_children(
                 text.as_ref()
             };
             if preformatted {
-                escaped(text, output);
+                output.text(text);
             } else {
                 let previous = child
                     .prev_siblings()
@@ -2832,15 +2946,15 @@ fn render_with_footnotes<'a>(
     prune_chrome: bool,
 ) -> Result<String> {
     let notes = Footnotes::collect(root, document, base, prune_chrome);
-    let mut cleaned = String::new();
-    serialize_clean(root, base, &mut cleaned, 0, &notes, false)?;
-    let mut markdown = render_sanitized(&cleaned)?;
+    let mut markdown =
+        render_cleaned(&|output| serialize_clean(root, base, output, 0, &notes, false))?;
     for (index, note) in notes.definitions.iter().enumerate() {
-        let mut cleaned = String::new();
-        for node in &note.nodes {
-            serialize_clean(*node, base, &mut cleaned, 0, &notes, true)?;
-        }
-        let content = render_sanitized(&cleaned)?;
+        let content = render_cleaned(&|output| {
+            for node in &note.nodes {
+                serialize_clean(*node, base, output, 0, &notes, true)?;
+            }
+            Ok(())
+        })?;
         if content.is_empty() {
             continue;
         }
@@ -2965,12 +3079,51 @@ fn tight_blockquote(markdown: &str) -> String {
         .join("\n")
 }
 
-fn render_sanitized(cleaned: &str) -> Result<String> {
+fn converter() -> &'static htmd::HtmlToMarkdown {
     // The converter keeps no state between documents, so its handler table is
     // built once per process instead of once per call.
     static CONVERTER: std::sync::OnceLock<htmd::HtmlToMarkdown> = std::sync::OnceLock::new();
-    CONVERTER
-        .get_or_init(sanitized_converter)
+    CONVERTER.get_or_init(sanitized_converter)
+}
+
+/// The Markdown of what `write` writes: htmd converts the tree built as it is
+/// written, and parses the markup only for a page the tree writer cannot build
+/// (raw-text elements such as a `title` in the body), writing it again.
+fn render_cleaned(write: &dyn Fn(&mut Out) -> Result<()>) -> Result<String> {
+    let mut output = Out::tree();
+    write(&mut output)?;
+    let document = output.tree.take().and_then(htmd::TreeWriter::finish);
+    // Every conversion a test makes also parses the markup and requires the
+    // same tree.
+    #[cfg(test)]
+    {
+        let mut markup = Out::markup();
+        write(&mut markup)?;
+        let markup = markup.into_markup();
+        match &document {
+            Some(document) => assert!(
+                tests::same_tree(
+                    document.tree.root(),
+                    Html::parse_document(&markup).tree.root()
+                ),
+                "written and parsed trees differ for {markup:?}"
+            ),
+            None => tests::markup_parsed(),
+        }
+    }
+    if let Some(document) = document {
+        return Ok(converter()
+            .tree_to_markdown(document.tree.root())
+            .trim()
+            .to_owned());
+    }
+    let mut output = Out::markup();
+    write(&mut output)?;
+    render_sanitized(&output.into_markup())
+}
+
+fn render_sanitized(cleaned: &str) -> Result<String> {
+    converter()
         .convert(cleaned)
         .map(|markdown| markdown.trim().to_owned())
         .map_err(|error| Error::Conversion(format!("HTML rendering failed: {error}")))
@@ -3390,7 +3543,10 @@ struct Announcement {
 
 fn structured_announcement(document: &Html, base: Option<&Url>) -> Result<Option<Announcement>> {
     for carrier in document.select(&selector("[data-partnereventstore]")) {
-        let raw = carrier.value().attr("data-partnereventstore").unwrap_or("");
+        let raw = carrier
+            .value()
+            .attribute("data-partnereventstore")
+            .unwrap_or("");
         let Ok(data) = serde_json::from_str::<Value>(raw) else {
             continue;
         };
@@ -3435,7 +3591,7 @@ fn structured_announcement(document: &Html, base: Option<&Url>) -> Result<Option
             }
             if let Some(group) = carrier
                 .value()
-                .attr("data-groupvanityinfo")
+                .attribute("data-groupvanityinfo")
                 .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
                 .and_then(|value| {
                     value
@@ -3473,8 +3629,8 @@ fn substack_note(document: &Html, base: Option<&Url>) -> Result<Option<Announcem
             .any(|asset| {
                 asset
                     .value()
-                    .attr("href")
-                    .or_else(|| asset.value().attr("src"))
+                    .attribute("href")
+                    .or_else(|| asset.value().attribute("src"))
                     .and_then(|source| Url::parse(source).ok())
                     .is_some_and(|url| url.host_str().is_some_and(cdn_host))
             });
@@ -3524,7 +3680,8 @@ fn substack_note(document: &Html, base: Option<&Url>) -> Result<Option<Announcem
 /// The image attached to a note: the largest `srcset` entry of the image
 /// grid right after the note's comment body (or after its wrapper).
 fn substack_note_image<'a>(note: ElementRef<'a>) -> Option<String> {
-    let classes = |element: ElementRef<'_>| element.value().attr("class").unwrap_or("").to_owned();
+    let classes =
+        |element: ElementRef<'_>| element.value().attribute("class").unwrap_or("").to_owned();
     let body = note
         .ancestors()
         .filter_map(ElementRef::wrap)
@@ -3543,7 +3700,7 @@ fn substack_note_image<'a>(note: ElementRef<'a>) -> Option<String> {
     .flatten()
     .find(|element| classes(*element).contains("imageGrid"))?;
     let image = grid.select(&selector("img")).next()?;
-    let largest = image.value().attr("srcset").and_then(|srcset| {
+    let largest = image.value().attribute("srcset").and_then(|srcset| {
         srcset
             .split(',')
             .filter_map(|candidate| {
@@ -3555,7 +3712,7 @@ fn substack_note_image<'a>(note: ElementRef<'a>) -> Option<String> {
             .max_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(url, _)| url.to_owned())
     });
-    largest.or_else(|| image.value().attr("src").map(str::to_owned))
+    largest.or_else(|| image.value().attribute("src").map(str::to_owned))
 }
 
 pub(super) fn fragment(source: &str) -> Result<String> {
@@ -3683,7 +3840,7 @@ pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
             document
                 .select(&selector("time[datetime]"))
                 .find_map(|time| {
-                    let value = time.value().attr("datetime")?.trim();
+                    let value = time.value().attribute("datetime")?.trim();
                     let bytes = value.as_bytes();
                     (bytes.len() >= 7
                         && bytes[..4].iter().all(u8::is_ascii_digit)
@@ -3711,12 +3868,12 @@ pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
     if let Some(canonical) = document
         .select(&selector("link[rel]"))
         .find(|node| {
-            node.value().attr("rel").is_some_and(|rel| {
+            node.value().attribute("rel").is_some_and(|rel| {
                 rel.split_whitespace()
                     .any(|token| token.eq_ignore_ascii_case("canonical"))
             })
         })
-        .and_then(|node| node.value().attr("href"))
+        .and_then(|node| node.value().attribute("href"))
         .and_then(|value| safe_url(value, base.as_ref()))
         .filter(|value| {
             !base.as_ref().is_some_and(|source| {
@@ -3769,6 +3926,178 @@ pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    thread_local! {
+        /// Conversions on this thread whose cleaned markup had to be parsed.
+        static MARKUP: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    pub(super) fn markup_parsed() {
+        MARKUP.with(|count| count.set(count.get() + 1));
+    }
+
+    /// The same nodes, names, attributes and text in the same order.
+    pub(super) fn same_tree(a: htmd::NodeRef<'_>, b: htmd::NodeRef<'_>) -> bool {
+        let same = match (a.value(), b.value()) {
+            (scraper::Node::Element(x), scraper::Node::Element(y)) => {
+                x.name == y.name && x.attrs == y.attrs
+            }
+            (scraper::Node::Text(x), scraper::Node::Text(y)) => *x.text == *y.text,
+            (x, y) => x == y,
+        };
+        same && a.children().count() == b.children().count()
+            && a.children().zip(b.children()).all(|(x, y)| same_tree(x, y))
+    }
+
+    #[test]
+    fn attribute_lookup_answers_as_scraper_does() {
+        let document = Html::parse_document(
+            r#"<html xml:lang="en"><body data-x="1" CLASS="a b" id="i">
+            <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1 1">
+            <a xlink:href="/svg" href="/plain"><title>t</title></a></svg>
+            <math><mi definitionURL="u" mathvariant="bold">x</mi></math>
+            <img src="s" alt="" data-src="d"><p hidden>h</p></body></html>"#,
+        );
+        let names = [
+            "class",
+            "CLASS",
+            "id",
+            "data-x",
+            "src",
+            "alt",
+            "data-src",
+            "hidden",
+            "href",
+            "xlink:href",
+            "xmlns",
+            "xmlns:xlink",
+            "viewBox",
+            "viewbox",
+            "definitionURL",
+            "definitionurl",
+            "mathvariant",
+            "xml:lang",
+            "lang",
+            "",
+            "missing",
+        ];
+        let mut found = 0;
+        for element in document
+            .root_element()
+            .descendants()
+            .filter_map(ElementRef::wrap)
+        {
+            for name in names {
+                let value = element.value();
+                assert_eq!(
+                    value.attribute(name),
+                    value.attr(name),
+                    "{name} on {}",
+                    value.name()
+                );
+                found += usize::from(value.attribute(name).is_some());
+            }
+        }
+        assert!(found >= 10, "{found}");
+    }
+
+    #[test]
+    fn consecutive_source_line_breaks_are_one_soft_break() {
+        for source in ["<p>first\n\n\nsecond</p>", "<p>first\r\n  \r\nsecond</p>"] {
+            assert_eq!(fragment(source).unwrap(), "first\nsecond", "{source:?}");
+        }
+    }
+
+    #[test]
+    fn markup_writer_escapes_values_and_closes_its_last_tag() {
+        let mut output = Out::markup();
+        output.start("a");
+        output.attribute("title", "say \"hi\" & <go>");
+        output.text("x < y");
+        output.end("a");
+        output.start("img");
+        assert_eq!(
+            output.into_markup(),
+            "<a title=\"say &quot;hi&quot; &amp; &lt;go&gt;\">x &lt; y</a><img>"
+        );
+    }
+
+    /// Converts a source as a page with and without a doctype and as a
+    /// fragment; every conversion checks the written tree against the parsed
+    /// one (in `render_cleaned`). Returns how often the markup was parsed.
+    fn markup_parsed_for(source: &str) -> usize {
+        let before = MARKUP.with(std::cell::Cell::get);
+        for document in [
+            format!("<!doctype html><body>{source}</body>"),
+            source.to_owned(),
+        ] {
+            let _ = extract_html(&document, None);
+        }
+        let _ = fragment(source);
+        MARKUP.with(std::cell::Cell::get) - before
+    }
+
+    #[test]
+    fn cleaned_pages_build_the_tree_their_markup_parses_into() {
+        for source in [
+            // Callouts, notes, soft breaks, void and unknown elements.
+            "<div class='callout' data-callout='note'><div class='callout-title'><div class='callout-title-inner'>Title</div></div><div class='callout-content'><p>Body\n  line</p></div></div>\
+             <p>Claim<sup id='r1'><a href='#n1'>1</a></sup> and <param>p</param><wbr> <custom-el a='1'>c</custom-el></p>\
+             <ol><li id='n1'>The note text. <a href='#r1'>↩</a></li></ol>",
+            // Line feeds after `<pre>`, and carriage returns written as references.
+            "<pre>\n\nfirst line\n</pre><pre>a&#13;b&#13;&#10;c&#13;</pre><p>x&#13;y&#13;&#10;z</p>",
+            // Tables written as grids and as blocks, lists and headings.
+            "<table><caption>Cap</caption><tr><th>h</th><th>i</th></tr><tr><td>1</td><td rowspan='2'>2</td></tr><tr><td><b>3</b></td></tr></table>\
+             <table><tr><td><h2><a href='/x'>Title</a></h2><ul><li>a<ul><li>b</li></ul></li></ul></td><td><p>Text</p></td></tr></table>",
+            // A link around a layout table is written on the block inside it.
+            "<a href='/1'><div><table><tr><td><a href='/2'>x</a></td><td>y</td></tr></table></div></a>",
+            // An email's head elements in its body, and raw text: a title
+            // with line breaks written as markers, text elements whose
+            // escapes stay as written.
+            "<html><head><title>Mail</title><meta name='x'><style>p {}</style></head><body><p>Hi</p></body></html>",
+            "<p>a</p><title>Inner &amp; ti\ntle</title><p>b</p>",
+            "<p>a</p><xmp>x &lt; y\nz</xmp><noembed>n &amp; m</noembed><noframes>f</noframes>",
+            "<p>a</p><plaintext>rest <b>of</b> it",
+        ] {
+            assert_eq!(markup_parsed_for(source), 0, "{source}");
+        }
+    }
+
+    /// Markup the parser rearranges (closed, moved or merged elements) or
+    /// reads as foreign content is parsed, and the conversion stays the one
+    /// of the parsed markup.
+    #[test]
+    fn cleaned_pages_the_parser_rearranges_parse_their_markup() {
+        for source in [
+            // A code block inside a paragraph closes the paragraph; the
+            // formatting element around it is opened again after it.
+            "<p>Use <b>bold <code style='white-space: pre'>x = 1</code> tail</b> now</p>",
+            // A link around blocks moves onto its first heading, inside a heading.
+            "<h2><a href='/x'><h3>Inner title</h3><p>Summary text of the card</p></a></h2>",
+            // A layout table's cells become blocks, and its list items close
+            // each other without the cells between them.
+            "<ul><li><table><tr><td><li>a</li></td><td>b <a href='/2'>two</a></td></tr></table></li></ul>",
+            // A table without rows keeps its text, which the parser moves
+            // before the table.
+            "<table>\n  <caption>Cap\n  tion</caption>\n  <colgroup><col></colgroup>\n</table>",
+            // Foreign content: SVG names with capitals, MathML without TeX.
+            "<p>Figure <svg viewBox='0 0 1 1'><foreignObject><div>inside</div></foreignObject><clipPath id='c'></clipPath></svg> after <math><mrow><mi>x</mi></mrow></math></p>",
+        ] {
+            assert!(markup_parsed_for(source) > 0, "{source}");
+        }
+        // Script content needs the markup parsed (the cleaner writes none).
+        let before = MARKUP.with(std::cell::Cell::get);
+        let markdown = render_cleaned(&|output| {
+            for (name, text) in [("p", "a"), ("script", "x < y"), ("p", "b")] {
+                output.start(name);
+                output.text(text);
+                output.end(name);
+            }
+            Ok(())
+        });
+        assert_eq!(markdown.unwrap(), "a\n\nb");
+        assert_eq!(MARKUP.with(std::cell::Cell::get), before + 1);
+    }
 
     #[test]
     fn streamed_article_keeps_metadata_links_and_resolved_notes() {

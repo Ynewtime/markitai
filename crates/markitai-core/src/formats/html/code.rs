@@ -1,4 +1,5 @@
 //! Recover code from display-oriented syntax highlighters without executing UI.
+use super::{Attribute, Out};
 use crate::{Error, Result};
 use scraper::{ElementRef, Node};
 use std::cell::OnceCell;
@@ -77,7 +78,7 @@ fn property(style: &str, wanted: &str) -> Option<String> {
 fn style_is(element: ElementRef<'_>, property_name: &str, values: &[&str]) -> bool {
     element
         .value()
-        .attr("style")
+        .attribute("style")
         .and_then(|style| property(style, property_name))
         .is_some_and(|value| {
             let keyword = match value.split_once('!') {
@@ -145,7 +146,7 @@ fn control(element: ElementRef<'_>) -> bool {
                 | "noscript"
                 | "svg"
         )
-        || element.value().attr("role").is_some_and(|role| {
+        || element.value().attribute("role").is_some_and(|role| {
             matches!(
                 role,
                 "button" | "toolbar" | "listbox" | "option" | "tooltip"
@@ -165,8 +166,8 @@ fn control(element: ElementRef<'_>) -> bool {
                 "hover-info",
             ],
         )
-        || element.value().attr("data-floating-buttons").is_some()
-        || element.value().attr("data-fade-overlay").is_some()
+        || element.value().attribute("data-floating-buttons").is_some()
+        || element.value().attribute("data-fade-overlay").is_some()
 }
 fn excluded(element: ElementRef<'_>) -> bool {
     control(element) || gutter(element)
@@ -208,7 +209,7 @@ fn explicit_wrapper(element: ElementRef<'_>) -> bool {
             ],
         ) || element
             .value()
-            .attr("data-rehype-pretty-code-figure")
+            .attribute("data-rehype-pretty-code-figure")
             .is_some()
             || (element.value().name() == "code"
                 && element
@@ -275,7 +276,7 @@ fn safe_language(raw: &str) -> Option<String> {
 }
 fn language_attribute(element: ElementRef<'_>) -> Option<String> {
     for key in ["data-language", "data-lang", "language"] {
-        if let Some(value) = element.value().attr(key).and_then(safe_language) {
+        if let Some(value) = element.value().attribute(key).and_then(safe_language) {
             return Some(value);
         }
     }
@@ -290,7 +291,7 @@ fn language_attribute(element: ElementRef<'_>) -> Option<String> {
     }
     if (matches!(element.value().name(), "pre" | "code")
         || any_class(element, &["highlighter-rouge", "highlight"]))
-        && let Some(value) = element.value().attr("lang").and_then(safe_language)
+        && let Some(value) = element.value().attribute("lang").and_then(safe_language)
     {
         return Some(value);
     }
@@ -519,7 +520,7 @@ fn row(element: ElementRef<'_>) -> bool {
             "CodeMirror",
         ],
     ) || code_mirror(element)
-        || element.value().attr("data-line").is_some()
+        || element.value().attribute("data-line").is_some()
         || paired_gutter(element).is_some()
         || (element.value().name() == "div"
             && element
@@ -584,12 +585,12 @@ fn text_content(element: ElementRef<'_>, output: &mut String, depth: usize) -> R
     }
     Ok(())
 }
+/// A target's code text and language.
 fn render_target(
     root: ElementRef<'_>,
     scope: &LanguageScope<'_>,
-    output: &mut String,
     depth: usize,
-) -> Result<()> {
+) -> Result<(String, Option<String>)> {
     let mut editors = root
         .descendants()
         .filter_map(ElementRef::wrap)
@@ -615,16 +616,7 @@ fn render_target(
     };
     let mut text = String::new();
     text_content(content, &mut text, depth + skipped_depth)?;
-    output.push_str("<pre><code");
-    if let Some(language) = code_language(root, scope) {
-        output.push_str(" class=\"language-");
-        super::escaped(&language, output);
-        output.push('"');
-    }
-    output.push('>');
-    super::escaped(&text, output);
-    output.push_str("</code></pre>");
-    Ok(())
+    Ok((text, code_language(root, scope)))
 }
 
 fn confirmed_targets(element: ElementRef<'_>, depth: usize) -> Result<Option<Vec<CodeTarget<'_>>>> {
@@ -655,17 +647,27 @@ pub(super) fn is_block(element: ElementRef<'_>) -> bool {
 }
 
 /// Serialize a confirmed block as literal code, leaving other DOM nodes untouched.
-pub(super) fn render(element: ElementRef<'_>, output: &mut String, depth: usize) -> Result<bool> {
+pub(super) fn render(element: ElementRef<'_>, output: &mut Out, depth: usize) -> Result<bool> {
     let Some(targets) = confirmed_targets(element, depth)? else {
         return Ok(false);
     };
-    // Build separately: malformed/deep markup must not leave a half-written block.
-    let mut cleaned = String::new();
+    // Read every target first: malformed/deep markup must not leave a
+    // half-written block.
     let scope = LanguageScope::new(element);
-    for (target, target_depth) in targets {
-        render_target(target, &scope, &mut cleaned, target_depth)?;
+    let blocks = targets
+        .into_iter()
+        .map(|(target, target_depth)| render_target(target, &scope, target_depth))
+        .collect::<Result<Vec<_>>>()?;
+    for (text, language) in blocks {
+        output.start("pre");
+        output.start("code");
+        if let Some(language) = language {
+            output.attribute("class", &format!("language-{language}"));
+        }
+        output.text(&text);
+        output.end("code");
+        output.end("pre");
     }
-    output.push_str(&cleaned);
     Ok(true)
 }
 
@@ -679,9 +681,9 @@ mod tests {
             .select(&Selector::parse(selector).unwrap())
             .next()
             .unwrap();
-        let mut output = String::new();
+        let mut output = Out::markup();
         let handled = render(element, &mut output, 0).unwrap();
-        (handled, output)
+        (handled, output.into_markup())
     }
     fn code(source: &str, selector: &str) -> String {
         let (handled, html) = normalized(source, selector);
@@ -851,9 +853,10 @@ mod tests {
             .select(&Selector::parse("pre").unwrap())
             .next()
             .unwrap();
-        let mut output = "already written".to_owned();
+        let mut output = Out::markup();
+        output.text("already written");
         assert!(render(element, &mut output, 0).is_err());
-        assert_eq!(output, "already written");
+        assert_eq!(output.into_markup(), "already written");
     }
     #[test]
     fn classifier_and_walker_share_block_boundaries_and_global_depth_budget() {
@@ -870,9 +873,9 @@ mod tests {
             .next()
             .unwrap();
         assert!(!is_block(mixed));
-        let mut output = String::new();
+        let mut output = Out::markup();
         assert!(render(editor, &mut output, 255).is_err());
-        assert!(output.is_empty());
+        assert!(output.markup.is_empty());
         assert!(render(editor, &mut output, 250).unwrap());
     }
     #[test]
