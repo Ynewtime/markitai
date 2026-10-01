@@ -5,7 +5,7 @@ use crate::{Asset, Document, Error, Result, config, ocr, pdf_raster::PdfRasterSe
 use image::{ImageEncoder, ImageReader, RgbImage};
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::io::{Cursor, Write};
+use std::io::Write;
 
 const DPI: f64 = 150.0;
 const MAX_PAGES: usize = 1_000;
@@ -435,7 +435,10 @@ fn recognize_native_pictures(
             };
             if let std::collections::hash_map::Entry::Vacant(entry) = recognized.entry(index) {
                 let asset = &pages.document.assets[index];
-                let dimensions = ImageReader::new(Cursor::new(&asset.bytes))
+                // One reader type for every image decode keeps one copy of
+                // the decoders (`ImageBytes`); a `Cursor` here compiled them
+                // all again.
+                let dimensions = ImageReader::new(crate::images::ImageBytes::new(&asset.bytes))
                     .with_guessed_format()
                     .map_err(|error| error.to_string())
                     .and_then(|reader| reader.into_dimensions().map_err(|error| error.to_string()));
