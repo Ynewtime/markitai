@@ -5,14 +5,70 @@ request and response contract. Neither an installed CLI nor a Python worker is
 used for conversion. Feature availability is therefore the same as the core;
 an installed binding does not add missing format, OCR, or browser capabilities.
 
-The latest [installed-package validation](validation/runtime-history-round25.md)
-targets source `ccf51ba8563a9066b14cf1fdee0aef6b1b7e05b3` on macOS arm64.
-Python 3.13, Node 24 and Go 1.27.1 checks pass: 18 installed Python tests,
-five installed Node tests and Go source-package race tests. The earlier
-[round-seventeen PDF comparison](validation/pdf-native-round17.md) remains its
-own recorded evidence. Native media backends are platform-specific; separate
-Rosetta testing retains an OCR failure and does not validate physical Intel,
-Linux or Windows hosts.
+Native media backends (local OCR, PDF page rendering, HEIF/AVIF) are
+macOS-only, exactly as in the CLI; see [quick start](quickstart.md#platform-support).
+
+## Installation
+
+No packages are published to PyPI, npm or a Go module proxy yet. Build them
+from a checkout with Rust 1.89 or later; each build compiles the Rust core
+once in the `release` profile and takes several minutes.
+
+| Language | Minimum | Build | Result |
+|---|---|---|---|
+| Python | CPython 3.10 (ABI3 wheel) | `maturin build --release` in `bindings/python` | `markitai-1.3.0.dev0-cp310-abi3-<platform>.whl` (about 9.8 MB on macOS arm64) |
+| Node.js | 18 (Node-API 8) | `npm --prefix bindings/node run build`, then `npm pack` | `markitai-1.3.0-dev.0.tgz` (about 9.6 MB on macOS arm64) |
+| Go | 1.23 with cgo and a C linker | `cargo build --release -p markitai-ffi` | `target/release/libmarkitai_ffi.{dylib,so}` |
+
+A built wheel or npm archive contains the native library for the build
+machine's operating system and architecture only. Using it needs no Rust
+toolchain. Release automation for other platforms is unfinished.
+
+### Python
+
+```sh
+python3 -m venv .local/py                  # Python 3.10 or later; Apple's /usr/bin/python3 may be older
+.local/py/bin/python -m pip install 'maturin>=1.9,<2'
+(cd bindings/python && ../../.local/py/bin/maturin build --release --out ../../dist/python)
+.local/py/bin/python -m pip install dist/python/markitai-*.whl
+.local/py/bin/python -c 'import markitai; print(markitai.__version__)'
+```
+
+During development `maturin develop --release` (inside an activated
+environment, from `bindings/python`) installs the package in place.
+
+### Node.js
+
+```sh
+npm --prefix bindings/node run build       # builds the addon as bindings/node/markitai.node
+mkdir -p dist/node
+(cd bindings/node && npm pack --pack-destination ../../dist/node)   # markitai-1.3.0-dev.0.tgz
+cd /path/to/your/project
+npm install /path/to/markitai-rust/dist/node/markitai-1.3.0-dev.0.tgz
+node -e "console.log(require('markitai').version)"
+```
+
+### Go
+
+```sh
+cargo build --release -p markitai-ffi
+```
+
+In the consuming module, point the development module name at the checkout:
+
+```text
+require markitai.local/go v0.0.0
+replace markitai.local/go => /path/to/markitai-rust/bindings/go
+```
+
+```go
+import markitai "markitai.local/go"
+```
+
+The default build links `target/release/libmarkitai_ffi` dynamically and embeds
+that directory as the runtime search path, so the checkout's `target/release`
+must remain in place; see [Go and C ABI](#go-and-c-abi) for deployment and the
+self-contained static package.
 
 ## Shared contract
 
@@ -56,7 +112,9 @@ raised by the adapter expose `.usage` (`ConversionUsage` or `None`), Node
 `ConversionError.usage` is optional, and Go `ConversionError.Usage` is a nullable
 pointer. Existing constructors, exception categories, code and message stay
 compatible. An absent value differs from a recorded response with zero tokens;
-neither establishes zero provider cost. Pricing remains unimplemented.
+neither establishes zero provider cost. `cost_usd` covers only the models in
+the bundled [price catalog](pricing.md); per-model rows state whether their
+cost is complete, partial or unknown.
 
 Rust callers can use `convert_detailed` and the detailed context/publication
 entrypoints to receive `ConversionFailure { error, usage }`, including final
@@ -133,22 +191,13 @@ Native `fetch_error` maps to `FetchError`; input/configuration errors map to
 `code` attribute. Specific filesystem and missing-model codes map to the
 existing named exception types when supplied by the core.
 
-Build from the repository root in a private environment:
+The wheel contains the extension and small typed Python wrapper; see
+[installation](#python). Run the package tests against an installed wheel with
+private state:
 
 ```sh
-python3 -m venv .local/python-env
-.local/python-env/bin/python -m pip install 'maturin>=1.9,<2'
-source .local/python-env/bin/activate
-cd bindings/python
-maturin develop --release
-MARKITAI_HOME=../../.local/test-home python -m unittest discover -s tests -v
-maturin build --release --out ../../dist/python
+MARKITAI_HOME="$PWD/.local/test-home" .local/py/bin/python -m unittest discover -s bindings/python/tests -v
 ```
-
-The wheel contains the extension and small typed Python wrapper. Building
-requires Rust and a compatible Python interpreter; using a built wheel does
-not require Rust. Wheel release automation and additional OS/architecture
-validation remain release work.
 
 ## Node.js
 
@@ -158,7 +207,8 @@ calling thread. Concurrency uses the host's libuv worker pool; hosts may set
 `UV_THREADPOOL_SIZE` before startup after measuring their workload.
 
 ```javascript
-const { convert, convertSync, ConversionError } = require('./bindings/node');
+// An installed package; inside the checkout use require('./bindings/node').
+const { convert, convertSync, ConversionError } = require('markitai');
 
 const out = await convert('report.md', { config: {}, llm: false });
 console.log(out.markdown);
@@ -169,11 +219,11 @@ Both functions expose the same snake_case result and option fields as the
 shared protocol. Native conversion failures reject/throw `ConversionError`
 with a stable `code`. TypeScript declarations ship with the package.
 
+Build and pack as described under [installation](#nodejs); run the tests with
+private state:
+
 ```sh
-npm --prefix bindings/node run build
 MARKITAI_HOME="$PWD/.local/test-home" npm --prefix bindings/node test
-cd bindings/node
-npm pack
 ```
 
 `MARKITAI_BUILD_PROFILE=debug` or `dist` selects another Cargo profile. The
@@ -186,7 +236,8 @@ does not remove operating-system or architecture requirements.
 ## Go and C ABI
 
 The Go package uses cgo and the C header in `bindings/c/markitai.h`. Build the
-native library before compiling Go:
+native library before compiling Go, then run the package tests with private
+state:
 
 ```sh
 cargo build --release -p markitai-ffi
@@ -307,88 +358,18 @@ Implementation references: [PyO3 function and module interface](https://pyo3.rs/
 [PyO3 GIL release](https://pyo3.rs/v0.27.2/parallelism.html), and
 [NAPI-RS native async tasks](https://napi.rs/docs/concepts/async-task).
 
-## Initial verified checkpoint: 2026-09-28
+## Verified evidence
 
-Platform: macOS arm64. Toolchain: Rust 1.98.1, Python 3.13.15, maturin 1.15.0,
-Node.js 24.21.0, Go 1.27.1. Native libraries use the Cargo `release` profile;
-the Python wheel additionally targets macOS 11.0 through maturin.
-
-| Adapter | Verification | Result |
-|---|---|---|
-| Python | Build wheel, install into `.local/bindings-venv`, run `unittest discover -s bindings/python/tests -v` from repository root | 8 passed against the installed wheel |
-| Node | `node --test bindings/node/test.cjs` using the rebuilt addon | 3 passed |
-| Node package | `npm pack`, local archive install under `.local/node-installed`, Unicode conversion | Passed from installed package |
-| Go | `go test -race -count=1 ./...` in `bindings/go` | Passed |
-| C library | `otool -L target/release/libmarkitai_ffi.dylib` | Relocatable `@rpath/libmarkitai_ffi.dylib`; only macOS system-library dependencies |
-
-The test wheel is
-`.local/bindings-wheels/markitai-1.3.0.dev0-cp310-abi3-macosx_11_0_arm64.whl`:
-6,575,897 compressed bytes and 13,433,091 unpacked bytes, including maturin's
-SBOM. The test npm archive is
-`.local/bindings-packages/markitai-1.3.0-dev.0.tgz`: 6,493,005 compressed bytes
-and 13,064,120 unpacked bytes. These are local development artifacts, not
-published releases or cross-platform size guarantees. Artifacts and test
-environments stay ignored; source and reproducible build commands are tracked.
-
-
-## Recovery checkpoint: 2026-09-28
-
-The configuration adapter now materializes all 27 native configuration models,
-including nested deployments, maps and lists. The newly built wheel was installed
-into the same private test environment and passed all 16 tests (eight native API
-and eight configuration contracts). Tests imported the installed wheel from the
-repository root, not the wrapper source directory.
-
-The rebuilt Node addon passed all three tests. Its new npm archive was installed
-under `.local/node-installed-round2`; synchronous and asynchronous Unicode
-conversion passed through the installed package. Go passed `go test -race
--count=1 ./...` against the rebuilt native C library.
-
-The source, native schema helper and shipped `_native.pyi` agree on the
-configuration protocol. Core and wrapper tests still do not establish full
-Pydantic extension-protocol compatibility or cross-platform support.
-
-Recovery artifacts live under `.local/bindings-wheels/round2` and
-`.local/bindings-packages/round2`, preserving the initial artifacts. Their sizes
-and identities are recorded in `validation/artifacts-round2.json`.
-
-## MSG, raster vision and HTML checkpoint: 2026-09-28
-
-Source `21bf8f5` was rebuilt after the CSS visibility fix. The newly installed
-wheel passed 16 tests, the addon passed three, and an independently installed npm
-archive passed synchronous/asynchronous Unicode conversion. Go's race tests
-passed against the rebuilt C library on macOS 27; its host test did not force an
-older deployment target. These checks use the same core as the CLI, including
-the new MSG, image and routing paths; they do not individually exercise every
-format through every host adapter.
-
-The final wheel and npm archive are preserved in
-`.local/bindings-wheels/round3-final` and
-`.local/bindings-packages/round3-final`. Their compressed/unpacked sizes are
-7,391,308/15,142,519 and 7,292,463/14,735,272 bytes respectively.
-[Artifact identities and validation logs](validation/artifacts-round3.json)
-record the exact source and hashes. The earlier round-three packages remain
-available in their own ignored directories; subsequent builds do not replace
-this evidence. Cross-platform release validation remains unfinished.
-
-R28 actual macOS arm64 static-package validation is recorded in
-[its evidence page](validation/routing-domains-static-round28.md). The isolated
-packaging environment explicitly sets the selected macOS SDK for absolute Apple
-clang; this avoids missing system headers in cgo. Seven installed race tests and
-a relocated 24-call consumer pass. The mechanical notice inventory retains 15
-missing-text entries; this is not a completed release review. The current sample
-consumer retains Go debug information, so its measured size is not a minimal
-Go delivery size.
-
-The R29 source adds automatic selected-macOS-SDK discovery when SDKROOT is absent.
-Its offline static-package notice overlay checks exact upstream commits, published
-Cargo manifests and original text bytes. Six package versions have complete texts;
-nine have notices only and remain explicitly unresolved. Original evidence is
-tracked under `licenses/upstream`. Actual rebuilt package acceptance is separate
-from these source and helper tests, and no legal clearance is asserted.
-
-[R29 installed evidence](validation/operations-runtime-round29.md) now verifies
-the rebuilt ABI3/Node/Go consumers and static package. With SDKROOT absent,
-automatic SDK selection passes all thirteen static stages; seven race tests and
-24 relocated concurrent calls succeed. The package retains 807 installed files
-and nine notice-only gaps. This remains a native macOS arm64 result.
+The package driver in [native CI](ci.md) builds all three bindings from a clean
+checkout, installs them into private consumers and runs their test suites. The
+latest recorded run, [delivery R44](validation/delivery-round44.md) (source
+`b961344`), passed on macOS arm64 and on Ubuntu amd64 under OrbStack/Rosetta:
+installed Node 7/7, Python 20 and Go race tests, plus the macOS static Go
+package (844 installed files, 24 relocated concurrent conversions). Toolchains
+were Rust 1.98.1, Python 3.13, Node.js 24 and Go 1.27; the minimum versions in
+the installation table come from the package manifests and are not separately
+tested. Windows, physical Intel hosts and other-platform static Go packages
+have not been run. Earlier rounds, including the first binding checkpoints and
+their package sizes, are kept in the [validation records](validation/README.md)
+(for example [artifacts round 3](validation/artifacts-round3.json) and
+[R28 static Go](validation/routing-domains-static-round28.md)).

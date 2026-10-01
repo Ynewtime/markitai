@@ -8,8 +8,13 @@ release their lock. Requests carry private snapshots; discovery and probes do
 not save credentials or change running conversions.
 
 Discovery supports OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, Azure,
-Ollama and custom OpenAI-compatible endpoints. OAuth/agent integrations return
-an explicit unavailable result. No browser or CLI authentication store is read.
+Ollama and custom OpenAI-compatible endpoints. The subscription providers
+`copilot` and `claude-agent` ask their installed official runtime for its model
+list on every request (never cached, because a stored login can change);
+`chatgpt` returns the adapter's fixed `gpt-5.5` allowlist marked
+non-authoritative. They reject an API key or base URL and report `unavailable`
+when the runtime or its login is missing. Markitai itself reads no browser or
+CLI authentication store; see [subscriptions](subscriptions.md).
 Quick-add `/api/settings/llm/detected` is an array derived from nonempty process
 environment keys. It does not contact providers; its candidates already have an
 environment credential, so `requires_api_key` is false.

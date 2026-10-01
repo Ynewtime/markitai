@@ -28,6 +28,9 @@ browser conversion controls an installed Chromium executable through Rust CDP.
 These platform/resources have explicit availability and bounded input contracts;
 they are not hidden runtime downloads or bundled in the CLI size measurement.
 
-Profiles are `release` for throughput and `dist` for distribution size. Both
-use LTO and stripped symbols; measurements select a profile explicitly.
-Optimizations must preserve test results before they are accepted.
+Packages are built with the `release` profile: workspace crates and the
+conversion hot path (PDF, Office, HTML, image and regex crates) are optimized
+for speed and every other dependency for size
+([measurement](validation/binary-size-round39.md)). `dist` optimizes everything
+for size. Both use fat LTO and stripped symbols; measurements select a profile
+explicitly. Optimizations must preserve test results before they are accepted.

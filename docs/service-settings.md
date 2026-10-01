@@ -121,6 +121,9 @@ candidates available without persisting them. Explicit `MODEL` selects the
 process's automatic model. Common provider cards do not perform network requests;
 `refresh` recomputes these inexpensive cards immediately.
 
-Local CLI/OAuth providers remain outside this native runtime's supported provider
-set. The settings schema can retain such configuration for compatibility, but
-listing or storing a model is not a claim that the converter can execute it.
+Subscription models (`copilot/`, `claude-agent/` and `chatgpt/gpt-5.5`) run
+through their installed official runtimes as described in
+[subscriptions](subscriptions.md); they take no API key or base URL. Other
+OAuth or local-CLI providers from the reference are not implemented. The
+settings schema can retain such configuration for compatibility, but listing or
+storing a model is not a claim that the converter can execute it.

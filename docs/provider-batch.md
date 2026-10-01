@@ -1,9 +1,5 @@
 # Provider Batch jobs
 
-R30 is verified at source `16babc6` on macOS arm64, including six independent
-optimized CLI workflows and all installed bindings. See [validation](validation/metered-provider-batch-round30.md)
-for exact artifact identities and the distinction between loopback and real-account evidence.
-
 Provider Batch sends prepared requests to a provider's asynchronous queue. It is
 separate from local directory concurrency, REST conversion jobs and MCP
 `batch_convert`. Those interfaces continue to execute ordinary live requests.
@@ -18,12 +14,9 @@ endpoint. It does not need the original input directory. Credentials are resolve
 again from the current configuration and remain in memory. Inline configuration
 and keys are never inserted into a suggested collection command or saved job.
 
-## R31 frozen recovery
+Only OpenAI's Batch API is implemented; see [supported scope](#initial-supported-scope).
 
-R31 source `88e44ce` passes the complete source gate, eleven independent optimized
-CLI workflows /234 assertions and installed bindings. See
-[recovery delivery](validation/subscription-recovery-round31.md). R30 artifact
-identities above remain unchanged.
+## Resuming an unfinished job
 
 `markitai --llm-batch --resume -o output-directory` selects the unique unfinished
 native job. INPUT is optional and, when supplied, must match the recorded resolved
@@ -156,3 +149,13 @@ under the configured API base, never arbitrary provider-returned URLs. Errors do
 not echo credentials or raw response content. Test suppliers are local loopback
 servers using fake keys and isolated state. Those tests do not establish live
 provider acceptance, quotas, invoice totals or 24-hour service reliability.
+
+## Verified evidence
+
+[R30](validation/metered-provider-batch-round30.md) verified source `16babc6` on
+macOS arm64 with six independent optimized CLI workflows and all installed
+bindings, and records which evidence is loopback-only rather than a real
+account. [R31](validation/subscription-recovery-round31.md) verified the resume
+and reconciliation paths at `88e44ce`: the complete source gate, eleven
+optimized CLI workflows with 234 assertions and installed bindings. No live
+provider Batch job has been run.

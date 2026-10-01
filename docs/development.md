@@ -1,12 +1,18 @@
 # Development and recovery
 
 Start at `docs/CONTROL.md`; inspect `git status --short --branch` before work.
-Use Rust stable, Node 24+, Go 1.22+, and Python 3.11+ for adapter testing.
-The manifest floor is Rust 1.89 due to resolved dependencies; this checkpoint
-was verified with Rust 1.98.1, not with the minimum compiler.
+Package manifests set the floors: Rust 1.89 (workspace `rust-version`, due to
+resolved dependencies), Python 3.10 (`bindings/python/pyproject.toml`),
+Node.js 18 (`bindings/node/package.json`) and Go 1.23 (`bindings/go/go.mod`).
+Checkpoints are verified with current toolchains (Rust 1.98.1, Python 3.13,
+Node.js 24, Go 1.27), not with the minimum versions. User-facing build and
+installation steps are in the [quick start](quickstart.md) and
+[bindings](bindings.md#installation).
 
-Standard checks (`python scripts/check.py` runs the complete gate with isolated
-state on all hosts; `scripts/check.sh` delegates to it on Unix):
+`python scripts/check.py` runs the source gate with `MARKITAI_HOME` set to
+`.local/test-home` on all hosts; `scripts/check.sh` delegates to it on Unix. It
+runs the first three commands below and the `scripts/test_*.py` helper tests.
+Build the optimized CLI separately:
 
 ```sh
 cargo fmt --all --check
@@ -14,6 +20,10 @@ cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo build --release -p markitai-cli
 ```
+
+The binding suites run against built artifacts; see
+[bindings](bindings.md). [Native CI](ci.md) builds, installs and tests every
+package from a clean checkout.
 
 Tests must set `MARKITAI_HOME` to a private directory under `.local/` or a
 temporary directory. Real-provider tests are opt-in. If needed, explicitly

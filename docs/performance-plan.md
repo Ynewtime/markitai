@@ -1,5 +1,11 @@
 # Bun reference: practical implications for Markitai
 
+> Historical design review. The profile described below has since changed:
+> `release` now uses fat LTO with size-optimized dependencies and a
+> speed-optimized conversion path ([architecture](architecture.md),
+> [measurement](validation/binary-size-round39.md)). Current performance results
+> are listed in the [control center](CONTROL.md).
+
 Design review, 2026-09-28. This plan adds no new performance measurements.
 Historical artifact figures below belong to `979d205`, not to a later build.
 The subsequent [round-six experiment](validation/profile-round6.md) supplies the

@@ -91,6 +91,9 @@ Per-model usage keeps its existing requests/input/output/cost fields and adds:
 }
 ```
 
+Rows can also carry `cached_input_tokens`, `cache_creation_input_tokens` and
+`incomplete_request_observations` (subscription runtimes that report tokens but
+not a request count); `pricing_snapshot` appears only on priced rows.
 `complete` means every observed request in that row was priced; `partial` means
 both priced and unpriced requests; `unknown` means none was priced. An explicit
 zero-token response can be completely priced at zero. No model event is invented
@@ -100,6 +103,24 @@ sources retain sorted unique `pricing_snapshots`; they do not overwrite the
 source with the latest one. A usage delta retains conservative observed source
 provenance rather than claiming an itemized ledger across historical catalogs.
 Old consumers that ignore these additions cannot distinguish unknown from zero.
+
+## Where costs appear
+
+Whenever model requests were observed, a summary object
+`pricing: {priced_requests, unpriced_requests, cost_status, pricing_snapshots}`
+(plus `incomplete_request_observations` when nonzero) accompanies the existing
+`cost_usd`:
+
+- CLI `--json`: each item, and `totals.pricing` for the run; per-model rows stay
+  under `llm_usage`.
+- Batch reports: the usage blocks ([reports](reports.md)).
+- REST job items ([REST service](serve.md)).
+- MCP single-source results, `batch_convert` items, and an aggregate `pricing`
+  and `cost_usd` on `job_status` ([MCP](mcp.md)).
+
+When any observed request is unpriced, the CLI also prints
+`Warning: Some observed LLM requests could not be priced. cost_usd is the known
+priced subtotal; the complete cost is unknown.`
 
 ## Dollar continuation budget
 

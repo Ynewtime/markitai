@@ -12,7 +12,23 @@ markitai --config /absolute/path/config.json mcp
 ```
 
 Configure an MCP host to launch that command. Keep provider credentials in the
-host's environment or the isolated Markitai configuration. Normal tool results
+host's environment or the isolated Markitai configuration. A typical client
+entry is:
+
+```json
+{
+  "mcpServers": {
+    "markitai": {
+      "command": "/absolute/path/to/markitai",
+      "args": ["--config", "/absolute/path/config.json", "mcp"],
+      "env": {"MARKITAI_HOME": "/absolute/path/markitai-home"}
+    }
+  }
+}
+```
+
+The `--config` arguments and `MARKITAI_HOME` are optional; without them the
+service uses the normal configuration search and `~/.markitai`. Normal tool results
 are MCP messages on stdout; diagnostics belong on stderr. The existing public
 `markitai-mcp` launcher name selects the same service, including a no-argument
 client launch. Unix distributions expose it as a relative link to the one CLI
@@ -50,7 +66,7 @@ Each single-source result contains:
 | `markdown_file` | Complete enhanced/base output path, or null |
 | `output_dir` | The selected output directory |
 | `assets`, `screenshots` | Written paths from the core result |
-| `cost_usd` | Core usage cost; currently zero without native pricing |
+| `cost_usd` | Known priced subtotal from the [price catalog](pricing.md); unpriced models add nothing |
 | `skip_reason` | Core skip reason, or null |
 | `duration_s` | Core duration rounded to two decimal places |
 | `warnings` | Nonfatal conversion notices |
@@ -79,7 +95,10 @@ When the core records model work, successful results additionally contain
 `error: null` and `usage`. Usage contains `requests`, `input_tokens`,
 `output_tokens`, `cost_usd` and `by_model`; it uses the same accounting as the
 core detailed conversion API. A recorded request with zero tokens is still an
-observation. Results without an observation retain the original eleven fields.
+observation. Such results also add a `pricing` summary
+(`priced_requests`, `unpriced_requests`, `cost_status`, `pricing_snapshots`; see
+[pricing](pricing.md#where-costs-appear)). Results without an observation retain
+the original eleven fields.
 
 Failed tools retain their existing `isError: true` and text beginning
 `Error executing tool <name>: `. If recorded work exists, `structuredContent`
@@ -92,8 +111,9 @@ is unchanged.
 
 These are per-attempt observations, not a lifetime billing ledger. A failed
 conversion can have consumed tokens; missing diagnostics mean unknown or no
-observation, not proof of a free call. Provider pricing is not implemented, so
-zero `cost_usd` does not establish zero cost. Raw credentials and provider error
+observation, not proof of a free call. Only models in the bundled price catalog
+are priced, so zero `cost_usd` does not establish zero cost; per-model usage
+reports `cost_status` as `complete`, `partial` or `unknown`. Raw credentials and provider error
 bodies are not added to diagnostics.
 
 ## Background batches
@@ -125,7 +145,9 @@ Either slot adds the same optional `diagnostics.last_attempt` when that
 conversion recorded work. A success reused through the shared runtime does not
 inherit the HTTP owner's usage; only the caller that actually sent the request
 is charged. A failed owner and a waiter that subsequently sends its own request
-keep separate observations. No new aggregate is added to `job_status`.
+keep separate observations. Either slot can also carry the same optional
+`pricing` summary. When any item has one, `job_status` adds an aggregate
+`pricing` and the summed `cost_usd` of the finished items.
 
 This task table is independent of REST history. Jobs exist only in this server
 process, with 100 finished jobs retained and up to 500 forgotten IDs remembered

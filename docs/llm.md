@@ -7,6 +7,34 @@ Configuration validation remains separate from runtime capability: an accepted
 configuration can still request a provider or routing strategy that this build
 explicitly rejects.
 
+## Getting started
+
+```sh
+export OPENAI_API_KEY=...           # or another provider key, or a .env file
+markitai init --yes                 # records the detected model; LLM stays off
+markitai doctor                     # checks credentials without a model request
+markitai report.pdf --llm -o out/   # writes out/report.pdf.llm.md
+```
+
+A pinned model in the configuration file looks like this:
+
+```json
+{
+  "llm": {
+    "enabled": true,
+    "model_list": [
+      {"model_name": "default",
+       "litellm_params": {"model": "anthropic/claude-haiku-4-5", "api_key": "env:ANTHROPIC_API_KEY"}}
+    ]
+  }
+}
+```
+
+`--keep-base` also keeps the unenhanced `report.pdf.md`; `--alt`/`--desc` add
+[image captions](image-enrichment.md). See [configuration](configuration.md)
+for the related keys and environment variables and [pricing](pricing.md) for
+costs.
+
 ## Model selection
 
 A nonempty `llm.model_list` owns the model pool. Entries with `weight: 0` are
@@ -20,8 +48,8 @@ available API credential joins the pool: Anthropic, OpenAI, Gemini, DeepSeek
 and OpenRouter. The model aliases are derived from the reference checkout's
 provider-default table, not an independent assertion about current provider
 availability. Pin `MODEL` or a configured deployment to control which provider
-receives documents. Subscription providers and local CLI authentication are
-not auto-detected by the native implementation.
+receives documents. [Subscription providers](subscriptions.md) are never
+auto-detected; configure them explicitly in `llm.model_list`.
 
 `simple-shuffle` chooses deployments in proportion to positive integer weights.
 A randomized process seed and an atomic sequence provide independent selection
@@ -140,6 +168,7 @@ or optional quota settings that Markitai does not expose.
 | `gemini/`, `deepseek/`, `openrouter/` | Provider's OpenAI-compatible endpoint |
 | `azure/` | Azure deployment Chat Completions, with `api-version` |
 | `ollama/`, `ollama_chat/` | Ollama's OpenAI-compatible `/v1` endpoint |
+| `copilot/`, `claude-agent/`, `chatgpt/` | Installed official subscription runtime; see [subscriptions](subscriptions.md) |
 
 Other prefixes return an unsupported error when no usable deployment remains.
 This table describes implemented request shapes, not live compatibility tests

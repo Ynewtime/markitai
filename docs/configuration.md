@@ -1,8 +1,116 @@
-# Rust 配置模型
+# 配置
 
-Rust 核心将配置的结构验证与运行能力分开。配置描述用户期望；转换层决定是否能兑现某项能力。浏览器、OCR、模型路由等字段在结构上有效，并不代表对应功能已经可用；尚未实现的运行路径必须给出明确诊断。
+Markitai 的配置是一个 UTF-8 JSON 对象，只需写出与默认值不同的字段。CLI、`serve`、`mcp` 和各语言绑定共用同一套键、默认值和校验规则。配置描述用户期望；转换层决定能否兑现某项能力。浏览器、OCR、模型路由等字段在结构上有效，并不代表对应功能已经可用；尚未实现的运行路径给出明确错误。
+
+## 快速参考
+
+### 使用哪个文件
+
+每次运行只选中一个文件，不会合并多个文件：
+
+1. `-c/--config PATH`（必须存在；`config set/edit` 可以创建）
+2. 环境变量 `MARKITAI_CONFIG`
+3. 当前目录的 `markitai.json`
+4. 用户配置 `MARKITAI_HOME/config.json`，未设置 `MARKITAI_HOME` 时为 `~/.markitai/config.json`
+5. 都不存在时使用内建默认值
+
+`--config-json '{...}'` 在选中的文件之上深度合并，仅对本次运行有效；`-p/--preset` 再覆盖功能开关，命令行显式参数最后生效。根级 `-c` 与 `--config-json` 对子命令同样有效。`markitai config path` 显示当前选中的文件。
+
+### 常用命令
+
+```sh
+markitai init --yes                  # 在用户目录创建配置；检测到 API 密钥环境变量时写入模型名
+markitai init --local --yes          # 在当前目录创建 markitai.json
+markitai config path
+markitai config list -f table        # json（默认）、yaml 或 table；默认隐藏密钥
+markitai config get output.on_conflict
+markitai config set output.on_conflict overwrite
+markitai config set 'llm.model_list[0].litellm_params.model' openai/gpt-4.1-mini
+markitai config validate markitai.json
+markitai config edit                 # 终端中的交互编辑器
+```
+
+`config set` 按字段声明解析值，保存前完整校验，只写改动的路径并保留文件中的未知键；未知键（如 `image.qualty`）和越界的数组下标都会报错而不修改文件。`init` 生成的配置默认关闭 LLM，且不保存密钥明文。
+
+### 示例
+
+```json
+{
+  "llm": {
+    "enabled": true,
+    "model_list": [
+      {
+        "model_name": "default",
+        "litellm_params": {"model": "openai/gpt-4.1-mini", "api_key": "env:OPENAI_API_KEY"}
+      }
+    ]
+  },
+  "output": {"on_conflict": "overwrite"},
+  "ocr": {"lang": "zh"},
+  "log": {"dir": "~/.markitai/logs"}
+}
+```
+
+`env:NAME` 在需要时才读取环境变量，配置文件里不必出现密钥。`~/.markitai/...` 路径在设置 `MARKITAI_HOME` 时自动落到该目录下。
+
+### 常用设置
+
+| 键 | 默认值 | 作用 |
+|---|---|---|
+| `output.dir` | `null` | 目录/URL 列表未给 `-o` 时的输出目录；单文件仍输出到 stdout |
+| `output.on_conflict` | `rename` | 目标已存在时 `rename`（生成 `.v2`）、`overwrite` 或 `skip` |
+| `output.profile` | `null` | `rag`、`obsidian` 或 `okf` 输出形态，同 `--profile` |
+| `output.report` | `null` | 批量报告；`null` 表示目录/URL 列表开启、单项关闭 |
+| `llm.enabled` | `false` | 模型增强，同 `--llm` |
+| `llm.model_list` | `[]` | 模型部署；为空时按 `MODEL` 和供应商密钥自动选择 |
+| `llm.keep_base` | `false` | 增强后同时保留基础 Markdown，同 `--keep-base` |
+| `llm.on_failure` | `fallback` | 增强失败时保留基础结果并警告；`fail` 判为失败 |
+| `llm.concurrency` | `10` | 同时进行的模型请求上限 |
+| `llm.max_requests_per_document` | `50` | 每个文档的模型请求上限，`0` 不限 |
+| `llm.max_cost_per_document_usd` | `0` | 每个文档的美元上限，`0` 不限；见[定价](pricing.md) |
+| `image.compress` / `image.format` / `image.quality` | `true` / `jpeg` / `75` | 资产图片压缩 |
+| `image.max_width` | `1920` | 资产图片最大宽度 |
+| `image.alt_enabled` / `image.desc_enabled` | `false` | 图片说明与描述（需要 LLM），同 `--alt`/`--desc` |
+| `ocr.enabled` / `ocr.lang` | `false` / `en` | OCR 开关与语言，见[本地 OCR](ocr.md) |
+| `screenshot.enabled` | `false` | 页面截图，同 `--screenshot` |
+| `batch.concurrency` / `batch.url_concurrency` | `10` / `5` | 文件与 URL 并发，同 `-j`/`--url-concurrency` |
+| `batch.scan_max_depth` / `batch.scan_max_files` | `5` / `10000` | 目录扫描深度与文件数上限 |
+| `cache.enabled` | `true` | 模型答案与网页缓存，见[缓存](cache.md) |
+| `cache.fetch_ttl_seconds` | `86400` | 无验证头网页的复用时间 |
+| `fetch.strategy` | `auto` | URL 策略，同 `-s` |
+| `fetch.remote_consent` | `always` | 是否允许把 URL 交给远程抽取服务（`ask`/`always`/`never`） |
+| `log.dir` / `log.level` | `null` / `INFO` | 文件日志目录与级别，默认不写日志 |
+| `history.record` | `false` | 记录供 `serve` 查看的历史，同 `--record-history` |
+
+内建 preset：`minimal` 全部关闭；`standard` 开启 LLM、alt 和 desc；`rich` 再开启截图；都不开启 OCR。`markitai config list` 列出完整默认值。
+
+### 环境变量
+
+| 变量 | 作用 |
+|---|---|
+| `MARKITAI_HOME` | 替代 `~/.markitai`：用户配置、`.env`、缓存、浏览器安装与历史都放在这里 |
+| `MARKITAI_CONFIG` | 配置文件路径（优先级低于 `-c`） |
+| `MARKITAI_PURE` | `1`/`true`/`yes` 时等同 `--pure` |
+| `MARKITAI_RECORD_HISTORY` | `1`/`true`/`yes`/`on`（不分大小写）开启历史，其他非空值关闭；命令行开关优先 |
+| `MARKITAI_NO_REMOTE_FETCH` | `1`/`true`/`yes`/`on` 时禁止远程抽取服务 |
+| `MARKITAI_NO_VLM_OCR` | 非空且不是 `0`/`false`/`no` 时，LLM 开启的 OCR 先本地识别再只发送文字 |
+| `MARKITAI_LOG_DIR` / `MARKITAI_LOG_FORMAT` | 覆盖 `log.dir` 与 `log.format`（`text`/`json`） |
+| `MARKITAI_SERVE_TOKEN` | `serve` 远程访问令牌，见 [REST 服务](serve.md) |
+| `MARKITAI_BROWSER_EXECUTABLE` | 指定 Chrome/Chromium 可执行文件 |
+| `PLAYWRIGHT_BROWSERS_PATH` | 额外搜索的 Playwright 浏览器缓存目录 |
+| `MODEL` | 未配置 `llm.model_list` 时使用的模型，如 `openai/gpt-4.1-mini` |
+| `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY`、`DEEPSEEK_API_KEY`、`OPENROUTER_API_KEY` | 供应商密钥；未配置模型时据此自动选择模型 |
+| `AZURE_API_KEY`、`AZURE_API_VERSION`、`OLLAMA_API_KEY` | Azure 与 Ollama 部署的凭据和 API 版本 |
+| `<PROVIDER>_API_BASE`、`OPENAI_BASE_URL` | 部署未设置 `api_base` 时的端点 |
+| `JINA_API_KEY` | `-s jina` 的可选密钥 |
+| `COPILOT_CLI_PATH`、`COPILOT_HOME`、`COPILOT_CACHE_HOME`、`COPILOT_GITHUB_TOKEN`/`GH_TOKEN`/`GITHUB_TOKEN`、`CLAUDE_CLI_PATH`、`CLAUDE_CONFIG_DIR`、`CODEX_CLI_PATH`、`CODEX_HOME` | 订阅运行时的可执行文件、状态目录与令牌，见[订阅](subscriptions.md) |
+| `HTTPS_PROXY`、`HTTP_PROXY`、`ALL_PROXY`、`NO_PROXY` | 代理，见[抓取](fetch.md#proxies) |
+
+CLI 启动时依次从进程环境、当前目录 `.env`、`MARKITAI_HOME/.env`（`~/.markitai/.env`）读取变量，已存在的值优先，不修改宿主进程环境。参考版本的 `MARKITAI_LANG`、`MARKITAI_PDF_WORKERS`、`MARKITAI_STATIC_HTTP` 以及 Cloudflare 凭据在本构建中不读取。
 
 ## 默认值与配置选择
+
+以下各节说明实现与契约细节，供集成和维护参考。
 
 `config::defaults()` 返回与参考版本 1.2.0 全量模型一致的 JSON 对象：14 个顶层配置组，27 个模型共 169 个声明字段（含嵌套模型定义）。完整默认快照作为测试夹具跟踪，核心只嵌入约 13 KiB 的类型、枚举、边界和默认值事实。数据首次使用时解析，随后复用不可变元数据；没有引入完整 JSON Schema 引擎或 Python 运行时。
 
@@ -10,7 +118,7 @@ Rust 核心将配置的结构验证与运行能力分开。配置描述用户期
 
 配置加载器选中了不存在的显式或环境路径时会在 stderr 警告并使用默认值，不继续选择低优先级文件；CLI 在此之前单独将缺失 `-c` 判为用法错误。已存在但无法读取、不是 UTF-8 JSON 对象、内容损坏或字段无效的文件都返回错误，不降级为默认值。
 
-`MARKITAI_HOME` 是 Rust 开发隔离入口，替换通常的用户 `.markitai` 目录。序列化默认仍保留旧路径字面值；运行时使用 `config::state_path` 将默认 `~/.markitai/...` 路径解析到隔离目录。显式自定义路径不会被重定向。不要为了测试修改进程的 HOME。
+`MARKITAI_HOME` 替换通常的用户 `.markitai` 目录，用于隔离试用、测试和多实例。序列化默认仍保留旧路径字面值；运行时使用 `config::state_path` 将默认 `~/.markitai/...` 路径解析到隔离目录。显式自定义路径不会被重定向。不要为了测试修改进程的 HOME。
 
 ## 规范化与验证
 

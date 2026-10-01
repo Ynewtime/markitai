@@ -83,8 +83,12 @@ ChatGPT login, model availability or subscription inference. JPEG/WebP paths
 have not received equivalent actual-runtime request inspection.
 
 Authored fake subprocess tests cover the native status/login/doctor, conversion,
-budget, fallback, cache bypass and terminal-accounting paths. Their presence in
-source is not evidence that a gate or installed package ran: the coordinator's
-retained results must record that separately. An actual native-to-official
-signed-out status check is planned in the dedicated guest user, with network
-isolation and no real credentials; it must not use the host's real Codex account.
+budget, fallback, cache bypass and terminal-accounting paths; the optimized-CLI
+workflow with an authored fake runtime passed 52 checks in
+[delivery R36](validation/delivery-round36.md). An actual native-to-official
+signed-out status check also passed in R36: the Linux single binary ran the
+unmodified official Codex 0.159.0 as a dedicated guest user with loopback-only
+networking and no credentials, reporting `authenticated: false` with JSON exit
+0 and text exit 1 and creating no auth file
+([Linux R36](validation/platform-linux-round36/summary.md)). This establishes
+the signed-out interaction only, not login, entitlement or inference.

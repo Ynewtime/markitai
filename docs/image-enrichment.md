@@ -6,6 +6,15 @@ runtime as document enhancement. It requires `llm.enabled` and at least one of
 by themselves. The feature analyzes actual image references and owned binary
 assets; it does not search for image-like text inside code or comments.
 
+```sh
+markitai report.docx --llm --alt --desc -o out/   # captions and descriptions
+markitai photo.jpg --llm -o out/                  # standalone image: description and visible text
+```
+
+Captions replace image alt text in the enhanced Markdown. With descriptions
+enabled and `-o`, an `images.json` sidecar in the asset directory also records
+each image's caption, description and visible text.
+
 ## Conversion order
 
 Referenced local, HTTP(S), and image data-URI resources are first localized into
@@ -73,7 +82,8 @@ never uses environment variables to identify a document. `LlmRuntime` separately
 bounds active model HTTP attempts across conversions when supplied by the caller.
 Returned token usage from unsuccessful content validation remains in the
 aggregate. Requests without provider usage cannot establish token cost or
-billing. Native pricing inference remains outside this feature.
+billing. Analysis responses are priced like every other model response, through
+the bounded [price catalog](pricing.md).
 
 Each analysis request has a 100 MiB encoded-image-bytes ceiling and observes
 `llm.max_vision_pages_per_document`. Existing image decoding/pixel limits still

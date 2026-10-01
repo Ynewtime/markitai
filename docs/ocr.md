@@ -4,8 +4,16 @@ On macOS 11 or later, local OCR uses the operating system's Vision framework
 through Rust bindings. It runs in the current process without Python, Node,
 Tesseract, a browser, downloaded OCR weights, provider credentials or a remote
 recognition service. Other platforms currently return an explicit unsupported
-error for this local path. This is an image implementation; PDF page OCR and
-multi-page TIFF OCR remain unfinished.
+error for this local path. This page covers image inputs, including every page
+of a multi-page TIFF and HEIF/AVIF images; scanned PDF pages use the same
+recognizer as described in [PDF page OCR](pdf-ocr.md), and Office page images in
+[Office rendering](office-rendering.md).
+
+```sh
+markitai scan.png --ocr                                        # English (default)
+markitai scan.png --ocr --config-json '{"ocr":{"lang":"zh"}}'  # Simplified Chinese
+markitai scan.png --ocr -o out/                                 # keep the image asset
+```
 
 ## Selection and output
 
@@ -26,10 +34,12 @@ error or CLI skip behavior.
 
 OCR consumes the original raster bytes, independently of preview compression,
 image width settings and embedded-image filters. Static SVG uses the existing
-bounded in-process SVG rasterizer. JPEG, PNG, GIF, BMP, single-page TIFF and WebP
-use the enabled Rust decoders; animation uses its first image. HEIF and AVIF are
-not implemented. Multi-page TIFF is rejected rather than silently recognizing
-only its first page.
+bounded in-process SVG rasterizer. JPEG, PNG, GIF, BMP, TIFF and WebP use the
+enabled Rust decoders; animation uses its first image. HEIF and AVIF are decoded
+by macOS ImageIO ([images](images.md#heif-and-avif)), and the primary image is
+recognized. A multi-page TIFF is recognized page by page: each page keeps its
+`<!-- Page number: N -->` marker and preview, followed by its text, and a page
+without text adds a warning instead of ending the conversion.
 
 ## Language selection
 
@@ -110,8 +120,7 @@ results match RapidOCR on arbitrary documents.
 Renderer-entry tests compare the same fixture's normalized PNG bytes and Vision
 observations with the encoded-image path. Additional checks reject zero-sized,
 oversized and excess-storage RGB layouts without allocating a maximum-sized
-image, and verify that ordinary RGB rows and colors remain unchanged. These
-new checks await the coordinated round-seventeen test run.
+image, and verify that ordinary RGB rows and colors remain unchanged.
 
 The [frozen release check](validation/native-backends-round16.md) observes a
 25.897-second first image OCR call and much shorter subsequent calls. OS caches
