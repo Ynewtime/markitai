@@ -63,7 +63,9 @@ warning per reason names how many parts were left out.
 Superscript and subscript runs are written as Unicode super/subscript
 characters when every character has one (`10⁻³`, `H₂O`) and stay at the
 baseline otherwise. `w:sym` characters from the Symbol and Wingdings fonts map
-to their Unicode marks; a non-breaking hyphen is `-`. Chinese, Japanese and
+to their Unicode marks, and so does text set in those fonts, as Word shows it
+(a Symbol `m` is `μ`, a stored private-use `F0FC` in Wingdings is `✓`; a real
+`α` stays); a non-breaking hyphen is `-`. Chinese, Japanese and
 enclosed-digit numbering (`一、`, `（二）`, `①`) keeps the document's own
 characters in list and heading labels. A list label Markdown does not read as
 a marker (`a)`, `(1)`, `一、`) is kept as text, one item to a line. Emphasis
@@ -72,7 +74,13 @@ beside a letter has its edge punctuation moved outside the markers
 Indentation typed with spaces is kept, because code pasted into Word depends
 on it; four or more leading spaces therefore render as a code block. Fields keep
 their last computed result, and floating shapes appear where their anchor
-paragraph is.
+paragraph is. A legacy form field shows what Word shows: a text field its
+result, a check box `☒` or `☐` (its `w:checked` state, else its default) and a
+drop-down list its chosen entry (`w:result`, else the default, else the
+first), which Word keeps in the field data rather than in the result; before,
+a filled-in form lost every answer but its text fields. A VML picture (Word
+2003, compatibility mode) takes its shape's `alt` as alt text when the
+drawing has no description.
 Text set in a monospaced font (Courier, Consolas, Menlo, or a family named
 `… Mono`, also by its PostScript name such as `Menlo-Regular`; by the run's own
 font, else its character style's, else its paragraph style's or the document
@@ -257,6 +265,72 @@ RTF, EPUB, legacy PowerPoint and spreadsheets) escapes `<` before a letter,
 `/`, `!` or `?` and an `&` that starts an entity, so a Markdown renderer shows
 `std::vector<int>` or a literal `&copy;` instead of reading them as HTML; PPTX
 text frames keep their plain-text contract.
+
+RTF is read as Word shows it. Hidden text (`\v`) and tracked deletions
+(`\deleted`) are left out, as Word's are, and a hidden or deleted paragraph
+mark joins its paragraph to the next; inserted text stays. Index and contents
+entries (`{\xe …}`, `{\tc …}`) are not text. `{\upr{…}{\*\ud{…}}}` is read
+once, from its Unicode part (the code-page part has `?` for what the code page
+lacks), and a `\uN` character in a Symbol or Wingdings font maps as the font's
+bytes do (Word's `\u-3913` is the Symbol bullet). A header, footer, comment,
+footnote separator or page background keeps everything it holds out of the
+body: the text boxes, pictures, object results, footnotes and bookmarks inside
+one ran into the document's first paragraph before (a letterhead's logo, a
+footer's note). Legacy form fields show their state as in Word documents: a
+check box `☒` or `☐` (`\ffres`, else `\ffdefres`), a drop-down list its chosen
+entry (`\*\ffl`), a text field its result. A shape's own picture (the `pib`
+property) is read in place of the Windows metafile copy in `\shprslt`, a
+picture's or shape's `wzDescription` becomes its alt text, and WordArt shows
+its words (`gtextUNICODE`) where it stands, its copy left out; a shape with no
+picture or WordArt of its own still gives its copy, as before. TextEdit's
+picture attachments (`\NeXTGraphic`, an RTFD's pictures, which an RTF read
+alone does not have) no longer put their file name and attachment mark into
+the sentence, and a blank line of a code listing laid out in a table cell is
+kept (two listings of the corpus had lost one). Not read: Word 6 drawing
+objects outside a shape (`\*\do` text boxes), OLE objects' data beyond their
+result, and a text box's place (its paragraphs end the paragraph it is
+anchored in, as before).
+
+OpenDocument text reads frames and shapes wherever they stand. A frame,
+picture or shape anchored to the page is a child of the body itself, which
+upstream skipped with its text; in a text document it is now read where it
+stands (LibreOffice writes it before the first paragraph of its page), while a
+spreadsheet's shape anchored to a cell still adds nothing to the cell. A shape
+holding text
+(custom shape, rectangle, ellipse, line, connector, caption and the like),
+in a paragraph or in a group, is read as a text box is, its paragraphs after
+the paragraph it is anchored in; upstream ran its words into the sentence
+(`Shape anchor.Custom shape words`). A `text:numbered-paragraph` (ODF 1.2's
+numbered paragraph outside a `text:list`) is a list item labelled with the
+number it shows, and consecutive ones that number on form one list; user,
+table and object indexes are read like the table of contents; a heading's
+`text:number` is its label instead of text run into the heading. A field set
+to show nothing (`text:display="none"`, an invisible variable), a script's
+source (`text:script`) and a section hidden outright (`text:section
+text:display="none"`) are left out. Text in a Symbol or Wingdings face (by
+`style:font-name`, through the face declarations, or `fo:font-family`) maps as
+in Word documents; LibreOffice's Unicode OpenSymbol does not. Not read: a
+section hidden by a condition (conditions are not evaluated) and paragraphs
+hidden by a `text:hidden-paragraph` field (shown, as LibreOffice can be set to
+show them); form controls show nothing.
+
+Words the reference keeps and these readers do not are not lost text. On the
+108 `textutil` pages the strict comparison counts DOCX 116, ODT 362 and RTF
+337 such words; classified one by one against each document's own text (its
+`textutil` plain-text reading and, for DOCX and ODT, its XML text), none is a
+word the document shows. They are listing line numbers removed on purpose (49
+DOCX, 55 ODT, 55 RTF), digits the readers write as Unicode superscripts or
+subscripts (66, 57, 66), the reference repeating nested-table text (237 ODT,
+two Hacker News pages) and RTF list labels (`1. 1`, 34), the reference's own
+GBK decoding of Windows-1252 RTF (163, `it抯`), words the reference runs
+together (10 ODT, 4 RTF) or that inline markup splits for the counter (5), and
+a link target the reference writes as text (14 RTF). In the other direction,
+against the documents' own text, the readers add no word but such splits. A
+probe set of 53 documents written as Word, LibreOffice and TextEdit write them
+(fields, notes, text boxes and shapes, hidden and deleted text, form fields,
+alt text, smart tags, symbol fonts, index entries, headers, nested tables)
+found the losses and additions fixed above: 33 passed before, 53 after (the
+reference: 25).
 
 A DOCX, ODT, RTF or Word 97 document with no heading style or outline level
 anywhere often still shows its headings as short bold paragraphs set above the

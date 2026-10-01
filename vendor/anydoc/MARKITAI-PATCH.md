@@ -332,6 +332,89 @@ upstream files:
   note ids prefixed `chunkN-`. Other formats, deeper nesting, missing and
   unreadable parts add nothing and a warning; resource limits stay errors.
   `Ctx` gains `chunk_depth` and `embedded`.
+- `src/shared/fields.rs`, `src/formats/docx/content.rs`, `src/formats/rtf/mod.rs`
+  (and `FieldFrame`'s new field, left empty by `src/formats/doc/mod.rs`): a
+  legacy form field shows its state, which Word keeps in the field data and
+  not in the empty result: `FormField` (kind, state, default, entries) and
+  `FormField::shown` give `☒`/`☐` for a check box (state 0/1, else the
+  default; RTF's 25 is unset) and the chosen entry of a drop-down list (state,
+  else default, else the first), only when the instruction names the same
+  form field; `form_field_result` uses it for a field whose result shows
+  nothing and `field_result` otherwise. DOCX reads `w:ffData` on the begin
+  `w:fldChar` (`w:checkBox` `w:checked`/`w:default`, `w:ddList`
+  `w:result`/`w:default`/`w:listEntry`; not in a hidden run); RTF reads
+  `\*\formfield` inside the instruction (`\fftype`, `\ffres`, `\ffdefres`,
+  each `\*\ffl` captured as an entry; `\ffname`, `\ffdeftext` and the other
+  text destinations no longer join the instruction) and shows nothing for a
+  field that started in hidden text.
+- `src/formats/docx/symbols.rs` (`is_symbol_font`, `symbol_face`,
+  `symbol_text`), `src/formats/docx/content.rs`, `src/formats/odf/styles.rs`,
+  `src/formats/odf/text.rs`, `src/formats/rtf/mod.rs`: text set in the Symbol
+  or Wingdings font shows the font's glyphs: each character `U+0020`-`U+00FF`
+  or `F020`-`F0FF` maps through the font's table, others stay. DOCX finds the
+  run's font as the monospace check does (now resolved for every run, not
+  only when code fonts are in play); ODF by `style:font-name` through the
+  face declarations (`svg:font-family`) or `fo:font-family` over
+  `parent-style-name` (memoised like the monospace answer; OpenSymbol is not a
+  symbol font here); RTF already mapped a symbol font's bytes and now maps a
+  `\uN` in one the same way (Word's `\u-3913` is the Symbol bullet).
+- `src/formats/docx/content.rs`: a VML picture's alt text is its shape's
+  `alt` attribute when no `wp:docPr` describes the drawing.
+- `src/formats/rtf/mod.rs`, `src/formats/rtf/table.rs`; RTF text Word does not
+  show, and text upstream lost or misplaced:
+  - hidden (`\v`) and deleted (`\deleted`) text is left out (`CharState`
+    gains `hidden` and `deleted`, reset by `\plain`): no text, tab, line
+    break, picture or math is pushed, and a hidden or deleted `\par` joins the
+    paragraph to the next instead of ending it;
+  - `\xe`, `\tc` and `\tcn` (index and contents entries) are suppressed
+    destinations;
+  - `\upr` reads only its `\*\ud` Unicode part, with the `suppress` and
+    `capture` the `\upr` group opened with (`CharState::upr`), so a `\upr` in
+    a suppressed destination stays suppressed;
+  - a destination suppressed as a whole (every `SUPPRESSED_DESTINATIONS`
+    entry but `shpinst` and `object`) sets `CharState::excluded`, inherited by
+    its groups: `accepts_text` refuses text there, and the destinations that
+    un-suppress (`\shptxt`, `\shppict`, `\result`, `\footnote`, `\bkmkstart`,
+    `\nesttableprops`) set `suppress` to `excluded` instead of `false`; before,
+    a header's or footer's text box, picture, object result, footnote or
+    bookmark (and a page background's shape text) ran into the body;
+  - shapes (`ShapeState`, opened by `\shp`/`\shpgrp` outside excluded
+    destinations) and shape properties (`PropState`, `\sp` with `\sn`/`\sv`
+    captured as `Capture::PropName`/`PropValue`; `sp`, `sn`, `sv` left
+    `SUPPRESSED_DESTINATIONS`): `wzDescription` is the alt text of the
+    `\pict` whose `\*\picprop` holds it (`PictState::alt`) or of the shape's
+    picture; the `pib` property's `\pict` is read (its `\sv` un-suppressed),
+    which makes the shape's `\shprslt` a suppressed copy; `gtextUNICODE` is
+    WordArt, pushed as text when the shape closes (not for a hidden one or
+    one with a text box), its `\shprslt` copy suppressed too;
+  - `\NeXTGraphic` (TextEdit's picture attachment in an RTFD's text) is an
+    excluded destination, and the attachment character after it (`¬` or
+    `U+FFFC`) is dropped (`Parser::attachment`);
+  - an empty paragraph set in a monospaced font inside a table cell is kept
+    as an empty paragraph (`TableState::push_cell_blank_line`) when code
+    fonts are in play, so a listing laid out in a cell keeps its blank lines
+    when `listing_tables` makes it code; a cell renders it as nothing.
+- `src/formats/odf/text.rs`; OpenDocument text upstream lost or ran
+  together:
+  - a drawing element that is a child of the body or of any block container
+    (a page-anchored frame, picture, group or shape) is read where it stands
+    (`walk_drawing`), its picture as a paragraph and its text as blocks;
+  - in a paragraph and in groups, a shape holding text (`is_drawing`: custom
+    shape, rectangle, ellipse, circle, polygon, polyline, path, line,
+    connector, caption, regular polygon, measure) is read as a text box is,
+    as blocks after the paragraph; `draw:g` and `draw:a` read their drawing
+    children in order; other drawing elements give nothing;
+  - `text:numbered-paragraph` is a list item at its `text:level`, labelled
+    with its `text:number` (a decimal `N.` of a decimal list is the list's
+    own number), joining the list before it when it numbers on from it
+    (`push_numbered_paragraph`); an empty one adds nothing;
+  - `text:user-index`, `text:table-index` and `text:object-index` are read as
+    the other indexes are;
+  - an inline text element with `text:display="none"` (an invisible
+    variable or user field) and `text:script` are skipped, and a
+    `text:section` with `text:display="none"` is left out;
+  - a heading's `text:number` is its label when the outline style gives
+    none, and `text:number` is no longer read inline.
 - `src/model/mod.rs` and every place that builds a `Document` (the format
   readers and the Markdown renderer's tests): `Document` gains `warnings`,
   sentences about content a reader left out on purpose (so far only the
@@ -346,4 +429,7 @@ package; it reproduces upstream's formatting, so `cargo fmt` in this directory
 changes nothing upstream wrote.
 
 Tests covering these changes were added beside the upstream ones; the upstream
-suite passes in an isolated copy (425 tests).
+suite passes in an isolated copy (443 tests), and so does its own
+`cargo clippy --all-targets -- -D warnings` after one upstream line in
+`src/formats/docx/numbering.rs` passes `level_value` by value instead of by
+reference (`needless_borrows_for_generic_args`).

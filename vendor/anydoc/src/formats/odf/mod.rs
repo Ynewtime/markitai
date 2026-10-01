@@ -387,6 +387,24 @@ mod tests {
         assert_eq!(md, "|  |  |  |\n| --- | --- | --- |\n| 14 | L/R [x] Roof | [ ] Wall |\n");
     }
 
+    // markitai: shapes are read where they stand in text documents only.
+    #[test]
+    fn a_shape_anchored_to_a_cell_is_not_the_cells_value() {
+        let content = r#"<office:document-content
+            xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+            xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+            xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
+            xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0">
+            <office:body><office:spreadsheet><table:table table:name="S"><table:table-row>
+              <table:table-cell><text:p>Value</text:p><draw:custom-shape
+                table:end-cell-address="S.C3"><text:p>Callout</text:p></draw:custom-shape></table:table-cell>
+            </table:table-row></table:table></office:spreadsheet></office:body>
+            </office:document-content>"#;
+        let doc = parse(&odt_with_content(content)).unwrap();
+        let md = crate::render::markdown::document_to_markdown(&doc);
+        assert_eq!(md, "|  |\n| --- |\n| Value |\n");
+    }
+
     // markitai: slide boundaries reach `Document::slide_starts`.
     #[test]
     fn every_slide_starts_at_its_first_block_and_blank_slides_keep_their_place() {
@@ -907,5 +925,124 @@ mod tests {
             panic!("{:?}", list.items[2].blocks)
         };
         assert_eq!(nested.items[0].blocks.len(), 2, "{:?}", nested.items[0].blocks);
+    }
+
+    /// markitai: a text document with the drawing, form and script namespaces.
+    fn drawing_doc(styles: &str, body: &str) -> String {
+        format!(
+            r#"<office:document-content
+            xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+            xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"
+            xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+            xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
+            xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"
+            xmlns:xlink="http://www.w3.org/1999/xlink"
+            xmlns:script="urn:oasis:names:tc:opendocument:xmlns:script:1.0"
+            xmlns:office2="urn:oasis:names:tc:opendocument:xmlns:office:1.0">
+            <office:automatic-styles>{styles}</office:automatic-styles>
+            <office:body><office:text>{body}</office:text></office:body>
+            </office:document-content>"#
+        )
+    }
+
+    // markitai: frames and shapes anchored to the page, and shapes in a
+    // paragraph.
+    #[test]
+    fn frames_and_shapes_are_read_where_they_stand() {
+        let body = r#"
+            <draw:frame text:anchor-type="page" text:anchor-page-number="1"><draw:text-box>
+              <text:p>Page box.</text:p></draw:text-box></draw:frame>
+            <draw:custom-shape text:anchor-type="page"><text:p>Page shape.</text:p>
+              <draw:enhanced-geometry draw:type="rectangle"/></draw:custom-shape>
+            <draw:g><draw:rect><text:p>Grouped on the page.</text:p></draw:rect></draw:g>
+            <text:p>Body.</text:p>
+            <text:p>Anchor.<draw:custom-shape text:anchor-type="paragraph"><text:p>Shape words</text:p>
+              <draw:enhanced-geometry draw:type="ellipse"/></draw:custom-shape> more.</text:p>
+            <text:p>Group:<draw:g><draw:frame><draw:text-box><text:p>Left box</text:p></draw:text-box></draw:frame>
+              <draw:ellipse><text:p>Right shape</text:p></draw:ellipse></draw:g></text:p>
+            <text:p>Linked <draw:a xlink:href="https://example.com"><draw:frame><svg:title>Logo</svg:title>
+              <draw:image xlink:href="Pictures/missing.png"/></draw:frame></draw:a> picture.</text:p>
+            <text:p>Empty <draw:line svg:x1="0cm" svg:x2="1cm"/>line.</text:p>"#;
+        assert_eq!(
+            markdown(&drawing_doc("", body)),
+            "Page box.\n\nPage shape.\n\nGrouped on the page.\n\nBody.\n\nAnchor. more.\n\n\
+             Shape words\n\nGroup:\n\nLeft box\n\nRight shape\n\nLinked Logo picture.\n\n\
+             Empty line.\n"
+        );
+    }
+
+    // markitai: text set in a symbol font.
+    #[test]
+    fn text_in_a_symbol_font_reads_as_its_glyphs() {
+        let styles = r#"
+            <style:style style:name="Sym" style:family="text">
+              <style:text-properties style:font-name="Symbol1"/></style:style>
+            <style:style style:name="Wing" style:family="text">
+              <style:text-properties fo:font-family="'Wingdings', serif"/></style:style>
+            <style:style style:name="Open" style:family="text">
+              <style:text-properties style:font-name="OpenSymbol"/></style:style>"#;
+        let content = drawing_doc(styles, r#"<text:p>Typed <text:span text:style-name="Sym">abg</text:span>, stored <text:span
+            text:style-name="Sym">&#xF06D;</text:span>m, tick <text:span text:style-name="Wing">&#xF0FC;</text:span>, unicode <text:span
+            text:style-name="Open">&#x2192;</text:span>, plain abg.</text:p>"#)
+        .replace(
+            "<office:automatic-styles>",
+            r#"<office:font-face-decls><style:font-face style:name="Symbol1" svg:font-family="Symbol"
+              style:font-charset="x-symbol"/><style:font-face style:name="OpenSymbol"
+              svg:font-family="OpenSymbol"/></office:font-face-decls><office:automatic-styles>"#,
+        )
+        .replace("<office:document-content", r#"<office:document-content xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0""#);
+        assert_eq!(markdown(&content), "Typed αβγ, stored μm, tick ✓, unicode →, plain abg.\n");
+    }
+
+    // markitai: a heading's number as shown.
+    #[test]
+    fn a_headings_shown_number_is_its_label() {
+        let body = r#"<text:h text:outline-level="1"><text:number>2.</text:number>Methods</text:h>
+            <text:h text:outline-level="2"><text:number></text:number>Unnumbered</text:h>"#;
+        assert_eq!(markdown(&text_doc("", body)), "# 2. Methods\n\n## Unnumbered\n");
+    }
+
+    // markitai: ODF 1.2's numbered paragraphs.
+    #[test]
+    fn numbered_paragraphs_are_list_items() {
+        let styles = r#"<text:list-style style:name="L1">
+              <text:list-level-style-number text:level="1" style:num-format="1" style:num-suffix="."/>
+              <text:list-level-style-number text:level="2" style:num-format="a" style:num-suffix=")"/>
+            </text:list-style>"#;
+        let body = r#"<text:p>Intro.</text:p>
+            <text:numbered-paragraph text:style-name="L1" text:level="1"><text:number>1.</text:number>
+              <text:p>One.</text:p></text:numbered-paragraph>
+            <text:numbered-paragraph text:style-name="L1" text:level="1"><text:number>2.</text:number>
+              <text:p>Two.</text:p></text:numbered-paragraph>
+            <text:numbered-paragraph text:style-name="L1" text:level="2"><text:number>a)</text:number>
+              <text:p>Two a.</text:p></text:numbered-paragraph>
+            <text:numbered-paragraph text:style-name="L1"><text:number>7.</text:number>
+              <text:p>Seven.</text:p></text:numbered-paragraph>
+            <text:numbered-paragraph text:style-name="L1"><text:p/></text:numbered-paragraph>
+            <text:p>Outro.</text:p>"#;
+        assert_eq!(
+            markdown(&drawing_doc(styles, body)),
+            "Intro.\n\n1. One.\n2. Two.\n\n- a) Two a.\n\n7. Seven.\n\nOutro.\n"
+        );
+    }
+
+    // markitai: invisible fields, scripts, hidden sections and the other
+    // indexes.
+    #[test]
+    fn invisible_fields_scripts_and_hidden_sections_are_not_text() {
+        let body = r#"
+            <text:p>Shown <text:variable-set text:name="a" text:display="none" office:value-type="string">secret</text:variable-set><text:variable-set
+              text:name="b" office:value-type="string">visible</text:variable-set> <text:user-field-get
+              text:name="c" text:display="none">quiet</text:user-field-get><text:script
+              script:language="JavaScript">alert("x")</text:script>end.</text:p>
+            <text:section text:name="Hidden" text:display="none"><text:p>Hidden section.</text:p></text:section>
+            <text:section text:name="Cond" text:display="condition" text:condition="ooow:x"><text:p>Conditional section.</text:p></text:section>
+            <text:user-index><text:index-body><text:p>User entry, 2</text:p></text:index-body></text:user-index>
+            <text:table-index><text:index-body><text:p>Table 1, 3</text:p></text:index-body></text:table-index>
+            <text:object-index><text:index-body><text:p>Object 1, 4</text:p></text:index-body></text:object-index>"#;
+        assert_eq!(
+            markdown(&drawing_doc("", body)),
+            "Shown visible end.\n\nConditional section.\n\nUser entry, 2\n\nTable 1, 3\n\nObject 1, 4\n"
+        );
     }
 }

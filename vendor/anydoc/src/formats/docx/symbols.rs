@@ -28,6 +28,43 @@ pub fn symbol_char(font: &str, code: &str) -> Option<char> {
     }
 }
 
+/// markitai: whether text set in `font` shows that font's glyphs rather than
+/// the characters it holds: the legacy symbol fonts with a table here.
+/// (LibreOffice's OpenSymbol is a Unicode font and is not one of them.)
+pub fn is_symbol_font(font: &str) -> bool {
+    symbol_face(font).is_some()
+}
+
+/// markitai: the symbol font `font` names, as [`symbol_text`] takes it.
+pub fn symbol_face(font: &str) -> Option<&'static str> {
+    let font = font.trim();
+    if font.eq_ignore_ascii_case("symbol") {
+        Some("Symbol")
+    } else if font.eq_ignore_ascii_case("wingdings") {
+        Some("Wingdings")
+    } else {
+        None
+    }
+}
+
+/// markitai: the text a run set in symbol font `font` shows. Word and
+/// LibreOffice keep such text as the font's byte values, either as
+/// characters `U+0020`-`U+00FF` (text typed in the font: `a` in Symbol is
+/// α, `ü` in Wingdings a tick) or in the private-use block `F020`-`F0FF`;
+/// each maps through the font's table, and characters it has no entry for,
+/// or that lie elsewhere (a real α), stay as they are. Before, the reader
+/// wrote such text as the Latin letters or private-use characters stored.
+pub fn symbol_text(font: &str, text: &str) -> String {
+    text.chars()
+        .map(|c| match c as u32 {
+            code @ (0x20..=0xFF | 0xF020..=0xF0FF) => {
+                symbol_char(font, &format!("F0{:02X}", code & 0xFF)).unwrap_or(c)
+            }
+            _ => c,
+        })
+        .collect()
+}
+
 fn is_private_use(c: char) -> bool {
     matches!(c as u32, 0xE000..=0xF8FF | 0xF0000..=0x10FFFF)
 }

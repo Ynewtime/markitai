@@ -17,7 +17,7 @@ use crate::shared::code::{
     MonoShare, RunFonts, drop_line_gutters, has_image, listing_tables, without_code,
 };
 use crate::shared::delta::rebase_emphasis;
-use crate::shared::fields::field_result;
+use crate::shared::fields::{FormField, FormKind, field_result, form_field_result};
 use crate::shared::list::{ListEntry, ListKey, MarkerKind, continuation_level, flush_list};
 use crate::shared::math::{math_lines, omath_para_to_tex};
 use crate::shared::tabs::{self, Stops, TabRows};
@@ -76,6 +76,12 @@ enum Capture {
     /// Inside a math zone: text routes to the math element under
     /// construction.
     Math,
+    /// markitai: inside a form field's `\*\ffl`: text is a drop-down
+    /// list's entry.
+    FormEntry,
+    /// markitai: inside a shape property's name (`\sn`) or value (`\sv`).
+    PropName,
+    PropValue,
 }
 
 #[derive(Clone, Copy)]
@@ -109,6 +115,19 @@ struct CharState {
     /// markitai: the paragraph's indents (`\li`, `\fi`, until `\pard`); see
     /// [`crate::shared::typed_lists`].
     indent: Indent,
+    /// markitai: hidden text (`\v`) and text whose deletion is tracked
+    /// (`\deleted`), until turned off or `\plain`. Neither is shown, as for
+    /// Word's `w:vanish` and `w:del`.
+    hidden: bool,
+    deleted: bool,
+    /// markitai: inside `\upr`, the `suppress` and `capture` its group
+    /// opened with; its `\ud` destination reads with them again.
+    upr: Option<(bool, Capture)>,
+    /// markitai: inside a destination left out as a whole (headers,
+    /// footers, comments, document information): the destinations that
+    /// show text inside a suppressed one (a shape's `\shptxt`, an object's
+    /// `\result`, `\shppict`, a footnote) stay suppressed there.
+    excluded: bool,
 }
 
 impl Default for CharState {
@@ -134,6 +153,10 @@ impl Default for CharState {
             tab_align: "left",
             tab_leader: false,
             indent: Indent::default(),
+            hidden: false,
+            deleted: false,
+            upr: None,
+            excluded: false,
         }
     }
 }
@@ -142,6 +165,10 @@ struct FieldFrame {
     depth: usize,
     instr: String,
     start: usize,
+    /// markitai: the field's `\*\formfield` data, and whether the field
+    /// started in shown text (a hidden check box shows nothing).
+    form: Option<FormField>,
+    shown: bool,
 }
 
 struct NoteFrame {
@@ -309,6 +336,8 @@ struct PictState {
     /// (media type, extension) from `\pngblip`/`\jpegblip`/`\emfblip`/
     /// `\wmetafile`; `None` = unsupported format.
     format: Option<(&'static str, &'static str)>,
+    /// markitai: its alt text (`wzDescription` in `\*\picprop`).
+    alt: String,
 }
 
 impl PictState {
@@ -554,6 +583,35 @@ struct Destinations {
     math: Option<MathState>,
     /// The current paragraph holds a finished math paragraph.
     math_display: bool,
+    /// markitai: the shapes (`\shp`, `\shpgrp`) and shape properties
+    /// (`\sp`) open around the text being read, innermost last.
+    shapes: Vec<ShapeState>,
+    props: Vec<PropState>,
+}
+
+/// markitai: a shape being read. Its properties sit in `\*\shpinst` and
+/// a copy for readers without shapes in `\shprslt`: a picture shape keeps
+/// its picture in the `pib` property (the copy is a Windows metafile of
+/// it), WordArt its words in `gtextUNICODE`, and any shape its alt text in
+/// `wzDescription`. Upstream read only the copy, so a floating picture came
+/// out as the metafile, or not at all, and WordArt and alt text were lost.
+struct ShapeState {
+    depth: usize,
+    alt: String,
+    word_art: String,
+    /// Its `pib` picture was read, so `\shprslt` is a copy of it.
+    picture: bool,
+    /// Its text box (`\shptxt`) was read.
+    text: bool,
+    /// Where in the paragraph its picture went, for alt text that follows it.
+    image: Option<usize>,
+}
+
+/// markitai: a shape property (`{\sp{\sn name}{\sv value}}`) being read.
+struct PropState {
+    depth: usize,
+    name: String,
+    value: String,
 }
 
 impl Destinations {
@@ -564,7 +622,9 @@ impl Destinations {
             let frame = self.fields.pop().unwrap();
             let start = frame.start.min(inlines.len());
             let content: Vec<Inline> = inlines.drain(start..).collect();
-            inlines.extend(field_result(&frame.instr, content));
+            // markitai: a check box or drop-down list shows its state.
+            let form = frame.form.as_ref().filter(|_| frame.shown);
+            inlines.extend(form_field_result(&frame.instr, form, content));
         }
     }
 
@@ -665,9 +725,6 @@ const SUPPRESSED_DESTINATIONS: &[&str] = &[
     "wgrffmtfilter",
     "pgdsctbl",
     "docvar",
-    "sp",
-    "sn",
-    "sv",
     "shpinst",
     "background",
     "userprops",
@@ -680,6 +737,11 @@ const SUPPRESSED_DESTINATIONS: &[&str] = &[
     "creatim",
     "revtim",
     "printim",
+    // markitai: index and contents entries (`{\xe ...}`, `{\tc ...}`) are
+    // hidden marks.
+    "xe",
+    "tc",
+    "tcn",
 ];
 
 struct Parser<'a> {
@@ -723,6 +785,9 @@ struct Parser<'a> {
     /// their indents (see [`crate::shared::typed_lists`]).
     tab_rows: TabRows,
     typed_lists: TypedLists,
+    /// markitai: a picture attachment (`\NeXTGraphic`) just ended; the
+    /// attachment character TextEdit writes after it is no text.
+    attachment: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -757,6 +822,7 @@ impl<'a> Parser<'a> {
             default_font: None,
             tab_rows: TabRows::default(),
             typed_lists: TypedLists::default(),
+            attachment: false,
         }
     }
 
@@ -787,6 +853,13 @@ impl<'a> Parser<'a> {
                     // past its own group (inner property groups close first).
                     if self.dest.pict.as_ref().is_some_and(|p| self.stack.len() < p.depth) {
                         self.finish_pict()?;
+                    }
+                    // markitai: and shape properties and shapes likewise.
+                    while self.dest.props.last().is_some_and(|p| self.stack.len() < p.depth) {
+                        self.finish_prop();
+                    }
+                    while self.dest.shapes.last().is_some_and(|s| self.stack.len() < s.depth) {
+                        self.finish_shape();
                     }
                     if let Some(math) = &mut self.dest.math {
                         if self.stack.len() < math.depth {
@@ -833,7 +906,7 @@ impl<'a> Parser<'a> {
     }
 
     fn accepts_text(&self) -> bool {
-        self.state.capture != Capture::None || !self.state.suppress
+        !self.state.excluded && (self.state.capture != Capture::None || !self.state.suppress)
     }
 
     fn control_symbol(&mut self, b: u8) {
@@ -862,13 +935,19 @@ impl<'a> Parser<'a> {
         if self.list_control(word, param) {
             return Ok(());
         }
-        if self.object_control(word) {
+        if self.object_control(word, param) {
             return Ok(());
         }
         if SUPPRESSED_DESTINATIONS.contains(&word) {
             self.flush_pending();
             self.state.suppress = true;
             self.state.capture = Capture::None;
+            // markitai: a shape's properties and an object's data hold
+            // destinations that show text; everything else is left out
+            // whole.
+            if !matches!(word, "shpinst" | "object") {
+                self.state.excluded = true;
+            }
         }
         Ok(())
     }
@@ -882,7 +961,8 @@ impl<'a> Parser<'a> {
                 if self.accepts_text() {
                     self.flush_pending();
                     if let Some(c) = self.decoder.unicode(param, self.state.uc_skip) {
-                        self.push_text(c.to_string());
+                        let text = self.symbol_unicode(c);
+                        self.push_text(text);
                     }
                 }
             }
@@ -906,6 +986,33 @@ impl<'a> Parser<'a> {
                 self.state.font = font;
                 self.state.script = None;
                 self.state.size = 24;
+                self.state.hidden = false;
+                self.state.deleted = false;
+            }
+            // markitai: hidden text and tracked deletions show nothing.
+            "v" => {
+                self.flush_pending();
+                self.state.hidden = on;
+            }
+            "deleted" => {
+                self.flush_pending();
+                self.state.deleted = on;
+            }
+            // markitai: `{\upr{ansi}{\*\ud{unicode}}}` gives text twice, in
+            // the code page and in Unicode (characters the code page lacks
+            // are `?` in the first); only the Unicode one is read.
+            "upr" => {
+                self.flush_pending();
+                self.state.upr = Some((self.state.suppress, self.state.capture));
+                self.state.suppress = true;
+                self.state.capture = Capture::None;
+            }
+            "ud" => {
+                if let Some((suppress, capture)) = self.state.upr.take() {
+                    self.flush_pending();
+                    self.state.suppress = suppress;
+                    self.state.capture = capture;
+                }
             }
             // markitai: raised and lowered text in its Unicode forms where
             // every character has one ("x₁", "library¹"), as for Word's
@@ -937,9 +1044,12 @@ impl<'a> Parser<'a> {
             }
             "par" | "sect" => {
                 self.flush_pending();
-                if self.state.note.is_some() {
+                // markitai: a hidden or deleted paragraph mark joins its
+                // paragraph to the next one, as Word shows it.
+                let shown = !self.hidden();
+                if shown && self.state.note.is_some() {
                     self.inlines.push(Inline::LineBreak);
-                } else if !self.state.suppress {
+                } else if shown && !self.state.suppress {
                     self.end_paragraph()?;
                 }
             }
@@ -990,7 +1100,7 @@ impl<'a> Parser<'a> {
             // boundary they carry is not.
             "line" | "lbr" | "page" | "column" => {
                 self.flush_pending();
-                if !self.state.suppress {
+                if !self.state.suppress && !self.hidden() {
                     self.inlines.push(Inline::LineBreak);
                 }
             }
@@ -1081,7 +1191,7 @@ impl<'a> Parser<'a> {
             }
             // Nested row properties arrive in a `{\*\nesttableprops ...}`
             // destination; its \trowd/\cellx/\nestrow must still act.
-            "nesttableprops" => self.state.suppress = false,
+            "nesttableprops" => self.state.suppress = self.state.excluded,
             _ => return Ok(false),
         }
         Ok(true)
@@ -1114,7 +1224,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Field, footnote, and bookmark controls.
-    fn object_control(&mut self, word: &str) -> bool {
+    fn object_control(&mut self, word: &str, param: Option<i32>) -> bool {
         match word {
             "field" => {
                 self.flush_pending();
@@ -1123,8 +1233,48 @@ impl<'a> Parser<'a> {
                         depth: self.stack.len(),
                         instr: String::new(),
                         start: self.inlines.len(),
+                        form: None,
+                        shown: !self.hidden(),
                     });
                 }
+            }
+            // markitai: a legacy form field's data, inside its instruction:
+            // the kind (`\fftype` 0 text, 1 check box, 2 drop-down list),
+            // the state (`\ffres`, else `\ffdefres`) and a list's entries
+            // (`\*\ffl`); see [`FormField`]. The field's name, default text,
+            // help and macros are not shown.
+            "formfield" => {
+                if let Some(frame) = self.dest.fields.last_mut() {
+                    frame.form = Some(FormField::default());
+                }
+            }
+            "fftype" | "ffres" | "ffdefres" => {
+                if let Some(form) = self.dest.fields.last_mut().and_then(|f| f.form.as_mut()) {
+                    match word {
+                        "fftype" => {
+                            form.kind = match param {
+                                Some(1) => Some(FormKind::CheckBox),
+                                Some(2) => Some(FormKind::DropDown),
+                                _ => Some(FormKind::Text),
+                            }
+                        }
+                        "ffres" => form.result = param,
+                        _ => form.default = param,
+                    }
+                }
+            }
+            "ffl" => {
+                self.flush_pending();
+                if let Some(form) = self.dest.fields.last_mut().and_then(|f| f.form.as_mut()) {
+                    form.entries.push(String::new());
+                    self.state.capture = Capture::FormEntry;
+                }
+            }
+            "ffname" | "ffdeftext" | "ffformat" | "ffhelptext" | "ffstattext" | "ffentrymcr"
+            | "ffexitmcr" => {
+                self.flush_pending();
+                self.state.capture = Capture::None;
+                self.state.suppress = true;
             }
             "fldinst" => {
                 self.flush_pending();
@@ -1140,7 +1290,7 @@ impl<'a> Parser<'a> {
             "footnote" => {
                 self.flush_pending();
                 self.state.note = Some(NoteKind::Footnote);
-                self.state.suppress = false;
+                self.state.suppress = self.state.excluded;
                 self.state.capture = Capture::None;
                 self.dest.note_frames.push(NoteFrame {
                     depth: self.stack.len(),
@@ -1158,21 +1308,87 @@ impl<'a> Parser<'a> {
             "bkmkstart" => {
                 self.flush_pending();
                 self.state.capture = Capture::Bookmark;
-                self.state.suppress = false;
+                self.state.suppress = self.state.excluded;
             }
             // `{\*\shppict {\pict ...}}` wraps the preferred picture; the
-            // `\nonshppict` fallback duplicate stays suppressed.
-            "shppict" => self.state.suppress = false,
+            // `\nonshppict` fallback duplicate stays suppressed. markitai:
+            // these destinations show nothing inside a header or footer
+            // (they did: a letterhead's logo or text box ran into the body).
+            "shppict" => self.state.suppress = self.state.excluded,
             // `\shpinst` itself is suppressed (shape properties), but its
             // `\shptxt` destination holds the shape's real text.
-            "shptxt" => self.state.suppress = false,
+            "shptxt" => {
+                self.state.suppress = self.state.excluded;
+                if let Some(shape) = self.dest.shapes.last_mut() {
+                    shape.text = true;
+                }
+            }
             // Likewise `\object` is suppressed (class names, `\objdata`
             // payload), but `\result` is the object's displayable rendering.
-            "result" => self.state.suppress = false,
+            "result" => self.state.suppress = self.state.excluded,
+            // markitai: a picture TextEdit attached (`{{\NeXTGraphic name
+            // \width..}\'ac}` in an RTFD's text) names a file beside the RTF,
+            // which a reader of the RTF alone does not have: its file name
+            // and the attachment character after it are no text (they were
+            // read into the sentence).
+            "NeXTGraphic" => {
+                self.flush_pending();
+                self.state.suppress = true;
+                self.state.excluded = true;
+                self.state.capture = Capture::None;
+                self.attachment = true;
+            }
+            // markitai: shapes and their properties (see `ShapeState`).
+            "shp" | "shpgrp" => {
+                if !self.state.excluded {
+                    self.dest.shapes.push(ShapeState {
+                        depth: self.stack.len(),
+                        alt: String::new(),
+                        word_art: String::new(),
+                        picture: false,
+                        text: false,
+                        image: None,
+                    });
+                }
+            }
+            "sp" => {
+                self.flush_pending();
+                self.state.suppress = true;
+                self.state.capture = Capture::None;
+                self.dest.props.push(PropState {
+                    depth: self.stack.len(),
+                    name: String::new(),
+                    value: String::new(),
+                });
+            }
+            "sn" | "sv" => {
+                self.flush_pending();
+                self.state.suppress = true;
+                self.state.capture = Capture::None;
+                if let Some(prop) = self.dest.props.last() {
+                    if word == "sn" {
+                        self.state.capture = Capture::PropName;
+                    } else if prop.name.trim() == "pib" {
+                        // The shape's picture is a `\pict` in the value.
+                        self.state.suppress = self.state.excluded;
+                    } else {
+                        self.state.capture = Capture::PropValue;
+                    }
+                }
+            }
+            // The copy of a shape whose picture or WordArt was read.
+            "shprslt" => {
+                if self.dest.shapes.last().is_some_and(|shape| {
+                    shape.picture || (!shape.word_art.trim().is_empty() && !shape.text)
+                }) {
+                    self.state.suppress = true;
+                }
+            }
             "pict" => {
                 // A pict inside a suppressed destination (the nonshppict
-                // fallback, excluded headers) is not extracted.
-                if !self.state.suppress {
+                // fallback, excluded headers) is not extracted, nor
+                // (markitai) a hidden or deleted one.
+                if !self.state.suppress && !self.hidden() {
                     self.flush_pending();
                     self.state.capture = Capture::Pict;
                     self.dest.pict =
@@ -1197,7 +1413,7 @@ impl<'a> Parser<'a> {
             if word != "mmath" {
                 return false;
             }
-            if !self.state.suppress {
+            if !self.state.suppress && !self.hidden() {
                 self.flush_pending();
                 self.state.capture = Capture::Math;
                 self.dest.math = Some(MathState::new(self.stack.len()));
@@ -1253,24 +1469,79 @@ impl<'a> Parser<'a> {
     /// asset and emit its inline reference. Unsupported formats degrade
     /// with a log.
     fn finish_pict(&mut self) -> Result<(), ConvertError> {
-        let Some(pict) = self.dest.pict.take() else {
+        let Some(mut pict) = self.dest.pict.take() else {
             return Ok(());
         };
         let Some((media_type, extension)) = pict.format else {
             log::debug!("skipping picture in an unsupported format");
             return Ok(());
         };
+        let pict_alt = std::mem::take(&mut pict.alt);
         let bytes = pict.payload();
         if bytes.is_empty() {
             return Ok(());
         }
         let part = format!("pict/{}.{extension}", self.assets.assets.len());
         let id = self.assets.add(media_type.to_string(), part, &bytes)?;
-        self.inlines.push(Inline::Image {
-            alt: String::new(),
-            source: crate::model::ImageSource::Asset(id),
-        });
+        // markitai: its alt text, else its shape's (a picture inside the
+        // shape's text box is not the shape's); a shape's `pib` picture
+        // makes the shape's copy redundant.
+        let mut alt = clean_text(pict_alt.trim());
+        if let Some(shape) = self.dest.shapes.last_mut().filter(|shape| !shape.text) {
+            if alt.is_empty() {
+                alt = clean_text(shape.alt.trim());
+            }
+            shape.image = Some(self.inlines.len());
+            if self.dest.props.last().is_some_and(|prop| prop.name.trim() == "pib") {
+                shape.picture = true;
+            }
+        }
+        self.inlines.push(Inline::Image { alt, source: crate::model::ImageSource::Asset(id) });
         Ok(())
+    }
+
+    /// markitai: a shape property was read (see [`ShapeState`]).
+    fn finish_prop(&mut self) {
+        let Some(prop) = self.dest.props.pop() else {
+            return;
+        };
+        match prop.name.trim() {
+            // A `\*\picprop` describes its picture, a `\*\shpinst` its shape.
+            "wzDescription" => match &mut self.dest.pict {
+                Some(pict) if pict.depth < prop.depth => pict.alt = prop.value,
+                _ => {
+                    if let Some(shape) = self.dest.shapes.last_mut() {
+                        shape.alt = prop.value;
+                    }
+                }
+            },
+            "gtextUNICODE" => {
+                if let Some(shape) = self.dest.shapes.last_mut() {
+                    shape.word_art = prop.value;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// markitai: a shape ended: WordArt shows its words where the shape
+    /// stands, and alt text read after the shape's picture goes onto it.
+    fn finish_shape(&mut self) {
+        let Some(shape) = self.dest.shapes.pop() else {
+            return;
+        };
+        let words = clean_text(shape.word_art.trim());
+        if !words.is_empty() && !shape.text && !self.hidden() {
+            self.inlines.push(Inline::Text { text: words, style: Style::PLAIN });
+        }
+        let alt = clean_text(shape.alt.trim());
+        if !alt.is_empty()
+            && let Some(Inline::Image { alt: image_alt, .. }) =
+                shape.image.and_then(|i| self.inlines.get_mut(i))
+            && image_alt.is_empty()
+        {
+            *image_alt = alt;
+        }
     }
 
     /// Table controls act outside suppressed groups and note bodies.
@@ -1309,12 +1580,31 @@ impl<'a> Parser<'a> {
             self.push_char(' ');
             return;
         }
-        if self.decoder.skip_char() {
+        if self.decoder.skip_char() || self.hidden() {
             return;
         }
         self.flush_pending();
         let style = self.text_style();
         self.inlines.push(tabs::tab(style));
+    }
+
+    /// markitai: whether the text being read is hidden (`\v`) or deleted
+    /// (`\deleted`), which Word does not show.
+    fn hidden(&self) -> bool {
+        self.state.hidden || self.state.deleted
+    }
+
+    /// markitai: a `\uN` character in a symbol font: Word writes such a
+    /// font's glyph as its byte in the private-use block (`\u-3913` is
+    /// `F0B7`, the Symbol bullet), mapped as the font's bytes are (see
+    /// [`crate::formats::docx::symbols::symbol_text`]).
+    fn symbol_unicode(&self, c: char) -> String {
+        match self.state.font.and_then(|f| self.prelude.symbol_fonts.get(&f).copied()) {
+            Some(font) => {
+                crate::formats::docx::symbols::symbol_text(font, c.encode_utf8(&mut [0; 4]))
+            }
+            None => c.to_string(),
+        }
     }
 
     /// markitai: whether the text being read is set in a monospaced font.
@@ -1363,6 +1653,25 @@ impl<'a> Parser<'a> {
                 }
             }
             Capture::Bookmark => self.dest.bookmark.push_str(&text),
+            Capture::PropName | Capture::PropValue => {
+                if let Some(prop) = self.dest.props.last_mut() {
+                    match self.state.capture {
+                        Capture::PropName => prop.name.push_str(&text),
+                        _ => prop.value.push_str(&text),
+                    }
+                }
+            }
+            Capture::FormEntry => {
+                if let Some(entry) = self
+                    .dest
+                    .fields
+                    .last_mut()
+                    .and_then(|f| f.form.as_mut())
+                    .and_then(|form| form.entries.last_mut())
+                {
+                    entry.push_str(&text);
+                }
+            }
             // Picture payload bytes are collected raw in the token loop.
             Capture::Pict => {}
             Capture::Math => {
@@ -1371,7 +1680,17 @@ impl<'a> Parser<'a> {
                 }
             }
             Capture::None => {
-                if !self.state.suppress {
+                if !self.state.suppress && !self.hidden() {
+                    // markitai: the character a picture attachment leaves.
+                    let text = if std::mem::take(&mut self.attachment) {
+                        match text.strip_prefix(['\u{AC}', '\u{FFFC}']) {
+                            Some("") => return,
+                            Some(rest) => rest.to_string(),
+                            None => text,
+                        }
+                    } else {
+                        text
+                    };
                     let text =
                         self.state.script.and_then(|script| script.convert(&text)).unwrap_or(text);
                     // markitai: a note's text is not the body's; text set in
@@ -1409,7 +1728,16 @@ impl<'a> Parser<'a> {
         if self.state.in_table {
             let depth = self.state.itap.max(1);
             if let Some(inlines) = self.cell_list_entry(depth, inlines, listtext.as_deref())? {
-                self.table.push_cell_paragraph(depth, self.state.block, inlines)?;
+                // markitai: a blank line of a listing in the cell.
+                if self.code_fonts
+                    && self.state.block.is_none()
+                    && inlines_are_empty(&inlines)
+                    && self.font_mono()
+                {
+                    self.table.push_cell_blank_line(depth)?;
+                } else {
+                    self.table.push_cell_paragraph(depth, self.state.block, inlines)?;
+                }
             }
             return Ok(());
         }
@@ -2019,6 +2347,48 @@ mod tests {
         );
     }
 
+    // markitai: TextEdit's picture attachments.
+    #[test]
+    fn picture_attachments_leave_no_file_name() {
+        let src = r"{\rtf1\ansi\ansicpg1252\cocoartf2822{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+\pard\f0 Before {{\NeXTGraphic Pasted Graphic.png \width2000 \height1000 \appleattachmentpadding0 \appleembedmode1 \appleaqc
+}\'ac}after.\par
+\pard Price \'ac 5 stays.\par}";
+        assert_eq!(markdown(src), "Before after.\n\nPrice ¬ 5 stays.\n");
+    }
+
+    // markitai: a blank line inside a listing's cell.
+    #[test]
+    fn a_blank_line_of_a_listing_in_a_cell_is_kept() {
+        let rtf = format!(
+            r"{{\rtf1\ansi{FONTS}
+\pard\f0 A listing with a blank line, as TextEdit saves a highlighter's table.\par
+\trowd\cellx1000\cellx8000
+\pard\intbl\f1 1\par 2\par 3\cell #include <stdio.h>\par
+\par
+int main();\par
+\cell\row
+\pard\f0 A table of values follows.\par
+\trowd\cellx4000\cellx8000
+\pard\intbl\f0 Name\cell\f1 value\par
+\par
+\f0 note\cell\row
+\pard\f0 Then the prose of the document goes on in the body face for long enough.\par}}"
+        );
+        assert_eq!(
+            described(&rtf),
+            [
+                "p:A listing with a blank line, as TextEdit saves a highlighter's table.",
+                "code:#include <stdio.h>\n\nint main();",
+                "p:A table of values follows.",
+                "table:p:Name|p:`value`;p:;p:note",
+                "p:Then the prose of the document goes on in the body face for long enough.",
+            ]
+        );
+        let text = markdown(&rtf);
+        assert!(text.contains("| Name | `value`<br>note |"), "{text}");
+    }
+
     #[test]
     fn columns_set_with_tab_stops_are_a_table() {
         let row = |stops: &str, text: &str| format!(r"\pard{stops} {text}\par ");
@@ -2143,5 +2513,165 @@ mod tests {
             })
             .collect();
         assert_eq!(starts, [1, 2]);
+    }
+
+    // markitai: hidden and deleted text.
+    #[test]
+    fn hidden_and_deleted_text_is_left_out() {
+        let src = r"{\rtf1\ansi
+\pard Shown {\v hidden in a group} shown.\par
+\pard Before \v toggled\v0  after.\par
+\pard Kept {\deleted\revauthdel1 removed }and {\revised inserted} text.\par
+\pard Reset \v gone\plain  back.\par
+\pard {\v Hidden paragraph mark.\par}Joined to the next.\par
+\pard Visible part{\v  hidden\par} joined.\par
+\pard {\deleted Deleted paragraph.\par}
+\pard {\v\tab\line hidden{\pict\pngblip 89504e47}}Tail.\par}";
+        assert_eq!(
+            markdown(src),
+            "Shown  shown.\n\nBefore  after.\n\nKept and inserted text.\n\nReset  back.\n\n\
+             Joined to the next.\n\nVisible part joined.\n\nTail.\n"
+        );
+    }
+
+    // markitai: index and contents entries.
+    #[test]
+    fn index_entries_are_not_text() {
+        let src = r"{\rtf1\ansi
+\pard Term{\xe {\v Hidden entry}} defined.\par
+\pard Old{\xe Plain entry{\txe See also}} style.\par
+\pard {\tc Contents entry}Chapter.\par}";
+        assert_eq!(markdown(src), "Term defined.\n\nOld style.\n\nChapter.\n");
+    }
+
+    // markitai: `\upr` keeps the Unicode reading.
+    #[test]
+    fn upr_reads_its_unicode_text() {
+        let u = |n: i32| format!("{}u{n}", '\\');
+        let src = format!(
+            r"{{\rtf1\ansi\pard A {{\upr{{Caf\'e9 ?}}{{\*\ud{{Caf{}? {}?}}}}}} B.\par
+\pard {{\*\bkmkstart {{\upr{{n?}}{{\*\ud{{n{}?}}}}}}}}C.\par
+{{\info{{\title {{\upr{{T}}{{\*\ud{{Title}}}}}}}}}}{{\*\mystery {{\upr{{M}}{{\*\ud{{Mystery}}}}}}}}\pard D.\par}}",
+            u(233),
+            u(20320),
+            u(241)
+        );
+        let doc = parse(src.as_bytes()).unwrap();
+        let text = crate::to_markdown_bytes(src.as_bytes(), crate::Format::Rtf).unwrap();
+        assert!(text.starts_with("A Café 你 B.\n\n"), "{text}");
+        assert!(!text.contains("Title"), "a suppressed destination stays suppressed: {text}");
+        assert!(!text.contains("Mystery"), "an unknown destination stays suppressed: {text}");
+        let Block::Paragraph(second) = &doc.blocks[1] else { panic!("{:?}", doc.blocks) };
+        assert!(
+            second.iter().any(|i| matches!(i, Inline::Anchor(name) if name == "nñ")),
+            "{second:?}"
+        );
+    }
+
+    // markitai: legacy form fields.
+    #[test]
+    fn form_fields_show_check_boxes_and_chosen_entries() {
+        fn field(data: &str, instr: &str) -> String {
+            format!(
+                r"{{\field{{\*\fldinst {{{instr} {{\*\formfield{{{data}{{\*\ffname F}}}}}}}}}}{{\fldrslt }}}}"
+            )
+        }
+        let body = [
+            r"\pard Typed: {\field{\*\fldinst {FORMTEXT {\*\formfield{\fftype0{\*\ffname T}{\*\ffdeftext Default}}}}}{\fldrslt Jane}}.\par "
+                .to_string(),
+            format!(r"\pard Checked: {}.\par ", field(r"\fftype1\ffres1\ffdefres0", "FORMCHECKBOX")),
+            format!(r"\pard By default: {}.\par ", field(r"\fftype1\ffres25\ffdefres1", "FORMCHECKBOX")),
+            format!(r"\pard Unset: {}.\par ", field(r"\fftype1\ffres25", "FORMCHECKBOX")),
+            format!(
+                r"\pard Chosen: {}.\par ",
+                field(r"\fftype2\ffres1{\*\ffl Red}{\*\ffl Green}{\*\ffl Blue}", "FORMDROPDOWN")
+            ),
+            format!(
+                r"\pard Default: {}.\par ",
+                field(r"\fftype2\ffres25\ffdefres2{\*\ffl S}{\*\ffl M}{\*\ffl L}", "FORMDROPDOWN")
+            ),
+            format!(r"\pard Not a form: {}.\par ", field(r"\fftype1\ffres1", "PAGE")),
+            format!(r"\pard Hidden: {{\v {}}}.\par", field(r"\fftype1\ffres1", "FORMCHECKBOX")),
+        ]
+        .concat();
+        assert_eq!(
+            markdown(&format!(r"{{\rtf1\ansi {body}}}")),
+            "Typed: Jane.\n\nChecked: ☒.\n\nBy default: ☒.\n\nUnset: ☐.\n\nChosen: Green.\n\n\
+             Default: L.\n\nNot a form: .\n\nHidden: .\n"
+        );
+    }
+
+    // markitai: `\uN` in a symbol font.
+    #[test]
+    fn symbol_font_unicode_reads_as_the_fonts_character() {
+        let src = r"{\rtf1\ansi{\fonttbl{\f0\froman Times;}{\f1\ftech\fcharset2 Symbol;}{\f2\fnil\fcharset2 Wingdings;}}
+\pard\f0 A {\f1 \u-3913\'b7} B {\f2 \u-3844\'fc} C {\f0 \u-3913?} D.\par}";
+        assert_eq!(markdown(src), "A • B ✓ C \u{F0B7} D.\n");
+    }
+
+    // markitai: what a header or footer holds stays out of the body.
+    #[test]
+    fn header_and_footer_shapes_pictures_and_notes_stay_out() {
+        let src = r"{\rtf1\ansi
+{\header \pard Header {\shp{\*\shpinst{\sp{\sn shapeType}{\sv 202}}{\shptxt \pard Header box\par}}}{\*\shppict{\pict\pngblip 89504e470d0a1a0a}}{\object\objemb{\*\objdata 0102}{\result Header object}}{\*\bkmkstart hdr}\par}
+{\footer \pard {\footnote Footer note}{\shp{\*\shpinst{\sp{\sn gtextUNICODE}{\sv DRAFT}}}}\par}
+\pard Body {\shp{\*\shpinst{\shptxt \pard Body box\par}}}text.\par}";
+        let doc = parse(src.as_bytes()).unwrap();
+        assert!(doc.assets.is_empty() && doc.notes.is_empty(), "{doc:?}");
+        // Not even the header's bookmark.
+        let anchors = crate::shared::code::describe(&doc.blocks);
+        assert!(
+            doc.blocks.iter().all(|b| match b {
+                Block::Paragraph(inlines) =>
+                    !inlines.iter().any(|i| matches!(i, Inline::Anchor(_))),
+                _ => true,
+            }),
+            "{anchors:?} {:?}",
+            doc.blocks
+        );
+        assert_eq!(
+            crate::render::markdown::document_to_markdown(&doc),
+            // The text box's paragraph mark ends the body's paragraph, as
+            // upstream read it.
+            "Body Body box\n\ntext.\n"
+        );
+    }
+
+    // markitai: a shape's picture, alt text and WordArt.
+    #[test]
+    fn shape_pictures_alt_text_and_word_art_are_read() {
+        let png = "89504e470d0a1a0a0000000d49484452";
+        let wmf = "0100090000";
+        let src = r"{\rtf1\ansi
+\pard Inline {\*\shppict{\pict{\*\picprop{\sp{\sn wzDescription}{\sv A red square}}{\sp{\sn wzName}{\sv Picture 1}}}\pngblip PNG}}{\nonshppict{\pict\wmetafile8 WMF}} end.\par
+\pard Floating {\shp{\*\shpinst{\sp{\sn shapeType}{\sv 75}}{\sp{\sn pib}{\sv {\pict\pngblip PNG}}}{\sp{\sn wzDescription}{\sv A floating square}}}{\shprslt\par\pard {\pict\wmetafile8 WMF}\par}}end.\par
+\pard Copy only {\shp{\*\shpinst{\sp{\sn shapeType}{\sv 75}}{\sp{\sn wzDescription}{\sv Metafile copy}}}{\shprslt {\pict\wmetafile8 WMF}}}end.\par
+\pard {\shp{\*\shpinst{\sp{\sn shapeType}{\sv 136}}{\sp{\sn gtextUNICODE}{\sv Grand Opening}}{\sp{\sn gtextFont}{\sv Arial Black}}}{\shprslt{\pict\wmetafile8 0200090000}}}\par
+\pard Hidden {\v{\shp{\*\shpinst{\sp{\sn gtextUNICODE}{\sv Secret}}}}}art.\par
+\pard Boxed {\shp{\*\shpinst{\sp{\sn wzDescription}{\sv Box alt}}{\shptxt \pard Inside {\*\shppict{\pict\pngblip PNG}} box\par}}}end.\par}"
+            .replace("PNG", png)
+            .replace("WMF", wmf);
+        let doc = parse(src.as_bytes()).unwrap();
+        let types: Vec<&str> = doc.assets.iter().map(|a| a.media_type.as_str()).collect();
+        // The inline picture, the floating shape's own picture (not its
+        // metafile copy), the copy of the shape with no picture of its own,
+        // not the WordArt's copy, and the picture in a text box.
+        assert_eq!(types, ["image/png", "image/png", "image/wmf", "image/png"]);
+        // The renderer writes a picture as its alt text.
+        let text = crate::render::markdown::document_to_markdown(&doc);
+        let lines: Vec<&str> = text.lines().filter(|l| !l.is_empty()).collect();
+        assert_eq!(
+            lines,
+            [
+                "Inline A red square end.",
+                "Floating A floating squareend.",
+                "Copy only Metafile copyend.",
+                "Grand Opening",
+                "Hidden art.",
+                // The text box's alt text is not its picture's.
+                "Boxed Inside  box",
+                "end.",
+            ]
+        );
     }
 }

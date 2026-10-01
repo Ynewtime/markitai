@@ -9,6 +9,8 @@ pub struct FieldFrame {
     pub instr: String,
     pub in_result: bool,
     pub inlines: Vec<Inline>,
+    /// markitai: the form field data the field's start carries, if any.
+    pub form: Option<FormField>,
 }
 
 /// Finish a field: wrap the result in a link when the instruction is a
@@ -20,6 +22,72 @@ pub fn field_result(instr: &str, content: Vec<Inline>) -> Vec<Inline> {
         }
         _ => content,
     }
+}
+
+/// markitai: the kind of a legacy form field (Word's `w:ffData`, RTF's
+/// `\*\formfield` with `\fftype`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FormKind {
+    Text,
+    CheckBox,
+    DropDown,
+}
+
+/// markitai: a legacy form field's own data. A check box and a drop-down
+/// list keep their state here and not in the field result, which Word leaves
+/// empty: the box is drawn and the chosen entry shown from this data, and
+/// without it a filled-in form lost every answer but its text fields.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FormField {
+    pub kind: Option<FormKind>,
+    /// The current state: a check box's 0 or 1, a drop-down list's entry
+    /// index; RTF writes 25 for "not set", which falls back to `default`.
+    pub result: Option<i32>,
+    pub default: Option<i32>,
+    /// A drop-down list's entries, in order.
+    pub entries: Vec<String>,
+}
+
+impl FormField {
+    /// What the field shows: `☒` or `☐` for a check box, the chosen entry of
+    /// a drop-down list (the first when none is chosen, as Word shows it).
+    /// `None` for a text field (its result is its text) and when `instr`
+    /// does not name the matching form field.
+    pub fn shown(&self, instr: &str) -> Option<String> {
+        let keyword = instr.split_whitespace().next()?;
+        match self.kind? {
+            FormKind::CheckBox if keyword.eq_ignore_ascii_case("FORMCHECKBOX") => {
+                let state = self.result.filter(|r| matches!(r, 0 | 1)).or(self.default);
+                Some(if state.unwrap_or(0) != 0 { "☒" } else { "☐" }.to_string())
+            }
+            FormKind::DropDown if keyword.eq_ignore_ascii_case("FORMDROPDOWN") => {
+                let entry = |index: Option<i32>| {
+                    index.and_then(|i| usize::try_from(i).ok()).filter(|&i| i < self.entries.len())
+                };
+                let index = entry(self.result).or(entry(self.default)).unwrap_or(0);
+                self.entries.get(index).map(|e| e.trim().to_string()).filter(|e| !e.is_empty())
+            }
+            _ => None,
+        }
+    }
+}
+
+/// markitai: finish a field that may be a form field: a check box or a
+/// drop-down list whose result shows nothing reads as its state (see
+/// [`FormField::shown`]); everything else goes through [`field_result`].
+pub fn form_field_result(
+    instr: &str,
+    form: Option<&FormField>,
+    content: Vec<Inline>,
+) -> Vec<Inline> {
+    if inlines_are_empty(&content)
+        && let Some(text) = form.and_then(|form| form.shown(instr))
+    {
+        let mut content = content;
+        content.push(Inline::Text { text, style: crate::model::Style::PLAIN });
+        return content;
+    }
+    field_result(instr, content)
 }
 
 #[derive(Debug, PartialEq)]

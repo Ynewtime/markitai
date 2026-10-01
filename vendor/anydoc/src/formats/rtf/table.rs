@@ -137,6 +137,22 @@ impl TableState {
         Ok(())
     }
 
+    /// markitai: a blank paragraph set in a monospaced font ended inside a
+    /// cell at `depth`: a blank line of the code the cell lays out (see
+    /// [`crate::shared::code::listing_tables`]), kept as an empty paragraph,
+    /// which a table cell renders as nothing. Dropped like any other blank
+    /// paragraph, it closed up the listing (`#include <iostream>` and
+    /// `int main()` with no line between them).
+    pub fn push_cell_blank_line(&mut self, depth: usize) -> Result<(), ConvertError> {
+        self.flush_into_cell(depth + 1, depth)?;
+        self.ensure_cell_depth(depth);
+        let blocks = &mut self.cell_blocks[depth - 1];
+        flush_list(blocks, &mut self.cell_lists[depth - 1]);
+        self.cell_runs[depth - 1].flush(blocks);
+        blocks.push(Block::Paragraph(Vec::new()));
+        Ok(())
+    }
+
     /// markitai: a list paragraph ended inside a cell at `depth`. Cells hold
     /// lists as the body does (a task list in a table cell); before, the
     /// items were plain paragraphs with no marker.

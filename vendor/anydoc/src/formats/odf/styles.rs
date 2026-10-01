@@ -7,6 +7,7 @@
 
 use crate::error::ConvertError;
 use crate::formats::docx::scripts::Script;
+use crate::formats::docx::symbols::symbol_face;
 use crate::package::xml::{Element, ns};
 use crate::shared::blockstyle::{self, BlockStyle};
 use crate::shared::code::{is_fixed_pitch_code_face, is_monospace};
@@ -92,6 +93,19 @@ pub struct OdfStyles<'a> {
     faces: HashMap<String, bool>,
     default_mono: Option<bool>,
     mono_memo: RefCell<HashMap<String, HashMap<String, Option<bool>>>>,
+    /// markitai: the declared font faces that are symbol fonts (see
+    /// [`crate::formats::docx::symbols::symbol_text`]), and each style's
+    /// symbol font by family and name, as [`Self::font_symbol`] finds it.
+    symbol_faces: HashMap<String, &'static str>,
+    symbol_memo: RefCell<SymbolMemo>,
+}
+
+type SymbolMemo = HashMap<String, HashMap<String, Option<Option<&'static str>>>>;
+
+/// markitai: the first family of a `fo:font-family` or `svg:font-family`
+/// list, unquoted.
+fn first_family(family: &str) -> &str {
+    family.split(',').next().unwrap_or_default().trim().trim_matches(['\'', '"']).trim()
 }
 
 /// markitai: a text size (`fo:font-size`), in half-points or as a
@@ -171,6 +185,11 @@ impl<'a> OdfStyles<'a> {
                                 || family_mono(family, fixed_pitch(face))
                                 || (fixed_pitch(face) && is_fixed_pitch_code_face(name));
                             self.faces.insert(name.to_string(), mono);
+                            if let Some(symbol) =
+                                symbol_face(first_family(family)).or_else(|| symbol_face(name))
+                            {
+                                self.symbol_faces.insert(name.to_string(), symbol);
+                            }
                         }
                     }
                     continue;
@@ -316,6 +335,32 @@ impl<'a> OdfStyles<'a> {
             .or_default()
             .insert(name.to_string(), mono);
         mono
+    }
+
+    /// markitai: the symbol font `style:text-properties` names: its
+    /// `style:font-name` face, which wins, else the first `fo:font-family`;
+    /// `Some(None)` for another font and `None` when it names no font.
+    fn props_symbol(&self, props: &Element) -> Option<Option<&'static str>> {
+        if let Some(name) = props.attr(ns::STYLE, "font-name") {
+            return Some(self.symbol_faces.get(name).copied().or_else(|| symbol_face(name)));
+        }
+        Some(symbol_face(first_family(props.attr(ns::FO, "font-family")?)))
+    }
+
+    /// markitai: the symbol font a style sets its text in, through
+    /// `parent-style-name`; `Some(None)` for another font, `None` when no
+    /// style on the chain names a font.
+    pub fn font_symbol(&self, family: &str, name: &str) -> Option<Option<&'static str>> {
+        if let Some(hit) = self.symbol_memo.borrow().get(family).and_then(|names| names.get(name)) {
+            return *hit;
+        }
+        let symbol = self.nearest(family, name, |props| self.props_symbol(props));
+        self.symbol_memo
+            .borrow_mut()
+            .entry(family.to_string())
+            .or_default()
+            .insert(name.to_string(), symbol);
+        symbol
     }
 
     /// markitai: whether text no style sets a font for is monospaced: the

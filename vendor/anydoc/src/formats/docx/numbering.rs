@@ -349,7 +349,7 @@ impl Counters {
                     marker,
                     value,
                     |l| instance.levels[l.min(LEVELS - 1)].marker.unwrap_or(MarkerKind::Decimal),
-                    &level_value,
+                    level_value,
                 )
             })
         });

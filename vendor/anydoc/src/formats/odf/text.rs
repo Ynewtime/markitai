@@ -179,7 +179,13 @@ fn parse_block_elem(
                     // ODF outline links target headings by their text; carry
                     // it as the heading's anchor id (without the number).
                     let anchor = Some(crate::model::inlines_to_plain_text(&content));
-                    if let Some(label) = heading_label(elem, level, ctx) {
+                    // markitai: else the number the heading holds as shown
+                    // (`text:number`), which ran into its text before.
+                    let shown = || {
+                        let number = clean_text(elem.find(ns::TEXT, "number")?.text().trim());
+                        (!number.is_empty()).then(|| format!("{number} "))
+                    };
+                    if let Some(label) = heading_label(elem, level, ctx).or_else(shown) {
                         content.insert(0, Inline::Text { text: label, style: Style::PLAIN });
                     }
                     blocks.push(Block::Heading { level, anchor, content });
@@ -241,6 +247,12 @@ fn parse_block_elem(
             // its open run closing at the section's end), so a heading set
             // by hand inside one is found too.
             "section" => {
+                // markitai: a section hidden outright (`text:display="none"`)
+                // is not shown; one hidden by a condition is read, as the
+                // condition is not evaluated.
+                if elem.attr(ns::TEXT, "display") == Some("none") {
+                    return Ok(());
+                }
                 let mut inner = StyledRun::default();
                 for child in elem.child_elems() {
                     parse_block_elem(child, ctx, blocks, &mut inner)?;
@@ -252,10 +264,18 @@ fn parse_block_elem(
                 blocks.extend(parse_container(elem, ctx)?);
                 return Ok(());
             }
-            "table-of-content" | "alphabetical-index" | "bibliography" | "illustration-index" => {
+            // markitai: and the user-defined, table and object indexes,
+            // which upstream left out.
+            "table-of-content" | "alphabetical-index" | "bibliography" | "illustration-index"
+            | "user-index" | "table-index" | "object-index" => {
                 // The stored index body is real document text (the generated
                 // entries are written into `text:index-body`).
                 blocks.extend(parse_container(elem, ctx)?);
+                return Ok(());
+            }
+            // markitai: a numbered paragraph outside any `text:list`.
+            "numbered-paragraph" => {
+                push_numbered_paragraph(elem, ctx, blocks)?;
                 return Ok(());
             }
             _ => return Ok(()),
@@ -265,7 +285,135 @@ fn parse_block_elem(
         run.flush(blocks);
         blocks.extend(parse_table(elem, ctx)?);
     }
+    // markitai: a frame or shape anchored to the page stands in the body
+    // itself (LibreOffice writes page-anchored text boxes, pictures and
+    // shapes before the first paragraph of their page); upstream read only
+    // those anchored in a paragraph, and lost these with their text. Only
+    // in a text document: a spreadsheet's shapes anchored to a cell are not
+    // the cell's value, and slides read their shapes themselves.
+    if ctx.looks.is_some() && elem.ns.as_deref() == Some(ns::DRAW) {
+        run.flush(blocks);
+        let mut inlines = Vec::new();
+        let mut boxes = Vec::new();
+        walk_drawing(elem, ctx, &mut inlines, &mut boxes)?;
+        if !inlines_are_empty(&inlines) {
+            blocks.push(Block::Paragraph(inlines));
+        }
+        blocks.extend(boxes);
+    }
     Ok(())
+}
+
+/// markitai: a `text:numbered-paragraph` (ODF 1.2's numbered paragraph that
+/// belongs to a list without a `text:list` around it): a list item of its
+/// own, at its `text:level`, labelled with the number it shows
+/// (`text:number`); one right after an item of the same kind that it
+/// numbers on from joins that list. Upstream left the paragraph out.
+fn push_numbered_paragraph(
+    elem: &Element,
+    ctx: &Ctx,
+    blocks: &mut Vec<Block>,
+) -> Result<(), ConvertError> {
+    let depth = elem
+        .attr(ns::TEXT, "level")
+        .and_then(|level| level.trim().parse::<usize>().ok())
+        .unwrap_or(1)
+        .clamp(1, LIST_LEVELS)
+        - 1;
+    let level = ctx.styles.list_level(elem.attr(ns::TEXT, "style-name").unwrap_or(""), depth);
+    let label = elem
+        .find(ns::TEXT, "number")
+        .map(|number| clean_text(number.text().trim()))
+        .filter(|label| !label.is_empty());
+    let mut item_blocks = Vec::new();
+    {
+        let _deeper = Deeper::enter(&ctx.depth);
+        let _in_list = Deeper::enter(&ctx.list_depth);
+        let mut item_run = StyledRun::default();
+        for child in elem.child_elems().filter(|child| !child.is(ns::TEXT, "number")) {
+            parse_block_elem(child, ctx, &mut item_blocks, &mut item_run)?;
+        }
+        item_run.flush(&mut item_blocks);
+    }
+    if item_blocks
+        .iter()
+        .all(|b| matches!(b, Block::Paragraph(inlines) if inlines_are_empty(inlines)))
+    {
+        return Ok(());
+    }
+    // A decimal number the list's own marker writes needs no label.
+    let number = label.as_deref().and_then(|l| l.strip_suffix('.')).and_then(|n| n.parse().ok());
+    let (start, marker_label) = match number {
+        Some(n) if level.marker == crate::model::MarkerKind::Decimal => (n, None),
+        _ => (level.start, label),
+    };
+    let item = ListItem { blocks: item_blocks, marker_label };
+    if let Some(Block::List(previous)) = blocks.last_mut()
+        && previous.marker == level.marker
+        && (!previous.ordered()
+            || item.marker_label.is_some()
+            || previous.start.saturating_add(previous.items.len() as u64) == start)
+    {
+        previous.items.push(item);
+        return Ok(());
+    }
+    blocks.push(Block::List(List { marker: level.marker, start, items: vec![item] }));
+    Ok(())
+}
+
+/// markitai: the drawing elements [`walk_drawing`] reads: a frame, a group,
+/// a hyperlink around drawings (`draw:a`) and the shapes that hold text.
+fn is_drawing(elem: &Element) -> bool {
+    elem.ns.as_deref() == Some(ns::DRAW)
+        && matches!(
+            elem.local.as_str(),
+            "frame"
+                | "g"
+                | "a"
+                | "custom-shape"
+                | "rect"
+                | "ellipse"
+                | "circle"
+                | "polygon"
+                | "polyline"
+                | "path"
+                | "line"
+                | "connector"
+                | "caption"
+                | "regular-polygon"
+                | "measure"
+        )
+}
+
+/// markitai: a drawing element where it stands: a frame (a picture, a text
+/// box, a formula or chart object), a group of them, a hyperlink around them
+/// (`draw:a`), or a shape holding text (a custom shape, rectangle, ellipse,
+/// line and the like), whose paragraphs are blocks after the paragraph as a
+/// text box's are. Upstream read a shape's text into the anchoring
+/// paragraph, running its words into the sentence around it. Other drawing
+/// elements (form controls, scenes) give nothing.
+fn walk_drawing(
+    elem: &Element,
+    ctx: &Ctx,
+    out: &mut Vec<Inline>,
+    boxes: &mut Vec<Block>,
+) -> Result<(), ConvertError> {
+    if !is_drawing(elem) {
+        return Ok(());
+    }
+    match elem.local.as_str() {
+        "frame" => walk_frame(elem, ctx, out, boxes),
+        "g" | "a" => {
+            for child in elem.child_elems() {
+                walk_drawing(child, ctx, out, boxes)?;
+            }
+            Ok(())
+        }
+        _ => {
+            boxes.extend(parse_container(elem, ctx)?);
+            Ok(())
+        }
+    }
 }
 
 /// markitai: read a `text:list` into `blocks`. A list that continues the
@@ -514,6 +662,8 @@ struct RunMarks {
     size: Size,
     /// markitai: whether the text is set in a monospaced font.
     mono: bool,
+    /// markitai: the symbol font the text is set in, if any.
+    symbol: Option<&'static str>,
 }
 
 impl RunMarks {
@@ -528,6 +678,7 @@ impl RunMarks {
                 .font_size(family, name)
                 .map_or(self.size, |size| size.within(self.size)),
             mono: ctx.styles.font_mono(family, name).unwrap_or(self.mono),
+            symbol: ctx.styles.font_symbol(family, name).unwrap_or(self.symbol),
         }
     }
 }
@@ -590,6 +741,13 @@ fn walk_inlines(
                     continue;
                 }
                 let text = collapse_ws(&clean_text(t));
+                // markitai: text in a symbol font as the glyphs it shows (a
+                // Symbol `a` is α; LibreOffice keeps a Word document's
+                // symbols as private-use characters in that font).
+                let text = match marks.symbol {
+                    Some(font) => crate::formats::docx::symbols::symbol_text(font, &text),
+                    None => text,
+                };
                 // markitai: raised or lowered text ("x₁", "library¹").
                 let text = marks.script.and_then(|script| script.convert(&text)).unwrap_or(text);
                 if !text.is_empty() {
@@ -610,6 +768,14 @@ fn walk_inlines(
                     continue;
                 }
                 let in_text = child.ns.as_deref().is_some_and(|n| n == ns::TEXT);
+                // markitai: a field set to show nothing (`text:display="none"`,
+                // a variable set or read invisibly) and a script's source
+                // are not text the document shows.
+                if in_text
+                    && (child.attr(ns::TEXT, "display") == Some("none") || child.local == "script")
+                {
+                    continue;
+                }
                 if in_text {
                     match child.local.as_str() {
                         "span" => {
@@ -700,12 +866,15 @@ fn walk_inlines(
                             out.push(Inline::NoteRef(id));
                             continue;
                         }
-                        "annotation" | "tracked-changes" | "soft-page-break" => continue,
+                        // markitai: and a heading's or item's number as shown
+                        // (`text:number`), which its label gives.
+                        "annotation" | "tracked-changes" | "soft-page-break" | "number" => continue,
                         _ => {}
                     }
                 }
-                if child.is(ns::DRAW, "frame") {
-                    walk_frame(child, ctx, out, boxes)?;
+                // markitai: and groups, links and shapes (see `walk_drawing`).
+                if is_drawing(child) {
+                    walk_drawing(child, ctx, out, boxes)?;
                     continue;
                 }
                 walk_inlines(child, ctx, delta, marks, out, boxes)?;

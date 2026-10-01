@@ -14,7 +14,7 @@ use crate::package::xml::{Element, ns};
 use crate::shared::blockstyle::{BlockStyle, StyledRun};
 use crate::shared::code::{RunFonts, without_code};
 use crate::shared::delta::rebase_emphasis;
-use crate::shared::fields::{FieldFrame, field_result};
+use crate::shared::fields::{FieldFrame, FormField, FormKind, field_result, form_field_result};
 use crate::shared::list::{ListEntry, ListKey, continuation_level, flush_list, unmarked_level};
 use crate::shared::math::{omath_para_to_tex, omath_to_tex};
 use crate::shared::tabs::{self, Stops, TabRows};
@@ -932,26 +932,29 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
             }
             None => self.base,
         };
-        // markitai: a run set in a monospaced font is code: its own font,
-        // else its character style's, else the paragraph's.
+        // markitai: the run's font: its own, else its character style's,
+        // else the paragraph's.
+        let rpr = run.find(ns::W, "rPr");
+        let font = match rpr.and_then(run_font) {
+            Some(font) => Some(font),
+            None => match rpr
+                .and_then(|rpr| rpr.find(ns::W, "rStyle"))
+                .and_then(|e| e.attr(ns::W, "val"))
+            {
+                Some(id) => self.ctx.styles.style_font(id)?,
+                None => None,
+            }
+            .or(self.font),
+        };
+        // markitai: a run set in a monospaced font is code.
         let mut style = style;
         if self.ctx.code_fonts && !hidden {
-            let rpr = run.find(ns::W, "rPr");
-            let font = match rpr.and_then(run_font) {
-                Some(font) => Some(font),
-                None => match rpr
-                    .and_then(|rpr| rpr.find(ns::W, "rStyle"))
-                    .and_then(|e| e.attr(ns::W, "val"))
-                {
-                    Some(id) => self.ctx.styles.style_font(id)?,
-                    None => None,
-                }
-                .or(self.font),
-            };
             let mono = font.is_some_and(is_monospace);
             count_run(&mut self.fonts, run, mono);
             style.code |= mono;
         }
+        // markitai: and one set in a symbol font shows the font's glyphs.
+        let symbol = font.filter(|font| super::symbols::is_symbol_font(font));
         // markitai: the run's size: its own, else its character style's,
         // else the paragraph's.
         let size = match run.find(ns::W, "rPr") {
@@ -965,7 +968,7 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
             None => None,
         }
         .unwrap_or(self.size);
-        self.walk_run_content(run, style, hidden, script, size)
+        self.walk_run_content(run, style, hidden, script, size, symbol)
     }
 
     /// markitai: text set at `size` was read; a field's instructions are not
@@ -985,11 +988,12 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
         hidden: bool,
         script: Option<Script>,
         size: Size,
+        symbol: Option<&str>,
     ) -> Result<(), ConvertError> {
         for child in run.child_elems() {
             if child.is(ns::MC, "AlternateContent") {
                 if let Some(branch) = self.ctx.alternate_branch(child) {
-                    self.walk_run_content(branch, style, hidden, script, size)?;
+                    self.walk_run_content(branch, style, hidden, script, size, symbol)?;
                 }
                 continue;
             }
@@ -1008,6 +1012,11 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
                     // that never mark xml:space, and XML leaves unmarked
                     // whitespace to the application, so it is kept.
                     let text = clean_text(child.text().as_ref());
+                    // markitai: text in a symbol font as the glyphs it shows.
+                    let text = match symbol {
+                        Some(font) => super::symbols::symbol_text(font, &text),
+                        None => text,
+                    };
                     // markitai: a raised or lowered run in its Unicode forms
                     // where it has them ("10⁻³", "H₂O").
                     let text = script.and_then(|script| script.convert(&text)).unwrap_or(text);
@@ -1064,15 +1073,22 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
                 }
                 "drawing" | "pict" | "object" => self.walk_drawing(child)?,
                 "fldChar" => match child.attr(ns::W, "fldCharType") {
-                    Some("begin") => self.fields.push(FieldFrame::default()),
+                    // markitai: with the form field data a legacy form
+                    // field's start carries (unless the run is hidden).
+                    Some("begin") => self.fields.push(FieldFrame {
+                        form: child.find(ns::W, "ffData").filter(|_| !hidden).map(form_field),
+                        ..FieldFrame::default()
+                    }),
                     Some("separate") => {
                         if let Some(f) = self.fields.last_mut() {
                             f.in_result = true;
                         }
                     }
                     Some("end") => {
-                        if let Some(FieldFrame { instr, inlines, .. }) = self.fields.pop() {
-                            self.push_field_result(&instr, inlines);
+                        if let Some(FieldFrame { instr, inlines, form, .. }) = self.fields.pop() {
+                            for inline in form_field_result(&instr, form.as_ref(), inlines) {
+                                self.push(inline);
+                            }
                         }
                     }
                     _ => {}
@@ -1118,9 +1134,12 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
             return Ok(());
         }
 
+        // markitai: or, for a VML picture (Word 2003 and compatibility
+        // mode), its shape's `alt`.
         let descr = elem
             .first_descendant(ns::WP, "docPr")
             .and_then(|d| d.attr(ns::WP, "descr"))
+            .or_else(|| elem.first_descendant(ns::VML, "shape").and_then(|s| s.attr_any("alt")))
             .map(clean_text)
             .unwrap_or_default();
 
@@ -1247,6 +1266,36 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
         }
         self.pieces
     }
+}
+
+/// markitai: a legacy form field's data (`w:ffData`): a check box's state
+/// (`w:checked`, else `w:default`) or a drop-down list's entries and choice
+/// (`w:result`, else `w:default`); see [`FormField`].
+fn form_field(ff_data: &Element) -> FormField {
+    if let Some(check) = ff_data.find(ns::W, "checkBox") {
+        let state = |name| on_off(check, name).map(i32::from);
+        return FormField {
+            kind: Some(FormKind::CheckBox),
+            result: state("checked"),
+            default: state("default"),
+            entries: Vec::new(),
+        };
+    }
+    if let Some(list) = ff_data.find(ns::W, "ddList") {
+        let index = |name| list.find(ns::W, name)?.attr(ns::W, "val")?.trim().parse::<i32>().ok();
+        return FormField {
+            kind: Some(FormKind::DropDown),
+            result: index("result"),
+            default: index("default"),
+            entries: list
+                .child_elems()
+                .filter(|e| e.is(ns::W, "listEntry"))
+                .filter_map(|e| e.attr(ns::W, "val"))
+                .map(clean_text)
+                .collect(),
+        };
+    }
+    FormField { kind: Some(FormKind::Text), ..FormField::default() }
 }
 
 fn split_pieces(pieces: Vec<Piece>) -> (Vec<Inline>, Vec<Block>) {

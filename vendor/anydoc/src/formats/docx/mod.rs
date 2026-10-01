@@ -442,6 +442,150 @@ mod tests {
         assert_eq!(plain_paragraphs(&doc), ["Done ✓ alpha α copyright © unknown ."]);
     }
 
+    // markitai: a VML picture's alt text.
+    #[test]
+    fn a_vml_pictures_alt_text_is_read() {
+        let doc = body_doc(
+            r##"<w:p><w:r><w:t xml:space="preserve">Logo: </w:t></w:r><w:r><w:pict
+            xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"
+            xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+            <v:shape id="i1" type="#_x0000_t75" alt="Company logo" style="width:40pt;height:20pt">
+            <v:imagedata r:id="rId9" o:title=""/></v:shape></w:pict></w:r></w:p>"##,
+        );
+        let [Block::Paragraph(inlines)] = &doc.blocks[..] else { panic!("{:?}", doc.blocks) };
+        assert!(
+            inlines.iter().any(|i| matches!(i, Inline::Image { alt, .. } if alt == "Company logo")),
+            "{inlines:?}"
+        );
+    }
+
+    // markitai: text set in a symbol font.
+    #[test]
+    fn text_in_a_symbol_font_reads_as_its_glyphs() {
+        let styles = format!(
+            r#"<w:styles {W}><w:style w:type="character" w:styleId="Greek">
+            <w:rPr><w:rFonts w:ascii="Symbol" w:hAnsi="Symbol"/></w:rPr></w:style></w:styles>"#
+        );
+        let symbol = r#"<w:rPr><w:rFonts w:ascii="Symbol" w:hAnsi="Symbol"/></w:rPr>"#;
+        let wingdings = r#"<w:rPr><w:rFonts w:ascii="Wingdings" w:hAnsi="Wingdings"/></w:rPr>"#;
+        let document = format!(
+            r#"<w:document {W}><w:body><w:p>
+            <w:r><w:t xml:space="preserve">Typed </w:t></w:r><w:r>{symbol}<w:t>abg</w:t></w:r>
+            <w:r><w:t xml:space="preserve">, stored </w:t></w:r><w:r>{symbol}<w:t>&#xF06D;</w:t></w:r>
+            <w:r><w:t xml:space="preserve">m, styled </w:t></w:r><w:r><w:rPr><w:rStyle w:val="Greek"/></w:rPr><w:t>p</w:t></w:r>
+            <w:r><w:t xml:space="preserve">, ticks </w:t></w:r><w:r>{wingdings}<w:t>&#xFC;&#xF0FC;</w:t></w:r>
+            <w:r><w:t xml:space="preserve">, real </w:t></w:r><w:r>{symbol}<w:t>&#x3B1;</w:t></w:r>
+            <w:r><w:t xml:space="preserve">, plain abg.</w:t></w:r></w:p></w:body></w:document>"#
+        );
+        let doc =
+            parse(&docx_parts(&[("word/document.xml", &document), ("word/styles.xml", &styles)]))
+                .unwrap();
+        assert_eq!(
+            plain_paragraphs(&doc),
+            ["Typed αβγ, stored μm, styled π, ticks ✓✓, real α, plain abg."]
+        );
+    }
+
+    // markitai: a legacy form field's check box and drop-down list.
+    #[test]
+    fn legacy_form_fields_show_their_state() {
+        fn field(data: &str, instr: &str, result: Option<&str>) -> String {
+            let result = result.map_or(String::new(), |text| {
+                format!(r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>{text}</w:t></w:r>"#)
+            });
+            format!(
+                r#"<w:r><w:fldChar w:fldCharType="begin"><w:ffData>{data}</w:ffData></w:fldChar></w:r>
+                <w:r><w:instrText xml:space="preserve"> {instr} </w:instrText></w:r>{result}
+                <w:r><w:fldChar w:fldCharType="end"/></w:r>"#
+            )
+        }
+        let paragraphs = [
+            ("Typed:", field("<w:textInput/>", "FORMTEXT", Some("Jane"))),
+            (
+                "Checked:",
+                field(
+                    r#"<w:checkBox><w:default w:val="0"/><w:checked/></w:checkBox>"#,
+                    "FORMCHECKBOX",
+                    None,
+                ),
+            ),
+            (
+                "By default:",
+                field(r#"<w:checkBox><w:default w:val="1"/></w:checkBox>"#, "FORMCHECKBOX", None),
+            ),
+            (
+                "Cleared:",
+                field(
+                    r#"<w:checkBox><w:default w:val="1"/><w:checked w:val="0"/></w:checkBox>"#,
+                    "FORMCHECKBOX",
+                    None,
+                ),
+            ),
+            ("Never set:", field("<w:checkBox><w:sizeAuto/></w:checkBox>", "FORMCHECKBOX", None)),
+            (
+                "Chosen:",
+                field(
+                    r#"<w:ddList><w:result w:val="1"/><w:listEntry w:val="Red"/><w:listEntry w:val="Green"/></w:ddList>"#,
+                    "FORMDROPDOWN",
+                    None,
+                ),
+            ),
+            (
+                "First:",
+                field(
+                    r#"<w:ddList><w:listEntry w:val="Small"/><w:listEntry w:val="Large"/></w:ddList>"#,
+                    "FORMDROPDOWN",
+                    None,
+                ),
+            ),
+            (
+                "Out of range:",
+                field(
+                    r#"<w:ddList><w:result w:val="9"/><w:default w:val="1"/><w:listEntry w:val="A"/><w:listEntry w:val="B"/></w:ddList>"#,
+                    "FORMDROPDOWN",
+                    None,
+                ),
+            ),
+            (
+                "Written result:",
+                field(
+                    r#"<w:ddList><w:result w:val="0"/><w:listEntry w:val="One"/><w:listEntry w:val="Two"/></w:ddList>"#,
+                    "FORMDROPDOWN",
+                    Some("Two"),
+                ),
+            ),
+            ("Not a form field:", field("<w:checkBox><w:checked/></w:checkBox>", "PAGE", None)),
+        ];
+        let body: String = paragraphs
+            .iter()
+            .map(|(label, field)| format!(r#"<w:p><w:r><w:t xml:space="preserve">{label} </w:t></w:r>{field}<w:r><w:t>.</w:t></w:r></w:p>"#))
+            .collect();
+        let hidden = field("<w:checkBox><w:checked/></w:checkBox>", "FORMCHECKBOX", None).replacen(
+            "<w:r><w:fldChar",
+            "<w:r><w:rPr><w:vanish/></w:rPr><w:fldChar",
+            1,
+        );
+        let body = format!(
+            r#"{body}<w:p><w:r><w:t xml:space="preserve">Hidden: </w:t></w:r>{hidden}</w:p>"#
+        );
+        assert_eq!(
+            plain_paragraphs(&body_doc(&body)),
+            [
+                "Typed: Jane.",
+                "Checked: ☒.",
+                "By default: ☒.",
+                "Cleared: ☐.",
+                "Never set: ☐.",
+                "Chosen: Green.",
+                "First: Small.",
+                "Out of range: B.",
+                "Written result: Two.",
+                "Not a form field: .",
+                "Hidden: ",
+            ]
+        );
+    }
+
     #[test]
     fn hidden_text_is_left_out_whatever_hides_it() {
         // Direct formatting, a character style and a paragraph style hide a
