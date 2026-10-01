@@ -195,11 +195,20 @@ pub(super) fn event(level: Level, message: impl AsRef<str>) {
 
 /// All existing CLI diagnostics keep their console policy and gain redaction.
 pub(super) fn diagnostic(args: std::fmt::Arguments<'_>) {
-    let original = args.to_string();
+    emit(args.to_string(), None);
+}
+
+/// A diagnostic whose console text is in the terminal language while the file
+/// log keeps `english`: log lines read the same in every language.
+pub(super) fn diagnostic_as(english: std::fmt::Arguments<'_>, console: std::fmt::Arguments<'_>) {
+    emit(english.to_string(), Some(console.to_string()));
+}
+
+fn emit(original: String, console: Option<String>) {
     let message = {
         let active = ACTIVE.lock().unwrap_or_else(|e| e.into_inner());
         redact(
-            &original,
+            console.as_deref().unwrap_or(&original),
             active.as_ref().map(|s| s.secrets.as_slice()).unwrap_or(&[]),
         )
     };

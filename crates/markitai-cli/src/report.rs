@@ -1,4 +1,5 @@
 use crate::{
+    app::i18n::{Lang, text},
     diagnostics::AttemptDiagnostics,
     pricing::{self, Pricing},
     report_store,
@@ -1274,15 +1275,30 @@ pub(crate) fn render_resumed(
 /// A batch's closing lines on the terminal: what was converted, how long it
 /// took and what it cost, then skipped items by reason with the next step,
 /// then failed and unfinished items (each failure's error is printed before)
-/// and where the results are.
+/// and where the results are. The wording follows `lang`; item names, skip
+/// reasons and paths are shown as they are.
 pub(crate) fn batch_summary(
     records: &[RunItem],
     elapsed: std::time::Duration,
     output: &Path,
+    lang: Lang,
 ) -> Vec<String> {
     const EXAMPLES: usize = 2;
-    let noun = |count: usize, one: &str, many: &str| {
-        format!("{count} {}", if count == 1 { one } else { many })
+    let (list_separator, more) = match lang {
+        Lang::En => (", ", ", ..."),
+        Lang::Zh => ("、", " 等"),
+    };
+    let items = |count: usize| {
+        let noun = if count == 1 { "item" } else { "items" };
+        text!(lang => "{count} {noun}", "{count} 项")
+    };
+    // The first names of a group, then a mark that there are more.
+    let examples = |names: &[&str]| {
+        let mut shown = names[..names.len().min(EXAMPLES)].join(list_separator);
+        if names.len() > EXAMPLES {
+            shown.push_str(more);
+        }
+        shown
     };
     let completed = |kind: ItemKind| {
         records
@@ -1291,30 +1307,42 @@ pub(crate) fn batch_summary(
             .count()
     };
     let mut parts = Vec::new();
-    if completed(ItemKind::File) > 0 {
-        parts.push(noun(completed(ItemKind::File), "file", "files"));
+    let files = completed(ItemKind::File);
+    if files > 0 {
+        let noun = if files == 1 { "file" } else { "files" };
+        parts.push(text!(lang => "{files} {noun}", "{files} 个文件"));
     }
-    if completed(ItemKind::Url) > 0 {
-        parts.push(noun(completed(ItemKind::Url), "URL", "URLs"));
+    let urls = completed(ItemKind::Url);
+    if urls > 0 {
+        let noun = if urls == 1 { "URL" } else { "URLs" };
+        parts.push(text!(lang => "{urls} {noun}", "{urls} 个 URL"));
     }
     let seconds = elapsed.as_secs();
     let mut detail = format!("{}:{:02}", seconds / 60, seconds % 60);
+    let detail_separator = match lang {
+        Lang::En => ", ",
+        Lang::Zh => "，",
+    };
     let cost: f64 = records.iter().map(|record| record.usage.cost_usd).sum();
     if cost > 0.0 {
-        detail.push_str(&format!(", ${cost:.3}"));
+        detail.push_str(&format!("{detail_separator}${cost:.3}"));
     }
     if records
         .iter()
         .any(|record| record.usage.requests > 0 && !record.usage.cost_complete())
     {
-        detail.push_str(", cost incomplete");
+        detail.push_str(detail_separator);
+        detail.push_str(&text!(lang => "cost incomplete", "费用不完整"));
     }
     let converted = if parts.is_empty() {
-        "nothing converted".to_owned()
+        text!(lang => "nothing converted", "没有转换任何内容")
     } else {
-        parts.join(", ")
+        parts.join(list_separator)
     };
-    let mut lines = vec![format!("Done: {converted} ({detail})")];
+    let mut lines = vec![text!(
+        lang => "Done: {converted} ({detail})",
+        "完成：{converted}（{detail}）"
+    )];
     let mut skipped: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for record in records
         .iter()
@@ -1326,24 +1354,38 @@ pub(crate) fn batch_summary(
             .push(&record.display);
     }
     for (reason, names) in skipped {
-        let mut examples = names[..names.len().min(EXAMPLES)].join(", ");
-        if names.len() > EXAMPLES {
-            examples.push_str(", ...");
-        }
         let hint = match reason {
-            "image_only" => " Use --llm or --ocr for content extraction.",
-            "exists" => " Set output.on_conflict to overwrite or rename to convert them again.",
-            "pending_batch" => " Collect it later with --llm-batch-collect or --resume.",
-            _ => "",
+            "image_only" => text!(
+                lang => " Use --llm or --ocr for content extraction.",
+                "请使用 --llm 或 --ocr 提取内容。"
+            ),
+            "exists" => text!(
+                lang => " Set output.on_conflict to overwrite or rename to convert them again.",
+                "将 output.on_conflict 设为 overwrite 或 rename 可重新转换。"
+            ),
+            "pending_batch" => text!(
+                lang => " Collect it later with --llm-batch-collect or --resume.",
+                "稍后可用 --llm-batch-collect 或 --resume 收取。"
+            ),
+            _ => String::new(),
         };
-        lines.push(format!(
-            "Skipped {} ({reason}): {examples}.{hint}",
-            noun(names.len(), "item", "items")
+        let (count, shown) = (items(names.len()), examples(&names));
+        lines.push(text!(
+            lang => "Skipped {count} ({reason}): {shown}.{hint}",
+            "已跳过 {count}（{reason}）：{shown}。{hint}"
         ));
     }
     for (status, label, hint) in [
-        (ItemStatus::Failed, "Failed", " See the errors above."),
-        (ItemStatus::Pending, "Not finished", ""),
+        (
+            ItemStatus::Failed,
+            text!(lang => "Failed", "失败"),
+            text!(lang => " See the errors above.", "详见上方的错误信息。"),
+        ),
+        (
+            ItemStatus::Pending,
+            text!(lang => "Not finished", "未完成"),
+            String::new(),
+        ),
     ] {
         let names: Vec<_> = records
             .iter()
@@ -1353,13 +1395,10 @@ pub(crate) fn batch_summary(
         if names.is_empty() {
             continue;
         }
-        let mut examples = names[..names.len().min(EXAMPLES)].join(", ");
-        if names.len() > EXAMPLES {
-            examples.push_str(", ...");
-        }
-        lines.push(format!(
-            "{label} {}: {examples}.{hint}",
-            noun(names.len(), "item", "items")
+        let (count, shown) = (items(names.len()), examples(&names));
+        lines.push(text!(
+            lang => "{label} {count}: {shown}.{hint}",
+            "{label} {count}：{shown}。{hint}"
         ));
     }
     // Every item failing for want of a model has one cause and one remedy.
@@ -1368,11 +1407,13 @@ pub(crate) fn batch_summary(
         .iter()
         .any(|record| record.error.as_deref() == Some(no_model.as_str()))
     {
-        lines.push(
-            "No LLM model is configured: set a provider API key such as OPENAI_API_KEY (optionally with MODEL) or configure llm.model_list, or rerun without --llm.".into(),
-        );
+        lines.push(text!(
+            lang => "No LLM model is configured: set a provider API key such as OPENAI_API_KEY (optionally with MODEL) or configure llm.model_list, or rerun without --llm.",
+            "未配置 LLM 模型：请设置供应商的 API key（如 OPENAI_API_KEY，可同时设置 MODEL）或配置 llm.model_list，也可以不加 --llm 重新运行。"
+        ));
     }
-    lines.push(format!("Output: {}", output.display()));
+    let output = output.display();
+    lines.push(text!(lang => "Output: {output}", "输出目录：{output}"));
     lines
 }
 
@@ -1407,7 +1448,8 @@ mod tests {
             batch_summary(
                 &records,
                 std::time::Duration::from_secs(75),
-                Path::new("out")
+                Path::new("out"),
+                Lang::En
             ),
             [
                 "Done: 1 file, 1 URL (1:15, $0.013, cost incomplete)",
@@ -1427,6 +1469,7 @@ mod tests {
             &records[..2],
             std::time::Duration::from_secs(3),
             Path::new("out"),
+            Lang::En,
         );
         assert_eq!(lines[0], "Done: nothing converted (0:03)");
         assert_eq!(lines[2], "Not finished 1 item: display-k1.");
@@ -1439,7 +1482,12 @@ mod tests {
             record.status = ItemStatus::Failed;
             record.error = Some(markitai_core::Error::NoModelConfigured.to_string());
         }
-        let lines = batch_summary(&records, std::time::Duration::ZERO, Path::new("out"));
+        let lines = batch_summary(
+            &records,
+            std::time::Duration::ZERO,
+            Path::new("out"),
+            Lang::En,
+        );
         assert_eq!(
             lines[1],
             "Failed 6 items: display-k0, display-k1, .... See the errors above."
@@ -1449,6 +1497,80 @@ mod tests {
             "{lines:?}"
         );
         assert_eq!(lines.len(), 4);
+    }
+
+    #[test]
+    fn batch_summary_has_the_same_lines_in_chinese_and_english() {
+        let mut records: Vec<RunItem> = (0..6)
+            .map(|index| {
+                item(
+                    index,
+                    if index < 3 {
+                        ItemKind::File
+                    } else {
+                        ItemKind::Url
+                    },
+                    &format!("k{index}"),
+                )
+            })
+            .collect();
+        records[0].usage.cost_usd = 0.0126;
+        for (index, reason) in [(1, "image_only"), (2, "image_only"), (4, "exists")] {
+            records[index].status = ItemStatus::Skipped;
+            records[index].skip_reason = Some(reason.into());
+        }
+        records[5].status = ItemStatus::Failed;
+        records[3].usage.requests = 1;
+        let summary = |records: &[RunItem], lang| {
+            batch_summary(
+                records,
+                std::time::Duration::from_secs(75),
+                Path::new("out"),
+                lang,
+            )
+        };
+        assert_eq!(
+            summary(&records, Lang::Zh),
+            [
+                "完成：1 个文件、1 个 URL（1:15，$0.013，费用不完整）",
+                "已跳过 1 项（exists）：display-k4。将 output.on_conflict 设为 overwrite 或 rename 可重新转换。",
+                "已跳过 2 项（image_only）：display-k1、display-k2。请使用 --llm 或 --ocr 提取内容。",
+                "失败 1 项：display-k5。详见上方的错误信息。",
+                "输出目录：out",
+            ]
+        );
+        // More than two names are cut off with a mark, as the English line is.
+        for record in &mut records {
+            record.status = ItemStatus::Failed;
+            record.error = Some(markitai_core::Error::NoModelConfigured.to_string());
+            record.usage.cost_usd = 0.0;
+            record.usage.requests = 0;
+        }
+        records[1].status = ItemStatus::Pending;
+        let lines = summary(&records, Lang::Zh);
+        assert_eq!(
+            lines,
+            [
+                "完成：没有转换任何内容（1:15）",
+                "失败 5 项：display-k0、display-k2 等。详见上方的错误信息。",
+                "未完成 1 项：display-k1。",
+                "未配置 LLM 模型：请设置供应商的 API key（如 OPENAI_API_KEY，可同时设置 MODEL）或配置 llm.model_list，也可以不加 --llm 重新运行。",
+                "输出目录：out",
+            ]
+        );
+        // The structure is the same in both languages: one line for one line.
+        assert_eq!(lines.len(), summary(&records, Lang::En).len());
+        let pending_batch = {
+            let mut one = vec![item(0, ItemKind::Url, "k0")];
+            one[0].status = ItemStatus::Skipped;
+            one[0].skip_reason = Some("pending_batch".into());
+            one[0].display = "u".into();
+            summary(&one, Lang::Zh)
+        };
+        assert_eq!(
+            pending_batch[1],
+            "已跳过 1 项（pending_batch）：u。稍后可用 --llm-batch-collect 或 --resume 收取。"
+        );
     }
 
     fn item(index: usize, kind: ItemKind, key: &str) -> RunItem {

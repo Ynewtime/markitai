@@ -1,0 +1,1515 @@
+=== markitai -h (exit 0, stderr 0 bytes) ===
+Convert documents and URLs to Markdown
+
+Usage: markitai [OPTIONS] [INPUT] [COMMAND]
+
+Commands:
+  config  Inspect or edit configuration
+  init    Create or update a configuration file with detected API models
+  doctor  Diagnose configured workflows and optional native backends
+  cache   Inspect or clear the LLM and URL fetch caches
+  auth    Inspect subscription authentication or delegate login to an official runtime
+  serve   Run the native REST conversion service and web interface
+  mcp     Run the native MCP service over standard input/output
+
+Arguments:
+  [INPUT]
+          Document, URL, .urls list, directory or atomic .numbers package
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Output:
+  -o, --output <PATH>
+          Output directory, or exact .md path for a single input. Omit for Markdown on stdout
+      --json
+          Print one JSON result on stdout; requires -o. Usage errors remain on stderr
+      --dry-run
+          Preview discovery without conversion or output publication
+      --record-history
+          Archive this run for `markitai serve` history (--no-record-history disables); stdout-only
+          conversions are not archived
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+  -p, --preset <NAME>
+          Use minimal, standard, rich or a configured preset (case-insensitive)
+      --profile <NAME>
+          Shape assets/frontmatter for rag, obsidian or okf; independent of the preset [possible
+          values: rag, obsidian, okf]
+  -I, --interactive
+          Choose a conversion in a terminal; edits apply to this session only
+
+LLM, OCR and screenshots:
+      --llm
+          Enable model processing (--no-llm disables). The last of a flag pair wins; without either,
+          the configuration decides
+      --alt
+          Generate image alt text when LLM processing is enabled (--no-alt disables)
+      --desc
+          Write image descriptions when LLM processing is enabled (--no-desc disables)
+      --ocr
+          Read scanned content: macOS Vision locally, or page images with a vision model (--no-ocr
+          disables)
+      --screenshot
+          Capture supported document pages or browser pages; optional backends may be required
+          (--no-screenshot disables)
+      --screenshot-only
+          Use screenshots as content (implies --screenshot). With --llm, read pixels; without --llm,
+          ordinary web pages save images without Markdown. PDF media retains Markdown. URL --pure
+          takes precedence
+      --pure
+          Preserve source text without ordinary generated metadata; URL pure takes precedence over
+          visual LLM input (--no-pure disables)
+      --keep-base
+          Keep the base Markdown alongside enhanced output
+      --llm-concurrency <N>
+          Maximum in-flight model requests shared by this conversion run
+
+URL fetching and backends:
+  -s, --strategy <NAME>
+          URL strategy: auto (static, then the local browser), static or playwright run locally;
+          defuddle and jina send the URL to that remote service; cloudflare is not implemented
+          [possible values: auto, static, playwright, defuddle, jina, cloudflare]
+  -b, --backend <NAME>
+          File backend; native is implemented, cloudflare remains explicitly unsupported [possible
+          values: native, cloudflare]
+      --no-remote-fetch
+          Forbid remote extraction services; does not disable explicitly configured model requests
+
+Batch processing:
+      --resume
+          Resume a directory or .urls batch with matching paths/options; completed entries stay
+          completed
+  -j, --batch-concurrency <N>
+          Maximum concurrent file conversions; independent of URL and model request limits
+      --url-concurrency <N>
+          Maximum concurrent URL conversions, separately from file processing
+  -g, --glob <PATTERN>
+          Include/exclude relative directory paths; repeatable, ! prefix excludes. Quote patterns in
+          the shell
+      --max-depth <N>
+          Directory scan depth; 0 scans only the input directory
+      --llm-batch
+          Submit directory text enhancement to the OpenAI Batch API; --resume continues frozen work
+          in -o
+      --llm-batch-timeout <SECONDS>
+          Maximum local wait for a provider batch (seconds, at least 60); expiry does not cancel it
+      --llm-batch-collect <BATCH_ID>
+          Collect a saved provider batch into its original -o directory; no input is required
+
+Cache and images:
+      --no-cache
+          Bypass cache reads while still writing successful fresh results (--cache restores reads)
+      --no-cache-for <PATTERNS>
+          Comma-separated glob patterns that bypass cache reads for matching inputs
+      --no-compress
+          Disable image compression (--compress enables it)
+
+Messages and logging:
+  -v, --verbose
+          Show details such as the report path. Single inputs are otherwise quiet by default: only
+          the written path, warnings and errors; stdout Markdown stays clean
+  -q, --quiet
+          Print errors only: no written path, warnings, progress or batch summary
+      --log-level <LEVEL>
+          Conversion file-log level; needs log.dir. Console output still follows --verbose/--quiet
+          [possible values: DEBUG, INFO, WARNING, ERROR, CRITICAL]
+
+Presets (-p):
+  minimal   plain conversion, no model processing
+  standard  --llm --alt --desc
+  rich      --llm --alt --desc --screenshot
+
+Examples:
+  markitai report.docx                     Print Markdown on stdout
+  markitai report.pdf -o out/              Write out/report.pdf.md
+  markitai notes.html -o out/notes.md      Choose the exact output file
+  markitai ./docs -o out/ -g '**/*.pdf'    Convert the PDFs in a directory
+  markitai links.urls -o out/ --resume     Continue an interrupted URL list
+  markitai https://example.com -o out/     Convert a web page
+  markitai scan.png --ocr                  Read the text of an image
+  markitai report.pdf -p standard -o out/  Enhance with the configured model
+  markitai init                            Create a configuration file
+  markitai doctor                          Check models and optional backends
+
+Exit status: 0 success; 1 failure; 2 usage error or provider batch still pending;
+10 some batch items failed; 130/143 interrupted.
+=== markitai --help (exit 0, stderr 0 bytes) ===
+Convert documents and URLs to Markdown
+
+Usage: markitai [OPTIONS] [INPUT] [COMMAND]
+
+Commands:
+  config  Inspect or edit configuration
+  init    Create or update a configuration file with detected API models
+  doctor  Diagnose configured workflows and optional native backends
+  cache   Inspect or clear the LLM and URL fetch caches
+  auth    Inspect subscription authentication or delegate login to an official runtime
+  serve   Run the native REST conversion service and web interface
+  mcp     Run the native MCP service over standard input/output
+
+Arguments:
+  [INPUT]
+          Document, URL, .urls list, directory or atomic .numbers package
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Output:
+  -o, --output <PATH>
+          Output directory, or exact .md path for a single input. Omit for Markdown on stdout
+      --json
+          Print one JSON result on stdout; requires -o. Usage errors remain on stderr
+      --dry-run
+          Preview discovery without conversion or output publication
+      --record-history
+          Archive this run for `markitai serve` history (--no-record-history disables); stdout-only
+          conversions are not archived
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+  -p, --preset <NAME>
+          Use minimal, standard, rich or a configured preset (case-insensitive)
+      --profile <NAME>
+          Shape assets/frontmatter for rag, obsidian or okf; independent of the preset [possible
+          values: rag, obsidian, okf]
+  -I, --interactive
+          Choose a conversion in a terminal; edits apply to this session only
+
+LLM, OCR and screenshots:
+      --llm
+          Enable model processing (--no-llm disables). The last of a flag pair wins; without either,
+          the configuration decides
+      --alt
+          Generate image alt text when LLM processing is enabled (--no-alt disables)
+      --desc
+          Write image descriptions when LLM processing is enabled (--no-desc disables)
+      --ocr
+          Read scanned content: macOS Vision locally, or page images with a vision model (--no-ocr
+          disables)
+      --screenshot
+          Capture supported document pages or browser pages; optional backends may be required
+          (--no-screenshot disables)
+      --screenshot-only
+          Use screenshots as content (implies --screenshot). With --llm, read pixels; without --llm,
+          ordinary web pages save images without Markdown. PDF media retains Markdown. URL --pure
+          takes precedence
+      --pure
+          Preserve source text without ordinary generated metadata; URL pure takes precedence over
+          visual LLM input (--no-pure disables)
+      --keep-base
+          Keep the base Markdown alongside enhanced output
+      --llm-concurrency <N>
+          Maximum in-flight model requests shared by this conversion run
+
+URL fetching and backends:
+  -s, --strategy <NAME>
+          URL strategy: auto (static, then the local browser), static or playwright run locally;
+          defuddle and jina send the URL to that remote service; cloudflare is not implemented
+          [possible values: auto, static, playwright, defuddle, jina, cloudflare]
+  -b, --backend <NAME>
+          File backend; native is implemented, cloudflare remains explicitly unsupported [possible
+          values: native, cloudflare]
+      --no-remote-fetch
+          Forbid remote extraction services; does not disable explicitly configured model requests
+
+Batch processing:
+      --resume
+          Resume a directory or .urls batch with matching paths/options; completed entries stay
+          completed
+  -j, --batch-concurrency <N>
+          Maximum concurrent file conversions; independent of URL and model request limits
+      --url-concurrency <N>
+          Maximum concurrent URL conversions, separately from file processing
+  -g, --glob <PATTERN>
+          Include/exclude relative directory paths; repeatable, ! prefix excludes. Quote patterns in
+          the shell
+      --max-depth <N>
+          Directory scan depth; 0 scans only the input directory
+      --llm-batch
+          Submit directory text enhancement to the OpenAI Batch API; --resume continues frozen work
+          in -o
+      --llm-batch-timeout <SECONDS>
+          Maximum local wait for a provider batch (seconds, at least 60); expiry does not cancel it
+      --llm-batch-collect <BATCH_ID>
+          Collect a saved provider batch into its original -o directory; no input is required
+
+Cache and images:
+      --no-cache
+          Bypass cache reads while still writing successful fresh results (--cache restores reads)
+      --no-cache-for <PATTERNS>
+          Comma-separated glob patterns that bypass cache reads for matching inputs
+      --no-compress
+          Disable image compression (--compress enables it)
+
+Messages and logging:
+  -v, --verbose
+          Show details such as the report path. Single inputs are otherwise quiet by default: only
+          the written path, warnings and errors; stdout Markdown stays clean
+  -q, --quiet
+          Print errors only: no written path, warnings, progress or batch summary
+      --log-level <LEVEL>
+          Conversion file-log level; needs log.dir. Console output still follows --verbose/--quiet
+          [possible values: DEBUG, INFO, WARNING, ERROR, CRITICAL]
+
+Presets (-p):
+  minimal   plain conversion, no model processing
+  standard  --llm --alt --desc
+  rich      --llm --alt --desc --screenshot
+
+Examples:
+  markitai report.docx                     Print Markdown on stdout
+  markitai report.pdf -o out/              Write out/report.pdf.md
+  markitai notes.html -o out/notes.md      Choose the exact output file
+  markitai ./docs -o out/ -g '**/*.pdf'    Convert the PDFs in a directory
+  markitai links.urls -o out/ --resume     Continue an interrupted URL list
+  markitai https://example.com -o out/     Convert a web page
+  markitai scan.png --ocr                  Read the text of an image
+  markitai report.pdf -p standard -o out/  Enhance with the configured model
+  markitai init                            Create a configuration file
+  markitai doctor                          Check models and optional backends
+
+Exit status: 0 success; 1 failure; 2 usage error or provider batch still pending;
+10 some batch items failed; 130/143 interrupted.
+=== markitai config -h (exit 0, stderr 0 bytes) ===
+Inspect or edit configuration
+
+Usage: markitai config [OPTIONS] <COMMAND>
+
+Commands:
+  list      Show the effective configuration; secrets are redacted
+  path      Show which configuration file is in use
+  validate  Check a configuration file against the schema
+  get       Print one value; sections print as JSON
+  set       Validate and save one value; invalid values are not written
+  edit      Edit settings in a terminal; each value is validated and saved at once
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Keys use dot notation, e.g. llm.enabled or llm.model_list[0].model_name. The file in
+use is -c, then MARKITAI_CONFIG, then ./markitai.json, then the user config.json.
+
+Examples:
+  markitai config list -f table           Show every effective setting
+  markitai config get llm.enabled         Read one value
+  markitai config set output.dir ./out    Validate and save one value
+  markitai config path                    Show which file is in use
+=== markitai config --help (exit 0, stderr 0 bytes) ===
+Inspect or edit configuration
+
+Usage: markitai config [OPTIONS] <COMMAND>
+
+Commands:
+  list      Show the effective configuration; secrets are redacted
+  path      Show which configuration file is in use
+  validate  Check a configuration file against the schema
+  get       Print one value; sections print as JSON
+  set       Validate and save one value; invalid values are not written
+  edit      Edit settings in a terminal; each value is validated and saved at once
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Keys use dot notation, e.g. llm.enabled or llm.model_list[0].model_name. The file in
+use is -c, then MARKITAI_CONFIG, then ./markitai.json, then the user config.json.
+
+Examples:
+  markitai config list -f table           Show every effective setting
+  markitai config get llm.enabled         Read one value
+  markitai config set output.dir ./out    Validate and save one value
+  markitai config path                    Show which file is in use
+=== markitai init -h (exit 0, stderr 0 bytes) ===
+Create or update a configuration file with detected API models
+
+Usage: markitai init [OPTIONS]
+
+Options:
+  -y, --yes            Do not prompt: create the file, or add newly detected models to an existing
+                       one
+  -o, --output <PATH>  Write this file, or markitai.json inside this directory
+      --local          Write ./markitai.json in the current directory instead of the user
+                       configuration
+  -h, --help           Print help (see more with '--help')
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai init                Choose the location and how to treat an existing file
+  markitai init -y             Create or update the user configuration without prompts
+  markitai init --local        Write ./markitai.json for this project
+  markitai init -o cfg.json    Write to a custom path
+=== markitai init --help (exit 0, stderr 0 bytes) ===
+Create or update a configuration file with detected API models.
+
+Detects API models from the environment (MODEL and provider API keys) without
+making requests or saving key values. LLM processing stays disabled in the
+generated file; enable it per run with --llm or with
+`markitai config set llm.enabled true`.
+
+Usage: markitai init [OPTIONS]
+
+Options:
+  -y, --yes
+          Do not prompt: create the file, or add newly detected models to an existing one
+
+  -o, --output <PATH>
+          Write this file, or markitai.json inside this directory
+
+      --local
+          Write ./markitai.json in the current directory instead of the user configuration
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai init                Choose the location and how to treat an existing file
+  markitai init -y             Create or update the user configuration without prompts
+  markitai init --local        Write ./markitai.json for this project
+  markitai init -o cfg.json    Write to a custom path
+=== markitai doctor -h (exit 0, stderr 0 bytes) ===
+Diagnose configured workflows and optional native backends
+
+Usage: markitai doctor [OPTIONS]
+
+Options:
+      --json            Print the checks as one JSON object
+      --fix             Install the official Chrome headless shell when no working browser is found
+      --suggest-extras  Python package extras; not applicable to this native build and rejected
+  -h, --help            Print help (see more with '--help')
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai doctor           Human-readable report
+  markitai doctor --json    Machine-readable checks
+  markitai doctor --fix     Install a browser when no working one is found
+=== markitai doctor --help (exit 0, stderr 0 bytes) ===
+Diagnose configured workflows and optional native backends.
+
+Missing optional backends are reported but do not fail. The exit status is 1
+only when the configuration asks for something this machine cannot deliver:
+an active model whose credentials are missing, a configured browser workflow
+that cannot launch, an unavailable subscription runtime, or a failed --fix
+repair. No model request is sent and no remote page is opened.
+
+Usage: markitai doctor [OPTIONS]
+
+Options:
+      --json
+          Print the checks as one JSON object
+
+      --fix
+          Install the official Chrome headless shell when no working browser is found
+
+      --suggest-extras
+          Python package extras; not applicable to this native build and rejected
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai doctor           Human-readable report
+  markitai doctor --json    Machine-readable checks
+  markitai doctor --fix     Install a browser when no working one is found
+=== markitai cache -h (exit 0, stderr 0 bytes) ===
+Inspect or clear the LLM and URL fetch caches
+
+Usage: markitai cache [OPTIONS] <COMMAND>
+
+Commands:
+  stats        Show cache entry counts and disk use
+  clear        Clear the LLM and URL fetch caches
+  spa-domains  Inspect or clear learned browser-domain routing
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai cache stats                    Entry counts and disk use
+  markitai cache stats -v --limit 10      Recent LLM entries per model
+  markitai cache clear -y                 Clear without a confirmation prompt
+=== markitai cache --help (exit 0, stderr 0 bytes) ===
+Inspect or clear the LLM and URL fetch caches
+
+Usage: markitai cache [OPTIONS] <COMMAND>
+
+Commands:
+  stats        Show cache entry counts and disk use
+  clear        Clear the LLM and URL fetch caches
+  spa-domains  Inspect or clear learned browser-domain routing
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai cache stats                    Entry counts and disk use
+  markitai cache stats -v --limit 10      Recent LLM entries per model
+  markitai cache clear -y                 Clear without a confirmation prompt
+=== markitai auth -h (exit 0, stderr 0 bytes) ===
+Inspect subscription authentication or delegate login to an official runtime
+
+Usage: markitai auth [OPTIONS] [COMMAND]
+
+Commands:
+  copilot  GitHub Copilot through the installed official CLI
+  claude   Claude subscription adapter status
+  chatgpt  ChatGPT subscription adapter status
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai auth --help (exit 0, stderr 0 bytes) ===
+Inspect subscription authentication or delegate login to an official runtime
+
+Usage: markitai auth [OPTIONS] [COMMAND]
+
+Commands:
+  copilot  GitHub Copilot through the installed official CLI
+  claude   Claude subscription adapter status
+  chatgpt  ChatGPT subscription adapter status
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai serve -h (exit 0, stderr 0 bytes) ===
+Run the native REST conversion service and web interface
+
+Usage: markitai serve [OPTIONS]
+
+Options:
+      --host <HOST>              Interface to bind. Clients other than this machine need the access
+                                 token printed at startup (or MARKITAI_SERVE_TOKEN) [default:
+                                 127.0.0.1]
+      --port <PORT>              Port to listen on [default: 3600]
+      --no-open                  Do not open a browser after startup
+      --no-auth                  Do not require the access token from other machines. They can then
+                                 upload files and read or delete history; URL conversion and model
+                                 settings stay blocked for them
+      --allowed-host <HOSTNAME>  Also accept this name in Host/Origin headers (repeatable);
+                                 localhost and IP addresses are always accepted
+  -h, --help                     Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai serve                          http://127.0.0.1:3600, opens a browser
+  markitai serve --port 8080 --no-open    Another port, no browser
+  markitai serve --host 0.0.0.0           LAN access with the printed access token
+=== markitai serve --help (exit 0, stderr 0 bytes) ===
+Run the native REST conversion service and web interface
+
+Usage: markitai serve [OPTIONS]
+
+Options:
+      --host <HOST>              Interface to bind. Clients other than this machine need the access
+                                 token printed at startup (or MARKITAI_SERVE_TOKEN) [default:
+                                 127.0.0.1]
+      --port <PORT>              Port to listen on [default: 3600]
+      --no-open                  Do not open a browser after startup
+      --no-auth                  Do not require the access token from other machines. They can then
+                                 upload files and read or delete history; URL conversion and model
+                                 settings stay blocked for them
+      --allowed-host <HOSTNAME>  Also accept this name in Host/Origin headers (repeatable);
+                                 localhost and IP addresses are always accepted
+  -h, --help                     Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai serve                          http://127.0.0.1:3600, opens a browser
+  markitai serve --port 8080 --no-open    Another port, no browser
+  markitai serve --host 0.0.0.0           LAN access with the printed access token
+=== markitai mcp -h (exit 0, stderr 0 bytes) ===
+Run the native MCP service over standard input/output
+
+Usage: markitai mcp [OPTIONS]
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai mcp --help (exit 0, stderr 0 bytes) ===
+Run the native MCP service over standard input/output
+
+Usage: markitai mcp [OPTIONS]
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai config list -h (exit 0, stderr 0 bytes) ===
+Show the effective configuration; secrets are redacted
+
+Usage: markitai config list [OPTIONS]
+
+Options:
+  -f, --format <FORMAT>  Output format [default: json] [possible values: json, yaml, table]
+      --show-secrets     Show secret values instead of redacting them (unsafe for shared logs)
+  -h, --help             Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai config list --help (exit 0, stderr 0 bytes) ===
+Show the effective configuration; secrets are redacted
+
+Usage: markitai config list [OPTIONS]
+
+Options:
+  -f, --format <FORMAT>  Output format [default: json] [possible values: json, yaml, table]
+      --show-secrets     Show secret values instead of redacting them (unsafe for shared logs)
+  -h, --help             Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai config path -h (exit 0, stderr 0 bytes) ===
+Show which configuration file is in use
+
+Usage: markitai config path [OPTIONS]
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai config path --help (exit 0, stderr 0 bytes) ===
+Show which configuration file is in use
+
+Usage: markitai config path [OPTIONS]
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai config validate -h (exit 0, stderr 0 bytes) ===
+Check a configuration file against the schema
+
+Usage: markitai config validate [OPTIONS] [CONFIG_FILE]
+
+Arguments:
+  [CONFIG_FILE]  File to check; defaults to the configuration in use
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai config validate --help (exit 0, stderr 0 bytes) ===
+Check a configuration file against the schema
+
+Usage: markitai config validate [OPTIONS] [CONFIG_FILE]
+
+Arguments:
+  [CONFIG_FILE]  File to check; defaults to the configuration in use
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai config get -h (exit 0, stderr 0 bytes) ===
+Print one value; sections print as JSON
+
+Usage: markitai config get [OPTIONS] <KEY>
+
+Arguments:
+  <KEY>  Dot-notation key, e.g. llm.enabled
+
+Options:
+      --show-secrets  Show secret values instead of redacting them (unsafe for shared logs)
+  -h, --help          Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai config get --help (exit 0, stderr 0 bytes) ===
+Print one value; sections print as JSON
+
+Usage: markitai config get [OPTIONS] <KEY>
+
+Arguments:
+  <KEY>  Dot-notation key, e.g. llm.enabled
+
+Options:
+      --show-secrets  Show secret values instead of redacting them (unsafe for shared logs)
+  -h, --help          Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai config set -h (exit 0, stderr 0 bytes) ===
+Validate and save one value; invalid values are not written
+
+Usage: markitai config set [OPTIONS] <KEY> <VALUE>
+
+Arguments:
+  <KEY>    Dot-notation key, e.g. output.on_conflict
+  <VALUE>  New value; parsed according to the key's declared type
+
+Options:
+      --show-secrets  Echo secret values instead of redacting them (unsafe for shared logs)
+  -h, --help          Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai config set --help (exit 0, stderr 0 bytes) ===
+Validate and save one value; invalid values are not written
+
+Usage: markitai config set [OPTIONS] <KEY> <VALUE>
+
+Arguments:
+  <KEY>    Dot-notation key, e.g. output.on_conflict
+  <VALUE>  New value; parsed according to the key's declared type
+
+Options:
+      --show-secrets  Echo secret values instead of redacting them (unsafe for shared logs)
+  -h, --help          Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai config edit -h (exit 0, stderr 0 bytes) ===
+Edit settings in a terminal; each value is validated and saved at once
+
+Usage: markitai config edit [OPTIONS]
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai config edit --help (exit 0, stderr 0 bytes) ===
+Edit settings in a terminal; each value is validated and saved at once
+
+Usage: markitai config edit [OPTIONS]
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai cache stats -h (exit 0, stderr 0 bytes) ===
+Show cache entry counts and disk use
+
+Usage: markitai cache stats [OPTIONS]
+
+Options:
+      --json       Print the statistics as JSON
+  -v, --verbose    List recent LLM cache entries per model
+      --limit <N>  Maximum entries listed with --verbose [default: 20]
+  -h, --help       Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai cache stats --help (exit 0, stderr 0 bytes) ===
+Show cache entry counts and disk use
+
+Usage: markitai cache stats [OPTIONS]
+
+Options:
+      --json       Print the statistics as JSON
+  -v, --verbose    List recent LLM cache entries per model
+      --limit <N>  Maximum entries listed with --verbose [default: 20]
+  -h, --help       Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai cache clear -h (exit 0, stderr 0 bytes) ===
+Clear the LLM and URL fetch caches
+
+Usage: markitai cache clear [OPTIONS]
+
+Options:
+  -y, --yes                  Clear without asking for confirmation
+      --include-spa-domains  Also forget learned browser-only domains
+  -h, --help                 Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai cache clear --help (exit 0, stderr 0 bytes) ===
+Clear the LLM and URL fetch caches
+
+Usage: markitai cache clear [OPTIONS]
+
+Options:
+  -y, --yes                  Clear without asking for confirmation
+      --include-spa-domains  Also forget learned browser-only domains
+  -h, --help                 Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai cache spa-domains -h (exit 0, stderr 0 bytes) ===
+Inspect or clear learned browser-domain routing
+
+Usage: markitai cache spa-domains [OPTIONS]
+
+Options:
+      --json   Print the domains as JSON
+      --clear  Forget every learned domain
+  -h, --help   Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai cache spa-domains --help (exit 0, stderr 0 bytes) ===
+Inspect or clear learned browser-domain routing
+
+Usage: markitai cache spa-domains [OPTIONS]
+
+Options:
+      --json   Print the domains as JSON
+      --clear  Forget every learned domain
+  -h, --help   Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai auth copilot -h (exit 0, stderr 0 bytes) ===
+GitHub Copilot through the installed official CLI
+
+Usage: markitai auth copilot [OPTIONS] [COMMAND]
+
+Commands:
+  status  Inspect existing authentication without initiating login
+  login   Open the official runtime's interactive login flow
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai auth copilot --help (exit 0, stderr 0 bytes) ===
+GitHub Copilot through the installed official CLI
+
+Usage: markitai auth copilot [OPTIONS] [COMMAND]
+
+Commands:
+  status  Inspect existing authentication without initiating login
+  login   Open the official runtime's interactive login flow
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai auth claude -h (exit 0, stderr 0 bytes) ===
+Claude subscription adapter status
+
+Usage: markitai auth claude [OPTIONS] [COMMAND]
+
+Commands:
+  status  Inspect existing authentication without initiating login
+  login   Open the official runtime's interactive login flow
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai auth claude --help (exit 0, stderr 0 bytes) ===
+Claude subscription adapter status
+
+Usage: markitai auth claude [OPTIONS] [COMMAND]
+
+Commands:
+  status  Inspect existing authentication without initiating login
+  login   Open the official runtime's interactive login flow
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai auth chatgpt -h (exit 0, stderr 0 bytes) ===
+ChatGPT subscription adapter status
+
+Usage: markitai auth chatgpt [OPTIONS] [COMMAND]
+
+Commands:
+  status  Inspect existing authentication without initiating login
+  login   Open the official runtime's interactive login flow
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai auth chatgpt --help (exit 0, stderr 0 bytes) ===
+ChatGPT subscription adapter status
+
+Usage: markitai auth chatgpt [OPTIONS] [COMMAND]
+
+Commands:
+  status  Inspect existing authentication without initiating login
+  login   Open the official runtime's interactive login flow
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai auth copilot status -h (exit 0, stderr 0 bytes) ===
+Inspect existing authentication without initiating login
+
+Usage: markitai auth copilot status [OPTIONS]
+
+Options:
+      --json  
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai auth copilot status --help (exit 0, stderr 0 bytes) ===
+Inspect existing authentication without initiating login
+
+Usage: markitai auth copilot status [OPTIONS]
+
+Options:
+      --json  
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai auth copilot login -h (exit 0, stderr 0 bytes) ===
+Open the official runtime's interactive login flow
+
+Usage: markitai auth copilot login [OPTIONS]
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai auth copilot login --help (exit 0, stderr 0 bytes) ===
+Open the official runtime's interactive login flow
+
+Usage: markitai auth copilot login [OPTIONS]
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai auth claude status -h (exit 0, stderr 0 bytes) ===
+Inspect existing authentication without initiating login
+
+Usage: markitai auth claude status [OPTIONS]
+
+Options:
+      --json  
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai auth claude status --help (exit 0, stderr 0 bytes) ===
+Inspect existing authentication without initiating login
+
+Usage: markitai auth claude status [OPTIONS]
+
+Options:
+      --json  
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai auth claude login -h (exit 0, stderr 0 bytes) ===
+Open the official runtime's interactive login flow
+
+Usage: markitai auth claude login [OPTIONS]
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai auth claude login --help (exit 0, stderr 0 bytes) ===
+Open the official runtime's interactive login flow
+
+Usage: markitai auth claude login [OPTIONS]
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai auth chatgpt status -h (exit 0, stderr 0 bytes) ===
+Inspect existing authentication without initiating login
+
+Usage: markitai auth chatgpt status [OPTIONS]
+
+Options:
+      --json  
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai auth chatgpt status --help (exit 0, stderr 0 bytes) ===
+Inspect existing authentication without initiating login
+
+Usage: markitai auth chatgpt status [OPTIONS]
+
+Options:
+      --json  
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai auth chatgpt login -h (exit 0, stderr 0 bytes) ===
+Open the official runtime's interactive login flow
+
+Usage: markitai auth chatgpt login [OPTIONS]
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai auth chatgpt login --help (exit 0, stderr 0 bytes) ===
+Open the official runtime's interactive login flow
+
+Usage: markitai auth chatgpt login [OPTIONS]
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+=== markitai (exit 0, stderr 0 bytes) ===
+Convert documents and URLs to Markdown
+
+Usage: markitai [OPTIONS] [INPUT] [COMMAND]
+
+Commands:
+  config  Inspect or edit configuration
+  init    Create or update a configuration file with detected API models
+  doctor  Diagnose configured workflows and optional native backends
+  cache   Inspect or clear the LLM and URL fetch caches
+  auth    Inspect subscription authentication or delegate login to an official runtime
+  serve   Run the native REST conversion service and web interface
+  mcp     Run the native MCP service over standard input/output
+
+Arguments:
+  [INPUT]
+          Document, URL, .urls list, directory or atomic .numbers package
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Output:
+  -o, --output <PATH>
+          Output directory, or exact .md path for a single input. Omit for Markdown on stdout
+      --json
+          Print one JSON result on stdout; requires -o. Usage errors remain on stderr
+      --dry-run
+          Preview discovery without conversion or output publication
+      --record-history
+          Archive this run for `markitai serve` history (--no-record-history disables); stdout-only
+          conversions are not archived
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+  -p, --preset <NAME>
+          Use minimal, standard, rich or a configured preset (case-insensitive)
+      --profile <NAME>
+          Shape assets/frontmatter for rag, obsidian or okf; independent of the preset [possible
+          values: rag, obsidian, okf]
+  -I, --interactive
+          Choose a conversion in a terminal; edits apply to this session only
+
+LLM, OCR and screenshots:
+      --llm
+          Enable model processing (--no-llm disables). The last of a flag pair wins; without either,
+          the configuration decides
+      --alt
+          Generate image alt text when LLM processing is enabled (--no-alt disables)
+      --desc
+          Write image descriptions when LLM processing is enabled (--no-desc disables)
+      --ocr
+          Read scanned content: macOS Vision locally, or page images with a vision model (--no-ocr
+          disables)
+      --screenshot
+          Capture supported document pages or browser pages; optional backends may be required
+          (--no-screenshot disables)
+      --screenshot-only
+          Use screenshots as content (implies --screenshot). With --llm, read pixels; without --llm,
+          ordinary web pages save images without Markdown. PDF media retains Markdown. URL --pure
+          takes precedence
+      --pure
+          Preserve source text without ordinary generated metadata; URL pure takes precedence over
+          visual LLM input (--no-pure disables)
+      --keep-base
+          Keep the base Markdown alongside enhanced output
+      --llm-concurrency <N>
+          Maximum in-flight model requests shared by this conversion run
+
+URL fetching and backends:
+  -s, --strategy <NAME>
+          URL strategy: auto (static, then the local browser), static or playwright run locally;
+          defuddle and jina send the URL to that remote service; cloudflare is not implemented
+          [possible values: auto, static, playwright, defuddle, jina, cloudflare]
+  -b, --backend <NAME>
+          File backend; native is implemented, cloudflare remains explicitly unsupported [possible
+          values: native, cloudflare]
+      --no-remote-fetch
+          Forbid remote extraction services; does not disable explicitly configured model requests
+
+Batch processing:
+      --resume
+          Resume a directory or .urls batch with matching paths/options; completed entries stay
+          completed
+  -j, --batch-concurrency <N>
+          Maximum concurrent file conversions; independent of URL and model request limits
+      --url-concurrency <N>
+          Maximum concurrent URL conversions, separately from file processing
+  -g, --glob <PATTERN>
+          Include/exclude relative directory paths; repeatable, ! prefix excludes. Quote patterns in
+          the shell
+      --max-depth <N>
+          Directory scan depth; 0 scans only the input directory
+      --llm-batch
+          Submit directory text enhancement to the OpenAI Batch API; --resume continues frozen work
+          in -o
+      --llm-batch-timeout <SECONDS>
+          Maximum local wait for a provider batch (seconds, at least 60); expiry does not cancel it
+      --llm-batch-collect <BATCH_ID>
+          Collect a saved provider batch into its original -o directory; no input is required
+
+Cache and images:
+      --no-cache
+          Bypass cache reads while still writing successful fresh results (--cache restores reads)
+      --no-cache-for <PATTERNS>
+          Comma-separated glob patterns that bypass cache reads for matching inputs
+      --no-compress
+          Disable image compression (--compress enables it)
+
+Messages and logging:
+  -v, --verbose
+          Show details such as the report path. Single inputs are otherwise quiet by default: only
+          the written path, warnings and errors; stdout Markdown stays clean
+  -q, --quiet
+          Print errors only: no written path, warnings, progress or batch summary
+      --log-level <LEVEL>
+          Conversion file-log level; needs log.dir. Console output still follows --verbose/--quiet
+          [possible values: DEBUG, INFO, WARNING, ERROR, CRITICAL]
+
+Presets (-p):
+  minimal   plain conversion, no model processing
+  standard  --llm --alt --desc
+  rich      --llm --alt --desc --screenshot
+
+Examples:
+  markitai report.docx                     Print Markdown on stdout
+  markitai report.pdf -o out/              Write out/report.pdf.md
+  markitai notes.html -o out/notes.md      Choose the exact output file
+  markitai ./docs -o out/ -g '**/*.pdf'    Convert the PDFs in a directory
+  markitai links.urls -o out/ --resume     Continue an interrupted URL list
+  markitai https://example.com -o out/     Convert a web page
+  markitai scan.png --ocr                  Read the text of an image
+  markitai report.pdf -p standard -o out/  Enhance with the configured model
+  markitai init                            Create a configuration file
+  markitai doctor                          Check models and optional backends
+
+Exit status: 0 success; 1 failure; 2 usage error or provider batch still pending;
+10 some batch items failed; 130/143 interrupted.
+
+--- stderr ---
+=== markitai --quiet --no-llm (exit 0, stderr 0 bytes) ===
+Convert documents and URLs to Markdown
+
+Usage: markitai [OPTIONS] [INPUT] [COMMAND]
+
+Commands:
+  config  Inspect or edit configuration
+  init    Create or update a configuration file with detected API models
+  doctor  Diagnose configured workflows and optional native backends
+  cache   Inspect or clear the LLM and URL fetch caches
+  auth    Inspect subscription authentication or delegate login to an official runtime
+  serve   Run the native REST conversion service and web interface
+  mcp     Run the native MCP service over standard input/output
+
+Arguments:
+  [INPUT]
+          Document, URL, .urls list, directory or atomic .numbers package
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+Output:
+  -o, --output <PATH>
+          Output directory, or exact .md path for a single input. Omit for Markdown on stdout
+      --json
+          Print one JSON result on stdout; requires -o. Usage errors remain on stderr
+      --dry-run
+          Preview discovery without conversion or output publication
+      --record-history
+          Archive this run for `markitai serve` history (--no-record-history disables); stdout-only
+          conversions are not archived
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+  -p, --preset <NAME>
+          Use minimal, standard, rich or a configured preset (case-insensitive)
+      --profile <NAME>
+          Shape assets/frontmatter for rag, obsidian or okf; independent of the preset [possible
+          values: rag, obsidian, okf]
+  -I, --interactive
+          Choose a conversion in a terminal; edits apply to this session only
+
+LLM, OCR and screenshots:
+      --llm
+          Enable model processing (--no-llm disables). The last of a flag pair wins; without either,
+          the configuration decides
+      --alt
+          Generate image alt text when LLM processing is enabled (--no-alt disables)
+      --desc
+          Write image descriptions when LLM processing is enabled (--no-desc disables)
+      --ocr
+          Read scanned content: macOS Vision locally, or page images with a vision model (--no-ocr
+          disables)
+      --screenshot
+          Capture supported document pages or browser pages; optional backends may be required
+          (--no-screenshot disables)
+      --screenshot-only
+          Use screenshots as content (implies --screenshot). With --llm, read pixels; without --llm,
+          ordinary web pages save images without Markdown. PDF media retains Markdown. URL --pure
+          takes precedence
+      --pure
+          Preserve source text without ordinary generated metadata; URL pure takes precedence over
+          visual LLM input (--no-pure disables)
+      --keep-base
+          Keep the base Markdown alongside enhanced output
+      --llm-concurrency <N>
+          Maximum in-flight model requests shared by this conversion run
+
+URL fetching and backends:
+  -s, --strategy <NAME>
+          URL strategy: auto (static, then the local browser), static or playwright run locally;
+          defuddle and jina send the URL to that remote service; cloudflare is not implemented
+          [possible values: auto, static, playwright, defuddle, jina, cloudflare]
+  -b, --backend <NAME>
+          File backend; native is implemented, cloudflare remains explicitly unsupported [possible
+          values: native, cloudflare]
+      --no-remote-fetch
+          Forbid remote extraction services; does not disable explicitly configured model requests
+
+Batch processing:
+      --resume
+          Resume a directory or .urls batch with matching paths/options; completed entries stay
+          completed
+  -j, --batch-concurrency <N>
+          Maximum concurrent file conversions; independent of URL and model request limits
+      --url-concurrency <N>
+          Maximum concurrent URL conversions, separately from file processing
+  -g, --glob <PATTERN>
+          Include/exclude relative directory paths; repeatable, ! prefix excludes. Quote patterns in
+          the shell
+      --max-depth <N>
+          Directory scan depth; 0 scans only the input directory
+      --llm-batch
+          Submit directory text enhancement to the OpenAI Batch API; --resume continues frozen work
+          in -o
+      --llm-batch-timeout <SECONDS>
+          Maximum local wait for a provider batch (seconds, at least 60); expiry does not cancel it
+      --llm-batch-collect <BATCH_ID>
+          Collect a saved provider batch into its original -o directory; no input is required
+
+Cache and images:
+      --no-cache
+          Bypass cache reads while still writing successful fresh results (--cache restores reads)
+      --no-cache-for <PATTERNS>
+          Comma-separated glob patterns that bypass cache reads for matching inputs
+      --no-compress
+          Disable image compression (--compress enables it)
+
+Messages and logging:
+  -v, --verbose
+          Show details such as the report path. Single inputs are otherwise quiet by default: only
+          the written path, warnings and errors; stdout Markdown stays clean
+  -q, --quiet
+          Print errors only: no written path, warnings, progress or batch summary
+      --log-level <LEVEL>
+          Conversion file-log level; needs log.dir. Console output still follows --verbose/--quiet
+          [possible values: DEBUG, INFO, WARNING, ERROR, CRITICAL]
+
+Presets (-p):
+  minimal   plain conversion, no model processing
+  standard  --llm --alt --desc
+  rich      --llm --alt --desc --screenshot
+
+Examples:
+  markitai report.docx                     Print Markdown on stdout
+  markitai report.pdf -o out/              Write out/report.pdf.md
+  markitai notes.html -o out/notes.md      Choose the exact output file
+  markitai ./docs -o out/ -g '**/*.pdf'    Convert the PDFs in a directory
+  markitai links.urls -o out/ --resume     Continue an interrupted URL list
+  markitai https://example.com -o out/     Convert a web page
+  markitai scan.png --ocr                  Read the text of an image
+  markitai report.pdf -p standard -o out/  Enhance with the configured model
+  markitai init                            Create a configuration file
+  markitai doctor                          Check models and optional backends
+
+Exit status: 0 success; 1 failure; 2 usage error or provider batch still pending;
+10 some batch items failed; 130/143 interrupted.
+
+--- stderr ---
+=== markitai --version (exit 0, stderr 0 bytes) ===
+markitai 1.3.0-dev
+--- stderr ---
+=== markitai -V (exit 0, stderr 0 bytes) ===
+markitai 1.3.0-dev
+--- stderr ---
+=== markitai config (exit 2, stderr 1194 bytes) ===
+--- stderr ---
+Inspect or edit configuration
+
+Usage: markitai config [OPTIONS] <COMMAND>
+
+Commands:
+  list      Show the effective configuration; secrets are redacted
+  path      Show which configuration file is in use
+  validate  Check a configuration file against the schema
+  get       Print one value; sections print as JSON
+  set       Validate and save one value; invalid values are not written
+  edit      Edit settings in a terminal; each value is validated and saved at once
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Keys use dot notation, e.g. llm.enabled or llm.model_list[0].model_name. The file in
+use is -c, then MARKITAI_CONFIG, then ./markitai.json, then the user config.json.
+
+Examples:
+  markitai config list -f table           Show every effective setting
+  markitai config get llm.enabled         Read one value
+  markitai config set output.dir ./out    Validate and save one value
+  markitai config path                    Show which file is in use
+=== markitai cache (exit 2, stderr 773 bytes) ===
+--- stderr ---
+Inspect or clear the LLM and URL fetch caches
+
+Usage: markitai cache [OPTIONS] <COMMAND>
+
+Commands:
+  stats        Show cache entry counts and disk use
+  clear        Clear the LLM and URL fetch caches
+  spa-domains  Inspect or clear learned browser-domain routing
+
+Options:
+  -h, --help  Print help
+
+Configuration:
+  -c, --config <PATH>
+          Configuration path; must exist except for config set/edit, which can create it
+      --config-json <JSON>
+          Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai cache stats                    Entry counts and disk use
+  markitai cache stats -v --limit 10      Recent LLM entries per model
+  markitai cache clear -y                 Clear without a confirmation prompt
+=== markitai auth copilot --bogus (exit 2, stderr 130 bytes) ===
+--- stderr ---
+error: unexpected argument '--bogus' found
+
+Usage: markitai auth copilot [OPTIONS] [COMMAND]
+
+For more information, try '--help'.

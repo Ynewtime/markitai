@@ -1,7 +1,7 @@
 // Declared first so its `text!` macro is visible in the modules below.
 #[macro_use]
 #[path = "app/i18n.rs"]
-mod i18n;
+pub(crate) mod i18n;
 #[path = "app/auth.rs"]
 mod auth;
 #[path = "app/compat.rs"]
@@ -10,12 +10,28 @@ mod compat;
 mod doctor;
 #[path = "app/guided.rs"]
 mod guided;
+#[path = "app/help_zh.rs"]
+mod help_zh;
 #[path = "app/interactive.rs"]
 mod interactive;
 #[path = "app/logging.rs"]
 mod logging;
 macro_rules! eprintln {
     ($($argument:tt)*) => { $crate::app::logging::diagnostic(format_args!($($argument)*)) };
+}
+// A stderr line in the terminal language. The file log keeps the English
+// line, so log entries read the same in every language. Both literals use the
+// same captured variables (or the same trailing arguments).
+macro_rules! say {
+    ($en:literal, $zh:literal $(, $($argument:tt)+)? $(,)?) => {
+        match $crate::app::i18n::lang() {
+            $crate::app::i18n::Lang::En => eprintln!($en $(, $($argument)+)?),
+            $crate::app::i18n::Lang::Zh => $crate::app::logging::diagnostic_as(
+                format_args!($en $(, $($argument)+)?),
+                format_args!($zh $(, $($argument)+)?),
+            ),
+        }
+    };
 }
 #[cfg_attr(unix, path = "batch_run.rs")]
 #[cfg_attr(not(unix), path = "batch_run_portable.rs")]
@@ -230,10 +246,19 @@ struct Cli {
     log_level: Option<String>,
 }
 
-/// The root command as printed and parsed. Option help sits on its own line:
-/// without terminal wrapping, long descriptions stay readable that way, while
-/// the short command list keeps its one-line layout.
+/// The root command as printed and parsed, in the terminal language. Option
+/// help sits on its own line: without terminal wrapping, long descriptions
+/// stay readable that way, while the short command list keeps its one-line
+/// layout.
 fn cli_command() -> clap::Command {
+    match i18n::lang() {
+        i18n::Lang::En => english_command(),
+        i18n::Lang::Zh => help_zh::localize(english_command),
+    }
+}
+
+/// The command tree as the derive declares it, with English help.
+fn english_command() -> clap::Command {
     Cli::command().mut_args(|arg| arg.next_line_help(true))
 }
 
@@ -789,14 +814,17 @@ fn execute_conversion(
     }
     if !cli.quiet
         && !config::enabled(&cfg, "/llm/enabled")
-        && let Some(flags) = match (cli.alt, cli.desc) {
-            (true, true) => Some("--alt and --desc have"),
-            (true, false) => Some("--alt has"),
-            (false, true) => Some("--desc has"),
+        && let Some((flags, names)) = match (cli.alt, cli.desc) {
+            (true, true) => Some(("--alt and --desc have", "--alt 和 --desc")),
+            (true, false) => Some(("--alt has", "--alt")),
+            (false, true) => Some(("--desc has", "--desc")),
             (false, false) => None,
         }
     {
-        eprintln!("Warning: {flags} no effect without --llm (or the standard/rich preset)");
+        say!(
+            "Warning: {flags} no effect without --llm (or the standard/rich preset)",
+            "Warning: 未启用 --llm（或 standard/rich 预设）时，{names} 不起作用"
+        );
     }
     let mut tasks = if directory {
         discover(input_path, output.as_deref().unwrap(), cli, &cfg)?
@@ -842,21 +870,24 @@ fn execute_conversion(
             );
         }
         if batch && !cli.quiet {
-            eprintln!("{}", dry_run_summary(&tasks, input_path));
+            say_with(|lang| dry_run_summary(&tasks, input_path, lang));
         }
         return Ok(0);
     }
     if tasks.is_empty() && !cli.resume {
         if !cli.quiet {
-            eprintln!(
-                "No supported files or .urls lists {} {}; nothing to convert.",
-                if cli.globs.is_empty() {
-                    "found in"
-                } else {
-                    "match --glob in"
-                },
-                input_path.display()
-            );
+            let input = input_path.display();
+            if cli.globs.is_empty() {
+                say!(
+                    "No supported files or .urls lists found in {input}; nothing to convert.",
+                    "在 {input} 中没有找到受支持的文件或 .urls 列表，无需转换。"
+                );
+            } else {
+                say!(
+                    "No supported files or .urls lists match --glob in {input}; nothing to convert.",
+                    "在 {input} 中没有与 --glob 匹配的受支持文件或 .urls 列表，无需转换。"
+                );
+            }
         }
         if cli.json {
             emit_json(&[], None);
@@ -989,9 +1020,11 @@ fn execute_conversion(
                         // about any it could not save.
                         if store.is_none()
                             && !cli.quiet
-                            && let Some(warning) = unsaved_assets(&rendered, &cfg)
+                            && unsaved_assets(&rendered, &cfg, i18n::Lang::En).is_some()
                         {
-                            eprintln!("{warning}");
+                            say_with(|lang| {
+                                unsaved_assets(&rendered, &cfg, lang).unwrap_or_default()
+                            });
                         }
                     }
                     if !cli.quiet {
@@ -999,19 +1032,23 @@ fn execute_conversion(
                             eprintln!("Warning: {warning}");
                         }
                         if let Some(reason) = result.skip_reason.as_deref() {
-                            eprintln!("{}", skip_notice(&task.display, reason));
+                            say_with(|lang| skip_notice(&task.display, reason, lang));
                         } else if task.output.is_some()
                             && let Some(path) = &record.output
                         {
                             // The name can differ from the input's (rename on conflict).
-                            eprintln!("Wrote {}", path.display());
+                            let path = path.display();
+                            say!("Wrote {path}", "已写入 {path}");
                         }
                     }
                 }
                 Err(failure) => {
                     eprintln!("Error: {failure}");
                     if matches!(failure.error, markitai_core::Error::NoModelConfigured) {
-                        eprintln!("{NO_MODEL_HINT}");
+                        say!(
+                            "Hint: set a provider API key such as OPENAI_API_KEY or ANTHROPIC_API_KEY (optionally with MODEL), or configure llm.model_list; `markitai init` saves a detected model. Run without --llm (or an LLM preset) to convert without a model.",
+                            "Hint: 请设置供应商的 API key，例如 OPENAI_API_KEY 或 ANTHROPIC_API_KEY（可同时设置 MODEL），或配置 llm.model_list；`markitai init` 可保存检测到的模型。不加 --llm（或 LLM 预设）即可在不使用模型的情况下转换。"
+                        );
                     }
                 }
             }
@@ -1477,12 +1514,17 @@ fn finish_report(
     match report::publish(plan, &bytes)? {
         crate::report_store::Publication::Written(path) => {
             if show_path {
-                eprintln!("Report: {}", path.display());
+                let path = path.display();
+                say!("Report: {path}", "报告：{path}");
             }
         }
         crate::report_store::Publication::SkippedExisting(path) => {
             if show_path {
-                eprintln!("Existing report preserved: {}", path.display());
+                let path = path.display();
+                say!(
+                    "Existing report preserved: {path}",
+                    "已保留现有报告：{path}"
+                );
             }
         }
     }
@@ -1550,7 +1592,7 @@ fn stdout_asset_store(cfg: &Value) -> Option<PathBuf> {
 /// With `image.stdout_persist` off, stdout mode writes no files, yet
 /// extracted images and page captures keep their output-directory
 /// references. Say so instead of leaving links that silently point nowhere.
-fn unsaved_assets(markdown: &str, cfg: &Value) -> Option<String> {
+fn unsaved_assets(markdown: &str, cfg: &Value, lang: i18n::Lang) -> Option<String> {
     let profile = cfg["output"]["profile"].as_str();
     let assets = if matches!(profile, Some("rag" | "obsidian")) {
         "assets/"
@@ -1571,9 +1613,14 @@ fn unsaved_assets(markdown: &str, cfg: &Value) -> Option<String> {
     }
     let count = targets.len();
     (count > 0).then(|| {
-        format!(
-            "Warning: {count} image {} to files that stdout mode does not write because image.stdout_persist is false; use -o DIR to keep images, or set image.stdout_persist to true",
-            if count == 1 { "reference points" } else { "references point" }
+        let verb = if count == 1 {
+            "reference points"
+        } else {
+            "references point"
+        };
+        text!(
+            lang => "Warning: {count} image {verb} to files that stdout mode does not write because image.stdout_persist is false; use -o DIR to keep images, or set image.stdout_persist to true",
+            "Warning: 有 {count} 个图片引用指向 stdout 模式不会写出的文件，因为 image.stdout_persist 为 false；用 -o DIR 保存图片，或把 image.stdout_persist 设为 true"
         )
     })
 }
@@ -1581,45 +1628,79 @@ fn is_url(s: &str) -> bool {
     s.starts_with("http://") || s.starts_with("https://")
 }
 
-const NO_MODEL_HINT: &str = "Hint: set a provider API key such as OPENAI_API_KEY or ANTHROPIC_API_KEY (optionally with MODEL), or configure llm.model_list; `markitai init` saves a detected model. Run without --llm (or an LLM preset) to convert without a model.";
-
 /// Why a single item produced no document, and what would change that.
-fn skip_notice(display: &str, reason: &str) -> String {
+fn skip_notice(display: &str, reason: &str, lang: i18n::Lang) -> String {
     match reason {
-        "image_only" => format!(
-            "Skipped {display}: an image has no text to extract without --ocr or --llm. Use --ocr for local text recognition or --llm for a vision model."
+        "image_only" => text!(
+            lang => "Skipped {display}: an image has no text to extract without --ocr or --llm. Use --ocr for local text recognition or --llm for a vision model.",
+            "已跳过 {display}：图片没有文字可提取，需要 --ocr 或 --llm。用 --ocr 做本地文字识别，或用 --llm 调用视觉模型。"
         ),
-        "exists" => format!(
-            "Skipped {display}: its output already exists and output.on_conflict is skip. Set it to rename or overwrite to convert again."
+        "exists" => text!(
+            lang => "Skipped {display}: its output already exists and output.on_conflict is skip. Set it to rename or overwrite to convert again.",
+            "已跳过 {display}：输出已存在，且 output.on_conflict 为 skip。设为 rename 或 overwrite 可重新转换。"
         ),
-        other => format!("Skipped {display} ({other})."),
+        other => text!(lang => "Skipped {display} ({other}).", "已跳过 {display}（{other}）。"),
     }
 }
 
 /// The preview's closing line; the listing itself stays on stdout.
-fn dry_run_summary(tasks: &[Task], input: &Path) -> String {
+fn dry_run_summary(tasks: &[Task], input: &Path, lang: i18n::Lang) -> String {
     let urls = tasks.iter().filter(|task| is_url(&task.source)).count();
     let files = tasks.len() - urls;
     if tasks.is_empty() {
-        return format!(
-            "Dry run: no supported files or URLs in {}; nothing would be converted.",
-            input.display()
+        let input = input.display();
+        return text!(
+            lang => "Dry run: no supported files or URLs in {input}; nothing would be converted.",
+            "预览：{input} 中没有受支持的文件或 URL，不会转换任何内容。"
         );
     }
     let mut parts = Vec::new();
     if files > 0 {
-        parts.push(format!(
-            "{files} {}",
-            if files == 1 { "file" } else { "files" }
-        ));
+        let noun = if files == 1 { "file" } else { "files" };
+        parts.push(text!(lang => "{files} {noun}", "{files} 个文件"));
     }
     if urls > 0 {
-        parts.push(format!("{urls} {}", if urls == 1 { "URL" } else { "URLs" }));
+        let noun = if urls == 1 { "URL" } else { "URLs" };
+        parts.push(text!(lang => "{urls} {noun}", "{urls} 个 URL"));
     }
-    format!(
-        "Dry run: {} would be converted; nothing was written.",
-        parts.join(" and ")
+    let parts = parts.join(match lang {
+        i18n::Lang::En => " and ",
+        i18n::Lang::Zh => "和 ",
+    });
+    text!(
+        lang => "Dry run: {parts} would be converted; nothing was written.",
+        "预览：将转换 {parts}；未写出任何内容。"
     )
+}
+
+/// Prints one stderr line built per language. The file log keeps the English
+/// line, so log entries read the same in every language.
+fn say_with(build: impl Fn(i18n::Lang) -> String) {
+    match i18n::lang() {
+        i18n::Lang::En => eprintln!("{}", build(i18n::Lang::En)),
+        i18n::Lang::Zh => logging::diagnostic_as(
+            format_args!("{}", build(i18n::Lang::En)),
+            format_args!("{}", build(i18n::Lang::Zh)),
+        ),
+    }
+}
+
+/// A batch's closing lines on stderr, in the terminal language.
+fn print_batch_summary(records: &[RunItem], elapsed: std::time::Duration, output: &Path) {
+    let english = report::batch_summary(records, elapsed, output, i18n::Lang::En);
+    match i18n::lang() {
+        i18n::Lang::En => {
+            for line in &english {
+                eprintln!("{line}");
+            }
+        }
+        i18n::Lang::Zh => {
+            let chinese = report::batch_summary(records, elapsed, output, i18n::Lang::Zh);
+            for (english, chinese) in english.iter().zip(&chinese) {
+                logging::diagnostic_as(format_args!("{english}"), format_args!("{chinese}"));
+            }
+        }
+    }
 }
 
 /// A single local input whose bytes cannot be read, named with its path.
@@ -1826,6 +1907,23 @@ fn absolute(path: &Path) -> PathBuf {
         }
     })
 }
+/// Where an entry of a `.urls` list was found.
+#[derive(Clone, Copy)]
+enum Place {
+    Entry(usize),
+    Line(usize),
+}
+
+impl Place {
+    /// The place named in English and in Chinese.
+    fn names(self) -> (String, String) {
+        match self {
+            Place::Entry(number) => (format!("entry {number}"), format!("第 {number} 项")),
+            Place::Line(number) => (format!("line {number}"), format!("第 {number} 行")),
+        }
+    }
+}
+
 fn parse_urls(path: &Path, output: &Path) -> CliResult<Vec<Task>> {
     let text = std::fs::read_to_string(path)
         .map_err(|error| runtime(format!("Cannot read {}: {error}", path.display())))?;
@@ -1842,7 +1940,7 @@ fn parse_urls(path: &Path, output: &Path) -> CliResult<Vec<Task>> {
             ))
         })?;
         for (index, value) in values.into_iter().enumerate() {
-            let location = format!("entry {}", index + 1);
+            let location = Place::Entry(index + 1);
             let pair = if let Some(url) = value.as_str() {
                 Some((url.to_string(), None))
             } else {
@@ -1855,10 +1953,14 @@ fn parse_urls(path: &Path, output: &Path) -> CliResult<Vec<Task>> {
             };
             match pair {
                 Some((url, name)) => entries.push((location, url, name)),
-                None => eprintln!(
-                    "Warning: skipping {location} in {}: expected a URL string or an object with \"url\"",
-                    path.display()
-                ),
+                None => {
+                    let (location, place) = location.names();
+                    let path = path.display();
+                    say!(
+                        "Warning: skipping {location} in {path}: expected a URL string or an object with \"url\"",
+                        "Warning: 跳过 {path} 的{place}：应为 URL 字符串，或带有 \"url\" 字段的对象"
+                    );
+                }
             }
         }
     } else {
@@ -1872,16 +1974,18 @@ fn parse_urls(path: &Path, output: &Path) -> CliResult<Vec<Task>> {
                 .split_once(char::is_whitespace)
                 .map(|(u, n)| (u, Some(n.trim().trim_matches(['\'', '"']).to_string())))
                 .unwrap_or((line, None));
-            entries.push((format!("line {}", number + 1), url.into(), name));
+            entries.push((Place::Line(number + 1), url.into(), name));
         }
     }
     let mut tasks = Vec::new();
     for (location, url, name) in entries {
         let url = url.trim();
         if !is_url(url) {
-            eprintln!(
-                "Warning: skipping {location} in {}: not an HTTP(S) URL",
-                path.display()
+            let (location, place) = location.names();
+            let path = path.display();
+            say!(
+                "Warning: skipping {location} in {path}: not an HTTP(S) URL",
+                "Warning: 跳过 {path} 的{place}：不是 HTTP(S) URL"
             );
             continue;
         }
@@ -2356,23 +2460,63 @@ mod tests {
         let markdown = "![a](.markitai/assets/one.png) ![b](.markitai/assets/one.png)\n\
             ![c](.markitai/assets/two.jpg)\n`.markitai/assets/literal`\n\
             <!-- ![Page 1](.markitai/screenshots/doc.pdf.page0001.jpg) -->\n";
-        let warning = unsaved_assets(markdown, &cfg).unwrap();
+        let warning = unsaved_assets(markdown, &cfg, i18n::Lang::En).unwrap();
         assert!(
             warning.starts_with("Warning: 3 image references point to files that stdout mode does not write because image.stdout_persist is false"),
             "{warning}"
         );
         assert!(warning.contains("use -o DIR"));
         assert_eq!(
-            unsaved_assets("![x](https://example.com/x.png)\n", &cfg),
+            unsaved_assets("![x](https://example.com/x.png)\n", &cfg, i18n::Lang::En),
             None
         );
         let mut obsidian = cfg.clone();
         obsidian["output"]["profile"] = json!("obsidian");
-        let warning = unsaved_assets("![[assets/one.png|caption]]\n", &obsidian).unwrap();
+        let warning =
+            unsaved_assets("![[assets/one.png|caption]]\n", &obsidian, i18n::Lang::En).unwrap();
         assert!(warning.starts_with("Warning: 1 image reference points to files"));
         assert_eq!(
-            unsaved_assets("![[.markitai/assets/one.png]]\n", &obsidian),
+            unsaved_assets("![[.markitai/assets/one.png]]\n", &obsidian, i18n::Lang::En),
             None
+        );
+    }
+
+    #[test]
+    fn notices_have_the_same_content_in_chinese_and_english() {
+        let cfg = config::defaults();
+        let markdown = "![a](.markitai/assets/one.png) ![c](.markitai/assets/two.jpg)\n";
+        assert_eq!(
+            unsaved_assets(markdown, &cfg, i18n::Lang::Zh).unwrap(),
+            "Warning: 有 2 个图片引用指向 stdout 模式不会写出的文件，因为 image.stdout_persist 为 false；用 -o DIR 保存图片，或把 image.stdout_persist 设为 true"
+        );
+        assert_eq!(
+            unsaved_assets("![a](.markitai/assets/one.png)\n", &cfg, i18n::Lang::Zh).unwrap(),
+            "Warning: 有 1 个图片引用指向 stdout 模式不会写出的文件，因为 image.stdout_persist 为 false；用 -o DIR 保存图片，或把 image.stdout_persist 设为 true"
+        );
+        for (reason, english, chinese) in [
+            (
+                "image_only",
+                "Skipped a.png: an image has no text to extract without --ocr or --llm. Use --ocr for local text recognition or --llm for a vision model.",
+                "已跳过 a.png：图片没有文字可提取，需要 --ocr 或 --llm。用 --ocr 做本地文字识别，或用 --llm 调用视觉模型。",
+            ),
+            (
+                "exists",
+                "Skipped a.png: its output already exists and output.on_conflict is skip. Set it to rename or overwrite to convert again.",
+                "已跳过 a.png：输出已存在，且 output.on_conflict 为 skip。设为 rename 或 overwrite 可重新转换。",
+            ),
+            ("weird", "Skipped a.png (weird).", "已跳过 a.png（weird）。"),
+        ] {
+            assert_eq!(skip_notice("a.png", reason, i18n::Lang::En), english);
+            assert_eq!(skip_notice("a.png", reason, i18n::Lang::Zh), chinese);
+        }
+        // A rejected `.urls` entry is located in both languages.
+        assert_eq!(
+            Place::Entry(3).names(),
+            ("entry 3".to_owned(), "第 3 项".to_owned())
+        );
+        assert_eq!(
+            Place::Line(12).names(),
+            ("line 12".to_owned(), "第 12 行".to_owned())
         );
     }
 
@@ -2403,14 +2547,31 @@ mod tests {
             reserved_stem: None,
             source_file: None,
         };
+        let both = [task("a.txt"), task("https://example.com/")];
         assert_eq!(
-            dry_run_summary(
-                &[task("a.txt"), task("https://example.com/")],
-                Path::new("in")
-            ),
+            dry_run_summary(&both, Path::new("in"), i18n::Lang::En),
             "Dry run: 1 file and 1 URL would be converted; nothing was written."
         );
-        assert!(dry_run_summary(&[], Path::new("in")).contains("nothing would be converted"));
+        assert!(
+            dry_run_summary(&[], Path::new("in"), i18n::Lang::En)
+                .contains("nothing would be converted")
+        );
+        assert_eq!(
+            dry_run_summary(&both, Path::new("in"), i18n::Lang::Zh),
+            "预览：将转换 1 个文件和 1 个 URL；未写出任何内容。"
+        );
+        assert_eq!(
+            dry_run_summary(
+                &[task("a.txt"), task("b.txt")],
+                Path::new("in"),
+                i18n::Lang::Zh
+            ),
+            "预览：将转换 2 个文件；未写出任何内容。"
+        );
+        assert_eq!(
+            dry_run_summary(&[], Path::new("in"), i18n::Lang::Zh),
+            "预览：in 中没有受支持的文件或 URL，不会转换任何内容。"
+        );
     }
     #[test]
     fn credentials_remain_redacted_at_nested_paths() {

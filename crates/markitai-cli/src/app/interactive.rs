@@ -1,4 +1,5 @@
 //! Line-oriented navigation works without a terminal UI runtime or subprocess.
+use super::i18n::{Lang, lang};
 use super::{CliResult, runtime, write_config};
 use markitai_core::config;
 use serde_json::{Value, json};
@@ -17,7 +18,13 @@ struct Setting {
 
 pub(super) fn terminal() -> CliResult<()> {
     if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
-        return Err((2, "Interactive configuration requires a terminal; use config set or init --yes for automation".into()));
+        return Err((
+            2,
+            text!(
+                "Interactive configuration requires a terminal; use config set or init --yes for automation",
+                "交互式配置需要终端；自动化场景请使用 config set 或 init --yes"
+            ),
+        ));
     }
     Ok(())
 }
@@ -38,16 +45,27 @@ pub(super) fn prompt(
         return Ok(None);
     }
     if read > 65536 {
-        return Err(runtime("Interactive input exceeds 64 KiB"));
+        return Err(runtime(text!(
+            "Interactive input exceeds 64 KiB",
+            "交互输入超过 64 KiB"
+        )));
     }
-    let line = String::from_utf8(bytes).map_err(|_| runtime("Interactive input must be UTF-8"))?;
+    let line = String::from_utf8(bytes).map_err(|_| {
+        runtime(text!(
+            "Interactive input must be UTF-8",
+            "交互输入必须是 UTF-8"
+        ))
+    })?;
     Ok(Some(line.trim_end_matches(['\r', '\n']).to_owned()))
 }
 
 fn read_bytes(path: &Path) -> CliResult<Option<Vec<u8>>> {
     match fs::metadata(path) {
         Ok(metadata) if !metadata.is_file() => {
-            return Err(runtime("Configuration must be a regular file"));
+            return Err(runtime(text!(
+                "Configuration must be a regular file",
+                "配置必须是普通文件"
+            )));
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(runtime(error)),
@@ -66,14 +84,20 @@ fn read_bytes(path: &Path) -> CliResult<Option<Vec<u8>>> {
         Err(error) => return Err(runtime(error)),
     };
     if !file.metadata().map_err(runtime)?.is_file() {
-        return Err(runtime("Configuration must be a regular file"));
+        return Err(runtime(text!(
+            "Configuration must be a regular file",
+            "配置必须是普通文件"
+        )));
     }
     let mut bytes = Vec::new();
     file.take(CONFIG_LIMIT + 1)
         .read_to_end(&mut bytes)
         .map_err(runtime)?;
     if bytes.len() as u64 > CONFIG_LIMIT {
-        return Err(runtime("Configuration exceeds 8 MiB"));
+        return Err(runtime(text!(
+            "Configuration exceeds 8 MiB",
+            "配置文件超过 8 MiB"
+        )));
     }
     Ok(Some(bytes))
 }
@@ -84,7 +108,10 @@ fn parse_config(bytes: Option<&[u8]>) -> CliResult<Value> {
         .map_err(runtime)?
         .unwrap_or_else(|| json!({}));
     if !raw.is_object() {
-        return Err(runtime("Configuration must be a JSON object"));
+        return Err(runtime(text!(
+            "Configuration must be a JSON object",
+            "配置必须是 JSON 对象"
+        )));
     }
     config::validate(&raw).map_err(runtime)?;
     Ok(raw)
@@ -97,9 +124,10 @@ fn read_config(path: &Path) -> CliResult<(Value, Option<Vec<u8>>)> {
 fn unchanged(path: &Path, expected: &Option<Vec<u8>>) -> CliResult<()> {
     let actual = read_bytes(path)?;
     if &actual != expected {
-        return Err(runtime(
+        return Err(runtime(text!(
             "Configuration changed outside this session; reopen it before saving",
-        ));
+            "配置文件在本次会话之外被修改；请重新打开后再保存"
+        )));
     }
     Ok(())
 }
@@ -531,14 +559,22 @@ fn merge_models(existing: &mut Value, detected: &Value) -> CliResult<usize> {
     if existing.get("llm").is_none() {
         existing["llm"] = json!({"enabled":false});
     }
-    let section = existing["llm"]
-        .as_object_mut()
-        .ok_or_else(|| runtime("Existing llm section must be an object"))?;
+    let section = existing["llm"].as_object_mut().ok_or_else(|| {
+        runtime(text!(
+            "Existing llm section must be an object",
+            "已有的 llm 配置段必须是对象"
+        ))
+    })?;
     let list = section
         .entry("model_list")
         .or_insert_with(|| json!([]))
         .as_array_mut()
-        .ok_or_else(|| runtime("Existing model_list must be an array"))?;
+        .ok_or_else(|| {
+            runtime(text!(
+                "Existing model_list must be an array",
+                "已有的 model_list 必须是数组"
+            ))
+        })?;
     let mut count = 0;
     for model in incoming {
         let name = &model["litellm_params"]["model"];
@@ -573,28 +609,45 @@ pub(super) fn init(yes: bool, output: Option<&Path>, local: bool) -> CliResult<(
     if !yes {
         writeln!(
             console,
-            "Native configuration setup; no provider requests are made."
+            "{}",
+            text!(
+                "Native configuration setup; no provider requests are made.",
+                "原生配置初始化；不会向任何供应商发出请求。"
+            )
         )
         .map_err(runtime)?;
         if let Some(models) = fresh.pointer("/llm/model_list").and_then(Value::as_array) {
             for model in models {
+                let name = model["litellm_params"]["model"]
+                    .as_str()
+                    .unwrap_or_default();
                 writeln!(
                     console,
-                    "Detected model: {}",
-                    model["litellm_params"]["model"]
-                        .as_str()
-                        .unwrap_or_default()
+                    "{}",
+                    text!("Detected model: {name}", "检测到模型：{name}")
                 )
                 .map_err(runtime)?;
             }
         } else {
-            writeln!(console, "No API model detected. LLM remains disabled.").map_err(runtime)?;
+            writeln!(
+                console,
+                "{}",
+                text!(
+                    "No API model detected. LLM remains disabled.",
+                    "未检测到 API 模型，LLM 保持关闭。"
+                )
+            )
+            .map_err(runtime)?;
         }
         if output.is_none() && !local {
-            let Some(choice) = choice(
+            let Some(choice) = choice_in(
+                lang(),
                 &mut input,
                 &mut console,
-                "Save to: 1 user configuration, 2 ./markitai.json, q cancel [1]: ",
+                &text!(
+                    "Save to: 1 user configuration, 2 ./markitai.json, q cancel [1]: ",
+                    "保存到：1 用户配置，2 ./markitai.json，q 取消 [1]："
+                ),
                 &["1", "2"],
                 "1",
             )?
@@ -611,11 +664,21 @@ pub(super) fn init(yes: bool, output: Option<&Path>, local: bool) -> CliResult<(
         if yes {
             "update".to_owned()
         } else {
-            writeln!(console, "Configuration exists: {}", path.display()).map_err(runtime)?;
-            let Some(choice) = choice(
+            let shown = path.display();
+            writeln!(
+                console,
+                "{}",
+                text!("Configuration exists: {shown}", "配置文件已存在：{shown}")
+            )
+            .map_err(runtime)?;
+            let Some(choice) = choice_in(
+                lang(),
                 &mut input,
                 &mut console,
-                "1 update detected models, 2 overwrite, 3 keep [3]: ",
+                &text!(
+                    "1 update detected models, 2 overwrite, 3 keep [3]: ",
+                    "1 追加检测到的模型，2 覆盖，3 保留 [3]："
+                ),
                 &["1", "2", "3"],
                 "3",
             )?
@@ -632,15 +695,22 @@ pub(super) fn init(yes: bool, output: Option<&Path>, local: bool) -> CliResult<(
     } else {
         "create".into()
     };
+    let shown = path.display();
     if action == "keep" {
-        writeln!(console, "Kept {}", path.display()).map_err(runtime)?;
+        writeln!(console, "{}", text!("Kept {shown}", "已保留 {shown}")).map_err(runtime)?;
         return Ok(());
     }
     let mut existing;
     if action == "update" {
         existing = parse_config(original.as_deref())?;
         if merge_models(&mut existing, &fresh)? == 0 {
-            println!("Configuration already up to date: {}", path.display());
+            println!(
+                "{}",
+                text!(
+                    "Configuration already up to date: {shown}",
+                    "配置已是最新：{shown}"
+                )
+            );
             return Ok(());
         }
     } else {
@@ -650,13 +720,12 @@ pub(super) fn init(yes: bool, output: Option<&Path>, local: bool) -> CliResult<(
     unchanged(&path, &original)?;
     write_config(&path, &existing)?;
     println!(
-        "Configuration {}: {}",
+        "{}",
         if action == "update" {
-            "updated"
+            text!("Configuration updated: {shown}", "配置已更新：{shown}")
         } else {
-            "created"
-        },
-        path.display()
+            text!("Configuration created: {shown}", "配置已创建：{shown}")
+        }
     );
     if action != "update" {
         // Guidance stays on stderr; stdout keeps the one-line result for scripts.
@@ -665,20 +734,44 @@ pub(super) fn init(yes: bool, output: Option<&Path>, local: bool) -> CliResult<(
             .and_then(Value::as_array)
             .map_or(0, Vec::len);
         let llm = if models > 0 {
-            "Detected models are saved, but LLM processing stays off: add --llm to a conversion or run `markitai config set llm.enabled true`."
+            text!(
+                "Detected models are saved, but LLM processing stays off: add --llm to a conversion or run `markitai config set llm.enabled true`.",
+                "已保存检测到的模型，但 LLM 处理仍处于关闭状态：转换时加上 --llm，或运行 `markitai config set llm.enabled true`。"
+            )
         } else {
-            "No API model was detected: set a provider API key such as OPENAI_API_KEY, then run `markitai init -y` again to add it."
+            text!(
+                "No API model was detected: set a provider API key such as OPENAI_API_KEY, then run `markitai init -y` again to add it.",
+                "未检测到 API 模型：请设置供应商的 API key（如 OPENAI_API_KEY），然后再次运行 `markitai init -y` 添加。"
+            )
         };
         writeln!(
             console,
-            "Next steps:\n  markitai FILE -o DIR    Convert a document\n  markitai doctor         Check models and optional backends\n{llm}"
+            "{}",
+            text!(
+                "Next steps:\n  markitai FILE -o DIR    Convert a document\n  markitai doctor         Check models and optional backends\n{llm}",
+                "后续步骤：\n  markitai FILE -o DIR    转换文档\n  markitai doctor         检查模型和可选后端\n{llm}"
+            )
         )
         .map_err(runtime)?;
     }
     Ok(())
 }
 
+/// A choice among `choices` (Enter takes `default`); the retry hint is in
+/// English, as the other wizard text is.
 pub(super) fn choice(
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+    label: &str,
+    choices: &[&str],
+    default: &str,
+) -> CliResult<Option<String>> {
+    choice_in(Lang::En, input, output, label, choices, default)
+}
+
+/// [`choice`] with the retry hint in the given language.
+fn choice_in(
+    lang: Lang,
     input: &mut impl BufRead,
     output: &mut impl Write,
     label: &str,
@@ -699,7 +792,13 @@ pub(super) fn choice(
         if choices.contains(&value) {
             return Ok(Some(value.into()));
         }
-        writeln!(output, "Choose one of: {}", choices.join(", ")).map_err(runtime)?;
+        let choices = choices.join(", ");
+        writeln!(
+            output,
+            "{}",
+            text!(lang => "Choose one of: {choices}", "请选择其中之一：{choices}")
+        )
+        .map_err(runtime)?;
     }
 }
 

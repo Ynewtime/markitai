@@ -150,14 +150,12 @@ fn doctor_repair_progress_follows_the_language_without_starting_an_installer() {
 }
 
 #[test]
-fn json_help_and_exit_codes_do_not_depend_on_the_language() {
+fn json_and_exit_codes_do_not_depend_on_the_language() {
     let dir = tempfile::tempdir().unwrap();
     for args in [
         &["doctor", "--json"][..],
         &["cache", "stats", "--json"],
         &["cache", "spa-domains", "--json"],
-        &["--help"],
-        &["cache", "--help"],
         &["config", "list"],
     ] {
         let chinese = run(dir.path(), ZH, args);
@@ -166,10 +164,19 @@ fn json_help_and_exit_codes_do_not_depend_on_the_language() {
         assert_eq!(chinese.stdout, english.stdout, "{args:?}");
         assert!(!chinese.stdout.is_empty(), "{args:?}");
     }
-    // Conversion messages are outside the localized commands.
+    // Help and the conversion lines have Chinese wording too; their tests are
+    // in `help_language.rs` and `cli_zh.rs`. Their exit codes are the same.
+    for args in [&["--help"][..], &["cache", "--help"]] {
+        let chinese = run(dir.path(), ZH, args);
+        let english = run(dir.path(), EN, args);
+        assert_eq!(chinese.status.code(), english.status.code(), "{args:?}");
+        assert_ne!(chinese.stdout, english.stdout, "{args:?}");
+    }
     std::fs::write(dir.path().join("note.txt"), "hello\n").unwrap();
     let output = run(dir.path(), ZH, &["note.txt", "-o", "out"]);
     assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(stderr(&output), "已写入 out/note.txt.md\n");
+    let output = run(dir.path(), EN, &["note.txt", "-o", "out"]);
     assert!(stderr(&output).starts_with("Wrote "), "{}", stderr(&output));
 }
 

@@ -672,15 +672,17 @@ fn run_with_namespace(
             }
             LoadOutcome::Missing => {
                 if !cli.quiet {
-                    eprintln!(
-                        "No recovery state matches these paths and options; starting a fresh batch."
+                    say!(
+                        "No recovery state matches these paths and options; starting a fresh batch.",
+                        "没有与这些路径和选项匹配的恢复状态，将开始全新的批处理。"
                     );
                 }
                 Snapshot::default()
             }
             LoadOutcome::Corrupt { reason } => {
-                eprintln!(
-                    "Warning: recovery state could not be loaded ({reason}); preserving it before a fresh checkpoint"
+                say!(
+                    "Warning: recovery state could not be loaded ({reason}); preserving it before a fresh checkpoint",
+                    "Warning: 无法加载恢复状态（{reason}）；将先保留它，再建立新的检查点"
                 );
                 Snapshot::default()
             }
@@ -850,9 +852,10 @@ fn run_with_namespace(
     if !cli.quiet
         && let Some(backup) = store.legacy_backup()
     {
-        eprintln!(
-            "Preserved original legacy recovery files at {}. This backup does not undo output or model work.",
-            backup.display()
+        let backup = backup.display();
+        say!(
+            "Preserved original legacy recovery files at {backup}. This backup does not undo output or model work.",
+            "已把原有的旧版恢复文件保留在 {backup}。该备份不会撤销已写出的输出或已完成的模型请求。"
         );
     }
     let generation = store
@@ -974,7 +977,10 @@ fn run_with_namespace(
                 && let Some(received) = crate::signals::interrupted()
             {
                 signal = Some(received);
-                eprintln!("Interrupted: stopping new work and waiting for active conversions.");
+                say!(
+                    "Interrupted: stopping new work and waiting for active conversions.",
+                    "Interrupted: 不再派发新任务，等待正在进行的转换完成。"
+                );
                 if let Err(error) = store.flush() {
                     fatal.get_or_insert_with(|| error.to_string());
                 }
@@ -1244,7 +1250,10 @@ fn run_with_namespace(
         && let Some(received) = crate::signals::interrupted()
     {
         signal = Some(received);
-        eprintln!("Interrupted: stopping new work and waiting for active conversions.");
+        say!(
+            "Interrupted: stopping new work and waiting for active conversions.",
+            "Interrupted: 不再派发新任务，等待正在进行的转换完成。"
+        );
     }
     if let Err(error) = store.compact() {
         fatal.get_or_insert_with(|| error.to_string());
@@ -1275,10 +1284,15 @@ fn run_with_namespace(
         match rendered.and_then(|bytes| report::publish(plan, &bytes)) {
             Ok(publication) if cli.verbose && !cli.quiet => match publication {
                 crate::report_store::Publication::Written(path) => {
-                    eprintln!("Report: {}", path.display())
+                    let path = path.display();
+                    say!("Report: {path}", "报告：{path}")
                 }
                 crate::report_store::Publication::SkippedExisting(path) => {
-                    eprintln!("Existing report preserved: {}", path.display())
+                    let path = path.display();
+                    say!(
+                        "Existing report preserved: {path}",
+                        "已保留现有报告：{path}"
+                    )
                 }
             },
             Ok(_) => (),
@@ -1298,7 +1312,10 @@ fn run_with_namespace(
         && let Some(received) = crate::signals::interrupted()
     {
         signal = Some(received);
-        eprintln!("Interrupted: stopping new work and waiting for active conversions.");
+        say!(
+            "Interrupted: stopping new work and waiting for active conversions.",
+            "Interrupted: 不再派发新任务，等待正在进行的转换完成。"
+        );
     }
     crate::sort::by_key(&mut records, |record| record.index);
     let items: Vec<_> = records.iter().map(outcome).collect();
@@ -1327,9 +1344,7 @@ fn run_with_namespace(
             }
         }
         if !cli.quiet {
-            for line in crate::report::batch_summary(&records, clock.elapsed(), output) {
-                eprintln!("{line}");
-            }
+            print_batch_summary(&records, clock.elapsed(), output);
         }
     }
     Ok(if let Some(signal) = signal {

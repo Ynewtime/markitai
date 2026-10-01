@@ -44,20 +44,35 @@ markitai -c isolated.json doctor --json
 
 ## 终端语言
 
-`doctor`、`cache stats/clear/spa-domains` 与 `config path/validate` 的终端文字可显示中文或英文，范围对应参考版本做了本地化的命令。语言选择沿用参考规则：非空的 `MARKITAI_LANG` 单独决定；未设置或为空时先读 `LANG`，再读 `LC_ALL`。取值以 `zh` 开头（不分大小写）为中文，其他取值和未设置均为英文；非空但不是 `zh` 的 `MARKITAI_LANG`（如 `en`、`fr`）不会再回退到 `LANG`。参考先读 `LANG` 后读 `LC_ALL`，与 POSIX 中 `LC_ALL` 优先的约定相反，这里保持参考顺序。变量读取与配置选择相同：进程环境优先，其次是当前目录 `.env` 和 `MARKITAI_HOME/.env`。
+`doctor`、`cache stats/clear/spa-domains`、`config path/validate`、`init`、转换与批量运行在 stderr 打印的结果和摘要，以及 `--help`/`-h` 的终端文字可显示中文或英文；前三类对应参考版本做了本地化的命令，其余是本版本在参考之外增加的。语言选择沿用参考规则：非空的 `MARKITAI_LANG` 单独决定；未设置或为空时先读 `LANG`，再读 `LC_ALL`。取值以 `zh` 开头（不分大小写）为中文，其他取值和未设置均为英文；非空但不是 `zh` 的 `MARKITAI_LANG`（如 `en`、`fr`）不会再回退到 `LANG`。参考先读 `LANG` 后读 `LC_ALL`，与 POSIX 中 `LC_ALL` 优先的约定相反，这里保持参考顺序。变量读取与配置选择相同：进程环境优先，其次是当前目录 `.env` 和 `MARKITAI_HOME/.env`。
 
 ```sh
 MARKITAI_LANG=zh markitai doctor
 LANG=zh_CN.UTF-8 markitai cache stats
+MARKITAI_LANG=zh markitai ./documents -o output/
+MARKITAI_LANG=zh markitai init --local
+MARKITAI_LANG=zh markitai --help
 ```
 
-翻译的是面向人的句子：标题、配置来源、状态词和“配置要求”标注、总结、浏览器修复进度、缓存条目与清理结果、清理确认与取消。doctor 每项的名称、说明和安装提示与 `--json` 字段同源，仍为英文；核心给出的错误原因、路径和大小单位不变。`--json`、`config path` 找到文件时打印的路径、`config list/get/set`、`--help`、参数错误、日志与退出码在两种语言下逐字节相同。参考同样未翻译的 `init`、`-I` 向导、`config edit`、转换进度与批量摘要、`auth`、`serve`/`mcp` 终端输出保持英文；网页工作台另有自己的语言切换。
+翻译的是面向人的句子：标题、配置来源、状态词和“配置要求”标注、总结、浏览器修复进度、缓存条目与清理结果、清理确认与取消。doctor 每项的名称、说明和安装提示与 `--json` 字段同源，仍为英文；核心给出的错误原因、路径和大小单位不变。
+
+`init` 的提示（保存位置、已有文件如何处理、重新输入的提示）、结果行（stdout 仍只有一行）和后续步骤都有中文，交互与 `--yes` 一致。转换与批量运行的 stderr 行也有中文：`已写入 <路径>`、跳过说明、`--dry-run` 与“无需转换”的说明、`.urls` 被跳过条目的警告、报告路径、恢复与中断提示，以及批量结束时的摘要（完成数、耗时与费用、按原因分组的跳过项、失败和未完成项、缺少模型时的一行提示、输出目录）。严重程度标签 `Error:`、`Warning:`、`Hint:`、`Interrupted:` 在任何语言下都不翻译（脚本和日志检索依赖它们，与 Clap 的 `error:` 一致），其后的句子在已有中文时为中文，例如 `Warning: 跳过 links.urls 的第 2 行：不是 HTTP(S) URL`。转换器、恢复状态和其他未翻译模块给出的原因，以及路径、文件名与 URL 保持原文，所以每个失败条目的 `Error: <名称>: <原因>` 行在两种语言下相同；它们下面的批量摘要是中文。
+
+在两种语言下逐字节相同的有：`--json` 与其他机器可读输出、`config path` 找到文件时打印的路径、`config list/get/set`、退出码、转换写出的文件，以及**文件日志**——日志始终是英文原句，不随终端语言变化（控制台行与日志行分别生成，见 `app/logging.rs` 的 `diagnostic_as`）。`--help` 本身在英文下与此前逐字节相同；中文帮助见下一节。
+
+仍保持英文的有：`-I` 向导的提示与摘要、`config edit` 的界面（它们与 `init` 共用的几条错误，如“需要终端”“配置必须是 JSON 对象”，随语言显示）、`auth`、`serve`/`mcp` 的终端输出、历史归档提示、供应商批处理（`--llm-batch`）的进度行，以及 Clap 自己生成的参数错误（如 `error: unexpected argument …`）；这些模块返回的错误原因也是英文。网页工作台另有自己的语言切换。
+
+### 中文帮助
+
+语言为中文时，`--help`、`-h`、无输入时的帮助，以及缺少子命令时随错误显示的帮助都是中文：命令与参数说明、分组标题、`用法:` 行、示例与退出状态，以及 Clap 内置的帮助与版本开关。选项名、值名（`<PATH>`）、用法行中的 `[OPTIONS]`、路径和代码字面量不翻译。实现只在中文时改写 Clap 命令（`app/help_zh.rs`），英文帮助不经过这段代码：`tests/fixtures/help_en.txt` 保存了改动前根命令和全部 25 个子命令的 `-h`/`--help`（另有版本和缺少子命令的输出），`tests/help_language.rs` 要求英文输出与它逐字节一致。
+
+中文帮助的版式与英文略有不同：每个选项的说明独占一行；Clap 按字符数而不是显示宽度折行，也不会在汉字之间断行，所以中文说明由本模块按显示宽度折行，每行不超过 78 列（80 列终端内可读，终端更宽也不拉长）；默认值与可选值写作 `[默认：…]`、`[可选值：…]`；分组标题由 Clap 写成 `标题:`（半角冒号），“用法:”和示例标题与之一致；分组顺序与英文相同。每个可见选项和子命令必须在表中有中文，缺失时 `help_zh` 的单元测试会失败，表中多余的条目同样会失败。`help <命令>` 子命令在本程序中本来就是关闭的，没有可翻译的内容。
 
 ## 已实现的命令行为
 
 - 单文件和 URL 未给 `-o` 时输出 Markdown 到 stdout；`--pure` 去除 frontmatter；提供 `-o chosen.md` 可选择准确文件名。
 - stdout 模式下文档引用的图片与页面截图默认保存到 `MARKITAI_HOME/assets/blobs/`（未设置时为 `~/.markitai/assets/blobs/`），按内容哈希命名、重复运行复用同一文件，Markdown 中的引用改为可直接打开的绝对 `file://` URI；内嵌 `data:image/…` 也一并保存。`image.stdout_persist=false` 时保留指向未写出文件的 `.markitai/...` 相对引用，并在 stderr 警告一次；个别图片保存失败时转换仍成功，这些引用保持相对并警告原因。详见[图片：stdout 中的图片](images.md#images-on-stdout)。
-- 单项默认不显示进度，但写入文件后在 stderr 打印一行 `Wrote <路径>`（冲突改名时可见实际文件名）；跳过时说明原因和下一步（图片需要 `--ocr` 或 `--llm`，已存在输出受 `output.on_conflict=skip` 约束）。`-q` 只保留错误；`--json` 的 stdout 只有 envelope。缺少模型的 `--llm` 失败附一行配置提示。
+- 单项默认不显示进度，但写入文件后在 stderr 打印一行 `Wrote <路径>`（中文为 `已写入 <路径>`；冲突改名时可见实际文件名）；跳过时说明原因和下一步（图片需要 `--ocr` 或 `--llm`，已存在输出受 `output.on_conflict=skip` 约束）。`-q` 只保留错误；`--json` 的 stdout 只有 envelope。缺少模型的 `--llm` 失败附一行配置提示。
 - 转换前检查 `-o`：已存在的非目录路径、最近的已存在祖先不是目录或不可写时，直接以退出 1 报告路径与原因，不再交给输出归属或恢复状态层用内部术语报错；`--dry-run` 只警告并照常列出目标。单个本地输入不存在或无读取权限时不创建输出目录，后者报 `Cannot read <路径>: …`。
 - 目录中没有受支持文件（或全部被 `--glob` 排除）时在 stderr 说明后退出 0；目录/URL 列表的 `--dry-run` 在 stderr 汇总将转换的文件和 URL 数。`.urls` 中被跳过的条目按行号（JSON 数组按条目序号）警告，不回显条目文本。`--alt/--desc` 在未启用 LLM 时警告其无效。
 - `--json -o` 输出 version 1.0 envelope，字段名与参考接口一致。运行失败仍有机器可读条目；参数错误只输出 stderr 并退出 2（未给 `-o` 时说明 stdout 已被 JSON 占用）。有模型请求的条目额外带 `pricing`（`priced_requests`、`unpriced_requests`、`cost_status`、`pricing_snapshots`，观察不完整时另有 `incomplete_request_observations`），`totals.pricing` 汇总这些条目；没有模型用量时两者省略，定价规则见 [定价](pricing.md)。没有条目时 totals 的 `cost_usd`/`duration_s` 为 0，不输出 `-0.0`。

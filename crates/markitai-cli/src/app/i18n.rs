@@ -1,5 +1,6 @@
-//! English or Chinese wording for the terminal text of the commands the
-//! reference CLI localizes: `doctor`, `cache` and `config path/validate`.
+//! English or Chinese wording for the terminal text of `doctor`, `cache`,
+//! `config path/validate`, `init`, the conversion and batch lines on stderr and
+//! `--help`.
 //!
 //! A nonempty `MARKITAI_LANG` decides on its own; otherwise `LANG` is used,
 //! then `LC_ALL`, in that order, as the reference does. A value that starts
@@ -8,19 +9,19 @@
 //! same `.env` files that configuration selection reads.
 //!
 //! Only sentences meant for a person change. JSON, values shared with JSON
-//! (check names, messages and hints), help, usage errors, logs and exit codes
-//! stay as they are in every language.
+//! (check names, messages and hints), usage errors from the argument parser,
+//! the file log and exit codes stay as they are in every language.
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Lang {
+pub(crate) enum Lang {
     En,
     Zh,
 }
 
 /// The language for this process, resolved once on first use.
-pub(super) fn lang() -> Lang {
+pub(crate) fn lang() -> Lang {
     static LANG: OnceLock<Lang> = OnceLock::new();
     *LANG.get_or_init(|| detect(&markitai_core::config::environment()))
 }
@@ -49,6 +50,9 @@ macro_rules! text {
         text!($crate::app::i18n::lang() => $en, $zh)
     };
 }
+
+// Also nameable by path (`crate::app::i18n::text`) for modules outside `app`.
+pub(crate) use text;
 
 #[cfg(test)]
 mod tests {
