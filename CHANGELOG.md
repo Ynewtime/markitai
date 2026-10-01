@@ -95,6 +95,7 @@
 
 ### Changed
 
+- Wrap `--help` text to the terminal's width (clap `wrap_help`; 100 columns when not on a terminal) instead of leaving long lines unbroken.
 - Sort through a few shared entry points (a type-erased stable sort and two float orders) instead of one monomorphized sort per closure in pdf-inspector, and precompute keys in a few Markitai sorts: sort code 1.45 MB → 0.68 MB and the release binary −826,176 bytes (−3.6%), with PDF output byte-identical and no slowdown.
 - Vendor htmd 0.5.5 to convert directly over scraper's parsed tree with html5ever 0.39, dropping the second HTML parser stack (html5ever, markup5ever, markup5ever_rcdom and xml5ever 0.38) and building the converter once per process: release binary −215,088 bytes (−0.93%), every HTML, e-mail and EPUB corpus output byte-identical, directory HTML runs slightly faster.
 - Order run-state, report, history and asset writes with barriers where only their order matters and keep one full flush where a step is acknowledged: directory runs are 16–36 ms faster, and runs with reports and history 110–169 ms (40–47%) faster, with outputs, ownership records and state byte-identical and every acknowledged step still durable.
