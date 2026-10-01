@@ -1,8 +1,9 @@
 # Validation records
 
-最新交付：[交付 R47](delivery-round47.md)（1.3.0 发布包）。其前的两轮改动与语料对照见并行改进 [R49](parallel-round49.md) 与
+最新交付：[交付 R48](delivery-round48.md)（1.3.0 最终发布候选；rc1 为 [R47](delivery-round47.md)），发布前检查见
+[发布验收](release-acceptance-r51.md)与[真实 LLM 验证](llm-real-providers-r51.md)。其前的两轮改动与语料对照见并行改进 [R49](parallel-round49.md) 与
 [R50](parallel-round50.md)，更早的见 [R47](parallel-round47.md) 与 [R48](parallel-round48.md)；上一次交付为 [R46](delivery-round46.md)。
-冻结性能见[性能记录](performance-round36.md)（`all-r13`，release r19）。当前状态与剩余事项见 [STATUS](../STATUS.md) 与
+冻结性能见[性能记录](performance-round36.md)（`all-r14`，release r22）。当前状态与剩余事项见 [STATUS](../STATUS.md) 与
 [剩余工作](../remaining-work.md)。
 
 An implementation checkpoint is reproducible only when it records the command,
