@@ -277,6 +277,36 @@ pub(super) async fn create(
     Ok((StatusCode::CREATED, Json(created)))
 }
 
+/// Stop the original items that are still waiting for a conversion slot.
+/// Items already converting finish; queued retries keep their own lifecycle.
+pub(super) async fn stop(
+    ExtractState(state): ExtractState<Arc<State>>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    if state.closing.load(Ordering::SeqCst) {
+        return Err(ApiError::new(503, "server is shutting down"));
+    }
+    let job = jobs::get(&state, &id)?;
+    let waiting = {
+        let data = job.data.lock().unwrap();
+        if data.status != "running" {
+            return Err(ApiError::new(409, "job is not running"));
+        }
+        data.items
+            .iter()
+            .filter(|item| item.status == "queued" && item.operation == "convert")
+            .count()
+    };
+    if waiting == 0 {
+        return Err(ApiError::new(409, "no queued items to stop"));
+    }
+    job.stop.send_replace(true);
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({"job_id":id,"stopping":waiting})),
+    ))
+}
+
 pub(super) async fn snapshot(
     ExtractState(state): ExtractState<Arc<State>>,
     Path(id): Path<String>,

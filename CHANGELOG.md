@@ -4,6 +4,7 @@
 
 ### Added
 
+- Give the `markitai serve` workspace a Chinese and English interface that follows the browser language, light, dark and automatic themes (printing stays light), page-wide drag and drop, upload cancellation and a `POST /api/jobs/{id}/cancel` route that stops queued items, a bottom notice region that stays in view, offline detection with reconnection, oversized files named before upload, plain explanations for skipped and failed items, a working 375-pixel layout, kept focus and expanded details across updates, and AA contrast.
 - Manual operating-system proxy discovery for static fetch and the native browser (macOS, Windows, KDE and GNOME), with the reference's single environment proxy order, exception semantics and loopback bypass.
 - Optional pinned official Codex CLI adapter for ChatGPT subscription conversion, authentication and Unix login, with bounded process cleanup and aggregate usage accounting.
 - Base/enhanced Markdown difference preview and printing of the sanitized selected document in the embedded Web UI.

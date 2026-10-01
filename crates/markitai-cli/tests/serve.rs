@@ -638,6 +638,109 @@ fn shutdown_drains_the_active_url_stops_queued_work_and_persists_both_outcomes()
 }
 
 #[test]
+fn stop_request_cancels_waiting_items_while_the_active_url_finishes() {
+    let origin = Origin::start();
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::start(temp.path());
+    let created = server.submit(
+        &[],
+        json!([
+            origin.url("/hold"),
+            origin.url("/waiting-a"),
+            origin.url("/waiting-b")
+        ]),
+        json!({"strategy":"static"}),
+    );
+    let id = created["job_id"].as_str().unwrap().to_owned();
+    until("first URL reaches origin", || {
+        origin.entered.load(Ordering::SeqCst) == 1
+    });
+    let stop = |job: &str| server.request("POST", &format!("/api/jobs/{job}/cancel"), &[], &[]);
+    let reply = stop(&id);
+    assert_eq!(reply.status, 202, "{}", reply.text());
+    assert_eq!(reply.json(), json!({"job_id":id,"stopping":2}));
+    let snapshot = server.json(&format!("/api/jobs/{id}"));
+    assert_eq!(snapshot["status"], "running");
+    assert_eq!(snapshot["items"][0]["status"], "running");
+    origin.release();
+    let snapshot = server.done(&id);
+    assert_eq!(snapshot["status"], "done");
+    assert_eq!(
+        (snapshot["done"].clone(), snapshot["failed"].clone()),
+        (json!(1), json!(2))
+    );
+    assert_eq!(snapshot["items"][0]["status"], "done");
+    for index in [1, 2] {
+        assert_eq!(snapshot["items"][index]["status"], "error");
+        assert_eq!(
+            snapshot["items"][index]["error"],
+            "cancelled (stopped by request)"
+        );
+    }
+    assert_eq!(
+        origin.entered.load(Ordering::SeqCst),
+        1,
+        "stopped URLs must not dispatch"
+    );
+    let reply = stop(&id);
+    assert_eq!(
+        (reply.status, reply.json()["detail"].clone()),
+        (409, json!("job is not running"))
+    );
+    assert_eq!(stop("ffffffffffff").status, 404);
+    // A stopped item remains an ordinary retryable failure.
+    let reply = server.request(
+        "POST",
+        &format!("/api/jobs/{id}/items/i2/retry"),
+        &[("Content-Type", "application/json")],
+        b"",
+    );
+    assert_eq!(reply.status, 202, "{}", reply.text());
+    let snapshot = server.done(&id);
+    assert_eq!(snapshot["items"][1]["status"], "done");
+    assert_eq!(
+        snapshot["items"][2]["error"],
+        "cancelled (stopped by request)"
+    );
+    let path = server.jobdir(&id);
+    server.stop();
+    let saved: Value =
+        serde_json::from_slice(&std::fs::read(path.join("meta.json")).unwrap()).unwrap();
+    assert_eq!(saved["items"][2]["error"], "cancelled (stopped by request)");
+}
+
+#[test]
+fn stop_request_without_waiting_items_is_a_conflict() {
+    let origin = Origin::start();
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::start(temp.path());
+    let created = server.submit(
+        &[],
+        json!([origin.url("/hold")]),
+        json!({"strategy":"static"}),
+    );
+    let id = created["job_id"].as_str().unwrap().to_owned();
+    until("URL reaches origin", || {
+        origin.entered.load(Ordering::SeqCst) == 1
+    });
+    let reply = server.request("POST", &format!("/api/jobs/{id}/cancel"), &[], &[]);
+    assert_eq!(
+        (reply.status, reply.json()["detail"].clone()),
+        (409, json!("no queued items to stop"))
+    );
+    let reply = server.request(
+        "POST",
+        &format!("/api/jobs/{id}/cancel"),
+        &[("Origin", "http://evil.test")],
+        &[],
+    );
+    assert_eq!(reply.status, 403, "{}", reply.text());
+    origin.release();
+    assert_eq!(server.done(&id)["items"][0]["status"], "done");
+    server.stop();
+}
+
+#[test]
 fn terminal_persistence_failure_is_visible_and_cannot_claim_saved_history() {
     let origin = Origin::start();
     let temp = tempfile::tempdir().unwrap();

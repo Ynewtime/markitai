@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {bootstrapToken,authenticatedURL,serviceURL,artifactPath,api} from './api.js';
+import {bootstrapToken,authenticatedURL,serviceURL,artifactPath,api,NetworkError,parseUrls,mergeFiles,formatSize,copyText} from './api.js';
 
 const origin='http://127.0.0.1:9876';
 globalThis.location={origin};
@@ -31,4 +31,40 @@ test('artifact references require exact manifest membership and resolve encoded 
 test('authenticated fetch rejects redirects and never dispatches an external request',async()=>{
   const previous=globalThis.fetch;const calls=[];globalThis.fetch=async(url,options)=>{calls.push({url,options});return new Response(JSON.stringify({ok:true}),{status:200,headers:{'content-type':'application/json'}});};
   try{assert.deepEqual(await api('/api/capabilities'),{ok:true});assert.equal(calls.length,1);assert.equal(calls[0].options.redirect,'error');assert.equal(calls[0].options.cache,'no-store');assert.equal(calls[0].options.headers.get('Authorization'),'Bearer memory-only');await assert.rejects(api('https://evil.test/api/jobs'));assert.equal(calls.length,1);}finally{globalThis.fetch=previous;}
+});
+test('URL lines accept bare domains, report the first unusable line and skip blanks',()=>{
+  assert.deepEqual(parseUrls(' https://a.test/x \n\nexample.com/page?q=1\nhttp://127.0.0.1:8080/y\n'),{urls:['https://a.test/x','https://example.com/page?q=1','http://127.0.0.1:8080/y'],invalid:null});
+  assert.deepEqual(parseUrls('https://ok.test\nnot a url\nftp://x.test').invalid,{value:'not a url',reason:'badUrl'});
+  assert.deepEqual(parseUrls('ftp://files.test/a').invalid,{value:'ftp://files.test/a',reason:'badScheme'});
+  assert.deepEqual(parseUrls('mailto:someone@example.test').invalid,{value:'mailto:someone@example.test',reason:'badScheme'});
+  assert.deepEqual(parseUrls('   \n'),{urls:[],invalid:null});
+});
+test('the same chosen file is listed once and sizes stay readable',()=>{
+  const file=(name,size,lastModified=1)=>({name,size,lastModified});
+  const first=mergeFiles([],[file('a.pdf',10),file('b.pdf',20),file('a.pdf',10)]);
+  assert.deepEqual(first.files.map(f=>f.name),['a.pdf','b.pdf']);assert.equal(first.duplicates,1);
+  const second=mergeFiles(first.files,[file('a.pdf',10),file('a.pdf',10,2),file('a.pdf',11)]);
+  assert.equal(second.files.length,4);assert.equal(second.duplicates,1);
+  assert.equal(formatSize(0),'0 KiB');assert.equal(formatSize(1500),'2 KiB');assert.equal(formatSize(101*1024*1024),'101.0 MiB');
+});
+test('copy falls back to the selection command when the clipboard API is missing or refused',async()=>{
+  const written=[];await copyText('direct',{clipboard:{writeText:async text=>written.push(text)}});assert.deepEqual(written,['direct']);
+  const fake=result=>{const doc={commands:[],body:{append(node){doc.appended=node;}},createElement(){return {value:'',setAttribute(){},select(){doc.selected=this.value;},remove(){doc.removed=true;}};},execCommand(name){doc.commands.push(name);if(result instanceof Error)throw result;return result;}};return doc;};
+  const doc=fake(true);await copyText('fallback',{clipboard:{writeText:async()=>{throw new Error('denied');}},doc});
+  assert.equal(doc.selected,'fallback');assert.deepEqual(doc.commands,['copy']);assert.equal(doc.removed,true);
+  const blocked=fake(false);await assert.rejects(copyText('x',{clipboard:undefined,doc:blocked}),/Copying is blocked/);assert.equal(blocked.removed,true);
+  const thrown=fake(new Error('no'));await assert.rejects(copyText('x',{clipboard:undefined,doc:thrown}),/Copying is blocked/);
+});
+test('an unreachable service becomes an explicit network error, while aborts and HTTP errors keep their meaning',async()=>{
+  const previous=globalThis.fetch;
+  try{
+    globalThis.fetch=async()=>{throw new TypeError('Failed to fetch');};
+    await assert.rejects(api('/api/capabilities'),error=>error instanceof NetworkError&&/Cannot reach the Markitai service/.test(error.message));
+    globalThis.fetch=async()=>{throw new DOMException('The user aborted a request.','AbortError');};
+    await assert.rejects(api('/api/jobs',{method:'POST'}),{name:'AbortError'});
+    globalThis.fetch=async()=>new Response(JSON.stringify({detail:'file exceeds upload limit',code:'payload_too_large'}),{status:413});
+    await assert.rejects(api('/api/jobs',{method:'POST'}),{message:'file exceeds upload limit',status:413});
+    globalThis.fetch=async()=>new Response('',{status:502});
+    await assert.rejects(api('/api/jobs'),{message:'Request failed (502)',status:502});
+  }finally{globalThis.fetch=previous;}
 });

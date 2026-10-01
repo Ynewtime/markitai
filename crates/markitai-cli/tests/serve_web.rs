@@ -175,6 +175,14 @@ fn embedded_interface_and_fixed_offline_assets_are_actual_http_resources() {
             include_bytes!("../src/server/web/preview.js").as_slice(),
         ),
         (
+            "/ui/i18n.js",
+            include_bytes!("../src/server/web/i18n.js").as_slice(),
+        ),
+        (
+            "/ui/boot.js",
+            include_bytes!("../src/server/web/boot.js").as_slice(),
+        ),
+        (
             "/ui/marked.js",
             include_bytes!("../../../vendor/web/marked.js").as_slice(),
         ),
@@ -197,6 +205,12 @@ fn embedded_interface_and_fixed_offline_assets_are_actual_http_resources() {
     assert_eq!(status, 200);
     assert_eq!(headers["content-type"], "text/css; charset=utf-8");
     assert_eq!(body, include_bytes!("../src/server/web/style.css"));
+    let (status, headers, body) = server.request("GET", "/ui/icon.svg", None);
+    assert_eq!(status, 200);
+    assert_eq!(headers["content-type"], "image/svg+xml");
+    assert_eq!(headers["x-content-type-options"], "nosniff");
+    assert!(headers["content-security-policy"].contains("default-src 'none'"));
+    assert_eq!(body, include_bytes!("../src/server/web/icon.svg"));
 }
 
 #[test]

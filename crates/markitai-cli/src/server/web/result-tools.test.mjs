@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {markdownPair, compareLines, renderComparison, waitForPrintImages, printPreview, previewBody} from './result-tools.js';
 import {api} from './api.js';
+import {useLocale} from './i18n.js';
 
 const restored = (result, side) => result.rows.filter(row => row.kind !== (side === 'base' ? 'add' : 'remove')).map(row => row.text).join('');
 
@@ -129,4 +130,20 @@ test('an image whose load fails reports the explicit print reason, not the decod
   const ready={complete:false,naturalWidth:0,decode:async()=>{ready.naturalWidth=3;}};
   await waitForPrintImages([ready]);
   assert.equal(ready.loading,'eager');
+});
+
+test('comparison and print messages follow the selected interface language',async()=>{
+  try{
+    useLocale('zh');
+    const {doc}=environment(),target=new Node('div',doc);
+    renderComparison(compareLines('a\nb\n','a\nc\nd\n'),target);
+    assert.equal(target.children[0].textContent,'基础版 → 增强版 · 新增 2 行，删除 1 行');
+    assert.equal(target.children[1].attributes.get('aria-label'),'从基础版到增强版的改动');
+    renderComparison({kind:'too-large'},target);
+    assert.match(target.children[0].textContent,/超出浏览器限制/);
+    await assert.rejects(waitForPrintImages([{complete:true,naturalWidth:0}]),/预览图片无法加载/);
+  }finally{useLocale('en');}
+  const {doc}=environment(),target=new Node('div',doc);
+  renderComparison(compareLines('a\n','b\n'),target);
+  assert.equal(target.children[0].textContent,'Base → Enhanced · 1 added, 1 removed lines');
 });

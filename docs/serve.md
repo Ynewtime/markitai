@@ -40,6 +40,13 @@ settings writes unavailable until restart without those overrides.
    `variant`, `markdown`, and downloadable `{relpath,size}` artifacts. Fetch an
    artifact through `GET /api/jobs/{job_id}/files/{relpath}`. Download all output
    files through `GET /api/jobs/{job_id}/archive` after completion.
+6. `POST /api/jobs/{job_id}/cancel` stops the job's original items that are still
+   waiting for a conversion slot. It returns HTTP 202 with `job_id` and `stopping`,
+   the number of such items when the request arrived. Each becomes an `error` item
+   with `cancelled (stopped by request)`, publishes an item event and stays
+   retryable; items already converting finish, and the job completes normally.
+   Queued retries and enhancements are not affected. A job that is not running,
+   or has no waiting original item, returns 409; the request needs no body.
 
 The `options` object supports the existing tri-state preset, LLM, OCR, profile,
 image description/alt text, screenshot, pure, cache, compression, strategy, and
@@ -49,6 +56,29 @@ Requested LLM processing uses core environment/model resolution, including
 Unlike the reference service's no-model fallback, an unavailable requested model
 follows the core's configured failure policy. Remote consent cannot request
 interactive terminal input. When LLM is enabled, base output is retained.
+
+## Output cost and pricing coverage
+
+Items report model cost in two fields. `cost_usd` is the subtotal of requests
+priced from the bundled catalog ([token prices](pricing.md)), not an invoice. It
+is null until a conversion succeeds; a conversion without model requests reports
+`0` and omits `pricing`. `pricing` states how much of the subtotal is established:
+
+```json
+{"priced_requests": 1, "unpriced_requests": 1, "cost_status": "partial",
+ "pricing_snapshots": ["litellm-1.100.1-selected-2026-09-29"]}
+```
+
+`cost_status` is `complete` when every recorded request was priced, `partial`
+when some were not, and `unknown` when none was. A subscription turn that reports
+tokens without a request count adds `incomplete_request_observations` and keeps
+the status from `complete`. A zero `cost_usd` therefore establishes zero cost only
+together with `cost_status: "complete"`. The fields appear in job snapshots, item
+SSE events and saved metadata. History summaries add `cost_usd` over the retained
+outputs and an aggregated `pricing`, which is omitted when coverage cannot be
+established for every retained output (for example an older entry with a numeric
+cost but no request counters). A failed attempt's usage is reported separately
+under `diagnostics`, described below.
 
 ## Retry, enhancement and item deletion
 
@@ -105,7 +135,8 @@ An item with recorded model work additionally exposes `diagnostics.last_attempt`
     "input_tokens": 7,
     "output_tokens": 5,
     "by_model": {
-      "example": {"requests": 1, "input_tokens": 7, "output_tokens": 5, "cost_usd": 0.0}
+      "example": {"requests": 1, "input_tokens": 7, "output_tokens": 5, "cost_usd": 0.0,
+                  "priced_requests": 0, "unpriced_requests": 1, "cost_status": "unknown"}
     }
   }
 }
@@ -115,8 +146,11 @@ An item with recorded model work additionally exposes `diagnostics.last_attempt`
 A successful attempt has a null error. Existing item errors remain strings or
 null. Diagnostics are omitted when no usage was recorded, including an unknown
 provider response; one recorded request with zero tokens still produces them.
-Missing diagnostics do not establish a free call. Provider pricing remains
-unavailable, so zero `cost_usd` is not evidence of zero cost.
+Missing diagnostics do not establish a free call. Each `by_model` row carries the
+same coverage counters as [token prices](pricing.md) describes
+(`priced_requests`, `unpriced_requests`, `cost_status` and, once a request is
+priced, `pricing_snapshot`), so a zero `cost_usd` means zero cost only when that
+row's `cost_status` is `complete`.
 
 A newly queued attempt clears previous diagnostics. After it finishes, only its
 own observation is published; this is not a cumulative retry ledger. If a retry
@@ -222,9 +256,13 @@ shared job ZIP, so concurrent downloads do not invalidate each other. Internal
 image-description metadata paths from its staging directory to the final job output
 and merges sibling entries while holding the same stable lock as the core writer.
 
-The native build currently provides an API landing response instead of opening
-an unimplemented UI. `--no-open` remains accepted; without it the startup message
-explains that an interactive UI is not bundled.
+The root URL serves the embedded [browser workspace](web-ui.md). Without
+`--no-open` the service asks the system to open it, passing the startup token in
+the URL fragment; with `--no-open` it only prints the listening address and the
+token. The workspace reports an unreachable service as offline, checks again
+every five seconds and says when it is connected again. It can abort an upload
+that is still being sent and offers Stop remaining (the cancel route above) while
+original items wait for a slot.
 
 ## Validation scope
 
@@ -233,7 +271,8 @@ The independent Unix CLI process suite in
 and `MARKITAI_HOME`, authored text/EML fixtures, and loopback HTTP gates. It covers
 submission and name collisions, public response types, SSE, downloads, concurrent
 ZIPs, source-upload removal, restart and late CLI history import, malformed form
-rollback, host/origin/path protection, shutdown queue cancellation, and explicit
+rollback, host/origin/path protection, shutdown queue cancellation, stop requests
+for waiting items, and explicit
 metadata-publication failure. Additional cases in
 [`tests/serve/rerun.rs`](../crates/markitai-cli/tests/serve/rerun.rs) cover per-item option
 inheritance/replacement, enhancement and failure preservation, sibling overlap,

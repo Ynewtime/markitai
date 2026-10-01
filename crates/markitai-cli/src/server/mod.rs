@@ -115,6 +115,7 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
         .route("/api/jobs", post(http::create))
         .route("/api/jobs/{job_id}", get(http::snapshot))
         .route("/api/jobs/{job_id}/events", get(http::events))
+        .route("/api/jobs/{job_id}/cancel", post(http::stop))
         .route(
             "/api/jobs/{job_id}/items/{item_id}/retry",
             post(rerun::retry),

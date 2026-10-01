@@ -75,6 +75,28 @@ pub(super) fn routes() -> Router<Arc<State>> {
             }),
         )
         .route(
+            "/ui/i18n.js",
+            get(|| async {
+                asset(
+                    include_bytes!("web/i18n.js"),
+                    "text/javascript; charset=utf-8",
+                )
+            }),
+        )
+        .route(
+            "/ui/boot.js",
+            get(|| async {
+                asset(
+                    include_bytes!("web/boot.js"),
+                    "text/javascript; charset=utf-8",
+                )
+            }),
+        )
+        .route(
+            "/ui/icon.svg",
+            get(|| async { asset(include_bytes!("web/icon.svg"), "image/svg+xml") }),
+        )
+        .route(
             "/ui/style.css",
             get(|| async { asset(include_bytes!("web/style.css"), "text/css; charset=utf-8") }),
         )

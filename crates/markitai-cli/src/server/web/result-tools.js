@@ -1,4 +1,5 @@
 // Comparison and printing consume only the current item's enumerated artifacts.
+import {t} from './i18n.js';
 export const DIFF_LIMITS = Object.freeze({characters: 2 * 1024 * 1024, lines: 6000, cells: 1_000_000});
 
 // Like the reference preview, rendered views show only the document body;
@@ -58,22 +59,22 @@ export function renderComparison(comparison, target, doc = target.ownerDocument)
   target.replaceChildren();
   if (comparison.kind === 'too-large') {
     const note = doc.createElement('p'); note.className = 'diff-note';
-    note.textContent = 'This comparison exceeds the browser limit. Download both Markdown versions to compare them locally.';
+    note.textContent = t('diffTooLarge');
     target.append(note); return;
   }
   const summary = doc.createElement('p'); summary.className = 'diff-note';
-  summary.textContent = comparison.added || comparison.removed ? `Base → Enhanced · ${comparison.added} added, ${comparison.removed} removed lines` : 'Base and enhanced Markdown are identical.';
-  const output = doc.createElement('div'); output.className = 'diff-lines'; output.setAttribute('aria-label', 'Changes from base to enhanced Markdown');
+  summary.textContent = comparison.added || comparison.removed ? t('diffSummary', {added: comparison.added, removed: comparison.removed}) : t('diffSame');
+  const output = doc.createElement('div'); output.className = 'diff-lines'; output.setAttribute('aria-label', t('diffLabel'));
   let oldLine = 1, newLine = 1;
   for (const row of comparison.rows) {
     const line = doc.createElement('div'); line.className = `diff-line diff-${row.kind}`;
     const numbers = doc.createElement('span'); numbers.className = 'diff-numbers'; numbers.setAttribute('aria-hidden', 'true');
     numbers.textContent = `${row.kind === 'add' ? '' : oldLine}\t${row.kind === 'remove' ? '' : newLine}`;
     const marker = doc.createElement('span'); marker.className = 'diff-marker'; marker.textContent = row.kind === 'add' ? '+' : row.kind === 'remove' ? '−' : ' ';
-    marker.setAttribute('aria-label', row.kind === 'add' ? 'Added' : row.kind === 'remove' ? 'Removed' : 'Unchanged');
+    marker.setAttribute('aria-label', t(row.kind === 'add' ? 'diffAdded' : row.kind === 'remove' ? 'diffRemoved' : 'diffUnchanged'));
     const text = doc.createElement('code'); text.textContent = row.text.endsWith('\n') ? row.text.slice(0, -1) : row.text;
     line.append(numbers, marker, text);
-    if (!row.text.endsWith('\n')) { const end = doc.createElement('span'); end.className = 'diff-eof'; end.textContent = ' (no final newline)'; line.append(end); }
+    if (!row.text.endsWith('\n')) { const end = doc.createElement('span'); end.className = 'diff-eof'; end.textContent = t('diffNoNewline'); line.append(end); }
     output.append(line);
     if (row.kind !== 'add') oldLine++;
     if (row.kind !== 'remove') newLine++;
@@ -81,7 +82,7 @@ export function renderComparison(comparison, target, doc = target.ownerDocument)
   target.append(summary, output);
 }
 
-function aborted() { return new DOMException('Print cancelled because the selected result changed.', 'AbortError'); }
+function aborted() { return new DOMException(t('printCancelled'), 'AbortError'); }
 
 export function waitForPrintImages(images, {signal, timeoutMs = 10_000} = {}) {
   return new Promise((resolve, reject) => {
@@ -91,7 +92,7 @@ export function waitForPrintImages(images, {signal, timeoutMs = 10_000} = {}) {
       error ? reject(error) : resolve();
     };
     const cancel = () => finish(aborted());
-    const timer = setTimeout(() => finish(new Error('Images are still loading. Try Print / PDF again after the preview has loaded.')), timeoutMs);
+    const timer = setTimeout(() => finish(new Error(t('printImagesLoading'))), timeoutMs);
     signal?.addEventListener('abort', cancel, {once: true});
     if (signal?.aborted) { cancel(); return; }
     Promise.all(images.map(async image => {
@@ -99,7 +100,7 @@ export function waitForPrintImages(images, {signal, timeoutMs = 10_000} = {}) {
       // A failed load rejects decode() with the browser's own wording; report
       // the same explicit reason as any other image that yields no pixels.
       if (!image.complete) await image.decode().catch(() => {});
-      if (!image.naturalWidth) throw new Error('A preview image could not load. Printing stopped so the document is not silently incomplete.');
+      if (!image.naturalWidth) throw new Error(t('printImageBroken'));
     })).then(() => finish(), error => finish(error));
   });
 }
@@ -124,7 +125,7 @@ export function printPreview({preview, title, isCurrent = () => true, doc = docu
   waitForPrintImages([...clone.querySelectorAll('img')], {signal: controller.signal, timeoutMs}).then(() => {
     if (ended) return;
     if (!isCurrent()) { finish(aborted()); return; }
-    doc.title = title.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 160) || 'Markitai document'; restoreTitle = true;
+    doc.title = title.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 160) || t('printUntitled'); restoreTitle = true;
     doc.body.classList.add('printing-result'); win.addEventListener('afterprint', afterPrint);
     // Some browsers omit afterprint when their print UI is cancelled.
     fallback = setTimeout(() => finish(), 120_000);

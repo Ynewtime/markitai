@@ -22,6 +22,60 @@ ask for confirmation and report service failures; the UI does not invent a
 successful state. History search and pagination are local views of the service's
 saved job summaries, not claims of a new server pagination API.
 
+## Selecting input and following a job
+
+Files dropped anywhere on the Convert view are added to the selection; a drop
+elsewhere is ignored rather than letting the browser open the file in place of
+the workspace. The same file chosen twice (same name, size and modification time)
+is listed once, with a short notice. A file over the 100 MiB upload limit is
+marked in its row as soon as it is chosen, and submitting names it instead of
+uploading anything. The selection shows its file count and total size and can be
+cleared at once. Each URL line is checked before upload: a bare domain such as
+`example.com/page` gets `https://`, and the first unusable line is quoted in the
+message, with the address field focused.
+
+While files are being sent, Cancel upload aborts the request and keeps the
+selection. If the service had already accepted the job, it continues and appears
+in History. While original items of a running job wait for a conversion slot,
+Stop remaining calls the service's cancel route: waiting items end as stopped
+(and can be retried), items already converting finish. On narrow screens the
+results panel is scrolled into view after a job starts or a saved job is opened.
+
+Each row states its kind and status in words (queued, converting, done, failed,
+skipped). An image skipped because no text was extracted says to convert it again
+with Local OCR or LLM enhancement. The unsupported-format message keeps its list
+of accepted extensions folded under Supported formats. Transport failures of a
+URL (`error sending request`, `HTTP 404`, timeouts) are prefixed with "Could not
+fetch this page". Enhance is offered only while the service reports a routable
+model; otherwise the action is omitted rather than shown disabled. Opening a
+result moves keyboard focus to its title; a result with a single Markdown version
+has no version chooser.
+
+Messages appear in one fixed region at the bottom of the window, so they are
+visible wherever the action happened. Confirmations fade after six seconds;
+errors stay until dismissed or replaced. When a request cannot reach the service,
+the header shows Offline (also on narrow screens), the page checks the service
+every five seconds and reports when it is connected again. Copy uses the
+Clipboard API and, where a browser withholds it (for example plain HTTP on a LAN
+address), the selection copy command; if both are refused it says so.
+
+## Language and appearance
+
+The interface is available in English and Chinese. Without a stored choice, a
+browser whose first language starts with `zh` gets Chinese; the EN/中 control
+switches immediately, including job rows, history, connections and comparison
+summaries. The theme control cycles through automatic (following the operating
+system), light and dark. Printed and PDF output always uses the light palette.
+
+These two preferences are the only values this application writes to
+`localStorage` (`markitai.lang`, `markitai.theme`). A small classic script,
+`/ui/boot.js`, applies them in the document head before first paint; it runs
+under the same `script-src 'self'` policy as the module scripts. Messages that
+come from the service, such as conversion errors and provider probe details, are
+shown as the service wrote them, inside localized context where the page knows
+the meaning. The access-token control is shown only when this tab uses a token
+or the service has answered 401.
+
 ## Connections and concurrent editing
 
 The Connections view lists configured and available providers, saved deployments
@@ -84,10 +138,17 @@ restrictions.
 exact embedded bytes, MIME/HEAD/cache/security headers, unknown API and asset
 404s, filesystem non-exposure and Host/method rejection. The pure JavaScript
 `web/api.test.mjs` tests fragment/query cleanup, blocked storage, token destination
-restriction, artifact identity and authenticated request redirect policy. Run it
-with `node --test crates/markitai-cli/src/server/web/api.test.mjs`; Node is only a
+restriction, artifact identity, authenticated request redirect policy, the
+offline error, URL-line parsing, duplicate files and the copy fallback.
+`web/i18n.test.mjs` checks that both languages define the same keys and
+placeholders, that every key the page and scripts use exists, language
+detection, plural forms and the theme cycle; `web/result-tools.test.mjs` also
+checks Chinese comparison and print messages. Run them with
+`node --test crates/markitai-cli/src/server/web/*.test.mjs`; Node is only a
 development test tool. Syntax checks use `node --input-type=module --check` with
-each authored JS file on stdin.
+each authored JS file on stdin. The embedded resources are `index.html`,
+`style.css`, `icon.svg` (the tab icon), `boot.js`, `app.js`, `api.js`, `i18n.js`,
+`preview.js`, `result-tools.js`, `settings.js` and the two vendored libraries.
 
 These tests and actual release-browser acceptance passed in
 [round twenty-one](validation/service-ui-round21.md), including mixed file/URL

@@ -2,6 +2,7 @@ import {marked} from './marked.js';
 import DOMPurify from './purify.js';
 import {artifactPath, authenticatedURL, fileURL} from './api.js';
 import {previewBody} from './result-tools.js';
+import {t} from './i18n.js';
 
 export function preview(markdown, job, documentPath, artifacts, target) {
   const allowed = new Set(artifacts.map(item => item.relpath));
@@ -17,7 +18,7 @@ export function preview(markdown, job, documentPath, artifacts, target) {
       node.src = authenticatedURL(fileURL(job, path)); node.loading = 'lazy'; node.referrerPolicy = 'no-referrer';
     } else {
       const placeholder = document.createElement('span'); placeholder.className = 'blocked-image';
-      placeholder.textContent = `[Image: ${node.getAttribute('alt') || 'preview unavailable'}]`;
+      placeholder.textContent = t('imagePlaceholder', {alt: node.getAttribute('alt') || t('imageUnavailable')});
       node.replaceWith(placeholder);
     }
   }

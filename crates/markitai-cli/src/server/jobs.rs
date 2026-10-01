@@ -14,7 +14,7 @@ use std::{
     },
     time::Instant,
 };
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 
 #[derive(Clone)]
 pub(super) struct JobData {
@@ -151,10 +151,13 @@ pub(super) struct Job {
     pub retry_pending: Mutex<HashSet<String>>,
     pub runtime: OnceLock<Arc<markitai_core::LlmRuntime>>,
     pub events: broadcast::Sender<(&'static str, Value)>,
+    /// Set by a stop request; original items still waiting for a slot are not dispatched.
+    pub stop: watch::Sender<bool>,
 }
 impl Job {
     pub fn new(folder: PathBuf, data: JobData) -> Self {
         let (events, _) = broadcast::channel(128);
+        let (stop, _) = watch::channel(false);
         Self {
             folder,
             data: Mutex::new(data),
@@ -166,6 +169,7 @@ impl Job {
             retry_pending: Mutex::new(HashSet::new()),
             runtime: OnceLock::new(),
             events,
+            stop,
         }
     }
 }
@@ -279,16 +283,26 @@ async fn convert_one(
         state.file_slots.clone()
     };
     let mut closing = state.shutdown.subscribe();
-    let permit = if state.closing.load(Ordering::SeqCst) {
+    let mut stopped = job.stop.subscribe();
+    let permit = if state.closing.load(Ordering::SeqCst) || *stopped.borrow() {
         None
     } else {
-        tokio::select! { biased; _=closing.changed()=>None, permit=semaphore.acquire_owned()=>permit.ok() }
+        tokio::select! { biased; _=closing.changed()=>None, _=stopped.wait_for(|stop| *stop)=>None, permit=semaphore.acquire_owned()=>permit.ok() }
     };
-    if permit.is_none() || state.closing.load(Ordering::SeqCst) {
+    let shutdown = state.closing.load(Ordering::SeqCst);
+    // A stop that arrives together with the slot still wins: the item has not started.
+    if permit.is_none() || shutdown || *job.stop.borrow() {
         let mut data = job.data.lock().unwrap();
         let item = &mut data.items[index];
         item.status = "error".into();
-        item.error = Some("cancelled (server shutdown)".into());
+        item.error = Some(
+            if !shutdown && *job.stop.borrow() {
+                "cancelled (stopped by request)"
+            } else {
+                "cancelled (server shutdown)"
+            }
+            .into(),
+        );
         item.finished_at = Some(now());
         let _ = job.events.send(("item", json!(item)));
         return;
