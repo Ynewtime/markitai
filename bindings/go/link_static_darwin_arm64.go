@@ -1,4 +1,4 @@
-//go:build markitai_static && darwin && arm64
+//go:build markitai_static && darwin && arm64 && !ios
 
 package markitai
 

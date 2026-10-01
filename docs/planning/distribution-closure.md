@@ -27,7 +27,7 @@ CLI/三绑定检查点；R28 的静态 Go 实际结果由协调器单独归档�
    wheel/npm/Go 模块、最终 Go 消费者分别的体积，不把 `.a` 大小当成用户 executable
    大小，也不混用不同优化 profile。
 
-`markitai_static` 保持可选，默认动态开发方式不变。目前仅 darwin/arm64 分支有
+`markitai_static` 保持可选，默认动态开发方式不变。目前 darwin/arm64 与 linux/amd64（glibc）分支有
 配送实现，其他 target 明确拒绝静态模式。C ABI 和 Go 调用接口不需要改变。
 Go 开发者构建时仍需 cgo/C linker，最终程序不需要 Rust、Python、Node 或另送
 Markitai 动态库。[Rust staticlib 规则](https://doc.rust-lang.org/reference/linkage.html)、

@@ -319,9 +319,9 @@ macOS/Linux. With this default dynamic mode, deployment must package
 `libmarkitai_ffi` and configure the loader path for the destination.
 `CGO_LDFLAGS` can supply additional library paths;
 `DYLD_LIBRARY_PATH` on macOS or `LD_LIBRARY_PATH` on Linux can select a test
-build. The optional static package described below is initially limited to
-macOS arm64. Windows cgo distribution and other-platform static delivery remain
-unvalidated. Go consumers need cgo enabled and a C linker at build time.
+build. The optional static package described below is packaged for macOS arm64
+and Linux x86-64 with glibc. Windows cgo distribution and other static targets
+remain unvalidated. Go consumers need cgo enabled and a C linker at build time.
 
 ```go
 out, err := markitai.Convert("report.md", &markitai.Options{
@@ -340,11 +340,16 @@ currently propagated into native work.
 ### Static Go package
 
 The `markitai_static` build tag selects an explicit
-`native/darwin_arm64/libmarkitai_ffi.a` inside the Go module. It cannot silently
-select the adjacent dynamic library. Without that tag, the original development
-linkage remains unchanged. Other operating systems and architectures explicitly
-reject this static mode; adding a target requires its own archive, system-link
-parameters and real consumer validation.
+`native/<goos>_<goarch>/libmarkitai_ffi.a` inside the Go module. Two targets are
+packaged: macOS arm64 (`darwin_arm64`) and Linux x86-64 with glibc
+(`linux_amd64`). The tag cannot silently select the adjacent dynamic library.
+Without that tag, the original development linkage remains unchanged. Other
+operating systems and architectures explicitly reject this static mode,
+including iOS and Android, which Go also builds with the `darwin` and `linux`
+tags; adding a target requires its own archive, system-link parameters and real
+consumer validation. Go does not tell glibc from musl, so on a musl system the
+Linux archive fails to link instead of being rejected. Each package carries only
+its own target's archive.
 
 `scripts/package_go_static.py` stages a self-contained module with the Go source,
 tests, C header, native archive, license texts and a hash manifest. It does not
@@ -352,13 +357,28 @@ build Rust or download a toolchain. The coordinator supplies the frozen static
 archive, full Cargo metadata, compiler `native-static-libs` output and a build
 record containing the exact source and input hashes. The script independently
 checks the current clean source revision and all tracked bytes before and after
-execution. It rejects an old output directory.
+execution. It runs only on the native host of the package's target
+(`--expected-host` names its Rust triple and defaults to the detected host), and
+it rejects an old output directory. The macOS archive comes from the
+[R28 builder](validation/drivers/routing-domains-static-round28/build-static.py),
+the Linux one from the [guest builder](validation/drivers/linux-static-go-round50/build-static.py),
+which also requires rustc's host to be `x86_64-unknown-linux-gnu`.
+[run-guest.py](validation/drivers/linux-static-go-round50/run-guest.py) runs both
+Linux steps from the macOS host in the OrbStack Ubuntu guest: it clones a git
+bundle of the clean HEAD into a new guest directory and brings back the records
+and logs as a hash-checked tar.
 
 The staged archive is unpacked into a separate module for the existing Go race
 tests. A separate consumer then builds with the static tag and is copied to a
 new directory for concurrent Unicode conversions and the JSON error contract.
 The driver requires only system dynamic dependencies and no rpath in the final
-consumer. `HOME` is retained; Markitai state, temporary files and Go caches are
+consumer. On macOS, `otool -L` may name only `/System/Library/Frameworks` and
+`/usr/lib`, and no `LC_RPATH` may remain. On Linux the archive must hold only
+relocatable x86-64 ELF objects; the consumer's `readelf -d` may name only
+glibc's libraries, its loader and `libgcc_s.so.1`, with no `RPATH` or `RUNPATH`;
+`ldd` must resolve each from the system library directories; and the newest
+glibc symbol version in `objdump -T` is recorded as the consumer's glibc
+minimum. `HOME` is retained; Markitai state, temporary files and Go caches are
 private. No dynamic-library search override is inherited. Fixture paths are
 provided only to the package tests, not the independent consumer.
 
@@ -371,11 +391,44 @@ replace markitai.local/go => /absolute/path/to/unpacked/markitai-go
 
 Build the consuming program with `go build -tags markitai_static`. Only the final
 executable needs distribution; a Markitai dynamic library, CLI or Rust toolchain
-is not required at runtime. macOS system libraries/frameworks remain dynamic,
-and optional Chromium/LibreOffice backends still require their separate runtime.
-The initial linkage names Vision, Foundation, ImageIO, CoreGraphics,
-CoreFoundation, Objective-C, iconv and the system C/math libraries. The packaging
-driver verifies these against the actual Rust compiler dependency note.
+is not required at runtime. macOS system libraries/frameworks, or glibc and
+libgcc_s on Linux, remain dynamic, and optional Chromium/LibreOffice backends
+still require their separate runtime. The macOS linkage names Vision,
+Foundation, ImageIO, CoreGraphics, CoreFoundation, Objective-C, iconv and the
+system C/math libraries; the Linux linkage names libgcc_s (the unwinder),
+libutil, librt, libpthread, libm, libdl and libc. The packaging driver verifies
+these against the actual Rust compiler dependency note. Since glibc 2.34 most of
+the Linux ones are part of libc; with Ubuntu's default `--as-needed` linking the
+consumer records only libgcc_s, libm, libc and the loader.
+
+A Linux executable requires at least the glibc whose newest symbol versions it
+binds, which depends on the glibc it was linked against. Linked on Ubuntu 24.04
+(glibc 2.39) that is 2.39: Rust's standard library refers to `pidfd_spawnp` and
+`pidfd_getpid` weakly, but the linker records their version as a hard
+requirement (the newest otherwise is 2.35). Executables linked against an older
+glibc have not been tested. In the R50 run (release profile, rustc 1.98.1, Go
+1.27.1, gcc 13.3, Ubuntu 24.04 amd64 under OrbStack/Rosetta) the archive was
+244,496,550 bytes in 619 objects, 139,629,492 of them embedded LLVM bitcode that
+linkers discard (machine code and data: 31,846,070 bytes); the package was
+71,858,526 bytes and the consumer 48,723,760 bytes (34,864,832 stripped). The
+archive keeps one object per crate: Cargo applies the release profile's LTO only
+when all of a package's crate types allow it, and `markitai-ffi` also builds an
+`rlib`.
+
+Go's external link keeps every section of the archive members it pulls in, and
+cgo rejects `-Wl,--gc-sections` (Linux) and `-Wl,-dead_strip` (macOS) in
+`#cgo LDFLAGS`. A consumer can opt in when it builds:
+
+```sh
+CGO_LDFLAGS="$(go env CGO_LDFLAGS) -Wl,--gc-sections" go build -tags markitai_static  # Linux
+CGO_LDFLAGS="$(go env CGO_LDFLAGS) -Wl,-dead_strip" go build -tags markitai_static    # macOS
+```
+
+In R50 this shrank the Linux consumer from 48,723,760 to 31,877,240 bytes
+(24,012,912 with `-ldflags=-s -w`, against 34,864,832) and the macOS arm64 one
+from 47,990,834 to 30,338,210 bytes. Both produced the same conversions and JSON
+error, the installed packages' race tests passed with the flag, and the Linux
+executable kept Go's build ID and build information.
 
 The package's `licenses.json` records original source paths and byte hashes for
 collected texts, including separate Rust toolchain notices. Its Cargo closure
@@ -384,7 +437,7 @@ list of code reachable in the final binary. Missing texts are reported explicitl
 as `unresolved`, and a successful technical consumer test does not complete the
 redistribution review. This workflow's host results must be recorded separately;
 the earlier dynamic-binding checkpoints do not establish static-link success or
-minimum-macOS compatibility.
+minimum-macOS or minimum-glibc compatibility.
 
 The C ABI is version 1:
 
@@ -485,8 +538,10 @@ installed Node 7/7, Python 20 and Go race tests, plus the macOS static Go
 package (844 installed files, 24 relocated concurrent conversions). Toolchains
 were Rust 1.98.1, Python 3.13, Node.js 24 and Go 1.27; the minimum versions in
 the installation table come from the package manifests and are not separately
-tested. Windows, physical Intel hosts and other-platform static Go packages
-have not been run. Earlier rounds, including the first binding checkpoints and
-their package sizes, are kept in the [validation records](validation/README.md)
+tested. The Linux x86-64 static Go package was first run in R50, outside a
+delivery round (see [Static Go package](#static-go-package)). Windows, physical
+Intel hosts and other static Go targets have not been run. Earlier rounds,
+including the first binding checkpoints and their package sizes, are kept in
+the [validation records](validation/README.md)
 (for example [artifacts round 3](validation/artifacts-round3.json) and
 [R28 static Go](validation/routing-domains-static-round28.md)).

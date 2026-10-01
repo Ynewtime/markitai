@@ -4,6 +4,7 @@
 
 ### Added
 
+- The `markitai_static` Go package is also staged for linux/amd64 (glibc): `scripts/package_go_static.py` targets the host, checks that every archive member is an x86-64 ELF object, that the consumer links only system libraries without RPATH, and records the glibc it requires (2.39); a guest driver builds the archive offline. iOS no longer matches the macOS archive.
 - The web workspace shows real upload progress (percentage and bytes, throttled, with Cancel upload kept), keeps a Chinese first paint free of English, returns focus to the job title after actions that remove the focused control, clears a stale `?job=` link once, and hides Download all for an empty history. API errors gain a stable `reason` beside `detail` and `code`, and failed items an `error_code`, so the page shows service and conversion errors in Chinese or English with the original English under Details.
 - `scripts/package_cli_target.py` builds the single-binary CLI archive for another target (x86-64 macOS on Apple silicon), checks it like the native archive and runs it under Rosetta 2 when the host can.
 - Save the images a document printed to stdout refers to under `MARKITAI_HOME/assets/blobs/` by content hash and link them with `file://` URIs (`image.stdout_persist`, on by default as in the reference, whose default wrote to the real home); turning it off keeps the relative references with a warning.
