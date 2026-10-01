@@ -16,7 +16,9 @@ Earlier checkpoints, oldest at the bottom of each series: delivery rounds
 and, before them, [round twenty-four](structured-media-round24.md) and
 [round twenty-three](vision-auth-cli-round23.md). Platform records: Linux
 `platform-linux-round*`, Windows type checks `windows-check-round38.md`, and the
-x86-64 macOS build under Rosetta 2 in [macos-x86_64-rosetta.md](macos-x86_64-rosetta.md).
+x86-64 macOS build under Rosetta 2 in [macos-x86_64-rosetta.md](macos-x86_64-rosetta.md); Linux desktop
+proxy reads with GNOME and KDE 5 in `linux-desktop-proxy-round38.md` and with KDE 6 in
+[linux-kde6-proxy-round49.md](linux-kde6-proxy-round49.md).
 
 [Round twenty-two](media-llm-round22.md) retains Office/Numbers/text processing
 acceptance; [round twenty-one](service-ui-round21.md) retains actual web workspace
