@@ -39,7 +39,7 @@ scraper = "0.27"
 markup5ever = "0.39"
 htmd = { version = "0.5", default-features = false }
 quick-xml = "0.41"
-mail-parser = "0.11"
+mail-parser = { version = "0.11", features = ["full_encoding"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

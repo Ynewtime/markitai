@@ -912,6 +912,58 @@ mod tests {
     }
 
     #[test]
+    fn multibyte_east_asian_charsets_decode_subjects_and_bodies() {
+        // GB2312 subject and body (base64), Big5, Shift_JIS, EUC-KR bodies
+        // (8bit) and ISO-2022-JP (7bit escape sequences).
+        let gb_subject = b"\xb2\xe2\xca\xd4\xd6\xf7\xcc\xe2"; // 测试主题
+        let gb_body = b"\xc4\xe3\xba\xc3\xa3\xac\xca\xc0\xbd\xe7"; // 你好，世界
+        let base64 = |bytes: &[u8]| {
+            use base64::Engine as _;
+            base64::engine::general_purpose::STANDARD.encode(bytes)
+        };
+        let mail = format!(
+            "From: a@example.com\r\nSubject: =?gb2312?B?{}?=\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=gb2312\r\nContent-Transfer-Encoding: base64\r\n\r\n{}\r\n",
+            base64(gb_subject),
+            base64(gb_body)
+        );
+        let doc = extract(mail.as_bytes()).unwrap();
+        assert!(
+            doc.markdown.contains("**Subject:** 测试主题"),
+            "{}",
+            doc.markdown
+        );
+        assert!(doc.markdown.contains("你好，世界"), "{}", doc.markdown);
+        for (charset, encoded, expected) in [
+            ("big5", &b"\xa4\xa4\xa4\xe5"[..], "中文"),
+            (
+                "shift_jis",
+                &b"\x82\xb1\x82\xf1\x82\xc9\x82\xbf\x82\xcd"[..],
+                "こんにちは",
+            ),
+            ("euc-kr", &b"\xc7\xd1\xb1\xb9\xbe\xee"[..], "한국어"),
+            ("iso-2022-jp", &b"\x1b$B$3$s$K$A$O\x1b(B"[..], "こんにちは"),
+        ] {
+            let mut mail = format!(
+                "From: a@example.com\r\nSubject: s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset={charset}\r\nContent-Transfer-Encoding: 8bit\r\n\r\n"
+            )
+            .into_bytes();
+            mail.extend_from_slice(encoded);
+            mail.extend_from_slice(b"\r\n");
+            let doc = extract(&mail).unwrap();
+            assert!(
+                doc.markdown.contains(expected),
+                "{charset}: {}",
+                doc.markdown
+            );
+            assert!(
+                !doc.markdown.contains('\u{fffd}'),
+                "{charset}: {}",
+                doc.markdown
+            );
+        }
+    }
+
+    #[test]
     fn malformed_transfer_encoding_and_invalid_cid_escapes_cannot_create_image_bindings() {
         let doc = extract(&message(multipart("related", "outer", &[
             part("Content-Type: text/html", b"<p>Surviving body.</p><img src='cid:bad' alt='Bad bytes'><img src='cid:%0Aevil' alt='Bad ID'><img src='cid:bad%XZ' alt='Bad escape'>"),
