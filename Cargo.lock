@@ -1725,7 +1725,7 @@ dependencies = [
 
 [[package]]
 name = "markitai-cli"
-version = "1.3.0-dev"
+version = "1.3.0"
 dependencies = [
  "axum",
  "caseless",
@@ -1754,7 +1754,7 @@ dependencies = [
 
 [[package]]
 name = "markitai-core"
-version = "1.3.0-dev"
+version = "1.3.0"
 dependencies = [
  "anydoc",
  "base64 0.22.1",
@@ -1802,7 +1802,7 @@ dependencies = [
 
 [[package]]
 name = "markitai-ffi"
-version = "1.3.0-dev"
+version = "1.3.0"
 dependencies = [
  "markitai-core",
  "serde_json",
@@ -1811,7 +1811,7 @@ dependencies = [
 
 [[package]]
 name = "markitai-node"
-version = "1.3.0-dev"
+version = "1.3.0"
 dependencies = [
  "markitai-core",
  "napi",
@@ -1821,7 +1821,7 @@ dependencies = [
 
 [[package]]
 name = "markitai-python"
-version = "1.3.0-dev"
+version = "1.3.0"
 dependencies = [
  "markitai-core",
  "pyo3",

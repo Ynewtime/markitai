@@ -1446,10 +1446,10 @@ Exit status: 0 success; 1 failure; 2 usage error or provider batch still pending
 
 --- stderr ---
 === markitai --version (exit 0, stderr 0 bytes) ===
-markitai 1.3.0-dev
+markitai 1.3.0
 --- stderr ---
 === markitai -V (exit 0, stderr 0 bytes) ===
-markitai 1.3.0-dev
+markitai 1.3.0
 --- stderr ---
 === markitai config (exit 2, stderr 1194 bytes) ===
 --- stderr ---
