@@ -45,14 +45,7 @@ fn rewrite(mut command: Command, reference: &Command) -> Command {
     // The flags go in first so that they take part in the ordering below.
     command = command.disable_help_flag(true).arg(help_flag(long_help));
     if versioned {
-        command = command.disable_version_flag(true).arg(
-            Arg::new("version")
-                .short('V')
-                .long("version")
-                .action(ArgAction::Version)
-                .help("显示版本")
-                .help_heading(OPTIONS),
-        );
+        command = command.disable_version_flag(true).arg(version_flag());
     }
     // Clap prints headings in the order their first option appears. Put the
     // positionals first, then the options that had no heading of their own
@@ -105,6 +98,16 @@ fn rewrite(mut command: Command, reference: &Command) -> Command {
         *child = rewrite(std::mem::take(child), built);
     }
     command
+}
+
+/// `-V, --version`, replacing clap's own flag.
+pub(super) fn version_flag() -> Arg {
+    Arg::new("version")
+        .short('V')
+        .long("version")
+        .action(ArgAction::Version)
+        .help("显示版本")
+        .help_heading(OPTIONS)
 }
 
 /// `-h, --help`. With a long form, `-h` points at `--help` and the other way

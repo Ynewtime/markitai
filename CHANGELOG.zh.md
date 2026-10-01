@@ -86,6 +86,7 @@
 
 ### 修复
 
+- 向已关闭的管道写出（`markitai file | head`）时所有命令都安静地按运行结果退出，不再显示 `Error: Broken pipe` 或崩溃；其它标准输出写入失败时提示 `Error: Cannot write to standard output: …`。被中断的批量运行会列出未处理的项并提示 `--resume`；需要用户密码的 PDF 会说明已加密；`markitai-mcp` 支持 `--version`，帮助中显示自己的名字；`--log-level` 不区分大小写；URL 后紧跟中文标点时终端行不再被打乱。
 - Claude 响应恢复计价：Messages API 现在在用量中返回 `usage.inference_geo`，此前这让所有 Anthropic 响应都无法计价；未限定地区（`not_available`、`global`）按标价计算，限定美国境内推理的响应仍不计价。
 - `claude-agent/` 模型接受 Claude Code 2.1.284 及此后的 2.1 补丁版本（官方运行时会自行更新到这些版本），不再只认 2.1.284；`markitai auth claude status --json` 报告已安装的版本与支持的最低版本。
 - 使用东亚多字节字符集（GB2312、GBK、GB18030、Big5、Shift_JIS、EUC-JP、EUC-KR、ISO-2022-JP）的邮件能正确解出主题与正文，不再写成替换字符：邮件解析器的完整字符集支持已开启。

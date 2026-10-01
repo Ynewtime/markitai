@@ -78,7 +78,7 @@ MARKITAI_LANG=zh markitai --help
 - `--json -o` 输出 version 1.0 envelope，字段名与参考接口一致。运行失败仍有机器可读条目；参数错误只输出 stderr 并退出 2（未给 `-o` 时说明 stdout 已被 JSON 占用）。有模型请求的条目额外带 `pricing`（`priced_requests`、`unpriced_requests`、`cost_status`、`pricing_snapshots`，观察不完整时另有 `incomplete_request_observations`），`totals.pricing` 汇总这些条目；没有模型用量时两者省略，定价规则见 [定价](pricing.md)。没有条目时 totals 的 `cost_usd`/`duration_s` 为 0，不输出 `-0.0`。
 - 目录递归转换保留相对路径，支持重复 `--glob`、`!` 排除和 `--max-depth`，使用受限线程并发；目录中的 `.urls` 也会发现。同批任务预留独立名称，即使冲突策略为 overwrite/skip，也不会让两个新结果互相覆盖；大小写匹配按输出文件系统探测。URL 列表支持文本和 JSON 两种格式。
 - `--llm-concurrency` 限制整个运行中的在途模型请求，目录中的文件与 URL 共用该上限；重试等待和缓存命中不占请求槽。文件与 URL 的转换并发仍分别由 `-j` 和 `--url-concurrency` 控制。
-- 目录/URL 列表普通转换项失败退出 10；单项失败退出 1，成功退出 0；状态存储致命错误退出 1，中断退出 130/143。`--quiet` 仍显示错误。批量结束时 stderr 摘要依次给出完成数、耗时与费用、按原因分组的跳过项、失败/未完成项示例（错误在上方逐项列出）、全部因缺少模型而失败时的一行配置提示，以及输出目录。
+- 目录/URL 列表普通转换项失败退出 10；单项失败退出 1，成功退出 0；状态存储致命错误退出 1，中断退出 130/143。`--quiet` 仍显示错误。批量结束时 stderr 摘要依次给出完成数、耗时与费用、按原因分组的跳过项、失败/未完成项示例（错误在上方逐项列出）、被中断时还有多少项根本没有开始（`Not processed N items: …. Run the same command with --resume to continue.`，中文为 `未处理 N 项：…。使用相同命令并加上 --resume 可继续。`，项名取前两个）、全部因缺少模型而失败时的一行配置提示，以及输出目录。`--quiet` 不输出摘要，`--json` 的条目只含已结束的项。
 - 四种输入模式支持持久 JSON 报告。`output.report` 为 null 或省略时，目录/URL 列表默认启用，单文件/URL 默认关闭；true/false 显式覆盖。报告写入输出目录的 `.markitai/reports/`，各模式的字段和计数差异见 [reports.md](reports.md)。
 - 报告发布失败保留已完成文件及 stdout JSON 条目，并退出非零；报告不替代 stdout envelope。stdout 转换、dry run、无可恢复状态的空目录和失败/跳过的单项不生成报告；批量部分失败仍可生成报告。报告的 skip 冲突策略保留已有报告。
 - Unix 目录/URL 列表每次保存恢复状态；`--resume` 合并新发现任务、保留完成项并重试未完成项。输出归属凭证保护隐式重试，旧状态按普通冲突策略升级，升级前私有保存原始 base/journal 及存在性；备份仅是状态回退材料，不撤销输出或模型请求。首次 Ctrl-C 停止派发、同步状态并等待在途转换，退出 130；再次中断先终止本进程启动的订阅运行时、Chromium 和 LibreOffice 进程组后立即退出。单输入转换收到 SIGINT/SIGTERM/SIGHUP 时同样先终止这些进程组，再按原信号默认方式退出；它们位于独立进程组，终端中断本身不会到达。详见 [恢复状态](state-storage.md) 与 [输出归属](output-ownership.md)。
@@ -93,7 +93,8 @@ MARKITAI_LANG=zh markitai --help
 - `doctor [--json]` 恢复参考的顶层检查字典：`playwright/libreoffice/rapidocr/anydoc/serve/llm-api/vision-model/vlm-ocr`，配置订阅模型时追加对应 SDK/auth 项。每项包含 `name/description/status/message/install_hint`，状态为 `ok/warning/missing/error`，按检查需要附 `path/optional/models`；保留旧 key，但描述实际原生后端，不声称安装了同名 Python 包。Chromium 实际执行私有 profile 的 about:blank/CDP 启停，LibreOffice 有界执行隔离的 `--version`；这不证明网页/文档完整兼容。OCR 检查平台 API 可用性，不预热模型；LLM 只核对本地配置、环境引用和路由资格，不联系 provider。
 - doctor 文本输出首行后注明所用配置文件（或内建默认值及 `markitai init` 提示），末行汇总：配置要求的检查是否就绪、可选项有几项未就绪；JSON 结构不变。缺少可选组件退出 0；活跃模型缺少环境引用或不可用、配置明确要求的浏览器不可启动时退出 1，weight=0 的模型不阻断。显式 playwright、截图以及带 HTTP credentials、非空 cookies 或额外 HTTP headers 的 auto 抓取要求浏览器，显式 static 不因该凭据字段而要求浏览器。VLM OCR 项显示 `MARKITAI_NO_VLM_OCR` 的实际选择。`doctor --fix` 在浏览器不可用时，通过原生安装器下载官方 Chrome headless shell，私有启动验证后原子启用；已有浏览器正常则不下载。显式 `MARKITAI_BROWSER_EXECUTABLE` 会阻止自动替换该路径。详见[浏览器安装](browser-installation.md)。`--json --fix` 返回 2，Python 专属 `--suggest-extras` 明确未支持。未配置 `llm.model_list` 时，LLM 项按 `MODEL`/供应商 API key 报告 `--llm` 实际会用的模型（有 key 为 ok，只有 `MODEL` 而缺 key 为 warning），不再报 missing；设置了 `MARKITAI_BROWSER_EXECUTABLE` 而浏览器不可用时，浏览器项直接指出该变量，并说明 `--fix` 不会替换它。
 - `serve` 启动原生 REST 服务，支持提交文件/URL、任务快照与 SSE、结果/资产/ZIP 下载及持久历史；根路径提供内嵌的浏览器工作区（转换、预览、历史与模型设置）。沿用 host、port、no-open、no-auth、allowed-host 参数；接口与安全边界见 [REST 服务](serve.md) 和 [浏览器工作区](web-ui.md)。
-- `mcp` 通过标准输入/输出提供 `convert_document`、`convert_url`、`batch_convert`、`job_status` 四个工具。配置与文件输出沿用同一核心，批处理任务保存在当前 MCP 进程内；协议和结果边界见 [MCP 服务](mcp.md)。
+- 标准输出与其他 Unix 工具一致：读端提前关闭（`markitai big.txt | head -1`）时静默结束，退出码保持运行本身的结果（成功转换为 0；不选 141，以免在 `set -o pipefail` 的脚本里把正常的截取变成失败，也与 ripgrep、fd 等 Rust 命令行一致）。其他写入失败（例如 `> file` 所在磁盘已满）在 stderr 打印 `Error: Cannot write to standard output: …` 并退出 1；运行本身已失败时保留原退出码。无输入时显示的帮助，以及 `config`、`cache`、`doctor`、`--dry-run` 等的输出同样处理，不再因 `println!` 写失败而 panic（此前退出 101）。
+- `mcp` 通过标准输入/输出提供 `convert_document`、`convert_url`、`batch_convert`、`job_status` 四个工具。`markitai-mcp` 启动名自成一个命令：`markitai-mcp --help` 的用法行写 `markitai-mcp [OPTIONS]`，`--version`/`-V` 打印 `markitai-mcp <版本>`，选项仍是 `-c/--config` 与 `--config-json`；`markitai mcp` 子命令本身不接受 `--version`（Windows 的 `markitai-mcp.cmd` 只转发到 `markitai mcp`，因此同样不接受）。配置与文件输出沿用同一核心，批处理任务保存在当前 MCP 进程内；协议和结果边界见 [MCP 服务](mcp.md)。
 - `--dry-run` 仅枚举输入和目标，不调用转换器、不创建输出目录。
 - `--compress/--no-compress` 映射共享图片处理配置；未启用 LLM/OCR 的独立图片返回 `image_only` 跳过状态，不写空文档。
 - 非 pure 本地文档及文本 URL 的 LLM 结果可逐块跨进程复用；`--no-cache` 跳过读取但仍写入成功结果，`--cache` 清除此绕过设置，不强制启用已禁用的缓存。`--no-cache-for` 接受逗号分隔的 glob，JSON 条目的 `cache_hit/llm_cache_hit` 反映实际命中。
@@ -115,7 +116,7 @@ MARKITAI_LANG=zh markitai --help
 ## 文件日志
 
 转换的文件日志默认关闭（`log.dir=null`）。设置目录后，默认文件级别为 INFO；
-`--log-level DEBUG|INFO|WARNING|ERROR|CRITICAL` 覆盖 `log.level`，仅影响文件。
+`--log-level DEBUG|INFO|WARNING|ERROR|CRITICAL`（不区分大小写，`debug` 同样可用）覆盖 `log.level`，仅影响文件。
 `--quiet`/`--verbose` 沿用终端策略，日志不进入 stdout Markdown 或 `--json` envelope。
 配置、缓存、服务等子命令保留自己的输出，不因根级 `--log-level` 启用转换日志。
 

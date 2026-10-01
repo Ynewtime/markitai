@@ -94,6 +94,56 @@ fn file_logging_does_not_change_stdout_and_level_only_filters_file() {
 }
 
 #[test]
+fn the_log_level_is_accepted_in_any_case_and_still_filters_by_that_level() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("note.txt"), "# Hello\n").unwrap();
+    let cfg =
+        json!({"log":{"dir":"logs","format":"json","level":"ERROR"},"cache":{"enabled":false}});
+    for (index, spelling) in ["debug", "Debug", "DEBUG"].into_iter().enumerate() {
+        let output = invoke(
+            root.path(),
+            cfg.clone(),
+            &["note.txt", "--pure", "--log-level", spelling, "-q"],
+            &[],
+        );
+        assert!(
+            output.status.success(),
+            "--log-level {spelling}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        // Each run writes its own file; every one of them carries DEBUG records.
+        let rows = records(&root.path().join("logs"));
+        let debug = rows.iter().filter(|row| row["lvl"] == "DEBUG").count();
+        assert!(debug > index, "--log-level {spelling}: {rows:?}");
+    }
+    // The other levels follow the same rule (WARNING hides the DEBUG records of
+    // its run), and a value that is no level fails.
+    let before = records(&root.path().join("logs")).len();
+    let output = invoke(
+        root.path(),
+        cfg.clone(),
+        &["note.txt", "--pure", "--log-level", "warning", "-q"],
+        &[],
+    );
+    assert!(output.status.success());
+    let rows = records(&root.path().join("logs"));
+    assert_eq!(rows.len(), before, "a clean run logs nothing at WARNING");
+    let output = invoke(
+        root.path(),
+        cfg,
+        &["note.txt", "--pure", "--log-level", "verbose"],
+        &[],
+    );
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("invalid value 'verbose'"), "{stderr}");
+    assert!(
+        stderr.contains("DEBUG, INFO, WARNING, ERROR, CRITICAL"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn parallel_json_results_and_log_rotation_keep_all_complete_records() {
     let root = tempfile::tempdir().unwrap();
     std::fs::create_dir(root.path().join("input")).unwrap();

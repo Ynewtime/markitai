@@ -23,6 +23,12 @@ fn conversion(message: impl std::fmt::Display) -> Error {
     Error::Conversion(format!("Native PDF conversion failed: {message}"))
 }
 
+fn password_required() -> Error {
+    conversion(
+        "the PDF is encrypted and needs a password to open; remove the password first, as Markitai has no password option",
+    )
+}
+
 fn decoded(stream: &Stream) -> std::result::Result<Vec<u8>, String> {
     if !stream.dict.has(b"Filter") {
         if stream.content.len() > MAX_STREAM_BYTES {
@@ -915,6 +921,13 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
             &unrepaired
         }
     };
+    // The reader opens a PDF that is only owner-password protected, trying the
+    // empty user password, and drops its `/Encrypt` entry once decrypted. One
+    // that asks for a password stays encrypted, and its pages cannot be found
+    // or read: say so instead of reporting an empty or garbled document.
+    if pdf.trailer.get(b"Encrypt").is_ok() {
+        return Err(password_required());
+    }
     let page_ids = pdf.get_pages();
     if page_ids.is_empty() {
         return Err(conversion("document contains no pages"));
@@ -1947,5 +1960,121 @@ mod tests {
         assert_eq!(output.images, [image]);
         assert!(output.signals.contains("invisible text rendering mode"));
         assert!(output.warnings.is_empty());
+    }
+
+    const PROTECTED_TEXT: &str = "Words behind the lock stay readable.";
+
+    /// One page of text, encrypted with the given passwords by `version`
+    /// (1: RC4 40-bit, 2: RC4 128-bit, 4: AES 128-bit).
+    fn protected(version: u8, owner: &str, user: &str) -> Vec<u8> {
+        let mut pdf = lopdf::Document::with_version("1.7");
+        let tree = pdf.new_object_id();
+        let font = pdf.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica"
+        });
+        let content = pdf.add_object(Stream::new(
+            Dictionary::new(),
+            format!("BT /F1 12 Tf 72 700 Td ({PROTECTED_TEXT}) Tj ET").into_bytes(),
+        ));
+        let page = pdf.add_object(dictionary! {
+            "Type" => "Page", "Parent" => tree, "Contents" => content,
+            "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } }
+        });
+        pdf.objects.insert(
+            tree,
+            dictionary! {
+                "Type" => "Pages", "Count" => 1, "Kids" => vec![Object::Reference(page)],
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()]
+            }
+            .into(),
+        );
+        let catalog = pdf.add_object(dictionary! { "Type" => "Catalog", "Pages" => tree });
+        pdf.trailer.set("Root", catalog);
+        let id = Object::string_literal("protected-pdf-test-id");
+        pdf.trailer.set("ID", vec![id.clone(), id]);
+        let version = match version {
+            1 => lopdf::EncryptionVersion::V1 {
+                document: &pdf,
+                owner_password: owner,
+                user_password: user,
+                permissions: lopdf::Permissions::all(),
+            },
+            2 => lopdf::EncryptionVersion::V2 {
+                document: &pdf,
+                owner_password: owner,
+                user_password: user,
+                key_length: 128,
+                permissions: lopdf::Permissions::all(),
+            },
+            _ => {
+                let filter: std::sync::Arc<dyn lopdf::encryption::crypt_filters::CryptFilter> =
+                    std::sync::Arc::new(lopdf::encryption::crypt_filters::Aes128CryptFilter);
+                lopdf::EncryptionVersion::V4 {
+                    document: &pdf,
+                    encrypt_metadata: true,
+                    crypt_filters: BTreeMap::from([(b"StdCF".to_vec(), filter)]),
+                    stream_filter: b"StdCF".to_vec(),
+                    string_filter: b"StdCF".to_vec(),
+                    owner_password: owner,
+                    user_password: user,
+                    permissions: lopdf::Permissions::all(),
+                }
+            }
+        };
+        let state = lopdf::EncryptionState::try_from(version).unwrap();
+        pdf.encrypt(&state).unwrap();
+        let mut bytes = Vec::new();
+        pdf.save_to(&mut bytes).unwrap();
+        bytes
+    }
+
+    #[test]
+    fn a_pdf_that_asks_for_a_password_is_reported_as_encrypted() {
+        for version in [1, 2, 4] {
+            let bytes = protected(version, "owner-secret", "user-secret");
+            for result in [
+                extract(&bytes).map(|_| ()),
+                extract_pages(&bytes).map(|_| ()),
+                extract_pages_bounded(&bytes, 10).map(|_| ()),
+            ] {
+                let message = result.unwrap_err().to_string();
+                assert!(
+                    message.contains("encrypted and needs a password"),
+                    "version {version}: {message}"
+                );
+                assert!(
+                    !message.contains("no pages"),
+                    "version {version}: {message}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_pdf_with_only_an_owner_password_still_converts() {
+        for version in [1, 2, 4] {
+            let bytes = protected(version, "owner-secret", "");
+            let document = extract(&bytes).unwrap();
+            assert!(
+                document.markdown.contains(PROTECTED_TEXT),
+                "version {version}: {}",
+                document.markdown
+            );
+        }
+    }
+
+    #[test]
+    fn an_unprotected_pdf_without_pages_keeps_its_own_message() {
+        let mut pdf = lopdf::Document::with_version("1.7");
+        let tree = pdf.add_object(dictionary! {
+            "Type" => "Pages", "Count" => 0, "Kids" => Vec::<Object>::new()
+        });
+        let catalog = pdf.add_object(dictionary! { "Type" => "Catalog", "Pages" => tree });
+        pdf.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        pdf.save_to(&mut bytes).unwrap();
+        let message = extract(&bytes).unwrap_err().to_string();
+        assert!(message.contains("document contains no pages"), "{message}");
+        assert!(!message.contains("encrypted"), "{message}");
     }
 }

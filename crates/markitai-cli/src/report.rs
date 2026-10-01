@@ -1275,10 +1275,13 @@ pub(crate) fn render_resumed(
 /// A batch's closing lines on the terminal: what was converted, how long it
 /// took and what it cost, then skipped items by reason with the next step,
 /// then failed and unfinished items (each failure's error is printed before)
-/// and where the results are. The wording follows `lang`; item names, skip
-/// reasons and paths are shown as they are.
+/// and where the results are. `unprocessed` names the items an interruption
+/// kept from starting; the summary says so and points at `--resume`. The
+/// wording follows `lang`; item names, skip reasons and paths are shown as
+/// they are.
 pub(crate) fn batch_summary(
     records: &[RunItem],
+    unprocessed: &[&str],
     elapsed: std::time::Duration,
     output: &Path,
     lang: Lang,
@@ -1401,6 +1404,14 @@ pub(crate) fn batch_summary(
             "{label} {count}：{shown}。{hint}"
         ));
     }
+    // Completed items stay completed; a resumed run picks up the rest.
+    if !unprocessed.is_empty() {
+        let (count, shown) = (items(unprocessed.len()), examples(unprocessed));
+        lines.push(text!(
+            lang => "Not processed {count}: {shown}. Run the same command with --resume to continue.",
+            "未处理 {count}：{shown}。使用相同命令并加上 --resume 可继续。"
+        ));
+    }
     // Every item failing for want of a model has one cause and one remedy.
     let no_model = markitai_core::Error::NoModelConfigured.to_string();
     if records
@@ -1447,6 +1458,7 @@ mod tests {
         assert_eq!(
             batch_summary(
                 &records,
+                &[],
                 std::time::Duration::from_secs(75),
                 Path::new("out"),
                 Lang::En
@@ -1467,6 +1479,7 @@ mod tests {
         records[1].usage.requests = 0;
         let lines = batch_summary(
             &records[..2],
+            &[],
             std::time::Duration::from_secs(3),
             Path::new("out"),
             Lang::En,
@@ -1484,6 +1497,7 @@ mod tests {
         }
         let lines = batch_summary(
             &records,
+            &[],
             std::time::Duration::ZERO,
             Path::new("out"),
             Lang::En,
@@ -1524,6 +1538,7 @@ mod tests {
         let summary = |records: &[RunItem], lang| {
             batch_summary(
                 records,
+                &[],
                 std::time::Duration::from_secs(75),
                 Path::new("out"),
                 lang,
@@ -1570,6 +1585,57 @@ mod tests {
         assert_eq!(
             pending_batch[1],
             "已跳过 1 项（pending_batch）：u。稍后可用 --llm-batch-collect 或 --resume 收取。"
+        );
+    }
+
+    #[test]
+    fn an_interrupted_batch_counts_what_it_did_not_start_and_points_to_resume() {
+        let records: Vec<RunItem> = (0..2)
+            .map(|index| item(index, ItemKind::File, &format!("k{index}")))
+            .collect();
+        let summary = |unprocessed: &[&str], lang| {
+            batch_summary(
+                &records,
+                unprocessed,
+                std::time::Duration::from_secs(3),
+                Path::new("out"),
+                lang,
+            )
+        };
+        // Nothing left over: the summary is what it always was.
+        assert_eq!(
+            summary(&[], Lang::En),
+            ["Done: 2 files (0:03)", "Output: out"]
+        );
+        let names = ["a.pdf", "b.pdf", "c.pdf"];
+        assert_eq!(
+            summary(&names[..1], Lang::En),
+            [
+                "Done: 2 files (0:03)",
+                "Not processed 1 item: a.pdf. Run the same command with --resume to continue.",
+                "Output: out",
+            ]
+        );
+        assert_eq!(
+            summary(&names, Lang::En),
+            [
+                "Done: 2 files (0:03)",
+                "Not processed 3 items: a.pdf, b.pdf, .... Run the same command with --resume to continue.",
+                "Output: out",
+            ]
+        );
+        assert_eq!(
+            summary(&names, Lang::Zh),
+            [
+                "完成：2 个文件（0:03）",
+                "未处理 3 项：a.pdf、b.pdf 等。使用相同命令并加上 --resume 可继续。",
+                "输出目录：out",
+            ]
+        );
+        // The structure is the same in both languages: one line for one line.
+        assert_eq!(
+            summary(&names, Lang::En).len(),
+            summary(&names, Lang::Zh).len()
         );
     }
 

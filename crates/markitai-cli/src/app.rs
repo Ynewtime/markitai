@@ -2,6 +2,16 @@
 #[macro_use]
 #[path = "app/i18n.rs"]
 pub(crate) mod i18n;
+// Standard output goes through `stdout_write`, so a reader that stops early
+// (`markitai note.txt | head -1`) ends the run quietly instead of panicking in
+// std's macros. Declared before the modules so that they print the same way.
+macro_rules! println {
+    () => { $crate::app::stdout_line(format_args!("")) };
+    ($($argument:tt)*) => { $crate::app::stdout_line(format_args!($($argument)*)) };
+}
+macro_rules! print {
+    ($($argument:tt)*) => { $crate::app::stdout_write(format_args!($($argument)*)) };
+}
 #[path = "app/auth.rs"]
 mod auth;
 #[path = "app/compat.rs"]
@@ -50,6 +60,7 @@ use markitai_core::{ConversionOutput, ConversionUsage, ConvertContext, ConvertOp
 use serde_json::{Value, json};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::Instant;
 
 // Help sections. Clap prints them in order of first use.
@@ -241,7 +252,7 @@ struct Cli {
     #[arg(short = 'q', long, help_heading = MESSAGES_HELP)]
     /// Print errors only: no written path, warnings, progress or batch summary.
     quiet: bool,
-    #[arg(long, value_name = "LEVEL", value_parser=["DEBUG","INFO","WARNING","ERROR","CRITICAL"], help_heading = MESSAGES_HELP)]
+    #[arg(long, value_name = "LEVEL", value_parser=["DEBUG","INFO","WARNING","ERROR","CRITICAL"], ignore_case=true, help_heading = MESSAGES_HELP)]
     /// Conversion file-log level; needs log.dir. Console output still follows --verbose/--quiet.
     log_level: Option<String>,
 }
@@ -430,23 +441,44 @@ enum ConfigCommand {
     Edit,
 }
 
+/// Whether the executable was started under the MCP launcher name.
+fn is_mcp_launcher(arguments: &[std::ffi::OsString]) -> bool {
+    arguments.first().is_some_and(|name| {
+        matches!(
+            Path::new(name).file_name().and_then(|name| name.to_str()),
+            Some("markitai-mcp" | "markitai-mcp.exe")
+        )
+    })
+}
+
+/// Under the launcher name the `mcp` subcommand is the whole command: usage
+/// lines say `markitai-mcp` (clap's own name for the subcommand in the version
+/// line already is) and `--version` is answered. The subcommand of `markitai`
+/// has neither change, and its help stays as it is.
+fn as_mcp_launcher(command: clap::Command) -> clap::Command {
+    command.mut_subcommand("mcp", |mcp| {
+        let mcp = mcp
+            .override_usage("markitai-mcp [OPTIONS]")
+            .version(markitai_core::VERSION);
+        match i18n::lang() {
+            i18n::Lang::En => mcp,
+            i18n::Lang::Zh => mcp.disable_version_flag(true).arg(help_zh::version_flag()),
+        }
+    })
+}
+
 pub fn run() -> i32 {
     let mut arguments: Vec<_> = std::env::args_os().collect();
     // A distribution may expose this executable through the existing MCP name.
     // Select the subcommand before the no-argument help path, so stdout remains
     // the protocol stream even when a client starts the alias without flags.
-    if arguments.first().is_some_and(|name| {
-        matches!(
-            Path::new(name).file_name().and_then(|name| name.to_str()),
-            Some("markitai-mcp" | "markitai-mcp.exe")
-        )
-    }) {
+    let launcher = is_mcp_launcher(&arguments);
+    if launcher {
         arguments.insert(1, "mcp".into());
     }
     if arguments.len() == 1 {
-        let _ = cli_command().print_help();
-        println!();
-        return 0;
+        print_root_help();
+        return settle_stdout(0);
     }
     if let Some(message) = compat::removed_option(&arguments[1..]) {
         let _ = cli_command()
@@ -455,6 +487,9 @@ pub fn run() -> i32 {
         return 2;
     }
     let mut command = cli_command();
+    if launcher {
+        command = as_mcp_launcher(command);
+    }
     let cli = command
         .try_get_matches_from_mut(arguments)
         .and_then(|matches| Cli::from_arg_matches(&matches))
@@ -476,9 +511,83 @@ pub fn run() -> i32 {
             code
         }
     };
+    let code = settle_stdout(code);
     if let Err(error) = logging::finish(code) {
         eprintln!("Error: {error}");
         return if code == 0 { 1 } else { code };
+    }
+    code
+}
+
+/// The first failure writing standard output. Later writes are dropped, and
+/// [`settle_stdout`] turns the failure into the outcome of the run.
+static STDOUT_FAILURE: Mutex<Option<io::Error>> = Mutex::new(None);
+
+/// Write to standard output, remembering a failure instead of panicking as
+/// std's `println!` does.
+fn with_stdout(write: impl FnOnce(&mut io::StdoutLock<'_>) -> io::Result<()>) {
+    let mut failure = STDOUT_FAILURE.lock().unwrap_or_else(|e| e.into_inner());
+    write_unless_failed(&mut failure, &mut io::stdout().lock(), write);
+}
+
+/// Run `write` on `out` unless an earlier write failed, which would leave the
+/// output with a hole; keep the first failure.
+fn write_unless_failed<W>(
+    failure: &mut Option<io::Error>,
+    out: &mut W,
+    write: impl FnOnce(&mut W) -> io::Result<()>,
+) {
+    if failure.is_none()
+        && let Err(error) = write(out)
+    {
+        *failure = Some(error);
+    }
+}
+
+/// What `print!` writes with.
+fn stdout_write(arguments: std::fmt::Arguments<'_>) {
+    with_stdout(|stdout| stdout.write_fmt(arguments));
+}
+
+/// What `println!` writes with.
+fn stdout_line(arguments: std::fmt::Arguments<'_>) {
+    with_stdout(|stdout| {
+        stdout.write_fmt(arguments)?;
+        stdout.write_all(b"\n")
+    });
+}
+
+/// The root help on standard output, followed by an empty line.
+fn print_root_help() {
+    with_stdout(|stdout| {
+        cli_command().print_help()?;
+        stdout.write_all(b"\n")
+    });
+}
+
+/// The exit status and the message after standard output failed. A reader that
+/// stops early (`markitai note.txt | head -1`) has chosen to: like other Unix
+/// tools, the run ends quietly with the status it already had. Any other
+/// failure, such as a full disk behind `> file`, is named once and fails a run
+/// that would have succeeded.
+fn stdout_outcome(code: i32, failure: Option<&io::Error>) -> (i32, Option<String>) {
+    match failure {
+        Some(error) if error.kind() != io::ErrorKind::BrokenPipe => (
+            if code == 0 { 1 } else { code },
+            Some(format!("Error: Cannot write to standard output: {error}")),
+        ),
+        _ => (code, None),
+    }
+}
+
+fn settle_stdout(code: i32) -> i32 {
+    let failure = STDOUT_FAILURE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take();
+    let (code, message) = stdout_outcome(code, failure.as_ref());
+    if let Some(message) = message {
+        eprintln!("{message}");
     }
     code
 }
@@ -571,8 +680,7 @@ fn execute(cli: &Cli) -> CliResult<i32> {
         return provider_batch::resume(cli, conversion_config(cli, overrides)?);
     }
     if cli.input.is_none() && !cli.interactive {
-        cli_command().print_help().map_err(runtime)?;
-        println!();
+        print_root_help();
         return Ok(0);
     }
     let cfg = conversion_config(cli, overrides)?;
@@ -729,7 +837,9 @@ fn execute_conversion(
     mut cfg: Value,
     mut output: Option<PathBuf>,
 ) -> CliResult<i32> {
-    logging::start(&cfg, cli.log_level.as_deref()).map_err(runtime)?;
+    // Clap accepts any spelling of a level; the logger knows the upper-case one.
+    let level = cli.log_level.as_deref().map(str::to_ascii_uppercase);
+    logging::start(&cfg, level.as_deref()).map_err(runtime)?;
     logging::event(
         logging::Level::Debug,
         "Configuration loaded; native CLI conversion starting",
@@ -1561,18 +1671,21 @@ fn emit_json(items: &[Value], error: Option<&str>) {
         serde_json::to_string_pretty(&envelope(items, error)).expect("JSON values serialize")
     );
 }
-/// Write the document to stdout and return what was written.
+/// Write the document to stdout and return what was rendered. A failed write
+/// is not returned: it is settled with the rest of the run (`settle_stdout`).
 fn print_stdout(result: &ConversionOutput, cfg: &Value) -> io::Result<String> {
     if result.skip_reason.is_some() {
         return Ok(String::new());
     }
-    let mut stdout = io::stdout().lock();
     let rendered = markitai_core::output::content(result, cfg, result.llm_markdown.is_some())
         .map_err(io::Error::other)?;
-    stdout.write_all(rendered.as_bytes())?;
-    if !rendered.ends_with('\n') {
-        stdout.write_all(b"\n")?;
-    }
+    with_stdout(|stdout| {
+        stdout.write_all(rendered.as_bytes())?;
+        if !rendered.ends_with('\n') {
+            stdout.write_all(b"\n")?;
+        }
+        Ok(())
+    });
     Ok(rendered)
 }
 
@@ -1685,9 +1798,15 @@ fn say_with(build: impl Fn(i18n::Lang) -> String) {
     }
 }
 
-/// A batch's closing lines on stderr, in the terminal language.
-fn print_batch_summary(records: &[RunItem], elapsed: std::time::Duration, output: &Path) {
-    let english = report::batch_summary(records, elapsed, output, i18n::Lang::En);
+/// A batch's closing lines on stderr, in the terminal language. `unprocessed`
+/// names the items an interruption left unstarted.
+fn print_batch_summary(
+    records: &[RunItem],
+    unprocessed: &[&str],
+    elapsed: std::time::Duration,
+    output: &Path,
+) {
+    let english = report::batch_summary(records, unprocessed, elapsed, output, i18n::Lang::En);
     match i18n::lang() {
         i18n::Lang::En => {
             for line in &english {
@@ -1695,7 +1814,8 @@ fn print_batch_summary(records: &[RunItem], elapsed: std::time::Duration, output
             }
         }
         i18n::Lang::Zh => {
-            let chinese = report::batch_summary(records, elapsed, output, i18n::Lang::Zh);
+            let chinese =
+                report::batch_summary(records, unprocessed, elapsed, output, i18n::Lang::Zh);
             for (english, chinese) in english.iter().zip(&chinese) {
                 logging::diagnostic_as(format_args!("{english}"), format_args!("{chinese}"));
             }
@@ -2438,6 +2558,42 @@ fn write_config(path: &Path, value: &Value) -> CliResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn after_a_failed_write_later_writes_are_dropped_and_the_first_failure_stays() {
+        let mut failure = None;
+        let mut out = Vec::new();
+        write_unless_failed(&mut failure, &mut out, |out| out.write_all(b"a"));
+        assert!(failure.is_none());
+        write_unless_failed(&mut failure, &mut out, |_| {
+            Err(io::ErrorKind::BrokenPipe.into())
+        });
+        write_unless_failed(&mut failure, &mut out, |out| out.write_all(b"b"));
+        write_unless_failed(&mut failure, &mut out, |_| {
+            Err(io::Error::from_raw_os_error(28))
+        });
+        assert_eq!(out, b"a");
+        assert_eq!(failure.unwrap().kind(), io::ErrorKind::BrokenPipe);
+    }
+    #[test]
+    fn a_closed_pipe_keeps_the_status_and_any_other_write_failure_is_named() {
+        let closed = io::Error::from(io::ErrorKind::BrokenPipe);
+        for code in [0, 1, 10, 130] {
+            assert_eq!(stdout_outcome(code, Some(&closed)), (code, None));
+            assert_eq!(stdout_outcome(code, None), (code, None));
+        }
+        let full = io::Error::from_raw_os_error(28);
+        let (code, message) = stdout_outcome(0, Some(&full));
+        assert_eq!(code, 1);
+        let message = message.unwrap();
+        assert!(
+            message.starts_with("Error: Cannot write to standard output: "),
+            "{message}"
+        );
+        assert!(message.contains(&full.to_string()), "{message}");
+        // A run that already failed keeps its own status.
+        assert_eq!(stdout_outcome(10, Some(&full)).0, 10);
+        assert_eq!(stdout_outcome(130, Some(&full)).0, 130);
+    }
     #[test]
     fn envelope_keeps_failed_items_and_totals() {
         let items = vec![

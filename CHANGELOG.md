@@ -86,6 +86,7 @@
 
 ### Fixed
 
+- Writing to a closed pipe (`markitai file | head`) ends quietly with the run's status instead of `Error: Broken pipe` or a panic, for every command; other standard-output failures say `Error: Cannot write to standard output: …`. An interrupted batch lists what it did not process and suggests `--resume`; a PDF that needs a user password says it is encrypted; `markitai-mcp` accepts `--version` and shows its own name in help; `--log-level` accepts any case; URLs followed by Chinese punctuation no longer garble the terminal line.
 - Claude responses are priced again: the Messages API now reports `usage.inference_geo`, which made every Anthropic response unpriced; an unrestricted placement (`not_available`, `global`) keeps the listed rates, while US-only inference stays unpriced.
 - `claude-agent/` models accept Claude Code 2.1.284 and later 2.1 patch releases, which the official runtime installs by itself, instead of only 2.1.284; `markitai auth claude status --json` reports the installed version and the oldest supported one.
 - Email in multi-byte East Asian charsets (GB2312, GBK, GB18030, Big5, Shift_JIS, EUC-JP, EUC-KR, ISO-2022-JP) decodes its subject and body instead of writing replacement characters: the mail parser's full charset support is enabled.

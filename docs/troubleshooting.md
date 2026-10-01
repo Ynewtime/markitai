@@ -19,6 +19,12 @@ Usage errors are printed on stderr only; `--json` prints its JSON document only
 after arguments are accepted. Failed batch items are listed in the JSON output
 and in the batch report under `out/.markitai/reports/`.
 
+Standard output behaves as with other Unix tools. A reader that stops early
+(`markitai big.txt | head -1`) ends the run quietly with the status it already
+had, 0 after a successful conversion. Any other failure to write it, such as a
+full disk behind `> file`, prints `Error: Cannot write to standard output: …`
+and exits 1.
+
 ## Common problems
 
 **An image produces no output.** A standalone image has no text unless you ask
@@ -61,10 +67,11 @@ in the current directory, or in `MARKITAI_HOME/.env` (`~/.markitai/.env`).
 endpoint is not in the bundled [price catalog](pricing.md), so `cost_usd` only
 counts the requests whose price is known. It does not mean the call was free.
 
-**`Error: --playwright has been removed, use '-s playwright' instead.`** The old
+**`error: --playwright has been removed, use '-s playwright' instead.`** The old
 `--playwright`, `--static`, `--jina`, `--defuddle` and `--cloudflare` switches
 are now values of `-s/--strategy`. `--kreuzberg` is gone because RTF is read
-natively.
+natively. Like other usage errors, it is printed in the argument parser's own
+form: `error: …` (lower case, not `Error: …`), then the usage line, exit status 2.
 
 **`Fetch strategy 'cloudflare' is not implemented` / `Cloudflare file conversion is not implemented`.**
 The Cloudflare strategy and `-b cloudflare` backend are not available in this
@@ -110,7 +117,25 @@ checks a file. See [configuration](configuration.md).
 
 **A batch was interrupted.** On macOS and Linux, run the same command again with
 `--resume`; completed items are kept and unfinished items are retried. Resume
-is not available on Windows.
+is not available on Windows. After Ctrl-C or SIGTERM the closing summary lists
+what was done and then the items that were never started, for example
+`Not processed 72 items: a.pdf, b.pdf, .... Run the same command with --resume to continue.`
+(exit status 130 or 143). `--quiet` leaves the summary out, and `--json` carries
+only the items that finished.
+
+**`Error: Native PDF conversion failed: the PDF is encrypted and needs a password to open …`.**
+The PDF asks for a password before it can be read. Markitai has no password
+option: remove the password with the tool that created the file, or print the
+document to a new PDF, and convert that. A PDF that only restricts printing or
+copying (an owner password, no password to open it) converts normally.
+
+**A failed conversion left `.markitai/ownership/` in the output directory.**
+Before converting, Markitai claims the output names with empty lock files under
+`.markitai/ownership/members/`. They stay after a failed or a successful run on
+purpose: removing a lock file while another run may be opening it would put the
+two runs in different lock domains (see [output ownership](output-ownership.md)).
+The files are empty and harmless; delete the whole output directory if it holds
+nothing else you want.
 
 **`Error: Unsupported file format: '.xyz'`.** The message lists every recognized
 extension. Rename files that have the wrong extension.
@@ -122,7 +147,8 @@ extension. Rename files that have the wrong extension.
   one run but still saves fresh ones. See [cache](cache.md).
 - File logs are off by default. Enable them with
   `--config-json '{"log":{"dir":"./logs"}}'` (or `MARKITAI_LOG_DIR`) and choose
-  the level with `--log-level DEBUG`; logs never go to stdout.
+  the level with `--log-level DEBUG` (any case: `debug` works too); logs never
+  go to stdout.
 - Everything Markitai stores lives under `MARKITAI_HOME` (default `~/.markitai`):
   `config.json`, `.env`, `cache.db`, `fetch_cache.db`, `learned_spa_domains.db`,
   `browsers/` and `serve/jobs/` history; the three databases follow

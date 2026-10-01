@@ -923,6 +923,9 @@ fn run_with_namespace(
     }
     let file_limit = cfg["batch"]["concurrency"].as_u64().unwrap_or(10) as usize;
     let url_limit = cfg["batch"]["url_concurrency"].as_u64().unwrap_or(5) as usize;
+    // What this run set out to convert; after an interruption, the items without
+    // a record are the ones it never got to.
+    let planned = pending.clone();
     // Separate queues avoid rescanning every blocked item whenever one worker finishes.
     let (mut pending_urls, mut pending_files): (VecDeque<_>, VecDeque<_>) = pending
         .into_iter()
@@ -1344,7 +1347,17 @@ fn run_with_namespace(
             }
         }
         if !cli.quiet {
-            print_batch_summary(&records, clock.elapsed(), output);
+            let unprocessed = if signal.is_some() {
+                let started: BTreeSet<_> = records.iter().map(|record| record.index).collect();
+                planned
+                    .iter()
+                    .filter(|index| !started.contains(index))
+                    .map(|&index| tasks[index].display.as_str())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            print_batch_summary(&records, &unprocessed, clock.elapsed(), output);
         }
     }
     Ok(if let Some(signal) = signal {

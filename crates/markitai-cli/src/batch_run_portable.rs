@@ -125,7 +125,7 @@ pub(super) fn run(
             }
         }
         if !cli.quiet {
-            print_batch_summary(&records, clock.elapsed(), destination.output);
+            print_batch_summary(&records, &[], clock.elapsed(), destination.output);
         }
     }
     Ok(if failed > 0 {

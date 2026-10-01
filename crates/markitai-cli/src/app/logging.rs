@@ -406,6 +406,10 @@ fn owned_name(name: &str) -> bool {
             .all(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))
 }
 
+/// Chinese text runs on without spaces, so its punctuation ends a URL; otherwise
+/// the sentence after the URL would be taken for a path and hidden.
+const CHINESE_PUNCTUATION: &str = "，。、；：！？（）【】「」『』《》“”";
+
 fn redact(message: &str, secrets: &[String]) -> String {
     let mut safe = String::with_capacity(message.len().min(65536));
     let mut rest = message;
@@ -418,7 +422,11 @@ fn redact(message: &str, secrets: &[String]) -> String {
         safe.push_str(&rest[..start]);
         let url = &rest[start..];
         let end = url
-            .find(|c: char| c.is_whitespace() || matches!(c, '<' | '>' | '\'' | '"'))
+            .find(|c: char| {
+                c.is_whitespace()
+                    || matches!(c, '<' | '>' | '\'' | '"')
+                    || CHINESE_PUNCTUATION.contains(c)
+            })
             .unwrap_or(url.len());
         safe.push_str(&safe_url(&url[..end]));
         rest = &url[end..];
@@ -510,6 +518,26 @@ mod tests {
         collect_secrets(&cfg, &config::redact(&cfg), &mut secrets);
         assert!(secrets.contains(&"key-secret".into()));
         assert!(secrets.contains(&"Bearer header-secret".into()));
+    }
+    #[test]
+    fn chinese_punctuation_ends_a_url_instead_of_hiding_the_text_after_it() {
+        assert_eq!(
+            redact(
+                "未处理 2 项：https://example.com/a、https://example.com/b。使用相同命令并加上 --resume 可继续。",
+                &[]
+            ),
+            "未处理 2 项：https://example.com/a、https://example.com/b。使用相同命令并加上 --resume 可继续。"
+        );
+        // The same cuts still hide what a URL carries.
+        assert_eq!(
+            redact("见（https://u:p@example.com/x?token=1）。", &[]),
+            "见（https://example.com/x）。"
+        );
+        // Without Chinese punctuation nothing changes: a trailing comma stays.
+        assert_eq!(
+            redact("https://example.com/a, https://example.com/b.", &[]),
+            "https://example.com/a, https://example.com/b."
+        );
     }
     #[test]
     fn rotation_retains_valid_complete_json_and_retention_ignores_unrelated_files() {
