@@ -2216,11 +2216,26 @@ fn inside_number(a: &str, b: &str) -> bool {
 /// well be the word gaps of one-letter words, and the fixed thresholds
 /// decide them: `None`.
 fn glyph_run_word_gap_floor(gaps: &[f32]) -> Option<f32> {
-    if gaps.len() < 3 {
+    // markitai: a gap of an em or more is a word or a column gap whatever
+    // the line's letters do. Left in the sample, the column gaps of a row
+    // of table cells are a class of their own and put every word gap
+    // inside a cell under the floor; they are left out, and the floor stays
+    // below them.
+    let mut sorted: Vec<f32> = gaps.iter().copied().filter(|&g| g < WIDE_GAP_EM).collect();
+    let wide = sorted.len() < gaps.len();
+    glyph_gap_floor(&mut sorted).map(|floor| if wide { floor.min(WIDE_GAP_EM) } else { floor })
+}
+
+/// A gap from which two glyphs of a line are a word apart whatever its
+/// other gaps are, in em (see [`glyph_run_word_gap_floor`]).
+const WIDE_GAP_EM: f32 = 1.0;
+
+/// [`glyph_run_word_gap_floor`] of the gaps under [`WIDE_GAP_EM`].
+fn glyph_gap_floor(sorted: &mut [f32]) -> Option<f32> {
+    if sorted.len() < 3 {
         return None;
     }
-    let mut sorted: Vec<f32> = gaps.to_vec();
-    crate::sort::f32_ascending(&mut sorted);
+    crate::sort::f32_ascending(sorted);
     let total: f32 = sorted.iter().sum();
     let n = sorted.len() as f32;
     let mut best: Option<(f32, f32, f32)> = None; // (between-class variance, low mean, high mean)
@@ -2291,11 +2306,33 @@ fn is_fixed_pitch(item: &TextItem) -> bool {
 /// `replaced_text` marks, parallel to `items` like `clips`, the runs whose
 /// text is a producer's ActualText replacement rather than their glyphs'
 /// decoding (see `compose_detached_spacing_accents`).
+#[cfg(test)]
 fn merge_text_items_with_clips(
     items: Vec<TextItem>,
     clips: &[Option<clip_boundaries::ClipRect>],
     visual_rtl: bool,
     replaced_text: &[bool],
+) -> Vec<TextItem> {
+    merge_page_text_items(
+        items,
+        clips,
+        visual_rtl,
+        replaced_text,
+        crate::bidi::BracketGlyphs::Mirrored,
+    )
+}
+
+/// [`merge_text_items_with_clips`] for a page whose glyphs show the
+/// brackets of its right-to-left runs as `brackets` says (markitai, see
+/// `crate::bidi::BracketGlyphs`). Where its text in reading order holds
+/// their mirror images, the brackets of its lines at odd levels are turned
+/// back (`crate::bidi::unmirror_odd_levels`).
+fn merge_page_text_items(
+    items: Vec<TextItem>,
+    clips: &[Option<clip_boundaries::ClipRect>],
+    visual_rtl: bool,
+    replaced_text: &[bool],
+    brackets: crate::bidi::BracketGlyphs,
 ) -> Vec<TextItem> {
     if items.is_empty() {
         return items;
@@ -2344,6 +2381,10 @@ fn merge_text_items_with_clips(
         bidi: bool,
         /// For a `bidi` line, each fragment's position in screen order.
         display_index: Vec<usize>,
+        /// For a `bidi` line, each fragment's place among the line's glyphs
+        /// on the page, in walk order (markitai): a dependent sign shares
+        /// the place of the letter it was shown on.
+        display_rank: Vec<usize>,
         /// For a `bidi` line, the gap between each pair of screen
         /// neighbours, in points, by screen position: from the line's right
         /// edge so far, which a dependent sign does not move.
@@ -2355,17 +2396,37 @@ fn merge_text_items_with_clips(
     }
     let mut ordered_line_groups: Vec<LineGroup<'_>> = Vec::new();
 
+    // A line with right-to-left letters, whichever direction dominates it,
+    // is walked in reading order below: in the direction its paragraph's
+    // alignment gives, where the alignment gives one (markitai, see
+    // `crate::base_direction`), else as its letters and the page's
+    // direction say. Pages without such a line skip the alignment.
+    let line_bidi: Vec<bool> = line_groups
+        .iter()
+        .map(|(_, _, group)| {
+            group
+                .iter()
+                .any(|i| i.text.chars().any(crate::text_utils::is_rtl_char))
+        })
+        .collect();
+    let aligned: Vec<Option<bool>> = if line_bidi.contains(&true) {
+        let boxes: Vec<Option<crate::base_direction::LineBox>> = line_groups
+            .iter()
+            .map(|(_, _, group)| crate::base_direction::LineBox::of(group.iter().copied()))
+            .collect();
+        crate::base_direction::aligned_bases(&boxes)
+    } else {
+        Vec::new()
+    };
+
     // Sort each group by X position (direction-aware), except for lines whose
     // content stream intentionally backtracks to overlay ActualText fragments.
-    for (page, y, mut group) in line_groups {
-        // A line with right-to-left letters, whichever direction dominates
-        // it, is walked in reading order below.
-        let bidi = group
-            .iter()
-            .any(|i| i.text.chars().any(crate::text_utils::is_rtl_char));
+    for (index, (page, y, mut group)) in line_groups.into_iter().enumerate() {
+        let bidi = line_bidi[index];
         let preserve_stream_order = !bidi && should_preserve_overlapping_stream_order(&group);
         let texts: Vec<Cow<'_, str>>;
         let mut display_index: Vec<usize> = Vec::new();
+        let mut display_rank: Vec<usize> = Vec::new();
         let mut display_gaps: Vec<f32> = Vec::new();
         let mut glyph_floor: Option<f32> = None;
         if bidi {
@@ -2375,11 +2436,13 @@ fn merge_text_items_with_clips(
             // concatenation below bakes the order in. On a visual-order page
             // the fragments' glyphs are the display line itself, and each
             // fragment gets its stretch of the logical text back.
-            let rtl_base = crate::text_utils::rtl_line_base(
-                &group,
-                |i| *i,
-                page_rtl.get(&page).copied().unwrap_or(false),
-            );
+            let rtl_base = aligned.get(index).copied().flatten().unwrap_or_else(|| {
+                crate::text_utils::rtl_line_base(
+                    &group,
+                    |i| *i,
+                    page_rtl.get(&page).copied().unwrap_or(false),
+                )
+            });
             // Screen order, with a dependent sign kept after the letter it
             // was shown on, as on a left-to-right line.
             sort_along_x_keeping_marks(&mut group);
@@ -2435,10 +2498,23 @@ fn merge_text_items_with_clips(
                 |_| visual_rtl,
                 glyph_floor,
                 rtl_base,
+                brackets,
             );
             let reordered: Vec<&TextItem> = order.iter().map(|&(index, _)| group[index]).collect();
             display_index = order.iter().map(|&(index, _)| index).collect();
-            texts = order
+            let mut rank = 0usize;
+            let screen_rank: Vec<usize> = group
+                .iter()
+                .enumerate()
+                .map(|(position, item)| {
+                    if position > 0 && !is_zero_width_mark(item) {
+                        rank += 1;
+                    }
+                    rank
+                })
+                .collect();
+            display_rank = display_index.iter().map(|&p| screen_rank[p]).collect();
+            let mut line_texts: Vec<Cow<'_, str>> = order
                 .into_iter()
                 .map(|(index, logical)| {
                     if visual_rtl {
@@ -2448,6 +2524,12 @@ fn merge_text_items_with_clips(
                     }
                 })
                 .collect();
+            // markitai: text in reading order that holds the mirror images
+            // of its brackets gets the characters written back.
+            if !visual_rtl && brackets == crate::bidi::BracketGlyphs::MirroredText {
+                crate::bidi::unmirror_odd_levels(&mut line_texts, rtl_base);
+            }
+            texts = line_texts;
             group = reordered;
         } else {
             if !preserve_stream_order {
@@ -2466,6 +2548,7 @@ fn merge_text_items_with_clips(
             preserve_stream_order,
             bidi,
             display_index,
+            display_rank,
             display_gaps,
             glyph_floor,
         });
@@ -2485,6 +2568,7 @@ fn merge_text_items_with_clips(
             preserve_stream_order,
             bidi,
             display_index,
+            display_rank,
             display_gaps,
             glyph_floor,
             ..
@@ -2538,6 +2622,16 @@ fn merge_text_items_with_clips(
             while j < group.len() {
                 let next = group[j];
                 let next_text: &str = &texts[j];
+                // markitai: the walk of a line with right-to-left text jumps
+                // where the reading turns round, from one end of an embedded
+                // run to the far side of it. The fragments either side of a
+                // jump are no neighbours on the page, and one item holding
+                // both would cover the stretch of line between them, which
+                // line assembly then cannot place: they stay apart, and the
+                // assembly orders and spaces them as its own items.
+                if *bidi && display_rank[j - 1].abs_diff(display_rank[j]) > 1 {
+                    break;
+                }
                 let gap = if *bidi {
                     junction_gap(j - 1, j)
                 } else {
@@ -2857,6 +2951,72 @@ mod tests {
         assert_eq!(glyph_run_word_gap_floor(&gaps), None);
         // Too few gaps to read a distribution from.
         assert_eq!(glyph_run_word_gap_floor(&[0.05, 0.3]), None);
+    }
+
+    #[test]
+    fn column_gaps_do_not_set_the_word_gap_floor() {
+        // A row of table cells shown a glyph per item: letter gaps, the word
+        // gap inside one cell and two column gaps of several em. The floor
+        // parts the word gap from the letters, not the columns from both.
+        let gaps = [0.02, 0.03, 0.01, 0.3, 0.02, 0.04, 4.5, 0.0, 0.01, 6.0, 0.02];
+        let floor = glyph_run_word_gap_floor(&gaps).expect("two classes");
+        assert!(floor > 0.04 && floor < 0.3, "{floor}");
+        // Cells of one word each: the floor stays below the column gaps.
+        let gaps = [0.02, 0.03, 0.01, 4.5, 0.02, 0.04, 6.0];
+        assert_eq!(glyph_run_word_gap_floor(&gaps), Some(WIDE_GAP_EM));
+    }
+
+    #[test]
+    fn fragments_either_side_of_a_turn_in_the_reading_stay_apart() {
+        // "Hello שלום כאן end" on a left-to-right line, painted in display
+        // order: the reading jumps from "Hello" to the right end of the
+        // Hebrew phrase and back out of its left end. The phrase's two
+        // words merge; the Latin words, no neighbours of the words they are
+        // read next to, stay items of their own.
+        let items = vec![
+            make_merge_item("Hello", 100.0, 30.0),
+            make_merge_item("\u{05DF}\u{05D0}\u{05DB}", 134.0, 18.0),
+            make_merge_item("\u{05DD}\u{05D5}\u{05DC}\u{05E9}", 156.0, 24.0),
+            make_merge_item("end", 184.0, 20.0),
+        ];
+        let merged = merge_text_items_with_clips(items, &[], true, &[]);
+        let texts: Vec<&str> = merged.iter().map(|i| i.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            ["Hello", "\u{05E9}\u{05DC}\u{05D5}\u{05DD} \u{05DB}\u{05D0}\u{05DF}", "end"]
+        );
+        for pair in merged.windows(2) {
+            let (a, b) = (&pair[0], &pair[1]);
+            assert!(
+                a.x + a.width <= b.x + 0.01 || b.x + b.width <= a.x + 0.01,
+                "overlapping boxes {merged:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_left_aligned_line_group_reads_left_to_right_on_a_hebrew_page() {
+        // A Hebrew page set left to right, as a browser sets a page that
+        // names no direction: the first line starts with a Latin word at the
+        // left margin. Its letters are Hebrew by a majority, but its
+        // paragraph's alignment gives the direction.
+        let line = |text: &str, x: f32, y: f32, width: f32| {
+            let mut item = make_merge_item(text, x, width);
+            item.y = y;
+            item
+        };
+        let items = vec![
+            line("Bases", 100.0, 700.0, 30.0),
+            line("\u{05DF}\u{05D0}\u{05DB} \u{05DD}\u{05D5}\u{05DC}\u{05E9}", 134.0, 700.0, 300.0),
+            line("\u{05D4}\u{05D5}\u{05D3} \u{05D2}\u{05D1}\u{05D0}", 100.0, 683.0, 260.0),
+            line("\u{05D8}\u{05D7}\u{05D6}", 100.0, 666.0, 90.0),
+        ];
+        let merged = merge_text_items_with_clips(items, &[], true, &[]);
+        assert_eq!(
+            merged[0].text,
+            "Bases \u{05E9}\u{05DC}\u{05D5}\u{05DD} \u{05DB}\u{05D0}\u{05DF}",
+            "{merged:?}"
+        );
     }
 
     fn glyph_run(chars: &str, start_x: f32, glyph_w: f32, gap: f32) -> Vec<TextItem> {

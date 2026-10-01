@@ -521,6 +521,30 @@ fn a_one_line_paragraph_after_a_table_is_not_a_heading() {
     }
 }
 
+#[test]
+fn right_to_left_text_reads_in_the_direction_its_lines_are_set() {
+    // Arabic in the browser's default direction, flush left: the heading
+    // and the paragraph read left to right, the Latin words at their ends
+    // where they stand and the full stop last. Then a right-to-left
+    // section: its brackets and quotation marks as written, and the cells
+    // of its table with their word spaces.
+    let document = extract(include_bytes!("fixtures/rtl-text.pdf")).unwrap();
+    let markdown = &document.markdown;
+    for line in [
+        "# مقدمة عن Markitai في Linux",
+        "Markitai أداة لتحويل المستندات إلى نص. تدعم ملفات PDF و DOCX وتعمل بسرعة كبيرة على \
+         كل الأنظمة، وتكتب النتيجة بصيغة Markdown بشكل منظم.",
+        "قال المطور: «النص العربي يقرأ بالترتيب الصحيح» ثم أضاف أن الاختبارات (وعددها 120) \
+         نجحت كلها، فابدأ اليوم (الأمر سهل جداً).",
+        "|1.3.0|إعادة كتابة بلغة Rust|",
+    ] {
+        assert!(
+            markdown.lines().any(|candidate| candidate == line),
+            "{line}\n{markdown}"
+        );
+    }
+}
+
 fn text_at(y: i32, value: &str) -> String {
     format!("BT /F1 12 Tf 1 0 0 1 40 {y} Tm ({value}) Tj ET")
 }

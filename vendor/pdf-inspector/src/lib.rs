@@ -32,6 +32,7 @@
 pub mod python;
 
 pub mod adobe_korea1;
+mod base_direction; // markitai: line direction from alignment
 mod bidi;
 mod bidi_mirroring;
 pub mod detector;

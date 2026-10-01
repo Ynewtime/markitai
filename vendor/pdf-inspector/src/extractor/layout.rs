@@ -3204,10 +3204,10 @@ fn group_single_column(
         }
     }
 
-    // Sort items within each line by X position (direction-aware)
-    for line in &mut lines {
-        sort_line_items(&mut line.items, page_rtl);
-    }
+    // Sort items within each line by X position (direction-aware); a line
+    // with right-to-left letters reads in the direction its paragraph's
+    // alignment gives (markitai, see `sort_lines_items`).
+    crate::text_utils::sort_lines_items(&mut lines, page_rtl);
 
     debug!("group_single_column: {} lines", lines.len());
 

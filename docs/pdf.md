@@ -280,6 +280,68 @@ inspections and 32 nested Form levels; Form operations are not used as
 speculative table borders. Pages with incomplete inspection retain the original
 warning and fallback behavior.
 
+## Right-to-left text
+
+Pages holding Hebrew, Arabic or another right-to-left script are read by the
+page reader, which puts each line's runs into reading order with the Unicode
+Bidirectional Algorithm. Glyphs are painted in display order, and a line can
+display the same glyphs for a left-to-right and a right-to-left paragraph:
+a Latin word at the left end of a Persian line is the first word of the one
+and the last of the other, and a full stop at the left end closes a
+right-to-left sentence. Rules P2 and P3 take a paragraph's direction from its
+first strong character in reading order, which is what is unknown here, and a
+producer may set the direction regardless of the letters (a browser lays a
+page out left to right unless it says otherwise, whatever its script). So a
+paragraph's direction is read from its alignment: lines of one paragraph
+share the edge they start from. Lines are linked into paragraphs (the nearest
+overlapping line below, a size within a fifth, a step within 2.5 em, a shared
+left or right edge, and no step a quarter wider than the one above or below);
+a pair of lines sharing its right edges with left edges at least 1.5 em apart
+votes right to left, the mirror case left to right, and a paragraph reads the
+way its votes go. A paragraph whose own lines say nothing (one line, lines of
+one width) compares itself with up to three overlapping lines above and below
+within 8 em; a line holding runs a column apart (3 em) is no evidence. An
+indented first line votes against a justified paragraph's last line, so such a
+paragraph ties and, like every line without evidence, keeps the previous
+letter-based rule. The same decision is taken where the extractor merges a
+line's fragments and where lines are assembled.
+
+The fragments of a line are merged only between neighbours on the page: where
+the reading turns round at the end of an embedded run, the runs either side
+stay items of their own, which line assembly orders and spaces again. A
+punctuation item at either end of a line, and one painted in display order,
+goes where the algorithm puts its characters. A full stop or comma shown
+between the space after a Latin word and the left end of a right-to-left word
+(a left-to-right line ending inside a right-to-left phrase) is read as the end
+of that phrase, set against the word it follows. A number shown between a
+Latin word and a right-to-left phrase still reads with the Latin word: the
+display does not tell `Rust 2025 …` from `… 2025`.
+
+Brackets at an odd level are shown by their mirror images, and producers map
+those glyphs differently. Glyphs painted in display order are read as the
+mirror images and turned back, except on a page that marks its reversed
+strings `/ReversedChars` (Chrome), whose glyphs decode to the brackets
+written. Text stored in reading order keeps its characters, unless its
+brackets stand against right-to-left letters the wrong way round (`)الأمر`,
+`جداً(`) more often than the right way, as CoreText stores them; those at odd
+levels are then turned back. CoreText also walks a right-to-left run with
+negative character spacing or with an offset back after each glyph: such a
+run's box is taken from its glyphs, not the pen's travel, an offset after a
+glyph walked back is no word or column gap, and the string votes for storage in
+reading order. Character spacing of an em or more, taken back by the offsets,
+is read the same way. The word-gap floor of a line shown one glyph per item
+leaves out gaps of an em or more, so the column gaps of a table row no longer
+hide the word spaces inside its cells.
+
+On authored pages printed by Chrome and by AppKit/Quartz (Arabic, Persian and
+Hebrew, right to left, in the default direction, `dir=auto`, justified and
+centred, with a table), 51 and 50 of 52 blocks keep their text in reading
+order, against 39 and 13 before; on 406 corpus PDFs only the six holding
+right-to-left text changed. Remaining differences are paragraph boundaries on
+short pages (the page reader's own threshold), kashida inserted by
+justification, which is kept as text, the number ambiguity above, and zero
+width non-joiners, which the PDFs do not carry.
+
 ## Images and remaining work
 
 Executed embedded raster images retain their existing extraction path and are
@@ -340,5 +402,7 @@ for painted bullets, rings, swatches, checkboxes, inline squares and a
 bulleted sidebar; and for documents (the fixtures and pages of several content
 streams, a comment and a ruled table) read with and without the page reader's
 document shared. A Chrome-printed fixture (`fixtures/wrapped-table`)
-reproduces a table tagged as layout that continues on the next page. Validation
+reproduces a table tagged as layout that continues on the next page, and
+`fixtures/rtl-text` Arabic in the default direction beside a right-to-left
+section with brackets, quotation marks and a table. Validation
 results are recorded by the coordinator after the source is frozen.

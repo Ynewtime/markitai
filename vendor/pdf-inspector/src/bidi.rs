@@ -520,18 +520,90 @@ fn analysis_sequence(
 /// reversals it applied from the highest level down to the lowest odd
 /// level, applied from the lowest level upwards. Returns the display
 /// positions in logical order together with the characters, un-mirrored
-/// where they sat at an odd level. (At an RTL base every level is at least
-/// 1, so the first pass reverses the whole line.)
-fn undo_reordering(chars: &[char], level_at: &[u8]) -> (Vec<usize>, Vec<char>) {
+/// where they sat at an odd level when the glyphs are `mirrored` images.
+/// (At an RTL base every level is at least 1, so the first pass reverses
+/// the whole line.)
+fn undo_reordering(chars: &[char], level_at: &[u8], mirrored: bool) -> (Vec<usize>, Vec<char>) {
     let max_level = level_at.iter().copied().max().unwrap_or(0);
     let mut logical: Vec<usize> = (0..chars.len()).collect();
     for min in 1..=max_level {
         reverse_runs_at_least(&mut logical, level_at, min, |p| chars[p]);
     }
     let mut out_chars: Vec<char> = logical.iter().map(|&p| chars[p]).collect();
-    let out_levels: Vec<u8> = logical.iter().map(|&p| level_at[p]).collect();
-    mirror_at_odd_levels(&mut out_chars, &out_levels);
+    if mirrored {
+        let out_levels: Vec<u8> = logical.iter().map(|&p| level_at[p]).collect();
+        mirror_at_odd_levels(&mut out_chars, &out_levels);
+    }
     (logical, out_chars)
+}
+
+/// Sentence punctuation, which is set against the word it follows.
+fn is_sentence_punctuation(c: char) -> bool {
+    matches!(
+        c,
+        '.' | ',' | ';' | ':' | '!' | '?' | '\u{060C}' | '\u{061B}' | '\u{061F}' | '\u{06D4}'
+    )
+}
+
+/// Punctuation a left-to-right line shows between a space after a Latin
+/// word and the left end of a right-to-left word (markitai). Two readings
+/// display it so: the punctuation of the Latin phrase, preceded by that
+/// space (`base ، می`), and the end of a right-to-left phrase that goes on
+/// in the next line (`مشاهده،`), whose display left end the mark touches.
+/// Punctuation is set against the word it follows, so the second reading
+/// is taken: a right-to-left mark ahead of the punctuation makes it part of
+/// the right-to-left run. A run of punctuation that brings its own space
+/// after it (`. `, read in reading order) shows that space on its left in a
+/// right-to-left run; it is moved there. Returns the line so changed, when
+/// it changes, and the display positions ahead of which a mark goes. (In a
+/// right-to-left paragraph the algorithm's own reading of the mirror case
+/// is the one that sets the mark against a word.)
+fn seam_punctuation(visual: &[VisualChar]) -> (Option<Vec<VisualChar>>, Vec<usize>) {
+    let mut line: Option<Vec<VisualChar>> = None;
+    let mut marks = Vec::new();
+    let mut k = 0;
+    while k < visual.len() {
+        let chars = line.as_deref().unwrap_or(visual);
+        if !is_sentence_punctuation(chars[k].ch) {
+            k += 1;
+            continue;
+        }
+        let start = k;
+        while k < chars.len() && is_sentence_punctuation(chars[k].ch) {
+            k += 1;
+        }
+        let own = chars[k - 1].item;
+        let mut end = k;
+        while own.is_some() && end < chars.len() && chars[end].ch == ' ' && chars[end].item == own {
+            end += 1;
+        }
+        let touches_rtl = chars
+            .get(end)
+            .is_some_and(|v| letter_direction(v.ch) == Some(Strong::Right));
+        let mut left = start;
+        while left > 0 && chars[left - 1].ch == ' ' {
+            left -= 1;
+        }
+        // The Latin phrase may end in a bracket or a quotation mark.
+        let latin_before = chars[..left]
+            .iter()
+            .rev()
+            .find_map(|v| match class_of(v.ch) {
+                BidiClass::ON => None,
+                _ => Some(letter_direction(v.ch) == Some(Strong::Left)),
+            })
+            .unwrap_or(false);
+        let spaced_from_latin = left < start && latin_before;
+        if touches_rtl && spaced_from_latin {
+            if end > k {
+                let changed = line.get_or_insert_with(|| visual.to_vec());
+                changed[start..end].rotate_left(k - start);
+            }
+            marks.push(start);
+        }
+        k = end;
+    }
+    (line, marks)
 }
 
 /// Most bracket pairs whose level is left open by the display that are
@@ -549,9 +621,129 @@ const MAX_OPEN_PAIRS: u32 = 4;
 /// each reading is rendered back to display order and the first one that
 /// reproduces the line is taken, the rule N0 reading first.
 pub(crate) fn visual_to_logical(visual: &[VisualChar], rtl_base: bool) -> Vec<VisualChar> {
+    visual_to_logical_glyphs(visual, rtl_base, true)
+}
+
+/// How the brackets of a page's right-to-left runs come out of their glyphs
+/// (markitai). At an odd level a bracket is shown by its mirror image, and
+/// what a producer maps that glyph to differs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BracketGlyphs {
+    /// Glyphs painted in display order decode to the mirror images, and
+    /// text in reading order holds the characters written: the reading
+    /// the algorithm inverts by default.
+    Mirrored,
+    /// Glyphs decode to the characters written, in display order too: a
+    /// producer that marks its reversed show strings (`/ReversedChars`).
+    Written,
+    /// Text in reading order holds the mirror images: the glyphs of a
+    /// shaping engine stored in reading order, as CoreText shows
+    /// right-to-left runs, so `(الأمر)` reads `)الأمر(`.
+    MirroredText,
+}
+
+impl BracketGlyphs {
+    /// Whether text in reading order is shown with its brackets at odd
+    /// levels mirrored on the way to display order.
+    fn mirrors_text(self) -> bool {
+        self == Self::Mirrored
+    }
+
+    /// Whether the display holds mirror images to turn back.
+    fn display_mirrored(self) -> bool {
+        self != Self::Written
+    }
+}
+
+/// Turn back the mirror images that texts in reading order hold at odd
+/// levels (markitai, [`BracketGlyphs::MirroredText`]): `texts` are the runs
+/// of one line in reading order, read as one paragraph of the given base
+/// direction with a space between two runs, and a mirrored character
+/// (rule L4) that resolves to an odd level there is replaced by its mirror
+/// image, which is the character written. Nothing else moves: the runs
+/// keep their order and their other characters. Brackets do not pair in
+/// such text, `)…(`, and resolve as the neutrals they otherwise are.
+pub(crate) fn unmirror_odd_levels(texts: &mut [Cow<'_, str>], rtl_base: bool) {
+    if !texts.iter().any(|t| t.chars().any(|c| mirror_char(c) != c)) {
+        return;
+    }
+    let mut sequence: Vec<AnalysisChar> = Vec::new();
+    let mut chars: Vec<char> = Vec::new();
+    for (index, text) in texts.iter().enumerate() {
+        if index > 0 {
+            sequence.push(AnalysisChar {
+                ch: ' ',
+                position: None,
+            });
+        }
+        for c in text.chars() {
+            sequence.push(AnalysisChar {
+                // Unpaired, a bracket is an other neutral; the broken bar
+                // is one that pairs with nothing.
+                ch: if paired_bracket(c).is_some() {
+                    '\u{00A6}'
+                } else {
+                    c
+                },
+                position: Some(chars.len()),
+            });
+            chars.push(c);
+        }
+    }
+    let levels = resolved_levels(&sequence, rtl_base, chars.len());
+    let mut at = 0;
+    for text in texts.iter_mut() {
+        let count = text.chars().count();
+        let span = &levels[at..at + count];
+        if text
+            .chars()
+            .zip(span)
+            .any(|(c, level)| level % 2 == 1 && mirror_char(c) != c)
+        {
+            let turned: String = text
+                .chars()
+                .zip(span)
+                .map(|(c, level)| if level % 2 == 1 { mirror_char(c) } else { c })
+                .collect();
+            *text = Cow::Owned(turned);
+        }
+        at += count;
+    }
+}
+
+/// Whether `c` opens (`Some(true)`) or closes (`Some(false)`) a bracket
+/// pair or a pair of angle quotation marks, as written in a left-to-right
+/// text.
+pub(crate) fn bracket_side(c: char) -> Option<bool> {
+    match c {
+        '\u{00AB}' | '\u{2039}' => Some(true),
+        '\u{00BB}' | '\u{203A}' => Some(false),
+        _ => paired_bracket(c).map(|(_, open)| open),
+    }
+}
+
+/// [`visual_to_logical`] for glyphs that are `mirrored` images of the
+/// characters written, or (markitai) that decode to those characters
+/// themselves: a producer that marks its reversed show strings
+/// (`/ReversedChars`) maps the mirrored glyph of a bracket at an odd level
+/// to the bracket written, so the display holds a right-to-left pair as
+/// `)…(`. Such characters are taken as they are, and brackets, which no
+/// longer nest on the display line, resolve as the neutrals they otherwise
+/// are.
+pub(crate) fn visual_to_logical_glyphs(
+    visual: &[VisualChar],
+    rtl_base: bool,
+    mirrored: bool,
+) -> Vec<VisualChar> {
     if visual.is_empty() {
         return Vec::new();
     }
+    let (seamed, seam_marks) = if rtl_base {
+        (None, Vec::new())
+    } else {
+        seam_punctuation(visual)
+    };
+    let visual: &[VisualChar] = seamed.as_deref().unwrap_or(visual);
     let chars: Vec<char> = visual.iter().map(|v| v.ch).collect();
 
     // The display line read back in the paragraph direction: the reading
@@ -561,7 +753,11 @@ pub(crate) fn visual_to_logical(visual: &[VisualChar], rtl_base: bool) -> Vec<Vi
         reverse_clusters(&mut read_back, |p| chars[p]);
     }
 
-    let pairs = bracket_pairs(&chars, rtl_base);
+    let pairs = if mirrored {
+        bracket_pairs(&chars, rtl_base)
+    } else {
+        Vec::new()
+    };
     let open_pairs: Vec<usize> = pairs
         .iter()
         .enumerate()
@@ -625,10 +821,15 @@ pub(crate) fn visual_to_logical(visual: &[VisualChar], rtl_base: bool) -> Vec<Vi
                 phantom_before_pair(&chars, pair, level),
             ));
         }
+        phantoms.extend(
+            seam_marks
+                .iter()
+                .map(|&at| (read_back_index[at], '\u{200F}')),
+        );
         let sequence = analysis_sequence(&chars, &read_back, rtl_base, &replaced, &phantoms);
         let level_at = resolved_levels(&sequence, rtl_base, chars.len());
-        let (logical, out_chars) = undo_reordering(&chars, &level_at);
-        if display_order(&out_chars, rtl_base) == chars {
+        let (logical, out_chars) = undo_reordering(&chars, &level_at, mirrored);
+        if display_order(&out_chars, rtl_base, mirrored) == chars {
             first = Some((logical, out_chars));
             break;
         }
@@ -649,8 +850,9 @@ pub(crate) fn visual_to_logical(visual: &[VisualChar], rtl_base: bool) -> Vec<Vi
 
 /// `chars`, a line in logical order, as a paragraph of the given base
 /// direction displays it: rule L2 reordering with combining marks kept after
-/// their base (rule L3) and the characters at odd levels mirrored (rule L4).
-fn display_order(chars: &[char], rtl_base: bool) -> Vec<char> {
+/// their base (rule L3) and, for `mirrored` glyphs, the characters at odd
+/// levels mirrored (rule L4).
+fn display_order(chars: &[char], rtl_base: bool, mirrored: bool) -> Vec<char> {
     if chars.is_empty() {
         return Vec::new();
     }
@@ -669,16 +871,28 @@ fn display_order(chars: &[char], rtl_base: bool) -> Vec<char> {
         reverse_runs_at_least(&mut display, &level_at, min, |p| chars[p]);
     }
     let mut out: Vec<char> = display.iter().map(|&p| chars[p]).collect();
-    let levels: Vec<u8> = display.iter().map(|&p| level_at[p]).collect();
-    mirror_at_odd_levels(&mut out, &levels);
+    if mirrored {
+        let levels: Vec<u8> = display.iter().map(|&p| level_at[p]).collect();
+        mirror_at_odd_levels(&mut out, &levels);
+    }
     out
 }
 
 /// `text`, logical order, as a paragraph of the given base direction is
 /// displayed (see [`display_order`]).
+#[cfg(test)]
 pub(crate) fn logical_to_visual(text: &str, rtl_base: bool) -> String {
+    logical_to_visual_glyphs(text, rtl_base, true)
+}
+
+/// [`logical_to_visual`] with brackets at odd levels shown as their mirror
+/// images or, when not `mirrored` (see [`visual_to_logical_glyphs`]), as
+/// written.
+pub(crate) fn logical_to_visual_glyphs(text: &str, rtl_base: bool, mirrored: bool) -> String {
     let chars: Vec<char> = text.chars().collect();
-    display_order(&chars, rtl_base).into_iter().collect()
+    display_order(&chars, rtl_base, mirrored)
+        .into_iter()
+        .collect()
 }
 
 /// Whether a character is a Hebrew or Arabic presentation form: a
@@ -753,7 +967,11 @@ fn joins_number(c: char) -> bool {
 /// two characters that mirror to it, so its place in the text is not its
 /// own to tell — and a run of such items between two lettered items sits
 /// between the same two items in the reading order, turned round with
-/// them when they are. Each item then takes the next stretch of the
+/// them when they are. A run at an end of the line, with a lettered item
+/// on one side only, and a run of painted glyphs go where the algorithm
+/// put their characters, which the paragraph direction decides, when each
+/// of their items keeps its characters together there (markitai). Each
+/// item then takes the next stretch of the
 /// logical line, as long as its own text, so a bracket pair split across
 /// runs — `(IFRS` and `16)` painted as separate words — keeps both runs
 /// whole. An item of combining marks alone — a point or a vowel sign shown
@@ -761,7 +979,9 @@ fn joins_number(c: char) -> bool {
 /// and inside that item's advance — is that letter's own characters and
 /// follows it in the reading, whichever way the stretch reads. Items
 /// without a single character (empty text) follow the others
-/// in screen order.
+/// in screen order. `brackets` says how the page's glyphs show brackets at
+/// odd levels (see [`BracketGlyphs`]).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn logical_line_order<T>(
     items: &[T],
     text_of: impl Fn(&T) -> &str,
@@ -770,26 +990,67 @@ pub(crate) fn logical_line_order<T>(
     text_is_visual: impl Fn(usize) -> bool,
     word_gap: Option<f32>,
     rtl_base: bool,
+    brackets: BracketGlyphs,
+) -> Vec<(usize, String)> {
+    // markitai: the runs as the reading needs them, so that its body is
+    // compiled once rather than for every caller's item type.
+    let runs: Vec<LineRun<'_>> = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let (x, width) = span_of(item);
+            LineRun {
+                text: text_of(item),
+                x,
+                width,
+                em: em_of(item),
+                visual: text_is_visual(index),
+            }
+        })
+        .collect();
+    line_order_of(&runs, word_gap, rtl_base, brackets)
+}
+
+/// One run of a line for [`logical_line_order`]: its text, its span on the
+/// page, its em and whether its text is in display order.
+struct LineRun<'a> {
+    text: &'a str,
+    x: f32,
+    width: f32,
+    em: f32,
+    visual: bool,
+}
+
+/// [`logical_line_order`] of the runs of a line.
+fn line_order_of(
+    runs: &[LineRun<'_>],
+    word_gap: Option<f32>,
+    rtl_base: bool,
+    brackets: BracketGlyphs,
 ) -> Vec<(usize, String)> {
     let mut visual: Vec<VisualChar> = Vec::new();
-    let mut counts: Vec<usize> = vec![0; items.len()];
+    let mut counts: Vec<usize> = vec![0; runs.len()];
     let mut prev_right: Option<f32> = None;
     let mut prev_last: Option<char> = None;
     let mut prev_em = f32::INFINITY;
-    for (index, item) in items.iter().enumerate() {
-        let (x, width) = span_of(item);
-        let display: Cow<'_, str> = if text_is_visual(index) {
-            Cow::Borrowed(text_of(item))
+    for (index, item) in runs.iter().enumerate() {
+        let (x, width) = (item.x, item.width);
+        let display: Cow<'_, str> = if item.visual {
+            Cow::Borrowed(item.text)
         } else {
-            Cow::Owned(logical_to_visual(text_of(item), rtl_base))
+            Cow::Owned(logical_to_visual_glyphs(
+                item.text,
+                rtl_base,
+                brackets.mirrors_text(),
+            ))
         };
         if let Some(right) = prev_right {
             let numeric_junction = prev_last.is_some_and(joins_number)
                 && display.chars().next().is_some_and(joins_number);
             let floor = match word_gap {
-                _ if numeric_junction => em_of(item).max(1.0) * NUMBER_GAP_EM,
-                Some(floor_em) => floor_em * em_of(item).min(prev_em).max(1.0),
-                None => em_of(item).max(1.0) * WORD_GAP_EM,
+                _ if numeric_junction => item.em.max(1.0) * NUMBER_GAP_EM,
+                Some(floor_em) => floor_em * item.em.min(prev_em).max(1.0),
+                None => item.em.max(1.0) * WORD_GAP_EM,
             };
             if x - right > floor {
                 visual.push(VisualChar {
@@ -800,7 +1061,7 @@ pub(crate) fn logical_line_order<T>(
         }
         prev_right = Some(prev_right.unwrap_or(f32::MIN).max(x + width.max(0.0)));
         prev_last = display.chars().last().or(prev_last);
-        prev_em = em_of(item);
+        prev_em = item.em;
         counts[index] = display.chars().count();
         visual.extend(display.chars().map(|ch| VisualChar {
             ch,
@@ -808,10 +1069,19 @@ pub(crate) fn logical_line_order<T>(
         }));
     }
 
-    let logical = visual_to_logical(&visual, rtl_base);
+    let logical = visual_to_logical_glyphs(&visual, rtl_base, brackets.display_mirrored());
+    // Where each item's first and last characters land in the logical line.
+    let mut first_at: Vec<usize> = vec![usize::MAX; runs.len()];
+    let mut last_at: Vec<usize> = vec![0; runs.len()];
+    for (at, v) in logical.iter().enumerate() {
+        if let Some(index) = v.item {
+            first_at[index] = first_at[index].min(at);
+            last_at[index] = at;
+        }
+    }
     // Where each item's letters and digits land in the logical line.
     let is_strong = |c: char| c.is_alphanumeric() && !is_combining_mark(c);
-    let mut strong_positions: Vec<Vec<usize>> = vec![Vec::new(); items.len()];
+    let mut strong_positions: Vec<Vec<usize>> = vec![Vec::new(); runs.len()];
     for (at, VisualChar { ch, item }) in logical.iter().enumerate() {
         if let Some(index) = item {
             if is_strong(*ch) {
@@ -819,36 +1089,39 @@ pub(crate) fn logical_line_order<T>(
             }
         }
     }
-    let mut reading: Vec<usize> = (0..items.len())
+    let mut reading: Vec<usize> = (0..runs.len())
         .filter(|&i| !strong_positions[i].is_empty())
         .collect();
     let middle = |i: usize| strong_positions[i][strong_positions[i].len() / 2];
     crate::sort::stable(&mut reading, &mut |&a, &b| middle(a).cmp(&middle(b)));
     let lettered = |i: usize| !strong_positions[i].is_empty();
+    let punctuation_together = (0..runs.len())
+        .filter(|&i| counts[i] > 0 && !lettered(i))
+        .all(|i| last_at[i] - first_at[i] + 1 == counts[i]);
 
     // Runs of punctuation-only items, placed by their neighbours.
     let mut k = 0;
-    while k < items.len() {
+    while k < runs.len() {
         if counts[k] == 0 || lettered(k) {
             k += 1;
             continue;
         }
         let run_start = k;
-        while k < items.len() && !lettered(k) {
+        while k < runs.len() && !lettered(k) {
             k += 1;
         }
         let mut run: Vec<usize> = (run_start..k).filter(|&i| counts[i] > 0).collect();
         let left = (0..run_start).rev().find(|&i| lettered(i));
-        let right = (k..items.len()).find(|&i| lettered(i));
+        let right = (k..runs.len()).find(|&i| lettered(i));
         // Combining marks shown as items of their own over the lettered
         // item to their left, inside its advance, are that letter's own
         // characters and follow it in the reading, whichever way the
         // stretch reads; the rest of the run is placed by its neighbours.
         if let Some(l) = left {
-            let (left_x, left_width) = span_of(&items[l]);
+            let (left_x, left_width) = (runs[l].x, runs[l].width);
             let over_left = |i: usize| {
-                let (x, _) = span_of(&items[i]);
-                text_of(&items[i]).chars().all(is_combining_mark)
+                let x = runs[i].x;
+                runs[i].text.chars().all(is_combining_mark)
                     && x >= left_x.min(left_x + left_width)
                     && x < left_x.max(left_x + left_width)
             };
@@ -862,6 +1135,46 @@ pub(crate) fn logical_line_order<T>(
                     continue;
                 }
             }
+        }
+        // markitai: a run at an end of the line, with a lettered item on
+        // one side only, and a run of glyphs as they were painted go where
+        // the algorithm put their characters, when it keeps the characters
+        // of each item of punctuation on the line together. At an end the
+        // neighbour's place in the reading does not tell which end of it
+        // the run belongs to (a full stop after a right-to-left phrase that
+        // fills a left-to-right line is shown at its right end, next to the
+        // phrase's first word, and is read last), and painted glyphs are
+        // the display itself, so the algorithm's place for them is the
+        // reading's: a bracket pair around a Latin word in a right-to-left
+        // phrase of a left-to-right paragraph takes the paragraph's level
+        // and sits apart from the letters beside it. Where it puts the
+        // characters of one item in two places (a `)(` between two
+        // bracketed words, which two readings display alike), its reading
+        // is not the neighbours', and every run of the line is placed by
+        // its neighbours; so are runs of logical texts inside the line
+        // other than sentence punctuation (a bracket may be either of the
+        // two characters that mirror to it, a sign follows its letter).
+        // Sentence punctuation goes where the algorithm put it, which
+        // `seam_punctuation` steers.
+        let at_end = left.is_none() || right.is_none();
+        let placed_by_reading = |i: usize| {
+            runs[i].visual
+                || runs[i]
+                    .text
+                    .chars()
+                    .all(|c| c == ' ' || is_sentence_punctuation(c))
+        };
+        if punctuation_together && (at_end || run.iter().all(|&i| placed_by_reading(i))) {
+            let at = |i: usize| first_at[i];
+            crate::sort::stable(&mut run, &mut |&a, &b| at(a).cmp(&at(b)));
+            for i in run {
+                let insert_at = reading
+                    .iter()
+                    .position(|&r| at(r) > at(i))
+                    .unwrap_or(reading.len());
+                reading.insert(insert_at, i);
+            }
+            continue;
         }
         let place = |i: usize| reading.iter().position(|&r| r == i).unwrap_or(0);
         let (insert_at, reversed) = match (left, right) {
@@ -909,7 +1222,7 @@ pub(crate) fn logical_line_order<T>(
         .map(|index| (index, chars.by_ref().take(counts[index]).collect()))
         .collect();
     result.extend(
-        (0..items.len())
+        (0..runs.len())
             .filter(|&i| counts[i] == 0)
             .map(|i| (i, String::new())),
     );
@@ -1165,6 +1478,7 @@ mod tests {
             |_| true,
             None,
             true,
+            BracketGlyphs::Mirrored,
         );
         assert_eq!(
             order,
@@ -1196,6 +1510,7 @@ mod tests {
                 |_| visual,
                 None,
                 true,
+                BracketGlyphs::Mirrored,
             );
             assert_eq!(
                 order,
@@ -1225,6 +1540,7 @@ mod tests {
             |_| false,
             None,
             true,
+            BracketGlyphs::Mirrored,
         );
         let reading: Vec<usize> = order.iter().map(|(index, _)| *index).collect();
         assert_eq!(reading, [3, 2, 1, 0]);
@@ -1248,6 +1564,7 @@ mod tests {
             |_| true,
             None,
             true,
+            BracketGlyphs::Mirrored,
         );
         assert_eq!(
             order,
@@ -1285,6 +1602,7 @@ mod tests {
             |_| true,
             None,
             true,
+            BracketGlyphs::Mirrored,
         );
         assert_eq!(
             order,
@@ -1322,11 +1640,240 @@ mod tests {
             |_| false,
             None,
             true,
+            BracketGlyphs::Mirrored,
         );
         let indexes: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
         assert_eq!(indexes, vec![3, 1, 2, 0]);
         assert_eq!(order[2].1, "42");
         assert_eq!(order[3].1, ":");
+    }
+
+    /// `logical_line_order` of `(text, x, width)` items, all visual or all
+    /// logical, of 12pt, with the default bracket glyphs.
+    fn line_order(
+        items: &[(&str, f32, f32)],
+        visual: bool,
+        rtl_base: bool,
+    ) -> Vec<(usize, String)> {
+        logical_line_order(
+            items,
+            |i| i.0,
+            |i| (i.1, i.2),
+            |_| 12.0,
+            |_| visual,
+            None,
+            rtl_base,
+            BracketGlyphs::Mirrored,
+        )
+    }
+
+    #[test]
+    fn a_full_stop_at_the_end_of_a_left_to_right_line_is_read_last() {
+        // "שלום כאן." in a left-to-right paragraph, painted as visual runs:
+        // the right-to-left phrase displays reversed, the full stop at the
+        // right end next to its first word, and is read after the phrase.
+        let items = [
+            ("\u{05DF}\u{05D0}\u{05DB}", 100.0, 20.0), // כאן reversed
+            ("\u{05DD}\u{05D5}\u{05DC}\u{05E9}", 125.0, 20.0), // שלום reversed
+            (".", 145.0, 3.0),
+        ];
+        for visual in [true, false] {
+            let items: Vec<(String, f32, f32)> = items
+                .iter()
+                .map(|&(t, x, w)| {
+                    let text = if visual {
+                        t.to_string()
+                    } else {
+                        t.chars().rev().collect()
+                    };
+                    (text, x, w)
+                })
+                .collect();
+            let items: Vec<(&str, f32, f32)> =
+                items.iter().map(|(t, x, w)| (t.as_str(), *x, *w)).collect();
+            let order = line_order(&items, visual, false);
+            assert_eq!(
+                order,
+                [
+                    (1, "\u{05E9}\u{05DC}\u{05D5}\u{05DD}".to_string()),
+                    (0, "\u{05DB}\u{05D0}\u{05DF}".to_string()),
+                    (2, ".".to_string()),
+                ],
+                "visual={visual}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_mark_at_the_end_of_a_line_goes_where_the_algorithm_puts_it() {
+        // "שלום כאן —" in a left-to-right paragraph, the words a run each
+        // in reading order: the dash after the phrase is shown at the line's
+        // right end, next to the phrase's first word, and is read last.
+        let items = [
+            ("\u{05DB}\u{05D0}\u{05DF}", 100.0, 20.0),
+            ("\u{05E9}\u{05DC}\u{05D5}\u{05DD}", 125.0, 20.0),
+            ("\u{2014}", 149.0, 6.0),
+        ];
+        let order: Vec<usize> = line_order(&items, false, false)
+            .iter()
+            .map(|(i, _)| *i)
+            .collect();
+        assert_eq!(order, [1, 0, 2]);
+    }
+
+    #[test]
+    fn painted_brackets_go_where_the_algorithm_reads_them() {
+        // "מה כאן (view)" in a left-to-right paragraph: the bracket pair
+        // around the Latin word takes the paragraph's level and stands
+        // after the whole right-to-left phrase, not after the word that is
+        // its screen neighbour. Each run keeps its own characters.
+        let items = [
+            ("\u{05DF}\u{05D0}\u{05DB}", 100.0, 20.0), // כאן reversed
+            ("\u{05D4}\u{05DE}", 125.0, 12.0),         // מה reversed
+            ("(", 140.0, 3.0),
+            ("view", 143.0, 25.0),
+            (")", 168.0, 3.0),
+        ];
+        let order = line_order(&items, true, false);
+        assert_eq!(
+            order,
+            [
+                (1, "\u{05DE}\u{05D4}".to_string()),
+                (0, "\u{05DB}\u{05D0}\u{05DF}".to_string()),
+                (2, "(".to_string()),
+                (3, "view".to_string()),
+                (4, ")".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn punctuation_against_the_end_of_a_right_to_left_phrase_closes_it() {
+        // A left-to-right line that ends inside a right-to-left phrase:
+        // "base מילה," with the phrase going on in the next line. The comma
+        // is shown against the phrase's left end and a space apart from the
+        // Latin word, and reads after the phrase.
+        let items = [
+            ("base", 100.0, 20.0),
+            (",", 124.0, 3.0),
+            ("\u{05D4}\u{05DC}\u{05D9}\u{05DE}", 127.0, 20.0), // מילה reversed
+        ];
+        for visual in [true, false] {
+            let items: Vec<(String, f32, f32)> = items
+                .iter()
+                .map(|&(t, x, w)| {
+                    let text = if visual {
+                        t.to_string()
+                    } else {
+                        t.chars().rev().collect()
+                    };
+                    (if t == "base" { t.to_string() } else { text }, x, w)
+                })
+                .collect();
+            let items: Vec<(&str, f32, f32)> =
+                items.iter().map(|(t, x, w)| (t.as_str(), *x, *w)).collect();
+            let order: Vec<usize> = line_order(&items, visual, false)
+                .iter()
+                .map(|(i, _)| *i)
+                .collect();
+            assert_eq!(order, [0, 2, 1], "visual={visual}");
+        }
+        // Its own space after it, in reading order, is shown on its left.
+        let items = [
+            ("base", 100.0, 20.0),
+            (". ", 124.0, 6.0),
+            ("\u{05D4}\u{05DC}\u{05D9}\u{05DE}", 130.0, 20.0),
+        ];
+        assert_eq!(
+            line_order(&items, true, false),
+            [
+                (0, "base".to_string()),
+                (2, "\u{05DE}\u{05D9}\u{05DC}\u{05D4}".to_string()),
+                (1, ". ".to_string()),
+            ]
+        );
+        // Set against the Latin word instead, it is that word's.
+        let items = [
+            ("one", 100.0, 20.0),
+            (":", 120.0, 3.0),
+            ("\u{05D4}\u{05DC}\u{05D9}\u{05DE}", 127.0, 20.0),
+        ];
+        let order: Vec<usize> = line_order(&items, true, false)
+            .iter()
+            .map(|(i, _)| *i)
+            .collect();
+        assert_eq!(order, [0, 1, 2]);
+        // Set against both words, it is the Latin word's.
+        let items = [
+            ("one", 100.0, 20.0),
+            (":", 120.0, 3.0),
+            ("\u{05D4}\u{05DC}\u{05D9}\u{05DE}", 123.0, 20.0),
+        ];
+        let order: Vec<usize> = line_order(&items, true, false)
+            .iter()
+            .map(|(i, _)| *i)
+            .collect();
+        assert_eq!(order, [0, 1, 2]);
+        // A right-to-left paragraph is read by the algorithm as it is.
+        let items = [
+            ("\u{05D4}\u{05DC}\u{05D9}\u{05DE}", 100.0, 20.0),
+            (",", 124.0, 3.0),
+            ("base", 127.0, 20.0),
+        ];
+        let order: Vec<usize> = line_order(&items, true, true)
+            .iter()
+            .map(|(i, _)| *i)
+            .collect();
+        assert_eq!(order, [2, 1, 0]);
+    }
+
+    #[test]
+    fn glyphs_that_decode_as_written_keep_their_brackets() {
+        // "(שלום)" in a right-to-left paragraph, painted in display order by
+        // a producer that maps the mirrored glyphs to the brackets written:
+        // the display holds ")" at the left and "(" at the right.
+        let display = visual(")\u{05DD}\u{05D5}\u{05DC}\u{05E9}(");
+        let read = |mirrored| -> String {
+            visual_to_logical_glyphs(&display, true, mirrored)
+                .into_iter()
+                .map(|v| v.ch)
+                .collect()
+        };
+        assert_eq!(read(false), "(\u{05E9}\u{05DC}\u{05D5}\u{05DD})");
+        // Read as mirror images they would turn round.
+        assert_eq!(read(true), ")\u{05E9}\u{05DC}\u{05D5}\u{05DD}(");
+        assert_eq!(
+            logical_to_visual_glyphs("(\u{05E9})", true, false),
+            ")\u{05E9}("
+        );
+        assert_eq!(
+            logical_to_visual_glyphs("(\u{05E9})", true, true),
+            "(\u{05E9})"
+        );
+    }
+
+    #[test]
+    fn mirror_images_in_reading_order_turn_back_at_odd_levels() {
+        // Runs in reading order holding the brackets' mirror images, as a
+        // shaping engine stores them: ")" "שלום" "(" in a right-to-left
+        // line, the Latin phrase's own pair left alone.
+        let mut texts: Vec<Cow<'_, str>> = vec![
+            ")".into(),
+            "\u{05E9}\u{05DC}\u{05D5}\u{05DD}".into(),
+            "(".into(),
+        ];
+        unmirror_odd_levels(&mut texts, true);
+        assert_eq!(texts, ["(", "\u{05E9}\u{05DC}\u{05D5}\u{05DD}", ")"]);
+        let mut texts: Vec<Cow<'_, str>> =
+            vec!["\u{05E9}".into(), "ABC (DEF) GH".into(), "\u{05D0}".into()];
+        unmirror_odd_levels(&mut texts, true);
+        assert_eq!(texts[1], "ABC (DEF) GH");
+        let mut texts: Vec<Cow<'_, str>> = vec!["see (this)".into()];
+        unmirror_odd_levels(&mut texts, false);
+        assert!(matches!(texts[0], Cow::Borrowed("see (this)")));
+        assert_eq!(bracket_side('\u{00AB}'), Some(true));
+        assert_eq!(bracket_side(']'), Some(false));
+        assert_eq!(bracket_side('.'), None);
     }
 
     struct XorShift(u64);

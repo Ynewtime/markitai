@@ -231,6 +231,53 @@ fn takes_word_space(c: char) -> bool {
     c.is_alphanumeric() && !crate::text_utils::is_rtl_char(c)
 }
 
+/// The extent of a shown string's glyphs, in text space from where the
+/// string starts (markitai). Character spacing far from nothing moves each
+/// glyph away from where the one before ends: taken back past the glyphs'
+/// own widths it puts each glyph to the left of the one before (CoreText
+/// shows a right-to-left run so, with a negative `Tc` and an offset after
+/// each glyph), and an em or more of it is taken back by the offsets
+/// instead (the same with a positive `Tc`). The pen's travel then covers
+/// neither the first glyph, drawn to the right of where the string starts,
+/// nor ends where the last one does; the glyphs' own boxes do. `None` when
+/// the string shows no glyph.
+fn glyph_extent(
+    raw: &[u8],
+    font: &FontWidthInfo,
+    font_size: f32,
+    char_spacing: f32,
+    word_spacing: f32,
+) -> Option<(f32, f32)> {
+    let step = if font.is_cid { 2 } else { 1 };
+    let (mut pen, mut left, mut right) = (0.0f32, f32::INFINITY, f32::NEG_INFINITY);
+    for code in raw.chunks_exact(step) {
+        let ink = compute_string_width_ts(code, font, font_size, 0.0, 0.0);
+        left = left.min(pen.min(pen + ink));
+        right = right.max(pen.max(pen + ink));
+        pen += compute_string_width_ts(code, font, font_size, char_spacing, word_spacing);
+    }
+    (left <= right).then_some((left, right))
+}
+
+/// Character spacing, in em of the font size, from which a `TJ` sub-run is
+/// placed by its glyphs' own boxes rather than by the pen's travel (see
+/// [`glyph_extent`]): spacing no letter-spaced text uses, taken back by the
+/// offsets.
+const WIDE_CHAR_SPACING_EM: f32 = 1.0;
+
+/// Character spacing, in em, from which a string's own extent in a `TJ`
+/// sub-run is read from its glyphs: below it the pen's travel is within a
+/// quarter em of them.
+const SPACED_GLYPHS_EM: f32 = 0.25;
+
+/// Whether a `BMC`/`BDC` operator opens a `/ReversedChars` sequence: show
+/// strings stored in reverse order, whose characters are those written
+/// (ISO 32000-1, 14.8.2.3.3) — so a bracket at an odd level decodes to the
+/// bracket written, not to the mirror image its glyph shows (markitai).
+fn is_reversed_chars_tag(operands: &[Object]) -> bool {
+    matches!(operands.first(), Some(Object::Name(tag)) if tag.as_slice() == b"ReversedChars")
+}
+
 impl PendingSpace {
     /// Note a whitespace-only run painted at `run` on `page`, when it is a
     /// squeezed space right after the last item. A run continuing a pending
@@ -515,6 +562,9 @@ pub(crate) struct PageRunText {
     pub(crate) items: Vec<TextItem>,
     item_clips: Vec<Option<super::clip_boundaries::ClipRect>>,
     visual_rtl: bool,
+    /// How the page's glyphs show the brackets of its right-to-left runs
+    /// (markitai, see `crate::bidi::BracketGlyphs`).
+    brackets: crate::bidi::BracketGlyphs,
     replaced_text: Vec<bool>,
     rects: Vec<PdfRect>,
     lines: Vec<PdfLine>,
@@ -538,6 +588,7 @@ impl PageRuns {
             items: Vec::new(),
             item_clips: Vec::new(),
             visual_rtl: false,
+            brackets: crate::bidi::BracketGlyphs::Mirrored,
             replaced_text: Vec::new(),
             rects: Vec::new(),
             lines: Vec::new(),
@@ -567,6 +618,7 @@ impl PageRuns {
             mut items,
             item_clips,
             visual_rtl,
+            brackets,
             replaced_text,
             rects,
             lines,
@@ -609,11 +661,11 @@ impl PageRuns {
             Vec::new()
         };
         let items = if page_rotation == PageRotation::Upright {
-            super::merge_text_items_with_clips(items, &item_clips, visual_rtl, &replaced_text)
+            super::merge_page_text_items(items, &item_clips, visual_rtl, &replaced_text, brackets)
         } else {
             // Clips use the original page frame; rotated-page correction is an
             // intentionally unsupported provenance case.
-            super::merge_text_items_with_clips(items, &[], visual_rtl, &replaced_text)
+            super::merge_page_text_items(items, &[], visual_rtl, &replaced_text, brackets)
         };
         let items = super::merge_subscript_items(items);
         (
@@ -868,6 +920,10 @@ pub(crate) fn read_page_runs(
         mcid: Option<i64>,
     }
     let mut marked_content_stack: Vec<MarkedContentEntry> = Vec::new();
+    // markitai: the page marks reversed show strings (`/ReversedChars`, as
+    // Chrome does around its right-to-left runs), whose glyphs then decode to
+    // the characters written.
+    let mut written_glyphs = false;
     let mut suppress_glyph_extraction = false;
     let mut actual_text_start_tm: Option<[f32; 6]> = None; // text matrix at BDC entry
     let mut actual_text_glyph_tm: Option<[f32; 6]> = None; // text matrix at first glyph inside BDC
@@ -1234,13 +1290,37 @@ pub(crate) fn read_page_runs(
                         &font_widths,
                         &font_kinds,
                     ) {
-                        let combined =
-                            multiply_matrices(&rise_adjusted(&text_matrix, text_rise), &ctm);
+                        // A run whose pen walks back over its glyphs, or is
+                        // shown with an em or more of character spacing, is
+                        // placed where its glyphs are (markitai, see
+                        // `glyph_extent`).
+                        let backward = match (
+                            font_widths.get(&current_font),
+                            get_operand_bytes(&op.operands[0]),
+                        ) {
+                            (Some(fi), Some(raw))
+                                if current_font_size > 0.0
+                                    && (w_ts_opt.is_some_and(|w| w < 0.0)
+                                        || char_spacing.abs()
+                                            >= WIDE_CHAR_SPACING_EM * current_font_size) =>
+                            {
+                                glyph_extent(raw, fi, current_font_size, char_spacing, word_spacing)
+                            }
+                            _ => None,
+                        };
+                        let (run_tm, run_advance) = match backward {
+                            Some((left, right)) => (
+                                advanced_tm(&text_matrix, left, horizontal_scale),
+                                Some(right - left),
+                            ),
+                            None => (text_matrix, w_ts_opt),
+                        };
+                        let combined = multiply_matrices(&rise_adjusted(&run_tm, text_rise), &ctm);
                         let rendered_size = effective_font_size(current_font_size, &combined)
                             * type3_scales.get(&current_font).copied().unwrap_or(1.0);
                         let geometry = scaled_run_geometry(
                             &combined,
-                            w_ts_opt,
+                            run_advance,
                             if glyph_count > 0 {
                                 estimate_ts
                             } else {
@@ -1286,7 +1366,12 @@ pub(crate) fn read_page_runs(
                                 // horizontal evidence and stay neutral — same
                                 // dominance test as the rotation votes above.
                                 if combined[0].abs() > combined[1].abs() {
-                                    if combined[0] * horizontal_scale > 0.0 {
+                                    // markitai: a string whose pen walks
+                                    // back over its glyphs paints right to
+                                    // left like a mirrored matrix.
+                                    let walks_back = current_font_size > 0.0
+                                        && w_ts_opt.is_some_and(|w| w < 0.0);
+                                    if combined[0] * horizontal_scale > 0.0 && !walks_back {
                                         rtl_visual_candidates.push(items.len());
                                         if !crate::text_utils::white_fill_hides(
                                             text_rendering_mode,
@@ -1456,6 +1541,21 @@ pub(crate) fn read_page_runs(
                         // backward past painted glyphs — logical-order RTL
                         // producers position runs right-to-left this way.
                         let mut backward_jump = false;
+                        // markitai: whether the string shown last walked
+                        // back over its glyphs — an offset after it is then
+                        // no word gap, but where the next glyph sits beside
+                        // it — and the extent of the current sub-run's
+                        // glyphs, which places a sub-run holding such a
+                        // string or one shown with an em or more of
+                        // character spacing, or one whose offsets put glyphs
+                        // behind where it starts (a right-to-left run walked
+                        // with an offset back after each glyph, a Latin word
+                        // reached by a jump back across it): the pen's
+                        // travel says nothing of where such glyphs are (see
+                        // `glyph_extent`).
+                        let mut walked_back = false;
+                        let mut sub_by_glyphs = false;
+                        let mut sub_glyphs: Option<(f32, f32)> = None;
                         // The farthest the pen has been, for a return from a
                         // zero-advance sign placed behind it: no gap opens on
                         // the page until the pen is past the mark again (see
@@ -1495,13 +1595,24 @@ pub(crate) fn read_page_runs(
                                     }
                                     if !is_invisible
                                         && judged < -split_gap
+                                        && !walked_back
                                         && !current_text.is_empty()
                                     {
                                         // Column gap: flush current segment
+                                        let (run_start, run_end) = match sub_glyphs.take() {
+                                            Some(extent)
+                                                if sub_by_glyphs
+                                                    || extent.0 < sub_start_width_ts - 1e-3 =>
+                                            {
+                                                extent
+                                            }
+                                            _ => (sub_start_width_ts, total_width_ts),
+                                        };
+                                        sub_by_glyphs = false;
                                         sub_items.push((
                                             std::mem::take(&mut current_text),
-                                            sub_start_width_ts,
-                                            total_width_ts,
+                                            run_start,
+                                            run_end,
                                             std::mem::take(&mut current_estimate_ts),
                                             std::mem::take(&mut current_symbol_rewrite),
                                         ));
@@ -1512,6 +1623,7 @@ pub(crate) fn read_page_runs(
                                         total_width_ts += displacement;
                                         if !is_invisible
                                             && judged < -word_gap
+                                            && !walked_back
                                             && !current_text.is_empty()
                                             && !current_text.ends_with(' ')
                                         {
@@ -1544,12 +1656,23 @@ pub(crate) fn read_page_runs(
                                     }
                                     if !is_invisible
                                         && judged < -split_gap
+                                        && !walked_back
                                         && !current_text.is_empty()
                                     {
+                                        let (run_start, run_end) = match sub_glyphs.take() {
+                                            Some(extent)
+                                                if sub_by_glyphs
+                                                    || extent.0 < sub_start_width_ts - 1e-3 =>
+                                            {
+                                                extent
+                                            }
+                                            _ => (sub_start_width_ts, total_width_ts),
+                                        };
+                                        sub_by_glyphs = false;
                                         sub_items.push((
                                             std::mem::take(&mut current_text),
-                                            sub_start_width_ts,
-                                            total_width_ts,
+                                            run_start,
+                                            run_end,
                                             std::mem::take(&mut current_estimate_ts),
                                             std::mem::take(&mut current_symbol_rewrite),
                                         ));
@@ -1560,6 +1683,7 @@ pub(crate) fn read_page_runs(
                                         total_width_ts += displacement;
                                         if !is_invisible
                                             && judged < -word_gap
+                                            && !walked_back
                                             && !current_text.is_empty()
                                             && !current_text.ends_with(' ')
                                         {
@@ -1629,6 +1753,45 @@ pub(crate) fn read_page_runs(
                                 // estimate the sub-run's box will carry.
                                 total_width_ts += element_estimate_ts;
                                 current_estimate_ts += element_estimate_ts;
+                            }
+                            if element_glyphs > 0 && font_info.is_some() && current_font_size > 0.0
+                            {
+                                let backward = total_width_ts < element_start_width_ts;
+                                let spacing_em = char_spacing.abs() / current_font_size.abs();
+                                let glyphs = match (font_info, get_operand_bytes(element)) {
+                                    (Some(fi), Some(raw))
+                                        if backward || spacing_em >= SPACED_GLYPHS_EM =>
+                                    {
+                                        glyph_extent(
+                                            raw,
+                                            fi,
+                                            current_font_size,
+                                            char_spacing,
+                                            word_spacing,
+                                        )
+                                    }
+                                    _ => None,
+                                };
+                                walked_back = backward && glyphs.is_some();
+                                // A string walked back over its glyphs paints
+                                // right to left, like a backtracking offset.
+                                backward_jump |= walked_back;
+                                sub_by_glyphs |= glyphs.is_some()
+                                    && (backward || spacing_em >= WIDE_CHAR_SPACING_EM);
+                                let (left, right) = match glyphs {
+                                    Some((left, right)) => (
+                                        element_start_width_ts + left,
+                                        element_start_width_ts + right,
+                                    ),
+                                    None => (
+                                        element_start_width_ts.min(total_width_ts),
+                                        element_start_width_ts.max(total_width_ts),
+                                    ),
+                                };
+                                sub_glyphs = Some(match sub_glyphs {
+                                    Some((a, b)) => (a.min(left), b.max(right)),
+                                    None => (left, right),
+                                });
                             }
                             if let Some(raw) =
                                 get_operand_bytes(element).filter(|raw| !raw.is_empty())
@@ -1750,10 +1913,18 @@ pub(crate) fn read_page_runs(
                         }
                         // Flush remaining text
                         if !is_invisible && !current_text.trim().is_empty() {
+                            let (run_start, run_end) = match sub_glyphs {
+                                Some(extent)
+                                    if sub_by_glyphs || extent.0 < sub_start_width_ts - 1e-3 =>
+                                {
+                                    extent
+                                }
+                                _ => (sub_start_width_ts, total_width_ts),
+                            };
                             sub_items.push((
                                 current_text,
-                                sub_start_width_ts,
-                                total_width_ts,
+                                run_start,
+                                run_end,
                                 current_estimate_ts,
                                 current_symbol_rewrite,
                             ));
@@ -2067,13 +2238,37 @@ pub(crate) fn read_page_runs(
                         &font_widths,
                         &font_kinds,
                     ) {
-                        let combined =
-                            multiply_matrices(&rise_adjusted(&text_matrix, text_rise), &ctm);
+                        // A run whose pen walks back over its glyphs, or is
+                        // shown with an em or more of character spacing, is
+                        // placed where its glyphs are (markitai, see
+                        // `glyph_extent`).
+                        let backward = match (
+                            font_widths.get(&current_font),
+                            get_operand_bytes(show_operand),
+                        ) {
+                            (Some(fi), Some(raw))
+                                if current_font_size > 0.0
+                                    && (w_ts_opt.is_some_and(|w| w < 0.0)
+                                        || char_spacing.abs()
+                                            >= WIDE_CHAR_SPACING_EM * current_font_size) =>
+                            {
+                                glyph_extent(raw, fi, current_font_size, char_spacing, word_spacing)
+                            }
+                            _ => None,
+                        };
+                        let (run_tm, run_advance) = match backward {
+                            Some((left, right)) => (
+                                advanced_tm(&text_matrix, left, horizontal_scale),
+                                Some(right - left),
+                            ),
+                            None => (text_matrix, w_ts_opt),
+                        };
+                        let combined = multiply_matrices(&rise_adjusted(&run_tm, text_rise), &ctm);
                         let rendered_size = effective_font_size(current_font_size, &combined)
                             * type3_scales.get(&current_font).copied().unwrap_or(1.0);
                         let geometry = scaled_run_geometry(
                             &combined,
-                            w_ts_opt,
+                            run_advance,
                             if glyph_count > 0 {
                                 estimate_ts
                             } else {
@@ -2106,7 +2301,11 @@ pub(crate) fn read_page_runs(
                             if crate::text_utils::is_visual_rtl_candidate(&text)
                                 && combined[0].abs() > combined[1].abs()
                             {
-                                if combined[0] * horizontal_scale > 0.0 {
+                                // markitai: as for `Tj`, a string walked
+                                // back over its glyphs paints right to left.
+                                let walks_back =
+                                    current_font_size > 0.0 && w_ts_opt.is_some_and(|w| w < 0.0);
+                                if combined[0] * horizontal_scale > 0.0 && !walks_back {
                                     rtl_visual_candidates.push(items.len());
                                     if !crate::text_utils::white_fill_hides(
                                         text_rendering_mode,
@@ -2301,6 +2500,7 @@ pub(crate) fn read_page_runs(
             }
             "BMC" => {
                 // Begin Marked Content (no properties)
+                written_glyphs |= is_reversed_chars_tag(&op.operands);
                 marked_content_stack.push(MarkedContentEntry {
                     actual_text: None,
                     mcid: None,
@@ -2308,6 +2508,7 @@ pub(crate) fn read_page_runs(
             }
             "BDC" => {
                 // Begin Marked Content with properties — extract ActualText and MCID
+                written_glyphs |= is_reversed_chars_tag(&op.operands);
                 let mut actual_text: Option<String> = None;
                 let mut mcid: Option<i64> = None;
                 if op.operands.len() >= 2 {
@@ -2865,7 +3066,26 @@ pub(crate) fn read_page_runs(
         rtl_logical_ops,
         rtl_visual_ops,
         &logical_text_items,
+        written_glyphs,
     );
+    // markitai: how the page's glyphs show the brackets of its right-to-left
+    // runs. A visual-order page decodes them to their mirror images unless it
+    // marks its reversed strings; a page storing them in reading order holds
+    // the characters, or, from a shaping engine, the mirror images, which its
+    // brackets tell.
+    let brackets = if visual_rtl {
+        if written_glyphs {
+            crate::bidi::BracketGlyphs::Written
+        } else {
+            crate::bidi::BracketGlyphs::Mirrored
+        }
+    } else if (!rtl_visual_candidates.is_empty() || rtl_logical_ops > 0)
+        && crate::text_utils::brackets_mirrored_in_text(&items)
+    {
+        crate::bidi::BracketGlyphs::MirroredText
+    } else {
+        crate::bidi::BracketGlyphs::Mirrored
+    };
 
     // Runs painted wholly outside the rectangular clip in force when they
     // were shown are invisible on the rendered page: labels a charting
@@ -2919,6 +3139,7 @@ pub(crate) fn read_page_runs(
             items,
             item_clips,
             visual_rtl,
+            brackets,
             replaced_text,
             rects,
             lines,
@@ -4364,6 +4585,177 @@ end"#;
     }
 
     const SHALOM_LOGICAL: &str = "\u{05E9}\u{05DC}\u{05D5}\u{05DD}"; // שלום
+
+    /// markitai: the merged items of a page shown with `F4`, a measured
+    /// font whose codes 41–44 read שלום (half an em each), 28/29 the
+    /// brackets and 2E a full stop (half an em) and 20 a space (a quarter).
+    fn extract_measured_rtl_items(content: &[u8]) -> Vec<TextItem> {
+        use crate::tounicode::FontCMaps;
+        use lopdf::{dictionary, Object, Stream};
+
+        let cmap = br#"/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CMapName /Test-UCS def
+/CMapType 2 def
+1 begincodespacerange
+<00> <FF>
+endcodespacerange
+8 beginbfchar
+<20> <0020>
+<28> <0028>
+<29> <0029>
+<2E> <002E>
+<41> <05E9>
+<42> <05DC>
+<43> <05D5>
+<44> <05DD>
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end"#;
+        let mut doc = lopdf::Document::new();
+        let cmap_id = doc.add_object(Object::Stream(Stream::new(dictionary! {}, cmap.to_vec())));
+        let widths: Vec<Object> = (32..=68)
+            .map(|c| if c == 32 { 250 } else { 500 }.into())
+            .collect();
+        let font_id = doc.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "TrueType",
+            "BaseFont" => "TestRtl",
+            "FirstChar" => 32,
+            "LastChar" => 68,
+            "Widths" => Object::Array(widths),
+            "ToUnicode" => Object::Reference(cmap_id),
+        });
+        let content_id = doc.add_object(Object::Stream(Stream::new(
+            dictionary! {},
+            content.to_vec(),
+        )));
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Contents" => Object::Reference(content_id),
+            "Resources" => dictionary! { "Font" => dictionary! { "F4" => Object::Reference(font_id) } },
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        });
+        let pages_id = doc.add_object(dictionary! {
+            "Type" => "Pages",
+            "Count" => Object::Integer(1),
+            "Kids" => vec![Object::Reference(page_id)],
+        });
+        doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => Object::Reference(pages_id) });
+        let font_cmaps = FontCMaps::from_doc(&doc);
+        let ((items, _, _), _, _, _) = extract_page_text_items(
+            &doc,
+            page_id,
+            1,
+            &font_cmaps,
+            false,
+            &mut FontStyleCache::new(),
+            &mut FormWalkBudget::new(),
+        )
+        .unwrap();
+        items
+    }
+
+    fn boxes(items: &[TextItem]) -> Vec<(String, f32, f32)> {
+        items
+            .iter()
+            .map(|i| (i.text.clone(), i.x, i.width))
+            .collect()
+    }
+
+    #[test]
+    fn a_run_walked_back_by_its_spacing_is_placed_by_its_glyphs() {
+        // Character spacing of minus an em takes each half-em glyph back
+        // past the one before (CoreText's way with a right-to-left run): A
+        // at 300, B at 294, C at 288, D at 282. The run covers 282–306, not
+        // the pen's 276–300, and its letters are stored in reading order.
+        let items =
+            extract_measured_rtl_items(b"BT /F4 12 Tf -12 Tc 1 0 0 1 300 700 Tm (ABCD) Tj ET");
+        assert_eq!(boxes(&items), [(SHALOM_LOGICAL.to_string(), 282.0, 24.0)]);
+        // Two thirds of an em taken back: each glyph a third of an em left of
+        // the one before, all four within 294–306.
+        let items =
+            extract_measured_rtl_items(b"BT /F4 12 Tf -8 Tc 1 0 0 1 300 700 Tm (ABCD) Tj ET");
+        assert_eq!(boxes(&items), [(SHALOM_LOGICAL.to_string(), 294.0, 12.0)]);
+        let items =
+            extract_measured_rtl_items(b"BT /F4 12 Tf -12 Tc 1 0 0 1 300 700 Tm [(AB) (CD)] TJ ET");
+        assert_eq!(boxes(&items), [(SHALOM_LOGICAL.to_string(), 282.0, 24.0)]);
+        // An offset after such a string moves the next glyph beside it: no
+        // word gap, no column gap (a Latin word inside the run goes on to
+        // the right so).
+        let items = extract_measured_rtl_items(
+            b"BT /F4 12 Tf -12 Tc 1 0 0 1 300 700 Tm [(A) -1000 (B) -1000 (C)] TJ ET",
+        );
+        assert_eq!(
+            boxes(&items),
+            [("\u{05E9}\u{05DC}\u{05D5}".to_string(), 300.0, 18.0)]
+        );
+    }
+
+    #[test]
+    fn glyphs_jumped_back_over_or_widely_spaced_are_placed_by_their_boxes() {
+        // An offset back after each glyph (A at 300, B at 294, C at 288):
+        // the glyphs cover 288–306.
+        let items = extract_measured_rtl_items(
+            b"BT /F4 12 Tf 1 0 0 1 300 700 Tm [(A) 1000 (B) 1000 (C)] TJ ET",
+        );
+        assert_eq!(
+            boxes(&items),
+            [("\u{05E9}\u{05DC}\u{05D5}".to_string(), 288.0, 18.0)]
+        );
+        // Twenty em of character spacing taken back by the offsets.
+        let items = extract_measured_rtl_items(
+            b"BT /F4 12 Tf 240 Tc 1 0 0 1 300 700 Tm [(A) 21000 (B)] TJ ET",
+        );
+        assert_eq!(
+            boxes(&items),
+            [("\u{05E9}\u{05DC}".to_string(), 294.0, 12.0)]
+        );
+        let items = extract_measured_rtl_items(b"BT /F4 12 Tf 240 Tc 1 0 0 1 300 700 Tm (.) Tj ET");
+        assert_eq!(boxes(&items), [(".".to_string(), 300.0, 6.0)]);
+        // Forward runs keep the pen's travel, spacing and all.
+        let items =
+            extract_measured_rtl_items(b"BT /F4 12 Tf 1 Tc 1 0 0 1 300 700 Tm [(.) 0 (.)] TJ ET");
+        assert_eq!(boxes(&items), [("..".to_string(), 300.0, 14.0)]);
+    }
+
+    #[test]
+    fn reversed_strings_keep_the_brackets_written() {
+        // "(שלום)" painted in display order. Marked `/ReversedChars`, the
+        // glyphs decode to the brackets written, which come out as they
+        // are; unmarked, the brackets are read as the mirror images a
+        // right-to-left run shows.
+        let marked = extract_measured_rtl_items(
+            b"/ReversedChars BMC BT /F4 12 Tf 1 0 0 1 300 700 Tm <294443424128> Tj ET EMC",
+        );
+        assert_eq!(marked[0].text, format!("({SHALOM_LOGICAL})"));
+        let plain =
+            extract_measured_rtl_items(b"BT /F4 12 Tf 1 0 0 1 300 700 Tm <294443424128> Tj ET");
+        assert_eq!(plain[0].text, format!("){SHALOM_LOGICAL}("));
+        assert!(is_reversed_chars_tag(&[Object::Name(
+            b"ReversedChars".to_vec()
+        )]));
+        assert!(!is_reversed_chars_tag(&[Object::Name(b"Span".to_vec())]));
+    }
+
+    #[test]
+    fn mirror_images_stored_in_reading_order_turn_back() {
+        // A run stored in reading order (walked back over its glyphs) that
+        // holds the brackets' mirror images, as a shaping engine stores
+        // them: ")שלום(" reads "(שלום)".
+        let items = extract_measured_rtl_items(
+            b"BT /F4 12 Tf -12 Tc 1 0 0 1 330 700 Tm <294142434428> Tj ET",
+        );
+        assert_eq!(items[0].text, format!("({SHALOM_LOGICAL})"));
+        // Brackets written as such in reading order are left alone.
+        let items = extract_measured_rtl_items(
+            b"BT /F4 12 Tf -12 Tc 1 0 0 1 330 700 Tm <284142434429> Tj ET",
+        );
+        assert_eq!(items[0].text, format!("({SHALOM_LOGICAL})"));
+    }
 
     #[test]
     fn items_carry_family_name_and_resource_tag() {

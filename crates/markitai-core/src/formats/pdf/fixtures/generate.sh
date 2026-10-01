@@ -5,7 +5,7 @@
 # written (or after 60 seconds). Name pages to print only those.
 set -eu
 cd "$(dirname "$0")"
-pages=${*:-"borderless-table default-table table-beside-prose wrapped-table"}
+pages=${*:-"borderless-table default-table table-beside-prose wrapped-table rtl-text"}
 for page in $pages; do
 profile=$(mktemp -d)
 rm -f "$page.pdf"

@@ -390,6 +390,52 @@ The local changes, each marked `markitai` (or, for sorts, made through
   operator takes two bytes with its delimiter; the cap shortcut at one rect
   more) and two only lose the saving (Markitai not passing its decode on,
   or reading under another bound).
+- Right-to-left lines in reading order (`src/base_direction.rs`, new, `mod
+  base_direction` in `src/lib.rs`; `src/text_utils.rs`, `src/bidi.rs`,
+  `src/extractor/mod.rs`, `src/extractor/layout.rs`,
+  `src/extractor/content_stream.rs`):
+  - A line holding right-to-left letters takes its base direction from its
+    paragraph's alignment (`aligned_bases`): lines linked into paragraphs
+    vote by the edge they share, a one-line paragraph by the lines around
+    it; the upstream letter rule (`rtl_line_base`) decides where the layout
+    says nothing. Both the fragment merge and line assembly
+    (`sort_lines_items`, used by `group_single_column`) take the decision,
+    from their own lines. Pages without right-to-left letters take the old
+    path after one scan.
+  - The merge joins the fragments of such a line only between neighbours on
+    the page, so no item covers the line between the two ends of a turn in
+    the reading.
+  - `logical_line_order`: a punctuation run at an end of the line, and one
+    of painted glyphs or of sentence punctuation, goes where the algorithm
+    put its characters when it keeps each item's characters together
+    (otherwise the upstream neighbour placement stays); sentence
+    punctuation between a space after a Latin word and the left end of a
+    right-to-left word of a left-to-right line closes the right-to-left
+    phrase (`seam_punctuation`).
+  - Bracket glyphs (`BracketGlyphs`): pages marking `/ReversedChars` decode
+    them as written (no un-mirroring); text stored in reading order whose
+    brackets face its letters the wrong way (`brackets_mirrored_in_text`)
+    is un-mirrored at odd levels (`unmirror_odd_levels`).
+  - Runs whose pen walks back over their glyphs (negative character
+    spacing), whose offsets put glyphs behind their start, or that are shown
+    with an em or more of character spacing are placed by their glyphs'
+    boxes (`glyph_extent`), take no word or column gap from an offset after
+    a backward string, and such strings vote for storage in reading order.
+  - The glyph-run word-gap floor leaves gaps of an em or more out of its
+    sample.
+  - `logical_line_order` gathers each caller's runs and reads them in one
+    non-generic body (`line_order_of`), which was compiled once per item
+    type before.
+  Measured on `c7fea20` (rustc 1.98.1, macOS 27.0.1, Apple M5 Max,
+  `cargo build --release -p markitai-cli`): the CLI is 22,046,272 bytes
+  before and 22,029,776 after (`__text` 15,260,184 → 15,253,272). Of 406
+  corpus PDFs only the six holding right-to-left text change; paired,
+  alternating runs over 422 PDFs (the corpora and 16 authored right-to-left
+  pages), five rounds: wall −0.10% and CPU −0.34..+0.24% per round, against
+  +0.05% and −0.22..+0.04% for a byte copy of the base binary. The isolated
+  copy's unit tests give 1,658 passed and the same 21 failed (25 added).
+  Each of 39 mutations of the rules fails a test of the copy, and three of
+  them, made in place, markitai-core's right-to-left fixture test as well.
 
 - `src/extractor/fonts.rs`, `src/extractor/content_stream.rs`,
   `src/extractor/xobjects.rs`, `src/types.rs`: a font that is an indirect

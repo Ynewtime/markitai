@@ -1,5 +1,5 @@
 {
-  "purpose": "Tagged PDFs whose tables are drawn without rules: wrapped, vertically centred cells (borderless-table), and the browser default style with cells a few pixels apart (default-table). Only the structure tree gives their rows and cells. table-beside-prose puts a small table among long paragraphs, so the table holds far less than half of its band. wrapped-table has neither header cells nor rules, so Chrome tags it as a layout table, without a Table in the structure tree: only the geometry of its wrapped, vertically centred cells gives its rows, and its last rows continue on the next page without a header.",
+  "purpose": "Tagged PDFs whose tables are drawn without rules: wrapped, vertically centred cells (borderless-table), and the browser default style with cells a few pixels apart (default-table). Only the structure tree gives their rows and cells. table-beside-prose puts a small table among long paragraphs, so the table holds far less than half of its band. wrapped-table has neither header cells nor rules, so Chrome tags it as a layout table, without a Table in the structure tree: only the geometry of its wrapped, vertically centred cells gives its rows, and its last rows continue on the next page without a header. rtl-text is Arabic laid out in the browser's default direction (left to right: the heading and the first paragraph, with Latin words at their ends) and in a right-to-left section with brackets, angle quotation marks and a table of multi-word cells; Chrome marks its reversed right-to-left runs ReversedChars and maps their mirrored bracket glyphs to the brackets written.",
   "authored": "written for these tests in markitai-rust",
   "generator": {
     "script": "generate.sh",
@@ -52,6 +52,18 @@
         "file": "wrapped-table.pdf",
         "bytes": 29399,
         "sha256": "3b737e8cd8c9472f8d8cd1b040f59e825bae474e1327f2027c90f69dfcfe03f7"
+      }
+    },
+    {
+      "source": {
+        "file": "rtl-text.html",
+        "bytes": 1025,
+        "sha256": "4977ddf0ceb846b305155c825c178627679a11dbb4d747aad3b9855ff7f69871"
+      },
+      "output": {
+        "file": "rtl-text.pdf",
+        "bytes": 45659,
+        "sha256": "19135ff34a2435de60db0731abb20ad43d8033b969206e043b763df9ecb7734b"
       }
     }
   ]

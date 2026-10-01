@@ -183,6 +183,7 @@ pub(crate) fn reorder_bidi_line<T: Clone>(
         |_| false,
         None,
         rtl_base,
+        crate::bidi::BracketGlyphs::Mirrored,
     );
     let source: Vec<T> = items.to_vec();
     for (slot, (index, _)) in order.into_iter().enumerate() {
@@ -218,10 +219,53 @@ pub(crate) fn sort_line_items(items: &mut [TextItem], page_rtl: bool) {
     // Algorithm, whichever direction dominates it.
     if items.iter().any(|i| i.text.chars().any(is_rtl_char)) {
         let rtl_base = rtl_line_base(items, |i| i, page_rtl);
-        crate::sort::stable(items, &mut |a, b| a.x.total_cmp(&b.x));
-        reorder_bidi_line(items, |i| i, rtl_base);
+        sort_bidi_line_items(items, rtl_base);
         return;
     }
+    sort_ltr_line_items(items);
+}
+
+/// Sort the items of lines into reading order (see [`sort_line_items`]). A
+/// line with right-to-left letters reads in the direction its paragraph's
+/// alignment gives, where the alignment gives one
+/// (markitai, `crate::base_direction`); its letters and the page's
+/// direction decide the others. A page without right-to-left letters is
+/// read once to tell, as before.
+pub(crate) fn sort_lines_items(lines: &mut [crate::types::TextLine], page_rtl: bool) {
+    let bidi: Vec<bool> = lines
+        .iter()
+        .map(|line| line.items.iter().any(|i| i.text.chars().any(is_rtl_char)))
+        .collect();
+    if !bidi.contains(&true) {
+        for line in lines {
+            sort_ltr_line_items(&mut line.items);
+        }
+        return;
+    }
+    let boxes: Vec<Option<crate::base_direction::LineBox>> = lines
+        .iter()
+        .map(|line| crate::base_direction::LineBox::of(&line.items))
+        .collect();
+    let bases = crate::base_direction::aligned_bases(&boxes);
+    for ((line, bidi), base) in lines.iter_mut().zip(bidi).zip(bases) {
+        if bidi {
+            let rtl_base = base.unwrap_or_else(|| rtl_line_base(&line.items, |i| i, page_rtl));
+            sort_bidi_line_items(&mut line.items, rtl_base);
+        } else {
+            sort_ltr_line_items(&mut line.items);
+        }
+    }
+}
+
+/// Put a line holding right-to-left letters into reading order for a
+/// paragraph of the given base direction (see [`reorder_bidi_line`]).
+fn sort_bidi_line_items(items: &mut [TextItem], rtl_base: bool) {
+    crate::sort::stable(items, &mut |a, b| a.x.total_cmp(&b.x));
+    reorder_bidi_line(items, |i| i, rtl_base);
+}
+
+/// Sort a line without right-to-left letters along its reading direction.
+fn sort_ltr_line_items(items: &mut [TextItem]) {
     // An upside-down line of LTR runs (180°) reads towards -x: sort it by its
     // mirrored position so the fragments come out in reading order.
     // Non-text items on the line (links, form fields, images) are axis-aligned
@@ -700,13 +744,17 @@ fn stored_in_visual_order(
 ///
 /// `logical_text_items` are items whose text is logical whatever the page
 /// does (ActualText replacements). On a visual-order page they are turned
-/// into display order here so every item of the page reads the same way.
+/// into display order here so every item of the page reads the same way,
+/// with the brackets at odd levels mirrored unless `written_glyphs` says
+/// the page's glyphs decode to the characters written (markitai, see
+/// `crate::bidi::visual_to_logical_glyphs`).
 pub(crate) fn fix_visual_order_rtl(
     items: &mut [TextItem],
     candidates: &[usize],
     logical_ops: u32,
     visual_ops: u32,
     logical_text_items: &[usize],
+    written_glyphs: bool,
 ) -> bool {
     let page_rtl = is_rtl_text(items.iter().map(|i| &i.text));
     if !stored_in_visual_order(items, candidates, logical_ops, visual_ops) {
@@ -742,9 +790,63 @@ pub(crate) fn fix_visual_order_rtl(
             continue;
         }
         let rtl = page_rtl || is_rtl_text(std::iter::once(&item.text));
-        item.text = crate::bidi::logical_to_visual(&item.text, rtl);
+        item.text = crate::bidi::logical_to_visual_glyphs(&item.text, rtl, !written_glyphs);
     }
     true
+}
+
+/// Whether the runs of a page that stores right-to-left text in reading
+/// order hold the mirror images of their brackets (markitai, see
+/// `crate::bidi::BracketGlyphs::MirroredText`): a bracket against a
+/// right-to-left letter on its inner side — `(` before the first letter of
+/// a word, `)` after its last, quotation marks alike — votes for the
+/// characters written, the reverse (`)الأمر`, `جداً(`) for mirror images.
+/// Characters are next to each other inside a run, and across two runs
+/// shown one after the other on one baseline whose boxes touch (a bracket
+/// set in a font of its own). Ties keep the characters written.
+pub(crate) fn brackets_mirrored_in_text(items: &[TextItem]) -> bool {
+    let letter = |c: char| {
+        is_rtl_char(c) && c.is_alphabetic() && !unicode_normalization::char::is_combining_mark(c)
+    };
+    let (mut mirrored, mut written) = (0i64, 0i64);
+    let mut vote = |before: char, after: char| {
+        if letter(after) {
+            match crate::bidi::bracket_side(before) {
+                Some(true) => written += 1,
+                Some(false) => mirrored += 1,
+                None => {}
+            }
+        }
+        if letter(before) {
+            match crate::bidi::bracket_side(after) {
+                Some(false) => written += 1,
+                Some(true) => mirrored += 1,
+                None => {}
+            }
+        }
+    };
+    let mut previous: Option<&TextItem> = None;
+    for item in items {
+        let touching = previous.is_some_and(|p| {
+            let em = p.font_size.min(item.font_size).abs().max(1.0);
+            let gap = (item.x - (p.x + p.width)).max(p.x - (item.x + item.width));
+            p.page == item.page && (p.y - item.y).abs() <= em * 0.2 && gap <= em * 0.15
+        });
+        if let (true, Some(p)) = (touching, previous) {
+            if let (Some(before), Some(after)) = (p.text.chars().last(), item.text.chars().next()) {
+                vote(before, after);
+            }
+        }
+        let mut chars = item.text.chars();
+        if let Some(mut before) = chars.next() {
+            for after in chars {
+                vote(before, after);
+                before = after;
+            }
+        }
+        previous = Some(item);
+    }
+    mirrored > written
 }
 
 /// Decode a PDF text string (ActualText, etc.) that may be UTF-16BE (BOM \xFE\xFF)
@@ -1725,7 +1827,7 @@ mod tests {
             make_rtl_item("\u{05DD}\u{05DC}\u{05D5}\u{05E2}", 100.0, 700.0), // visual עולם
             make_rtl_item("\u{05DD}\u{05D5}\u{05DC}\u{05E9}", 160.0, 700.0), // visual שלום
         ];
-        assert!(fix_visual_order_rtl(&mut items, &[0, 1], 0, 0, &[]));
+        assert!(fix_visual_order_rtl(&mut items, &[0, 1], 0, 0, &[], false));
         // The items themselves are left for the merge to read.
         assert_eq!(items[0].text, "\u{05DD}\u{05DC}\u{05D5}\u{05E2}");
     }
@@ -1737,7 +1839,7 @@ mod tests {
             make_rtl_item("\u{05E9}\u{05DC}\u{05D5}\u{05DD}", 160.0, 700.0),
             make_rtl_item("\u{05E2}\u{05D5}\u{05DC}\u{05DD}", 100.0, 700.0),
         ];
-        assert!(!fix_visual_order_rtl(&mut items, &[0, 1], 0, 0, &[]));
+        assert!(!fix_visual_order_rtl(&mut items, &[0, 1], 0, 0, &[], false));
     }
 
     #[test]
@@ -1750,10 +1852,10 @@ mod tests {
             make_rtl_item("\u{05DD}\u{05D5}\u{05DC}\u{05E9}", 160.0, 700.0), // visual שלום
             make_rtl_item("\u{05DD}\u{05DC}\u{05D5}\u{05E2}", 100.0, 700.0), // visual עולם
         ];
-        assert!(fix_visual_order_rtl(&mut items, &[0, 1], 0, 2, &[]));
+        assert!(fix_visual_order_rtl(&mut items, &[0, 1], 0, 2, &[], false));
         // The same walk of an invisible text layer, whose runs display
         // nothing and cast no visual vote, still reads as logical storage.
-        assert!(!fix_visual_order_rtl(&mut items, &[0, 1], 0, 0, &[]));
+        assert!(!fix_visual_order_rtl(&mut items, &[0, 1], 0, 0, &[], false));
     }
 
     #[test]
@@ -1783,9 +1885,9 @@ mod tests {
             100.0,
             700.0,
         )];
-        assert!(fix_visual_order_rtl(&mut items, &[0], 0, 0, &[]));
+        assert!(fix_visual_order_rtl(&mut items, &[0], 0, 0, &[], false));
         // No candidate at all: nothing to decide.
-        assert!(!fix_visual_order_rtl(&mut items, &[], 0, 0, &[]));
+        assert!(!fix_visual_order_rtl(&mut items, &[], 0, 0, &[], false));
     }
 
     #[test]
@@ -1796,7 +1898,7 @@ mod tests {
             make_rtl_item(logical, 100.0, 700.0),
             make_rtl_item(logical, 160.0, 700.0),
         ];
-        assert!(!fix_visual_order_rtl(&mut items, &[0, 1], 2, 0, &[]));
+        assert!(!fix_visual_order_rtl(&mut items, &[0, 1], 2, 0, &[], false));
     }
 
     #[test]
@@ -1807,7 +1909,7 @@ mod tests {
             make_rtl_item("\u{05D1}\u{05D0}", 160.0, 700.0),
             make_rtl_item("\u{05D3}\u{05D2}", 100.0, 650.0),
         ];
-        assert!(fix_visual_order_rtl(&mut items, &[0, 1], 0, 0, &[]));
+        assert!(fix_visual_order_rtl(&mut items, &[0, 1], 0, 0, &[], false));
     }
 
     #[test]
@@ -1821,9 +1923,23 @@ mod tests {
             make_rtl_item("\u{05DC}", 112.0, 700.0),
             make_rtl_item("\u{05E9}", 118.0, 700.0),
         ];
-        assert!(fix_visual_order_rtl(&mut items, &[0, 1, 2, 3], 0, 0, &[]));
+        assert!(fix_visual_order_rtl(
+            &mut items,
+            &[0, 1, 2, 3],
+            0,
+            0,
+            &[],
+            false
+        ));
         items.reverse();
-        assert!(!fix_visual_order_rtl(&mut items, &[0, 1, 2, 3], 0, 0, &[]));
+        assert!(!fix_visual_order_rtl(
+            &mut items,
+            &[0, 1, 2, 3],
+            0,
+            0,
+            &[],
+            false
+        ));
     }
 
     #[test]
@@ -1836,7 +1952,7 @@ mod tests {
             make_rtl_item("\u{FEE6}\u{FEFB}", 160.0, 700.0), // لان displayed: noon-final, lam-alef
             make_rtl_item("\u{FEF3}\u{FEE1}", 100.0, 700.0), // مي displayed: yeh-initial, meem-medial
         ];
-        assert!(!fix_visual_order_rtl(&mut items, &[0, 1], 0, 0, &[]));
+        assert!(!fix_visual_order_rtl(&mut items, &[0, 1], 0, 0, &[], false));
         assert_eq!(items[0].text, "\u{FEFB}\u{FEE6}");
         assert_eq!(items[1].text, "\u{FEE1}\u{FEF3}");
     }
@@ -1850,7 +1966,7 @@ mod tests {
             make_rtl_item("\u{05DD}\u{05DC}\u{05D5}\u{05E2}", 100.0, 700.0),
             make_rtl_item("\u{05E9}\u{05DC}\u{05D5}\u{05DD} 12", 160.0, 700.0),
         ];
-        assert!(fix_visual_order_rtl(&mut items, &[0], 0, 0, &[1]));
+        assert!(fix_visual_order_rtl(&mut items, &[0], 0, 0, &[1], false));
         assert_eq!(items[1].text, "12 \u{05DD}\u{05D5}\u{05DC}\u{05E9}");
     }
 
@@ -1910,6 +2026,183 @@ mod tests {
         sort_line_items(&mut items, true);
         assert_eq!(items[0].text, "IBM");
         assert_eq!(items[1].text, "\u{05D4}\u{05D9}\u{05D0}");
+    }
+
+    /// A line of items `(text, x, width)` at `y`, 12pt.
+    fn line_of(y: f32, items: &[(&str, f32, f32)]) -> crate::types::TextLine {
+        crate::types::TextLine {
+            items: items
+                .iter()
+                .map(|&(text, x, width)| {
+                    let mut item = make_rtl_item(text, x, y);
+                    item.width = width;
+                    item
+                })
+                .collect(),
+            y,
+            page: 1,
+            adaptive_threshold: 0.10,
+        }
+    }
+
+    fn texts(line: &crate::types::TextLine) -> Vec<&str> {
+        line.items.iter().map(|i| i.text.as_str()).collect()
+    }
+
+    #[test]
+    fn lines_flush_with_the_left_edge_read_left_to_right_on_a_hebrew_page() {
+        // A browser's default direction for a page that does not set one:
+        // every paragraph left to right, flush left. The heading "שלום IBM
+        // עולם Linux" shows its words in that order from the left, and so
+        // reads; by its letters on a Hebrew page it would read backwards.
+        let mut lines = vec![
+            line_of(
+                700.0,
+                &[
+                    ("\u{05E9}\u{05DC}\u{05D5}\u{05DD}", 100.0, 30.0),
+                    ("IBM", 135.0, 25.0),
+                    ("\u{05E2}\u{05D5}\u{05DC}\u{05DD}", 165.0, 30.0),
+                    ("Linux", 200.0, 30.0),
+                ],
+            ),
+            line_of(
+                683.0,
+                &[(
+                    "\u{05D0}\u{05D1}\u{05D2} \u{05D3}\u{05D4}\u{05D5}",
+                    100.0,
+                    300.0,
+                )],
+            ),
+            line_of(666.0, &[("\u{05D6}\u{05D7}\u{05D8}", 100.0, 120.0)]),
+        ];
+        lines[0].items.reverse();
+        sort_lines_items(&mut lines, true);
+        assert_eq!(
+            texts(&lines[0]),
+            [
+                "\u{05E9}\u{05DC}\u{05D5}\u{05DD}",
+                "IBM",
+                "\u{05E2}\u{05D5}\u{05DC}\u{05DD}",
+                "Linux"
+            ]
+        );
+        // The same lines flush right read right to left.
+        let mut lines = vec![
+            line_of(
+                700.0,
+                &[
+                    ("\u{05E9}\u{05DC}\u{05D5}\u{05DD}", 270.0, 30.0),
+                    ("IBM", 305.0, 25.0),
+                    ("\u{05E2}\u{05D5}\u{05DC}\u{05DD}", 335.0, 30.0),
+                    ("Linux", 370.0, 30.0),
+                ],
+            ),
+            line_of(
+                683.0,
+                &[(
+                    "\u{05D0}\u{05D1}\u{05D2} \u{05D3}\u{05D4}\u{05D5}",
+                    100.0,
+                    300.0,
+                )],
+            ),
+            line_of(666.0, &[("\u{05D6}\u{05D7}\u{05D8}", 280.0, 120.0)]),
+        ];
+        sort_lines_items(&mut lines, true);
+        assert_eq!(
+            texts(&lines[0]),
+            [
+                "Linux",
+                "\u{05E2}\u{05D5}\u{05DC}\u{05DD}",
+                "IBM",
+                "\u{05E9}\u{05DC}\u{05D5}\u{05DD}"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_latin_line_of_a_right_aligned_paragraph_reads_right_to_left() {
+        // "Obsidian و Notion" as the middle line of a right-to-left
+        // paragraph: Latin by its letters, Latin at both ends, so it reads
+        // left to right on its own; flush right with the lines around it,
+        // it reads right to left.
+        let line = |y: f32, left: f32, items: &[(&str, f32)]| {
+            let mut x = left;
+            let spans: Vec<(&str, f32, f32)> = items
+                .iter()
+                .map(|&(t, w)| {
+                    let span = (t, x, w);
+                    x += w + 4.0;
+                    span
+                })
+                .collect();
+            line_of(y, &spans)
+        };
+        let mut lines = vec![
+            line(
+                700.0,
+                300.0,
+                &[("\u{05D0}\u{05D1}\u{05D2} \u{05D3}\u{05D4}\u{05D5}", 200.0)],
+            ),
+            line(
+                683.0,
+                396.0,
+                &[("Notion", 40.0), ("\u{05D5}", 8.0), ("Obsidian", 48.0)],
+            ),
+            line(
+                666.0,
+                350.0,
+                &[("\u{05D6}\u{05D7}\u{05D8} \u{05D9}\u{05DB}", 150.0)],
+            ),
+        ];
+        sort_lines_items(&mut lines, false);
+        assert_eq!(texts(&lines[1]), ["Obsidian", "\u{05D5}", "Notion"]);
+        // Without the paragraph around it the letters decide, as before.
+        let mut alone = vec![lines[1].clone()];
+        sort_lines_items(&mut alone, false);
+        assert_eq!(texts(&alone[0]), ["Notion", "\u{05D5}", "Obsidian"]);
+        // A page without right-to-left letters is sorted along x.
+        let mut latin = vec![line_of(700.0, &[("b", 120.0, 10.0), ("a", 100.0, 10.0)])];
+        sort_lines_items(&mut latin, true);
+        assert_eq!(texts(&latin[0]), ["a", "b"]);
+    }
+
+    #[test]
+    fn brackets_against_letters_tell_mirror_images_from_written_characters() {
+        let item = |text: &str, x: f32, width: f32| {
+            let mut item = make_rtl_item(text, x, 700.0);
+            item.width = width;
+            item
+        };
+        // In reading order a pair opens before its first letter and closes
+        // after its last: the characters written.
+        let written = [item("(\u{05E9}\u{05DC}\u{05D5}\u{05DD})", 100.0, 40.0)];
+        assert!(!brackets_mirrored_in_text(&written));
+        // A shaping engine's mirror images, in one run or in runs of their
+        // own that touch the word.
+        let mirrored = [item(")\u{05E9}\u{05DC}\u{05D5}\u{05DD}(", 100.0, 40.0)];
+        assert!(brackets_mirrored_in_text(&mirrored));
+        let apart = [
+            item(")", 140.0, 3.0),
+            item("\u{05E9}\u{05DC}\u{05D5}\u{05DD}", 110.0, 30.0),
+            item("(", 107.0, 3.0),
+        ];
+        assert!(brackets_mirrored_in_text(&apart));
+        // Runs a word apart or on another line cast no vote, nor do digits.
+        let far = [
+            item(")", 150.0, 3.0),
+            item("\u{05E9}\u{05DC}\u{05D5}\u{05DD}", 110.0, 30.0),
+        ];
+        assert!(!brackets_mirrored_in_text(&far));
+        let mut below = item("\u{05E9}\u{05DC}\u{05D5}\u{05DD}", 110.0, 30.0);
+        below.y = 680.0;
+        assert!(!brackets_mirrored_in_text(&[item(")", 140.0, 3.0), below]));
+        assert!(!brackets_mirrored_in_text(&[item(")12(", 100.0, 20.0)]));
+        // A tie keeps the characters written.
+        assert!(!brackets_mirrored_in_text(&[item(
+            "(\u{05E9} )\u{05DC}",
+            100.0,
+            40.0
+        )]));
     }
 
     #[test]
