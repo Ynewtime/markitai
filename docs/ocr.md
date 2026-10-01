@@ -122,11 +122,25 @@ observations with the encoded-image path. Additional checks reject zero-sized,
 oversized and excess-storage RGB layouts without allocating a maximum-sized
 image, and verify that ordinary RGB rows and colors remain unchanged.
 
-The [frozen release check](validation/native-backends-round16.md) observes a
-25.897-second first image OCR call and much shorter subsequent calls. OS caches
-were not reset and the cause is not established; this remains an optimization
-target. A separate small native CPU-only probe does not justify changing the
-default compute policy. These observations are not an OCR speed guarantee.
+The [frozen release check](validation/native-backends-round16.md) observed a
+25.897-second first image OCR call and much shorter subsequent calls. The cause
+is Vision compiling its recognition models for the device on first use: it
+caches them under `~/Library/Caches/<executable name>/com.apple.e5rt.e5bundlecache/`
+per system build, for the executable that ran. The first OCR after installing
+or updating Markitai, or after switching between two builds, takes about 25–45
+seconds; later calls take about 130 ms per image. A process that may not write
+that cache directory (a sandbox limited to its output folder) fails with
+Vision's `missingError`. A separate small native CPU-only probe does not
+justify changing the default compute policy. These observations are not an
+OCR speed guarantee.
+
+The command-line executables link Foundation, CoreFoundation, CoreGraphics,
+ImageIO and Vision delay-initialized: from macOS 15, dyld initializes them on
+first use instead of at launch, which saves about 1 ms in every process that
+needs none of them (HTML, Office and text PDF conversions). OCR, HEIF/AVIF
+decoding and PDF rasterization open their framework explicitly before first
+use, about 1 ms more once per process; earlier systems initialize them at
+launch as before, and the language bindings are unaffected.
 
 Implementation references: Apple's [text-recognition guide](https://developer.apple.com/documentation/vision/recognizing-text-in-images),
 [recognition request](https://developer.apple.com/documentation/vision/vnrecognizetextrequest)

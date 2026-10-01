@@ -21,9 +21,16 @@ and in the batch report under `out/.markitai/reports/`.
 
 ## Common problems
 
-**An image produces no output and no message.** A standalone image has no text
-unless you ask for recognition. Add `--ocr` (on-device OCR, macOS) or `--llm`
-(vision model). With `--json` the item shows `"skip_reason": "image_only"`.
+**An image produces no output.** A standalone image has no text unless you ask
+for recognition; Markitai says on stderr that it skipped the image. Add `--ocr`
+(on-device OCR, macOS) or `--llm` (vision model). With `--json` the item shows
+`"skip_reason": "image_only"`.
+
+**The first OCR takes half a minute.** Vision compiles its recognition models
+for this executable the first time it runs and caches them, so the first OCR
+after installing or updating Markitai takes about 25–45 seconds and later ones
+well under a second per page. A sandbox that forbids writing
+`~/Library/Caches/markitai` makes OCR fail with `missingError`.
 
 **Images are missing when I print to stdout.** Without `-o`, Markdown goes to
 stdout and image references such as `.markitai/assets/…` are not written

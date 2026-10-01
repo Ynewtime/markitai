@@ -1,4 +1,5 @@
 use super::{RasterSize, Result, failure, raster_size};
+use crate::system_frameworks::{self, Framework};
 use image::RgbImage;
 use objc2_core_foundation::{CFData, CFRetained, CGAffineTransform, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
@@ -70,6 +71,7 @@ impl PdfRasterSession {
         {
             return Err(failure("input has no PDF header"));
         }
+        system_frameworks::open(Framework::CoreGraphics).map_err(|message| failure(&message))?;
         // SAFETY: The slice is valid for its checked length; CFDataCreate copies
         // it before returning. The caller's buffer may then be dropped.
         let data = unsafe { CFData::new(None, bytes.as_ptr(), bytes.len() as isize) }

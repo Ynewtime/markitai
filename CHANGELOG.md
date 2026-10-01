@@ -94,6 +94,7 @@
 ### Changed
 
 - Look up PDF glyph names in pdf-inspector through a packed table built at compile time instead of a 4,528-entry map filled at first use (108,960 bytes of code): release binary −82,576 bytes, PDF output byte-identical on 216 corpus PDFs and every glyph name.
+- Link the macOS frameworks behind OCR, HEIF/AVIF decoding and PDF rasterization delay-initialized in the command-line executables, so conversions that need none of them start about 1 ms (≈25%) faster on macOS 15 and later; explain why the first OCR after an install takes 25–45 seconds (Vision compiles its models per executable).
 - Load each PDF once and walk each page's content stream once for its text: the page reader, layout reconstruction and Markitai's own inspection share one parsed document whenever both loaders would read the same objects, cutting PDF conversion CPU by about 25% (wall time 6%, large PDFs 14%) with byte-identical output.
 - Warn about PDF image placement only when images were extracted, without the obsolete claim that page screenshots and local OCR are not implemented.
 - Order output publication stages on macOS with `F_BARRIERFSYNC` and keep one full-cache flush, before a success is acknowledged, and answer adjacent path checks with one ancestor walk: single-file `-o` conversions are about 6 ms (≈33%) faster and directory runs 14–24% faster, outputs and ownership records stay byte-identical, and an acknowledged output is still on stable media; Linux keeps its per-object `fsync` sequence.

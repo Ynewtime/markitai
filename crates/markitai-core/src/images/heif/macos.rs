@@ -1,5 +1,6 @@
 use super::{Decoded, Info, unavailable};
 use crate::Result;
+use crate::system_frameworks::{self, Framework};
 use image::{DynamicImage, RgbaImage, metadata::Orientation};
 use objc2_core_foundation::{
     CFBoolean, CFData, CFDictionary, CFNumber, CFString, CFType, CGPoint, CGRect, CGSize,
@@ -46,6 +47,7 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Decoded> {
     // Some system codecs synthesize a CGImage even when all pixel payloads
     // were truncated. Validate the declared container before trusting it.
     super::validate_container(bytes)?;
+    system_frameworks::open(Framework::ImageIO).map_err(|message| failure(&message))?;
     // SAFETY: CFData copies the checked slice; it remains alive until after
     // ImageIO and the CGImage have been released. Options have CFBoolean values.
     let data = unsafe { CFData::new(None, bytes.as_ptr(), bytes.len() as isize) }

@@ -1,6 +1,7 @@
 use super::{
     Line, MAX_LINES, MAX_TEXT, Result, failure, pixel_bounds, pixels::Prepared, supported_language,
 };
+use crate::system_frameworks::{self, Framework};
 use objc2::{AnyThread, rc::autoreleasepool};
 use objc2_foundation::{NSArray, NSData, NSDictionary, NSString};
 use objc2_vision::{
@@ -8,6 +9,8 @@ use objc2_vision::{
 };
 
 pub(super) fn recognize(image: &Prepared, requested: &str) -> Result<Vec<Line>> {
+    // Vision and Foundation classes are looked up by name below.
+    system_frameworks::open(Framework::Vision).map_err(|message| failure(&message))?;
     autoreleasepool(|_| {
         let request = VNRecognizeTextRequest::new();
         request.setRecognitionLevel(VNRequestTextRecognitionLevel::Accurate);
