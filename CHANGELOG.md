@@ -86,6 +86,7 @@
 
 ### Fixed
 
+- Non-UTF-8 HTML, text and CSV decode correctly instead of turning into Windows-1252 mojibake: HTML follows its BOM and the standard `<meta charset>`/`http-equiv` prescan (also for fetched pages without a header charset; a header charset still wins), and TXT, Markdown, CSV and TSV without a BOM are checked conservatively for GB18030/GBK, Big5, Shift_JIS, EUC-JP and EUC-KR against a Western reading, with a warning when the encoding stays uncertain. Western single-byte files and every UTF-8 corpus are unchanged.
 - Writing to a closed pipe (`markitai file | head`) ends quietly with the run's status instead of `Error: Broken pipe` or a panic, for every command; other standard-output failures say `Error: Cannot write to standard output: …`. An interrupted batch lists what it did not process and suggests `--resume`; a PDF that needs a user password says it is encrypted; `markitai-mcp` accepts `--version` and shows its own name in help; `--log-level` accepts any case; URLs followed by Chinese punctuation no longer garble the terminal line.
 - Claude responses are priced again: the Messages API now reports `usage.inference_geo`, which made every Anthropic response unpriced; an unrestricted placement (`not_available`, `global`) keeps the listed rates, while US-only inference stays unpriced.
 - `claude-agent/` models accept Claude Code 2.1.284 and later 2.1 patch releases, which the official runtime installs by itself, instead of only 2.1.284; `markitai auth claude status --json` reports the installed version and the oldest supported one.

@@ -8,6 +8,7 @@ mod numbers;
 mod text;
 
 pub use html::extract_html;
+pub(crate) use html::legacy_encoding as html_legacy_encoding;
 pub(crate) use native::extract_presentation_count;
 #[cfg(test)]
 pub(crate) use native::pdf::extract_pages as extract_pdf_pages;
@@ -154,15 +155,11 @@ pub fn extract(path: &Path) -> Result<Document> {
             std::fs::read(path)?
         };
         match extension.as_str() {
-            "txt" | "md" | "markdown" => Document {
-                markdown: text::decode(&bytes)?,
-                ..Document::default()
-            },
-            "html" | "htm" | "xhtml" => extract_html(&text::decode(&bytes)?, None)?,
-            "csv" | "tsv" => text::delimited(
-                &text::decode(&bytes)?,
-                if extension == "tsv" { b'\t' } else { b',' },
-            )?,
+            "txt" | "md" | "markdown" => text::plain(&bytes)?,
+            "html" | "htm" | "xhtml" => html::extract_html_bytes(&bytes)?,
+            "csv" | "tsv" => {
+                text::delimited_bytes(&bytes, if extension == "tsv" { b'\t' } else { b',' })?
+            }
             "ipynb" => text::notebook(&text::decode(&bytes)?)?,
             "json" => text::json(&text::decode(&bytes)?)?,
             "xml" => text::xml(&text::decode(&bytes)?)?,

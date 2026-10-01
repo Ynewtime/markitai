@@ -6,9 +6,11 @@ the local format readers. Requests negotiate
 `Accept: text/markdown, text/html;q=0.9, */*;q=0.5`, follow at most ten redirects
 and bound response bodies to 100 MiB. HTML links resolve against the final
 response URL. Both initial and conditional responses use the same charset and
-format decoder. Text decoding follows a BOM or HTTP charset, otherwise UTF-8;
-malformed sequences use replacement characters. HTML meta-charset prescanning
-and heuristic encoding detection are not implemented. Explicit plain-text and
+format decoder. Text decoding follows a BOM, then an HTTP charset, then for
+HTML a `<meta>` declaration found by the HTML standard's prescan (see
+[text encodings](formats.md#text-encodings)), otherwise UTF-8; malformed
+sequences use replacement characters. Plain-text responses without a charset
+are not run through the local encoding detection. Explicit plain-text and
 Markdown MIME types keep literal HTML examples as text rather than triggering
 HTML challenge detection.
 

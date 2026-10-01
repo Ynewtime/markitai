@@ -1,0 +1,358 @@
+//! The character encoding of HTML bytes that arrive without a transport label.
+//!
+//! The HTML standard decides it from a byte-order mark, then from a `<meta>`
+//! declaration found by its prescan of the first 1,024 bytes. One deliberate
+//! difference: bytes that are valid UTF-8 and not plain ASCII are read as
+//! UTF-8 whatever they declare, because pages re-saved as UTF-8 (a browser's
+//! DOM capture, an editor's conversion) keep their old declaration, while
+//! legacy text practically never forms valid UTF-8. The `replacement`
+//! encoding (ISO-2022-KR, HZ-GB-2312) is ignored instead of turning the page
+//! into one replacement character.
+
+use encoding_rs::{Encoding, UTF_8, WINDOWS_1252, X_USER_DEFINED};
+
+/// Bytes the prescan reads.
+const PRESCAN: usize = 1024;
+
+/// The non-UTF-8 encoding to read unlabeled HTML bytes with, or `None` when
+/// the caller's BOM/UTF-8 handling applies.
+pub(crate) fn legacy_encoding(bytes: &[u8]) -> Option<&'static Encoding> {
+    if Encoding::for_bom(bytes).is_some() {
+        return None;
+    }
+    let encoding = prescan(&bytes[..bytes.len().min(PRESCAN)]).filter(|e| *e != UTF_8)?;
+    // ASCII-only bytes read the same in every declared encoding except
+    // ISO-2022-JP, which is why they follow the declaration.
+    (bytes.is_ascii() || std::str::from_utf8(bytes).is_err()).then_some(encoding)
+}
+
+fn is_space(byte: u8) -> bool {
+    matches!(byte, 0x09 | 0x0A | 0x0C | 0x0D | 0x20)
+}
+
+/// The standard's "prescan a byte stream to determine its encoding".
+fn prescan(bytes: &[u8]) -> Option<&'static Encoding> {
+    let mut i = 0;
+    while let Some(rest) = bytes.get(i..).filter(|rest| !rest.is_empty()) {
+        if rest.starts_with(b"<!--") {
+            // The closing dashes may overlap the opening ones (`<!-->`).
+            i += 2 + rest[2..].windows(3).position(|w| w == b"-->")? + 3;
+        } else if rest.len() > 5
+            && rest[..5].eq_ignore_ascii_case(b"<meta")
+            && (is_space(rest[5]) || rest[5] == b'/')
+        {
+            i += 6;
+            if let Some(encoding) = meta(bytes, &mut i) {
+                return Some(encoding);
+            }
+            i += 1;
+        } else if rest[0] == b'<'
+            && match rest.get(1) {
+                Some(b'/') => rest.get(2).is_some_and(u8::is_ascii_alphabetic),
+                next => next.is_some_and(u8::is_ascii_alphabetic),
+            }
+        {
+            i += rest.iter().position(|&b| is_space(b) || b == b'>')?;
+            while attribute(bytes, &mut i).is_some() {}
+            i += 1;
+        } else if rest.starts_with(b"<!") || rest.starts_with(b"</") || rest.starts_with(b"<?") {
+            i += 1 + rest[1..].iter().position(|&b| b == b'>')? + 1;
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+/// The attributes of one `<meta>` element; the declared encoding when they
+/// form a `charset` declaration or a `Content-Type` pragma.
+fn meta(bytes: &[u8], i: &mut usize) -> Option<&'static Encoding> {
+    let mut seen: Vec<Vec<u8>> = Vec::new();
+    let mut got_pragma = false;
+    let mut need_pragma = None;
+    // `None` until declared; `Some(None)` for an unknown `charset` label.
+    let mut charset = None;
+    while let Some((name, value)) = attribute(bytes, i) {
+        if seen.contains(&name) {
+            continue;
+        }
+        match name.as_slice() {
+            b"http-equiv" => got_pragma |= value == b"content-type",
+            b"content" if charset.is_none() => {
+                if let Some(found) = content_charset(&value) {
+                    charset = Some(Some(found));
+                    need_pragma = Some(true);
+                }
+            }
+            b"charset" => {
+                charset = Some(label(&value));
+                need_pragma = Some(false);
+            }
+            _ => (),
+        }
+        seen.push(name);
+    }
+    match need_pragma? {
+        true if !got_pragma => None,
+        _ => charset.flatten(),
+    }
+}
+
+/// The standard's "get an attribute": a lowercased name and value, or `None`
+/// at the end of the tag or of the prescanned bytes.
+fn attribute(bytes: &[u8], i: &mut usize) -> Option<(Vec<u8>, Vec<u8>)> {
+    let skip_spaces = |i: &mut usize| {
+        while bytes.get(*i).copied().is_some_and(is_space) {
+            *i += 1;
+        }
+    };
+    while bytes.get(*i).is_some_and(|&b| is_space(b) || b == b'/') {
+        *i += 1;
+    }
+    if *bytes.get(*i)? == b'>' {
+        return None;
+    }
+    let mut name = Vec::new();
+    let mut value = Vec::new();
+    loop {
+        match *bytes.get(*i)? {
+            b'=' if !name.is_empty() => break,
+            b if is_space(b) => {
+                skip_spaces(i);
+                if bytes.get(*i) != Some(&b'=') {
+                    return Some((name, value));
+                }
+                break;
+            }
+            b'/' | b'>' => return Some((name, value)),
+            b => name.push(b.to_ascii_lowercase()),
+        }
+        *i += 1;
+    }
+    *i += 1;
+    skip_spaces(i);
+    match *bytes.get(*i)? {
+        quote @ (b'"' | b'\'') => loop {
+            *i += 1;
+            let b = *bytes.get(*i)?;
+            if b == quote {
+                *i += 1;
+                return Some((name, value));
+            }
+            value.push(b.to_ascii_lowercase());
+        },
+        b'>' => return Some((name, value)),
+        b => value.push(b.to_ascii_lowercase()),
+    }
+    loop {
+        *i += 1;
+        match *bytes.get(*i)? {
+            b if is_space(b) || b == b'>' => return Some((name, value)),
+            b => value.push(b.to_ascii_lowercase()),
+        }
+    }
+}
+
+/// The standard's "extract a character encoding from a meta element" for a
+/// `content` value such as `text/html; charset=gbk`.
+fn content_charset(value: &[u8]) -> Option<&'static Encoding> {
+    let mut i = 0;
+    loop {
+        i += value[i..].windows(7).position(|w| w == b"charset")? + 7;
+        while value.get(i).copied().is_some_and(is_space) {
+            i += 1;
+        }
+        if value.get(i) != Some(&b'=') {
+            continue;
+        }
+        i += 1;
+        while value.get(i).copied().is_some_and(is_space) {
+            i += 1;
+        }
+        let rest = &value[i..];
+        return match *rest.first()? {
+            quote @ (b'"' | b'\'') => {
+                let end = rest[1..].iter().position(|&b| b == quote)?;
+                label(&rest[1..=end])
+            }
+            _ => {
+                let end = rest
+                    .iter()
+                    .position(|&b| is_space(b) || b == b';')
+                    .unwrap_or(rest.len());
+                label(&rest[..end])
+            }
+        };
+    }
+}
+
+/// An encoding label with the prescan's substitutions: UTF-16 declarations
+/// (impossible in an ASCII-compatible prescan) mean UTF-8 and `x-user-defined`
+/// means Windows-1252.
+fn label(value: &[u8]) -> Option<&'static Encoding> {
+    let encoding = Encoding::for_label_no_replacement(value)?;
+    Some(if encoding == X_USER_DEFINED {
+        WINDOWS_1252
+    } else {
+        encoding.output_encoding()
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use encoding_rs::{BIG5, GBK, ISO_2022_JP, SHIFT_JIS, WINDOWS_1251};
+
+    fn declared(source: &[u8]) -> Option<&'static str> {
+        prescan(source).map(Encoding::name)
+    }
+
+    #[test]
+    fn prescan_reads_charset_and_content_type_declarations() {
+        assert_eq!(declared(b"<meta charset=gbk>"), Some("GBK"));
+        assert_eq!(declared(b"<META CHARSET='Big5'>"), Some("Big5"));
+        assert_eq!(declared(b"<meta/charset=\"shift_jis\">"), Some("Shift_JIS"));
+        assert_eq!(
+            declared(b"<meta http-equiv=\"Content-Type\" content=\"text/html; charset=gb2312\">"),
+            Some("GBK")
+        );
+        assert_eq!(
+            declared(
+                b"<meta content='text/html;charset = \"windows-1251\"' http-equiv=content-type>"
+            ),
+            Some("windows-1251")
+        );
+        // The first valid declaration wins; a later one is not read.
+        assert_eq!(
+            declared(b"<meta charset=euc-kr><meta charset=gbk>"),
+            Some("EUC-KR")
+        );
+    }
+
+    #[test]
+    fn prescan_requires_the_pragma_and_a_known_label() {
+        assert_eq!(declared(b"<meta content=\"text/html; charset=gbk\">"), None);
+        assert_eq!(
+            declared(b"<meta http-equiv=refresh content=\"0; charset=gbk\">"),
+            None
+        );
+        assert_eq!(
+            declared(b"<meta charset=klingon><meta charset=big5>"),
+            Some("Big5")
+        );
+        // A repeated attribute keeps its first value.
+        assert_eq!(declared(b"<meta charset=gbk charset=big5>"), Some("GBK"));
+        // `charset` overrides an earlier `content` declaration.
+        assert_eq!(
+            declared(b"<meta http-equiv=content-type content=\"charset=big5\" charset=gbk>"),
+            Some("GBK")
+        );
+    }
+
+    #[test]
+    fn prescan_skips_comments_other_tags_and_attribute_values() {
+        assert_eq!(declared(b"<!-- <meta charset=gbk> --><p>"), None);
+        assert_eq!(declared(b"<!-- a > b <meta charset=gbk> -->"), None);
+        assert_eq!(declared(b"<!--><meta charset=gbk>"), Some("GBK"));
+        assert_eq!(
+            declared(b"<title x=\"<meta charset=gbk>\"><meta charset=big5>"),
+            Some("Big5")
+        );
+        assert_eq!(
+            declared(b"<?xml version=\"1.0\"?><!DOCTYPE html><meta charset=sjis>"),
+            Some("Shift_JIS")
+        );
+        assert_eq!(declared(b"<metadata charset=gbk>"), None);
+        let mut late = vec![b' '; PRESCAN];
+        late.extend_from_slice(b"<meta charset=gbk>");
+        assert_eq!(legacy_encoding(&late), None);
+    }
+
+    #[test]
+    fn prescan_applies_the_standard_label_substitutions() {
+        assert_eq!(declared(b"<meta charset=utf-16le>"), Some("UTF-8"));
+        assert_eq!(
+            declared(b"<meta charset=x-user-defined>"),
+            Some("windows-1252")
+        );
+        assert_eq!(declared(b"<meta charset=iso-2022-kr>"), None);
+        assert_eq!(declared(b"<meta charset=latin1>"), Some("windows-1252"));
+    }
+
+    #[test]
+    fn legacy_encoding_yields_to_a_bom_and_to_valid_utf8_text() {
+        assert_eq!(
+            legacy_encoding(b"<meta charset=gbk><p>\xd6\xd0</p>"),
+            Some(GBK)
+        );
+        assert_eq!(
+            legacy_encoding(b"<meta charset=big5><p>\xa4\xa4</p>"),
+            Some(BIG5)
+        );
+        assert_eq!(
+            legacy_encoding(b"<meta charset=sjis><p>\x82\xa0</p>"),
+            Some(SHIFT_JIS)
+        );
+        assert_eq!(
+            legacy_encoding(b"<meta charset=cp1251><p>\xcf\xf0</p>"),
+            Some(WINDOWS_1251)
+        );
+        // ISO-2022-JP is seven-bit, so it is also valid UTF-8.
+        assert_eq!(
+            legacy_encoding(b"<meta charset=iso-2022-jp><p>\x1b$B$3\x1b(B</p>"),
+            Some(ISO_2022_JP)
+        );
+        assert_eq!(
+            legacy_encoding("<meta charset=gbk><p>中文</p>".as_bytes()),
+            None
+        );
+        assert_eq!(
+            legacy_encoding(b"\xef\xbb\xbf<meta charset=gbk><p>\xd6\xd0"),
+            None
+        );
+        assert_eq!(
+            legacy_encoding(b"<meta charset=utf-8><p>\xd6\xd0</p>"),
+            None
+        );
+        assert_eq!(legacy_encoding(b"<p>\xd6\xd0</p>"), None);
+    }
+
+    #[test]
+    fn local_html_bytes_follow_the_declaration() {
+        use super::super::extract_html_bytes;
+        let page = |charset: &str, text: &str, encoding: &'static Encoding| {
+            let source = format!(
+                "<html><head><meta charset=\"{charset}\"><title>t</title></head><body><p>{text}</p></body></html>"
+            );
+            let (bytes, _, unmappable) = encoding.encode(&source);
+            assert!(!unmappable);
+            extract_html_bytes(&bytes).unwrap()
+        };
+        for (charset, text, encoding) in [
+            ("gbk", "中文内容在这里，测试编码检测。", GBK),
+            ("gb2312", "简体中文", GBK),
+            ("big5", "繁體中文內容", BIG5),
+            ("shift_jis", "日本語のテキストです。", SHIFT_JIS),
+            ("windows-1251", "Привет, мир!", WINDOWS_1251),
+            ("euc-kr", "안녕하세요", encoding_rs::EUC_KR),
+        ] {
+            let document = page(charset, text, encoding);
+            assert_eq!(document.markdown, text, "{charset}");
+            assert!(document.warnings.is_empty());
+        }
+        // Undeclared legacy bytes are read like plain text.
+        let (gbk, ..) = GBK.encode("<p>中文内容在这里，测试编码检测。</p>");
+        assert_eq!(
+            extract_html_bytes(&gbk).unwrap().markdown,
+            "中文内容在这里，测试编码检测。"
+        );
+        assert_eq!(
+            extract_html_bytes(b"<p>caf\xe9</p>").unwrap().markdown,
+            "café"
+        );
+        // Bytes invalid in the declared encoding are replaced with a warning.
+        let document = extract_html_bytes(b"<meta charset=shift_jis><p>\x82\xa0\x82</p>").unwrap();
+        assert_eq!(document.markdown, "あ\u{fffd}");
+        assert_eq!(document.warnings.len(), 1);
+    }
+}

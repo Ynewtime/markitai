@@ -86,6 +86,7 @@
 
 ### 修复
 
+- 非 UTF-8 的 HTML、文本与 CSV 能正确解码，不再被当成 Windows-1252 变成乱码：HTML 遵循 BOM 与标准的 `<meta charset>`/`http-equiv` 预扫描（没有 charset 响应头的抓取页面也一样，响应头中的 charset 仍然优先）；没有 BOM 的 TXT、Markdown、CSV 与 TSV 会保守地检测 GB18030/GBK、Big5、Shift_JIS、EUC-JP 与 EUC-KR，并与西文读法比较，无法确定时给出警告。西文单字节文件与所有 UTF-8 语料不变。
 - 向已关闭的管道写出（`markitai file | head`）时所有命令都安静地按运行结果退出，不再显示 `Error: Broken pipe` 或崩溃；其它标准输出写入失败时提示 `Error: Cannot write to standard output: …`。被中断的批量运行会列出未处理的项并提示 `--resume`；需要用户密码的 PDF 会说明已加密；`markitai-mcp` 支持 `--version`，帮助中显示自己的名字；`--log-level` 不区分大小写；URL 后紧跟中文标点时终端行不再被打乱。
 - Claude 响应恢复计价：Messages API 现在在用量中返回 `usage.inference_geo`，此前这让所有 Anthropic 响应都无法计价；未限定地区（`not_available`、`global`）按标价计算，限定美国境内推理的响应仍不计价。
 - `claude-agent/` 模型接受 Claude Code 2.1.284 及此后的 2.1 补丁版本（官方运行时会自行更新到这些版本），不再只认 2.1.284；`markitai auth claude status --json` 报告已安装的版本与支持的最低版本。

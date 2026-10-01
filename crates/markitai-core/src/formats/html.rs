@@ -1,5 +1,6 @@
 mod article;
 mod callouts;
+mod charset;
 mod code;
 mod facts;
 mod furniture;
@@ -4062,6 +4063,30 @@ fn count_words(text: &str) -> usize {
         in_word = word;
     }
     words
+}
+
+pub(crate) use charset::legacy_encoding;
+
+/// Extract a local HTML file's bytes. A `<meta>` declaration decides unless a
+/// BOM or valid UTF-8 is present (see [`charset`]); byte sequences invalid in
+/// the declared encoding become replacement characters with a warning.
+/// Undeclared bytes are read like plain text.
+pub(super) fn extract_html_bytes(bytes: &[u8]) -> Result<Document> {
+    let Some(encoding) = legacy_encoding(bytes) else {
+        let (source, warning) = super::text::decode_legacy(bytes)?;
+        let mut document = extract_html(&source, None)?;
+        document.warnings.extend(warning);
+        return Ok(document);
+    };
+    let (source, malformed) = encoding.decode_without_bom_handling(bytes);
+    let mut document = extract_html(&source, None)?;
+    if malformed {
+        document.warnings.push(format!(
+            "HTML declared as {} contains invalid byte sequences; they were replaced with U+FFFD.",
+            encoding.name()
+        ));
+    }
+    Ok(document)
 }
 
 /// Extract an article candidate, metadata and Markdown without fetching links.

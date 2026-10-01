@@ -6,7 +6,10 @@ and parses the page only once (see [single parse](#single-parse)); what its
 passes ask of an element is computed once (see [facts read once](#facts-read-once)).
 It does not run JavaScript, fetch images, follow links, start a browser, or call
 the Python implementation. The same reader serves local HTML and fetched HTML;
-fetching itself belongs to the separate HTTP layer.
+fetching itself belongs to the separate HTTP layer. Bytes become text by a BOM,
+the `<meta>` charset prescan or UTF-8 (see
+[text encodings](formats.md#text-encodings)); a fetched page's HTTP charset
+comes first.
 
 Full-page article selection and structural widget removal are described in
 [article boundaries](html-article.md). That policy is disabled for document

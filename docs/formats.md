@@ -9,9 +9,9 @@ network policy and optional model enhancement belong to the orchestration layer.
 
 | Inputs | Reader | Current behavior |
 | --- | --- | --- |
-| TXT, MD, MARKDOWN | Rust text decoder | Preserves text and existing frontmatter; accepts UTF-8, BOM-marked UTF-16 and Windows-1252 |
-| HTML, HTM, XHTML | scraper + htmd | Selects an article/main candidate, extracts metadata, removes navigation/scripts/hidden content, resolves relative HTTP links and images |
-| CSV, TSV | csv | CSV preserves the reference's header width and raw cells; TSV retains the widest row and escapes table delimiters |
+| TXT, MD, MARKDOWN | Rust text decoder | Preserves text and existing frontmatter; accepts UTF-8, BOM-marked UTF-16, Windows-1252 and detected GBK/GB18030, Big5, Shift_JIS, EUC-JP and EUC-KR (see [text encodings](#text-encodings)) |
+| HTML, HTM, XHTML | scraper + htmd | Honors a `<meta>` charset declaration; selects an article/main candidate, extracts metadata, removes navigation/scripts/hidden content, resolves relative HTTP links and images |
+| CSV, TSV | csv | Decoded like TXT; CSV preserves the reference's header width and raw cells; TSV retains the widest row and escapes table delimiters |
 | IPYNB | serde_json | Markdown cells, fenced code and raw cells; metadata title and code language; code fences sized to protect embedded backticks |
 | JSON | serde_json | Validated, pretty-printed fenced JSON; an additive Rust format |
 | XML | quick-xml | Structured headings, attributes and mixed text, plus a source fence for small inputs; document types are rejected |
@@ -27,6 +27,41 @@ network policy and optional model enhancement belong to the orchestration layer.
 | NUMBERS | bounded ZIP/directory IWA preflight + iwork | Ordered sheets/tables, rectangular saved values and explicit formatting/unsupported-content warnings; see [Numbers](numbers.md) |
 | EPUB | anydoc + OPF metadata | Spine content and the original title/authors/language/publisher/date/description/identifier preamble |
 | PDF | pdf-inspector + lopdf; optional macOS CoreGraphics/Vision | Per-page text/layout, partial recovery and embedded images; explicit local-file page OCR and screenshots through the shared media pipeline |
+
+### Text encodings
+
+TXT, MD, CSV and TSV files carry no encoding label. A byte-order mark (UTF-8,
+UTF-16LE/BE) decides first, then valid UTF-8, which stays a single validation
+pass. Other bytes are offered to GB18030 (which includes GBK and GB2312), Big5,
+Shift_JIS, EUC-JP and EUC-KR, the encodings Chinese, Japanese and Korean Excel
+and Notepad still write. A reading with any invalid or unmapped byte sequence
+is discarded; Western text rarely survives, because an accented letter
+followed by a space, digit or punctuation is invalid in all five. Each
+remaining reading is scored by the share of its non-ASCII characters in the
+frequent part of its character set (punctuation, kana, Hangul, first-level
+ideographs), with three structural rules: EUC-JP kanji count only beside kana,
+a Big5 reading of eight or more characters without a low trail byte is not
+Big5, and a reading of twelve or more KS X 1001 Hangul syllables with nothing
+else is Korean. Windows-1252 competes with the share of non-ASCII bytes that
+stand alone between ASCII bytes as letters or common punctuation (accented
+letters, curly quotes, dashes). A multibyte reading needs a score of 0.7 and a
+lead of 0.2 over every other reading; otherwise the text is read as
+Windows-1252 as before, with a warning when an East Asian reading was plausible
+but not decisive. Very short inputs (a few characters) are often undecidable.
+There is no option to name the encoding.
+
+HTML follows the HTML standard's order: a BOM, then a `<meta charset>` or
+`<meta http-equiv="Content-Type" content="…; charset=…">` declaration found
+by its prescan of the first 1,024 bytes, with its label substitutions (UTF-16
+labels mean UTF-8, `x-user-defined` means Windows-1252). Bytes that are valid
+UTF-8 and not plain ASCII are read as UTF-8 whatever they declare, because a
+page re-saved as UTF-8 keeps its old declaration; the `replacement` labels
+(ISO-2022-KR, HZ-GB-2312) are ignored. Byte sequences invalid in the declared
+encoding become U+FFFD with a warning. HTML without a declaration is decoded
+like TXT. The detection is measured in
+`.local/text-encodings-r1/` (not committed): 1,725 encoded samples from Rust
+by Example (zh, ja, ko, es), the reference project's Chinese documentation and
+authored Western sentences.
 
 The native Office renderer reads the document once and preserves referenced
 embedded bytes. Shared image preparation then applies configured filtering and

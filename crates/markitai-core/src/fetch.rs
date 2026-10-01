@@ -676,7 +676,9 @@ fn header_text(response: &Response, name: reqwest::header::HeaderName) -> Option
         .map(str::to_owned)
 }
 
-fn decode_text<'a>(bytes: &'a [u8], content_type: &str) -> std::borrow::Cow<'a, str> {
+/// A BOM, then the HTTP charset, then for HTML a `<meta>` declaration, then
+/// UTF-8; malformed sequences become replacement characters.
+fn decode_text<'a>(bytes: &'a [u8], content_type: &str, html: bool) -> std::borrow::Cow<'a, str> {
     let charset = content_type.split(';').find_map(|parameter| {
         let (key, value) = parameter.trim().split_once('=')?;
         key.trim()
@@ -687,6 +689,7 @@ fn decode_text<'a>(bytes: &'a [u8], content_type: &str) -> std::borrow::Cow<'a, 
         .and_then(|label| {
             encoding_rs::Encoding::for_label(label.trim_matches(['\"', '\'']).as_bytes())
         })
+        .or_else(|| html.then(|| formats::html_legacy_encoding(bytes)).flatten())
         .unwrap_or(encoding_rs::UTF_8);
     encoding.decode(bytes).0
 }
@@ -919,7 +922,7 @@ fn probe_pdf(
     if !response.is_pdf() {
         let needs_javascript = inspect_learning
             && response.kind() == StaticKind::Html
-            && html_rejection(&decode_text(&response.bytes, &response.content_type))
+            && html_rejection(&decode_text(&response.bytes, &response.content_type, true))
                 == Some(JS_REQUIRED);
         return Ok((None, needs_javascript));
     }
@@ -956,14 +959,14 @@ fn decode_static(response: Response, defer_pdf: bool) -> Result<StaticPage> {
     let cache_eligible = kind != StaticKind::Other;
     let mut doc = match kind {
         StaticKind::Html => {
-            let html = decode_text(&response.bytes, &response.content_type);
+            let html = decode_text(&response.bytes, &response.content_type, true);
             if let Some(reason) = html_rejection(&html) {
                 return Err(Error::Fetch(reason.into()));
             }
             formats::extract_html(&html, Some(response.effective_url.as_str()))?
         }
         StaticKind::Text => Document {
-            markdown: decode_text(&response.bytes, &response.content_type).into_owned(),
+            markdown: decode_text(&response.bytes, &response.content_type, false).into_owned(),
             ..Default::default()
         },
         StaticKind::Other => {
@@ -1403,6 +1406,28 @@ mod cache_tests {
             .unwrap();
         assert_eq!(final_url, server.url("/folder/page"));
         assert_eq!(server.requests().len(), 4);
+    }
+
+    #[test]
+    fn html_meta_charset_applies_without_a_header_charset() {
+        let (_directory, mut cfg) = settings();
+        cfg["cache"]["enabled"] = json!(false);
+        let body = |charset: &str| {
+            let mut page = Reply::html("");
+            page.body = [
+                format!("<meta charset={charset}><title>t</title><article><p>").as_bytes(),
+                b"\xd6\xd0\xce\xc4\xc4\xda\xc8\xdd</p></article>",
+            ]
+            .concat();
+            page
+        };
+        let server = Server::new(vec![
+            body("gbk"),
+            // The HTTP charset wins over the declaration.
+            body("gbk").header("Content-Type", "text/html; charset=windows-1252"),
+        ]);
+        assert!(run(&server, &cfg).document().markdown.contains("中文内容"));
+        assert!(run(&server, &cfg).document().markdown.contains("ÖÐÎÄÄÚÈÝ"));
     }
 
     #[test]
