@@ -810,6 +810,19 @@ fn recover_plain_text(
     warnings.push(format!("PDF page {number}: recovered bounded font-decoded text after {reason}. Reading order, paragraph boundaries and text styling may differ."));
 }
 
+/// Pages holding cells of a table in the structure tree: the page reader reads
+/// those tables from the tags, which layout geometry does not override.
+fn tagged_table_pages(pdf: &lopdf::Document, pages: &BTreeMap<u32, ObjectId>) -> HashSet<u32> {
+    pdf_inspector::structure_tree::StructTree::from_doc(pdf)
+        .map(|tree| tree.extract_tables(pages))
+        .unwrap_or_default()
+        .iter()
+        .flat_map(|table| &table.rows)
+        .flat_map(|row| &row.cells)
+        .flat_map(|cell| cell.mcids.iter().map(|&(_, page)| page))
+        .collect()
+}
+
 pub(super) fn extract(bytes: &[u8]) -> Result<Document> {
     extract_pages(bytes)?.finish()
 }
@@ -925,6 +938,8 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
     if let Ok(loaded) = &loaded {
         loaded.forget_page_runs();
     }
+    // Read only when a page shows a table drawn without rules.
+    let tagged_tables = std::cell::OnceCell::new();
     let mut image_names = BTreeMap::<ObjectId, Option<String>>::new();
     let mut total_asset_bytes = 0;
     let mut extracted_pages = Vec::with_capacity(page_ids.len());
@@ -940,10 +955,15 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
         let inspection = inspections
             .remove(&number)
             .expect("every page was inspected");
+        let tagged = || {
+            tagged_tables
+                .get_or_init(|| tagged_table_pages(pdf, &page_ids))
+                .contains(&number)
+        };
         if let Some((frame, grids, marks)) = page_geometry.remove(&number)
-            && let Some(refined) = layout
-                .as_mut()
-                .and_then(|layout| layout.page(number, frame, grids, &marks, &page.markdown))
+            && let Some(refined) = layout.as_mut().and_then(|layout| {
+                layout.page(number, frame, grids, &marks, &page.markdown, &tagged)
+            })
         {
             page.markdown = refined;
         }

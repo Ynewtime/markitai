@@ -3,6 +3,9 @@ use super::geometry::{Frame, Grid, Mark};
 use pdf_inspector::{TextItem, types::ItemType};
 use std::collections::{BTreeMap, HashSet};
 
+#[path = "unruled.rs"]
+mod unruled;
+
 const MAX_ITEMS: usize = 250_000;
 const MAX_TEXT: usize = 16 * 1024 * 1024;
 const MAX_PAGE_ITEMS: usize = 20_000;
@@ -10,6 +13,28 @@ const MAX_PAGE_ITEMS: usize = 20_000;
 pub(super) struct Layout {
     pages: BTreeMap<u32, Vec<TextItem>>,
     headings: Vec<f32>,
+    carry: Carry,
+}
+
+/// What a page passes to the next one it renders.
+#[derive(Default)]
+struct Carry {
+    /// The prose line pitch, in em, of the last page that showed one.
+    pitch: Option<f32>,
+    /// The page whose last block was a borderless table, with its shape.
+    table: Option<(u32, unruled::Shape)>,
+}
+
+/// What borderless-table detection on a page needs beyond the page's text.
+struct Tables<'a> {
+    /// The shape of a borderless table that ended the previous page.
+    continued: Option<&'a unruled::Shape>,
+    /// The running text's line pitch on the last page that showed one;
+    /// this page's own replaces it.
+    pitch: &'a mut Option<f32>,
+    /// Whether the page's structure tree holds table cells: the page reader
+    /// reads those tables from the tags, and geometry defers to them.
+    tagged: &'a dyn Fn() -> bool,
 }
 
 impl Layout {
@@ -72,9 +97,17 @@ impl Layout {
                 headings.push(size);
             }
         }
-        Ok(Self { pages, headings })
+        Ok(Self {
+            pages,
+            headings,
+            carry: Carry::default(),
+        })
     }
 
+    /// Pages are rendered in ascending order: a borderless table ending one
+    /// page may continue at the top of the next. `tagged` tells whether the
+    /// page's structure tree holds table cells; it is asked only when a
+    /// borderless table is found.
     pub(super) fn page(
         &mut self,
         number: u32,
@@ -82,9 +115,31 @@ impl Layout {
         grids: Vec<Grid>,
         marks: &[Mark],
         baseline: &str,
+        tagged: &dyn Fn() -> bool,
     ) -> Option<String> {
         let items = self.pages.remove(&number)?;
-        render(items, &self.headings, frame, grids, marks, baseline)
+        let continued = self
+            .carry
+            .table
+            .take()
+            .filter(|(page, _)| page + 1 == number)
+            .map(|(_, shape)| shape);
+        let mut tables = Tables {
+            continued: continued.as_ref(),
+            pitch: &mut self.carry.pitch,
+            tagged,
+        };
+        let (markdown, ending) = render(
+            items,
+            &self.headings,
+            frame,
+            grids,
+            marks,
+            baseline,
+            &mut tables,
+        )?;
+        self.carry.table = ending.map(|shape| (number, shape));
+        Some(markdown)
     }
 }
 
@@ -888,6 +943,39 @@ fn markdown_cell(runs: &[Run]) -> String {
     markdown(runs).replace('|', "\\|")
 }
 
+/// Lines between ruled tables: borderless tables found among them, and the
+/// paragraph flow around those. Also the shape of a borderless table that is
+/// the last block, which the next page may continue.
+fn segment(
+    lines: &[Line],
+    headings: &[f32],
+    marks: &[Mark],
+    context: &Tables,
+    continued: Option<&unruled::Shape>,
+) -> Option<(String, Option<unruled::Shape>)> {
+    let mut found = unruled::find(lines, *context.pitch, headings, continued);
+    if !found.is_empty() && (context.tagged)() {
+        found.clear();
+    }
+    let mut blocks = Vec::new();
+    let mut start = 0;
+    let mut ending = None;
+    for table in found {
+        if table.lines.start > start {
+            blocks.push(flow(&lines[start..table.lines.start], headings, marks)?);
+        }
+        blocks.push(table.markdown);
+        start = table.lines.end;
+        ending = Some(table.shape);
+    }
+    if start < lines.len() {
+        blocks.push(flow(&lines[start..], headings, marks)?);
+        ending = None;
+    }
+    Some((blocks.join("\n\n"), ending))
+}
+
+/// The page's Markdown, and the shape of a borderless table ending it.
 fn render(
     mut items: Vec<TextItem>,
     headings: &[f32],
@@ -895,7 +983,8 @@ fn render(
     grids: Vec<Grid>,
     marks: &[Mark],
     baseline: &str,
-) -> Option<String> {
+    context: &mut Tables,
+) -> Option<(String, Option<unruled::Shape>)> {
     // Link annotations carry a target, not page text; the existing reader
     // does not render them either. Form-field values are page text whose
     // semantics this reconstruction does not know.
@@ -940,12 +1029,20 @@ fn render(
         return None;
     }
     let all_lines = lines(items);
+    if let Some(own) = unruled::prose_pitch(&all_lines) {
+        *context.pitch = Some(own);
+    }
     let mut start = 0;
     let mut blocks = Vec::new();
+    let mut ending = None;
     for table in tables {
         let end = start + all_lines[start..].partition_point(|line| line.y > table.top);
         if end > start {
-            blocks.push(flow(&all_lines[start..end], headings, marks)?);
+            let continued = context
+                .continued
+                .filter(|_| start == 0 && blocks.is_empty());
+            let (text, _) = segment(&all_lines[start..end], headings, marks, context, continued)?;
+            blocks.push(text);
         }
         // Any non-table text beside it is ambiguous multi-column layout.
         if all_lines
@@ -958,10 +1055,15 @@ fn render(
         start = end;
     }
     if start < all_lines.len() {
-        blocks.push(flow(&all_lines[start..], headings, marks)?);
+        let continued = context
+            .continued
+            .filter(|_| start == 0 && blocks.is_empty());
+        let (text, last) = segment(&all_lines[start..], headings, marks, context, continued)?;
+        blocks.push(text);
+        ending = last;
     }
     let output = blocks.join("\n\n");
-    (!output.is_empty()).then_some(output)
+    (!output.is_empty()).then_some((output, ending))
 }
 
 #[cfg(test)]
@@ -1478,6 +1580,15 @@ mod tests {
         }
     }
 
+    /// Detection context for a page without a previous table or tags.
+    fn untagged(pitch: &mut Option<f32>) -> Tables<'_> {
+        Tables {
+            continued: None,
+            pitch,
+            tagged: &|| false,
+        }
+    }
+
     #[test]
     fn malformed_geometry_and_disagreeing_text_decline_refinement() {
         let bytes = pdf(
@@ -1509,19 +1620,42 @@ mod tests {
                 frame,
                 vec![],
                 &[],
-                "Different text from another decoder."
+                "Different text from another decoder.",
+                &mut untagged(&mut None)
             )
             .is_none()
         );
         let mut hebrew = items.clone();
         hebrew[0].text = "שלום עולם".into();
         let hebrew_baseline = hebrew.iter().map(|i| i.text.as_str()).collect::<String>();
-        assert!(render(hebrew, &[], frame, vec![], &[], &hebrew_baseline).is_none());
+        assert!(
+            render(
+                hebrew,
+                &[],
+                frame,
+                vec![],
+                &[],
+                &hebrew_baseline,
+                &mut untagged(&mut None)
+            )
+            .is_none()
+        );
         for (bad_x, bad_rotation) in [(f32::NAN, 0.), (-100., 0.), (40., 45.)] {
             let mut bad = items.clone();
             bad[0].x = bad_x;
             bad[0].rotation = bad_rotation;
-            assert!(render(bad, &[], frame, vec![], &[], &baseline).is_none());
+            assert!(
+                render(
+                    bad,
+                    &[],
+                    frame,
+                    vec![],
+                    &[],
+                    &baseline,
+                    &mut untagged(&mut None)
+                )
+                .is_none()
+            );
         }
     }
 
@@ -1548,7 +1682,7 @@ mod tests {
         let baseline = pdf_inspector::extract_pages_markdown_mem(&bytes, None).unwrap();
         assert!(
             layout
-                .page(1, frame, grids, &[], &baseline.pages[0].markdown)
+                .page(1, frame, grids, &[], &baseline.pages[0].markdown, &|| false)
                 .is_none()
         );
     }
@@ -1764,5 +1898,470 @@ mod tests {
                 .markdown
                 .contains("parentheses, then finish with punctuation!")
         );
+    }
+
+    /// Text runs at `(x, y)` in 12pt Helvetica.
+    fn runs_at(cells: &[(i64, i64, &str)]) -> Vec<Operation> {
+        cells
+            .iter()
+            .flat_map(|&(x, y, value)| text("F1", 12, x, y, value))
+            .collect()
+    }
+
+    /// Four lines of running text from `top`, 15pt apart (1.25 em).
+    fn prose_from(top: i64) -> Vec<Operation> {
+        runs_at(&[
+            (
+                40,
+                top,
+                "The plans below differ in price, storage and the support they",
+            ),
+            (
+                40,
+                top - 15,
+                "include. Each plan can be changed at the end of any month, and",
+            ),
+            (
+                40,
+                top - 30,
+                "a change takes effect on the first day of the following month",
+            ),
+            (
+                40,
+                top - 45,
+                "without any charge for the switch itself or for the new plan.",
+            ),
+        ])
+    }
+
+    /// The borderless tables the detector finds on one authored page.
+    fn borderless(page: Vec<Operation>) -> Vec<String> {
+        let bytes = pdf(vec![page], None);
+        let items = pdf_inspector::extract_text_with_positions_mem(&bytes)
+            .unwrap()
+            .into_iter()
+            .filter(|i| matches!(i.item_type, ItemType::Text) && !i.text.trim().is_empty())
+            .collect();
+        let lines = lines(items);
+        unruled::find(&lines, unruled::prose_pitch(&lines), &[], None)
+            .into_iter()
+            .map(|table| table.markdown)
+            .collect()
+    }
+
+    #[test]
+    fn wrapped_top_aligned_cells_without_rules_are_rows_by_their_spacing() {
+        // Each cell's lines follow at the running text's pitch (15pt); rows
+        // are 6pt further apart. The header cells wrap too, and a note a
+        // paragraph below starts at the first column without being a row.
+        let mut page = prose_from(740);
+        page.extend(runs_at(&[
+            (200, 650, "Monthly"),
+            (300, 650, "Storage"),
+            (400, 650, "Support"),
+            (200, 635, "fee"),
+            (300, 635, "included"),
+            (40, 614, "Starter plan for"),
+            (200, 614, "9 EUR"),
+            (300, 614, "10 GB"),
+            (400, 614, "Email"),
+            (40, 599, "small teams"),
+            (40, 578, "Growth"),
+            (200, 578, "29 EUR"),
+            (300, 578, "100 GB"),
+            (400, 578, "Chat and"),
+            (400, 563, "email"),
+            (40, 542, "Enterprise"),
+            (200, 542, "Custom"),
+            (300, 542, "Unlimited"),
+            (400, 542, "Phone"),
+            (40, 527, "agreement"),
+            (40, 491, "Prices exclude tax."),
+        ]));
+        let markdown = super::super::extract(&pdf(vec![page], None))
+            .unwrap()
+            .markdown;
+        assert!(
+            markdown.contains(
+                "for the new plan.\n\n\
+                 ||Monthly fee|Storage included|Support|\n\
+                 |---|---|---|---|\n\
+                 |Starter plan for small teams|9 EUR|10 GB|Email|\n\
+                 |Growth|29 EUR|100 GB|Chat and email|\n\
+                 |Enterprise agreement|Custom|Unlimited|Phone|\n\nPrices exclude tax."
+            ),
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn centred_rows_whose_labels_always_wrap_keep_their_label_column() {
+        // No running text gives a pitch: a value centred between a label's
+        // two lines shows they are one cell. No label shares a baseline with
+        // the values, so the label column comes from the lines between them.
+        let mut page = text("F2", 18, 40, 770, "Climate by region");
+        page.extend(runs_at(&[
+            (40, 740, "Measured over ten years at regional stations."),
+            // A caption just above the table keeps to its first column.
+            (40, 718, "Regional averages"),
+            (220, 700, "North"),
+            (320, 700, "South"),
+            (420, 700, "East"),
+            (40, 680, "Annual rainfall"),
+            (220, 673, "812"),
+            (320, 673, "640"),
+            (420, 673, "455"),
+            (40, 666, "in millimetres"),
+            (40, 646, "Days of frost"),
+            (220, 639, "31"),
+            (320, 639, "18"),
+            (420, 639, "9"),
+            (40, 632, "per winter"),
+            (40, 612, "Mean summer"),
+            (220, 605, "17"),
+            (320, 605, "21"),
+            (420, 605, "24"),
+            (40, 598, "temperature"),
+            (40, 560, "Stations report every hour."),
+        ]));
+        let markdown = super::super::extract(&pdf(vec![page], None))
+            .unwrap()
+            .markdown;
+        assert!(
+            markdown.contains(
+                "regional stations.\n\nRegional averages\n\n\
+                 ||North|South|East|\n\
+                 |---|---|---|---|\n\
+                 |Annual rainfall in millimetres|812|640|455|\n\
+                 |Days of frost per winter|31|18|9|\n\
+                 |Mean summer temperature|17|21|24|\n\nStations report every hour."
+            ),
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn a_small_cells_pitch_a_pixel_off_is_still_one_cell() {
+        // A browser sets lines on whole pixels: in 9pt text one cell's line
+        // pitch measures 10.5pt and another's 11.2pt, more than 6% apart.
+        let mut page = Vec::new();
+        let mut put = |x: f32, y: f32, value: &str| {
+            page.extend([
+                Operation::new("BT", vec![]),
+                Operation::new("Tf", vec![Object::Name(b"F1".to_vec()), 9.into()]),
+                Operation::new("Td", vec![x.into(), y.into()]),
+                Operation::new("Tj", vec![Object::string_literal(value)]),
+                Operation::new("ET", vec![]),
+            ])
+        };
+        for (x, value) in [(200., "Grade"), (300., "Width"), (400., "Depth")] {
+            put(x, 700., value);
+        }
+        for (top, step, label, values) in [
+            (680., 10.5, ["Oak board", "planed"], ["A", "180", "22"]),
+            (655.5, 11.2, ["Pine strip", "rough sawn"], ["B", "95", "19"]),
+            (630.3, 10.5, ["Ash panel", "kiln dried"], ["A", "240", "28"]),
+        ] {
+            put(40., top, label[0]);
+            put(40., top - step, label[1]);
+            for (x, value) in [200., 300., 400.].into_iter().zip(values) {
+                put(x, top - step / 2., value);
+            }
+        }
+        assert_eq!(
+            borderless(page),
+            [
+                "||Grade|Width|Depth|\n|---|---|---|---|\n|Oak board planed|A|180|22|\n|Pine strip rough sawn|B|95|19|\n|Ash panel kiln dried|A|240|28|"
+            ]
+        );
+    }
+
+    #[test]
+    fn side_by_side_paragraphs_are_not_a_borderless_table() {
+        // Three columns of running text, their paragraphs a few points
+        // apart and starting at different heights: aligned stretches of text
+        // with gutters, but cells that read as sentences.
+        let mut page = Vec::new();
+        for (column, x, lengths) in [(0, 40, [4, 3, 5]), (1, 220, [3, 5, 4]), (2, 400, [5, 4, 3])] {
+            let mut y = 720 - column * 8;
+            for (paragraph, length) in lengths.into_iter().enumerate() {
+                for line in 0..length {
+                    let words = [
+                        "harbour lanterns glow late",
+                        "over quiet copper roofs",
+                        "while the morning tide",
+                        "turns along the old wall",
+                    ];
+                    page.extend(text(
+                        "F1",
+                        12,
+                        x,
+                        y,
+                        words[(paragraph + line + column as usize) % 4],
+                    ));
+                    y -= 14;
+                }
+                y -= 8;
+            }
+        }
+        assert_eq!(borderless(page), Vec::<String>::new());
+    }
+
+    #[test]
+    fn rows_of_single_lines_are_left_to_the_page_reader() {
+        // No cell of the grid wraps, so nothing in it shows which spacing is
+        // a cell's own (the note below, at the text's pitch, is no row):
+        // the page reader's alignment-based tables cover such grids.
+        let mut page = prose_from(760);
+        for row in 0..6 {
+            let y = 680 - row * 21;
+            page.extend(runs_at(&[
+                (40, y, "Item"),
+                (200, y, "North"),
+                (300, y, "South"),
+                (400, y, "East"),
+            ]));
+        }
+        page.extend(runs_at(&[(40, 554, "Values are"), (40, 539, "rounded.")]));
+        assert_eq!(borderless(page), Vec::<String>::new());
+    }
+
+    /// Centred rows as in `centred_rows_whose_labels_always_wrap_keep_their_label_column`,
+    /// without the caption and the paragraphs around: the header, then rows
+    /// whose two-line labels start at `top` and step 34pt down.
+    fn centred(rows: &[(&str, &str, [&str; 3])]) -> Vec<Operation> {
+        let mut page = runs_at(&[(220, 700, "North"), (320, 700, "South"), (420, 700, "East")]);
+        for (index, (first, second, values)) in rows.iter().enumerate() {
+            let top = 680 - 34 * index as i64;
+            page.extend(runs_at(&[(40, top, first), (40, top - 14, second)]));
+            for (x, value) in [220, 320, 420].into_iter().zip(values) {
+                page.extend(runs_at(&[(x, top - 7, value)]));
+            }
+        }
+        page
+    }
+
+    const RAINFALL: (&str, &str, [&str; 3]) =
+        ("Annual rainfall", "in millimetres", ["812", "640", "455"]);
+    const FROST: (&str, &str, [&str; 3]) = ("Days of frost", "per winter", ["31", "18", "9"]);
+    const SUMMER: (&str, &str, [&str; 3]) = ("Mean summer", "temperature", ["17", "21", "24"]);
+
+    #[test]
+    fn a_borderless_table_needs_three_rows_each_of_two_cells() {
+        // The rows of the centred example are found, but a row of a lone
+        // label (a heading or a stray line) is no row.
+        assert_eq!(borderless(centred(&[RAINFALL, FROST, SUMMER])).len(), 1);
+        let closed = ("Closed for", "the winter", ["", "", ""]);
+        assert_eq!(
+            borderless(centred(&[RAINFALL, closed, FROST, SUMMER])),
+            Vec::<String>::new()
+        );
+        // A header and one row are not enough either.
+        let mut page = prose_from(780);
+        page.extend(runs_at(&[
+            (40, 690, "Plan"),
+            (200, 690, "Monthly"),
+            (300, 690, "Storage"),
+            (400, 690, "Support"),
+            (40, 669, "Starter plan for"),
+            (200, 669, "9 EUR"),
+            (300, 669, "10 GB"),
+            (400, 669, "Email"),
+            (40, 654, "small teams"),
+        ]));
+        assert_eq!(borderless(page), Vec::<String>::new());
+    }
+
+    #[test]
+    fn rows_of_two_cells_under_a_wide_header_are_not_a_table() {
+        // Only the header fills three cells; each row below fills two.
+        let mut page = prose_from(780);
+        page.extend(runs_at(&[
+            (40, 690, "Station"),
+            (220, 690, "Mean"),
+            (320, 690, "Peak"),
+            (420, 690, "Days of"),
+            (40, 675, "name"),
+            (220, 675, "rain"),
+            (320, 675, "wind"),
+            (420, 675, "frost"),
+            (40, 654, "North"),
+            (220, 654, "812"),
+            (40, 639, "ridge"),
+            (40, 618, "South"),
+            (320, 618, "41"),
+            (40, 603, "valley"),
+            (40, 582, "East"),
+            (420, 582, "9"),
+            (40, 567, "coast"),
+        ]));
+        assert_eq!(borderless(page), Vec::<String>::new());
+    }
+
+    #[test]
+    fn cells_that_read_as_paragraphs_are_not_a_borderless_table() {
+        // Two of every row's four cells hold a sentence of 13 words or more.
+        let mut page = prose_from(780);
+        page.extend(runs_at(&[
+            (160, 690, "Free plan"),
+            (330, 690, "Pro plan"),
+            (500, 690, "Price"),
+        ]));
+        for (top, label, free, pro, price) in [
+            (
+                669,
+                "Members",
+                [
+                    "Five members can open",
+                    "and edit shared files",
+                    "from any of their devices",
+                ],
+                [
+                    "Fifty members can open",
+                    "and edit shared files",
+                    "with history of every day",
+                ],
+                "9 EUR",
+            ),
+            (
+                618,
+                "Storage",
+                [
+                    "Ten gigabytes of space",
+                    "for all the files the",
+                    "team keeps in the folders",
+                ],
+                [
+                    "One terabyte of space",
+                    "for all the files the",
+                    "team keeps in the folders",
+                ],
+                "19 EUR",
+            ),
+            (
+                567,
+                "Support",
+                [
+                    "Support by email within",
+                    "two working days of the",
+                    "first message from a user",
+                ],
+                [
+                    "Support by phone within",
+                    "two working hours of the",
+                    "first message from a user",
+                ],
+                "29 EUR",
+            ),
+        ] {
+            for (line, (free, pro)) in free.into_iter().zip(pro).enumerate() {
+                let y = top - 15 * line as i64;
+                page.extend(runs_at(&[(160, y, free), (330, y, pro)]));
+            }
+            page.extend(runs_at(&[(40, top - 15, label), (500, top - 15, price)]));
+        }
+        assert_eq!(borderless(page), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_cell_spanning_two_rows_declines_the_table() {
+        // The note's two lines overlap the rows of both Alpha and Beta.
+        let mut page = prose_from(780);
+        page.extend(runs_at(&[
+            (200, 690, "Group"),
+            (300, 690, "Score"),
+            (400, 690, "Note"),
+            (40, 669, "Alpha"),
+            (200, 669, "A"),
+            (300, 669, "12"),
+            (400, 666, "Both joined"),
+            (400, 651, "in March"),
+            (40, 648, "Beta"),
+            (200, 648, "A"),
+            (300, 648, "15"),
+            (40, 627, "Gamma"),
+            (200, 627, "B"),
+            (300, 627, "9"),
+            (400, 627, "New"),
+            (40, 606, "Delta"),
+            (200, 606, "B"),
+            (300, 606, "11"),
+            (400, 606, "New"),
+        ]));
+        assert_eq!(borderless(page), Vec::<String>::new());
+    }
+
+    #[test]
+    fn cells_whose_left_edges_drift_do_not_make_columns() {
+        // The counts are centred: their left edges drift with their width
+        // and no two rows share one. Taken as no column of its own, each
+        // count would join the kind beside it ("Hard 7"); too few cells start
+        // at a shared edge to tell the columns apart.
+        let mut page = prose_from(780);
+        page.extend(runs_at(&[
+            (200, 690, "Kind"),
+            (304, 690, "Count"),
+            (400, 690, "Grade"),
+        ]));
+        for (top, label, kind, (x, count), grade) in [
+            (669, ["Oak board", "planed"], "Hard", (330, "7"), "A"),
+            (633, ["Pine strip", "rough"], "Soft", (324, "12"), "B"),
+            (597, ["Ash panel", "dried"], "Hard", (318, "123"), "A"),
+            (561, ["Elm beam", "oiled"], "Hard", (312, "1234"), "C"),
+        ] {
+            page.extend(runs_at(&[
+                (40, top, label[0]),
+                (200, top, kind),
+                (x, top, count),
+                (400, top, grade),
+                (40, top - 15, label[1]),
+            ]));
+        }
+        assert_eq!(borderless(page), Vec::<String>::new());
+    }
+
+    #[test]
+    fn columns_without_a_clear_gutter_are_not_a_borderless_table() {
+        // Every gap between cells is 1.5 em: words of a line can be as far
+        // apart. ("Oak" is 22pt wide at 12pt, "X" and "A" 8pt.)
+        let mut page = runs_at(&[(80, 700, "A"), (106, 700, "B"), (132, 700, "C")]);
+        for (index, (first, second)) in [("Oak", "red"), ("Ash", "dry"), ("Elm", "wet")]
+            .into_iter()
+            .enumerate()
+        {
+            let top = 680 - 34 * index as i64;
+            page.extend(runs_at(&[
+                (40, top, first),
+                (40, top - 14, second),
+                (80, top - 7, "X"),
+                (106, top - 7, "X"),
+                (132, top - 7, "X"),
+            ]));
+        }
+        assert_eq!(borderless(page), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_row_step_between_a_cells_pitch_and_a_rows_is_no_evidence() {
+        // Rows 16pt apart against a 15pt line pitch: neither the same cell
+        // nor clearly a new row.
+        let mut page = prose_from(760);
+        page.extend(runs_at(&[
+            (40, 680, "Starter plan for"),
+            (200, 680, "9 EUR"),
+            (300, 680, "10 GB"),
+            (400, 680, "Email"),
+            (40, 665, "small teams"),
+            (40, 649, "Growth"),
+            (200, 649, "29 EUR"),
+            (300, 649, "100 GB"),
+            (400, 649, "Chat and"),
+            (400, 634, "email"),
+            (40, 618, "Enterprise"),
+            (200, 618, "Custom"),
+            (300, 618, "Unlimited"),
+            (400, 618, "Phone"),
+        ]));
+        assert_eq!(borderless(page), Vec::<String>::new());
     }
 }

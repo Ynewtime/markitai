@@ -1,5 +1,5 @@
 {
-  "purpose": "Tagged PDFs whose tables are drawn without rules: wrapped, vertically centred cells (borderless-table), and the browser default style with cells a few pixels apart (default-table). Only the structure tree gives their rows and cells. table-beside-prose puts a small table among long paragraphs, so the table holds far less than half of its band.",
+  "purpose": "Tagged PDFs whose tables are drawn without rules: wrapped, vertically centred cells (borderless-table), and the browser default style with cells a few pixels apart (default-table). Only the structure tree gives their rows and cells. table-beside-prose puts a small table among long paragraphs, so the table holds far less than half of its band. wrapped-table has neither header cells nor rules, so Chrome tags it as a layout table, without a Table in the structure tree: only the geometry of its wrapped, vertically centred cells gives its rows, and its last rows continue on the next page without a header.",
   "authored": "written for these tests in markitai-rust",
   "generator": {
     "script": "generate.sh",
@@ -40,6 +40,18 @@
         "file": "table-beside-prose.pdf",
         "bytes": 58322,
         "sha256": "a018f01d274c977a31b947faef5786cec275fceaa7adf9ca191cedfe81a382a7"
+      }
+    },
+    {
+      "source": {
+        "file": "wrapped-table.html",
+        "bytes": 1574,
+        "sha256": "913527234d1f4b96e4a16165adc23d0d7b8e36a58d9ee30c5eb6946b8257bd40"
+      },
+      "output": {
+        "file": "wrapped-table.pdf",
+        "bytes": 29399,
+        "sha256": "3b737e8cd8c9472f8d8cd1b040f59e825bae474e1327f2027c90f69dfcfe03f7"
       }
     }
   ]

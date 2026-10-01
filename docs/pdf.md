@@ -147,12 +147,37 @@ that an untagged PDF declared it a semantic header.
 A tagged PDF's tables come from its structure tree on each page, as in the
 page reader's whole-document conversion (`8b9747d`): a table drawn without rules
 whose cells wrap and are vertically centred is otherwise read from its text's
-alignment alone, which splits it into broken rows. Untagged pages still rely on
-that alignment and on ruled grids. Text extraction keeps the runs of two
-structure-tree cells apart (`03deb93`): cells a few pixels apart, as in the
-browser's default table style, would otherwise merge into one item that keeps
-only the first cell's marked content. A fully tagged table among long
-paragraphs is used when it holds 80% of the text inside its own bounds.
+alignment alone, which splits it into broken rows. Text extraction keeps the
+runs of two structure-tree cells apart (`03deb93`): cells a few pixels apart,
+as in the browser's default table style, would otherwise merge into one item
+that keeps only the first cell's marked content. A fully tagged table among
+long paragraphs is used when it holds 80% of the text inside its own bounds.
+
+Where the structure tree holds no table cells on a page (an untagged PDF, or a
+table Chrome tags as layout because it has neither header cells nor borders),
+the layout pass reconstructs a table drawn without rules from its geometry when
+the evidence is clear. Columns are the left edges at which two or more rows with
+three cells or more, one gap of at least two em among them, start a cell; nine
+in ten of those rows' cells must start at such an edge, and a label column
+further left may come from the wrapped labels between them. Rows are told apart
+by their spacing rather than by a shared baseline: one cell's lines follow at
+the table's smallest line step, which must match the running text's line pitch
+or have another column's line centred between two of a cell's lines; a step 12%
+(at least two CSS pixels) larger starts a row, and a step between the two
+declines the table. Cells whose text overlaps vertically form one row, so
+vertically centred cells of different heights stay together. A run the
+extractor merged across two neighbouring cells is split at the space nearest
+the column edge, and a cell's wrapped lines are rejoined with spaces (after a
+line-end hyphen that follows a letter, without one). The table needs three rows,
+each of two cells or more, two rows of three cells, a cell that wraps, no cell
+overlapping two rows of another column, and no more than a third of its cells
+over twelve words. A line of one cell just above or below it stays with the
+text around. Rows at the top of the next page that keep to the columns of a
+table ending the previous page continue it under an empty header row; the first
+row of any other table is its header, as for ruled tables. Tables of single-line
+rows and of cells a few pixels apart remain with the page reader's
+alignment-based detection, and a page with any other side-by-side text keeps
+the page reader's output.
 
 Before replacing page Markdown, decoded alphanumeric character counts must agree
 with the existing reader. This is a conservative agreement check, not proof that
@@ -234,10 +259,11 @@ the verdict depends on: full opacity, a Normal or Compatible blend mode, no soft
 mask, and otherwise only line and rendering parameters. Chrome's print output sets
 such a state around its per-cell border rectangles, so its continued tables are
 reconstructed with every row, as are pages with links, images or curved marks.
-Text extraction can still proceed. Borderless or merged-cell
-tables, complex columns, mathematical layout and structured vector charts remain
-open. Explicit [page media processing](pdf-ocr.md) provides rendering and local
-OCR separately from this text reader, with its own accuracy limits.
+Text extraction can still proceed. Merged-cell tables, borderless
+tables outside the evidence described above, complex columns, mathematical
+layout and structured vector charts remain open. Explicit
+[page media processing](pdf-ocr.md) provides rendering and local OCR
+separately from this text reader, with its own accuracy limits.
 The historical five-page sample's chart must not be presented as recovered
 merely because its textual labels are extractable.
 
@@ -247,5 +273,9 @@ decoded document with that dependency needs a future API change; no speedup or
 corpus-parity claim follows from local reuse alone. Focused tests author
 their own PDF streams for heading consistency, paragraphs, continuous emphasis,
 complete tables, hidden text, rotated/invalid geometry, compressed multi-stream
-pages, inspection budget boundaries and unreadable or deeply nested Forms. Validation results
+pages, inspection budget boundaries and unreadable or deeply nested Forms; for
+borderless tables, top-aligned and centred wrapped rows, a pitch a pixel off,
+and one layout each that every evidence condition above declines. A
+Chrome-printed fixture (`fixtures/wrapped-table`) reproduces a table tagged as
+layout that continues on the next page. Validation results
 are recorded by the coordinator after the source is frozen.

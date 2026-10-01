@@ -461,6 +461,36 @@ fn a_tagged_table_among_long_paragraphs_keeps_its_header() {
 }
 
 #[test]
+fn a_wrapped_table_without_tagged_cells_continues_on_the_next_page() {
+    // No header cells and no rules: Chrome tags the table as layout, so only
+    // its geometry gives the rows. Labels and header cells wrap, values are
+    // centred between their lines, two header words share one text run,
+    // and the last four rows are printed on the next page without a header.
+    let document = extract(include_bytes!("fixtures/wrapped-table.pdf")).unwrap();
+    assert!(
+        document.markdown.contains(
+            "Blank cells mean the property was not tested.\n\n\
+             ||Low thermal conductivity|Corrosion resistant|Recyclable at end of life|Fire rated|Weight class|\n\
+             |---|---|---|---|---|---|\n\
+             |Brick|X|X|X|X||\n\
+             |Stainless steel sheet||X|X|X|X|\n\
+             |Cross-laminated timber panel|X||X||X|\n\
+             |Glass||X|X|X||\n\n\
+             <!-- Page number: 2 -->\n\n\
+             | | | | | | |\n\
+             |---|---|---|---|---|---|\n\
+             |Fibre cement board|X|X||X|X|\n\
+             |Zinc||X|X|X|X|\n\
+             |Recycled plastic composite|X|X|||X|\n\
+             |Copper||X|X|X||\n\n\
+             Brick and zinc were shortlisted for the street facade."
+        ),
+        "{}",
+        document.markdown
+    );
+}
+
+#[test]
 fn a_one_line_paragraph_after_a_table_is_not_a_heading() {
     // Set off by paragraph spacing only, in the body's size and weight and
     // closing a sentence: the page reader took it for a title.

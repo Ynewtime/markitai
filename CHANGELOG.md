@@ -124,6 +124,7 @@
 
 ### Fixed
 
+- Rebuild PDF tables drawn without rules whose cells wrap over several lines and sit vertically centred (no structure-tree table needed), including a table continued on the next page, where they were run together into one paragraph; corpus outputs are unchanged but for one table that now ends where it should, and 14 layouts prone to false tables (columns, card grids, calendars, aligned code) gain none.
 - Write columns that Word, OpenDocument and RTF documents align with tab stops as tables (three or more consecutive paragraphs with the same stops and cell count; tables of contents, leader dots, indentation and hand-typed lists stay text), where tabs used to collapse into spaces.
 - Write OpenDocument and RTF text set in a monospaced font as code, as for Word, and turn tables that only lay out a numbered code listing into code blocks: on the textutil corpus ODT and RTF code blocks rose from 0 to 64 (DOCX 65), the only words lost being listing line numbers.
 - Stop starting queued MCP batch items as soon as the client closes its input, rather than once the MCP session has finished tearing down, so a departed client cannot cause another (possibly paid) conversion.
