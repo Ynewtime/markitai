@@ -1,0 +1,557 @@
+{
+  "name": "lopdf",
+  "version": "0.45.0",
+  "repository": "https://github.com/J-F-Liu/lopdf",
+  "upstream_git_commit": "1e3d646ca249ebf1a6ff479278c07e9c0f9377a8",
+  "upstream_git_note": "From the package's .cargo_vcs_info.json, which records \"dirty\": true: the package was made from a work tree with uncommitted changes, so the copied files are those of the published archive, not necessarily of that commit.",
+  "registry_archive_sha256": "bfffda0fe1ab0157e1a13c14bebd3f28671f2fccb7922f0722ec53926e6922d3",
+  "license": "MIT",
+  "copy_scope": "The published package (src, tests, examples, README.md, CHANGELOG.md, LICENSE, rustfmt.toml) and its package manifest. Not copied: Cargo.lock, Cargo.toml.orig, .cargo_vcs_info.json and the repository dotfiles .editorconfig, .gitattributes and .gitignore (whose Cargo.lock and *.pdf patterns would hide files of this repository). The package excludes upstream's assets directory, which some upstream tests read.",
+  "copied_files": [
+    {
+      "path": "CHANGELOG.md",
+      "bytes": 37006,
+      "upstream_sha256": "63359d6fd00b6cefc22bacc192fb0c1dba6e9d546f9398bd46d8c139bb275e39"
+    },
+    {
+      "path": "Cargo.toml",
+      "bytes": 8758,
+      "upstream_sha256": "271a88255c99418241b9beae196ebb857eda8a9e5fb03c6ae954d2b6d2290aff"
+    },
+    {
+      "path": "LICENSE",
+      "bytes": 1068,
+      "upstream_sha256": "2fb01e6708ea9d53e8b7e74bd82af23bce5256f19f4de93915027a53173c50d8"
+    },
+    {
+      "path": "README.md",
+      "bytes": 32597,
+      "upstream_sha256": "7532cef2998afbcaaf1dd0351ebccd9a028d2b6873cf76260847168a75d7e4aa"
+    },
+    {
+      "path": "examples/add_barcode.rs",
+      "bytes": 3377,
+      "upstream_sha256": "dbbd19d753ddb3585c3dcfa3c229390f4bc4e186bd0e85e017e0f4b1993d3dfe"
+    },
+    {
+      "path": "examples/analyze_object_streams.rs",
+      "bytes": 8829,
+      "upstream_sha256": "29b4ab135ca3e3b0544741e31ed13e60cf866672672024286fb7f3b95180b5e4"
+    },
+    {
+      "path": "examples/analyze_page_contents.rs",
+      "bytes": 5886,
+      "upstream_sha256": "b7926ffeea47469976aa4fb26e867cd137c42564925a3fe12a03d1583161b59a"
+    },
+    {
+      "path": "examples/analyze_pdf.rs",
+      "bytes": 3220,
+      "upstream_sha256": "bc79d9e21e6b086001886e718f03f7df32fc3f43bc741389cd9f5411d53e2b7a"
+    },
+    {
+      "path": "examples/analyze_references.rs",
+      "bytes": 5843,
+      "upstream_sha256": "e59551adfd15329ece931ef3735de41a0b6b502490219b6ecb884b400f1fd27f"
+    },
+    {
+      "path": "examples/check_raw_objstream.rs",
+      "bytes": 4807,
+      "upstream_sha256": "ab2714ba4e3e90d6227287fb7d5c179a0403e6cdadc58ce69917bedfd100de14"
+    },
+    {
+      "path": "examples/compress_existing_pdf.rs",
+      "bytes": 3929,
+      "upstream_sha256": "ca11744bd85e2c40a41329dba39e81b175ae793d69e626262c23e6d9c91e3c4f"
+    },
+    {
+      "path": "examples/create.rs",
+      "bytes": 5961,
+      "upstream_sha256": "3cb69464d1aceacba8962eea5485584757a2e534466c1cfc997c52aa9f014b9d"
+    },
+    {
+      "path": "examples/create_text_heavy_pdf.rs",
+      "bytes": 5881,
+      "upstream_sha256": "f6a4584cf7c1c713d639852d944025e10104bb9ac3d8292e316370a574c2a2b5"
+    },
+    {
+      "path": "examples/debug_compression_detailed.rs",
+      "bytes": 3650,
+      "upstream_sha256": "89540ee5a4bdf9fdcb067221a1db072ee6511f3b993413a9ab2b2e5a2e8ef8a1"
+    },
+    {
+      "path": "examples/debug_compression_full.rs",
+      "bytes": 18937,
+      "upstream_sha256": "24ca138587e30276bf8c1a6914c713decbfb121a4787d639d0bab45935873e13"
+    },
+    {
+      "path": "examples/debug_object_stream.rs",
+      "bytes": 2683,
+      "upstream_sha256": "deaa0222abbb26376a051e6c8a7364f34136768a6907f96e0fcbc72381765438"
+    },
+    {
+      "path": "examples/debug_save_with_objstreams.rs",
+      "bytes": 2765,
+      "upstream_sha256": "29fbf437fd2eb6ba73152e793acf6f8873c5c8f1b7684f075f20169c7d4ad754"
+    },
+    {
+      "path": "examples/decompression_bomb.rs",
+      "bytes": 4730,
+      "upstream_sha256": "8d35111090c3dd1bd05dbf77d432a0ab482df7232cabf74515b99f2e5168b084"
+    },
+    {
+      "path": "examples/decrypt.rs",
+      "bytes": 1705,
+      "upstream_sha256": "bc83b2089bc855938df0906486e2e0c53067623b81a63df1f1f78ac22583374d"
+    },
+    {
+      "path": "examples/delete_outlines.rs",
+      "bytes": 1153,
+      "upstream_sha256": "4cd096a2d8270b080c25601982ab3fb2befdd8c99c14faf885d8730d8980efc4"
+    },
+    {
+      "path": "examples/encrypt.rs",
+      "bytes": 8020,
+      "upstream_sha256": "2779640070af697a048ea37c9978db72116b28116abbee5b0d2bd27587e85726"
+    },
+    {
+      "path": "examples/extract_text.rs",
+      "bytes": 5421,
+      "upstream_sha256": "ffcdda9322fe7970c4094b4231ba9df9c0733f635283ba2dcae1daa23cec5696"
+    },
+    {
+      "path": "examples/extract_toc.rs",
+      "bytes": 3891,
+      "upstream_sha256": "b45c7e7dd737c1ab78027530546e43d7fb34ea58101db7cb6a3e68ac0b975605"
+    },
+    {
+      "path": "examples/final_compression_test.rs",
+      "bytes": 4715,
+      "upstream_sha256": "e1a8b70443287b189cc2be98850915c3a11c9c79bae76589ae78d8ea1894dd13"
+    },
+    {
+      "path": "examples/inspect_object_stream.rs",
+      "bytes": 5461,
+      "upstream_sha256": "d52e489a311c2bfc370fd318680057522f91665c9f177da6bfcfd175b3f886c8"
+    },
+    {
+      "path": "examples/merge.rs",
+      "bytes": 10903,
+      "upstream_sha256": "a2cd09a2471acf1a06aaa0aa248eafa66cc6457609ad9f8265528740430eff0c"
+    },
+    {
+      "path": "examples/object_streams.rs",
+      "bytes": 4387,
+      "upstream_sha256": "2227653ef6983ca73c9a5173deccb0c0661f19bf184db4e78fa96375d24820eb"
+    },
+    {
+      "path": "examples/print_annotations.rs",
+      "bytes": 2863,
+      "upstream_sha256": "93ca000e472e3eeb09027806f8a9e5271848b79252db66918994df59ff4c7bde"
+    },
+    {
+      "path": "examples/replace_partial_text.rs",
+      "bytes": 5536,
+      "upstream_sha256": "7aeb9ff6840a913016bf17cd68cd77224e95d51cf53568e9cb3bd6d5a047f0e4"
+    },
+    {
+      "path": "examples/rotate.rs",
+      "bytes": 2580,
+      "upstream_sha256": "b97efd3ea355faedc82b4fdcfd9e364c5dd79d51c607b00a6ad679357791a79f"
+    },
+    {
+      "path": "examples/test_better_compression.rs",
+      "bytes": 6390,
+      "upstream_sha256": "0b627f5a82537fab14f6386efecae41b4525ed59bbae6c5c6266af0c58a5d4a5"
+    },
+    {
+      "path": "examples/test_decryption.rs",
+      "bytes": 3433,
+      "upstream_sha256": "e71dbaf96837db123d2326779508a72236ce6d9eeef6a74c565dc65993b0871c"
+    },
+    {
+      "path": "examples/test_direct_objstream.rs",
+      "bytes": 2609,
+      "upstream_sha256": "8802791c12caca394be0fd4edacc4cec16cdb8e77cb84bbce084d155f60d6d93"
+    },
+    {
+      "path": "examples/test_filter_roundtrip.rs",
+      "bytes": 2025,
+      "upstream_sha256": "a26118999ddb3cc13322fc4e55626d305846256037184c81734ed14c29673ab8"
+    },
+    {
+      "path": "examples/test_metadata.rs",
+      "bytes": 1142,
+      "upstream_sha256": "4229d95e7119ad3575b7afcdfd98b51e6a2e9c960682782d33d967d673bc61c6"
+    },
+    {
+      "path": "examples/test_object_stream_creation.rs",
+      "bytes": 4408,
+      "upstream_sha256": "63377325e512dc2ff77728351c50ea82ffe679341ea555ff7258a6c77697a213"
+    },
+    {
+      "path": "examples/test_object_stream_roundtrip.rs",
+      "bytes": 3691,
+      "upstream_sha256": "f4961a3961bcee5f15ea8d4e94fa66ce558e030efff173531a1e2f17757050ae"
+    },
+    {
+      "path": "examples/test_real_pdf_compression_with_fix.rs",
+      "bytes": 3092,
+      "upstream_sha256": "fb95bd4305ecad48069f58e94a661563b189a316d8a7ee18a7dd12a56d4f3e59"
+    },
+    {
+      "path": "examples/test_structural_compression.rs",
+      "bytes": 4733,
+      "upstream_sha256": "f19714257ed6e5605b2949a5d85ecff827f5211c4f6bc56388843f1b4e628e47"
+    },
+    {
+      "path": "examples/verify_decryption.rs",
+      "bytes": 8716,
+      "upstream_sha256": "5c6b9da638a69942a65cbd4d391e3a31ec970856ac6a05adc4d384aae09f9688"
+    },
+    {
+      "path": "examples/verify_page_compression.rs",
+      "bytes": 3031,
+      "upstream_sha256": "a0fc0ebd9710fcdd175d3aff1f94f439afae7cd24529fbc0af1845f3a0a39705"
+    },
+    {
+      "path": "examples/verify_pdf.rs",
+      "bytes": 1834,
+      "upstream_sha256": "f9d156b7b35b65a054dd5087a1a015a55ed23cfba379b9317bdf1a45fd070fe2"
+    },
+    {
+      "path": "examples/verify_trailer_compression_fix.rs",
+      "bytes": 3326,
+      "upstream_sha256": "9ef8445d5748274c9656fdde5df149428c68bc839ef21f176b3037936dbbdcfd"
+    },
+    {
+      "path": "rustfmt.toml",
+      "bytes": 135,
+      "upstream_sha256": "f79a930ec559297dd8ad4bae5fa5414f0a5366e30a098bfa17507ac90056645c"
+    },
+    {
+      "path": "src/bookmarks.rs",
+      "bytes": 4828,
+      "upstream_sha256": "492d77a65f1d7844b99a2a41ce223a722ba1b252df89f15074788b5d225e133a"
+    },
+    {
+      "path": "src/cmap_section.rs",
+      "bytes": 895,
+      "upstream_sha256": "7fdb371b11309f5818353bd5697b73037166b40b81f1d23942e73d27763ca5cf"
+    },
+    {
+      "path": "src/common_data_structures/mod.rs",
+      "bytes": 3767,
+      "upstream_sha256": "83db74da563246d1ed2258828fa463b2fde740be75b8f4aeb4ede8bc28ff43c2"
+    },
+    {
+      "path": "src/content.rs",
+      "bytes": 1267,
+      "upstream_sha256": "0d3c85c101396e87da191de3691b908d7335f179c990a5b8b768f2fb6a28fd78"
+    },
+    {
+      "path": "src/creator.rs",
+      "bytes": 15721,
+      "upstream_sha256": "1c218cf58b9690685cb761a146301cd9977d0774647e5dcad0d2b488a9150df5"
+    },
+    {
+      "path": "src/datetime.rs",
+      "bytes": 14334,
+      "upstream_sha256": "96edb2605a344707eae776dd65142d92dd09aee878cda16e12c5223fc197bd7e"
+    },
+    {
+      "path": "src/destinations.rs",
+      "bytes": 3143,
+      "upstream_sha256": "6dd1426497cf4270b1f371c1d136ab287bbd8216875ed4ac081591ecb2944821"
+    },
+    {
+      "path": "src/document.rs",
+      "bytes": 37976,
+      "upstream_sha256": "734216343aba19ff45c137e2930a1aee4e8b3ae023cfe488dd966996674c5a10"
+    },
+    {
+      "path": "src/encodings/cmap.rs",
+      "bytes": 11470,
+      "upstream_sha256": "434b56c6b19ae698225d9d0281e0dddd530242e123a52133b9981fdddcfa2229"
+    },
+    {
+      "path": "src/encodings/differences.rs",
+      "bytes": 1316,
+      "upstream_sha256": "84839b01402769e1ce9a8b1ce7fc3bc3051ffdb4ee016eccc18cde9bf47b68be"
+    },
+    {
+      "path": "src/encodings/glyphnames.rs",
+      "bytes": 119219,
+      "upstream_sha256": "96b882b9b0bb1ab8afd1209846e9ce540272ecb8f648e4b58cfb14d6ef57525e"
+    },
+    {
+      "path": "src/encodings/mappings.rs",
+      "bytes": 40256,
+      "upstream_sha256": "6dfd019c536641196cc746ef34ab8badde1dbeff26be69320236cad2539bbca4"
+    },
+    {
+      "path": "src/encodings/mod.rs",
+      "bytes": 9745,
+      "upstream_sha256": "dbc88a278b271ea2add3198152c516a76a967eca113d85783877a1fc00d77d38"
+    },
+    {
+      "path": "src/encryption.rs",
+      "bytes": 38677,
+      "upstream_sha256": "85bbba13ad16aab5ed7a7170c6556b81fd56d0ff2b7b7e24f8a82af0b84860c5"
+    },
+    {
+      "path": "src/encryption/algorithms.rs",
+      "bytes": 65492,
+      "upstream_sha256": "183ba3a2e0a83b7e484251a37588def9c37a481029f7519cca6b4ade69d52167"
+    },
+    {
+      "path": "src/encryption/crypt_filters.rs",
+      "bytes": 11351,
+      "upstream_sha256": "8bcb100a3f58dfdc824b6179a9503a0dd4007c24d9ec01b130e085bc1a74731f"
+    },
+    {
+      "path": "src/encryption/pkcs5.rs",
+      "bytes": 1441,
+      "upstream_sha256": "d272b7e1c2ba14a939b28fc67177bc34e42342f537f21c83270a38462c60dc8a"
+    },
+    {
+      "path": "src/encryption/rc4.rs",
+      "bytes": 2133,
+      "upstream_sha256": "72470d82ab6cd8e94941d8919669123c2ec12989e7443024b45e1b7cb8c541f0"
+    },
+    {
+      "path": "src/error.rs",
+      "bytes": 6616,
+      "upstream_sha256": "4dc55ebac7b73a002f462156cb15d00522f656419310a4d28e0a7a0f1b9f903d"
+    },
+    {
+      "path": "src/filters/mod.rs",
+      "bytes": 13,
+      "upstream_sha256": "e10a3126a4ef0a018b21ae8cdce9cdd10dcd7bed25274f8680ce9242dec6d181"
+    },
+    {
+      "path": "src/filters/png.rs",
+      "bytes": 4576,
+      "upstream_sha256": "b5b9325544cdf630121165ba55ca4d99258283f038053960286a024829693512"
+    },
+    {
+      "path": "src/font.rs",
+      "bytes": 8233,
+      "upstream_sha256": "a83e5c8e42fc3f8f558d3477b578cc18e4a7545bd68692060b04412c4122500b"
+    },
+    {
+      "path": "src/incremental_document.rs",
+      "bytes": 4845,
+      "upstream_sha256": "99addd95e94ae275fd2136035b6b657bba8ad4c812a34499c530ec8bec5fd9eb"
+    },
+    {
+      "path": "src/lib.rs",
+      "bytes": 1438,
+      "upstream_sha256": "496c0f671a3e8062e80217fa32e7aaf4bb6d6ff546284fc94ad54da23f9ff45d"
+    },
+    {
+      "path": "src/load_options.rs",
+      "bytes": 3283,
+      "upstream_sha256": "3c1d77defc936afb2378612059ae9c84432da0873f214ba3d95eaa132d569a07"
+    },
+    {
+      "path": "src/object.rs",
+      "bytes": 65833,
+      "upstream_sha256": "be4fff123d63cf0de7036db1df386e024b07b604c0b601eba04dfdda90f3789c"
+    },
+    {
+      "path": "src/object_stream.rs",
+      "bytes": 11891,
+      "upstream_sha256": "2f680fa64af0075c7dbf40f894a40306e3ab8da19ba397bbef21c7ef118627ab"
+    },
+    {
+      "path": "src/outlines.rs",
+      "bytes": 6336,
+      "upstream_sha256": "7a4e44e89772b0a4192ded65424952255ac10ce585425160a8ef1b13086a1310"
+    },
+    {
+      "path": "src/parser/cmap_parser.rs",
+      "bytes": 28461,
+      "upstream_sha256": "4afa0eac6154b7f7fa2e6fc5572d02f802be540f3c0a3b23658143930e6c8a20"
+    },
+    {
+      "path": "src/parser/mod.rs",
+      "bytes": 47948,
+      "upstream_sha256": "9e289dabee9e9445d23b5b70ad4ccbf9bd861d4e846aebb2861b8d2af3821a1b"
+    },
+    {
+      "path": "src/parser_aux.rs",
+      "bytes": 38360,
+      "upstream_sha256": "a2f56978abd8f6cf52816768577a5dd7326da30b5e58a26f56da1716e8ea8d01"
+    },
+    {
+      "path": "src/processor.rs",
+      "bytes": 10178,
+      "upstream_sha256": "306465f380b0b232606ae9287c81df4cb9cd131e38331e606f7a89893cc0e148"
+    },
+    {
+      "path": "src/reader.rs",
+      "bytes": 77194,
+      "upstream_sha256": "a8cc0990a27d17c80f769009e731256f178c12b835139be8cfd2d1438379069d"
+    },
+    {
+      "path": "src/save_options.rs",
+      "bytes": 2293,
+      "upstream_sha256": "97a67124a146ede643540e4e6a039b07f3521c571bf72204a991d347092ba4aa"
+    },
+    {
+      "path": "src/toc.rs",
+      "bytes": 6575,
+      "upstream_sha256": "8975eb5907c0e35480a6906dd516346bdc1d73b224b3c8f05df6a072cc363629"
+    },
+    {
+      "path": "src/writer.rs",
+      "bytes": 33664,
+      "upstream_sha256": "6df2d6ba3ca3cc3b55c7aaa2e0c72596fcbb63a4a0902e95c9d5a49001688263"
+    },
+    {
+      "path": "src/xobject.rs",
+      "bytes": 9827,
+      "upstream_sha256": "cb77c22436f9bba51b9f49af1c10b7244816f55355c303d083cc59c71ce94d47"
+    },
+    {
+      "path": "src/xref.rs",
+      "bytes": 9500,
+      "upstream_sha256": "53286dd4aede03c1258207c72866296a13bece7cef2b6007c9a5ddedc9defdc8"
+    },
+    {
+      "path": "tests/annotation.rs",
+      "bytes": 3712,
+      "upstream_sha256": "91e980a177c5f7052691087a6c6e7d149f18ac5fc78d101c88fce3b7b4bc8c82"
+    },
+    {
+      "path": "tests/brotli_decode.rs",
+      "bytes": 3923,
+      "upstream_sha256": "3f7306382b07b44458e4ce84f95fd0e20baee62663ff6c27a86af2ba219f5cda"
+    },
+    {
+      "path": "tests/catalog_compression_integration_test.rs",
+      "bytes": 2798,
+      "upstream_sha256": "d0d366960ff337f524dca24470bfee3d4b441c3b4ad0ea8e77df6ec95261bdf2"
+    },
+    {
+      "path": "tests/decompression_bomb.rs",
+      "bytes": 12625,
+      "upstream_sha256": "9dc52fcffc71f2f1cf5957eac71631aa794360532f6ee313ff96ecdde5d72c35"
+    },
+    {
+      "path": "tests/decryption.rs",
+      "bytes": 56744,
+      "upstream_sha256": "753b4f2c4cd9ed13659bfc79c6e7bacf6c5b494df9ff18382b43bdcbbd4d8ef5"
+    },
+    {
+      "path": "tests/document_load_performance.rs",
+      "bytes": 1340,
+      "upstream_sha256": "2cc2ad26101495217c4beb7a97b9d463c1a36ab45b43ecf2ba6cd7af8e52d9f2"
+    },
+    {
+      "path": "tests/encrypted_object_stream_test.rs",
+      "bytes": 6289,
+      "upstream_sha256": "24ff2d85545b8020bc503c3a17023b387748b7b6645a7f685a014b213299ba4d"
+    },
+    {
+      "path": "tests/extract_test.rs",
+      "bytes": 5216,
+      "upstream_sha256": "a805b50d57fa1c393c383bbda3c87c82427f9c21ac948ac13da2fbdb786e3d50"
+    },
+    {
+      "path": "tests/font_test.rs",
+      "bytes": 1305,
+      "upstream_sha256": "2e3f734613f74ddaeb5fbd37fba7b34f55b73291f2644e59d08ef04724c30522"
+    },
+    {
+      "path": "tests/incremental_document.rs",
+      "bytes": 19486,
+      "upstream_sha256": "b207ca300e265ede6371c4468f8275a5b9aad0080ad5b09e651b7a2ca6f971f2"
+    },
+    {
+      "path": "tests/linearized_objstm_test.rs",
+      "bytes": 4152,
+      "upstream_sha256": "d47544aec0b61cb6e30d6f6f05414400a048990c1c6a17507f08f0b198dbd23e"
+    },
+    {
+      "path": "tests/load_options_test.rs",
+      "bytes": 7755,
+      "upstream_sha256": "ea987b4c2fa41ced33829078b8ab3ba9bd2728803a7c2dea3657ced713487a60"
+    },
+    {
+      "path": "tests/metadata_test.rs",
+      "bytes": 12921,
+      "upstream_sha256": "98fe8e5ae5376b97ea1876297912d9d7f43011e16f5f25837a5b89a60e7876b1"
+    },
+    {
+      "path": "tests/modify.rs",
+      "bytes": 5082,
+      "upstream_sha256": "3df4bff34f3590e6d9bf2aac131f38568b9ddbea84bd19d157dd1d1325366b3b"
+    },
+    {
+      "path": "tests/object_stream_comprehensive_test.rs",
+      "bytes": 16133,
+      "upstream_sha256": "bf928d88df457eadad3f1b4d8f6a738b88acb4f4d366623b34ae39bddc7b1106"
+    },
+    {
+      "path": "tests/object_stream_edge_cases_test.rs",
+      "bytes": 5907,
+      "upstream_sha256": "e79bf5d30976a1c3690f8cbf63763f87361b718f5658bd24c7da504367f95a83"
+    },
+    {
+      "path": "tests/object_stream_methods_test.rs",
+      "bytes": 14492,
+      "upstream_sha256": "af5e010b7d47060bbe90c924a29021f5edb67984c78711fe956c74b882d77259"
+    },
+    {
+      "path": "tests/object_stream_performance_test.rs",
+      "bytes": 5039,
+      "upstream_sha256": "4379ad993dceca2419153bfa9050851f9d7a1af18f3f9d0897682c10730b1905"
+    },
+    {
+      "path": "tests/page_content.rs",
+      "bytes": 1762,
+      "upstream_sha256": "33b7615f0a070497385e6ee06963b5a1fb01aeb1de4723987194a3872c45181c"
+    },
+    {
+      "path": "tests/save_options_xref_streams_test.rs",
+      "bytes": 4327,
+      "upstream_sha256": "edf6c89368f8e1d6f0e6d1df003c72e5e69d4465f8244bffa157c555622e061b"
+    },
+    {
+      "path": "tests/simple_object_stream_test.rs",
+      "bytes": 5674,
+      "upstream_sha256": "9c41feaeefc50ce7f575bec70a80ae5cca9d90839e6b5f35184f204bfed5a85d"
+    },
+    {
+      "path": "tests/stream_length_recovery.rs",
+      "bytes": 12068,
+      "upstream_sha256": "31b22b36047c9257e0c48ec95fdcc87afb74fe66f1fc56b343d75287ba18c163"
+    },
+    {
+      "path": "tests/trailer_reference_compression_test.rs",
+      "bytes": 11207,
+      "upstream_sha256": "25fd31a5a8fd5fb61001cb74dce47d624b5cec030cbc36feb746fb03e6e802b2"
+    },
+    {
+      "path": "tests/unicode.rs",
+      "bytes": 4377,
+      "upstream_sha256": "d7f833c73d05cbea05fa0b527004d5953156cc242a6157a6135d0ec4c38d78d5"
+    },
+    {
+      "path": "tests/utils.rs",
+      "bytes": 983,
+      "upstream_sha256": "c3af32905cae0e2f83cdc9f9b47ddcf4b8bcc76bc6deb936ccb32af6711f9e6e"
+    },
+    {
+      "path": "tests/xref_reconstruction.rs",
+      "bytes": 15526,
+      "upstream_sha256": "ec8b3f0a82f14a8a910c4b2469d94a685a7b4627a196fe0cccc6f678a8238690"
+    },
+    {
+      "path": "tests/xref_stream_bounds.rs",
+      "bytes": 9054,
+      "upstream_sha256": "6d3c8dc160a59e03334e0c8cb37ec6f9a702b28abc299849fad24365c33386cc"
+    }
+  ]
+}

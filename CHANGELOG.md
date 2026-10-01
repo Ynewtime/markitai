@@ -92,6 +92,7 @@
 
 ### Changed
 
+- Vendor lopdf 0.45.0 with its glyph-name lookup as a binary search over a packed table instead of a 4,495-arm `match` (531,880 bytes of code): release binary −462,352 bytes (−2.0%), PDF output byte-identical on 216 corpus PDFs and every glyph name, speed unchanged within noise.
 - Build `zip` with the same flate2/zlib-rs deflate backend but without the zopfli encoder, which it uses only above level 9 and Markitai never requests (release binary −82,800 bytes; 982 inputs convert byte-identically).
 - Make a single conversion into a fresh output directory issue 3 full-cache flushes instead of 10: its claim directories are created first and share one media fence per volume, with the same per-level checks and host synchronization, before any lock or work. Single-file conversions on corpus-r4 run 23–36% faster; existing output directories are unchanged.
 - Report a web page's `word_count` in URL frontmatter (each CJK character one word, as the reference counts), and keep the internal reader identity (`converter`) out of user-facing URL frontmatter.
