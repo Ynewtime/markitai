@@ -1,8 +1,12 @@
 //! The native stdout image store: only a conversion without an output
 //! directory that asks for it saves images there; library calls never do.
 use super::*;
-use markitai_core::{ConversionOutput, ConvertContext, convert_with_context};
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use markitai_core::ConversionOutput;
+use markitai_core::{ConvertContext, convert_with_context};
+use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
 
 fn png(color: [u8; 3], width: u32, height: u32) -> Vec<u8> {
     let mut bytes = std::io::Cursor::new(Vec::new());
@@ -44,6 +48,8 @@ fn docx(path: &Path) {
 }
 
 /// A one-page PDF with text and an uncompressed 80x80 RGB picture.
+// Used by the Unix-only store test below.
+#[cfg(unix)]
 fn pdf(path: &Path) {
     use lopdf::{Object, Stream, dictionary};
     let mut document = lopdf::Document::with_version("1.7");
@@ -94,6 +100,8 @@ fn inline(path: &Path) {
     .unwrap();
 }
 
+// Used by the Unix-only store test below.
+#[cfg(unix)]
 fn stdout(source: &Path, store: &Path) -> ConversionOutput {
     convert_with_context(
         source.to_str().unwrap(),
@@ -107,6 +115,8 @@ fn stdout(source: &Path, store: &Path) -> ConversionOutput {
 }
 
 /// Every Markdown image destination in order.
+// Used by the Unix-only store test below.
+#[cfg(unix)]
 fn destinations(markdown: &str) -> Vec<String> {
     markdown
         .match_indices("](")
@@ -117,6 +127,8 @@ fn destinations(markdown: &str) -> Vec<String> {
         .collect()
 }
 
+// Used by the Unix-only store test below.
+#[cfg(unix)]
 fn stored(store: &Path) -> Vec<PathBuf> {
     let mut files: Vec<_> = std::fs::read_dir(store.join("blobs"))
         .map(|entries| entries.map(|entry| entry.unwrap().path()).collect())
