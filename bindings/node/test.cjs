@@ -2,6 +2,7 @@
 
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -316,5 +317,112 @@ test('Numbers package support leaves ordinary directories, XML and visual modes 
     }
   } finally {
     process.chdir(cwd);
+  }
+});
+
+// From macOS 15 (Darwin 24) dyld postpones the initialization of an image
+// linked delay-initialized, and DYLD_PRINT_LIBRARIES reports each image it
+// maps, postpones, and initializes later.
+const postponesImages = process.platform === 'darwin' && Number(os.release().split('.')[0]) >= 24;
+const mediaFrameworks = ['CoreFoundation', 'Foundation', 'CoreGraphics', 'ImageIO', 'Vision'];
+
+function dyldImages(trace) {
+  const mapped = new Set();
+  const postponed = new Set();
+  const initializedLater = new Set();
+  for (const line of trace.split('\n')) {
+    const image = line.match(/^dyld\[\d+\]: <[0-9A-F-]+> (.+)$/);
+    if (image) mapped.add(path.basename(image[1]));
+    const moved = line.match(/^dyld\[\d+\]: move (loaded to delayed|delayed to loaded): (.+)$/);
+    if (moved) (moved[1] === 'loaded to delayed' ? postponed : initializedLater).add(moved[2]);
+  }
+  return { mapped, postponed, initializedLater };
+}
+
+function delayedDependencies(file) {
+  // A thin 64-bit Mach-O image's dependencies whose dylib_use_command carries
+  // DYLIB_USE_DELAYED_INIT.
+  const image = fs.readFileSync(file);
+  assert.equal(image.readUInt32LE(0), 0xfeedfacf, 'a thin 64-bit Mach-O image');
+  const delayed = new Set();
+  for (let index = 0, at = 32; index < image.readUInt32LE(16); index++, at += image.readUInt32LE(at + 4)) {
+    const command = image.readUInt32LE(at);
+    if ((command === 0xc || command === 0x80000018) && image.readUInt32LE(at + 12) === 0x1a741800
+        && (image.readUInt32LE(at + 24) & 0x8) !== 0) {
+      const name = image.subarray(at + image.readUInt32LE(at + 8), at + image.readUInt32LE(at + 4));
+      delayed.add(path.basename(name.subarray(0, name.indexOf(0)).toString()));
+    }
+  }
+  return delayed;
+}
+
+function tracedNode(code) {
+  const run = spawnSync(process.execPath, ['-e', code], {
+    env: { ...process.env, DYLD_PRINT_LIBRARIES: '1' }, encoding: 'utf8',
+  });
+  assert.equal(run.status, 0, run.stderr.slice(-4000));
+  return run;
+}
+
+function pagePdf() {
+  // One page holding a filled rectangle and no text.
+  const content = '0 0.4 0.8 rg 20 20 160 60 re f';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R >>',
+    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets = objects.map((body, index) => {
+    const at = pdf.length;
+    pdf += `${index + 1} 0 obj\n${body}\nendobj\n`;
+    return at;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  pdf += offsets.map((at) => `${String(at).padStart(10, '0')} 00000 n \n`).join('');
+  return `${pdf}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+}
+
+test('loading the addon postpones media frameworks until a conversion needs them', {
+  skip: !postponesImages && 'dyld postpones delay-initialized images from macOS 15',
+}, () => {
+  // The package directory of the addon this file loaded, in a checkout or an
+  // installed package alike.
+  const addon = Object.keys(require.cache).find((name) => path.basename(name) === 'markitai.node');
+  assert.ok(addon, 'the addon is loaded');
+  const delayed = delayedDependencies(addon);
+  assert.deepEqual(mediaFrameworks.filter((name) => !delayed.has(name)), [], 'linked delay-initialized');
+  const host = dyldImages(tracedNode('').stderr);
+  if (host.mapped.size === 0) return; // This host drops dyld's diagnostic variables.
+  // Frameworks that Node itself initializes at launch stay initialized.
+  const expected = mediaFrameworks.filter((name) => !host.mapped.has(name) || host.postponed.has(name));
+  assert.ok(expected.includes('Vision'));
+  const directory = fs.mkdtempSync(path.join(root, 'frameworks-'));
+  const pdf = path.join(directory, 'page.pdf');
+  fs.writeFileSync(pdf, pagePdf());
+  const options = {
+    config: { llm: { enabled: false }, cache: { enabled: false }, history: { record: false } },
+    output_dir: path.join(directory, 'out'), llm: false, ocr: false, screenshot: true, alt: false, desc: false,
+  };
+  const marker = 'markitai test: addon loaded';
+  const run = tracedNode([
+    `const markitai = require(${JSON.stringify(path.dirname(addon))});`,
+    `require('node:fs').writeSync(2, ${JSON.stringify(`${marker}\n`)});`,
+    `const out = markitai.convertSync(${JSON.stringify(pdf)}, ${JSON.stringify(options)});`,
+    'process.stdout.write(JSON.stringify(out.screenshots));',
+  ].join('\n'));
+  const [loading, converting] = run.stderr.split(`${marker}\n`);
+  assert.notEqual(converting, undefined, 'the marker separates loading from converting');
+  const loaded = dyldImages(loading);
+  assert.deepEqual(expected.filter((name) => !loaded.postponed.has(name)), []);
+  assert.deepEqual([...loaded.initializedLater], [], 'loading initializes no postponed image');
+  // Page rendering opens CoreGraphics on first use.
+  const screenshots = JSON.parse(run.stdout);
+  assert.equal(screenshots.length, 1);
+  assert.deepEqual([...fs.readFileSync(screenshots[0]).subarray(0, 3)], [0xff, 0xd8, 0xff]);
+  if (expected.includes('CoreGraphics')) {
+    assert.ok(dyldImages(converting).initializedLater.has('CoreGraphics'));
   }
 });

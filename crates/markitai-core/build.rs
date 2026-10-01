@@ -1,5 +1,7 @@
 // Links the macOS system frameworks delay-initialized in this package's
-// executables and tests; `markitai-cli` includes this script for its own.
+// executables and tests; `markitai-cli` includes this script for its own, and
+// the language bindings' build scripts (the Node addon, the Python extension
+// and the C library) call `delay_frameworks` through it as a module.
 //
 // Only OCR, HEIF/AVIF decoding and PDF rasterization use Vision, ImageIO and
 // CoreGraphics, and Foundation through them. On current macOS, CoreGraphics or
@@ -50,6 +52,12 @@ fn main() {
         }
         return;
     }
+    delay_frameworks();
+}
+
+/// On macOS, links the media frameworks delay-initialized in every target of
+/// the calling package that cargo links (executables, tests and cdylibs).
+pub fn delay_frameworks() {
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") || !linker_delays() {
         return;
     }

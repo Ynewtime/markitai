@@ -1,14 +1,15 @@
 //! Explicit first use of the macOS frameworks behind OCR, HEIF/AVIF decoding
 //! and PDF rasterization.
 //!
-//! The command-line executables and this crate's tests link these frameworks
-//! delay-initialized (`build.rs`). On macOS 15 and later dyld then postpones
-//! their initializers and Objective-C class registration until first use, so a
-//! conversion that never needs them does not pay for that work at launch. A C
-//! call into a delayed framework completes the initialization first, but an
-//! Objective-C class lookup by name does not and fails instead. Each backend
-//! therefore opens its framework here before its first call. Where the
-//! framework was initialized at launch (older systems, the language bindings),
+//! The command-line executables, the language bindings' libraries and this
+//! crate's tests link these frameworks delay-initialized (`build.rs`). On
+//! macOS 15 and later dyld then postpones their initializers and Objective-C
+//! class registration until first use, so a conversion that never needs them
+//! does not pay for that work at launch. A C call into a delayed framework
+//! completes the initialization first, but an Objective-C class lookup by name
+//! does not and fails instead. Each backend therefore opens its framework here
+//! before its first call. Where the framework was initialized at launch (older
+//! systems, the static Go package, a host process that links it itself),
 //! opening it only takes another reference.
 
 use std::ffi::CStr;

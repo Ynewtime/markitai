@@ -211,7 +211,11 @@ The [frozen release check](validation/native-backends-round16.md) observed a
 25.897-second first image OCR call and much shorter subsequent calls. The cause
 is Vision compiling its recognition models for the device on first use: it
 caches them under `~/Library/Caches/<executable name>/com.apple.e5rt.e5bundlecache/`
-per system build, for the executable that ran. The first OCR after installing
+per system build, for the executable that ran: `markitai` for the CLI, the host
+process (`node`, `python3.13`, a Go program's name) for a binding, and each test
+binary under its hashed name. The cache is about 136 KB, lies outside
+`MARKITAI_HOME` (Vision chooses it; neither `MARKITAI_HOME` nor `HOME` moves it)
+and can be deleted at any time. The first OCR after installing
 or updating Markitai, or after switching between two builds, takes about 25–45
 seconds; later calls take about 130 ms per image. A process that may not write
 that cache directory (a sandbox limited to its output folder) fails with
@@ -225,7 +229,9 @@ first use instead of at launch, which saves about 1 ms in every process that
 needs none of them (HTML, Office and text PDF conversions). OCR, HEIF/AVIF
 decoding and PDF rasterization open their framework explicitly before first
 use, about 1 ms more once per process; earlier systems initialize them at
-launch as before, and the language bindings are unaffected.
+launch as before. The language bindings link them the same way; see
+[macOS system frameworks](bindings.md#macos-system-frameworks) for what each
+host saves.
 
 Implementation references: Apple's [text-recognition guide](https://developer.apple.com/documentation/vision/recognizing-text-in-images),
 [recognition request](https://developer.apple.com/documentation/vision/vnrecognizetextrequest)

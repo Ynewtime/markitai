@@ -341,6 +341,52 @@ conversion are caught at each language boundary. Invalid foreign pointers,
 double frees of copied handles, allocation failure, and builds configured to
 abort on panic remain outside this recoverable contract.
 
+## macOS system frameworks
+
+The Node addon, the Python extension and `libmarkitai_ffi.dylib` link
+CoreFoundation, Foundation, CoreGraphics, ImageIO and Vision delay-initialized,
+from the same build script and linker probe as the CLI. From macOS 15, dyld
+maps them when the binding loads but initializes them on first use: OCR,
+HEIF/AVIF decoding and PDF rasterization open their framework before they need
+it. Earlier systems initialize them at load as before, and a linker without
+`-delay_framework` keeps ordinary links. A conversion that uses none of these
+backends (HTML, Office, text PDF, Markdown) never initializes them.
+
+What a host saves depends on what it links itself. Node and Python link
+CoreFoundation, which initializes Foundation, CoreGraphics and ImageIO at
+launch, so the binding postpones Vision and the images that only Vision brings.
+A Go program linking only the dynamic library postpones all five. Release
+builds, macOS 27.0.1 on an Apple M5 Max, medians of 101 interleaved runs with
+byte-identical copies of the old build as a noise check (within 0.1 ms); images
+initialized are those `DYLD_PRINT_LIBRARIES` reports mapped and not postponed:
+
+| Host | Measured | Before | After | Images initialized at load |
+|---|---|---|---|---|
+| Node.js 24.21 | `require()` of the package, in process | 4.88 ms | 3.58 ms | 510 → 390 (Node alone: 389) |
+| CPython 3.13.15 | loading `markitai._native`, in process | 2.30 ms | 1.54 ms | 511 → 393 (Python alone: 392) |
+| CPython 3.13.15 | `import markitai`, in process | 23.46 ms | 22.82 ms | as above |
+| Go 1.27.1 | process printing `Version()`, dynamic library | 7.99 ms | 5.68 ms | 510 → 85 |
+
+The first OCR, HEIF/AVIF or PDF page in a process pays the postponed
+initialization instead; conversions produce the same results. The static Go
+package keeps ordinary links: cgo rejects `-Wl,-delay_framework` in `#cgo
+LDFLAGS` without `CGO_LDFLAGS_ALLOW`, and requesting it from inside the archive
+(an object's linker option) marks the frameworks without the call stubs that
+initialize a framework on its first C call. A consumer can opt in when it
+builds; flags from the environment are not checked against cgo's list:
+
+```sh
+CGO_LDFLAGS="$(go env CGO_LDFLAGS) -Wl,-delay_framework,Vision -Wl,-delay_framework,Foundation \
+  -Wl,-delay_framework,ImageIO -Wl,-delay_framework,CoreGraphics -Wl,-delay_framework,CoreFoundation" \
+  go build -tags markitai_static
+```
+
+Keep Go's default flags (`$(go env CGO_LDFLAGS)`, normally `-O2 -g`) in the
+value, which otherwise replaces them. ld then notes that CoreGraphics has weak
+definitions; dyld still postpones it. In the measurement above, such a static
+program started in 4.91 ms instead of 7.19 ms (509 → 84 images) and its
+executable grew by 19,952 bytes.
+
 ## Verification and maintenance
 
 `cargo test -p markitai-ffi` exercises null pointers and oversized lengths,
@@ -348,7 +394,11 @@ invalid UTF-8, repeated Unicode conversions, and explicit release. Python,
 Node, and Go integration suites load compiled native artifacts and cover
 Unicode, concurrent repeated calls, output files, and structured failures.
 Local HTTP-server tests also verify that Python's GIL and Node's event loop
-remain available while native work runs.
+remain available while native work runs. On macOS 15 and later each suite
+loads the binding in a child process under `DYLD_PRINT_LIBRARIES`, checks that
+loading postpones the media frameworks the host has not initialized itself and
+initializes no postponed image, then renders a generated PDF page; the Go test
+covers the dynamic library, not the static package.
 Conversion tests use explicit empty config or test-owned config objects.
 Terminal-usage tests use loopback HTTP fixtures with fake credentials, including
 concurrent paid failures and zero-token responses. They do not contact real model
