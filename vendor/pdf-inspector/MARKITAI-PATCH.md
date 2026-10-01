@@ -78,9 +78,23 @@ The local changes are limited to fifteen upstream files:
   (exclusive like a decoration; mono links, bare URLs and runs holding a
   backtick stay text). `text_with_formatting` is unchanged. A URL inside an
   inline code span is not turned into a link.
+- `src/markdown/convert.rs` (again): a line set off only by the paragraph
+  spacing around it (`find_isolated_lines`), at body size and not bold, is no
+  heading candidate when it reads as running text: it ends a sentence (`.`,
+  `!`, `:` and the full-width forms, after any footnote marker or closing
+  quote) or starts in lowercase. Upstream scored such a line at least 0.5
+  (standalone 0.2 plus isolated 0.3, plus a share for its size's rarity), so
+  any one-line body paragraph of two to six words became a heading one level
+  below the page's last size tier ("Memory use varies widely between
+  services." under a table became `###`). A larger or bold line keeps its
+  isolation, and a question mark does not count since a question is a common
+  title. On the 215 Chrome- and Quartz-printed corpus PDFs this removes 35
+  page-reader headings, none of which the reference or the defuddle
+  expectation has.
 
-  With these changes, the isolated copy's unit tests give 1,609 passed and the
-  same 21 failed. Each added test fails on the unmodified code it covers.
+  With these changes, the isolated copy's unit tests give 1,611 passed and the
+  same 21 failed (1,609 before the two tests of the last item). Each added test
+  fails on the unmodified code it covers.
 
 The page-level OCR, font decoding, repair, limits and reliability routing remain
 the upstream paths. Markitai's own visibility warnings and layout agreement

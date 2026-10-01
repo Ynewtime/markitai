@@ -207,6 +207,34 @@ fn detect_overused_struct_heading_levels(
     overused
 }
 
+/// markitai: whether a line that only the space around it sets apart reads as
+/// running text rather than a title. At body size and without weight the line
+/// has no larger size, weight or numbering, so isolation is all the evidence
+/// there is, and a one-line paragraph is isolated too. It stays prose when it
+/// closes a sentence ("Memory use varies widely between services."),
+/// introduces what follows ("Let's look at the generated assembly:") or
+/// continues one (it starts in lowercase). A footnote marker or a closing
+/// quote after the final mark does not hide the sentence end; a question mark
+/// does not count, since a question is a common heading.
+fn reads_as_running_text(text: &str) -> bool {
+    let mut end = text.trim_end();
+    loop {
+        let before = end;
+        if let Some(open) = end
+            .strip_suffix("</sup>")
+            .and_then(|rest| rest.rfind("<sup>"))
+        {
+            end = end[..open].trim_end();
+        }
+        end = end.trim_end_matches(['"', '\'', ')', ']', '\u{bb}', '\u{2019}', '\u{201d}']);
+        if end == before {
+            break;
+        }
+    }
+    const CLOSES_OR_LEADS_IN: [char; 7] = ['.', '!', ':', '。', '！', '．', '：'];
+    end.ends_with(CLOSES_OR_LEADS_IN) || text.chars().next().is_some_and(char::is_lowercase)
+}
+
 /// Pre-scan lines to find "isolated" ones: short lines with paragraph breaks both
 /// before and after.  These are heading candidates even at body font size — common
 /// in academic papers ("Acknowledgements", "B.3 Prompt Engineering").
@@ -232,6 +260,12 @@ fn find_isolated_lines(lines: &[TextLine], base_size: f32, para_threshold: f32) 
         // ends with hyphen, comma, preposition, or lowercase continuation
         let last_char = trimmed.chars().last().unwrap_or(' ');
         if last_char == '-' || last_char == ',' || last_char == ';' {
+            continue;
+        }
+        if font_size < base_size * 1.05
+            && !crate::markdown::analysis::line_is_mostly_bold(line)
+            && reads_as_running_text(trimmed)
+        {
             continue;
         }
         // Last word is a common continuation word → wrapped paragraph
@@ -2043,6 +2077,55 @@ mod tests {
             isolated.is_empty(),
             "dense page of isolated lines must be wiped"
         );
+    }
+
+    #[test]
+    fn isolated_body_lines_that_read_as_running_text_are_not_candidates() {
+        // markitai: a one-line paragraph is set off by the space around it as
+        // a title is, but it closes a sentence, leads into what follows or
+        // continues one. Titles keep their isolation.
+        let texts = [
+            "Memory use varies widely between services.",
+            "Let's look at the generated assembly:",
+            "with the product",
+            "The result is stated below.<sup>1</sup>",
+            "He said \"Wait for it.\"",
+            "Acknowledgements",
+            "Experimental setup",
+            "Why does this matter?",
+            "Related work (draft)",
+        ];
+        let lines: Vec<TextLine> = texts
+            .iter()
+            .enumerate()
+            .map(|(i, text)| line_at(text, 1, 700.0 - i as f32 * 50.0))
+            .collect();
+        let isolated = find_isolated_lines(&lines, 12.0, 20.0);
+        for (i, text) in texts.iter().enumerate() {
+            assert_eq!(isolated.contains(&i), i >= 5, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn isolated_lines_with_their_own_size_or_weight_keep_their_candidacy() {
+        // markitai: only a line with nothing but isolation is judged by how
+        // it reads; a larger or bold sentence has typographic evidence.
+        let mut larger = make_item("Use it for machine payments.", 1, None);
+        larger.font_size = 13.5;
+        larger.y = 700.0;
+        let mut bold = make_item("This action cannot be undone.", 1, None);
+        bold.is_bold = true;
+        bold.y = 650.0;
+        let mut plain = make_item("Memory use varies widely.", 1, None);
+        plain.y = 600.0;
+        let lines: Vec<TextLine> = [larger, bold, plain]
+            .into_iter()
+            .map(|i| make_line(vec![i]))
+            .collect();
+        let isolated = find_isolated_lines(&lines, 12.0, 20.0);
+        assert!(isolated.contains(&0), "larger sentence");
+        assert!(isolated.contains(&1), "bold sentence");
+        assert!(!isolated.contains(&2), "plain sentence");
     }
 
     #[test]

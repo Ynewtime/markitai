@@ -428,3 +428,75 @@ fn a_tagged_table_among_long_paragraphs_keeps_its_header() {
         document.markdown
     );
 }
+
+#[test]
+fn a_one_line_paragraph_after_a_table_is_not_a_heading() {
+    // Set off by paragraph spacing only, in the body's size and weight and
+    // closing a sentence: the page reader took it for a title.
+    let document = extract(include_bytes!("fixtures/table-beside-prose.pdf")).unwrap();
+    let sentence = "Memory use varies widely between services.";
+    let carrying: Vec<&str> = document
+        .markdown
+        .lines()
+        .filter(|line| line.contains(sentence))
+        .collect();
+    assert_eq!(carrying, [sentence], "{}", document.markdown);
+    // The page's real headings keep their sizes' levels.
+    for heading in ["# Quarterly storage review", "## Memory usage"] {
+        assert!(
+            document.markdown.lines().any(|line| line == heading),
+            "{heading}\n{}",
+            document.markdown
+        );
+    }
+}
+
+fn text_at(y: i32, value: &str) -> String {
+    format!("BT /F1 12 Tf 1 0 0 1 40 {y} Tm ({value}) Tj ET")
+}
+
+#[test]
+fn isolated_body_size_lines_are_headings_only_when_they_do_not_read_as_text() {
+    // One-line paragraphs of the body's size and weight, apart from the
+    // paragraphs around them. A bare title stays a heading; a sentence, the
+    // lead-in of a block and the tail of a sentence do not.
+    let paragraph = |top: i32| {
+        (0..3)
+            .map(|line| {
+                text_at(
+                    top - 14 * line,
+                    "The measurements were repeated on every node and each run was recorded twice.",
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let alone = [
+        "Experimental Setup",
+        "Memory use varies widely between services.",
+        "Here is the generated assembly:",
+        "with the product",
+    ];
+    let mut rows = Vec::new();
+    for (index, line) in alone.into_iter().enumerate() {
+        let top = 720 - index as i32 * 148;
+        rows.extend(paragraph(top));
+        rows.push(text_at(top - 14 * 3 - 34, line));
+    }
+    rows.extend(paragraph(720 - alone.len() as i32 * 148));
+    let (bytes, _) = fixture(&[rows.join("\n")], false);
+    let page = pdf_inspector::extract_pages_markdown_mem(&bytes, None)
+        .unwrap()
+        .pages
+        .remove(0);
+    let markdown = &page.markdown;
+    let heading = |line: &str| {
+        markdown
+            .lines()
+            .any(|candidate| candidate.starts_with('#') && candidate.ends_with(line))
+    };
+    assert!(heading(alone[0]), "{markdown}");
+    for line in &alone[1..] {
+        assert!(markdown.contains(line), "{line}\n{markdown}");
+        assert!(!heading(line), "{line}\n{markdown}");
+    }
+}
