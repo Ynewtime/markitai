@@ -371,6 +371,80 @@ fn review_comments_are_reported_as_left_out_of_the_markdown() {
     assert_eq!(markdown(&body, &[comments(2)]), "Reviewed text.");
 }
 
+#[test]
+fn embedded_html_rtf_and_web_archive_parts_are_read_and_others_reported() {
+    // Report generators embed HTML and RTF with `w:altChunk` for Word to
+    // convert on opening, and html-docx-js a web archive (MHT); a part in
+    // Word's XML format is not converted and the warning says so.
+    let chunk = |id: &str| {
+        format!(
+            r#"<w:altChunk xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="{id}"/>"#
+        )
+    };
+    let body = [
+        paragraph("Dear customer,"),
+        chunk("html"),
+        chunk("rtf"),
+        chunk("mht"),
+        chunk("xml"),
+        paragraph("Kind regards."),
+    ]
+    .concat();
+    let rels = (
+        "word/_rels/document.xml.rels",
+        [
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
+            r#"<Relationship Id="html" Target="afchunk1.html" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk"/>"#,
+            r#"<Relationship Id="rtf" Target="afchunk2.rtf" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk"/>"#,
+            r#"<Relationship Id="mht" Target="afchunk3.mht" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk"/>"#,
+            r#"<Relationship Id="xml" Target="afchunk4.xml" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk"/>"#,
+            "</Relationships>",
+        ]
+        .concat(),
+    );
+    let types = (
+        "[Content_Types].xml",
+        r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+        <Default Extension="html" ContentType="text/html"/><Default Extension="rtf" ContentType="application/rtf"/>
+        <Default Extension="mht" ContentType="message/rfc822"/>
+        <Default Extension="xml" ContentType="application/xml"/></Types>"#
+            .to_string(),
+    );
+    let html = (
+        "word/afchunk1.html",
+        "<html><body><h2>Your order</h2><p>We shipped <b>3 items</b> on Monday.<table>\
+         <tr><th>Item<th>Price<tr><td>Lamp<td>12.00</table></body></html>"
+            .to_string(),
+    );
+    let rtf = (
+        "word/afchunk2.rtf",
+        r"{\rtf1\ansi Questions? Call us.\par}".to_string(),
+    );
+    let mht = (
+        "word/afchunk3.mht",
+        "MIME-Version: 1.0\r\nContent-Type: multipart/related; type=\"text/html\"; \
+         boundary=\"----=mhtDocumentPart\"\r\n\r\n------=mhtDocumentPart\r\n\
+         Content-Type: text/html; charset=\"utf-8\"\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n\
+         <p>Thank you for choosing our caf=C3=A9.</p>\r\n------=mhtDocumentPart--\r\n"
+            .to_string(),
+    );
+    let xml = ("word/afchunk4.xml", "<w:document/>".to_string());
+    let doc = extract(&docx(&body, &[rels, types, html, rtf, mht, xml]), "docx").unwrap();
+    assert_eq!(
+        doc.markdown,
+        "Dear customer,\n\n## Your order\n\nWe shipped **3 items** on Monday.\n\n\
+         | Item | Price |\n| --- | --- |\n| Lamp | 12.00 |\n\nQuestions? Call us.\n\n\
+         Thank you for choosing our café.\n\nKind regards."
+    );
+    assert_eq!(
+        doc.warnings,
+        [
+            "1 embedded part of the document (w:altChunk) is in a format that is not converted \
+          (application/xml); its content is not in the Markdown."
+        ]
+    );
+}
+
 /// A run set in `font`.
 fn run_in(font: &str, text: &str) -> String {
     format!(
@@ -667,5 +741,63 @@ fn a_list_typed_by_hand_in_a_word_97_file_is_a_list() {
         ),
         "{}",
         doc.markdown
+    );
+}
+
+fn listed_paragraph(numbered: Option<(u32, u8)>, ppr: &str, text: &str) -> String {
+    let num = numbered.map_or(String::new(), |(id, level)| {
+        format!(r#"<w:numPr><w:ilvl w:val="{level}"/><w:numId w:val="{id}"/></w:numPr>"#)
+    });
+    format!(r#"<w:p><w:pPr>{ppr}{num}</w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#)
+}
+
+#[test]
+fn a_paragraph_lined_up_with_an_items_text_continues_the_item() {
+    // Word's numbering sets each level's text indent; a paragraph after an
+    // item set in as far (Enter, then Backspace, in a List Paragraph) is
+    // more of that item, after its nested list when it is back at the outer
+    // text; body text at the margin ends the list. pandoc numbers an item's
+    // later paragraphs with a bullet of one space, which shows nothing.
+    let numbering = (
+        "word/numbering.xml",
+        format!(
+            r#"<w:numbering {W}><w:abstractNum w:abstractNumId="0">
+            <w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/>
+              <w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl>
+            <w:lvl w:ilvl="1"><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/>
+              <w:pPr><w:ind w:left="1440" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum>
+            <w:abstractNum w:abstractNumId="9"><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/>
+              <w:lvlText w:val=" "/><w:pPr><w:ind w:left="720" w:hanging="480"/></w:pPr></w:lvl></w:abstractNum>
+            <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+            <w:num w:numId="1000"><w:abstractNumId w:val="9"/></w:num></w:numbering>"#
+        ),
+    );
+    let styles = (
+        "word/styles.xml",
+        format!(
+            r#"<w:styles {W}><w:style w:type="paragraph" w:styleId="ListParagraph">
+            <w:name w:val="List Paragraph"/><w:pPr><w:ind w:left="720"/></w:pPr></w:style></w:styles>"#
+        ),
+    );
+    let list = r#"<w:pStyle w:val="ListParagraph"/>"#;
+    let body = [
+        paragraph("Before the list."),
+        listed_paragraph(Some((1, 0)), list, "One."),
+        listed_paragraph(None, list, "More of one."),
+        listed_paragraph(Some((1, 0)), list, "Two."),
+        listed_paragraph(Some((1, 1)), list, "Two a."),
+        listed_paragraph(None, r#"<w:ind w:left="1440"/>"#, "More of two a."),
+        "<w:p/>".to_string(),
+        listed_paragraph(None, r#"<w:ind w:left="720"/>"#, "More of two."),
+        listed_paragraph(Some((1, 0)), "", "Three."),
+        listed_paragraph(Some((1000, 0)), "", "More of three, as pandoc writes it."),
+        paragraph("After the list."),
+    ]
+    .concat();
+    assert_eq!(
+        markdown(&body, &[numbering, styles]),
+        "Before the list.\n\n1. One.\n   \n   More of one.\n2. Two.\n   \n   * Two a.\n     \n     \
+         More of two a.\n   \n   More of two.\n3. Three.\n   \n   More of three, as pandoc writes it.\n\n\
+         After the list."
     );
 }

@@ -32,6 +32,35 @@ impl<'a> Package<'a> {
         Ok(Package { zip, total_read: 0, cache: HashMap::new() })
     }
 
+    /// markitai: an archive stored inside another one (a Word document's
+    /// `altChunk`), whose reads count on from the `spent` bytes the outer
+    /// archive has read, so nesting cannot multiply the total budget.
+    pub fn open_spent(bytes: &'a [u8], spent: u64) -> Result<Self, ConvertError> {
+        let mut package = Package::open(bytes)?;
+        package.total_read = spent;
+        Ok(package)
+    }
+
+    /// markitai: the decompressed bytes read so far, those of archives
+    /// stored inside it included (see [`Package::charge`]).
+    pub fn total_read(&self) -> u64 {
+        self.total_read
+    }
+
+    /// markitai: take over the total an archive stored inside this one
+    /// reached (see [`Package::open_spent`]); past the total budget it is
+    /// the same resource-limit error a read gives.
+    pub fn charge(&mut self, total: u64) -> Result<(), ConvertError> {
+        self.total_read = self.total_read.max(total);
+        if self.total_read > limits::MAX_TOTAL_BYTES {
+            return Err(ConvertError::ResourceLimit {
+                limit: "max_total_bytes",
+                detail: "embedded parts exceed the archive's decompression budget".into(),
+            });
+        }
+        Ok(())
+    }
+
     /// Read a part's bytes. `Ok(None)` means the part is absent (a valid
     /// state for optional parts); `Err` means it exists but cannot be read.
     /// Callers apply the unified policy: skip + log when useful output
@@ -167,6 +196,25 @@ mod tests {
         w.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
         w.write_all(bytes).unwrap();
         w.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn an_archive_inside_another_spends_from_the_outer_budget() {
+        // markitai: what the outer archive has read counts, and the inner
+        // total comes back to it.
+        let data = one_part_zip("a.bin", &[7u8; 4096]);
+        let spent = limits::MAX_TOTAL_BYTES - 100;
+        let mut inner = Package::open_spent(&data, spent).unwrap();
+        let error = inner.part("a.bin").unwrap_err();
+        assert!(matches!(error, ConvertError::ResourceLimit { limit: "max_total_bytes", .. }));
+        let mut inner = Package::open_spent(&data, 1000).unwrap();
+        assert!(inner.part("a.bin").unwrap().is_some());
+        assert_eq!(inner.total_read(), 5096);
+        let mut outer = Package::open(&data).unwrap();
+        outer.charge(inner.total_read()).unwrap();
+        assert_eq!(outer.total_read(), 5096);
+        let error = outer.charge(limits::MAX_TOTAL_BYTES + 1).unwrap_err();
+        assert!(matches!(error, ConvertError::ResourceLimit { limit: "max_total_bytes", .. }));
     }
 
     #[test]

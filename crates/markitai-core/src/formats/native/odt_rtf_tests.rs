@@ -217,3 +217,65 @@ fn rtf_lists_typed_by_hand_are_lists() {
         "Options:\n\n* Fast\n  \n  * cached\n* Cheap\n\nChoose:\n\na) the first  \nb) the second\n"
     );
 }
+
+#[test]
+fn a_paragraph_lined_up_with_an_items_text_continues_the_item() {
+    // RTF as TextEdit writes a list (`\ls1`, the marker in `\listtext`) with
+    // a paragraph set in to an item's text after it (`\pard\li720`): more
+    // of that item, numbering carrying on; text back at the margin ends the
+    // list.
+    let rtf = "{\\rtf1\\ansi\\ansicpg1252\\cocoartf2907{\\fonttbl\\f0\\froman\\fcharset0 Times-Roman;}\n\
+{\\*\\listtable{\\list\\listtemplateid1\\listhybrid{\\listlevel\\levelnfc0\\levelnfcn0\\leveljc0\
+\\leveljcn0\\levelfollow0\\levelstartat1\\levelspace360\\levelindent0{\\*\\levelmarker \\{decimal\\}}\
+{\\leveltext\\leveltemplateid1\\'01\\'00;}{\\levelnumbers\\'01;}\\fi-360\\li720\\lin720 }\
+{\\listlevel\\levelnfc23\\levelnfcn23\\leveljc0\\leveljcn0\\levelfollow0\\levelstartat0\\levelspace360\
+\\levelindent0{\\*\\levelmarker \\{disc\\}}{\\leveltext\\leveltemplateid2\\'01\\uc0\\u8226 ;}\
+{\\levelnumbers;}\\fi-360\\li1440\\lin1440 }{\\listname ;}\\listid1}}\n\
+{\\*\\listoverridetable{\\listoverride\\listid1\\listoverridecount0\\ls1}}\n\
+\\pard\\pardeftab720\\sa240\\partightenfactor0\n\\f0\\fs24 \\cf0 Before the list.\\\n\
+\\pard\\tx220\\tx720\\pardeftab720\\li720\\fi-720\\sa120\\partightenfactor0\n\
+\\ls1\\ilvl0\\cf0 {\\listtext\t1\t}Unpack the parts.\\\n\
+\\pard\\pardeftab720\\li720\\sa120\\partightenfactor0\n\\cf0 Keep the screws.\\\n\
+\\pard\\tx220\\tx720\\pardeftab720\\li720\\fi-720\\sa120\\partightenfactor0\n\
+\\ls1\\ilvl0\\cf0 {\\listtext\t2\t}Fit the wheels.\\\n\
+\\pard\\tx940\\tx1440\\pardeftab720\\li1440\\fi-1440\\sa120\\partightenfactor0\n\
+\\ls1\\ilvl1\\cf0 {\\listtext\t\\uc0\\u8226 \t}Front wheel first.\\\n\
+\\pard\\pardeftab720\\li1440\\sa120\\partightenfactor0\n\\cf0 Tighten the nuts.\\\n\
+\\pard\\pardeftab720\\li720\\sa120\\partightenfactor0\n\\cf0 Check both wheels.\\\n\
+\\pard\\tx220\\tx720\\pardeftab720\\li720\\fi-720\\sa120\\partightenfactor0\n\
+\\ls1\\ilvl0\\cf0 {\\listtext\t3\t}Fit the saddle.\\\n\
+\\pard\\pardeftab720\\sa240\\partightenfactor0\n\\cf0 After the list.\\\n}";
+    let doc = extract(rtf.as_bytes(), "rtf").unwrap();
+    assert_eq!(
+        doc.markdown,
+        "Before the list.\n\n1. Unpack the parts.\n   \n   Keep the screws.\n2. Fit the wheels.\n   \n   \
+         * Front wheel first.\n     \n     Tighten the nuts.\n   \n   Check both wheels.\n3. Fit the saddle.\n\n\
+         After the list.\n"
+    );
+}
+
+#[test]
+fn an_unnumbered_odt_entry_between_items_stays_in_the_item_before_it() {
+    // LibreOffice closes the list and opens one continuing it with a list
+    // header for a paragraph without a number; it is more of the item
+    // before it, and the numbering goes on in one list.
+    let content = format!(
+        r#"<office:document-content {NAMESPACES}>
+        <office:automatic-styles><text:list-style style:name="L1">
+          <text:list-level-style-number text:level="1" style:num-format="1"/></text:list-style>
+        </office:automatic-styles>
+        <office:body><office:text>
+        <text:list xml:id="list1" text:style-name="L1">
+          <text:list-item><text:p>One.</text:p></text:list-item></text:list>
+        <text:list text:continue-numbering="true" text:style-name="L1">
+          <text:list-header><text:p>More of one.</text:p></text:list-header>
+          <text:list-item><text:p>Two.</text:p><text:p>More of two.</text:p></text:list-item></text:list>
+        <text:p>After the list.</text:p>
+        </office:text></office:body></office:document-content>"#
+    );
+    let doc = extract(&odt(&[("content.xml", &content)]), "odt").unwrap();
+    assert_eq!(
+        doc.markdown,
+        "1. One.\n   \n   More of one.\n2. Two.\n   \n   More of two.\n\nAfter the list.\n"
+    );
+}

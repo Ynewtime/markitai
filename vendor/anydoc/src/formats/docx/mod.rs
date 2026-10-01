@@ -3,6 +3,8 @@
 //! Resolution pipeline: package parts -> style/numbering models ->
 //! spec-order property resolution -> document model.
 
+// markitai: embedded parts (`w:altChunk`).
+mod altchunk;
 mod code;
 mod content;
 mod numbering;
@@ -24,7 +26,14 @@ use numbering::Counters;
 use std::cell::RefCell;
 
 pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
-    let pkg = match Package::open(bytes) {
+    parse_at(bytes, 0, 0).map(|(document, _)| document)
+}
+
+/// markitai: a Word package stored `depth` `altChunk`s deep inside another
+/// (0 for the document itself), whose decompressed bytes count on from the
+/// `spent` bytes the outer packages have read; with the total reached.
+fn parse_at(bytes: &[u8], depth: u32, spent: u64) -> Result<(Document, u64), ConvertError> {
+    let pkg = match Package::open_spent(bytes, spent) {
         Ok(p) => p,
         Err(e) => return Err(crate::package::archive::probe_ole(bytes).unwrap_or(e)),
     };
@@ -68,6 +77,8 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
     let looks = RefCell::new(crate::shared::visual::Looks::default());
     let tab_rows = RefCell::new(crate::shared::tabs::TabRows::default());
     let typed_lists = RefCell::new(crate::shared::typed_lists::TypedLists::default());
+    // markitai: what the document's embedded parts (`w:altChunk`) add.
+    let embedded = RefCell::new(altchunk::Embedded::default());
 
     let footnotes_part =
         typed_part_path(&doc_rels, &main_part, rel_type::FOOTNOTES, "footnotes.xml");
@@ -87,6 +98,8 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
         block_depth: Default::default(),
         tabs: Some(&tab_rows),
         lists: Some(&typed_lists),
+        chunk_depth: depth,
+        embedded: &embedded,
     };
     let mut blocks = content::parse_blocks(body, &ctx)?;
     // markitai: tables set with tab stops, headings set by hand and lists
@@ -135,8 +148,11 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
         crate::shared::code::listing_tables(&mut note.blocks);
     }
 
+    // markitai: the notes of embedded documents follow the document's own.
+    let warnings = embedded.into_inner().finish(&mut notes);
     let assets = std::mem::take(&mut assets.borrow_mut().assets);
-    Ok(Document { blocks, notes, assets, slide_starts: Vec::new() })
+    let total = pkg.borrow().total_read();
+    Ok((Document { blocks, notes, assets, slide_starts: Vec::new(), warnings }, total))
 }
 
 /// Path of a typed related part, resolved against the main part; falls back
@@ -798,5 +814,387 @@ mod tests {
             read(&[menlo.to_string(), prose.to_string()]),
             ["list:p:`npm test`", "p:The prose of the document runs on for long enough."]
         );
+    }
+
+    /// markitai: a document of `body` with lists numbered as Word, pandoc
+    /// and a `none` level number them, and Word's List Paragraph style.
+    fn listed(body: &str) -> Vec<String> {
+        let numbering = format!(
+            r#"<w:numbering {W}>
+            <w:abstractNum w:abstractNumId="0">
+              <w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/>
+                <w:lvlText w:val="%1."/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl>
+              <w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="lowerLetter"/>
+                <w:lvlText w:val="%2."/><w:pPr><w:ind w:left="1440" w:hanging="360"/></w:pPr></w:lvl>
+            </w:abstractNum>
+            <w:abstractNum w:abstractNumId="9">
+              <w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/><w:lvlText w:val=" "/>
+                <w:pPr><w:ind w:left="720" w:hanging="480"/></w:pPr></w:lvl>
+              <w:lvl w:ilvl="1"><w:numFmt w:val="bullet"/><w:lvlText w:val=" "/>
+                <w:pPr><w:ind w:left="1440" w:hanging="480"/></w:pPr></w:lvl>
+            </w:abstractNum>
+            <w:abstractNum w:abstractNumId="5">
+              <w:lvl w:ilvl="0"><w:numFmt w:val="none"/><w:lvlText w:val=""/>
+                <w:pPr><w:ind w:left="720"/></w:pPr></w:lvl>
+            </w:abstractNum>
+            <w:abstractNum w:abstractNumId="6">
+              <w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/><w:lvlText w:val=""/>
+                <w:lvlPicBulletId w:val="0"/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl>
+            </w:abstractNum>
+            <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+            <w:num w:numId="1000"><w:abstractNumId w:val="9"/></w:num>
+            <w:num w:numId="5"><w:abstractNumId w:val="5"/></w:num>
+            <w:num w:numId="6"><w:abstractNumId w:val="6"/></w:num>
+            </w:numbering>"#
+        );
+        let styles = format!(
+            r#"<w:styles {W}>
+            <w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/>
+              <w:pPr><w:ind w:left="720"/></w:pPr></w:style>
+            </w:styles>"#
+        );
+        let document = format!(r#"<w:document {W}><w:body>{body}</w:body></w:document>"#);
+        let doc = parse(&docx_parts(&[
+            ("word/document.xml", &document),
+            ("word/numbering.xml", &numbering),
+            ("word/styles.xml", &styles),
+        ]))
+        .unwrap();
+        let mut shown = crate::shared::code::describe(&doc.blocks);
+        for block in &doc.blocks {
+            if let Block::List(list) = block {
+                shown.push(format!("start {}", list.start));
+            }
+        }
+        shown
+    }
+
+    /// markitai: a paragraph numbered `numid` at `level` (none: no number),
+    /// with `ppr` added to its properties.
+    fn para(numid: Option<(u32, u32)>, ppr: &str, text: &str) -> String {
+        let num = numid.map_or(String::new(), |(id, level)| {
+            format!(r#"<w:numPr><w:ilvl w:val="{level}"/><w:numId w:val="{id}"/></w:numPr>"#)
+        });
+        format!(r#"<w:p><w:pPr>{ppr}{num}</w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#)
+    }
+
+    #[test]
+    fn a_paragraph_set_in_to_an_items_text_continues_the_item() {
+        let list = r#"<w:pStyle w:val="ListParagraph"/>"#;
+        let body = [
+            para(None, "", "Before the list."),
+            para(Some((1, 0)), list, "One."),
+            // Enter, then Backspace in Word: the style's indent, no number.
+            para(None, list, "More of one."),
+            para(Some((1, 0)), list, "Two."),
+            para(Some((1, 1)), list, "Two a."),
+            para(None, r#"<w:ind w:left="1440"/>"#, "More of two a."),
+            // Back at the outer item's text, after its nested list.
+            para(None, r#"<w:ind w:left="720"/>"#, "More of two."),
+            // The numbering level alone sets this item's text indent.
+            para(Some((1, 0)), "", "Three."),
+            para(None, r#"<w:ind w:left="720"/>"#, "More of three."),
+            para(None, "", "Body text after the list."),
+            para(None, r#"<w:ind w:left="720"/>"#, "An indented note after the body."),
+        ]
+        .concat();
+        assert_eq!(
+            listed(&body),
+            [
+                "p:Before the list.",
+                "list:p:One.;p:More of one.|p:Two.;list:p:Two a.;p:More of two a.;p:More of two.|p:Three.;p:More of three.",
+                "p:Body text after the list.",
+                "p:An indented note after the body.",
+                "start 1",
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_paragraphs_keep_an_item_open_only_for_its_continuation() {
+        let list = r#"<w:pStyle w:val="ListParagraph"/>"#;
+        let body = [
+            para(Some((1, 0)), list, "One."),
+            "<w:p/>".to_string(),
+            para(None, list, "More of one."),
+            "<w:p/><w:p/>".to_string(),
+            // An empty paragraph between items closes the list as before;
+            // the numbering goes on.
+            para(Some((1, 0)), list, "Two."),
+            "<w:p/>".to_string(),
+            para(None, "", "Body text."),
+        ]
+        .concat();
+        assert_eq!(
+            listed(&body),
+            ["list:p:One.;p:More of one.", "list:p:Two.", "p:Body text.", "start 1", "start 2"]
+        );
+    }
+
+    #[test]
+    fn a_number_that_shows_nothing_continues_the_item() {
+        // pandoc numbers an item's later paragraphs with a bullet of one
+        // space, and a `none` level shows no number either.
+        let body = [
+            para(Some((1, 0)), "", "One."),
+            para(Some((1000, 0)), "", "More of one."),
+            para(Some((1, 1)), "", "One a."),
+            para(Some((1000, 1)), "", "More of one a."),
+            para(Some((5, 0)), "", "More of one, at a none level."),
+            para(Some((1, 0)), "", "Two."),
+            para(None, "", "Body."),
+            // Without a list before them they are paragraphs, not items.
+            para(Some((1000, 0)), "", "Unmarked, alone."),
+            para(Some((5, 0)), "", "None, alone."),
+            // A picture bullet shows a picture.
+            para(Some((6, 0)), "", "Picture bullet."),
+        ]
+        .concat();
+        assert_eq!(
+            listed(&body),
+            [
+                "list:p:One.;p:More of one.;list:p:One a.;p:More of one a.;p:More of one, at a none level.|p:Two.",
+                "p:Body.",
+                "p:Unmarked, alone.",
+                "p:None, alone.",
+                "list:p:Picture bullet.",
+                "start 1",
+                "start 1",
+            ]
+        );
+    }
+
+    #[test]
+    fn body_text_at_the_lists_own_indent_continues_nothing() {
+        // A document whose body is set in as far as its lists' text: the
+        // paragraph after the list is body text again.
+        let body_ind = r#"<w:ind w:left="720"/>"#;
+        let item = r#"<w:ind w:left="720" w:hanging="360"/>"#;
+        let body = [
+            para(None, body_ind, "Body set in."),
+            para(Some((1, 0)), item, "One."),
+            para(None, body_ind, "Body again."),
+            // Nor does a list whose text starts at the margin.
+            para(None, "", "Body at the margin."),
+            para(Some((1, 0)), r#"<w:ind w:left="0" w:hanging="0"/>"#, "Two."),
+            para(None, "", "Margin again."),
+        ]
+        .concat();
+        assert_eq!(
+            listed(&body),
+            [
+                "p:Body set in.",
+                "list:p:One.",
+                "p:Body again.",
+                "p:Body at the margin.",
+                "list:p:Two.",
+                "p:Margin again.",
+                "start 1",
+                "start 2",
+            ]
+        );
+    }
+
+    /// markitai: a package of these parts, bytes as they are.
+    fn package(parts: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut w = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default();
+        for (name, body) in parts {
+            w.start_file(*name, opts).unwrap();
+            w.write_all(body).unwrap();
+        }
+        w.finish().unwrap().into_inner()
+    }
+
+    const R: &str =
+        r#"xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#;
+    const WORD_TYPE: &str =
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml";
+
+    /// markitai: a Word package whose body is `body`, embedding `chunks`
+    /// (relationship id, part name under `word/`, content type or none,
+    /// bytes), with these footnotes.
+    fn with_chunks(
+        body: &str,
+        chunks: &[(&str, &str, Option<&str>, &[u8])],
+        notes: &str,
+    ) -> Vec<u8> {
+        let document = format!(r#"<w:document {W} {R}><w:body>{body}</w:body></w:document>"#);
+        let mut rels = String::from(
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
+        );
+        let mut types = String::from(
+            r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+            <Default Extension="txt" ContentType="text/plain"/>"#,
+        );
+        for (id, name, content_type, _) in chunks {
+            rels.push_str(&format!(
+                r#"<Relationship Id="{id}" Target="{name}"
+                Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk"/>"#
+            ));
+            if let Some(content_type) = content_type {
+                types.push_str(&format!(
+                    r#"<Override PartName="/word/{name}" ContentType="{content_type}"/>"#
+                ));
+            }
+        }
+        rels.push_str("</Relationships>");
+        types.push_str("</Types>");
+        let footnotes = format!(
+            r#"<w:footnotes {W}><w:footnote w:id="1"><w:p><w:r><w:t>{notes}</w:t></w:r></w:p></w:footnote></w:footnotes>"#
+        );
+        let names: Vec<String> =
+            chunks.iter().map(|(_, name, _, _)| format!("word/{name}")).collect();
+        let mut parts: Vec<(&str, &[u8])> = vec![
+            ("[Content_Types].xml", types.as_bytes()),
+            ("word/document.xml", document.as_bytes()),
+            ("word/_rels/document.xml.rels", rels.as_bytes()),
+        ];
+        if !notes.is_empty() {
+            parts.push(("word/footnotes.xml", footnotes.as_bytes()));
+        }
+        for (name, (_, _, _, bytes)) in names.iter().zip(chunks) {
+            parts.push((name, bytes));
+        }
+        package(&parts)
+    }
+
+    #[test]
+    fn embedded_parts_are_read_where_they_stand() {
+        // markitai: `w:altChunk` parts in HTML, RTF, plain text and Word,
+        // nested Word documents down to the depth limit; an MHT part and a
+        // missing one add warnings.
+        let text = |words: &str| format!("<w:p><w:r><w:t>{words}</w:t></w:r></w:p>");
+        let chunk = |id: &str| format!(r#"<w:altChunk r:id="{id}"/>"#);
+        let level4 = with_chunks(&text("Level four"), &[], "");
+        let level3 = with_chunks(
+            &(text("Level three") + &chunk("d")),
+            &[("d", "d.docx", None, &level4)],
+            "",
+        );
+        let level2 =
+            with_chunks(&(text("Level two") + &chunk("d")), &[("d", "d.docx", None, &level3)], "");
+        let noted = r#"<w:p><w:r><w:t>From the nested document</w:t></w:r>
+            <w:r><w:footnoteReference w:id="1"/></w:r></w:p>"#;
+        let level1 = with_chunks(
+            &(noted.to_string() + &chunk("d")),
+            &[("d", "afchunk.docx", Some(WORD_TYPE), &level2)],
+            "A nested note.",
+        );
+        let html = br#"<html><head><style>.b{font-weight:bold}</style></head><body>
+            <h2>From HTML</h2><p>Some <span class=b>bold</span> text<br>and a <a href="https://e.com">link</a>.
+            <p>Second &amp; last<ul><li>one<li>two</ul><img src="data:image/png;base64,iVBORw0KGgo=" alt="dot">
+            </body></html>"#;
+        // A web archive as html-docx-js writes it: quoted-printable HTML and
+        // a base64 picture it shows by location.
+        let mht = [
+            "MIME-Version: 1.0\r\nContent-Type: multipart/related;\r\n    type=\"text/html\";\r\n",
+            "    boundary=\"----=mhtDocumentPart\"\r\n\r\n\r\n------=mhtDocumentPart\r\n",
+            "Content-Type: text/html;\r\n    charset=\"utf-8\"\r\nContent-Transfer-Encoding: quoted-printable\r\n",
+            "Content-Location: file:///C:/fake/document.html\r\n\r\n",
+            "<html><body><p>From the web archive, caf=C3=A9 <img src=3D\"file:///C:/fake/image0.png\">",
+            "</p><p>A line split by a soft=\r\n line break.</p></body></html>\r\n\r\n",
+            "------=mhtDocumentPart\r\nContent-Type: image/png\r\nContent-Transfer-Encoding: base64\r\n",
+            "Content-Location: file:///C:/fake/image0.png\r\n\r\niVBORw0KGgo=\r\n------=mhtDocumentPart--\r\n",
+        ]
+        .concat();
+        let body = [
+            text("Before."),
+            chunk("h"),
+            chunk("r"),
+            chunk("t"),
+            chunk("w"),
+            chunk("m"),
+            chunk("x"),
+            chunk("gone"),
+            format!("<w:tbl><w:tr><w:tc>{}</w:tc></w:tr></w:tbl>", chunk("t")),
+            text("After."),
+        ]
+        .concat();
+        let mut parts: Vec<(&str, &str, Option<&str>, &[u8])> = vec![
+            ("h", "afchunk1.html", Some("application/xhtml+xml"), html),
+            ("r", "afchunk2.rtf", Some("application/rtf"), br"{\rtf1\ansi From {\b RTF}.\par}"),
+            ("t", "afchunk3.txt", None, b"Line one\r\n\r\nLine two\n"),
+            ("w", "afchunk4.docx", Some(WORD_TYPE), &level1),
+            ("m", "afchunk5.mht", Some("message/rfc822"), mht.as_bytes()),
+            ("x", "afchunk6.xml", Some("application/xml"), b"<w:document/>"),
+        ];
+        let bytes = with_chunks(&body, &parts, "");
+        let doc = parse(&bytes).unwrap();
+        assert_eq!(
+            crate::shared::code::describe(&doc.blocks),
+            [
+                "p:Before.",
+                "h2:From HTML",
+                "p:Some bold text\nand a link. ",
+                "p:Second & last",
+                "list:p:one|p:two",
+                "p: ",
+                "p:From RTF.",
+                "p:Line one",
+                "p:Line two",
+                "p:From the nested document",
+                "p:Level two",
+                "p:Level three",
+                "p:From the web archive, café ",
+                "p:A line split by a soft line break.",
+                "table:p:Line one;p:Line two",
+                "p:After.",
+            ]
+        );
+        let [note] = &doc.notes[..] else { panic!("{:?}", doc.notes) };
+        assert_eq!(note.id, "chunk4-fn1");
+        assert_eq!(crate::shared::code::describe(&note.blocks), ["p:A nested note."]);
+        assert!(format!("{:?}", doc.blocks).contains("NoteRef(\"chunk4-fn1\")"));
+        let [data, archived] = &doc.assets[..] else { panic!("{:?}", doc.assets) };
+        assert_eq!((data.media_type.as_str(), data.bytes.len()), ("image/png", 8));
+        assert_eq!((archived.media_type.as_str(), archived.bytes.len()), ("image/png", 8));
+        assert!(format!("{:?}", doc.blocks).contains("Asset(AssetId(1))"));
+        assert_eq!(
+            doc.warnings,
+            [
+                "1 embedded part of the document (w:altChunk) is missing from the package; its \
+                 content is not in the Markdown.",
+                "1 embedded part of the document (w:altChunk) is in a format that is not converted \
+                 (application/xml); its content is not in the Markdown.",
+                "1 embedded part of the document (w:altChunk) is a Word document nested more than \
+                 3 documents deep; its content is not in the Markdown.",
+            ]
+        );
+        // A part that is not what its type says is unreadable, not fatal.
+        parts[1].3 = b"not rtf at all";
+        parts[3].3 = b"PK\x03\x04 not a zip";
+        let doc = parse(&with_chunks(&body, &parts, "")).unwrap();
+        assert!(
+            doc.warnings[2].starts_with(
+                "2 embedded parts of the document (w:altChunk) could not be read; their"
+            ),
+            "{:?}",
+            doc.warnings
+        );
+        let doc = parse(&with_chunks(&(chunk("a") + &chunk("b")), &[], "")).unwrap();
+        assert_eq!(
+            doc.warnings,
+            ["2 embedded parts of the document (w:altChunk) are missing from the package; their \
+              content is not in the Markdown."]
+        );
+    }
+
+    #[test]
+    fn an_embedded_document_reads_against_the_outer_budget() {
+        // markitai: what an embedded Word document decompresses counts
+        // towards the outer package's total, on top of what it had read.
+        let long = format!("<w:p><w:r><w:t>{}</w:t></w:r></w:p>", "word ".repeat(20_000));
+        let inner = with_chunks(&long, &[], "");
+        let (_, alone) = parse_at(&inner, 0, 0).unwrap();
+        assert!(alone > 100_000 && inner.len() < 10_000, "{alone} {}", inner.len());
+        let outer = with_chunks(
+            r#"<w:altChunk r:id="d"/>"#,
+            &[("d", "afchunk.docx", Some(WORD_TYPE), &inner)],
+            "",
+        );
+        let (doc, total) = parse_at(&outer, 0, 0).unwrap();
+        assert_eq!(doc.blocks.len(), 1);
+        assert!(total >= alone + inner.len() as u64, "{total} < {alone} + {}", inner.len());
     }
 }

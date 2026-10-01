@@ -13,9 +13,10 @@
 //!
 //! The rules keep a missed table as the text it was rather than guess:
 //!
-//! - at least [`MIN_ROWS`] consecutive paragraphs at the same tab stops,
-//!   each with the same number of tab-separated cells, and no line break
-//!   inside; a tab inside a link splits nothing;
+//! - at least [`MIN_ROWS`] rows at the same tab stops, each with the same
+//!   number of tab-separated cells: consecutive paragraphs, or the lines of
+//!   a paragraph split by line breaks (Shift+Enter between rows, every
+//!   line holding a tab); a tab inside a link splits nothing;
 //! - at the default tab stops a run of tabs separates one pair of columns
 //!   (the author pressed Tab until the text lined up), so empty cells are
 //!   dropped; at stops the author set each tab moves to the next column;
@@ -162,25 +163,26 @@ impl TabRows {
     }
 
     /// Each run of the paragraphs that reads as a table: the blocks it
-    /// takes and the table.
+    /// takes and the table. markitai: a paragraph whose lines (split by
+    /// line breaks) all hold tabs gives a row per line.
     fn tables(&self, blocks: &[Block]) -> Vec<(Range<usize>, Table)> {
         let mut found = Vec::new();
         let mut run: Vec<(usize, Vec<Vec<Inline>>)> = Vec::new();
         let mut run_stops = Stops::default();
         for &(index, stops) in &self.paragraphs {
-            let row = match blocks.get(index) {
-                Some(Block::Paragraph(inlines)) => cells(inlines, stops),
+            let rows = match blocks.get(index) {
+                Some(Block::Paragraph(inlines)) => rows(inlines, stops),
                 _ => None,
             };
-            let continues = |row: &Vec<Vec<Inline>>| {
+            let continues = |rows: &Vec<Vec<Vec<Inline>>>| {
                 run.last().is_some_and(|(last, cells)| {
-                    *last + 1 == index && run_stops == stops && cells.len() == row.len()
+                    *last + 1 == index && run_stops == stops && cells.len() == rows[0].len()
                 })
             };
-            if !row.as_ref().is_some_and(continues) {
+            if !rows.as_ref().is_some_and(continues) {
                 close(&mut run, run_stops, &mut found);
             }
-            if let Some(row) = row {
+            for row in rows.into_iter().flatten() {
                 run.push((index, row));
                 run_stops = stops;
             }
@@ -206,13 +208,24 @@ fn close(
     }
 }
 
-/// A paragraph's inline content split at each of its tabs; `None` when it
-/// cannot be a row (no tab of its own, or a line break inside it).
+/// markitai: the rows a paragraph gives: one per line, its line breaks
+/// splitting them (blank lines aside), each line split at its tabs into
+/// the same number of cells; `None` when a line holds no tab of its own or
+/// the lines split differently, or the paragraph has no tab.
+fn rows(inlines: &[Inline], stops: Stops) -> Option<Vec<Vec<Vec<Inline>>>> {
+    let rows: Vec<Vec<Vec<Inline>>> = inlines
+        .split(|inline| matches!(inline, Inline::LineBreak))
+        .filter(|line| !inlines_are_empty(line))
+        .map(|line| cells(line, stops))
+        .collect::<Option<_>>()?;
+    let width = rows.first()?.len();
+    rows.iter().all(|row| row.len() == width).then_some(rows)
+}
+
+/// A line's inline content split at each of its tabs; `None` when it
+/// cannot be a row (no tab of its own).
 fn cells(inlines: &[Inline], stops: Stops) -> Option<Vec<Vec<Inline>>> {
-    let start = inlines.iter().position(|inline| !matches!(inline, Inline::LineBreak))?;
-    let end = inlines.iter().rposition(|inline| !matches!(inline, Inline::LineBreak))? + 1;
-    let inlines = &inlines[start..end];
-    if !has_tab(inlines) || inlines.iter().any(|inline| matches!(inline, Inline::LineBreak)) {
+    if !has_tab(inlines) {
         return None;
     }
     let mut cells = vec![Vec::new()];
@@ -651,6 +664,57 @@ mod tests {
         let blocks =
             read(vec![link, broken, row(&["f", "g", "h"]), row(&["i", "j", "k"])], custom());
         assert_eq!(shown(&blocks), ["a b", "c\n d e", "f g h", "i j k"]);
+    }
+
+    /// markitai: one paragraph whose lines are these rows, joined by line
+    /// breaks (a blank line between two of them when `blank`).
+    fn lines(rows: &[&[&str]], blank: bool) -> Block {
+        let mut inlines = Vec::new();
+        for (i, cells) in rows.iter().enumerate() {
+            if i > 0 {
+                inlines.push(Inline::LineBreak);
+                if blank && i == 1 {
+                    inlines.push(Inline::LineBreak);
+                }
+            }
+            let Block::Paragraph(line) = row(cells) else { unreachable!() };
+            inlines.extend(line);
+        }
+        Block::Paragraph(inlines)
+    }
+
+    #[test]
+    fn rows_split_by_line_breaks_inside_one_paragraph_are_rows() {
+        // markitai: Shift+Enter between the rows of a tab-set table.
+        let unchanged = |paragraphs: Vec<Block>, stops: Stops| {
+            let expected: Vec<String> =
+                shown(&paragraphs).iter().map(|t| t.replace('\t', " ")).collect();
+            assert_eq!(shown(&read(paragraphs, stops)), expected);
+        };
+        let price_list =
+            [&["Item", "Qty", "Price"][..], &["Apple", "3", "1.20"], &["Pear", "", "0.50"]];
+        let blocks = read(vec![lines(&price_list, true)], custom());
+        assert_eq!(shown(&blocks), ["Item|Qty|Price / Apple|3|1.20 / Pear||0.50"]);
+        // A header paragraph, then the other rows in one paragraph.
+        let blocks = read(
+            vec![
+                row(&["Item", "Qty", "Price"]),
+                lines(&price_list[1..], false),
+                row(&["Fig", "9", "2"]),
+            ],
+            custom(),
+        );
+        assert_eq!(shown(&blocks), ["Item|Qty|Price / Apple|3|1.20 / Pear||0.50 / Fig|9|2"]);
+        // Two rows are too few, and a line without a tab, or with other
+        // cells, makes the paragraph no rows; field labels stay text.
+        unchanged(vec![lines(&price_list[..2], false)], custom());
+        let caption =
+            [&["Prices:"][..], &["Apple", "3", "1.20"], &["Pear", "4", "0.50"], &["Fig", "9", "2"]];
+        unchanged(vec![lines(&caption, false)], custom());
+        let ragged = [&["a", "b", "c"][..], &["d", "e"], &["f", "g", "h"]];
+        unchanged(vec![lines(&ragged, false)], custom());
+        let memo = [&["To:", "Staff"][..], &["From:", "Office"], &["Date:", "Monday"]];
+        unchanged(vec![lines(&memo, false)], custom());
     }
 
     #[test]

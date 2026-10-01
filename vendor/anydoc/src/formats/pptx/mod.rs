@@ -213,7 +213,13 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
     }
 
     let assets = std::mem::take(&mut assets.borrow_mut().assets);
-    Ok(Document { blocks, notes: Vec::new(), assets, slide_starts: Vec::new() })
+    Ok(Document {
+        blocks,
+        notes: Vec::new(),
+        assets,
+        slide_starts: Vec::new(),
+        warnings: Vec::new(),
+    })
 }
 
 fn rel_target_of_type(rels: &Relationships, base: &str, rel_type: &str) -> Option<String> {
@@ -490,6 +496,8 @@ fn parse_text_body(
                     number,
                     label: wrap.label(marker, number),
                     blocks: vec![Block::Paragraph(inlines)],
+                    indent: None,
+                    continues: false,
                 });
             }
             Bullet::Char => list_run.push(ListEntry {
@@ -498,6 +506,8 @@ fn parse_text_body(
                 number: 0,
                 label: None,
                 blocks: vec![Block::Paragraph(inlines)],
+                indent: None,
+                continues: false,
             }),
             Bullet::None | Bullet::Inherit => {
                 flush_list(blocks, &mut list_run);

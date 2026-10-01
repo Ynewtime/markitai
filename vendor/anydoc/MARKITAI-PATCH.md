@@ -265,6 +265,77 @@ upstream files:
   zipped package is read as an ODF chart or spreadsheet, or else through
   `sheet::parse` as an OOXML workbook, with the same detachment and sheet-name
   handling. Anything else gives no blocks; only resource limits are errors.
+- `src/shared/list.rs` and the readers that build list entries
+  (`src/formats/docx/content.rs`, `numbering.rs`; `src/formats/rtf/mod.rs`;
+  `src/formats/doc/mod.rs`; `src/shared/typed_lists.rs`; `src/formats/pptx/mod.rs`
+  and `src/formats/ppt/mod.rs` only fill the new fields): a paragraph that
+  continues a list item goes into it (upstream closed the list there):
+  - `ListEntry` gains `indent` (where the item's text lines start, in
+    twips) and `continues`; `ListEntry::continuation` makes an entry that
+    `build_lists` appends to the item open at its level, after that item's
+    nested lists, taking no number and splitting no list;
+    `continuation_level` picks the deepest open item whose text starts no
+    further right than the paragraph, when the paragraph reaches the
+    outermost item's text and that text sits at least `2 * ALIGNED` (10
+    points) right of the body text before the list; `unmarked_level` places
+    a paragraph numbered at a level that shows no marker;
+  - DOCX: a numbering level's `w:pPr/w:ind` is read (`LevelDef::left`,
+    `first_line`) and applies between the style's indent and the
+    paragraph's own; a bullet level whose `lvlText` is only spaces (and no
+    picture) shows no marker, as `none` does (pandoc's "no marker" list,
+    which upstream read as items); `resolve_numbering` also returns the
+    level a paragraph is numbered at; a plain paragraph after an item
+    continues it by indent or by such an unmarked level; empty paragraphs
+    after an item are held and close the list only when another item
+    follows, as before; `emit_paragraph` says when a paragraph went into the
+    list so it is not recorded as a plain one;
+  - RTF and Word 97: an item's `\li` / `sprmPDxaLeft` is its text indent, a
+    plain paragraph after it continues it by indent (Word 97 also by a
+    level with no marker), empty paragraphs are held as in DOCX, and the
+    body text's indent is tracked; RTF table cells are unchanged;
+  - ODF (`src/formats/odf/text.rs`): a `text:list` that continues the one
+    before it (`text:continue-numbering`, `text:continue-list`) and opens with
+    a `text:list-header` (LibreOffice's unnumbered entry) puts the header's
+    blocks into the previous list's last item, as deep as the header is
+    nested, and that list takes the following items when they carry on its
+    count (`push_list`, `header_depth`, `last_item`; `parse_list` returns how
+    many leading blocks the header gave);
+  - lists typed by hand: a paragraph right after an item with a hanging
+    indent, set in to the item's text, continues it (`Run`, `More`,
+    `Member`); one after a rejected item stays text, and one that lines up
+    with no open item ends the list there.
+- `src/shared/typed_lists.rs`: hyphen and en-dash lines are dialogue (no
+  list) when a line's clause after a comma is a speech incise
+  (`speech_incise`: at most three words led by one of `SPEECH_VERBS`, about a
+  hundred speech verbs in fourteen languages, or by a French inversion such
+  as `dit-il`, `dis-je`, or an English pronoun and such a verb). On 21,825
+  dash and `<li>` list items of local Markdown and HTML it fires on none.
+- `src/shared/tabs.rs`: the lines of one paragraph split by line breaks are
+  rows of a table set with tab stops when every line holds a tab and they
+  split into the same number of cells (`rows`); the thresholds are those
+  for paragraphs.
+- `src/formats/docx/altchunk.rs` (added), `src/formats/docx/mod.rs`,
+  `src/formats/docx/content.rs`, `src/package/archive.rs`: a `w:altChunk`
+  is read where it stands (upstream ignored it), by the part's content type
+  (`[Content_Types].xml`, else extension, else first bytes): HTML/XHTML
+  through `shared::html` after `html_as_xml` makes well-formed XML of it
+  (at most `MAX_HTML_DEPTH` open elements, deeper tags dropped with their
+  text kept, so the XML reader's depth limit cannot fail the document; with
+  `data:` images); MHT web archives (`message/rfc822`,
+  `multipart/related`, as html-docx-js writes them) by their HTML part with
+  quoted-printable/base64 decoding and pictures by `Content-Location` or
+  `cid:`; RTF through `formats::rtf::parse`; plain text as a paragraph per
+  line; Word documents through `parse_at` at most `MAX_DEPTH` (3) deep, whose
+  archive counts its reads on from the outer one's (`Package::open_spent`,
+  `total_read`, `charge`). An embedded document's assets are re-added with
+  scoped origins, its notes appended after the document's, its anchors and
+  note ids prefixed `chunkN-`. Other formats, deeper nesting, missing and
+  unreadable parts add nothing and a warning; resource limits stay errors.
+  `Ctx` gains `chunk_depth` and `embedded`.
+- `src/model/mod.rs` and every place that builds a `Document` (the format
+  readers and the Markdown renderer's tests): `Document` gains `warnings`,
+  sentences about content a reader left out on purpose (so far only the
+  altChunk warnings); empty for every other reader.
 
 `Cargo.toml` asks `zip` for `deflate-flate2-zlib-rs` instead of `deflate`, as
 the workspace crates do: the same deflate backend without the zopfli encoder,
@@ -275,4 +346,4 @@ package; it reproduces upstream's formatting, so `cargo fmt` in this directory
 changes nothing upstream wrote.
 
 Tests covering these changes were added beside the upstream ones; the upstream
-suite passes in an isolated copy (402 tests).
+suite passes in an isolated copy (425 tests).

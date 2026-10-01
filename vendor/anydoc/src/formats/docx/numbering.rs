@@ -25,6 +25,11 @@ pub struct LevelDef {
     pub restart: Option<u32>,
     /// `w:lvlText` (with `w:isLgl`) as the shared pattern IR.
     pub pattern: NumberPattern,
+    /// markitai: the level's own indent (`w:pPr/w:ind`), which a paragraph
+    /// numbered at it takes over its style's: where its lines start and
+    /// the first line's offset from that, in twips.
+    pub left: Option<i32>,
+    pub first_line: Option<i32>,
 }
 
 impl Default for LevelDef {
@@ -35,6 +40,8 @@ impl Default for LevelDef {
             start: 1,
             restart: None,
             pattern: NumberPattern::default(),
+            left: None,
+            first_line: None,
         }
     }
 }
@@ -187,8 +194,18 @@ fn parse_start(v: &str) -> Option<u64> {
 
 fn parse_level(lvl: &Element) -> LevelDef {
     let fmt = lvl.find(ns::W, "numFmt").and_then(|e| e.attr(ns::W, "val")).unwrap_or("bullet");
+    // markitai: a bullet whose text is only spaces (and no picture) shows
+    // nothing, as `none` does: pandoc numbers an item's later paragraphs
+    // so, which upstream read as items of their own.
+    let blank_bullet = fmt == "bullet"
+        && lvl.find(ns::W, "lvlPicBulletId").is_none()
+        && lvl
+            .find(ns::W, "lvlText")
+            .and_then(|e| e.attr(ns::W, "val"))
+            .is_some_and(|text| text.trim().is_empty());
     let marker = match fmt {
         "none" => None,
+        "bullet" if blank_bullet => None,
         "bullet" => Some(MarkerKind::Bullet),
         "lowerLetter" => Some(MarkerKind::LowerAlpha),
         "upperLetter" => Some(MarkerKind::UpperAlpha),
@@ -217,7 +234,20 @@ fn parse_level(lvl: &Element) -> LevelDef {
         _ => Vec::new(),
     };
     let legal = crate::formats::docx::styles::on_off(lvl, "isLgl") == Some(true);
-    LevelDef { marker, numeral, start, restart, pattern: NumberPattern { text, legal } }
+    let ind = lvl.find(ns::W, "pPr").and_then(|ppr| ppr.find(ns::W, "ind"));
+    let (left, first_line) = match ind {
+        Some(ind) => (super::content::ind_left(ind), super::content::ind_first_line(ind)),
+        None => (None, None),
+    };
+    LevelDef {
+        marker,
+        numeral,
+        start,
+        restart,
+        pattern: NumberPattern { text, legal },
+        left,
+        first_line,
+    }
 }
 
 /// markitai: the number text of a level that counts in a CJK or enclosed-digit

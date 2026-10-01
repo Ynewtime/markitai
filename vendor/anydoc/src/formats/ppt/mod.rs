@@ -55,7 +55,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
     }
     let assets = collect_pictures(&mut ole)?;
     let (blocks, slide_starts) = ex.into_blocks();
-    Ok(Document { blocks, notes: Vec::new(), assets, slide_starts })
+    Ok(Document { blocks, notes: Vec::new(), assets, slide_starts, warnings: Vec::new() })
 }
 
 /// Retain the deck's embedded pictures from the `Pictures` stream (OfficeArt
@@ -752,6 +752,8 @@ impl<'a> Extractor<'a> {
                     number: 0,
                     label: None,
                     blocks: vec![Block::Paragraph(inlines)],
+                    indent: None,
+                    continues: false,
                 });
             } else {
                 flush_list(&mut self.current, &mut self.list_run);

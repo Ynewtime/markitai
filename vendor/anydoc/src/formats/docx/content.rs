@@ -15,7 +15,7 @@ use crate::shared::blockstyle::{BlockStyle, StyledRun};
 use crate::shared::code::{RunFonts, without_code};
 use crate::shared::delta::rebase_emphasis;
 use crate::shared::fields::{FieldFrame, field_result};
-use crate::shared::list::{ListEntry, ListKey, flush_list};
+use crate::shared::list::{ListEntry, ListKey, continuation_level, flush_list, unmarked_level};
 use crate::shared::math::{omath_para_to_tex, omath_to_tex};
 use crate::shared::tabs::{self, Stops, TabRows};
 use crate::shared::text::clean_text;
@@ -67,6 +67,11 @@ pub(super) struct Ctx<'a, 'b> {
     /// markitai: the body's plain paragraphs and their indents, for the
     /// lists typed by hand (see [`crate::shared::typed_lists`]).
     pub lists: Option<&'b RefCell<TypedLists>>,
+    /// markitai: how many `w:altChunk`s deep this package sits (0 for the
+    /// document itself), and what its embedded parts add to the document
+    /// (see [`super::altchunk`]).
+    pub chunk_depth: u32,
+    pub embedded: &'b RefCell<super::altchunk::Embedded>,
 }
 
 /// markitai: content read one level deeper (inside a table cell, or a block
@@ -104,17 +109,19 @@ impl<'a, 'b> Ctx<'a, 'b> {
             block_depth: Default::default(),
             tabs: None,
             lists: None,
+            chunk_depth: self.chunk_depth,
+            embedded: self.embedded,
         }
     }
 
     /// Load an internal relationship target's bytes, resolved against this
     /// part. Failures degrade (log + `None`) per the unified policy;
     /// resource-limit errors always propagate.
-    fn rel_part(&self, rel_id: &str) -> Result<Option<RelTarget>, ConvertError> {
+    pub(super) fn rel_part(&self, rel_id: &str) -> Result<Option<RelTarget>, ConvertError> {
         rel_target_bytes(self.pkg, &self.rels, &self.base_part, rel_id)
     }
 
-    fn add_asset(
+    pub(super) fn add_asset(
         &self,
         media_type: String,
         part: String,
@@ -150,6 +157,18 @@ pub(super) enum ParaKind {
     Plain,
 }
 
+/// markitai: where a paragraph sits, for the list before it and the lists
+/// typed by hand.
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct Place {
+    /// Where its lines start, in twips, attribute by attribute from its own
+    /// `w:ind`, else its numbering level's, else its style's; `None` in a
+    /// table of contents or an index.
+    pub indent: Option<Indent>,
+    /// The level it is numbered at, when that level's marker shows nothing.
+    pub unmarked: Option<usize>,
+}
+
 /// Block runs a following paragraph may extend: a list being built, and a
 /// styled container. Only one is ever open, so starting either closes the
 /// other.
@@ -157,12 +176,34 @@ pub(super) enum ParaKind {
 pub(super) struct Runs {
     list: Vec<ListEntry>,
     styled: StyledRun,
+    /// markitai: empty paragraphs came after the list's last paragraph. They
+    /// close the list, as before, unless what follows continues an item.
+    gap: bool,
+    /// markitai: where the last paragraph of body text before the list
+    /// starts its lines, in twips (see [`continuation_level`]).
+    body_left: i32,
 }
 
 impl Runs {
     fn flush(&mut self, blocks: &mut Vec<Block>) {
         self.styled.flush(blocks);
         flush_list(blocks, &mut self.list);
+        self.gap = false;
+    }
+
+    /// markitai: the level of the open list's item a plain paragraph with
+    /// content continues: one numbered at a level that shows no marker, or
+    /// one set in as far as an item's text (see [`continuation_level`]).
+    fn continues(&self, pieces: &[Piece], place: Place) -> Option<usize> {
+        let empty =
+            pieces.iter().all(|piece| matches!(piece, Piece::Inlines(i) if inlines_are_empty(i)));
+        if self.list.is_empty() || empty {
+            return None;
+        }
+        match place.unmarked {
+            Some(level) => unmarked_level(&self.list, level),
+            None => continuation_level(&self.list, place.indent?.left, self.body_left),
+        }
     }
 }
 
@@ -214,7 +255,7 @@ fn collect_blocks(
         }
         match child.local.as_str() {
             "p" => {
-                let (kind, pieces, size) = parse_paragraph(child, ctx)?;
+                let (kind, pieces, size, place) = parse_paragraph(child, ctx)?;
                 // markitai: a plain paragraph of the body itself may turn
                 // out to be a heading set by hand.
                 let plain = matches!(kind, ParaKind::Plain)
@@ -224,7 +265,9 @@ fn collect_blocks(
                 // markitai: and it may be a row of a table set with tab stops.
                 let row = plain
                     && matches!(&pieces[..], [Piece::Inlines(inlines)] if tabs::has_tab(inlines));
-                emit_paragraph(kind, pieces, blocks, runs);
+                // markitai: unless it continues an item of the list before it.
+                let plain = !emit_paragraph(kind, pieces, place, blocks, runs) && plain;
+                let row = plain && row;
                 if plain && let Some(looks) = ctx.looks {
                     looks.borrow_mut().paragraph(blocks.len() - 1, size);
                 }
@@ -237,7 +280,7 @@ fn collect_blocks(
                 // markitai: and an item of a list typed by hand.
                 if plain
                     && let Some(lists) = ctx.lists
-                    && let Some(indent) = paragraph_indent(child, ctx.styles)?
+                    && let Some(indent) = place.indent
                 {
                     lists.borrow_mut().paragraph(blocks.len() - 1, indent);
                 }
@@ -252,21 +295,49 @@ fn collect_blocks(
                 }
             }
             "customXml" => collect_blocks(child, ctx, blocks, runs)?,
+            // markitai: an embedded part, read where it stands.
+            "altChunk" => {
+                runs.flush(blocks);
+                blocks.extend(super::altchunk::blocks(child, ctx)?);
+            }
             _ => {}
         }
     }
     Ok(())
 }
 
-fn emit_paragraph(kind: ParaKind, pieces: Vec<Piece>, blocks: &mut Vec<Block>, runs: &mut Runs) {
+/// Place a paragraph. markitai: true when a plain one went into the open
+/// list (an item's continuation, or an empty paragraph after it) instead of
+/// being the last of `blocks`.
+fn emit_paragraph(
+    kind: ParaKind,
+    pieces: Vec<Piece>,
+    place: Place,
+    blocks: &mut Vec<Block>,
+    runs: &mut Runs,
+) -> bool {
     match kind {
         ParaKind::ListItem { ilvl, key, number, label } => {
             runs.styled.flush(blocks);
+            // markitai: an empty paragraph between items closes the list as
+            // it did before.
+            if std::mem::take(&mut runs.gap) {
+                flush_list(blocks, &mut runs.list);
+            }
             let item = pieces_into_blocks(pieces);
-            runs.list.push(ListEntry { level: ilvl, key, number, label, blocks: item });
+            runs.list.push(ListEntry {
+                level: ilvl,
+                key,
+                number,
+                label,
+                blocks: item,
+                indent: place.indent.map(|indent| indent.left),
+                continues: false,
+            });
         }
         ParaKind::Styled(style) => {
             flush_list(blocks, &mut runs.list);
+            runs.gap = false;
             // markitai: an empty paragraph of a code block is a blank line of
             // it (upstream dropped it, joining the lines around it).
             if !pieces.iter().any(|piece| matches!(piece, Piece::Inlines(_))) {
@@ -309,16 +380,32 @@ fn emit_paragraph(kind: ParaKind, pieces: Vec<Piece>, blocks: &mut Vec<Block>, r
             }
         }
         ParaKind::Plain => {
+            // markitai: a paragraph that continues an item of the open list
+            // goes into it; an empty one after the list waits to see whether
+            // one follows (it shows nothing either way).
+            if let Some(level) = runs.continues(&pieces, place) {
+                runs.list.push(ListEntry::continuation(level, pieces_into_blocks(pieces)));
+                runs.gap = false;
+                return true;
+            }
+            if pieces.is_empty() && !runs.list.is_empty() {
+                runs.gap = true;
+                return true;
+            }
             runs.flush(blocks);
+            if !pieces.is_empty() {
+                runs.body_left = place.indent.map_or(0, |indent| indent.left);
+            }
             blocks.extend(pieces_into_blocks(pieces));
         }
     }
+    false
 }
 
 fn parse_paragraph(
     p: &Element,
     ctx: &Ctx,
-) -> Result<(ParaKind, Vec<Piece>, ParaSize), ConvertError> {
+) -> Result<(ParaKind, Vec<Piece>, ParaSize, Place), ConvertError> {
     let ppr = p.find(ns::W, "pPr");
     let pstyle_id = ppr.and_then(|pr| pr.find(ns::W, "pStyle")).and_then(|e| e.attr(ns::W, "val"));
 
@@ -341,7 +428,13 @@ fn parse_paragraph(
 
     // Numbering resolves independently of heading semantics: a numbered
     // heading advances its sequence and keeps its number visible.
-    let numbering = resolve_numbering(ppr, pstyle_id, ctx)?;
+    let Numbered { item: numbering, level } = resolve_numbering(ppr, pstyle_id, ctx)?;
+    // markitai: where its lines start, and whether it is numbered at a level
+    // that shows no marker, for the list before it.
+    let place = Place {
+        indent: paragraph_indent(p, ctx.styles, level)?,
+        unmarked: level.filter(|level| !level.marked).map(|level| level.ilvl),
+    };
 
     // Toggle properties: the paragraph style chain's true-parity flips the
     // docDefaults base. Headings use the same resolution as body text.
@@ -425,7 +518,7 @@ fn parse_paragraph(
         }
         kind => kind,
     };
-    Ok((kind, pieces, size))
+    Ok((kind, pieces, size, place))
 }
 
 /// markitai: count a run of a paragraph in `fonts` (see
@@ -494,33 +587,53 @@ fn tab_stops(tabs: &Element, set: &mut std::collections::BTreeMap<i64, (&'static
 }
 
 /// markitai: where a paragraph's lines start, for the lists typed by hand
-/// (see [`crate::shared::typed_lists`]): its own `w:ind`, then its style's
-/// through `basedOn`, attribute by attribute. A hanging indent wins over a
-/// first-line one, and character units over twips, as in Word; `textutil`
-/// writes the first line's offset as `w:first-line`. `None` for a
-/// paragraph of a table of contents or an index, which lists pages.
-fn paragraph_indent(p: &Element, styles: &Styles) -> Result<Option<Indent>, ConvertError> {
+/// (see [`crate::shared::typed_lists`]) and an item's continuations: its
+/// own `w:ind`, then its numbering level's (`level`), then its style's
+/// through `basedOn`, attribute by attribute, as Word applies them. A
+/// hanging indent wins over a first-line one, and character units over
+/// twips, as in Word; `textutil` writes the first line's offset as
+/// `w:first-line`. `None` for a paragraph of a table of contents or an
+/// index, which lists pages.
+fn paragraph_indent(
+    p: &Element,
+    styles: &Styles,
+    level: Option<NumLevel>,
+) -> Result<Option<Indent>, ConvertError> {
     let ppr = p.find(ns::W, "pPr");
     let style = ppr
         .and_then(|pr| pr.find(ns::W, "pStyle"))
         .and_then(|e| e.attr(ns::W, "val"))
         .or(styles.default_paragraph);
-    let mut found: Vec<&Element> = ppr.and_then(|pr| pr.find(ns::W, "ind")).into_iter().collect();
+    let direct = ppr.and_then(|pr| pr.find(ns::W, "ind"));
+    let mut inherited: Vec<&Element> = Vec::new();
     if let Some(id) = style {
         if styles.style_name(id).is_some_and(lists_pages) {
             return Ok(None);
         }
-        found.extend(styles.style_indents(id)?);
+        inherited.extend(styles.style_indents(id)?);
     }
-    let left = found
-        .iter()
-        .find_map(|ind| indent_value(ind, &["startChars", "leftChars"], &["start", "left"]));
-    let first_line = found.iter().find_map(|ind| {
-        indent_value(ind, &["hangingChars"], &["hanging"])
-            .map(|hanging| -hanging)
-            .or_else(|| indent_value(ind, &["firstLineChars"], &["firstLine", "first-line"]))
-    });
+    let left = direct
+        .and_then(ind_left)
+        .or(level.and_then(|level| level.left))
+        .or_else(|| inherited.iter().find_map(|ind| ind_left(ind)));
+    let first_line = direct
+        .and_then(ind_first_line)
+        .or(level.and_then(|level| level.first_line))
+        .or_else(|| inherited.iter().find_map(|ind| ind_first_line(ind)));
     Ok(Some(Indent { left: left.unwrap_or(0), first_line: first_line.unwrap_or(0) }))
+}
+
+/// markitai: the left indent a `w:ind` sets, in twips.
+pub(super) fn ind_left(ind: &Element) -> Option<i32> {
+    indent_value(ind, &["startChars", "leftChars"], &["start", "left"])
+}
+
+/// markitai: the first line's offset a `w:ind` sets, in twips (negative
+/// for a hanging indent).
+pub(super) fn ind_first_line(ind: &Element) -> Option<i32> {
+    indent_value(ind, &["hangingChars"], &["hanging"])
+        .map(|hanging| -hanging)
+        .or_else(|| indent_value(ind, &["firstLineChars"], &["firstLine", "first-line"]))
 }
 
 /// markitai: one `w:ind` length in twips: a non-zero count in hundredths
@@ -553,12 +666,13 @@ fn lists_pages(name: &str) -> bool {
 /// style-inherited `numPr` (a missing `numId`/`ilvl` inherits; an explicit
 /// `numId` of 0 suppresses). Returns the level, list identity, effective
 /// number, and composite label, advancing the instance counters.
-#[expect(clippy::type_complexity)]
+/// markitai: and the level the paragraph is numbered at, whether its marker
+/// shows or not, with that level's own indent.
 fn resolve_numbering(
     ppr: Option<&Element>,
     pstyle_id: Option<&str>,
     ctx: &Ctx,
-) -> Result<Option<(usize, ListKey, u64, Option<String>)>, ConvertError> {
+) -> Result<Numbered, ConvertError> {
     let direct = ppr.and_then(|pr| pr.find(ns::W, "numPr"));
     let direct_num_id: Option<u64> = direct
         .and_then(|numpr| numpr.find(ns::W, "numId"))
@@ -577,15 +691,15 @@ fn resolve_numbering(
         },
     };
     let Some(num_id) = num_id else {
-        return Ok(None);
+        return Ok(Numbered::default());
     };
     if num_id == 0 {
         // numId 0 is explicitly suppressed numbering.
-        return Ok(None);
+        return Ok(Numbered::default());
     }
     let Some(instance) = ctx.numbering.instance(num_id) else {
         log::debug!("paragraph references undefined numbering instance {num_id}");
-        return Ok(None);
+        return Ok(Numbered::default());
     };
     let ilvl = match (direct_ilvl, pstyle_id) {
         (Some(l), _) => l,
@@ -595,16 +709,43 @@ fn resolve_numbering(
         (None, None) => 0,
     };
     let def = &instance.levels[ilvl.min(crate::formats::docx::numbering::LEVELS - 1)];
+    let level = Some(NumLevel {
+        ilvl,
+        marked: def.marker.is_some(),
+        left: def.left,
+        first_line: def.first_line,
+    });
     // A numFmt of "none" is explicitly suppressed numbering.
     let Some(marker) = def.marker else {
-        return Ok(None);
+        return Ok(Numbered { item: None, level });
     };
     let (number, label) = if marker.ordered() {
         ctx.counters.borrow_mut().next(num_id, ilvl, instance)
     } else {
         (0, None)
     };
-    Ok(Some((ilvl, ListKey { instance: num_id, marker }, number, label)))
+    Ok(Numbered { item: Some((ilvl, ListKey { instance: num_id, marker }, number, label)), level })
+}
+
+/// A paragraph's numbering (see [`resolve_numbering`]).
+#[derive(Default)]
+struct Numbered {
+    /// The level, list identity, effective number and composite label of a
+    /// numbered paragraph whose marker shows.
+    item: Option<(usize, ListKey, u64, Option<String>)>,
+    /// markitai: the level it is numbered at, marker or not.
+    level: Option<NumLevel>,
+}
+
+/// markitai: a numbering level a paragraph is set at.
+#[derive(Debug, Clone, Copy)]
+struct NumLevel {
+    ilvl: usize,
+    /// Whether its marker shows (not `none`, nor a bullet of spaces).
+    marked: bool,
+    /// Its own indent, in twips (see `numbering::LevelDef`).
+    left: Option<i32>,
+    first_line: Option<i32>,
 }
 
 struct InlineWalker<'a, 'b, 'e> {
@@ -1332,6 +1473,7 @@ mod tests {
         emit_paragraph(
             ParaKind::Heading { level: 2, label: None, base: Style::PLAIN },
             vec![text("before"), Piece::Blocks(vec![Block::Rule]), text("after")],
+            Place::default(),
             &mut blocks,
             &mut Runs::default(),
         );
@@ -1354,6 +1496,7 @@ mod tests {
                 label: None,
             },
             vec![text("before"), Piece::Blocks(vec![Block::Rule]), text("after")],
+            Place::default(),
             &mut blocks,
             &mut runs,
         );
@@ -1374,6 +1517,7 @@ mod tests {
         emit_paragraph(
             ParaKind::Plain,
             vec![Piece::Inlines(vec![Inline::Anchor("mark".into())])],
+            Place::default(),
             &mut blocks,
             &mut Runs::default(),
         );
@@ -1393,6 +1537,7 @@ mod tests {
                 label: None,
             },
             Vec::new(),
+            Place::default(),
             &mut blocks,
             &mut runs,
         );
@@ -1408,6 +1553,7 @@ mod tests {
         emit_paragraph(
             ParaKind::Styled(BlockStyle::Code),
             vec![text("before"), Piece::Blocks(vec![Block::Rule]), text("after")],
+            Place::default(),
             &mut blocks,
             &mut runs,
         );

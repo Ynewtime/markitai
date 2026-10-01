@@ -864,6 +864,9 @@ pub(super) fn extract(bytes: &[u8], extension: &str) -> Result<Document> {
         markdown.push('\n');
     }
     let mut warnings = metadata.warnings.clone();
+    // What the reader left out on purpose, such as a Word document's
+    // embedded part in a format it does not convert.
+    warnings.append(&mut parsed.warnings);
     if repaired.is_some() {
         warnings.push("The compound file's allocation tables were malformed (an unused mini stream or a short FAT, as the macOS Word 97 exporter writes); it was read from a repaired copy.".into());
     }

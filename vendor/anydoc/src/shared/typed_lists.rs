@@ -57,7 +57,7 @@
 //! ([`opens_with_bullet`]).
 
 use crate::model::{Block, Inline, MarkerKind, inlines_are_empty, inlines_to_plain_text};
-use crate::shared::list::{ListEntry, ListKey, flush_list};
+use crate::shared::list::{ALIGNED, ListEntry, ListKey, continuation_level, flush_list};
 use std::ops::Range;
 
 /// Where a paragraph's lines start, in twips (twentieths of a point): the
@@ -135,21 +135,43 @@ impl TypedLists {
         taken: impl Fn(usize) -> bool,
     ) -> Vec<(Range<usize>, Vec<Block>)> {
         let mut found = Vec::new();
-        let mut run: Vec<Item> = Vec::new();
+        let mut run = Run::default();
+        // markitai: where the last paragraph of body text starts its lines.
+        let mut body_left = 0;
         for &(index, indent) in &self.paragraphs {
-            let item = match blocks.get(index) {
-                Some(Block::Paragraph(inlines)) if !taken(index) => {
-                    item(inlines).map(|item| Item { index, indent, ..item })
-                }
+            let paragraph = match blocks.get(index) {
+                Some(Block::Paragraph(inlines)) if !taken(index) => Some(inlines),
                 _ => None,
             };
-            if run
-                .last()
-                .is_some_and(|last| item.as_ref().is_none_or(|i| i.index != last.index + 1))
+            let item = paragraph.and_then(|inlines| item(inlines)).map(|item| Item {
+                index,
+                indent,
+                ..item
+            });
+            let next = run.last_index().is_some_and(|last| last + 1 == index);
+            // markitai: a paragraph right after an item, with words and no
+            // marker, set in as far as an item's text continues it.
+            if item.is_none()
+                && next
+                && let Some(inlines) = paragraph
+                && has_words(inlines)
+                && run.may_continue(indent.left)
             {
+                run.more.push((run.items.len(), More { index, indent, content: inlines.clone() }));
+                continue;
+            }
+            if run.last_index().is_some() && (item.is_none() || !next) {
                 close(std::mem::take(&mut run), &mut found);
             }
-            run.extend(item);
+            match item {
+                Some(item) => {
+                    if run.items.is_empty() {
+                        run.body_left = body_left;
+                    }
+                    run.items.push(item);
+                }
+                None => body_left = indent.left,
+            }
         }
         close(run, &mut found);
         found
@@ -511,11 +533,15 @@ fn has_words(inlines: &[Inline]) -> bool {
 /// [`SAME_LEVEL`] of each other are at one position. No item is more than a
 /// level below the one before it.
 fn levels(items: &[Item]) -> Vec<usize> {
+    levels_at(&items.iter().map(Item::position).collect::<Vec<_>>())
+}
+
+/// The levels of items whose markers sit at `positions` (see [`levels`]).
+fn levels_at(positions: &[i32]) -> Vec<usize> {
     let mut open: Vec<i32> = Vec::new();
-    items
+    positions
         .iter()
-        .map(|item| {
-            let position = item.position();
+        .map(|&position| {
             while open.last().is_some_and(|&last| last - position >= SAME_LEVEL) {
                 open.pop();
             }
@@ -648,38 +674,263 @@ fn reads_as_dialogue(item: &Item) -> bool {
                 && pair[1].starts_with(['-', '–', '—'])
                 && !pair[1].starts_with("--")
         })
+        || speech_incise(&text)
+}
+
+/// markitai: speech verbs as an incise after a line of dialogue gives them
+/// (`– Je pars, dit Paul.`, `– Ya voy, dijo.`, `– Vi ses, sa han.`), in
+/// the languages that set dialogue with dashes, and English; words that
+/// also say other things in a list (`added`, `called`, `fit`) are left out.
+const SPEECH_VERBS: &[&str] = &[
+    "said",
+    "asked",
+    "replied",
+    "answered",
+    "cried",
+    "shouted",
+    "whispered",
+    "muttered",
+    "murmured",
+    "exclaimed",
+    "sighed",
+    "dit",
+    "demanda",
+    "répondit",
+    "ajouta",
+    "murmura",
+    "cria",
+    "reprit",
+    "souffla",
+    "lança",
+    "s'écria",
+    "s'exclama",
+    "déclara",
+    "avoua",
+    "dijo",
+    "preguntó",
+    "respondió",
+    "contestó",
+    "añadió",
+    "exclamó",
+    "gritó",
+    "murmuró",
+    "susurró",
+    "disse",
+    "perguntou",
+    "respondeu",
+    "retrucou",
+    "acrescentou",
+    "gritou",
+    "exclamou",
+    "murmurou",
+    "chiese",
+    "rispose",
+    "aggiunse",
+    "esclamò",
+    "gridò",
+    "mormorò",
+    "sussurrò",
+    "сказал",
+    "сказала",
+    "спросил",
+    "спросила",
+    "ответил",
+    "ответила",
+    "крикнул",
+    "крикнула",
+    "прошептал",
+    "прошептала",
+    "добавил",
+    "добавила",
+    "сказав",
+    "спитав",
+    "спитала",
+    "відповів",
+    "відповіла",
+    "powiedział",
+    "powiedziała",
+    "zapytał",
+    "zapytała",
+    "odpowiedział",
+    "odpowiedziała",
+    "dodał",
+    "dodała",
+    "krzyknął",
+    "krzyknęła",
+    "szepnął",
+    "szepnęła",
+    "řekl",
+    "řekla",
+    "zeptal",
+    "zeptala",
+    "odpověděl",
+    "odpověděla",
+    "sa",
+    "sade",
+    "sagde",
+    "spurte",
+    "spurgte",
+    "frågade",
+    "svarade",
+    "svarte",
+    "svarede",
+    "ropade",
+    "sanoi",
+    "kysyi",
+    "vastasi",
+    "huusi",
+    "sagte",
+    "fragte",
+    "antwortete",
+    "rief",
+    "flüsterte",
+];
+
+/// markitai: personal pronouns a speech verb follows in an incise (`he
+/// said`, `she asked`).
+const SPEECH_PRONOUNS: &[&str] = &["he", "she", "i", "they", "we", "you", "it"];
+
+/// markitai: whether a clause after a comma is a speech incise: at most
+/// three words, the first a speech verb or a French inversion (`dit-il`,
+/// `répondit-elle`, `dis-je`, `a-t-on`), or a pronoun and then a speech
+/// verb. On the 21,825 dash and `<li>` list items of the local Markdown and
+/// HTML (crate READMEs and changelogs, these docs, the reference's pages)
+/// no clause reads so; written dialogue in fourteen languages mostly does.
+fn speech_incise(text: &str) -> bool {
+    let verb = |word: &str| SPEECH_VERBS.contains(&word);
+    text.split(',').skip(1).any(|after| {
+        let clause = after.trim_start().trim_start_matches(['-', '–', '—']);
+        let clause = clause.split(['.', '!', '?', ';', '…']).next().unwrap_or("");
+        let words: Vec<String> = clause.split_whitespace().map(str::to_lowercase).collect();
+        let [first, rest @ ..] = &words[..] else { return false };
+        if rest.len() > 2 {
+            return false;
+        }
+        let inverted =
+            ["-t-il", "-t-elle", "-t-on", "-il", "-elle", "-ils", "-elles", "-on", "-je"]
+                .iter()
+                .find_map(|pronoun| first.strip_suffix(pronoun))
+                .is_some_and(|verb| !verb.is_empty() && verb.chars().all(char::is_alphabetic));
+        verb(first.split('-').next().unwrap_or(""))
+            || inverted
+            || (SPEECH_PRONOUNS.contains(&first.as_str()) && rest.first().is_some_and(|w| verb(w)))
+    })
+}
+
+/// markitai: a paragraph with no marker right after an item, set in as far
+/// as an item's text: more of that item.
+#[derive(Debug, Clone)]
+struct More {
+    index: usize,
+    indent: Indent,
+    content: Vec<Inline>,
+}
+
+/// markitai: consecutive paragraphs that start like items, the paragraphs
+/// that may continue them (each after the number of items before it), and
+/// where the body text before them starts its lines.
+#[derive(Debug, Default)]
+struct Run {
+    items: Vec<Item>,
+    more: Vec<(usize, More)>,
+    body_left: i32,
+}
+
+impl Run {
+    /// The block index of the run's last paragraph.
+    fn last_index(&self) -> Option<usize> {
+        let item = self.items.last().map(|item| item.index);
+        let more = self.more.last().map(|(_, more)| more.index);
+        item.max(more)
+    }
+
+    /// Whether a paragraph starting its lines `left` twips in may continue
+    /// an item of the run (see [`continuation_level`], which decides once
+    /// the items' levels are known).
+    fn may_continue(&self, left: i32) -> bool {
+        self.items.iter().filter_map(|item| text_indent(item.indent)).any(|text| {
+            text >= self.body_left.saturating_add(2 * ALIGNED) && left >= text - ALIGNED
+        })
+    }
+}
+
+/// markitai: where an item's text lines start, when a hanging indent says
+/// so (the marker hangs out to the left of them); `None` otherwise, as an
+/// item with no hanging indent shows no column a paragraph could line up
+/// with.
+fn text_indent(indent: Indent) -> Option<i32> {
+    (indent.first_line < 0).then_some(indent.left)
 }
 
 /// End a run of paragraphs that start like items, keeping the lists it
-/// reads as.
-fn close(run: Vec<Item>, found: &mut Vec<(Range<usize>, Vec<Block>)>) {
-    if run.is_empty() {
+/// reads as. markitai: a paragraph continuing a rejected item stays text.
+fn close(run: Run, found: &mut Vec<(Range<usize>, Vec<Block>)>) {
+    let Run { items, more, body_left } = run;
+    if items.is_empty() {
         return;
     }
-    let accepted = accepted(&run);
-    let mut part: Vec<Item> = Vec::new();
-    for (item, accepted) in run.into_iter().zip(accepted) {
+    let accepted = accepted(&items);
+    let mut more = more.into_iter().peekable();
+    let mut part: Vec<Member> = Vec::new();
+    for (k, (item, accepted)) in items.into_iter().zip(accepted).enumerate() {
         if accepted {
-            part.push(item);
+            part.push(Member::Item(item));
         } else {
-            list(std::mem::take(&mut part), found);
+            list(std::mem::take(&mut part), body_left, found);
+        }
+        while let Some((_, paragraph)) = more.next_if(|(after, _)| *after == k + 1) {
+            if accepted {
+                part.push(Member::More(paragraph));
+            }
         }
     }
-    list(part, found);
+    list(part, body_left, found);
 }
 
-/// The list blocks a run of items makes.
-fn list(items: Vec<Item>, found: &mut Vec<(Range<usize>, Vec<Block>)>) {
-    let (Some(first), Some(last)) = (items.first(), items.last()) else {
-        return;
-    };
-    let range = first.index..last.index + 1;
+/// markitai: a paragraph of a list typed by hand: an item, or more of one.
+enum Member {
+    Item(Item),
+    More(More),
+}
+
+/// The list blocks a run of items makes. markitai: with the paragraphs
+/// that continue them; one that lines up with no open item's text ends the
+/// list and stays text, and the members after it make their own.
+fn list(members: Vec<Member>, body_left: i32, found: &mut Vec<(Range<usize>, Vec<Block>)>) {
+    let positions: Vec<i32> = members
+        .iter()
+        .filter_map(|member| match member {
+            Member::Item(item) => Some(item.position()),
+            Member::More(_) => None,
+        })
+        .collect();
+    let mut levels = levels_at(&positions).into_iter();
     // The run's items are assembled on their own: one identity serves, and
     // a change of marker kind or a gap in the count still splits a list.
     let instance = 0;
-    let levels = levels(&items);
     let mut entries: Vec<ListEntry> = Vec::new();
-    for (item, level) in items.into_iter().zip(levels) {
+    let mut range: Option<Range<usize>> = None;
+    let mut members = members.into_iter();
+    while let Some(member) = members.next() {
+        let item = match member {
+            Member::Item(item) => item,
+            Member::More(more) => match continuation_level(&entries, more.indent.left, body_left) {
+                Some(level) => {
+                    let blocks = vec![Block::Paragraph(more.content)];
+                    entries.push(ListEntry::continuation(level, blocks));
+                    range = range.map(|range| range.start..more.index + 1);
+                    continue;
+                }
+                None => {
+                    if let Some(range) = range {
+                        let mut lists = Vec::new();
+                        flush_list(&mut lists, &mut entries);
+                        found.push((range, lists));
+                    }
+                    return list(members.collect(), body_left, found);
+                }
+            },
+        };
         let (marker, number, label) = match item.marker {
             Marker::Bullet { .. } => (MarkerKind::Bullet, 0, None),
             Marker::Number { readings, form, label } => {
@@ -691,17 +942,22 @@ fn list(items: Vec<Item>, found: &mut Vec<(Range<usize>, Vec<Block>)>) {
                 }
             }
         };
+        range = Some(range.map_or(item.index, |range| range.start)..item.index + 1);
         entries.push(ListEntry {
-            level,
+            level: levels.next().unwrap_or_default(),
             key: ListKey { instance, marker },
             number,
             label,
             blocks: vec![Block::Paragraph(item.content)],
+            indent: text_indent(item.indent),
+            continues: false,
         });
     }
-    let mut lists = Vec::new();
-    flush_list(&mut lists, &mut entries);
-    found.push((range, lists));
+    if let Some(range) = range {
+        let mut lists = Vec::new();
+        flush_list(&mut lists, &mut entries);
+        found.push((range, lists));
+    }
 }
 
 #[cfg(test)]
@@ -896,6 +1152,37 @@ mod tests {
     }
 
     #[test]
+    fn dialogue_with_a_speech_incise_stays_text() {
+        // markitai: hyphens and en dashes whose lines end in full stops are
+        // dialogue when a line's clause after a comma is a speech incise.
+        let unchanged = |paragraphs: Vec<Block>| {
+            let expected = shown(&paragraphs);
+            assert_eq!(shown(&flat(paragraphs)), expected);
+        };
+        unchanged(vec![para(&["– Je pars demain, dit-il."]), para(&["– Je sais."])]);
+        unchanged(vec![para(&["- Il est tard, murmura-t-elle, viens."]), para(&["- Oui."])]);
+        unchanged(vec![para(&["– Je n'en sais rien, dis-je."]), para(&["– Moi non plus."])]);
+        unchanged(vec![para(&["- Llegaremos tarde, dijo."]), para(&["- No importa."])]);
+        unchanged(vec![para(&["– Vi ses i morgon, sa han."]), para(&["– Kom i tid."])]);
+        unchanged(vec![para(&["- Я подожду, сказал он."]), para(&["- Хорошо."])]);
+        unchanged(vec![para(&["- I'll be there, she said."]), para(&["- Fine."])]);
+        unchanged(vec![para(&["- Ready, – he asked."]), para(&["- Yes."])]);
+        // Commas in list items that are no incise keep the list.
+        let listed = |paragraphs: Vec<Block>| {
+            let blocks = flat(paragraphs);
+            assert!(matches!(&blocks[..], [Block::List(_)]), "{:?}", shown(&blocks));
+        };
+        listed(vec![para(&["- Fixed the parser, added tests."]), para(&["- Faster builds."])]);
+        listed(vec![para(&["- Shares fell, analysts said."]), para(&["- Oil rose."])]);
+        listed(vec![para(&["- Revenue rose, the company said."]), para(&["- Costs fell."])]);
+        listed(vec![para(&["- Apples, pears and plums."]), para(&["- Milk, then bread."])]);
+        listed(vec![para(&["- Si oui, peut-on le changer plus tard."]), para(&["- Non."])]);
+        assert!(speech_incise("Bien, s'écria-t-il."));
+        assert!(!speech_incise("No comma at all, really"));
+        assert!(!speech_incise("Nothing after the comma,"));
+    }
+
+    #[test]
     fn weak_marks_need_a_tab_a_sibling_or_a_parent() {
         let blocks = flat(vec![
             para(&["-", TAB, "Tabbed dash"]),
@@ -1049,5 +1336,97 @@ mod tests {
         let spaced =
             Item { indent: Indent { left: 360, first_line: 0 }, leading: vec![' '; 3], ..hanging };
         assert_eq!(spaced.position(), 540);
+    }
+
+    /// markitai: a paragraph whose lines start `left` twips in.
+    fn at(left: i32) -> Indent {
+        Indent { left, first_line: 0 }
+    }
+
+    #[test]
+    fn a_paragraph_set_in_to_an_items_text_continues_it() {
+        let blocks = read(vec![
+            (para(&["Before the list."]), at(0)),
+            (para(&[TAB, "1", TAB, "One"]), hanging(720)),
+            (para(&["More of one."]), at(720)),
+            (para(&[TAB, "2", TAB, "Two"]), hanging(720)),
+            (para(&[TAB, "◦", TAB, "Two a"]), hanging(1440)),
+            (para(&["More of two a."]), at(1440)),
+            (para(&["More of two."]), at(720)),
+            (para(&[TAB, "3", TAB, "Three"]), hanging(720)),
+            (para(&["Body after."]), at(0)),
+            (para(&["Indented after the body."]), at(720)),
+        ]);
+        assert_eq!(
+            crate::shared::code::describe(&blocks),
+            [
+                "p:Before the list.",
+                "list:p:One;p:More of one.|p:Two;list:p:Two a;p:More of two a.;p:More of two.|p:Three",
+                "p:Body after.",
+                "p:Indented after the body.",
+            ]
+        );
+        let [_, Block::List(list), ..] = &blocks[..] else { panic!("{blocks:?}") };
+        assert_eq!((list.start, list.items.len()), (1, 3));
+    }
+
+    #[test]
+    fn only_a_paragraph_lined_up_with_an_items_text_continues_it() {
+        let shown = |paragraphs| crate::shared::code::describe(&read(paragraphs));
+        // Body set in as far as the list's text, before and after it.
+        assert_eq!(
+            shown(vec![
+                (para(&["Body set in."]), at(720)),
+                (para(&[TAB, "•", TAB, "One"]), hanging(720)),
+                (para(&["Body again."]), at(720)),
+            ]),
+            ["p:Body set in.", "list:p:One", "p:Body again."]
+        );
+        // Set back to where the bullet hangs.
+        assert_eq!(
+            shown(vec![
+                (para(&[TAB, "•", TAB, "One"]), hanging(720)),
+                (para(&["Under the bullet."]), at(360)),
+            ]),
+            ["list:p:One", "p:Under the bullet."]
+        );
+        // An item with no hanging indent shows no column of text.
+        assert_eq!(
+            shown(vec![(para(&["•", TAB, "One"]), at(0)), (para(&["Set in."]), at(720))]),
+            ["list:p:One", "p:Set in."]
+        );
+        assert_eq!(
+            shown(vec![(para(&["•", TAB, "One"]), at(720)), (para(&["Set in."]), at(720))]),
+            ["list:p:One", "p:Set in."]
+        );
+        // Body text set in between two dashes keeps them apart: neither is
+        // an item alone.
+        assert_eq!(
+            shown(vec![
+                (para(&["Body set in."]), at(720)),
+                (para(&["- one"]), hanging(720)),
+                (para(&["Body again."]), at(720)),
+                (para(&["- two"]), hanging(720)),
+            ]),
+            ["p:Body set in.", "p:- one", "p:Body again.", "p:- two"]
+        );
+        // After an item that is no item (dialogue), it stays text too.
+        assert_eq!(
+            shown(vec![
+                (para(&["- Where are you going?"]), hanging(720)),
+                (para(&["Narration set in."]), at(720)),
+                (para(&["- Home!"]), hanging(720)),
+            ]),
+            ["p:- Where are you going?", "p:Narration set in.", "p:- Home!"]
+        );
+        // An empty paragraph or one with only a mark ends the list.
+        assert_eq!(
+            shown(vec![
+                (para(&[TAB, "•", TAB, "One"]), hanging(720)),
+                (para(&[" "]), at(720)),
+                (para(&["Set in, after a blank."]), at(720)),
+            ]),
+            ["list:p:One", "p: ", "p:Set in, after a blank."]
+        );
     }
 }

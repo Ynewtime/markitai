@@ -31,6 +31,80 @@ pub struct ListEntry {
     /// from the marker kind and number alone (composite number text).
     pub label: Option<String>,
     pub blocks: Vec<Block>,
+    /// markitai: where the item's lines of text start, in twips from the
+    /// left margin (its left indent), when the reader knows it; see
+    /// [`continuation_level`].
+    pub indent: Option<i32>,
+    /// markitai: the entry is no item of its own but more paragraphs of the
+    /// item open at `level` before it (see [`ListEntry::continuation`]).
+    pub continues: bool,
+}
+
+impl ListEntry {
+    /// markitai: paragraphs that continue the item open at `level`: they go
+    /// into that item after what it holds so far (its text, its nested
+    /// lists), take no number and split no list.
+    pub fn continuation(level: usize, blocks: Vec<Block>) -> ListEntry {
+        ListEntry {
+            level,
+            key: ListKey { instance: u64::MAX, marker: MarkerKind::Bullet },
+            number: 0,
+            label: None,
+            blocks,
+            indent: None,
+            continues: true,
+        }
+    }
+}
+
+/// markitai: how far apart, in twips (5 points), two indents may be and
+/// still line up.
+pub const ALIGNED: i32 = 100;
+
+/// markitai: the items of a run a following paragraph can continue: the
+/// last item at each level still open at the run's end, outermost first,
+/// with the indent of its text.
+fn open_items(run: &[ListEntry]) -> Vec<(usize, Option<i32>)> {
+    let mut open = Vec::new();
+    let mut ceiling = usize::MAX;
+    for entry in run.iter().rev().filter(|entry| !entry.continues) {
+        if entry.level < ceiling {
+            open.push((entry.level, entry.indent));
+            ceiling = entry.level;
+        }
+    }
+    open.reverse();
+    open
+}
+
+/// markitai: the level at which a paragraph with no number of its own
+/// continues an item of `run`, judged by where its lines start: `left`, in
+/// twips. The list's text must sit further right than the body text before
+/// it (`body_left`, by at least twice [`ALIGNED`]), and the paragraph at
+/// least as far right as the outermost open item's text; it continues the
+/// deepest open item whose text starts no further right than it does. Body
+/// text set back at the body's indent continues nothing, nor does anything
+/// after a list whose text starts where the body's does.
+pub fn continuation_level(run: &[ListEntry], left: i32, body_left: i32) -> Option<usize> {
+    let open = open_items(run);
+    let first = open.first()?.1?;
+    if first < body_left.saturating_add(2 * ALIGNED) {
+        return None;
+    }
+    // Set back further than the outermost text, no item's text starts
+    // within reach.
+    open.iter()
+        .rev()
+        .find(|(_, indent)| indent.is_some_and(|indent| indent <= left.saturating_add(ALIGNED)))
+        .map(|&(level, _)| level)
+}
+
+/// markitai: the level at which a paragraph numbered at `level` with a
+/// marker that shows nothing (Word's `none` format, or a bullet of only
+/// spaces, as pandoc writes an item's later paragraphs) continues an item of
+/// `run`: the deepest open item at or above that level.
+pub fn unmarked_level(run: &[ListEntry], level: usize) -> Option<usize> {
+    open_items(run).iter().rev().find(|&&(open, _)| open <= level).map(|&(open, _)| open)
 }
 
 /// Pop the accumulated run of list paragraphs into list blocks; one block
@@ -64,6 +138,20 @@ fn build_lists(entries: Vec<ListEntry>) -> Vec<Block> {
     while let Some(&ListEntry { level, key, number, .. }) = iter.peek() {
         if level <= min_lvl {
             let entry = iter.next().unwrap();
+            // markitai: a continuation goes into the item open at its
+            // level, after the item's own blocks and nested lists; with no
+            // such item (which a reader does not produce) its blocks stand
+            // between the lists.
+            if entry.continues {
+                match current.as_mut().and_then(|(list, _, _)| list.items.last_mut()) {
+                    Some(item) => item.blocks.extend(entry.blocks),
+                    None => {
+                        flush_current(&mut current, &mut out);
+                        out.extend(entry.blocks);
+                    }
+                }
+                continue;
+            }
             let split = match &current {
                 Some((_, cur_key, last_number)) => {
                     *cur_key != key
@@ -131,7 +219,45 @@ mod tests {
             number,
             label: None,
             blocks: vec![Block::Paragraph(vec![Inline::plain(text)])],
+            indent: None,
+            continues: false,
         }
+    }
+
+    /// markitai: an item whose text starts `indent` twips in.
+    fn at(indent: i32, entry: ListEntry) -> ListEntry {
+        ListEntry { indent: Some(indent), ..entry }
+    }
+
+    fn more(level: usize, text: &str) -> ListEntry {
+        ListEntry::continuation(level, vec![Block::Paragraph(vec![Inline::plain(text)])])
+    }
+
+    /// markitai: each item's marker, then its blocks one level deeper.
+    fn shown(blocks: &[Block], depth: usize, out: &mut Vec<String>) {
+        for block in blocks {
+            match block {
+                Block::Paragraph(inlines) => out.push(format!(
+                    "{}{}",
+                    "  ".repeat(depth),
+                    crate::model::inlines_to_plain_text(inlines)
+                )),
+                Block::List(list) => {
+                    for (i, item) in list.items.iter().enumerate() {
+                        let marker = list.marker.label(list.start + i as u64);
+                        out.push(format!("{}{marker}", "  ".repeat(depth)));
+                        shown(&item.blocks, depth + 1, out);
+                    }
+                }
+                _ => out.push("?".into()),
+            }
+        }
+    }
+
+    fn lines(entries: Vec<ListEntry>) -> Vec<String> {
+        let mut out = Vec::new();
+        shown(&lists(entries), 0, &mut out);
+        out
     }
 
     fn lists(entries: Vec<ListEntry>) -> Vec<Block> {
@@ -192,5 +318,85 @@ mod tests {
         let Block::List(l) = &out[0] else { panic!() };
         assert_eq!(l.items.len(), 2);
         assert!(matches!(l.items[0].blocks.last(), Some(Block::List(sub)) if sub.ordered()));
+    }
+
+    #[test]
+    fn a_continuation_goes_into_its_item_after_its_nested_list() {
+        let d = MarkerKind::Decimal;
+        let shown = lines(vec![
+            entry(0, 1, d, 1, "one"),
+            more(0, "more of one"),
+            entry(0, 1, d, 2, "two"),
+            entry(1, 1, MarkerKind::Bullet, 0, "under two"),
+            more(1, "more under two"),
+            more(0, "more of two"),
+            entry(0, 1, d, 3, "three"),
+        ]);
+        assert_eq!(
+            shown,
+            [
+                "1.",
+                "  one",
+                "  more of one",
+                "2.",
+                "  two",
+                "  -",
+                "    under two",
+                "    more under two",
+                "  more of two",
+                "3.",
+                "  three",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_continuation_with_no_item_open_stands_between_the_lists() {
+        let shown = lines(vec![more(0, "loose"), entry(0, 1, MarkerKind::Decimal, 1, "one")]);
+        assert_eq!(shown, ["loose", "1.", "  one"]);
+    }
+
+    #[test]
+    fn indents_decide_which_item_a_paragraph_continues() {
+        let d = MarkerKind::Decimal;
+        let run = vec![at(720, entry(0, 1, d, 1, "one")), at(1440, entry(1, 2, d, 1, "a"))];
+        // At the nested item's text, under it; back at the outer item's
+        // text (or between the two), under the outer item.
+        assert_eq!(continuation_level(&run, 1440, 0), Some(1));
+        assert_eq!(continuation_level(&run, 1500, 0), Some(1));
+        assert_eq!(continuation_level(&run, 2880, 0), Some(1));
+        assert_eq!(continuation_level(&run, 720, 0), Some(0));
+        assert_eq!(continuation_level(&run, 660, 0), Some(0));
+        assert_eq!(continuation_level(&run, 1100, 0), Some(0));
+        // Set back to where the markers hang, or to the body: no item.
+        assert_eq!(continuation_level(&run, 360, 0), None);
+        assert_eq!(continuation_level(&run, 0, 0), None);
+        // A list whose text starts at the body's indent continues nothing.
+        assert_eq!(continuation_level(&run, 720, 720), None);
+        assert_eq!(continuation_level(&run, 720, 600), None);
+        assert_eq!(continuation_level(&run, 720, 500), Some(0));
+        // Nor does an item whose indent the reader does not know.
+        assert_eq!(continuation_level(&[entry(0, 1, d, 1, "x")], 720, 0), None);
+        // A continuation already read changes nothing.
+        let run = vec![at(720, entry(0, 1, d, 1, "one")), more(0, "more")];
+        assert_eq!(continuation_level(&run, 720, 0), Some(0));
+        // A closed sibling is not open.
+        let run = vec![
+            at(720, entry(0, 1, d, 1, "one")),
+            at(1440, entry(1, 2, d, 1, "a")),
+            at(720, entry(0, 1, d, 2, "two")),
+        ];
+        assert_eq!(continuation_level(&run, 1440, 0), Some(0));
+    }
+
+    #[test]
+    fn an_unmarked_paragraph_continues_the_deepest_item_at_or_above_its_level() {
+        let d = MarkerKind::Decimal;
+        let run = vec![entry(0, 1, d, 1, "one"), entry(1, 1, d, 1, "a")];
+        assert_eq!(unmarked_level(&run, 1), Some(1));
+        assert_eq!(unmarked_level(&run, 4), Some(1));
+        assert_eq!(unmarked_level(&run, 0), Some(0));
+        assert_eq!(unmarked_level(&[entry(1, 1, d, 1, "a")], 0), None);
+        assert_eq!(unmarked_level(&[], 0), None);
     }
 }

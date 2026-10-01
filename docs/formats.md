@@ -42,6 +42,24 @@ number. A table's first row is a Markdown header only when Word marks it as a
 repeated header row; otherwise the header line is blank and every row is data.
 The base text of a phonetic guide (ruby) is kept and the guide is not, and the
 words of VML WordArt are read from the shape.
+Parts a Word document embeds with `w:altChunk` for Word to convert when it
+opens the file (report generators, mail merges and the Open XML SDK write
+HTML, RTF, plain text or whole Word documents that way; the html-docx-js
+library writes every document as one MHT web archive) are read where they
+stand, by the content type `[Content_Types].xml` gives them, else their
+extension or first bytes; before, such content was missing, all of it for an
+html-docx-js file. HTML and XHTML go through the HTML reader once a bounded
+pass has made well-formed XML of them (void and implicitly closed elements,
+unquoted attributes, a lone `&` or `<`, Word's `o:p` markup, comments,
+conditional comments and scripts), `data:` pictures becoming assets; a web
+archive's HTML page is read with its quoted-printable or base64 parts and its
+pictures by `Content-Location` or `cid:`; RTF, plain text (a paragraph per
+line) and Word documents go through their readers, a Word document at most
+three documents deep and reading against the outer file's 512 MiB
+decompression budget, with its notes, pictures, anchors and note ids joining
+the document's under a scope of their own. A part in another format (Word's
+XML formats), nested deeper, missing or unreadable adds nothing, and one
+warning per reason names how many parts were left out.
 Superscript and subscript runs are written as Unicode super/subscript
 characters when every character has one (`10⁻³`, `H₂O`) and stay at the
 baseline otherwise. `w:sym` characters from the Symbol and Wingdings fonts map
@@ -70,11 +88,46 @@ lays out a listing (one row holding the code after an optional cell of line
 numbers, as syntax highlighters build it; one numbered line per row; or a single
 cell of code) is that code block, without the numbers.
 
-Columns set with tab stops become a table. A run of at least three consecutive
-plain body paragraphs (not headings, list items, table cells, text boxes, notes
-or code) at the same tab stops, each split by its tabs into the same number of
-cells and no longer than one printed line (100 characters, no line break), is a
-table's rows. At the default stops a run of tabs separates one pair of columns,
+A paragraph that continues a list item is part of it. In Word, RTF and Word 97
+files each list level sets its text in from the margin (a numbering level's
+indent, the item paragraph's own `w:ind`, `\li` or `sprmPDxaLeft`); a
+paragraph after an item with no number of its own whose lines start at least as
+far right as the list's outermost text (a List Paragraph after Enter and
+Backspace, a direct indent as Google Docs exports, TextEdit's or Word's
+`\pard\li720`) continues the deepest open item whose text starts no further
+right, so it follows that item's nested list when it is set back to the outer
+text. It is written under the item after a blank line, indented to the
+marker's width, and the numbering goes on in one list. A paragraph numbered at
+a level that shows no marker (Word's `none` format, or a bullet of spaces, as
+pandoc writes an item's later paragraphs, which read as extra bullets before)
+continues the item at that level. Empty paragraphs between an item and its
+continuation are passed over; between two items they split the list as before.
+Text back at the body's indent ends the list, and nothing continues a list
+whose text starts less than ten points right of the body text before it (a
+memo set in throughout). In OpenDocument several paragraphs of one
+`text:list-item` were already one item; an unnumbered entry LibreOffice writes
+as a `text:list-header` opening a list that continues the one before it
+(`text:continue-numbering`, `text:continue-list`) now goes into the last item
+of that list, as deep as it is nested, and the items after it carry on that
+list. In lists typed by hand an item with a hanging indent is continued the
+same way by a paragraph set in to its text. Not covered: OpenDocument
+paragraphs outside a list matched against its indents (label positions there
+depend on the list style's positioning mode), code or quotation paragraphs
+inside an item, and list items in RTF table cells. On six documents written as
+Word (List Paragraph, a nested level, an empty paragraph), pandoc, Google
+Docs, TextEdit, Word's RTF and LibreOffice write them, every continuation is
+inside its item (none was before, and pandoc's no longer reads as a stray
+bullet), and a seventh, a memo set in throughout, keeps its body text outside
+the list. The 432 `textutil` documents of the Office corpus and the 440 held
+out from the heading work have no such paragraph and are unchanged.
+
+Columns set with tab stops become a table. A run of at least three rows at the
+same tab stops, each split by its tabs into the same number of cells and no
+longer than one printed line (100 characters), is a table: consecutive plain
+body paragraphs (not headings, list items, table cells, text boxes, notes or
+code), or the lines of such a paragraph split by line breaks (Shift+Enter
+between rows), every line holding a tab. At the default stops a run of tabs
+separates one pair of columns,
 since authors press Tab until the text lines up; at stops the author set each
 tab moves to the next column, so a cell may be empty. A column no row fills,
 such as a tab that indents every row, is dropped. Three columns are enough; two
@@ -86,13 +139,16 @@ with no header above them (a contents page) keeps the paragraphs as text. The
 first row is the header only when it alone is bold; otherwise every row is data
 and the header line is blank, as for Word tables. Every other tab, including
 those in headings, lists, cells, notes and code, reads as a single space as
-before. On 27 cases written as DOCX, ODT and RTF (stops set on the paragraph or
+before. On 35 cases written as DOCX, ODT and RTF (stops set on the paragraph or
 its style, default stops pressed several times, decimal stops, empty cells,
-links in cells, an indented table, a typewriter document; contents pages with
-leaders, by hand and in a contents style, verse, a lone tab, two rows, lists
-typed by hand, memo labels, two default-stop columns, prose, and rows inside
-lists, headings, code, cells or one paragraph's lines), each format finds all
-9 tables and makes no table of the 18 text cases. The 108 `textutil` pages,
+links in cells, an indented table, a typewriter document, rows split by line
+breaks at set and at default stops and after a header paragraph; contents
+pages with leaders, by hand and in a contents style, verse, a lone tab, two
+rows, lists typed by hand, memo labels, two default-stop columns, prose, rows
+inside lists, headings, code or cells, and line-broken look-alikes: two lines,
+memo labels, verse, a caption line, prose and a signature block), each format
+finds all 12 tables and makes no table of the 23 text cases (before the
+line-break rule, 9 tables). The 108 `textutil` pages,
 whose only tabs belong to lists typed by hand, give no table.
 
 Lists typed by hand are lists. Many documents type their lists: each item is
@@ -113,9 +169,12 @@ open that way is a list:
   sibling at its level with the same mark and no other such mark beside
   them (`+ fast`, `- loud` stay text). An em dash needs a tab or a parent,
   and hyphens or en dashes whose lines end as speech does (`?`, `!`, `…`, a
-  quotation mark) or set narration apart (`– Oui, – dit-elle.`) are dialogue
-  and stay text, as do a lone `- and then…`, an attribution (`— Name`) and
-  `* * *`;
+  quotation mark), set narration apart (`– Oui, – dit-elle.`) or carry a
+  speech incise after a comma (`– Je pars, dit-il.`, `- Ya voy, dijo Ana.`,
+  `– Vi ses, sa han.`: a clause of at most three words led by one of about
+  a hundred speech verbs in fourteen languages or by a French inversion such
+  as `murmura-t-elle`, or `he`/`she`/`I` and such a verb) are dialogue and stay
+  text, as do a lone `- and then…`, an attribution (`— Name`) and `* * *`;
 - numbers make items when at least two at one level count up by one in one
   form (`1.` `2.`, `a)` `b)`, `(i)` `(ii)`, `一、` `二、`), or when a decimal
   number stands alone before a tab (`Tab 2 Tab`, an `<ol start="2">`),
@@ -151,9 +210,17 @@ cons, section signs, bullets in a table cell, a heading or code), each format
 finds every item and nothing else. Of these, 25 were written after the rules
 were first set; they found three look-alikes read as lists (French dialogue
 ending in full stops, Spanish dialogue with a spaced dash, pros and cons),
-which the em-dash and mixed-mark rules now keep as text. Dialogue set with
-hyphens or en dashes whose lines all end in full stops, with no narration set
-apart by a dash, still reads as a list.
+which the em-dash and mixed-mark rules now keep as text. Thirteen more cases
+(dialogue with a speech incise in six languages, lists whose items hold
+commas, continuation paragraphs, body text after a list) make 93: each format
+finds all 120 items and nothing else (before: 13 dialogue lines read as items
+and four continuations left the list). On the 21,825 distinct dash and `<li>`
+list items of the local Markdown and HTML (crate READMEs and changelogs,
+these documents, the reference's fixture pages) the incise rule fires on none;
+of 25 dialogue scenes written for the check in fourteen languages with full
+stops, it keeps the 19 that carry an incise as text. A bare exchange of
+statements (`– Bonsoir.` `– Vous désirez.`) has nothing that tells it from a
+list and still reads as one.
 
 OpenDocument text and RTF follow the same conventions. An ODT run's font is
 the face `style:font-name` names (its `svg:font-family`), else `fo:font-family`

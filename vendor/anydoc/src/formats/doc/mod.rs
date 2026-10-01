@@ -21,7 +21,7 @@ use crate::shared::delta::rebase_emphasis;
 use crate::shared::fields::{FieldFrame, field_result};
 use crate::shared::grid::{CellProp, GridRow, build_edge_table};
 use crate::shared::list::MarkerKind;
-use crate::shared::list::{ListEntry, ListKey, flush_list};
+use crate::shared::list::{ListEntry, ListKey, continuation_level, flush_list, unmarked_level};
 use crate::shared::tabs::{self, TabRows};
 use crate::shared::typed_lists::{Indent, TypedLists};
 use crate::shared::visual::{Looks, ParaSize, Size};
@@ -134,7 +134,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
         notes.push(Note { id, kind, blocks: assembler.build_blocks(lo, hi, None, None)? });
     }
     let assets = std::mem::take(&mut assembler.assets.borrow_mut().assets);
-    Ok(Document { blocks, notes, assets, slide_starts: Vec::new() })
+    Ok(Document { blocks, notes, assets, slide_starts: Vec::new(), warnings: Vec::new() })
 }
 
 /// Read a PLC's CP array; n is the number of data elements.
@@ -627,6 +627,24 @@ struct Assembler {
     assets: std::cell::RefCell<AssetSink>,
 }
 
+/// markitai: a run of list paragraphs being read, whether empty paragraphs
+/// came after its last one (they close it unless an item's continuation
+/// follows), and where the last paragraph of body text before it starts its
+/// lines, in twips.
+#[derive(Default)]
+struct ListRun {
+    entries: Vec<ListEntry>,
+    gap: bool,
+    body_left: i32,
+}
+
+impl ListRun {
+    fn flush(&mut self, blocks: &mut Vec<Block>) {
+        flush_list(blocks, &mut self.entries);
+        self.gap = false;
+    }
+}
+
 /// A paragraph's resolved properties: the style chain's contribution merged
 /// with the PAPX and any piece `Prm`.
 struct EffectivePap {
@@ -731,7 +749,7 @@ impl Assembler {
         mut lists: Option<&mut TypedLists>,
     ) -> Result<Vec<Block>, ConvertError> {
         let mut blocks: Vec<Block> = Vec::new();
-        let mut list_run: Vec<ListEntry> = Vec::new();
+        let mut list_run = ListRun::default();
         let mut styled = StyledRun::default();
         let mut cell_blocks: Vec<Block> = Vec::new();
         let mut cell_styled = StyledRun::default();
@@ -761,7 +779,7 @@ impl Assembler {
                         // A table is a hard boundary for top-level list and
                         // styled runs, even while its rows are accumulated.
                         styled.flush(&mut blocks);
-                        flush_list(&mut blocks, &mut list_run);
+                        list_run.flush(&mut blocks);
                         // Nested-table content (table depth > 1, inner
                         // cell/row terminators) flattens into the outer
                         // cell as paragraphs.
@@ -886,11 +904,11 @@ impl Assembler {
         Self::flush_table(&mut blocks, &mut table_rows, &mut row, &mut cell_blocks)?;
         if !inlines_are_empty(&inlines) {
             styled.flush(&mut blocks);
-            flush_list(&mut blocks, &mut list_run);
+            list_run.flush(&mut blocks);
             blocks.push(Block::Paragraph(inlines));
         }
         styled.flush(&mut blocks);
-        flush_list(&mut blocks, &mut list_run);
+        list_run.flush(&mut blocks);
         Ok(blocks)
     }
 
@@ -983,26 +1001,32 @@ impl Assembler {
         pap: &EffectivePap,
         inlines: Vec<Inline>,
         blocks: &mut Vec<Block>,
-        list_run: &mut Vec<ListEntry>,
+        list_run: &mut ListRun,
         styled: &mut StyledRun,
     ) -> bool {
         let style = self.stylesheet.get(pap.istd);
         // A styled container absorbs its blank paragraphs: they are the
         // blank lines of a code block.
         if let Some(block) = style.block {
-            flush_list(blocks, list_run);
+            list_run.flush(blocks);
             styled.push(block, inlines, blocks);
             return false;
         }
+        // markitai: an empty paragraph after a list closes it, as before,
+        // unless an item's continuation follows.
         if inlines_are_empty(&inlines) {
             styled.flush(blocks);
-            flush_list(blocks, list_run);
+            if list_run.entries.is_empty() {
+                list_run.flush(blocks);
+            } else {
+                list_run.gap = true;
+            }
             return false;
         }
         let heading = style.heading.or(pap.effective.outline.flatten());
         if let Some(level) = heading {
             styled.flush(blocks);
-            flush_list(blocks, list_run);
+            list_run.flush(blocks);
             let mut content = inlines;
             rebase_emphasis(&mut content, style.chp);
             // A numbered heading advances its sequence and keeps its number
@@ -1013,6 +1037,9 @@ impl Assembler {
             blocks.push(Block::Heading { level, anchor: None, content });
             return false;
         }
+        // markitai: where its lines start, for the list before it.
+        let left = pap.effective.left.unwrap_or(0);
+        let mut unmarked = None;
         // ilfo 0xF801 marks a paragraph whose list numbering is suppressed.
         let ilfo = pap.effective.ilfo.unwrap_or(0);
         if ilfo != 0 && ilfo != 0xF801 {
@@ -1033,19 +1060,39 @@ impl Assembler {
                     (0, None)
                 };
                 styled.flush(blocks);
-                list_run.push(ListEntry {
+                if list_run.gap {
+                    list_run.flush(blocks);
+                }
+                list_run.entries.push(ListEntry {
                     level: ilvl,
                     key: ListKey { instance: list.lsid as u64, marker },
                     number,
                     label,
                     blocks: vec![Block::Paragraph(inlines)],
+                    indent: Some(left),
+                    continues: false,
                 });
                 return false;
             }
             // Marker "none": numbering suppressed, plain paragraph.
+            // markitai: one after an item of the list continues it.
+            unmarked = Some(ilvl);
+        }
+        // markitai: a paragraph set in as far as an item's text, or numbered
+        // at a level that shows no marker, continues the item (see
+        // `crate::shared::list`).
+        let continues = match unmarked {
+            Some(level) => unmarked_level(&list_run.entries, level),
+            None => continuation_level(&list_run.entries, left, list_run.body_left),
+        };
+        if let Some(level) = continues {
+            list_run.entries.push(ListEntry::continuation(level, vec![Block::Paragraph(inlines)]));
+            list_run.gap = false;
+            return false;
         }
         styled.flush(blocks);
-        flush_list(blocks, list_run);
+        list_run.flush(blocks);
+        list_run.body_left = left;
         blocks.push(Block::Paragraph(inlines));
         true
     }
@@ -1324,5 +1371,76 @@ mod tests {
         assert_eq!(tap.boundaries, vec![0, 4000, 8000]);
         assert!(tap.cells[0].vert_restart && !tap.cells[0].vert_cont);
         assert!(tap.cells[1].vert_cont && !tap.cells[1].vert_restart);
+    }
+
+    /// markitai: the body blocks of paragraphs with these properties and
+    /// texts, one character position each, read from the main stream.
+    fn assembled(paragraphs: &[(PapDelta, &str)]) -> Vec<Block> {
+        let mut chars = Vec::new();
+        let mut papx = Vec::new();
+        for (pap, text) in paragraphs {
+            let start = chars.len() as u32;
+            chars.extend(text.chars());
+            chars.push('\r');
+            let props = RunProps { chpx: Vec::new(), istd: 0, pap: pap.clone() };
+            papx.push(Run { fc_start: start, fc_end: chars.len() as u32, props });
+        }
+        let count = chars.len() as u32;
+        let assembler = Assembler {
+            text: TextStream {
+                chars,
+                fcs: (0..count).collect(),
+                cps: (0..count).collect(),
+                piece_of: vec![0; count as usize],
+            },
+            chpx: Runs::new(Vec::new()),
+            papx: Runs::new(papx),
+            stylesheet: Stylesheet::default(),
+            lists: Lists::default(),
+            prcs: Vec::new(),
+            piece_prcs: vec![None],
+            note_refs: HashMap::new(),
+            counters: std::cell::RefCell::new(Counters::default()),
+            data: Vec::new(),
+            assets: std::cell::RefCell::new(AssetSink::new()),
+        };
+        assembler.build_blocks(0, count as usize, None, None).unwrap()
+    }
+
+    #[test]
+    fn a_paragraph_set_in_to_an_items_text_continues_the_item() {
+        // markitai: an item's `sprmPDxaLeft` is where its text starts; a
+        // paragraph after it set in as far continues it, an empty one in
+        // between included, and body text at the margin does not.
+        let item = |ilvl: u8, left: i32| PapDelta {
+            ilfo: Some(1),
+            ilvl: Some(ilvl),
+            left: Some(left),
+            first_line: Some(-360),
+            ..PapDelta::default()
+        };
+        let at = |left: i32| PapDelta { left: Some(left), ..PapDelta::default() };
+        let blocks = assembled(&[
+            (at(0), "Before."),
+            (item(0, 720), "One."),
+            (at(720), "More of one."),
+            (at(0), ""),
+            (at(720), "After an empty paragraph."),
+            (item(0, 720), "Two."),
+            (item(1, 1440), "Two a."),
+            (at(1440), "More of two a."),
+            (at(720), "More of two."),
+            (at(0), "After."),
+            (at(720), "Indented after the body."),
+        ]);
+        assert_eq!(
+            crate::shared::code::describe(&blocks),
+            [
+                "p:Before.",
+                "list:p:One.;p:More of one.;p:After an empty paragraph.|p:Two.;list:p:Two a.;p:More of two a.;p:More of two.",
+                "p:After.",
+                "p:Indented after the body.",
+            ]
+        );
     }
 }

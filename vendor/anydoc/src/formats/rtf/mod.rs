@@ -18,7 +18,7 @@ use crate::shared::code::{
 };
 use crate::shared::delta::rebase_emphasis;
 use crate::shared::fields::field_result;
-use crate::shared::list::{ListEntry, ListKey, MarkerKind, flush_list};
+use crate::shared::list::{ListEntry, ListKey, MarkerKind, continuation_level, flush_list};
 use crate::shared::math::{math_lines, omath_para_to_tex};
 use crate::shared::tabs::{self, Stops, TabRows};
 use crate::shared::text::clean_text;
@@ -693,6 +693,11 @@ struct Parser<'a> {
     inlines: Vec<Inline>,
     blocks: Vec<Block>,
     list_run: Vec<ListEntry>,
+    /// markitai: empty paragraphs came after the list's last paragraph (they
+    /// close it unless an item's continuation follows), and where the last
+    /// paragraph of body text before it starts its lines, in twips.
+    list_gap: bool,
+    body_left: i32,
     styled: StyledRun,
     counters: Counters,
     table: TableState,
@@ -736,6 +741,8 @@ impl<'a> Parser<'a> {
             inlines: Vec::new(),
             blocks: Vec::new(),
             list_run: Vec::new(),
+            list_gap: false,
+            body_left: 0,
             styled: StyledRun::default(),
             counters: Counters::default(),
             table: TableState::new(),
@@ -1411,7 +1418,7 @@ impl<'a> Parser<'a> {
         // A styled container absorbs its blank paragraphs: they are the
         // blank lines of a code block.
         if let Some(style) = self.state.block {
-            flush_list(&mut self.blocks, &mut self.list_run);
+            self.close_list();
             self.styled.push(style, inlines, &mut self.blocks);
             return Ok(());
         }
@@ -1429,12 +1436,18 @@ impl<'a> Parser<'a> {
         // markitai: one opening with a bullet is an item of a list typed by
         // hand (see `crate::shared::typed_lists`).
         if mono && self.state.outline.is_none() && !listed && !opens_with_bullet(&inlines) {
-            flush_list(&mut self.blocks, &mut self.list_run);
+            self.close_list();
             self.styled.push(BlockStyle::Code, inlines, &mut self.blocks);
             return Ok(());
         }
+        // markitai: an empty paragraph after a list closes it, as before,
+        // unless an item's continuation follows.
         if inlines_are_empty(&inlines) {
-            self.flush_runs();
+            if self.list_run.is_empty() {
+                self.flush_runs();
+            } else {
+                self.list_gap = true;
+            }
             return Ok(());
         }
         // Numbering identity comes from the list tables; the captured label
@@ -1460,16 +1473,34 @@ impl<'a> Parser<'a> {
             return Ok(());
         }
         if let Some((key, level, number, label)) = entry {
+            if self.list_gap {
+                self.flush_runs();
+            }
             self.list_run.push(ListEntry {
                 level,
                 key,
                 number,
                 label,
                 blocks: vec![Block::Paragraph(inlines)],
+                indent: Some(self.state.indent.left),
+                continues: false,
             });
             return Ok(());
         }
+        // markitai: a paragraph set in as far as an item's text continues
+        // it (see `crate::shared::list::continuation_level`); `\pard`
+        // resets the indent, so body text after the list starts at the
+        // body's.
+        if !math_display
+            && let Some(level) =
+                continuation_level(&self.list_run, self.state.indent.left, self.body_left)
+        {
+            self.list_run.push(ListEntry::continuation(level, vec![Block::Paragraph(inlines)]));
+            self.list_gap = false;
+            return Ok(());
+        }
         self.flush_runs();
+        self.body_left = self.state.indent.left;
         match math_lines(&inlines).filter(|_| math_display) {
             Some(lines) => self.blocks.extend(lines.into_iter().map(Block::Math)),
             None => {
@@ -1583,7 +1614,8 @@ impl<'a> Parser<'a> {
             return Ok(Some(inlines));
         };
         let blocks = vec![Block::Paragraph(inlines)];
-        self.table.push_cell_list_entry(depth, ListEntry { level, key, number, label, blocks })?;
+        let entry = ListEntry { level, key, number, label, blocks, indent: None, continues: false };
+        self.table.push_cell_list_entry(depth, entry)?;
         Ok(None)
     }
 
@@ -1598,7 +1630,13 @@ impl<'a> Parser<'a> {
     /// Close every open block run before something else is emitted.
     fn flush_runs(&mut self) {
         self.styled.flush(&mut self.blocks);
+        self.close_list();
+    }
+
+    /// markitai: place the open list, the empty paragraphs after it read.
+    fn close_list(&mut self) {
         flush_list(&mut self.blocks, &mut self.list_run);
+        self.list_gap = false;
     }
 
     fn finish(mut self) -> Result<Document, ConvertError> {
@@ -1625,7 +1663,13 @@ impl<'a> Parser<'a> {
             listing_tables(blocks);
             drop_line_gutters(blocks);
         }
-        Ok(Document { blocks, notes, assets: self.assets.assets, slide_starts: Vec::new() })
+        Ok(Document {
+            blocks,
+            notes,
+            assets: self.assets.assets,
+            slide_starts: Vec::new(),
+            warnings: Vec::new(),
+        })
     }
 }
 
@@ -2048,5 +2092,56 @@ mod tests {
         // Text in a symbol font that the table has no glyph for decodes as
         // before.
         assert_eq!(read(r"\pard {\f1 J} {\f1 A} smiles\par")[0], "p:☺ A smiles");
+    }
+
+    /// markitai: Word's list table: a numbered level and a bulleted one
+    /// under it.
+    const LISTS: &str = r"{\*\listtable{\list\listtemplateid1
+        {\listlevel\levelnfc0\levelstartat1{\leveltext\'02\'00.;}{\levelnumbers\'01;}\fi-360\li720}
+        {\listlevel\levelnfc23\levelstartat1{\leveltext\'01舦 ?;}{\levelnumbers;}\fi-360\li1440}
+        \listid1}}{\*\listoverridetable{\listoverride\listid1\listoverridecount0\ls1}}";
+
+    #[test]
+    fn a_paragraph_set_in_to_an_items_text_continues_the_item() {
+        let one = r"\pard\fi-360\li720\ls1\ilvl0 {\listtext 1.\tab}";
+        let two = r"\pard\fi-360\li720\ls1\ilvl0 {\listtext 2.\tab}";
+        let nested = r"\pard\fi-360\li1440\ls1\ilvl1 {\listtext \bullet\tab}";
+        let body = [
+            r"\pard Before the list.\par ",
+            one,
+            r"One.\par \pard\li720 More of one.\par \pard\par \pard\li720 After a blank line.\par ",
+            two,
+            r"Two.\par ",
+            nested,
+            r"Two a.\par \pard\li1440 More of two a.\par \pard\li720 More of two.\par ",
+            r"\pard Body after.\par \pard\li720 An indented note.\par",
+        ]
+        .concat();
+        let doc = described(&format!(r"{{\rtf1\ansi {LISTS}{body}}}"));
+        assert_eq!(
+            doc,
+            [
+                "p:Before the list.",
+                "list:p:One.;p:More of one.;p:After a blank line.|p:Two.;list:p:Two a.;p:More of two a.;p:More of two.",
+                "p:Body after.",
+                "p:An indented note.",
+            ]
+        );
+        // An empty paragraph between items closes the list as before, and
+        // a body set in as far as the list's text continues nothing.
+        let body = [r"\pard\li720 Body set in.\par ", one, r"One.\par \pard\par ", two].concat()
+            + r"Two.\par \pard\li720 Body again.\par";
+        let doc = parse(format!(r"{{\rtf1\ansi {LISTS}{body}}}").as_bytes()).unwrap();
+        let shown = crate::shared::code::describe(&doc.blocks);
+        assert_eq!(shown, ["p:Body set in.", "list:p:One.", "list:p:Two.", "p:Body again."]);
+        let starts: Vec<u64> = doc
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::List(list) => Some(list.start),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(starts, [1, 2]);
     }
 }

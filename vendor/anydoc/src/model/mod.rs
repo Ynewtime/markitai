@@ -44,6 +44,12 @@ pub struct Document {
     /// format, and for a legacy PPT read in raw stream order, where slides
     /// cannot be told apart.
     pub slide_starts: Vec<usize>,
+    // markitai: what a reader had to leave out and a reader of the output
+    // should know about.
+    /// Content the reader left out of `blocks` on purpose, one sentence
+    /// each (a Word document's embedded part in a format it does not read).
+    /// Empty when nothing was left out that way.
+    pub warnings: Vec<String>,
 }
 
 /// Footnote or endnote body, referenced from text by [`Inline::NoteRef`].

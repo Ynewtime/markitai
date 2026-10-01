@@ -65,7 +65,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
     };
 
     let assets = std::mem::take(&mut assets.borrow_mut().assets);
-    Ok(Document { blocks, notes, assets, slide_starts })
+    Ok(Document { blocks, notes, assets, slide_starts, warnings: Vec::new() })
 }
 
 /// markitai: a text document's body and notes, and how much of its text is
@@ -842,5 +842,70 @@ mod tests {
         assert_eq!(read(&[item("", "a"), item("Deeper", "b")].concat()), ["list:p:a;list:p:b"]);
         let mono = r#"<text:p><text:span text:style-name="Mono">•<text:tab/>npm test</text:span></text:p>"#;
         assert_eq!(read(mono), ["list:p:`npm test`"]);
+    }
+
+    /// markitai: a text document's blocks, described, and each list's start.
+    fn lists_of(body: &str) -> Vec<String> {
+        let styles = r#"<text:list-style style:name="L1">
+              <text:list-level-style-number text:level="1" style:num-format="1"/>
+              <text:list-level-style-number text:level="2" style:num-format="a"/>
+            </text:list-style>"#;
+        let doc = parse(&odt_with_content(&text_doc(styles, body))).unwrap();
+        let mut shown = crate::shared::code::describe(&doc.blocks);
+        for block in &doc.blocks {
+            if let Block::List(list) = block {
+                shown.push(format!("start {}", list.start));
+            }
+        }
+        shown
+    }
+
+    #[test]
+    fn an_unnumbered_entry_between_items_stays_in_the_item_before_it() {
+        // Several paragraphs of one item, and a paragraph without a number
+        // between items as LibreOffice writes it: the list is closed and a
+        // list continuing it opens with a list header.
+        let body = r#"<text:p>Before.</text:p>
+            <text:list xml:id="list1" text:style-name="L1">
+              <text:list-item><text:p>One.</text:p><text:p>More of one.</text:p></text:list-item>
+              <text:list-item><text:p>Two.</text:p></text:list-item>
+            </text:list>
+            <text:list xml:id="list2" text:continue-numbering="true" text:style-name="L1">
+              <text:list-header><text:p>More of two.</text:p></text:list-header>
+              <text:list-item><text:p>Three.</text:p>
+                <text:list><text:list-item><text:p>Three a.</text:p></text:list-item></text:list>
+              </text:list-item>
+            </text:list>
+            <text:list text:continue-list="list2" text:style-name="L1">
+              <text:list-header><text:list><text:list-header>
+                <text:p>More of three a.</text:p>
+              </text:list-header></text:list></text:list-header>
+              <text:list-item><text:p>Four.</text:p></text:list-item>
+            </text:list>
+            <text:p>After.</text:p>
+            <text:list text:style-name="L1">
+              <text:list-header><text:p>A header opening a list of its own.</text:p></text:list-header>
+              <text:list-item><text:p>Alone.</text:p></text:list-item>
+            </text:list>"#;
+        assert_eq!(
+            lists_of(body),
+            [
+                "p:Before.",
+                "list:p:One.;p:More of one.|p:Two.;p:More of two.|p:Three.;list:p:Three a.;p:More of three a.|p:Four.",
+                "p:After.",
+                "p:A header opening a list of its own.",
+                "list:p:Alone.",
+                "start 1",
+                "start 1",
+            ]
+        );
+        // The entry nested one list deep is more of the nested item, not
+        // of its parent.
+        let doc = parse(&odt_with_content(&text_doc("", body))).unwrap();
+        let Some(Block::List(list)) = doc.blocks.get(1) else { panic!("{:?}", doc.blocks) };
+        let [_, Block::List(nested)] = &list.items[2].blocks[..] else {
+            panic!("{:?}", list.items[2].blocks)
+        };
+        assert_eq!(nested.items[0].blocks.len(), 2, "{:?}", nested.items[0].blocks);
     }
 }

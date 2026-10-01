@@ -233,7 +233,7 @@ fn parse_block_elem(
                 return Ok(());
             }
             "list" => {
-                blocks.extend(parse_list(elem, ctx, 0, None, &[])?);
+                push_list(elem, ctx, 0, None, &[], blocks)?;
                 return Ok(());
             }
             // markitai: a section's paragraphs are the body's own, read into
@@ -268,18 +268,89 @@ fn parse_block_elem(
     Ok(())
 }
 
+/// markitai: read a `text:list` into `blocks`. A list that continues the
+/// one just before it (`text:continue-numbering` or `text:continue-list`)
+/// and opens with an unnumbered entry (`text:list-header`) is how
+/// LibreOffice writes a paragraph without a number between two items: the
+/// entry's blocks go into the last item of that list, as deep as the entry
+/// is nested, and the items after it carry on that list. Upstream left the
+/// entry between two lists.
+fn push_list(
+    elem: &Element,
+    ctx: &Ctx,
+    depth: usize,
+    inherited_style: Option<&str>,
+    ancestors: &[u64],
+    blocks: &mut Vec<Block>,
+) -> Result<(), ConvertError> {
+    let (mut parsed, header) = parse_list(elem, ctx, depth, inherited_style, ancestors)?;
+    let continues = elem.attr(ns::TEXT, "continue-numbering") == Some("true")
+        || elem.attr(ns::TEXT, "continue-list").is_some();
+    if let (true, Some(levels), Some(Block::List(previous))) =
+        (continues && header > 0, header_depth(elem), blocks.last_mut())
+    {
+        if let Some(item) = last_item(previous, levels) {
+            item.blocks.extend(parsed.drain(..header));
+        }
+        // The items after the entry carry on the list it interrupted.
+        if let Some(Block::List(next)) = parsed.first()
+            && next.marker == previous.marker
+            && (!next.ordered()
+                || next.start == previous.start.saturating_add(previous.items.len() as u64))
+        {
+            let Block::List(next) = parsed.remove(0) else { unreachable!() };
+            previous.items.extend(next.items);
+        }
+    }
+    blocks.extend(parsed);
+    Ok(())
+}
+
+/// markitai: the last item of `list`, followed `levels` lists down through
+/// each last item's nested list while it ends with one.
+fn last_item(list: &mut List, levels: usize) -> Option<&mut ListItem> {
+    let item = list.items.last_mut()?;
+    if levels > 0
+        && matches!(item.blocks.last(), Some(Block::List(inner)) if !inner.items.is_empty())
+    {
+        let Some(Block::List(inner)) = item.blocks.last_mut() else { unreachable!() };
+        return last_item(inner, levels - 1);
+    }
+    Some(item)
+}
+
+/// markitai: how many lists deep the paragraphs of the unnumbered entry
+/// opening `list` sit (a header holding only a list that opens with a
+/// header is one deeper); `None` when no entry opens it.
+fn header_depth(list: &Element) -> Option<usize> {
+    let first = list
+        .child_elems()
+        .find(|child| child.is(ns::TEXT, "list-header") || child.is(ns::TEXT, "list-item"))?;
+    if !first.is(ns::TEXT, "list-header") {
+        return None;
+    }
+    let mut children = first.child_elems().filter(|child| !child.is(ns::TEXT, "number"));
+    match (children.next(), children.next()) {
+        (Some(only), None) if only.is(ns::TEXT, "list") => {
+            Some(header_depth(only).map_or(0, |depth| depth + 1))
+        }
+        _ => Some(0),
+    }
+}
+
 /// One `text:list` -> blocks: list headers render without markers (as
 /// plain blocks alongside the list), and every `text:start-value` restart
 /// after the first item splits the run into a new list with that start.
 /// `ancestors` carries the enclosing levels' current numbers so composite
-/// labels (`text:display-levels` > 1) render the full chain.
+/// labels (`text:display-levels` > 1) render the full chain. markitai: with
+/// the number of leading blocks an opening list header gave.
 fn parse_list(
     elem: &Element,
     ctx: &Ctx,
     depth: usize,
     inherited_style: Option<&str>,
     ancestors: &[u64],
-) -> Result<Vec<Block>, ConvertError> {
+) -> Result<(Vec<Block>, usize), ConvertError> {
     // markitai: a list's paragraphs are not the body's own (see `Ctx::depth`),
     // nor lines of code (see `Ctx::list_depth`).
     let _deeper = Deeper::enter(&ctx.depth);
@@ -308,6 +379,7 @@ fn parse_list(
     let mut current = List { marker: level.marker, start, items: Vec::new() };
     let mut next = start;
     let mut first_item = true;
+    let mut leading = 0;
     let flush = |current: &mut List, out: &mut Vec<Block>, start: u64| {
         let done =
             std::mem::replace(current, List { marker: current.marker, start, items: Vec::new() });
@@ -340,7 +412,7 @@ fn parse_list(
         for child in item.child_elems() {
             if child.is(ns::TEXT, "list") {
                 item_run.flush(&mut item_blocks);
-                item_blocks.extend(parse_list(child, ctx, depth + 1, style_name, &chain)?);
+                push_list(child, ctx, depth + 1, style_name, &chain, &mut item_blocks)?;
             } else {
                 parse_block_elem(child, ctx, &mut item_blocks, &mut item_run)?;
             }
@@ -350,6 +422,9 @@ fn parse_list(
             // A list header has no marker: its blocks sit next to the list
             // and do not consume a number.
             flush(&mut current, &mut out, next);
+            if first_item && out.is_empty() {
+                leading = item_blocks.len();
+            }
             out.extend(item_blocks);
             continue;
         }
@@ -365,7 +440,7 @@ fn parse_list(
             ctx.list_ids.borrow_mut().insert(id.to_string(), next);
         }
     }
-    Ok(out)
+    Ok((out, leading))
 }
 
 /// A list item's composite marker label (`num-prefix`/`num-suffix`/
