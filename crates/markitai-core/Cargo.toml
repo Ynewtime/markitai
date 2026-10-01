@@ -30,7 +30,7 @@ rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"
 anydoc = "0.2.4"
 iwork = "=0.2.1"
 pdf-inspector = { version = "1.25.1", default-features = false }
-zip = { version = "8.6", default-features = false, features = ["deflate"] }
+zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 cfb = "0.14"
 encoding_rs = "0.8"
 csv = "1"

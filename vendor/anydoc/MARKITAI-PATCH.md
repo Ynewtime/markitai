@@ -69,6 +69,10 @@ upstream files:
     superscript or subscript forms when every character has one ("10⁻³",
     "H₂O"; `scripts.rs`), and left at the baseline otherwise ("1st").
 
+`Cargo.toml` asks `zip` for `deflate-flate2-zlib-rs` instead of `deflate`, as
+the workspace crates do: the same deflate backend without the zopfli encoder,
+which zip uses only above level 9 and Markitai never requests.
+
 `rustfmt.toml` (`use_small_heuristics = "Max"`) is not in the published
 package; it reproduces upstream's formatting, so `cargo fmt` in this directory
 changes nothing upstream wrote.

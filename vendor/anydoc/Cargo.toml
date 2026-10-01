@@ -73,7 +73,7 @@ version = "0.41.0"
 
 [dependencies.zip]
 version = "8.6.0"
-features = ["deflate"]
+features = ["deflate-flate2-zlib-rs"]
 default-features = false
 
 [dev-dependencies.insta]
