@@ -89,6 +89,7 @@ struct DocumentAccounting {
     limit: u64,
     dollars: accounting::Dollars,
     usage: ConversionUsage,
+    warnings: Vec<String>,
 }
 thread_local! {
     static DOCUMENT_ACCOUNTING: std::cell::RefCell<Option<Arc<Mutex<DocumentAccounting>>>> = const { std::cell::RefCell::new(None) };
@@ -124,6 +125,17 @@ impl DocumentScope {
     pub(crate) fn usage(&self) -> ConversionUsage {
         copy_usage(&self.current.lock().unwrap_or_else(|e| e.into_inner()).usage)
     }
+    /// Routing notices of this document that no enhancement result carried
+    /// (pure output, image analysis, an enhancement that still failed).
+    pub(crate) fn take_warnings(&self) -> Vec<String> {
+        std::mem::take(
+            &mut self
+                .current
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .warnings,
+        )
+    }
 }
 impl Drop for DocumentScope {
     fn drop(&mut self) {
@@ -140,6 +152,25 @@ fn copy_usage(value: &ConversionUsage) -> ConversionUsage {
         output_tokens: value.output_tokens,
         by_model: value.by_model.clone(),
     }
+}
+// Routing notices reach the document whose request produced them; the entry
+// point that publishes an enhancement takes them.
+fn note_document_warning(message: String) {
+    DOCUMENT_ACCOUNTING.with(|slot| {
+        if let Some(state) = slot.borrow().as_ref() {
+            let mut state = state.lock().unwrap_or_else(|e| e.into_inner());
+            if !state.warnings.contains(&message) {
+                state.warnings.push(message);
+            }
+        }
+    });
+}
+fn take_document_warnings() -> Vec<String> {
+    DOCUMENT_ACCOUNTING.with(|slot| {
+        slot.borrow().as_ref().map_or_else(Vec::new, |state| {
+            std::mem::take(&mut state.lock().unwrap_or_else(|e| e.into_inner()).warnings)
+        })
+    })
 }
 fn document_usage() -> Option<ConversionUsage> {
     DOCUMENT_ACCOUNTING.with(|slot| {
@@ -407,6 +438,8 @@ fn usage_difference(after: &ConversionUsage, before: &ConversionUsage) -> Conver
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FailureKind {
     Transport,
+    /// A deployment's credential or subscription account was refused.
+    Authentication,
     Validation,
     ModeRejected,
     InvalidRequest,
@@ -1199,14 +1232,12 @@ fn run_mode(
             &local_runtime
         }
     };
-    let routing_keys: Vec<_> = if strategy.adaptive() {
-        entries
-            .iter()
-            .map(|entry| runtime.routing().key(entry))
-            .collect()
-    } else {
-        Vec::new()
-    };
+    // Salted identities serve adaptive metrics and run-wide authentication
+    // exclusion; they never leave the runtime.
+    let routing_keys: Vec<_> = entries
+        .iter()
+        .map(|entry| runtime.routing().key(entry))
+        .collect();
     let client = Client::builder()
         .timeout(Duration::from_secs(timeout))
         .connect_timeout(Duration::from_secs(timeout.min(15)))
@@ -1231,6 +1262,15 @@ fn run_mode(
         if candidates.is_empty() {
             continue;
         }
+        // An authentication failure moves to a sibling only when the group has
+        // another distinct deployment; a group of one keeps its earlier policy.
+        let mut members = entries
+            .iter()
+            .zip(&routing_keys)
+            .filter(|(entry, _)| entry.group == *group)
+            .map(|(_, key)| key);
+        let first = members.next();
+        let shared = members.any(|key| Some(key) != first);
         let metric_group = if strategy.adaptive() {
             runtime.routing().group_key(
                 strategy,
@@ -1242,29 +1282,50 @@ fn run_mode(
             None
         };
         let mut failed = HashSet::new();
-        for attempt in 0..=retries {
+        let mut attempt = 0;
+        loop {
             if budget > 0 && attempts >= budget || document_exhausted() {
                 return Err(VisionFailure::blocked(Error::Conversion(
                     "LLM per-document request budget exhausted".into(),
                 )));
             }
-            let remaining: Vec<_> = candidates
-                .iter()
-                .copied()
-                .filter(|index| !failed.contains(index))
-                .collect();
-            let eligible = if remaining.is_empty() {
-                &candidates
-            } else {
-                &remaining
-            };
-            let (selected, result) = {
+            let (selected, result, moves) = {
                 let _permit = runtime.acquire();
                 if stop.is_some_and(|stop| stop.load(Ordering::Acquire)) {
                     return Err(VisionFailure::blocked(Error::Conversion(
                         "Visual document processing stopped after a fatal batch".into(),
                     )));
                 }
+                // Read exclusions under the permit: a request queued behind a
+                // refused one must not choose the deployment it just excluded.
+                let included;
+                let usable = if shared {
+                    included = runtime.routing().included(&routing_keys, &candidates);
+                    &included
+                } else {
+                    &candidates
+                };
+                if usable.is_empty() {
+                    // Earlier requests of this run excluded every candidate.
+                    last_error = VisionFailure {
+                        error: Error::Conversion(format!(
+                            "Every LLM deployment of model group '{group}' failed authentication earlier in this run"
+                        )),
+                        allow_text_fallback: false,
+                        kind: FailureKind::Authentication,
+                    };
+                    break;
+                }
+                let remaining: Vec<_> = usable
+                    .iter()
+                    .copied()
+                    .filter(|index| !failed.contains(index))
+                    .collect();
+                let eligible = if remaining.is_empty() {
+                    usable
+                } else {
+                    &remaining
+                };
                 // Select under the runtime permit, then check the selected tariff
                 // and document budgets before a request or metric observation.
                 // A refused admission drops its reservation without an observation.
@@ -1331,13 +1392,27 @@ fn run_mode(
                 if let Some(route) = &route {
                     route.observe(observation);
                 }
+                let mut moves = false;
                 if let Err(failure) = &response {
+                    if shared && failure.kind == FailureKind::Authentication {
+                        if runtime.routing().exclude(routing_keys[selected]) {
+                            note_document_warning(format!(
+                                "LLM deployment {} failed authentication and is skipped for this run",
+                                entries[selected].id
+                            ));
+                        }
+                        moves = !runtime
+                            .routing()
+                            .included(&routing_keys, &candidates)
+                            .is_empty();
+                    }
                     let future = entries.iter().any(|entry| {
                         groups[group_index + 1..].contains(&entry.group)
                             && (prompts.image.is_none() || entry.supports_vision != Some(false))
                     });
                     if (failure.fatal
                         || failure.document_fatal
+                            && !moves
                             && (!future
                                 || structured.is_some()
                                     && matches!(
@@ -1353,7 +1428,7 @@ fn run_mode(
                         stop.store(true, Ordering::Release);
                     }
                 }
-                (selected, response)
+                (selected, response, moves)
             };
             match result {
                 Ok(text) => return Ok((text, usage)),
@@ -1377,6 +1452,15 @@ fn run_mode(
                     {
                         return Err(last_error);
                     }
+                    if shared && failure.kind == FailureKind::Authentication {
+                        if moves {
+                            // Another deployment serves this request at once:
+                            // no backoff and no transport retry is consumed.
+                            continue;
+                        }
+                        // The whole group is now excluded; its error stands.
+                        break;
+                    }
                     if !failure.retryable || attempt == retries {
                         break;
                     }
@@ -1396,6 +1480,7 @@ fn run_mode(
                     }
                     slept += backoff;
                     sleep(Duration::from_secs(backoff));
+                    attempt += 1;
                 }
             }
         }
@@ -1570,6 +1655,8 @@ fn request_with_mode(
                 FailureKind::ModeRejected
             } else if invalid_request {
                 FailureKind::InvalidRequest
+            } else if !fatal && matches!(status, 401 | 403) {
+                FailureKind::Authentication
             } else {
                 FailureKind::Transport
             },
@@ -1761,6 +1848,7 @@ fn record_usage_class(
 
 #[cfg(test)]
 mod tests {
+    mod auth_fallback;
     use super::*;
     use std::io::Write;
     use std::net::{TcpListener, TcpStream};

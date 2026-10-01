@@ -299,6 +299,7 @@ pub(crate) fn process_vision_with_runtime(
             Error::Conversion("Visual processing produced an empty document".into()).into(),
         );
     }
+    warnings.extend(take_document_warnings());
     warnings.sort();
     warnings.dedup();
     let usage = usage_difference(&document_usage().expect("scope installed"), &before);

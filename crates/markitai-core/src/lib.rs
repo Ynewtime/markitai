@@ -748,6 +748,11 @@ fn convert_inner(
     }
     if let Some(scope) = document_scope.as_ref() {
         result.usage = scope.usage();
+        for warning in scope.take_warnings() {
+            if !result.warnings.contains(&warning) {
+                result.warnings.push(warning);
+            }
+        }
         if result.usage.requests > 0 || !result.usage.by_model.is_empty() {
             result.llm_cache_hit = false;
             if !result.usage.cost_complete() {

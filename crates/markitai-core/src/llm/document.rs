@@ -230,6 +230,7 @@ pub(crate) fn process_document_with_runtime(
             "LLM document processing produced an empty document".into(),
         ));
     }
+    warnings.extend(take_document_warnings());
     warnings.sort();
     warnings.dedup();
     let usage = usage_difference(

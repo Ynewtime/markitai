@@ -145,6 +145,13 @@ identity. Transport failures are not replayed by the adapter. Explicit configure
 fallback groups and semantic content retries retain the shared budget and all
 observed usage; neither is a guarantee of one provider-internal paid call.
 
+A runtime that is signed out, reports a non-subscription account or reports an
+authentication failure is an authentication refusal. When its model group has
+another deployment, that request moves there at once and the runtime deployment
+is skipped for the rest of the run with one warning; see
+[retries](llm.md#retries-budgets-and-usage). Policy violations such as an
+unexpected tool or callback remain fatal.
+
 ## Evidence boundaries and next provider
 
 Optimized-CLI Copilot process fixtures passed in

@@ -165,6 +165,7 @@ fn route_tokens(evidence: &subscription::claude::UsageEvidence) -> (Option<u64>,
 fn failure(error: subscription::claude::Failure) -> Failure {
     use subscription::FailureKind as K;
     let kind = match error.kind {
+        K::Authentication => FailureKind::Authentication,
         K::Refusal => FailureKind::Refusal,
         K::Truncated => FailureKind::Truncated,
         K::InvalidRequest | K::Unsupported => FailureKind::InvalidRequest,

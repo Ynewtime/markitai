@@ -88,7 +88,9 @@ or deployment IDs do not share occupancy accidentally. Identical entries with
 the same identity share their actual occupancy. These fingerprints are not
 logged or persisted. Only active occupancy identities remain in the table, bounded by
 the runtime's existing concurrency limit. Metric strategies retain a separate
-bounded set of observations as described below.
+bounded set of observations as described below. The authentication exclusion
+list described under retries holds only these salted identities and is
+discarded with the runtime.
 
 Without configured fallbacks, all model names share the `default` pool. With
 fallbacks, configured group names are preserved and requests enter `default`.
@@ -110,7 +112,8 @@ Fallbacks are traversed in declared order, including nested fallback groups.
 Each reachable group is attempted once; cycles, malformed target lists and
 references to unavailable groups fail before requests begin. Each group gets
 its configured transport retry allowance. Adaptive strategies change deployment
-selection without adding another retry loop. There is no cross-document
+selection without adding another retry loop. Apart from the run-scoped
+authentication exclusion described under retries, there is no cross-document
 deployment cooldown or health-history database.
 
 ### Usage and latency observations
@@ -210,10 +213,35 @@ omit URLs, authorization headers, document text and response payloads.
 `router_settings.num_retries` means additional attempts after the first attempt
 in a group. Connection failures, timeouts, interrupted response reads, temporary
 HTTP failures, rate limits, recognized unavailable-model responses and empty
-text responses may retry. Authentication failures do not retry the same group;
-a configured fallback group can still run. Billing/payment/insufficient-quota
-failures stop the entire operation. Truncated output is rejected instead of
-being accepted as a complete document.
+text responses may retry. Billing/payment/insufficient-quota failures stop the
+entire operation. Truncated output is rejected instead of being accepted as a
+complete document.
+
+An authentication or permission refusal excludes that deployment for the rest
+of the `LlmRuntime`, so later requests and documents of the run skip it. The
+refusals are HTTP 401/403 responses without a billing or quota marker, and a
+[subscription runtime](subscriptions.md) that is signed out, reports a
+non-subscription account or reports an authentication failure. The request then
+moves at once to another eligible deployment of the same group under the group's
+routing strategy: there is no backoff and `num_retries` is not consumed, while
+each attempt still counts toward `llm.max_requests_per_document` and paid usage
+on the refused response is recorded as usual. Each excluded deployment produces
+one warning per run that names its configured model, never a credential or
+endpoint, for example `LLM deployment openai/gpt-5.6-luna failed authentication
+and is skipped for this run`. Only when every deployment of the group is excluded
+does the authentication error stand; configured fallback groups then run as
+usual, and later requests fail that group without a network call. A group with a
+single deployment identity keeps the earlier rule: its authentication failure is
+not excluded, does not retry the same group, and a fallback group can still run.
+
+The warning accompanies the typed document or visual enhancement that observed
+the refusal. Pure-mode enhancement and image caption/description analysis apply
+the same exclusion but do not yet carry its warning, and a document whose
+enhancement still fails reports only its final error. LiteLLM 1.100.1's
+`Router.should_retry_this_error` likewise moves an authentication or permission
+error to another deployment only when the group has more than one, but spends a
+retry on the move and cools a 401 deployment down only for `cooldown_time`
+(5 seconds by default) rather than for the run.
 
 Backoff starts at one second and doubles. A numeric `Retry-After` value can
 replace that delay. Individual delays and total backoff sleep across all groups
@@ -446,8 +474,9 @@ responses may have no text body; this is valid when their typed data is valid.
 Each non-final mode gets one schema-validation attempt. Rejection of tools/schema
 parameters with HTTP 400/422 descends without resending the same shape. Unrelated
 invalid-input errors, explicit refusal, token-limit truncation, quota and budget
-failures stop the ladder; authentication failures retain configured routing
-fallbacks before stopping. Transport retries stay inside the router. Exhausted network/HTTP transport errors
+failures stop the ladder; authentication failures first move to unexcluded
+sibling deployments and then configured routing fallbacks before stopping.
+Transport retries stay inside the router. Exhausted network/HTTP transport errors
 stop the ladder in every mode and do not trigger image caption/description fallback.
 The final JSON-text mode gets three validation attempts total. Response-size
 limits are terminal resource errors, not invalid JSON to retry or downgrade. All actual HTTP attempts
@@ -508,10 +537,10 @@ that same budget; zero still means unlimited. Paid error and invalid responses
 retain their parsed usage exactly once.
 
 A fatal first-batch failure prevents later dispatch. Fatal authentication after
-available routing fallbacks, quota/billing failure and exhausted budgets stop
-queued batches before HTTP admission. Already active calls finish. A nonfatal
-batch failure may leave valid sibling batches cached, but it never returns a
-partial enhanced document. Ordinary rendered web pages may use the remaining
+available sibling deployments and routing fallbacks, quota/billing failure and
+exhausted budgets stop queued batches before HTTP admission. Already active
+calls finish. A nonfatal batch failure may leave valid sibling batches cached,
+but it never returns a partial enhanced document. Ordinary rendered web pages may use the remaining
 budget for typed text fallback; visual-only/empty pages, PDF/Office documents
 and fatal failures do not use that fallback. Existing output failure policies
 govern retained base files and screenshots.
@@ -538,6 +567,15 @@ text and image requests stay within the same cap. They also exercise requests
 during another request's backoff, terminal and budget failures, and a cache hit
 while every permit is occupied. `llm_runtime.rs` tests cloning, independent runs,
 waiting callers, invalid zero capacity and permit release during unwinding.
+`llm/tests/auth_fallback.rs` covers the run-wide authentication exclusion with
+loopback HTTP and the Claude CLI fixture: 401/403 sibling moves without backoff
+or retries, groups whose every deployment is refused with and without fallbacks,
+terminal billing refusals, single-identity groups, all four routing strategies,
+unchanged usage totals, concurrent refusals that warn once, visual cancellation,
+typed and visual document warnings and a refused Claude subscription account
+followed by an API deployment. The Copilot and ChatGPT adapter tests check that
+their authentication refusals take the same path while policy failures stay
+fatal.
 
 `tests/conversion/document_processing.rs` adds isolated public-API scenarios for
 typed fields and base separation, Unicode parallel chunk order, literal fidelity,

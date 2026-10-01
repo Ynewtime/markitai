@@ -93,6 +93,9 @@ pub(crate) struct Table {
     salt: [u8; 32],
     started: Instant,
     state: Mutex<State>,
+    // Deployments that failed authentication beside a sibling stay out of
+    // every later selection of this runtime. Only salted identities are kept.
+    excluded: Mutex<HashSet<Key>>,
 }
 impl Table {
     pub(crate) fn new() -> Self {
@@ -103,7 +106,27 @@ impl Table {
             salt,
             started: Instant::now(),
             state: Mutex::new(State::default()),
+            excluded: Mutex::new(HashSet::new()),
         }
+    }
+    /// Returns true only for the call that newly excludes the deployment, so
+    /// concurrent requests report each exclusion once.
+    pub(crate) fn exclude(&self, key: Key) -> bool {
+        self.excluded
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .insert(key)
+    }
+    pub(crate) fn included(&self, keys: &[Key], candidates: &[usize]) -> Vec<usize> {
+        let excluded = self
+            .excluded
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        candidates
+            .iter()
+            .copied()
+            .filter(|&index| !excluded.contains(&keys[index]))
+            .collect()
     }
     fn stamp(&self) -> Stamp {
         Stamp {

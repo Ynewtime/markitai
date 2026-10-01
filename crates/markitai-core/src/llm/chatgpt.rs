@@ -99,6 +99,7 @@ fn observe(
 fn failure(error: subscription::chatgpt::Failure) -> Failure {
     use subscription::FailureKind as K;
     let kind = match error.kind {
+        K::Authentication => FailureKind::Authentication,
         K::Refusal => FailureKind::Refusal,
         K::Truncated => FailureKind::Truncated,
         K::InvalidRequest | K::Unsupported => FailureKind::InvalidRequest,
@@ -213,6 +214,23 @@ mod tests {
             max_tokens: None,
             supports_vision: None,
         }
+    }
+    #[test]
+    fn a_signed_out_runtime_is_an_authentication_refusal_and_policy_stays_fatal() {
+        use subscription::FailureKind as K;
+        let classify = |kind| {
+            failure(subscription::chatgpt::Failure {
+                kind,
+                error: Error::Conversion("authored runtime failure".into()),
+                usage: Default::default(),
+            })
+        };
+        let refused = classify(K::Authentication);
+        assert_eq!(refused.kind, FailureKind::Authentication);
+        assert!(!refused.fatal && !refused.retryable && refused.document_fatal);
+        let policy = classify(K::Permission);
+        assert_eq!(policy.kind, FailureKind::Blocked);
+        assert!(policy.fatal);
     }
     #[test]
     fn aggregate_totals_do_not_double_count_cached_input_or_invent_requests() {

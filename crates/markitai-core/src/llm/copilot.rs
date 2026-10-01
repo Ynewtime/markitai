@@ -129,6 +129,7 @@ fn observed(
 fn failure(error: subscription::Failure) -> Failure {
     use subscription::FailureKind as K;
     let kind = match error.kind {
+        K::Authentication => FailureKind::Authentication,
         K::Refusal => FailureKind::Refusal,
         K::Truncated => FailureKind::Truncated,
         K::InvalidRequest | K::Unsupported => FailureKind::InvalidRequest,
@@ -235,4 +236,26 @@ pub(super) fn request(
         }
     }
     result.map(|value| value.text).map_err(failure)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn an_unauthenticated_runtime_is_an_authentication_refusal_and_policy_stays_fatal() {
+        use subscription::FailureKind as K;
+        let classify = |kind| {
+            failure(subscription::Failure {
+                kind,
+                error: Error::Conversion("authored runtime failure".into()),
+                usage: Default::default(),
+            })
+        };
+        let refused = classify(K::Authentication);
+        assert_eq!(refused.kind, FailureKind::Authentication);
+        assert!(!refused.fatal && !refused.retryable && refused.document_fatal);
+        let policy = classify(K::Permission);
+        assert_eq!(policy.kind, FailureKind::Blocked);
+        assert!(policy.fatal);
+    }
 }
