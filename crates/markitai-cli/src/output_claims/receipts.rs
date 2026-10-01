@@ -1,6 +1,6 @@
 //! A synced prepared receipt survives publication without a second metadata commit.
 pub(super) mod group;
-use super::{Error, MemberLeases, Owner, Policy, Result};
+use super::{Error, MemberLeases, Owner, Policy, Result, sync_group::SyncGroup};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -121,9 +121,14 @@ fn member_paths(leases: &MemberLeases) -> Result<BTreeMap<String, PathBuf>> {
             "a document claim needs one or two members".into(),
         ));
     }
+    let requested: Vec<_> = leases
+        .members()
+        .iter()
+        .map(|name| leases.parent().join(name))
+        .collect();
+    let validated = leases.validate_members(requested.iter().map(PathBuf::as_path))?;
     let mut paths = BTreeMap::new();
-    for name in leases.members() {
-        let path = leases.validate_member(&leases.parent().join(name))?;
+    for (name, path) in leases.members().iter().zip(validated) {
         if paths.insert(name.clone(), path).is_some() {
             return Err(Error::Invalid("duplicate document claim member".into()));
         }
@@ -308,12 +313,19 @@ pub(crate) fn adopt_owner(leases: &MemberLeases, previous: &Owner, next: &Owner)
             return Err(mismatch("named owner has different publication evidence"));
         }
         // An earlier attempt may have installed the receipt but failed its sync.
-        File::open(&next_path)?.sync_all()?;
-        sync_directory(next_path.parent().expect("receipt has a parent"))?;
+        // One durable fence covers the receipt and its directory entry.
+        let mut durable = SyncGroup::new();
+        durable.stage(&File::open(&next_path)?)?;
+        durable.stage(&File::open(
+            next_path.parent().expect("receipt has a parent"),
+        )?)?;
+        durable.commit()?;
         return Ok(());
     }
     receipt.owner = next.clone();
-    write_receipt(leases, &next_path, &receipt)
+    // The merged checkpoint saved next may live on another volume, so this
+    // copy is durable before returning rather than merely ordered.
+    write_receipt(leases, &next_path, &receipt, SyncGroup::new(), true)
 }
 
 fn verify_members(paths: &BTreeMap<String, PathBuf>, receipt: Option<&Receipt>) -> Result<()> {
@@ -437,10 +449,16 @@ impl Pending<'_> {
         result.map_err(|error| Error::Io(error.error))
     }
 
+    /// The acknowledgement fence: a durable flush of the output parent's volume.
+    /// Claim metadata, receipts and the staged bytes share that file system,
+    /// so it also persists everything the earlier ordered fences staged.
     fn finish(self) -> Result<()> {
         let parent = self.leases.parent().to_owned();
         let _published = self.install()?;
-        sync_directory(&parent)
+        let mut durable = SyncGroup::new();
+        durable.stage(&File::open(&parent)?)?;
+        durable.commit()?;
+        Ok(())
     }
 }
 
@@ -513,7 +531,10 @@ fn prepare<'a>(
         .prefix(STAGE_PREFIX)
         .tempfile_in(leases.parent())?;
     stage.write_all(bytes)?;
-    stage.as_file().sync_all()?;
+    // The staged bytes must reach the media before the rename that publishes
+    // them; durability waits for the acknowledgement fence in finish().
+    let mut ordered = SyncGroup::new();
+    ordered.stage(stage.as_file())?;
     let staged = observe(stage.path())?.ok_or_else(|| mismatch("staged document disappeared"))?;
     if staged.kind != Kind::Regular
         || staged.bytes != bytes.len() as u64
@@ -584,7 +605,11 @@ fn prepare<'a>(
                 .to_owned(),
             proof: pending.staged.clone(),
         });
-        write_receipt(leases, &record_path, &receipt)?;
+        // The receipt's installation and directory entry are ordered before
+        // the document rename; finish() makes all of them durable.
+        write_receipt(leases, &record_path, &receipt, ordered, false)?;
+    } else {
+        ordered.commit_ordered()?;
     }
     Ok(pending)
 }
@@ -790,7 +815,17 @@ fn read_receipt_at(parent: &Path, path: &Path) -> Result<Option<Receipt>> {
         .map_err(|_| mismatch("publication receipt is malformed"))
 }
 
-fn write_receipt(leases: &MemberLeases, path: &Path, receipt: &Receipt) -> Result<()> {
+/// Install a receipt by atomic replacement. Its bytes, together with anything
+/// already staged in `data` (the prepared document), are ordered before the
+/// receipt name; the name is then ordered before whatever the caller does next,
+/// or made durable when `durable` is set.
+fn write_receipt(
+    leases: &MemberLeases,
+    path: &Path,
+    receipt: &Receipt,
+    mut data: SyncGroup,
+    durable: bool,
+) -> Result<()> {
     let mut bytes = Bounded::new(RECEIPT_LIMIT);
     serde_json::to_writer(&mut bytes, receipt)
         .map_err(|_| mismatch("publication receipt cannot be encoded within its size limit"))?;
@@ -803,11 +838,19 @@ fn write_receipt(leases: &MemberLeases, path: &Path, receipt: &Receipt) -> Resul
     }
     let mut stage = tempfile::NamedTempFile::new_in(&directory)?;
     stage.write_all(&bytes.bytes)?;
-    stage.as_file().sync_all()?;
+    data.stage(stage.as_file())?;
+    data.commit_ordered()?;
     stage
         .persist(path)
         .map_err(|error| Error::Io(error.error))?;
-    sync_directory(&directory)
+    let mut name = SyncGroup::new();
+    name.stage(&File::open(&directory)?)?;
+    if durable {
+        name.commit()?;
+    } else {
+        name.commit_ordered()?;
+    }
+    Ok(())
 }
 
 fn sync_directory(path: &Path) -> Result<()> {
@@ -873,6 +916,61 @@ mod tests {
 
     fn record(leases: &MemberLeases, owner: &Owner) -> PathBuf {
         receipt_path(leases, owner, &member_paths(leases).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn publication_orders_each_phase_and_durably_fences_only_the_acknowledgement() {
+        use crate::output_claims::sync_group::take_commits;
+        let (_dir, leases, owner) = setup();
+        let path = leases.parent().join("note.md");
+        take_commits();
+        // Without an owner: staged bytes ordered before the rename, then one
+        // durable fence after it, before success is returned.
+        publish(&leases, None, Policy::NoClobber, &path, b"plain").unwrap();
+        assert_eq!(take_commits(), ["ordered", "durable"]);
+        fs::remove_file(&path).unwrap();
+        // With a receipt: bytes, then the receipt name, then the acknowledgement.
+        publish(&leases, Some(&owner), Policy::NoClobber, &path, b"owned").unwrap();
+        assert_eq!(take_commits(), ["ordered", "ordered", "durable"]);
+        // A failed preparation never reaches the acknowledgement fence.
+        assert!(publish(&leases, Some(&owner), Policy::NoClobber, &path, b"again").is_err());
+        assert!(!take_commits().contains(&"durable"));
+        // A copied adoption receipt is durable on its own: the checkpoint that
+        // depends on it may be saved on another volume.
+        let (previous, next) = url_owners(&owner);
+        let enhanced = leases.parent().join("note.llm.md");
+        publish(&leases, Some(&previous), Policy::NoClobber, &enhanced, b"e").unwrap();
+        fs::remove_file(&path).unwrap();
+        take_commits();
+        adopt_owner(&leases, &previous, &next).unwrap();
+        assert_eq!(take_commits(), ["ordered", "durable"]);
+        adopt_owner(&leases, &previous, &next).unwrap();
+        assert_eq!(take_commits(), ["durable"]);
+    }
+
+    #[test]
+    fn an_ancestor_swapped_for_a_symlink_after_preparation_blocks_the_rename() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        let parent = root.join("tree/out");
+        let leases =
+            MemberLeases::acquire(&parent, &["note.md".into(), "note.llm.md".into()], false)
+                .unwrap();
+        let path = parent.join("note.md");
+        let pending = prepare(&leases, None, Policy::NoClobber, &path, b"generated").unwrap();
+        // The same physical directory, now reached through a symbolic link.
+        fs::rename(root.join("tree"), root.join("moved")).unwrap();
+        symlink(root.join("moved"), root.join("tree")).unwrap();
+        let error = pending.finish().unwrap_err().to_string();
+        assert!(error.contains("symlink policy"), "{error}");
+        assert!(!root.join("moved/out/note.md").exists());
+        assert!(!fs::read_dir(root.join("moved/out")).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(STAGE_PREFIX)
+        }));
     }
 
     #[test]

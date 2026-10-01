@@ -99,6 +99,30 @@ fn a_sync_failure_never_yields_admission_authority_or_starts_work() {
 }
 
 #[test]
+fn the_namespace_fence_orders_without_a_durable_flush_and_symlinks_still_fail() {
+    use crate::output_claims::sync_group::take_commits;
+    let root = tempfile::tempdir().unwrap();
+    let real = fs::canonicalize(root.path()).unwrap();
+    let parent = real.join("tree/out");
+    let mut batch = NamespaceBatch::new();
+    batch.prepare(&parent, false).unwrap();
+    batch.prepare(&real.join("tree/second"), false).unwrap();
+    take_commits();
+    let ready = batch.commit().unwrap();
+    // One commit for every parent of the window, ordered only: the admission
+    // journal flush and each publication's acknowledgement make it durable.
+    assert_eq!(take_commits(), ["ordered"]);
+    ready.validate(&parent, false).unwrap();
+    // A symbolic link substituted above the parent fails the next validation.
+    fs::rename(real.join("tree"), real.join("moved")).unwrap();
+    symlink(real.join("moved"), real.join("tree")).unwrap();
+    let error = ready.validate(&parent, false).unwrap_err().to_string();
+    assert!(error.contains("symlink policy"), "{error}");
+    let mut batch = NamespaceBatch::new();
+    assert!(batch.prepare(&parent, false).is_err());
+}
+
+#[test]
 fn changed_namespace_is_rejected_before_and_after_the_fence() {
     for after_fence in [false, true] {
         let root = tempfile::tempdir().unwrap();

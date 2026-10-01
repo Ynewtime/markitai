@@ -63,7 +63,10 @@ download-link labels remain readable.
 
 The core serializes file reservations and writing within one process. The CLI
 also has [per-member publication ownership](output-ownership.md); this does not
-turn the in-process binding API into a batch recovery coordinator. Existing
+turn the in-process binding API into a batch recovery coordinator. CLI document
+publication orders its intermediate steps and completes one
+[durability fence](output-ownership.md#ordering-and-durability-fences) per volume
+before reporting success; assets keep the core's per-file synchronization. Existing
 content-addressed asset bytes are verified before reuse. Malformed input
 frontmatter remains content. [Round-eleven measurements](validation/html-media-round11.md)
 record a limited asset-heavy CLI comparison; binding overhead and peak memory

@@ -54,6 +54,17 @@ directory. Lock files remain after release and are never unlinked as a cleanup
 step. Their presence alone does not indicate an active process. Publication
 rechecks the held lock paths, directory identities and requested member.
 
+Every check observes the path afresh. Within one check, the symlink policy and
+the resolution of the same parent share a single walk of its components, and a
+parent already walked by that check (for example, for the other member of a
+family) is not walked again. The shared walk is used only for an absolute path
+spelled canonically whose every component is an ordinary entry or absent; a
+symbolic link anywhere (permitted, root-owned or not), `..`, a redundant
+separator or an unexpected error repeats the separate policy and resolution
+steps unchanged. No observation outlives its check: the recheck after directory
+creation and every later protocol step walk again, so a link substituted in
+between is still rejected.
+
 Ordinary rename policy can try another version when a candidate is occupied or
 busy. An owned retry must use its verified family. A skipped existing output does
 not become owned by the skipped item and does not create a receipt. Completed
@@ -91,17 +102,65 @@ Publication performs these steps while the item holds its member locks:
    destination. An ordinary new write requires absence; a native retry requires
    matching evidence; explicit overwrite supplies separate authority.
 2. Write the rendered document to a temporary file in the output parent and sync
-   it. Persist the prepared receipt by atomic replacement, syncing both receipt
-   file and receipt directory before touching the output target.
+   it. Install the prepared receipt by atomic replacement: an ordering fence puts
+   the staged document and receipt bytes before the receipt name, and a second
+   one puts the receipt name before the output target is touched.
 3. Recheck the staged object and expected destination. Publish with atomic
    no-clobber semantics for an absent destination, or replacement for the exact
-   authorized prior object. Sync the output directory before acknowledging success.
+   authorized prior object. Complete a durability fence on the output parent's
+   volume before acknowledging success.
 
 There is no required second receipt commit after document publication. Renaming
-the staged file preserves its file identity, so the durable prepared record can
-prove that publication happened even if the process stops before returning or
+the staged file preserves its file identity, so the prepared record can prove
+that publication happened even if the process stops before returning or
 recording task completion. Preparing a later attempt replaces this evidence only
-after retaining the currently authorized prior proof.
+after retaining the currently authorized prior proof. Single-file and single-URL
+conversions have no receipt; their staged bytes are ordered before the rename and
+the same durability fence precedes success.
+
+## Ordering and durability fences
+
+An ordering fence guarantees that what it covers reaches stable storage before
+any later write to the same device. A durability fence guarantees that it is on
+stable storage when the call returns. Every success acknowledgement is preceded
+by a durability fence; every other phase boundary uses an ordering fence:
+
+| Point | Fence |
+|---|---|
+| Created output, `.markitai`, `ownership` and `members` directories of a claim | ordering |
+| Run-wide output ancestors and each namespace window (see [grouped publication](grouped-publication.md)) | ordering |
+| Staged document and receipt bytes, before the receipt name | ordering |
+| Installed receipt name, before the document rename | ordering |
+| Document rename, before success is reported | durability |
+| Receipt copied for an adopted URL owner, before the checkpoint names it | durability |
+| Records directory created by this call; directory created after a concurrent removal | durability (unchanged immediate synchronization) |
+
+On a verified local macOS APFS or HFS volume, each object is synchronized with
+`fsync`, then a retained descriptor on that volume issues one `F_BARRIERFSYNC`
+(ordering) or `F_FULLFSYNC` (durability). The [fcntl manual](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/fcntl.2.html)
+describes this two-phase use of one barrier after per-descriptor `fsync`, and that
+`F_FULLFSYNC` persists everything previously `fsync`ed on the same device. A file
+system that rejects the barrier operation gets the full flush instead. Elsewhere,
+including Linux, every object still receives `File::sync_all` when it is staged,
+so both kinds remain per-object durable synchronization, as before.
+
+Claim directories, receipts and staged documents share the output parent's file
+system (the claim refuses metadata on another device), so the acknowledgement's
+full flush on that volume also persists every earlier ordered write of the
+publication. After an operating-system crash or power loss before the
+acknowledgement, a document visible at its final name therefore has its complete
+bytes and its receipt; a receipt name has complete bytes; the publication may also
+be absent entirely, which recovery already handles. Acknowledged publications are
+durable, as before. A process kill needs no fence: the renames are atomic in the
+operating system's cache.
+
+The barrier relies on the storage stack honoring it; IOKit reports this as the
+media's `Barrier` storage feature, which Apple documents as guaranteed for Apple
+SSDs. On an APFS disk image whose media lacks that feature, a barrier took as long
+as a full flush (8.4 ms versus 8.7 ms, against 0.4 ms versus 3.5 ms on the internal
+SSD), consistent with a fallback to a full flush rather than a silent no-op; the
+APFS implementation is not public. The guarantee remains conditional on file
+system and hardware flush behavior, which these measurements cannot prove.
 
 For fresh explicit overwrite, the change-detection window starts when publication
 preparation captures the destination, after conversion. Native retries are also

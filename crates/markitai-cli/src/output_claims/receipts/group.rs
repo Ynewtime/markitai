@@ -1,4 +1,4 @@
-//! Bounded document preparation with three explicit durability phases.
+//! Bounded document preparation with three ordered phases and one durable acknowledgement.
 use super::super::{Claim, sync_group::SyncGroup};
 use super::*;
 use std::collections::BTreeSet;
@@ -371,7 +371,8 @@ impl PublicationGroup {
     }
 
     /// A success is returned only after all three phases. On error earlier
-    /// renames may be visible; their durable receipts remain the retry authority.
+    /// renames may be visible; their receipts, which no document rename can
+    /// outlive on the media, remain the retry authority.
     pub(crate) fn commit(self) -> Result<Vec<Arc<Claim>>> {
         self.commit_with(|_| Ok(()))
     }
@@ -402,13 +403,14 @@ impl PublicationGroup {
                     .to_owned(),
             );
         }
-        // Make temporary names durable too; recovery never depends on a lucky
+        // Order temporary names too; recovery never depends on a lucky
         // background directory write between the data and receipt phases.
+        // Ordering suffices: no receipt can reach the media before these.
         for parent in stage_parents {
             data.stage(&File::open(parent)?)?;
         }
-        data.commit()?;
-        boundary(Boundary::DataDurable)?;
+        data.commit_ordered()?;
+        boundary(Boundary::DataOrdered)?;
 
         let mut receipts = SyncGroup::new();
         let mut receipt_parents = BTreeSet::new();
@@ -427,11 +429,12 @@ impl PublicationGroup {
             );
             boundary(Boundary::ReceiptInstalled(index))?;
         }
+        // No document name can reach the media before its installed receipt.
         for parent in receipt_parents {
             receipts.stage(&File::open(parent)?)?;
         }
-        receipts.commit()?;
-        boundary(Boundary::ReceiptsDurable)?;
+        receipts.commit_ordered()?;
+        boundary(Boundary::ReceiptsOrdered)?;
 
         let mut outputs = SyncGroup::new();
         let mut output_parents = BTreeSet::new();
@@ -446,6 +449,9 @@ impl PublicationGroup {
                 boundary(Boundary::OutputInstalled(document_index, member_index))?;
             }
         }
+        // The acknowledgement fence. Each claim's metadata and staged files share
+        // its output parent's file system, so this durable flush per volume also
+        // persists everything the two ordered phases staged.
         for parent in output_parents {
             outputs.stage(&File::open(parent)?)?;
         }
@@ -461,9 +467,9 @@ impl PublicationGroup {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Boundary {
-    DataDurable,
+    DataOrdered,
     ReceiptInstalled(usize),
-    ReceiptsDurable,
+    ReceiptsOrdered,
     OutputInstalled(usize, usize),
     OutputsDurable,
 }
@@ -552,10 +558,10 @@ mod tests {
         assert_eq!(
             phases,
             [
-                Boundary::DataDurable,
+                Boundary::DataOrdered,
                 Boundary::ReceiptInstalled(0),
                 Boundary::ReceiptInstalled(1),
-                Boundary::ReceiptsDurable,
+                Boundary::ReceiptsOrdered,
                 Boundary::OutputInstalled(0, 0),
                 Boundary::OutputInstalled(0, 1),
                 Boundary::OutputInstalled(1, 0),
@@ -586,11 +592,62 @@ mod tests {
     }
 
     #[test]
+    fn two_ordered_phases_precede_one_durable_acknowledgement_fence() {
+        use crate::output_claims::sync_group::take_commits;
+        let directory = tempfile::tempdir().unwrap();
+        let a = claim(directory.path(), "a", None, Policy::NoClobber);
+        let b = claim(directory.path(), "b", None, Policy::NoClobber);
+        let mut group = PublicationGroup::new();
+        group.push(prepared(a, "a")).unwrap();
+        group.push(prepared(b, "b")).unwrap();
+        take_commits();
+        group.commit().unwrap();
+        assert_eq!(take_commits(), ["ordered", "ordered", "durable"]);
+        // A failure in an ordered phase never reaches the acknowledgement fence.
+        let c = claim(directory.path(), "c", None, Policy::NoClobber);
+        let mut group = PublicationGroup::new();
+        group.push(prepared(c, "c")).unwrap();
+        take_commits();
+        assert!(
+            group
+                .commit_with(|phase| if phase == Boundary::ReceiptsOrdered {
+                    Err(io::Error::other("stop after receipts").into())
+                } else {
+                    Ok(())
+                })
+                .is_err()
+        );
+        assert_eq!(take_commits(), ["ordered", "ordered"]);
+    }
+
+    #[test]
+    fn an_ancestor_swapped_for_a_symlink_after_preparation_installs_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        let parent = root.join("tree/out");
+        let claim = claim(&parent, "a", None, Policy::NoClobber);
+        let receipt = record(&claim);
+        let mut group = PublicationGroup::new();
+        group.push(prepared(claim.clone(), "a")).unwrap();
+        fs::rename(root.join("tree"), root.join("moved")).unwrap();
+        std::os::unix::fs::symlink(root.join("moved"), root.join("tree")).unwrap();
+        let Err(error) = group.commit() else {
+            panic!("a swapped ancestor must fail the group");
+        };
+        let error = error.to_string();
+        assert!(error.contains("symlink policy"), "{error}");
+        let moved = root.join("moved/out");
+        assert!(!moved.join("a.md").exists());
+        assert!(!moved.join("a.llm.md").exists());
+        assert!(!moved.join(receipt.strip_prefix(&parent).unwrap()).exists());
+    }
+
+    #[test]
     fn every_interrupted_boundary_retains_old_or_provably_owned_new_members() {
         for stop in [
-            Boundary::DataDurable,
+            Boundary::DataOrdered,
             Boundary::ReceiptInstalled(0),
-            Boundary::ReceiptsDurable,
+            Boundary::ReceiptsOrdered,
             Boundary::OutputInstalled(0, 0),
             Boundary::OutputInstalled(0, 1),
             Boundary::OutputsDurable,
@@ -626,7 +683,7 @@ mod tests {
                     .is_err()
             );
             verify_owned(&retry.leases, retry.owner.as_ref().unwrap()).unwrap();
-            if stop == Boundary::DataDurable {
+            if stop == Boundary::DataOrdered {
                 assert_eq!(fs::read(record(&retry)).unwrap(), old_receipt);
             }
             for (name, old, new) in [
@@ -653,7 +710,7 @@ mod tests {
         assert!(
             group
                 .commit_with(|phase| {
-                    if phase == Boundary::ReceiptsDurable {
+                    if phase == Boundary::ReceiptsOrdered {
                         fs::write(&path, b"foreign")?;
                     }
                     Ok(())

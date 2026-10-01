@@ -100,8 +100,7 @@ impl NamespaceBatch {
     }
 
     pub(crate) fn prepare(&mut self, parent: &Path, allow_symlinks: bool) -> Result<()> {
-        check_policy(parent, allow_symlinks)?;
-        let planned = crate::report_store::resolve_path(parent)?;
+        let planned = leases::PathStep::default().resolve(parent, allow_symlinks, check_policy)?;
         if !self.parents.contains_key(&planned) && self.parents.len() == MAX_NAMESPACE_PARENTS {
             return Err(invalid("namespace preparation window is full"));
         }
@@ -121,13 +120,17 @@ impl NamespaceBatch {
         Ok(())
     }
 
+    /// One ordering fence per volume: no member lock, receipt or document in
+    /// this namespace can reach the media before its directories. The
+    /// admission journal's full flush and each document's durable
+    /// acknowledgement fence on the same file system make them durable.
     pub(crate) fn commit(self) -> Result<PreparedNamespaces> {
         self.commit_with(|directories| {
             let mut sync = SyncGroup::new();
             for directory in directories {
                 sync.stage(&directory.file)?;
             }
-            sync.commit()?;
+            sync.commit_ordered()?;
             Ok(())
         })
     }
@@ -165,8 +168,7 @@ pub(crate) struct PreparedNamespaces {
 
 impl PreparedNamespaces {
     pub(crate) fn validate(&self, parent: &Path, allow_symlinks: bool) -> Result<()> {
-        check_policy(parent, allow_symlinks)?;
-        let parent = crate::report_store::resolve_path(parent)?;
+        let parent = leases::PathStep::default().resolve(parent, allow_symlinks, check_policy)?;
         self.parents
             .get(&parent)
             .ok_or_else(|| invalid("output parent was not prepared in this namespace window"))?

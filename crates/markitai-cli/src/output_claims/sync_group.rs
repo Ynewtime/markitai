@@ -5,6 +5,16 @@ use std::io;
 
 const MAX_VOLUMES: usize = 32;
 
+/// How a commit completes the fence of each verified volume.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Fence {
+    /// Staged objects reach stable media before any later write to the same
+    /// device, but nothing is promised durable when the commit returns.
+    Ordered,
+    /// Staged objects are on stable media when the commit returns.
+    Durable,
+}
+
 /// Hold one descriptor per eligible volume until every staged object crosses a
 /// media fence. Dropping this value does not imply that anything was committed.
 #[must_use = "staged synchronization must be committed before publication is acknowledged"]
@@ -20,16 +30,57 @@ impl SyncGroup {
     }
 
     /// Flush this object's data/attributes to the device. The group still needs
-    /// commit() before a later phase may depend on stable media contents.
+    /// a commit before a later phase may depend on stable media contents.
     pub(crate) fn stage(&mut self, file: &File) -> io::Result<()> {
         self.inner.stage(file)
     }
 
-    /// Complete all staged volume fences, or fail without issuing a success
-    /// acknowledgement. Some earlier volumes may already be durable on failure.
+    /// Complete all staged volume fences durably, or fail without issuing a
+    /// success acknowledgement. Some earlier volumes may already be durable on
+    /// failure. A durable fence also persists every write that an earlier
+    /// ordered commit staged on the same device.
     pub(crate) fn commit(self) -> io::Result<()> {
-        self.inner.commit()
+        #[cfg(test)]
+        record(Fence::Durable);
+        self.inner.commit(Fence::Durable)
     }
+
+    /// Order every staged object before any later write to its device, without
+    /// waiting for the device cache: what follows (a rename, a later phase)
+    /// can never reach stable media without what was staged. This is not an
+    /// acknowledgement; success still requires a durable commit on the volume.
+    /// Off verified volumes every object was already synchronized durably when
+    /// it was staged, which is at least as strong.
+    pub(crate) fn commit_ordered(self) -> io::Result<()> {
+        #[cfg(test)]
+        record(Fence::Ordered);
+        self.inner.commit(Fence::Ordered)
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static COMMITS: std::cell::RefCell<Vec<Fence>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+fn record(fence: Fence) {
+    COMMITS.with(|commits| commits.borrow_mut().push(fence));
+}
+
+/// Fence kinds committed by this test thread since the last call, in order.
+#[cfg(test)]
+pub(crate) fn take_commits() -> Vec<&'static str> {
+    COMMITS.with(|commits| {
+        commits
+            .borrow_mut()
+            .drain(..)
+            .map(|fence| match fence {
+                Fence::Ordered => "ordered",
+                Fence::Durable => "durable",
+            })
+            .collect()
+    })
 }
 
 trait Backend {
@@ -37,7 +88,7 @@ trait Backend {
     fn volume(&self, handle: &Self::Handle) -> io::Result<Option<u64>>;
     fn duplicate(&self, handle: &Self::Handle) -> io::Result<Self::Handle>;
     fn host_sync(&self, handle: &Self::Handle) -> io::Result<()>;
-    fn media_sync(&self, handle: &Self::Handle) -> io::Result<()>;
+    fn media_sync(&self, handle: &Self::Handle, fence: Fence) -> io::Result<()>;
     fn durable_sync(&self, handle: &Self::Handle) -> io::Result<()>;
 }
 
@@ -87,12 +138,12 @@ impl<B: Backend> Group<B> {
         Ok(())
     }
 
-    fn commit(self) -> io::Result<()> {
+    fn commit(self, fence: Fence) -> io::Result<()> {
         if self.poisoned {
             return Err(io::Error::other("synchronization group already failed"));
         }
         for handle in self.volumes.values() {
-            self.backend.media_sync(handle)?;
+            self.backend.media_sync(handle, fence)?;
         }
         Ok(())
     }
@@ -157,18 +208,44 @@ impl Backend for System {
         file.sync_all()
     }
 
-    fn media_sync(&self, file: &File) -> io::Result<()> {
+    fn media_sync(&self, file: &File, fence: Fence) -> io::Result<()> {
         #[cfg(target_os = "macos")]
         {
             use std::os::fd::AsRawFd;
-            retry_interrupted(|| {
-                // SAFETY: F_FULLFSYNC ignores its optional argument; the file is
-                // a retained descriptor on the same verified local volume.
-                unsafe { libc::fcntl(file.as_raw_fd(), libc::F_FULLFSYNC) }
-            })
+            let full = || {
+                retry_interrupted(|| {
+                    // SAFETY: F_FULLFSYNC ignores its optional argument; the file
+                    // is a retained descriptor on the same verified local volume.
+                    unsafe { libc::fcntl(file.as_raw_fd(), libc::F_FULLFSYNC) }
+                })
+            };
+            if fence == Fence::Durable {
+                return full();
+            }
+            // fcntl(2): after fsync of each descriptor, one barrier orders all of
+            // them before any later I/O on the device. APFS and HFS implement it.
+            let barrier = retry_interrupted(|| {
+                // SAFETY: as above; F_BARRIERFSYNC also ignores its argument.
+                unsafe { libc::fcntl(file.as_raw_fd(), libc::F_BARRIERFSYNC) }
+            });
+            match barrier {
+                // A file system without the operation gets the stronger flush.
+                Err(error)
+                    if matches!(
+                        error.raw_os_error(),
+                        Some(libc::ENOTSUP | libc::ENOTTY | libc::EINVAL)
+                    ) =>
+                {
+                    full()
+                }
+                result => result,
+            }
         }
         #[cfg(not(target_os = "macos"))]
-        file.sync_all()
+        {
+            let _ = fence;
+            file.sync_all()
+        }
     }
 
     fn durable_sync(&self, file: &File) -> io::Result<()> {
@@ -225,8 +302,9 @@ mod tests {
         fn host_sync(&self, handle: &Handle) -> io::Result<()> {
             self.event('h', handle)
         }
-        fn media_sync(&self, handle: &Handle) -> io::Result<()> {
-            self.event('m', handle)
+        fn media_sync(&self, handle: &Handle, fence: Fence) -> io::Result<()> {
+            // 'm' is the durable flush, 'b' the ordering barrier.
+            self.event(if fence == Fence::Durable { 'm' } else { 'b' }, handle)
         }
         fn durable_sync(&self, handle: &Handle) -> io::Result<()> {
             self.event('d', handle)
@@ -250,7 +328,7 @@ mod tests {
         group.stage(&handle(2, 10)).unwrap();
         group.stage(&handle(3, 20)).unwrap();
         assert_eq!(*events.borrow(), [('h', 1), ('h', 2), ('h', 3)]);
-        group.commit().unwrap();
+        group.commit(Fence::Durable).unwrap();
         assert_eq!(
             *events.borrow(),
             [('h', 1), ('h', 2), ('h', 3), ('m', 1), ('m', 3)]
@@ -267,7 +345,7 @@ mod tests {
         group.stage(&handle(1, 10)).unwrap();
         assert!(group.stage(&handle(2, 10)).is_err());
         assert!(group.stage(&handle(3, 10)).is_err());
-        assert!(group.commit().is_err());
+        assert!(group.commit(Fence::Durable).is_err());
         assert_eq!(*events.borrow(), [('h', 1), ('h', 2)]);
     }
 
@@ -280,7 +358,7 @@ mod tests {
         });
         group.stage(&handle(1, 10)).unwrap();
         group.stage(&handle(2, 20)).unwrap();
-        assert!(group.commit().is_err());
+        assert!(group.commit(Fence::Durable).is_err());
         assert_eq!(*events.borrow(), [('h', 1), ('h', 2), ('m', 1)]);
     }
 
@@ -302,7 +380,7 @@ mod tests {
         }
         group.stage(&handle(91, 99)).unwrap();
         assert_eq!(group.volumes.len(), MAX_VOLUMES);
-        group.commit().unwrap();
+        group.commit(Fence::Durable).unwrap();
         assert_eq!(events.borrow()[0], ('d', 90));
         assert!(events.borrow().contains(&('d', 91)));
         assert_eq!(
@@ -316,18 +394,81 @@ mod tests {
     }
 
     #[test]
+    fn ordered_commit_issues_one_barrier_per_volume_after_every_object_flush() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let mut group = Group::new(Fake {
+            events: events.clone(),
+            fail: None,
+        });
+        group.stage(&handle(1, 10)).unwrap();
+        group.stage(&handle(2, 20)).unwrap();
+        group.stage(&handle(3, 10)).unwrap();
+        group.commit(Fence::Ordered).unwrap();
+        // A barrier, never a full flush, and only after all object flushes.
+        assert_eq!(
+            *events.borrow(),
+            [('h', 1), ('h', 2), ('h', 3), ('b', 1), ('b', 2)]
+        );
+    }
+
+    #[test]
+    fn ordered_commit_cannot_succeed_after_a_failed_object_or_barrier() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let mut group = Group::new(Fake {
+            events: events.clone(),
+            fail: Some(('h', 2)),
+        });
+        group.stage(&handle(1, 10)).unwrap();
+        assert!(group.stage(&handle(2, 10)).is_err());
+        assert!(group.commit(Fence::Ordered).is_err());
+        assert_eq!(*events.borrow(), [('h', 1), ('h', 2)]);
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let mut group = Group::new(Fake {
+            events: events.clone(),
+            fail: Some(('b', 1)),
+        });
+        group.stage(&handle(1, 10)).unwrap();
+        group.stage(&handle(2, 20)).unwrap();
+        assert!(group.commit(Fence::Ordered).is_err());
+        assert_eq!(*events.borrow(), [('h', 1), ('h', 2), ('b', 1)]);
+    }
+
+    #[test]
+    fn ordered_commit_keeps_durable_per_object_sync_off_verified_volumes() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let mut group = Group::new(Fake {
+            events: events.clone(),
+            fail: None,
+        });
+        group
+            .stage(&Handle {
+                id: 7,
+                volume: None,
+            })
+            .unwrap();
+        group.commit(Fence::Ordered).unwrap();
+        assert_eq!(*events.borrow(), [('d', 7)]);
+    }
+
+    #[test]
     #[cfg(unix)]
     fn real_private_files_survive_descriptor_retention_and_fence() {
         use std::io::Write;
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("prepared");
-        let mut file = File::create(&path).unwrap();
-        file.write_all(b"complete staged bytes").unwrap();
-        let mut group = SyncGroup::new();
-        group.stage(&file).unwrap();
-        drop(file);
-        group.stage(&File::open(directory.path()).unwrap()).unwrap();
-        group.commit().unwrap();
-        assert_eq!(std::fs::read(path).unwrap(), b"complete staged bytes");
+        for ordered in [false, true] {
+            let path = directory.path().join(format!("prepared-{ordered}"));
+            let mut file = File::create(&path).unwrap();
+            file.write_all(b"complete staged bytes").unwrap();
+            let mut group = SyncGroup::new();
+            group.stage(&file).unwrap();
+            drop(file);
+            group.stage(&File::open(directory.path()).unwrap()).unwrap();
+            if ordered {
+                group.commit_ordered().unwrap();
+            } else {
+                group.commit().unwrap();
+            }
+            assert_eq!(std::fs::read(path).unwrap(), b"complete staged bytes");
+        }
     }
 }

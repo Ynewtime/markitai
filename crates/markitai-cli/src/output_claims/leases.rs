@@ -79,6 +79,20 @@ impl MemberLeases {
     pub(crate) fn validate_member(&self, path: &Path) -> Result<PathBuf> {
         self.prepared.validate_member(path)
     }
+
+    /// Validate several members as one step, in order, with the same checks
+    /// and errors as [`Self::validate_member`] on each. Only the parent chain
+    /// observed earlier within this call is reused, never across calls.
+    pub(crate) fn validate_members<'a>(
+        &self,
+        paths: impl IntoIterator<Item = &'a Path>,
+    ) -> Result<Vec<PathBuf>> {
+        let mut step = PathStep::default();
+        paths
+            .into_iter()
+            .map(|path| self.prepared.validate_member_in(path, &mut step))
+            .collect()
+    }
 }
 
 /// Return process-local reservation identities without claiming a queued task.
@@ -218,6 +232,10 @@ impl PreparedMembers {
     /// Resolve the parent only: a permitted leaf symlink remains the entry a
     /// publication replaces, rather than becoming an authority over its target.
     pub(crate) fn validate_member(&self, path: &Path) -> Result<PathBuf> {
+        self.validate_member_in(path, &mut PathStep::default())
+    }
+
+    fn validate_member_in(&self, path: &Path, step: &mut PathStep) -> Result<PathBuf> {
         let name = path
             .file_name()
             .and_then(OsStr::to_str)
@@ -228,10 +246,8 @@ impl PreparedMembers {
                 "output path is outside the claimed member set".into(),
             ));
         }
-        self.check_paths()?;
-        check_policy(path, self.allow_symlinks)?;
-        let requested_parent = path.parent().unwrap_or_else(|| Path::new(""));
-        if crate::report_store::resolve_path(requested_parent)? != self.parent {
+        self.check_paths_in(step)?;
+        if step.member_parent(path, self.allow_symlinks, check_policy)? != self.parent {
             return Err(Error::Invalid(
                 "output path is outside the claimed parent".into(),
             ));
@@ -240,8 +256,11 @@ impl PreparedMembers {
     }
 
     fn check_paths(&self) -> Result<()> {
-        check_policy(&self.original_parent, self.allow_symlinks)?;
-        if crate::report_store::resolve_path(&self.original_parent)? != self.parent
+        self.check_paths_in(&mut PathStep::default())
+    }
+
+    fn check_paths_in(&self, step: &mut PathStep) -> Result<()> {
+        if step.resolve(&self.original_parent, self.allow_symlinks, check_policy)? != self.parent
             || identity(&directory_metadata(&self.parent, false)?)? != self.parent_identity
         {
             return Err(Error::Invalid("claimed output parent changed".into()));
@@ -282,6 +301,115 @@ fn validate_name(name: &str) -> Result<()> {
 fn check_policy(path: &Path, allow_symlinks: bool) -> Result<()> {
     markitai_core::output::check_path(path, allow_symlinks)
         .map_err(|_| Error::Invalid("output path violates the symlink policy".into()))
+}
+
+/// A caller's symlink-policy check, with its own error wording.
+pub(crate) type PolicyCheck = fn(&Path, bool) -> Result<()>;
+
+/// Path observations shared by the checks of one validation call. Each method
+/// returns exactly what its pair of original calls returns. For an absolute
+/// path spelled canonically, with only normal components and no symbolic link
+/// at any prefix, the symlink policy has nothing to reject and resolution
+/// returns the path itself, so one walk of the prefixes answers both calls.
+/// Anything else (a symbolic link anywhere, including a permitted or root-owned
+/// one, `..`, a redundant separator, an unexpected error) repeats the original
+/// calls verbatim, with their error order. Within the call, prefixes already
+/// seen as ordinary entries are not observed again; the next call starts
+/// empty, so every protocol step still observes its paths afresh.
+#[derive(Default)]
+pub(crate) struct PathStep {
+    plain: Vec<PathBuf>,
+}
+
+impl PathStep {
+    /// `policy(path, allow)` followed by `resolve_path(path)`.
+    pub(crate) fn resolve(
+        &mut self,
+        path: &Path,
+        allow_symlinks: bool,
+        policy: PolicyCheck,
+    ) -> Result<PathBuf> {
+        if let Ok(absolute) = std::path::absolute(path)
+            && self.plain(&absolute)
+        {
+            return Ok(absolute);
+        }
+        policy(path, allow_symlinks)?;
+        Ok(crate::report_store::resolve_path(path)?)
+    }
+
+    /// `policy(path, allow)` followed by resolving the path's parent, as member
+    /// validation checks a target: the leaf matters to the policy only.
+    fn member_parent(
+        &mut self,
+        path: &Path,
+        allow_symlinks: bool,
+        policy: PolicyCheck,
+    ) -> Result<PathBuf> {
+        let requested = path.parent().unwrap_or_else(|| Path::new(""));
+        if let (Ok(absolute), Ok(parent)) =
+            (std::path::absolute(path), std::path::absolute(requested))
+            && absolute.parent() == Some(parent.as_path())
+            && canonical(&absolute)
+            // The policy rejects a symbolic-link leaf even when root-owned.
+            && (allow_symlinks || !is_symlink(&absolute))
+            && self.plain(&parent)
+        {
+            return Ok(parent);
+        }
+        policy(path, allow_symlinks)?;
+        Ok(crate::report_store::resolve_path(requested)?)
+    }
+
+    /// Whether every prefix of this canonical absolute path is an ordinary or
+    /// absent entry. Both original walks tolerate absent and inaccessible
+    /// components; any other error is left to them to report.
+    fn plain(&mut self, absolute: &Path) -> bool {
+        if !canonical(absolute) {
+            return false;
+        }
+        let known = self
+            .plain
+            .iter()
+            .filter(|known| absolute.starts_with(known))
+            .map(|known| known.components().count())
+            .max()
+            .unwrap_or(1);
+        let mut prefix = PathBuf::new();
+        for (index, component) in absolute.components().enumerate() {
+            prefix.push(component);
+            if index < known {
+                continue;
+            }
+            match fs::symlink_metadata(&prefix) {
+                Ok(metadata) if metadata.file_type().is_symlink() => return false,
+                Ok(_) => (),
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::NotFound
+                            | io::ErrorKind::NotADirectory
+                            | io::ErrorKind::PermissionDenied
+                    ) => {}
+                Err(_) => return false,
+            }
+        }
+        self.plain.push(absolute.to_owned());
+        true
+    }
+}
+
+/// An absolute path whose spelling is exactly its normal components, so its
+/// lexical ancestors are the prefixes resolution visits.
+fn canonical(path: &Path) -> bool {
+    let mut components = path.components();
+    components.next() == Some(Component::RootDir)
+        && components.all(|component| matches!(component, Component::Normal(_)))
+        && path.as_os_str() == path.components().collect::<PathBuf>().as_os_str()
+}
+
+fn is_symlink(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
 }
 
 fn unsupported() -> Error {
@@ -349,8 +477,8 @@ fn validate_lock_metadata(metadata: &Metadata, device: u64) -> Result<()> {
 // immediate synchronization path; the grouped path begins below this parent.
 pub(crate) fn prepare_namespace_parent(parent: &Path, allow_symlinks: bool) -> Result<PathBuf> {
     let original_parent = std::path::absolute(parent)?;
-    check_policy(&original_parent, allow_symlinks)?;
-    let planned_parent = crate::report_store::resolve_path(&original_parent)?;
+    let planned_parent =
+        PathStep::default().resolve(&original_parent, allow_symlinks, check_policy)?;
     create_output_directory(&planned_parent, &mut sync_new_directory)?;
     check_policy(&original_parent, allow_symlinks)?;
     let parent = fs::canonicalize(&original_parent)?;
@@ -365,10 +493,13 @@ pub(crate) fn prepare_namespace_parent(parent: &Path, allow_symlinks: bool) -> R
 /// Create a claim's missing output directory chain and its `.markitai`,
 /// `ownership` and `members` metadata directories, then give every created
 /// directory and its parent the immediate path's host synchronization with one
-/// media fence per volume for the whole set. The fence completes before any
-/// lock file exists or any work starts; creating nothing issues no fence, as
-/// the immediate path does. The immediate path below still covers directories
-/// that another process removes and recreates in between.
+/// ordering fence per volume for the whole set. The fence completes before any
+/// lock file exists or any work starts, so nothing later can reach the media
+/// without these entries; creating nothing issues no fence, as the immediate
+/// path does. Every created directory shares the claimed parent's file system,
+/// whose durable acknowledgement fence at publication persists them. The
+/// immediate path below still covers directories that another process removes
+/// and recreates in between.
 fn prepare_claim_directories(parent: &Path, allow_symlinks: bool) -> Result<()> {
     let mut group = super::sync_group::SyncGroup::new();
     let mut staged = false;
@@ -384,7 +515,7 @@ fn prepare_claim_directories(parent: &Path, allow_symlinks: bool) -> Result<()> 
         Ok(group.stage(&options.open(path)?)?)
     });
     if staged {
-        group.commit()?;
+        group.commit_ordered()?;
     }
     result
 }
@@ -423,8 +554,7 @@ fn create_claim_directories(
     allow_symlinks: bool,
     created: &mut Vec<PathBuf>,
 ) -> Result<()> {
-    check_policy(parent, allow_symlinks)?;
-    let planned = crate::report_store::resolve_path(parent)?;
+    let planned = PathStep::default().resolve(parent, allow_symlinks, check_policy)?;
     create_output_directory(&planned, &mut |directory| {
         created.push(directory.to_owned());
         Ok(())
@@ -485,10 +615,14 @@ fn create_metadata_directory(path: &Path) -> Result<()> {
 
 /// Create every missing output ancestor of these parents before any name probe,
 /// claim or dispatch. Each newly created directory and its parent receive the
-/// same host synchronization as the immediate path, but one media fence per
-/// volume covers the whole set. Existing directories keep their original
-/// treatment, and each parent's policy and resolved identity are rechecked. An
-/// error, including a failed commit, acknowledges nothing and admits no work.
+/// same host synchronization as the immediate path, and one ordering fence per
+/// volume covers the whole set: no claim, receipt or document beneath them can
+/// reach the media first. Durability follows from the full flush of the
+/// admission journal on the same device and, at the latest, from each
+/// published document's durable acknowledgement fence on its parent's volume.
+/// Existing directories keep their original treatment, and each parent's
+/// policy and resolved identity are rechecked. An error, including a failed
+/// commit, acknowledges nothing and admits no work.
 pub(crate) fn prepare_output_ancestors<'a>(
     parents: impl IntoIterator<Item = &'a Path>,
     allow_symlinks: bool,
@@ -504,7 +638,7 @@ pub(crate) fn prepare_output_ancestors<'a>(
         }
         Ok(group.stage(&options.open(path)?)?)
     })?;
-    group.commit()?;
+    group.commit_ordered()?;
     Ok(())
 }
 
@@ -521,8 +655,7 @@ fn stage_output_ancestors<'a>(
         if !prepared.insert(original.clone()) {
             continue;
         }
-        check_policy(&original, allow_symlinks)?;
-        let planned = crate::report_store::resolve_path(&original)?;
+        let planned = PathStep::default().resolve(&original, allow_symlinks, check_policy)?;
         create_output_directory(&planned, &mut |directory| {
             created.push(directory.to_owned());
             Ok(())
@@ -710,6 +843,236 @@ mod tests {
         let real = root.join("real-group/x");
         prepare_output_ancestors([real.as_path()], false).unwrap();
         assert!(real.is_dir());
+    }
+
+    fn original_resolve(path: &Path, allow: bool) -> std::result::Result<PathBuf, String> {
+        check_policy(path, allow).map_err(|error| error.to_string())?;
+        crate::report_store::resolve_path(path).map_err(|error| Error::from(error).to_string())
+    }
+
+    fn original_member(path: &Path, allow: bool) -> std::result::Result<PathBuf, String> {
+        check_policy(path, allow).map_err(|error| error.to_string())?;
+        crate::report_store::resolve_path(path.parent().unwrap_or_else(|| Path::new("")))
+            .map_err(|error| Error::from(error).to_string())
+    }
+
+    #[test]
+    fn one_walk_answers_exactly_what_the_policy_and_resolution_pair_answers() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        fs::create_dir_all(root.join("real/deep")).unwrap();
+        fs::create_dir_all(root.join("other/deep")).unwrap();
+        symlink(root.join("real"), root.join("link")).unwrap();
+        symlink(root.join("real/deep"), root.join("real/inner-link")).unwrap();
+        symlink("relative-target", root.join("real/relative-link")).unwrap();
+        fs::write(root.join("file"), b"x").unwrap();
+        symlink("loop-b", root.join("loop-a")).unwrap();
+        symlink("loop-a", root.join("loop-b")).unwrap();
+        symlink(root.join("file"), root.join("real/leaf-link.md")).unwrap();
+        symlink(root.join("missing"), root.join("dangling")).unwrap();
+        fs::create_dir_all(root.join("locked/inner")).unwrap();
+        let mut cases: Vec<PathBuf> = [
+            "",
+            "real",
+            "real/deep",
+            "real/deep/missing/tail",
+            "missing/child",
+            "link",
+            "link/deep",
+            "link/leaf.md",
+            "real/inner-link/x.md",
+            "real/relative-link/x.md",
+            "real/../real/deep",
+            "real/./deep",
+            "real/deep/",
+            "real//deep",
+            "file/child",
+            "file/child/x.md",
+            "loop-a/x.md",
+            "dangling/x.md",
+            "locked/inner",
+            "locked/inner/x.md",
+            "real/leaf-link.md",
+            "real/deep/leaf.md",
+        ]
+        .iter()
+        .map(|case| {
+            if case.is_empty() {
+                root.clone()
+            } else {
+                root.join(case)
+            }
+        })
+        .collect();
+        cases.extend([
+            PathBuf::new(),
+            PathBuf::from("relative/child.md"),
+            PathBuf::from("x.md"),
+            // On macOS /var is a root-owned symbolic link: allowed above the leaf.
+            temp.path().join("real/deep"),
+            temp.path().join("real/deep/x.md"),
+        ]);
+        // Searchable no more: lstat below it is denied (unless run as root).
+        fs::set_permissions(root.join("locked"), fs::Permissions::from_mode(0o000)).unwrap();
+        let mut compared = 0;
+        for allow in [false, true] {
+            for case in &cases {
+                let mut step = PathStep::default();
+                let expected = original_resolve(case, allow);
+                for _ in 0..2 {
+                    // The second answer comes from the same step's observations.
+                    let fused = step
+                        .resolve(case, allow, check_policy)
+                        .map_err(|error| error.to_string());
+                    assert_eq!(fused, expected, "resolve {case:?} allow={allow}");
+                }
+                let expected = original_member(case, allow);
+                for _ in 0..2 {
+                    let fused = step
+                        .member_parent(case, allow, check_policy)
+                        .map_err(|error| error.to_string());
+                    assert_eq!(fused, expected, "member {case:?} allow={allow}");
+                }
+                compared += 1;
+            }
+            // Earlier ordinary prefixes never hide a link on a later branch.
+            let mut step = PathStep::default();
+            step.resolve(&root.join("real/deep"), allow, check_policy)
+                .unwrap();
+            for case in ["real/inner-link/x.md", "link/deep", "real/leaf-link.md"] {
+                let case = root.join(case);
+                assert_eq!(
+                    step.resolve(&case, allow, check_policy)
+                        .map_err(|error| error.to_string()),
+                    original_resolve(&case, allow)
+                );
+                assert_eq!(
+                    step.member_parent(&case, allow, check_policy)
+                        .map_err(|error| error.to_string()),
+                    original_member(&case, allow)
+                );
+            }
+        }
+        fs::set_permissions(root.join("locked"), fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(compared, cases.len() * 2);
+        // The fast walk is actually taken for an ordinary canonical path.
+        let mut step = PathStep::default();
+        let deep = root.join("real/deep");
+        assert_eq!(step.resolve(&deep, false, check_policy).unwrap(), deep);
+        assert_eq!(step.plain, [deep]);
+    }
+
+    #[test]
+    fn a_new_step_observes_a_link_substituted_after_an_earlier_walk() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        let path = root.join("tree/out");
+        fs::create_dir_all(&path).unwrap();
+        PathStep::default()
+            .resolve(&path, false, check_policy)
+            .unwrap();
+        prepare_namespace_parent(&path, false).unwrap();
+        fs::rename(root.join("tree"), root.join("moved")).unwrap();
+        symlink(root.join("moved"), root.join("tree")).unwrap();
+        let error = PathStep::default()
+            .resolve(&path, false, check_policy)
+            .unwrap_err();
+        assert!(error.to_string().contains("symlink policy"), "{error}");
+        assert!(prepare_namespace_parent(&path, false).is_err());
+        assert!(stage_output_ancestors([path.as_path()], false, |_| Ok(())).is_err());
+        assert!(MemberLeases::acquire(&path, &names(&["a.md"]), false).is_err());
+        assert!(!root.join("moved/out/.markitai").exists());
+    }
+
+    #[test]
+    fn an_ancestor_swapped_for_a_symlink_after_claiming_is_rejected_at_every_check() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        let parent = root.join("tree/out");
+        let members = names(&["x.md", "x.llm.md"]);
+        let lease = MemberLeases::acquire(&parent, &members, false).unwrap();
+        let paths = [parent.join("x.md"), parent.join("x.llm.md")];
+        lease.validate_member(&paths[0]).unwrap();
+        lease
+            .validate_members(paths.iter().map(PathBuf::as_path))
+            .unwrap();
+        // Same physical directory, but now reached through a symbolic link.
+        fs::rename(root.join("tree"), root.join("moved")).unwrap();
+        symlink(root.join("moved"), root.join("tree")).unwrap();
+        for error in [
+            lease.validate_member(&paths[0]).unwrap_err(),
+            lease.validate_member(&paths[1]).unwrap_err(),
+            lease
+                .validate_members(paths.iter().map(PathBuf::as_path))
+                .unwrap_err(),
+        ] {
+            assert!(error.to_string().contains("symlink policy"), "{error}");
+        }
+        // Restoring the real directory restores validation: nothing was cached.
+        fs::remove_file(root.join("tree")).unwrap();
+        fs::rename(root.join("moved"), root.join("tree")).unwrap();
+        lease.validate_member(&paths[0]).unwrap();
+    }
+
+    #[test]
+    fn a_permitted_symlink_retargeted_after_claiming_no_longer_reaches_the_claim() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        for side in ["first", "second"] {
+            fs::create_dir_all(root.join(side).join("out")).unwrap();
+        }
+        symlink(root.join("first"), root.join("link")).unwrap();
+        let parent = root.join("link/out");
+        let lease = MemberLeases::acquire(&parent, &names(&["x.md"]), true).unwrap();
+        assert_eq!(lease.parent(), root.join("first/out"));
+        lease.validate_member(&parent.join("x.md")).unwrap();
+        fs::remove_file(root.join("link")).unwrap();
+        symlink(root.join("second"), root.join("link")).unwrap();
+        let error = lease.validate_member(&parent.join("x.md")).unwrap_err();
+        assert!(error.to_string().contains("parent changed"), "{error}");
+        assert!(
+            lease
+                .validate_members([parent.join("x.md").as_path()])
+                .is_err()
+        );
+        assert_eq!(fs::read_dir(root.join("second/out")).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_member_swapped_for_a_symlink_is_rejected_unless_permitted() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        let outside = root.join("outside.txt");
+        fs::write(&outside, b"private").unwrap();
+        let parent = root.join("out");
+        let target = parent.join("x.md");
+        let lease = MemberLeases::acquire(&parent, &names(&["x.md"]), false).unwrap();
+        lease.validate_member(&target).unwrap();
+        symlink(&outside, &target).unwrap();
+        let error = lease.validate_member(&target).unwrap_err();
+        assert!(error.to_string().contains("symlink policy"), "{error}");
+        assert!(lease.validate_members([target.as_path()]).is_err());
+        drop(lease);
+        let permitted = MemberLeases::acquire(&parent, &names(&["x.md"]), true).unwrap();
+        assert_eq!(permitted.validate_member(&target).unwrap(), target);
+        assert_eq!(fs::read(outside).unwrap(), b"private");
+    }
+
+    #[test]
+    fn claim_and_ancestor_creation_order_without_a_durable_fence() {
+        use crate::output_claims::sync_group::take_commits;
+        let temp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        take_commits();
+        let lease = MemberLeases::acquire(&root.join("new/out"), &names(&["a.md"]), false);
+        assert_eq!(take_commits(), ["ordered"]);
+        drop(lease);
+        // Nothing created, nothing fenced.
+        let lease = MemberLeases::acquire(&root.join("new/out"), &names(&["a.md"]), false);
+        assert!(take_commits().is_empty());
+        drop(lease);
+        prepare_output_ancestors([root.join("x/y").as_path()], false).unwrap();
+        assert_eq!(take_commits(), ["ordered"]);
     }
 
     #[test]
