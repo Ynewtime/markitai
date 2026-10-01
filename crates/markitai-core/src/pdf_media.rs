@@ -1012,8 +1012,11 @@ mod tests {
             "mixed.pdf",
             &config,
             false,
-        )
-        .unwrap();
+        );
+        if crate::ocr::tests::vision_unavailable_under_rosetta(&prepared) {
+            return;
+        }
+        let prepared = prepared.unwrap();
         assert!(prepared.has_reliable_text);
         assert!(prepared.screenshots.is_empty());
         let (document, screenshots) = prepared.finish().unwrap();

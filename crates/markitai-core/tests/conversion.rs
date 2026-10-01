@@ -726,6 +726,41 @@ fn cached_url_reuses_extracted_content_without_changing_binding_json() {
     );
 }
 
+/// True, after saying why, when `result` is local OCR's explicit failure in a
+/// process translated by Rosetta (an x86_64 build on Apple silicon), where
+/// Vision text recognition fails on every system measured. The caller then
+/// skips its assertions about recognized text. The translation is checked here
+/// independently of the library, so a native process never skips, and any
+/// other failure is left for the caller to report.
+#[cfg(target_os = "macos")]
+fn vision_unavailable_under_rosetta<T>(result: &markitai_core::Result<T>) -> bool {
+    let mut translated: libc::c_int = 0;
+    let mut size = std::mem::size_of::<libc::c_int>();
+    // SAFETY: A read-only integer sysctl into a correctly sized buffer.
+    let status = unsafe {
+        libc::sysctlbyname(
+            c"sysctl.proc_translated".as_ptr(),
+            (&raw mut translated).cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    match result {
+        Err(error)
+            if status == 0
+                && translated == 1
+                && error
+                    .to_string()
+                    .contains("Vision text recognition failed under Rosetta translation") =>
+        {
+            eprintln!("skipping recognized-text assertions: {error}");
+            true
+        }
+        _ => false,
+    }
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn local_image_ocr_reads_original_pixels_and_blank_images_are_explicit() {
@@ -741,8 +776,17 @@ fn local_image_ocr_reads_original_pixels_and_blank_images_are_explicit() {
             output_dir: Some(dir.path().join("out")),
             ..Default::default()
         },
-    )
-    .unwrap();
+    );
+    if vision_unavailable_under_rosetta(&recognized) {
+        // The failed conversion publishes no Markdown.
+        let published = std::fs::read_dir(dir.path().join("out"))
+            .into_iter()
+            .flatten()
+            .any(|entry| entry.unwrap().path().extension() == Some("md".as_ref()));
+        assert!(!published);
+        return;
+    }
+    let recognized = recognized.unwrap();
     for line in include_str!("../src/ocr/fixtures/english.txt").lines() {
         assert!(
             recognized.markdown.contains(line),

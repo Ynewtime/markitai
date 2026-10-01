@@ -67,10 +67,61 @@ pub(crate) fn open(framework: Framework) -> Result<(), String> {
     }
 }
 
+/// Whether this process runs under Rosetta, as an x86_64 executable on Apple
+/// silicon. Native processes, and systems without Rosetta (where the sysctl
+/// does not exist), report false.
+///
+/// Some framework paths behave differently there: Vision text recognition
+/// fails without an error, and CoreGraphics' rejection of a malformed PDF can
+/// crash the process (see `docs/validation/macos-x86_64-rosetta.md`).
+pub(crate) fn translated() -> bool {
+    static TRANSLATED: OnceLock<bool> = OnceLock::new();
+    *TRANSLATED.get_or_init(|| {
+        let mut value: libc::c_int = 0;
+        let mut size = std::mem::size_of::<libc::c_int>();
+        // SAFETY: The name is NUL-terminated, `value` is a writable c_int and
+        // `size` holds its size; no new value is set.
+        let status = unsafe {
+            libc::sysctlbyname(
+                c"sysctl.proc_translated".as_ptr(),
+                (&raw mut value).cast(),
+                &mut size,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        status == 0 && value == 1
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use objc2::runtime::AnyClass;
+
+    #[test]
+    fn only_an_x86_64_process_can_be_translated() {
+        // An arm64 process always runs natively; an x86_64 one is translated
+        // exactly when the machine is Apple silicon.
+        if cfg!(target_arch = "aarch64") {
+            assert!(!translated());
+        } else {
+            let mut value: libc::c_int = 0;
+            let mut size = std::mem::size_of::<libc::c_int>();
+            // SAFETY: As in `translated`, for a read-only integer sysctl.
+            let status = unsafe {
+                libc::sysctlbyname(
+                    c"hw.optional.arm64".as_ptr(),
+                    (&raw mut value).cast(),
+                    &mut size,
+                    std::ptr::null_mut(),
+                    0,
+                )
+            };
+            assert_eq!(translated(), status == 0 && value == 1);
+        }
+        assert_eq!(translated(), translated());
+    }
 
     #[test]
     fn opened_frameworks_register_their_classes_and_stay_open() {

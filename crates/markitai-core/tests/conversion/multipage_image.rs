@@ -236,7 +236,11 @@ fn local_ocr_uses_every_upright_page_and_retains_blank_pages() {
     config["ocr"]["enabled"] = true.into();
     // A model-specific budget must not truncate local OCR pages.
     config["llm"]["max_vision_pages_per_document"] = 1.into();
-    let result = run(&path, config, Some(directory.path().join("out"))).unwrap();
+    let result = run(&path, config, Some(directory.path().join("out")));
+    if super::vision_unavailable_under_rosetta(&result) {
+        return;
+    }
+    let result = result.unwrap();
     let pages: Vec<_> = result.markdown.split("<!-- Page number:").skip(1).collect();
     assert_eq!(pages.len(), 3);
     for page in &pages[..2] {
@@ -293,7 +297,13 @@ fn vlm_optout_sends_all_recognized_text_without_image_blocks() {
     model(&mut config, &base);
     config["ocr"]["enabled"] = true.into();
     config["llm"]["max_vision_pages_per_document"] = 1.into();
-    let result = run(&path, config, None).unwrap();
+    let result = run(&path, config, None);
+    if super::vision_unavailable_under_rosetta(&result) {
+        // Local recognition fails before any model request; the fixture
+        // server's thread ends with this test process.
+        return;
+    }
+    let result = result.unwrap();
     let request = server.join().unwrap();
     let content = &request["messages"][1]["content"];
     assert!(content.is_string(), "{content}");

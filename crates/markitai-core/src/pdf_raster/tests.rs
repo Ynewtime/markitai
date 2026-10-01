@@ -175,8 +175,21 @@ fn crop_is_intersected_with_media_and_clips_outside_marks() {
 
 #[test]
 fn malformed_locked_and_oversized_documents_fail_explicitly() {
-    for bytes in [b"".as_slice(), b"not a PDF", b"%PDF-1.7\ninvalid document"] {
+    // Rejected before CoreGraphics sees them.
+    for bytes in [b"".as_slice(), b"not a PDF"] {
         assert!(PdfRasterSession::open(bytes).is_err());
+    }
+    // CoreGraphics rejects a header without a document. Under Rosetta its
+    // failed open crashes the process intermittently (SIGSEGV, SIGILL or SIGBUS
+    // inside CGPDFDocumentCreateWithProvider, reproduced without Rust);
+    // production first parses the bytes, so only this call is skipped there.
+    if crate::system_frameworks::translated() {
+        eprintln!(
+            "skipping CoreGraphics' rejection of a malformed PDF: it crashes intermittently under \
+             Rosetta translation (docs/validation/macos-x86_64-rosetta.md)"
+        );
+    } else {
+        assert!(PdfRasterSession::open(b"%PDF-1.7\ninvalid document").is_err());
     }
     let mut huge = one_page(b"", dictionary! {}, [0, 0, 1_000_000, 1_000_000]);
     let huge = PdfRasterSession::open(&save(&mut huge)).unwrap();

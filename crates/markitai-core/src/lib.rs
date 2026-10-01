@@ -64,6 +64,15 @@ pub fn local_ocr_available() -> bool {
     ocr::available()
 }
 
+/// Whether this process is an x86_64 build translated by Rosetta on Apple
+/// silicon, where Vision text recognition fails even though the API is present.
+pub fn rosetta_translated() -> bool {
+    #[cfg(target_os = "macos")]
+    return system_frameworks::translated();
+    #[cfg(not(target_os = "macos"))]
+    false
+}
+
 pub fn pdf_raster_available() -> bool {
     pdf_raster::available()
 }

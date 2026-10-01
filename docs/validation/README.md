@@ -14,7 +14,9 @@ Earlier checkpoints, oldest at the bottom of each series: delivery rounds
 (`pdf-quality-round41.md`, `office-quality-round42.md`, `html-quality-round43.md`,
 `html-quality-round44.md`, `ocr-quality-round45.md`, `epub-quality-round46.md`),
 and, before them, [round twenty-four](structured-media-round24.md) and
-[round twenty-three](vision-auth-cli-round23.md).
+[round twenty-three](vision-auth-cli-round23.md). Platform records: Linux
+`platform-linux-round*`, Windows type checks `windows-check-round38.md`, and the
+x86-64 macOS build under Rosetta 2 in [macos-x86_64-rosetta.md](macos-x86_64-rosetta.md).
 
 [Round twenty-two](media-llm-round22.md) retains Office/Numbers/text processing
 acceptance; [round twenty-one](service-ui-round21.md) retains actual web workspace

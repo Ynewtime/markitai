@@ -124,6 +124,7 @@
 
 ### Fixed
 
+- Explain an OCR failure under Rosetta 2 (Vision text recognition is unavailable to a translated process) and suggest the arm64 build, and show it as a `doctor` warning; the x86_64 macOS build was checked under Rosetta with 2,345 corpus outputs identical to arm64.
 - Exit 1 from `cache clear` without `--yes` when no answer can be read (a script), as the reference does, instead of reporting success; an explicit “no” still exits 0.
 - Report a model as routable in the workspace settings whenever conversion can route it (subscription runtimes, models detected from the environment), instead of saying no model is routable while conversions use one.
 - Recognize headings in Word, OpenDocument, RTF and Word 97 documents that use no heading styles, from paragraphs set larger than the body text (bold and at least 1 pt larger, or at least a third larger), short and not ending a sentence, levelled by size; documents with any styled heading are left as they are. On the textutil corpus, headings found rose from 4 to 274–279 per format with precision 0.98–1.00 against the pages' HTML headings (held-out recall 0.90–0.93; the reference's RTF reading 0.52–0.65), with missing and extra words unchanged.

@@ -84,8 +84,10 @@ universal binaries. Helper unit tests use tiny authored archives and temporary
 files; passing them does not substitute for actual installed-package acceptance.
 
 The first actual macOS arm64 execution and the separate Rosetta limitation are
-recorded in [round twenty](validation/media-cli-round20.md). No remote matrix
-run is implied by that local result.
+recorded in [round twenty](validation/media-cli-round20.md); the x86-64 macOS
+release build, its full test run under Rosetta 2 and a universal-binary size
+check are in [macOS x86-64 under Rosetta](validation/macos-x86_64-rosetta.md).
+No remote matrix run is implied by those local results.
 
 The compiled Codex capability catalog is Apache-2.0 data. `licenses/codex/`
 contains the complete original license/copyright, modification description,

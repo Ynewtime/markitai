@@ -218,6 +218,38 @@ fn summary(checks: &IndexMap<&'static str, Check>, lang: Lang) -> String {
     }
 }
 
+/// The optional local OCR check. An x86_64 build translated by Rosetta finds
+/// the Vision API, but Vision text recognition fails there on every system
+/// measured, so it is reported as a warning with the remedy.
+fn local_ocr_check(available: bool, translated: bool) -> Check {
+    let (status, message, hint) = match (available, translated) {
+        (false, _) => (
+            "missing",
+            "No native local OCR backend is available on this platform",
+            "Use a supported macOS host or configure a vision model for supported VLM workflows",
+        ),
+        (true, true) => (
+            "warning",
+            "macOS Vision API is present, but this x86_64 build runs under Rosetta on Apple silicon, where Vision text recognition fails",
+            "Use the native arm64 build of markitai for local OCR",
+        ),
+        (true, false) => (
+            "ok",
+            "macOS Vision API is available; this check does not warm up OCR or establish recognition accuracy",
+            "",
+        ),
+    };
+    let mut check = Check::new(
+        "Local OCR",
+        "Local image and rendered-page text recognition",
+        status,
+        message,
+        hint,
+    );
+    check.optional = Some(true);
+    check
+}
+
 fn checks(
     cfg: &Value,
     path: Option<&Path>,
@@ -281,24 +313,13 @@ fn checks(
             .push_str("; native PDF rendering is unavailable on this platform");
     }
     result.insert("libreoffice", office);
-    let ocr = markitai_core::local_ocr_available();
-    let mut check = Check::new(
-        "Local OCR",
-        "Local image and rendered-page text recognition",
-        if ocr { "ok" } else { "missing" },
-        if ocr {
-            "macOS Vision API is available; this check does not warm up OCR or establish recognition accuracy"
-        } else {
-            "No native local OCR backend is available on this platform"
-        },
-        if ocr {
-            ""
-        } else {
-            "Use a supported macOS host or configure a vision model for supported VLM workflows"
-        },
+    result.insert(
+        "rapidocr",
+        local_ocr_check(
+            markitai_core::local_ocr_available(),
+            markitai_core::rosetta_translated(),
+        ),
     );
-    check.optional = Some(true);
-    result.insert("rapidocr", check);
     let mut legacy = Check::new(
         "Native Office readers",
         "Legacy Office text extraction (.doc/.ppt)",
@@ -676,6 +697,21 @@ mod tests {
             ]
         );
     }
+    #[test]
+    fn local_ocr_under_rosetta_is_an_optional_warning_with_the_remedy() {
+        let native = local_ocr_check(true, false);
+        assert_eq!((native.status, native.install_hint.as_str()), ("ok", ""));
+        let translated = local_ocr_check(true, true);
+        assert_eq!(translated.status, "warning");
+        assert!(translated.message.contains("Rosetta"));
+        assert!(translated.install_hint.contains("native arm64 build"));
+        assert_eq!(local_ocr_check(false, true).status, "missing");
+        for check in [native, translated, local_ocr_check(false, false)] {
+            assert_eq!(check.optional, Some(true));
+            assert!(!check.failed());
+        }
+    }
+
     fn checks_of(states: &[(&'static str, &'static str, bool)]) -> IndexMap<&'static str, Check> {
         states
             .iter()

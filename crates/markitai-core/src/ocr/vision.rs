@@ -1,5 +1,6 @@
 use super::{
-    Line, MAX_LINES, MAX_TEXT, Result, failure, pixel_bounds, pixels::Prepared, supported_language,
+    Line, MAX_LINES, MAX_TEXT, Result, failure, pixel_bounds, pixels::Prepared,
+    recognition_failure, supported_language,
 };
 use crate::system_frameworks::{self, Framework};
 use objc2::{AnyThread, rc::autoreleasepool};
@@ -38,10 +39,11 @@ pub(super) fn recognize(image: &Prepared, requested: &str) -> Result<Vec<Line>> 
         );
         let requests = NSArray::<VNRequest>::from_slice(&[&request]);
         handler.performRequests_error(&requests).map_err(|error| {
-            failure(&format!(
-                "Vision text recognition failed: {}",
-                error.localizedDescription()
-            ))
+            // objc2 substitutes an error in this domain when the method
+            // returns failure without setting one.
+            let reported = (error.domain().to_string() != "__objc2.missingError")
+                .then(|| error.localizedDescription().to_string());
+            recognition_failure(reported.as_deref(), system_frameworks::translated())
         })?;
         let observations = request
             .results()

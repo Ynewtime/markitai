@@ -4,7 +4,10 @@ On macOS 11 or later, local OCR uses the operating system's Vision framework
 through Rust bindings. It runs in the current process without Python, Node,
 Tesseract, a browser, downloaded OCR weights, provider credentials or a remote
 recognition service. Other platforms currently return an explicit unsupported
-error for this local path. This page covers image inputs, including every page
+error for this local path. An x86-64 build running under Rosetta 2 on Apple
+silicon fails recognition with an error that names Rosetta (Vision reports
+failure there without an error of its own); use the arm64 build ([details](validation/macos-x86_64-rosetta.md)).
+This page covers image inputs, including every page
 of a multi-page TIFF and HEIF/AVIF images; scanned PDF pages use the same
 recognizer as described in [PDF page OCR](pdf-ocr.md), and Office page images in
 [Office rendering](office-rendering.md).

@@ -157,6 +157,28 @@ fn supported_language(requested: &str, supported: &[String]) -> Result<String> {
     ))
 }
 
+/// Names the cause when Vision fails in a process translated by Rosetta.
+#[cfg(any(target_os = "macos", test))]
+const ROSETTA: &str = "under Rosetta translation";
+
+/// The error for a failed Vision request. `reported` is the request's error
+/// description, or `None` when Vision returned failure without one. Under
+/// Rosetta (an x86_64 build on Apple silicon) every measured system fails the
+/// request without an error, so the message names that cause and the remedy;
+/// it does not claim anything about physical Intel Macs.
+#[cfg(any(target_os = "macos", test))]
+fn recognition_failure(reported: Option<&str>, translated: bool) -> Error {
+    let detail = reported.unwrap_or("Vision reported failure without an error");
+    if translated {
+        failure(&format!(
+            "Vision text recognition failed {ROSETTA} ({detail}); this x86_64 build is running on \
+             Apple silicon, so use the native arm64 build for local OCR"
+        ))
+    } else {
+        failure(&format!("Vision text recognition failed: {detail}"))
+    }
+}
+
 #[cfg(any(target_os = "macos", test))]
 fn pixel_bounds(rectangle: [f64; 4], width: u32, height: u32) -> Result<[f32; 4]> {
     let [x, y, w, h] = rectangle;
@@ -386,9 +408,28 @@ fn rows(mut lines: Vec<Line>, text: &mut String, boxes: &mut Vec<[f32; 4]>, conf
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn vision_failures_name_rosetta_only_in_a_translated_process() {
+        let native = recognition_failure(None, false).to_string();
+        assert!(native.contains("failed: Vision reported failure without an error"));
+        assert!(!native.contains("Rosetta") && !native.contains("arm64"));
+        let reported = recognition_failure(Some("The request was cancelled."), false).to_string();
+        assert!(
+            reported.ends_with("failed: The request was cancelled."),
+            "{reported}"
+        );
+        let translated = recognition_failure(None, true);
+        assert!(matches!(translated, Error::Conversion(_)));
+        let translated = translated.to_string();
+        assert!(translated.starts_with("Local OCR: "), "{translated}");
+        for part in [ROSETTA, "without an error", "x86_64", "native arm64 build"] {
+            assert!(translated.contains(part), "{part}: {translated}");
+        }
+    }
 
     #[test]
     fn language_aliases_preserve_script_and_reject_unavailable_languages() {
@@ -548,11 +589,44 @@ mod tests {
         assert!(text.starts_with(&prose("Right", 0)), "{text}");
     }
 
+    /// True, after saying why, when `result` is Vision's explicit failure in a
+    /// process translated by Rosetta; the caller then skips its assertions
+    /// about recognized text. Never true in a native process, and any other
+    /// failure is left for the caller to report.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn vision_unavailable_under_rosetta<T>(result: &Result<T>) -> bool {
+        let unavailable = crate::system_frameworks::translated()
+            && matches!(result, Err(Error::Conversion(message)) if message.contains(ROSETTA));
+        if let (true, Err(error)) = (unavailable, result) {
+            eprintln!("skipping recognized-text assertions: {error}");
+        }
+        unavailable
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn vision_recognizes_authored_pixels_and_reports_a_real_blank_image() {
         let config = json!({"ocr":{"lang":"en"}});
-        let result = recognize(include_bytes!("ocr/fixtures/english.png"), &config).unwrap();
+        let result = recognize(include_bytes!("ocr/fixtures/english.png"), &config);
+        let rejected = || {
+            assert!(matches!(
+                recognize(b"not an image", &config),
+                Err(Error::Conversion(_))
+            ));
+            assert!(matches!(
+                recognize(
+                    include_bytes!("ocr/fixtures/english.png"),
+                    &json!({"ocr":{"lang":"not-a-language"}})
+                ),
+                Err(Error::Unsupported(_))
+            ));
+        };
+        if vision_unavailable_under_rosetta(&result) {
+            // Inputs rejected before the recognition request keep their errors.
+            rejected();
+            return;
+        }
+        let result = result.unwrap();
         let expected = include_str!("ocr/fixtures/english.txt");
         assert_eq!(
             result.text.split_whitespace().collect::<Vec<_>>(),
@@ -573,16 +647,6 @@ mod tests {
         let result = recognize(&blank, &config).unwrap();
         assert!(result.text.is_empty() && result.boxes.is_empty());
         assert_eq!(result.confidence, 0.0);
-        assert!(matches!(
-            recognize(b"not an image", &config),
-            Err(Error::Conversion(_))
-        ));
-        assert!(matches!(
-            recognize(
-                include_bytes!("ocr/fixtures/english.png"),
-                &json!({"ocr":{"lang":"not-a-language"}})
-            ),
-            Err(Error::Unsupported(_))
-        ));
+        rejected();
     }
 }

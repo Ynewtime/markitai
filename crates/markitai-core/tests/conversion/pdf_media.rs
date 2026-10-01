@@ -40,7 +40,11 @@ fn pdf_local_ocr_preserves_native_page_and_records_blank_outcome() {
     let base = run(&path, cfg(), None).unwrap();
     let mut config = cfg();
     config["ocr"] = json!({"enabled":true});
-    let result = run(&path, config.clone(), None).unwrap();
+    let result = run(&path, config.clone(), None);
+    if super::vision_unavailable_under_rosetta(&result) {
+        return;
+    }
+    let result = result.unwrap();
     let native = base
         .markdown
         .split("<!-- Page number: 2 -->")

@@ -16,8 +16,12 @@ cargo build --release -p markitai-cli
 ```
 
 This produces `target/release/markitai` and the identical `target/release/mkai`
-(about 23 MB each on macOS arm64; the first release build takes several
-minutes). Put the executable on your `PATH`, for example:
+(about 22 MB each on macOS arm64 and 25 MB on x86-64 macOS; the first release
+build takes several minutes). On Apple silicon, build for an Intel Mac with
+`rustup target add x86_64-apple-darwin` and
+`cargo build --release --target x86_64-apple-darwin -p markitai-cli`; the
+executable lands in `target/x86_64-apple-darwin/release/`. Put the executable
+on your `PATH`, for example:
 
 ```sh
 mkdir -p ~/.local/bin
@@ -35,16 +39,18 @@ bindings see [bindings](bindings.md#installation).
 
 ### Platform support
 
-| Capability | macOS arm64 | Linux x86-64 | Windows |
-|---|---|---|---|
-| Document, web-page, e-mail and data conversion; `serve`; `mcp`; bindings | Tested | Tested (Ubuntu under OrbStack emulation) | Type-checks only; never linked or run |
-| Local OCR, PDF page images, HEIF/AVIF images | Built in (system frameworks) | Explicit "unsupported" error | Unsupported |
-| JavaScript pages and web screenshots (`-s playwright`, `--screenshot`) | Needs Chrome/Chromium | Needs Chrome/Chromium (not exercised in the Linux rounds) | Not tested |
-| Office page screenshots | Needs LibreOffice | Not available | Not available |
-| Batch `--resume`, subscription models | Supported | Supported | Not available |
+| Capability | macOS arm64 | macOS x86-64 (Intel) | Linux x86-64 | Windows |
+|---|---|---|---|---|
+| Document, web-page, e-mail and data conversion; `serve`; `mcp`; bindings | Tested | CLI and Rust tests pass under Rosetta 2 only; bindings not built | Tested (Ubuntu under OrbStack emulation) | Type-checks only; never linked or run |
+| Local OCR, PDF page images, HEIF/AVIF images | Built in (system frameworks) | Built in, not tested on Intel hardware; under Rosetta 2 OCR fails with an explicit error | Explicit "unsupported" error | Unsupported |
+| JavaScript pages and web screenshots (`-s playwright`, `--screenshot`) | Needs Chrome/Chromium | Not tested | Needs Chrome/Chromium (not exercised in the Linux rounds) | Not tested |
+| Office page screenshots | Needs LibreOffice | Not tested | Not available | Not available |
+| Batch `--resume`, subscription models | Supported | Supported (tests under Rosetta 2) | Supported | Not available |
 
-Intel Macs and physical Intel/AMD Linux machines have not been tested. Run
-`markitai doctor` to see which optional pieces are present on your machine.
+Physical Intel Macs and physical Intel/AMD Linux machines have not been tested.
+On Apple silicon, use the arm64 build: an x86-64 build running under Rosetta 2
+cannot use local OCR, and `markitai doctor` says so ([details](validation/macos-x86_64-rosetta.md)).
+Run `markitai doctor` to see which optional pieces are present on your machine.
 
 ## 2. Try it without touching your real settings (optional)
 
