@@ -67,6 +67,25 @@ manuscript) and marks nothing. A code block whose lines carry their own numbers,
 as a column before them or alternating with them (a web page's numbered listing
 saved as a document), loses the numbers.
 
+OpenDocument text and RTF follow the same conventions. Raised and lowered
+text (`style:text-position`; RTF `\super` and `\sub`) is written in Unicode
+super/subscript forms where every character has one. ODF text a style hides
+(`text:display="none"`) is left out, the base text of a phonetic guide is kept
+without the guide, and comments (`office:annotation`) are left out with a
+warning naming their number, as for Word. A chart embedded in an ODT or ODP
+reads as its title and the data table the chart document stores, first row as
+the header, instead of its replacement picture. In RTF a charset-0 font's bytes
+are Windows-1252 whatever `\ansicpg` declares (TextEdit on a Chinese system
+writes `\ansicpg936` over 1252 text), a hyperlink spanning paragraphs links
+each paragraph's part, lists inside table cells stay lists, and a nested
+table TextEdit closes with `\nestcell` directly after `\nestrow` (no `\itap`)
+is read at the right depth; text after a nested table in a cell stays after
+it. Text that goes through the shared document renderer (Word, OpenDocument,
+RTF, EPUB, legacy PowerPoint and spreadsheets) escapes `<` before a letter,
+`/`, `!` or `?` and an `&` that starts an entity, so a Markdown renderer shows
+`std::vector<int>` or a literal `&copy;` instead of reading them as HTML; PPTX
+text frames keep their plain-text contract.
+
 OOXML presentations have a separate reader because the generic document model
 flattens slide boundaries. The package's presentation relationships and
 `sldIdLst` determine slide order, including empty slides; filename sorting and
@@ -86,6 +105,10 @@ at their shape position, keep normalized description text, and return their
 original embedded bytes; shared image processing owns encoding. Repeated
 references to the same package image share one asset. Cached chart category and
 series values become a table; linked workbooks are never opened or recalculated.
+Cached numbers read through their cache's (or point's) format code with the
+spreadsheet readers' engine, so date categories are ISO dates rather than
+serial numbers (`c:date1904` honoured) and `0%` values are percentages; text
+points and General numbers are unchanged.
 Speaker notes follow their slide under `### Notes:`. Missing or malformed slides
 retain their numbered marker with a warning, while readable slides survive; a
 package with no readable slide fails. Unknown shapes retain available DrawingML
@@ -97,7 +120,9 @@ The vendored anydoc records where each slide of an ODP or a legacy PPT begins
 `<!-- Slide number: N -->` line before each slide, blank slides included, with a
 blank line between slides. This differs from the reference, whose legacy PPT
 output has no slide markers and which does not read ODP. In these formats a
-slide's speaker notes keep their place after it as a quote. A legacy PPT whose persist directory is
+slide's speaker notes keep their place after it as a quote. An ODP table styled
+with a header row (`table:use-first-row-styles`, Impress's default) takes its
+first row as the header, as PPTX and PPT tables do. A legacy PPT whose persist directory is
 unusable is read in raw stream order, where slides cannot be told apart, and
 carries no markers.
 

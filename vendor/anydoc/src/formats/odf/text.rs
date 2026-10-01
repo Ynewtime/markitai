@@ -1,6 +1,7 @@
 //! Block and inline walking for ODF text content.
 
 use crate::error::ConvertError;
+use crate::formats::docx::scripts::Script;
 use crate::formats::odf::styles::{LIST_LEVELS, OdfStyles, parse_start};
 use crate::formats::odf::table::parse_table;
 use crate::model::{
@@ -290,6 +291,26 @@ fn heading_label(elem: &Element, level: u8, ctx: &Ctx) -> Option<String> {
     Some(format!("{} ", label.unwrap_or_else(|| lvl.marker.label(value))))
 }
 
+/// markitai: how a run's text shows beyond emphasis: raised or lowered
+/// (written in Unicode super/subscript forms where every character has
+/// one), or hidden (left out).
+#[derive(Clone, Copy, Default)]
+struct RunMarks {
+    script: Option<Script>,
+    hidden: bool,
+}
+
+impl RunMarks {
+    /// The marks of text styled `name` in `family`, over the enclosing ones:
+    /// the nearest specification in the style's chain wins.
+    fn under(self, ctx: &Ctx, family: &str, name: &str) -> RunMarks {
+        RunMarks {
+            script: ctx.styles.script(family, name).unwrap_or(self.script),
+            hidden: ctx.styles.hidden(family, name).unwrap_or(self.hidden),
+        }
+    }
+}
+
 /// Inline content of a paragraph plus block attachments (text boxes) that
 /// were anchored in it.
 fn parse_inline_content(
@@ -297,9 +318,13 @@ fn parse_inline_content(
     ctx: &Ctx,
 ) -> Result<(Vec<Inline>, Vec<Block>), ConvertError> {
     let base = paragraph_base(elem, ctx)?;
+    let marks = match elem.attr(ns::TEXT, "style-name") {
+        Some(name) => RunMarks::default().under(ctx, "paragraph", name),
+        None => RunMarks::default(),
+    };
     let mut out = Vec::new();
     let mut boxes = Vec::new();
-    walk_inlines(elem, ctx, base, &mut out, &mut boxes)?;
+    walk_inlines(elem, ctx, base, marks, &mut out, &mut boxes)?;
     Ok((out, boxes))
 }
 
@@ -313,6 +338,7 @@ fn walk_inlines(
     elem: &Element,
     ctx: &Ctx,
     delta: StyleDelta,
+    marks: RunMarks,
     out: &mut Vec<Inline>,
     boxes: &mut Vec<Block>,
 ) -> Result<(), ConvertError> {
@@ -320,27 +346,52 @@ fn walk_inlines(
     for node in &elem.children {
         match node {
             Node::Text(t) => {
+                // markitai: hidden text shows nothing.
+                if marks.hidden {
+                    continue;
+                }
                 let text = collapse_ws(&clean_text(t));
+                // markitai: raised or lowered text ("x₁", "library¹").
+                let text = marks.script.and_then(|script| script.convert(&text)).unwrap_or(text);
                 if !text.is_empty() {
                     out.push(Inline::Text { text, style });
                 }
             }
             Node::Elem(child) => {
+                // markitai: a comment (`office:annotation`, its author, date
+                // and text) is not document text; read as plain children it
+                // ran into the sentence it annotates. Comments stay out, as
+                // for Word documents.
+                if child.is(ns::OFFICE, "annotation") || child.is(ns::OFFICE, "annotation-end") {
+                    continue;
+                }
                 let in_text = child.ns.as_deref().is_some_and(|n| n == ns::TEXT);
                 if in_text {
                     match child.local.as_str() {
                         "span" => {
-                            let merged = match child.attr(ns::TEXT, "style-name") {
-                                Some(name) => delta.merge(ctx.styles.delta("text", name)?),
-                                None => delta,
+                            let (merged, marks) = match child.attr(ns::TEXT, "style-name") {
+                                Some(name) => (
+                                    delta.merge(ctx.styles.delta("text", name)?),
+                                    marks.under(ctx, "text", name),
+                                ),
+                                None => (delta, marks),
                             };
-                            walk_inlines(child, ctx, merged, out, boxes)?;
+                            walk_inlines(child, ctx, merged, marks, out, boxes)?;
+                            continue;
+                        }
+                        // markitai: the base text of a phonetic guide is the
+                        // text; the guide (`text:ruby-text`, furigana or
+                        // pinyin) only annotates it and ran into the words.
+                        "ruby" => {
+                            if let Some(base) = child.find(ns::TEXT, "ruby-base") {
+                                walk_inlines(base, ctx, delta, marks, out, boxes)?;
+                            }
                             continue;
                         }
                         "a" => {
                             let href = child.attr(ns::XLINK, "href").unwrap_or("");
                             let mut content = Vec::new();
-                            walk_inlines(child, ctx, delta, &mut content, boxes)?;
+                            walk_inlines(child, ctx, delta, marks, &mut content, boxes)?;
                             match classify_href(href) {
                                 Some(target) if !inlines_are_empty(&content) => {
                                     out.push(Inline::Link { content, target })
@@ -404,7 +455,7 @@ fn walk_inlines(
                     walk_frame(child, ctx, out, boxes)?;
                     continue;
                 }
-                walk_inlines(child, ctx, delta, out, boxes)?;
+                walk_inlines(child, ctx, delta, marks, out, boxes)?;
             }
         }
     }
@@ -427,6 +478,12 @@ pub(super) fn walk_frame(
         && let Some(tex) = formula_tex(ctx, object)?
     {
         out.push(Inline::Math(tex));
+        return Ok(());
+    }
+    if let Some(object) = frame.find(ns::DRAW, "object")
+        && let Some(chart) = chart_blocks(ctx, object)?
+    {
+        boxes.extend(chart);
         return Ok(());
     }
     let alt = frame
@@ -475,6 +532,57 @@ pub(super) fn formula_tex(ctx: &Ctx, object: &Element) -> Result<Option<String>,
         return Ok(None);
     };
     Ok(Some(mathml_to_tex(math)).filter(|t| !t.is_empty()))
+}
+
+/// markitai: the data of a `draw:object` holding a chart. A chart document
+/// keeps the values it plots in a table of its own (`chart:chart`'s
+/// `table:table`: series names across the first row, categories down the
+/// first column), which is returned after the chart's title, the first row
+/// as the header, in place of the replacement picture. Upstream read only
+/// the picture, usually a metafile with no text. `None` for any other
+/// object; an unreadable object degrades to `None` like a formula.
+pub(super) fn chart_blocks(
+    ctx: &Ctx,
+    object: &Element,
+) -> Result<Option<Vec<Block>>, ConvertError> {
+    let href = object.attr(ns::XLINK, "href").unwrap_or("");
+    if href.is_empty() || crate::shared::uri::is_absolute_uri(href) {
+        return Ok(None);
+    }
+    let Ok(target) = crate::package::path::resolve("content.xml", &format!("{href}/content.xml"))
+    else {
+        return Ok(None);
+    };
+    let Some(tree) = ctx.pkg.borrow_mut().optional_xml_part(&target.path)? else {
+        return Ok(None);
+    };
+    let Some(chart) = tree.first_descendant(ns::ODF_CHART, "chart") else {
+        return Ok(None);
+    };
+    let mut blocks = Vec::new();
+    if let Some(title) = chart.find(ns::ODF_CHART, "title") {
+        let text = title
+            .find_all(ns::TEXT, "p")
+            .map(|p| collapse_ws(&clean_text(&p.text())).trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !text.is_empty() {
+            blocks.push(Block::Paragraph(vec![Inline::Text { text, style: Style::PLAIN }]));
+        }
+    }
+    if let Some(table) = chart.find(ns::TABLE, "table") {
+        for block in parse_table(table, ctx)? {
+            match block {
+                Block::Table(mut table) => {
+                    table.header_rows = table.header_rows.max(1).min(table.grid.len());
+                    blocks.push(Block::Table(table));
+                }
+                other => blocks.push(other),
+            }
+        }
+    }
+    Ok(Some(blocks))
 }
 
 /// Failures degrade (log + `None`) per the unified policy; resource-limit

@@ -610,6 +610,9 @@ impl Reader<'_> {
         let tree = self.package.tree(&path)?;
         let mut series = Vec::new();
         tree.collect(Ns::Chart, "ser", &mut series);
+        let date1904 = tree
+            .descendant(Ns::Chart, "date1904")
+            .is_some_and(|node| matches!(node.attr("val"), Some("1" | "true") | None));
         let mut rows = Vec::new();
         for (index, series) in series.iter().enumerate() {
             let name = series
@@ -621,11 +624,13 @@ impl Reader<'_> {
                 series
                     .child(Ns::Chart, "val")
                     .or_else(|| series.child(Ns::Chart, "yVal")),
+                date1904,
             )?;
             let categories = cached_points(
                 series
                     .child(Ns::Chart, "cat")
                     .or_else(|| series.child(Ns::Chart, "xVal")),
+                date1904,
             )?;
             if rows.is_empty() {
                 rows.push(vec!["Category".into()]);
@@ -788,11 +793,23 @@ impl Reader<'_> {
     }
 }
 
-fn cached_points(node: Option<&Node>) -> Result<BTreeMap<usize, String>> {
+/// A series' cached points by index. Numbers read as the chart shows them,
+/// through their cache's format code (or a point's own): a date category is
+/// a date rather than its serial number, and `0%` a percentage. Text points
+/// and numbers without a code stay as cached.
+fn cached_points(node: Option<&Node>, date1904: bool) -> Result<BTreeMap<usize, String>> {
     let mut points = Vec::new();
+    let mut numbers = None;
     if let Some(node) = node {
+        numbers = node
+            .descendant(Ns::Chart, "numCache")
+            .or_else(|| node.descendant(Ns::Chart, "numLit"));
         node.collect(Ns::Chart, "pt", &mut points);
     }
+    let format = numbers
+        .and_then(|cache| cache.child(Ns::Chart, "formatCode"))
+        .map(|code| code.text.trim())
+        .filter(|code| !code.is_empty());
     let mut result = BTreeMap::new();
     for point in points {
         let index: usize = point.attr("idx").unwrap_or("0").parse().map_err(error)?;
@@ -800,7 +817,14 @@ fn cached_points(node: Option<&Node>) -> Result<BTreeMap<usize, String>> {
             return Err(error("chart point index exceeds limit"));
         }
         if let Some(value) = point.child(Ns::Chart, "v") {
-            result.insert(index, value.text.clone());
+            let code = numbers.and(point.attr("formatCode").or(format));
+            let text = match (code, value.text.trim().parse::<f64>()) {
+                (Some(code), Ok(number)) if number.is_finite() => {
+                    anydoc::format_number(code, number, date1904)
+                }
+                _ => value.text.clone(),
+            };
+            result.insert(index, text);
         }
     }
     Ok(result)
@@ -1380,6 +1404,55 @@ mod tests {
                 .iter()
                 .any(|warning| warning.contains("linked workbook"))
         );
+    }
+
+    #[test]
+    fn cached_chart_numbers_read_in_their_format_codes() {
+        // Date categories are cached as serial numbers and a share as a
+        // fraction; the chart shows a date and a percentage. Text points and
+        // General numbers are unchanged, and a point's own code wins.
+        let frame = r#"<p:graphicFrame><a:graphic><a:graphicData><c:chart r:id="rC"/></a:graphicData></a:graphic></p:graphicFrame>"#;
+        let series = |name: &str, cat: &str, val: &str| {
+            format!(
+                r#"<c:ser><c:tx><c:v>{name}</c:v></c:tx><c:cat>{cat}</c:cat><c:val>{val}</c:val></c:ser>"#
+            )
+        };
+        let dates = r#"<c:numRef><c:numCache><c:formatCode>m/d/yyyy</c:formatCode><c:pt idx="0"><c:v>45658.0</c:v></c:pt><c:pt idx="1"><c:v>45689</c:v></c:pt></c:numCache></c:numRef>"#;
+        let users = r#"<c:numRef><c:numCache><c:formatCode>General</c:formatCode><c:pt idx="0"><c:v>100.0</c:v></c:pt><c:pt idx="1"><c:v>0.30000000000000004</c:v></c:pt></c:numCache></c:numRef>"#;
+        let names = r#"<c:strRef><c:strCache><c:pt idx="0"><c:v>0.5</c:v></c:pt><c:pt idx="1"><c:v>Pears</c:v></c:pt></c:strCache></c:strRef>"#;
+        let share = r#"<c:numLit><c:formatCode>0%</c:formatCode><c:pt idx="0"><c:v>0.65</c:v></c:pt><c:pt idx="1" formatCode="0.0%"><c:v>0.35</c:v></c:pt></c:numLit>"#;
+        let chart = |date1904: &str, body: String| {
+            format!(
+                r#"<c:chartSpace xmlns:c="{C}" xmlns:a="{A}" xmlns:r="{R}">{date1904}<c:chart><c:plotArea><c:lineChart>{body}</c:lineChart></c:plotArea></c:chart></c:chartSpace>"#
+            )
+        };
+        let convert = |chart: String| {
+            let bytes = package(
+                &[("rS", "slides/one.xml")],
+                vec![
+                    ("ppt/slides/one.xml", slide(frame).into_bytes()),
+                    (
+                        "ppt/slides/_rels/one.xml.rels",
+                        relationships(&[("rC", "chart", "../charts/one.xml")]).into_bytes(),
+                    ),
+                    ("ppt/charts/one.xml", chart.into_bytes()),
+                ],
+            );
+            extract_presentation(&bytes).unwrap().markdown
+        };
+        let markdown = convert(chart(
+            r#"<c:date1904 val="0"/>"#,
+            series("Users", dates, users) + &series("Share", names, share),
+        ));
+        assert!(
+            markdown.contains(
+                "| Category | Users | Share |\n| --- | --- | --- |\n| 2025-01-01 | 100 | 65% |\n| 2025-02-01 | 0.3 | 35.0% |"
+            ),
+            "{markdown}"
+        );
+        // The 1904 date system counts from 1904-01-01, 1,462 days later.
+        let markdown = convert(chart(r#"<c:date1904/>"#, series("Users", dates, users)));
+        assert!(markdown.contains("| 2029-01-02 | 100 |"), "{markdown}");
     }
 
     #[test]

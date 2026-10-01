@@ -123,11 +123,28 @@ fn walk_shapes(
                     if content.is(ns::DRAW, "text-box") {
                         inner.extend(parse_container(content, ctx)?);
                     } else if content.is(ns::TABLE, "table") {
-                        inner.extend(table::parse_table(content, ctx)?);
+                        let mut tables = table::parse_table(content, ctx)?;
+                        // markitai: a slide table styled with a header row
+                        // (Impress's default) has its first row as the
+                        // header, as PPTX and PPT tables do.
+                        if content.attr(ns::TABLE, "use-first-row-styles") == Some("true") {
+                            for block in &mut tables {
+                                if let Block::Table(table) = block {
+                                    table.header_rows = table.header_rows.max(1);
+                                }
+                            }
+                        }
+                        inner.extend(tables);
                     } else if content.is(ns::DRAW, "object")
                         && let Some(tex) = text::formula_tex(ctx, content)?
                     {
                         inner.push(Block::Math(tex));
+                        break;
+                    } else if content.is(ns::DRAW, "object")
+                        && let Some(chart) = text::chart_blocks(ctx, content)?
+                    {
+                        // markitai: a chart's data, not its picture.
+                        inner.extend(chart);
                         break;
                     } else if content.is(ns::DRAW, "image") {
                         let mut out = Vec::new();
@@ -375,5 +392,144 @@ mod tests {
     #[test]
     fn only_presentations_record_slide_boundaries() {
         assert!(parse(&odt(b"<manifest:manifest/>")).unwrap().slide_starts.is_empty());
+    }
+
+    fn text_doc(styles: &str, body: &str) -> String {
+        format!(
+            r#"<office:document-content
+            xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+            xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"
+            xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+            xmlns:dc="http://purl.org/dc/elements/1.1/">
+            <office:automatic-styles>{styles}</office:automatic-styles>
+            <office:body><office:text>{body}</office:text></office:body>
+            </office:document-content>"#
+        )
+    }
+
+    fn markdown(content: &str) -> String {
+        crate::render::markdown::document_to_markdown(&parse(&odt_with_content(content)).unwrap())
+    }
+
+    // markitai: `style:text-position`.
+    #[test]
+    fn raised_and_lowered_text_uses_unicode_forms_where_it_has_them() {
+        let styles = r#"
+            <style:style style:name="Sup" style:family="text">
+              <style:text-properties style:text-position="super 58%"/></style:style>
+            <style:style style:name="Low" style:family="text">
+              <style:text-properties style:text-position="-33% 100%"/></style:style>
+            <style:style style:name="Note" style:family="text" style:parent-style-name="Sup"/>
+            <style:style style:name="Flat" style:family="text">
+              <style:text-properties style:text-position="0% 100%"/></style:style>"#;
+        let body = r#"<text:p>library<text:span text:style-name="Note">1</text:span>
+            H<text:span text:style-name="Low">2</text:span>O
+            1<text:span text:style-name="Sup">st</text:span>
+            <text:span text:style-name="Sup">10<text:span text:style-name="Flat">2</text:span></text:span></text:p>"#;
+        assert_eq!(markdown(&text_doc(styles, body)), "library¹ H₂O 1st ¹⁰2\n");
+    }
+
+    // markitai: comments, phonetic guides and hidden text.
+    #[test]
+    fn comments_ruby_guides_and_hidden_text_stay_out_of_the_text() {
+        let styles = r#"
+            <style:style style:name="Hidden" style:family="text">
+              <style:text-properties text:display="none"/></style:style>
+            <style:style style:name="Shown" style:family="text" style:parent-style-name="Hidden">
+              <style:text-properties text:display="true"/></style:style>"#;
+        let body = r#"<text:p>Before<office:annotation><dc:creator>Ann Author</dc:creator>
+            <dc:date>2026-01-01T00:00:00</dc:date><text:p>Check this claim</text:p>
+            </office:annotation> after<office:annotation-end/>.</text:p>
+            <text:p><text:ruby><text:ruby-base>漢字</text:ruby-base><text:ruby-text>かんじ</text:ruby-text></text:ruby>です</text:p>
+            <text:p>Shown<text:span text:style-name="Hidden"> secret<text:span text:style-name="Shown"> visible</text:span></text:span>.</text:p>"#;
+        assert_eq!(
+            markdown(&text_doc(styles, body)),
+            "Before after.\n\n漢字です\n\nShown visible.\n"
+        );
+    }
+
+    const CHART: &str = r#"<office:document-content
+        xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+        xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+        xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
+        xmlns:chart="urn:oasis:names:tc:opendocument:xmlns:chart:1.0">
+        <office:body><office:chart><chart:chart chart:class="chart:bar">
+        <chart:title><text:p>Sales</text:p></chart:title>
+        <table:table table:name="local-table">
+          <table:table-header-rows><table:table-row>
+            <table:table-cell><text:p/></table:table-cell>
+            <table:table-cell office:value-type="string"><text:p>2024</text:p></table:table-cell>
+          </table:table-row></table:table-header-rows>
+          <table:table-rows><table:table-row>
+            <table:table-cell office:value-type="string"><text:p>East</text:p></table:table-cell>
+            <table:table-cell office:value-type="float" office:value="19.2"><text:p>19.2</text:p></table:table-cell>
+          </table:table-row></table:table-rows>
+        </table:table></chart:chart></office:chart></office:body></office:document-content>"#;
+
+    fn package(parts: &[(&str, &str)]) -> Vec<u8> {
+        let mut w = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for (name, content) in parts {
+            w.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
+            w.write_all(content.as_bytes()).unwrap();
+        }
+        w.finish().unwrap().into_inner()
+    }
+
+    // markitai: chart objects and slide table headers.
+    #[test]
+    fn a_chart_object_reads_as_its_data_table() {
+        let frame = r#"<draw:frame><draw:object xlink:href="./Object 1"/>
+            <draw:image xlink:href="./ObjectReplacements/Object 1"/></draw:frame>"#;
+        let namespaces = r#"xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+            xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+            xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
+            xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
+            xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"
+            xmlns:xlink="http://www.w3.org/1999/xlink""#;
+        let expected = "Sales\n\n|  | 2024 |\n| --- | --- |\n| East | 19.2 |\n";
+        // In a text document the chart's data follows its paragraph.
+        let odt = format!(
+            r#"<office:document-content {namespaces}><office:body><office:text>
+            <text:p>See the chart.{frame}</text:p></office:text></office:body></office:document-content>"#
+        );
+        let doc =
+            parse(&package(&[("content.xml", &odt), ("Object 1/content.xml", CHART)])).unwrap();
+        assert!(doc.assets.is_empty(), "the replacement picture is not read: {:?}", doc.assets);
+        let md = crate::render::markdown::document_to_markdown(&doc);
+        assert_eq!(md, format!("See the chart.\n\n{expected}"));
+        // On a slide, beside a table styled with a header row: its first
+        // row heads it even where its values alone would not say so.
+        let slide_table = |styled: &str| {
+            format!(
+                r#"<office:document-content {namespaces}><office:body><office:presentation>
+                <draw:page>{frame}<draw:frame><table:table {styled}>
+                  <table:table-row><table:table-cell><text:p>2024</text:p></table:table-cell>
+                    <table:table-cell><text:p>2025</text:p></table:table-cell></table:table-row>
+                  <table:table-row><table:table-cell><text:p>10</text:p></table:table-cell>
+                    <table:table-cell><text:p>12</text:p></table:table-cell></table:table-row>
+                </table:table></draw:frame></draw:page>
+                </office:presentation></office:body></office:document-content>"#
+            )
+        };
+        let slide = |styled: &str| {
+            let odp = slide_table(styled);
+            let parts = [("content.xml", odp.as_str()), ("Object 1/content.xml", CHART)];
+            crate::render::markdown::document_to_markdown(&parse(&package(&parts)).unwrap())
+        };
+        assert_eq!(
+            slide(r#"table:use-first-row-styles="true""#),
+            format!("{expected}\n| 2024 | 2025 |\n| --- | --- |\n| 10 | 12 |\n")
+        );
+        assert_eq!(
+            slide(""),
+            format!("{expected}\n|  |  |\n| --- | --- |\n| 2024 | 2025 |\n| 10 | 12 |\n")
+        );
+        // Any other object keeps its replacement picture path (none here).
+        let other = r#"<office:document-content
+            xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0">
+            <office:body><office:drawing/></office:body></office:document-content>"#;
+        let doc =
+            parse(&package(&[("content.xml", &odt), ("Object 1/content.xml", other)])).unwrap();
+        assert_eq!(crate::render::markdown::document_to_markdown(&doc), "See the chart.\n");
     }
 }

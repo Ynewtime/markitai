@@ -40,6 +40,8 @@ pub mod ns {
     pub const XML: &str = "http://www.w3.org/XML/1998/namespace";
     pub const SVG_COMPAT: &str = "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0";
     pub const FORM: &str = "urn:oasis:names:tc:opendocument:xmlns:form:1.0";
+    /// markitai: ODF chart documents (`chart:chart`).
+    pub const ODF_CHART: &str = "urn:oasis:names:tc:opendocument:xmlns:chart:1.0";
 
     pub const VML: &str = "urn:schemas-microsoft-com:vml";
     pub const O_VML: &str = "urn:schemas-microsoft-com:office:office";

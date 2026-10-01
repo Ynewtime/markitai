@@ -43,6 +43,17 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
     }
 }
 
+/// markitai: `value` as a cell with the number format `code` shows it
+/// (dates as ISO dates, `0%` as a percentage), through the same engine as
+/// the workbook readers; a code outside the implemented grammar is General.
+pub(crate) fn format_number(code: &str, value: f64, date1904: bool) -> String {
+    let format = match numfmt::NumberFormat::parse(code) {
+        Some(format) => xlsx::CellFormat::Fmt(std::rc::Rc::new(format)),
+        None => xlsx::CellFormat::General,
+    };
+    xlsx::render_number(&format, value, date1904)
+}
+
 fn not_a_workbook() -> ConvertError {
     ConvertError::malformed("not a readable workbook container")
 }

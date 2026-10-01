@@ -450,12 +450,21 @@ fn marker_for_nfc(nfc: i32) -> Option<MarkerKind> {
 }
 
 /// `\fcharsetN` -> encoding.
+///
+/// markitai: charset 0 is ANSI, which is Windows-1252 whatever `\ansicpg`
+/// says; only 1 (`DEFAULT_CHARSET`) defers to the document code page.
+/// TextEdit, saving on a Chinese system, declares `\ansicpg936` but writes
+/// the bytes of its charset-0 fonts in 1252 (`Apple\'92s`, `\'bd` for ½),
+/// and the code page turned them into CJK characters. Charset 77 is Mac
+/// Roman.
 fn charset_encoding(
     charset: i32,
     default_encoding: &'static encoding_rs::Encoding,
 ) -> &'static encoding_rs::Encoding {
     match charset {
-        0 | 1 => default_encoding,
+        0 => encoding_rs::WINDOWS_1252,
+        1 => default_encoding,
+        77 => encoding_rs::MACINTOSH,
         128 => encoding_rs::SHIFT_JIS,
         129 => encoding_rs::EUC_KR,
         134 => encoding_rs::GBK,

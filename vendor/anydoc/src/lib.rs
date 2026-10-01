@@ -126,6 +126,17 @@ pub fn to_markdown_bytes(
     Ok(document_to_markdown(&to_document(bytes, format)?))
 }
 
+/// A number as a spreadsheet cell with the number format `code` displays it:
+/// dates and times as ISO-like dates and clock times, percentages, grouping,
+/// currency and the other implemented SpreadsheetML codes; anything else as
+/// General. `date1904` selects the 1904 date system.
+///
+/// markitai: exposed so a chart's cached values read as the chart shows
+/// them (a date category is otherwise a bare serial number).
+pub fn format_number(code: &str, value: f64, date1904: bool) -> String {
+    formats::format_number(code, value, date1904)
+}
+
 /// Parse an in-memory document into the document model. Pass a [`Format`] to
 /// select the parser, or `None` to detect it from the content.
 ///

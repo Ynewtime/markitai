@@ -6,6 +6,7 @@
 //! from two separately parsed trees (`styles.xml` and `content.xml`).
 
 use crate::error::ConvertError;
+use crate::formats::docx::scripts::Script;
 use crate::package::xml::{Element, ns};
 use crate::shared::blockstyle::{self, BlockStyle};
 use crate::shared::delta::StyleDelta;
@@ -150,6 +151,63 @@ impl<'a> OdfStyles<'a> {
             self.memo.borrow_mut().insert(current.to_string(), delta);
         }
         Ok(delta)
+    }
+
+    /// markitai: the nearest `style:text-properties` value `read` finds on a
+    /// style or its `parent-style-name` chain (a cycle reads as unset; the
+    /// cascade in [`Self::delta`] reports it).
+    fn nearest<T>(
+        &self,
+        family: &str,
+        name: &str,
+        read: impl Fn(&Element) -> Option<T>,
+    ) -> Option<T> {
+        let mut id = key(family, name);
+        let mut visited: HashSet<String> = HashSet::new();
+        while visited.insert(id.clone()) {
+            let (def, parent) = self.raw.get(&id)?;
+            if let Some(hit) = def.find(ns::STYLE, "text-properties").and_then(&read) {
+                return Some(hit);
+            }
+            id = parent.clone()?;
+        }
+        None
+    }
+
+    /// markitai: the raised or lowered position a style gives its text
+    /// (`style:text-position`); `Some(None)` is an explicit baseline. See
+    /// [`crate::formats::docx::scripts`].
+    pub fn script(&self, family: &str, name: &str) -> Option<Option<Script>> {
+        self.nearest(family, name, |props| {
+            let value = props.attr(ns::STYLE, "text-position")?;
+            let first = value.split_whitespace().next()?;
+            Some(match first {
+                "super" => Some(Script::Superscript),
+                "sub" => Some(Script::Subscript),
+                percent => {
+                    let raise: f64 = percent.strip_suffix('%')?.parse().ok()?;
+                    if raise > 0.0 {
+                        Some(Script::Superscript)
+                    } else if raise < 0.0 {
+                        Some(Script::Subscript)
+                    } else {
+                        None
+                    }
+                }
+            })
+        })
+    }
+
+    /// markitai: whether a style hides its text (`text:display="none"`, the
+    /// hidden character attribute); `Some(false)` shows it explicitly. The
+    /// application neither displays nor prints such text, so it is left out,
+    /// as Word's hidden text is.
+    pub fn hidden(&self, family: &str, name: &str) -> Option<bool> {
+        self.nearest(family, name, |props| match props.attr(ns::TEXT, "display")? {
+            "none" => Some(true),
+            "true" => Some(false),
+            _ => None,
+        })
     }
 
     /// The block container a paragraph style names, walking

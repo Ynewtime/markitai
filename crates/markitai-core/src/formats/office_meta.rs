@@ -229,6 +229,37 @@ fn read_docx(bytes: &[u8]) -> Metadata {
         )
     })()
     .unwrap_or(0);
+    comment_warning(count)
+}
+
+/// An OpenDocument text's comments (`office:annotation`), which the
+/// Markdown leaves out as it does Word's. Counted while streaming
+/// `content.xml`, without building it, since the document reader builds it
+/// anyway.
+fn read_odt(bytes: &[u8]) -> Metadata {
+    let count = (|| {
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).ok()?;
+        let xml = zip_text(&mut archive, "content.xml").ok()?;
+        let mut reader = quick_xml::Reader::from_str(&xml);
+        let mut count = 0usize;
+        loop {
+            match reader.read_event().ok()? {
+                quick_xml::events::Event::Start(event) | quick_xml::events::Event::Empty(event)
+                    if event.local_name().as_ref() == b"annotation" =>
+                {
+                    count += 1;
+                }
+                quick_xml::events::Event::Eof => break,
+                _ => {}
+            }
+        }
+        Some(count)
+    })()
+    .unwrap_or(0);
+    comment_warning(count)
+}
+
+fn comment_warning(count: usize) -> Metadata {
     let mut result = Metadata::default();
     if count > 0 {
         result.warnings.push(format!(
@@ -309,6 +340,7 @@ fn biff_sheet_names(bytes: &[u8]) -> Result<Metadata, String> {
 pub(super) fn read(bytes: &[u8], extension: &str) -> Metadata {
     let parsed = match extension {
         "docx" | "docm" => return read_docx(bytes),
+        "odt" => return read_odt(bytes),
         "xlsx" | "xlsm" | "epub" => read_zip(bytes, extension),
         "xls" => (|| {
             let mut compound =

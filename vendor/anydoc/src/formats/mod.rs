@@ -16,6 +16,9 @@ use crate::Format;
 use crate::error::ConvertError;
 use crate::model::Document;
 
+// markitai: see `crate::format_number`.
+pub(crate) use sheet::format_number;
+
 pub fn parse(bytes: &[u8], format: Format) -> Result<Document, ConvertError> {
     match format {
         Format::Excel => sheet::parse(bytes),

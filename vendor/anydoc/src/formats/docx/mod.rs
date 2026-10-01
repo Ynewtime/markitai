@@ -7,7 +7,8 @@ mod code;
 mod content;
 mod numbering;
 mod numerals;
-mod scripts;
+// markitai: shared with the ODF and RTF readers.
+pub(crate) mod scripts;
 mod styles;
 mod symbols;
 

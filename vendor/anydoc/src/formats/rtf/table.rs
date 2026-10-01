@@ -6,6 +6,7 @@ use crate::error::ConvertError;
 use crate::model::{Block, Inline, inlines_are_empty};
 use crate::shared::blockstyle::{BlockStyle, StyledRun};
 use crate::shared::grid::{GridRow, build_edge_table};
+use crate::shared::list::{ListEntry, flush_list};
 
 pub use crate::shared::grid::CellProp;
 
@@ -32,6 +33,8 @@ pub struct TableState {
     tables: Vec<TableBuild>,
     cell_blocks: Vec<Vec<Block>>,
     cell_runs: Vec<StyledRun>,
+    /// markitai: list paragraphs awaiting their list, per depth.
+    cell_lists: Vec<Vec<ListEntry>>,
 }
 
 impl TableState {
@@ -40,6 +43,7 @@ impl TableState {
             tables: Vec::new(),
             cell_blocks: vec![Vec::new()],
             cell_runs: vec![StyledRun::default()],
+            cell_lists: vec![Vec::new()],
         }
     }
 
@@ -63,6 +67,9 @@ impl TableState {
         while self.cell_runs.len() < depth {
             self.cell_runs.push(StyledRun::default());
         }
+        while self.cell_lists.len() < depth {
+            self.cell_lists.push(Vec::new());
+        }
     }
 
     fn cell_block_at(&mut self, depth: usize) -> &mut Vec<Block> {
@@ -74,6 +81,7 @@ impl TableState {
         self.ensure_cell_depth(depth);
         let blocks = &mut self.cell_blocks[depth - 1];
         self.cell_runs[depth - 1].flush(blocks);
+        flush_list(blocks, &mut self.cell_lists[depth - 1]);
     }
 
     /// `\trowd`: reset the row's declared properties.
@@ -109,9 +117,14 @@ impl TableState {
         depth: usize,
         style: Option<BlockStyle>,
         inlines: Vec<Inline>,
-    ) {
+    ) -> Result<(), ConvertError> {
+        // markitai: a table nested in this cell has ended before the
+        // paragraph; folding it in only when the cell closed put the
+        // cell's later text ahead of it.
+        self.flush_into_cell(depth + 1, depth)?;
         self.ensure_cell_depth(depth);
         let blocks = &mut self.cell_blocks[depth - 1];
+        flush_list(blocks, &mut self.cell_lists[depth - 1]);
         let run = &mut self.cell_runs[depth - 1];
         if let Some(style) = style {
             run.push(style, inlines, blocks);
@@ -121,6 +134,22 @@ impl TableState {
                 blocks.push(Block::Paragraph(inlines));
             }
         }
+        Ok(())
+    }
+
+    /// markitai: a list paragraph ended inside a cell at `depth`. Cells hold
+    /// lists as the body does (a task list in a table cell); before, the
+    /// items were plain paragraphs with no marker.
+    pub fn push_cell_list_entry(
+        &mut self,
+        depth: usize,
+        entry: ListEntry,
+    ) -> Result<(), ConvertError> {
+        self.flush_into_cell(depth + 1, depth)?;
+        self.ensure_cell_depth(depth);
+        self.cell_runs[depth - 1].flush(&mut self.cell_blocks[depth - 1]);
+        self.cell_lists[depth - 1].push(entry);
+        Ok(())
     }
 
     /// Whether unfinished cell content is pending at `depth`.
@@ -144,7 +173,7 @@ impl TableState {
         style: Option<BlockStyle>,
         inlines: Vec<Inline>,
     ) -> Result<(), ConvertError> {
-        self.push_cell_paragraph(depth, style, inlines);
+        self.push_cell_paragraph(depth, style, inlines)?;
         self.flush_cell_run(depth);
         // A deeper completed table belongs inside this cell.
         self.flush_into_cell(depth + 1, depth)?;
@@ -206,7 +235,7 @@ mod tests {
         let mut state = TableState::new();
         state.begin_row(1);
         state.declare_cell(1, 1000);
-        state.push_cell_paragraph(1, Some(BlockStyle::Code), vec![Inline::plain("first")]);
+        state.push_cell_paragraph(1, Some(BlockStyle::Code), vec![Inline::plain("first")]).unwrap();
         state.end_cell(1, Some(BlockStyle::Code), vec![Inline::plain("second")]).unwrap();
         state.end_row(1);
 

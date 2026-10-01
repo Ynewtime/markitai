@@ -81,6 +81,46 @@ upstream files:
   and a code block whose lines carry their numbers (as a leading column or
   alternating) loses them.
 
+- `src/formats/rtf/tables.rs`, `src/formats/rtf/mod.rs`, `src/formats/rtf/table.rs`;
+  RTF content lost or misread in documents TextEdit and Word save:
+  - `\fcharset0` is Windows-1252 under any `\ansicpg` (only charset 1 follows
+    the code page) and charset 77 is Mac Roman; TextEdit declares
+    `\ansicpg936` on a Chinese system and writes its charset-0 fonts' bytes
+    in 1252, which upstream decoded as GBK (`Apple\'92s` became `Apple抯`,
+    `\'bd` a replacement character);
+  - a `\nestcell` straight after a `\nestrow`, with no `\itap` or `\pard`
+    between them, closes the cell holding the finished nested table (TextEdit
+    ends a table nested two deep that way; upstream read it one level too
+    deep and lost every row of the inner table);
+  - a completed nested table is placed in its cell before the cell's next
+    paragraph or list item, not after the cell's last paragraph;
+  - a `HYPERLINK` field whose result spans paragraphs links each
+    paragraph's part (upstream kept the text and dropped the link);
+  - list paragraphs inside a table cell form a list, numbered from the list
+    tables as in the body (upstream wrote them as plain paragraphs);
+  - `\super` and `\sub` text (until `\nosupersub` or `\plain`) is written in
+    Unicode super/subscript forms where every character has one, through
+    the DOCX reader's `scripts.rs` (made `pub(crate)` in `src/formats/docx/mod.rs`).
+- `src/formats/odf/text.rs`, `src/formats/odf/styles.rs`, `src/formats/odf/mod.rs`,
+  `src/package/xml.rs` (the ODF chart namespace):
+  - `style:text-position` (`super`, `sub`, or a raise percentage, through
+    `parent-style-name`) is read as for Word's `w:vertAlign`;
+  - text a style hides (`text:display="none"`) is left out, as Word's hidden
+    text is;
+  - `office:annotation` (a comment: author, date and text) is skipped; it
+    is not in the text namespace, so upstream read its children into the
+    annotated sentence;
+  - the base text of `text:ruby` is read and the guide text is not;
+  - a `draw:object` holding a chart yields the chart's title and its own
+    data table (`chart:chart`'s `table:table`, first row as the header) in
+    place of the replacement picture, in text documents and on slides;
+  - a slide table with `table:use-first-row-styles="true"` (Impress's
+    header row) takes its first row as the header.
+- `src/lib.rs`, `src/formats/mod.rs`, `src/formats/sheet/mod.rs`: a public
+  `format_number(code, value, date1904)` renders a number through the sheet
+  readers' number-format engine, so a PPTX chart's cached values read as the
+  chart shows them (dates, percentages) instead of bare serial numbers.
+
 `Cargo.toml` asks `zip` for `deflate-flate2-zlib-rs` instead of `deflate`, as
 the workspace crates do: the same deflate backend without the zopfli encoder,
 which zip uses only above level 9 and Markitai never requests.
@@ -90,4 +130,4 @@ package; it reproduces upstream's formatting, so `cargo fmt` in this directory
 changes nothing upstream wrote.
 
 Tests covering these changes were added beside the upstream ones; the upstream
-suite passes in an isolated copy (324 tests).
+suite passes in an isolated copy (333 tests).

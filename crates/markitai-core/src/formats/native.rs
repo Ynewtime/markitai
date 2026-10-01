@@ -76,8 +76,25 @@ fn conversion_error(error: anydoc::ConvertError) -> Error {
 
 fn escape(text: &str) -> String {
     let mut output = String::new();
-    for ch in text.chars() {
-        if matches!(ch, '\\' | '*' | '_' | '[' | ']' | '`') {
+    for (index, ch) in text.char_indices() {
+        let rest = &text[index + ch.len_utf8()..];
+        // Text that opens an HTML tag, comment or entity is raw HTML to a
+        // Markdown renderer, which hides the `<int>` of `std::vector<int>`
+        // or turns a literal `&copy;` into a symbol.
+        let html = match ch {
+            '<' => rest
+                .chars()
+                .next()
+                .is_some_and(|next| next.is_ascii_alphabetic() || matches!(next, '/' | '!' | '?')),
+            '&' => {
+                rest.starts_with('#')
+                    || rest
+                        .find(|c: char| !c.is_ascii_alphanumeric())
+                        .is_some_and(|end| end > 0 && rest[end..].starts_with(';'))
+            }
+            _ => false,
+        };
+        if html || matches!(ch, '\\' | '*' | '_' | '[' | ']' | '`') {
             output.push('\\');
         }
         output.push(ch);
@@ -824,6 +841,10 @@ pub(super) fn extract(bytes: &[u8], extension: &str) -> Result<Document> {
 mod docx_tests;
 
 #[cfg(test)]
+#[path = "native/odt_rtf_tests.rs"]
+mod odt_rtf_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use anydoc::model::{AssetId, Cell, Style, Table, TableKind};
@@ -1226,5 +1247,17 @@ mod tests {
         let mut assets = BTreeSet::new();
         references(&blocks, &mut BTreeSet::new(), &mut assets);
         assert_eq!(assets.into_iter().collect::<Vec<_>>(), [2]);
+    }
+
+    #[test]
+    fn text_that_reads_as_html_is_escaped() {
+        // Code pasted into a document: a renderer would take `<int>` and
+        // `<iostream>` for tags and `&copy;` for an entity, and show neither.
+        let rtf = br"{\rtf1\ansi #include <iostream>\par std::vector<int> v; a < b, a<3 & b\par &copy; &#169; AT&T; x&y\par}";
+        let doc = extract(rtf, "rtf").unwrap();
+        assert_eq!(
+            doc.markdown,
+            "#include \\<iostream>\n\nstd::vector\\<int> v; a < b, a<3 & b\n\n\\&copy; \\&#169; AT\\&T; x&y\n"
+        );
     }
 }

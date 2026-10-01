@@ -8,6 +8,7 @@ mod table;
 mod tables;
 
 use crate::error::ConvertError;
+use crate::formats::docx::scripts::Script;
 use crate::model::{Block, Document, Inline, Note, NoteKind, Style, inlines_are_empty};
 use crate::package::xml::{Element, Node, ns};
 use crate::shared::blockstyle::{BlockStyle, StyledRun};
@@ -79,6 +80,8 @@ struct CharState {
     suppress: bool,
     capture: Capture,
     note: Option<NoteKind>,
+    /// markitai: `\super` or `\sub` text, until `\nosupersub` or `\plain`.
+    script: Option<Script>,
 }
 
 impl Default for CharState {
@@ -98,6 +101,7 @@ impl Default for CharState {
             suppress: false,
             capture: Capture::None,
             note: None,
+            script: None,
         }
     }
 }
@@ -510,6 +514,25 @@ impl Destinations {
         }
     }
 
+    /// markitai: a paragraph ends inside open fields. A hyperlink result can
+    /// span paragraphs (TextEdit links a whole card: a blank paragraph, then
+    /// the title and summary), and the text before each paragraph mark
+    /// would otherwise leave the field unlinked, closing it with nothing in
+    /// the current paragraph. Each paragraph keeps its part of the link, as
+    /// a word processor shows it; the rest of the field starts afresh.
+    fn split_open_links(&mut self, inlines: &mut Vec<Inline>) {
+        for frame in self.fields.iter_mut().rev() {
+            let start = frame.start.min(inlines.len());
+            if crate::shared::fields::hyperlink_target(&frame.instr).is_some() {
+                let content: Vec<Inline> = inlines.drain(start..).collect();
+                inlines.extend(field_result(&frame.instr, content));
+            }
+        }
+        for frame in &mut self.fields {
+            frame.start = 0;
+        }
+    }
+
     /// Close note frames opened deeper than `depth`, replacing their content
     /// with a reference to the collected note.
     fn close_notes(&mut self, depth: usize, inlines: &mut Vec<Inline>) {
@@ -621,6 +644,9 @@ struct Parser<'a> {
     table: TableState,
     dest: Destinations,
     assets: crate::shared::assets::AssetSink,
+    /// markitai: the depth whose `\nestrow` was the last table control, with
+    /// no `\itap` or `\pard` since; see the `nestcell` arm.
+    nested_row_closed: Option<usize>,
 }
 
 impl<'a> Parser<'a> {
@@ -644,6 +670,7 @@ impl<'a> Parser<'a> {
             table: TableState::new(),
             dest: Destinations::default(),
             assets: crate::shared::assets::AssetSink::new(),
+            nested_row_closed: None,
         }
     }
 
@@ -786,6 +813,19 @@ impl<'a> Parser<'a> {
                 let font = self.state.font;
                 self.state.style = Style::PLAIN;
                 self.state.font = font;
+                self.state.script = None;
+            }
+            // markitai: raised and lowered text in its Unicode forms where
+            // every character has one ("x₁", "library¹"), as for Word's
+            // `w:vertAlign`; see `crate::formats::docx::scripts`.
+            "super" | "sub" | "nosupersub" => {
+                self.flush_pending();
+                self.state.script = match word {
+                    _ if param == Some(0) => None,
+                    "super" => Some(Script::Superscript),
+                    "sub" => Some(Script::Subscript),
+                    _ => None,
+                };
             }
             "s" => {
                 // Paragraph style: outline level for headings plus its
@@ -809,6 +849,7 @@ impl<'a> Parser<'a> {
             }
             "pard" => {
                 self.flush_pending();
+                self.nested_row_closed = None;
                 self.state.in_table = false;
                 self.state.itap = 1;
                 self.state.ilvl = 0;
@@ -846,6 +887,7 @@ impl<'a> Parser<'a> {
         match word {
             "intbl" => self.state.in_table = true,
             "itap" => {
+                self.nested_row_closed = None;
                 self.state.itap = param.unwrap_or(1).clamp(0, 8) as usize;
                 if self.state.itap > 1 {
                     self.state.in_table = true;
@@ -882,7 +924,19 @@ impl<'a> Parser<'a> {
             "nestcell" => {
                 self.flush_pending();
                 if self.table_active() {
-                    self.end_cell(self.state.itap.max(2))?;
+                    let mut depth = self.state.itap.max(2);
+                    // markitai: a `\nestcell` straight after a `\nestrow`,
+                    // with no `\itap` between them, closes the cell that
+                    // holds the finished table. TextEdit ends a table nested
+                    // two deep with `\nestcell \lastrow\nestrow\nestcell
+                    // \nestrow` and never writes `\itap2` again; read at
+                    // depth 3, the outer cell never closed and every row of
+                    // the inner table (Hacker News comments) was lost.
+                    if self.nested_row_closed.take() == Some(depth) && depth > 2 {
+                        depth -= 1;
+                        self.state.itap = depth;
+                    }
+                    self.end_cell(depth)?;
                 }
             }
             "row" => {
@@ -894,7 +948,9 @@ impl<'a> Parser<'a> {
             "nestrow" => {
                 self.flush_pending();
                 if self.table_active() {
-                    self.end_row(self.state.itap.max(2))?;
+                    let depth = self.state.itap.max(2);
+                    self.end_row(depth)?;
+                    self.nested_row_closed = Some(depth);
                 }
             }
             // Nested row properties arrive in a `{\*\nesttableprops ...}`
@@ -1152,6 +1208,8 @@ impl<'a> Parser<'a> {
             }
             Capture::None => {
                 if !self.state.suppress {
+                    let text =
+                        self.state.script.and_then(|script| script.convert(&text)).unwrap_or(text);
                     self.inlines.push(Inline::Text { text, style: self.state.style });
                 }
             }
@@ -1168,13 +1226,16 @@ impl<'a> Parser<'a> {
     }
 
     fn end_paragraph(&mut self) -> Result<(), ConvertError> {
+        self.dest.split_open_links(&mut self.inlines);
         let inlines = std::mem::take(&mut self.inlines);
         let listtext = self.dest.listtext.take();
         let math_display = std::mem::take(&mut self.dest.math_display);
 
         if self.state.in_table {
             let depth = self.state.itap.max(1);
-            self.table.push_cell_paragraph(depth, self.state.block, inlines);
+            if let Some(inlines) = self.cell_list_entry(depth, inlines, listtext.as_deref())? {
+                self.table.push_cell_paragraph(depth, self.state.block, inlines)?;
+            }
             return Ok(());
         }
         self.flush_top_table()?;
@@ -1292,9 +1353,33 @@ impl<'a> Parser<'a> {
     }
 
     fn end_cell(&mut self, depth: usize) -> Result<(), ConvertError> {
+        self.dest.split_open_links(&mut self.inlines);
         let inlines = std::mem::take(&mut self.inlines);
-        self.dest.listtext = None;
+        let listtext = self.dest.listtext.take();
+        let inlines =
+            self.cell_list_entry(depth, inlines, listtext.as_deref())?.unwrap_or_default();
         self.table.end_cell(depth, self.state.block, inlines)
+    }
+
+    /// markitai: a paragraph inside a table cell that belongs to a list
+    /// joins the cell's list, numbered as in the body; any other paragraph
+    /// is handed back. A heading or a styled block is never a list item.
+    fn cell_list_entry(
+        &mut self,
+        depth: usize,
+        inlines: Vec<Inline>,
+        listtext: Option<&str>,
+    ) -> Result<Option<Vec<Inline>>, ConvertError> {
+        if self.state.block.is_some() || self.state.outline.is_some() || inlines_are_empty(&inlines)
+        {
+            return Ok(Some(inlines));
+        }
+        let Some((key, level, number, label)) = self.list_entry(listtext) else {
+            return Ok(Some(inlines));
+        };
+        let blocks = vec![Block::Paragraph(inlines)];
+        self.table.push_cell_list_entry(depth, ListEntry { level, key, number, label, blocks })?;
+        Ok(None)
     }
 
     fn end_row(&mut self, depth: usize) -> Result<(), ConvertError> {
@@ -1418,5 +1503,136 @@ mod tests {
         .unwrap();
         assert_eq!(doc.assets.len(), 1, "only the preferred picture: {:?}", doc.assets);
         assert_eq!(doc.assets[0].media_type, "image/png");
+    }
+
+    fn markdown(src: &str) -> String {
+        crate::to_markdown_bytes(src.as_bytes(), crate::Format::Rtf).unwrap()
+    }
+
+    fn cell_blocks(block: &Block, row: usize, column: usize) -> &[Block] {
+        let Block::Table(table) = block else { panic!("expected a table: {block:?}") };
+        let crate::model::CellSlot::Origin(cell) = &table.grid[row][column] else {
+            panic!("expected an origin cell")
+        };
+        &cell.blocks
+    }
+
+    // markitai: charset 0 is Windows-1252 under any `\ansicpg`.
+    #[test]
+    fn ansi_fonts_read_their_bytes_as_windows_1252_under_a_cjk_code_page() {
+        // As TextEdit saves on a Chinese system: the document code page is
+        // 936, the charset-0 font's bytes are 1252, the charset-134 font's
+        // bytes are GBK.
+        let src = r"{\rtf1\ansi\ansicpg936{\fonttbl\f0\froman\fcharset0 Times-Roman;\f1\fnil\fcharset134 STSongti-SC-Regular;}
+\f0 Apple\'92s \'bd caf\'e9 10\'9616\par
+\f1 \'d6\'d0\'ce\'c4\'a1\'af\par}";
+        assert_eq!(markdown(src), "Apple’s ½ café 10–16\n\n中文’\n");
+        // The default charset still follows the code page.
+        let src =
+            r"{\rtf1\ansi\ansicpg1251{\fonttbl\f0\fnil\fcharset1 Arial;}\f0 \'cf\'f0\'e8\par}";
+        assert_eq!(markdown(src), "При\n");
+    }
+
+    // markitai: TextEdit's nested-table ending.
+    #[test]
+    fn a_nestcell_after_a_nestrow_closes_the_cell_holding_the_nested_table() {
+        // A table nested two deep, as TextEdit writes a web page's comment
+        // thread: each depth-2 row holds a depth-3 table, and the depth-2
+        // cell is closed by a `\nestcell` with no `\itap2` before it.
+        let src = r"{\rtf1
+\itap1\trowd\cellx8640
+\itap2\trowd\cellx8640
+\pard\intbl\itap2 Title\nestcell \lastrow\nestrow
+\itap2\trowd\cellx8640
+\itap3\trowd\cellx4320\cellx8640
+\pard\intbl\itap3 \nestcell
+\pard\intbl\itap3 First comment\nestcell \lastrow\nestrow\nestcell \nestrow
+\itap2\trowd\cellx8640
+\itap3\trowd\cellx4320\cellx8640
+\pard\intbl\itap3 \nestcell
+\pard\intbl\itap3 Second comment\nestcell \lastrow\nestrow\nestcell \lastrow\nestrow\cell \lastrow\row
+\pard After\par}";
+        let doc = parse(src.as_bytes()).unwrap();
+        let [outer, Block::Paragraph(after)] = &doc.blocks[..] else {
+            panic!("unexpected blocks: {:?}", doc.blocks)
+        };
+        assert_eq!(crate::model::inlines_to_plain_text(after), "After");
+        let [middle] = cell_blocks(outer, 0, 0) else { panic!("{outer:?}") };
+        let Block::Table(table) = middle else { panic!("{middle:?}") };
+        assert_eq!(table.grid.len(), 3, "title row and one row per comment: {table:?}");
+        for (row, comment) in [(1, "First comment"), (2, "Second comment")] {
+            let [inner] = cell_blocks(middle, row, 0) else { panic!("{middle:?}") };
+            let [Block::Paragraph(text)] = cell_blocks(inner, 0, 1) else { panic!("{inner:?}") };
+            assert_eq!(crate::model::inlines_to_plain_text(text), comment);
+        }
+    }
+
+    // markitai: text after a nested table stays after it.
+    #[test]
+    fn text_after_a_nested_table_follows_it_in_the_cell() {
+        // Word's shape: the nested row properties trail the row in
+        // `\nesttableprops`, and the outer cell continues at `\itap1`.
+        let src = r"{\rtf1
+\trowd\cellx3000\cellx6000
+\pard\intbl\itap1 Outer A\cell
+\pard\intbl\itap1 Before inner\par
+\pard\intbl\itap2 Inner 1\nestcell Inner 2\nestcell
+{\*\nesttableprops\trowd\cellx1000\cellx2000\nestrow}{\nonesttables\par}
+\pard\intbl\itap1 After inner\cell
+\trowd\cellx3000\cellx6000\row}";
+        let doc = parse(src.as_bytes()).unwrap();
+        let [table] = &doc.blocks[..] else { panic!("unexpected blocks: {:?}", doc.blocks) };
+        let [Block::Paragraph(before), Block::Table(_), Block::Paragraph(after)] =
+            cell_blocks(table, 0, 1)
+        else {
+            panic!("{table:?}")
+        };
+        assert_eq!(crate::model::inlines_to_plain_text(before), "Before inner");
+        assert_eq!(crate::model::inlines_to_plain_text(after), "After inner");
+    }
+
+    // markitai: a hyperlink result spanning paragraphs.
+    #[test]
+    fn a_link_spanning_paragraphs_links_each_paragraph() {
+        let src = "{\\rtf1 {\\field{\\*\\fldinst{HYPERLINK \"https://example.com/related\"}}{\\fldrslt \\pard \\\n\\pard example.com {\\b Related Project}\\\nA similar project\\\n}}\\pard After\\par}";
+        assert_eq!(
+            markdown(src),
+            "[example.com **Related Project**](https://example.com/related)\n\n\
+             [A similar project](https://example.com/related)\n\nAfter\n"
+        );
+        // A link inside one paragraph is unchanged.
+        let src = r#"{\rtf1 See {\field{\*\fldinst{HYPERLINK "https://example.com"}}{\fldrslt this}} now\par}"#;
+        assert_eq!(markdown(src), "See [this](https://example.com) now\n");
+    }
+
+    // markitai: lists inside table cells.
+    #[test]
+    fn list_paragraphs_inside_a_cell_form_a_list() {
+        let src = r"{\rtf1{\*\listtable{\list\listtemplateid1{\listlevel\levelnfc23\levelstartat1{\leveltext\'01舦 ;}{\levelnumbers;}}\listid1}{\list\listtemplateid2{\listlevel\levelnfc0\levelstartat1{\leveltext\'02\'00.;}{\levelnumbers\'01;}}\listid2}}
+{\*\listoverridetable{\listoverride\listid1\listoverridecount0\ls1}{\listoverride\listid2\listoverridecount0\ls2}}
+\trowd\cellx4000\cellx8000
+\pard\intbl Posted a follow-up.\par
+\pard\intbl\ls1\ilvl0 {\listtext 舦 }Preserve linked text\par
+\ls1\ilvl0 {\listtext 舦 }Check block content\cell
+\pard\intbl\ls2\ilvl0 {\listtext 1.}One\par
+\ls2\ilvl0 {\listtext 2.}Two\cell\row}";
+        let doc = parse(src.as_bytes()).unwrap();
+        let [table] = &doc.blocks[..] else { panic!("unexpected blocks: {:?}", doc.blocks) };
+        let [Block::Paragraph(intro), Block::List(bullets)] = cell_blocks(table, 0, 0) else {
+            panic!("{table:?}")
+        };
+        assert_eq!(crate::model::inlines_to_plain_text(intro), "Posted a follow-up.");
+        assert!(!bullets.marker.ordered());
+        assert_eq!(bullets.items.len(), 2);
+        let [Block::List(numbers)] = cell_blocks(table, 0, 1) else { panic!("{table:?}") };
+        assert!(numbers.marker.ordered());
+        assert_eq!((numbers.start, numbers.items.len()), (1, 2));
+    }
+
+    // markitai: `\super` and `\sub`.
+    #[test]
+    fn raised_and_lowered_text_uses_unicode_forms_where_it_has_them() {
+        let src = r"{\rtf1 library{\super 1} and x{\sub 1}, H\sub 2\nosupersub O, 1{\super st}, 10\super -3\plain\par}";
+        assert_eq!(markdown(src), "library¹ and x₁, H₂O, 1st, 10⁻³\n");
     }
 }
