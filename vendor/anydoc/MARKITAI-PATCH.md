@@ -157,6 +157,36 @@ upstream files:
     spaces, an ODF heading's tabs become spaces before its anchor is taken,
     and `Looks::skip` keeps a table's rows out of the heading guess;
     `w:ptab`, notes in Word and presentations keep upstream's space.
+- `src/shared/typed_lists.rs` (added, declared in `src/shared/mod.rs`),
+  `src/shared/tabs.rs`, and the readers that feed it:
+  `src/formats/docx/content.rs`, `styles.rs`, `mod.rs`;
+  `src/formats/odf/text.rs`, `styles.rs`, `mod.rs`; `src/formats/rtf/mod.rs`,
+  `tables.rs`; `src/formats/doc/mod.rs`, `sprm.rs`. A run of plain body
+  paragraphs that open with a typed bullet or number (`Tab • Tab text`, as
+  `textutil` saves HTML lists in Word documents) is a list (rules in the
+  module):
+  - each reader records every plain top-level paragraph with its indent:
+    Word's `w:ind` over the paragraph style's through `basedOn` (`w:left` or
+    `w:start`, `w:hanging`, `w:firstLine`, their `…Chars` forms, and
+    `textutil`'s `w:first-line`; table-of-contents and index styles are
+    skipped), ODF `fo:margin-left` and `fo:text-indent` through
+    `parent-style-name`, RTF `\li` and `\fi` until `\pard`, and Word 97
+    `sprmPDxaLeft`, `sprmPDxaLeft1` and their Word 97 forms (`PapDelta`
+    gains `left` and `first_line`) over the style chain;
+  - the Word 97 reader keeps the body's tabs as `tabs::TAB` inlines and ends
+    with `tabs::finish` (no tab stops are read there, so no table is found)
+    instead of `Looks::apply`; a tab elsewhere is the space it was;
+  - `tabs::finish` takes the paragraphs: after finding tables it applies the
+    heading guess, which no longer takes a paragraph opening with a bullet,
+    then places the lists among the paragraphs left (not a table's rows)
+    and writes the remaining tabs back as spaces;
+  - in the body of DOCX, ODT and RTF, a paragraph set all in a monospaced
+    font that opens with a bullet is an item, not a line of code;
+  - RTF text in a font named `Symbol` or `Wingdings` maps each byte through
+    the DOCX reader's symbol table (`symbols.rs`, made `pub(crate)` in
+    `src/formats/docx/mod.rs`) where it has a character, so Word's Wingdings
+    square and arrowhead bullets (`\'a7`, `\'d8`) are no longer `§` and
+    `Ø`; other bytes decode as before.
 
 - `src/formats/rtf/tables.rs`, `src/formats/rtf/mod.rs`, `src/formats/rtf/table.rs`;
   RTF content lost or misread in documents TextEdit and Word save:
@@ -235,4 +265,4 @@ package; it reproduces upstream's formatting, so `cargo fmt` in this directory
 changes nothing upstream wrote.
 
 Tests covering these changes were added beside the upstream ones; the upstream
-suite passes in an isolated copy (385 tests).
+suite passes in an isolated copy (400 tests).

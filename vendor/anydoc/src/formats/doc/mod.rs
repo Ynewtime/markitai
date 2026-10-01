@@ -22,6 +22,8 @@ use crate::shared::fields::{FieldFrame, field_result};
 use crate::shared::grid::{CellProp, GridRow, build_edge_table};
 use crate::shared::list::MarkerKind;
 use crate::shared::list::{ListEntry, ListKey, flush_list};
+use crate::shared::tabs::{self, TabRows};
+use crate::shared::typed_lists::{Indent, TypedLists};
 use crate::shared::visual::{Looks, ParaSize, Size};
 use lists::{LEVELS, ListDef, Lists};
 use sprm::{PapDelta, Tap, apply_chpx, apply_pap_sprms, chpx_istd};
@@ -115,11 +117,13 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
         data,
         assets: std::cell::RefCell::new(AssetSink::new()),
     };
-    // markitai: the body's headings may be set by hand; notes are not
-    // looked at.
+    // markitai: the body's headings may be set by hand, and its lists typed
+    // by hand (see `crate::shared::typed_lists`; the body keeps its tabs
+    // until then); notes are not looked at.
     let mut looks = Looks::default();
-    let mut blocks = assembler.build_blocks(0, main_end, Some(&mut looks))?;
-    looks.apply(&mut blocks);
+    let mut lists = TypedLists::default();
+    let mut blocks = assembler.build_blocks(0, main_end, Some(&mut looks), Some(&mut lists))?;
+    tabs::finish(TabRows::default(), lists, Some(looks), &mut blocks, &mut []);
     let mut notes = Vec::new();
     for (lo, hi, id, kind) in note_ranges {
         let lo = lo.min(assembler.text.chars.len());
@@ -127,7 +131,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
         if lo >= hi {
             continue;
         }
-        notes.push(Note { id, kind, blocks: assembler.build_blocks(lo, hi, None)? });
+        notes.push(Note { id, kind, blocks: assembler.build_blocks(lo, hi, None, None)? });
     }
     let assets = std::mem::take(&mut assembler.assets.borrow_mut().assets);
     Ok(Document { blocks, notes, assets, slide_starts: Vec::new() })
@@ -724,6 +728,7 @@ impl Assembler {
         lo: usize,
         hi: usize,
         mut looks: Option<&mut Looks>,
+        mut lists: Option<&mut TypedLists>,
     ) -> Result<Vec<Block>, ConvertError> {
         let mut blocks: Vec<Block> = Vec::new();
         let mut list_run: Vec<ListEntry> = Vec::new();
@@ -816,6 +821,14 @@ impl Assembler {
                         if plain && let Some(looks) = looks.as_deref_mut() {
                             looks.paragraph(blocks.len() - 1, size);
                         }
+                        // markitai: or an item of a list typed by hand.
+                        if plain && let Some(lists) = lists.as_deref_mut() {
+                            let indent = Indent {
+                                left: pap.effective.left.unwrap_or(0),
+                                first_line: pap.effective.first_line.unwrap_or(0),
+                            };
+                            lists.paragraph(blocks.len() - 1, indent);
+                        }
                     }
                 }
                 '\u{b}' => para.push_inline(Inline::LineBreak),
@@ -824,7 +837,14 @@ impl Assembler {
                 '\u{15}' => para.field_end(),
                 '\t' => {
                     let style = self.char_style(fc, i);
-                    para.push_char(' ', style);
+                    // markitai: the body's text keeps its tabs until the
+                    // lists typed by hand are found (`tabs::finish` writes
+                    // them back as spaces); elsewhere a tab is a space.
+                    if lists.is_some() && para.shows_text() {
+                        para.push_inline(tabs::tab(style));
+                    } else {
+                        para.push_char(' ', style);
+                    }
                 }
                 '\u{1e}' => {
                     let style = self.char_style(fc, i);
@@ -1253,6 +1273,28 @@ mod tests {
         assert_eq!(prm0_grpprl(prm), Some(vec![0x16, 0x24, 0x01]));
         // isprm 0x05 (sprmPJc) is outside the converted model.
         assert_eq!(prm0_grpprl(0x05 << 1), None);
+    }
+
+    #[test]
+    fn indent_sprms_set_where_lines_start() {
+        // markitai: sprmPDxaLeft (0x845E) and sprmPDxaLeft1 (0x8460) and
+        // their Word 97 forms (0x840F, 0x8411), signed twips; a PAPX's
+        // value overrides its style's.
+        let sprm = |code: u16, twips: i16| {
+            let mut grpprl = code.to_le_bytes().to_vec();
+            grpprl.extend_from_slice(&twips.to_le_bytes());
+            grpprl
+        };
+        let mut style = PapDelta::default();
+        apply_pap_sprms(&[sprm(0x840F, 1440), sprm(0x8411, -360)].concat(), &[], &mut style);
+        assert_eq!((style.left, style.first_line), (Some(1440), Some(-360)));
+        let mut direct = PapDelta::default();
+        apply_pap_sprms(&sprm(0x845E, 720), &[], &mut direct);
+        let merged = style.merge(direct);
+        assert_eq!((merged.left, merged.first_line), (Some(720), Some(-360)));
+        let mut later = PapDelta::default();
+        apply_pap_sprms(&sprm(0x8460, -720), &[], &mut later);
+        assert_eq!(later.first_line, Some(-720));
     }
 
     #[test]

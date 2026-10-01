@@ -574,3 +574,98 @@ fn a_listing_laid_out_in_a_table_is_a_code_block() {
         "Example:\n\n```\nlet a = 1;\nlet b = 2;\n```\n\nThe prose of the document goes on in its own face for a while."
     );
 }
+
+/// A paragraph typed as a list item: its indent (`w:ind`, as `textutil`
+/// writes it) and runs, `\t` pieces as tabs.
+fn typed_item(ind: &str, rpr: &str, pieces: &[&str]) -> String {
+    let runs: String = pieces
+        .iter()
+        .map(|piece| match *piece {
+            "\t" => format!("<w:r>{rpr}<w:tab/></w:r>"),
+            text if text.starts_with("<w:sym") => format!("<w:r>{rpr}{text}</w:r>"),
+            text => format!(r#"<w:r>{rpr}<w:t xml:space="preserve">{text}</w:t></w:r>"#),
+        })
+        .collect();
+    format!("<w:p><w:pPr>{ind}</w:pPr>{runs}</w:p>")
+}
+
+#[test]
+fn lists_typed_by_hand_are_lists() {
+    // As `textutil` saves an HTML list: a tab, the bullet, a tab, the text,
+    // under a hanging indent that sets the level; an `ol` writes bare
+    // numbers. A bullet line set in Menlo is an item with inline code, not
+    // a code block. Word's Symbol and Wingdings bullets (`w:sym`) are
+    // bullets; numbers before tabs that do not count up stay text.
+    let level = |twips: u32| format!(r#"<w:ind w:left="{twips}" w:first-line="-{twips}"/>"#);
+    let menlo = r#"<w:rPr><w:rFonts w:ascii="Menlo" w:hAnsi="Menlo"/></w:rPr>"#;
+    let hanging = r#"<w:ind w:left="360" w:hanging="360"/>"#;
+    let body = [
+        paragraph("Features:"),
+        typed_item(
+            &level(720),
+            "",
+            &["", "\t", "•", "\t", "", "Written in Lua"],
+        ),
+        typed_item(&level(1440), "", &["\t", "◦", "\t", "Nested under it"]),
+        typed_item(&level(720), "", &["\t", "•", "\t", "Fast"]),
+        typed_item(&level(720), menlo, &["\t", "•", "\t", "npm test"]),
+        paragraph("Steps:"),
+        typed_item(&level(720), "", &["\t", "1", "\t", "Open the box"]),
+        typed_item(&level(720), "", &["\t", "2", "\t", "Read the manual"]),
+        paragraph("Symbols:"),
+        typed_item(
+            hanging,
+            "",
+            &[
+                r#"<w:sym w:font="Symbol" w:char="F0B7"/>"#,
+                "\t",
+                "Symbol bullet",
+            ],
+        ),
+        typed_item(
+            hanging,
+            "",
+            &[
+                r#"<w:sym w:font="Wingdings" w:char="F0A7"/>"#,
+                "\t",
+                "Wingdings square",
+            ],
+        ),
+        paragraph("Stock:"),
+        typed_item("", "", &["3", "\t", "Apples"]),
+        typed_item("", "", &["12", "\t", "Pears"]),
+    ]
+    .concat();
+    assert_eq!(
+        markdown(&body, &[]),
+        "Features:\n\n* Written in Lua\n  \n  * Nested under it\n* Fast\n* `npm test`\n\n\
+         Steps:\n\n1. Open the box\n2. Read the manual\n\n\
+         Symbols:\n\n* Symbol bullet\n* Wingdings square\n\n\
+         Stock:\n\n3 Apples\n\n12 Pears"
+    );
+}
+
+#[test]
+fn a_list_typed_by_hand_in_a_word_97_file_is_a_list() {
+    // The Word 97 exporter writes an HTML list as typed bullets, as it does
+    // in Word documents.
+    let doc = extract(include_bytes!("fixtures/textedit-word97.doc"), "doc").unwrap();
+    assert!(
+        doc.markdown
+            .contains("system.\n\n- First listed point\n- Second listed point\n\nThe closing"),
+        "{}",
+        doc.markdown
+    );
+    // An `ol` starting at 2 (`<Tab>2<Tab>`: a lone number is an item only
+    // before a tab) and a nested `ul` (`<Tab>◦<Tab>` under a deeper hanging
+    // indent).
+    let doc = extract(include_bytes!("fixtures/textedit-word97-lists.doc"), "doc").unwrap();
+    assert!(
+        doc.markdown.contains(
+            "between tabs.\n\n2. Second step on its own\n\nThe parts of the bicycle:\n\n\
+             - Frame\n  \n  - Front wheel\n- Saddle\n\nThe closing"
+        ),
+        "{}",
+        doc.markdown
+    );
+}

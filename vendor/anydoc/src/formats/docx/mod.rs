@@ -10,7 +10,8 @@ mod numerals;
 // markitai: shared with the ODF and RTF readers.
 pub(crate) mod scripts;
 mod styles;
-mod symbols;
+// markitai: shared with the RTF reader.
+pub(crate) mod symbols;
 
 use crate::error::ConvertError;
 use crate::model::{Document, Note, NoteKind};
@@ -66,6 +67,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
     // the paragraphs that may be rows of tables set with tab stops.
     let looks = RefCell::new(crate::shared::visual::Looks::default());
     let tab_rows = RefCell::new(crate::shared::tabs::TabRows::default());
+    let typed_lists = RefCell::new(crate::shared::typed_lists::TypedLists::default());
 
     let footnotes_part =
         typed_part_path(&doc_rels, &main_part, rel_type::FOOTNOTES, "footnotes.xml");
@@ -84,12 +86,20 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
         looks: Some(&looks),
         block_depth: Default::default(),
         tabs: Some(&tab_rows),
+        lists: Some(&typed_lists),
     };
     let mut blocks = content::parse_blocks(body, &ctx)?;
-    // markitai: tables set with tab stops, then headings set by hand (see
-    // `crate::shared::tabs` and `crate::shared::visual`), and a table laying
-    // out a code listing is its code (`crate::shared::code`).
-    crate::shared::tabs::finish(tab_rows.take(), Some(looks.take()), &mut blocks, &mut []);
+    // markitai: tables set with tab stops, headings set by hand and lists
+    // typed by hand (see `crate::shared::tabs`, `crate::shared::visual` and
+    // `crate::shared::typed_lists`), and a table laying out a code listing
+    // is its code (`crate::shared::code`).
+    crate::shared::tabs::finish(
+        tab_rows.take(),
+        typed_lists.take(),
+        Some(looks.take()),
+        &mut blocks,
+        &mut [],
+    );
     crate::shared::code::listing_tables(&mut blocks);
 
     let mut notes = Vec::new();
@@ -739,6 +749,54 @@ mod tests {
                 "code:a b",
                 "p:And the prose of the document goes on in its own face for a while.",
             ]
+        );
+    }
+
+    #[test]
+    fn indents_set_the_levels_of_a_list_typed_by_hand() {
+        // markitai: textutil's `w:first-line`, `w:hanging`, character units
+        // and a style's indent through `basedOn` each place the bullet; a
+        // contents style lists pages, and a bullet line in Menlo is an item.
+        let styles = format!(
+            r#"<w:styles {W}>
+            <w:style w:type="paragraph" w:styleId="Deep"><w:name w:val="Deep"/>
+              <w:pPr><w:ind w:left="1440" w:hanging="360"/></w:pPr></w:style>
+            <w:style w:type="paragraph" w:styleId="Deeper"><w:name w:val="Deeper"/>
+              <w:basedOn w:val="Deep"/></w:style>
+            <w:style w:type="paragraph" w:styleId="TOC1"><w:name w:val="toc 1"/></w:style>
+            </w:styles>"#
+        );
+        let item = |ppr: &str, lead: &str, text: &str| {
+            format!(
+                r#"<w:p><w:pPr>{ppr}</w:pPr><w:r>{lead}<w:t>•</w:t><w:tab/><w:t>{text}</w:t></w:r></w:p>"#
+            )
+        };
+        let read = |body: &[String]| {
+            let body = body.concat();
+            let document = format!(r#"<w:document {W}><w:body>{body}</w:body></w:document>"#);
+            let parts = [("word/document.xml", document.as_str()), ("word/styles.xml", &styles)];
+            crate::shared::code::describe(&parse(&docx_parts(&parts)).unwrap().blocks)
+        };
+        let textutil = r#"<w:ind w:left="720" w:first-line="-720"/>"#;
+        assert_eq!(
+            read(&[item("", "<w:tab/>", "a"), item(textutil, "<w:tab/>", "b")]),
+            ["list:p:a|p:b"]
+        );
+        let hanging = r#"<w:ind w:left="360" w:hanging="360"/>"#;
+        assert_eq!(read(&[item("", "", "a"), item(hanging, "", "b")]), ["list:p:a|p:b"]);
+        let chars = r#"<w:ind w:leftChars="300" w:left="0"/>"#;
+        assert_eq!(read(&[item("", "", "a"), item(chars, "", "b")]), ["list:p:a;list:p:b"]);
+        let style = r#"<w:pStyle w:val="Deeper"/>"#;
+        assert_eq!(read(&[item("", "", "a"), item(style, "", "b")]), ["list:p:a;list:p:b"]);
+        let toc = r#"<w:pStyle w:val="TOC1"/>"#;
+        assert_eq!(read(&[item(toc, "", "a"), item(toc, "", "b")]), ["p:• a", "p:• b"]);
+        let menlo = r#"<w:p><w:r><w:rPr><w:rFonts w:ascii="Menlo"/></w:rPr><w:t>•</w:t><w:tab/>
+            <w:t>npm test</w:t></w:r></w:p>"#;
+        let prose =
+            "<w:p><w:r><w:t>The prose of the document runs on for long enough.</w:t></w:r></w:p>";
+        assert_eq!(
+            read(&[menlo.to_string(), prose.to_string()]),
+            ["list:p:`npm test`", "p:The prose of the document runs on for long enough."]
         );
     }
 }

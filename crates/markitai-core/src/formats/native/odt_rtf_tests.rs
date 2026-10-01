@@ -165,3 +165,55 @@ fn textedit_rtf_reads_like_the_same_page_saved_as_docx() {
          Changes:\n\n* Preserve linked text\n* Add a test\n"
     );
 }
+
+#[test]
+fn odt_lists_typed_by_hand_are_lists() {
+    // Indents from the paragraph styles' margins set the levels; a run of
+    // dashes that reads as dialogue stays text.
+    let content = format!(
+        r#"<office:document-content {NAMESPACES}
+        xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0">
+        <office:automatic-styles>
+          <style:style style:name="L1" style:family="paragraph"><style:paragraph-properties
+            fo:margin-left="0.5in" fo:text-indent="-0.25in"/></style:style>
+          <style:style style:name="L2" style:family="paragraph" style:parent-style-name="L1">
+            <style:paragraph-properties fo:margin-left="1in"/></style:style>
+        </office:automatic-styles>
+        <office:body><office:text>
+        <text:p>Packing list:</text:p>
+        <text:p text:style-name="L1">•<text:tab/>Clothes</text:p>
+        <text:p text:style-name="L2">–<text:tab/>shirts</text:p>
+        <text:p text:style-name="L1">•<text:tab/>Books</text:p>
+        <text:p>Then they talked.</text:p>
+        <text:p>– Are you ready?</text:p>
+        <text:p>– Almost!</text:p>
+        </office:text></office:body></office:document-content>"#
+    );
+    let doc = extract(&odt(&[("content.xml", &content)]), "odt").unwrap();
+    assert_eq!(
+        doc.markdown,
+        "Packing list:\n\n- Clothes\n  \n  - shirts\n- Books\n\nThen they talked.\n\n– Are you ready?\n\n– Almost!\n"
+    );
+}
+
+#[test]
+fn rtf_lists_typed_by_hand_are_lists() {
+    // `\li` and `\fi` set the levels; `\bullet` is a bullet, and so are the
+    // bytes of Word's Wingdings square (`\'a7`) and arrowhead (`\'d8`),
+    // which are not `§` and `Ø`. Lowercase letters counting up keep their
+    // labels.
+    let rtf = "{\\rtf1\\ansi{\\fonttbl{\\f0\\froman\\fcharset0 Times New Roman;}\
+{\\f1\\fnil\\fcharset2 Wingdings;}}\n\
+\\pard\\f0 Options:\\par\n\
+\\pard\\li360\\fi-360 \\bullet\\tab Fast\\par\n\
+\\pard\\li1080\\fi-360 {\\f1\\'a7}\\tab cached\\par\n\
+\\pard\\li360\\fi-360 {\\f1\\'d8}\\tab Cheap\\par\n\
+\\pard Choose:\\par\n\
+\\pard a) the first\\par\n\
+\\pard b) the second\\par}";
+    let doc = extract(rtf.as_bytes(), "rtf").unwrap();
+    assert_eq!(
+        doc.markdown,
+        "Options:\n\n* Fast\n  \n  * cached\n* Cheap\n\nChoose:\n\na) the first  \nb) the second\n"
+    );
+}

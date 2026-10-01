@@ -13,6 +13,7 @@ use crate::shared::code::{is_fixed_pitch_code_face, is_monospace};
 use crate::shared::delta::StyleDelta;
 use crate::shared::list::MarkerKind;
 use crate::shared::tabs::Stops;
+use crate::shared::typed_lists::{self, Indent};
 use crate::shared::visual::Size;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -341,6 +342,21 @@ impl<'a> OdfStyles<'a> {
             Some(stops)
         });
         stops.unwrap_or_default()
+    }
+
+    /// markitai: where a paragraph style starts its lines (the nearest
+    /// `fo:margin-left` and `fo:text-indent` on its chain, or
+    /// `fo:margin-start`); see [`crate::shared::typed_lists`].
+    pub fn indent(&self, name: &str) -> Indent {
+        let length = |attrs: &'static [&'static str]| {
+            self.nearest_in("paragraph", name, "paragraph-properties", |props| {
+                attrs.iter().find_map(|attr| typed_lists::twips(props.attr(ns::FO, attr)?))
+            })
+        };
+        Indent {
+            left: length(&["margin-left", "margin-start"]).unwrap_or(0),
+            first_line: length(&["text-indent"]).unwrap_or(0),
+        }
     }
 
     /// markitai: the raised or lowered position a style gives its text

@@ -17,6 +17,7 @@ use crate::shared::delta::{StyleDelta, rebase_emphasis};
 use crate::shared::math::mathml_to_tex;
 use crate::shared::tabs::{self, TabRows};
 use crate::shared::text::{clean_text, collapse_ws};
+use crate::shared::typed_lists::{self, TypedLists};
 use crate::shared::visual::{Looks, ParaSize, Size};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -55,6 +56,10 @@ pub struct Ctx<'a, 'b> {
     /// of a table set with tab stops (see [`crate::shared::tabs`]); while it
     /// is set, a tab is read as [`tabs::TAB`].
     pub tabs: Option<RefCell<TabRows>>,
+    /// markitai: in a text document, the body's plain paragraphs and their
+    /// indents, for the lists typed by hand (see
+    /// [`crate::shared::typed_lists`]).
+    pub lists: Option<RefCell<TypedLists>>,
 }
 
 impl<'a, 'b> Ctx<'a, 'b> {
@@ -81,6 +86,7 @@ impl<'a, 'b> Ctx<'a, 'b> {
             cell_depth: Default::default(),
             list_depth: Default::default(),
             tabs: None,
+            lists: None,
         }
     }
 
@@ -186,9 +192,13 @@ fn parse_block_elem(
                 let name = elem.attr(ns::TEXT, "style-name");
                 let style = name.and_then(|n| ctx.styles.block_style(n));
                 // markitai: a paragraph all in a monospaced font is a line
-                // of code, except in a table cell or a list.
+                // of code, except in a table cell or a list, or when it
+                // opens the body's list typed by hand with a bullet.
+                let bullet = ctx.lists.is_some()
+                    && ctx.depth.get() == 1
+                    && typed_lists::opens_with_bullet(&inlines);
                 let style = style.or_else(|| {
-                    (mono && ctx.cell_depth.get() == 0 && ctx.list_depth.get() == 0)
+                    (mono && ctx.cell_depth.get() == 0 && ctx.list_depth.get() == 0 && !bullet)
                         .then_some(BlockStyle::Code)
                 });
                 match style {
@@ -207,6 +217,11 @@ fn parse_block_elem(
                         if row && let Some(tab_rows) = &ctx.tabs {
                             let stops = name.map(|n| ctx.styles.tab_stops(n)).unwrap_or_default();
                             tab_rows.borrow_mut().paragraph(blocks.len() - 1, stops);
+                        }
+                        // markitai: or an item of a list typed by hand.
+                        if plain && let Some(lists) = &ctx.lists {
+                            let indent = name.map(|n| ctx.styles.indent(n)).unwrap_or_default();
+                            lists.borrow_mut().paragraph(blocks.len() - 1, indent);
                         }
                     }
                 }

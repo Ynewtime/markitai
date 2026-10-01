@@ -102,27 +102,43 @@ fn escape(text: &str) -> String {
     output
 }
 
-/// A paragraph's lines with the `#` that would make Markdown read a line as
-/// an ATX heading (`# text`, up to three spaces in) written as text, as a
-/// document's own line starting with `#` (a shell comment, a hashtag) is
-/// text in its source. A line indented four spaces or more is a code block
+/// A paragraph's lines with the mark that would make Markdown read a line as
+/// a block of its own written as text: an ATX heading (`# text`), a bullet
+/// (`- item`, `+ item`), an ordered item (`1. item`, `1) item`), a quote
+/// (`> text`) or a thematic break (`---`), up to three spaces in. A
+/// document's own line starting so (a shell comment, a dash before a remark,
+/// a year and a full stop) is text in its source. `*` and `_` are escaped
+/// wherever they occur. A line indented four spaces or more is a code block
 /// already and stays as it is.
 fn literal_heading_marks(text: &str) -> String {
     text.split('\n')
         .map(|line| {
             let indent = line.len() - line.trim_start_matches(' ').len();
             let rest = &line[indent..];
+            if indent > 3 {
+                return line.to_owned();
+            }
+            let ends = |after: &str| after.is_empty() || after.starts_with([' ', '\t']);
             let hashes = rest.bytes().take_while(|&b| b == b'#').count();
-            let heading = indent <= 3
-                && (1..=6).contains(&hashes)
-                && rest[hashes..]
-                    .chars()
-                    .next()
-                    .is_none_or(|c| c == ' ' || c == '\t');
-            if heading {
-                format!("{}\\{rest}", &line[..indent])
+            let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+            let heading = (1..=6).contains(&hashes) && ends(&rest[hashes..]);
+            let bullet = rest.starts_with(['-', '+']) && ends(&rest[1..]);
+            let rule = rest.len() >= 3
+                && rest.trim_end().chars().all(|c| c == '-' || c == ' ')
+                && rest.matches('-').count() >= 3;
+            let ordered = (1..=9).contains(&digits)
+                && rest[digits..].starts_with(['.', ')'])
+                && ends(&rest[digits + 1..]);
+            let mark = if heading || bullet || rule || rest.starts_with('>') {
+                Some(0)
+            } else if ordered {
+                Some(digits)
             } else {
-                line.to_owned()
+                None
+            };
+            match mark {
+                Some(at) => format!("{}{}\\{}", &line[..indent], &rest[..at], &rest[at..]),
+                None => line.to_owned(),
             }
         })
         .collect::<Vec<_>>()
@@ -880,6 +896,16 @@ mod tests {
     #[test]
     fn a_line_markdown_would_read_as_a_heading_keeps_its_hash_as_text() {
         for (line, written) in [
+            ("- and then it rained.", "\\- and then it rained."),
+            ("+ plus", "\\+ plus"),
+            ("2024. A good year", "2024\\. A good year"),
+            ("1) first", "1\\) first"),
+            ("> quoted", "\\> quoted"),
+            ("---", "\\---"),
+            ("- - -", "\\- - -"),
+            ("-dash", "-dash"),
+            ("3.5 kg", "3.5 kg"),
+            ("1234567890. too long", "1234567890. too long"),
             ("# shell comment", "\\# shell comment"),
             ("  ## two in", "  \\## two in"),
             ("#", "\\#"),
@@ -1319,7 +1345,8 @@ mod tests {
             doc.markdown
         );
         assert!(
-            doc.markdown.contains("\n\n • Second listed point\n\n"),
+            doc.markdown
+                .contains("\n\n- First listed point\n- Second listed point\n\n"),
             "{}",
             doc.markdown
         );

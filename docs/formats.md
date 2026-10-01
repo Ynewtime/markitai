@@ -79,8 +79,8 @@ since authors press Tab until the text lines up; at stops the author set each
 tab moves to the next column, so a cell may be empty. A column no row fills,
 such as a tab that indents every row, is dropped. Three columns are enough; two
 need stops the author set and a first column that is not a list label (`1.`,
-`a)`) or a field label (`Date:`). A first column of bullets (a list typed by
-hand, as `textutil` saves HTML lists in DOCX), a tab stop with a leader or a
+`a)`) or a field label (`Date:`). A first column of bullets is a list typed by
+hand (below), not a table; a tab stop with a leader or a
 table-of-contents or index style, or a last column of page numbers counting up
 with no header above them (a contents page) keeps the paragraphs as text. The
 first row is the header only when it alone is bold; otherwise every row is data
@@ -93,7 +93,67 @@ leaders, by hand and in a contents style, verse, a lone tab, two rows, lists
 typed by hand, memo labels, two default-stop columns, prose, and rows inside
 lists, headings, code, cells or one paragraph's lines), each format finds all
 9 tables and makes no table of the 18 text cases. The 108 `textutil` pages,
-whose only tabs belong to lists typed by hand, convert as before.
+whose only tabs belong to lists typed by hand, give no table.
+
+Lists typed by hand are lists. Many documents type their lists: each item is
+a paragraph that starts with a bullet or a number and a tab or a space, as
+macOS `textutil` saves every HTML list in Word documents (`Tab • Tab text`
+under a hanging indent, `Tab ◦ Tab text` one level down, `Tab 1 Tab text` in an
+ordered list). In DOCX, ODT, RTF and Word 97 files, a run of consecutive plain
+body paragraphs (not headings, real list items, table cells, text boxes,
+notes, code, a table-of-contents style or a table set with tab stops) that
+open that way is a list:
+
+- a bullet that is only ever one (`•`, `◦`, `▪`, `●`, `➢`, `・`, Word's Symbol
+  and Wingdings bullets, a ballot box, a tick) makes an item by itself; a
+  ballot box becomes a task-list box (`[ ]`, `[x]`) and a tick stays in the
+  item's text;
+- a character that also starts sentences (`-`, `–`, `*`, `+`, `o`, an arrow)
+  needs a tab after it, an item above it that it is indented under, or a
+  sibling at its level with the same mark and no other such mark beside
+  them (`+ fast`, `- loud` stay text). An em dash needs a tab or a parent,
+  and hyphens or en dashes whose lines end as speech does (`?`, `!`, `…`, a
+  quotation mark) or set narration apart (`– Oui, – dit-elle.`) are dialogue
+  and stay text, as do a lone `- and then…`, an attribution (`— Name`) and
+  `* * *`;
+- numbers make items when at least two at one level count up by one in one
+  form (`1.` `2.`, `a)` `b)`, `(i)` `(ii)`, `一、` `二、`), or when a decimal
+  number stands alone before a tab (`Tab 2 Tab`, an `<ol start="2">`),
+  unless numbers that do not count up stand beside it (an inventory) or its
+  text is all bold (a numbered heading typed by hand). A number before a
+  space (`3 apples`), an initial (`A. Smith`), a year, an outline number
+  (`1.2`) or a quantity (`1.5 kg`) is text;
+- the level comes from where the marker sits (the paragraph's left and
+  hanging indent, then the tabs and spaces before the marker): an item set
+  further right than the one before it is nested under it;
+- decimal numbers keep their count (`2.` for `<ol start="2">`), and other
+  labels are kept as written, one item to a line, as for real lists.
+
+A bullet line set in a monospaced font is a list item with inline code, not a
+code block, and a paragraph opening with a bullet is never taken for a heading
+set by hand. RTF text in a `Symbol` or `Wingdings` font reads as that font's
+characters where they are known (Word's Wingdings square bullet `\'a7` was
+`§`). On the 108 `textutil` pages, DOCX now gives 261 list items (11 before),
+exactly as many as the ODT and RTF versions of each page, whose lists are real
+ones; 256 of them have the same level, number and text (two keep the
+`<ol start>` numbers the ODT loses, two sit under section headings numbered in
+their text that the page's CSS sets as body text, which therefore read as a
+numbered list, and one differs by a thin space). The Word 97 files give 260 (12
+before; the other two sit in a one-cell layout table). The strict word
+comparison with the reference is unchanged in every format, and DOCX now has
+the same 64 code blocks and 35 inline code spans as ODT and RTF. On 80 cases
+written as DOCX, ODT and RTF (42 lists with 105 items: bullets by hand, by tab,
+by Symbol and Wingdings codes, nested by tabs, spaces or indents, numbers in
+twelve forms, checklists, a monospaced bullet; 38 look-alikes: dialogue in four
+languages, attributions, quotations, scene breaks, numbered headings, numbers
+that skip, inventories, years, initials, outline numbers, quantities, pros and
+cons, section signs, bullets in a table cell, a heading or code), each format
+finds every item and nothing else. Of these, 25 were written after the rules
+were first set; they found three look-alikes read as lists (French dialogue
+ending in full stops, Spanish dialogue with a spaced dash, pros and cons),
+which the em-dash and mixed-mark rules now keep as text. Dialogue set with
+hyphens or en dashes whose lines all end in full stops, with no narration set
+apart by a dash, still reads as a list.
 
 OpenDocument text and RTF follow the same conventions. An ODT run's font is
 the face `style:font-name` names (its `svg:font-family`), else `fo:font-family`
@@ -107,10 +167,10 @@ fixed-width under body text. Tab stops are a paragraph style's
 `style:tab-stops` (a `style:leader-style` other than `none` is a leader) and RTF
 `\tx` after `\tqr`, `\tqc`, `\tqdec` or a leader such as `\tldot`, until
 `\pard`. On the 108 `textutil` pages, where ODT and RTF had no code at all, each
-now gives 64 code blocks against DOCX's 65 on the same pages (DOCX's extra one
-is a hand-typed list item set in Menlo, which ODT and RTF read as a list item
-with inline code) and 35 inline code spans against 34; DOCX output is unchanged
-and the only words that leave ODT and RTF output are 55 listing line numbers.
+now gives 64 code blocks and 35 inline code spans, as DOCX does on the same
+pages since a hand-typed list item set in Menlo became a list item with inline
+code there too (it was DOCX's 65th block); the only words that leave ODT and
+RTF output are 55 listing line numbers.
 
 Raised and lowered text (`style:text-position`; RTF `\super` and `\sub`) is
 written in Unicode super/subscript forms where every character has one. ODF

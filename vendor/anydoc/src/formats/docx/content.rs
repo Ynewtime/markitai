@@ -19,6 +19,7 @@ use crate::shared::list::{ListEntry, ListKey, flush_list};
 use crate::shared::math::{omath_para_to_tex, omath_to_tex};
 use crate::shared::tabs::{self, Stops, TabRows};
 use crate::shared::text::clean_text;
+use crate::shared::typed_lists::{Indent, TypedLists, opens_with_bullet};
 use crate::shared::visual::{Looks, ParaSize, Size};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -63,6 +64,9 @@ pub(super) struct Ctx<'a, 'b> {
     /// with tab stops (see [`crate::shared::tabs`]); while it is set, a tab
     /// is read as [`tabs::TAB`]. Notes are not looked at.
     pub tabs: Option<&'b RefCell<TabRows>>,
+    /// markitai: the body's plain paragraphs and their indents, for the
+    /// lists typed by hand (see [`crate::shared::typed_lists`]).
+    pub lists: Option<&'b RefCell<TypedLists>>,
 }
 
 /// markitai: content read one level deeper (inside a table cell, or a block
@@ -99,6 +103,7 @@ impl<'a, 'b> Ctx<'a, 'b> {
             looks: None,
             block_depth: Default::default(),
             tabs: None,
+            lists: None,
         }
     }
 
@@ -228,6 +233,13 @@ fn collect_blocks(
                     && let Some(stops) = paragraph_stops(child, ctx.styles)?
                 {
                     tab_rows.borrow_mut().paragraph(blocks.len() - 1, stops);
+                }
+                // markitai: and an item of a list typed by hand.
+                if plain
+                    && let Some(lists) = ctx.lists
+                    && let Some(indent) = paragraph_indent(child, ctx.styles)?
+                {
+                    lists.borrow_mut().paragraph(blocks.len() - 1, indent);
                 }
             }
             "tbl" => {
@@ -394,8 +406,15 @@ fn parse_paragraph(
     });
     let size = walker.para_size;
     let mut pieces = walker.finish();
+    // markitai: in the body, a monospaced paragraph opening with a bullet is
+    // an item of a list typed by hand, not a line of code.
+    let bullet = ctx.lists.is_some()
+        && ctx.block_depth.get() == 1
+        && matches!(&pieces[..], [Piece::Inlines(inlines)] if opens_with_bullet(inlines));
     let kind = match kind {
-        ParaKind::Plain if mono && ctx.cell_depth.get() == 0 => ParaKind::Styled(BlockStyle::Code),
+        ParaKind::Plain if mono && ctx.cell_depth.get() == 0 && !bullet => {
+            ParaKind::Styled(BlockStyle::Code)
+        }
         ParaKind::Heading { .. } if mono => {
             for piece in &mut pieces {
                 if let Piece::Inlines(inlines) = piece {
@@ -472,6 +491,53 @@ fn tab_stops(tabs: &Element, set: &mut std::collections::BTreeMap<i64, (&'static
         let leader = !matches!(tab.attr(ns::W, "leader"), None | Some("none"));
         set.insert(position, (align, leader));
     }
+}
+
+/// markitai: where a paragraph's lines start, for the lists typed by hand
+/// (see [`crate::shared::typed_lists`]): its own `w:ind`, then its style's
+/// through `basedOn`, attribute by attribute. A hanging indent wins over a
+/// first-line one, and character units over twips, as in Word; `textutil`
+/// writes the first line's offset as `w:first-line`. `None` for a
+/// paragraph of a table of contents or an index, which lists pages.
+fn paragraph_indent(p: &Element, styles: &Styles) -> Result<Option<Indent>, ConvertError> {
+    let ppr = p.find(ns::W, "pPr");
+    let style = ppr
+        .and_then(|pr| pr.find(ns::W, "pStyle"))
+        .and_then(|e| e.attr(ns::W, "val"))
+        .or(styles.default_paragraph);
+    let mut found: Vec<&Element> = ppr.and_then(|pr| pr.find(ns::W, "ind")).into_iter().collect();
+    if let Some(id) = style {
+        if styles.style_name(id).is_some_and(lists_pages) {
+            return Ok(None);
+        }
+        found.extend(styles.style_indents(id)?);
+    }
+    let left = found
+        .iter()
+        .find_map(|ind| indent_value(ind, &["startChars", "leftChars"], &["start", "left"]));
+    let first_line = found.iter().find_map(|ind| {
+        indent_value(ind, &["hangingChars"], &["hanging"])
+            .map(|hanging| -hanging)
+            .or_else(|| indent_value(ind, &["firstLineChars"], &["firstLine", "first-line"]))
+    });
+    Ok(Some(Indent { left: left.unwrap_or(0), first_line: first_line.unwrap_or(0) }))
+}
+
+/// markitai: one `w:ind` length in twips: a non-zero count in hundredths
+/// of a character (taken as a 12-point em), else a length in twips or with
+/// its unit.
+fn indent_value(ind: &Element, chars: &[&str], lengths: &[&str]) -> Option<i32> {
+    chars
+        .iter()
+        .find_map(|name| {
+            let hundredths = ind.attr(ns::W, name)?.trim().parse::<i32>().ok()?;
+            (hundredths != 0).then(|| hundredths.saturating_mul(12) / 5)
+        })
+        .or_else(|| {
+            lengths
+                .iter()
+                .find_map(|name| crate::shared::typed_lists::twips(ind.attr(ns::W, name)?))
+        })
 }
 
 /// markitai: a paragraph style of a table of contents or an index.

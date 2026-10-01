@@ -9,6 +9,7 @@ mod tables;
 
 use crate::error::ConvertError;
 use crate::formats::docx::scripts::Script;
+use crate::formats::docx::symbols::symbol_char;
 use crate::model::{Block, Document, Inline, Note, NoteKind, Style, inlines_are_empty};
 use crate::package::xml::{Element, Node, ns};
 use crate::shared::blockstyle::{BlockStyle, StyledRun};
@@ -21,6 +22,7 @@ use crate::shared::list::{ListEntry, ListKey, MarkerKind, flush_list};
 use crate::shared::math::{math_lines, omath_para_to_tex};
 use crate::shared::tabs::{self, Stops, TabRows};
 use crate::shared::text::clean_text;
+use crate::shared::typed_lists::{Indent, TypedLists, opens_with_bullet};
 use crate::shared::visual::{Looks, ParaSize, Size};
 use lexer::{Lexer, Token};
 use std::collections::HashMap;
@@ -104,6 +106,9 @@ struct CharState {
     stops: Stops,
     tab_align: &'static str,
     tab_leader: bool,
+    /// markitai: the paragraph's indents (`\li`, `\fi`, until `\pard`); see
+    /// [`crate::shared::typed_lists`].
+    indent: Indent,
 }
 
 impl Default for CharState {
@@ -128,6 +133,7 @@ impl Default for CharState {
             stops: Stops::default(),
             tab_align: "left",
             tab_leader: false,
+            indent: Indent::default(),
         }
     }
 }
@@ -243,6 +249,28 @@ impl TextDecoder {
         let bytes = std::mem::take(&mut self.pending);
         let (text, _, _) = encoding.unwrap_or(self.default_encoding).decode(&bytes);
         Some(text.into_owned())
+    }
+
+    /// markitai: the buffered bytes of text in symbol font `font`: each its
+    /// glyph's character where [`symbol_char`] maps it, else decoded with
+    /// `encoding` as other text is.
+    fn take_symbols(
+        &mut self,
+        font: &str,
+        encoding: Option<&'static encoding_rs::Encoding>,
+    ) -> Option<String> {
+        if self.pending.is_empty() {
+            return None;
+        }
+        let encoding = encoding.unwrap_or(self.default_encoding);
+        let mut text = String::new();
+        for byte in std::mem::take(&mut self.pending) {
+            match symbol_char(font, &format!("F0{byte:02X}")) {
+                Some(c) => text.push(c),
+                None => text.push_str(&encoding.decode(&[byte]).0),
+            }
+        }
+        Some(text)
     }
 
     /// `\uN`: the completed scalar (surrogate pairs are held and combined),
@@ -686,8 +714,10 @@ struct Parser<'a> {
     para_fonts: RunFonts,
     default_font: Option<i32>,
     /// markitai: the body's paragraphs that may be rows of a table set with
-    /// tab stops (see [`crate::shared::tabs`]).
+    /// tab stops (see [`crate::shared::tabs`]), and its plain paragraphs and
+    /// their indents (see [`crate::shared::typed_lists`]).
     tab_rows: TabRows,
+    typed_lists: TypedLists,
 }
 
 impl<'a> Parser<'a> {
@@ -719,6 +749,7 @@ impl<'a> Parser<'a> {
             para_fonts: RunFonts::default(),
             default_font: None,
             tab_rows: TabRows::default(),
+            typed_lists: TypedLists::default(),
         }
     }
 
@@ -916,11 +947,16 @@ impl<'a> Parser<'a> {
                 self.state.outline = None;
                 self.state.block = None;
                 self.state.style_base = Style::PLAIN;
-                // markitai: and the tab stops.
+                // markitai: and the tab stops and indents.
                 self.state.stops = Stops::default();
                 self.state.tab_align = "left";
                 self.state.tab_leader = false;
+                self.state.indent = Indent::default();
             }
+            // markitai: the paragraph's indents, for the lists typed by
+            // hand.
+            "li" | "lin" => self.state.indent.left = param.unwrap_or(0),
+            "fi" => self.state.indent.first_line = param.unwrap_or(0),
             // markitai: the paragraph's tab stops, for the tables set with
             // them; a bar tab only draws a line.
             "tx" => {
@@ -1289,7 +1325,16 @@ impl<'a> Parser<'a> {
 
     fn flush_pending(&mut self) {
         let encoding = self.state.font.and_then(|f| self.prelude.fonts.get(&f).copied());
-        if let Some(text) = self.decoder.take_pending(encoding) {
+        // markitai: a symbol font's bytes are its glyphs (Word writes a
+        // Wingdings square bullet as `\'a7`, not `§`); those the DOCX
+        // reader's table maps become their characters, the rest decode as
+        // before.
+        let symbol = self.state.font.and_then(|f| self.prelude.symbol_fonts.get(&f).copied());
+        let text = match symbol {
+            Some(font) => self.decoder.take_symbols(font, encoding),
+            None => self.decoder.take_pending(encoding),
+        };
+        if let Some(text) = text {
             self.push_text(text);
         }
     }
@@ -1381,7 +1426,9 @@ impl<'a> Parser<'a> {
         let listed = self.state.ls.is_some()
             || self.state.legacy_list.is_some()
             || listtext.as_deref().is_some_and(|text| !text.trim().is_empty());
-        if mono && self.state.outline.is_none() && !listed {
+        // markitai: one opening with a bullet is an item of a list typed by
+        // hand (see `crate::shared::typed_lists`).
+        if mono && self.state.outline.is_none() && !listed && !opens_with_bullet(&inlines) {
             flush_list(&mut self.blocks, &mut self.list_run);
             self.styled.push(BlockStyle::Code, inlines, &mut self.blocks);
             return Ok(());
@@ -1429,11 +1476,13 @@ impl<'a> Parser<'a> {
                 let row = tabs::has_tab(&inlines);
                 self.blocks.push(Block::Paragraph(inlines));
                 // markitai: a plain paragraph may turn out to be a heading
-                // set by hand, or a row of a table set with tab stops.
+                // set by hand, a row of a table set with tab stops, or an
+                // item of a list typed by hand.
                 self.looks.paragraph(self.blocks.len() - 1, size);
                 if row {
                     self.tab_rows.paragraph(self.blocks.len() - 1, self.state.stops);
                 }
+                self.typed_lists.paragraph(self.blocks.len() - 1, self.state.indent);
             }
         }
         Ok(())
@@ -1562,13 +1611,14 @@ impl<'a> Parser<'a> {
         self.table.collapse_nested()?;
         self.flush_top_table()?;
         self.flush_runs();
-        // markitai: tables set with tab stops, then headings set by hand (see
-        // `crate::shared::tabs` and `crate::shared::visual`); a table laying
-        // out a listing is its code, and a numbered listing keeps its code,
-        // not its line numbers (see `crate::shared::code`).
+        // markitai: tables set with tab stops, headings set by hand and lists
+        // typed by hand (see `crate::shared::tabs`, `crate::shared::visual`
+        // and `crate::shared::typed_lists`); a table laying out a listing is
+        // its code, and a numbered listing keeps its code, not its line
+        // numbers (see `crate::shared::code`).
         let mut blocks = self.blocks;
         let mut notes = self.dest.notes;
-        tabs::finish(self.tab_rows, Some(self.looks), &mut blocks, &mut notes);
+        tabs::finish(self.tab_rows, self.typed_lists, Some(self.looks), &mut blocks, &mut notes);
         for blocks in
             std::iter::once(&mut blocks).chain(notes.iter_mut().map(|note| &mut note.blocks))
         {
@@ -1967,5 +2017,36 @@ mod tests {
             ]
         );
         assert_eq!(crate::shared::code::describe(&doc.notes[0].blocks), ["p:Note text"]);
+    }
+
+    #[test]
+    fn indents_and_symbol_fonts_in_a_list_typed_by_hand() {
+        // markitai: `\li` and `\fi` place the bullet until `\pard`; a
+        // Wingdings square's byte is the square, not `§`; a bullet line in
+        // a monospaced font is an item.
+        let read = |body: &str| {
+            described(&format!(
+                r"{{\rtf1\ansi{{\fonttbl{{\f0\froman\fcharset0 Times;}}{{\f1\fnil\fcharset2 Wingdings;}}
+                {{\f2\fnil\fcharset0 Menlo-Regular;}}}}{body}
+                \pard\f0 And then the prose of the document goes on for a while.\par}}"
+            ))
+        };
+        let both = |a: &str, b: &str| {
+            read(&format!(r"\pard{a} \bullet\tab a\par \pard{b} \bullet\tab b\par"))
+        };
+        assert_eq!(both("", r"\li360\fi-360")[0], "list:p:a|p:b");
+        assert_eq!(both("", r"\li720")[0], "list:p:a;list:p:b");
+        // `\pard` resets the indent: `c` is back beside `a`, not under it.
+        let doc = parse(
+            br"{\rtf1 \pard \bullet\tab a\par \pard\li720 \bullet\tab b\par \pard \bullet\tab c\par}",
+        )
+        .unwrap();
+        let [Block::List(list)] = &doc.blocks[..] else { panic!("{:?}", doc.blocks) };
+        assert_eq!(list.items.len(), 2, "{list:?}");
+        assert_eq!(read(r"\pard {\f1\'a7}\tab a\par \pard {\f1\'a7}\tab b\par")[0], "list:p:a|p:b");
+        assert_eq!(read(r"\pard\f2 \bullet\tab npm test\par")[0], "list:p:`npm test`");
+        // Text in a symbol font that the table has no glyph for decodes as
+        // before.
+        assert_eq!(read(r"\pard {\f1 J} {\f1 A} smiles\par")[0], "p:☺ A smiles");
     }
 }

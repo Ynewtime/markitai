@@ -80,6 +80,9 @@ pub struct Prelude {
     /// markitai: the numbers of the monospaced fonts (see
     /// [`crate::shared::code`]).
     pub mono_fonts: HashSet<i32>,
+    /// markitai: the symbol fonts (`symbol`, `wingdings`) by number, whose
+    /// bytes are that font's glyphs, not the code page's characters.
+    pub symbol_fonts: HashMap<i32, &'static str>,
     /// Paragraph style id (`\sN`) -> definition.
     pub styles: HashMap<i32, StyleDef>,
     /// `\lsN` -> resolved list definition (through the override table).
@@ -91,7 +94,7 @@ pub fn parse_prelude(bytes: &[u8], default_encoding: &'static encoding_rs::Encod
 
     for group in destination_groups(bytes, "fonttbl") {
         parse_fonttbl(group, &mut prelude.fonts, default_encoding);
-        mono_fonts(group, &mut prelude.mono_fonts, default_encoding);
+        mono_fonts(group, &mut prelude.mono_fonts, &mut prelude.symbol_fonts, default_encoding);
     }
     for group in destination_groups(bytes, "stylesheet") {
         parse_stylesheet(group, &mut prelude.styles, default_encoding);
@@ -184,12 +187,16 @@ struct FontDecl {
 /// name). Word writes each font in a group of its own (`{\f2\fmodern
 /// \fcharset0\fprq1{\*\panose ...}Courier New;}`); TextEdit writes them one
 /// after another (`\f2\fnil\fcharset0 Menlo-Regular;`).
+///
+/// It also notes the symbol fonts whose bytes the DOCX reader's table maps
+/// to Unicode (`Symbol`, `Wingdings`), by the font's lowercase name.
 fn mono_fonts(
     group: &[u8],
     mono: &mut HashSet<i32>,
+    symbols: &mut HashMap<i32, &'static str>,
     default_encoding: &'static encoding_rs::Encoding,
 ) {
-    let finish = |font: FontDecl, mono: &mut HashSet<i32>| {
+    let mut finish = |font: FontDecl, mono: &mut HashSet<i32>| {
         let encoding = font
             .charset
             .map_or(default_encoding, |charset| charset_encoding(charset, default_encoding));
@@ -199,6 +206,11 @@ fn mono_fonts(
             font.charset.is_some_and(|charset| matches!(charset, 128 | 129 | 130 | 134 | 136));
         if is_monospace(name) || (font.fixed && !cjk && is_fixed_pitch_code_face(name)) {
             mono.insert(font.id);
+        }
+        if let Some(symbol) =
+            ["symbol", "wingdings"].into_iter().find(|symbol| name.eq_ignore_ascii_case(symbol))
+        {
+            symbols.insert(font.id, symbol);
         }
     };
     let mut lexer = Lexer::new(group);
@@ -614,10 +626,23 @@ mod tests {
     /// markitai: the monospaced fonts of a font table.
     fn mono(table: &str) -> Vec<i32> {
         let mut found = HashSet::new();
-        mono_fonts(table.as_bytes(), &mut found, encoding_rs::WINDOWS_1252);
+        mono_fonts(table.as_bytes(), &mut found, &mut HashMap::new(), encoding_rs::WINDOWS_1252);
         let mut found: Vec<i32> = found.into_iter().collect();
         found.sort_unstable();
         found
+    }
+
+    #[test]
+    fn symbol_fonts_are_noted_by_name() {
+        let mut symbols = HashMap::new();
+        mono_fonts(
+            br"{\f1\froman\fcharset2\fprq2{\*\panose 05050102010706020507}Symbol;}
+            {\f2\fnil\fcharset2 Wingdings;}{\f3\fswiss\fcharset0 Arial;}",
+            &mut HashSet::new(),
+            &mut symbols,
+            encoding_rs::WINDOWS_1252,
+        );
+        assert_eq!(symbols, HashMap::from([(1, "symbol"), (2, "wingdings")]));
     }
 
     #[test]

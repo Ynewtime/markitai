@@ -21,7 +21,8 @@ pub mod officeart;
 pub mod text;
 pub mod uri;
 // markitai: headings inferred from how a paragraph looks, code from a
-// monospaced font, and tables from tab stops.
+// monospaced font, tables from tab stops, and lists typed by hand.
 pub mod code;
 pub mod tabs;
+pub mod typed_lists;
 pub mod visual;

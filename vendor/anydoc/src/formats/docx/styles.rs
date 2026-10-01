@@ -150,6 +150,19 @@ impl<'a> Styles<'a> {
         Ok(found)
     }
 
+    /// markitai: the `w:ind` elements a paragraph style and those it is
+    /// `basedOn` set, nearest first; see [`crate::shared::typed_lists`].
+    pub fn style_indents(&self, id: &str) -> Result<Vec<&'a Element>, ConvertError> {
+        let mut found = Vec::new();
+        self.chains.walk::<()>(id, |style| {
+            if let Some(ind) = style.find(ns::W, "pPr").and_then(|ppr| ppr.find(ns::W, "ind")) {
+                found.push(ind);
+            }
+            None
+        })?;
+        Ok(found)
+    }
+
     /// The size a style sets its text in (`w:sz`), inherited through
     /// `basedOn`; the nearest specification wins.
     ///

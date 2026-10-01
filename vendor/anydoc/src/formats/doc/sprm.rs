@@ -146,11 +146,18 @@ pub struct PapDelta {
     pub inner_ttp: Option<bool>,
     /// Row properties, present on TTP marks.
     pub tap: Option<Tap>,
+    /// markitai: the left indent and the first line's offset from it, in
+    /// twips (`sprmPDxaLeft`, `sprmPDxaLeft1` and their Word 97 forms); see
+    /// [`crate::shared::typed_lists`].
+    pub left: Option<i32>,
+    pub first_line: Option<i32>,
 }
 
 impl PapDelta {
     pub fn merge(self, over: PapDelta) -> PapDelta {
         PapDelta {
+            left: over.left.or(self.left),
+            first_line: over.first_line.or(self.first_line),
             in_table: over.in_table.or(self.in_table),
             ttp: over.ttp.or(self.ttp),
             outline: over.outline.or(self.outline),
@@ -195,6 +202,10 @@ pub fn apply_pap_sprms(grpprl: &[u8], data: &[u8], delta: &mut PapDelta) {
                 delta.itap = Some(delta.itap.unwrap_or(0).saturating_add(d));
             }
         }
+        // markitai: sprmPDxaLeft80 / sprmPDxaLeft and sprmPDxaLeft1_80 /
+        // sprmPDxaLeft1, signed twips.
+        0x840F | 0x845E => delta.left = get_u16(operand, 0).map(|v| i32::from(v as i16)),
+        0x8411 | 0x8460 => delta.first_line = get_u16(operand, 0).map(|v| i32::from(v as i16)),
         // sprmPFInnerTableCell / sprmPFInnerTtp
         0x244B => delta.inner_cell = Some(operand.first().is_some_and(|&v| v != 0)),
         0x244C => delta.inner_ttp = Some(operand.first().is_some_and(|&v| v != 0)),

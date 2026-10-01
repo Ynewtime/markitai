@@ -23,7 +23,8 @@
 //!   indents it (a verse, a quotation) and makes no column;
 //! - two columns only at tab stops the author set, and not after a list
 //!   label (`1.`, `a)`) or a field label (`Date:`); three or more at any;
-//! - not a list typed by hand (a first column of bullets), a table of
+//! - not a list typed by hand (a first column of bullets, which
+//!   [`crate::shared::typed_lists`] reads as a list), a table of
 //!   contents (a tab stop with a leader, or page numbers counting up in the
 //!   last column with no header above them) or prose (a row longer than
 //!   [`MAX_ROW_CHARS`], which no longer fits a line);
@@ -34,6 +35,7 @@ use crate::model::{
     Block, Cell, CellSlot, Inline, Note, Style, Table, TableKind, inlines_are_empty,
     inlines_to_plain_text,
 };
+use crate::shared::typed_lists::TypedLists;
 use crate::shared::visual::Looks;
 use std::ops::Range;
 
@@ -374,21 +376,38 @@ fn all_bold(row: &[Vec<Inline>]) -> bool {
     row.iter().any(|cell| !inlines_are_empty(cell)) && row.iter().all(|cell| bold(cell))
 }
 
-/// Place the tables a document's tabs set out, write every other tab back
-/// as a space, and then find the headings its paragraphs show by their looks
-/// (see [`crate::shared::visual`]); a row of a table is no heading.
-pub fn finish(rows: TabRows, looks: Option<Looks>, blocks: &mut Vec<Block>, notes: &mut [Note]) {
+/// Place the tables a document's tabs set out, find the headings its
+/// paragraphs show by their looks (see [`crate::shared::visual`]; a row of
+/// a table, or a paragraph opening with a bullet, is no heading), then the
+/// lists typed by hand among the paragraphs left (see
+/// [`crate::shared::typed_lists`], which reads a tab after a marker), and
+/// write every other tab back as a space.
+pub fn finish(
+    rows: TabRows,
+    lists: TypedLists,
+    looks: Option<Looks>,
+    blocks: &mut Vec<Block>,
+    notes: &mut [Note],
+) {
     let tables = rows.tables(blocks);
+    let in_table = |index: usize| tables.iter().any(|(range, _)| range.contains(&index));
+    if let Some(mut looks) = looks {
+        let bullets = lists.bullets(blocks);
+        looks.skip(|index| in_table(index) || bullets.contains(&index));
+        looks.apply(blocks);
+    }
+    let mut placed: Vec<(Range<usize>, Vec<Block>)> = lists.lists(blocks, in_table);
     spaces_in_blocks(blocks);
+    for (_, list) in &mut placed {
+        spaces_in_blocks(list);
+    }
     for note in notes {
         spaces_in_blocks(&mut note.blocks);
     }
-    if let Some(mut looks) = looks {
-        looks.skip(|index| tables.iter().any(|(range, _)| range.contains(&index)));
-        looks.apply(blocks);
-    }
-    for (range, table) in tables.into_iter().rev() {
-        let _rows: Vec<Block> = blocks.splice(range, [Block::Table(table)]).collect();
+    placed.extend(tables.into_iter().map(|(range, table)| (range, vec![Block::Table(table)])));
+    placed.sort_by_key(|(range, _)| range.start);
+    for (range, replacement) in placed.into_iter().rev() {
+        let _paragraphs: Vec<Block> = blocks.splice(range, replacement).collect();
     }
 }
 
@@ -428,7 +447,7 @@ mod tests {
             }
         }
         let mut blocks = paragraphs;
-        finish(rows, None, &mut blocks, &mut []);
+        finish(rows, TypedLists::default(), None, &mut blocks, &mut []);
         blocks
     }
 
@@ -614,7 +633,7 @@ mod tests {
         rows.paragraph(0, custom());
         rows.paragraph(1, custom());
         rows.paragraph(2, other);
-        finish(rows, None, &mut blocks, &mut []);
+        finish(rows, TypedLists::default(), None, &mut blocks, &mut []);
         assert_eq!(shown(&blocks), ["a b c", "d e f", "g h i"]);
         unchanged(vec![row(&["a", "b", "c"]), row(&["d", "e"]), row(&["g", "h", "i"])], custom());
     }
@@ -665,11 +684,58 @@ mod tests {
             kind: crate::model::NoteKind::Footnote,
             blocks: vec![row(&["n", "o"])],
         }];
-        finish(rows, Some(looks), &mut blocks, &mut notes);
+        finish(rows, TypedLists::default(), Some(looks), &mut blocks, &mut notes);
         assert!(matches!(blocks[1], Block::Heading { level: 1, .. }), "{blocks:?}");
         assert!(matches!(blocks[2], Block::Table(_)), "{blocks:?}");
         assert_eq!(blocks.len(), 3);
         assert_eq!(shown(&notes[0].blocks), ["n o"]);
+    }
+
+    #[test]
+    fn a_list_typed_by_hand_takes_no_rows_and_no_headings() {
+        // markitai: rows numbered in their first column are the table's,
+        // not a list's; a bullet paragraph set large and bold is an item,
+        // not a heading; a tab in an item's text is a space.
+        use crate::shared::typed_lists::{Indent, TypedLists};
+        let bold = |text: &str| Inline::Text {
+            text: text.into(),
+            style: Style { bold: true, ..Style::PLAIN },
+        };
+        let mut blocks = vec![
+            Block::Paragraph(vec![Inline::plain("Body text that sets the size.")]),
+            Block::Paragraph(vec![bold("•"), tab(Style::PLAIN), bold("Big point")]),
+            row(&["1", "Apple", "3"]),
+            row(&["2", "Pear", "1"]),
+            row(&["3", "Plum", "7"]),
+            Block::Paragraph(vec![Inline::plain("Between.")]),
+            row(&["•", "Name", "value"]),
+        ];
+        let mut looks = Looks::default();
+        let mut rows = TabRows::default();
+        let mut lists = TypedLists::default();
+        for (index, size, repeat) in [(0, 24, 20), (1, 48, 1), (5, 24, 1), (6, 24, 1)] {
+            let Block::Paragraph(inlines) = &blocks[index] else { unreachable!() };
+            let mut para = ParaSize::default();
+            looks.text(&mut para, size, &inlines_to_plain_text(inlines).repeat(repeat));
+            looks.paragraph(index, para);
+        }
+        for index in 0..blocks.len() {
+            lists.paragraph(index, Indent::default());
+            if (2..5).contains(&index) {
+                rows.paragraph(index, custom());
+            }
+        }
+        finish(rows, lists, Some(looks), &mut blocks, &mut []);
+        let [p, Block::List(big), Block::Table(_), between, Block::List(named)] = &blocks[..]
+        else {
+            panic!("{blocks:?}")
+        };
+        assert_eq!(
+            shown(&[p.clone(), between.clone()]),
+            ["Body text that sets the size.", "Between."]
+        );
+        assert_eq!(shown(&big.items[0].blocks), ["Big point"]);
+        assert_eq!(shown(&named.items[0].blocks), ["Name value"]);
     }
 
     #[test]

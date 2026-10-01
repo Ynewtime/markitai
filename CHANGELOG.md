@@ -125,6 +125,8 @@
 
 ### Fixed
 
+- Write hand-typed lists in Word, OpenDocument, RTF and Word 97 documents (paragraphs led by a bullet character, symbol-font bullet, check box or consecutive typed numbers) as Markdown lists, nested by indentation, while dialogue dashes, signatures, years, initials and quantities stay text; on the textutil corpus DOCX list items now match the ODT and RTF documents' real lists file for file.
+- Keep a document line that starts like a Markdown block (`- `, `+ `, `1. `, `1) `, `>`, `---`) as text, as was already done for `#`, so a remark after a dash or a year with a full stop is not read as a list.
 - Read small Chinese text better with local OCR: lines under 24 pixels high are read again from an enlarged image, and a character the recognizer dropped inside a widened box is recovered when a reread confirms it between unchanged neighbours. Chinese character error falls in every corpus (72 DPI held-out text 8.82% → 3.21%); English, numbers and two-column pages read exactly as before.
 - Rebuild PDF tables drawn without rules whose cells wrap over several lines and sit vertically centred (no structure-tree table needed), including a table continued on the next page, where they were run together into one paragraph; corpus outputs are unchanged but for one table that now ends where it should, and 14 layouts prone to false tables (columns, card grids, calendars, aligned code) gain none.
 - Write columns that Word, OpenDocument and RTF documents align with tab stops as tables (three or more consecutive paragraphs with the same stops and cell count; tables of contents, leader dots, indentation and hand-typed lists stay text), where tabs used to collapse into spaces.

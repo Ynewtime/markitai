@@ -81,11 +81,14 @@ fn read_text(
 ) -> Result<(Vec<Block>, Vec<Note>, MonoShare), ConvertError> {
     ctx.looks = Some(RefCell::default());
     ctx.tabs = Some(RefCell::default());
+    ctx.lists = Some(RefCell::default());
     ctx.code_fonts = code_fonts;
     let mut blocks = parse_container(text, &ctx)?;
     let mut notes = ctx.notes.take();
     let rows = ctx.tabs.take().map(RefCell::into_inner).unwrap_or_default();
-    tabs::finish(rows, ctx.looks.take().map(RefCell::into_inner), &mut blocks, &mut notes);
+    // markitai: and its lists typed by hand ([`crate::shared::typed_lists`]).
+    let lists = ctx.lists.take().map(RefCell::into_inner).unwrap_or_default();
+    tabs::finish(rows, lists, ctx.looks.take().map(RefCell::into_inner), &mut blocks, &mut notes);
     for blocks in std::iter::once(&mut blocks).chain(notes.iter_mut().map(|note| &mut note.blocks))
     {
         listing_tables(blocks);
@@ -797,5 +800,47 @@ mod tests {
             panic!("{:?}", doc.blocks)
         };
         assert_eq!(anchor, "A B");
+    }
+
+    #[test]
+    fn margins_set_the_levels_of_a_list_typed_by_hand() {
+        // markitai: a style's `fo:margin-left` and `fo:text-indent`, and a
+        // parent style's, place the bullet; a bullet line set in a
+        // monospaced face is an item, not code.
+        let read = |body: &str| {
+            let content = format!(
+                r#"<office:document-content
+                xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+                xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"
+                xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+                xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"
+                xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0">
+                <office:font-face-decls>
+                  <style:font-face style:name="Menlo" svg:font-family="Menlo"/>
+                </office:font-face-decls>
+                <office:automatic-styles>
+                  <style:style style:name="Hang" style:family="paragraph"><style:paragraph-properties
+                    fo:margin-left="0.25in" fo:text-indent="-0.25in"/></style:style>
+                  <style:style style:name="Deep" style:family="paragraph"><style:paragraph-properties
+                    fo:margin-left="1.27cm"/></style:style>
+                  <style:style style:name="Deeper" style:family="paragraph"
+                    style:parent-style-name="Deep"/>
+                  <style:style style:name="Mono" style:family="text">
+                    <style:text-properties style:font-name="Menlo"/></style:style>
+                </office:automatic-styles>
+                <office:body><office:text>{body}
+                <text:p>And then the prose of the document goes on for a while.</text:p>
+                </office:text></office:body></office:document-content>"#
+            );
+            let doc = parse(&odt_with_content(&content)).unwrap();
+            crate::shared::code::describe(&doc.blocks)[..doc.blocks.len() - 1].to_vec()
+        };
+        let item = |style: &str, text: &str| {
+            format!(r#"<text:p text:style-name="{style}">•<text:tab/>{text}</text:p>"#)
+        };
+        assert_eq!(read(&[item("", "a"), item("Hang", "b")].concat()), ["list:p:a|p:b"]);
+        assert_eq!(read(&[item("", "a"), item("Deeper", "b")].concat()), ["list:p:a;list:p:b"]);
+        let mono = r#"<text:p><text:span text:style-name="Mono">•<text:tab/>npm test</text:span></text:p>"#;
+        assert_eq!(read(mono), ["list:p:`npm test`"]);
     }
 }
