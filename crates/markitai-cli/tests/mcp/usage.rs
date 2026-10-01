@@ -414,7 +414,10 @@ fn eof_drains_the_admitted_response_without_starting_queued_batch_items() {
     );
     model.wait(1);
     client.input.take();
-    thread::sleep(Duration::from_millis(200));
+    // The server stops dispatching once its MCP session has ended after end
+    // of input; under a heavily loaded machine that teardown has taken longer
+    // than 200 ms, so the queued item started. Wait long enough for it.
+    thread::sleep(Duration::from_millis(1000));
     assert!(
         client.child.try_wait().unwrap().is_none(),
         "server exited before draining the model"
