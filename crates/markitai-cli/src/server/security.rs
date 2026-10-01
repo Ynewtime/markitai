@@ -42,9 +42,14 @@ fn local(host: &str) -> bool {
     host == "localhost" || host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
 }
 pub(super) fn allowed_host(value: &str) -> ApiResult<String> {
-    let host = hostname(value).ok_or_else(|| ApiError::new(400, "invalid allowed host"))?;
+    let host = hostname(value)
+        .ok_or_else(|| ApiError::new(400, "invalid_allowed_host", "invalid allowed host"))?;
     if host.is_empty() {
-        return Err(ApiError::new(400, "invalid allowed host"));
+        return Err(ApiError::new(
+            400,
+            "invalid_allowed_host",
+            "invalid allowed host",
+        ));
     }
     Ok(host)
 }
@@ -101,6 +106,7 @@ async fn guard_inner(state: Arc<State>, mut request: Request, next: Next) -> Res
     {
         return ApiError::new(
             401,
+            "token_required",
             "authentication required: send the startup token in Authorization: Bearer or ?token=",
         )
         .into_response();
@@ -117,6 +123,7 @@ async fn guard_inner(state: Arc<State>, mut request: Request, next: Next) -> Res
     }) {
         return ApiError::new(
             400,
+            "host_not_allowed",
             "host is not allowed; use localhost, an IP address, or --allowed-host",
         )
         .into_response();
@@ -138,13 +145,18 @@ async fn guard_inner(state: Arc<State>, mut request: Request, next: Next) -> Res
                 || state.allowed_hosts.contains(origin)
                 || host.as_deref() == Some(origin))
         }) {
-            return ApiError::new(403, "cross-site request from this origin is not allowed")
-                .into_response();
+            return ApiError::new(
+                403,
+                "origin_not_allowed",
+                "cross-site request from this origin is not allowed",
+            )
+            .into_response();
         }
     }
     if settings_path(request.uri().path()) && !(loopback || authenticated) {
         return ApiError::new(
             403,
+            "settings_forbidden",
             "settings access requires loopback or token authentication",
         )
         .into_response();
@@ -156,7 +168,8 @@ async fn guard_inner(state: Arc<State>, mut request: Request, next: Next) -> Res
         .and_then(|v| v.parse::<u64>().ok())
         .is_some_and(|size| size > MAX_REQUEST as u64)
     {
-        return ApiError::new(413, "request exceeds upload limit").into_response();
+        return ApiError::new(413, "request_too_large", "request exceeds upload limit")
+            .into_response();
     }
     request
         .extensions_mut()

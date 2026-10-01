@@ -264,7 +264,7 @@ pub(super) fn get(state: &State, id: &str) -> ApiResult<Arc<Job>> {
         .unwrap()
         .get(id)
         .cloned()
-        .ok_or_else(|| ApiError::new(404, "job not found"))
+        .ok_or_else(|| ApiError::new(404, "job_not_found", "job not found"))
 }
 
 async fn convert_one(
@@ -294,15 +294,14 @@ async fn convert_one(
     if permit.is_none() || shutdown || *job.stop.borrow() {
         let mut data = job.data.lock().unwrap();
         let item = &mut data.items[index];
+        let (code, error) = if !shutdown && *job.stop.borrow() {
+            ("cancelled", "cancelled (stopped by request)")
+        } else {
+            ("shutdown", "cancelled (server shutdown)")
+        };
         item.status = "error".into();
-        item.error = Some(
-            if !shutdown && *job.stop.borrow() {
-                "cancelled (stopped by request)"
-            } else {
-                "cancelled (server shutdown)"
-            }
-            .into(),
-        );
+        item.error = Some(error.into());
+        item.error_code = Some(code.into());
         item.finished_at = Some(now());
         let _ = job.events.send(("item", json!(item)));
         return;
@@ -356,6 +355,7 @@ async fn convert_one(
                 .skip_reason
                 .as_ref()
                 .map(|reason| format!("skipped ({reason})"));
+            item.error_code = None;
             item.llm_enhanced = result.llm_output_path.is_some();
             item.cost_usd = Some(result.usage.cost_usd);
             item.pricing = crate::pricing::Pricing::from_usage(&result.usage);
@@ -388,6 +388,7 @@ async fn convert_one(
         Ok(Err(failure)) => {
             item.status = "error".into();
             let message = failure.error.to_string();
+            item.error_code = Some(failure.code().into());
             item.diagnostics =
                 AttemptDiagnostics::failed(Operation::Convert, message.clone(), failure.usage);
             item.error = Some(message);
@@ -395,6 +396,7 @@ async fn convert_one(
         Err(_) => {
             item.status = "error".into();
             item.error = Some("internal conversion error".into());
+            item.error_code = Some("internal_error".into());
         }
     }
     let id = item.item_id.clone();

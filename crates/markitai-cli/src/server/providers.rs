@@ -33,6 +33,7 @@ fn trusted(request: &Request) -> ApiResult<()> {
     } else {
         Err(ApiError::new(
             403,
+            "settings_forbidden",
             "Provider settings require a trusted connection",
         ))
     }
@@ -61,14 +62,15 @@ async fn body(request: Request) -> ApiResult<Value> {
     {
         return Err(ApiError::new(
             422,
+            "json_required",
             "Provider request must use application/json",
         ));
     }
     let bytes = axum::body::to_bytes(request.into_body(), 64 * 1024)
         .await
-        .map_err(|_| ApiError::new(413, "Provider request exceeds 64 KiB"))?;
+        .map_err(|_| ApiError::new(413, "request_too_large", "Provider request exceeds 64 KiB"))?;
     serde_json::from_slice(&bytes)
-        .map_err(|_| ApiError::new(422, "Provider request is not valid JSON"))
+        .map_err(|_| ApiError::new(422, "invalid_json", "Provider request is not valid JSON"))
 }
 async fn detected(request: Request) -> Response {
     response(
@@ -102,7 +104,13 @@ async fn network(request: Value, is_probe: bool) -> ApiResult<Value> {
         .get_or_init(|| Arc::new(Semaphore::new(8)))
         .clone()
         .try_acquire_owned()
-        .map_err(|_| ApiError::new(429, "Too many provider requests are active"))?;
+        .map_err(|_| {
+            ApiError::new(
+                429,
+                "provider_busy",
+                "Too many provider requests are active",
+            )
+        })?;
     let task = tokio::task::spawn_blocking(move || {
         let _permit = permit;
         if is_probe {
@@ -116,17 +124,24 @@ async fn network(request: Value, is_probe: bool) -> ApiResult<Value> {
         Ok(Ok(Err(markitai_core::Error::InvalidInput(_) | markitai_core::Error::Config(_)))) => {
             Err(ApiError::new(
                 422,
+                "invalid_provider_request",
                 "Provider request or environment reference is invalid",
             ))
         }
-        Ok(Ok(Err(_))) | Ok(Err(_)) => {
-            Err(ApiError::new(503, "Provider operation could not complete"))
-        }
+        Ok(Ok(Err(_))) | Ok(Err(_)) => Err(ApiError::new(
+            503,
+            "provider_unavailable",
+            "Provider operation could not complete",
+        )),
         Err(_) => {
             if is_probe {
                 Ok(serde_json::json!({"ok":false,"detail":"Model connection test timed out"}))
             } else {
-                Err(ApiError::new(503, "Model discovery timed out"))
+                Err(ApiError::new(
+                    503,
+                    "discovery_timeout",
+                    "Model discovery timed out",
+                ))
             }
         }
     }

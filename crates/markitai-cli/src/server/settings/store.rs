@@ -236,6 +236,7 @@ impl Store {
         if read(&self.source.path)?.is_none() {
             return Err(ApiError::new(
                 404,
+                "config_missing",
                 "config file does not exist yet; save a model to create it",
             ));
         }
@@ -245,6 +246,7 @@ impl Store {
         if self.read_only {
             return Err(ApiError::new(
                 409,
+                "settings_read_only",
                 "Session model/provider overrides are active; edit the selected configuration file and restart without those overrides",
             ));
         }
@@ -274,6 +276,7 @@ impl Store {
         {
             return Err(ApiError::structured(
                 409,
+                "stale_revision",
                 json!({"code":"stale_revision","current_revision":current}),
             ));
         }
@@ -334,6 +337,7 @@ impl Store {
         if !durable {
             return Err(ApiError::new(
                 500,
+                "settings_durability_unknown",
                 "Configuration was written and activated, but directory durability could not be confirmed; reload settings before another change",
             ));
         }
@@ -461,7 +465,11 @@ fn save_with_sync(
     let mut bytes = serde_json::to_vec_pretty(value).map_err(|_| failure())?;
     bytes.push(b'\n');
     if bytes.len() > LIMIT {
-        return Err(invalid("configuration exceeds 8 MiB limit"));
+        return Err(ApiError::new(
+            422,
+            "config_too_large",
+            "configuration exceeds 8 MiB limit",
+        ));
     }
     markitai_core::output::check_path(path, false).map_err(|_| failure())?;
     let parent = path.parent().ok_or_else(failure)?;
@@ -487,6 +495,7 @@ fn save_with_sync(
     if read(path)?.as_deref() != original {
         return Err(ApiError::new(
             409,
+            "config_changed",
             "Configuration changed during save; reload settings",
         ));
     }

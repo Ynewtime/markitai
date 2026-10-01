@@ -1,18 +1,23 @@
-import {api,element,button,errorText} from './api.js';
-import {t} from './i18n.js';
+import {api,element,button,errorText,errorDetail,detailNode} from './api.js';
+import {t,serviceNote,discoveryStatus,providerName} from './i18n.js';
 const $=id=>document.getElementById(id), base='/api/settings/llm';
 let hooks, settings=null, providers=[], selected=null, draftRevision=null, discovered=[], edit=null, busy=false;
 let loadGeneration=0;
 function label(node,key){node.dataset.i18n=key;node.textContent=t(key);}
-function status(text,bad=false){$('settings-message').textContent=text;$('settings-message').classList.toggle('item-error',bad);}
+// A translated service message keeps the service's own wording folded beside it.
+function status(text,bad=false,detail=''){$('settings-message').replaceChildren(text);if(detail&&detail!==text)$('settings-message').append(detailNode(detail));$('settings-message').classList.toggle('item-error',bad);}
+// Probe details are fixed provider-runtime phrases; known ones are translated.
+function probeStatus(result){const note=serviceNote(result.detail);status(note.text,!result.ok,note.detail);}
+// Only a revision conflict keeps the draft for review; other 409s (read-only settings, ambiguous names) are plain errors.
+export const conflicted=error=>error.status===409&&(!error.reason||['stale_revision','config_changed'].includes(error.reason));
 function formBusy(value){busy=value;for(const node of $('connection-form').querySelectorAll('button'))node.disabled=value;}
-async function guarded(action){if(busy)return;formBusy(true);try{await action();}catch(error){if(error.status===409){await conflict(error);}else{status(errorText(error),true);}}finally{formBusy(false);}}
+async function guarded(action){if(busy)return;formBusy(true);try{await action();}catch(error){if(conflicted(error)){await conflict(error);}else{status(errorText(error),true,errorDetail(error));}}finally{formBusy(false);}}
 async function conflict(error){
   const previous=draftRevision;await loadSettings();draftRevision=previous;
   $('conflict-message').hidden=false;
   $('conflict-message').replaceChildren(element('strong','',t('conflictTitle')),element('p','',t('conflictText')));
   $('conflict-message').append(button(t('conflictAccept'),()=>{draftRevision=settings.revision;$('conflict-message').hidden=true;status(t('conflictKept'));}));
-  status(errorText(error),true);
+  status(errorText(error),true,errorDetail(error));
 }
 function credentials(){const fields={};for(const [prefix,key]of[['key','api_key'],['base','api_base']]){const mode=$(prefix+'-mode').value;if(mode==='clear')fields[key]=null;if(mode==='replace'){const value=$('provider-'+prefix).value.trim();if(!value)throw new Error(t(key==='api_key'?'enterKey':'enterBase'));fields[key]=value;}}return fields;}
 function currentModels(){const entries=[...$('discovered-models').querySelectorAll('input:checked')].map(node=>node.value);entries.push(...$('manual-models').value.split(/\r?\n/).map(line=>line.trim()).filter(Boolean));return [...new Set(entries)];}
@@ -29,7 +34,7 @@ async function editConnection(provider){
     $('provider-type').value=provider.provider;$('provider-type').disabled=true;
     $('provider-key').value=values.api_key||'';$('provider-base').value=values.api_base||'';
     $('provider-base').placeholder=values.api_base_placeholder||'https://api.example.com/v1';
-    delete $('connection-title').dataset.i18n;$('connection-title').textContent=provider.label||provider.provider;
+    delete $('connection-title').dataset.i18n;$('connection-title').textContent=providerName(provider);
     label($('connection-hint'),'editHint');
     $('save-connection').hidden=false;$('conflict-message').hidden=true;$('manual-models').value='';$('discovered-models').replaceChildren();$('discovery-status').textContent='';status(t('connectionLoaded'));
   });
@@ -49,9 +54,9 @@ export function renderSettings(){
   for(const provider of providers){
     const row=element('article','connection-row');const info=element('div');
     const meta=[word(KINDS,provider.kind),word(STATES,provider.status)];if(provider.model_count!==undefined)meta.push(t('modelCount',{count:provider.model_count}));
-    info.append(element('strong','',provider.label||provider.provider),element('small',`muted state-${provider.status}`,meta.join(' · ')));if(provider.api_base)info.append(element('small','mono muted',provider.api_base));
+    info.append(element('strong','',providerName(provider)),element('small',`muted state-${provider.status}`,meta.join(' · ')));if(provider.api_base)info.append(element('small','mono muted',provider.api_base));
     const actions=element('div','row');
-    if(provider.provider_id){actions.append(button(t('actEdit'),()=>editConnection(provider)),button(t('actDelete'),()=>guarded(async()=>{if(!await hooks.confirmDelete(t('deleteConnectionTitle'),t('deleteConnectionText',{label:provider.label||provider.provider})))return;await api(`${base}/providers/${encodeURIComponent(provider.provider_id)}?expected_revision=${encodeURIComponent(settings.revision)}`,{method:'DELETE'});if(selected?.provider_id===provider.provider_id)reset();await saved(t('connectionDeleted'));}),'quiet small delete'));}
+    if(provider.provider_id){actions.append(button(t('actEdit'),()=>editConnection(provider)),button(t('actDelete'),()=>guarded(async()=>{if(!await hooks.confirmDelete(t('deleteConnectionTitle'),t('deleteConnectionText',{label:providerName(provider)})))return;await api(`${base}/providers/${encodeURIComponent(provider.provider_id)}?expected_revision=${encodeURIComponent(settings.revision)}`,{method:'DELETE'});if(selected?.provider_id===provider.provider_id)reset();await saved(t('connectionDeleted'));}),'quiet small delete'));}
     else if(['openai','anthropic','gemini','deepseek','openrouter','azure','ollama','custom'].includes(provider.provider)){actions.append(button(t('actSetUp'),()=>setUp(provider.provider,provider.status)));}
     row.append(info,actions);$('provider-list').append(row);
   }
@@ -59,8 +64,8 @@ export function renderSettings(){
   if(!settings?.deployments?.length&&!settings?.detected?.length)$('deployment-list').append(element('p','empty compact',t('noModels')));
   for(const deployment of [...(settings?.deployments||[]),...(settings?.detected||[])]){
     const row=element('article','connection-row');const info=element('div');info.append(element('strong','filename',deployment.model),element('small','muted',t('deploymentMeta',{group:deployment.routing_group,weight:deployment.weight,state:t(deployment.persisted?'deploymentSaved':'deploymentDetected')})));const actions=element('div','row');
-    if(deployment.persisted===false){actions.append(button(t('actUseModel'),()=>{reset();$('provider-type').value=deployment.model.split('/')[0];$('manual-models').value=deployment.model;revealEditor($('manual-models'));}),button(t('actTest'),()=>guarded(async()=>{status(t('testingConnection'));const response=await api(base+'/test',{method:'POST',body:{deployment_id:deployment.deployment_id}});status(response.detail,!response.ok);})));row.append(info,actions);$('deployment-list').append(row);continue;}
-    actions.append(button(t('actTest'),()=>guarded(async()=>{status(t('testingConnection'));const result=await api(base+'/test',{method:'POST',body:{deployment_id:deployment.deployment_id}});status(result.detail,!result.ok);})),button(t('actEdit'),()=>{edit={...deployment,revision:settings.revision};$('edit-model').value=deployment.model;$('edit-group').value=deployment.routing_group;$('edit-weight').value=deployment.weight;$('edit-message').textContent='';$('deployment-dialog').showModal();}),button(t('actDelete'),()=>guarded(async()=>{if(!await hooks.confirmDelete(t('deleteModelTitle'),t('deleteModelText',{model:deployment.model})))return;await api(`${base}/deployments/${encodeURIComponent(deployment.deployment_id)}?expected_revision=${encodeURIComponent(settings.revision)}`,{method:'DELETE'});await saved(t('modelDeleted'));}),'quiet small delete'));
+    if(deployment.persisted===false){actions.append(button(t('actUseModel'),()=>{reset();$('provider-type').value=deployment.model.split('/')[0];$('manual-models').value=deployment.model;revealEditor($('manual-models'));}),button(t('actTest'),()=>guarded(async()=>{status(t('testingConnection'));probeStatus(await api(base+'/test',{method:'POST',body:{deployment_id:deployment.deployment_id}}));})));row.append(info,actions);$('deployment-list').append(row);continue;}
+    actions.append(button(t('actTest'),()=>guarded(async()=>{status(t('testingConnection'));probeStatus(await api(base+'/test',{method:'POST',body:{deployment_id:deployment.deployment_id}}));})),button(t('actEdit'),()=>{edit={...deployment,revision:settings.revision};$('edit-model').value=deployment.model;$('edit-group').value=deployment.routing_group;$('edit-weight').value=deployment.weight;$('edit-message').textContent='';$('deployment-dialog').showModal();}),button(t('actDelete'),()=>guarded(async()=>{if(!await hooks.confirmDelete(t('deleteModelTitle'),t('deleteModelText',{model:deployment.model})))return;await api(`${base}/deployments/${encodeURIComponent(deployment.deployment_id)}?expected_revision=${encodeURIComponent(settings.revision)}`,{method:'DELETE'});await saved(t('modelDeleted'));}),'quiet small delete'));
     row.append(info,actions);$('deployment-list').append(row);
   }
 }
@@ -71,8 +76,8 @@ export async function loadSettings(){
 }
 async function saved(message){await loadSettings();draftRevision=settings.revision;await hooks.onSaved();renderSettings();status(message);$('conflict-message').hidden=true;}
 function discoveryText(result){
-  const parts=[result.status,t('discoveryModels',{count:discovered.length})];
-  if(result.cached)parts.push(t('discoveryCached'));if(result.stale)parts.push(t('discoveryStale'));if(result.authoritative===false)parts.push(t('discoveryVerify'));if(result.detail)parts.push(result.detail);
+  const parts=[discoveryStatus(result.status),t('discoveryModels',{count:discovered.length})];
+  if(result.cached)parts.push(t('discoveryCached'));if(result.stale)parts.push(t('discoveryStale'));if(result.authoritative===false)parts.push(t('discoveryVerify'));if(result.detail)parts.push(serviceNote(result.detail).text);
   if(!discovered.length)parts.push(t('discoveryManual'));
   return parts.filter(Boolean).join(' · ');
 }
@@ -85,7 +90,7 @@ export function initSettings(value){
     const body={provider:$('provider-type').value,...credentials()};if(selected)body.provider_id=selected.provider_id;
     $('discovery-status').textContent=t('discovering');
     const result=await api(base+'/model-discovery',{method:'POST',body});discovered=result.models||[];
-    $('discovery-status').textContent=discoveryText(result);
+    $('discovery-status').textContent=discoveryText(result);if(result.detail)$('discovery-status').title=result.detail;else $('discovery-status').removeAttribute('title');
     $('discovered-models').replaceChildren();
     if(discovered.length){$('discovered-models').append(button(t('selectAll'),()=>{for(const input of $('discovered-models').querySelectorAll('input'))input.checked=true;}),button(t('clearSelection'),()=>{for(const input of $('discovered-models').querySelectorAll('input'))input.checked=false;}));}
     for(const model of discovered){const choice=element('label','model-choice'),input=element('input');input.type='checkbox';input.value=model.model;choice.append(input,element('span','',model.label||model.model));if(model.supports_vision)choice.append(element('small','tag',t('visionTag')));$('discovered-models').append(choice);}
@@ -106,12 +111,12 @@ export function initSettings(value){
     // Explicit edit loaded the saved reference, not its environment-expanded secret.
     const body={model,...credentials()};
     if(selected){if(!('api_key'in body)&&$('provider-key').value)body.api_key=$('provider-key').value;if(!('api_base'in body)&&$('provider-base').value)body.api_base=$('provider-base').value;}
-    status(t('testingModel'));const response=await api(base+'/test',{method:'POST',body});status(response.detail,!response.ok);
+    status(t('testingModel'));probeStatus(await api(base+'/test',{method:'POST',body}));
   }));
   $('edit-cancel').addEventListener('click',()=>$('deployment-dialog').close());
   $('deployment-form').addEventListener('submit',async event=>{
     event.preventDefault();const weight=Number($('edit-weight').value);if(!Number.isInteger(weight)||weight<0)return;
     try{await api(`${base}/deployments/${encodeURIComponent(edit.deployment_id)}`,{method:'PATCH',body:{expected_revision:edit.revision,model:$('edit-model').value.trim(),model_name:$('edit-group').value.trim(),weight}});$('deployment-dialog').close();await saved(t('modelUpdated'));}
-    catch(error){if(error.status===409){await loadSettings();$('edit-message').replaceChildren(element('p','',t('editConflict')),button(t('conflictAccept'),()=>{edit.revision=settings.revision;$('edit-message').textContent=t('editKept');}));}else $('edit-message').textContent=errorText(error);}
+    catch(error){if(conflicted(error)){await loadSettings();$('edit-message').replaceChildren(element('p','',t('editConflict')),button(t('conflictAccept'),()=>{edit.revision=settings.revision;$('edit-message').textContent=t('editKept');}));}else{$('edit-message').replaceChildren(errorText(error));if(errorDetail(error))$('edit-message').append(detailNode(errorDetail(error)));}}
   });
 }

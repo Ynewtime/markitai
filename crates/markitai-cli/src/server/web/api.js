@@ -1,5 +1,5 @@
 // Token handling is confined to this service; provider credentials never enter storage.
-import {t} from './i18n.js';
+import {t, apiErrorMessage} from './i18n.js';
 let token = '';
 const TOKEN_KEY = 'markitai.service-token';
 export const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -33,11 +33,14 @@ export function authenticatedURL(path) {
   if (token) url.searchParams.set('token', token);
   return url.href;
 }
+// The message is localized from the service's stable `reason`/`code`; `detail`
+// keeps the service's own English wording for diagnosis.
 export class ApiError extends Error {
   constructor(status, body) {
-    const detail = body?.detail;
-    super(typeof detail === 'string' ? detail : detail?.code || t('requestFailed', {status}));
-    this.status = status; this.body = body;
+    const {text, detail} = apiErrorMessage(status, body);
+    super(text);
+    this.status = status; this.body = body; this.detail = detail;
+    this.reason = typeof body?.reason === 'string' ? body.reason : typeof body?.detail?.code === 'string' ? body.detail.code : null;
   }
 }
 // fetch rejects with a TypeError when the service cannot be reached (stopped
@@ -86,6 +89,55 @@ export async function api(path, {method = 'GET', body, signal: abort, text = fal
   }
   return text ? response.text() : response.json();
 }
+// fetch cannot report upload progress, so the multipart job submission uses
+// XMLHttpRequest with api()'s token, offline and error handling. It cannot
+// refuse a redirect before following it; a response from another URL is rejected.
+export function upload(path, body, {signal: abort, onProgress, Request = globalThis.XMLHttpRequest} = {}) {
+  const url = serviceURL(path);
+  return new Promise((resolve, reject) => {
+    const aborted = () => new DOMException('The upload was aborted.', 'AbortError');
+    if (abort?.aborted) { reject(aborted()); return; }
+    const request = new Request();
+    const cancel = () => request.abort();
+    const settle = (fn, value) => { abort?.removeEventListener('abort', cancel); fn(value); };
+    request.open('POST', url.href);
+    if (token) request.setRequestHeader('Authorization', `Bearer ${token}`);
+    request.upload.onprogress = event => onProgress?.(event.loaded, event.lengthComputable ? event.total : 0);
+    request.upload.onload = event => { if (event?.lengthComputable) onProgress?.(event.total, event.total); };
+    request.onabort = () => settle(reject, aborted());
+    request.onerror = () => { signal('markitai:offline'); settle(reject, new NetworkError()); };
+    request.onload = () => {
+      if (request.responseURL && request.responseURL !== url.href) { settle(reject, new Error(t('requestFailedPlain'))); return; }
+      signal('markitai:online');
+      let value = null; try { value = request.responseText ? JSON.parse(request.responseText) : null; } catch { value = null; }
+      if (request.status >= 200 && request.status < 300) { settle(resolve, value); return; }
+      if (request.status === 401) window.dispatchEvent(new CustomEvent('markitai:unauthorized'));
+      settle(reject, new ApiError(request.status, value));
+    };
+    abort?.addEventListener('abort', cancel, {once: true});
+    request.send(body);
+  });
+}
+// Upload progress as display text: percent of a known total, otherwise bytes sent.
+export function uploadState(loaded, total) {
+  if (!(total > 0)) return {percent: null, done: false, text: loaded > 0 ? t('uploadProgressUnknown', {sent: formatSize(loaded)}) : t('uploadStarting')};
+  const done = loaded >= total, percent = done ? 100 : Math.min(99, Math.floor(loaded / total * 100));
+  return {percent, done, text: done ? t('uploadDone') : t('uploadProgress', {percent, sent: formatSize(loaded), total: formatSize(total)})};
+}
+// Progress events can arrive hundreds of times a second; redraw at most once per
+// interval, always keep the latest value, and never drop the completion.
+export function throttle(update, interval = 100, now = () => Date.now()) {
+  let last = -Infinity, timer = null, latest = null;
+  const flush = () => { timer = null; last = now(); update(...latest); };
+  const report = (...values) => {
+    latest = values;
+    const finished = values[1] > 0 && values[0] >= values[1];
+    if (finished || now() - last >= interval) { clearTimeout(timer); flush(); return; }
+    timer ??= setTimeout(flush, Math.max(0, interval - (now() - last)));
+  };
+  report.cancel = () => { clearTimeout(timer); timer = null; };
+  return report;
+}
 export function fileURL(job, path) {
   return `/api/jobs/${encodeURIComponent(job)}/files/${path.split('/').map(encodeURIComponent).join('/')}`;
 }
@@ -100,6 +152,16 @@ export function button(text, action, className = 'quiet small') {
   node.addEventListener('click', action); return node;
 }
 export function errorText(error) { return error instanceof Error ? error.message : t('requestFailedPlain'); }
+// The service's original wording, when the shown text is a translation of it.
+export function errorDetail(error) { return error?.detail && error.detail !== error.message ? error.detail : ''; }
+// Folded original wording beside a localized message; the summary follows language switches.
+export function detailNode(text, key) {
+  const node = element('details', 'error-detail'), summary = element('summary', '', t('errorDetails'));
+  summary.dataset.i18n = 'errorDetails';
+  if (key) { node.dataset.key = key; summary.dataset.key = `${key}:summary`; }
+  node.append(summary, element('code', '', text));
+  return node;
+}
 export function artifactPath(target, documentPath, allowed) {
   if (/^[a-z][a-z\d+.-]*:/i.test(target) || target.startsWith('//') || target.startsWith('/') || target.includes('\\')) return null;
   let url;

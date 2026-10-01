@@ -14,6 +14,10 @@ button:focus-visible,a:focus-visible,summary:focus-visible,select:focus-visible,
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}
 [hidden]{display:none!important}
+/* boot.js marks a Chinese first paint until i18n.js has replaced the static English text. */
+html[data-i18n-pending] [data-i18n],html[data-i18n-pending] select,html[data-i18n-pending] ::placeholder{color:transparent!important}
+html[data-i18n-pending] .segmented [data-lang="en"]{background:transparent;color:var(--muted)}
+html[data-i18n-pending] .segmented [data-lang="zh"]{background:var(--mint);color:var(--accent)}
 .topbar{min-height:86px;display:flex;align-items:center;gap:24px;border-bottom:1px solid var(--line);padding:0 4.5vw;background:var(--topbar)}
 .brand{display:flex;gap:10px;align-items:center;color:var(--ink);font-weight:750;letter-spacing:-.8px;font-size:23px}
 .brand:hover{text-decoration:none}
@@ -88,6 +92,11 @@ textarea{resize:vertical;line-height:1.6}
 .option-grid select{padding:7px}
 .submit{display:flex;width:calc(100% - 48px);margin:22px 24px 0;justify-content:space-between;padding:14px 17px}
 .cancel-upload{display:flex;width:calc(100% - 48px);margin:8px 24px 0;border-color:var(--line)}
+.upload-progress{margin:12px 24px 0}
+.upload-progress progress{margin-top:6px}
+.error-detail{margin-top:6px;font-size:12px}
+.error-detail summary{cursor:pointer;opacity:.85}
+.error-detail code{display:block;margin-top:4px;font:11px/1.6 ui-monospace,SFMono-Regular,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
 .fineprint{font-size:11px;color:var(--muted);margin:12px 24px 22px;line-height:1.7}
 .job-panel{min-height:430px}
 .empty{display:flex;flex-direction:column;align-items:center;text-align:center;padding:72px 25px;color:var(--muted)}
@@ -239,6 +248,7 @@ h1{font-size:40px;letter-spacing:-2px}
 .drop-zone,.file-tools{margin-left:20px;margin-right:20px}
 .drop-zone{min-height:120px}
 .submit,.cancel-upload{width:calc(100% - 40px);margin-left:20px;margin-right:20px}
+.upload-progress{margin-left:20px;margin-right:20px}
 .fineprint{margin-left:20px;margin-right:20px}
 .job-item{margin:0 20px}
 #job-progress{padding:3px 20px 10px}

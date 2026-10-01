@@ -185,8 +185,13 @@ async fn delete_provider(
 async fn open(ExtractState(state): ExtractState<Arc<State>>) -> ApiResult<StatusCode> {
     tokio::task::spawn_blocking(move || {
         let path = state.settings.config_path()?;
-        crate::server::open_config(&path)
-            .map_err(|_| super::ApiError::new(500, "Could not open the configuration file"))?;
+        crate::server::open_config(&path).map_err(|_| {
+            super::ApiError::new(
+                500,
+                "settings_io_failed",
+                "Could not open the configuration file",
+            )
+        })?;
         Ok(StatusCode::NO_CONTENT)
     })
     .await

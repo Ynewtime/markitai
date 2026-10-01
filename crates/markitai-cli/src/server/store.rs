@@ -29,19 +29,19 @@ pub(super) fn safe_file(root: &Path, name: &str) -> ApiResult<PathBuf> {
             .components()
             .any(|part| !matches!(part, Component::Normal(_)))
     {
-        return Err(ApiError::new(404, "file not found"));
+        return Err(ApiError::new(404, "file_not_found", "file not found"));
     }
     let path = root.join(relative);
     markitai_core::output::check_path(&path, false)
-        .map_err(|_| ApiError::new(404, "file not found"))?;
+        .map_err(|_| ApiError::new(404, "file_not_found", "file not found"))?;
     if !path.is_file() {
-        return Err(ApiError::new(404, "file not found"));
+        return Err(ApiError::new(404, "file_not_found", "file not found"));
     }
     let canonical = path
         .canonicalize()
-        .map_err(|_| ApiError::new(404, "file not found"))?;
+        .map_err(|_| ApiError::new(404, "file_not_found", "file not found"))?;
     if !canonical.starts_with(root.canonicalize().map_err(ApiError::internal)?) {
-        return Err(ApiError::new(404, "file not found"));
+        return Err(ApiError::new(404, "file_not_found", "file not found"));
     }
     Ok(canonical)
 }

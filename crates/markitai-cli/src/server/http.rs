@@ -25,10 +25,10 @@ use std::{
 use tokio::io::AsyncWriteExt;
 
 pub(super) async fn missing() -> ApiError {
-    ApiError::new(404, "route not found")
+    ApiError::new(404, "route_not_found", "route not found")
 }
 pub(super) async fn method_not_allowed() -> ApiError {
-    ApiError::new(405, "method not allowed")
+    ApiError::new(405, "method_not_allowed", "method not allowed")
 }
 pub(super) async fn capabilities(ExtractState(state): ExtractState<Arc<State>>) -> Json<Value> {
     let cfg = state.settings.snapshot();
@@ -51,7 +51,11 @@ pub(super) async fn create(
     request: Request,
 ) -> ApiResult<impl IntoResponse> {
     if state.closing.load(Ordering::SeqCst) {
-        return Err(ApiError::new(503, "server is shutting down"));
+        return Err(ApiError::new(
+            503,
+            "shutting_down",
+            "server is shutting down",
+        ));
     }
     let trusted = request.extensions().get::<Trusted>().is_some_and(|v| v.0);
     let stage = tempfile::Builder::new()
@@ -78,7 +82,7 @@ pub(super) async fn create(
     {
         let body = axum::body::to_bytes(request.into_body(), 1024 * 1024)
             .await
-            .map_err(|_| ApiError::new(413, "form field exceeds limit"))?;
+            .map_err(|_| ApiError::new(413, "form_field_too_large", "form field exceeds limit"))?;
         for (name, value) in url::form_urlencoded::parse(&body) {
             if name == "urls" {
                 urls = Some(value.as_bytes().to_vec());
@@ -89,18 +93,18 @@ pub(super) async fn create(
     } else {
         let mut multipart = Multipart::from_request(request, &state)
             .await
-            .map_err(|e| ApiError::new(e.status().as_u16(), e.body_text()))?;
+            .map_err(|e| ApiError::multipart(e.status(), e.body_text()))?;
         while let Some(mut field) = multipart
             .next_field()
             .await
-            .map_err(|e| ApiError::new(e.status().as_u16(), "invalid multipart body"))?
+            .map_err(|e| ApiError::multipart(e.status(), "invalid multipart body"))?
         {
             let name = field.name().unwrap_or("").to_owned();
             if name == "files"
                 && let Some(filename) = field.file_name()
             {
                 if items.len() >= MAX_ITEMS {
-                    return Err(ApiError::new(422, "too many job items"));
+                    return Err(ApiError::new(422, "too_many_items", "too many job items"));
                 }
                 let filename = jobs::unique_name(&jobs::sanitize_name(filename), &mut names);
                 let path = stage.path().join("uploads").join(&filename);
@@ -113,13 +117,17 @@ pub(super) async fn create(
                 while let Some(bytes) = field
                     .chunk()
                     .await
-                    .map_err(|e| ApiError::new(e.status().as_u16(), "invalid multipart body"))?
+                    .map_err(|e| ApiError::multipart(e.status(), "invalid multipart body"))?
                 {
-                    size = size
-                        .checked_add(bytes.len())
-                        .ok_or_else(|| ApiError::new(413, "file exceeds upload limit"))?;
+                    size = size.checked_add(bytes.len()).ok_or_else(|| {
+                        ApiError::new(413, "file_too_large", "file exceeds upload limit")
+                    })?;
                     if size > MAX_UPLOAD {
-                        return Err(ApiError::new(413, "file exceeds upload limit"));
+                        return Err(ApiError::new(
+                            413,
+                            "file_too_large",
+                            "file exceeds upload limit",
+                        ));
                     }
                     file.write_all(&bytes).await.map_err(ApiError::internal)?;
                 }
@@ -130,10 +138,14 @@ pub(super) async fn create(
                 while let Some(chunk) = field
                     .chunk()
                     .await
-                    .map_err(|e| ApiError::new(e.status().as_u16(), "invalid multipart body"))?
+                    .map_err(|e| ApiError::multipart(e.status(), "invalid multipart body"))?
                 {
                     if bytes.len() + chunk.len() > 1024 * 1024 {
-                        return Err(ApiError::new(413, "form field exceeds limit"));
+                        return Err(ApiError::new(
+                            413,
+                            "form_field_too_large",
+                            "form field exceeds limit",
+                        ));
                     }
                     bytes.extend_from_slice(&chunk);
                 }
@@ -147,12 +159,14 @@ pub(super) async fn create(
     }
     let urls: Vec<String> = match urls.filter(|bytes| !bytes.iter().all(u8::is_ascii_whitespace)) {
         None => Vec::new(),
-        Some(bytes) => serde_json::from_slice(&bytes)
-            .map_err(|_| ApiError::new(422, "urls must be a JSON array of strings"))?,
+        Some(bytes) => serde_json::from_slice(&bytes).map_err(|_| {
+            ApiError::new(422, "invalid_urls", "urls must be a JSON array of strings")
+        })?,
     };
     if urls.iter().any(|url| url.trim().is_empty()) {
         return Err(ApiError::new(
             422,
+            "invalid_urls",
             "urls must be a JSON array of non-empty strings",
         ));
     }
@@ -163,26 +177,36 @@ pub(super) async fn create(
     if !urls.is_empty() && !trusted {
         return Err(ApiError::new(
             403,
+            "remote_url_forbidden",
             "URL conversion requires loopback or token authentication; safe remote URL fetching is not yet available",
         ));
     }
     if items.len() + urls.len() > MAX_ITEMS {
-        return Err(ApiError::new(422, "too many job items"));
+        return Err(ApiError::new(422, "too_many_items", "too many job items"));
     }
     for url in urls {
-        let parsed = url::Url::parse(&url).map_err(|_| ApiError::new(422, "invalid URL"))?;
+        let parsed =
+            url::Url::parse(&url).map_err(|_| ApiError::new(422, "invalid_url", "invalid URL"))?;
         if !["http", "https"].contains(&parsed.scheme()) || parsed.host_str().is_none() {
-            return Err(ApiError::new(422, "URLs must use http or https"));
+            return Err(ApiError::new(
+                422,
+                "unsupported_url_scheme",
+                "URLs must use http or https",
+            ));
         }
         items.push(Item::new(items.len() + 1, url, "url", None));
     }
     if items.is_empty() {
-        return Err(ApiError::new(422, "provide at least one file or URL"));
+        return Err(ApiError::new(
+            422,
+            "empty_job",
+            "provide at least one file or URL",
+        ));
     }
     let options: JobOptions = match options.filter(|bytes| !bytes.is_empty()) {
         None => JobOptions::default(),
         Some(bytes) => serde_json::from_slice(&bytes)
-            .map_err(|e| ApiError::new(422, format!("invalid options: {e}")))?,
+            .map_err(|e| ApiError::new(422, "invalid_options", format!("invalid options: {e}")))?,
     };
     let cfg = options.config(&state.settings.snapshot())?;
     let bases = jobs::reserve_outputs(&items);
@@ -235,11 +259,16 @@ pub(super) async fn create(
         let _publication = PublicationLock(lock);
         let mut registry = publication_state.jobs.lock().unwrap();
         if publication_state.closing.load(Ordering::SeqCst) {
-            return Err(ApiError::new(503, "server is shutting down"));
+            return Err(ApiError::new(
+                503,
+                "shutting_down",
+                "server is shutting down",
+            ));
         }
         if folder.exists() {
             return Err(ApiError::new(
                 409,
+                "job_id_collision",
                 "job identifier collision; retry the request",
             ));
         }
@@ -284,13 +313,17 @@ pub(super) async fn stop(
     Path(id): Path<String>,
 ) -> ApiResult<impl IntoResponse> {
     if state.closing.load(Ordering::SeqCst) {
-        return Err(ApiError::new(503, "server is shutting down"));
+        return Err(ApiError::new(
+            503,
+            "shutting_down",
+            "server is shutting down",
+        ));
     }
     let job = jobs::get(&state, &id)?;
     let waiting = {
         let data = job.data.lock().unwrap();
         if data.status != "running" {
-            return Err(ApiError::new(409, "job is not running"));
+            return Err(ApiError::new(409, "job_not_running", "job is not running"));
         }
         data.items
             .iter()
@@ -298,7 +331,11 @@ pub(super) async fn stop(
             .count()
     };
     if waiting == 0 {
-        return Err(ApiError::new(409, "no queued items to stop"));
+        return Err(ApiError::new(
+            409,
+            "nothing_to_stop",
+            "no queued items to stop",
+        ));
     }
     job.stop.send_replace(true);
     Ok((
@@ -433,10 +470,10 @@ fn remove_registered(
         .get(id)
         .is_some_and(|current| Arc::ptr_eq(current, &job))
     {
-        return Err(ApiError::new(404, "job not found"));
+        return Err(ApiError::new(404, "job_not_found", "job not found"));
     }
     if job.data.lock().unwrap().status == "running" {
-        return Err(ApiError::new(409, "job is still running"));
+        return Err(ApiError::new(409, "job_running", "job is still running"));
     }
     markitai_core::output::check_path(&job.folder, false).map_err(ApiError::internal)?;
     std::fs::remove_dir_all(&job.folder).map_err(ApiError::internal)?;
@@ -503,5 +540,185 @@ mod deletion_tests {
             std::fs::read(folder.join("keep")).unwrap(),
             b"replacement job"
         );
+    }
+}
+
+#[cfg(test)]
+mod error_code_tests {
+    use super::*;
+    use axum::{
+        Router,
+        body::{Body, to_bytes},
+        http::Request as HttpRequest,
+        routing::{get, post},
+    };
+    use std::sync::{Mutex, atomic::AtomicBool};
+    use tokio::sync::{Semaphore, watch};
+    use tower::ServiceExt;
+
+    fn service(root: &std::path::Path) -> (Arc<State>, Router) {
+        store::private_dir(root).unwrap();
+        let (shutdown, _) = watch::channel(false);
+        let cfg = markitai_core::config::normalize(
+            &json!({"llm":{"enabled":false},"cache":{"enabled":false},"log":{"dir":null}}),
+        )
+        .unwrap();
+        let state = Arc::new(State {
+            settings: super::super::settings::Store::new(
+                cfg,
+                super::super::SettingsSource {
+                    path: root.join("config.json"),
+                    origin: "default".into(),
+                    overrides: None,
+                },
+            )
+            .unwrap(),
+            root: root.into(),
+            jobs: Mutex::new(HashMap::new()),
+            file_slots: Arc::new(Semaphore::new(1)),
+            url_slots: Arc::new(Semaphore::new(1)),
+            closing: AtomicBool::new(false),
+            persistence_failed: AtomicBool::new(false),
+            shutdown,
+            tasks: Mutex::new(Vec::new()),
+            token: None,
+            allowed_hosts: HashSet::new(),
+        });
+        let router = Router::new()
+            .route("/api/jobs", post(create))
+            .route("/api/jobs/{job_id}", get(snapshot))
+            .route("/api/jobs/{job_id}/cancel", post(stop))
+            .route(
+                "/api/jobs/{job_id}/items/{item_id}/retry",
+                post(super::super::rerun::retry),
+            )
+            .fallback(missing)
+            .with_state(state.clone());
+        (state, router)
+    }
+    // Job creation gets a multipart body with the named files; other routes an empty one.
+    async fn call(router: &Router, method: &str, path: &str, files: &[&str]) -> (u16, Value) {
+        let mut request = HttpRequest::builder().method(method).uri(path);
+        let mut body = String::new();
+        if path == "/api/jobs" {
+            for name in files {
+                body.push_str(&format!("--edge\r\nContent-Disposition: form-data; name=\"files\"; filename=\"{name}\"\r\nContent-Type: application/octet-stream\r\n\r\nsample\r\n"));
+            }
+            body.push_str("--edge--\r\n");
+            request = request.header("content-type", "multipart/form-data; boundary=edge");
+        }
+        let request = request.body(Body::from(body)).unwrap();
+        let response = router.clone().oneshot(request).await.unwrap();
+        let status = response.status().as_u16();
+        let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+    async fn settled(router: &Router, id: &str) -> Value {
+        for _ in 0..2000 {
+            let (status, value) = call(router, "GET", &format!("/api/jobs/{id}"), &[]).await;
+            assert_eq!(status, 200);
+            if value["status"] != "running" {
+                return value;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        panic!("job {id} did not finish");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn failed_items_carry_the_core_code_and_retries_keep_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let (state, router) = service(temp.path());
+        let (status, created) = call(&router, "POST", "/api/jobs", &["notes.xyz"]).await;
+        assert_eq!(status, 201, "{created}");
+        let id = created["job_id"].as_str().unwrap().to_owned();
+        let done = settled(&router, &id).await;
+        let item = &done["items"][0];
+        assert_eq!(item["status"], "error");
+        assert_eq!(item["error_code"], "unsupported", "{item}");
+        assert!(
+            item["error"]
+                .as_str()
+                .unwrap()
+                .starts_with("Unsupported file format")
+        );
+        // While the retry waits for the only slot, the old failure no longer describes it.
+        let slot = state.file_slots.clone().acquire_owned().await.unwrap();
+        let retry = format!("/api/jobs/{id}/items/i1/retry");
+        let (status, _) = call(&router, "POST", &retry, &[]).await;
+        assert_eq!(status, 202);
+        let (_, queued) = call(&router, "GET", &format!("/api/jobs/{id}"), &[]).await;
+        assert_eq!(queued["items"][0]["status"], "queued");
+        assert!(queued["items"][0].get("error_code").is_none(), "{queued}");
+        assert!(queued["items"][0]["error"].is_null());
+        drop(slot);
+        let retried = settled(&router, &id).await;
+        assert_eq!(retried["items"][0]["operation"], "retry");
+        assert_eq!(retried["items"][0]["error_code"], "unsupported");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stopped_and_shutdown_items_are_told_apart_by_code() {
+        let temp = tempfile::tempdir().unwrap();
+        let (state, router) = service(temp.path());
+        // Holding the only file slot keeps the items waiting.
+        let slot = state.file_slots.clone().acquire_owned().await.unwrap();
+        let (_, created) = call(&router, "POST", "/api/jobs", &["a.txt", "b.txt"]).await;
+        let id = created["job_id"].as_str().unwrap().to_owned();
+        let cancel = format!("/api/jobs/{id}/cancel");
+        let (status, reply) = call(&router, "POST", &cancel, &[]).await;
+        assert_eq!((status, reply["stopping"].as_u64()), (202, Some(2)));
+        drop(slot);
+        let stopped = settled(&router, &id).await;
+        for item in stopped["items"].as_array().unwrap() {
+            assert_eq!(item["error_code"], "cancelled", "{item}");
+            assert_eq!(item["error"], "cancelled (stopped by request)");
+        }
+        let (status, reply) = call(&router, "POST", &cancel, &[]).await;
+        assert_eq!(
+            (status, reply["reason"].as_str()),
+            (409, Some("job_not_running"))
+        );
+
+        let slot = state.file_slots.clone().acquire_owned().await.unwrap();
+        let (_, created) = call(&router, "POST", "/api/jobs", &["c.txt"]).await;
+        let id = created["job_id"].as_str().unwrap().to_owned();
+        state.closing.store(true, Ordering::SeqCst);
+        state.shutdown.send_replace(true);
+        drop(slot);
+        let closed = settled(&router, &id).await;
+        assert_eq!(closed["items"][0]["error_code"], "shutdown");
+        assert_eq!(closed["items"][0]["error"], "cancelled (server shutdown)");
+        let (status, reply) = call(&router, "POST", "/api/jobs", &["d.txt"]).await;
+        assert_eq!(
+            (status, reply["reason"].as_str()),
+            (503, Some("shutting_down"))
+        );
+    }
+
+    #[tokio::test]
+    async fn request_errors_name_their_reason() {
+        let temp = tempfile::tempdir().unwrap();
+        let (_state, router) = service(temp.path());
+        for (method, path, status, code, reason) in [
+            (
+                "GET",
+                "/api/jobs/000000000000",
+                404,
+                "not_found",
+                "job_not_found",
+            ),
+            ("POST", "/api/jobs", 422, "invalid_request", "empty_job"),
+            ("GET", "/api/elsewhere", 404, "not_found", "route_not_found"),
+        ] {
+            let (actual, value) = call(&router, method, path, &[]).await;
+            assert_eq!(actual, status, "{path}: {value}");
+            assert_eq!(value["code"], code, "{path}");
+            assert_eq!(value["reason"], reason, "{path}");
+            assert!(value["detail"].is_string(), "{path}");
+        }
     }
 }

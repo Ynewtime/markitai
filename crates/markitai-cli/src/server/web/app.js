@@ -1,8 +1,8 @@
-import {api, authenticatedURL, bootstrapToken, setToken, hasToken, fileURL, element, button, errorText, formatSize, mergeFiles, parseUrls, copyText, MAX_FILE_BYTES} from './api.js';
+import {api, upload, uploadState, throttle, authenticatedURL, bootstrapToken, setToken, hasToken, fileURL, element, button, errorText, errorDetail, detailNode, formatSize, mergeFiles, parseUrls, copyText, MAX_FILE_BYTES} from './api.js';
 import {preview} from './preview.js';
 import {markdownPair, compareLines, renderComparison, printPreview} from './result-tools.js';
 import {initSettings, loadSettings, renderSettings} from './settings.js';
-import {t, detectLocale, setLocale, currentLocale, themePreference, setTheme, nextTheme} from './i18n.js';
+import {t, detectLocale, setLocale, currentLocale, themePreference, setTheme, nextTheme, itemErrorMessage, persistenceMessage} from './i18n.js';
 bootstrapToken();
 const $ = id => document.getElementById(id);
 let files = [], current = null, stream = null, poll = null, generation = 0, resultGeneration = 0;
@@ -14,12 +14,15 @@ function label(node, key, values) { node.dataset.i18n = key; node.textContent = 
 function cancelResultTools() { diffGeneration++; lastComparison = null; comparisonRequest?.abort(); comparisonRequest = null; printSession?.cancel(); printSession = null; if(resultMode==='diff')$('comparison').textContent=t('diffPick'); }
 let noticeTimer = null;
 // A fixed message region stays visible wherever the action happened; confirmations fade, errors stay until dismissed.
-function notice(message, bad = false) {
+// A translated service error keeps the service's own wording folded beside it.
+function notice(message, bad = false, detail = '') {
   clearTimeout(noticeTimer);
-  $('notice-text').textContent = message; $('notice').hidden = !message; $('notice').classList.toggle('error', bad);
+  $('notice-text').replaceChildren(message || '');
+  if (message && detail && detail !== message) $('notice-text').append(detailNode(detail));
+  $('notice').hidden = !message; $('notice').classList.toggle('error', bad);
   if (message && !bad) noticeTimer = setTimeout(() => notice(''), 6000);
 }
-const run = async action => { try { return await action(); } catch (error) { notice(errorText(error), true); } };
+const run = async action => { try { return await action(); } catch (error) { notice(errorText(error), true, errorDetail(error)); } };
 const terminal = item => ['done','error'].includes(item.status);
 // Request coverage is independent of a zero or rounded cost subtotal.
 function attemptPricing(usage) {
@@ -67,7 +70,7 @@ function attemptNotice(item, words = PRICE_WORDS) {
   if (!attempt || (attempt.status !== 'error' && item.cost_usd != null)) return null;
   const cost = priceText(attempt.usage?.cost_usd, attemptPricing(attempt.usage), words);
   const failed = attempt.status === 'error';
-  const error = failed && typeof attempt.error === 'string' && attempt.error !== item.error ? attempt.error : '';
+  const error = failed && typeof attempt.error === 'string' && attempt.error !== item.error ? itemErrorMessage({error: attempt.error, kind: item.kind}) : null;
   return {label: failed ? (cost ? fillPrice(words.lastFailedCost, {cost}) : words.lastFailed) : cost ? fillPrice(words.last, {cost}) : '', error};
 }
 
@@ -141,6 +144,16 @@ window.addEventListener('drop', event => {
 function submitting(busy) {
   $('submit-job').disabled = busy; label($('submit-label'), busy ? 'submitBusy' : 'submit');
   $('cancel-upload').hidden = !busy || !files.length;
+  // Upload progress belongs to the form; conversion progress stays in the results panel.
+  $('upload-progress').hidden = !busy || !files.length;
+  if (busy) showUpload(0, 0);
+}
+function showUpload(loaded, total) {
+  const state = uploadState(loaded, total), bar = $('upload-bar');
+  $('upload-progress-text').textContent = state.text;
+  if (state.percent === null) bar.removeAttribute('value'); else bar.value = state.percent;
+  bar.setAttribute('aria-valuetext', state.text);
+  if (state.done) label($('submit-label'), 'submitCreating');
 }
 $('cancel-upload').addEventListener('click', () => uploadController?.abort());
 $('job-stop').addEventListener('click', () => run(async () => {
@@ -167,14 +180,16 @@ $('convert-form').addEventListener('submit',async event => {
     body.append('urls',JSON.stringify(urls)); body.append('options',JSON.stringify(options()));
     const controller = new AbortController(); uploadController = controller;
     submitting(true); notice('');
+    const progress = throttle(showUpload);
+    let created;
     try {
-      const created = await api('/api/jobs',{method:'POST',body,signal:controller.signal});
-      files = []; showFiles(); $('urls').value = '';
-      await openJob(created.job_id); revealJob();
+      created = await upload('/api/jobs', body, {signal: controller.signal, onProgress: progress});
     } catch (error) {
       if (error?.name === 'AbortError') { notice(t('uploadCancelled')); return; }
       throw error;
-    } finally { uploadController = null; submitting(false); }
+    } finally { progress.cancel(); uploadController = null; submitting(false); }
+    files = []; showFiles(); $('urls').value = '';
+    await openJob(created.job_id); revealJob(); $('job-title').focus({preventScroll:true});
   });
 });
 // On narrow screens the results sit below the form; bring them into view after an action.
@@ -183,10 +198,14 @@ function revealJob() {
   if (box.top < 0 || box.top > innerHeight * 0.6) $('job-title').scrollIntoView({behavior:'smooth',block:'start'});
 }
 function closeStream() { stream?.close(); stream = null; clearTimeout(poll); poll = null; }
+// A job that no longer exists must not stay in the address bar and fail on every reload.
+function forgetJob(id) { const url = new URL(location.href); if (url.searchParams.get('job') !== id) return; url.searchParams.delete('job'); history.replaceState(null,'',url.pathname+url.search); }
 async function openJob(id) {
   generation++; closeStream(); cancelResultTools(); resultGeneration++; resultPending=0; $('print-result').disabled=false; result = null; $('result-panel').hidden = true;
   const expected = generation;
-  const snapshot = await api(`/api/jobs/${encodeURIComponent(id)}`);
+  let snapshot;
+  try { snapshot = await api(`/api/jobs/${encodeURIComponent(id)}`); }
+  catch (error) { if (error.reason === 'job_not_found') forgetJob(id); throw error; }
   if (expected !== generation) return;
   current = snapshot;
   const url = new URL(location.href); url.searchParams.set('job',id); history.replaceState(null,'',url.pathname+url.search);
@@ -204,17 +223,17 @@ function itemProblem(item, info, expanded) {
   if (hint) { info.append(element('p','item-hint',t(hint))); return; }
   if (!item.error) return;
   if (item.skipped) { info.append(element('p','item-hint',item.error)); return; }
-  const cancelled = {'cancelled (stopped by request)':'itemStopped','cancelled (server shutdown)':'itemShutdown'}[item.error];
-  if (cancelled) { info.append(element('p','item-hint',t(cancelled))); return; }
-  let text = item.error, formats = '';
+  const problem = itemErrorMessage(item);
+  if (problem.hint) { info.append(element('p','item-hint',problem.text)); return; }
+  info.append(element('p','item-error',problem.text));
+  problemDetail(info, problem.detail, `${item.item_id}:detail`, expanded);
   // The unsupported-format message ends with every accepted extension; keep that list folded.
-  const split = text.indexOf(' Supported extensions:');
-  if (split > 0) { formats = text.slice(split + 1).replace(/^Supported extensions:\s*/, '').replace(/\.$/, ''); text = text.slice(0, split); }
-  const unsupported = /^Unsupported file format: (.+)\.$/.exec(text);
-  if (unsupported) text = t('unsupportedFormat', {format: unsupported[1]});
-  if (item.kind === 'url' && /^(error sending request|HTTP \d{3}\b|.*timed out)/i.test(text)) text = t('fetchFailed', {error: text});
-  info.append(element('p','item-error',text));
-  if (formats) { const more = element('details','item-more'); more.dataset.key = `${item.item_id}:formats`; more.open = expanded.has(more.dataset.key); const summary = element('summary','',t('supportedFormats')); summary.dataset.key = `${more.dataset.key}:summary`; more.append(summary, element('p','',formats)); info.append(more); }
+  if (problem.formats) { const more = element('details','item-more'); more.dataset.key = `${item.item_id}:formats`; more.open = expanded.has(more.dataset.key); const summary = element('summary','',t('supportedFormats')); summary.dataset.key = `${more.dataset.key}:summary`; more.append(summary, element('p','',problem.formats)); info.append(more); }
+}
+// The service's original wording stays one click away from its translation.
+function problemDetail(info, detail, key, expanded) {
+  if (!detail) return;
+  const more = detailNode(detail, key); more.classList.add('item-more'); more.open = expanded.has(key); info.append(more);
 }
 function renderJob() {
   if (!current) return;
@@ -223,7 +242,9 @@ function renderJob() {
   $('progress').max = current.total || current.items.length || 1; $('progress').value = completed;
   $('job-progress-text').textContent = t('progressCount', {done: completed, total: current.items.length});
   $('job-id').textContent = current.job_id;
-  $('job-message').textContent = current.persistence_error || (current.status === 'running' ? t('jobRunning') : current.failed ? t('jobAttention', {count: current.failed}) : t('jobReady'));
+  const saved = current.persistence_error ? persistenceMessage(current.persistence_error) : null;
+  $('job-message').textContent = saved?.text || (current.status === 'running' ? t('jobRunning') : current.failed ? t('jobAttention', {count: current.failed}) : t('jobReady'));
+  if (saved?.detail) $('job-message').title = saved.detail; else $('job-message').removeAttribute('title');
   $('job-archive').hidden = current.status === 'running';
   // Only original items still waiting for a slot can be stopped; retries keep their own lifecycle.
   const waiting = current.items.filter(item => item.status === 'queued' && (item.operation || 'convert') === 'convert').length;
@@ -248,7 +269,7 @@ function renderJob() {
     if (outputCost) info.append(element('small','muted',t('outputCost', {cost: outputCost})));
     const attempt = attemptNotice(item, words);
     if (attempt?.label) info.append(element('small','muted',attempt.label));
-    if (attempt?.error) info.append(element('p','item-error',attempt.error));
+    if (attempt?.error) { info.append(element('p','item-error',attempt.error.text)); problemDetail(info, attempt.error.detail, `${item.item_id}:attempt`, expanded); }
     itemProblem(item, info, expanded);
     if (item.warnings?.length) { const details = element('details','warnings'); details.dataset.key = `${item.item_id}:warnings`; details.open = expanded.has(details.dataset.key); const summary = element('summary','',t('noticeCount', {count: item.warnings.length})); summary.dataset.key = `${details.dataset.key}:summary`; details.append(summary); for (const warning of item.warnings) details.append(element('p','',warning)); info.append(details); }
     const actions = element('div','item-actions');
@@ -261,13 +282,18 @@ function renderJob() {
     if (current.status !== 'running') actions.append(button(t('actDelete'),() => run(async () => {
       if (!await confirmDelete(t('deleteItemTitle'),t('deleteItemText', {name: item.name}))) return;
       const id = current.job_id; await api(`/api/jobs/${encodeURIComponent(id)}/items/${encodeURIComponent(item.item_id)}`,{method:'DELETE'});
-      if (current.items.length === 1) { cancelResultTools(); current = null; closeStream(); $('job-items').replaceChildren(); $('job-empty').hidden = false; $('job-progress').hidden = true; $('job-archive').hidden = true; $('result-panel').hidden = true; const url=new URL(location.href);url.searchParams.delete('job');history.replaceState(null,'',url.pathname+url.search); }
+      if (current.items.length === 1) { cancelResultTools(); current = null; closeStream(); $('job-items').replaceChildren(); $('job-empty').hidden = false; $('job-progress').hidden = true; $('job-archive').hidden = true; $('result-panel').hidden = true; forgetJob(id); $('job-title').focus({preventScroll:true}); }
       else await openJob(id);
     }), 'quiet small delete'));
     for (const node of actions.querySelectorAll('button')) node.dataset.key = `${item.item_id}:${node.dataset.action || 'delete'}`;
     row.append(icon,info,actions); $('job-items').append(row);
   }
-  if (focused) [...$('job-items').querySelectorAll('button, summary')].find(node => node.dataset.key === focused)?.focus();
+  // An action that disappears (Retry while queued, a deleted row) leaves focus on the
+  // same item's next control, otherwise on the results heading rather than the page.
+  if (focused) {
+    const nodes = [...$('job-items').querySelectorAll('button, summary')], row = `${focused.split(':')[0]}:`;
+    (nodes.find(node => node.dataset.key === focused) || nodes.find(node => node.dataset.key?.startsWith(row)) || $('job-title')).focus({preventScroll:true});
+  }
 }
 function subscribe(expected) {
   const id = current.job_id;
@@ -386,6 +412,8 @@ function renderHistory() {
   const pages=Math.max(1,Math.ceil(rows.length/12));page=Math.min(page,pages-1);
   $('history-count').textContent=search?t('historyMatches',{count:rows.length,total:historyRows.length}):t('historyCount',{count:rows.length}); $('history-page').textContent=`${page+1} / ${pages}`; $('history-prev').disabled=page===0;$('history-next').disabled=page>=pages-1;
   $('history-list').parentElement.querySelector('.pagination').hidden=pages<2;
+  // An empty history has no archive; the link would only open the service's JSON error.
+  $('history-archive').hidden=!historyRows.length;
   $('history-list').replaceChildren();
   if(!rows.length)$('history-list').append(element('p','empty compact',search&&historyRows.length?t('historyNoMatch',{query}):t('historyEmpty')));
   const dates=new Intl.DateTimeFormat(currentLocale()==='zh'?'zh-CN':'en',{dateStyle:'medium',timeStyle:'short'});
@@ -397,7 +425,7 @@ function renderHistory() {
     let meta=t('historyMeta',{date:when,total:row.total,done:row.done}); if(row.failed)meta+=` · ${t('historyFailed',{count:row.failed})}`;
     info.append(element('strong','filename',extra?`${title} ${t('historyMore',{count:extra})}`:title),element('small','muted',meta));
     const historyCost = priceText(row.cost_usd, row.pricing, priceWords()); if (historyCost) info.append(element('small','muted',historyCost));
-    const actions=element('div','row');const open=button(t('actOpen'),()=>run(async()=>{await openJob(row.job_id);revealJob();}),'quiet small strong');actions.append(open);const zip=element('a','quiet small','ZIP ↓');zip.href=authenticatedURL(`/api/jobs/${encodeURIComponent(row.job_id)}/archive`);actions.append(zip,button(t('actDelete'),()=>run(async()=>{if(await confirmDelete(t('deleteJobTitle'),t('deleteJobText',{names:title}))){await api(`/api/history/${encodeURIComponent(row.job_id)}`,{method:'DELETE'});await loadHistory();}}),'quiet small delete'));item.append(info,actions);$('history-list').append(item);
+    const actions=element('div','row');const open=button(t('actOpen'),()=>run(async()=>{await openJob(row.job_id);revealJob();$('job-title').focus({preventScroll:true});}),'quiet small strong');actions.append(open);const zip=element('a','quiet small','ZIP ↓');zip.href=authenticatedURL(`/api/jobs/${encodeURIComponent(row.job_id)}/archive`);actions.append(zip,button(t('actDelete'),()=>run(async()=>{if(await confirmDelete(t('deleteJobTitle'),t('deleteJobText',{names:title}))){await api(`/api/history/${encodeURIComponent(row.job_id)}`,{method:'DELETE'});await loadHistory();}}),'quiet small delete'));item.append(info,actions);$('history-list').append(item);
   }
 }
 $('history-search').addEventListener('input',()=>{page=0;renderHistory();});$('history-prev').addEventListener('click',()=>{page--;renderHistory();});$('history-next').addEventListener('click',()=>{page++;renderHistory();});$('history-refresh').addEventListener('click',()=>run(loadHistory));

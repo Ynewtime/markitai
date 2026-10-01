@@ -43,8 +43,9 @@ settings writes unavailable until restart without those overrides.
 6. `POST /api/jobs/{job_id}/cancel` stops the job's original items that are still
    waiting for a conversion slot. It returns HTTP 202 with `job_id` and `stopping`,
    the number of such items when the request arrived. Each becomes an `error` item
-   with `cancelled (stopped by request)`, publishes an item event and stays
-   retryable; items already converting finish, and the job completes normally.
+   with `cancelled (stopped by request)` and `error_code: "cancelled"`, publishes
+   an item event and stays retryable; items already converting finish, and the
+   job completes normally.
    Queued retries and enhancements are not affected. A job that is not running,
    or has no waiting original item, returns 409; the request needs no body.
 
@@ -56,6 +57,42 @@ Requested LLM processing uses core environment/model resolution, including
 Unlike the reference service's no-model fallback, an unavailable requested model
 follows the core's configured failure policy. Remote consent cannot request
 interactive terminal input. When LLM is enabled, base output is retained.
+
+## Error responses
+
+Every API error body has the same three fields:
+
+```json
+{"detail": "file exceeds upload limit", "code": "payload_too_large", "reason": "file_too_large"}
+```
+
+`detail` is the service's English message (an object for the settings conflicts
+that already carry `detail.code`), and `code` is the category derived from the
+HTTP status (`bad_request`, `unauthorized`, `forbidden`, `not_found`,
+`method_not_allowed`, `conflict`, `payload_too_large`, `invalid_request`,
+`rate_limited`, `unavailable`, `server_error`). `reason` is an additive, stable
+machine code for the specific cause, for example `job_not_found`,
+`file_too_large`, `request_too_large`, `empty_job`, `unsupported_url_scheme`,
+`remote_url_forbidden`, `invalid_options`, `job_running`, `nothing_to_stop`,
+`llm_unavailable`, `upload_missing`, `history_empty`, `token_required`,
+`host_not_allowed`, `provider_busy`, `stale_revision`, `config_changed` or
+`settings_read_only`. Clients that read only `detail` and `code` are unaffected.
+Clients should present text by `reason`, then `code`, and keep `detail` for
+diagnosis; the [browser workspace](web-ui.md#language-and-appearance) does so in
+English and Chinese.
+
+A failed item adds `error_code` beside its `error` string. It is the core's
+conversion error code, the same vocabulary as the bindings' error envelope
+(`unsupported`, `fetch_error`, `no_model_configured`, `conversion_error`,
+`invalid_input`, `config_error`, `io_error`, `not_found`, `is_directory`,
+`invalid_json`), or a service cause: `cancelled` (stop request), `shutdown`,
+`internal_error`, and for a failed rerun the `reason` of its publication error
+(for example `output_conflict`, `enhancement_failed` or `no_output`). Skipped
+items keep `skip_reason` instead and have no `error_code`; a successful or queued
+attempt clears it. The field is omitted when absent, so items saved before it
+existed, and CLI-recorded history items, simply have none. The code names a
+category; the precise cause, such as an HTTP status or a timeout, remains in
+`error`.
 
 ## Output cost and pricing coverage
 
@@ -260,9 +297,9 @@ The root URL serves the embedded [browser workspace](web-ui.md). Without
 `--no-open` the service asks the system to open it, passing the startup token in
 the URL fragment; with `--no-open` it only prints the listening address and the
 token. The workspace reports an unreachable service as offline, checks again
-every five seconds and says when it is connected again. It can abort an upload
-that is still being sent and offers Stop remaining (the cancel route above) while
-original items wait for a slot.
+every five seconds and says when it is connected again. It shows the percentage
+and bytes of an upload while it is sent, can abort it, and offers Stop remaining
+(the cancel route above) while original items wait for a slot.
 
 ## Validation scope
 
@@ -277,7 +314,9 @@ metadata-publication failure. Additional cases in
 [`tests/serve/rerun.rs`](../crates/markitai-cli/tests/serve/rerun.rs) cover per-item option
 inheritance/replacement, enhancement and failure preservation, sibling overlap,
 queued cancellation, shared-asset deletion, and retry metadata failure followed by
-restart. Module tests exercise committed/uncommitted file recovery. Separate synthetic-peer router tests exercise
+restart. Module tests exercise committed/uncommitted file recovery, the error
+body shape, and router-level `error_code` values for failed, retried, stopped and
+shutdown items and request `reason`s. Separate synthetic-peer router tests exercise
 remote token and trust decisions without relying on a host network interface.
 [`tests/serve_terminal_usage.rs`](../crates/markitai-cli/tests/serve_terminal_usage.rs)
 contains private loopback cases for paid authentication errors, zero-token recorded

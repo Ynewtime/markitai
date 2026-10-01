@@ -97,7 +97,7 @@ pub(super) async fn download(
     let file = tokio::task::spawn_blocking(move || {
         let _guard = job.access.lock().unwrap();
         if !public_member(&relative) {
-            return Err(ApiError::new(404, "file not found"));
+            return Err(ApiError::new(404, "file_not_found", "file not found"));
         }
         let path = store::safe_file(&job.folder.join("out"), &relative)?;
         File::open(path).map_err(ApiError::internal)
@@ -119,14 +119,14 @@ pub(super) async fn result(
     let job = jobs::get(&state, &id)?;
     tokio::task::spawn_blocking(move||{
         let _guard=job.access.lock().unwrap();let data=job.data.lock().unwrap();
-        let item=data.items.iter().find(|item|item.item_id==item_id).ok_or_else(||ApiError::new(404,"item not found"))?;
-        let selected=item.output.as_deref().filter(|_|item.status=="done").ok_or_else(||ApiError::new(404,"item result not available"))?;
+        let item=data.items.iter().find(|item|item.item_id==item_id).ok_or_else(||ApiError::new(404,"item_not_found","item not found"))?;
+        let selected=item.output.as_deref().filter(|_|item.status=="done").ok_or_else(||ApiError::new(404,"result_unavailable","item result not available"))?;
         let out=job.folder.join("out");store::safe_file(&out,selected)?;
         let base=item_base(&data,item)?;
         let base_name=format!("{base}.md");let enhanced_name=format!("{base}.llm.md");
         let base_path=store::safe_file(&out,&base_name).ok();let enhanced_path=store::safe_file(&out,&enhanced_name).ok();
-        let (variant,path)=if item.llm_enhanced&&enhanced_path.is_some(){("llm",enhanced_path.clone().unwrap())}else if let Some(path)=base_path.clone(){("base",path)}else if let Some(path)=enhanced_path.clone(){("llm",path)}else{return Err(ApiError::new(404,"item result not available"));};
-        if fs::metadata(&path).map_err(ApiError::internal)?.len()>MAX_RESULT{return Err(ApiError::new(413,"result is too large for JSON; use the file download endpoint"));}
+        let (variant,path)=if item.llm_enhanced&&enhanced_path.is_some(){("llm",enhanced_path.clone().unwrap())}else if let Some(path)=base_path.clone(){("base",path)}else if let Some(path)=enhanced_path.clone(){("llm",path)}else{return Err(ApiError::new(404,"result_unavailable","item result not available"));};
+        if fs::metadata(&path).map_err(ApiError::internal)?.len()>MAX_RESULT{return Err(ApiError::new(413,"result_too_large","result is too large for JSON; use the file download endpoint"));}
         let markdown=fs::read_to_string(&path).map_err(ApiError::internal)?;
         let mut artifacts=Vec::new();let mut seen=HashSet::new();
         let mut add=|relative:String|->ApiResult<()> {
@@ -179,7 +179,7 @@ fn zip_jobs(
         let _guard = job.access.lock().unwrap();
         let data = job.data.lock().unwrap();
         if data.status == "running" {
-            return Err(ApiError::new(409, "job is still running"));
+            return Err(ApiError::new(409, "job_running", "job is still running"));
         }
         let prefix = if multiple {
             let raw = data
@@ -213,7 +213,11 @@ fn zip_jobs(
             }
             count += 1;
             if count > 100_000 {
-                return Err(ApiError::new(413, "archive has too many files"));
+                return Err(ApiError::new(
+                    413,
+                    "archive_too_large",
+                    "archive has too many files",
+                ));
             }
             writer
                 .start_file(
@@ -265,7 +269,7 @@ pub(super) async fn history_archive(
         .collect::<Vec<_>>();
     crate::sort::by_key(&mut jobs, |job| job.data.lock().unwrap().created_at.clone());
     if jobs.is_empty() {
-        return Err(ApiError::new(404, "history is empty"));
+        return Err(ApiError::new(404, "history_empty", "history is empty"));
     }
     let root = state.root.clone();
     let (file, temp) = tokio::task::spawn_blocking(move || zip_jobs(&root, jobs))
@@ -278,7 +282,13 @@ pub(super) fn item_base(
     data: &super::jobs::JobData,
     item: &super::types::Item,
 ) -> ApiResult<String> {
-    let invalid = || ApiError::new(409, "saved output identity is inconsistent or unsafe");
+    let invalid = || {
+        ApiError::new(
+            409,
+            "output_identity_conflict",
+            "saved output identity is inconsistent or unsafe",
+        )
+    };
     let base = if let Some(base) = data.bases.get(&item.item_id) {
         base.clone()
     } else if let Some(name) = &item.output_name {
@@ -344,6 +354,7 @@ pub(super) fn exclusive_item_base(
         {
             return Err(ApiError::new(
                 409,
+                "output_identity_conflict",
                 "saved output family overlaps another item",
             ));
         }

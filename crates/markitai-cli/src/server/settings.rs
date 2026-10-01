@@ -18,14 +18,19 @@ pub(crate) struct SettingsSource {
 
 use super::types::{ApiError, ApiResult};
 fn invalid(message: &str) -> ApiError {
-    ApiError::new(422, message)
+    ApiError::new(422, "invalid_settings_request", message)
 }
 fn missing() -> ApiError {
     ApiError::new(
         404,
+        "settings_entry_missing",
         "This saved configuration no longer exists. Refresh settings and try again.",
     )
 }
 fn failure() -> ApiError {
-    ApiError::new(500, "Could not read or save the configuration file")
+    ApiError::new(
+        500,
+        "settings_io_failed",
+        "Could not read or save the configuration file",
+    )
 }

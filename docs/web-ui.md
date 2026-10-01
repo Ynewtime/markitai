@@ -34,22 +34,38 @@ cleared at once. Each URL line is checked before upload: a bare domain such as
 `example.com/page` gets `https://`, and the first unusable line is quoted in the
 message, with the address field focused.
 
-While files are being sent, Cancel upload aborts the request and keeps the
-selection. If the service had already accepted the job, it continues and appears
-in History. While original items of a running job wait for a conversion slot,
-Stop remaining calls the service's cancel route: waiting items end as stopped
-(and can be retried), items already converting finish. On narrow screens the
-results panel is scrolled into view after a job starts or a saved job is opened.
+While files are being sent, the form shows the upload's own progress under the
+submit button: the percentage and the bytes sent of the total, in a progress bar
+labelled by that text (`aria-valuetext` repeats it). The multipart submission uses
+XMLHttpRequest because fetch reports no upload progress; redraws are limited to
+one per 100 ms and the completion is never dropped. Once every byte is sent the
+line says the service is saving the files and creating the job. Conversion
+progress stays in the results panel, which appears only after the job exists.
+Cancel upload aborts the request and keeps the selection. If the service had
+already accepted the job, it continues and appears in History. While original
+items of a running job wait for a conversion slot, Stop remaining calls the
+service's cancel route: waiting items end as stopped (and can be retried), items
+already converting finish. On narrow screens the results panel is scrolled into
+view after a job starts or a saved job is opened.
 
 Each row states its kind and status in words (queued, converting, done, failed,
 skipped). An image skipped because no text was extracted says to convert it again
 with Local OCR or LLM enhancement. The unsupported-format message keeps its list
-of accepted extensions folded under Supported formats. Transport failures of a
-URL (`error sending request`, `HTTP 404`, timeouts) are prefixed with "Could not
-fetch this page". Enhance is offered only while the service reports a routable
-model; otherwise the action is omitted rather than shown disabled. Opening a
-result moves keyboard focus to its title; a result with a single Markdown version
-has no version chooser.
+of accepted extensions folded under Supported formats. Other failures are stated
+by cause, such as a page that answered HTTP 404, a website that refused the
+connection, a timeout, a missing model or unavailable local OCR, an input over a
+size limit, or a stop request; the service's original message is folded under
+Details (see [Language and appearance](#language-and-appearance)). Enhance is
+offered only while the service reports a routable model; otherwise the action is
+omitted rather than shown disabled. Opening a result moves keyboard focus to its
+title; a result with a single Markdown version has no version chooser.
+
+After a job starts or a saved job is opened, keyboard focus moves to the results
+heading. When the focused row action disappears (Retry while the item is queued
+again, a deleted row), focus moves to that item's next control, or to the results
+heading, instead of being lost. An address whose `?job=` names a job that no
+longer exists reports that once and drops the parameter, so reloading does not
+repeat the error. Download all is hidden while History is empty.
 
 Messages appear in one fixed region at the bottom of the window, so they are
 visible wherever the action happened. Confirmations fade after six seconds;
@@ -70,11 +86,32 @@ system), light and dark. Printed and PDF output always uses the light palette.
 These two preferences are the only values this application writes to
 `localStorage` (`markitai.lang`, `markitai.theme`). A small classic script,
 `/ui/boot.js`, applies them in the document head before first paint; it runs
-under the same `script-src 'self'` policy as the module scripts. Messages that
-come from the service, such as conversion errors and provider probe details, are
-shown as the service wrote them, inside localized context where the page knows
-the meaning. The access-token control is shown only when this tab uses a token
-or the service has answered 401.
+under the same `script-src 'self'` policy as the module scripts. The page's static
+text is English, so when the resolved language is Chinese boot.js also sets the
+Chinese tab title and marks the document (`data-i18n-pending`): the stylesheet
+keeps translatable text, placeholders and select values transparent until
+`i18n.js` has translated them and removes the mark. Layout is unchanged while
+marked. If the modules have not run after three seconds, boot.js removes the mark
+itself, so the page is never left blank; without JavaScript the mark is never set.
+The served HTML stays a fixed embedded file: the stored choice lives in the
+browser, where the server cannot see it.
+
+The service answers in English. Its errors carry stable codes: an API error's
+`reason` (then its status-derived `code`) and a failed item's `error_code`, which
+is the core's conversion error code or a service cause (see
+[error responses](serve.md#error-responses)). The page maps them to text in the
+interface language, refining recognizable message shapes such as `HTTP 404`,
+refused connections, timeouts, `LLM returned HTTP 401`, unavailable local OCR or
+`exceeds the 500 MiB limit`. Provider probe and discovery details, which the
+core words as fixed phrases, are translated the same way; provider names are
+proper nouns and stay as they are, while generic labels (OpenAI compatible,
+Unknown provider, the discovery status) are translated. Wherever a translation
+replaces the service's wording, the original is kept: folded under Details in
+job rows, messages and settings status, or as the element's tooltip for the job
+summary and discovery line. A message that matches no known code or shape, for
+example from an older history without `error_code`, is shown as written. The
+access-token control is shown only when this tab uses a token or the service has
+answered 401.
 
 ## Connections and concurrent editing
 
@@ -95,8 +132,10 @@ Mutations include the revision captured by that draft. A conflict refreshes the
 visible connection/model lists but retains the draft and old revision. The user
 must explicitly acknowledge the current revision after review and submit again;
 there is no automatic overwrite/retry. Deployment dialogs use the same behavior.
-A server-side session override or other write restriction remains visible as an
-error; the page does not pretend it saved a blocked configuration.
+Only a revision conflict (`stale_revision`, or `config_changed` when the file
+changed during the save) opens this review; a server-side session override
+(`settings_read_only`) or other write restriction remains visible as an error;
+the page does not pretend it saved a blocked configuration.
 
 ## Preview and token boundaries
 
@@ -139,11 +178,16 @@ exact embedded bytes, MIME/HEAD/cache/security headers, unknown API and asset
 404s, filesystem non-exposure and Host/method rejection. The pure JavaScript
 `web/api.test.mjs` tests fragment/query cleanup, blocked storage, token destination
 restriction, artifact identity, authenticated request redirect policy, the
-offline error, URL-line parsing, duplicate files and the copy fallback.
-`web/i18n.test.mjs` checks that both languages define the same keys and
-placeholders, that every key the page and scripts use exists, language
-detection, plural forms and the theme cycle; `web/result-tools.test.mjs` also
-checks Chinese comparison and print messages. Run them with
+offline error, URL-line parsing, duplicate files, the copy fallback, error
+localization by reason and code, the XMLHttpRequest upload (progress, token,
+cancellation, service, network and redirect failures), the progress text and
+the redraw throttle. `web/i18n.test.mjs` checks that both languages define the
+same keys and placeholders, that every key the page, scripts and message tables
+use exists, that every `reason` in the Rust service sources and every core error
+code has localized text, item-error and provider-phrase translations, language
+detection, plural forms, the theme cycle and boot.js's first-paint mark (run in a
+`node:vm` context); `web/result-tools.test.mjs` also checks Chinese comparison
+and print messages. Run them with
 `node --test crates/markitai-cli/src/server/web/*.test.mjs`; Node is only a
 development test tool. Syntax checks use `node --input-type=module --check` with
 each authored JS file on stdin. The embedded resources are `index.html`,

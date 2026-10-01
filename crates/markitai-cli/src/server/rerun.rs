@@ -65,17 +65,27 @@ pub(super) async fn retry(
     request: Request,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     if state.closing.load(Ordering::SeqCst) {
-        return Err(ApiError::new(503, "server is shutting down"));
+        return Err(ApiError::new(
+            503,
+            "shutting_down",
+            "server is shutting down",
+        ));
     }
     let trusted = request.extensions().get::<Trusted>().is_some_and(|v| v.0);
     let bytes = axum::body::to_bytes(request.into_body(), 1024 * 1024)
         .await
-        .map_err(|_| ApiError::new(413, "retry body exceeds limit"))?;
+        .map_err(|_| ApiError::new(413, "request_too_large", "retry body exceeds limit"))?;
     let body = if bytes.is_empty() {
         RetryBody::default()
     } else {
         serde_json::from_slice::<Option<RetryBody>>(&bytes)
-            .map_err(|e| ApiError::new(422, format!("invalid retry body: {e}")))?
+            .map_err(|e| {
+                ApiError::new(
+                    422,
+                    "invalid_retry_body",
+                    format!("invalid retry body: {e}"),
+                )
+            })?
             .unwrap_or_default()
     };
     http::refresh(&state).await?;
@@ -85,29 +95,29 @@ pub(super) async fn retry(
     let (created,drain)=tokio::task::spawn_blocking(move|| {
         let job=admission_job;let state=admission_state;
         let _access=job.access.lock().unwrap();
-        if state.closing.load(Ordering::SeqCst){return Err(ApiError::new(503,"server is shutting down"));}
-        if !state.jobs.lock().unwrap().get(&id).is_some_and(|known|Arc::ptr_eq(known,&job)){return Err(ApiError::new(404,"job not found"));}
+        if state.closing.load(Ordering::SeqCst){return Err(ApiError::new(503,"shutting_down","server is shutting down"));}
+        if !state.jobs.lock().unwrap().get(&id).is_some_and(|known|Arc::ptr_eq(known,&job)){return Err(ApiError::new(404,"job_not_found","job not found"));}
         let mut data=job.data.lock().unwrap();
-        if data.persistence_error.is_some(){return Err(ApiError::new(409,"job persistence failed; restart to recover before retrying"));}
-        let index=data.items.iter().position(|i|i.item_id==item_id).ok_or_else(||ApiError::new(404,"item not found"))?;
+        if data.persistence_error.is_some(){return Err(ApiError::new(409,"persistence_failed","job persistence failed; restart to recover before retrying"));}
+        let index=data.items.iter().position(|i|i.item_id==item_id).ok_or_else(||ApiError::new(404,"item_not_found","item not found"))?;
         let prior=data.items[index].clone();
-        if prior.skip_reason.as_deref()==Some("pending_batch"){return Err(ApiError::new(409,"provider batch enhancement is pending; collect that batch before retrying or enhancing this item"));}
-        if !["done","error"].contains(&prior.status.as_str())||job.retry_pending.lock().unwrap().contains(&item_id){return Err(ApiError::new(409,"item has not reached a terminal state yet; retry when done"));}
-        if !prior.retryable{return Err(ApiError::new(409,"file items recorded from a CLI run cannot be retried or enhanced here; run the markitai CLI on the file again"));}
-        if prior.kind=="file" {store::safe_file(&job.folder.join("uploads"),&prior.name).map_err(|_|ApiError::new(404,"original upload is no longer on disk"))?;}
+        if prior.skip_reason.as_deref()==Some("pending_batch"){return Err(ApiError::new(409,"batch_pending","provider batch enhancement is pending; collect that batch before retrying or enhancing this item"));}
+        if !["done","error"].contains(&prior.status.as_str())||job.retry_pending.lock().unwrap().contains(&item_id){return Err(ApiError::new(409,"item_busy","item has not reached a terminal state yet; retry when done"));}
+        if !prior.retryable{return Err(ApiError::new(409,"not_retryable","file items recorded from a CLI run cannot be retried or enhanced here; run the markitai CLI on the file again"));}
+        if prior.kind=="file" {store::safe_file(&job.folder.join("uploads"),&prior.name).map_err(|_|ApiError::new(404,"upload_missing","original upload is no longer on disk"))?;}
         else if prior.kind=="url" {
-            if !trusted{return Err(ApiError::new(403,"URL conversion requires loopback or token authentication; safe remote URL fetching is not yet available"));}
-            let parsed=url::Url::parse(&prior.name).map_err(|_|ApiError::new(422,"invalid URL"))?;
-            if !["http","https"].contains(&parsed.scheme())||parsed.host_str().is_none(){return Err(ApiError::new(422,"URLs must use http or https"));}
-        } else {return Err(ApiError::new(409,"item has no supported original source"));}
+            if !trusted{return Err(ApiError::new(403,"remote_url_forbidden","URL conversion requires loopback or token authentication; safe remote URL fetching is not yet available"));}
+            let parsed=url::Url::parse(&prior.name).map_err(|_|ApiError::new(422,"invalid_url","invalid URL"))?;
+            if !["http","https"].contains(&parsed.scheme())||parsed.host_str().is_none(){return Err(ApiError::new(422,"unsupported_url_scheme","URLs must use http or https"));}
+        } else {return Err(ApiError::new(409,"no_source","item has no supported original source"));}
         let opts=match body.options {Some(opts)=>opts,None=>{
             let saved=data.item_options.get(&item_id).unwrap_or(&data.options);
             let mut known=serde_json::to_value(JobOptions::default()).unwrap();
             if let Some(fields)=saved.as_object(){for (key,value) in fields{if let Some(target)=known.get_mut(key){*target=value.clone();}}}
-            serde_json::from_value(known).map_err(|_|ApiError::new(422,"saved item options are invalid"))?
+            serde_json::from_value(known).map_err(|_|ApiError::new(422,"invalid_options","saved item options are invalid"))?
         }};
         let mut cfg=opts.config(&state.settings.snapshot())?;
-        if body.operation==Operation::Enhance&& (cfg["llm"]["enabled"]!=true||!markitai_core::llm_capabilities(&cfg).routable){return Err(ApiError::new(409,"LLM enhancement is unavailable; enable a routable LLM first"));}
+        if body.operation==Operation::Enhance&& (cfg["llm"]["enabled"]!=true||!markitai_core::llm_capabilities(&cfg).routable){return Err(ApiError::new(409,"llm_unavailable","LLM enhancement is unavailable; enable a routable LLM first"));}
         let base=files::exclusive_item_base(&data,&prior)?;
         let runtime=job.runtime.get_or_init(||Arc::new(markitai_core::LlmRuntime::new(cfg["llm"]["concurrency"].as_u64().unwrap_or(10).max(1) as usize).expect("validated LLM concurrency"))).clone();
         cfg["output"]["on_conflict"]=json!("overwrite");
@@ -119,7 +129,7 @@ pub(super) async fn retry(
         }
         data.bases.insert(item_id.clone(),base.clone());
         let job_id=data.id.clone();
-        let item=&mut data.items[index];item.status="queued".into();item.error=None;item.output=None;item.duration_ms=None;item.finished_at=None;item.cost_usd=None;item.pricing=None;item.diagnostics=None;item.llm_enhanced=false;item.operation=body.operation.name().into();item.skipped=false;item.skip_reason=None;item.warnings.clear();
+        let item=&mut data.items[index];item.status="queued".into();item.error=None;item.error_code=None;item.output=None;item.duration_ms=None;item.finished_at=None;item.cost_usd=None;item.pricing=None;item.diagnostics=None;item.llm_enhanced=false;item.operation=body.operation.name().into();item.skipped=false;item.skip_reason=None;item.warnings.clear();
         let created=json!({"job_id":job_id,"items":[item.created()]});
         let payload=json!(item);
         data.status="running".into();data.finished_at=None;data.persistence_error=None;
@@ -189,6 +199,7 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
             &job,
             work.index,
             &work.prior,
+            "shutdown",
             "cancelled (server shutdown)".into(),
             0,
             None,
@@ -268,7 +279,11 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
                 }
                 Err(failure) => {
                     attempt_usage = failure.usage;
-                    return Err(ApiError::new(500, failure.error.to_string()));
+                    return Err(ApiError::new(
+                        500,
+                        failure.error.code(),
+                        failure.error.to_string(),
+                    ));
                 }
             };
             if work.operation == Operation::Enhance
@@ -276,6 +291,7 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
             {
                 return Err(ApiError::new(
                     500,
+                    "enhancement_failed",
                     "LLM enhancement did not produce an enhanced result",
                 ));
             }
@@ -290,7 +306,11 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
                 .or(converted.output_path.as_deref())
                 .and_then(relative);
             if selected.is_none() {
-                return Err(ApiError::new(500, "conversion produced no output"));
+                return Err(ApiError::new(
+                    500,
+                    "no_output",
+                    "conversion produced no output",
+                ));
             }
             let mut replacements = store::files(&out)
                 .map_err(ApiError::internal)?
@@ -318,6 +338,7 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
                     if !equal_files(&existing, &path).map_err(ApiError::internal)? {
                         return Err(ApiError::new(
                             409,
+                            "output_conflict",
                             "retry would replace another item's artifact",
                         ));
                     }
@@ -374,6 +395,7 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
             item.skipped = converted.skip_reason.is_some();
             item.skip_reason = converted.skip_reason;
             item.error = item.skip_reason.as_ref().map(|v| format!("skipped ({v})"));
+            item.error_code = None;
             item.warnings = converted.warnings;
             worker
                 .retry_pending
@@ -394,6 +416,7 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
                 &worker,
                 work.index,
                 &work.prior,
+                error.reason,
                 error.detail,
                 started.elapsed().as_millis().min(u64::MAX as u128) as u64,
                 diagnostics,
@@ -406,6 +429,7 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
             &job,
             fallback.0,
             &fallback.1,
+            "internal_error",
             "internal retry worker failure".into(),
             0,
             None,
@@ -416,6 +440,7 @@ fn failed(
     job: &Job,
     index: usize,
     prior: &Item,
+    code: &str,
     error: String,
     duration: u64,
     diagnostics: Option<AttemptDiagnostics>,
@@ -428,6 +453,7 @@ fn failed(
     } else {
         item.status = "error".into();
         item.error = Some(error);
+        item.error_code = Some(code.into());
         item.finished_at = Some(now());
         item.duration_ms = Some(duration);
     }
@@ -453,19 +479,23 @@ pub(super) async fn delete(
             .get(&id)
             .is_some_and(|known| Arc::ptr_eq(known, &job))
         {
-            return Err(ApiError::new(404, "job not found"));
+            return Err(ApiError::new(404, "job_not_found", "job not found"));
         }
         let mut data = job.data.lock().unwrap();
         let index = data
             .items
             .iter()
             .position(|i| i.item_id == item_id)
-            .ok_or_else(|| ApiError::new(404, "item not found"))?;
+            .ok_or_else(|| ApiError::new(404, "item_not_found", "item not found"))?;
         if data.status == "running"
             || job.active.load(Ordering::SeqCst) > 0
             || !["done", "error"].contains(&data.items[index].status.as_str())
         {
-            return Err(ApiError::new(409, "job is still running; retry when done"));
+            return Err(ApiError::new(
+                409,
+                "job_running",
+                "job is still running; retry when done",
+            ));
         }
         files::exclusive_item_base(&data, &data.items[index])?;
         if data.items.len() == 1 {

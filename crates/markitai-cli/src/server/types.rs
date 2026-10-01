@@ -43,7 +43,7 @@ impl JobOptions {
                 "standard" => Some(json!({"llm":true,"ocr":false,"alt":true,"desc":true,"screenshot":false})),
                 "rich" => Some(json!({"llm":true,"ocr":false,"alt":true,"desc":true,"screenshot":true})),
                 _ => None,
-            }).ok_or_else(|| ApiError::new(422, format!("unknown preset '{name}'")))?;
+            }).ok_or_else(|| ApiError::new(422, "unknown_preset", format!("unknown preset '{name}'")))?;
             for (key, path) in [
                 ("llm", "/llm/enabled"),
                 ("ocr", "/ocr/enabled"),
@@ -84,7 +84,7 @@ impl JobOptions {
         }
         if let Some(value) = &self.backend {
             if !["native", "cloudflare"].contains(&value.as_str()) {
-                return Err(ApiError::new(422, "invalid backend"));
+                return Err(ApiError::new(422, "invalid_options", "invalid backend"));
             }
             cfg["fetch"]["cloudflare"]["convert_enabled"] = json!(value == "cloudflare");
         }
@@ -102,7 +102,7 @@ impl JobOptions {
         }
         cfg["output"]["allow_symlinks"] = json!(false);
         markitai_core::config::normalize(&cfg)
-            .map_err(|error| ApiError::new(422, error.to_string()))
+            .map_err(|error| ApiError::new(422, "invalid_options", error.to_string()))
     }
 }
 
@@ -113,6 +113,10 @@ pub(super) struct Item {
     pub kind: String,
     pub status: String,
     pub error: Option<String>,
+    /// Stable category of a failed item's `error`: the core's conversion error
+    /// code or a service cause. Older and CLI-recorded histories have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
     pub output: Option<String>,
     pub output_name: Option<String>,
     pub duration_ms: Option<u64>,
@@ -153,6 +157,7 @@ impl Item {
             kind: kind.into(),
             status: "queued".into(),
             error: None,
+            error_code: None,
             output: None,
             output_name,
             duration_ms: None,
@@ -177,27 +182,41 @@ pub(super) type ApiResult<T> = Result<T, ApiError>;
 #[derive(Debug)]
 pub(super) struct ApiError {
     pub status: StatusCode,
+    /// Stable machine-readable cause, finer than the status-derived `code`.
+    /// Clients localize by it; `detail` keeps the service's English wording.
+    pub reason: &'static str,
     pub detail: String,
     structured_detail: Option<Value>,
 }
 impl ApiError {
-    pub fn new(status: u16, detail: impl Into<String>) -> Self {
+    pub fn new(status: u16, reason: &'static str, detail: impl Into<String>) -> Self {
         Self {
             status: StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            reason,
             detail: detail.into(),
             structured_detail: None,
         }
     }
-    pub fn structured(status: u16, detail: Value) -> Self {
+    pub fn structured(status: u16, reason: &'static str, detail: Value) -> Self {
         Self {
             status: StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            reason,
             detail: "structured API error".into(),
             structured_detail: Some(detail),
         }
     }
     pub fn internal(error: impl std::fmt::Display) -> Self {
         eprintln!("Serve: {error}");
-        Self::new(500, "internal server error")
+        Self::new(500, "internal_error", "internal server error")
+    }
+    /// A request body the multipart reader rejected; an exceeded body limit stays distinct.
+    pub fn multipart(status: StatusCode, detail: impl Into<String>) -> Self {
+        let reason = if status == StatusCode::PAYLOAD_TOO_LARGE {
+            "request_too_large"
+        } else {
+            "invalid_multipart"
+        };
+        Self::new(status.as_u16(), reason, detail)
     }
 }
 impl IntoResponse for ApiError {
@@ -216,14 +235,87 @@ impl IntoResponse for ApiError {
             _ => "server_error",
         };
         let detail = self.structured_detail.unwrap_or(Value::String(self.detail));
-        let mut response =
-            (self.status, Json(json!({"detail":detail,"code":code}))).into_response();
+        let mut response = (
+            self.status,
+            Json(json!({"detail":detail,"code":code,"reason":self.reason})),
+        )
+            .into_response();
         if self.status == StatusCode::UNAUTHORIZED {
             response
                 .headers_mut()
                 .insert("www-authenticate", "Bearer".parse().unwrap());
         }
         response
+    }
+}
+
+#[cfg(test)]
+mod error_tests {
+    use super::*;
+
+    async fn body(error: ApiError) -> (u16, Value) {
+        let response = error.into_response();
+        let status = response.status().as_u16();
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    #[tokio::test]
+    async fn errors_add_a_stable_reason_beside_the_existing_detail_and_status_code() {
+        let (status, value) = body(ApiError::new(
+            413,
+            "file_too_large",
+            "file exceeds upload limit",
+        ))
+        .await;
+        assert_eq!(status, 413);
+        assert_eq!(
+            value,
+            json!({"detail":"file exceeds upload limit","code":"payload_too_large","reason":"file_too_large"})
+        );
+        let (status, value) = body(ApiError::structured(
+            409,
+            "stale_revision",
+            json!({"code":"stale_revision","current_revision":"r2"}),
+        ))
+        .await;
+        assert_eq!(status, 409);
+        assert_eq!(value["detail"]["current_revision"], "r2");
+        assert_eq!(value["code"], "conflict");
+        assert_eq!(value["reason"], "stale_revision");
+        let (_, value) = body(ApiError::internal("disk detail stays in the log")).await;
+        assert_eq!(
+            value,
+            json!({"detail":"internal server error","code":"server_error","reason":"internal_error"})
+        );
+    }
+
+    #[test]
+    fn a_multipart_body_over_the_limit_is_distinct_from_a_malformed_one() {
+        assert_eq!(
+            ApiError::multipart(StatusCode::PAYLOAD_TOO_LARGE, "length limit").reason,
+            "request_too_large"
+        );
+        let malformed = ApiError::multipart(StatusCode::BAD_REQUEST, "invalid multipart body");
+        assert_eq!(malformed.reason, "invalid_multipart");
+        assert_eq!(malformed.status, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn item_error_codes_are_additive_and_older_items_still_load() {
+        let mut item = Item::new(1, "a.xyz".into(), "file", None);
+        let fresh = serde_json::to_value(&item).unwrap();
+        assert!(fresh.get("error_code").is_none(), "{fresh}");
+        let restored: Item = serde_json::from_value(fresh).unwrap();
+        assert!(restored.error_code.is_none());
+        item.status = "error".into();
+        item.error = Some("Unsupported file format: '.xyz'.".into());
+        item.error_code = Some("unsupported".into());
+        let failed = serde_json::to_value(&item).unwrap();
+        assert_eq!(failed["error_code"], "unsupported");
+        assert_eq!(failed["error"], "Unsupported file format: '.xyz'.");
     }
 }
 

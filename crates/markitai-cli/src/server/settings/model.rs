@@ -116,6 +116,7 @@ pub(super) fn legacy(models: &[Value], name: &str) -> ApiResult<usize> {
     if found.next().is_some() {
         return Err(ApiError::structured(
             409,
+            "ambiguous_legacy_model_name",
             json!({"code":"ambiguous_legacy_model_name","model_name":name}),
         ));
     }
