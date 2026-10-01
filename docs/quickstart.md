@@ -3,53 +3,89 @@
 Markitai converts documents, web pages and images to Markdown. One Rust core
 powers the `markitai` command (also installed as `mkai`), a local REST service
 with a browser workspace, an MCP server, and in-process Node.js, Python and Go
-bindings. This guide covers version 1.3.0-dev, the development build of the
-rewrite of reference release 1.2.0.
+bindings. This guide covers version 1.3.0, the Rust rewrite of reference
+release 1.2.0.
 
-## 1. Get the command
+## 1. Install
 
-No release packages are published yet; build from a checkout. You need Rust
-1.89 or later (development uses current stable).
+Markitai 1.3.0 is distributed as one archive per platform. Each holds the
+`markitai` executable, relative `mkai` and `markitai-mcp` links and all license
+notices; the executable needs no Python, Node.js or Go runtime.
+
+| Platform | Archive | Executable |
+|---|---|---|
+| macOS on Apple silicon | `markitai-1.3.0-aarch64-apple-darwin-single-binary.tar.gz` | about 22 MB |
+| macOS on Intel (tested under Rosetta 2 only) | `markitai-1.3.0-x86_64-apple-darwin-single-binary.tar.gz` | about 25 MB |
+| Linux x86-64 with glibc 2.39 or later | `markitai-1.3.0-x86_64-unknown-linux-gnu-single-binary.tar.gz` | about 26 MB |
+
+The archives are about 12 MB each. The macOS builds declare macOS 11.0 as their
+minimum but have been run only on macOS 27; the Linux build is linked against
+glibc 2.39 (Ubuntu 24.04, also Debian 13 and later) and has been tested on
+Ubuntu 24.04. The files sit at the top of the archive, so extract it into a
+directory of its own and put the commands on your `PATH`:
+
+```sh
+mkdir -p ~/.local/share/markitai ~/.local/bin
+tar -xzf markitai-1.3.0-aarch64-apple-darwin-single-binary.tar.gz -C ~/.local/share/markitai
+ln -sf ~/.local/share/markitai/markitai ~/.local/bin/markitai
+ln -sf ~/.local/share/markitai/mkai ~/.local/bin/mkai                  # optional short name
+ln -sf ~/.local/share/markitai/markitai-mcp ~/.local/bin/markitai-mcp  # optional MCP launcher name
+markitai --version   # markitai 1.3.0
+```
+
+If `markitai` is not found, add `~/.local/bin` to `PATH` in your shell profile.
+On Apple silicon use the arm64 archive: the x86-64 build also runs there under
+Rosetta 2, but cannot use local OCR. The Node.js package, the Python wheel and
+the Go packages are covered in [bindings](bindings.md#installation).
+
+### Unsigned builds on macOS
+
+The 1.3.0 executables and packages are not code-signed with an Apple
+Developer ID or notarized yet. macOS Gatekeeper therefore blocks a copy that a
+web browser downloaded (it carries the download "quarantine" mark) and reports
+that Apple cannot verify it; an archive fetched with `curl` or `wget` has no
+such mark. Once you are sure the archive is the one published for the
+release, remove the mark from that file before extracting it:
+
+```sh
+xattr -d com.apple.quarantine markitai-1.3.0-aarch64-apple-darwin-single-binary.tar.gz
+```
+
+If you have already extracted it, run the same command on
+`~/.local/share/markitai/markitai` instead. This exempts only that file; it does
+not change Gatekeeper for any other program, and there is no need to turn
+Gatekeeper off. The same applies to a downloaded `.tgz` or wheel before you
+install it.
+
+### Build from source
+
+You need Rust 1.89 or later (development uses current stable):
 
 ```sh
 cargo build --release -p markitai-cli
 ```
 
-This produces `target/release/markitai` and the identical `target/release/mkai`
-(about 22 MB each on macOS arm64 and 25 MB on x86-64 macOS; the first release
-build takes several minutes). On Apple silicon, build for an Intel Mac with
-`rustup target add x86_64-apple-darwin` and
+This produces `target/release/markitai` and the identical `target/release/mkai`;
+the first release build takes several minutes. On Apple silicon, build for an
+Intel Mac with `rustup target add x86_64-apple-darwin` and
 `cargo build --release --target x86_64-apple-darwin -p markitai-cli`; the
-executable lands in `target/x86_64-apple-darwin/release/`. Put the executable
-on your `PATH`, for example:
-
-```sh
-mkdir -p ~/.local/bin
-ln -sf "$PWD/target/release/markitai" ~/.local/bin/markitai
-ln -sf "$PWD/target/release/markitai" ~/.local/bin/mkai          # optional short name
-ln -sf "$PWD/target/release/markitai" ~/.local/bin/markitai-mcp  # optional MCP launcher name
-markitai --version   # markitai 1.3.0-dev
-```
-
-The executable needs no Python, Node.js or Go runtime. Maintainers can produce
-the self-contained archive `markitai-<version>-<host>-single-binary.tar.gz`
-(one executable, relative `mkai`/`markitai-mcp` links and all license notices)
-with the package driver described in [native CI](ci.md). For the language
-bindings see [bindings](bindings.md#installation).
+executable lands in `target/x86_64-apple-darwin/release/`. Link the executable
+into `~/.local/bin` as above. Maintainers produce the release archives with the
+package drivers described in [native CI](ci.md).
 
 ### Platform support
 
 | Capability | macOS arm64 | macOS x86-64 (Intel) | Linux x86-64 | Windows |
 |---|---|---|---|---|
-| Document, web-page, e-mail and data conversion; `serve`; `mcp`; bindings | Tested | CLI and Rust tests pass under Rosetta 2 only; bindings not built | Tested (Ubuntu under OrbStack emulation) | Type-checks only; never linked or run |
+| Document, web-page, e-mail and data conversion; `serve`; `mcp`; bindings | Tested | CLI archive and Rust tests checked under Rosetta 2 only; no binding packages | Tested (Ubuntu 24.04 under OrbStack emulation), including the static Go package | No release build; type-checks only, never linked or run |
 | Local OCR, PDF page images, HEIF/AVIF images | Built in (system frameworks) | Built in, not tested on Intel hardware; under Rosetta 2 OCR fails with an explicit error | Explicit "unsupported" error | Unsupported |
 | JavaScript pages and web screenshots (`-s playwright`, `--screenshot`) | Needs Chrome/Chromium | Not tested | Needs Chrome/Chromium (not exercised in the Linux rounds) | Not tested |
 | Office page screenshots | Needs LibreOffice | Not tested | Not available | Not available |
 | Batch `--resume`, subscription models | Supported | Supported (tests under Rosetta 2) | Supported | Not available |
 
 Physical Intel Macs and physical Intel/AMD Linux machines have not been tested.
-On Apple silicon, use the arm64 build: an x86-64 build running under Rosetta 2
-cannot use local OCR, and `markitai doctor` says so ([details](validation/macos-x86_64-rosetta.md)).
+On Apple silicon, an x86-64 build running under Rosetta 2 cannot use local OCR,
+and `markitai doctor` says so ([details](validation/macos-x86_64-rosetta.md)).
 Run `markitai doctor` to see which optional pieces are present on your machine.
 
 ## 2. Try it without touching your real settings (optional)

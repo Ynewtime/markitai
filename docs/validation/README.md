@@ -1,8 +1,9 @@
 # Validation records
 
-最新交付：[R46](delivery-round46.md)（macOS arm64 与 Linux amd64 打包、三绑定），对应的改动与语料对照见
-[R47](parallel-round47.md) 与 [R48](parallel-round48.md) 并行改进，冻结性能见[性能记录](performance-round36.md)（`all-r13`）。当前状态与剩余
-事项见 [STATUS](../STATUS.md) 与 [剩余工作](../remaining-work.md)。
+最新交付：[交付 R47](delivery-round47.md)（1.3.0 发布包）。其前的两轮改动与语料对照见并行改进 [R49](parallel-round49.md) 与
+[R50](parallel-round50.md)，更早的见 [R47](parallel-round47.md) 与 [R48](parallel-round48.md)；上一次交付为 [R46](delivery-round46.md)。
+冻结性能见[性能记录](performance-round36.md)（`all-r13`，release r19）。当前状态与剩余事项见 [STATUS](../STATUS.md) 与
+[剩余工作](../remaining-work.md)。
 
 An implementation checkpoint is reproducible only when it records the command,
 source revision, test inputs, build profile, and platform. Passing new unit
@@ -10,7 +11,8 @@ tests establishes specific contracts; it does not imply reference parity. Each
 record below stays tied to its own source revision and artifacts.
 
 Earlier checkpoints, oldest at the bottom of each series: delivery rounds
-`delivery-round36.md` through `delivery-round44.md`, quality records
+`delivery-round36.md` through `delivery-round46.md`, parallel improvement rounds
+`parallel-round47.md` through `parallel-round50.md`, quality records
 (`pdf-quality-round41.md`, `office-quality-round42.md`, `html-quality-round43.md`,
 `html-quality-round44.md`, `ocr-quality-round45.md`, `epub-quality-round46.md`),
 and, before them, [round twenty-four](structured-media-round24.md) and
@@ -18,7 +20,8 @@ and, before them, [round twenty-four](structured-media-round24.md) and
 `platform-linux-round*`, Windows type checks `windows-check-round38.md`, and the
 x86-64 macOS build under Rosetta 2 in [macos-x86_64-rosetta.md](macos-x86_64-rosetta.md); Linux desktop
 proxy reads with GNOME and KDE 5 in `linux-desktop-proxy-round38.md` and with KDE 6 in
-[linux-kde6-proxy-round49.md](linux-kde6-proxy-round49.md).
+[linux-kde6-proxy-round49.md](linux-kde6-proxy-round49.md), and the Linux x86-64 static Go
+package in [linux-static-go-round50.md](linux-static-go-round50.md).
 
 [Round twenty-two](media-llm-round22.md) retains Office/Numbers/text processing
 acceptance; [round twenty-one](service-ui-round21.md) retains actual web workspace

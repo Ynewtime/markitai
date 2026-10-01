@@ -16,8 +16,8 @@ once in the `release` profile and takes several minutes.
 
 | Language | Minimum | Build | Result |
 |---|---|---|---|
-| Python | CPython 3.10 (ABI3 wheel) | `maturin build --release` in `bindings/python` | `markitai-1.3.0.dev0-cp310-abi3-<platform>.whl` (about 9.8 MB on macOS arm64) |
-| Node.js | 18 (Node-API 8) | `npm --prefix bindings/node run build`, then `npm pack` | `markitai-1.3.0-dev.0.tgz` (about 9.6 MB on macOS arm64) |
+| Python | CPython 3.10 (ABI3 wheel) | `maturin build --release` in `bindings/python` | `markitai-1.3.0-cp310-abi3-<platform>.whl` (about 9.8 MB on macOS arm64) |
+| Node.js | 18 (Node-API 8) | `npm --prefix bindings/node run build`, then `npm pack` | `markitai-1.3.0.tgz` (about 9.6 MB on macOS arm64) |
 | Go | 1.23 with cgo and a C linker | `cargo build --release -p markitai-ffi` | `target/release/libmarkitai_ffi.{dylib,so}` |
 
 A built wheel or npm archive contains the native library for the build
@@ -42,9 +42,9 @@ environment, from `bindings/python`) installs the package in place.
 ```sh
 npm --prefix bindings/node run build       # builds the addon as bindings/node/markitai.node
 mkdir -p dist/node
-(cd bindings/node && npm pack --pack-destination ../../dist/node)   # markitai-1.3.0-dev.0.tgz
+(cd bindings/node && npm pack --pack-destination ../../dist/node)   # markitai-1.3.0.tgz
 cd /path/to/your/project
-npm install /path/to/markitai-rust/dist/node/markitai-1.3.0-dev.0.tgz
+npm install /path/to/markitai-rust/dist/node/markitai-1.3.0.tgz
 node -e "console.log(require('markitai').version)"
 ```
 

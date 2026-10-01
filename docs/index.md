@@ -1,16 +1,19 @@
 # Markitai documentation
 
-Markitai 1.3.0-dev converts documents, web pages and images to Markdown. A
+Markitai 1.3.0 converts documents, web pages and images to Markdown. A
 single Rust core powers the `markitai` command (alias `mkai`), a local REST
 service with a browser workspace, an MCP server and in-process Node.js, Python
-and Go bindings. It is the development build of a rewrite of reference release
-1.2.0 and is not yet release-ready; [compatibility](compatibility.md) lists the
-reference contracts and [project status](STATUS.md) the delivered scope.
+and Go bindings. It is the Rust rewrite of reference release 1.2.0:
+[compatibility](compatibility.md) lists the reference contracts,
+[project status](STATUS.md) the delivered scope and tested platforms, and the
+[changelog](../CHANGELOG.md) what changed.
 
 ## Start here
 
-- [Quick start](quickstart.md): build, first conversion, folders, web pages,
-  OCR, language models, workspace and MCP.
+- [Quick start](quickstart.md): installation from the release archives,
+  first conversion, folders, web pages, OCR, language models, workspace and MCP.
+  The 1.3.0 builds are not code-signed yet; see
+  [unsigned builds on macOS](quickstart.md#unsigned-builds-on-macos).
 - [Troubleshooting](troubleshooting.md): `doctor`, exit codes and common errors.
 - [CLI](cli.md): every option and subcommand.
 - [Configuration](configuration.md): file locations, `config`/`init`, environment
