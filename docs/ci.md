@@ -45,6 +45,21 @@ mtime unchanged. Source symlinks must target regular files inside the repository
 both link text and target contents are checked. These are boundary snapshots,
 not a filesystem monitor that can detect an edit reverted between snapshots.
 
+## Archives for another target
+
+`scripts/package_cli_target.py --target <triple> --output <new directory>`
+cross-builds only the release CLI for one non-host target (for example
+`x86_64-apple-darwin` on Apple silicon) and writes the same
+`-single-binary.tar.gz` as the native run, checked by the same member
+inventory, hashes and attribution bytes. It records the executable's
+instruction set read from its Mach-O or ELF header. When the host can execute
+the target (x86-64 macOS under Rosetta 2), the archived `markitai`, `mkai` and
+`markitai-mcp` run (version, MCP alias selection, a Markdown round trip and
+`doctor --json`); otherwise the record says it did not run. Bindings are not
+built, a host target or a Windows target is refused, and the same clean-checkout
+and source-snapshot rules apply. Running under Rosetta is not evidence from
+Intel hardware.
+
 ## Package license files and provenance
 
 CLI archives and C-ABI artifacts carry the repository's LICENSE and NOTICE.

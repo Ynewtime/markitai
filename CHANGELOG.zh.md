@@ -4,6 +4,7 @@
 
 ### 新增
 
+- `scripts/package_cli_target.py` 为非本机目标（在 Apple silicon 上构建 x86-64 macOS）生成单 binary CLI 归档，按本机归档的同样规则校验，并在主机可运行时于 Rosetta 2 下执行。
 - 输出到 stdout 的文档所引用的图片按内容哈希保存到 `MARKITAI_HOME/assets/blobs/`，并以 `file://` URI 链接（`image.stdout_persist`，与参考一样默认开启，但参考默认写到真实用户目录）；关闭时保留相对引用并给出警告。
 - `doctor`、`cache` 以及 `config path`/`config validate` 的提示与参考一致地按中英文显示：非空的 `MARKITAI_LANG` 决定语言，否则依次看 `LANG`、`LC_ALL`，以 `zh` 开头即为中文；JSON 输出、帮助、错误与退出码不变。
 - `markitai serve` 工作台提供跟随浏览器语言的中英文界面，以及浅色、深色、自动三种主题（打印始终为浅色）；整页支持拖放；可以取消上传，新增 `POST /api/jobs/{id}/cancel` 路由停止排队中的项；提示固定在窗口底部；断线时显示离线并自动重连；超大文件在上传前点名提示；跳过与失败项给出易懂说明；375 像素宽度下布局可用；界面刷新时保留焦点与已展开的详情；对比度达到 AA。

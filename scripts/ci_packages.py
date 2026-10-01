@@ -139,6 +139,26 @@ def supplement_wheel_licenses(source, destination, licenses):
             "supplemented": identity(destination), "license_directory": directory + "/licenses"}
 
 
+def package_attribution(root):
+    """Attribution every package carries: the project's license and notice,
+    pricing data, Codex and vendored upstream licenses."""
+    licenses = {name: (root / name).read_bytes() for name in ["LICENSE", "NOTICE"]}
+    licenses.update(pricing_files(root))
+    licenses.update(codex_files(root))
+    licenses.update(upstream_files(root))
+    return licenses
+
+
+def cli_attribution(root, licenses):
+    """The CLI archives' attribution: the package attribution and the
+    licenses of the web libraries the CLI embeds."""
+    cli_licenses = dict(licenses)
+    for name in ["marked-LICENSE", "DOMPurify-LICENSE", "provenance.json"]:
+        relative = "vendor/web/" + name
+        cli_licenses[relative] = (root / relative).read_bytes()
+    return cli_licenses
+
+
 def _cli_license_paths(licenses):
     from pathlib import PurePosixPath
     for name in licenses:
@@ -293,10 +313,7 @@ def main():
         if record["source_status_before"]:
             raise RuntimeError("Package validation requires a clean source checkout")
         record["source_before"] = snapshot()
-        licenses = {name: (root / name).read_bytes() for name in ["LICENSE", "NOTICE"]}
-        licenses.update(pricing_files(root))
-        licenses.update(codex_files(root))
-        licenses.update(upstream_files(root))
+        licenses = package_attribution(root)
         compiler = run("compiler", ["rustc", "-vV"])
         record["compiler"] = compiler
         host = next(line.split(": ", 1)[1] for line in compiler.splitlines()
@@ -311,10 +328,7 @@ def main():
         binary = release / ("markitai" + extension)
         version = run("version", [binary, "--version"]).strip().split()[-1]
 
-        cli_licenses = dict(licenses)
-        for name in ["marked-LICENSE", "DOMPurify-LICENSE", "provenance.json"]:
-            relative = "vendor/web/" + name
-            cli_licenses[relative] = (root / relative).read_bytes()
+        cli_licenses = cli_attribution(root, licenses)
         archive = output / f"markitai-{version}-{host}.zip"
         with zipfile.ZipFile(archive, "x", zipfile.ZIP_DEFLATED) as bundle:
             for name in ["markitai", "mkai"]:
