@@ -259,8 +259,10 @@ fn stats_clear_and_incomplete_store_preflight_preserve_entries() {
     assert_eq!(stats["cache"]["count"], 1);
     assert_eq!(stats["cache"]["entries"].as_array().unwrap().len(), 1);
     assert!(stats["cache"]["size_bytes"].as_u64().unwrap() > 0);
+    // Without --yes and with no answer on stdin nothing is cleared, and the
+    // run fails so a script notices.
     let abort = invoke(root.path(), &["cache", "clear"]);
-    assert!(abort.status.success());
+    assert_eq!(abort.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&abort.stdout).contains("Aborted"));
     assert_eq!(
         convert(root.path(), "source.md", &[])["llm_cache_hit"],

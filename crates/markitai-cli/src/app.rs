@@ -2156,10 +2156,12 @@ fn cache_command(command: &CacheCommand, cfg: &Value) -> CliResult<i32> {
                 print!("{question}");
                 io::stdout().flush().map_err(runtime)?;
                 let mut answer = String::new();
-                io::stdin().read_line(&mut answer).map_err(runtime)?;
+                let read = io::stdin().read_line(&mut answer).map_err(runtime)?;
                 if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
                     println!("{}", text!("Aborted", "已取消"));
-                    return Ok(0);
+                    // No answer at all (a script without --yes) is a failure, as
+                    // in the reference; an explicit "no" is not.
+                    return Ok(if read == 0 { 1 } else { 0 });
                 }
             }
             markitai_core::llm_cache::preflight_clear(cfg).map_err(runtime)?;
