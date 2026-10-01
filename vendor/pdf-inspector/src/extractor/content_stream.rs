@@ -8,7 +8,7 @@ use crate::text_utils::{decode_text_string, effective_font_size, expand_ligature
 use crate::tounicode::FontCMaps;
 use crate::types::{
     BoldSource, FontWidthInfo, ItemCoverage, ItemType, PageExtraction, PdfLine, PdfRect,
-    RunCoverage, TextItem, attach_run_coverage,
+    PendingCoverage, RunCoverage, TextItem, attach_run_coverage,
 };
 use log::trace;
 use lopdf::{Document, Encoding, Object, ObjectId};
@@ -444,7 +444,155 @@ pub(crate) fn extract_page_text_items_with_options(
     style_cache: &mut FontStyleCache,
     form_budget: &mut FormWalkBudget,
 ) -> Result<(PageExtraction, bool, PageRotation, bool, Vec<RunCoverage>), PdfError> {
-    let include_invisible = options.include_invisible;
+    // markitai: the walk of the content stream and the switches that only
+    // shape its result are two steps, so readings that differ in those
+    // switches can share one walk (see `PageRuns`).
+    let runs = read_page_runs(
+        doc,
+        page_id,
+        page_num,
+        font_cmaps,
+        options.include_invisible,
+        style_cache,
+        form_budget,
+    )?;
+    Ok(runs.finish(options))
+}
+
+/// One page's runs as its content stream shows them, before the switches of
+/// [`TextExtractionOptions`] that only shape the result: bold read from the
+/// weight class, the CMap coverage, and the merge of runs into items, which
+/// also reads the table cells of `with_table_cells` (markitai). Everything
+/// here depends only on the document, the page and `include_invisible`.
+pub(crate) struct PageRuns {
+    pub(crate) text: PageRunText,
+    /// The CMap coverage of each run and of the show operators no run
+    /// followed; `None` for runs taken from a cache, which serves only
+    /// readings that do not ask for coverage.
+    coverage: Option<(ItemCoverage, PendingCoverage)>,
+}
+
+/// [`PageRuns`] without their CMap coverage, which holds reference-counted
+/// font names: what a cache of page runs keeps (markitai).
+#[derive(Clone)]
+pub(crate) struct PageRunText {
+    pub(crate) items: Vec<TextItem>,
+    item_clips: Vec<Option<super::clip_boundaries::ClipRect>>,
+    visual_rtl: bool,
+    replaced_text: Vec<bool>,
+    rects: Vec<PdfRect>,
+    lines: Vec<PdfLine>,
+    has_gid_fonts: bool,
+    page_rotation: PageRotation,
+    skipped_invisible: bool,
+}
+
+impl PageRuns {
+    /// A page whose content is skipped: no runs, no geometry, no verdicts.
+    fn skipped() -> Self {
+        let mut runs = Self::cached(PageRunText {
+            items: Vec::new(),
+            item_clips: Vec::new(),
+            visual_rtl: false,
+            replaced_text: Vec::new(),
+            rects: Vec::new(),
+            lines: Vec::new(),
+            has_gid_fonts: false,
+            page_rotation: PageRotation::Upright,
+            skipped_invisible: false,
+        });
+        runs.coverage = Some(Default::default());
+        runs
+    }
+
+    /// Runs kept without their coverage.
+    pub(crate) fn cached(text: PageRunText) -> Self {
+        Self {
+            text,
+            coverage: None,
+        }
+    }
+
+    /// The page's extraction under `options`: what
+    /// [`extract_page_text_items_with_options`] returns.
+    pub(crate) fn finish(
+        self,
+        options: TextExtractionOptions,
+    ) -> (PageExtraction, bool, PageRotation, bool, Vec<RunCoverage>) {
+        let PageRunText {
+            mut items,
+            item_clips,
+            visual_rtl,
+            replaced_text,
+            rects,
+            lines,
+            has_gid_fonts,
+            page_rotation,
+            skipped_invisible,
+        } = self.text;
+        debug_assert!(self.coverage.is_some() || !options.cmap_coverage);
+        if options.bold_from_weight {
+            read_bold_from_weight(&mut items, options.bold_weight_threshold);
+        }
+        // The runs' coverage with the geometry the caller's page box test sees,
+        // taken before the merges below join runs into lines.
+        if let Some((item_coverage, _)) = &self.coverage {
+            debug_assert_eq!(items.len(), item_coverage.len());
+        }
+        let (item_coverage, unplaced_coverage) = self.coverage.unwrap_or_default();
+        let run_coverage: Vec<RunCoverage> = if options.cmap_coverage {
+            items
+                .iter()
+                .zip(item_coverage.iter())
+                .flat_map(|(item, coverage)| {
+                    coverage.iter().map(move |(font, stats)| RunCoverage {
+                        position: Some((item.x, item.y, item.width)),
+                        font: font.clone(),
+                        stats: *stats,
+                    })
+                })
+                .chain(
+                    unplaced_coverage
+                        .into_iter()
+                        .map(|(font, stats)| RunCoverage {
+                            position: None,
+                            font,
+                            stats,
+                        }),
+                )
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let items = if page_rotation == PageRotation::Upright {
+            super::merge_text_items_with_clips(items, &item_clips, visual_rtl, &replaced_text)
+        } else {
+            // Clips use the original page frame; rotated-page correction is an
+            // intentionally unsupported provenance case.
+            super::merge_text_items_with_clips(items, &[], visual_rtl, &replaced_text)
+        };
+        let items = super::merge_subscript_items(items);
+        (
+            (items, rects, lines),
+            has_gid_fonts,
+            page_rotation,
+            skipped_invisible,
+            run_coverage,
+        )
+    }
+}
+
+/// The walk of [`extract_page_text_items_with_options`] (markitai): the
+/// page's runs before the switches that only shape its result.
+pub(crate) fn read_page_runs(
+    doc: &Document,
+    page_id: ObjectId,
+    page_num: u32,
+    font_cmaps: &FontCMaps,
+    include_invisible: bool,
+    style_cache: &mut FontStyleCache,
+    form_budget: &mut FormWalkBudget,
+) -> Result<PageRuns, PdfError> {
     let mut items = Vec::new();
     let mut rects: Vec<PdfRect> = Vec::new();
     let mut clip_rects: Vec<PdfRect> = Vec::new();
@@ -588,13 +736,7 @@ pub(crate) fn extract_page_text_items_with_options(
                 MAX_PAGE_CONTENT_BYTES,
                 e
             );
-            return Ok((
-                (Vec::new(), Vec::new(), Vec::new()),
-                false,
-                PageRotation::Upright,
-                false,
-                Vec::new(),
-            ));
+            return Ok(PageRuns::skipped());
         }
     };
 
@@ -614,13 +756,7 @@ pub(crate) fn extract_page_text_items_with_options(
                 page_num,
                 super::content_decode::MAX_PAGE_OPERATIONS
             );
-            return Ok((
-                (Vec::new(), Vec::new(), Vec::new()),
-                false,
-                PageRotation::Upright,
-                false,
-                Vec::new(),
-            ));
+            return Ok(PageRuns::skipped());
         }
     };
 
@@ -2721,51 +2857,22 @@ pub(crate) fn extract_page_text_items_with_options(
         page_num,
     );
 
-    if options.bold_from_weight {
-        read_bold_from_weight(&mut items, options.bold_weight_threshold);
-    }
-    // The runs' coverage with the geometry the caller's page box test sees,
-    // taken before the merges below join runs into lines.
-    debug_assert_eq!(items.len(), item_coverage.len());
-    let run_coverage: Vec<RunCoverage> = if options.cmap_coverage {
-        items
-            .iter()
-            .zip(item_coverage.iter())
-            .flat_map(|(item, coverage)| {
-                coverage.iter().map(move |(font, stats)| RunCoverage {
-                    position: Some((item.x, item.y, item.width)),
-                    font: font.clone(),
-                    stats: *stats,
-                })
-            })
-            .chain(
-                unplaced_coverage
-                    .into_iter()
-                    .map(|(font, stats)| RunCoverage {
-                        position: None,
-                        font,
-                        stats,
-                    }),
-            )
-            .collect()
-    } else {
-        Vec::new()
-    };
-    let items = if page_rotation == PageRotation::Upright {
-        super::merge_text_items_with_clips(items, &item_clips, visual_rtl, &replaced_text)
-    } else {
-        // Clips use the original page frame; rotated-page correction is an
-        // intentionally unsupported provenance case.
-        super::merge_text_items_with_clips(items, &[], visual_rtl, &replaced_text)
-    };
-    let items = super::merge_subscript_items(items);
-    Ok((
-        (items, rects, lines),
-        has_gid_fonts,
-        page_rotation,
-        skipped_invisible,
-        run_coverage,
-    ))
+    // markitai: the switches of `TextExtractionOptions` that only shape the
+    // result are applied by `PageRuns::finish`.
+    Ok(PageRuns {
+        text: PageRunText {
+            items,
+            item_clips,
+            visual_rtl,
+            replaced_text,
+            rects,
+            lines,
+            has_gid_fonts,
+            page_rotation,
+            skipped_invisible,
+        },
+        coverage: Some((item_coverage, unplaced_coverage)),
+    })
 }
 
 /// Counts of text-producing show operators by baseline direction: the

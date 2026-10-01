@@ -3,7 +3,7 @@ use super::*;
 use lopdf::dictionary;
 
 const NATIVE: &str = "Visible native paragraph retained exactly while other pages require OCR.";
-const LIMITATION: &str = "PDF images are appended to their source page; exact placement, page screenshots, vector graphics and local OCR are not implemented.";
+const LIMITATION: &str = crate::pdf_media::IMAGE_PLACEMENT;
 
 fn fixture(streams: &[String], masked_image: bool) -> (Vec<u8>, String) {
     let mut pdf = lopdf::Document::with_version("1.7");
@@ -211,7 +211,38 @@ fn recovering_one_page_retains_native_body_and_inspection_warning_order() {
         .position(|warning| warning == "Explicit caller diagnostic.")
         .unwrap();
     assert!(image_warning < missing_warning && missing_warning < caller_warning);
-    assert_eq!(document.warnings.last().unwrap(), LIMITATION);
+    // The image was not extracted, so none is out of place.
+    assert!(document.assets.is_empty());
+    assert_eq!(
+        document.warnings.last().unwrap(),
+        "Explicit caller diagnostic."
+    );
+}
+
+#[test]
+fn only_a_pdf_with_extracted_images_warns_about_their_placement() {
+    let (bytes, _) = fixture(&[text(NATIVE)], false);
+    let document = extract(&bytes).unwrap();
+    assert!(document.assets.is_empty());
+    assert!(
+        !document
+            .warnings
+            .iter()
+            .any(|warning| warning == LIMITATION),
+        "{:?}",
+        document.warnings
+    );
+    let (bytes, _) = fixture(&[text(NATIVE), "/Im Do".into()], false);
+    let document = extract(&bytes).unwrap();
+    assert!(!document.assets.is_empty());
+    assert!(
+        document
+            .warnings
+            .iter()
+            .any(|warning| warning == LIMITATION),
+        "{:?}",
+        document.warnings
+    );
 }
 
 #[test]

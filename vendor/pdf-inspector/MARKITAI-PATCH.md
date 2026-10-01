@@ -91,15 +91,54 @@ The local changes are limited to fifteen upstream files:
   title. On the 215 Chrome- and Quartz-printed corpus PDFs this removes 35
   page-reader headings, none of which the reference or the defuddle
   expectation has.
+- `src/lib.rs`, `src/extractor/mod.rs`, `src/extractor/content_stream.rs`
+  (again): one load for several readings. `LoadedPdf::load_mem` loads a file
+  as the one-shot readings do; its `pages_markdown` returns what
+  `extract_pages_markdown_mem` returns and its
+  `text_with_positions_and_rotations` what
+  `extract_text_with_positions_and_rotations_mem_with_options` returns, for
+  the same bytes, without loading them again. A page's text extraction is
+  split into the walk of its content stream (`read_page_runs`) and the
+  switches that only shape the result (`PageRuns::finish`: bold from the
+  weight class, CMap coverage, and the merge of runs into items, which reads
+  the table cells of `with_table_cells`). The walk depends on nothing else
+  the readings vary, so a `LoadedPdf` keeps each page's runs
+  (`PageRunCache`, at most 500,000 runs, only for readings that skip
+  invisible text and report no coverage) and the position reading after the
+  per-page Markdown finishes the kept runs under its own switches instead of
+  walking the pages again; `forget_page_runs` frees them. The font CMaps are
+  read once per load, with the first reading of the text. `extract_pages_markdown_mem_impl` keeps its load and
+  render repairs and reads through the shared
+  `extract_pages_markdown_from_doc`. `as_loaded_by_lopdf` gives the
+  document to a caller that would otherwise load the same bytes with
+  `lopdf::Document::load_mem`, only when the two are the same document: the
+  loader read the caller's bytes unchanged (`LoadRepairs::rewrote_bytes`:
+  leading bytes dropped, bare structure names fixed, container repaired),
+  repaired no object after the load, and every object the cross-reference
+  table lists as in use was loaded. The last test is how an object stream
+  left out past the loader's 8 MB decompression bound shows, which lopdf
+  alone keeps; an entry whose offset leads to no object header, or to the
+  header of another loaded object, holds nothing either load could add
+  (Quartz lists freed objects as in use at offset 0). Decryption is the same
+  in both loads (the empty password, without a password); lopdf drops a
+  decrypted file's `/Encrypt` object, so such a file is not shared either.
+  Two added tests compare every reading with its one-shot function, check
+  that the position reading takes kept runs and finishes them under its own
+  bold-from-weight switch, and check the sharing test on a plain file, a
+  Quartz-style offset-0 entry, leading bytes, an encrypted file and an
+  unused 9 MB object stream; each fails on a mutation of the code it covers.
 
-  With these changes, the isolated copy's unit tests give 1,611 passed and the
-  same 21 failed (1,609 before the two tests of the last item). Each added test
-  fails on the unmodified code it covers.
+  With these changes, the isolated copy's unit tests give 1,613 passed and the
+  same 21 failed (1,611 before the two tests of the last item, 1,609 before
+  the two of the item before it). Each added test fails on the unmodified
+  code it covers.
 
 The page-level OCR, font decoding, repair, limits and reliability routing remain
 the upstream paths. Markitai's own visibility warnings and layout agreement
-checks remain enabled. The only new public API is `TextLine::text_with_markup`; no optional runtime
-dependency is added.
+checks remain enabled. The only new public API is `TextLine::text_with_markup`
+and `LoadedPdf` (`load_mem`, `document`, `as_loaded_by_lopdf`,
+`pages_markdown`, `text_with_positions_and_rotations`, `forget_page_runs`); no
+optional runtime dependency is added.
 Opacity, masks, occlusion, full text clipping and mixed-visibility marked content
 are not claimed to be solved by this patch.
 

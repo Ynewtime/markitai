@@ -596,6 +596,409 @@ pub fn extract_pages_markdown_mem(
     .map(|extraction| extraction.result)
 }
 
+// =========================================================================
+// markitai: one load for several readings
+// =========================================================================
+
+/// A PDF loaded once for several readings (markitai): per-page Markdown,
+/// positioned text and a caller's own look at the objects share one parse
+/// of the file, and a page's content stream is walked once for every
+/// reading of its text that can share the walk.
+///
+/// Each reading returns what the function it names returns for the same
+/// bytes; only the work is shared.
+pub struct LoadedPdf {
+    doc: Document,
+    page_count: u32,
+    /// The document is what `Document::load_mem` makes of the same bytes.
+    as_lopdf_loads: bool,
+    /// Read with the first reading of the text, so a caller that only
+    /// looks at the objects (a page count over its limit) does not pay.
+    font_cmaps: std::cell::OnceCell<FontCMaps>,
+    runs: extractor::PageRunCache,
+}
+
+impl LoadedPdf {
+    /// Load `buffer` as the readings of [`extract_pages_markdown_mem`] and
+    /// [`extract_text_with_positions_and_rotations_mem_with_options`] do: a
+    /// buffer they cannot load fails here with the error they return.
+    pub fn load_mem(buffer: &[u8]) -> Result<Self, PdfError> {
+        validate_pdf_bytes(buffer)?;
+        let (doc, page_count, repairs) = load_document_from_mem_with_repairs(buffer, None)?;
+        // The loader differs from `Document::load_mem` in its byte and
+        // object repairs and its decompression bound. Decryption is the
+        // same: without a password both try the empty one, and a file it
+        // does not open fails the loader.
+        let as_lopdf_loads = repairs.none() && every_listed_object_loaded(&doc, buffer);
+        Ok(Self {
+            doc,
+            page_count,
+            as_lopdf_loads,
+            font_cmaps: std::cell::OnceCell::new(),
+            runs: extractor::PageRunCache::default(),
+        })
+    }
+
+    fn font_cmaps(&self) -> &FontCMaps {
+        self.font_cmaps.get_or_init(|| FontCMaps::from_doc(&self.doc))
+    }
+
+    /// The loaded document, with the loader's repairs.
+    pub fn document(&self) -> &Document {
+        &self.doc
+    }
+
+    /// The document when it is exactly what `lopdf::Document::load_mem`
+    /// makes of the same bytes, so a caller need not load them again for
+    /// its own look at the objects. `None` when the loader read other
+    /// bytes (leading bytes dropped, bare structure names fixed, the
+    /// container repaired), repaired objects after the load, or an object
+    /// the cross-reference table lists is missing — which is how an object
+    /// stream left out past the loader's decompression bound shows, and
+    /// also how a decrypted file shows, its `/Encrypt` dictionary dropped.
+    pub fn as_loaded_by_lopdf(&self) -> Option<&Document> {
+        self.as_lopdf_loads.then_some(&self.doc)
+    }
+
+    /// [`extract_pages_markdown_mem`] of the loaded bytes.
+    pub fn pages_markdown(
+        &self,
+        pages: Option<&[u32]>,
+    ) -> Result<PagesExtractionResult, PdfError> {
+        extract_pages_markdown_from_doc(
+            &self.doc,
+            self.page_count,
+            self.font_cmaps(),
+            Some(&self.runs),
+            pages,
+            &MarkdownOptions::default(),
+            false,
+            false,
+        )
+        .map(|extraction| extraction.result)
+    }
+
+    /// [`extract_text_with_positions_and_rotations_mem_with_options`] of
+    /// the loaded bytes.
+    pub fn text_with_positions_and_rotations(
+        &self,
+        page_filter: Option<&HashSet<u32>>,
+        options: PositionOptions,
+    ) -> Result<(Vec<TextItem>, HashMap<u32, PageRotation>), PdfError> {
+        let ((mut items, _rects, _lines), _thresholds, _gid_pages, page_rotations, _coverage) =
+            extractor::extract_positioned_text_in_page_box_with_runs(
+                &self.doc,
+                self.font_cmaps(),
+                page_filter,
+                options,
+                &self.runs,
+            )?;
+        if options.frame == PositionFrame::Display {
+            extractor::display_frame::document_items_to_display_frame(
+                &self.doc,
+                &mut items,
+                &page_rotations,
+            );
+        }
+        Ok((items, page_rotations))
+    }
+
+    /// Forget the page runs kept for later readings of the pages' text.
+    pub fn forget_page_runs(&self) {
+        self.runs.clear();
+    }
+}
+
+/// Whether every object the cross-reference table lists as in use was
+/// loaded, unless no load could read it (markitai). The loader's
+/// decompression bound leaves out an object stream that inflates past it,
+/// with the objects stored in it, where a load without the bound keeps
+/// them; an object both loads leave out counts against the document too,
+/// so the test only ever errs towards a second load. An entry whose offset
+/// leads to no object header, or to the header of another object that was
+/// loaded, holds nothing a load could add: Quartz lists freed objects as in
+/// use at offset 0, before the header comment and the first object.
+fn every_listed_object_loaded(doc: &Document, buffer: &[u8]) -> bool {
+    use lopdf::xref::XrefEntry;
+    doc.reference_table
+        .entries
+        .iter()
+        .all(|(&number, entry)| match *entry {
+            XrefEntry::Normal { offset, generation } => {
+                doc.objects.contains_key(&(number, generation))
+                    || object_header_at(buffer, offset as usize).is_none_or(|id| {
+                        id != (number, generation) && doc.objects.contains_key(&id)
+                    })
+            }
+            XrefEntry::Compressed { .. } => doc.objects.contains_key(&(number, 0)),
+            XrefEntry::Free | XrefEntry::UnusableFree => true,
+        })
+}
+
+/// The `N G obj` header lopdf reads an indirect object from at `offset`,
+/// past whitespace and comments (markitai).
+fn object_header_at(buffer: &[u8], offset: usize) -> Option<lopdf::ObjectId> {
+    fn space(mut input: &[u8]) -> &[u8] {
+        loop {
+            match input.first() {
+                Some(b' ' | b'\t' | b'\n' | b'\r' | b'\0' | b'\x0c') => input = &input[1..],
+                Some(b'%') => {
+                    let end = input
+                        .iter()
+                        .position(|&c| c == b'\r' || c == b'\n')
+                        .unwrap_or(input.len());
+                    input = &input[end..];
+                }
+                _ => return input,
+            }
+        }
+    }
+    fn unsigned(input: &[u8]) -> Option<(u64, &[u8])> {
+        let digits = input.iter().take_while(|c| c.is_ascii_digit()).count();
+        let value = std::str::from_utf8(&input[..digits]).ok()?.parse().ok()?;
+        Some((value, &input[digits..]))
+    }
+    let (number, rest) = unsigned(space(buffer.get(offset..)?))?;
+    let (generation, rest) = unsigned(space(rest))?;
+    space(rest)
+        .starts_with(b"obj")
+        .then_some((u32::try_from(number).ok()?, u16::try_from(generation).ok()?))
+}
+
+#[cfg(test)]
+mod loaded_pdf_tests {
+    //! markitai: a [`LoadedPdf`] reads what the one-shot functions read, and
+    //! shares its document only when lopdf alone loads the same objects.
+    use super::*;
+    use lopdf::{dictionary, Object, Stream};
+
+    /// Two pages of text. The second page's font has a regular name and a
+    /// descriptor weight of 600: bold only for a reading that reads bold
+    /// from the weight class.
+    fn two_pages() -> Vec<u8> {
+        let mut doc = Document::with_version("1.5");
+        let pages = doc.new_object_id();
+        let regular = doc.add_object(
+            dictionary! { "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica" },
+        );
+        let descriptor = doc.add_object(dictionary! {
+            "Type" => "FontDescriptor", "FontName" => "Helvetica", "Flags" => 32,
+            "ItalicAngle" => 0, "FontWeight" => 600
+        });
+        let heavy = doc.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+            "FontDescriptor" => descriptor
+        });
+        let resources = doc.add_object(dictionary! {
+            "Font" => dictionary! { "F1" => regular, "F2" => heavy }
+        });
+        let mut kids = Vec::new();
+        for (font, words) in [
+            ("F1", "The first page holds a sentence of ordinary words."),
+            ("F2", "The second page sets its words in a heavier weight."),
+        ] {
+            let content = format!("BT /{font} 12 Tf 72 700 Td ({words}) Tj ET");
+            let contents = doc.add_object(Stream::new(dictionary! {}, content.into_bytes()));
+            kids.push(Object::Reference(doc.add_object(dictionary! {
+                "Type" => "Page", "Parent" => pages, "Contents" => contents,
+                "Resources" => resources
+            })));
+        }
+        doc.objects.insert(
+            pages,
+            dictionary! {
+                "Type" => "Pages", "Count" => 2, "Kids" => kids,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()]
+            }
+            .into(),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+        doc.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        bytes
+    }
+
+    /// A one-page file written by hand with a cross-reference stream: with
+    /// `big`, nine unreferenced 1 MB dictionaries packed into an object
+    /// stream that inflates past the loader's 8 MB bound; without, a fifth
+    /// object listed as in use at offset 0, as Quartz lists freed objects.
+    fn handwritten(big: bool) -> Vec<u8> {
+        fn object(body: &mut Vec<u8>, offsets: &mut Vec<u32>, number: u32, data: &[u8]) {
+            offsets.push(body.len() as u32);
+            body.extend_from_slice(format!("{number} 0 obj\n").as_bytes());
+            body.extend_from_slice(data);
+            body.extend_from_slice(b"\nendobj\n");
+        }
+        let mut body = b"%PDF-1.5\n%\xe2\xe3\xcf\xd3\n".to_vec();
+        let mut offsets = Vec::new();
+        let content = b"BT /F1 12 Tf 72 720 Td (A page whose own objects all load.) Tj ET";
+        object(&mut body, &mut offsets, 1, b"<< /Type /Catalog /Pages 2 0 R >>");
+        object(
+            &mut body,
+            &mut offsets,
+            2,
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 612 792] >>",
+        );
+        object(
+            &mut body,
+            &mut offsets,
+            3,
+            b"<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Resources << /Font << /F1 \
+              << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>",
+        );
+        let mut stream = format!("<< /Length {} >>\nstream\n", content.len()).into_bytes();
+        stream.extend_from_slice(content);
+        stream.extend_from_slice(b"\nendstream");
+        object(&mut body, &mut offsets, 4, &stream);
+        // (type, field 2, field 3) rows of the cross-reference stream.
+        let mut rows = vec![(0u8, 0u32, 65535u16)];
+        rows.extend(offsets.iter().map(|&offset| (1, offset, 0)));
+        if big {
+            let (mut header, mut members) = (String::new(), Vec::new());
+            for index in 0..9 {
+                header.push_str(&format!("{} {} ", 6 + index, members.len()));
+                members.extend_from_slice(b"<< /Filler (");
+                members.extend(std::iter::repeat_n(b'y', 1024 * 1024));
+                members.extend_from_slice(b") >> ");
+            }
+            let mut plain = header.clone().into_bytes();
+            plain.extend_from_slice(&members);
+            let mut packed = Stream::new(dictionary! {}, plain);
+            packed.compress().unwrap();
+            let mut data = format!(
+                "<< /Type /ObjStm /N 9 /First {} /Filter /FlateDecode /Length {} >>\nstream\n",
+                header.len(),
+                packed.content.len()
+            )
+            .into_bytes();
+            data.extend_from_slice(&packed.content);
+            data.extend_from_slice(b"\nendstream");
+            object(&mut body, &mut offsets, 5, &data);
+            rows.push((1, *offsets.last().unwrap(), 0));
+            rows.extend((0..9).map(|index| (2, 5, index)));
+        } else {
+            rows.push((1, 0, 0));
+        }
+        let xref = rows.len() as u32;
+        rows.push((1, body.len() as u32, 0));
+        let table: Vec<u8> = rows
+            .iter()
+            .flat_map(|&(kind, field, generation)| {
+                std::iter::once(kind)
+                    .chain(field.to_be_bytes())
+                    .chain(generation.to_be_bytes())
+            })
+            .collect();
+        let start = body.len();
+        body.extend_from_slice(
+            format!(
+                "{xref} 0 obj\n<< /Type /XRef /Size {} /W [1 4 2] /Root 1 0 R /Length {} >>\nstream\n",
+                xref + 1,
+                table.len()
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(&table);
+        body.extend_from_slice(format!("\nendstream\nendobj\nstartxref\n{start}\n%%EOF\n").as_bytes());
+        body
+    }
+
+    #[test]
+    fn readings_of_a_loaded_pdf_equal_the_one_shot_readings() {
+        let bytes = two_pages();
+        let loaded = LoadedPdf::load_mem(&bytes).unwrap();
+        assert_eq!(
+            format!("{:?}", loaded.pages_markdown(None)),
+            format!("{:?}", extract_pages_markdown_mem(&bytes, None))
+        );
+        // Both pages' runs are kept for the readings after it, which take
+        // them from the cache rather than walking the pages again.
+        let kept = loaded.runs.kept();
+        assert_eq!(kept.0, 2);
+        let bold = PositionOptions::new().bold_from_weight(true);
+        let second = HashSet::from([2]);
+        for (filter, options) in [
+            (Some(&second), bold),
+            (None, bold),
+            (None, PositionOptions::new().frame(PositionFrame::Display)),
+        ] {
+            let (items, rotations) = loaded
+                .text_with_positions_and_rotations(filter, options)
+                .unwrap();
+            let (expected, expected_rotations) =
+                extract_text_with_positions_and_rotations_mem_with_options(&bytes, filter, options)
+                    .unwrap();
+            assert_eq!(format!("{items:?}"), format!("{expected:?}"));
+            assert_eq!(rotations, expected_rotations);
+        }
+        assert_eq!(loaded.runs.kept(), kept);
+        // Cached runs are finished under each reading's own switches.
+        let heavy = |options| {
+            loaded
+                .text_with_positions_and_rotations(Some(&second), options)
+                .unwrap()
+                .0
+                .iter()
+                .any(|item| item.text.contains("heavier") && item.is_bold)
+        };
+        assert!(heavy(bold));
+        assert!(!heavy(PositionOptions::new()));
+        assert_eq!(
+            format!("{:?}", loaded.pages_markdown(Some(&[1]))),
+            format!("{:?}", extract_pages_markdown_mem(&bytes, Some(&[1])))
+        );
+        loaded.forget_page_runs();
+        assert_eq!(loaded.runs.kept(), (0, 0));
+    }
+
+    #[test]
+    fn a_loaded_pdf_shares_its_document_only_as_lopdf_loads_it() {
+        let lopdf_loads = |bytes: &[u8]| {
+            let loaded = LoadedPdf::load_mem(bytes).unwrap();
+            let shared = loaded.as_loaded_by_lopdf().is_some();
+            if shared {
+                let own = Document::load_mem(bytes).unwrap();
+                assert!(own.objects == loaded.doc.objects && own.trailer == loaded.doc.trailer);
+            }
+            shared
+        };
+        let bytes = two_pages();
+        assert!(lopdf_loads(&bytes));
+        // Quartz's in-use entries at offset 0 hold nothing a load could add.
+        assert!(lopdf_loads(&handwritten(false)));
+
+        // The loader drops bytes before the header.
+        let mut leading = b"--boundary\r\n\r\n".to_vec();
+        leading.extend_from_slice(&bytes);
+        assert!(!lopdf_loads(&leading));
+        // lopdf decrypts with the empty user password as the loader does,
+        // and drops the `/Encrypt` dictionary the table still lists.
+        let mut doc = Document::load_mem(&bytes).unwrap();
+        let id = Object::string_literal("markitai-shared-load");
+        doc.trailer.set("ID", vec![id.clone(), id]);
+        let encryption = lopdf::EncryptionState::try_from(lopdf::EncryptionVersion::V2 {
+            document: &doc,
+            owner_password: "owner",
+            user_password: "",
+            key_length: 128,
+            permissions: lopdf::Permissions::all(),
+        })
+        .unwrap();
+        doc.encrypt(&encryption).unwrap();
+        let mut encrypted = Vec::new();
+        doc.save_to(&mut encrypted).unwrap();
+        assert!(!lopdf_loads(&encrypted));
+        // The load bound leaves out an object stream lopdf alone keeps.
+        let big = handwritten(true);
+        assert!(
+            Document::load_mem(&big).unwrap().objects.len()
+                > LoadedPdf::load_mem(&big).unwrap().doc.objects.len()
+        );
+        assert!(!lopdf_loads(&big));
+    }
+}
+
 #[cfg(all(feature = "ocr", not(target_arch = "wasm32")))]
 /// `render_repairs` asks for the repaired document to be written back out
 /// for the renderer when the loader changed it (see `form_bbox_repair`);
@@ -634,7 +1037,57 @@ fn extract_pages_markdown_mem_impl(
     #[cfg(not(all(feature = "ocr", not(target_arch = "wasm32"))))]
     let _ = (repairs, render_repairs);
     let font_cmaps = FontCMaps::from_doc(&doc);
+    // markitai: the reading itself is shared with `LoadedPdf::pages_markdown`.
+    #[cfg_attr(
+        not(all(feature = "ocr", not(target_arch = "wasm32"))),
+        allow(unused_mut)
+    )]
+    let mut extraction = extract_pages_markdown_from_doc(
+        &doc,
+        page_count,
+        &font_cmaps,
+        None,
+        pages,
+        markdown_options,
+        strip_repeated_headers_footers,
+        preserve_ocr_candidates,
+    )?;
+    // A renderer reading the original bytes would clip a repaired form
+    // to nothing, so the OCR pipeline renders the repaired document.
+    #[cfg(all(feature = "ocr", not(target_arch = "wasm32")))]
+    {
+        extraction.render_bytes = if render_repairs && repairs.repaired_forms() {
+            // A renderer given the original bytes would clip the repaired
+            // forms to nothing again, so a copy that cannot be written is
+            // an error, not a fallback.
+            Some(
+                form_bbox_repair::serialize_for_rendering(&mut doc).ok_or_else(|| {
+                    PdfError::Parse(
+                        "the repaired document could not be written for rendering".to_string(),
+                    )
+                })?,
+            )
+        } else {
+            None
+        };
+    }
+    Ok(extraction)
+}
 
+/// The per-page Markdown of a loaded document (markitai: split from
+/// `extract_pages_markdown_mem_impl` so a [`LoadedPdf`] reads it without
+/// loading again). `runs` keeps each page's runs for later readings.
+#[allow(clippy::too_many_arguments)]
+fn extract_pages_markdown_from_doc(
+    doc: &Document,
+    page_count: u32,
+    font_cmaps: &FontCMaps,
+    runs: Option<&extractor::PageRunCache>,
+    pages: Option<&[u32]>,
+    markdown_options: &MarkdownOptions,
+    strip_repeated_headers_footers: bool,
+    preserve_ocr_candidates: bool,
+) -> Result<InternalPagesExtraction, PdfError> {
     // Extract ALL pages to get accurate, document-wide font stats. A malformed
     // unselected page cannot make a valid requested page fail, but errors on a
     // requested page retain the normal extraction semantics.
@@ -648,7 +1101,7 @@ fn extract_pages_markdown_mem_impl(
     // reads them from its structure tree; per-page Markdown otherwise misses
     // every table drawn without rules. Their cells also keep text extraction
     // from merging adjacent cells' runs.
-    let struct_tables = structure_tree::StructTree::from_doc(&doc)
+    let struct_tables = structure_tree::StructTree::from_doc(doc)
         .map(|tree| tree.extract_tables(&doc.get_pages()))
         .unwrap_or_default();
     let table_cells: HashSet<(u32, i64)> = struct_tables
@@ -659,14 +1112,23 @@ fn extract_pages_markdown_mem_impl(
         .collect();
     let ((all_items, all_rects, all_lines), page_thresholds, gid_pages, _page_rotations, _) =
         extractor::with_table_cells(table_cells, || {
-            if let Some(required_pages) = required_pages.as_ref() {
+            // markitai: a loaded document keeps each page's runs for its
+            // later readings.
+            if let Some(runs) = runs {
+                extractor::extract_positioned_text_with_runs(
+                    doc,
+                    font_cmaps,
+                    required_pages.as_ref(),
+                    runs,
+                )
+            } else if let Some(required_pages) = required_pages.as_ref() {
                 extractor::extract_positioned_text_for_document_analysis(
-                    &doc,
-                    &font_cmaps,
+                    doc,
+                    font_cmaps,
                     required_pages,
                 )
             } else {
-                extractor::extract_positioned_text_from_doc(&doc, &font_cmaps, None)
+                extractor::extract_positioned_text_from_doc(doc, font_cmaps, None)
             }
         })?;
     let text_quality = analyze_text_quality(&all_items);
@@ -784,7 +1246,7 @@ fn extract_pages_markdown_mem_impl(
         // analyze_page_content pass — see page_ocr_signals's doc comment.
         let signals = lopdf_pages
             .get(&page_1idx)
-            .map(|&page_id| detector::page_ocr_signals(&doc, page_id))
+            .map(|&page_id| detector::page_ocr_signals(doc, page_id))
             .unwrap_or_default();
         let has_template_image = signals.template_image_needs_ocr;
         let has_vector_text = signals.has_vector_text;
@@ -888,23 +1350,10 @@ fn extract_pages_markdown_mem_impl(
         page_count,
         #[cfg(all(feature = "ocr", not(target_arch = "wasm32")))]
         supplemental_ocr_regions,
-        // A renderer reading the original bytes would clip a repaired form
-        // to nothing, so the OCR pipeline renders the repaired document.
+        // Set by the caller that loaded the document (see
+        // `extract_pages_markdown_mem_impl`).
         #[cfg(all(feature = "ocr", not(target_arch = "wasm32")))]
-        render_bytes: if render_repairs && repairs.repaired_forms() {
-            // A renderer given the original bytes would clip the repaired
-            // forms to nothing again, so a copy that cannot be written is
-            // an error, not a fallback.
-            Some(
-                form_bbox_repair::serialize_for_rendering(&mut doc).ok_or_else(|| {
-                    PdfError::Parse(
-                        "the repaired document could not be written for rendering".to_string(),
-                    )
-                })?,
-            )
-        } else {
-            None
-        },
+        render_bytes: None,
     })
 }
 
@@ -4252,6 +4701,10 @@ pub(crate) struct LoadRepairs {
     /// `/BBox` numerals too large for any parser, saturated in the file's
     /// bytes before it was read (see `overlong_numerals`).
     pub(crate) saturated_bbox_numerals: usize,
+    /// markitai: the bytes lopdf read were not the caller's own — leading
+    /// bytes before the header dropped, bare structure names fixed, or the
+    /// container repaired.
+    pub(crate) rewrote_bytes: bool,
 }
 
 impl LoadRepairs {
@@ -4259,6 +4712,12 @@ impl LoadRepairs {
     /// bytes would lose it again.
     pub(crate) fn repaired_forms(&self) -> bool {
         self.widened_form_bboxes > 0 || self.saturated_bbox_numerals > 0
+    }
+
+    /// markitai: the caller's bytes were read as they are and nothing was
+    /// repaired after the load.
+    fn none(&self) -> bool {
+        !self.rewrote_bytes && !self.repaired_forms()
     }
 }
 
@@ -4276,18 +4735,22 @@ pub(crate) fn load_document_from_mem_with_repairs(
     // version-like mention in the leading bytes was taken for the header — is
     // recovered by lopdf's cross-reference reconstruction, the same path every
     // reader takes for it.
+    let original_len = buffer.len();
     let buffer = strip_leading_bytes_before_header(buffer);
 
     // Fix malformed struct element names before parsing. Some PDF generators
     // write bare names (/S Code) instead of proper PDF names (/S /Code), which
     // causes lopdf to silently drop the entire object.
     let fixed = structure_tree::fix_bare_struct_names(buffer);
+    // markitai: whether lopdf reads other bytes than the caller's.
+    let rewrote_bytes =
+        buffer.len() != original_len || matches!(fixed, std::borrow::Cow::Owned(_));
     let buf = fixed.as_ref();
 
     match load_document_bytes(buf, password) {
         Ok(doc) => {
             let (doc, saturated) = reload_after_saturating_bbox_numerals(doc, buf, password);
-            finish_loaded_document(doc, saturated)
+            finish_loaded_document(doc, saturated, rewrote_bytes)
         }
         Err(first_err) => {
             for repaired in repair_pdf_container_candidates(buf) {
@@ -4296,7 +4759,7 @@ pub(crate) fn load_document_from_mem_with_repairs(
                         log::debug!("loaded PDF after repairing malformed container bytes");
                         let (doc, saturated) =
                             reload_after_saturating_bbox_numerals(doc, &repaired, password);
-                        return finish_loaded_document(doc, saturated);
+                        return finish_loaded_document(doc, saturated, true);
                     }
                     Err(e) => {
                         if is_encrypted_lopdf_error(&e) {
@@ -4349,6 +4812,7 @@ fn reload_after_saturating_bbox_numerals(
 fn finish_loaded_document(
     mut doc: Document,
     saturated_bbox_numerals: usize,
+    rewrote_bytes: bool,
 ) -> Result<(Document, u32, LoadRepairs), PdfError> {
     let page_count = doc.get_pages().len() as u32;
     if page_count == 0 {
@@ -4378,6 +4842,7 @@ fn finish_loaded_document(
     let repairs = LoadRepairs {
         widened_form_bboxes: form_bbox_repair::widen_degenerate_form_bboxes(&mut doc),
         saturated_bbox_numerals,
+        rewrote_bytes,
     };
     Ok((doc, page_count, repairs))
 }

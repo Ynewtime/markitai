@@ -13,18 +13,21 @@ pub(super) struct Layout {
 }
 
 impl Layout {
+    /// The selected pages' positioned text from the document the page
+    /// reader loaded; `None` when it could not load the file.
     pub(super) fn read(
-        bytes: &[u8],
+        pdf: Option<&pdf_inspector::LoadedPdf>,
         selected: &HashSet<u32>,
         geometry: &BTreeMap<u32, (Frame, Vec<Grid>, Vec<Mark>)>,
     ) -> std::result::Result<Self, &'static str> {
-        let (items, rotations) =
-            pdf_inspector::extract_text_with_positions_and_rotations_mem_with_options(
-                bytes,
+        let Some(Ok((items, rotations))) = pdf.map(|pdf| {
+            pdf.text_with_positions_and_rotations(
                 Some(selected),
                 pdf_inspector::PositionOptions::new().bold_from_weight(true),
             )
-            .map_err(|_| "positioned text could not be decoded")?;
+        }) else {
+            return Err("positioned text could not be decoded");
+        };
         if items.len() > MAX_ITEMS || items.iter().map(|i| i.text.len()).sum::<usize>() > MAX_TEXT {
             return Err("positioned text exceeds the layout budget");
         }
@@ -1318,6 +1321,57 @@ mod tests {
         assert!(!result.markdown.contains("**Plain text"));
     }
 
+    /// The page reader reads bold from a font's name and flags, the layout
+    /// reader also from its weight class, from the text runs both share.
+    #[test]
+    fn a_heavier_weight_alone_makes_layout_text_bold() {
+        let mut pdf = lopdf::Document::with_version("1.7");
+        let pages_id = pdf.new_object_id();
+        let regular =
+            pdf.add_object(dictionary! {"Type"=>"Font","Subtype"=>"Type1","BaseFont"=>"Helvetica"});
+        let descriptor = pdf.add_object(dictionary! {"Type"=>"FontDescriptor","FontName"=>"Helvetica","Flags"=>32,"ItalicAngle"=>0,"FontWeight"=>600});
+        let semibold = pdf.add_object(dictionary! {"Type"=>"Font","Subtype"=>"Type1","BaseFont"=>"Helvetica","FontDescriptor"=>descriptor});
+        let resources =
+            pdf.add_object(dictionary! {"Font"=>dictionary!{"F1"=>regular,"F4"=>semibold}});
+        let mut ops = text(
+            "F1",
+            12,
+            40,
+            750,
+            "Regular paragraph with enough text to establish its body font.",
+        );
+        ops.extend(text(
+            "F4",
+            12,
+            40,
+            714,
+            "Semibold words set apart by weight.",
+        ));
+        ops.extend(text(
+            "F1",
+            12,
+            40,
+            680,
+            "Plain text after the semibold line remains plain text.",
+        ));
+        let content = Content { operations: ops }.encode().unwrap();
+        let stream = pdf.add_object(Stream::new(Dictionary::new(), content));
+        let page = pdf.add_object(dictionary! {"Type"=>"Page","Parent"=>pages_id,"Contents"=>stream,"Resources"=>resources});
+        pdf.objects.insert(pages_id,dictionary!{"Type"=>"Pages","Count"=>1,"Kids"=>vec![page.into()],"MediaBox"=>vec![0.into(),0.into(),600.into(),800.into()]}.into());
+        let catalog = pdf.add_object(dictionary! {"Type"=>"Catalog","Pages"=>pages_id});
+        pdf.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        pdf.save_to(&mut bytes).unwrap();
+        let baseline = pdf_inspector::extract_pages_markdown_mem(&bytes, None).unwrap();
+        assert!(!baseline.pages[0].markdown.contains("**"));
+        let markdown = super::super::extract(&bytes).unwrap().markdown;
+        assert!(
+            markdown.contains("**Semibold words set apart by weight.**"),
+            "{markdown}"
+        );
+        assert!(!markdown.contains("**Plain text"), "{markdown}");
+    }
+
     #[test]
     fn real_pdf_ruled_table_keeps_header_blank_column_and_multiline_cell() {
         let mut ops = text(
@@ -1468,7 +1522,9 @@ mod tests {
             ops.extend(text("F1", 12, 350, y, "Right column paragraph."));
         }
         let bytes = pdf(vec![ops], None);
-        let mut layout = Layout::read(&bytes, &HashSet::from([1]), &BTreeMap::new()).unwrap();
+        let loaded = pdf_inspector::LoadedPdf::load_mem(&bytes).unwrap();
+        let mut layout =
+            Layout::read(Some(&loaded), &HashSet::from([1]), &BTreeMap::new()).unwrap();
         let doc = lopdf::Document::load_mem(&bytes).unwrap();
         let id = doc.get_pages()[&1];
         let frame = super::super::geometry::frame(&doc, id).unwrap();

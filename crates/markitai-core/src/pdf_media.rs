@@ -14,7 +14,9 @@ const MAX_DOCUMENT_PIXELS: u64 = 2_000_000_000;
 const MAX_SHOT_BYTES: usize = 5 * 1024 * 1024;
 const MAX_SHOTS_BYTES: usize = 100 * 1024 * 1024;
 const MIN_PICTURE_PIXELS: u64 = 40_000;
-const OLD_LIMITATIONS: &str = "PDF images are appended to their source page; exact placement, page screenshots, vector graphics and local OCR are not implemented.";
+/// The extraction warning of a PDF with images: they follow their page's
+/// text rather than sit where the page shows them.
+pub(crate) const IMAGE_PLACEMENT: &str = "PDF images are placed after their page's text; their exact position and vector graphics are not reconstructed.";
 
 fn failure(message: impl std::fmt::Display) -> Error {
     Error::Conversion(format!("PDF page media: {message}"))
@@ -44,12 +46,11 @@ impl PreparedPdf {
         } else {
             self.pages.finish()?
         };
-        // This replaces one known obsolete capability statement, never a routing
-        // signal. All page-specific extraction and inspection diagnostics remain.
+        // This replaces the image placement statement, never a routing signal. All page-specific extraction and inspection diagnostics remain.
         if self.media_requested {
             for warning in &mut document.warnings {
-                if warning == OLD_LIMITATIONS {
-                    *warning = "PDF embedded images remain appended to their source page; exact image placement and editable vector reconstruction are not implemented. Page media preserves the renderer's visual composition.".into();
+                if warning == IMAGE_PLACEMENT {
+                    *warning = "PDF images are placed after their page's text and vector graphics are not reconstructed; the page screenshots keep each page's appearance.".into();
                 }
             }
         }
@@ -888,7 +889,7 @@ mod tests {
             !document
                 .warnings
                 .iter()
-                .any(|warning| warning == OLD_LIMITATIONS)
+                .any(|warning| warning == IMAGE_PLACEMENT)
         );
     }
 

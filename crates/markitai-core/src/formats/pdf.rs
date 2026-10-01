@@ -657,7 +657,12 @@ impl PdfPages {
             )));
         }
         document.markdown = sections.join("\n\n");
-        document.warnings.push("PDF images are appended to their source page; exact placement, page screenshots, vector graphics and local OCR are not implemented.".into());
+        // Only a document with extracted images has images out of place.
+        if !document.assets.is_empty() {
+            document
+                .warnings
+                .push(crate::pdf_media::IMAGE_PLACEMENT.into());
+        }
         Ok(document)
     }
 }
@@ -819,7 +824,23 @@ pub(crate) fn extract_pages_bounded(bytes: &[u8], max_pages: usize) -> Result<Pd
 }
 
 fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPages> {
-    let pdf = lopdf::Document::load_mem(bytes).map_err(conversion)?;
+    // One parse of the file serves the page reader, the layout reader and,
+    // when the reader's document is what lopdf alone makes of the bytes,
+    // this module's own inspection; otherwise that inspection loads the
+    // bytes itself, unrepaired, as it always has.
+    let loaded = pdf_inspector::LoadedPdf::load_mem(bytes);
+    let unrepaired;
+    let pdf = match loaded
+        .as_ref()
+        .ok()
+        .and_then(pdf_inspector::LoadedPdf::as_loaded_by_lopdf)
+    {
+        Some(pdf) => pdf,
+        None => {
+            unrepaired = lopdf::Document::load_mem(bytes).map_err(conversion)?;
+            &unrepaired
+        }
+    };
     let page_ids = pdf.get_pages();
     if page_ids.is_empty() {
         return Err(conversion("document contains no pages"));
@@ -830,7 +851,14 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
         )));
     }
     let mut document = Document::default();
-    let extracted = match pdf_inspector::extract_pages_markdown_mem(bytes, None) {
+    // A file the reader cannot load fails each reading with the load's error.
+    let whole = match &loaded {
+        Ok(loaded) => loaded
+            .pages_markdown(None)
+            .map_err(|error| error.to_string()),
+        Err(error) => Err(error.to_string()),
+    };
+    let extracted = match whole {
         Ok(result) => result.pages,
         Err(error) => {
             document.warnings.push(format!(
@@ -839,8 +867,10 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
             page_ids
                 .keys()
                 .map(|&page| {
-                    pdf_inspector::extract_pages_markdown_mem(bytes, Some(&[page - 1]))
+                    loaded
+                        .as_ref()
                         .ok()
+                        .and_then(|loaded| loaded.pages_markdown(Some(&[page - 1])).ok())
                         .and_then(|mut result| result.pages.pop())
                         .unwrap_or(pdf_inspector::PageMarkdown {
                             page: page - 1,
@@ -860,18 +890,18 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
     let mut layout_pages = HashSet::new();
     let mut page_geometry = BTreeMap::new();
     for (&number, &id) in &page_ids {
-        let (inspection, content) = inspect_page(&pdf, id);
+        let (inspection, content) = inspect_page(pdf, id);
         if let Some(page) = pages.get_mut(&number) {
-            recover_plain_text(&pdf, number, id, page, &inspection, &mut document.warnings);
+            recover_plain_text(pdf, number, id, page, &inspection, &mut document.warnings);
             if !page.needs_ocr
                 && !page.markdown.trim().is_empty()
                 && inspection.signals.is_empty()
                 && inspection.warnings.is_empty()
-                && let Some(frame) = geometry::frame(&pdf, id)
+                && let Some(frame) = geometry::frame(pdf, id)
                 && let Some(content) = content.as_ref()
             {
                 layout_pages.insert(number);
-                let resources = geometry::rule_resources(&pdf, id);
+                let resources = geometry::rule_resources(pdf, id);
                 let (grids, marks) = geometry::page_shapes(content, frame, &resources);
                 page_geometry.insert(number, (frame, grids, marks));
             }
@@ -883,7 +913,7 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
     let mut layout = if layout_pages.is_empty() {
         None
     } else {
-        match layout::Layout::read(bytes, &layout_pages, &page_geometry) {
+        match layout::Layout::read(loaded.as_ref().ok(), &layout_pages, &page_geometry) {
             Ok(layout) => Some(layout),
             Err(reason) => {
                 document.warnings.push(format!("PDF layout refinement was skipped ({reason}); the original page reader's output is retained."));
@@ -891,6 +921,10 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
             }
         }
     };
+    // The layout reader was the last to read the pages' text.
+    if let Ok(loaded) = &loaded {
+        loaded.forget_page_runs();
+    }
     let mut image_names = BTreeMap::<ObjectId, Option<String>>::new();
     let mut total_asset_bytes = 0;
     let mut extracted_pages = Vec::with_capacity(page_ids.len());
@@ -930,7 +964,7 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
                     .get_object(image_id)
                     .and_then(Object::as_stream)
                     .map_err(|e| e.to_string())
-                    .and_then(|stream| image_bytes(&pdf, stream));
+                    .and_then(|stream| image_bytes(pdf, stream));
                 match extracted {
                     Ok((extension, bytes))
                         if total_asset_bytes + bytes.len() <= MAX_ASSET_BYTES =>
@@ -1544,6 +1578,105 @@ mod tests {
         ] {
             assert!(image_bytes(&pdf, &image(space, bits, 2, samples)).is_err());
         }
+    }
+
+    /// One page written by hand with a cross-reference stream, its Info
+    /// dictionary packed with 9 MB of unreferenced filler into one object
+    /// stream: past the page reader's 8 MB load bound, within lopdf's own.
+    fn info_in_a_large_object_stream() -> Vec<u8> {
+        fn object(body: &mut Vec<u8>, offsets: &mut Vec<u32>, number: u32, data: &[u8]) {
+            offsets.push(body.len() as u32);
+            body.extend_from_slice(format!("{number} 0 obj\n").as_bytes());
+            body.extend_from_slice(data);
+            body.extend_from_slice(b"\nendobj\n");
+        }
+        let (mut body, mut offsets) = (b"%PDF-1.5\n".to_vec(), Vec::new());
+        let content =
+            b"BT /F1 12 Tf 72 720 Td (The page reader loads every object of this page.) Tj ET";
+        object(
+            &mut body,
+            &mut offsets,
+            1,
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+        );
+        object(
+            &mut body,
+            &mut offsets,
+            2,
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 612 792] >>",
+        );
+        object(&mut body, &mut offsets, 3, b"<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>");
+        let mut stream = format!("<< /Length {} >>\nstream\n", content.len()).into_bytes();
+        stream.extend_from_slice(content);
+        stream.extend_from_slice(b"\nendstream");
+        object(&mut body, &mut offsets, 4, &stream);
+        let mut header = String::new();
+        let mut members = b"<< /Title (Kept by lopdf) >> ".to_vec();
+        header.push_str("6 0 ");
+        for index in 0..9 {
+            header.push_str(&format!("{} {} ", 7 + index, members.len()));
+            members.extend_from_slice(b"<< /Filler (");
+            members.extend(std::iter::repeat_n(b'y', 1024 * 1024));
+            members.extend_from_slice(b") >> ");
+        }
+        let mut packed = header.clone().into_bytes();
+        packed.extend_from_slice(&members);
+        let mut packed = Stream::new(Dictionary::new(), packed);
+        packed.compress().unwrap();
+        let mut data = format!(
+            "<< /Type /ObjStm /N 10 /First {} /Filter /FlateDecode /Length {} >>\nstream\n",
+            header.len(),
+            packed.content.len()
+        )
+        .into_bytes();
+        data.extend_from_slice(&packed.content);
+        data.extend_from_slice(b"\nendstream");
+        object(&mut body, &mut offsets, 5, &data);
+        let mut rows = vec![(0u8, 0u32, 65535u16)];
+        rows.extend(offsets.iter().map(|&offset| (1, offset, 0)));
+        rows.extend((0..10).map(|index| (2, 5, index)));
+        let xref = rows.len();
+        rows.push((1, body.len() as u32, 0));
+        let table: Vec<u8> = rows
+            .iter()
+            .flat_map(|&(kind, field, index)| {
+                std::iter::once(kind)
+                    .chain(field.to_be_bytes())
+                    .chain(index.to_be_bytes())
+            })
+            .collect();
+        let start = body.len();
+        body.extend_from_slice(format!("{xref} 0 obj\n<< /Type /XRef /Size {} /W [1 4 2] /Root 1 0 R /Info 6 0 R /Length {} >>\nstream\n", xref + 1, table.len()).as_bytes());
+        body.extend_from_slice(&table);
+        body.extend_from_slice(
+            format!("\nendstream\nendobj\nstartxref\n{start}\n%%EOF\n").as_bytes(),
+        );
+        body
+    }
+
+    #[test]
+    fn a_file_the_page_reader_loads_differently_is_inspected_as_lopdf_loads_it() {
+        let bytes = info_in_a_large_object_stream();
+        let loaded = pdf_inspector::LoadedPdf::load_mem(&bytes).unwrap();
+        assert!(loaded.as_loaded_by_lopdf().is_none());
+        assert!(loaded.document().trailer.get(b"Info").is_ok());
+        assert!(loaded.document().get_object((6, 0)).is_err());
+        // The page reader's text and this module's own load's metadata.
+        let result = extract(&bytes).unwrap();
+        assert!(
+            result
+                .markdown
+                .contains("The page reader loads every object of this page."),
+            "{}",
+            result.markdown
+        );
+        assert_eq!(
+            result
+                .metadata
+                .get("title")
+                .and_then(|title| title.as_str()),
+            Some("Kept by lopdf")
+        );
     }
 
     #[test]

@@ -476,6 +476,7 @@ pub(crate) fn extract_positioned_text_from_doc(
         TextExtractionOptions::default(),
         None,
         CoordinateFrame::UserSpace,
+        None,
     )
 }
 
@@ -497,6 +498,7 @@ pub(crate) fn extract_positioned_text_from_doc_in_page_box(
         options.text_extraction(false),
         None,
         CoordinateFrame::VisiblePageBox,
+        None,
     )
 }
 
@@ -553,6 +555,7 @@ fn extract_positioned_text_with_folio_context_impl(
             options,
             None,
             CoordinateFrame::UserSpace,
+            None,
         );
     };
 
@@ -569,6 +572,7 @@ fn extract_positioned_text_with_folio_context_impl(
         options,
         None,
         CoordinateFrame::UserSpace,
+        None,
     )?;
     if !layout::needs_document_page_number_context(&selected_items, doc.get_pages().len()) {
         return Ok((
@@ -605,6 +609,7 @@ fn extract_positioned_text_with_folio_context_impl(
         },
         Some(required_pages),
         CoordinateFrame::UserSpace,
+        None,
     )?;
     selected_items.extend(context_items);
     selected_rects.extend(context_rects);
@@ -635,6 +640,148 @@ pub(crate) fn extract_positioned_text_for_document_analysis(
         TextExtractionOptions::default(),
         Some(required_pages),
         CoordinateFrame::UserSpace,
+        None,
+    )
+}
+
+/// The runs of the pages a loaded document has read (markitai), so another
+/// reading of a page — the position reader's bold from the weight class and
+/// its frame, a reading without the table cells of `with_table_cells` — does
+/// not walk the page's content stream again. Only readings that skip
+/// invisible text and report no CMap coverage use it: a page's runs depend
+/// on nothing else those readings vary (see `content_stream::PageRuns`).
+#[derive(Default)]
+pub(crate) struct PageRunCache {
+    pages: std::cell::RefCell<HashMap<u32, content_stream::PageRunText>>,
+    /// Runs kept so far, against [`MAX_CACHED_RUNS`].
+    kept: std::cell::Cell<usize>,
+}
+
+/// The runs a [`PageRunCache`] keeps at most; a page past them is walked
+/// again when it is read again.
+const MAX_CACHED_RUNS: usize = 500_000;
+
+impl PageRunCache {
+    fn serves(options: TextExtractionOptions) -> bool {
+        !options.include_invisible && !options.cmap_coverage
+    }
+
+    fn get(&self, page: u32) -> Option<content_stream::PageRuns> {
+        let pages = self.pages.borrow();
+        pages
+            .get(&page)
+            .map(|text| content_stream::PageRuns::cached(text.clone()))
+    }
+
+    fn keep(&self, page: u32, runs: &content_stream::PageRuns) {
+        let count = runs.text.items.len();
+        let kept = self.kept.get().saturating_add(count);
+        if kept > MAX_CACHED_RUNS {
+            return;
+        }
+        self.kept.set(kept);
+        self.pages.borrow_mut().insert(page, runs.text.clone());
+    }
+
+    /// Forget every page's runs.
+    pub(crate) fn clear(&self) {
+        self.pages.borrow_mut().clear();
+        self.kept.set(0);
+    }
+
+    /// The pages and the runs kept.
+    #[cfg(test)]
+    pub(crate) fn kept(&self) -> (usize, usize) {
+        (self.pages.borrow().len(), self.kept.get())
+    }
+}
+
+/// [`extract_page_text_items_with_options`] for one page of a document-level
+/// extraction, taking the page's runs from `runs` or keeping them there
+/// when the reading can share them (markitai).
+fn read_page_text(
+    doc: &Document,
+    page_id: ObjectId,
+    page_num: u32,
+    font_cmaps: &FontCMaps,
+    options: TextExtractionOptions,
+    style_cache: &mut FontStyleCache,
+    runs: Option<&PageRunCache>,
+) -> Result<
+    (
+        PageExtraction,
+        bool,
+        geometry::PageRotation,
+        bool,
+        Vec<RunCoverage>,
+    ),
+    PdfError,
+> {
+    let Some(runs) = runs.filter(|_| PageRunCache::serves(options)) else {
+        return extract_page_text_items_with_options(
+            doc,
+            page_id,
+            page_num,
+            font_cmaps,
+            options,
+            style_cache,
+            &mut FormWalkBudget::new(),
+        );
+    };
+    if let Some(cached) = runs.get(page_num) {
+        return Ok(cached.finish(options));
+    }
+    let page = content_stream::read_page_runs(
+        doc,
+        page_id,
+        page_num,
+        font_cmaps,
+        options.include_invisible,
+        style_cache,
+        &mut FormWalkBudget::new(),
+    )?;
+    runs.keep(page_num, &page);
+    Ok(page.finish(options))
+}
+
+/// The document-level reading of per-page Markdown —
+/// [`extract_positioned_text_from_doc`] over every page, or with
+/// `required_pages` [`extract_positioned_text_for_document_analysis`] —
+/// sharing page runs through `runs` (markitai).
+pub(crate) fn extract_positioned_text_with_runs(
+    doc: &Document,
+    font_cmaps: &FontCMaps,
+    required_pages: Option<&HashSet<u32>>,
+    runs: &PageRunCache,
+) -> Result<DocumentExtraction, PdfError> {
+    extract_positioned_text_impl(
+        doc,
+        font_cmaps,
+        None,
+        TextExtractionOptions::default(),
+        required_pages,
+        CoordinateFrame::UserSpace,
+        Some(runs),
+    )
+}
+
+/// [`extract_positioned_text_from_doc_in_page_box`] sharing page runs
+/// through `runs` (markitai).
+pub(crate) fn extract_positioned_text_in_page_box_with_runs(
+    doc: &Document,
+    font_cmaps: &FontCMaps,
+    page_filter: Option<&HashSet<u32>>,
+    options: PositionOptions,
+    runs: &PageRunCache,
+) -> Result<DocumentExtraction, PdfError> {
+    extract_positioned_text_impl(
+        doc,
+        font_cmaps,
+        page_filter,
+        options.text_extraction(false),
+        None,
+        CoordinateFrame::VisiblePageBox,
+        Some(runs),
     )
 }
 
@@ -645,6 +792,7 @@ fn extract_positioned_text_impl(
     options: TextExtractionOptions,
     required_pages: Option<&HashSet<u32>>,
     frame: CoordinateFrame,
+    runs: Option<&PageRunCache>,
 ) -> Result<DocumentExtraction, PdfError> {
     let pages = doc.get_pages();
     let mut all_items = Vec::new();
@@ -673,14 +821,15 @@ fn extract_positioned_text_impl(
                 continue;
             }
         }
-        let page_result = extract_page_text_items_with_options(
+        // markitai: through the page-run cache when the reading has one.
+        let page_result = read_page_text(
             doc,
             page_id,
             *page_num,
             font_cmaps,
             options,
             &mut style_cache,
-            &mut FormWalkBudget::new(),
+            runs,
         );
         let (
             (mut items, mut rects, mut lines),
