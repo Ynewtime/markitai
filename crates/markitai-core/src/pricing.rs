@@ -317,8 +317,17 @@ fn calculate(
                     "cache_creation",
                     "total_tokens",
                     "service_tier",
+                    "inference_geo",
                 ],
             )?;
+            // The Messages API reports where it ran; US-only inference is
+            // billed at a premium, so only an unrestricted placement keeps the
+            // listed rates.
+            match usage.get("inference_geo") {
+                None | Some(Value::Null) => {}
+                Some(value) if matches!(value.as_str(), Some("not_available" | "global")) => {}
+                Some(_) => return Err(UnknownPrice::UnsupportedUsage),
+            }
             let input = required(usage, "input_tokens", None)?;
             let output = required(usage, "output_tokens", None)?;
             let cached = optional(usage, "cache_read_input_tokens")?;
@@ -418,6 +427,30 @@ mod tests {
             amount(&openai(), &response, BillingClass::Batch),
             1_500_000_000
         );
+    }
+
+    #[test]
+    fn an_unrestricted_inference_placement_keeps_the_listed_rates() {
+        // The usage the Messages API returned for Claude Haiku 4.5 on 2026-10-02.
+        let mut response = json!({"model":"claude-sonnet-4-5-20250929","usage":{"input_tokens":9,
+            "cache_creation_input_tokens":0,"cache_read_input_tokens":0,
+            "cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},
+            "output_tokens":4,"service_tier":"standard","inference_geo":"not_available"}});
+        let listed = amount(&anthropic(), &response, BillingClass::Standard);
+        assert_eq!(listed, 9 * 3_000_000 + 4 * 15_000_000);
+        response["usage"]["inference_geo"] = json!("global");
+        assert_eq!(
+            amount(&anthropic(), &response, BillingClass::Standard),
+            listed
+        );
+        // US-only inference is billed at a premium these rates do not hold.
+        for geo in [json!("us"), json!(1), json!("")] {
+            response["usage"]["inference_geo"] = geo;
+            assert_eq!(
+                quote(&anthropic(), &response, BillingClass::Standard),
+                Quote::Unknown(UnknownPrice::UnsupportedUsage)
+            );
+        }
     }
 
     #[test]

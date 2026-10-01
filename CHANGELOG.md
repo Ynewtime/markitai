@@ -86,6 +86,7 @@
 
 ### Fixed
 
+- Claude responses are priced again: the Messages API now reports `usage.inference_geo`, which made every Anthropic response unpriced; an unrestricted placement (`not_available`, `global`) keeps the listed rates, while US-only inference stays unpriced.
 - `claude-agent/` models accept Claude Code 2.1.284 and later 2.1 patch releases, which the official runtime installs by itself, instead of only 2.1.284; `markitai auth claude status --json` reports the installed version and the oldest supported one.
 - Email in multi-byte East Asian charsets (GB2312, GBK, GB18030, Big5, Shift_JIS, EUC-JP, EUC-KR, ISO-2022-JP) decodes its subject and body instead of writing replacement characters: the mail parser's full charset support is enabled.
 - Right-to-left PDF text (Arabic, Persian, Hebrew) comes out in logical order, headings included: a paragraph's direction follows the edge its lines share, punctuation and embedded Latin words and numbers stay in place, Chrome's reversed-character runs and Quartz's mirrored brackets read as the characters shown, and Quartz/CoreText glyphs drawn leftward no longer split words; layout reconstruction no longer reorders a Persian or Hebrew line's runs left to right, and such pages keep the page reader's bidirectional ordering. The Persian corpus page reads all 105 expected words in order (before at most 23); every left-to-right file is unchanged.

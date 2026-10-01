@@ -43,7 +43,9 @@ Prices apply only to these exact final endpoints:
 - `https://api.anthropic.com/v1/messages`
 
 Custom/proxy endpoints, alternate hosts/ports/paths, regional hosting, other
-providers or models are unpriced. An accepted model configuration is not proof
+providers or models are unpriced. An Anthropic response's `usage.inference_geo` keeps
+the listed rates only when it is `not_available` or `global`; US-only inference is
+billed at a premium and stays unpriced. An accepted model configuration is not proof
 of pricing coverage. Explicit service tiers other than Standard/default or the
 transport's Batch class are unpriced. The reviewed Claude band is at most
 200,000 total input tokens, including cache reads and writes. Larger contexts
