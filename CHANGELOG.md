@@ -124,6 +124,7 @@
 
 ### Fixed
 
+- Report a model as routable in the workspace settings whenever conversion can route it (subscription runtimes, models detected from the environment), instead of saying no model is routable while conversions use one.
 - Recognize headings in Word, OpenDocument, RTF and Word 97 documents that use no heading styles, from paragraphs set larger than the body text (bold and at least 1 pt larger, or at least a third larger), short and not ending a sentence, levelled by size; documents with any styled heading are left as they are. On the textutil corpus, headings found rose from 4 to 274–279 per format with precision 0.98–1.00 against the pages' HTML headings (held-out recall 0.90–0.93; the reference's RTF reading 0.52–0.65), with missing and extra words unchanged.
 - Keep a document line that starts with `#` (a shell comment, a hashtag) as text instead of letting Markdown read it as a heading.
 - Write spreadsheet durations formatted without seconds (`[h]:mm`) as hours and minutes (`27:05`) instead of adding `:00`, dropping seconds as the spreadsheet displays them.

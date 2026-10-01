@@ -169,6 +169,28 @@ fn rev(view: &Value) -> String {
     view["revision"].as_str().unwrap().to_owned()
 }
 #[test]
+fn a_subscription_model_is_routable_in_settings_as_in_conversion() {
+    // The conversion side routes subscription runtimes without an API key;
+    // the settings view must not report that no model can be routed.
+    let dir = tempfile::tempdir().unwrap();
+    let value = json!({"log":{"dir":null},"cache":{"enabled":false},"history":{"record":false},"llm":{"enabled":true,"model_list":[{"model_name":"default","litellm_params":{"model":"chatgpt/gpt-5.5"}}]}});
+    fs::write(dir.path().join("config.json"), value.to_string()).unwrap();
+    // The official Codex program is found, as conversion requires; it is
+    // never run while the view is computed.
+    let codex = dir.path().join("codex");
+    fs::write(&codex, "").unwrap();
+    fs::write(
+        dir.path().join(".env"),
+        format!("CODEX_CLI_PATH={}\n", codex.display()),
+    )
+    .unwrap();
+    let server = Server::start(dir.path(), &[]);
+    let view = server.view();
+    assert_eq!(view["routable"], true, "{view}");
+    server.stop();
+}
+
+#[test]
 fn actual_http_settings_crud_preserves_ids_credentials_fields_and_restart() {
     let dir = tempfile::tempdir().unwrap();
     let initial = configuration(dir.path());

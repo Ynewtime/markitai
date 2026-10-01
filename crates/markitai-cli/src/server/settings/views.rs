@@ -38,7 +38,13 @@ fn origin(value: Option<&str>) -> Option<String> {
     }
     Some(url.origin().ascii_serialization())
 }
+/// Whether a conversion could route an LLM request: what the conversion side
+/// reports (subscription runtimes, models detected from the environment), or
+/// a configured deployment whose key a linked provider record holds.
 fn routable(data: &Data) -> bool {
+    markitai_core::llm_capabilities(&data.cfg).routable || keyed_deployment(data)
+}
+fn keyed_deployment(data: &Data) -> bool {
     data.cfg["llm"]["model_list"]
         .as_array()
         .is_some_and(|models| {
