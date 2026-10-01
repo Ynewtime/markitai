@@ -102,6 +102,11 @@ pub struct ConvertContext<'a> {
     pub explicit_fetch_strategy: Option<&'a str>,
     pub llm_runtime: Option<&'a crate::LlmRuntime>,
     pub browser_runtime: Option<&'a crate::BrowserRuntime>,
+    /// Store for the images of a conversion without an output directory (the
+    /// CLI's stdout mode): referenced images are saved there under content
+    /// hashes and the Markdown links to them with `file://` URIs. Ignored when
+    /// an output directory is given; library callers leave it unset.
+    pub stdout_assets: Option<&'a std::path::Path>,
 }
 
 #[derive(Debug, Deserialize)]

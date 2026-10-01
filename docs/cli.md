@@ -56,6 +56,7 @@ LANG=zh_CN.UTF-8 markitai cache stats
 ## 已实现的命令行为
 
 - 单文件和 URL 未给 `-o` 时输出 Markdown 到 stdout；`--pure` 去除 frontmatter；提供 `-o chosen.md` 可选择准确文件名。
+- stdout 模式下文档引用的图片与页面截图默认保存到 `MARKITAI_HOME/assets/blobs/`（未设置时为 `~/.markitai/assets/blobs/`），按内容哈希命名、重复运行复用同一文件，Markdown 中的引用改为可直接打开的绝对 `file://` URI；内嵌 `data:image/…` 也一并保存。`image.stdout_persist=false` 时保留指向未写出文件的 `.markitai/...` 相对引用，并在 stderr 警告一次；个别图片保存失败时转换仍成功，这些引用保持相对并警告原因。详见[图片：stdout 中的图片](images.md#images-on-stdout)。
 - 单项默认不显示进度，但写入文件后在 stderr 打印一行 `Wrote <路径>`（冲突改名时可见实际文件名）；跳过时说明原因和下一步（图片需要 `--ocr` 或 `--llm`，已存在输出受 `output.on_conflict=skip` 约束）。`-q` 只保留错误；`--json` 的 stdout 只有 envelope。缺少模型的 `--llm` 失败附一行配置提示。
 - 转换前检查 `-o`：已存在的非目录路径、最近的已存在祖先不是目录或不可写时，直接以退出 1 报告路径与原因，不再交给输出归属或恢复状态层用内部术语报错；`--dry-run` 只警告并照常列出目标。单个本地输入不存在或无读取权限时不创建输出目录，后者报 `Cannot read <路径>: …`。
 - 目录中没有受支持文件（或全部被 `--glob` 排除）时在 stderr 说明后退出 0；目录/URL 列表的 `--dry-run` 在 stderr 汇总将转换的文件和 URL 数。`.urls` 中被跳过的条目按行号（JSON 数组按条目序号）警告，不回显条目文本。`--alt/--desc` 在未启用 LLM 时警告其无效。
@@ -90,7 +91,7 @@ LANG=zh_CN.UTF-8 markitai cache stats
 
 ## 明确的迁移缺口
 
-仍有迁移缺口：`-s cloudflare` 抓取与 `-b cloudflare` 文件后端、非 Unix 断点恢复、Anthropic Batch API 与旧版 Python Batch 状态导入、`image.stdout_persist*`（stdout 模式不保存抽取出的图片，其引用指向未写出的文件；CLI 在 stderr 警告并建议改用 `-o`）。`-s jina`/`-s defuddle` 远程抽取、OpenAI Batch API、经官方运行时的订阅登录（`auth <provider> login`）和 serve 的浏览器工作区均已实现。pure 按参考行为绕过 LLM 缓存；文本、独立图片与分页视觉请求的缓存范围分别见 [LLM 处理](llm.md)，不能将一次命中理解成所有输入已支持缓存。其余未实现的开关/命令请求会失败并说明原因。Office 演示与文字文档可通过可选的独立 LibreOffice 安装获得全页截图和 OCR 补充，详见 [Office 渲染](office-rendering.md)；XLS/XLSX/ODS 支持每张完整工作表一页，包含隐藏和空表；Numbers 完整画布和其他平台本地 OCR/PDF 渲染仍未完成；未实现的选项只在遇到相关格式或图片时拒绝，不应阻断纯文本转换。独立栅格图片、完整多页 TIFF 和 SVG 可经 LLM 视觉模型读取。alt/desc 已接入真实图片引用、结构化分析及 images.json 合并，详见[图片分析](image-enrichment.md)；需要启用 LLM。rich/standard preset 仍不是对所有格式可用的完整模式。
+仍有迁移缺口：`-s cloudflare` 抓取与 `-b cloudflare` 文件后端、非 Unix 断点恢复、Anthropic Batch API 与旧版 Python Batch 状态导入、终端内联图片显示（因此 `image.stdout_fetch_external` 可设置但无作用）。`-s jina`/`-s defuddle` 远程抽取、OpenAI Batch API、经官方运行时的订阅登录（`auth <provider> login`）和 serve 的浏览器工作区均已实现。pure 按参考行为绕过 LLM 缓存；文本、独立图片与分页视觉请求的缓存范围分别见 [LLM 处理](llm.md)，不能将一次命中理解成所有输入已支持缓存。其余未实现的开关/命令请求会失败并说明原因。Office 演示与文字文档可通过可选的独立 LibreOffice 安装获得全页截图和 OCR 补充，详见 [Office 渲染](office-rendering.md)；XLS/XLSX/ODS 支持每张完整工作表一页，包含隐藏和空表；Numbers 完整画布和其他平台本地 OCR/PDF 渲染仍未完成；未实现的选项只在遇到相关格式或图片时拒绝，不应阻断纯文本转换。独立栅格图片、完整多页 TIFF 和 SVG 可经 LLM 视觉模型读取。alt/desc 已接入真实图片引用、结构化分析及 images.json 合并，详见[图片分析](image-enrichment.md)；需要启用 LLM。rich/standard preset 仍不是对所有格式可用的完整模式。
 
 持久报告、可选历史导出和 Unix 批量恢复已实现；单项和非 Unix 恢复仍明确拒绝。普通非 Unix 转换保留既有行为，但尚未完成实机验证。混合目录分别应用文件与 URL 并发上限。URL 列表的自定义文件名只允许一个安全 basename；旧实现的名称清理细节尚待配对验收。帮助使用原生 Clap 布局，不复刻 Rich 框线；非 Unix 进程中断清理及全部非 ASCII 终端行为仍需专门测试。
 

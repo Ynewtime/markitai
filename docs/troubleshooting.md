@@ -32,10 +32,14 @@ after installing or updating Markitai takes about 25–45 seconds and later ones
 well under a second per page. A sandbox that forbids writing
 `~/Library/Caches/markitai` makes OCR fail with `missingError`.
 
-**Images are missing when I print to stdout.** Without `-o`, Markdown goes to
-stdout and image references such as `.markitai/assets/…` are not written
-anywhere. Use `-o out/` to keep images; the `image.stdout_persist*` settings are
-accepted but not implemented in this build.
+**Images are missing when I print to stdout.** Without `-o`, images are saved
+under `MARKITAI_HOME/assets/blobs/` (`~/.markitai/assets/blobs/` by default) and
+linked with `file://` URIs, which open on this machine only. If the output
+still shows `.markitai/assets/…` references, either `image.stdout_persist` is
+`false` (stderr says so) or the store could not be written; the warning names
+the directory and the reason, often a symbolic link refused while
+`output.allow_symlinks` is off. Use `-o out/` for Markdown with portable
+relative image paths. See [images on stdout](images.md#images-on-stdout).
 
 **The output is named `….v2.md`.** The target already existed and the default
 conflict policy is `rename`. Choose `overwrite` or `skip` with

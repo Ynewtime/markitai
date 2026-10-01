@@ -104,7 +104,9 @@ unwrap this envelope into a result or host-language error. Result fields are
 `source`, `markdown`, `llm_markdown`, `frontmatter`, `output_path`,
 `llm_output_path`, `assets`, `screenshots`, `images`, `usage`, `skip_reason`,
 `duration`, and `warnings`. Durations are seconds. In-memory conversions have
-null output paths and empty asset/screenshot path lists.
+null output paths and empty asset/screenshot path lists, keep relative
+`.markitai/...` image references and write no files; the CLI's stdout image
+store (`image.stdout_persist`) is not used by the bindings.
 
 Terminal usage uses the same `cost_usd`, `requests`, `input_tokens`,
 `output_tokens` and `by_model` fields as successful conversions. Python errors

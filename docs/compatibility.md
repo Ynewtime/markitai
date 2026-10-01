@@ -77,6 +77,8 @@
 
 单文件/URL 未给 `-o` 时输出 Markdown 到 stdout。单文件明确不以 `output.dir` 配置替代 `-o`；目录批量可以从配置选择输出目录。默认普通转换加 frontmatter；`--pure` 才是原始正文路径。库调用则始终不能向 stdout 写内容。
 
+stdout 图片持久化（`image.stdout_persist`，默认开启）与参考一致：被引用的图片和页面截图存入 `stdout_persist_dir/blobs/`，引用改为绝对 `file://` URI，包括生成的页面截图注释。有意的差异：默认目录跟随 `MARKITAI_HOME`（参考按真实 HOME 展开并忽略 `MARKITAI_HOME`）；文件名取 SHA-256 前 24 位（参考 16 位），已有同名不同内容的文件不改写而改用完整摘要；不建立参考的 `refs/<来源>/<图片>` 符号链接索引；关闭或保存失败时保留原相对引用与 alt 并警告（参考改为丢失 alt 的 `![image: 名称]()` 占位符）；无终端内联图片，`stdout_fetch_external` 无作用。对照记录见[stdout 中的图片](images.md#images-on-stdout)。
+
 转换退出矩阵：成功（包括 dry-run）为 0；单项失败/运行级输入失败为 1；Click 参数、枚举、缺失 `-c` 等 usage 错误为 2；目录或 URL 批量有任意失败为 10。中断当前由 Click 接收 `KeyboardInterrupt`，现有测试只要求非零；不要在未做进程级基线试验前声称中断固定为 130。来源：`src/markitai/runs/report.py:209`、`src/markitai/cli/main.py:197,1472`、`tests/unit/test_json_output.py:620`。
 
 JSON envelope `version="1.0"`，顶层字段为 `version, ok, error, batch, items, totals`。`ok` 仅在无 failed、无 pending、无运行级 error 时为真。条目按照完成顺序排列；总耗时是条目耗时和，不是墙钟时间。
@@ -209,7 +211,7 @@ Rust 下载 PDF 的媒体处理是明确的能力扩展：参考 URL 转换器�
 远程策略不隐式替换。未知 URL 的仅截图内存请求需要先判别 HTTP 内容，若为
 网页则在启动浏览器前报缺少输出目录；网络错误可能先于该目录错误返回。
 
-- CLI 中断进程退出码、各非 ASCII/窄终端场景和 stdout 图像持久化行为。
+- CLI 中断进程退出码、各非 ASCII/窄终端场景。
 - 参考 API Config 对象被下游直接使用到何种程度；现有文档的“provisional/0.x”文字过时，不能据此忽略 1.2.0 兼容性。
 - 全格式语义和字节差异；当前清单确认可见注册与覆盖位置，不证明每个可选后端在本机可用。
 - serve/OpenAPI 和 MCP 的完整逐字段验收需单独展开。当前列出其契约位置和范围，不声称完成 HTTP 全面审计。

@@ -231,6 +231,8 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
                     explicit_fetch_strategy: explicit,
                     llm_runtime: Some(&work.runtime),
                     browser_runtime: Some(&browser_runtime),
+                    // A rerun publishes into its job folder.
+                    stdout_assets: None,
                 },
             ) {
                 Ok(result) => {

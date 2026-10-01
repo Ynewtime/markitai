@@ -345,6 +345,58 @@ fn standalone_analysis_publishes_rich_markdown_real_assets_and_upserts_sidecar()
     assert_eq!(vision_bytes(&calls[0]), vec![bytes]);
 }
 
+#[cfg(unix)]
+#[test]
+fn stdout_store_links_enhanced_markdown_and_image_records_to_saved_files() {
+    if isolated("stdout_store_links_enhanced_markdown_and_image_records_to_saved_files") {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let bytes = png();
+    std::fs::write(dir.path().join("a.png"), &bytes).unwrap();
+    let source = dir.path().join("report.md");
+    std::fs::write(&source, "# Report\n\n![one](a.png)\n\n`![code](a.png)`\n").unwrap();
+    let server = Server::new(vec![Reply::echo(), analysis()]);
+    let store = dir.path().join("store");
+    let output = markitai_core::convert_with_context(
+        source.to_str().unwrap(),
+        ConvertOptions {
+            config: Some(cfg(&server)),
+            ..Default::default()
+        },
+        markitai_core::ConvertContext {
+            stdout_assets: Some(&store),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    // Links name the canonical store path.
+    let files: Vec<_> = std::fs::read_dir(store.join("blobs"))
+        .unwrap()
+        .map(|entry| std::fs::canonicalize(entry.unwrap().path()).unwrap())
+        .collect();
+    assert_eq!(files.len(), 1, "{files:?}");
+    assert_eq!(std::fs::read(&files[0]).unwrap(), bytes);
+    let uri = format!("file://{}", files[0].display());
+    assert!(
+        body(&output).contains(&format!("![A \\[safe\\] chart]({uri})")),
+        "{}",
+        body(&output)
+    );
+    assert!(output.markdown.contains(&format!("![one]({uri})")));
+    assert!(body(&output).contains("`![code](a.png)`"));
+    assert!(!body(&output).contains(".markitai/"));
+    assert_eq!(output.images.len(), 1);
+    assert_eq!(output.images[0]["asset"], files[0].to_str().unwrap());
+    // Descriptions are not published without an output directory.
+    let entries: Vec<_> = std::fs::read_dir(&store)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(entries, vec![std::ffi::OsString::from("blobs")]);
+    assert_eq!(requests(&server).len(), 2);
+}
+
 #[test]
 fn embedded_local_duplicates_change_real_alts_and_preserve_literals_and_custom_prompt_data() {
     if isolated(

@@ -83,6 +83,10 @@ Hello world. Ünïcode 世界.
 - two
 ```
 
+On stdout, images the document refers to are saved once under
+`MARKITAI_HOME/assets/blobs/` and linked with absolute `file://` URIs; see
+[images on stdout](images.md#images-on-stdout).
+
 With `-o`, output files keep the source extension (`report.docx.md`), extracted
 images go to `out/.markitai/assets/` under content-hash names, and page images
 go to `out/.markitai/screenshots/`. Converting again does not overwrite: the

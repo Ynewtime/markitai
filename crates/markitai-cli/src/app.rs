@@ -916,9 +916,19 @@ fn execute_conversion(
             .filter(|strategy| *strategy != "auto"),
         llm_runtime: llm_runtime.as_ref(),
         browser_runtime: Some(&browser_runtime),
+        stdout_assets: None,
     };
     if !batch {
         let mut task = tasks.remove(0);
+        let store = task
+            .output
+            .is_none()
+            .then(|| stdout_asset_store(&cfg))
+            .flatten();
+        let context = ConvertContext {
+            stdout_assets: store.as_deref(),
+            ..context
+        };
         // A missing or unreadable local input fails before any output directory
         // is created for it; the converter reports a missing one itself.
         let local = mode == RunMode::SingleFile;
@@ -975,7 +985,10 @@ fn execute_conversion(
                 Ok(result) => {
                     if task.output.is_none() {
                         let rendered = print_stdout(&result, &cfg).map_err(runtime)?;
-                        if !cli.quiet
+                        // A persisted image is linked by now; the core warns
+                        // about any it could not save.
+                        if store.is_none()
+                            && !cli.quiet
                             && let Some(warning) = unsaved_assets(&rendered, &cfg)
                         {
                             eprintln!("{warning}");
@@ -1521,31 +1534,46 @@ fn print_stdout(result: &ConversionOutput, cfg: &Value) -> io::Result<String> {
     Ok(rendered)
 }
 
-/// Stdout mode publishes no files, yet extracted images keep their output-
-/// directory references (`image.stdout_persist` is not implemented). Say so
-/// instead of leaving links that silently point nowhere.
+/// The image store for a document printed to stdout, unless
+/// `image.stdout_persist` is off. The default `~/.markitai/assets` follows
+/// `MARKITAI_HOME`; another configured directory keeps its meaning.
+fn stdout_asset_store(cfg: &Value) -> Option<PathBuf> {
+    config::enabled(cfg, "/image/stdout_persist").then(|| {
+        config::state_path(Path::new(
+            cfg["image"]["stdout_persist_dir"]
+                .as_str()
+                .unwrap_or("~/.markitai/assets"),
+        ))
+    })
+}
+
+/// With `image.stdout_persist` off, stdout mode writes no files, yet
+/// extracted images and page captures keep their output-directory
+/// references. Say so instead of leaving links that silently point nowhere.
 fn unsaved_assets(markdown: &str, cfg: &Value) -> Option<String> {
     let profile = cfg["output"]["profile"].as_str();
-    let prefix = if matches!(profile, Some("rag" | "obsidian")) {
+    let assets = if matches!(profile, Some("rag" | "obsidian")) {
         "assets/"
     } else {
         ".markitai/assets/"
     };
     let mut targets = std::collections::BTreeSet::new();
-    for opener in ["](", "[["] {
-        for (index, _) in markdown.match_indices(opener) {
-            let rest = &markdown[index + opener.len()..];
-            if let Some(target) = rest.strip_prefix(prefix) {
-                let end = target.find([')', ']', '|', ' ']).unwrap_or(target.len());
-                targets.insert(&target[..end]);
+    for prefix in [assets, ".markitai/screenshots/"] {
+        for opener in ["](", "[["] {
+            for (index, _) in markdown.match_indices(opener) {
+                let rest = &markdown[index + opener.len()..];
+                if let Some(target) = rest.strip_prefix(prefix) {
+                    let end = target.find([')', ']', '|', ' ']).unwrap_or(target.len());
+                    targets.insert((prefix, &target[..end]));
+                }
             }
         }
     }
     let count = targets.len();
     (count > 0).then(|| {
         format!(
-            "Warning: {count} image {} {prefix}, which stdout mode does not write (image.stdout_persist is not implemented yet); use -o DIR to keep images",
-            if count == 1 { "reference points into" } else { "references point into" }
+            "Warning: {count} image {} to files that stdout mode does not write because image.stdout_persist is false; use -o DIR to keep images, or set image.stdout_persist to true",
+            if count == 1 { "reference points" } else { "references point" }
         )
     })
 }
@@ -2324,10 +2352,11 @@ mod tests {
     fn stdout_documents_warn_about_unwritten_asset_references() {
         let cfg = config::defaults();
         let markdown = "![a](.markitai/assets/one.png) ![b](.markitai/assets/one.png)\n\
-            ![c](.markitai/assets/two.jpg)\n`.markitai/assets/literal`\n";
+            ![c](.markitai/assets/two.jpg)\n`.markitai/assets/literal`\n\
+            <!-- ![Page 1](.markitai/screenshots/doc.pdf.page0001.jpg) -->\n";
         let warning = unsaved_assets(markdown, &cfg).unwrap();
         assert!(
-            warning.starts_with("Warning: 2 image references point into .markitai/assets/"),
+            warning.starts_with("Warning: 3 image references point to files that stdout mode does not write because image.stdout_persist is false"),
             "{warning}"
         );
         assert!(warning.contains("use -o DIR"));
@@ -2338,7 +2367,25 @@ mod tests {
         let mut obsidian = cfg.clone();
         obsidian["output"]["profile"] = json!("obsidian");
         let warning = unsaved_assets("![[assets/one.png|caption]]\n", &obsidian).unwrap();
-        assert!(warning.starts_with("Warning: 1 image reference points into assets/"));
+        assert!(warning.starts_with("Warning: 1 image reference points to files"));
+        assert_eq!(
+            unsaved_assets("![[.markitai/assets/one.png]]\n", &obsidian),
+            None
+        );
+    }
+
+    #[test]
+    fn stdout_images_are_stored_in_the_isolated_home_unless_turned_off() {
+        let mut cfg = config::defaults();
+        let store = stdout_asset_store(&cfg).unwrap();
+        assert_eq!(store, config::state_path(Path::new("~/.markitai/assets")));
+        cfg["image"]["stdout_persist_dir"] = json!("/srv/markitai-images");
+        assert_eq!(
+            stdout_asset_store(&cfg).unwrap(),
+            Path::new("/srv/markitai-images")
+        );
+        cfg["image"]["stdout_persist"] = json!(false);
+        assert_eq!(stdout_asset_store(&cfg), None);
     }
     #[test]
     fn numeric_limits_and_previews_state_their_rule_plainly() {

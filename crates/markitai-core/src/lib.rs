@@ -216,6 +216,8 @@ fn convert_inner(
             .and_then(|s| s.to_str())
             .is_some_and(is_image_extension);
     let output_dir = options.output_dir.map(|path| config::expand_home(&path));
+    // Only a document that would otherwise publish nothing uses the store.
+    let stdout_assets = context.stdout_assets.filter(|_| output_dir.is_none());
     let mut pdf_input = !is_url
         && input_path
             .extension()
@@ -414,7 +416,13 @@ fn convert_inner(
         && config::enabled(&cfg, "/screenshot/screenshot_only")
         && !(config::enabled(&cfg, "/llm/enabled") && config::enabled(&cfg, "/llm/pure"));
     if !screenshot_only {
-        image_enrichment::prepare(&mut doc, source, &cfg, output_dir.is_some())?;
+        // Inline data images become owned assets wherever assets are kept.
+        image_enrichment::prepare(
+            &mut doc,
+            source,
+            &cfg,
+            output_dir.is_some() || stdout_assets.is_some(),
+        )?;
     }
     if !image_input {
         images::prepare_assets(&mut doc, &cfg);
@@ -735,6 +743,11 @@ fn convert_inner(
                 result.warnings.push("Some observed LLM requests could not be priced. cost_usd is the known priced subtotal; the complete cost is unknown.".into());
             }
         }
+    }
+    if let Some(store) = stdout_assets {
+        // Before profiles: persisted images become `file://` links, which
+        // the visible-asset and wikilink profiles leave as they are.
+        output::stdout_assets::persist(store, &mut result, &doc.assets, &screenshots, &cfg);
     }
     output::apply_profiles(&mut result, &cfg);
     if let Some(dir) = output_dir {

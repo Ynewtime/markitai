@@ -4,6 +4,7 @@
 
 ### Added
 
+- Save the images a document printed to stdout refers to under `MARKITAI_HOME/assets/blobs/` by content hash and link them with `file://` URIs (`image.stdout_persist`, on by default as in the reference, whose default wrote to the real home); turning it off keeps the relative references with a warning.
 - Show `doctor`, `cache` and `config path`/`config validate` messages in Chinese or English as the reference does: a non-empty `MARKITAI_LANG` decides, otherwise `LANG` then `LC_ALL`, and a value starting with `zh` selects Chinese; JSON output, help, errors and exit codes stay as they were.
 - Give the `markitai serve` workspace a Chinese and English interface that follows the browser language, light, dark and automatic themes (printing stays light), page-wide drag and drop, upload cancellation and a `POST /api/jobs/{id}/cancel` route that stops queued items, a bottom notice region that stays in view, offline detection with reconnection, oversized files named before upload, plain explanations for skipped and failed items, a working 375-pixel layout, kept focus and expanded details across updates, and AA contrast.
 - Manual operating-system proxy discovery for static fetch and the native browser (macOS, Windows, KDE and GNOME), with the reference's single environment proxy order, exception semantics and loopback bypass.

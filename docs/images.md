@@ -158,12 +158,15 @@ the archive. Symlinked index/lock leaves are rejected.
 
 ## Embedded assets
 
-With an output directory, complete inline `data:image/...` references in any
-converted Markdown become owned assets first, as the reference workflow saves
-embedded base64 images; they then follow the rules below. Undecodable data keeps
-its original reference with a warning. Without an output directory (stdout or
-in-memory calls) the data URI stays inline instead of naming an unwritten file.
-Local and remote image references are localized only by image enrichment.
+With an output directory, or in CLI stdout mode while
+[`image.stdout_persist`](#images-on-stdout) is on, complete inline
+`data:image/...` references in any converted Markdown become owned assets
+first, as the reference workflow saves embedded base64 images; they then follow
+the rules below. Undecodable data keeps its original reference with a warning.
+A converter's elided placeholder such as `data:image/png;base64...` (the HTML
+reader keeps no payload) is left as it is without a warning. In-memory library
+calls keep the data URI inline instead of naming an unwritten file. Local and
+remote image references are localized only by image enrichment.
 
 After document extraction and before output profiles, the core processes raster
 assets already held in memory. It applies EXIF orientation, configured minimum
@@ -209,6 +212,70 @@ Unsupported or malformed embedded images retain their original bytes with a
 warning. This is an explicit fidelity choice: conversion does not quietly erase
 an asset simply because its codec is unavailable. Non-image attachments bypass
 raster processing entirely. Input files are never modified.
+
+## Images on stdout
+
+Without `-o`, a single file or URL is printed to stdout and no output directory
+exists. The CLI then saves the images and page captures the document refers
+to in one store and links them with absolute `file://` URIs, so the printed
+Markdown opens with its pictures after the process exits:
+
+```text
+![Chart](file:///Users/me/.markitai/assets/blobs/7416822bd6078af29cc72e66.jpg)
+<!-- ![Page 1](file:///Users/me/.markitai/assets/blobs/336f4a11bd5d2a0c50ade34e.jpg) -->
+```
+
+| Key | Default | Effect |
+|---|---|---|
+| `image.stdout_persist` | `true` | Save stdout images and link them; `false` keeps `.markitai/...` references that point nowhere and prints one warning |
+| `image.stdout_persist_dir` | `~/.markitai/assets` | Store directory; the default follows `MARKITAI_HOME`, another path keeps its meaning, a relative one resolves against the current directory |
+| `image.stdout_fetch_external` | `false` | Accepted; no effect in this build (see below) |
+
+Files are written below `blobs/` and named by the first 24 hex digits of the
+SHA-256 of their bytes, the same names `-o` uses for assets, with the source
+extension reduced to ASCII letters and digits. Identical images, within a
+document or across runs, share one file; an existing file is verified byte for
+byte and never rewritten, so links printed earlier keep showing the same image.
+A file under that name with other bytes (damaged, or edited by hand) is left
+alone and the full 64-digit digest names the image instead. New files are
+written with the same no-clobber staging and ordering barrier as output assets.
+Links name the canonical store path. Base and enhanced Markdown, Markdown
+links, HTML image and media attributes, CSS resource positions and the
+generated `<!-- ![Page N](…) -->` page references are rewritten; code and other
+comments stay literal. Only referenced images are saved: a document without
+image references does not create the store. The store is never cleaned up; it
+is not part of `markitai cache clear`, and deleting it only breaks links in
+Markdown printed earlier.
+
+Persisting runs before output profiles, so `rag` and `obsidian` keep the
+`file://` image links (an Obsidian wikilink cannot carry one). `--pure`, LLM
+enhancement, image analysis (`--alt`/`--desc`, whose records then name the
+stored file; no `images.json` is written), OCR and screenshots all use the same
+store. `-o`, `--json` (which requires `-o`), directory and URL-list runs, `serve`,
+MCP and the language bindings never use it: their results keep relative
+references.
+
+The output-directory symlink policy applies: with `output.allow_symlinks` off,
+a symbolic link anywhere in the store path (other than a root-owned system
+link such as macOS `/var`) is refused and nothing is written through it. When
+images cannot be saved, the conversion still succeeds; those references stay
+relative and stderr says how many failed, where and why.
+
+Differences from the reference 1.2.0, which uses `blobs/<16 hex digits>` names
+(compared on macOS with a debug build, generated DOCX/PDF/HTML fixtures and the
+reference `sample.pptx`, running the reference with a private `HOME`):
+
+- The reference expands `stdout_persist_dir` against the real home even when
+  `MARKITAI_HOME` is set; here the default follows `MARKITAI_HOME`.
+- It also keeps a `refs/<source>/<image>` symlink index. That index is
+  mutable, keyed by source and image names, and only a browsing aid, so it is
+  not created here.
+- With persistence off or a failed save it replaces each reference with an
+  `![image: name]()` placeholder; here the original reference and its alt text
+  remain and the warning explains them.
+- On a terminal with an inline image protocol it prints images inline, and
+  `stdout_fetch_external` downloads remote images for that display. This build
+  has no terminal image output, so remote images stay as links.
 
 ## Resource boundaries
 

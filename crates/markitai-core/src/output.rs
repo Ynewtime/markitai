@@ -10,6 +10,7 @@ use std::sync::Mutex;
 static OUTPUT_LOCK: Mutex<()> = Mutex::new(());
 pub(crate) mod fence;
 mod image_metadata;
+pub(crate) mod stdout_assets;
 
 /// Relocate complete asset destinations when archiving Markdown and its assets.
 #[doc(hidden)]

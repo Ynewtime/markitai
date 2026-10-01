@@ -52,6 +52,9 @@ mod terminal_usage;
 #[path = "conversion/proxy.rs"]
 mod proxy;
 
+#[path = "conversion/stdout_assets.rs"]
+mod stdout_assets;
+
 fn options() -> ConvertOptions {
     ConvertOptions {
         config: Some(json!({})),

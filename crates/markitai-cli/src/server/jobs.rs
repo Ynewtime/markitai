@@ -336,6 +336,8 @@ async fn convert_one(
                 explicit_fetch_strategy: explicit.as_deref(),
                 llm_runtime: Some(&runtime),
                 browser_runtime: Some(&browser_runtime),
+                // Jobs always publish into their own folder.
+                stdout_assets: None,
             },
         )
     })

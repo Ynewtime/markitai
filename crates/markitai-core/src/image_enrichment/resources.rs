@@ -59,6 +59,11 @@ pub(super) fn prepare(
         if scope == Scope::Data && !target.starts_with("data:image/") {
             continue;
         }
+        if elided_data(&target) {
+            // A converter's placeholder for an inline image whose payload it
+            // did not keep; there is nothing to localize and nothing wrong.
+            continue;
+        }
         if asset_name(&target).is_some_and(|name| owned.contains(&name))
             || !attempted.insert(target.clone())
         {
@@ -135,6 +140,10 @@ fn unquote(input: &[u8]) -> Result<Vec<u8>> {
         i += 1;
     }
     Ok(decoded)
+}
+/// `data:image/png;base64...`: the media type with the payload left out.
+fn elided_data(target: &str) -> bool {
+    target.starts_with("data:") && !target.contains(',') && target.ends_with("...")
 }
 fn data_image(target: &str) -> Result<Vec<u8>> {
     let (header, body) = target
@@ -301,6 +310,20 @@ fn download(mut url: Url, allow_private: bool) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn elided_inline_images_are_placeholders_not_malformed_data() {
+        let markdown =
+            "![kept](data:image/png;base64...)\n\n![broken](data:image/png;base64)\n".to_owned();
+        let mut doc = Document {
+            markdown: markdown.clone(),
+            ..Default::default()
+        };
+        prepare(&mut doc, "page.html", &serde_json::json!({}), Scope::Data).unwrap();
+        assert_eq!(doc.markdown, markdown);
+        assert!(doc.assets.is_empty());
+        assert_eq!(doc.warnings.len(), 1, "{:?}", doc.warnings);
+        assert!(doc.warnings[0].contains("malformed data URI"));
+    }
     #[test]
     fn owned_paths_decode_once_and_keep_query_separate() {
         assert_eq!(

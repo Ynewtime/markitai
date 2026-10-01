@@ -71,6 +71,9 @@ markitai config edit                 # 终端中的交互编辑器
 | `image.compress` / `image.format` / `image.quality` | `true` / `jpeg` / `75` | 资产图片压缩 |
 | `image.max_width` | `1920` | 资产图片最大宽度 |
 | `image.alt_enabled` / `image.desc_enabled` | `false` | 图片说明与描述（需要 LLM），同 `--alt`/`--desc` |
+| `image.stdout_persist` | `true` | 未给 `-o` 输出到 stdout 时保存引用的图片并以 `file://` 链接；`false` 保留相对引用并警告，见[stdout 中的图片](images.md#images-on-stdout) |
+| `image.stdout_persist_dir` | `~/.markitai/assets` | stdout 图片库目录（文件在其下 `blobs/`）；默认值跟随 `MARKITAI_HOME`，自定义路径保持原义 |
+| `image.stdout_fetch_external` | `false` | 参考版用于终端内联显示远程图片；本构建无终端图片输出，可设置但无作用 |
 | `ocr.enabled` / `ocr.lang` | `false` / `en` | OCR 开关与语言，见[本地 OCR](ocr.md) |
 | `screenshot.enabled` | `false` | 页面截图，同 `--screenshot` |
 | `batch.concurrency` / `batch.url_concurrency` | `10` / `5` | 文件与 URL 并发，同 `-j`/`--url-concurrency` |
@@ -88,7 +91,7 @@ markitai config edit                 # 终端中的交互编辑器
 
 | 变量 | 作用 |
 |---|---|
-| `MARKITAI_HOME` | 替代 `~/.markitai`：用户配置、`.env`、缓存、浏览器安装与历史都放在这里 |
+| `MARKITAI_HOME` | 替代 `~/.markitai`：用户配置、`.env`、缓存、浏览器安装、历史与 stdout 图片库（`assets/`）都放在这里 |
 | `MARKITAI_CONFIG` | 配置文件路径（优先级低于 `-c`） |
 | `MARKITAI_PURE` | `1`/`true`/`yes` 时等同 `--pure` |
 | `MARKITAI_RECORD_HISTORY` | `1`/`true`/`yes`/`on`（不分大小写）开启历史，其他非空值关闭；命令行开关优先 |
