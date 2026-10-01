@@ -104,9 +104,81 @@ receipt's items and prices, stay rows. The reference's table, vertical-writing
 and marginal-note reconstruction is not reproduced. On a rendered corpus
 ([R45](validation/ocr-quality-round45.md)) English and number text is read more
 accurately than by the reference's RapidOCR, two-column pages in order, and
-Chinese with two to three times its character error rate. Vision inference itself has no wall-clock cancellation deadline
+Chinese, with the [aids below](#chinese-recognition-aids), at 1.7 to 2.6 times
+its character error rate. Vision inference itself has no wall-clock cancellation deadline
 in this slice, and recognition quality is not guaranteed for handwriting, small
 text or every supported language.
+
+## Chinese recognition aids
+
+Two steps run only when the requested language is `zh-Hans` or `zh-Hant`.
+English and every other language take exactly the path described above.
+
+- **Small text is read again, enlarged.** When the median height of the
+  recognized lines that hold Han characters is below 24 pixels (12-point text at
+  96 DPI or smaller), the image is enlarged with Lanczos filtering toward
+  32-pixel lines, by 1.25 to 4 times and within the 32-million-pixel limit, and
+  that second reading replaces the first. Rectangles stay in the original
+  image's pixels. The first reading is discarded, so such an image takes about
+  twice as long.
+- **Dropped characters are recovered.** Vision sometimes drops a character,
+  most often 的, and stretches its neighbour's box over the gap. In a line with
+  at least four Han characters, a Han character box wider than 1.6 times the
+  line's median Han box marks a suspect. The region of the suspect and up to four
+  recognized neighbours on each side is read again. One Han character is
+  inserted only when that reading places it directly before or after the
+  suspect and repeats up to two neighbours on each side exactly; any other
+  reading, including a failed one, leaves the line unchanged. At most 32
+  regions are read again per image.
+
+Measured on macOS 27.0.1 (26A434), Apple silicon, `cargo build -p markitai-cli
+--release --locked`, before (r18, 21,731,920 bytes) and after (21,748,496
+bytes). Character error rate is edit distance over ground-truth length with
+whitespace removed; the reference is RapidOCR (PP-OCRv6) in the reference's
+virtual environment.
+
+| Corpus / variant | Reference | Before | After |
+|---|---:|---:|---:|
+| R45 Chinese 300 DPI / 150 DPI / scan-like | 0.34% / 0.52% / 0.52% | 0.86% / 1.03% / 1.55% | 0.69% / 0.86% / 1.37% |
+| Held-out Chinese 300 / 150 / scan-like | 1.60% / 2.17% / 2.57% | 1.44% / 1.28% / 1.56% | 1.28% / 1.16% / 1.52% |
+| Held-out Chinese 96 DPI / 72 DPI | 0.96% / 1.68% | 2.21% / 8.82% | 1.93% / 3.21% |
+| Full Chinese pages 150 / 96 DPI | 1.92% / 2.89% | 1.19% / 2.97% | 1.16% / 2.06% |
+| Traditional check 150 / 96 / 72 DPI | not run | 0.30% / 0.60% / 5.44% | 0.00% / 0.30% / 3.93% |
+
+The R45 English, number and two-column text (126 images) is identical before
+and after. Of 150 held-out images, 61 changed: 167 fewer and 12 more edits; the
+added edits are single characters read differently from the enlarged copies.
+The held-out corpus renders 30 paragraphs of the reference's Chinese guides
+and changelog (disjoint from R45's text) in Heiti TC Light and Medium, Hiragino
+Sans GB, Songti SC and Arial Unicode at 12 points: 300 and 150 DPI, a
+scan-like copy (as in R45) and 96 and 72 DPI screenshots. The full pages are
+two A4-proportioned pages in Hiragino Sans GB and Songti SC at 150 and 96 DPI;
+the Traditional check is eight short paragraphs written for it, in Heiti TC
+and Songti TC. All are synthetic renders, not scans or photographs.
+
+Whole conversions (`--ocr --no-llm`, one at a time, after a warm-up, median of
+five runs of the mean per image; the quieter of two alternating rounds) are
+unchanged for English (153 ms) and within 5 ms for ordinary Chinese images
+(207 to 236 ms) and a full 150 DPI page (656 to 661 ms). Images enlarged for a
+second reading take longer: held-out 96 and 72 DPI paragraphs 202 to 268 ms
+and 191 to 269 ms, a full 96 DPI page 584 to 1,284 ms. The other round, on a
+busier machine, showed the same pattern with more spread.
+
+Tried with a Swift probe of the same Vision request and not adopted: other
+settings (language correction off, `zh-Hans` with `en-US`, request revision 3:
+identical output; `en-US` first: unusable); enlarging text that is not small
+(no gain at 150 and 300 DPI); reading every line again in its own region (the
+held-out error rate rose from 3.1% to 8.7%); voting across three readings at
+different scales (2 to 3 fewer edits of 1,746 for three times the time);
+restoring the case of Latin words inside Chinese lines from an English reading
+of their line (6 and 5 fewer edits on R45 and held-out text, 4 more on the full
+pages, and up to 0.8 seconds more per page); normalizing full-width symbols
+such as ＃ to ASCII (the held-out text itself uses the full-width ／); and
+lexical replacements such as 己 to 已 outside 自己 (two cases in R45, none held
+out). Vision never put a space between two Han characters, so no spacing
+cleanup is applied. Remaining Chinese errors are mostly lookalike characters
+(界/果, 器/嚣, 已/己), 的 read as another character, and Latin letters inside
+Chinese lines (`l`/`I`, the case of `o`, `s` and `c`, `--` read as `-`).
 
 ## Validation fixtures
 
@@ -119,6 +191,16 @@ a white image, undecodable input and an unavailable language. Pure tests cover
 language aliases, bounds, alpha handling, row/paragraph assembly and malformed
 geometry. These are focused checks, not an OCR accuracy corpus or a claim that
 results match RapidOCR on arbitrary documents.
+
+Two macOS tests draw sentences adapted from this repository's Chinese changelog with
+the in-process SVG renderer in Hiragino Sans GB: at 13 pixels per em the text
+must be read exactly from an enlarged copy with rectangles in the original
+pixels, while 25-pixel Chinese and 13-pixel English are read once; at 25 pixels
+a 的 that this system's recognizer drops must be recovered. They depend on the
+installed recognizer, like the English fixture. Pure tests cover the
+enlargement threshold, factor and pixel limit, the Lanczos copy's size and
+rounding, the wide-box suspects and their regions, and the anchored insertion,
+including ambiguous, non-Han and mismatched readings.
 
 Renderer-entry tests compare the same fixture's normalized PNG bytes and Vision
 observations with the encoded-image path. Additional checks reject zero-sized,

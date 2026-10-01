@@ -4,6 +4,8 @@ use crate::{Error, Result};
 use serde_json::Value;
 
 #[cfg(any(target_os = "macos", test))]
+mod cjk;
+#[cfg(any(target_os = "macos", test))]
 mod pixels;
 #[cfg(target_os = "macos")]
 mod vision;
@@ -17,6 +19,11 @@ pub(crate) struct OcrResult {
     /// Pixel rectangles [left, top, right, bottom], after orientation correction.
     #[cfg(any(target_os = "macos", test))]
     pub boxes: Vec<[f32; 4]>,
+    /// How many times the image was enlarged for the reading used; 1 when it
+    /// was read at its own size. Only macOS tests read it.
+    #[cfg(any(target_os = "macos", test))]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub scale: f32,
 }
 
 pub(crate) fn available() -> bool {
@@ -40,9 +47,7 @@ pub(crate) fn recognize(bytes: &[u8], cfg: &Value) -> Result<OcrResult> {
     #[cfg(target_os = "macos")]
     {
         let language = language(cfg)?;
-        let image = pixels::prepare(bytes)?;
-        let lines = vision::recognize(&image, &language)?;
-        assemble(lines, image.width, image.height)
+        read(pixels::prepare(bytes)?, &language)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -64,9 +69,7 @@ pub(crate) fn recognize_rgb(image: image::RgbImage, cfg: &Value) -> Result<OcrRe
     #[cfg(target_os = "macos")]
     {
         let language = language(cfg)?;
-        let image = pixels::prepare_rgb(image)?;
-        let lines = vision::recognize(&image, &language)?;
-        assemble(lines, image.width, image.height)
+        read(pixels::prepare_rgb(image)?, &language)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -75,6 +78,28 @@ pub(crate) fn recognize_rgb(image: image::RgbImage, cfg: &Value) -> Result<OcrRe
             "Local OCR backend is unavailable".into(),
         ))
     }
+}
+
+/// Recognize prepared pixels. Small Chinese text is read a second time from
+/// an enlarged copy, and that reading replaces the first.
+#[cfg(target_os = "macos")]
+fn read(image: pixels::Prepared, language: &str) -> Result<OcrResult> {
+    let space = (image.width, image.height);
+    let first = vision::recognize(&image, language, space, true)?;
+    let (lines, scale) = match first.enlarge {
+        Some(factor) => {
+            let larger = pixels::enlarge(&image, factor)?;
+            drop(image);
+            (
+                vision::recognize(&larger, language, space, false)?.lines,
+                factor,
+            )
+        }
+        None => (first.lines, 1.0),
+    };
+    let mut result = assemble(lines, space.0, space.1)?;
+    result.scale = scale;
+    Ok(result)
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -239,6 +264,7 @@ fn assemble(mut lines: Vec<Line>, width: u32, height: u32) -> Result<OcrResult> 
         text,
         confidence,
         boxes,
+        scale: 1.0,
     };
     // Keep diagnostics private to the native API, while validating the engine's
     // blank-image distinction before exposing text to the conversion pipeline.
@@ -458,6 +484,106 @@ pub(crate) mod tests {
         );
         assert!(pixel_bounds([f64::NAN, 0., 1., 1.], 10, 10).is_err());
         assert!(pixel_bounds([0., 0., -1., 1.], 10, 10).is_err());
+    }
+
+    /// Lines of Chinese drawn by the in-process SVG renderer in a macOS system
+    /// font, black on white, `size` pixels per em.
+    #[cfg(target_os = "macos")]
+    fn chinese_lines(lines: &[&str], size: u32) -> image::RgbImage {
+        use resvg::{tiny_skia, usvg};
+        let family = "Hiragino Sans GB";
+        let longest = lines.iter().map(|l| l.chars().count()).max().unwrap() as u32;
+        let (width, pitch) = (size * (longest + 2), size * 3 / 2);
+        let height = size * 2 + pitch * lines.len() as u32;
+        let mut svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">"#
+        );
+        svg.push_str(r#"<rect width="100%" height="100%" fill="white"/>"#);
+        for (row, line) in lines.iter().enumerate() {
+            let baseline = size * 2 + pitch * row as u32;
+            svg.push_str(&format!(
+                r#"<text x="{size}" y="{baseline}" font-family="{family}" font-size="{size}">{line}</text>"#
+            ));
+        }
+        svg.push_str("</svg>");
+        let mut options = usvg::Options::default();
+        options.fontdb_mut().load_system_fonts();
+        assert!(
+            options
+                .fontdb
+                .faces()
+                .any(|face| face.families.iter().any(|(name, _)| name == family)),
+            "macOS provides {family}"
+        );
+        let tree = usvg::Tree::from_str(&svg, &options).unwrap();
+        let mut pixmap = tiny_skia::Pixmap::new(width, height).unwrap();
+        resvg::render(&tree, tiny_skia::Transform::default(), &mut pixmap.as_mut());
+        image::RgbImage::from_fn(width, height, |x, y| {
+            let pixel = pixmap.pixel(x, y).unwrap();
+            image::Rgb([pixel.red(), pixel.green(), pixel.blue()])
+        })
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn vision_reads_small_chinese_text_again_enlarged_in_original_coordinates() {
+        let lines = [
+            "含链接注释、图片、曲线标记或圆角裁剪的页面也能重建；",
+            "宽度相同的边框块不再并入表格网格。",
+        ];
+        let config = json!({"ocr":{"lang":"zh"}});
+        let small = chinese_lines(&lines, 13);
+        let (width, height) = small.dimensions();
+        let result = recognize_rgb(small, &config);
+        if vision_unavailable_under_rosetta(&result) {
+            return;
+        }
+        let result = result.unwrap();
+        assert!(result.scale > 1.25, "{}", result.scale);
+        assert_eq!(
+            result.text.split_whitespace().collect::<String>(),
+            lines.concat()
+        );
+        // Rectangles describe the image that was passed in, not the enlarged copy.
+        assert_eq!(result.boxes.len(), 2);
+        for [left, top, right, bottom] in result.boxes {
+            assert!(right <= width as f32 && bottom <= height as f32);
+            assert!(left < right && bottom - top < 24.0, "{top} {bottom}");
+        }
+        // Ordinary sizes and other languages are read once.
+        let large = recognize_rgb(chinese_lines(&lines, 25), &config).unwrap();
+        assert_eq!(large.scale, 1.0);
+        assert_eq!(
+            large.text.split_whitespace().collect::<String>(),
+            lines.concat()
+        );
+        let english = recognize_rgb(
+            chinese_lines(&["Small print from 2026", "Local text only"], 13),
+            &json!({"ocr":{"lang":"en"}}),
+        )
+        .unwrap();
+        assert_eq!(english.scale, 1.0);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn vision_recovers_a_character_dropped_inside_a_wide_box() {
+        // This system's recognizer drops 的 from the second line at this size
+        // and stretches the box of 版 over it.
+        let lines = [
+            "静态获取与原生浏览器支持读取操作系统手动代理",
+            "并采用参考版的单一环境代理顺序与回环直连。",
+        ];
+        let result = recognize_rgb(chinese_lines(&lines, 25), &json!({"ocr":{"lang":"zh"}}));
+        if vision_unavailable_under_rosetta(&result) {
+            return;
+        }
+        let result = result.unwrap();
+        assert_eq!(result.scale, 1.0);
+        assert_eq!(
+            result.text.split_whitespace().collect::<String>(),
+            lines.concat()
+        );
     }
 
     #[test]

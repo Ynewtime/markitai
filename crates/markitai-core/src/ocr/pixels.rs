@@ -3,7 +3,7 @@ use image::{DynamicImage, ImageDecoder, ImageEncoder, ImageFormat, ImageReader, 
 use std::io::{Cursor, Write};
 
 const MAX_INPUT: usize = 64 * 1024 * 1024;
-const MAX_PIXELS: u64 = 32_000_000;
+pub(super) const MAX_PIXELS: u64 = 32_000_000;
 const MAX_DECODED: u64 = 256 * 1024 * 1024;
 const MAX_ENCODED: usize = 128 * 1024 * 1024;
 
@@ -117,6 +117,35 @@ pub(super) fn prepare_rgb(rgb: RgbImage) -> Result<Prepared> {
     })
 }
 
+/// A copy of prepared pixels enlarged `factor` times with Lanczos filtering,
+/// within the same pixel limit, for a second reading of small text.
+pub(super) fn enlarge(image: &Prepared, factor: f32) -> Result<Prepared> {
+    let scale = |side: u32| (f64::from(side) * f64::from(factor)).round();
+    let (width, height) = (scale(image.width), scale(image.height));
+    if !factor.is_finite() || factor < 1.0 {
+        return Err(failure("invalid OCR enlargement factor"));
+    }
+    if width * height > MAX_PIXELS as f64 {
+        return Err(failure("enlarged OCR image exceeds 32 million pixels"));
+    }
+    let mut reader = ImageReader::with_format(Cursor::new(&image.png), ImageFormat::Png);
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(MAX_DECODED);
+    reader.limits(limits);
+    let rgb = reader
+        .decode()
+        .map_err(|_| failure("cannot decode prepared OCR image"))?
+        .into_rgb8();
+    let larger = image::imageops::resize(
+        &rgb,
+        width as u32,
+        height as u32,
+        image::imageops::FilterType::Lanczos3,
+    );
+    drop(rgb);
+    prepare_rgb(larger)
+}
+
 #[cfg(test)]
 pub(super) fn encode_test_image(image: DynamicImage) -> Vec<u8> {
     let mut buffer = Cursor::new(Vec::new());
@@ -192,6 +221,36 @@ mod tests {
             image::load_from_memory(&rendered.png).unwrap().into_rgb8(),
             expected
         );
+    }
+
+    #[test]
+    fn enlargement_scales_both_sides_and_keeps_the_pixel_limit() {
+        // A black left half and a white right half.
+        let rgb = RgbImage::from_fn(40, 10, |x, _| Rgb([if x < 20 { 0 } else { 255 }; 3]));
+        let prepared = prepare_rgb(rgb).unwrap();
+        let larger = enlarge(&prepared, 2.5).unwrap();
+        assert_eq!((larger.width, larger.height), (100, 25));
+        let decoded = image::load_from_memory(&larger.png).unwrap().into_rgb8();
+        assert_eq!(decoded.dimensions(), (100, 25));
+        assert_eq!(decoded.get_pixel(10, 12).0, [0; 3]);
+        assert_eq!(decoded.get_pixel(90, 12).0, [255; 3]);
+        let edge = decoded.get_pixel(50, 12).0[0];
+        assert!(edge > 0 && edge < 255, "{edge}");
+        // Sides are rounded, not truncated.
+        let odd = prepare_rgb(RgbImage::from_pixel(3, 3, Rgb([255; 3]))).unwrap();
+        let rounded = enlarge(&odd, 1.5).unwrap();
+        assert_eq!((rounded.width, rounded.height), (5, 5));
+        for factor in [0.5, f32::NAN, f32::INFINITY] {
+            assert!(enlarge(&prepared, factor).is_err(), "{factor}");
+        }
+        let wide = Prepared {
+            png: prepared.png.clone(),
+            width: 8_000,
+            height: 4_000,
+        };
+        // Rejected before decoding or allocating the enlarged copy.
+        let error = enlarge(&wide, 1.01).err().unwrap().to_string();
+        assert!(error.contains("enlarged OCR image exceeds"), "{error}");
     }
 
     #[test]
