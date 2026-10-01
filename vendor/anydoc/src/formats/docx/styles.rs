@@ -13,6 +13,7 @@ use crate::package::xml::{Element, ns};
 use crate::shared::blockstyle::{self, BlockStyle};
 use crate::shared::chain::StyleChains;
 use crate::shared::delta::StyleDelta;
+use crate::shared::visual::Size;
 
 /// Per-property parity of `true` toggle specifications in a style chain.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -49,6 +50,8 @@ pub struct Styles<'a> {
     /// naming none takes (`w:default`, Word's "Normal").
     pub default_font: Option<&'a str>,
     pub default_paragraph: Option<&'a str>,
+    /// markitai: the docDefaults text size (`w:sz`), in half-points.
+    pub default_size: Option<Size>,
 }
 
 impl<'a> Styles<'a> {
@@ -60,6 +63,7 @@ impl<'a> Styles<'a> {
                 doc_defaults: Style::PLAIN,
                 default_font: None,
                 default_paragraph: None,
+                default_size: None,
             },
         }
     }
@@ -89,6 +93,7 @@ impl<'a> Styles<'a> {
             doc_defaults,
             default_font: default_rpr.and_then(run_font),
             default_paragraph,
+            default_size: default_rpr.and_then(run_size),
         }
     }
 
@@ -125,6 +130,14 @@ impl<'a> Styles<'a> {
     /// markitai: see [`crate::formats::docx::code`].
     pub fn style_font(&self, id: &str) -> Result<Option<&'a str>, ConvertError> {
         self.chains.walk(id, |style| run_font(style.find(ns::W, "rPr")?))
+    }
+
+    /// The size a style sets its text in (`w:sz`), inherited through
+    /// `basedOn`; the nearest specification wins.
+    ///
+    /// markitai: see [`crate::shared::visual`].
+    pub fn style_size(&self, id: &str) -> Result<Option<Size>, ConvertError> {
+        self.chains.walk(id, |style| run_size(style.find(ns::W, "rPr")?))
     }
 
     /// The raised or lowered position a style gives its text (`w:vertAlign`),
@@ -242,6 +255,12 @@ pub fn rpr_delta(rpr: &Element) -> StyleDelta {
 pub fn run_font(rpr: &Element) -> Option<&str> {
     let fonts = rpr.find(ns::W, "rFonts")?;
     fonts.attr(ns::W, "ascii").or_else(|| fonts.attr(ns::W, "hAnsi"))
+}
+
+/// markitai: the text size a run property set names (`w:sz`), in
+/// half-points.
+pub fn run_size(rpr: &Element) -> Option<Size> {
+    rpr.find(ns::W, "sz")?.attr(ns::W, "val")?.trim().parse().ok().filter(|&size| size > 0)
 }
 
 /// ST_OnOff: `1`/`true`/`on` (or no value) are true; `0`/`false`/`off` are

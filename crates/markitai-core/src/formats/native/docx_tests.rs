@@ -59,8 +59,9 @@ fn table(rows: &[String]) -> String {
 #[test]
 fn a_note_starts_at_its_text_and_code_paragraphs_keep_their_indentation() {
     // Word writes a space between a note's mark and its text; it is not part
-    // of the text. Paragraphs pasted from code keep their leading spaces (and
-    // a line that starts `#` is the code's own comment, not a heading).
+    // of the text. Paragraphs pasted from code keep their leading spaces, and
+    // a line that starts `#` is the code's own comment, not a heading, so its
+    // `#` is escaped.
     let footnotes = format!(
         r#"<w:footnotes {W}><w:footnote w:id="1"><w:p><w:r><w:footnoteRef/></w:r>
         <w:r><w:t xml:space="preserve"> Note text.</w:t></w:r></w:p></w:footnote></w:footnotes>"#
@@ -73,7 +74,7 @@ fn a_note_starts_at_its_text_and_code_paragraphs_keep_their_indentation() {
     );
     assert_eq!(
         markdown(&body, &[("word/footnotes.xml", footnotes)]),
-        "    indented = 1\n\n# a comment\n\nCited[^fn1]\n\n[^fn1]: Note text."
+        "    indented = 1\n\n\\# a comment\n\nCited[^fn1]\n\n[^fn1]: Note text."
     );
 }
 

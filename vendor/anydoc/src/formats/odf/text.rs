@@ -15,7 +15,8 @@ use crate::shared::blockstyle::StyledRun;
 use crate::shared::delta::{StyleDelta, rebase_emphasis};
 use crate::shared::math::mathml_to_tex;
 use crate::shared::text::{clean_text, collapse_ws};
-use std::cell::RefCell;
+use crate::shared::visual::{Looks, ParaSize, Size};
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 pub struct Ctx<'a, 'b> {
@@ -30,6 +31,14 @@ pub struct Ctx<'a, 'b> {
     list_ids: RefCell<HashMap<String, u64>>,
     /// Heading numbering state for `text:outline-style` (values, started).
     heading_counters: RefCell<([u64; LIST_LEVELS], [bool; LIST_LEVELS])>,
+    /// markitai: in a text document, what its body text looks like (see
+    /// [`crate::shared::visual`]); the sizes of the paragraph being read;
+    /// how many containers or lists deep the content being read sits; and
+    /// how many notes deep (a note's text is not the body's).
+    pub looks: Option<RefCell<Looks>>,
+    para_size: Cell<ParaSize>,
+    depth: Cell<u32>,
+    note_depth: Cell<u32>,
 }
 
 impl<'a, 'b> Ctx<'a, 'b> {
@@ -46,11 +55,44 @@ impl<'a, 'b> Ctx<'a, 'b> {
             list_counters: Default::default(),
             list_ids: Default::default(),
             heading_counters: Default::default(),
+            looks: None,
+            para_size: Default::default(),
+            depth: Default::default(),
+            note_depth: Default::default(),
+        }
+    }
+
+    /// markitai: visible text set at `size` was read.
+    fn saw_text(&self, size: Size, text: &str) {
+        if let Some(looks) = &self.looks
+            && self.note_depth.get() == 0
+        {
+            let mut para = self.para_size.get();
+            looks.borrow_mut().text(&mut para, size, text);
+            self.para_size.set(para);
         }
     }
 }
 
+/// markitai: content read one container, list or note deeper, for as long
+/// as it lives.
+struct Deeper<'c>(&'c Cell<u32>);
+
+impl<'c> Deeper<'c> {
+    fn enter(depth: &'c Cell<u32>) -> Self {
+        depth.set(depth.get() + 1);
+        Deeper(depth)
+    }
+}
+
+impl Drop for Deeper<'_> {
+    fn drop(&mut self) {
+        self.0.set(self.0.get() - 1);
+    }
+}
+
 pub fn parse_container(parent: &Element, ctx: &Ctx) -> Result<Vec<Block>, ConvertError> {
+    let _deeper = Deeper::enter(&ctx.depth);
     let mut blocks = Vec::new();
     let mut run = StyledRun::default();
     for child in parent.child_elems() {
@@ -78,7 +120,7 @@ fn parse_block_elem(
                     .attr(ns::TEXT, "outline-level")
                     .and_then(|v| v.parse::<u8>().ok())
                     .unwrap_or(1);
-                let (inlines, boxes) = parse_inline_content(elem, ctx)?;
+                let (inlines, boxes, _) = parse_inline_content(elem, ctx)?;
                 if !inlines_are_empty(&inlines) {
                     let mut content = inlines;
                     rebase_emphasis(&mut content, paragraph_base(elem, ctx)?.resolve());
@@ -94,7 +136,7 @@ fn parse_block_elem(
                 return Ok(());
             }
             "p" => {
-                let (inlines, boxes) = parse_inline_content(elem, ctx)?;
+                let (inlines, boxes, size) = parse_inline_content(elem, ctx)?;
                 let style =
                     elem.attr(ns::TEXT, "style-name").and_then(|n| ctx.styles.block_style(n));
                 match style {
@@ -102,6 +144,14 @@ fn parse_block_elem(
                     None => {
                         run.flush(blocks);
                         blocks.push(Block::Paragraph(inlines));
+                        // markitai: a plain paragraph of the body itself may
+                        // turn out to be a heading set by hand.
+                        if boxes.is_empty()
+                            && ctx.depth.get() == 1
+                            && let Some(looks) = &ctx.looks
+                        {
+                            looks.borrow_mut().paragraph(blocks.len() - 1, size);
+                        }
                     }
                 }
                 if !boxes.is_empty() {
@@ -115,7 +165,19 @@ fn parse_block_elem(
                 blocks.extend(parse_list(elem, ctx, 0, None, &[])?);
                 return Ok(());
             }
-            "section" | "index-body" | "index-title" => {
+            // markitai: a section's paragraphs are the body's own, read into
+            // the same blocks (as upstream's separate container read them,
+            // its open run closing at the section's end), so a heading set
+            // by hand inside one is found too.
+            "section" => {
+                let mut inner = StyledRun::default();
+                for child in elem.child_elems() {
+                    parse_block_elem(child, ctx, blocks, &mut inner)?;
+                }
+                inner.flush(blocks);
+                return Ok(());
+            }
+            "index-body" | "index-title" => {
                 blocks.extend(parse_container(elem, ctx)?);
                 return Ok(());
             }
@@ -147,6 +209,8 @@ fn parse_list(
     inherited_style: Option<&str>,
     ancestors: &[u64],
 ) -> Result<Vec<Block>, ConvertError> {
+    // markitai: a list's paragraphs are not the body's own (see `Ctx::depth`).
+    let _deeper = Deeper::enter(&ctx.depth);
     let style_name = elem.attr(ns::TEXT, "style-name").or(inherited_style);
     let level = ctx.styles.list_level(style_name.unwrap_or(""), depth);
     let ordered = level.marker.ordered();
@@ -298,6 +362,8 @@ fn heading_label(elem: &Element, level: u8, ctx: &Ctx) -> Option<String> {
 struct RunMarks {
     script: Option<Script>,
     hidden: bool,
+    /// markitai: the text size, in half-points.
+    size: Size,
 }
 
 impl RunMarks {
@@ -307,25 +373,35 @@ impl RunMarks {
         RunMarks {
             script: ctx.styles.script(family, name).unwrap_or(self.script),
             hidden: ctx.styles.hidden(family, name).unwrap_or(self.hidden),
+            size: ctx
+                .styles
+                .font_size(family, name)
+                .map_or(self.size, |size| size.within(self.size)),
         }
     }
 }
 
 /// Inline content of a paragraph plus block attachments (text boxes) that
 /// were anchored in it.
+///
+/// markitai: and the sizes of its visible text.
 fn parse_inline_content(
     elem: &Element,
     ctx: &Ctx,
-) -> Result<(Vec<Inline>, Vec<Block>), ConvertError> {
+) -> Result<(Vec<Inline>, Vec<Block>, ParaSize), ConvertError> {
     let base = paragraph_base(elem, ctx)?;
+    let unstyled = RunMarks { size: ctx.styles.base_size(), ..RunMarks::default() };
     let marks = match elem.attr(ns::TEXT, "style-name") {
-        Some(name) => RunMarks::default().under(ctx, "paragraph", name),
-        None => RunMarks::default(),
+        Some(name) => unstyled.under(ctx, "paragraph", name),
+        None => unstyled,
     };
     let mut out = Vec::new();
     let mut boxes = Vec::new();
+    // A text box read inside the paragraph gathers its own sizes.
+    let outer = ctx.para_size.take();
     walk_inlines(elem, ctx, base, marks, &mut out, &mut boxes)?;
-    Ok((out, boxes))
+    let size = ctx.para_size.replace(outer);
+    Ok((out, boxes, size))
 }
 
 /// The style a paragraph's runs cascade from. An unstyled paragraph still sits
@@ -354,6 +430,8 @@ fn walk_inlines(
                 // markitai: raised or lowered text ("x₁", "library¹").
                 let text = marks.script.and_then(|script| script.convert(&text)).unwrap_or(text);
                 if !text.is_empty() {
+                    // markitai: visible text and its size.
+                    ctx.saw_text(marks.size, &text);
                     out.push(Inline::Text { text, style });
                 }
             }
@@ -436,7 +514,11 @@ fn walk_inlines(
                                 _ => NoteKind::Footnote,
                             };
                             let note_blocks = match child.find(ns::TEXT, "note-body") {
-                                Some(b) => parse_container(b, ctx)?,
+                                Some(b) => {
+                                    // markitai: see `Ctx::note_depth`.
+                                    let _in_note = Deeper::enter(&ctx.note_depth);
+                                    parse_container(b, ctx)?
+                                }
                                 None => Vec::new(),
                             };
                             ctx.notes.borrow_mut().push(Note {

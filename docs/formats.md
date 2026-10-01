@@ -86,6 +86,29 @@ RTF, EPUB, legacy PowerPoint and spreadsheets) escapes `<` before a letter,
 `std::vector<int>` or a literal `&copy;` instead of reading them as HTML; PPTX
 text frames keep their plain-text contract.
 
+A DOCX, ODT, RTF or Word 97 document with no heading style or outline level
+anywhere often still shows its headings as short bold paragraphs set above the
+body size (TextEdit and `textutil` save a web page's headings that way). In
+such a document a plain top-level paragraph (not a list item, table cell, text
+box or quote/code container) becomes a heading when all its visible text has
+one size, at least one point above the body size in bold or a third above it
+without bold, with at most 15 words (two CJK characters count as one), a letter,
+no image, and no closing `.`, `,`, `;`, `:` or their full-width forms. The body
+size is the size of most of the body's visible characters (notes excluded).
+The largest such size is level 1, the next level 2, and so on to 6; the heading
+drops its bold and the line breaks around it. Bold text at the body size stays
+a paragraph, as does anything smaller: in the measurement such lines were
+table headers, labels and lead-ins at least as often as headings. On the 108
+R42 pages saved by `textutil`, against their HTML `h1`–`h6`, 281–282 of 361
+headings are found per format (none before) with no paragraph wrongly
+promoted and no other output change; the reference's RTF guess (bold, 4 points
+above the body, under 12 words) finds 188. On 110 other pages held out from
+choosing these rules, 275–282 of 305 are found (the reference's RTF guess
+finds 198); one promoted paragraph is not an HTML heading, a bold 13-point
+sidebar label over 12-point text in the DOCX, where `textutil` flattens the
+layout table. Headings set bold at the body size (an `h4`) or that a page's CSS
+sets at body size are not found.
+
 OOXML presentations have a separate reader because the generic document model
 flattens slide boundaries. The package's presentation relationships and
 `sldIdLst` determine slide order, including empty slides; filename sorting and

@@ -68,6 +68,8 @@ pub struct StyleDef {
     pub delta: StyleDelta,
     /// The block container the style's name designates.
     pub block: Option<BlockStyle>,
+    /// markitai: the text size the style sets (`\fs`), in half-points.
+    pub size: Option<crate::shared::visual::Size>,
 }
 
 #[derive(Debug, Default)]
@@ -214,6 +216,12 @@ fn parse_stylesheet(
                         def.delta.italic = Some(param != Some(0));
                     }
                 }
+                // markitai: the style's text size.
+                "fs" => {
+                    if let Some((_, def, _)) = current.as_mut() {
+                        def.size = Some(param.unwrap_or(24).clamp(1, 3276) as u32);
+                    }
+                }
                 _ => {}
             },
             _ => {}
@@ -240,6 +248,7 @@ fn parse_stylesheet(
             resolved.delta = resolved.delta.merge(def.delta);
             resolved.outline = def.outline.or(resolved.outline);
             resolved.block = def.block.or(resolved.block);
+            resolved.size = def.size.or(resolved.size);
         }
         styles.insert(id, resolved);
     }

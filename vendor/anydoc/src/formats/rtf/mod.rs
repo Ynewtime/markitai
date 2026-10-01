@@ -17,6 +17,7 @@ use crate::shared::fields::field_result;
 use crate::shared::list::{ListEntry, ListKey, MarkerKind, flush_list};
 use crate::shared::math::{math_lines, omath_para_to_tex};
 use crate::shared::text::clean_text;
+use crate::shared::visual::{Looks, ParaSize, Size};
 use lexer::{Lexer, Token};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -82,6 +83,8 @@ struct CharState {
     note: Option<NoteKind>,
     /// markitai: `\super` or `\sub` text, until `\nosupersub` or `\plain`.
     script: Option<Script>,
+    /// markitai: the text size (`\fs`), in half-points.
+    size: Size,
 }
 
 impl Default for CharState {
@@ -102,6 +105,7 @@ impl Default for CharState {
             capture: Capture::None,
             note: None,
             script: None,
+            size: 24,
         }
     }
 }
@@ -647,6 +651,10 @@ struct Parser<'a> {
     /// markitai: the depth whose `\nestrow` was the last table control, with
     /// no `\itap` or `\pard` since; see the `nestcell` arm.
     nested_row_closed: Option<usize>,
+    /// markitai: what the body's text looks like, and the sizes of the
+    /// paragraph being read (see [`crate::shared::visual`]).
+    looks: Looks,
+    para_size: ParaSize,
 }
 
 impl<'a> Parser<'a> {
@@ -671,6 +679,8 @@ impl<'a> Parser<'a> {
             dest: Destinations::default(),
             assets: crate::shared::assets::AssetSink::new(),
             nested_row_closed: None,
+            looks: Looks::default(),
+            para_size: ParaSize::default(),
         }
     }
 
@@ -806,6 +816,11 @@ impl<'a> Parser<'a> {
                 self.state.font = param;
             }
             "b" => self.set_style(|s| s.bold = on),
+            // markitai: the text size, for headings set by hand.
+            "fs" => {
+                self.flush_pending();
+                self.state.size = param.unwrap_or(24).clamp(1, 3276) as Size;
+            }
             "i" => self.set_style(|s| s.italic = on),
             "strike" | "striked" => self.set_style(|s| s.strike = on),
             "plain" => {
@@ -814,6 +829,7 @@ impl<'a> Parser<'a> {
                 self.state.style = Style::PLAIN;
                 self.state.font = font;
                 self.state.script = None;
+                self.state.size = 24;
             }
             // markitai: raised and lowered text in its Unicode forms where
             // every character has one ("x₁", "library¹"), as for Word's
@@ -837,6 +853,10 @@ impl<'a> Parser<'a> {
                     self.state.block = def.block;
                     self.state.style = def.delta.apply(self.state.style);
                     self.state.style_base = self.state.style;
+                    // markitai: the style's text size.
+                    if let Some(size) = def.size {
+                        self.state.size = size;
+                    }
                 }
             }
             "par" | "sect" => {
@@ -1210,6 +1230,10 @@ impl<'a> Parser<'a> {
                 if !self.state.suppress {
                     let text =
                         self.state.script.and_then(|script| script.convert(&text)).unwrap_or(text);
+                    // markitai: a note's text is not the body's.
+                    if self.state.note.is_none() {
+                        self.looks.text(&mut self.para_size, self.state.size, &text);
+                    }
                     self.inlines.push(Inline::Text { text, style: self.state.style });
                 }
             }
@@ -1228,6 +1252,8 @@ impl<'a> Parser<'a> {
     fn end_paragraph(&mut self) -> Result<(), ConvertError> {
         self.dest.split_open_links(&mut self.inlines);
         let inlines = std::mem::take(&mut self.inlines);
+        // markitai: the sizes this paragraph's text gathered.
+        let size = std::mem::take(&mut self.para_size);
         let listtext = self.dest.listtext.take();
         let math_display = std::mem::take(&mut self.dest.math_display);
 
@@ -1282,7 +1308,12 @@ impl<'a> Parser<'a> {
         self.flush_runs();
         match math_lines(&inlines).filter(|_| math_display) {
             Some(lines) => self.blocks.extend(lines.into_iter().map(Block::Math)),
-            None => self.blocks.push(Block::Paragraph(inlines)),
+            None => {
+                self.blocks.push(Block::Paragraph(inlines));
+                // markitai: a plain paragraph may turn out to be a heading
+                // set by hand.
+                self.looks.paragraph(self.blocks.len() - 1, size);
+            }
         }
         Ok(())
     }
@@ -1355,6 +1386,8 @@ impl<'a> Parser<'a> {
     fn end_cell(&mut self, depth: usize) -> Result<(), ConvertError> {
         self.dest.split_open_links(&mut self.inlines);
         let inlines = std::mem::take(&mut self.inlines);
+        // markitai: a cell's paragraph is never a heading set by hand.
+        self.para_size = ParaSize::default();
         let listtext = self.dest.listtext.take();
         let inlines =
             self.cell_list_entry(depth, inlines, listtext.as_deref())?.unwrap_or_default();
@@ -1406,8 +1439,11 @@ impl<'a> Parser<'a> {
         self.table.collapse_nested()?;
         self.flush_top_table()?;
         self.flush_runs();
+        // markitai: headings set by hand (see `crate::shared::visual`).
+        let mut blocks = self.blocks;
+        self.looks.apply(&mut blocks);
         Ok(Document {
-            blocks: self.blocks,
+            blocks,
             notes: self.dest.notes,
             assets: self.assets.assets,
             slide_starts: Vec::new(),
@@ -1634,5 +1670,38 @@ mod tests {
     fn raised_and_lowered_text_uses_unicode_forms_where_it_has_them() {
         let src = r"{\rtf1 library{\super 1} and x{\sub 1}, H\sub 2\nosupersub O, 1{\super st}, 10\super -3\plain\par}";
         assert_eq!(markdown(src), "library¹ and x₁, H₂O, 1st, 10⁻³\n");
+    }
+
+    // markitai: headings set by hand (see `crate::shared::visual`).
+    #[test]
+    fn bold_paragraphs_set_above_the_body_size_are_headings_ranked_by_size() {
+        let prose = r"\f0\b0\fs24 Body text long enough to outweigh every heading together, as the \
+            text of a document does: a few sentences set at one ordinary size.\par ";
+        let body = [
+            r"\pard\b\fs48 The Title\par ",
+            prose,
+            r"\pard\b\fs36 A Section\par ",
+            prose,
+            r"\pard\intbl\b\fs36 Cell\cell\row\pard ",
+            r"\b0\fs26 let x = 1\par ",
+            r"{\b\fs28 A Subsection}\par ",
+            r"\plain\b A plain reset\par ",
+            prose,
+        ]
+        .concat();
+        let markdown = markdown(&format!(r"{{\rtf1\ansi {body}}}"));
+        assert_eq!(
+            markdown.lines().filter(|line| line.starts_with('#')).collect::<Vec<_>>(),
+            ["# The Title", "## A Section", "### A Subsection"],
+            "{markdown}"
+        );
+        assert!(markdown.contains("Cell"), "{markdown}");
+        let outlined = format!(r"{{\rtf1\ansi {body}\pard\outlinelevel0 Real\par}}");
+        let markdown = crate::to_markdown_bytes(outlined.as_bytes(), crate::Format::Rtf).unwrap();
+        assert_eq!(
+            markdown.lines().filter(|line| line.starts_with('#')).collect::<Vec<_>>(),
+            ["# Real"],
+            "{markdown}"
+        );
     }
 }

@@ -36,11 +36,17 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
         .ok_or_else(|| ConvertError::malformed_part("content.xml", "no office:body"))?;
 
     let assets = RefCell::new(AssetSink::new());
-    let ctx = Ctx::new(&styles, &pkg, &assets);
+    let mut ctx = Ctx::new(&styles, &pkg, &assets);
 
     let mut slide_starts = Vec::new();
     let blocks = if let Some(text) = body.find(ns::OFFICE, "text") {
-        parse_container(text, &ctx)?
+        // markitai: a text document's headings may be set by hand.
+        ctx.looks = Some(RefCell::default());
+        let mut blocks = parse_container(text, &ctx)?;
+        if let Some(looks) = ctx.looks.take() {
+            looks.into_inner().apply(&mut blocks);
+        }
+        blocks
     } else if let Some(sheet) = body.find(ns::OFFICE, "spreadsheet") {
         table::parse_spreadsheet(sheet, &ctx)?
     } else if let Some(pres) = body.find(ns::OFFICE, "presentation") {
@@ -531,5 +537,67 @@ mod tests {
         let doc =
             parse(&package(&[("content.xml", &odt), ("Object 1/content.xml", other)])).unwrap();
         assert_eq!(crate::render::markdown::document_to_markdown(&doc), "See the chart.\n");
+    }
+
+    // markitai: headings set by hand (see `crate::shared::visual`).
+    #[test]
+    fn bold_paragraphs_set_above_the_body_size_are_headings_ranked_by_size() {
+        let prose = r#"<text:p text:style-name="Body">Body text long enough to outweigh every
+            heading together, as the text of a document does: a few sentences at one size.</text:p>"#;
+        let content = |extra: &str| {
+            format!(
+                r#"<office:document-content
+                xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+                xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"
+                xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+                xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0">
+                <office:automatic-styles>
+                  <style:style style:name="Big" style:family="paragraph">
+                    <style:text-properties fo:font-size="24.0pt"/></style:style>
+                  <style:style style:name="Body" style:family="paragraph">
+                    <style:text-properties fo:font-size="12pt"/></style:style>
+                  <style:style style:name="Mid" style:family="paragraph">
+                    <style:text-properties fo:font-size="18pt"/></style:style>
+                  <style:style style:name="Half" style:family="paragraph">
+                    <style:text-properties fo:font-size="150%"/></style:style>
+                  <style:style style:name="B" style:family="text">
+                    <style:text-properties fo:font-weight="bold"/></style:style>
+                  <style:style style:name="Tiny" style:family="text">
+                    <style:text-properties fo:font-size="9pt" fo:font-weight="bold"/></style:style>
+                </office:automatic-styles>
+                <office:body><office:text>
+                  <text:p text:style-name="Body">By the authors</text:p>
+                  <text:p text:style-name="Big"><text:span text:style-name="B">The Title</text:span></text:p>
+                  {prose}
+                  <text:section text:name="S"><text:p text:style-name="Mid"><text:span
+                    text:style-name="B">In a Section</text:span></text:p></text:section>
+                  {prose}
+                  <text:list><text:list-item><text:p text:style-name="Mid"><text:span
+                    text:style-name="B">Listed</text:span></text:p></text:list-item></text:list>
+                  <text:p text:style-name="Half"><text:span text:style-name="B">Relative</text:span></text:p>
+                  <text:p text:style-name="Mid"><text:span text:style-name="B">Mixed</text:span><text:span
+                    text:style-name="Tiny">sizes</text:span></text:p>
+                  {prose}{extra}
+                </office:text></office:body></office:document-content>"#
+            )
+        };
+        let shapes = |extra: &str| -> Vec<String> {
+            parse(&odt_with_content(&content(extra)))
+                .unwrap()
+                .blocks
+                .iter()
+                .map(|block| match block {
+                    Block::Heading { level, .. } => format!("h{level}"),
+                    Block::Paragraph(_) => "p".into(),
+                    Block::List(_) => "list".into(),
+                    other => format!("{other:?}"),
+                })
+                .collect()
+        };
+        // The short first line would take a list paragraph's place if one
+        // were taken for the body's.
+        assert_eq!(shapes(""), ["p", "h1", "p", "h2", "p", "list", "h2", "p", "p"]);
+        let styled = r#"<text:h text:outline-level="1">Real</text:h>"#;
+        assert_eq!(shapes(styled), ["p", "p", "p", "p", "p", "list", "p", "p", "p", "h1"]);
     }
 }

@@ -102,6 +102,33 @@ fn escape(text: &str) -> String {
     output
 }
 
+/// A paragraph's lines with the `#` that would make Markdown read a line as
+/// an ATX heading (`# text`, up to three spaces in) written as text, as a
+/// document's own line starting with `#` (a shell comment, a hashtag) is
+/// text in its source. A line indented four spaces or more is a code block
+/// already and stays as it is.
+fn literal_heading_marks(text: &str) -> String {
+    text.split('\n')
+        .map(|line| {
+            let indent = line.len() - line.trim_start_matches(' ').len();
+            let rest = &line[indent..];
+            let hashes = rest.bytes().take_while(|&b| b == b'#').count();
+            let heading = indent <= 3
+                && (1..=6).contains(&hashes)
+                && rest[hashes..]
+                    .chars()
+                    .next()
+                    .is_none_or(|c| c == ' ' || c == '\t');
+            if heading {
+                format!("{}\\{rest}", &line[..indent])
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn destination(value: &str) -> String {
     value
         .replace(' ', "%20")
@@ -535,7 +562,9 @@ impl Renderer<'_> {
                         heading
                     }
                 }
-                Block::Paragraph(values) => self.inlines(values).trim_end().to_owned(),
+                Block::Paragraph(values) => literal_heading_marks(&self.inlines(values))
+                    .trim_end()
+                    .to_owned(),
                 Block::CodeBlock { lang, text } => {
                     super::text::fence(text, lang.as_deref().unwrap_or(""))
                 }
@@ -847,6 +876,22 @@ mod odt_rtf_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_line_markdown_would_read_as_a_heading_keeps_its_hash_as_text() {
+        for (line, written) in [
+            ("# shell comment", "\\# shell comment"),
+            ("  ## two in", "  \\## two in"),
+            ("#", "\\#"),
+            ("a\n# b", "a\n\\# b"),
+            ("#hashtag", "#hashtag"),
+            ("####### seven", "####### seven"),
+            ("    # indented code", "    # indented code"),
+            ("C# and F#", "C# and F#"),
+        ] {
+            assert_eq!(literal_heading_marks(line), written, "{line:?}");
+        }
+    }
     use anydoc::model::{AssetId, Cell, Style, Table, TableKind};
     #[test]
     fn rtf_ends_with_a_newline_and_headings_drop_trailing_spaces_like_the_reference() {
@@ -1259,5 +1304,25 @@ mod tests {
             doc.markdown,
             "#include \\<iostream>\n\nstd::vector\\<int> v; a < b, a<3 & b\n\n\\&copy; \\&#169; AT\\&T; x&y\n"
         );
+    }
+
+    #[test]
+    fn a_title_set_by_hand_in_a_word_97_file_is_a_heading() {
+        // The exporter saves `<h1>` as a bold 24-point paragraph over 12-point
+        // text, with no heading style or outline level (anydoc's
+        // `shared::visual`); the other paragraphs stay as they were.
+        let doc = extract(include_bytes!("native/fixtures/textedit-word97.doc"), "doc").unwrap();
+        assert!(
+            doc.markdown
+                .starts_with("# Compound repair\n\nThis paragraph was written"),
+            "{}",
+            doc.markdown
+        );
+        assert!(
+            doc.markdown.contains("\n\n • Second listed point\n\n"),
+            "{}",
+            doc.markdown
+        );
+        assert_eq!(doc.markdown.matches('#').count(), 1, "{}", doc.markdown);
     }
 }

@@ -22,6 +22,7 @@ use crate::shared::fields::{FieldFrame, field_result};
 use crate::shared::grid::{CellProp, GridRow, build_edge_table};
 use crate::shared::list::MarkerKind;
 use crate::shared::list::{ListEntry, ListKey, flush_list};
+use crate::shared::visual::{Looks, ParaSize, Size};
 use lists::{LEVELS, ListDef, Lists};
 use sprm::{PapDelta, Tap, apply_chpx, apply_pap_sprms, chpx_istd};
 use std::collections::HashMap;
@@ -114,7 +115,11 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
         data,
         assets: std::cell::RefCell::new(AssetSink::new()),
     };
-    let blocks = assembler.build_blocks(0, main_end)?;
+    // markitai: the body's headings may be set by hand; notes are not
+    // looked at.
+    let mut looks = Looks::default();
+    let mut blocks = assembler.build_blocks(0, main_end, Some(&mut looks))?;
+    looks.apply(&mut blocks);
     let mut notes = Vec::new();
     for (lo, hi, id, kind) in note_ranges {
         let lo = lo.min(assembler.text.chars.len());
@@ -122,7 +127,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
         if lo >= hi {
             continue;
         }
-        notes.push(Note { id, kind, blocks: assembler.build_blocks(lo, hi)? });
+        notes.push(Note { id, kind, blocks: assembler.build_blocks(lo, hi, None)? });
     }
     let assets = std::mem::take(&mut assembler.assets.borrow_mut().assets);
     Ok(Document { blocks, notes, assets, slide_starts: Vec::new() })
@@ -403,6 +408,17 @@ struct RunProps {
     pap: PapDelta,
 }
 
+/// markitai: the last size [`Assembler::char_size`] resolved, and what it
+/// holds for: the extents of the CHPX and PAPX runs it came from, and the
+/// piece.
+#[derive(Clone, Copy)]
+struct SizeCache {
+    chpx: (u32, u32),
+    papx: (u32, u32),
+    piece: Option<u32>,
+    size: Size,
+}
+
 struct Run {
     fc_start: u32,
     fc_end: u32,
@@ -426,6 +442,12 @@ impl Runs {
         }
         let run = &self.runs[idx - 1];
         (fc < run.fc_end).then_some(&run.props)
+    }
+
+    /// markitai: the run holding `fc`, with its extent.
+    fn run_at(&self, fc: u32) -> Option<&Run> {
+        let idx = self.runs.partition_point(|r| r.fc_start <= fc);
+        self.runs.get(idx.checked_sub(1)?).filter(|run| fc < run.fc_end)
     }
 }
 
@@ -681,6 +703,12 @@ impl ParaBuilder {
         }
     }
 
+    /// markitai: whether text read now shows (a field's instructions do
+    /// not).
+    fn shows_text(&self) -> bool {
+        self.fields.last().is_none_or(|field| field.in_result)
+    }
+
     fn finish(mut self) -> Vec<Inline> {
         self.flush_text();
         while !self.fields.is_empty() {
@@ -691,7 +719,12 @@ impl ParaBuilder {
 }
 
 impl Assembler {
-    fn build_blocks(&self, lo: usize, hi: usize) -> Result<Vec<Block>, ConvertError> {
+    fn build_blocks(
+        &self,
+        lo: usize,
+        hi: usize,
+        mut looks: Option<&mut Looks>,
+    ) -> Result<Vec<Block>, ConvertError> {
         let mut blocks: Vec<Block> = Vec::new();
         let mut list_run: Vec<ListEntry> = Vec::new();
         let mut styled = StyledRun::default();
@@ -700,6 +733,9 @@ impl Assembler {
         let mut row: Vec<Vec<Block>> = Vec::new();
         let mut table_rows: Vec<DocRow> = Vec::new();
         let mut para = ParaBuilder::new();
+        // markitai: the sizes of the paragraph's visible text.
+        let mut para_size = ParaSize::default();
+        let mut size_cache = None;
 
         let mut i = lo;
         while i < hi.min(self.text.chars.len()) {
@@ -714,6 +750,7 @@ impl Assembler {
                 '\r' | '\u{7}' | '\u{c}' | '\u{e}' => {
                     let pap = self.effective_pap(fc, i);
                     let inlines = std::mem::replace(&mut para, ParaBuilder::new()).finish();
+                    let size = std::mem::take(&mut para_size);
                     let is_cell_mark = c == '\u{7}';
                     if pap.effective.in_table.unwrap_or(false) || is_cell_mark {
                         // A table is a hard boundary for top-level list and
@@ -767,7 +804,18 @@ impl Assembler {
                             &mut row,
                             &mut cell_blocks,
                         )?;
-                        self.emit_paragraph(&pap, inlines, &mut blocks, &mut list_run, &mut styled);
+                        // markitai: a plain paragraph may turn out to be a
+                        // heading set by hand.
+                        let plain = self.emit_paragraph(
+                            &pap,
+                            inlines,
+                            &mut blocks,
+                            &mut list_run,
+                            &mut styled,
+                        );
+                        if plain && let Some(looks) = looks.as_deref_mut() {
+                            looks.paragraph(blocks.len() - 1, size);
+                        }
                     }
                 }
                 '\u{b}' => para.push_inline(Inline::LineBreak),
@@ -780,6 +828,13 @@ impl Assembler {
                 }
                 '\u{1e}' => {
                     let style = self.char_style(fc, i);
+                    // markitai: visible text and its size.
+                    if para.shows_text()
+                        && let Some(looks) = looks.as_deref_mut()
+                    {
+                        let size = self.char_size(fc, i, &mut size_cache);
+                        looks.text(&mut para_size, size, "-");
+                    }
                     para.push_char('-', style);
                 }
                 // Inline picture special character: extract the payload
@@ -793,6 +848,14 @@ impl Assembler {
                 c if c.is_control() => {}
                 c => {
                     let style = self.char_style(fc, i);
+                    // markitai: visible text and its size.
+                    if !c.is_whitespace()
+                        && para.shows_text()
+                        && let Some(looks) = looks.as_deref_mut()
+                    {
+                        let size = self.char_size(fc, i, &mut size_cache);
+                        looks.text(&mut para_size, size, c.encode_utf8(&mut [0; 4]));
+                    }
                     para.push_char(c, style);
                 }
             }
@@ -827,6 +890,49 @@ impl Assembler {
         style
     }
 
+    /// markitai: the effective text size, in the same order: the character
+    /// style's, else the paragraph style's, then the CHPX's, then the piece
+    /// Prm's; 10 points where nothing sets one. `cache` keeps the last
+    /// answer, which holds while the character stays in the same CHPX and
+    /// PAPX runs and piece.
+    fn char_size(&self, fc: u32, char_index: usize, cache: &mut Option<SizeCache>) -> Size {
+        let piece = self.text.piece_of.get(char_index).copied();
+        if let Some(hit) = *cache
+            && hit.piece == piece
+            && (hit.chpx.0..hit.chpx.1).contains(&fc)
+            && (hit.papx.0..hit.papx.1).contains(&fc)
+        {
+            return hit.size;
+        }
+        let chpx_run = self.chpx.run_at(fc);
+        let papx_run = self.papx.run_at(fc);
+        let para_istd = papx_run.map(|run| run.props.istd).unwrap_or(0);
+        let chpx = chpx_run.map(|run| run.props.chpx.as_slice()).unwrap_or(&[]);
+        let mut size = chpx_istd(chpx)
+            .and_then(|istd| self.stylesheet.get(istd).size)
+            .or(self.stylesheet.get(para_istd).size)
+            .unwrap_or(20);
+        if let Some(direct) = sprm::chpx_size(chpx) {
+            size = direct;
+        }
+        if let Some(piece_idx) = piece
+            && let Some(piece_prc) = self.piece_prm(piece_idx as usize)
+            && let Some(direct) = sprm::chpx_size(piece_prc)
+        {
+            size = direct;
+        }
+        *cache = match (chpx_run, papx_run) {
+            (Some(chpx), Some(papx)) => Some(SizeCache {
+                chpx: (chpx.fc_start, chpx.fc_end),
+                papx: (papx.fc_start, papx.fc_end),
+                piece,
+                size,
+            }),
+            _ => None,
+        };
+        size
+    }
+
     fn piece_prm(&self, piece_idx: usize) -> Option<&[u8]> {
         let prc_idx = (*self.piece_prcs.get(piece_idx)?)?;
         self.prcs.get(prc_idx).map(Vec::as_slice)
@@ -851,6 +957,7 @@ impl Assembler {
         EffectivePap { istd, effective }
     }
 
+    /// markitai: true when the paragraph is a plain one, the last of `blocks`.
     fn emit_paragraph(
         &self,
         pap: &EffectivePap,
@@ -858,19 +965,19 @@ impl Assembler {
         blocks: &mut Vec<Block>,
         list_run: &mut Vec<ListEntry>,
         styled: &mut StyledRun,
-    ) {
+    ) -> bool {
         let style = self.stylesheet.get(pap.istd);
         // A styled container absorbs its blank paragraphs: they are the
         // blank lines of a code block.
         if let Some(block) = style.block {
             flush_list(blocks, list_run);
             styled.push(block, inlines, blocks);
-            return;
+            return false;
         }
         if inlines_are_empty(&inlines) {
             styled.flush(blocks);
             flush_list(blocks, list_run);
-            return;
+            return false;
         }
         let heading = style.heading.or(pap.effective.outline.flatten());
         if let Some(level) = heading {
@@ -884,7 +991,7 @@ impl Assembler {
                 content.insert(0, Inline::Text { text: label, style: Style::PLAIN });
             }
             blocks.push(Block::Heading { level, anchor: None, content });
-            return;
+            return false;
         }
         // ilfo 0xF801 marks a paragraph whose list numbering is suppressed.
         let ilfo = pap.effective.ilfo.unwrap_or(0);
@@ -913,13 +1020,14 @@ impl Assembler {
                     label,
                     blocks: vec![Block::Paragraph(inlines)],
                 });
-                return;
+                return false;
             }
             // Marker "none": numbering suppressed, plain paragraph.
         }
         styled.flush(blocks);
         flush_list(blocks, list_run);
         blocks.push(Block::Paragraph(inlines));
+        true
     }
 
     /// Emit one paragraph into the current table cell. Styled runs are

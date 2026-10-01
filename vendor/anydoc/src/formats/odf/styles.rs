@@ -11,6 +11,7 @@ use crate::package::xml::{Element, ns};
 use crate::shared::blockstyle::{self, BlockStyle};
 use crate::shared::delta::StyleDelta;
 use crate::shared::list::MarkerKind;
+use crate::shared::visual::Size;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
@@ -77,6 +78,50 @@ pub struct OdfStyles<'a> {
     /// `style:default-style` per family: the base beneath every named chain
     /// (and the delta for unstyled content of that family).
     defaults: HashMap<String, StyleDelta>,
+    /// markitai: the text size of the paragraph family's default style, and
+    /// each style's size by family and name, as [`Self::font_size`] finds it.
+    default_size: Option<Size>,
+    size_memo: RefCell<HashMap<String, HashMap<String, Option<FontSize>>>>,
+}
+
+/// markitai: a text size (`fo:font-size`), in half-points or as a
+/// percentage of the size it is set inside.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FontSize {
+    Absolute(Size),
+    Percent(f64),
+}
+
+impl FontSize {
+    /// The size this makes of text set inside `outer`.
+    pub fn within(self, outer: Size) -> Size {
+        match self {
+            FontSize::Absolute(size) => size,
+            FontSize::Percent(percent) => (f64::from(outer) * percent / 100.0).round() as Size,
+        }
+    }
+
+    fn parse(value: &str) -> Option<FontSize> {
+        let value = value.trim();
+        if let Some(percent) = value.strip_suffix('%') {
+            let percent: f64 = percent.trim().parse().ok()?;
+            return (percent > 0.0).then_some(FontSize::Percent(percent));
+        }
+        let split = value.find(|c: char| c.is_ascii_alphabetic())?;
+        let number: f64 = value[..split].trim().parse().ok()?;
+        let points = number
+            * match &value[split..] {
+                "pt" => 1.0,
+                "pc" => 12.0,
+                "in" => 72.0,
+                "cm" => 72.0 / 2.54,
+                "mm" => 7.2 / 2.54,
+                "px" => 0.75,
+                _ => return None,
+            };
+        let half_points = (points * 2.0).round();
+        (1.0..10_000.0).contains(&half_points).then_some(FontSize::Absolute(half_points as Size))
+    }
 }
 
 fn key(family: &str, name: &str) -> String {
@@ -98,6 +143,15 @@ impl<'a> OdfStyles<'a> {
                         && let Some(family) = style.attr(ns::STYLE, "family")
                     {
                         self.defaults.insert(family.to_string(), text_properties_delta(style));
+                        // markitai: the size of text no style sizes.
+                        if family == "paragraph"
+                            && let Some(FontSize::Absolute(size)) = style
+                                .find(ns::STYLE, "text-properties")
+                                .and_then(|props| props.attr(ns::FO, "font-size"))
+                                .and_then(FontSize::parse)
+                        {
+                            self.default_size = Some(size);
+                        }
                     }
                     if style.is(ns::STYLE, "style")
                         && let Some(name) = style.attr(ns::STYLE, "name")
@@ -196,6 +250,28 @@ impl<'a> OdfStyles<'a> {
                 }
             })
         })
+    }
+
+    /// markitai: the size a style sets its text in (`fo:font-size`); see
+    /// [`crate::shared::visual`].
+    pub fn font_size(&self, family: &str, name: &str) -> Option<FontSize> {
+        if let Some(hit) = self.size_memo.borrow().get(family).and_then(|names| names.get(name)) {
+            return *hit;
+        }
+        let size =
+            self.nearest(family, name, |props| FontSize::parse(props.attr(ns::FO, "font-size")?));
+        self.size_memo
+            .borrow_mut()
+            .entry(family.to_string())
+            .or_default()
+            .insert(name.to_string(), size);
+        size
+    }
+
+    /// markitai: the size of text no style sizes: the paragraph default
+    /// style's, else the 12 points the office suites use.
+    pub fn base_size(&self) -> Size {
+        self.default_size.unwrap_or(24)
     }
 
     /// markitai: whether a style hides its text (`text:display="none"`, the

@@ -62,6 +62,8 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
 
     let counters = RefCell::new(Counters::default());
     let assets = RefCell::new(AssetSink::new());
+    // markitai: how the body's text looks, for headings set by hand.
+    let looks = RefCell::new(crate::shared::visual::Looks::default());
 
     let footnotes_part =
         typed_part_path(&doc_rels, &main_part, rel_type::FOOTNOTES, "footnotes.xml");
@@ -77,8 +79,12 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
         assets: &assets,
         code_fonts: code::sets_code_apart(body, &styles)?,
         cell_depth: Default::default(),
+        looks: Some(&looks),
+        block_depth: Default::default(),
     };
-    let blocks = content::parse_blocks(body, &ctx)?;
+    let mut blocks = content::parse_blocks(body, &ctx)?;
+    // markitai: headings set by hand (see `crate::shared::visual`).
+    looks.take().apply(&mut blocks);
 
     let mut notes = Vec::new();
     for (part, root_name, elem_name, prefix, kind) in [
@@ -564,5 +570,98 @@ mod tests {
             "{:?}",
             doc.blocks
         );
+    }
+
+    /// markitai: what each top-level block is: `h<level>`, `p`, `list` or
+    /// `table`.
+    fn shapes(blocks: &[Block]) -> Vec<String> {
+        blocks
+            .iter()
+            .map(|block| match block {
+                Block::Heading { level, .. } => format!("h{level}"),
+                Block::Paragraph(_) => "p".into(),
+                Block::List(_) => "list".into(),
+                Block::Table(_) => "table".into(),
+                other => format!("{other:?}"),
+            })
+            .collect()
+    }
+
+    /// markitai: a paragraph of one run, bold or not, at a size in
+    /// half-points (none written for `0`).
+    fn sized(text: &str, bold: bool, size: u32) -> String {
+        let bold = if bold { "<w:b/>" } else { "" };
+        let size = if size > 0 { format!(r#"<w:sz w:val="{size}"/>"#) } else { String::new() };
+        format!(r#"<w:p><w:r><w:rPr>{bold}{size}</w:rPr><w:t>{text}</w:t></w:r></w:p>"#)
+    }
+
+    const PROSE: &str = "Body text long enough to outweigh every heading together, \
+        as the text of a document does: a few sentences set at one ordinary size.";
+
+    // markitai: headings set by hand (see `crate::shared::visual`).
+    #[test]
+    fn bold_paragraphs_set_above_the_body_size_are_headings_ranked_by_size() {
+        let numbered = r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>
+            <w:r><w:rPr><w:b/><w:sz w:val="36"/></w:rPr><w:t>Listed</w:t></w:r></w:p>"#;
+        let table = format!("<w:tbl><w:tr><w:tc>{}</w:tc></w:tr></w:tbl>", sized("Cell", true, 36));
+        // A short line first: a cell's or a list's paragraph taken for one
+        // of the body's would land on it.
+        let body = [
+            sized("By the authors", false, 24),
+            sized("The Title", true, 48),
+            sized(PROSE, false, 24),
+            sized("A Section", true, 36),
+            sized(PROSE, false, 24),
+            numbered.to_string(),
+            table,
+            sized("let x = 1", false, 26),
+            sized("A Subsection", true, 28),
+            sized(PROSE, false, 24),
+            sized("Bold at the body size", true, 24),
+        ]
+        .concat();
+        let document = format!(r#"<w:document {W}><w:body>{body}</w:body></w:document>"#);
+        let doc = parse(&docx_parts(&[
+            ("word/document.xml", &document),
+            ("word/numbering.xml", &numbering_with_start("1")),
+        ]))
+        .unwrap();
+        assert_eq!(
+            shapes(&doc.blocks),
+            ["p", "h1", "p", "h2", "p", "list", "table", "p", "h3", "p", "p"],
+            "{:?}",
+            doc.blocks
+        );
+        let Block::Heading { content, .. } = &doc.blocks[1] else { unreachable!() };
+        assert!(
+            matches!(&content[..], [Inline::Text { text, style }] if text == "The Title" && !style.bold),
+            "{content:?}"
+        );
+    }
+
+    // markitai: sizes come from styles and docDefaults as well as runs.
+    #[test]
+    fn style_sizes_count_and_a_styled_heading_turns_the_guess_off() {
+        let styles = format!(
+            r#"<w:styles {W}>
+            <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults>
+            <w:style w:type="paragraph" w:styleId="Big"><w:name w:val="Big Bold"/>
+                <w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style>
+            <w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/></w:style>
+            </w:styles>"#
+        );
+        let big =
+            r#"<w:p><w:pPr><w:pStyle w:val="Big"/></w:pPr><w:r><w:t>Styled Big</w:t></w:r></w:p>"#;
+        let body = [big.to_string(), sized(PROSE, false, 0), sized(PROSE, false, 0)].concat();
+        let read = |body: &str| {
+            let document = format!(r#"<w:document {W}><w:body>{body}</w:body></w:document>"#);
+            parse(&docx_parts(&[("word/document.xml", &document), ("word/styles.xml", &styles)]))
+                .unwrap()
+                .blocks
+        };
+        assert_eq!(shapes(&read(&body)), ["h1", "p", "p"]);
+        let heading =
+            r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Real</w:t></w:r></w:p>"#;
+        assert_eq!(shapes(&read(&format!("{body}{heading}"))), ["p", "p", "p", "h1"]);
     }
 }

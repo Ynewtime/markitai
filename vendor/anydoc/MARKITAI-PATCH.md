@@ -116,6 +116,34 @@ upstream files:
     place of the replacement picture, in text documents and on slides;
   - a slide table with `table:use-first-row-styles="true"` (Impress's
     header row) takes its first row as the header.
+- `src/shared/visual.rs` (added, declared in `src/shared/mod.rs`) and the
+  readers that feed it: `src/formats/docx/content.rs`, `styles.rs`, `mod.rs`;
+  `src/formats/odf/text.rs`, `styles.rs`, `mod.rs`; `src/formats/rtf/mod.rs`,
+  `tables.rs`; `src/formats/doc/mod.rs`, `sprm.rs`, `stsh.rs`. A document with
+  no heading style or outline level anywhere may still show its headings as
+  short bold paragraphs set above the body size (TextEdit and `textutil` save
+  a web page that way); those become headings, ranked by size:
+  - each reader now resolves text size, which upstream never read: Word's
+    `w:sz` (run, character style, paragraph or default style, `docDefaults`,
+    else 10 points), ODF `fo:font-size` (absolute units or a percentage,
+    through `parent-style-name`, over the paragraph default style or 12
+    points), RTF `\fs` (a style's too; `\plain` resets to 12 points) and
+    Word 97 `sprmCHps` (style chain, CHPX, piece `Prm`, else 10 points);
+  - while reading, a reader reports the size of every piece of visible body
+    text (not notes, field instructions or hidden text) and which top-level
+    paragraphs are plain: not a heading, list item, table cell, text box or
+    styled container; the Word 97 reader's `emit_paragraph` now says whether
+    it wrote one;
+  - an ODF `text:section` is read into the body's own blocks (upstream read
+    it as a separate container and appended the result, which gives the same
+    blocks) so its paragraphs count as the body's;
+  - `Looks::apply` (rules and their evidence in the module) leaves the
+    document alone if any heading exists, and otherwise turns into a heading,
+    without its bold or the line breaks around it, each such paragraph whose
+    text is all one size at least a point above the body size and bold (or a
+    third above without bold), at most 15 words, with a letter, no image, and
+    no prose ending; the largest such size is level 1, the next level 2, up
+    to 6.
 - `src/lib.rs`, `src/formats/mod.rs`, `src/formats/sheet/mod.rs`: a public
   `format_number(code, value, date1904)` renders a number through the sheet
   readers' number-format engine, so a PPTX chart's cached values read as the
@@ -130,4 +158,4 @@ package; it reproduces upstream's formatting, so `cargo fmt` in this directory
 changes nothing upstream wrote.
 
 Tests covering these changes were added beside the upstream ones; the upstream
-suite passes in an isolated copy (335 tests).
+suite passes in an isolated copy (347 tests).

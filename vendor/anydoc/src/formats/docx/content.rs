@@ -4,7 +4,7 @@ use crate::error::ConvertError;
 use crate::formats::docx::code::{is_monospace, without_line_gutter};
 use crate::formats::docx::numbering::{Counters, Numbering};
 use crate::formats::docx::scripts::Script;
-use crate::formats::docx::styles::{Styles, on_off, rpr_delta, run_font};
+use crate::formats::docx::styles::{Styles, on_off, rpr_delta, run_font, run_size};
 use crate::model::{
     Block, Cell, GridBuilder, ImageSource, Inline, LinkTarget, Style, TableKind, inlines_are_empty,
 };
@@ -17,6 +17,7 @@ use crate::shared::fields::{FieldFrame, field_result};
 use crate::shared::list::{ListEntry, ListKey, flush_list};
 use crate::shared::math::{omath_para_to_tex, omath_to_tex};
 use crate::shared::text::clean_text;
+use crate::shared::visual::{Looks, ParaSize, Size};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -50,9 +51,16 @@ pub(super) struct Ctx<'a, 'b> {
     /// how many table cells deep the content being read sits.
     pub code_fonts: bool,
     pub cell_depth: std::cell::Cell<u32>,
+    /// markitai: what the body's text looks like (see
+    /// [`crate::shared::visual`]), and how many block containers deep (the
+    /// body, a text box, a cell) the content being read sits. Notes are not
+    /// looked at.
+    pub looks: Option<&'b RefCell<Looks>>,
+    pub block_depth: std::cell::Cell<u32>,
 }
 
-/// markitai: content read inside a table cell, for as long as it lives.
+/// markitai: content read one level deeper (inside a table cell, or a block
+/// container: the body, a text box, a cell), for as long as it lives.
 struct InCell<'c>(&'c std::cell::Cell<u32>);
 
 impl<'c> InCell<'c> {
@@ -82,6 +90,8 @@ impl<'a, 'b> Ctx<'a, 'b> {
             assets: self.assets,
             code_fonts: self.code_fonts,
             cell_depth: Default::default(),
+            looks: None,
+            block_depth: Default::default(),
         }
     }
 
@@ -152,6 +162,8 @@ pub(super) enum Piece {
 }
 
 pub(super) fn parse_blocks(parent: &Element, ctx: &Ctx) -> Result<Vec<Block>, ConvertError> {
+    // markitai: see `Ctx::block_depth`.
+    let _nested = InCell::enter(&ctx.block_depth);
     let mut blocks: Vec<Block> = Vec::new();
     let mut runs = Runs::default();
     collect_blocks(parent, ctx, &mut blocks, &mut runs)?;
@@ -190,8 +202,17 @@ fn collect_blocks(
         }
         match child.local.as_str() {
             "p" => {
-                let (kind, pieces) = parse_paragraph(child, ctx)?;
+                let (kind, pieces, size) = parse_paragraph(child, ctx)?;
+                // markitai: a plain paragraph of the body itself may turn
+                // out to be a heading set by hand.
+                let plain = matches!(kind, ParaKind::Plain)
+                    && matches!(&pieces[..], [Piece::Inlines(_)])
+                    && ctx.block_depth.get() == 1
+                    && ctx.cell_depth.get() == 0;
                 emit_paragraph(kind, pieces, blocks, runs);
+                if plain && let Some(looks) = ctx.looks {
+                    looks.borrow_mut().paragraph(blocks.len() - 1, size);
+                }
             }
             "tbl" => {
                 runs.flush(blocks);
@@ -266,7 +287,10 @@ fn emit_paragraph(kind: ParaKind, pieces: Vec<Piece>, blocks: &mut Vec<Block>, r
     }
 }
 
-fn parse_paragraph(p: &Element, ctx: &Ctx) -> Result<(ParaKind, Vec<Piece>), ConvertError> {
+fn parse_paragraph(
+    p: &Element,
+    ctx: &Ctx,
+) -> Result<(ParaKind, Vec<Piece>, ParaSize), ConvertError> {
     let ppr = p.find(ns::W, "pPr");
     let pstyle_id = ppr.and_then(|pr| pr.find(ns::W, "pStyle")).and_then(|e| e.attr(ns::W, "val"));
 
@@ -331,6 +355,14 @@ fn parse_paragraph(p: &Element, ctx: &Ctx) -> Result<(ParaKind, Vec<Piece>), Con
         None => None,
     }
     .or(ctx.styles.default_font);
+    // markitai: the size the paragraph's style, or the default one, sets
+    // its runs in (Word shows 10 points where nothing names one).
+    walker.size = match pstyle_id.or(ctx.styles.default_paragraph) {
+        Some(id) => ctx.styles.style_size(id)?,
+        None => None,
+    }
+    .or(ctx.styles.default_size)
+    .unwrap_or(20);
     walker.walk(p)?;
     // markitai: a paragraph whose text is all monospaced is a line of code,
     // except in a table cell, where no code block can go. Without text the
@@ -344,6 +376,7 @@ fn parse_paragraph(p: &Element, ctx: &Ctx) -> Result<(ParaKind, Vec<Piece>), Con
                 .or(walker.font)
                 .is_some_and(is_monospace)
     });
+    let size = walker.para_size;
     let mut pieces = walker.finish();
     let kind = match kind {
         ParaKind::Plain if mono && ctx.cell_depth.get() == 0 => ParaKind::Styled(BlockStyle::Code),
@@ -357,7 +390,7 @@ fn parse_paragraph(p: &Element, ctx: &Ctx) -> Result<(ParaKind, Vec<Piece>), Con
         }
         kind => kind,
     };
-    Ok((kind, pieces))
+    Ok((kind, pieces, size))
 }
 
 /// markitai: inline content with no code styling.
@@ -484,6 +517,10 @@ struct InlineWalker<'a, 'b, 'e> {
     /// the runs read so far.
     font: Option<&'b str>,
     fonts: RunFonts,
+    /// markitai: the size the paragraph style sets runs in, and the sizes
+    /// of the visible text read so far.
+    size: Size,
+    para_size: ParaSize,
     pieces: Vec<Piece>,
     current: Vec<Inline>,
     fields: Vec<FieldFrame>,
@@ -497,6 +534,8 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
             hidden: false,
             font: None,
             fonts: RunFonts::default(),
+            size: 20,
+            para_size: ParaSize::default(),
             pieces: Vec::new(),
             current: Vec::new(),
             fields: Vec::new(),
@@ -509,6 +548,7 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
         let mut inner = InlineWalker::new(self.ctx, self.base);
         inner.hidden = self.hidden;
         inner.font = self.font;
+        inner.size = self.size;
         inner
     }
 
@@ -562,6 +602,7 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
                     let mut inner = self.nested();
                     inner.walk(child)?;
                     self.fonts.add(inner.fonts);
+                    self.para_size.merge(inner.para_size);
                     let (content, attachments) = split_pieces(inner.finish());
                     if let Some(target) = target {
                         // An empty label still keeps a resolved target: the
@@ -579,6 +620,7 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
                     let mut inner = self.nested();
                     inner.walk(child)?;
                     self.fonts.add(inner.fonts);
+                    self.para_size.merge(inner.para_size);
                     let (content, attachments) = split_pieces(inner.finish());
                     self.push_field_result(&instr, content);
                     self.push_blocks(attachments);
@@ -670,7 +712,30 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
             self.fonts.count(run, mono);
             style.code |= mono;
         }
-        self.walk_run_content(run, style, hidden, script)
+        // markitai: the run's size: its own, else its character style's,
+        // else the paragraph's.
+        let size = match run.find(ns::W, "rPr") {
+            Some(rpr) => match run_size(rpr) {
+                Some(size) => Some(size),
+                None => match rpr.find(ns::W, "rStyle").and_then(|e| e.attr(ns::W, "val")) {
+                    Some(id) => self.ctx.styles.style_size(id)?,
+                    None => None,
+                },
+            },
+            None => None,
+        }
+        .unwrap_or(self.size);
+        self.walk_run_content(run, style, hidden, script, size)
+    }
+
+    /// markitai: text set at `size` was read; a field's instructions are not
+    /// visible.
+    fn saw_text(&mut self, size: Size, text: &str) {
+        if let Some(looks) = self.ctx.looks
+            && self.fields.last().is_none_or(|field| field.in_result)
+        {
+            looks.borrow_mut().text(&mut self.para_size, size, text);
+        }
     }
 
     fn walk_run_content(
@@ -679,11 +744,12 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
         style: Style,
         hidden: bool,
         script: Option<Script>,
+        size: Size,
     ) -> Result<(), ConvertError> {
         for child in run.child_elems() {
             if child.is(ns::MC, "AlternateContent") {
                 if let Some(branch) = self.ctx.alternate_branch(child) {
-                    self.walk_run_content(branch, style, hidden, script)?;
+                    self.walk_run_content(branch, style, hidden, script, size)?;
                 }
                 continue;
             }
@@ -706,6 +772,7 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
                     // where it has them ("10⁻³", "H₂O").
                     let text = script.and_then(|script| script.convert(&text)).unwrap_or(text);
                     if !text.is_empty() {
+                        self.saw_text(size, &text);
                         self.push(Inline::Text { text, style });
                     }
                 }
@@ -719,7 +786,10 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
                 // markitai: a non-breaking hyphen is a hyphen; dropping it ran
                 // "e-mail" together. A soft hyphen shows nothing unless a line
                 // breaks there, so it stays out of the text.
-                "noBreakHyphen" => self.push(Inline::Text { text: "-".into(), style }),
+                "noBreakHyphen" => {
+                    self.saw_text(size, "-");
+                    self.push(Inline::Text { text: "-".into(), style });
+                }
                 // markitai: the base text of a phonetic guide is the text; the
                 // guide (`w:rt`, furigana or pinyin) only annotates it. Leaving
                 // the whole element unread lost the words themselves.
@@ -734,7 +804,9 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
                         (child.attr(ns::W, "font"), child.attr(ns::W, "char"))
                         && let Some(symbol) = super::symbols::symbol_char(font, code)
                     {
-                        self.push(Inline::Text { text: symbol.to_string(), style });
+                        let text = symbol.to_string();
+                        self.saw_text(size, &text);
+                        self.push(Inline::Text { text, style });
                     }
                 }
                 "footnoteReference" => {

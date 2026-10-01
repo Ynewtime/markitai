@@ -69,6 +69,20 @@ pub fn chpx_pic_location(grpprl: &[u8]) -> Option<u32> {
     location
 }
 
+/// markitai: the text size a CHPX grpprl sets (`sprmCHps`), in
+/// half-points; see [`crate::shared::visual`].
+pub fn chpx_size(grpprl: &[u8]) -> Option<crate::shared::visual::Size> {
+    let mut size = None;
+    walk_sprms(grpprl, |sprm, operand| {
+        if sprm == 0x4A43
+            && let Some(hps) = get_u16(operand, 0).filter(|&hps| hps > 0)
+        {
+            size = Some(u32::from(hps));
+        }
+    });
+    size
+}
+
 /// Apply a CHPX grpprl over `current`, resolving toggle operands against the
 /// style chain's value (`style_base`), per the published algorithm.
 pub fn apply_chpx(grpprl: &[u8], current: Style, style_base: Style) -> Style {

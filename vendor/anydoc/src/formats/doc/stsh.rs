@@ -2,7 +2,7 @@
 //! `istdBase` inheritance chains and UPX formatting payloads, resolved into
 //! effective per-style character formatting and paragraph properties.
 
-use crate::formats::doc::sprm::{PapDelta, apply_pap_sprms, apply_style_chpx};
+use crate::formats::doc::sprm::{PapDelta, apply_pap_sprms, apply_style_chpx, chpx_size};
 use crate::model::Style;
 use crate::shared::binary::{get_u16, get_u32, utf16le_units};
 use crate::shared::blockstyle::{self, BlockStyle};
@@ -20,6 +20,8 @@ pub struct ResolvedStyle {
     pub heading: Option<u8>,
     /// The block container the style's name designates.
     pub block: Option<BlockStyle>,
+    /// markitai: the text size of the chain (`sprmCHps`), in half-points.
+    pub size: Option<crate::shared::visual::Size>,
 }
 
 #[derive(Debug, Default)]
@@ -188,6 +190,8 @@ fn resolve(
             base.pap = base.pap.merge(delta);
         }
         base.chp = apply_style_chpx(&std.upx_chpx, base.chp);
+        // markitai: the text size, for headings set by hand.
+        base.size = chpx_size(&std.upx_chpx).or(base.size);
         if let sti @ 1..=9 = std.sti {
             base.heading = Some(sti as u8);
         }
@@ -233,5 +237,26 @@ mod tests {
         stds.insert(2u16, style(0x0FFE, 1));
         let mut memo = HashMap::new();
         assert_eq!(resolve(0, &stds, &mut memo).heading, Some(2));
+    }
+
+    // markitai: a style's text size (`sprmCHps`) is inherited along its
+    // chain and overridden by a nearer one.
+    #[test]
+    fn text_sizes_inherit_along_the_style_chain() {
+        let sized = |sti: u16, base: u16, hps: Option<u8>| Std {
+            // sprmCFBold on, then sprmCHps when given.
+            upx_chpx: [vec![0x35, 0x08, 0x01], hps.map_or(Vec::new(), |h| vec![0x43, 0x4A, h, 0])]
+                .concat(),
+            ..style(sti, base)
+        };
+        let mut stds = HashMap::new();
+        stds.insert(0u16, sized(0, ISTD_NIL, Some(24)));
+        stds.insert(1u16, sized(0x0FFE, 0, None));
+        stds.insert(2u16, sized(0x0FFE, 1, Some(36)));
+        let mut memo = HashMap::new();
+        assert_eq!(resolve(1, &stds, &mut memo).size, Some(24));
+        assert_eq!(resolve(2, &stds, &mut memo).size, Some(36));
+        assert!(resolve(2, &stds, &mut memo).chp.bold);
+        assert_eq!(crate::formats::doc::sprm::chpx_size(&[0x43, 0x4A, 0, 0]), None);
     }
 }
