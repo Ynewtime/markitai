@@ -80,8 +80,9 @@ pub(crate) fn recognize_rgb(image: image::RgbImage, cfg: &Value) -> Result<OcrRe
     }
 }
 
-/// Recognize prepared pixels. Small Chinese text is read a second time from
-/// an enlarged copy, and that reading replaces the first.
+/// Recognize prepared pixels. Small Chinese or Japanese text, and Chinese,
+/// Japanese or Korean text that the first reading missed, are read a second
+/// time from an enlarged copy, and that reading replaces the first.
 #[cfg(target_os = "macos")]
 fn read(image: pixels::Prepared, language: &str) -> Result<OcrResult> {
     let space = (image.width, image.height);
@@ -490,8 +491,14 @@ pub(crate) mod tests {
     /// font, black on white, `size` pixels per em.
     #[cfg(target_os = "macos")]
     fn chinese_lines(lines: &[&str], size: u32) -> image::RgbImage {
+        system_font_lines("Hiragino Sans GB", lines, size)
+    }
+
+    /// Lines drawn by the in-process SVG renderer in the macOS system font
+    /// `family`, black on white, `size` pixels per em.
+    #[cfg(target_os = "macos")]
+    fn system_font_lines(family: &str, lines: &[&str], size: u32) -> image::RgbImage {
         use resvg::{tiny_skia, usvg};
-        let family = "Hiragino Sans GB";
         let longest = lines.iter().map(|l| l.chars().count()).max().unwrap() as u32;
         let (width, pitch) = (size * (longest + 2), size * 3 / 2);
         let height = size * 2 + pitch * lines.len() as u32;
@@ -584,6 +591,91 @@ pub(crate) mod tests {
             result.text.split_whitespace().collect::<String>(),
             lines.concat()
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn vision_reads_small_japanese_text_enlarged_and_recovers_a_dropped_kanji() {
+        // Read as drawn, this system's recognizer drops 環 from 環境変数 at
+        // both sizes and stretches a neighbouring box over it.
+        let lines = [
+            "キャッシュの保存先は環境変数で変更できます。テストの際",
+            "には一時ディレクトリを指定してください。",
+        ];
+        let config = json!({"ocr":{"lang":"ja"}});
+        let small = recognize_rgb(system_font_lines("Hiragino Sans", &lines, 16), &config);
+        if vision_unavailable_under_rosetta(&small) {
+            return;
+        }
+        let small = small.unwrap();
+        assert!(small.scale > 1.25, "{}", small.scale);
+        assert_eq!(
+            small.text.split_whitespace().collect::<String>(),
+            lines.concat()
+        );
+        // At 17 pixels per em the lines are read once and 環 is recovered.
+        let larger =
+            recognize_rgb(system_font_lines("Hiragino Sans", &lines, 17), &config).unwrap();
+        assert_eq!(larger.scale, 1.0);
+        assert_eq!(
+            larger.text.split_whitespace().collect::<String>(),
+            lines.concat()
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn vision_reads_korean_text_it_missed_again_enlarged_but_not_small_hangul() {
+        // At 16 pixels per em this system's recognizer returns no text for
+        // these lines; a fast reading finds them, and an enlarged copy is read.
+        let lines = [
+            "오늘 아침은 조금 쌀쌀해서 역 앞 카페에서 따뜻한 라테를",
+            "주문했습니다. 직원이 새로운 메뉴도 있다고 알려 주어서",
+            "다음에는 유자차를 마셔 볼 생각입니다.",
+        ];
+        let expected: String = lines.concat().split_whitespace().collect();
+        let config = json!({"ocr":{"lang":"ko"}});
+        let missed = system_font_lines("Arial Unicode MS", &lines, 16);
+        let (width, height) = missed.dimensions();
+        let missed = recognize_rgb(missed, &config);
+        if vision_unavailable_under_rosetta(&missed) {
+            return;
+        }
+        let missed = missed.unwrap();
+        // The fast reading's lines, about 15 pixels tall, set the factor.
+        assert!(
+            missed.scale > 1.25 && missed.scale < 3.0,
+            "{}",
+            missed.scale
+        );
+        assert_eq!(missed.text.split_whitespace().collect::<String>(), expected);
+        assert_eq!(missed.boxes.len(), 3);
+        for [_, top, right, bottom] in missed.boxes {
+            assert!(right <= width as f32 && bottom <= height as f32 && bottom - top < 24.0);
+        }
+        // One pixel smaller the lines are read, and small Hangul is read once.
+        let small =
+            recognize_rgb(system_font_lines("Arial Unicode MS", &lines, 15), &config).unwrap();
+        assert_eq!(small.scale, 1.0);
+        assert_eq!(small.text.split_whitespace().collect::<String>(), expected);
+        // At 11 pixels the recognizer drops 돗 from 돗자리를; it is recovered.
+        let lines = [
+            "봄이 되면 강변의 벚꽃길에 꽃이 한꺼번에 피어납니다. 밤에는",
+            "조명이 켜지고, 돗자리를 펴고 앉아 꽃구경을 즐기는 사람들로",
+            "붐빕니다.",
+        ];
+        let recovered =
+            recognize_rgb(system_font_lines("Arial Unicode MS", &lines, 11), &config).unwrap();
+        assert_eq!(recovered.scale, 1.0);
+        assert_eq!(
+            recovered.text.split_whitespace().collect::<String>(),
+            lines.concat().split_whitespace().collect::<String>()
+        );
+        // A blank image stays blank.
+        let blank = image::RgbImage::from_pixel(400, 200, image::Rgb([255; 3]));
+        let blank = recognize_rgb(blank, &config).unwrap();
+        assert!(blank.text.is_empty() && blank.boxes.is_empty());
+        assert_eq!(blank.scale, 1.0);
     }
 
     #[test]

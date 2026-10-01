@@ -9,7 +9,7 @@ use objc2_vision::{
     VNImageRequestHandler, VNRecognizeTextRequest, VNRequest, VNRequestTextRecognitionLevel,
 };
 
-// Chinese recognition aids.
+// Chinese, Japanese and Korean recognition aids.
 use super::{cjk, pixels::MAX_PIXELS};
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::NSRange;
@@ -19,16 +19,18 @@ use objc2_vision::VNRecognizedText;
 pub(super) struct Reading {
     /// Lines with pixel rectangles in the requested coordinate space.
     pub lines: Vec<Line>,
-    /// For small Chinese text, the factor to read the image again at; the
-    /// lines are then this first reading, without recovered characters.
+    /// For small Chinese or Japanese text, or Chinese, Japanese or Korean
+    /// text that the reading missed entirely, the factor to read the image
+    /// again at; the lines are then this first reading, without recovered
+    /// characters.
     pub enlarge: Option<f32>,
 }
 
 /// Recognize text, reporting rectangles in a `space` of pixels (the original
-/// image when `image` is an enlarged copy). For Chinese, `may_enlarge` lets a
-/// reading of small text stop early with an enlargement factor; otherwise
-/// characters dropped inside wide character boxes are recovered by reading
-/// those regions again.
+/// image when `image` is an enlarged copy). For Chinese, Japanese and Korean,
+/// `may_enlarge` lets a reading of small text, or one that found no text at
+/// all, stop early with an enlargement factor; otherwise characters dropped
+/// inside wide character boxes are recovered by reading those regions again.
 pub(super) fn recognize(
     image: &Prepared,
     requested: &str,
@@ -110,16 +112,23 @@ pub(super) fn recognize(
             });
             recognized.push(candidate);
         }
-        if !cjk::applies(requested) {
+        let Some(script) = cjk::script(requested) else {
             return Ok(Reading {
                 lines,
                 enlarge: None,
             });
-        }
+        };
         if may_enlarge {
             // The first reading's line heights are in the image's own pixels.
             debug_assert_eq!(space, (image.width, image.height));
-            let factor = cjk::enlargement(&lines, image.width, image.height, MAX_PIXELS);
+            let factor = if lines.is_empty() {
+                // Vision occasionally finds no text in small print that it
+                // reads at other sizes; a fast reading still finds the lines.
+                let found = fast_lines(&handler, image.width, image.height);
+                cjk::missed(&found, image.width, image.height, MAX_PIXELS)
+            } else {
+                cjk::enlargement(&lines, script, image.width, image.height, MAX_PIXELS)
+            };
             if factor.is_some() {
                 return Ok(Reading {
                     lines,
@@ -129,7 +138,7 @@ pub(super) fn recognize(
         }
         let mut budget = cjk::MAX_REREADS;
         for (line, candidate) in lines.iter_mut().zip(&recognized) {
-            recover(&handler, &languages, line, candidate, &mut budget);
+            recover(&handler, &languages, script, line, candidate, &mut budget);
         }
         Ok(Reading {
             lines,
@@ -138,18 +147,19 @@ pub(super) fn recognize(
     })
 }
 
-/// Read the regions of a line's suspiciously wide Han character boxes again
-/// and insert a character that the second reading places there. A failed
+/// Read the regions of a line's suspiciously wide letter boxes again and
+/// insert a letter that the second reading places there. A failed
 /// second reading leaves the line as it was.
 fn recover(
     handler: &VNImageRequestHandler,
     languages: &NSArray<NSString>,
+    script: cjk::Script,
     line: &mut Line,
     candidate: &VNRecognizedText,
     budget: &mut usize,
 ) {
     let characters: Vec<char> = line.text.chars().collect();
-    if *budget == 0 || characters.iter().filter(|c| cjk::han(**c)).count() < cjk::MIN_HAN {
+    if *budget == 0 || characters.iter().filter(|c| script.letter(**c)).count() < cjk::MIN_LETTERS {
         return;
     }
     let length = candidate.string().length();
@@ -172,7 +182,7 @@ fn recover(
         })
         .collect();
     let mut insertions: Vec<(usize, char)> = Vec::new();
-    for suspect in cjk::suspects(&characters, &boxes) {
+    for suspect in cjk::suspects(&characters, &boxes, script) {
         if *budget == 0 {
             break;
         }
@@ -206,7 +216,7 @@ fn recover(
             .collect();
         parts.sort_by(|a, b| a.0.total_cmp(&b.0));
         let reading: String = parts.into_iter().map(|(_, text)| text).collect();
-        if let Some(found) = cjk::insertion(&characters, suspect.index, &reading)
+        if let Some(found) = cjk::insertion(&characters, suspect.index, &reading, script)
             && !insertions.iter().any(|(index, _)| *index == found.0)
         {
             insertions.push(found);
@@ -220,4 +230,37 @@ fn recover(
         }
         line.text = characters.into_iter().collect();
     }
+}
+
+/// The pixel `[width, height]` of each text line that a fast reading finds in
+/// a `width` by `height` image. Only the geometry is used: the fast recognizer
+/// reads Latin script, so its text for these languages is meaningless. A
+/// failed reading finds no lines.
+fn fast_lines(handler: &VNImageRequestHandler, width: u32, height: u32) -> Vec<[f32; 2]> {
+    let request = VNRecognizeTextRequest::new();
+    request.setRecognitionLevel(VNRequestTextRecognitionLevel::Fast);
+    request.setUsesLanguageCorrection(false);
+    request.setRecognitionLanguages(&NSArray::from_retained_slice(&[NSString::from_str(
+        "en-US",
+    )]));
+    let requests = NSArray::<VNRequest>::from_slice(&[&request]);
+    if handler.performRequests_error(&requests).is_err() {
+        return Vec::new();
+    }
+    let Some(observations) = request.results() else {
+        return Vec::new();
+    };
+    (0..observations.len().min(MAX_LINES))
+        .filter_map(|index| {
+            // SAFETY: As for the line observations in `recognize`.
+            let rectangle = unsafe { observations.objectAtIndex(index).boundingBox() };
+            let line = [
+                rectangle.size.width * f64::from(width),
+                rectangle.size.height * f64::from(height),
+            ];
+            line.iter()
+                .all(|side| side.is_finite() && *side > 0.0)
+                .then(|| line.map(|side| side as f32))
+        })
+        .collect()
 }
