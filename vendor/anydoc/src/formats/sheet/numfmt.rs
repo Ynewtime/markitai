@@ -1213,7 +1213,12 @@ mod tests {
         let f = NumberFormat::parse("yyyy\\-mm\\-dd").unwrap();
         assert_eq!(
             f.format_number(45000.0),
-            Rendered::DateTime(DateParts { date: true, time: false, elapsed: false, seconds: false })
+            Rendered::DateTime(DateParts {
+                date: true,
+                time: false,
+                elapsed: false,
+                seconds: false
+            })
         );
         let f = NumberFormat::parse("[hh]:mm:ss").unwrap();
         assert_eq!(
@@ -1223,12 +1228,22 @@ mod tests {
         let f = NumberFormat::parse("h:mm AM/PM").unwrap();
         assert_eq!(
             f.format_number(0.5),
-            Rendered::DateTime(DateParts { date: false, time: true, elapsed: false, seconds: false })
+            Rendered::DateTime(DateParts {
+                date: false,
+                time: true,
+                elapsed: false,
+                seconds: false
+            })
         );
         let f = NumberFormat::parse("h:mm:ss").unwrap();
         assert_eq!(
             f.format_number(0.5),
-            Rendered::DateTime(DateParts { date: false, time: true, elapsed: false, seconds: true })
+            Rendered::DateTime(DateParts {
+                date: false,
+                time: true,
+                elapsed: false,
+                seconds: true
+            })
         );
     }
 

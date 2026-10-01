@@ -9,10 +9,13 @@
 mod styletext;
 
 use crate::error::ConvertError;
-use crate::model::{Block, Document, Inline, Style, inlines_are_empty};
+use crate::model::{
+    Block, Cell, Document, GridBuilder, Inline, Style, Table, TableKind, inlines_are_empty,
+};
 use crate::package::limits;
 use crate::shared::binary::{get_u32, read_ole_stream, utf16le_units};
 use crate::shared::delta::{StyleDelta, rebase_emphasis};
+use crate::shared::header::resolve_header_rows;
 use crate::shared::list::{ListEntry, ListKey, MarkerKind, flush_list};
 use crate::shared::officeart::record_at;
 use crate::shared::text::clean_text;
@@ -137,6 +140,8 @@ struct Extractor {
     recovering: bool,
     /// Records visited across the whole extraction, capped.
     records: u64,
+    /// markitai: the cells of a table group are being read.
+    in_table: bool,
 }
 
 /// The persist-resolved layout of the presentation: slide/notes lists from
@@ -451,6 +456,9 @@ impl Extractor {
                 0x03F0 | 0x03F8 | 0x0FC9 => {}
                 // Only instance 0 of SlideListWithText holds slide text here.
                 0x0FF0 if ver_inst >> 4 != 0 => {}
+                // markitai: a group shape marked as a table is read as one
+                // table; one nested in a cell is walked as plain shapes.
+                0xF003 if !self.in_table && is_table_group(body) => self.table(body)?,
                 _ => {
                     if stack.len() >= limits::MAX_RECORD_DEPTH {
                         return Err(ConvertError::ResourceLimit {
@@ -530,6 +538,57 @@ impl Extractor {
             }
             _ => {}
         }
+    }
+
+    /// markitai: read a table group. Each cell is a shape of the group with
+    /// its own text box, read like any other text shape; the cells' anchors
+    /// draw the grid. A group whose cells cannot be placed keeps their text
+    /// as the blocks it had before tables were read.
+    fn table(&mut self, group: &[u8]) -> Result<(), ConvertError> {
+        self.flush_shape();
+        flush_list(&mut self.current, &mut self.list_run);
+        let outer = std::mem::take(&mut self.current);
+        self.in_table = true;
+        let mut cells = Vec::new();
+        let mut placed = true;
+        for (_, rec_type, shape) in children(group) {
+            self.charge_record()?;
+            // The group's own shape holds no cell.
+            if rec_type != 0xF004 || children(shape).any(|(_, t, _)| t == 0xF009) {
+                continue;
+            }
+            let anchor = children(shape).find(|&(_, t, _)| t == 0xF00F).and_then(|(.., body)| {
+                let edge = |at| get_u32(body, at).map(|v| v as i32);
+                Some([edge(0)?, edge(4)?, edge(8)?, edge(12)?])
+            });
+            self.walk(shape)?;
+            self.flush_shape();
+            flush_list(&mut self.current, &mut self.list_run);
+            let blocks = std::mem::take(&mut self.current);
+            match anchor {
+                Some([left, top, right, bottom]) if left < right && top < bottom => {
+                    cells.push(([left, top, right, bottom], blocks));
+                }
+                // A zero-size shape is a border line, not a cell.
+                Some(_) if blocks.is_empty() => {}
+                _ => {
+                    placed = false;
+                    cells.push(([0; 4], blocks));
+                }
+            }
+        }
+        self.in_table = false;
+        self.current = outer;
+        match placed.then(|| table_grid(&mut cells)).flatten() {
+            Some(table) => {
+                let table = table?;
+                if !table.grid.is_empty() {
+                    self.current.push(Block::Table(table));
+                }
+            }
+            None => self.current.extend(cells.into_iter().flat_map(|(_, blocks)| blocks)),
+        }
+        Ok(())
     }
 
     fn push_text(&mut self, text: String) {
@@ -672,6 +731,120 @@ impl Extractor {
     }
 }
 
+/// markitai: whether a group shape is a table: its own shape's
+/// tertiary options set bit 0 of `tableProperties` (0x039F).
+fn is_table_group(group: &[u8]) -> bool {
+    let Some((.., shape)) = children(group).next().filter(|&(_, t, _)| t == 0xF004) else {
+        return false;
+    };
+    children(shape).filter(|&(_, t, _)| t == 0xF122).any(|(ver_inst, _, options)| {
+        (0..usize::from(ver_inst >> 4)).any(|i| {
+            let (Some(id), Some(value)) =
+                (options.get(i * 6..i * 6 + 2), get_u32(options, i * 6 + 2))
+            else {
+                return false;
+            };
+            let id = u16::from_le_bytes([id[0], id[1]]);
+            id & 0x3FFF == 0x039F && value & 1 == 1
+        })
+    })
+}
+
+/// markitai: edges closer than this, in master units (576 to the inch), are
+/// one grid line; the cells of a table share their edges.
+const EDGE_TOLERANCE: i32 = 8;
+
+/// markitai: the grid lines along one axis: the cells' edges in order, an
+/// edge within the tolerance of the line before it merged into that line.
+fn grid_lines(mut edges: Vec<i32>) -> Vec<i32> {
+    edges.sort_unstable();
+    let mut lines: Vec<i32> = Vec::new();
+    for edge in edges {
+        if lines.last().is_none_or(|&last| edge.saturating_sub(last) > EDGE_TOLERANCE) {
+            lines.push(edge);
+        }
+    }
+    lines
+}
+
+/// markitai: the table that cells (left, top, right, bottom, then content)
+/// draw. A cell starts at the grid lines of its left and top edges and spans
+/// to those of its right and bottom; a cell landing where another already
+/// is adds its text to that one. `None` when the cells draw no grid or
+/// more positions than any grid may hold.
+fn table_grid(cells: &mut [([i32; 4], Vec<Block>)]) -> Option<Result<Table, ConvertError>> {
+    let columns = grid_lines(cells.iter().flat_map(|&([l, _, r, _], _)| [l, r]).collect());
+    let rows = grid_lines(cells.iter().flat_map(|&([_, t, _, b], _)| [t, b]).collect());
+    let (width, height) = (columns.len().checked_sub(1)?, rows.len().checked_sub(1)?);
+    if width == 0 || height == 0 || width as u64 * height as u64 > limits::MAX_GRID_SLOTS {
+        return None;
+    }
+    // Each edge belongs to the last line at or before it.
+    let line = |lines: &[i32], edge: i32| lines.partition_point(|&l| l <= edge).saturating_sub(1);
+    // (row, column, rows spanned, columns spanned, cell) in reading order.
+    let mut origins: Vec<[usize; 5]> = cells
+        .iter()
+        .enumerate()
+        .map(|(index, &([left, top, right, bottom], _))| {
+            let row = line(&rows, top).min(height - 1);
+            let column = line(&columns, left).min(width - 1);
+            let depth = line(&rows, bottom).saturating_sub(row).max(1);
+            [row, column, depth, line(&columns, right).saturating_sub(column).max(1), index]
+        })
+        .collect();
+    origins.sort_unstable();
+    // The kept origin owning each position: a span claims the positions no
+    // earlier cell holds, and the grid builder cuts it short of the others.
+    const FREE: u32 = u32::MAX;
+    let mut owner = vec![FREE; width * height];
+    let mut kept: Vec<[usize; 5]> = Vec::new();
+    for [row, column, depth, span, index] in origins {
+        let holder = owner[row * width + column];
+        if holder != FREE {
+            let blocks = std::mem::take(&mut cells[index].1);
+            cells[kept[holder as usize][4]].1.extend(blocks);
+            continue;
+        }
+        for r in row..row + depth {
+            for slot in &mut owner[r * width + column..r * width + column + span] {
+                if *slot == FREE {
+                    *slot = kept.len() as u32;
+                }
+            }
+        }
+        kept.push([row, column, depth, span, index]);
+    }
+    let mut builder = GridBuilder::new();
+    for row in 0..height {
+        builder.next_row();
+        for column in 0..width {
+            let placed = match owner[row * width + column] {
+                FREE => builder.place(Cell::new(Vec::new())),
+                holder => match kept[holder as usize] {
+                    [r, c, depth, span, index] if (r, c) == (row, column) => {
+                        builder.place(Cell::spanning(
+                            std::mem::take(&mut cells[index].1),
+                            span as u32,
+                            depth as u32,
+                        ))
+                    }
+                    _ => {
+                        builder.covered();
+                        Ok(())
+                    }
+                },
+            };
+            if let Err(error) = placed {
+                return Some(Err(error));
+            }
+        }
+    }
+    let mut table = builder.finish(TableKind::Data);
+    // PowerPoint styles a table's first row as its header by default.
+    table.header_rows = resolve_header_rows(&table, 1);
+    Some(Ok(table))
+}
+
 // markitai: tests for the slide boundaries recorded in `Document::slide_starts`.
 #[cfg(test)]
 mod tests {
@@ -773,6 +946,192 @@ mod tests {
         // notes of the otherwise blank slide 3 stay in it; slide 5 has none
         // and is last, so it starts at the end.
         assert_eq!(doc.slide_starts, [0, 2, 2, 3, 4]);
+    }
+
+    // markitai: tables read from table groups.
+
+    /// A shape of the given type at `anchor` (left, top, right, bottom),
+    /// with a text box holding `chars` when there is one.
+    fn shape(shape_type: u16, anchor: [i32; 4], chars: Option<&str>) -> Vec<u8> {
+        let mut body = record(2, shape_type, 0xF00A, &[0; 8]);
+        if anchor != [0; 4] {
+            let edges: Vec<u8> = anchor.iter().flat_map(|e| e.to_le_bytes()).collect();
+            body.extend(record(0, 0, 0xF00F, &edges));
+        }
+        if let Some(chars) = chars {
+            body.extend(record(0xF, 0, 0xF00D, &text(4, chars)));
+        }
+        record(0xF, 0, 0xF004, &body)
+    }
+
+    fn cell(anchor: [i32; 4], chars: &str) -> Vec<u8> {
+        shape(1, anchor, Some(chars))
+    }
+
+    /// A group of `shapes` whose own shape sets `tableProperties` to `flags`.
+    fn group(flags: u32, shapes: &[Vec<u8>]) -> Vec<u8> {
+        let mut own = record(1, 0, 0xF009, &[0; 16]);
+        own.extend(record(2, 0, 0xF00A, &[0; 8]));
+        let mut option = 0x039Fu16.to_le_bytes().to_vec();
+        option.extend(flags.to_le_bytes());
+        own.extend(record(3, 1, 0xF122, &option));
+        let mut body = record(0xF, 0, 0xF004, &own);
+        for shape in shapes {
+            body.extend(shape);
+        }
+        record(0xF, 0, 0xF003, &body)
+    }
+
+    fn walked(data: &[u8]) -> Vec<Block> {
+        let mut ex = Extractor::default();
+        ex.walk(data).unwrap();
+        ex.flush_shape();
+        flush_list(&mut ex.current, &mut ex.list_run);
+        ex.current
+    }
+
+    fn plain(blocks: &[Block]) -> String {
+        let text = |block: &Block| match block {
+            Block::Paragraph(inlines) => crate::model::inlines_to_plain_text(inlines),
+            other => format!("{other:?}"),
+        };
+        blocks.iter().map(text).collect::<Vec<_>>().join("/")
+    }
+
+    /// Each slot as `text:columns x rows`, or `^row,column` when covered.
+    fn grid(block: &Block) -> Vec<Vec<String>> {
+        let Block::Table(table) = block else {
+            panic!("not a table: {block:?}");
+        };
+        let slot = |slot: &crate::model::CellSlot| match slot {
+            crate::model::CellSlot::Origin(cell) => {
+                format!("{}:{}x{}", plain(&cell.blocks), cell.col_span, cell.row_span)
+            }
+            crate::model::CellSlot::Covered { origin_row, origin_col } => {
+                format!("^{origin_row},{origin_col}")
+            }
+        };
+        table.grid.iter().map(|row| row.iter().map(slot).collect()).collect()
+    }
+
+    #[test]
+    fn a_table_group_reads_as_one_table_laid_out_by_its_cells_anchors() {
+        // Stored out of reading order, with a border rule among the cells
+        // and one cell's edges a few units off the shared grid lines.
+        let shapes = [
+            cell([203, 102, 300, 150], "9"),
+            cell([100, 100, 200, 150], "7"),
+            shape(20, [0, 50, 300, 50], None),
+            cell([100, 50, 300, 100], "Both quarters"),
+            cell([0, 50, 100, 150], "North"),
+            cell([200, 0, 300, 50], "Q2"),
+            cell([100, 0, 200, 50], "Q1"),
+            cell([0, 0, 100, 50], "Region"),
+        ];
+        let blocks = walked(&group(0x11, &shapes));
+        let [table] = &blocks[..] else {
+            panic!("unexpected blocks: {blocks:?}");
+        };
+        assert_eq!(
+            grid(table),
+            [
+                ["Region:1x1", "Q1:1x1", "Q2:1x1"],
+                ["North:1x2", "Both quarters:2x1", "^1,1"],
+                ["^1,0", "7:1x1", "9:1x1"],
+            ]
+        );
+        let Block::Table(table) = table else { unreachable!() };
+        assert_eq!(table.header_rows, 1);
+    }
+
+    #[test]
+    fn a_group_not_marked_as_a_table_keeps_its_shapes_as_paragraphs() {
+        let shapes = [cell([0, 0, 100, 50], "Left"), cell([100, 0, 200, 50], "Right")];
+        assert_eq!(plain(&walked(&group(0x10, &shapes))), "Left/Right");
+    }
+
+    #[test]
+    fn cells_that_cannot_be_placed_keep_their_text_in_stored_order() {
+        let shapes = [
+            cell([100, 0, 200, 50], "Second"),
+            shape(1, [0; 4], Some("Unanchored")),
+            cell([0, 0, 100, 50], "First"),
+        ];
+        assert_eq!(plain(&walked(&group(1, &shapes))), "Second/Unanchored/First");
+    }
+
+    #[test]
+    fn a_cell_stored_over_another_adds_its_text_to_that_cell() {
+        let shapes = [
+            cell([0, 0, 100, 50], "Name"),
+            cell([0, 0, 100, 50], "continued"),
+            cell([100, 0, 200, 50], "Value"),
+            cell([0, 50, 100, 100], "a"),
+            cell([100, 50, 200, 100], "b"),
+        ];
+        let blocks = walked(&group(1, &shapes));
+        assert_eq!(grid(&blocks[0]), [["Name/continued:1x1", "Value:1x1"], ["a:1x1", "b:1x1"]]);
+    }
+
+    #[test]
+    fn a_cell_reaching_into_another_cells_span_stops_short_of_it() {
+        let shapes = [
+            cell([0, 0, 100, 50], "A"),
+            cell([100, 0, 200, 100], "Tall"),
+            cell([0, 50, 200, 100], "Wide"),
+            cell([100, 50, 200, 100], "Under"),
+        ];
+        let blocks = walked(&group(1, &shapes));
+        assert_eq!(grid(&blocks[0]), [["A:1x1", "Tall/Under:1x2"], ["Wide:1x1", "^0,1"]]);
+    }
+
+    #[test]
+    fn a_table_whose_rows_below_the_first_are_empty_keeps_its_header() {
+        let shapes = [
+            cell([0, 0, 100, 50], "Column 1"),
+            cell([100, 0, 200, 50], "Column 2"),
+            cell([0, 50, 100, 100], ""),
+            cell([100, 50, 200, 100], ""),
+        ];
+        let blocks = walked(&group(1, &shapes));
+        assert_eq!(grid(&blocks[0]), [["Column 1:1x1", "Column 2:1x1"]]);
+        let Block::Table(table) = &blocks[0] else { unreachable!() };
+        assert_eq!(table.header_rows, 1);
+    }
+
+    #[test]
+    fn slivers_within_the_tolerance_of_a_grid_line_join_the_cell_they_touch() {
+        // Grid lines at x 0, 100, 200 and y 0, 50, 100; the first cell's
+        // corner sits a few units inside them.
+        let shapes = [
+            cell([3, 3, 100, 50], "a"),
+            cell([100, 0, 200, 50], "b"),
+            cell([0, 50, 100, 100], "c"),
+            cell([100, 50, 200, 100], "d"),
+            cell([100, 0, 104, 50], "narrow"),
+            cell([0, 50, 100, 54], "flat"),
+            cell([202, 50, 206, 100], "right"),
+            cell([0, 102, 200, 106], "low"),
+        ];
+        let blocks = walked(&group(1, &shapes));
+        assert_eq!(
+            grid(&blocks[0]),
+            [["a:1x1", "b/narrow:1x1"], ["c/flat/low:1x1", "d/right:1x1"]]
+        );
+        // Cells that all collapse onto one point draw no grid.
+        assert_eq!(plain(&walked(&group(1, &[cell([0, 0, 4, 4], "Dot")]))), "Dot");
+    }
+
+    #[test]
+    fn a_table_group_inside_a_cell_is_read_as_plain_shapes() {
+        let inner = group(1, &[cell([0, 0, 10, 10], "x"), cell([10, 0, 20, 10], "y")]);
+        let mut nested = record(2, 1, 0xF00A, &[0; 8]);
+        let edges: Vec<u8> = [0i32, 0, 100, 50].iter().flat_map(|e| e.to_le_bytes()).collect();
+        nested.extend(record(0, 0, 0xF00F, &edges));
+        nested.extend(inner);
+        let shapes = [record(0xF, 0, 0xF004, &nested), cell([100, 0, 200, 50], "z")];
+        let blocks = walked(&group(1, &shapes));
+        assert_eq!(grid(&blocks[0]), [["x/y:1x1", "z:1x1"]]);
     }
 
     #[test]

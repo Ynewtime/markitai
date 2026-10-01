@@ -784,7 +784,9 @@ fn code_language(pre: &Element) -> Option<String> {
         .find_map(|class| class.strip_prefix("language-").or_else(|| class.strip_prefix("lang-")))
         .filter(|lang| {
             !lang.is_empty()
-                && lang.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '#' | '.' | '_'))
+                && lang
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '#' | '.' | '_'))
         })
         .map(str::to_owned)
 }
@@ -840,7 +842,13 @@ mod tests {
         .collect();
         assert_eq!(
             langs,
-            [Some("rust".into()), Some("python".into()), Some("c++".into()), Some("a".into()), None]
+            [
+                Some("rust".into()),
+                Some("python".into()),
+                Some("c++".into()),
+                Some("a".into()),
+                None
+            ]
         );
         let odd = blocks(r#"<body><pre><code class="language-x`y">x</code></pre></body>"#);
         assert!(matches!(&odd[0], Block::CodeBlock { lang: None, .. }));

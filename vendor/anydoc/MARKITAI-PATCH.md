@@ -33,5 +33,19 @@ upstream files:
   all other formats, including PPTX. Notes without a resolvable owner still
   come last, inside the last slide's range.
 
+- `src/formats/ppt/mod.rs`: a group shape whose own shape's tertiary options
+  set bit 0 of `tableProperties` (0x039F) is read as one table instead of one
+  paragraph per cell. Each cell shape's text goes through the ordinary text
+  shape path; the cells' child anchors draw the grid (edges within 8 master
+  units are one line), a cell spanning lines is a merged cell, a shape stored
+  over a cell adds its text to it, zero-size shapes (border lines) are
+  skipped, and the first row is the header. A table group inside a cell is
+  read as plain shapes, and a group with an unanchored cell, or one drawing
+  more positions than `MAX_GRID_SLOTS`, keeps upstream's paragraphs.
+
+`rustfmt.toml` (`use_small_heuristics = "Max"`) is not in the published
+package; it reproduces upstream's formatting, so `cargo fmt` in this directory
+changes nothing upstream wrote.
+
 Tests covering these changes were added beside the upstream ones; the upstream
-suite passes in an isolated copy (291 tests).
+suite passes in an isolated copy (299 tests).

@@ -585,7 +585,11 @@ fn render_serial(serial: f64, parts: DateParts, date1904: bool) -> String {
     // A serial carrying no whole day has no date for a date format to show;
     // the clock a combined format also names still renders.
     if serial.abs() < 1.0 {
-        return if parts.time { format_time_of_day(serial, parts.seconds) } else { format_float(serial) };
+        return if parts.time {
+            format_time_of_day(serial, parts.seconds)
+        } else {
+            format_float(serial)
+        };
     }
     // Out of the representable date range (through 9999-12-31): the serial
     // is not a date, show the number.
@@ -1011,7 +1015,8 @@ mod tests {
         );
     }
 
-    const DATE_ONLY: DateParts = DateParts { date: true, time: false, elapsed: false, seconds: false };
+    const DATE_ONLY: DateParts =
+        DateParts { date: true, time: false, elapsed: false, seconds: false };
 
     #[test]
     fn the_fictitious_leap_day_keeps_its_own_value() {

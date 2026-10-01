@@ -68,6 +68,15 @@ slide's speaker notes keep their place after it as a quote. A legacy PPT whose p
 unusable is read in raw stream order, where slides cannot be told apart, and
 carries no markers.
 
+A legacy PPT table is a group shape whose `tableProperties` mark it as one; each
+cell is a shape of the group with its own text box. The vendored anydoc places
+the cells on the grid their anchors draw (edges within 8 master units, 1/72
+inch, are one grid line), keeps a cell spanning several lines as a merged cell,
+adds the text of a shape stored over a cell to that cell, and takes the first
+row as the header, as PowerPoint styles it. Border lines are ignored, trailing
+empty rows are dropped, and a group with a cell that has no anchor keeps its
+cells' text as paragraphs, as before.
+
 The presentation reader limits packages to 16,384 entries and 10,000 slides,
 each XML part to 16 MiB, each asset to 64 MiB and total decompressed parts to
 256 MiB. XML has per-part limits of 200,000 nodes and 127 nested elements.

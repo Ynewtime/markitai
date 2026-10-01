@@ -100,11 +100,7 @@ fn format_float(f: f64) -> String {
 fn format_time_of_day(days: f64, seconds: bool) -> String {
     let total_secs = (days.abs() * 86_400.0).round() as u64 % 86_400;
     let (h, m, s) = (total_secs / 3600, (total_secs % 3600) / 60, total_secs % 60);
-    if seconds {
-        format!("{h:02}:{m:02}:{s:02}")
-    } else {
-        format!("{h:02}:{m:02}")
-    }
+    if seconds { format!("{h:02}:{m:02}:{s:02}") } else { format!("{h:02}:{m:02}") }
 }
 
 /// Render an Excel duration (stored in days) as `[h]:mm:ss`.
