@@ -3,9 +3,21 @@
 //! This module provides mapping from Adobe Glyph List and related names
 //! to Unicode characters.
 
+// markitai: names are looked up by binary search in a table packed at
+// compile time (`lookup`, from the generated `sorted_names`) instead of a map
+// built at first use. The list below and the overrides `GLYPH_TO_UNICODE`
+// adds are compiled only for tests: they are what
+// `scripts/sorted_glyph_names.py` generates the table from and what the
+// tests check it against.
+#[cfg(test)]
 use std::collections::HashMap;
+#[cfg(test)]
 use std::sync::LazyLock;
 
+mod lookup;
+mod sorted_names;
+
+#[cfg(test)] // markitai: the table's source; see above.
 pub fn build_glyph_to_unicode_map() -> HashMap<&'static str, char> {
     let mut m = HashMap::with_capacity(4528);
     m.insert("A", 'A');
@@ -4539,6 +4551,7 @@ pub fn build_glyph_to_unicode_map() -> HashMap<&'static str, char> {
     m
 }
 
+#[cfg(test)] // markitai: the table's source; see above.
 static GLYPH_TO_UNICODE: LazyLock<HashMap<&'static str, char>> = LazyLock::new(|| {
     let mut m = build_glyph_to_unicode_map();
     // Local overrides for non-standard glyph names seen in PDFs.
@@ -4550,10 +4563,17 @@ static GLYPH_TO_UNICODE: LazyLock<HashMap<&'static str, char>> = LazyLock::new(|
     m
 });
 
+/// markitai: the character the glyph list, with the local overrides, gives
+/// exactly `name`; no suffix is dropped and no encoded name is read (see
+/// [`glyph_to_char`] and [`glyph_name_to_string`] for those).
+pub fn glyph_to_unicode(name: &str) -> Option<char> {
+    lookup::char_of(name.as_bytes())
+}
+
 /// Convert a glyph name to its Unicode character
 pub fn glyph_to_char(name: &str) -> Option<char> {
-    // First check our mapping with the full name
-    if let Some(&c) = GLYPH_TO_UNICODE.get(name) {
+    // First check our mapping with the full name (markitai: the packed table)
+    if let Some(c) = glyph_to_unicode(name) {
         return Some(c);
     }
 
@@ -4561,7 +4581,8 @@ pub fn glyph_to_char(name: &str) -> Option<char> {
     // E.g., "zero.tf" → "zero", "a.ss01" → "a", "hyphen.case" → "hyphen"
     if let Some(dot_pos) = name.find('.') {
         let base = &name[..dot_pos];
-        if let Some(&c) = GLYPH_TO_UNICODE.get(base) {
+        // markitai: the packed table.
+        if let Some(c) = glyph_to_unicode(base) {
             return Some(c);
         }
     }
@@ -4610,7 +4631,8 @@ pub fn glyph_name_to_string(name: &str) -> Option<String> {
     if base.contains('_') {
         return base.split('_').map(glyph_name_to_string).collect();
     }
-    if let Some(&ch) = GLYPH_TO_UNICODE.get(base) {
+    // markitai: the packed table.
+    if let Some(ch) = glyph_to_unicode(base) {
         return Some(ch.to_string());
     }
     // `uni` takes groups of exactly four hex digits, `u` four to six: a

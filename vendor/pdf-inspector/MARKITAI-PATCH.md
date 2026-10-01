@@ -132,13 +132,78 @@ The local changes are limited to fifteen upstream files:
   same 21 failed (1,611 before the two tests of the last item, 1,609 before
   the two of the item before it). Each added test fails on the unmodified
   code it covers.
+- `src/glyph_names.rs`, with three added files, `src/glyph_names/lookup.rs`,
+  `src/glyph_names/sorted_names.rs` (generated) and
+  `scripts/sorted_glyph_names.py`: a glyph name's character is found by
+  binary search in a table packed at compile time instead of in a `HashMap`
+  built at first use, which `build_glyph_to_unicode_map` filled with 4,528
+  inserts and `GLYPH_TO_UNICODE` with four overrides. That function was the
+  second largest in markitai's CLI: 108,960 bytes of code (symbol-address
+  difference in an unstripped release-profile build). The list and the
+  overrides are unchanged and compiled only for tests, as the table's source
+  and the tests' reference. `lookup.rs` checks at compile time that the names
+  are non-empty and strictly ascending (so none appears twice), that their
+  bytes fit 16-bit offsets and that every character is in the Basic
+  Multilingual Plane, and packs one byte string with 16-bit bounds, 16-bit
+  code points and the range of names each first byte starts (69,831 bytes,
+  no pointers for a position-independent executable to relocate). A search
+  covers one first byte's names, about 7 steps on average instead of 12.
+  The new public `glyph_to_unicode(name) -> Option<char>` is the exact
+  lookup the map gave; `glyph_to_char` and `glyph_name_to_string` use it and
+  keep their signatures and results. `build_glyph_to_unicode_map` is no
+  longer public outside tests; nothing in the workspace called it.
+
+  After changing the list, run
+  `python3 vendor/pdf-inspector/scripts/sorted_glyph_names.py`; `--check`
+  exits 1 when the table is stale. It reads every `m.insert` line of
+  `glyph_names.rs`, a later insert of a name replacing an earlier one as in
+  the map, and stops at an insert in another form or an unknown escape. A
+  table out of order, with a name twice or with a character outside the
+  plane fails to compile; one with a name missing, added or recoded fails
+  the tests.
+
+  lopdf's glyph list (`Glyph::from_name`) cannot replace the table: lopdf
+  does not export it, and the lists differ. Of the 4,532 names here, 230
+  are not among lopdf's 4,495 (the four overrides, 201 ZapfDingbats names
+  `a1`… and 25 others such as `angbracketleftBig` and `controlNULL`) and 28
+  have another code there (`angbracketleft` is U+3008 here, U+27E8 in
+  lopdf); 193 of lopdf's names are not here.
+
+  Tests (four, in `lookup.rs`): every listed name gives its character and
+  the table holds exactly those names; 248,737 changed names (every prefix,
+  a byte before or after, one byte changed by one, letters' case flipped;
+  9,055 of them are listed names, a count also computed independently from
+  the list) agree with the map; `glyph_to_char` reads every listed name, also
+  with a suffix, and `glyph_name_to_string` every one but the five joined by
+  underscores; a few named cases. A separate harness compiling the old and
+  new modules side by side agreed on the same names and on 360,575 inputs to
+  `glyph_to_char` and `glyph_name_to_string` (suffixes, names joined by
+  underscores, `uni` and `u` forms). Of 22 mutants of the search, packing,
+  first-byte ranges, compile-time checks, table data and the two readers, 21
+  fail these tests (three at compile time); the other starts the search
+  earlier, which is still correct. With the other
+  changes, the isolated copy's unit tests give 1,617 passed and the same 21
+  failed.
+
+  Measured at `cb8b881` with `cargo build --release -p markitai-cli` (rustc
+  1.98.1, macOS 27.0.1 on an 18-core Apple M5 Max): the CLI is 23,087,024
+  bytes before and 23,004,448 after (−82,576, −0.36%; code −111,464,
+  read-only data +20,480). The 216 Chrome- and Quartz-printed PDFs of the R41
+  PDF quality corpus give byte-identical output, as does a generated PDF that
+  names all 4,532 glyphs through `/Differences` (the characters of 3,921 of
+  them appear in its Markdown). In a release-mode harness an exact lookup
+  takes about 29 ns instead of about 10 ns, but nothing is built: the map
+  took about 100–200 µs and 200 KB of heap at first use. Page-Markdown
+  extraction of the 216 files looks names up 31,829 times (16 found), at most
+  2,874 times in one file, well below the roughly 5,000 lookups per process
+  at which the search would cost more than building the map.
 
 The page-level OCR, font decoding, repair, limits and reliability routing remain
 the upstream paths. Markitai's own visibility warnings and layout agreement
-checks remain enabled. The only new public API is `TextLine::text_with_markup`
-and `LoadedPdf` (`load_mem`, `document`, `as_loaded_by_lopdf`,
-`pages_markdown`, `text_with_positions_and_rotations`, `forget_page_runs`); no
-optional runtime dependency is added.
+checks remain enabled. The only new public APIs are `TextLine::text_with_markup`,
+`LoadedPdf` (`load_mem`, `document`, `as_loaded_by_lopdf`, `pages_markdown`,
+`text_with_positions_and_rotations`, `forget_page_runs`) and
+`glyph_names::glyph_to_unicode`; no optional runtime dependency is added.
 Opacity, masks, occlusion, full text clipping and mixed-visibility marked content
 are not claimed to be solved by this patch.
 
