@@ -14,6 +14,8 @@ use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
 pub const CLI_VERSION: &str = "2.1.284";
+/// `CLI_VERSION` as numbers: the oldest release of the supported line.
+const PINNED: (u64, u64, u64) = (2, 1, 284);
 pub const SDK_VERSION: &str = "0.3.284";
 const INPUT_LIMIT: usize = 10 * 1024 * 1024;
 const TEXT_LIMIT: usize = 8 * 1024 * 1024;
@@ -184,22 +186,48 @@ fn small_command(
     let status = process.finish(cancel)?;
     Ok((output, status))
 }
-fn version(config: &Config, deadline: Instant, cancel: Option<&AtomicBool>) -> Result<(), Failure> {
+/// Whether `version` (`2.1.285` or `2.1.285 (Claude Code)`) is a release this
+/// adapter speaks: the pinned 2.1.284 or a later patch of the 2.1 line. The
+/// official runtime updates itself between patch releases, which keep the
+/// stream-json protocol of their line; a new minor or major line or an older
+/// patch fails explicitly before any request, and the stream itself is still
+/// validated message by message.
+fn supported_version(version: &str) -> bool {
+    let version = version.strip_suffix(" (Claude Code)").unwrap_or(version);
+    let mut parts = version.split('.').map(|part| {
+        (!part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| part.parse::<u64>().ok())
+            .flatten()
+    });
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some(Some(major)), Some(Some(minor)), Some(Some(patch)), None) => {
+            (major, minor) == (PINNED.0, PINNED.1) && patch >= PINNED.2
+        }
+        _ => false,
+    }
+}
+/// The installed runtime's release, when it is one this adapter speaks.
+fn version(
+    config: &Config,
+    deadline: Instant,
+    cancel: Option<&AtomicBool>,
+) -> Result<String, Failure> {
     let (bytes, status) = small_command(config, &["--version"], deadline, cancel)?;
     let value = std::str::from_utf8(&bytes).map_err(|_| protocol())?.trim();
-    if !status.success()
-        || !(value == CLI_VERSION || value == format!("{CLI_VERSION} (Claude Code)"))
-    {
+    if !status.success() || !supported_version(value) {
         return Err(Failure::new(
             FailureKind::Unsupported,
             "Installed Claude CLI does not match the supported protocol version",
         ));
     }
-    Ok(())
+    Ok(value
+        .strip_suffix(" (Claude Code)")
+        .unwrap_or(value)
+        .to_owned())
 }
 pub fn status(config: &Config, timeout: Duration) -> Result<AuthStatus, Failure> {
     let deadline = process::deadline(timeout)?;
-    version(config, deadline, None)?;
+    let installed = version(config, deadline, None)?;
     let (bytes, exit) = small_command(config, &["auth", "status"], deadline, None)?;
     let value: Value = serde_json::from_slice(&bytes).map_err(|_| protocol())?;
     let logged = value["loggedIn"].as_bool().ok_or_else(protocol)?;
@@ -233,7 +261,7 @@ pub fn status(config: &Config, timeout: Duration) -> Result<AuthStatus, Failure>
             }
             .into()
         }),
-        details: json!({"source":"official_cli","cli_version":CLI_VERSION,"native_adapter":true,"auth_method":method.filter(|m| matches!(*m, "claude.ai" | "apiKey")),"subscription":subscription}),
+        details: json!({"source":"official_cli","cli_version":installed,"supported_from":CLI_VERSION,"native_adapter":true,"auth_method":method.filter(|m| matches!(*m, "claude.ai" | "apiKey")),"subscription":subscription}),
     })
 }
 fn private_file(workspace: &Path, file: &str, bytes: &[u8]) -> Result<PathBuf, Failure> {
@@ -411,7 +439,7 @@ fn validate_system(value: &Value) -> Result<(), Failure> {
         Some("init") => {
             if value
                 .get("claude_code_version")
-                .is_some_and(|v| v != CLI_VERSION)
+                .is_some_and(|v| !v.as_str().is_some_and(supported_version))
             {
                 return Err(protocol());
             }

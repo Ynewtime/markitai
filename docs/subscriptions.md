@@ -6,7 +6,7 @@ key, using the provider's separately installed official command-line runtime:
 | Model | Runtime | Status and login |
 |---|---|---|
 | `copilot/MODEL` | GitHub Copilot CLI `1.0.90-2` | `markitai auth copilot status`, `markitai auth copilot login` |
-| `claude-agent/MODEL` | Claude Code CLI `2.1.284` | `markitai auth claude status`, `markitai auth claude login` |
+| `claude-agent/MODEL` | Claude Code CLI `2.1.284` or a later 2.1 patch release | `markitai auth claude status`, `markitai auth claude login` |
 | `chatgpt/gpt-5.5` | Codex CLI `0.159.0` | `markitai auth chatgpt status`, `markitai auth chatgpt login` |
 
 `markitai auth` alone reports all three. Other runtime versions fail explicitly
@@ -77,7 +77,11 @@ process-tree boundary is implemented and tested.
 ## Claude
 
 `claude-agent/MODEL` runs through the separately installed official Claude Code
-CLI 2.1.284. The protocol reference is official TypeScript SDK 0.3.284
+CLI 2.1.284 or a later 2.1 patch release (the runtime updates itself; patch releases
+keep the stream-json protocol of their line, and every message is still validated).
+An older patch or a new minor or major line fails before any request;
+`markitai auth claude status --json` reports the installed `cli_version` and the
+`supported_from` release. The protocol reference is official TypeScript SDK 0.3.284
 and CLI release `8364969e9f5234ef3d9743cf7c790e9aab0ac3b1`; neither Python nor Node SDK
 is required by the Rust adapter. `CLAUDE_CLI_PATH` selects the executable and
 `CLAUDE_CONFIG_DIR` selects the official runtime's state. HOME is preserved.

@@ -339,3 +339,33 @@ fn advertised_builtin_agent_metadata_does_not_grant_tools_or_background_authorit
         f.clean();
     }
 }
+
+#[test]
+fn later_patch_releases_of_the_pinned_line_are_supported() {
+    for accepted in [
+        "2.1.284",
+        "2.1.284 (Claude Code)",
+        "2.1.285 (Claude Code)",
+        "2.1.400",
+    ] {
+        assert!(super::supported_version(accepted), "{accepted}");
+    }
+    for refused in [
+        "2.1.283",
+        "2.1.283 (Claude Code)",
+        "2.2.0",
+        "2.0.999",
+        "3.1.284",
+        "1.1.284",
+        "2.1",
+        "2.1.284.1",
+        "2.1.x",
+        "2.1.-1",
+        "2.1.+285",
+        " 2.1.284",
+        "",
+        "2.1.284 (Other)",
+    ] {
+        assert!(!super::supported_version(refused), "{refused}");
+    }
+}
