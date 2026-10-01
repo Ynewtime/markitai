@@ -317,9 +317,15 @@ merely because its textual labels are extractable.
 
 The page reader loads the file once for the page Markdown, the positioned pass and,
 when it read the bytes unchanged, this module's inspection; each page's content is
-expanded and parsed once, as described above. The reader's OCR signals still
-interpret the expanded bytes with a byte-level scan of their own, and Form XObjects
-are still expanded by each reader that follows them. A file under 256 KiB is parsed
+expanded and parsed once, as described above. A font that is an indirect object is
+decoded once per document, its encoding and width table taken by every page and
+Form that lists it (up to 2^18 kept codes in all; a font written in place is decoded
+where it is listed), and the reader's text pass decodes each Form XObject once per
+document (64 KiB of Form content kept at most) however often it is invoked. The
+reader's OCR signals still interpret the expanded bytes with a byte-level scan of
+their own: a scan over parsed operations would measure literal strings by their
+decoded bytes, not by the bytes it measures now. This module's inspection and the
+OCR signals still expand Form XObjects themselves. A file under 256 KiB is parsed
 on one thread: lopdf parses on a pool of one thread per core, whose start and idle
 spinning cost more processor time than a small file's parse, and larger files keep
 the pool, which shortens their load. Focused tests author

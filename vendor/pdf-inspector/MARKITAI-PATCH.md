@@ -391,6 +391,62 @@ The local changes, each marked `markitai` (or, for sorts, made through
   more) and two only lose the saving (Markitai not passing its decode on,
   or reading under another bound).
 
+- `src/extractor/fonts.rs`, `src/extractor/content_stream.rs`,
+  `src/extractor/xobjects.rs`, `src/types.rs`: a font that is an indirect
+  object is read once per document. `page_fonts` lists a page's fonts as
+  `Document::get_page_fonts` does, with the object id of each, given only
+  when that id resolves to the very dictionary listed; `get_form_fonts`
+  returns the ids of a form's fonts. `build_font_encodings` and
+  `build_font_widths` keep what they read of a font with an id in the
+  document's `FontStyleCache` (`FontReadings`) and every later listing,
+  by any page or form under any name, takes it; a font written in place
+  is read where it is listed, as before. Each reading is a function of
+  the font dictionary within its document, the encoding of the CMaps too:
+  readings asked for with other CMaps start over. They are bounded at
+  2^18 entries (a font and each code its encoding or width table lists),
+  past which fonts are read at each listing again. A page's encodings
+  share the kept ones (`PageFontEncodings` holds `Arc`s). lopdf's own
+  encoding of a font, which parses its ToUnicode CMap again, is resolved
+  only when a string first falls back to it (`LopdfEncodings`), the last
+  of the resources whose names read alike giving it as before.
+  `parse_encoding_dictionary` reads `/Differences` in place and removes a
+  code's earlier reading only when it was named before. The debug lines
+  of `parse_encoding_dictionary` are written when a font is read, no
+  longer for every page that lists it.
+
+- `src/extractor/xobjects.rs`: the text walk decompresses and decodes a
+  Form XObject once per document (`FormContents`, in the same cache),
+  under the same bounds as before; a form it skips is kept as skipped. At
+  most 64 KiB of form content is kept: decoded content takes about 32
+  times its bytes over the corpora below (100 times at most), and nearly
+  every form there is under a hundred bytes.
+
+- `src/detector.rs`, `src/detector/content_scan.rs`: the OCR signals
+  borrow the font and XObject dictionaries of a page's resources instead
+  of copying them, and the byte scan tries a byte only against the
+  operators it begins (an operator matches only where its first byte is,
+  so the chain's first match is unchanged). The scan itself stays a byte
+  scan: lopdf's parsed strings hold decoded bytes, and the scan measures
+  a shown literal string by its bytes as written (`show_operand_text_bytes`),
+  which differ wherever an escape is written; 40 of the 406 text PDFs
+  below show such strings (`escape_census.py`).
+
+  Measured on `c7fea20` with `cargo build --release -p markitai-cli`
+  (rustc 1.98.1, macOS 27.0.1, 18-core Apple M5 Max): the CLI stays
+  22,046,272 bytes (`__text` +7,956 bytes). The 406 text PDFs (R41 Chrome
+  and Quartz, R48 extra and stress), six large ones (0.2–14 MB), three
+  synthetic form-heavy ones and seven scanned or mixed PDFs converted with
+  local OCR give byte-identical Markdown, assets, JSON results and stderr.
+  Paired, alternating runs, five rounds, against a byte copy of the base
+  binary: the 406 text PDFs CPU −1.9% (per round −1.9..−2.7%, copy
+  −0.4..+0.5%) and wall −0.7% (−0.6..−1.5%, copy −0.5..+0.3%); the three
+  form-heavy files CPU −33.3% (−27.5..−33.8%, copy −1.3..+1.0%); the six
+  large files CPU −4.4% (−2.7..−8.8%), whose range touches the copy's
+  (−2.7..+0.8%), so no claim is made for them. Peak memory of
+  the large and form-heavy files is within −4.8..+0.5%. The isolated copy's unit tests give 1,645 passed (12
+  added) and the same 21 failed. All 25 mutations of the conditions above
+  fail at least one test.
+
 The page-level OCR, font decoding, repair, limits and reliability routing remain
 the upstream paths. Markitai's own visibility warnings and layout agreement
 checks remain enabled. The only new public APIs are `TextLine::text_with_markup`,

@@ -162,8 +162,9 @@ pub(crate) struct FontEncoding {
     pub(crate) sequences: HashMap<u8, String>,
 }
 
-/// All font encodings for a page
-pub(crate) type PageFontEncodings = HashMap<String, FontEncoding>;
+/// All font encodings for a page (markitai: shared with the readings a
+/// `FontStyleCache` keeps of fonts listed by several pages)
+pub(crate) type PageFontEncodings = HashMap<String, std::sync::Arc<FontEncoding>>;
 
 /// Font width information extracted from PDF font dictionaries
 #[derive(Debug, Clone)]

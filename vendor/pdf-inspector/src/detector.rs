@@ -710,16 +710,16 @@ fn page_ocr_reasons(a: &PageAnalysis) -> Vec<&'static str> {
 }
 
 /// Extracted font information from a Resource dictionary entry.
-/// Stores the properties needed for decodability/identity-h checks
-/// without holding a reference to the document.
+/// Stores the properties needed for decodability/identity-h checks.
 #[derive(Clone, Debug)]
-struct FontInfo {
+struct FontInfo<'a> {
     subtype: Option<Vec<u8>>,
     encoding: Option<Vec<u8>>,
     has_tounicode: bool,
-    /// The raw font dictionary as an owned lopdf Dictionary.
+    /// The raw font dictionary, in the document (markitai: borrowed
+    /// rather than copied for every page that lists the font).
     /// Needed for fallback checks (DescendantFonts → W array, embedded cmap).
-    dict: lopdf::Dictionary,
+    dict: &'a lopdf::Dictionary,
 }
 
 /// Collect font entries from a Resources/Font dictionary into the font map.
@@ -730,10 +730,10 @@ struct FontInfo {
 ///
 /// Inline font dictionaries (rare — fonts are almost always indirect refs)
 /// are skipped because they have no ObjectId.
-fn collect_fonts_from_resource_dict(
-    doc: &Document,
-    resources: &lopdf::Dictionary,
-    font_map: &mut HashMap<ObjectId, FontInfo>,
+fn collect_fonts_from_resource_dict<'a>(
+    doc: &'a Document,
+    resources: &'a lopdf::Dictionary,
+    font_map: &mut HashMap<ObjectId, FontInfo<'a>>,
 ) {
     let font_obj = match resources.get(b"Font").ok() {
         Some(obj) => obj,
@@ -776,7 +776,7 @@ fn collect_fonts_from_resource_dict(
                     subtype,
                     encoding,
                     has_tounicode,
-                    dict: fd.clone(),
+                    dict: fd,
                 },
             );
         }
@@ -1687,7 +1687,7 @@ fn page_has_decodable_text_fonts(doc: &Document, page_id: ObjectId) -> bool {
 /// Form XObject Resources (P2 fix).
 fn used_fonts_have_identity_h_no_tounicode(
     used_font_ids: &HashSet<ObjectId>,
-    font_map: &HashMap<ObjectId, FontInfo>,
+    font_map: &HashMap<ObjectId, FontInfo<'_>>,
     doc: &Document,
 ) -> bool {
     let mut has_undecodable_identity_h = false;
@@ -1711,7 +1711,7 @@ fn used_fonts_have_identity_h_no_tounicode(
                     has_other_decodable_font = true;
                     continue;
                 }
-                if identity_h_font_has_fallback(&info.dict, doc) {
+                if identity_h_font_has_fallback(info.dict, doc) {
                     has_other_decodable_font = true;
                     continue;
                 }
@@ -1736,7 +1736,7 @@ fn used_fonts_have_identity_h_no_tounicode(
 /// by Tf operators (P1 fix) and includes Form XObject fonts (P2 fix).
 fn used_fonts_are_only_type3(
     used_font_ids: &HashSet<ObjectId>,
-    font_map: &HashMap<ObjectId, FontInfo>,
+    font_map: &HashMap<ObjectId, FontInfo<'_>>,
 ) -> bool {
     if used_font_ids.is_empty() {
         return false;
@@ -1765,7 +1765,7 @@ fn used_fonts_are_only_type3(
 /// referenced by Tf operators (P1 fix) and includes Form XObject fonts (P2 fix).
 fn used_fonts_have_decodable_text(
     used_font_ids: &HashSet<ObjectId>,
-    font_map: &HashMap<ObjectId, FontInfo>,
+    font_map: &HashMap<ObjectId, FontInfo<'_>>,
     doc: &Document,
 ) -> bool {
     for id in used_font_ids {
@@ -1780,7 +1780,7 @@ fn used_fonts_have_decodable_text(
                 return true;
             }
             Some(b"Type0") => {
-                if identity_h_font_has_fallback(&info.dict, doc) {
+                if identity_h_font_has_fallback(info.dict, doc) {
                     return true;
                 }
             }
@@ -1790,19 +1790,20 @@ fn used_fonts_have_decodable_text(
     false
 }
 
-fn scan_xobjects_in_resources(
-    doc: &Document,
-    resources: &lopdf::Dictionary,
+fn scan_xobjects_in_resources<'a>(
+    doc: &'a Document,
+    resources: &'a lopdf::Dictionary,
     visited: &mut HashSet<ObjectId>,
     unique_chars: &mut HashSet<u8>,
     used_font_ids: &mut HashSet<ObjectId>,
-    font_map: &mut HashMap<ObjectId, FontInfo>,
+    font_map: &mut HashMap<ObjectId, FontInfo<'a>>,
 ) -> ContentCounts {
     let mut counts = ContentCounts::default();
 
+    // markitai: borrowed from the document rather than copied per page.
     let xobjects = match resources.get(b"XObject").ok() {
-        Some(Object::Dictionary(d)) => Some(d.clone()),
-        Some(Object::Reference(r)) => doc.get_dictionary(*r).ok().cloned(),
+        Some(Object::Dictionary(d)) => Some(d),
+        Some(Object::Reference(r)) => doc.get_dictionary(*r).ok(),
         _ => None,
     };
 

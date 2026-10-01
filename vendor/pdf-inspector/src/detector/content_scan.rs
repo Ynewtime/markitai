@@ -1191,100 +1191,104 @@ fn scan_masked_content<'a>(
                 collect_text_chars_before(content, i, unique_chars, operand_floor);
             }
             operand_floor = i;
-        } else if matches!(
-            b,
-            b'c' | b'D'
-                | b's'
-                | b'B'
-                | b'E'
-                | b'S'
-                | b'g'
-                | b'r'
-                | b'k'
-                | b'C'
-                | b'G'
-                | b'R'
-                | b'K'
-                | b'q'
-                | b'Q'
-        ) {
+        } else {
             // The operators below, met by their first byte: a byte that
-            // begins none of them — most bytes — is done with here.
-            if token_at(i, b"cm") {
-                // cm = concatenate matrix.
-                if let Some(matrix) = numeric_operands_before::<6>(ops, i, operand_floor) {
-                    state.concat(matrix);
-                    operand_floor = i;
+            // begins none of them — most bytes — is done with here, and one
+            // that does is tried only against the operators it begins, in
+            // the order they are listed (markitai: an operator matches only
+            // where its own first byte is).
+            match b {
+                b'c' if token_at(i, b"cm") => {
+                    // cm = concatenate matrix.
+                    if let Some(matrix) = numeric_operands_before::<6>(ops, i, operand_floor) {
+                        state.concat(matrix);
+                        operand_floor = i;
+                    }
                 }
-            } else if token_at(i, b"Do") {
-                // Do = paint an XObject: an image is measured, a form run in
-                // place. Whether a page has images at all is read from its
-                // resources (scan_xobjects_in_resources, analyze_page_images).
-                if let Some(name) = name_operand_before(ops, i, operand_floor) {
-                    operand_floor = i;
-                    if state.follow_do {
-                        match resolve_xobject(state.doc, resources, &name) {
-                            Some(XObjectDrawn::Image) => state.image_drawn(),
-                            Some(XObjectDrawn::Form(id, form)) => {
-                                state.form_drawn(id, form, resources)
+                b'D' if token_at(i, b"Do") => {
+                    // Do = paint an XObject: an image is measured, a form run
+                    // in place. Whether a page has images at all is read from
+                    // its resources (scan_xobjects_in_resources,
+                    // analyze_page_images).
+                    if let Some(name) = name_operand_before(ops, i, operand_floor) {
+                        operand_floor = i;
+                        if state.follow_do {
+                            match resolve_xobject(state.doc, resources, &name) {
+                                Some(XObjectDrawn::Image) => state.image_drawn(),
+                                Some(XObjectDrawn::Form(id, form)) => {
+                                    state.form_drawn(id, form, resources)
+                                }
+                                None => {}
                             }
-                            None => {}
                         }
                     }
                 }
-            } else if token_at(i, b"sh") {
-                // sh = paint a shading, over the clip in force — nothing when
-                // the clip has no extent.
-                if state.clip_is_open() {
-                    state.painted(Some(state.clip));
+                b's' if token_at(i, b"sh") => {
+                    // sh = paint a shading, over the clip in force — nothing
+                    // when the clip has no extent.
+                    if state.clip_is_open() {
+                        state.painted(Some(state.clip));
+                    }
                 }
-            } else if token_at(i, b"BI") {
-                // BI = begin an inline image, which paints the unit square
-                // under the matrix in force as an image XObject does. It counts
-                // among the page's images, and is measured, only in an
-                // executed scan: the walk over every bound form keeps its
-                // tally of bound image XObjects, which an inline image in a
-                // form never invoked is not, and reads nothing of its state.
-                if state.follow_do {
-                    counts.image_count += 1;
-                    state.image_drawn();
+                b'B' if token_at(i, b"BI") => {
+                    // BI = begin an inline image, which paints the unit square
+                    // under the matrix in force as an image XObject does. It
+                    // counts among the page's images, and is measured, only in
+                    // an executed scan: the walk over every bound form keeps
+                    // its tally of bound image XObjects, which an inline image
+                    // in a form never invoked is not, and reads nothing of its
+                    // state.
+                    if state.follow_do {
+                        counts.image_count += 1;
+                        state.image_drawn();
+                    }
                 }
-            } else if token_at(i, b"BT") {
-                // BT = begin a text object, which the operators to come position.
-                state.text_object_began();
-            } else if token_at(i, b"ET") {
-                // ET = end a text object: its clip-only text's clip takes effect.
-                state.text_object_ended();
-            } else if token_at(i, b"scn") || token_at(i, b"sc") {
-                // scn/sc = set the fill colour. A name names a pattern, which
-                // draws an image or does not; numbers name none.
-                let paints_image = name_operand_before(ops, i, operand_floor)
-                    .is_some_and(|name| state.pattern_paints_image(&name, resources));
-                state.fill_paints_image = paints_image;
-                operand_floor = i;
-            } else if token_at(i, b"SCN") || token_at(i, b"SC") {
-                // SCN/SC = set the stroke colour, likewise.
-                let paints_image = name_operand_before(ops, i, operand_floor)
-                    .is_some_and(|name| state.pattern_paints_image(&name, resources));
-                state.stroke_paints_image = paints_image;
-                operand_floor = i;
-            } else if token_at(i, b"cs")
-                || token_at(i, b"g")
-                || token_at(i, b"rg")
-                || token_at(i, b"k")
-            {
-                // A fill colour space or a plain fill colour: no pattern fills.
-                state.fill_paints_image = false;
-            } else if token_at(i, b"CS")
-                || token_at(i, b"G")
-                || token_at(i, b"RG")
-                || token_at(i, b"K")
-            {
-                state.stroke_paints_image = false;
-            } else if token_at(i, b"q") {
-                state.save();
-            } else if token_at(i, b"Q") {
-                state.restore();
+                b'B' if token_at(i, b"BT") => {
+                    // BT = begin a text object, which the operators to come
+                    // position.
+                    state.text_object_began();
+                }
+                b'E' if token_at(i, b"ET") => {
+                    // ET = end a text object: its clip-only text's clip takes
+                    // effect.
+                    state.text_object_ended();
+                }
+                b's' if token_at(i, b"scn") || token_at(i, b"sc") => {
+                    // scn/sc = set the fill colour. A name names a pattern,
+                    // which draws an image or does not; numbers name none.
+                    let paints_image = name_operand_before(ops, i, operand_floor)
+                        .is_some_and(|name| state.pattern_paints_image(&name, resources));
+                    state.fill_paints_image = paints_image;
+                    operand_floor = i;
+                }
+                b'S' if token_at(i, b"SCN") || token_at(i, b"SC") => {
+                    // SCN/SC = set the stroke colour, likewise.
+                    let paints_image = name_operand_before(ops, i, operand_floor)
+                        .is_some_and(|name| state.pattern_paints_image(&name, resources));
+                    state.stroke_paints_image = paints_image;
+                    operand_floor = i;
+                }
+                b'c' | b'g' | b'r' | b'k'
+                    if token_at(i, b"cs")
+                        || token_at(i, b"g")
+                        || token_at(i, b"rg")
+                        || token_at(i, b"k") =>
+                {
+                    // A fill colour space or a plain fill colour: no pattern
+                    // fills.
+                    state.fill_paints_image = false;
+                }
+                b'C' | b'G' | b'R' | b'K'
+                    if token_at(i, b"CS")
+                        || token_at(i, b"G")
+                        || token_at(i, b"RG")
+                        || token_at(i, b"K") =>
+                {
+                    state.stroke_paints_image = false;
+                }
+                b'q' if token_at(i, b"q") => state.save(),
+                b'Q' if token_at(i, b"Q") => state.restore(),
+                _ => {}
             }
         }
 

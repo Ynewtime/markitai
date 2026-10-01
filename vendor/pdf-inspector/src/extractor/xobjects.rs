@@ -5,13 +5,15 @@ use super::text_paint::{PaintResources, TextPaint};
 use crate::text_utils::{effective_font_size, expand_ligatures};
 use crate::tounicode::FontCMaps;
 use crate::types::{BoldSource, ItemCoverage, ItemType, TextItem, attach_run_coverage};
-use lopdf::{Document, Encoding, Object, ObjectId};
+use lopdf::{Document, Object, ObjectId};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use super::content_stream::{PendingSpace, estimated_string_advance_ts};
 use super::fonts::{
-    CMapDecisionCache, FontStyleCache, build_font_encodings, build_font_kinds, build_font_widths,
-    build_type3_scales, build_type3_y_flips, compute_string_width_ts, extract_text_from_operand,
+    CMapDecisionCache, FontObjectIds, FontResources, FontStyleCache, LopdfEncodings,
+    build_font_encodings, build_font_kinds, build_font_widths, build_type3_scales,
+    build_type3_y_flips, compute_string_width_ts, extract_text_from_operand,
     get_font_file2_obj_num, get_operand_bytes,
 };
 use super::geometry::{
@@ -251,6 +253,101 @@ impl ExtractedText {
     }
 }
 
+/// How many decompressed bytes of form content the contents a document's
+/// walks keep may come from in all (markitai). Decoded, content takes
+/// about 32 times its bytes over the 412 text PDFs of the PDF corpora (100
+/// times at most), so the kept contents take a couple of megabytes, a few
+/// at most, while nearly every form there is under a hundred bytes. A form
+/// past the bound is decompressed and decoded at each invocation, as every
+/// form was before.
+const FORM_CONTENTS_MAX_BYTES: usize = 64 << 10;
+
+/// The decoded content of each Form XObject a document's walks run, by
+/// object id (markitai), kept in its [`FontStyleCache`]: a form a page
+/// invokes many times, or every page invokes, is decompressed and decoded
+/// once. What is kept is what the walk reads of the form's stream (see
+/// [`read_form_content`]), `None` for a form it skips, within
+/// [`FORM_CONTENTS_MAX_BYTES`].
+#[derive(Default)]
+pub(crate) struct FormContents {
+    by_form: HashMap<ObjectId, Option<Arc<lopdf::content::Content>>>,
+    bytes: usize,
+}
+
+impl std::fmt::Debug for FormContents {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FormContents")
+            .field("forms", &self.by_form.len())
+            .field("bytes", &self.bytes)
+            .finish()
+    }
+}
+
+impl FormContents {
+    /// The content of form `form_id`, whose object is `stream`, as the walk
+    /// reads it (see [`read_form_content`]).
+    fn read(
+        &mut self,
+        form_id: ObjectId,
+        stream: &lopdf::Stream,
+    ) -> Option<Arc<lopdf::content::Content>> {
+        if let Some(kept) = self.by_form.get(&form_id) {
+            return kept.clone();
+        }
+        let (content, bytes) = read_form_content(form_id, stream);
+        let content = content.map(Arc::new);
+        if self.bytes + bytes <= FORM_CONTENTS_MAX_BYTES {
+            self.bytes += bytes;
+            self.by_form.insert(form_id, content.clone());
+        }
+        content
+    }
+}
+
+/// A form's content as the walk reads it, with the number of bytes it was
+/// decoded from: `None` for a form the walk skips.
+fn read_form_content(
+    form_id: ObjectId,
+    stream: &lopdf::Stream,
+) -> (Option<lopdf::content::Content>, usize) {
+    // Decompress the content stream within the page-content bound: a form
+    // inflating past it is skipped, as a page over it is, before anything
+    // is allocated for it. A stream that fails to decode for another
+    // reason is read raw, if that fits the bound too.
+    let content_data = match stream
+        .decompressed_content_with_limit(super::content_decode::MAX_PAGE_CONTENT_BYTES)
+    {
+        Ok(data) => data,
+        Err(lopdf::Error::Decompress(lopdf::DecompressError::MemoryLimitExceeded { .. })) => {
+            log::warn!(
+                "form xobject {:?}: skipping — content stream exceeds {} decompressed bytes",
+                form_id,
+                super::content_decode::MAX_PAGE_CONTENT_BYTES
+            );
+            return (None, 0);
+        }
+        Err(_) if stream.content.len() > super::content_decode::MAX_PAGE_CONTENT_BYTES => {
+            log::warn!(
+                "form xobject {:?}: skipping — raw content stream exceeds {} bytes",
+                form_id,
+                super::content_decode::MAX_PAGE_CONTENT_BYTES
+            );
+            return (None, 0);
+        }
+        Err(_) => stream.content.clone(),
+    };
+
+    // Decode the content stream. Cap before lopdf materializes the operator
+    // vector — the walk budget cannot help if decode itself allocates first.
+    let Ok(Some(content)) = super::content_decode::decode_content_bounded(
+        &content_data,
+        super::content_decode::MAX_PAGE_OPERATIONS,
+    ) else {
+        return (None, content_data.len());
+    };
+    (Some(content), content_data.len())
+}
+
 /// Extract text items from a Form XObject.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn extract_form_xobject_text(
@@ -317,39 +414,9 @@ fn extract_form_xobject_text_inner(
         return extracted;
     };
 
-    // Decompress the content stream within the page-content bound: a form
-    // inflating past it is skipped, as a page over it is, before anything
-    // is allocated for it. A stream that fails to decode for another
-    // reason is read raw, if that fits the bound too.
-    let content_data = match stream
-        .decompressed_content_with_limit(super::content_decode::MAX_PAGE_CONTENT_BYTES)
-    {
-        Ok(data) => data,
-        Err(lopdf::Error::Decompress(lopdf::DecompressError::MemoryLimitExceeded { .. })) => {
-            log::warn!(
-                "form xobject {:?}: skipping — content stream exceeds {} decompressed bytes",
-                form_id,
-                super::content_decode::MAX_PAGE_CONTENT_BYTES
-            );
-            return extracted;
-        }
-        Err(_) if stream.content.len() > super::content_decode::MAX_PAGE_CONTENT_BYTES => {
-            log::warn!(
-                "form xobject {:?}: skipping — raw content stream exceeds {} bytes",
-                form_id,
-                super::content_decode::MAX_PAGE_CONTENT_BYTES
-            );
-            return extracted;
-        }
-        Err(_) => stream.content.clone(),
-    };
-
-    // Decode the content stream. Cap before lopdf materializes the operator
-    // vector — the walk budget cannot help if decode itself allocates first.
-    let Ok(Some(content)) = super::content_decode::decode_content_bounded(
-        &content_data,
-        super::content_decode::MAX_PAGE_OPERATIONS,
-    ) else {
+    // markitai: decompressed and decoded once for the document's walks,
+    // while the contents kept last (see `FormContents`).
+    let Some(content) = style_cache.forms.read(form_id, stream) else {
         return extracted;
     };
     let items = &mut extracted.items;
@@ -360,8 +427,9 @@ fn extract_form_xobject_text_inner(
     let run_rotations = &mut extracted.run_rotations;
     let skipped_invisible = &mut extracted.skipped_invisible;
 
-    // Get fonts from the Form's Resources
-    let form_fonts = get_form_fonts(doc, &stream.dict);
+    // Get fonts from the Form's Resources, with the ids their readings are
+    // kept under (markitai)
+    let (form_fonts, form_font_ids) = get_form_fonts(doc, &stream.dict);
     let paint_resources = PaintResources::form(doc, &stream.dict);
     // Unknown font resources may be Type3; infer stroke weight only for
     // positively resolved ordinary text fonts.
@@ -378,10 +446,10 @@ fn extract_form_xobject_text_inner(
         .map(|(name, _)| String::from_utf8_lossy(name).into_owned())
         .collect();
     let (font_encodings, _has_gid_fonts) =
-        build_font_encodings(doc, &form_fonts, font_cmaps, style_cache);
+        build_font_encodings(doc, &form_fonts, &form_font_ids, font_cmaps, style_cache);
 
     // Build font width info for the form
-    let font_widths = build_font_widths(doc, &form_fonts, style_cache);
+    let font_widths = build_font_widths(doc, &form_fonts, &form_font_ids, style_cache);
     let font_kinds = build_font_kinds(&form_fonts);
     let type3_scales = build_type3_scales(doc, &form_fonts);
     let type3_y_flips = build_type3_y_flips(doc, &form_fonts);
@@ -436,13 +504,8 @@ fn extract_form_xobject_text_inner(
     }
 
     // Cache font encodings for form fonts
-    let mut encoding_cache: HashMap<String, Encoding<'_>> = HashMap::new();
-    for (font_name, font_dict) in &form_fonts {
-        let name = String::from_utf8_lossy(font_name).to_string();
-        if let Ok(enc) = font_dict.get_font_encoding(doc) {
-            encoding_cache.insert(name, enc);
-        }
-    }
+    // markitai: each resolved when a string first needs it.
+    let encoding_cache = LopdfEncodings::new(doc, &form_fonts);
 
     // Build XObject map from the Form's own Resources for nested Do
     let form_xobjects = get_form_xobjects(doc, &stream.dict);
@@ -1511,12 +1574,14 @@ fn extract_form_xobject_text_inner(
     extracted
 }
 
-/// Get fonts from a Form XObject's Resources
+/// Get fonts from a Form XObject's Resources, with the object id of each
+/// that is an indirect object (markitai: see [`FontObjectIds`])
 pub(crate) fn get_form_fonts<'a>(
     doc: &'a Document,
     form_dict: &'a lopdf::Dictionary,
-) -> std::collections::BTreeMap<Vec<u8>, &'a lopdf::Dictionary> {
-    let mut fonts = std::collections::BTreeMap::new();
+) -> (FontResources<'a>, FontObjectIds<'a>) {
+    let mut fonts = FontResources::new();
+    let mut ids = FontObjectIds::new();
 
     // Get Resources from Form dictionary
     let resources = if let Ok(res_ref) = form_dict.get(b"Resources") {
@@ -1526,11 +1591,11 @@ pub(crate) fn get_form_fonts<'a>(
             res_ref.as_dict().ok()
         }
     } else {
-        return fonts;
+        return (fonts, ids);
     };
 
     let Some(resources) = resources else {
-        return fonts;
+        return (fonts, ids);
     };
 
     // Get Font dictionary
@@ -1541,26 +1606,29 @@ pub(crate) fn get_form_fonts<'a>(
             font_ref.as_dict().ok()
         }
     } else {
-        return fonts;
+        return (fonts, ids);
     };
 
     let Some(font_dict) = font_dict else {
-        return fonts;
+        return (fonts, ids);
     };
 
     // Collect fonts
     for (name, value) in font_dict.iter() {
-        let dict = match value {
-            Object::Reference(id) => doc.get_dictionary(*id).ok(),
-            Object::Dictionary(dict) => Some(dict),
-            _ => None,
+        let (id, dict) = match value {
+            Object::Reference(id) => (Some(*id), doc.get_dictionary(*id).ok()),
+            Object::Dictionary(dict) => (None, Some(dict)),
+            _ => (None, None),
         };
         if let Some(dict) = dict {
             fonts.insert(name.clone(), dict);
+            if let Some(id) = id {
+                ids.insert(name.as_slice(), id);
+            }
         }
     }
 
-    fonts
+    (fonts, ids)
 }
 
 #[cfg(test)]
@@ -2839,3 +2907,7 @@ BT /F1 10 Tf 0 1 -1 0 60 200 Tm [(ABCD)] TJ ET",
         assert_eq!(texts, [expected.as_str()]);
     }
 }
+
+#[cfg(test)]
+#[path = "xobjects_memo_tests.rs"]
+mod memo_tests;

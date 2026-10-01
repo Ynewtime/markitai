@@ -11,13 +11,13 @@ use crate::types::{
     PendingCoverage, RunCoverage, TextItem, attach_run_coverage,
 };
 use log::trace;
-use lopdf::{Document, Encoding, Object, ObjectId};
-use std::collections::HashMap;
+use lopdf::{Document, Object, ObjectId};
 
 use super::fonts::{
-    CMapDecisionCache, FontStyle, FontStyleCache, build_font_encodings, build_font_kinds,
-    build_font_widths, build_type3_scales, build_type3_y_flips, compute_string_width_ts,
-    extract_text_from_operand, font_style, get_font_file2_obj_num, get_operand_bytes,
+    CMapDecisionCache, FontStyle, FontStyleCache, LopdfEncodings, build_font_encodings,
+    build_font_kinds, build_font_widths, build_type3_scales, build_type3_y_flips,
+    compute_string_width_ts, extract_text_from_operand, font_style, get_font_file2_obj_num,
+    get_operand_bytes, page_fonts,
 };
 use super::geometry::{
     PageRotation, RunGeometry, advanced_tm, estimated_advance_for_glyphs, estimated_advance_ts,
@@ -672,8 +672,9 @@ pub(crate) fn read_page_runs(
     let mut pending_re_rects: Vec<PdfRect> = Vec::new();
     let mut painted_rects: Vec<PdfRect> = Vec::new();
 
-    // Get fonts for encoding
-    let fonts = doc.get_page_fonts(page_id).unwrap_or_default();
+    // Get fonts for encoding, with the ids their readings are kept under
+    // (markitai)
+    let (fonts, font_ids) = page_fonts(doc, page_id);
     let paint_resources = PaintResources::page(doc, page_id);
     // Unknown font resources may be Type3; infer stroke weight only for
     // positively resolved ordinary text fonts.
@@ -692,10 +693,10 @@ pub(crate) fn read_page_runs(
 
     // Build font encoding maps from Differences arrays
     let (font_encodings, has_gid_fonts) =
-        build_font_encodings(doc, &fonts, font_cmaps, style_cache);
+        build_font_encodings(doc, &fonts, &font_ids, font_cmaps, style_cache);
 
     // Build font width info for accurate text positioning
-    let font_widths = build_font_widths(doc, &fonts, style_cache);
+    let font_widths = build_font_widths(doc, &fonts, &font_ids, style_cache);
     let font_kinds = build_font_kinds(&fonts);
     let type3_scales = build_type3_scales(doc, &fonts);
     let type3_y_flips = build_type3_y_flips(doc, &fonts);
@@ -759,13 +760,8 @@ pub(crate) fn read_page_runs(
 
     // Cache font encodings from lopdf (once per font, not per text operand).
     // This avoids re-parsing ToUnicode CMap streams for every Tj/TJ operator.
-    let mut encoding_cache: HashMap<String, Encoding<'_>> = HashMap::new();
-    for (font_name, font_dict) in &fonts {
-        let name = String::from_utf8_lossy(font_name).to_string();
-        if let Ok(enc) = font_dict.get_font_encoding(doc) {
-            encoding_cache.insert(name, enc);
-        }
-    }
+    // markitai: each resolved when a string first needs it.
+    let encoding_cache = LopdfEncodings::new(doc, &fonts);
 
     let mut cmap_decisions = CMapDecisionCache::new();
 
