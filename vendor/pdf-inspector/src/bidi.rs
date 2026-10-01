@@ -822,7 +822,8 @@ pub(crate) fn logical_line_order<T>(
     let mut reading: Vec<usize> = (0..items.len())
         .filter(|&i| !strong_positions[i].is_empty())
         .collect();
-    reading.sort_by_key(|&i| strong_positions[i][strong_positions[i].len() / 2]);
+    let middle = |i: usize| strong_positions[i][strong_positions[i].len() / 2];
+    crate::sort::stable(&mut reading, &mut |&a, &b| middle(a).cmp(&middle(b)));
     let lettered = |i: usize| !strong_positions[i].is_empty();
 
     // Runs of punctuation-only items, placed by their neighbours.

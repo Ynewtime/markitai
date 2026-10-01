@@ -228,6 +228,15 @@ fn assemble(mut lines: Vec<Line>, width: u32, height: u32) -> Result<OcrResult> 
     Ok(result)
 }
 
+/// Top edge, then left edge: the order `columns` and `rows` start from. One
+/// named comparator, so the two sorts share one compiled sort.
+#[cfg(any(target_os = "macos", test))]
+fn top_then_left(a: &Line, b: &Line) -> std::cmp::Ordering {
+    a.bounds[1]
+        .total_cmp(&b.bounds[1])
+        .then_with(|| a.bounds[0].total_cmp(&b.bounds[0]))
+}
+
 /// Lines in reading order as blocks: a page of text columns is read column
 /// by column. A column gutter is the widest horizontal gap between the lines
 /// narrower than three fifths of the text, at least one line height wide,
@@ -242,11 +251,7 @@ fn columns(mut lines: Vec<Line>, depth: usize) -> Vec<Vec<Line>> {
     const MIN_COLUMN_LINES: usize = 3;
     const MIN_PROSE_CHARS: usize = 12;
     const SPANNING: f32 = 0.6;
-    lines.sort_by(|a, b| {
-        a.bounds[1]
-            .total_cmp(&b.bounds[1])
-            .then_with(|| a.bounds[0].total_cmp(&b.bounds[0]))
-    });
+    lines.sort_by(top_then_left);
     if depth >= MAX_DEPTH || lines.len() < 2 * MIN_COLUMN_LINES {
         return vec![lines];
     }
@@ -340,11 +345,7 @@ fn columns(mut lines: Vec<Line>, depth: usize) -> Vec<Vec<Line>> {
 /// band form a left-to-right row, and a wide vertical gap starts a paragraph.
 #[cfg(any(target_os = "macos", test))]
 fn rows(mut lines: Vec<Line>, text: &mut String, boxes: &mut Vec<[f32; 4]>, confidence: &mut f32) {
-    lines.sort_by(|a, b| {
-        a.bounds[1]
-            .total_cmp(&b.bounds[1])
-            .then_with(|| a.bounds[0].total_cmp(&b.bounds[0]))
-    });
+    lines.sort_by(top_then_left);
     let mut index = 0;
     let mut previous: Option<[f32; 4]> = None;
     while index < lines.len() {

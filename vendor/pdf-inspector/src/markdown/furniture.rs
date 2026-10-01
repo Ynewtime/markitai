@@ -49,7 +49,7 @@ fn strip_edge_furniture(lines: Vec<TextLine>) -> Vec<TextLine> {
 
     let mut removal: HashSet<usize> = HashSet::new();
     for indices in pages.values_mut() {
-        indices.sort_by(|&a, &b| lines[b].y.total_cmp(&lines[a].y));
+        crate::sort::stable(indices, &mut |&a, &b| lines[b].y.total_cmp(&lines[a].y));
         // Strictly more than the floor: on a page at the minimum, the two
         // edge blocks could remove up to half the content.
         if indices.len() <= MIN_PAGE_LINES {
@@ -80,7 +80,7 @@ fn strip_edge_furniture(lines: Vec<TextLine>) -> Vec<TextLine> {
             .map(|w| lines[w[0]].y - lines[w[1]].y)
             .filter(|d| *d > 1.0)
             .collect();
-        steps.sort_by(|a, b| a.total_cmp(b));
+        crate::sort::f32_ascending(&mut steps);
         let median_leading = steps.get(steps.len() / 2).copied().unwrap_or(12.0);
         let isolation = median_leading * ISOLATION_FACTOR;
 
@@ -134,7 +134,7 @@ fn strip_edge_furniture(lines: Vec<TextLine>) -> Vec<TextLine> {
                     .iter()
                     .map(|it| (it.x, it.x + it.width))
                     .collect();
-                xs.sort_by(|a, b| a.0.total_cmp(&b.0));
+                crate::sort::stable(&mut xs, &mut |a, b| a.0.total_cmp(&b.0));
                 let cluster_gap = line_font(i).max(6.0) * 2.0;
                 let mut clusters = 1usize;
                 let mut run_right = xs.first().map(|&(_, r)| r).unwrap_or(0.0);
@@ -340,7 +340,7 @@ fn strip_repeated_lines(lines: Vec<TextLine>, page_count: u32) -> Vec<TextLine> 
         page_sorted_ys.entry(line.page).or_default().push(line.y);
     }
     for ys in page_sorted_ys.values_mut() {
-        ys.sort_by(|a, b| a.total_cmp(b));
+        crate::sort::f32_ascending(ys);
         ys.dedup();
     }
 

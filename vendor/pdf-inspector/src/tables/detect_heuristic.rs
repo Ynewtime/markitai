@@ -51,7 +51,7 @@ fn merge_adjacent_items_preserving(
 
     // Sort each group by X position
     for (_, group) in &mut line_groups {
-        group.sort_by(|a, b| {
+        crate::sort::stable(group, &mut |a, b| {
             a.1.x
                 .partial_cmp(&b.1.x)
                 .unwrap_or(std::cmp::Ordering::Equal)
@@ -59,7 +59,7 @@ fn merge_adjacent_items_preserving(
     }
 
     // Sort groups by Y descending (top of page first)
-    line_groups.sort_by(|a, b| b.0.total_cmp(&a.0));
+    crate::sort::stable(&mut line_groups, &mut |a, b| b.0.total_cmp(&a.0));
 
     let mut merged_items = Vec::new();
     let mut index_map: Vec<Vec<usize>> = Vec::new();
@@ -246,7 +246,7 @@ fn redline_edit_regions(items: &[TextItem], page_width: f32) -> Vec<RedlineEditR
     const MAX_HORIZONTAL_GAP_RATIO: f32 = 0.20;
 
     let mut strikeouts: Vec<&TextItem> = items.iter().filter(|item| item.is_strikeout).collect();
-    strikeouts.sort_by(|a, b| a.y.total_cmp(&b.y));
+    crate::sort::stable(&mut strikeouts, &mut |a, b| a.y.total_cmp(&b.y));
 
     let mut rows: Vec<(f32, Vec<(f32, f32)>)> = Vec::new();
     for item in strikeouts {
@@ -272,7 +272,7 @@ fn redline_edit_regions(items: &[TextItem], page_width: f32) -> Vec<RedlineEditR
                 .iter()
                 .flat_map(|(_, x_ranges)| x_ranges.iter().copied())
                 .collect();
-            x_ranges.sort_by(|a, b| a.0.total_cmp(&b.0));
+            crate::sort::stable(&mut x_ranges, &mut |a, b| a.0.total_cmp(&b.0));
             let mut merged_ranges: Vec<(f32, f32)> = Vec::new();
             for (x_min, x_max) in x_ranges {
                 // Modest inline gaps can separate fragments of one flowing
@@ -372,7 +372,7 @@ fn underlined_table_columns(
     // Sort once globally by X, then partition candidates into their unique Y
     // regions. Each regional vector remains X-sorted without another sort.
     let mut live_items: Vec<&TextItem> = items.iter().filter(|item| !item.is_strikeout).collect();
-    live_items.sort_by(|a, b| a.x.total_cmp(&b.x));
+    crate::sort::stable(&mut live_items, &mut |a, b| a.x.total_cmp(&b.x));
     let mut candidates_by_region: Vec<Vec<&TextItem>> = vec![Vec::new(); redline_regions.len()];
     for item in live_items {
         if let Some(region_index) = redline_region_at_y(redline_regions, item.y) {
@@ -770,7 +770,7 @@ fn find_table_regions(items: &[(usize, &TextItem)]) -> Vec<(f32, f32)> {
     }
 
     let mut y_positions: Vec<f32> = items.iter().map(|(_, i)| i.y).collect();
-    y_positions.sort_by(|a, b| a.total_cmp(b));
+    crate::sort::f32_ascending(&mut y_positions);
 
     // Find clusters of Y positions (table regions)
     let mut regions = Vec::new();
@@ -833,7 +833,7 @@ fn find_table_regions_strict(items: &[(usize, &TextItem)]) -> Vec<(f32, f32, f32
     let mut qualifying_rows: Vec<(f32, Vec<f32>)> = Vec::new(); // (y, cluster_starts)
     for (y, x_positions) in &row_groups {
         let mut sorted_xs = x_positions.clone();
-        sorted_xs.sort_by(|a, b| a.total_cmp(b));
+        crate::sort::f32_ascending(&mut sorted_xs);
 
         if sorted_xs.is_empty() {
             continue;
@@ -872,7 +872,7 @@ fn find_table_regions_strict(items: &[(usize, &TextItem)]) -> Vec<(f32, f32, f32
             .windows(2)
             .map(|w| (w[1].0 - w[0].0).abs())
             .collect();
-        gaps.sort_by(|a, b| a.total_cmp(b));
+        crate::sort::f32_ascending(&mut gaps);
         let median_gap = gaps[gaps.len() / 2];
         (median_gap * 3.0).max(25.0)
     } else {
@@ -1014,7 +1014,7 @@ fn detect_contents_list(items: &[(usize, &TextItem)]) -> Option<Table> {
         }
     }
     for row in &mut row_items {
-        row.sort_by(|a, b| a.1.x.total_cmp(&b.1.x));
+        crate::sort::stable(row, &mut |a, b| a.1.x.total_cmp(&b.1.x));
     }
     // A numbered row ends in a page number and has a text title before it —
     // one contiguous title, at most preceded by a short chapter or section
@@ -1052,7 +1052,7 @@ fn detect_contents_list(items: &[(usize, &TextItem)]) -> Option<Table> {
                 return None;
             }
             let mut sizes: Vec<f32> = text_items.iter().map(|(_, i)| i.font_size).collect();
-            sizes.sort_by(|a, b| a.total_cmp(b));
+            crate::sort::f32_ascending(&mut sizes);
             if let Some(&median) = sizes.get(sizes.len() / 2) {
                 if last.font_size < median * 0.75 {
                     return None;
@@ -1211,7 +1211,7 @@ fn detect_contents_list(items: &[(usize, &TextItem)]) -> Option<Table> {
         return None;
     }
     // The page numbers share a right edge.
-    right_edges.sort_by(|a, b| a.total_cmp(b));
+    crate::sort::f32_ascending(&mut right_edges);
     let median_edge = right_edges[right_edges.len() / 2];
     let aligned = right_edges
         .iter()
@@ -1301,7 +1301,7 @@ fn detect_contents_list(items: &[(usize, &TextItem)]) -> Option<Table> {
         item_indices.extend(row.iter().map(|(idx, _)| *idx));
         cells.push(vec![title, page]);
     }
-    number_x.sort_by(|a, b| a.total_cmp(b));
+    crate::sort::f32_ascending(&mut number_x);
     let columns = vec![title_x, number_x[number_x.len() / 2]];
     let table = Table::new(columns, rows[first..=last].to_vec(), cells, item_indices);
     if table.kind != super::TableKind::Toc {
@@ -1445,7 +1445,7 @@ fn detect_table_in_region(
             if rtl {
                 crate::text_utils::sort_rtl_cell_items(col_items, |i| *i);
             } else {
-                col_items.sort_by(|a, b| a.x.total_cmp(&b.x));
+                crate::sort::stable(col_items, &mut |a, b| a.x.total_cmp(&b.x));
             }
 
             // Join items with subscript-aware spacing
@@ -2577,7 +2577,7 @@ fn try_add_label_column(
             })
             .map(|(idx, item)| (*idx, *item))
             .collect();
-        row_labels.sort_by(|a, b| {
+        crate::sort::stable(&mut row_labels, &mut |a, b| {
             a.1.x
                 .partial_cmp(&b.1.x)
                 .unwrap_or(std::cmp::Ordering::Equal)

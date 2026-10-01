@@ -89,7 +89,7 @@ pub(crate) fn detect_columns(
         // emptiness. Real content, however sparse, does not leave a void that
         // large; a malformed coordinate sits alone beyond one.
         let mut spans: Vec<(f32, f32)> = page_items.iter().filter_map(finite_span).collect();
-        spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+        crate::sort::stable(&mut spans, &mut |a, b| a.0.total_cmp(&b.0));
 
         let mut core: Option<std::ops::Range<usize>> = None;
         let mut start = 0usize;
@@ -364,20 +364,20 @@ fn try_xy_cut_split(
         .iter()
         .map(|i| (i.x, i.x + effective_width(i)))
         .collect();
-    edges.sort_by(|a, b| a.0.total_cmp(&b.0));
+    crate::sort::stable(&mut edges, &mut |a, b| a.0.total_cmp(&b.0));
 
     // Find the largest gap between consecutive items (by left edge).
     // Use a sweep: sort left edges, find max gap between sorted right edges
     // of items to the left and left edges of items to the right.
     let mut left_edges: Vec<f32> = page_items.iter().map(|i| i.x).collect();
-    left_edges.sort_by(|a, b| a.total_cmp(b));
+    crate::sort::f32_ascending(&mut left_edges);
 
     // Build prefix max of right edges (for items sorted by left edge)
     let mut sorted_by_left: Vec<(f32, f32)> = page_items
         .iter()
         .map(|i| (i.x, i.x + effective_width(i)))
         .collect();
-    sorted_by_left.sort_by(|a, b| a.0.total_cmp(&b.0));
+    crate::sort::stable(&mut sorted_by_left, &mut |a, b| a.0.total_cmp(&b.0));
 
     let mut best_gap = 0.0f32;
     let mut best_split = 0.0f32;
@@ -591,7 +591,7 @@ fn columns_have_prose(columns: &[ColumnRegion], items: &[&TextItem]) -> bool {
 
         // Sort by Y descending (top of page = higher Y in PDF coords)
         let mut sorted: Vec<&TextItem> = col_items;
-        sorted.sort_by(|a, b| b.line_y().total_cmp(&a.line_y()));
+        crate::sort::stable(&mut sorted, &mut |a, b| b.line_y().total_cmp(&a.line_y()));
 
         // Group into lines by Y-proximity and measure fill + item count
         let mut stats = ProseLineStats::default();
@@ -1062,7 +1062,7 @@ fn identify_spanning_lines(items: &[TextItem], columns: &[ColumnRegion]) -> Vec<
 
         // Sort group indices by X to compute span
         let mut sorted_by_x: Vec<usize> = group;
-        sorted_by_x.sort_by(|&a, &b| {
+        crate::sort::stable(&mut sorted_by_x, &mut |&a, &b| {
             items[a]
                 .x
                 .partial_cmp(&items[b].x)
@@ -1429,7 +1429,7 @@ fn mark_adjacent_page_folio_pairs(
             .push(index);
     }
     for anchors in anchors_by_sequence.values_mut() {
-        anchors.sort_by(|&left, &right| items[left].y.total_cmp(&items[right].y));
+        crate::sort::stable(anchors, &mut |&left, &right| items[left].y.total_cmp(&items[right].y));
     }
 
     for (index, value) in candidate_values.iter().enumerate() {
@@ -1507,7 +1507,7 @@ fn page_number_context_masks(
         }
     }
     for mut page_indices in indices_by_page.into_values() {
-        page_indices.sort_by(|&left, &right| {
+        crate::sort::stable(&mut page_indices, &mut |&left, &right| {
             items[right]
                 .y
                 .total_cmp(&items[left].y)
@@ -1526,7 +1526,7 @@ fn page_number_context_masks(
         }
 
         for mut row in rows {
-            row.sort_by(|&left, &right| items[left].x.total_cmp(&items[right].x));
+            crate::sort::stable(&mut row, &mut |&left, &right| items[left].x.total_cmp(&items[right].x));
             let mut start = 0;
             while start < row.len() {
                 let mut end = start + 1;
@@ -1999,7 +1999,7 @@ pub(crate) fn is_newspaper_layout(
                             return 0.0;
                         }
                         let mut ys: Vec<f32> = lines.iter().map(|l| l.y).collect();
-                        ys.sort_by(|a, b| a.total_cmp(b));
+                        crate::sort::f32_ascending(&mut ys);
                         let span = ys.last().unwrap() - ys.first().unwrap();
                         span / (lines.len() as f32 - 1.0)
                     };
@@ -2113,7 +2113,7 @@ fn split_column_stragglers(lines: Vec<TextLine>) -> (Vec<TextLine>, Vec<TextLine
 
     // Median gap = typical line spacing
     let mut sorted_gaps = gaps.clone();
-    sorted_gaps.sort_by(|a, b| a.total_cmp(b));
+    crate::sort::f32_ascending(&mut sorted_gaps);
     let median_gap = sorted_gaps[sorted_gaps.len() / 2];
 
     // A gap > 3× median (min 30pt) indicates a break between content clusters
@@ -2656,8 +2656,8 @@ fn order_columns_with_policy(
                     }
                 }
 
-                above.sort_by(|a, b| b.y.total_cmp(&a.y));
-                below_spanning.sort_by(|a, b| b.y.total_cmp(&a.y));
+                crate::sort::stable(&mut above, &mut |a, b| b.y.total_cmp(&a.y));
+                crate::sort::stable(&mut below_spanning, &mut |a, b| b.y.total_cmp(&a.y));
 
                 all_lines.extend(above);
                 for col in core_columns {
@@ -2677,7 +2677,7 @@ fn order_columns_with_policy(
                 }
 
                 // Sort by Y descending (top-first), then by X for same-Y lines
-                all_page_lines.sort_by(|a, b| {
+                crate::sort::stable(&mut all_page_lines, &mut |a, b| {
                     b.y.total_cmp(&a.y).then(
                         a.items
                             .first()
@@ -2785,16 +2785,16 @@ fn split_into_y_bands(detection_items: &[TextItem]) -> (Vec<YBand>, Vec<(f32, f3
     if intervals.len() < 10 {
         return (vec![], vec![]);
     }
-    intervals.sort_by(|a, b| b.0.total_cmp(&a.0));
+    crate::sort::stable(&mut intervals, &mut |a, b| b.0.total_cmp(&a.0));
 
     let mut baselines: Vec<f32> = intervals.iter().map(|&(_, bottom)| bottom).collect();
-    baselines.sort_by(|a, b| b.total_cmp(a));
+    crate::sort::f32_descending(&mut baselines);
     let mut steps: Vec<f32> = baselines
         .windows(2)
         .map(|w| w[0] - w[1])
         .filter(|d| *d > 1.0)
         .collect();
-    steps.sort_by(|a, b| a.total_cmp(b));
+    crate::sort::f32_ascending(&mut steps);
     let median_leading = steps.get(steps.len() / 2).copied().unwrap_or(12.0);
     let gap_threshold = (median_leading * LEADING_FACTOR).max(MIN_GAP);
 
@@ -2957,7 +2957,7 @@ fn try_banded_layout(
         .filter(|i| crate::extractor::is_text_layout_item(i))
         .map(|i| i.y)
         .collect();
-    sorted_ys.sort_by(|a, b| b.total_cmp(a));
+    crate::sort::f32_descending(&mut sorted_ys);
     let gap_has_content = |gap: (f32, f32)| -> bool {
         let first_below_top = sorted_ys.partition_point(|&y| y >= gap.0);
         first_below_top < sorted_ys.len() && sorted_ys[first_below_top] > gap.1
@@ -3090,7 +3090,7 @@ fn group_single_column(
         // sort by their anchor's baseline so a raised footnote marker lands
         // beside its word instead of ahead of the whole line.
         let mut sorted = items;
-        sorted.sort_by(|a, b| b.line_y().total_cmp(&a.line_y()).then(a.x.total_cmp(&b.x)));
+        crate::sort::stable(&mut sorted, &mut |a, b| b.line_y().total_cmp(&a.line_y()).then(a.x.total_cmp(&b.x)));
         sorted
     } else {
         items

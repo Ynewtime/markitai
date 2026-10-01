@@ -240,8 +240,19 @@ fn line_y(item: &TextItem) -> f32 {
     item.y - item.baseline_shift
 }
 
+/// A stable sort of text items. Its comparator is a trait object, so the two
+/// orders `lines` sorts by share one compiled sort.
+fn sort_items(
+    items: &mut [TextItem],
+    compare: &mut dyn FnMut(&TextItem, &TextItem) -> std::cmp::Ordering,
+) {
+    items.sort_by(|a, b| compare(a, b));
+}
+
 fn lines(mut items: Vec<TextItem>) -> Vec<Line> {
-    items.sort_by(|a, b| line_y(b).total_cmp(&line_y(a)).then(a.x.total_cmp(&b.x)));
+    sort_items(&mut items, &mut |a, b| {
+        line_y(b).total_cmp(&line_y(a)).then(a.x.total_cmp(&b.x))
+    });
     let mut result: Vec<Line> = Vec::new();
     for item in items {
         let y = line_y(&item);
@@ -259,7 +270,7 @@ fn lines(mut items: Vec<TextItem>) -> Vec<Line> {
         }
     }
     for line in &mut result {
-        line.items.sort_by(|a, b| a.x.total_cmp(&b.x));
+        sort_items(&mut line.items, &mut |a, b| a.x.total_cmp(&b.x));
     }
     result
 }

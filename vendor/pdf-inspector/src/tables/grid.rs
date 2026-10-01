@@ -9,7 +9,7 @@ pub(crate) fn find_column_boundaries(
     mode: TableDetectionMode,
 ) -> Vec<f32> {
     let mut x_positions: Vec<f32> = items.iter().map(|(_, i)| i.x).collect();
-    x_positions.sort_by(|a, b| a.total_cmp(b));
+    crate::sort::f32_ascending(&mut x_positions);
 
     if x_positions.is_empty() {
         return vec![];
@@ -43,7 +43,7 @@ pub(crate) fn find_column_boundaries(
         .collect();
 
     if consec_gaps.len() > 2 {
-        consec_gaps.sort_by(|a, b| a.total_cmp(b));
+        crate::sort::f32_ascending(&mut consec_gaps);
         // Find the biggest jump in the sorted gap sequence — natural break
         // between within-column jitter and between-column spacing.
         // Require at least 3 values on each side to avoid outlier-dominated
@@ -271,7 +271,7 @@ fn merge_numeric_adjacent_clusters(
 /// Find row boundaries by clustering Y positions
 pub(crate) fn find_row_boundaries(items: &[(usize, &TextItem)]) -> Vec<f32> {
     let mut y_positions: Vec<f32> = items.iter().map(|(_, i)| i.y).collect();
-    y_positions.sort_by(|a, b| b.total_cmp(a)); // Descending
+    crate::sort::f32_descending(&mut y_positions); // Descending
 
     if y_positions.is_empty() {
         return vec![];
@@ -282,7 +282,7 @@ pub(crate) fn find_row_boundaries(items: &[(usize, &TextItem)]) -> Vec<f32> {
     // inter-row gaps (≥1× font size), preventing row merging in uniform-spaced PDFs.
     let cluster_threshold = {
         let mut font_sizes: Vec<f32> = items.iter().map(|(_, i)| i.font_size).collect();
-        font_sizes.sort_by(|a, b| a.total_cmp(b));
+        crate::sort::f32_ascending(&mut font_sizes);
         let median_font = font_sizes[font_sizes.len() / 2];
         (median_font * 0.8).max(4.0)
     };
@@ -396,7 +396,7 @@ pub(crate) fn recover_header_row(
     // Group header candidates by Y (cluster within 5pt)
     let mut header_y_groups: Vec<(f32, Vec<(usize, &TextItem)>)> = Vec::new();
     let mut sorted_candidates = header_candidates;
-    sorted_candidates.sort_by(|a, b| {
+    crate::sort::stable(&mut sorted_candidates, &mut |a, b| {
         b.1.y
             .partial_cmp(&a.1.y)
             .unwrap_or(std::cmp::Ordering::Equal)

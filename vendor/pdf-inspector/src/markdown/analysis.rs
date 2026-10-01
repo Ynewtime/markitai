@@ -525,7 +525,7 @@ pub(crate) fn compute_paragraph_threshold(lines: &[TextLine], base_size: f32) ->
         return fallback;
     }
 
-    gaps.sort_by(|a, b| a.total_cmp(b));
+    crate::sort::f32_ascending(&mut gaps);
 
     let median = gaps[gaps.len() / 2];
 
@@ -719,7 +719,7 @@ pub(crate) fn compute_heading_tiers(lines: &[TextLine], base_size: f32) -> Vec<f
     }
 
     // Sort descending
-    heading_sizes.sort_by(|a, b| b.total_cmp(a));
+    crate::sort::f32_descending(&mut heading_sizes);
 
     // Cluster sizes within 0.5pt into same tier (use first value as representative)
     let mut tiers: Vec<f32> = Vec::new();
@@ -746,7 +746,7 @@ pub(crate) fn compute_heading_tiers(lines: &[TextLine], base_size: f32) -> Vec<f
             .filter(|it| it.is_bold && it.font_size / base_size >= 1.05)
             .map(|it| it.font_size)
             .collect();
-        bold_sizes.sort_by(|a, b| b.total_cmp(a));
+        crate::sort::f32_descending(&mut bold_sizes);
         for size in bold_sizes {
             if !tiers.iter().any(|&t| (t - size).abs() < 0.5) {
                 tiers.push(size);

@@ -197,7 +197,7 @@ pub(crate) fn reorder_bidi_line<T: Clone>(
 /// which a plain Y-then-X comparator would (`total_cmp` ties only on
 /// identical Y).
 pub(crate) fn sort_rtl_cell_items<T: Clone>(items: &mut [T], item_of: impl Fn(&T) -> &TextItem) {
-    items.sort_by(|a, b| item_of(b).line_y().total_cmp(&item_of(a).line_y()));
+    crate::sort::stable(items, &mut |a, b| item_of(b).line_y().total_cmp(&item_of(a).line_y()));
     let mut start = 0;
     while start < items.len() {
         let y0 = item_of(&items[start]).line_y();
@@ -205,7 +205,7 @@ pub(crate) fn sort_rtl_cell_items<T: Clone>(items: &mut [T], item_of: impl Fn(&T
         while end < items.len() && (item_of(&items[end]).line_y() - y0).abs() <= 2.0 {
             end += 1;
         }
-        items[start..end].sort_by(|a, b| item_of(a).x.total_cmp(&item_of(b).x));
+        crate::sort::stable(&mut items[start..end], &mut |a, b| item_of(a).x.total_cmp(&item_of(b).x));
         reorder_bidi_line(&mut items[start..end], &item_of, true);
         start = end;
     }
@@ -218,7 +218,7 @@ pub(crate) fn sort_line_items(items: &mut [TextItem], page_rtl: bool) {
     // Algorithm, whichever direction dominates it.
     if items.iter().any(|i| i.text.chars().any(is_rtl_char)) {
         let rtl_base = rtl_line_base(items, |i| i, page_rtl);
-        items.sort_by(|a, b| a.x.total_cmp(&b.x));
+        crate::sort::stable(items, &mut |a, b| a.x.total_cmp(&b.x));
         reorder_bidi_line(items, |i| i, rtl_base);
         return;
     }
@@ -237,7 +237,7 @@ pub(crate) fn sort_line_items(items: &mut [TextItem], page_rtl: bool) {
             item.x
         }
     };
-    items.sort_by(|a, b| key(a).total_cmp(&key(b)));
+    crate::sort::stable(items, &mut |a, b| key(a).total_cmp(&key(b)));
 }
 
 /// Detect if a font name indicates bold style: a bold word ("Bold",
@@ -997,7 +997,7 @@ fn compute_canva_join_threshold(items: &[TextItem]) -> f32 {
     }
 
     let mut sorted: Vec<f32> = ratios;
-    sorted.sort_by(|a, b| a.total_cmp(b));
+    crate::sort::f32_ascending(&mut sorted);
 
     if sorted[sorted.len() - 1] < 0.40 || sorted[0] < 0.40 {
         return DEFAULT;
@@ -1099,7 +1099,7 @@ fn compute_single_char_join_threshold(items: &[TextItem]) -> f32 {
         return DEFAULT;
     }
 
-    ratios.sort_by(|a, b| a.total_cmp(b));
+    crate::sort::f32_ascending(&mut ratios);
 
     // If all gaps are tight (max < 0.40), use default — normal PDF
     let max_ratio = ratios[ratios.len() - 1];

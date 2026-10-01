@@ -479,8 +479,14 @@ fn edges(content: &Content, frame: Frame, resources: &RuleResources) -> Option<V
     shapes(content, frame, resources).map(|(edges, _)| edges)
 }
 
+/// A stable sort of edges. Its comparator is a trait object, so the two
+/// orders `merge` sorts by share one compiled sort.
+fn sort_edges(edges: &mut [Edge], compare: &mut dyn FnMut(&Edge, &Edge) -> std::cmp::Ordering) {
+    edges.sort_by(|a, b| compare(a, b));
+}
+
 fn merge(mut edges: Vec<Edge>) -> Vec<Edge> {
-    edges.sort_by(|a, b| {
+    sort_edges(&mut edges, &mut |a, b| {
         a.horizontal
             .cmp(&b.horizontal)
             .then(a.position.total_cmp(&b.position))
@@ -499,7 +505,7 @@ fn merge(mut edges: Vec<Edge>) -> Vec<Edge> {
     }
     let mut out: Vec<Edge> = Vec::new();
     for mut band in bands {
-        band.sort_by(|a, b| a.start.total_cmp(&b.start));
+        sort_edges(&mut band, &mut |a, b| a.start.total_cmp(&b.start));
         let position = band[0].position;
         for mut e in band {
             e.position = position;

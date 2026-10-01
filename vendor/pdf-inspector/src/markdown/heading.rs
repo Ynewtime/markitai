@@ -222,7 +222,7 @@ fn has_displaced_baseline_peer(lines: &[TextLine], line_idx: usize) -> bool {
     };
 
     let mut items: Vec<_> = line.items.iter().collect();
-    items.sort_by(|left, right| left.x.total_cmp(&right.x));
+    crate::sort::stable(&mut items, &mut |left, right| left.x.total_cmp(&right.x));
     if items.windows(2).any(|pair| {
         let left_edge = pair[0].x + pair[0].width.max(0.0);
         pair[1].x - left_edge >= X_BUCKET_POINTS

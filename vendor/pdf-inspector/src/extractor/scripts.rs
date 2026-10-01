@@ -47,7 +47,7 @@ pub(crate) fn merge_subscript_items(items: Vec<TextItem>) -> Vec<TextItem> {
     // further than the window on large type.
     let mut lines = super::group_indices_into_lines(&items);
     for line in &mut lines {
-        line.sort_by(|&a, &b| items[a].x.total_cmp(&items[b].x));
+        crate::sort::stable(line, &mut |&a, &b| items[a].x.total_cmp(&items[b].x));
     }
     let mut slots: Vec<Option<TextItem>> = items.into_iter().map(Some).collect();
     let mut ordered: Vec<TextItem> = Vec::with_capacity(slots.len());
@@ -245,7 +245,7 @@ fn detect_script_runs(items: &[TextItem]) -> Vec<ScriptRun> {
 
     let mut runs = Vec::new();
     for (_, mut by_y) in pages {
-        by_y.sort_by(|&a, &b| items[a].y.total_cmp(&items[b].y));
+        crate::sort::stable(&mut by_y, &mut |&a, &b| items[a].y.total_cmp(&items[b].y));
         let max_fs = by_y
             .iter()
             .map(|&i| items[i].font_size)
@@ -259,7 +259,7 @@ fn detect_script_runs(items: &[TextItem]) -> Vec<ScriptRun> {
             .copied()
             .filter(|&i| is_script_glyph_text(&items[i].text))
             .collect();
-        glyphs.sort_by(|&a, &b| {
+        crate::sort::stable(&mut glyphs, &mut |&a, &b| {
             items[a]
                 .x
                 .total_cmp(&items[b].x)

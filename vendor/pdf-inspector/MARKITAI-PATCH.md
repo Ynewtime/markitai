@@ -6,7 +6,8 @@ upstream commit and every copied file's original checksum. The original MIT
 license and `external/bcmaps/LICENSE` remain in place. No Cargo registry source
 was modified. The workspace coordinator owns the path patch and lockfile.
 
-The local changes are limited to fifteen upstream files:
+The local changes, each marked `markitai` (or, for sorts, made through
+`crate::sort`), are limited to the upstream files listed here:
 
 - `src/text_utils.rs`: page-number recognition requires a complete folio
   expression, preserving paragraphs such as `Page 42 explains the result` and
@@ -55,6 +56,46 @@ The local changes are limited to fifteen upstream files:
   (`FontBBox`). Chrome/Skia mirrors the matrix over glyphs drawn y-down, so its
   runs stood one font size below their baseline and interleaved with the
   embedded fonts of the same line; dvips/PK fonts keep the old handling.
+- `src/sort.rs` (new, `mod sort` in `src/lib.rs`) and 132 sort calls in
+  `src/bidi.rs`, `src/text_utils.rs`,
+  `src/extractor/{layout,mod,reading_order,scripts,underline,word_gaps}.rs`,
+  `src/markdown/{analysis,furniture,heading,mod}.rs` and
+  `src/tables/{detect_heuristic,detect_lines,detect_rects,detect_struct,grid,mod}.rs`
+  (twelve of these files were otherwise unmodified): one compiled sort per
+  element type. A closure is a type of its own, so every `sort_by` with a
+  closure compiled the standard library's stable sort again, about 4 KB for a
+  list of floats and up to 25 KB for a list of items, and once more for each
+  caller of a generic function such as `sort_rtl_cell_items`.
+  `crate::sort::stable(v, &mut compare)` takes the comparator as a trait
+  object. A call keeps its element type and its comparator, and the stable
+  sort's steps depend only on those and on the comparisons' results, so the
+  order is the same, also where a comparator is not a total order
+  (`partial_cmp` read as `Equal`). `f32_ascending` and `f32_descending`
+  replace `sort_by(|a, b| a.total_cmp(b))` and its reverse: two floats
+  `total_cmp` finds equal have the same bits, so the descending order is the
+  ascending one reversed. Calls are changed only where their element type had
+  more than one sorting closure in markitai's CLI (two `sort_by_key` calls
+  become `stable` with their key's `cmp`); every call of `crate::sort` is a
+  markitai change. The float sorts of `src/lib.rs` (vector grids, TSR) are
+  left as they were, since the CLI does not compile them. No sort became
+  unstable and no unstable sort changed.
+
+  Measured on `3129ec2` with `cargo build --release -p markitai-cli` (rustc
+  1.98.1, macOS 27.0.1 on an 18-core Apple M5 Max): the CLI is 22,773,504
+  bytes before and 21,947,328 after (−826,176, −3.6%, including four
+  markitai-core sorts changed alongside). In an unstripped build of the same
+  profile with v0 symbol names, the code of `core::slice::sort`
+  instantiations naming `pdf_inspector` (symbol-address differences) fell
+  from 849,180 to 155,728 bytes. The 216 Chrome- and Quartz-printed PDFs of
+  the R41 quality corpus give byte-identical output apart from the
+  `markitai_processed` line, and paired, alternating runs over them show no
+  slowdown (sums −0.4% and −0.2%, within the noise of a loaded machine). Two
+  added tests compare the float orders bit for bit (signed zeros, NaNs) with
+  the closures they replace and check the stable order of 64 tied pairs. The
+  isolated copy's unit tests give 1,619 passed and the same 21 failed with
+  every change listed here (1,617 before this item). Reversing `stable`'s comparator fails 183 more tests, reversing
+  `f32_ascending` 64, dropping `f32_descending`'s reversal 49, and an
+  unstable sort inside `stable` fails the added stability test.
 - `src/extractor/mod.rs`, `src/extractor/scripts.rs`: a run 5% or more smaller
   or larger and at least 0.2 em off the baseline is not merged into its
   neighbour, and a run clearly off the baseline (0.2 em) is a script up to 0.86

@@ -701,10 +701,17 @@ impl Reader<'_> {
             number: slide,
             title,
         } = *context;
-        let mut children = parent.children.iter().collect::<Vec<_>>();
-        children.sort_by_key(|shape| position(shape, layout, master));
+        // Each shape's position is read once and the stable sort compares
+        // the stored keys: the order of sorting by `position` itself, without
+        // its lookups compiled into every step of the sort.
+        let mut children = parent
+            .children
+            .iter()
+            .map(|shape| (position(shape, layout, master), shape))
+            .collect::<Vec<_>>();
+        children.sort_by_key(|&(at, _)| at);
         let mut output = String::new();
-        for shape in children {
+        for (_, shape) in children {
             if shape.is(Ns::Compatibility, "AlternateContent") {
                 if let Some(branch) = shape
                     .child(Ns::Compatibility, "Fallback")

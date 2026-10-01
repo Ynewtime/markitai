@@ -68,7 +68,7 @@ fn page_x_bounds(items: &[TextItem], images: &[ImageRegion]) -> Option<(f32, f32
 fn group_rows(items: &[TextItem]) -> Vec<Row<'_>> {
     const Y_TOLERANCE: f32 = 3.0;
     let mut sorted: Vec<&TextItem> = items.iter().collect();
-    sorted.sort_by(|left, right| right.line_y().total_cmp(&left.line_y()));
+    crate::sort::stable(&mut sorted, &mut |left, right| right.line_y().total_cmp(&left.line_y()));
     let mut rows: Vec<Row<'_>> = Vec::new();
     for item in sorted {
         if let Some(row) = rows
@@ -86,7 +86,7 @@ fn group_rows(items: &[TextItem]) -> Vec<Row<'_>> {
         }
     }
     for row in &mut rows {
-        row.items.sort_by(|left, right| left.x.total_cmp(&right.x));
+        crate::sort::stable(&mut row.items, &mut |left, right| left.x.total_cmp(&right.x));
     }
     rows
 }
@@ -351,7 +351,7 @@ fn paired_column_images(
             })
             .map(|item| item.y)
             .collect();
-        ys.sort_by(|left, right| left.total_cmp(right));
+        crate::sort::f32_ascending(&mut ys);
         ys.dedup_by(|left, right| (*left - *right).abs() <= 3.0);
         ys.len()
     };

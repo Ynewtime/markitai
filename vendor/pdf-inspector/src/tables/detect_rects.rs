@@ -360,7 +360,7 @@ fn split_wide_cluster(
 
     // Build sorted list of X-intervals (x_left, x_right) from each rect
     let mut intervals: Vec<(f32, f32)> = rects.iter().map(|&(x, _, w, _)| (x, x + w)).collect();
-    intervals.sort_by(|a, b| a.0.total_cmp(&b.0));
+    crate::sort::stable(&mut intervals, &mut |a, b| a.0.total_cmp(&b.0));
 
     // Merge overlapping intervals to find contiguous X-bands
     let mut merged: Vec<(f32, f32)> = Vec::new();
@@ -575,7 +575,7 @@ pub fn detect_tables_from_rects(
     // background fills stand out clearly.
     if page_rects.len() >= 6 {
         let mut widths: Vec<f32> = page_rects.iter().map(|&(_, _, w, _)| w).collect();
-        widths.sort_by(|a, b| a.total_cmp(b));
+        crate::sort::f32_ascending(&mut widths);
         let median_width = widths[widths.len() / 2];
         let width_threshold = median_width * 10.0;
         let before = page_rects.len();
@@ -652,7 +652,7 @@ pub fn detect_tables_from_rects(
         // cluster they overlap, so grid detection still has their edges.
         let is_page_bg = {
             let mut heights: Vec<f32> = page_rects.iter().map(|&(_, _, _, h)| h).collect();
-            heights.sort_by(|a, b| a.total_cmp(b));
+            crate::sort::f32_ascending(&mut heights);
             let median_height = heights[heights.len() / 2];
             let height_threshold = median_height * 20.0;
             let flags: Vec<bool> = page_rects
@@ -1086,7 +1086,7 @@ fn detect_stacked_box_table(
         );
         return None;
     }
-    boxes.sort_by(|a, b| b.1.total_cmp(&a.1)); // top to bottom (descending y)
+    crate::sort::stable(&mut boxes, &mut |a, b| b.1.total_cmp(&a.1)); // top to bottom (descending y)
 
     // Merge duplicates (border + fill pairs draw the same box twice), then
     // require a clean vertical stack: no overlaps beyond a small tolerance.
@@ -1126,7 +1126,7 @@ fn detect_stacked_box_table(
         if in_box.is_empty() {
             return None;
         }
-        in_box.sort_by(|a, b| {
+        crate::sort::stable(&mut in_box, &mut |a, b| {
             b.1.line_y()
                 .partial_cmp(&a.1.line_y())
                 .unwrap_or(std::cmp::Ordering::Equal)
@@ -1324,7 +1324,7 @@ fn extract_hint_region(group_rects: &[(f32, f32, f32, f32)]) -> Option<RectHintR
 
     // Compute median height to identify cell-sized rects
     let mut heights: Vec<f32> = group_rects.iter().map(|&(_, _, _, h)| h).collect();
-    heights.sort_by(|a, b| a.total_cmp(b));
+    crate::sort::f32_ascending(&mut heights);
     let median_h = heights[heights.len() / 2];
 
     // Keep only cell-sized rects (height ≤ 4× median)
@@ -1496,9 +1496,9 @@ fn try_build_grid(
 
     // Sort column edges left-to-right, row edges top-to-bottom (highest Y first for PDF)
     let mut col_edges = x_edges;
-    col_edges.sort_by(|a, b| a.total_cmp(b));
+    crate::sort::f32_ascending(&mut col_edges);
     let mut row_edges = y_edges;
-    row_edges.sort_by(|a, b| b.total_cmp(a));
+    crate::sort::f32_descending(&mut row_edges);
 
     let num_cols = col_edges.len() - 1;
     let num_rows = row_edges.len() - 1;
@@ -1682,7 +1682,7 @@ fn try_build_grid(
 /// Deduplicate nearby edge values within a tolerance, returning sorted unique edges.
 pub(crate) fn snap_edges(values: &[f32], tolerance: f32) -> Vec<f32> {
     let mut sorted: Vec<f32> = values.to_vec();
-    sorted.sort_by(|a, b| a.total_cmp(b));
+    crate::sort::f32_ascending(&mut sorted);
 
     let mut snapped: Vec<f32> = Vec::new();
     for &v in &sorted {
@@ -1757,7 +1757,7 @@ pub(crate) fn assign_items_to_grid(
             if rtl {
                 crate::text_utils::sort_rtl_cell_items(col_items, |(_, i)| *i);
             } else {
-                col_items.sort_by(|a, b| {
+                crate::sort::stable(col_items, &mut |a, b| {
                     b.1.line_y()
                         .partial_cmp(&a.1.line_y())
                         .unwrap_or(std::cmp::Ordering::Equal)
@@ -1901,7 +1901,7 @@ fn is_row_stripe_pattern(rects: &[(f32, f32, f32, f32)]) -> bool {
     }
 
     let mut widths: Vec<f32> = rects.iter().map(|&(_, _, w, _)| w).collect();
-    widths.sort_by(|a, b| a.total_cmp(b));
+    crate::sort::f32_ascending(&mut widths);
     let median_width = widths[widths.len() / 2];
 
     // Must be page-spanning (>200pt)
@@ -1949,7 +1949,7 @@ fn detect_row_stripe_table(
 
     // Sort row edges top-to-bottom (highest Y first for PDF)
     let mut row_edges = y_edges;
-    row_edges.sort_by(|a, b| b.total_cmp(a));
+    crate::sort::f32_descending(&mut row_edges);
 
     // Compute the bounding box of the stripe region for filtering items
     let y_top = row_edges[0];
@@ -2355,7 +2355,7 @@ fn is_repeated_cell_grid(group_rects: &[(f32, f32, f32, f32)]) -> bool {
         widths.sort_by(f32::total_cmp);
         let median_width = widths[widths.len() / 2];
         cells.retain(|&(left, right)| right - left <= median_width * 2.5);
-        cells.sort_by(|left, right| {
+        crate::sort::stable(&mut cells, &mut |left, right| {
             left.0
                 .total_cmp(&right.0)
                 .then_with(|| left.1.total_cmp(&right.1))
@@ -2446,7 +2446,7 @@ fn segmented_stacked_bar_geometry(
     }
 
     rows.retain_mut(|(_, _, segments)| {
-        segments.sort_by(|left, right| left.0.total_cmp(&right.0));
+        crate::sort::stable(segments, &mut |left, right| left.0.total_cmp(&right.0));
         segments.len() >= MIN_SEGMENTS
             && segments
                 .windows(2)
@@ -2615,7 +2615,7 @@ fn has_chart_bar_signature(
             if positions.len() < 2 {
                 return false;
             }
-            positions.sort_by(|a, b| a.total_cmp(b));
+            crate::sort::f32_ascending(&mut positions);
             let min_gap = positions
                 .windows(2)
                 .map(|w| w[1] - w[0] - bw)
@@ -2707,7 +2707,7 @@ fn detect_row_stripe_table_from_cell_rects(
     // bounding box to scope items and derive rows from text Y-positions.
     let row_edges = if y_edges.len() >= 4 {
         let mut edges = y_edges;
-        edges.sort_by(|a, b| b.total_cmp(a));
+        crate::sort::f32_descending(&mut edges);
         edges
     } else {
         // Fall back: gather items in the rect region and cluster by Y
@@ -2739,11 +2739,11 @@ fn detect_row_stripe_table_from_cell_rects(
         // Cluster Y positions using median font height as threshold
         let median_h = {
             let mut hs: Vec<f32> = region_items.iter().map(|i| i.height).collect();
-            hs.sort_by(|a, b| a.total_cmp(b));
+            crate::sort::f32_ascending(&mut hs);
             hs[hs.len() / 2]
         };
         let mut ys: Vec<f32> = region_items.iter().map(|i| i.y).collect();
-        ys.sort_by(|a, b| b.total_cmp(a));
+        crate::sort::f32_descending(&mut ys);
         let mut edges = Vec::new();
         let threshold = median_h * 0.8;
         let mut cluster_start = ys[0];
@@ -2767,7 +2767,7 @@ fn detect_row_stripe_table_from_cell_rects(
         edges.push(center - median_h * 0.5);
         let _ = cluster_start; // suppress unused warning
         edges = snap_edges(&edges, 3.0);
-        edges.sort_by(|a, b| b.total_cmp(a));
+        crate::sort::f32_descending(&mut edges);
         if edges.len() < 4 {
             return None;
         }
@@ -2777,7 +2777,7 @@ fn detect_row_stripe_table_from_cell_rects(
     // Compute bounding box from non-full-page rects
     let median_h = {
         let mut heights: Vec<f32> = group_rects.iter().map(|&(_, _, _, h)| h).collect();
-        heights.sort_by(|a, b| a.total_cmp(b));
+        crate::sort::f32_ascending(&mut heights);
         heights[heights.len() / 2]
     };
     let content_rects: Vec<_> = group_rects
@@ -2847,7 +2847,7 @@ fn detect_row_stripe_table_from_cell_rects(
             x_vals.push(x + w);
         }
         let mut edges = snap_edges(&x_vals, 6.0);
-        edges.sort_by(|a, b| a.total_cmp(b));
+        crate::sort::f32_ascending(&mut edges);
         if (3..=26).contains(&edges.len()) {
             Some(edges)
         } else {
@@ -3302,7 +3302,7 @@ fn detect_merged_cluster_table(
     }
 
     let mut row_edges = y_edges;
-    row_edges.sort_by(|a, b| b.total_cmp(a));
+    crate::sort::f32_descending(&mut row_edges);
 
     // Bounding box of all rects
     let y_top = row_edges[0];
@@ -3475,7 +3475,7 @@ fn cluster_x_positions(items: &[(usize, &TextItem)], min_threshold: f32) -> Vec<
     // (style boundary, script change, underline split) — feeding its x-start
     // in here fabricates a phantom column mid-cell.
     let mut sorted: Vec<&TextItem> = items.iter().map(|&(_, i)| i).collect();
-    sorted.sort_by(|a, b| a.y.total_cmp(&b.y).then(a.x.total_cmp(&b.x)));
+    crate::sort::stable(&mut sorted, &mut |a, b| a.y.total_cmp(&b.y).then(a.x.total_cmp(&b.x)));
     let mut x_positions: Vec<f32> = Vec::with_capacity(sorted.len());
     for (idx, item) in sorted.iter().enumerate() {
         let is_continuation = idx > 0 && {
@@ -3493,7 +3493,7 @@ fn cluster_x_positions(items: &[(usize, &TextItem)], min_threshold: f32) -> Vec<
             x_positions.push(item.x);
         }
     }
-    x_positions.sort_by(|a, b| a.total_cmp(b));
+    crate::sort::f32_ascending(&mut x_positions);
 
     if x_positions.is_empty() {
         return vec![];

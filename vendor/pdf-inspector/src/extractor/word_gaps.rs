@@ -579,7 +579,7 @@ pub(crate) fn tj_tracking(
         return None;
     }
     let mut sorted = gaps;
-    sorted.sort_by(|a, b| a.total_cmp(b));
+    crate::sort::f32_ascending(&mut sorted);
     let seed = lower_median(&sorted);
     let letter_gaps: Vec<f32> = sorted
         .iter()

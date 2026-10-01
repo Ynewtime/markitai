@@ -288,7 +288,7 @@ fn has_snug_text_owner(rule: &Rule, items: &[TextItem]) -> bool {
     // An underlined text line is contiguous runs with word-sized gaps; any
     // column-sized hole between matched runs means this is a row ruling.
     let mut sorted = matched;
-    sorted.sort_by(|a, b| a.x.total_cmp(&b.x));
+    crate::sort::stable(&mut sorted, &mut |a, b| a.x.total_cmp(&b.x));
     sorted.windows(2).all(|pair| {
         let gap = pair[1].x - (pair[0].x + pair[0].width);
         gap <= (max_fs * 2.0).max(12.0)
@@ -302,7 +302,7 @@ fn is_repeated_ruling_rule(rule: &Rule, rules: &[Rule]) -> bool {
         .map(|other| other.y)
         .collect();
 
-    y_levels.sort_by(|a, b| a.total_cmp(b));
+    crate::sort::f32_ascending(&mut y_levels);
     y_levels.dedup_by(|a, b| (*a - *b).abs() <= RULE_Y_DEDUP_EPS);
     y_levels.len() >= MIN_REPEATED_RULE_LEVELS
 }
@@ -355,7 +355,7 @@ fn tabular_row_separator_rule_indices(rules: &[Rule], items: &[TextItem]) -> Has
             continue;
         }
 
-        matched_items.sort_by(|a, b| a.x.total_cmp(&b.x));
+        crate::sort::stable(&mut matched_items, &mut |a, b| a.x.total_cmp(&b.x));
         let large_gaps = matched_items
             .windows(2)
             .filter(|pair| {
@@ -533,7 +533,7 @@ fn snug_strike_owner_indices(rule: &Rule, items: &[TextItem]) -> Vec<usize> {
     if struck_indices.is_empty() {
         return Vec::new();
     }
-    struck_indices.sort_by(|&left, &right| {
+    crate::sort::stable(&mut struck_indices, &mut |&left, &right| {
         baseline_and_up(&items[left])
             .0
             .total_cmp(&baseline_and_up(&items[right]).0)
@@ -553,7 +553,7 @@ fn snug_strike_owner_indices(rule: &Rule, items: &[TextItem]) -> Vec<usize> {
 
     let mut owned_indices = Vec::new();
     for mut row in rows {
-        row.sort_by(|&left, &right| items[left].x.total_cmp(&items[right].x));
+        crate::sort::stable(&mut row, &mut |&left, &right| items[left].x.total_cmp(&items[right].x));
 
         // Underline detection runs before the extractor's script-merging
         // pass. Include the same tightly adjacent numeric script shape here
@@ -570,7 +570,7 @@ fn snug_strike_owner_indices(rule: &Rule, items: &[TextItem]) -> Vec<usize> {
             })
             .collect();
         row.extend(scripts);
-        row.sort_by(|&left, &right| items[left].x.total_cmp(&items[right].x));
+        crate::sort::stable(&mut row, &mut |&left, &right| items[left].x.total_cmp(&items[right].x));
         row.dedup();
 
         let x1 = row

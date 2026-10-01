@@ -1311,7 +1311,7 @@ fn sort_along_x_keeping_marks(group: &mut [&TextItem]) {
         previous_base = Some(base.unwrap_or(index));
     }
     let mut order: Vec<usize> = (0..group.len()).collect();
-    order.sort_by(|&a, &b| keys[a].total_cmp(&keys[b]));
+    crate::sort::stable(&mut order, &mut |&a, &b| keys[a].total_cmp(&keys[b]));
     let sorted: Vec<&TextItem> = order.iter().map(|&index| group[index]).collect();
     group.copy_from_slice(&sorted);
 }
@@ -1543,7 +1543,7 @@ fn should_preserve_overlapping_stream_order(group: &[&TextItem]) -> bool {
     }
 
     let mut sorted_by_x = group.to_vec();
-    sorted_by_x.sort_by(|a, b| a.x.total_cmp(&b.x));
+    crate::sort::stable(&mut sorted_by_x, &mut |a, b| a.x.total_cmp(&b.x));
     let cluster_start = sorted_by_x[0].x;
     let mut cluster_end = cluster_start + order_extent(sorted_by_x[0]);
     for item in sorted_by_x.iter().skip(1) {
@@ -1690,7 +1690,7 @@ fn tracked_run_space_floor(group: &[&TextItem], start: usize) -> Option<(usize, 
     // sequence of single letters ("x y z" variables) has the same gap
     // count; display tracking is a caps convention.
     let mut sorted = gaps.clone();
-    sorted.sort_by(|a, b| a.total_cmp(b));
+    crate::sort::f32_ascending(&mut sorted);
     let median = sorted[sorted.len() / 2];
     // Typographic convention gate, both tiers: display tracking is an
     // all-caps convention, and Han/Kana never space between glyphs. Mixed-
@@ -2151,7 +2151,7 @@ fn glyph_run_word_gap_floor(gaps: &[f32]) -> Option<f32> {
         return None;
     }
     let mut sorted: Vec<f32> = gaps.to_vec();
-    sorted.sort_by(|a, b| a.total_cmp(b));
+    crate::sort::f32_ascending(&mut sorted);
     let total: f32 = sorted.iter().sum();
     let n = sorted.len() as f32;
     let mut best: Option<(f32, f32, f32)> = None; // (between-class variance, low mean, high mean)

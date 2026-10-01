@@ -178,7 +178,7 @@ pub(crate) fn split_side_by_side(items: &[TextItem]) -> Vec<(f32, f32)> {
 
     // Sort items by left edge
     let mut xs: Vec<f32> = items.iter().map(|i| i.x).collect();
-    xs.sort_by(|a, b| a.total_cmp(b));
+    crate::sort::f32_ascending(&mut xs);
 
     // Find all candidate gaps: ≥30pt, in the middle 60% of the X range,
     // with ≥20 items on each side.
@@ -254,7 +254,7 @@ pub(crate) fn split_side_by_side(items: &[TextItem]) -> Vec<(f32, f32)> {
         })
         .copied()
         .collect();
-    balanced_positions.sort_by(|a, b| a.total_cmp(b));
+    crate::sort::f32_ascending(&mut balanced_positions);
     balanced_positions.dedup_by(|a, b| (*a - *b).abs() < 50.0);
     if balanced_positions.len() > 1 {
         return vec![];
@@ -332,7 +332,7 @@ fn chart_page_prose_column_split(items: &[TextItem]) -> Option<f32> {
     if prose.len() < MIN_LINES_PER_COLUMN * 2 {
         return None;
     }
-    prose.sort_by(|a, b| a.x.total_cmp(&b.x));
+    crate::sort::stable(&mut prose, &mut |a, b| a.x.total_cmp(&b.x));
 
     let mut clusters: Vec<(f32, Vec<&TextItem>)> = Vec::new();
     for item in prose {
@@ -1074,7 +1074,7 @@ fn split_from_hint_regions(items: &[TextItem], rects: &[PdfRect], page: u32) -> 
 
     // Width outlier filter (same as detect_tables_from_rects)
     let mut widths: Vec<f32> = page_rects.iter().map(|&(_, _, w, _)| w).collect();
-    widths.sort_by(|a, b| a.total_cmp(b));
+    crate::sort::f32_ascending(&mut widths);
     let median_width = widths[widths.len() / 2];
     page_rects.retain(|&(_, _, w, _)| w <= median_width * 10.0);
 
@@ -2304,7 +2304,7 @@ fn convert_items_with_rects_lines_and_table_output(
             }
             // Sort by Y descending (top to bottom) so left and right
             // band lines interleave in visual reading order.
-            page_lines.sort_by(|a, b| b.y.total_cmp(&a.y));
+            crate::sort::stable(&mut page_lines, &mut |a, b| b.y.total_cmp(&a.y));
             all_lines.extend(page_lines);
         }
 
@@ -2343,7 +2343,7 @@ fn convert_items_with_rects_lines_and_table_output(
                 .iter()
                 .map(|&(_, y0, _, y1)| (y0 - CHART_SEPARATOR_PAD, y1 + CHART_SEPARATOR_PAD))
                 .collect();
-            chart_y_bands.sort_by(|a, b| b.1.total_cmp(&a.1));
+            crate::sort::stable(&mut chart_y_bands, &mut |a, b| b.1.total_cmp(&a.1));
             let mut merged_chart_y_bands: Vec<(f32, f32)> = Vec::new();
             for (low, high) in chart_y_bands {
                 if let Some(last) = merged_chart_y_bands.last_mut() {
@@ -2381,7 +2381,7 @@ fn convert_items_with_rects_lines_and_table_output(
         }
         // The three processing paths above are accumulated separately. Restore
         // document page order while preserving each page's chosen line order.
-        all_lines.sort_by_key(|line| line.page);
+        crate::sort::stable(&mut all_lines, &mut |a, b| a.page.cmp(&b.page));
         all_lines
     };
 

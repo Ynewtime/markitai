@@ -71,7 +71,7 @@ fn infer_column_positions(
         .iter()
         .flat_map(|row| row.iter().filter_map(|cell| cell.x))
         .collect();
-    additional_positions.sort_by(|a, b| a.total_cmp(b));
+    crate::sort::f32_ascending(&mut additional_positions);
 
     for x in additional_positions {
         if anchors.len() >= num_cols {
@@ -82,7 +82,7 @@ fn infer_column_positions(
             .all(|existing| (x - *existing).abs() > SAME_COLUMN_TOLERANCE)
         {
             anchors.push(x);
-            anchors.sort_by(|a, b| a.total_cmp(b));
+            crate::sort::f32_ascending(&mut anchors);
         }
     }
 
@@ -96,7 +96,7 @@ fn infer_column_positions(
                 .all(|existing| (x - *existing).abs() > SAME_COLUMN_TOLERANCE)
             {
                 anchors.push(x);
-                anchors.sort_by(|a, b| a.total_cmp(b));
+                crate::sort::f32_ascending(&mut anchors);
             }
         }
     }
@@ -274,9 +274,9 @@ fn recover_unclaimed_header_row(table: &mut Table, items: &[TextItem], has_ragge
     }
 
     for (_, row_items) in &mut candidate_rows {
-        row_items.sort_by(|a, b| a.1.x.total_cmp(&b.1.x));
+        crate::sort::stable(row_items, &mut |a, b| a.1.x.total_cmp(&b.1.x));
     }
-    candidate_rows.sort_by(|a, b| a.0.total_cmp(&b.0));
+    crate::sort::stable(&mut candidate_rows, &mut |a, b| a.0.total_cmp(&b.0));
 
     if candidate_rows[0].0 - top_row_y > MAX_GAP_TO_TABLE {
         return;
@@ -470,7 +470,7 @@ pub fn detect_tables_from_struct_tree(
                 if rtl {
                     crate::text_utils::sort_rtl_cell_items(&mut cell_items, |(_, i)| *i);
                 } else {
-                    cell_items.sort_by(|a, b| {
+                    crate::sort::stable(&mut cell_items, &mut |a, b| {
                         b.1.line_y()
                             .partial_cmp(&a.1.line_y())
                             .unwrap_or(std::cmp::Ordering::Equal)

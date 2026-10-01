@@ -42,6 +42,7 @@ mod mac_glyph_order;
 pub mod markdown;
 mod overlong_numerals;
 pub mod process_mode;
+mod sort; // markitai: shared sort instantiations
 pub mod structure_tree;
 pub mod tables;
 mod text_quality;

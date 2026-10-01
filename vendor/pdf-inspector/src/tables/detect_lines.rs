@@ -60,7 +60,7 @@ struct TextAnchorTable {
 /// band while text anchors recover the columns.
 fn merge_horizontal_segments(horizontals: &[HorizontalRule]) -> Vec<HorizontalRule> {
     let mut sorted = horizontals.to_vec();
-    sorted.sort_by(|left, right| {
+    crate::sort::stable(&mut sorted, &mut |left, right| {
         right
             .0
             .total_cmp(&left.0)
@@ -82,7 +82,7 @@ fn merge_horizontal_segments(horizontals: &[HorizontalRule]) -> Vec<HorizontalRu
 
     let mut merged = Vec::new();
     for mut group in y_groups {
-        group.sort_by(|left, right| left.1.total_cmp(&right.1));
+        crate::sort::stable(&mut group, &mut |left, right| left.1.total_cmp(&right.1));
         let y = group.iter().map(|rule| rule.0).sum::<f32>() / group.len() as f32;
         let mut current = (y, group[0].1, group[0].2);
         for rule in group.into_iter().skip(1) {
@@ -95,7 +95,7 @@ fn merge_horizontal_segments(horizontals: &[HorizontalRule]) -> Vec<HorizontalRu
         }
         merged.push(current);
     }
-    merged.sort_by(|left, right| right.0.total_cmp(&left.0));
+    crate::sort::stable(&mut merged, &mut |left, right| right.0.total_cmp(&left.0));
     merged
 }
 
@@ -121,7 +121,7 @@ fn group_rules_by_span(rules: &[HorizontalRule]) -> Vec<Vec<HorizontalRule>> {
         }
     }
     for group in &mut groups {
-        group.sort_by(|left, right| right.0.total_cmp(&left.0));
+        crate::sort::stable(group, &mut |left, right| right.0.total_cmp(&left.0));
     }
     groups
 }
@@ -185,7 +185,7 @@ fn split_independent_rule_runs(
                 .collect();
             occupied_y.push(y_min);
             occupied_y.push(y_max);
-            occupied_y.sort_by(|left, right| left.total_cmp(right));
+            crate::sort::f32_ascending(&mut occupied_y);
             occupied_y.dedup_by(|left, right| (*left - *right).abs() <= TEXT_ROW_TOLERANCE);
             let largest_empty_gap = occupied_y
                 .windows(2)
@@ -244,7 +244,7 @@ fn collect_anchored_rows<'a>(
                 && item.x <= x_max + RULE_JOIN_GAP
         })
         .collect();
-    selected.sort_by(|left, right| {
+    crate::sort::stable(&mut selected, &mut |left, right| {
         right
             .1
             .y
@@ -263,7 +263,7 @@ fn collect_anchored_rows<'a>(
         rows.push((item.y, vec![(index, item)]));
     }
     for (_, row) in &mut rows {
-        row.sort_by(|left, right| left.1.x.total_cmp(&right.1.x));
+        crate::sort::stable(row, &mut |left, right| left.1.x.total_cmp(&right.1.x));
     }
     rows
 }
@@ -695,7 +695,7 @@ fn combine_non_overlapping_tables(mut primary: Vec<Table>, secondary: Vec<Table>
             .iter()
             .all(|index| !claimed_items.contains(index))
     }));
-    primary.sort_by(|left, right| {
+    crate::sort::stable(&mut primary, &mut |left, right| {
         right
             .rows
             .first()
@@ -711,7 +711,7 @@ fn logical_row_anchors(row: &[(usize, &TextItem)]) -> Vec<f32> {
         .iter()
         .map(|(_, item)| (item.x, item.x + item.width.max(0.0)))
         .collect();
-    spans.sort_by(|left, right| left.0.total_cmp(&right.0));
+    crate::sort::stable(&mut spans, &mut |left, right| left.0.total_cmp(&right.0));
 
     let mut anchors = Vec::new();
     let mut current_right = f32::NEG_INFINITY;
@@ -764,7 +764,7 @@ fn build_dense_row_anchor_table(
     // page-wide table; a valid competing hypothesis must be one contiguous
     // ruled region.
     let mut distinct_rule_ys: Vec<f32> = rules.iter().map(|rule| rule.0).collect();
-    distinct_rule_ys.sort_by(|left, right| right.total_cmp(left));
+    crate::sort::f32_descending(&mut distinct_rule_ys);
     distinct_rule_ys.dedup_by(|left, right| (*left - *right).abs() <= RULE_Y_TOLERANCE);
     let mut rule_gaps: Vec<f32> = distinct_rule_ys
         .windows(2)
@@ -971,7 +971,7 @@ fn build_open_edge_grid_table_for_rules(
 
     let row_y_values: Vec<f32> = rules.iter().map(|rule| rule.0).collect();
     let mut row_edges = snap_edges(&row_y_values, 3.0);
-    row_edges.sort_by(|left, right| right.total_cmp(left));
+    crate::sort::f32_descending(&mut row_edges);
     if row_edges.len() < 3 {
         return None;
     }
@@ -1091,7 +1091,7 @@ fn table_evidence_score(table: &Table) -> usize {
 }
 
 fn select_non_overlapping_hypotheses(mut candidates: Vec<Table>) -> Vec<Table> {
-    candidates.sort_by(|left, right| {
+    crate::sort::stable(&mut candidates, &mut |left, right| {
         table_evidence_score(right)
             .cmp(&table_evidence_score(left))
             .then_with(|| right.item_indices.len().cmp(&left.item_indices.len()))
@@ -1110,7 +1110,7 @@ fn select_non_overlapping_hypotheses(mut candidates: Vec<Table>) -> Vec<Table> {
         claimed_items.extend(table.item_indices.iter().copied());
         selected.push(table);
     }
-    selected.sort_by(|left, right| {
+    crate::sort::stable(&mut selected, &mut |left, right| {
         right
             .rows
             .first()
@@ -1399,7 +1399,7 @@ fn refine_segment_grid_text_rows(
                     if crate::text_utils::is_rtl_text(items.iter().map(|item| &item.text)) {
                         crate::text_utils::sort_rtl_cell_items(items, |item| *item);
                     } else {
-                        items.sort_by(|left, right| left.x.total_cmp(&right.x));
+                        crate::sort::stable(items, &mut |left, right| left.x.total_cmp(&right.x));
                     }
                     join_cell_items(items)
                 })
@@ -1613,7 +1613,7 @@ pub(crate) fn detect_dense_line_chart_regions(
 
     // Prefer the smallest qualifying region when a broad rule happens to
     // cover a denser nested panel, and retain every non-overlapping panel.
-    grid_regions.sort_by(|left, right| {
+    crate::sort::stable(&mut grid_regions, &mut |left, right| {
         let left_area = (left.2 - left.0) * (left.3 - left.1);
         let right_area = (right.2 - right.0) * (right.3 - right.1);
         left_area.total_cmp(&right_area)
@@ -1703,7 +1703,7 @@ pub(crate) fn detect_dense_line_chart_regions(
             ))
         })
         .collect();
-    regions.sort_by(|left, right| {
+    crate::sort::stable(&mut regions, &mut |left, right| {
         left.0
             .total_cmp(&right.0)
             .then_with(|| left.1.total_cmp(&right.1))
@@ -2003,7 +2003,7 @@ fn detect_tables_from_lines_inner(
 
     // Row edges need to be in descending order (top of page = higher Y first)
     let mut row_edges_desc = row_edges;
-    row_edges_desc.sort_by(|a, b| b.total_cmp(a));
+    crate::sort::f32_descending(&mut row_edges_desc);
 
     log::debug!(
         "detect_lines p{}: {} row_edges, {} col_edges, table=({:.0},{:.0})-({:.0},{:.0}), spanning_h={}, spanning_v={}",
