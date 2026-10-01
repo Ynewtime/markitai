@@ -1,7 +1,7 @@
 # Validation records
 
-最新交付：[R45](delivery-round45.md)（macOS arm64 与 Linux amd64 打包、三绑定），对应的改动与语料对照见
-[R47 并行改进](parallel-round47.md)，冻结性能见[性能记录](performance-round36.md)（`all-r12`）。当前状态与剩余
+最新交付：[R46](delivery-round46.md)（macOS arm64 与 Linux amd64 打包、三绑定），对应的改动与语料对照见
+[R47](parallel-round47.md) 与 [R48](parallel-round48.md) 并行改进，冻结性能见[性能记录](performance-round36.md)（`all-r13`）。当前状态与剩余
 事项见 [STATUS](../STATUS.md) 与 [剩余工作](../remaining-work.md)。
 
 An implementation checkpoint is reproducible only when it records the command,
