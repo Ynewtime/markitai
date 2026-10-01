@@ -479,9 +479,33 @@ fn furniture(element: ElementRef<'_>) -> bool {
     })
 }
 
+/// Whether a class or id names a featured comment set into an article: a top,
+/// featured, hot, best or pinned comment, in any spelling (`top-comment`,
+/// `hotComment`, `featured_comments`, the BEM block of `top-comment__body`).
+pub(super) fn featured_comment(element: ElementRef<'_>) -> bool {
+    ["class", "id"]
+        .iter()
+        .filter_map(|attribute| element.value().attr(attribute))
+        .flat_map(str::split_ascii_whitespace)
+        .any(|token| {
+            let block = token.split("__").next().unwrap_or(token);
+            if block.len() > 32 || !block.contains("omment") {
+                return false;
+            }
+            let name: String = block
+                .chars()
+                .filter(|ch| !matches!(ch, '-' | '_'))
+                .map(|ch| ch.to_ascii_lowercase())
+                .collect();
+            name.strip_suffix("comments")
+                .or_else(|| name.strip_suffix("comment"))
+                .is_some_and(|kind| matches!(kind, "top" | "featured" | "hot" | "best" | "pinned"))
+        })
+}
+
 /// Whether an article is a teaser card: its title is a link to another page
 /// (a linked heading, or a heading inside a link).
-fn teaser(element: ElementRef<'_>) -> bool {
+pub(super) fn teaser(element: ElementRef<'_>) -> bool {
     element
         .descendants()
         .filter_map(ElementRef::wrap)

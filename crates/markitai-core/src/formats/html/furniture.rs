@@ -3,11 +3,12 @@
 //! [`beside_body`] reads the content region of a full page as running text: the
 //! body is the innermost element holding three fifths of the region's text
 //! (words outside links and headings), and what stands beside it without saying
-//! much is page furniture. Nothing here reads a class name: the evidence is
-//! how much text a block holds, how it is made (links, headings, pictures,
-//! code) and where it stands.
+//! much is page furniture. The evidence is how much text a block holds, how it
+//! is made (links, headings, pictures, code, dates) and where it stands; short
+//! marks (a reading time, a count of likes) are read from their words, and only
+//! a featured comment inside the body is known by its class name.
 
-use super::article::{discarded, heading, note, structured_page};
+use super::article::{discarded, featured_comment, heading, note, structured_page, teaser};
 use scraper::{ElementRef, Node};
 
 /// The body must have this many words of running text ...
@@ -28,6 +29,18 @@ const MAX_EYEBROW: usize = 4;
 /// A row of links after the body's last text.
 const MIN_LINKS: usize = 2;
 const MIN_TAIL: usize = 25;
+/// A mark of the page (a reading time, a counter) in words ...
+const MAX_MARK: usize = 6;
+/// ... and in characters.
+const MAX_MARK_CHARS: usize = 48;
+/// A breadcrumb trail has fewer links than this, and the page it ends on at
+/// most this many words.
+const MAX_CRUMBS: usize = 6;
+const MAX_CRUMB_PAGE: usize = 12;
+/// An author's card, in words.
+const MAX_CARD: usize = 80;
+/// A sentence introducing what follows it with a colon, in words.
+const MIN_INTRO: usize = 5;
 
 /// Whether a heading's text labels the article's own supporting matter: notes,
 /// sources, an appendix. Such a section is content wherever it stands.
@@ -70,11 +83,42 @@ struct Mass<'a> {
     title: bool,
     /// A picture, a video or a date: something to see, not only to read.
     media: bool,
+    /// Words of running text in the element's own text, outside its children.
+    own: usize,
+    /// The index after the element's last descendant.
+    end: usize,
+    /// A `time` element.
+    dated: bool,
+    /// A picture.
+    picture: bool,
+    /// A link to the article's author (`rel=author`, `itemprop=author`).
+    author: bool,
+    /// Inside a paragraph, a list item, a table, a heading, a quote or code,
+    /// where a short text is part of the sentence or cell around it.
+    inline: bool,
 }
 
 struct Region<'a> {
     nodes: Vec<Mass<'a>>,
     children: Vec<Vec<usize>>,
+}
+
+/// Elements whose text is a sentence, a cell or code: what stands inside them
+/// is part of that text, never a mark of the page by itself.
+fn sentence_or_cell(element: ElementRef<'_>) -> bool {
+    heading(element)
+        || matches!(
+            element.value().name(),
+            "p" | "li"
+                | "dt"
+                | "dd"
+                | "table"
+                | "caption"
+                | "figcaption"
+                | "blockquote"
+                | "pre"
+                | "code"
+        )
 }
 
 impl<'a> Region<'a> {
@@ -84,17 +128,17 @@ impl<'a> Region<'a> {
             nodes: Vec::new(),
             children: Vec::new(),
         };
-        let mut stack = vec![(root, None, true)];
-        while let Some((element, parent, plain)) = stack.pop() {
+        let mut stack = vec![(root, None, true, false)];
+        while let Some((element, parent, plain, inline)) = stack.pop() {
             if discarded(element) && parent.is_some() {
                 continue;
             }
             let index = region.nodes.len();
-            let name = element.value().name();
+            let value = element.value();
+            let name = value.name();
             let title = heading(element) && plain;
-            let plain = plain
-                && !heading(element)
-                && !(name == "a" && element.value().attr("href").is_some());
+            let plain =
+                plain && !heading(element) && !(name == "a" && value.attr("href").is_some());
             let (mut text, mut total, mut paragraphs) = (0, 0, 0);
             for child in element.children() {
                 if let Node::Text(run) = child.value() {
@@ -111,7 +155,7 @@ impl<'a> Region<'a> {
                 parent,
                 text,
                 total,
-                links: usize::from(name == "a" && element.value().attr("href").is_some()),
+                links: usize::from(name == "a" && value.attr("href").is_some()),
                 paragraphs,
                 keep: matches!(name, "pre" | "math")
                     || note(element)
@@ -125,17 +169,29 @@ impl<'a> Region<'a> {
                     name,
                     "time" | "img" | "picture" | "figure" | "video" | "audio" | "canvas"
                 ),
+                own: text,
+                end: index + 1,
+                dated: name == "time",
+                picture: matches!(name, "img" | "picture"),
+                author: value.attr("itemprop") == Some("author")
+                    || (name == "a"
+                        && value.attr("rel").is_some_and(|rel| {
+                            rel.split_ascii_whitespace()
+                                .any(|token| token.eq_ignore_ascii_case("author"))
+                        })),
+                inline,
             });
             region.children.push(Vec::new());
             if let Some(parent) = parent {
                 region.children[parent].push(index);
             }
+            let inline = inline || sentence_or_cell(element);
             stack.extend(
                 element
                     .children()
                     .rev()
                     .filter_map(ElementRef::wrap)
-                    .map(|child| (child, Some(index), plain)),
+                    .map(|child| (child, Some(index), plain, inline)),
             );
         }
         // Children follow their parent, so each subtree is complete on its turn.
@@ -146,22 +202,33 @@ impl<'a> Region<'a> {
             let Some(parent) = region.nodes[index].parent else {
                 continue;
             };
-            let (text, total, links) = {
+            let (text, total, links, paragraphs, end) = {
                 let node = &region.nodes[index];
-                (node.text, node.total, node.links)
+                (node.text, node.total, node.links, node.paragraphs, node.end)
             };
-            let (keep, paragraphs, title, media) = {
+            let (keep, title, media, dated, picture, author) = {
                 let node = &region.nodes[index];
-                (node.keep, node.paragraphs, node.title, node.media)
+                (
+                    node.keep,
+                    node.title,
+                    node.media,
+                    node.dated,
+                    node.picture,
+                    node.author,
+                )
             };
             let parent = &mut region.nodes[parent];
             parent.text += text;
             parent.total += total;
             parent.links += links;
             parent.paragraphs += paragraphs;
+            parent.end = parent.end.max(end);
             parent.keep |= keep;
             parent.title |= title;
             parent.media |= media;
+            parent.dated |= dated;
+            parent.picture |= picture;
+            parent.author |= author;
         }
         region
     }
@@ -185,8 +252,22 @@ impl<'a> Region<'a> {
     /// Siblings of the elements on the way to the body: before it, a block that
     /// is only a link or a label (a banner, a back link, a breadcrumb trail)
     /// and no title, date or picture; after it, what holds few words together.
+    /// Replies that repeat the post they follow stay, and so does the block
+    /// right after the body when the body introduces it with a colon or when
+    /// it is a conclusion of plain prose.
     fn around(&self, chain: &[usize], found: &mut Vec<ElementRef<'a>>) {
-        let body = self.nodes[*chain.last().unwrap_or(&0)].text;
+        let last = *chain.last().unwrap_or(&0);
+        let body = self.nodes[last].text;
+        // The first block after the body, from its own level outwards.
+        let next = chain.windows(2).rev().find_map(|pair| {
+            let siblings = &self.children[pair[0]];
+            let at = siblings.iter().position(|child| *child == pair[1])?;
+            siblings[at + 1..].iter().copied().find(|child| {
+                let node = &self.nodes[*child];
+                node.total > 0 || node.links > 0 || node.media
+            })
+        });
+        let introduced = next.is_some() && introduces(self.nodes[last].element);
         for pair in chain.windows(2) {
             let siblings = &self.children[pair[0]];
             let at = siblings
@@ -206,7 +287,14 @@ impl<'a> Region<'a> {
                     })
                     .map(|node| node.element),
             );
-            let after = &siblings[at + 1..];
+            let after: Vec<usize> = siblings[at + 1..]
+                .iter()
+                .copied()
+                .filter(|child| {
+                    !(self.repeats(pair[1], *child)
+                        || (Some(*child) == next && (introduced || self.conclusion(*child))))
+                })
+                .collect();
             let words: usize = after.iter().map(|child| self.nodes[*child].text).sum();
             if words <= MAX_AFTER && words * AFTER_SHARE <= body {
                 found.extend(
@@ -216,6 +304,230 @@ impl<'a> Region<'a> {
                         .filter(|node| !node.keep)
                         .map(|node| node.element),
                 );
+            }
+        }
+    }
+
+    /// A reply after the post it follows in a thread: the same element with
+    /// the same first class (or a plain `article`, the element of a comment),
+    /// both dated, the reply with words of its own besides its date and not a
+    /// teaser of another page.
+    fn repeats(&self, post: usize, reply: usize) -> bool {
+        fn class<'a>(node: &Mass<'a>) -> Option<&'a str> {
+            node.element
+                .value()
+                .attr("class")
+                .and_then(|class| class.split_ascii_whitespace().next())
+        }
+        let (first, next) = (&self.nodes[post], &self.nodes[reply]);
+        first.element.value().name() == next.element.value().name()
+            && class(first) == class(next)
+            && (class(first).is_some() || first.element.value().name() == "article")
+            && first.dated
+            && next.dated
+            && !teaser(next.element)
+            && self.says_more_than_a_date(reply)
+    }
+
+    /// Whether a block has running text of its own outside its `time`s.
+    fn says_more_than_a_date(&self, block: usize) -> bool {
+        let mut index = block;
+        while index < self.nodes[block].end {
+            let node = &self.nodes[index];
+            if node.element.value().name() == "time" {
+                index = node.end;
+            } else if node.own > 0 {
+                return true;
+            } else {
+                index += 1;
+            }
+        }
+        false
+    }
+
+    /// A conclusion: plain prose with a paragraph-long run, with or without a
+    /// heading, and without the links, pictures or dates that a bio, a call
+    /// to action or a related post would show.
+    fn conclusion(&self, block: usize) -> bool {
+        let node = &self.nodes[block];
+        node.paragraphs > 0 && node.links == 0 && !node.media
+    }
+
+    /// Marks of the page beside the article's prose:
+    ///
+    /// - anywhere off the way to the body, a block whose whole text is a
+    ///   reading time or a count of likes, views, shares or comments, unless
+    ///   it is a list item, a cell or part of a sentence;
+    /// - before the body's first paragraph, a breadcrumb trail (a list of
+    ///   links ending on the page's own name) and a block that only repeats an
+    ///   earlier date;
+    /// - outside the body, an author's card: a picture, a link to the author
+    ///   and a sentence about them, without a heading or a date.
+    fn marks(&self, chain: &[usize], found: &mut Vec<ElementRef<'a>>) {
+        let body = *chain.last().unwrap_or(&0);
+        // The body's lede ends at its first paragraph-long run of prose.
+        let lede = (body..self.nodes[body].end)
+            .find(|index| self.nodes[*index].own >= MIN_PARAGRAPH)
+            .unwrap_or(body);
+        let mut dates: Vec<&str> = Vec::new();
+        let mut index = 1;
+        while index < self.nodes.len() {
+            let node = &self.nodes[index];
+            if chain.contains(&index) {
+                index += 1;
+                continue;
+            }
+            let outside = index < body || index >= self.nodes[body].end;
+            let mark = if self.mark(index) || (index < lede && self.crumbs(index)) {
+                Some(index)
+            } else if index < lede
+                && node.element.value().name() == "time"
+                && let Some(date) = node
+                    .element
+                    .value()
+                    .attr("datetime")
+                    .and_then(|stamp| stamp.trim().get(..10))
+            {
+                if dates.contains(&date) {
+                    self.date_line(index, chain)
+                } else {
+                    dates.push(date);
+                    None
+                }
+            } else if outside && self.card(index) {
+                Some(self.smallest_card(index))
+            } else {
+                None
+            };
+            match mark {
+                Some(mark) => {
+                    found.push(self.nodes[mark].element);
+                    index = self.nodes[mark].end.max(index + 1);
+                }
+                None => index += 1,
+            }
+        }
+    }
+
+    /// A block whose whole text is a reading time or a counter.
+    fn mark(&self, index: usize) -> bool {
+        let node = &self.nodes[index];
+        if node.total == 0
+            || node.total > MAX_MARK
+            || node.inline
+            || node.keep
+            || node.title
+            || node.media
+            || (sentence_or_cell(node.element) && node.element.value().name() != "p")
+            // Every reading time and counter has a number.
+            || !node
+                .element
+                .text()
+                .any(|text| text.bytes().any(|byte| byte.is_ascii_digit()))
+        {
+            return false;
+        }
+        let text = super::plain(node.element);
+        text.len() <= MAX_MARK_CHARS && {
+            let words = label_words(&text);
+            let words: Vec<&str> = words.iter().map(String::as_str).collect();
+            reading_time(&words) || counter(&words)
+        }
+    }
+
+    /// A breadcrumb trail: a list of two to five steps, each a single link,
+    /// that ends on the page's own name as plain text.
+    fn crumbs(&self, list: usize) -> bool {
+        let node = &self.nodes[list];
+        if !matches!(node.element.value().name(), "ul" | "ol") || node.inline || node.media {
+            return false;
+        }
+        let steps = &self.children[list];
+        let Some((page, links)) = steps.split_last() else {
+            return false;
+        };
+        let page = &self.nodes[*page];
+        (MIN_LINKS..MAX_CRUMBS).contains(&links.len())
+            && steps
+                .iter()
+                .all(|step| self.nodes[*step].element.value().name() == "li")
+            && links.iter().all(|step| {
+                let step = &self.nodes[*step];
+                step.links == 1 && step.text == 0
+            })
+            && page.links == 0
+            && page.text > 0
+            && page.total <= MAX_CRUMB_PAGE
+    }
+
+    /// The block that holds nothing but a repeated date, when it is a block
+    /// of its own and not part of a byline.
+    fn date_line(&self, time: usize, chain: &[usize]) -> Option<usize> {
+        let words = self.nodes[time].total;
+        let mut line = time;
+        while let Some(parent) = self.nodes[line].parent
+            && self.nodes[parent].total == words
+            && !chain.contains(&parent)
+        {
+            line = parent;
+        }
+        super::block_tag(self.nodes[line].element.value().name()).then_some(line)
+    }
+
+    /// An author's card: a picture, a link to the author and a sentence about
+    /// them, in few words, without a heading, a date or kept content.
+    fn card(&self, index: usize) -> bool {
+        let node = &self.nodes[index];
+        node.author
+            && node.picture
+            && node.paragraphs > 0
+            && node.total <= MAX_CARD
+            && !node.title
+            && !node.dated
+            && !node.keep
+    }
+
+    /// The innermost card inside a card (the card, not the wrapper of the
+    /// page's front matter around it).
+    fn smallest_card(&self, mut index: usize) -> usize {
+        while let Some(inner) = self.children[index]
+            .iter()
+            .copied()
+            .find(|child| self.card(*child))
+        {
+            index = inner;
+        }
+        index
+    }
+
+    /// Inside the body, a featured comment (a block named as a top, featured,
+    /// hot, best or pinned comment) with the article's own prose both before
+    /// and after it: a reader's comment set into the article, not the page's
+    /// discussion or a page about comments.
+    fn featured(&self, body: usize, found: &mut Vec<ElementRef<'a>>) {
+        let end = self.nodes[body].end;
+        let mut blocks: Vec<usize> = Vec::new();
+        let mut index = body + 1;
+        while index < end {
+            if featured_comment(self.nodes[index].element) {
+                blocks.push(index);
+                index = self.nodes[index].end;
+            } else {
+                index += 1;
+            }
+        }
+        if blocks.is_empty() {
+            return;
+        }
+        let prose = |index: usize| {
+            self.nodes[index].own > 0
+                && !blocks
+                    .iter()
+                    .any(|block| (*block..self.nodes[*block].end).contains(&index))
+        };
+        for &block in &blocks {
+            if (body + 1..block).any(prose) && (self.nodes[block].end..end).any(prose) {
+                found.push(self.nodes[block].element);
             }
         }
     }
@@ -259,8 +571,9 @@ impl<'a> Region<'a> {
 
     /// Inside the body, what follows its last running text, code or picture and
     /// is a row of links with at most a label: tags, related posts, previous
-    /// and next. A paragraph or a list is text however short, and a heading
-    /// starts a section that stays.
+    /// and next. A paragraph or a list is text however short, a heading
+    /// starts a section that stays, and a row that a sentence ending with a
+    /// colon introduces is the article's.
     fn tail(&self, body: usize, found: &mut Vec<ElementRef<'a>>) {
         let node = &self.nodes[body];
         if node.text < MIN_TAIL
@@ -275,11 +588,14 @@ impl<'a> Region<'a> {
         let mut tail = Vec::new();
         let mut sealed = false;
         let mut cursor = 0;
+        // The block of text right before, which may introduce a row.
+        let mut text = None;
         for child in node.element.children() {
             match child.value() {
-                Node::Text(text) if text.chars().any(|ch| !ch.is_whitespace()) => {
+                Node::Text(run) if run.chars().any(|ch| !ch.is_whitespace()) => {
                     tail.clear();
                     sealed = false;
+                    text = None;
                 }
                 Node::Element(_) => {
                     let Some(&index) = self.children[body].get(cursor) else {
@@ -301,11 +617,17 @@ impl<'a> Region<'a> {
                     {
                         tail.clear();
                         sealed = false;
+                        text = (!block.keep).then_some(block.element);
                     } else if block.title {
                         tail.clear();
                         sealed = true;
+                        text = None;
                     } else if !sealed && !sentence && block.links >= MIN_LINKS {
-                        tail.push(block.element);
+                        if text.take().is_some_and(introduces) {
+                            tail.clear();
+                        } else {
+                            tail.push(block.element);
+                        }
                     }
                 }
                 _ => {}
@@ -313,6 +635,121 @@ impl<'a> Region<'a> {
         }
         found.extend(tail);
     }
+}
+
+/// Whether an element ends with a sentence that ends with a colon: an
+/// introduction to what follows it. A label ("Related:", "Tags:") is not one.
+fn introduces(element: ElementRef<'_>) -> bool {
+    let mut stack: Vec<_> = element.children().collect();
+    while let Some(node) = stack.pop() {
+        match node.value() {
+            Node::Text(text) => {
+                let text = text.trim_end();
+                if text.is_empty() {
+                    continue;
+                }
+                if !text.ends_with([':', '：']) {
+                    return false;
+                }
+                // The words of the line that ends there: back to a line break
+                // or the start of its block.
+                let mut words = super::count_words(text);
+                let mut at = node;
+                loop {
+                    for sibling in at.prev_siblings() {
+                        match sibling.value() {
+                            Node::Text(text) => words += super::count_words(text),
+                            Node::Element(value)
+                                if value.name() == "br" || super::block_tag(value.name()) =>
+                            {
+                                return words >= MIN_INTRO;
+                            }
+                            Node::Element(_) => {
+                                words += ElementRef::wrap(sibling)
+                                    .map_or(0, |inline| super::count_words(&super::plain(inline)));
+                            }
+                            _ => {}
+                        }
+                    }
+                    match at.parent() {
+                        Some(parent)
+                            if parent.id() != element.id()
+                                && ElementRef::wrap(parent).is_some_and(|parent| {
+                                    !super::block_tag(parent.value().name())
+                                }) =>
+                        {
+                            at = parent;
+                        }
+                        _ => return words >= MIN_INTRO,
+                    }
+                }
+            }
+            Node::Element(_) => {
+                if let Some(child) = ElementRef::wrap(node)
+                    && !discarded(child)
+                {
+                    stack.extend(child.children());
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The words of a short label, lowercased: letters and digits split apart
+/// (`8min` → `8`, `min`), a number keeping its separators (`1,234`, `1.2`).
+fn label_words(text: &str) -> Vec<String> {
+    let mut words: Vec<String> = Vec::new();
+    let mut digits = false;
+    for ch in text.chars().flat_map(char::to_lowercase) {
+        let numeric = ch.is_ascii_digit() || (digits && matches!(ch, '.' | ','));
+        if !(numeric || ch.is_alphanumeric()) {
+            digits = false;
+            words.push(String::new());
+            continue;
+        }
+        match words.last_mut() {
+            Some(word) if !word.is_empty() && numeric == digits => word.push(ch),
+            _ => words.push(ch.to_string()),
+        }
+        digits = numeric;
+    }
+    words
+        .into_iter()
+        .map(|word| word.trim_end_matches(['.', ',']).to_owned())
+        .filter(|word| !word.is_empty())
+        .collect()
+}
+
+/// A reading time: "8 min read", "5-minute read", "Reading time: 3 minutes".
+fn reading_time(words: &[&str]) -> bool {
+    let number = |word: &str| word.len() <= 3 && word.bytes().all(|byte| byte.is_ascii_digit());
+    let unit = |word: &str| matches!(word, "min" | "mins" | "minute" | "minutes");
+    match words {
+        [count, per, read] => number(count) && unit(per) && matches!(*read, "read" | "reading"),
+        ["reading" | "read", "time", count, per] => number(count) && unit(per),
+        _ => false,
+    }
+}
+
+/// A counter: "9 Likes", "1.2K views", "3,456 shares", "12 comments".
+fn counter(words: &[&str]) -> bool {
+    // A number keeps its separators only after a digit (see `label_words`).
+    let number = |word: &str| {
+        word.bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'.' | b','))
+    };
+    let (count, what) = match words {
+        [count, what] => (*count, *what),
+        [count, "k" | "m", what] => (*count, *what),
+        _ => return false,
+    };
+    number(count)
+        && matches!(
+            what,
+            "like" | "likes" | "view" | "views" | "share" | "shares" | "comment" | "comments"
+        )
 }
 
 /// Blocks of a full page's content region that are furniture beside the body.
@@ -326,12 +763,15 @@ impl<'a> Region<'a> {
 ///   stays;
 /// - the siblings after it go when together they hold under fifty words and a
 ///   third of the body's: a subscribe box, a call to action, related-post
-///   cards, an author bio.
+///   cards, an author bio; replies repeating the post they follow, and a
+///   conclusion or a list the body introduces right after it, stay.
 ///
-/// A block with code, math, a note, a section of notes or sources, or a table
-/// of data (more than a row of links) always stays. A short label right above
-/// the first `h1`, and a row of links after the body's last text (see
-/// [`Region::tail`]), go too. A region without such a body keeps everything.
+/// Marks of the page (see [`Region::marks`]) and a featured comment set into
+/// the body (see [`Region::featured`]) go as well. A block with code, math, a
+/// note, a section of notes or sources, or a table of data (more than a row of
+/// links) always stays. A short label right above the first `h1`, and a row of
+/// links after the body's last text (see [`Region::tail`]), go too. A region
+/// without such a body keeps everything.
 pub(super) fn beside_body(root: ElementRef<'_>) -> Vec<ElementRef<'_>> {
     if structured_page(root) {
         return Vec::new();
@@ -342,6 +782,8 @@ pub(super) fn beside_body(root: ElementRef<'_>) -> Vec<ElementRef<'_>> {
     let mut found = Vec::new();
     if region.nodes[body].paragraphs >= MIN_PARAGRAPHS && region.nodes[body].text >= MIN_BODY {
         region.around(&chain, &mut found);
+        region.marks(&chain, &mut found);
+        region.featured(body, &mut found);
     }
     if region.nodes[0].paragraphs >= MIN_PARAGRAPHS {
         region.eyebrow(&mut found);
@@ -412,10 +854,11 @@ mod tests {
             prose(60)
         ));
         assert!(long.is_empty(), "{long:?}");
-        // ... or over a third of a short body's.
+        // ... or over a third of a short body's (a link keeps the block from
+        // reading as a conclusion).
         let short = |after: usize| {
             format!(
-                r#"<body><div><div class="post"><p>{}</p><p>{}</p></div><div id="more"><p>{}</p></div></div></body>"#,
+                r#"<body><div><div class="post"><p>{}</p><p>{}</p></div><div id="more"><p>{} <a href="/x">x</a></p></div></div></body>"#,
                 prose(40),
                 prose(40),
                 prose(after)
@@ -533,6 +976,10 @@ mod tests {
         // A row of related-post paragraphs with dots between.
         let related = r#"<section id="rel"><p><a href="/x">First</a> · <a href="/t/x">x</a></p><p><a href="/y">Second</a> · <a href="/t/y">y</a></p></section>"#;
         assert_eq!(left_out(&page(related)), ["rel"]);
+        // A label is not an introduction, but a sentence ending with a colon is.
+        assert_eq!(left_out(&page(&format!("<p>Tags:</p>{tags}"))), ["tags"]);
+        let formats = format!("<p>Download the report in these formats:</p>{tags}");
+        assert!(left_out(&page(&formats)).is_empty());
         // A labelled section, a paragraph, a list, one link and mid-body links stay.
         for kept in [
             format!("<h2>Links</h2>{tags}"),
@@ -586,6 +1033,360 @@ mod tests {
             body()
         );
         assert!(left_out(&issue).is_empty());
+    }
+
+    #[test]
+    fn replies_repeating_the_post_they_follow_stay() {
+        let post = |class: &str, text: &str| {
+            format!(
+                r#"<div class="{class}"><p>by <a href="/u">ann</a> <time datetime="2026-03-01">Mar 1</time></p><div>{text}</div></div>"#
+            )
+        };
+        let thread = |replies: &str| {
+            format!(
+                r#"<body><main><div class="topic">{}{replies}</div></main></body>"#,
+                post("post bg2", &body())
+            )
+        };
+        // Short replies after a long first post, alternating classes.
+        let replies = format!(
+            "{}{}",
+            post("post bg1", "Thanks, the first bus helps."),
+            post("post bg2", "Does route 7 still stop here?")
+        );
+        assert!(left_out(&thread(&replies)).is_empty());
+        // Plain comment articles after the article.
+        let comments = format!(
+            r#"<body><main><article><time datetime="2026-01-01">Jan 1</time>{}</article><article><time datetime="2026-01-02">Jan 2</time><p>Nice post.</p></article></main></body>"#,
+            body()
+        );
+        assert!(left_out(&comments).is_empty());
+        // Without dates, a block of the same class is a call to action, and a
+        // dated teaser of another page is a related post.
+        let cta = format!(
+            r#"<body><main><div class="mt-8">{}</div><div class="mt-8" id="cta"><p>Subscribe to our newsletter.</p></div></main></body>"#,
+            body()
+        );
+        assert_eq!(left_out(&cta), ["cta"]);
+        let teaser = format!(
+            r#"<body><main><div class="topic">{}<div class="post" id="t"><h3><a href="/other">Other post</a></h3><time datetime="2026-01-02">Jan 2</time><p>A summary.</p></div></div></main></body>"#,
+            post("post", &body())
+        );
+        assert_eq!(left_out(&teaser), ["t"]);
+        // Another element, another first class, or no words of its own.
+        for other in [
+            r#"<section class="post" id="o"><time datetime="2026-01-02">Jan 2</time><p>Reply.</p></section>"#,
+            r#"<div class="note" id="o"><time datetime="2026-01-02">Jan 2</time><p>Reply.</p></div>"#,
+            r#"<div class="post" id="o"><time datetime="2026-01-02">Jan 2</time><a href="/x">Link</a></div>"#,
+        ] {
+            assert_eq!(left_out(&thread(other)), ["o"], "{other}");
+        }
+        // Blocks without a class are not posts (only plain `article`s are).
+        let plain = format!(
+            r#"<body><main><div><time datetime="2026-01-01">Jan 1</time>{}</div><div id="o"><time datetime="2026-01-02">Jan 2</time><p>Subscribe to our newsletter.</p></div></main></body>"#,
+            body()
+        );
+        assert_eq!(left_out(&plain), ["o"]);
+    }
+
+    #[test]
+    fn a_conclusion_or_a_list_the_body_introduces_stays() {
+        let page = |intro: &str, after: &str| {
+            format!(
+                r#"<body><main><div class="intro">{}{intro}</div>{after}<div id="share"><a href="/s">Share</a> <a href="/t">Post</a></div></main></body>"#,
+                body()
+            )
+        };
+        let list = r#"<ul id="list"><li><a href="/a">On schedules</a></li><li><a href="/b">On maps</a></li></ul>"#;
+        // A sentence ending with a colon introduces the list after it.
+        assert_eq!(
+            left_out(&page("<p>Here are the notes I wrote this year:</p>", list)),
+            ["share"]
+        );
+        // A label is not a sentence; a list after other text is not introduced.
+        for intro in [
+            "<p><b>Related:</b></p>",
+            "<p>Related posts:</p>",
+            "<p>Here are my notes.</p>",
+        ] {
+            assert_eq!(left_out(&page(intro, list)), ["list", "share"], "{intro}");
+        }
+        // A line of its own after a break is a label too.
+        assert_eq!(
+            left_out(&page(
+                "<p>The essay ends here.<br><br><b>Related:</b></p>",
+                list
+            )),
+            ["list", "share"]
+        );
+        // A conclusion of plain prose right after the body stays, under a
+        // heading or not ...
+        for conclusion in [
+            format!(
+                r#"<div id="end"><h2>Conclusion</h2><p>{}</p></div>"#,
+                prose(20)
+            ),
+            format!(r#"<p id="end">{}</p>"#, prose(16)),
+        ] {
+            assert_eq!(left_out(&page("", &conclusion)), ["share"], "{conclusion}");
+        }
+        // ... but not a short line, a bio with a link or picture, or prose
+        // that does not follow the body directly.
+        for (after, gone) in [
+            (
+                "<p id=\"end\">Thanks for reading.</p>".to_owned(),
+                vec!["end", "share"],
+            ),
+            (
+                format!(
+                    r#"<div id="end"><p>{}</p><a href="/jane">Jane</a></div>"#,
+                    prose(20)
+                ),
+                vec!["end", "share"],
+            ),
+            (
+                format!(
+                    r#"<div id="end"><img src="jane.jpg"><p>{}</p></div>"#,
+                    prose(20)
+                ),
+                vec!["end", "share"],
+            ),
+        ] {
+            assert_eq!(left_out(&page("", &after)), gone, "{after}");
+        }
+        let late = format!(
+            r#"<body><main><div>{}</div><div id="share"><a href="/s">Share</a> <a href="/t">Post</a></div><p id="end">{}</p></main></body>"#,
+            body(),
+            prose(16)
+        );
+        assert_eq!(left_out(&late), ["end", "share"]);
+    }
+
+    #[test]
+    fn marks_of_the_page_are_furniture_and_text_about_them_is_not() {
+        let page = |marks: &str| {
+            format!(
+                r#"<body><article><h1>Title</h1>{marks}{}</article></body>"#,
+                body()
+            )
+        };
+        let gone = left_out(&page(
+            r#"<div id="read">8 min read</div><div id="likes"><div><img src="a.png"></div><div id="count"><a>9 Likes</a></div></div>
+            <div class="meta"><span>By Jane</span> <span id="views">1.2K views</span></div><p id="time">Reading time: 3 minutes</p>"#,
+        ));
+        assert_eq!(gone, ["count", "read", "time", "views"]);
+        // A list item, a cell, a heading, a sentence and other durations stay.
+        for kept in [
+            "<ul><li>13 likes</li><li>4 shares</li></ul>",
+            "<table><tr><td>Views</td><td>12 views</td></tr><tr><td>Likes</td><td>9 likes</td></tr></table>",
+            "<h2>5 min read</h2>",
+            "<div><h2>5 min read</h2></div>",
+            "<p>It is an 8 min read at most.</p>",
+            "<p>The phrase <span>8 min read</span> appears in headers.</p>",
+            "<div>Prep time: 5 minutes</div>",
+            "<div>9 Lives</div>",
+        ] {
+            assert!(left_out(&page(kept)).is_empty(), "{kept}");
+        }
+        // Without an article body nothing is a mark: an index lists read times.
+        let index = r#"<body><main><div><h3><a href="/a">A</a></h3><span>5 min read</span></div><div><h3><a href="/b">B</a></h3><span>8 min read</span></div></main></body>"#;
+        assert!(left_out(index).is_empty());
+    }
+
+    #[test]
+    fn short_labels_are_read_as_words() {
+        assert_eq!(label_words("· 8min read"), ["8", "min", "read"]);
+        assert_eq!(label_words("1.2K Views"), ["1.2", "k", "views"]);
+        assert_eq!(
+            label_words("Reading time: 3 minutes."),
+            ["reading", "time", "3", "minutes"]
+        );
+        let words = |text: &str| label_words(text);
+        let read = |text: &str| {
+            let words = words(text);
+            reading_time(&words.iter().map(String::as_str).collect::<Vec<_>>())
+        };
+        let count = |text: &str| {
+            let words = words(text);
+            counter(&words.iter().map(String::as_str).collect::<Vec<_>>())
+        };
+        for yes in [
+            "8 min read",
+            "5-minute read",
+            "12 mins read",
+            "Read time: 4 min",
+        ] {
+            assert!(read(yes), "{yes}");
+        }
+        for no in [
+            "8 min",
+            "read 8 min",
+            "1000 min read",
+            "3 pages read",
+            "Prep time: 5 minutes",
+        ] {
+            assert!(!read(no), "{no}");
+        }
+        for yes in [
+            "9 Likes",
+            "1 comment",
+            "3,456 shares",
+            "12k views",
+            "1.2M Views",
+        ] {
+            assert!(count(yes), "{yes}");
+        }
+        for no in [
+            "Likes",
+            "9 lives",
+            "nine likes",
+            "9 likes today",
+            "v2 likes",
+        ] {
+            assert!(!count(no), "{no}");
+        }
+    }
+
+    #[test]
+    fn a_breadcrumb_trail_above_the_text_is_furniture() {
+        let trail = r#"<ul id="trail"><li><a href="/">Home</a></li><li><a href="/archive">Posts</a></li><li>I took a job in an unexpected industry</li></ul>"#;
+        let page = |before: &str, after: &str| {
+            format!(r#"<body><main>{before}{}{after}</main></body>"#, body())
+        };
+        assert_eq!(
+            left_out(&page(
+                &format!(r#"<div data-block="nav">{trail}</div>"#),
+                ""
+            )),
+            ["trail"]
+        );
+        for kept in [
+            // Every step a link, a step with words of its own, a long last step.
+            r#"<ul><li><a href="/">Home</a></li><li><a href="/p">Posts</a></li><li><a href="/p/x">This</a></li></ul>"#,
+            r#"<ul><li><a href="/">Home</a></li><li><a href="/p">Posts</a></li><li><a href="/p/x">This</a> page</li></ul>"#,
+            r#"<ul><li><a href="/">Home</a> and more</li><li><a href="/p">Posts</a></li><li>This</li></ul>"#,
+            r#"<ul><li><a href="/">Home</a></li><li><a href="/p">Posts</a></li><li>A step that goes on for far too many words to be the name of a page</li></ul>"#,
+            // One link only.
+            r#"<ul><li><a href="/">Home</a></li><li>This</li></ul>"#,
+        ] {
+            assert!(left_out(&page(kept, "")).is_empty(), "{kept}");
+        }
+        // After the first paragraph a list of steps is the article's.
+        assert!(left_out(&page("", trail)).is_empty());
+    }
+
+    #[test]
+    fn a_date_repeated_around_the_title_is_written_once() {
+        let page = |lede: &str| {
+            format!(
+                r#"<body><article><time datetime="2025-01-15">January 15, 2025</time><h1>Title</h1>{lede}{}</article></body>"#,
+                body()
+            )
+        };
+        assert_eq!(
+            left_out(&page(
+                r#"<p id="again"><i><time datetime="2025-01-15T09:00">15 Jan, 2025</time></i></p>"#
+            )),
+            ["again"]
+        );
+        for kept in [
+            // Another date, a date in a byline, a date after the first paragraph.
+            r#"<p><time datetime="2025-01-16">Updated January 16, 2025</time></p>"#,
+            r#"<p>By Jane, <time datetime="2025-01-15">15 Jan</time></p>"#,
+        ] {
+            assert!(left_out(&page(kept)).is_empty(), "{kept}");
+        }
+        let late = format!(
+            r#"<body><article><time datetime="2025-01-15">January 15, 2025</time><h1>Title</h1>{}<p><time datetime="2025-01-15">15 Jan</time></p></article></body>"#,
+            body()
+        );
+        assert!(left_out(&late).is_empty());
+    }
+
+    #[test]
+    fn an_authors_card_beside_the_body_is_furniture() {
+        let bio = "I write about distributed systems, storage and performance, and I like to share what I learn.";
+        let page = |front: &str| {
+            format!(
+                r#"<body><main><h1>Title</h1><section><p>A short abstract.</p><p>07 April 2026</p>{front}</section><section>{}</section></main></body>"#,
+                body()
+            )
+        };
+        let card = format!(
+            r#"<div class="grid"><div id="card"><div><a href="/jane"><img src="jane.jpg" alt="Jane"></a></div><address><a href="/jane" rel="author">Jane Doe</a></address><div><p>{bio}</p></div></div></div>"#
+        );
+        assert_eq!(left_out(&page(&card)), ["card"]);
+        for kept in [
+            // A byline (with an avatar or not), a dek beside a byline, a card
+            // with a heading or a date.
+            r#"<p>By <a href="/jane" rel="author">Jane Doe</a></p>"#.to_owned(),
+            r#"<div><img src="jane.jpg"><a href="/jane" rel="author">Jane Doe</a></div>"#
+                .to_owned(),
+            format!(
+                r#"<div><p>{bio}</p><p>By <a href="/jane" rel="author">Jane Doe</a></p></div>"#
+            ),
+            format!(
+                r#"<div><h3>About Jane</h3><img src="jane.jpg"><a href="/jane" rel="author">Jane Doe</a><p>{bio}</p></div>"#
+            ),
+            format!(
+                r#"<div><img src="jane.jpg"><a href="/jane" rel="author">Jane Doe</a> <time datetime="2026-04-07">Apr 7</time><p>{bio}</p></div>"#
+            ),
+            // A lead picture with a long caption names no author.
+            format!(r#"<div><img src="hero.jpg"><p>{bio}</p></div>"#),
+        ] {
+            assert!(left_out(&page(&kept)).is_empty(), "{kept}");
+        }
+        // Inside the body a card is the article's.
+        let inside = format!(
+            r#"<body><main><h1>Title</h1><div><p>{}</p>{card}<p>{}</p><p>{}</p></div></main></body>"#,
+            prose(40),
+            prose(40),
+            prose(40)
+        );
+        assert!(left_out(&inside).is_empty());
+    }
+
+    #[test]
+    fn a_featured_comment_set_into_the_body_is_furniture() {
+        let comment = |class: &str| {
+            format!(
+                r##"<div class="{class}"><h2 class="{class}__heading">Top comment by</h2><span>Liked by 28 people</span><p>I can't believe they kept it secret!</p><a href="#comments">View all comments</a></div>"##
+            )
+        };
+        let page = |inner: &str| {
+            format!(
+                r#"<body><article><h1>Title</h1><p>{}</p>{inner}<p>{}</p><p>{}</p></article></body>"#,
+                prose(40),
+                prose(40),
+                prose(40)
+            )
+        };
+        for class in [
+            "top-comment",
+            "hotComment",
+            "featured_comments",
+            "pinned-comment",
+            "featured-comments__list",
+        ] {
+            assert_eq!(left_out(&page(&comment(class))), ["div"], "{class}");
+        }
+        // An ordinary comment block, and a featured one opening or ending the
+        // article.
+        assert!(left_out(&page(&comment("comment"))).is_empty());
+        for (before, after) in [(String::new(), body()), (body(), String::new())] {
+            let edge = format!(
+                r#"<body><article><h1>Title</h1>{before}{}{after}</article></body>"#,
+                comment("top-comment")
+            );
+            assert!(left_out(&edge).is_empty(), "{edge}");
+        }
+        // A page of featured comments is about them.
+        let pick = format!(r#"<div class="top-comment"><p>{}</p></div>"#, prose(40));
+        let picks = format!(
+            r#"<body><main><h1>Top comments</h1><p>Our editors picked these.</p>{}</main></body>"#,
+            pick.repeat(3)
+        );
+        assert!(left_out(&picks).is_empty());
     }
 
     #[test]

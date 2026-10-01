@@ -3,6 +3,7 @@ mod callouts;
 mod code;
 mod furniture;
 mod hacker_news;
+mod mail;
 mod social;
 mod stream;
 
@@ -1464,7 +1465,8 @@ struct Footnotes<'a> {
     text_markers: HashMap<usize, String>,
     /// In-page tables of contents of a full page, left out.
     contents: HashSet<usize>,
-    /// Blocks after an article's body that are page furniture, left out.
+    /// Blocks beside an article's body that are page furniture, and the
+    /// quoted history of a web mail message, left out.
     furniture: HashSet<usize>,
     /// Where a saved page's relative links point when no page URL is given:
     /// its `<base href>`, else its canonical address; `false` when that is only
@@ -1547,6 +1549,7 @@ impl<'a> Footnotes<'a> {
             furniture: if prune_chrome {
                 furniture::beside_body(root)
                     .into_iter()
+                    .chain(mail::quoted_history(root))
                     .map(element_key)
                     .collect()
             } else {
@@ -4133,6 +4136,61 @@ mod tests {
         // Books and emails keep every block.
         let book = fragment(&page).unwrap();
         for kept in ["Jane", "Related", "Another post"] {
+            assert!(book.contains(kept), "{kept}: {book}");
+        }
+    }
+
+    #[test]
+    fn a_web_mail_thread_folds_quoted_history_on_a_full_page_only() {
+        let page = r#"<div role="main"><h2 class="hP">Kickoff</h2>
+            <div class="adn" data-message-id="1"><span class="gD">Alex Rivera</span><div class="a3s aiL"><div>Are Tuesdays good for you?</div></div></div>
+            <div class="adn" data-message-id="2"><span class="gD">Jane Doe</span><div class="a3s aiL"><div>Tuesdays work well.</div>
+            <div class="gmail_quote"><div class="gmail_attr">On Wed, Alex Rivera wrote:</div><blockquote class="gmail_quote">Are Tuesdays good for you?</blockquote></div>
+            <div class="adL"><div>-- Jane Doe, Example Corp</div></div></div></div></div>"#;
+        let full = extract_html(page, None).unwrap().markdown;
+        assert_eq!(
+            full,
+            "## Kickoff\n\nAlex Rivera\n\nAre Tuesdays good for you?\n\nJane Doe\n\nTuesdays work well."
+        );
+        // A mail fragment keeps the history it quotes.
+        let mail = fragment(page).unwrap();
+        for kept in [
+            "On Wed, Alex Rivera wrote:",
+            "> Are Tuesdays",
+            "Example Corp",
+        ] {
+            assert!(mail.contains(kept), "{kept}: {mail}");
+        }
+    }
+
+    #[test]
+    fn page_marks_beside_an_article_are_left_out_of_a_full_page_only() {
+        let page = format!(
+            r##"<main><div data-block="nav"><ul><li><a href="/">Home</a></li><li><a href="/posts">Posts</a></li><li>A job in an unexpected industry</li></ul></div>
+            <article><h1>A job in an unexpected industry</h1><div>8 min read</div><p>{}</p>
+            <div class="top-comment"><p>Great story!</p><a href="#comments">View all comments</a></div>
+            <p>{}</p><div><a>13 Likes</a></div><p>{}</p></article></main>"##,
+            prose(40),
+            prose(40),
+            prose(40)
+        );
+        let full = extract_html(&page, None).unwrap().markdown;
+        assert!(
+            full.starts_with("# A job in an unexpected industry\n\nword0"),
+            "{full}"
+        );
+        for gone in [
+            "Home",
+            "Posts",
+            "min read",
+            "Great story",
+            "View all",
+            "Likes",
+        ] {
+            assert!(!full.contains(gone), "{gone}: {full}");
+        }
+        let book = fragment(&page).unwrap();
+        for kept in ["Home", "Posts", "8 min read", "Great story", "13 Likes"] {
             assert!(book.contains(kept), "{kept}: {book}");
         }
     }

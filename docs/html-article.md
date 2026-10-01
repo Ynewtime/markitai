@@ -49,7 +49,14 @@ root to the body:
 - after the body, the sibling blocks go when together they hold under fifty
   words and under a third of the body's: a subscribe box, a call to action,
   related-post cards, an author bio, share counters, a category list,
-  previous and next links;
+  previous and next links. Three kinds of block stay and are not counted:
+  replies of a thread (the same element with the same first class as the post
+  they follow, or plain `article`s, both dated, the reply with words of its own
+  and not a teaser of another page); the block right after the body when the
+  body ends with a sentence of at least five words ending with a colon (an
+  index's introduction and its list; "Related:" is a label, not a sentence);
+  and that block when it is a conclusion of plain prose (a paragraph-long run,
+  with or without a heading, no links, pictures or dates);
 - a block with code, math, a recognized note, a section headed as notes,
   references, sources or an appendix, or a data table (a grid that says more
   than a row of navigation links) always stays; a layout table's cell or row is
@@ -60,8 +67,38 @@ root to the body:
 - inside the body, a block after the last text, code or picture that is only a
   row of links with at most a label (two or more links; tags, related posts) goes. A
   paragraph or a list is text however short, a heading seals what follows it
-  (a labelled "See also" or "External links" list stays), and text after the row
-  makes it part of the article.
+  (a labelled "See also" or "External links" list stays), text after the row
+  makes it part of the article, and so does a sentence ending with a colon
+  right before it.
+
+Marks of the page go wherever they stand off the way to the body, on a page
+whose body reads as an article (an index keeps the reading times of its cards):
+
+- a block whose whole text is a reading time ("8 min read", "5-minute read",
+  "Reading time: 3 minutes") or a count of likes, views, shares or comments
+  ("9 Likes", "1.2K views"), unless it is a list item, a table cell, a heading or
+  part of a sentence;
+- before the body's first paragraph, a breadcrumb trail (a list of two to five
+  links, one per item, ending on the page's own name as plain text of at most
+  twelve words) and a block that holds nothing but a `time` whose date an earlier
+  `time` already gave (the first stays; a date inside a byline stays);
+- outside the body, an author's card: the smallest block with a picture, a
+  `rel=author` or `itemprop=author` link and a paragraph-long sentence, in at
+  most eighty words, without a heading or a date. A byline, a dek beside a
+  byline and a card inside the body stay;
+- inside the body, a featured comment: a block whose class or id names a top,
+  featured, hot, best or pinned comment (`top-comment`, `hotComment`,
+  `featured_comments`), with the article's own prose both before and after it.
+  A page of such comments, a featured comment ending the article and ordinary
+  comment blocks stay.
+
+In a web mail thread saved from the browser, each message body (Gmail's
+`a3s`) leaves out what the client folds away: the quoted history
+(`gmail_quote`, its "On … wrote:" line `gmail_attr`, a quote right after that
+line, Apple Mail's `blockquote type=cite`, Outlook's `divRplyFwdMsg` header with
+the rule above it and the message after it), Gmail's trimmed content (`adL`)
+and its controls (`role=button`). Quotes outside such a body, an article about
+email and every mail fragment keep their quotes.
 
 After rendering, a heading of a full page with no content before the next
 heading of its level or a higher one (usually every paragraph under it was
@@ -73,12 +110,16 @@ is not written as an empty bullet; an element with `role=tooltip` is a control's
 label, not text. A note's definition beside the body is still written at the end,
 and a reference inside a block that is left out creates no footnote.
 
-Known limits: a forum thread whose first post holds most of the text, followed
-by under fifty words of replies, loses those replies; an index page whose
-introduction is wrapped apart from a list of plain links can lose the list; a
-separate conclusion of under fifty words after a long body is treated as furniture.
-Text-pattern clutter (bylines, read times, social counters, quoted email
-replies) is not removed, and neither are inline comments.
+Known limits: replies after a dominant first post stay only when they repeat its
+markup and carry dates, so undated or differently classed short replies are
+still left out; an index list stays only after an introduction of five or more
+words ending with a colon, and a conclusion only when it follows the body
+directly without links or pictures. A reading time or counter inside a byline
+line ("Oct 18, 2019 · 8 min read"), a list of post facts ("March 13, 2026 / 4 min
+/ Share"), marks in other languages, and dates repeated as text without `time`
+stay. Of web mail, only Gmail's message body is recognized; a plain-text "On …
+wrote:" line that Gmail shows above its trimmed-content control stays, and so do
+the recipients line and quoted replies on mailing-list archives.
 
 Explicit footnote/endnote/bibliography containers are protected. The parent
 footnote pass resolves referenced definitions against the full document even
@@ -86,14 +127,21 @@ when the selected article is narrower. Chrome references do not create notes.
 These rules preserve an article about navigation, ordinary comment bodies,
 reading lists and unlabelled image galleries. They intentionally leave some
 ambiguous material that the reference implementation removes using text and
-link-density heuristics, including trailing link lists under a heading, inline
-featured comments and gallery-like related tiles without a semantic label
-inside the article body (see the furniture rules above for what stands beside it).
+link-density heuristics, including trailing link lists under a heading and
+gallery-like related tiles without a semantic label inside the article body
+(see the furniture rules above for what stands beside it).
 
 The design addresses concrete extra content observed in the retained round-five
 HTML corpus: `related--inline-related-stories-block`,
 `scoring--related-posts-byline`, `general--trailing-cta-newsletter`, and
-`general--github.com-issue-56`. The repository fixture
+`general--github.com-issue-56`. The marks, the featured comment and the mail
+rules follow `content-patterns--iso-date-and-read-time`, `issues--114-leading-hr`,
+`content-patterns--social-counter-link`, `content-patterns--social-engagement-counter`,
+`content-patterns--leading-breadcrumb`, `issues--136-time-element`,
+`metadata--rel-author-in-bio-container`, `general--inline-comments-and-link-lists`
+and `gmail--mail.google.com-mail-u-0-thread`; the three kinds of block that stay
+after the body come from the limits this section used to list, reduced to
+authored unit cases. The repository fixture
 `github-repo--panniantong-agent-reach` provides the README structure. New authored
 unit cases reduce these structures to their relevant evidence and include
 retention negatives. This document describes policy and fixture provenance;

@@ -98,6 +98,7 @@
 
 ### Changed
 
+- Full-page HTML drops more clutter beside the article (breadcrumbs above it, reading-time and like/view counters, a date repeated around the title, an author's card, featured comments set into the body, and Gmail's quoted history and controls) and keeps short content it used to lose (forum replies that repeat the post's structure, a list the body introduces with a colon, a short plain conclusion). Against defuddle's expected outputs extra words fall from 1,655 to 1,484 with missing words unchanged at 210; fragments (EPUB, Office, email) are unchanged.
 - Pack relative relocations (DT_RELR) in native Linux builds when the linker and C library support them, and share more sort code across the CLI and pdf-inspector: Linux CLI −1,174,904 bytes (−4.4%), macOS −231,360 bytes, with every corpus output byte-identical on both platforms.
 - Wrap `--help` text to the terminal's width (clap `wrap_help`; 100 columns when not on a terminal) instead of leaving long lines unbroken.
 - Sort through a few shared entry points (a type-erased stable sort and two float orders) instead of one monomorphized sort per closure in pdf-inspector, and precompute keys in a few Markitai sorts: sort code 1.45 MB → 0.68 MB and the release binary −826,176 bytes (−3.6%), with PDF output byte-identical and no slowdown.
