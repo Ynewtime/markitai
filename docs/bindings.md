@@ -410,10 +410,15 @@ glibc have not been tested. In the R50 run (release profile, rustc 1.98.1, Go
 1.27.1, gcc 13.3, Ubuntu 24.04 amd64 under OrbStack/Rosetta) the archive was
 244,496,550 bytes in 619 objects, 139,629,492 of them embedded LLVM bitcode that
 linkers discard (machine code and data: 31,846,070 bytes); the package was
-71,858,526 bytes and the consumer 48,723,760 bytes (34,864,832 stripped). The
-archive keeps one object per crate: Cargo applies the release profile's LTO only
-when all of a package's crate types allow it, and `markitai-ffi` also builds an
-`rlib`.
+71,858,526 bytes and the consumer 48,723,760 bytes (34,864,832 stripped). That
+archive kept one object per crate: Cargo applies the release profile's LTO only
+when all of a package's crate types allow it, and `markitai-ffi` also built an
+`rlib`. It now builds only `cdylib` and `staticlib` (nothing depends on it as a
+Rust library and it has no doctests), so both are link-time optimized: on macOS
+arm64 the archive fell from 219,756,184 to 34,462,632 bytes and
+`libmarkitai_ffi.dylib` from 18,058,736 to 16,942,784 bytes; R50's experiment
+copy measured the Linux archive at 53.3 MB and both platforms' consumers at
+about 25–28 MB. The release link of the library takes about 100 s longer.
 
 Go's external link keeps every section of the archive members it pulls in, and
 cgo rejects `-Wl,--gc-sections` (Linux) and `-Wl,-dead_strip` (macOS) in
@@ -424,11 +429,12 @@ CGO_LDFLAGS="$(go env CGO_LDFLAGS) -Wl,--gc-sections" go build -tags markitai_st
 CGO_LDFLAGS="$(go env CGO_LDFLAGS) -Wl,-dead_strip" go build -tags markitai_static    # macOS
 ```
 
-In R50 this shrank the Linux consumer from 48,723,760 to 31,877,240 bytes
+Before the library was link-time optimized, this shrank the Linux consumer from 48,723,760 to 31,877,240 bytes
 (24,012,912 with `-ldflags=-s -w`, against 34,864,832) and the macOS arm64 one
 from 47,990,834 to 30,338,210 bytes. Both produced the same conversions and JSON
 error, the installed packages' race tests passed with the flag, and the Linux
-executable kept Go's build ID and build information.
+executable kept Go's build ID and build information. With the optimized archive the flag
+adds little.
 
 The package's `licenses.json` records original source paths and byte hashes for
 collected texts, including separate Rust toolchain notices. Its Cargo closure

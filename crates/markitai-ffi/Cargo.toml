@@ -8,7 +8,7 @@ build = "build.rs"
 
 [lib]
 name = "markitai_ffi"
-crate-type = ["cdylib", "staticlib", "rlib"]
+crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 markitai-core.workspace = true
