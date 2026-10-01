@@ -52,7 +52,11 @@ cross-builds only the release CLI for one non-host target (for example
 `x86_64-apple-darwin` on Apple silicon) and writes the same
 `-single-binary.tar.gz` as the native run, checked by the same member
 inventory, hashes and attribution bytes. It records the executable's
-instruction set read from its Mach-O or ELF header. When the host can execute
+instruction set read from its Mach-O or ELF header. An Apple target builds for
+macOS 11.0, the minimum the arm64 build records, unless `MACOSX_DEPLOYMENT_TARGET`
+is set (Rust's x86-64 default, 10.12, would name systems nothing was tested on);
+the minimum the executable records and whether it carries a code signature are
+read back into the record. When the host can execute
 the target (x86-64 macOS under Rosetta 2), the archived `markitai`, `mkai` and
 `markitai-mcp` run (version, MCP alias selection, a Markdown round trip and
 `doctor --json`); otherwise the record says it did not run. Bindings are not

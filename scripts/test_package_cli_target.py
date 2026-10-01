@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import unittest
 
-from package_cli_target import executable_arch, main, workspace_version
+from package_cli_target import executable_arch, macho_minimum, main, workspace_version
 
 
 class TargetPackagingTests(unittest.TestCase):
@@ -31,6 +31,22 @@ class TargetPackagingTests(unittest.TestCase):
         self.assertIsNone(executable_arch(self.file("f", elf(62, width=1))))
         self.assertIsNone(executable_arch(self.file("g", macho(0x01000012))))
         self.assertIsNone(executable_arch(self.file("h", b"\xcf\xfa\xed\xfe")))
+
+    def test_the_minimum_macos_comes_from_the_first_version_command(self):
+        def macho(*commands):
+            body = b"".join(commands)
+            return (b"\xcf\xfa\xed\xfe" + struct.pack("<IIIII", 0x01000007, 3, 2, len(commands), len(body))
+                    + bytes(8) + body)
+        uuid = struct.pack("<II", 0x1B, 24) + bytes(16)
+        build = lambda platform, minos: struct.pack("<IIIIII", 0x32, 24, platform, minos, 0x1B0000, 0)
+        legacy = struct.pack("<IIII", 0x24, 16, 0x0A0C00, 0x1B0000)
+        self.assertEqual(macho_minimum(self.file("a", macho(uuid, build(1, 0x0B0000)))), "11.0")
+        self.assertEqual(macho_minimum(self.file("b", macho(legacy))), "10.12")
+        self.assertEqual(macho_minimum(self.file("c", macho(build(1, 0x0D0301)))), "13.3.1")
+        # An iOS build version is not a macOS minimum; a malformed command stops the walk.
+        self.assertIsNone(macho_minimum(self.file("d", macho(build(2, 0x0B0000)))))
+        self.assertIsNone(macho_minimum(self.file("e", macho(struct.pack("<II", 0x1B, 0)))))
+        self.assertIsNone(macho_minimum(self.file("f", b"\x7fELF" + bytes(60))))
 
     def test_the_version_comes_from_the_workspace_package_section(self):
         manifest = '[package]\nversion = "0.1.0"\n\n[workspace.package]\nedition = "2024"\nversion = "1.3.0-dev"\n'

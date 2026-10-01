@@ -10,6 +10,11 @@ target (x86-64 macOS under Rosetta 2), the archived executable and its aliases
 also run: version, MCP alias selection, a Markdown round trip and
 `doctor --json`. Otherwise the record says it was not run.
 
+An Apple target builds for macOS 11.0, the oldest system the arm64 build
+names, unless `MACOSX_DEPLOYMENT_TARGET` is set; Rust's x86-64 default
+(10.12) would claim systems nothing was tested on. The minimum the
+executable records is read back from its load commands.
+
 The record is not a signature, a notarization or evidence from the target's
 own hardware.
 """
@@ -43,6 +48,33 @@ def executable_arch(path):
         return MACHO.get(struct.unpack_from("<I", header, 4)[0])
     if header[:4] == b"\x7fELF" and header[4] == 2 and header[5] == 1:
         return ELF.get(struct.unpack_from("<H", header, 18)[0])
+    return None
+
+
+def macho_minimum(path):
+    """The minimum macOS a thin 64-bit Mach-O executable records, else None."""
+    data = path.read_bytes()
+    if data[:4] != b"\xcf\xfa\xed\xfe" or len(data) < 32:
+        return None
+    count = struct.unpack_from("<I", data, 16)[0]
+    offset = 32
+    for _ in range(count):
+        if offset + 8 > len(data):
+            return None
+        command, size = struct.unpack_from("<II", data, offset)
+        # LC_BUILD_VERSION names a platform (1, macOS) before its minimum;
+        # LC_VERSION_MIN_MACOSX names the minimum alone.
+        if command == 0x32 and offset + 16 <= len(data) and struct.unpack_from("<I", data, offset + 8)[0] == 1:
+            encoded = struct.unpack_from("<I", data, offset + 12)[0]
+        elif command == 0x24 and offset + 12 <= len(data):
+            encoded = struct.unpack_from("<I", data, offset + 8)[0]
+        else:
+            if size < 8:
+                return None
+            offset += size
+            continue
+        major, minor, patch = encoded >> 16, (encoded >> 8) & 0xFF, encoded & 0xFF
+        return f"{major}.{minor}" + (f".{patch}" if patch else "")
     return None
 
 
@@ -86,6 +118,8 @@ def main(argv=None):
     work = Path(tempfile.mkdtemp(prefix="cli-target-", dir=local))
     environment = dict(os.environ, MARKITAI_HOME=str(work / "state"))
     environment.pop("CARGO_BUILD_TARGET", None)
+    if args.target.endswith("-apple-darwin"):
+        environment.setdefault("MACOSX_DEPLOYMENT_TARGET", "11.0")
     target_dir = Path(environment.get("CARGO_TARGET_DIR", root / "target"))
     if not target_dir.is_absolute():
         target_dir = root / target_dir
@@ -100,6 +134,8 @@ def main(argv=None):
         "steps": [],
         "limitations": ["No signing, notarization, publishing or target-hardware result is implied."],
     }
+    if "MACOSX_DEPLOYMENT_TARGET" in environment:
+        record["deployment_target"] = environment["MACOSX_DEPLOYMENT_TARGET"]
 
     def snapshot():
         names = subprocess.check_output(
@@ -138,6 +174,14 @@ def main(argv=None):
             raise RuntimeError(f"Built executable is {arch}, not {expected_arch}")
         version = workspace_version((root / "Cargo.toml").read_text(encoding="utf-8"))
         record["executable"] = {**identity(binary), "arch": arch, "version": version}
+        if args.target.endswith("-apple-darwin"):
+            record["executable"]["minimum_macos"] = macho_minimum(binary)
+            if record["executable"]["minimum_macos"] != record["deployment_target"]:
+                raise RuntimeError(f"Executable records macOS {record['executable']['minimum_macos']}, "
+                                   f"not the deployment target {record['deployment_target']}")
+            signature = subprocess.run(["codesign", "-dv", str(binary)], capture_output=True, text=True)
+            record["executable"]["code_signature"] = (
+                "none" if "not signed" in signature.stderr else signature.stderr.strip().splitlines()[-1:])
         cli_licenses = cli_attribution(root, package_attribution(root))
         archive = output / f"markitai-{version}-{args.target}-single-binary.tar.gz"
         write_single_binary_tar(binary, archive, cli_licenses)
