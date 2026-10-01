@@ -36,7 +36,7 @@ pub fn check_path(path: &Path, allow_symlinks: bool) -> Result<()> {
                 }
             }
             return Err(Error::InvalidInput(format!(
-                "Symlink access is disabled: {}",
+                "Symlink access is disabled: {} (set output.allow_symlinks to true to follow it)",
                 ancestor.display()
             )));
         }

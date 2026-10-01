@@ -19,7 +19,26 @@ pub(crate) fn client(timeout: u64) -> Result<Client> {
             .user_agent(concat!("markitai/", env!("CARGO_PKG_VERSION"))),
     )?
     .build()
-    .map_err(|e| Error::Fetch(e.without_url().to_string()))
+    .map_err(request_error)
+}
+
+/// A request failure with the causes reqwest keeps behind its summary
+/// ("error sending request" alone gives no reason, such as a refused
+/// connection or a name that does not resolve), without the URL, which can
+/// carry credentials.
+pub(crate) fn request_error(error: reqwest::Error) -> Error {
+    let error = error.without_url();
+    let mut message = error.to_string();
+    let mut source = std::error::Error::source(&error);
+    while let Some(cause) = source {
+        let cause_text = cause.to_string();
+        if !message.contains(&cause_text) {
+            message.push_str(": ");
+            message.push_str(&cause_text);
+        }
+        source = cause.source();
+    }
+    Error::Fetch(message)
 }
 
 pub(crate) fn body(response: Response) -> Result<Vec<u8>> {
@@ -287,11 +306,7 @@ pub(crate) fn fetch_with_runtime(
                     request = request.bearer_auth(key);
                 }
             }
-            let bytes = body(
-                request
-                    .send()
-                    .map_err(|e| Error::Fetch(e.without_url().to_string()))?,
-            )?;
+            let bytes = body(request.send().map_err(request_error)?)?;
             let mut doc = if strategy == "jina" {
                 let value: Value = serde_json::from_slice(&bytes)?;
                 let markdown = value
@@ -613,7 +628,7 @@ fn fetch_static(
                 .get(url.clone())
                 .header(reqwest::header::ACCEPT, STATIC_ACCEPT)
                 .send()
-                .map_err(|e| Error::Fetch(e.without_url().to_string()))?,
+                .map_err(request_error)?,
             defer_pdf(cfg),
         )?,
     };
@@ -899,7 +914,7 @@ fn probe_pdf(
             .get(url.clone())
             .header(reqwest::header::ACCEPT, STATIC_ACCEPT)
             .send()
-            .map_err(|error| Error::Fetch(error.without_url().to_string()))?,
+            .map_err(request_error)?,
     )?;
     if !response.is_pdf() {
         let needs_javascript = inspect_learning
@@ -1007,6 +1022,31 @@ impl FetchOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_failed_request_says_why_without_its_url() {
+        // A port nothing listens on: the summary alone would only say that
+        // sending the request failed.
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let url = format!("http://user:secret@127.0.0.1:{port}/private/path");
+        let error = client(5)
+            .unwrap()
+            .get(&url)
+            .send()
+            .map_err(request_error)
+            .unwrap_err();
+        let Error::Fetch(message) = error else {
+            panic!("{error:?}")
+        };
+        assert!(message.to_lowercase().contains("refused"), "{message}");
+        assert!(
+            !message.contains("secret") && !message.contains("/private/path"),
+            "{message}"
+        );
+    }
     #[test]
     fn private_and_credentialed_remote_targets_are_rejected() {
         let cfg = config::defaults();

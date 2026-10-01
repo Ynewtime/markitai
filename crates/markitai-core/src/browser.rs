@@ -72,6 +72,18 @@ fn executable(path: &Path) -> bool {
     }
 }
 
+/// Why no browser can be used: the configured executable that is not one,
+/// or none installed.
+fn missing_browser(configured: Option<&Path>) -> String {
+    match configured {
+        Some(path) => format!(
+            "MARKITAI_BROWSER_EXECUTABLE is {}, which is not an executable file; point it at Chrome or Chromium, or unset it to use an installed browser",
+            path.display()
+        ),
+        None => "Chromium is not installed; install Chrome/Chromium or set MARKITAI_BROWSER_EXECUTABLE to its executable".into(),
+    }
+}
+
 pub(crate) fn discover() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("MARKITAI_BROWSER_EXECUTABLE") {
         let path = PathBuf::from(path);
@@ -377,7 +389,10 @@ pub(crate) fn fetch_with_runtime(
     };
     let url = Url::parse(source).map_err(|_| Error::InvalidInput("Invalid browser URL".into()))?;
     let options = options::Options::from_config(cfg, &url, screenshot)?;
-    let executable = discover().ok_or_else(|| Error::Unsupported("Chromium is not installed; install Chrome/Chromium or set MARKITAI_BROWSER_EXECUTABLE to its executable".into()))?;
+    let executable = discover().ok_or_else(|| {
+        let configured = std::env::var_os("MARKITAI_BROWSER_EXECUTABLE").map(PathBuf::from);
+        Error::Unsupported(missing_browser(configured.as_deref()))
+    })?;
     let mut lease = runtime.pool.acquire(&executable, &url, cfg, &options)?;
     lease.browser().begin_page(&options)?;
     let result = fetch_page(source, cfg, screenshot, &url, &options, lease.browser());
@@ -525,6 +540,15 @@ fn fetch_page(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_missing_browser_names_the_configured_executable_that_is_not_one() {
+        let configured = missing_browser(Some(Path::new("/opt/none/chrome")));
+        assert!(
+            configured.contains("MARKITAI_BROWSER_EXECUTABLE is /opt/none/chrome"),
+            "{configured}"
+        );
+        assert!(missing_browser(None).starts_with("Chromium is not installed"));
+    }
     #[test]
     fn screenshot_names_distinguish_queries_and_hash_routes_not_plain_anchors() {
         let base = filename(&Url::parse("https://example.com/a/b").unwrap());

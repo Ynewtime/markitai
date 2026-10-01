@@ -56,8 +56,9 @@ impl Table {
                         .and_then(Value::as_f64)
                 })
                 .sum();
+            // An empty sum is -0.0; a job without costs reports 0.
             if cost.is_finite() {
-                value["cost_usd"] = json!(cost);
+                value["cost_usd"] = json!(cost + 0.0);
             }
         }
         Ok(value)
