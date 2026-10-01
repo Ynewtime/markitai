@@ -140,9 +140,10 @@ Stroked lines and thin filled polygons are supported, including transformed
 coordinates and a nonzero page origin. The complete grid determines the column
 count: empty cells and empty trailing columns remain. Multiple physical text
 lines in a cell use `<br>`. A row spanning a border, an incomplete grid or
-overlapping table regions prevents speculative reconstruction. The first row is
-represented as a Markdown table header; this representation does not establish
-that an untagged PDF declared it a semantic header.
+overlapping table regions prevents speculative reconstruction. The first row with
+text is represented as a Markdown table header (a row with nothing in it above
+it heads nothing); this representation does not establish that an untagged PDF
+declared it a semantic header.
 
 A tagged PDF's tables come from its structure tree on each page, as in the
 page reader's whole-document conversion (`8b9747d`): a table drawn without rules
@@ -172,12 +173,36 @@ line-end hyphen that follows a letter, without one). The table needs three rows,
 each of two cells or more, two rows of three cells, a cell that wraps, no cell
 overlapping two rows of another column, and no more than a third of its cells
 over twelve words. A line of one cell just above or below it stays with the
-text around. Rows at the top of the next page that keep to the columns of a
-table ending the previous page continue it under an empty header row; the first
-row of any other table is its header, as for ruled tables. Tables of single-line
+text around. Rows at the top of the next page that keep to the columns and line
+pitch of a table ending the previous page continue it (see below); the first row
+of any other table is its header, as for ruled tables. Tables of single-line
 rows and of cells a few pixels apart remain with the page reader's
 alignment-based detection, and a page with any other side-by-side text keeps
-the page reader's output.
+the page reader's output. Single-line rows were not given a geometric detector
+of their own: column alignment is all the evidence they offer, and on the
+adversarial pages of R48 the page reader's alignment-based detection, which
+already reads such tables, also makes tables of a footer link grid, a row of
+statistic cards and newspaper columns.
+
+A table that a page break cuts is read page by page, and each part would be a
+table of its own. A table ending in the lowest fifth of its page continues when
+the next page opens with a table of the same columns: for a ruled table, column
+borders within 1.5pt and a first row that repeats the header or is not set apart
+as one (bold throughout, above a row that is not); for a borderless table, rows
+that keep to its columns and line pitch. When the document is assembled, the
+continuation's rows join the table they continue, so they stand under the marker
+of the page the table starts on, and the next page keeps only what follows them
+(or only its marker, without a missing-text warning). A part that repeats the
+header row of the table ending the previous page joins it too, also when the page
+reader read both and when running headers or footers stand between (one-line
+blocks that open, or close, two pages or more and half of them, digits aside);
+layout geometry alone does not reach across such lines. The repeated header row
+is dropped; any other first row becomes a body row. Other text between the
+parts, another column count, a header of empty cells, a single column or a page
+recognized by OCR keeps the tables apart. A part on its own (per-page
+extraction, or a page recognized by OCR next to it) is headed by its first row,
+so no table has an empty header row. Page images stay after their own page's
+text.
 
 Before replacing page Markdown, decoded alphanumeric character counts must agree
 with the existing reader. This is a conservative agreement check, not proof that
@@ -203,14 +228,27 @@ run inside the code. Fixed-pitch runs in prose become inline code spans; mono
 links, bare URLs and runs holding a backtick stay text.
 
 Browsers paint list bullets as shapes rather than characters. The geometry pass
-also collects compact painted marks of 1–8pt; a mark of at most half the line's
-size, ending no more than two em before its first run and centred on the lower
-part of its text, makes the line a list item. Bullet characters remain list
-markers. A number (`3.`/`3)`, up to three digits) opens an item where a new line
-could start: first in the flow, inside a list, after a gap or heading, or offset
-from the line above. A number on a line of its own marks the next line. Items
-nest by their marker's offset (a browser indents 40px), consecutive items form
-one tight list, and a heading keeps its level. Super/subscript runs keep their
+also collects compact painted marks of 1–8pt with the colour they are painted
+in: filled shapes, and stroked rings drawn with curves only (a stroked shape
+with straight sides is a checkbox or a frame). A mark of 0.15 to 0.5 times the
+size of a line's first run, ending no more than two em before it and at most
+half a point inside it, centred between its baseline and 0.8 em above it,
+painted in a dark neutral, in the run's colour or in the colour of most of the
+page's text (a legend swatch or a status dot has a colour of its own), with no
+other text on that baseline ending within three em before it, makes the line a
+list item (`pdf_inspector::painted_bullets::targets`). The page reader is given
+the same marks of each page, outside ruled tables and in the page's own
+coordinates, and reads such a mark as a bullet character, so a page left to it
+keeps its painted lists. A list item beside other text on its line, or lines of
+two columns whose baselines interleave (less than three quarters of an em apart
+without overlapping horizontally; markers, runs of fewer than four characters
+and code aside), leave the page to the page reader: a bulleted sidebar beside an
+article no longer runs its items into the article's lines. Bullet characters
+remain list markers. A number (`3.`/`3)`, up to three digits) opens an item
+where a new line could start: first in the flow, inside a list, after a gap or
+heading, or offset from the line above. A number on a line of its own marks the
+next line. Items nest by their marker's offset (a browser indents 40px),
+consecutive items form one tight list, and a heading keeps its level. Super/subscript runs keep their
 anchor's line and render as `<sup>`/`<sub>`; digits the page reader fuses into
 their word stay Unicode superscripts. Headings need more than 1.15 times the body
 size, so a browser `<h3>` (1.17 em) is one.
@@ -275,7 +313,10 @@ their own PDF streams for heading consistency, paragraphs, continuous emphasis,
 complete tables, hidden text, rotated/invalid geometry, compressed multi-stream
 pages, inspection budget boundaries and unreadable or deeply nested Forms; for
 borderless tables, top-aligned and centred wrapped rows, a pitch a pixel off,
-and one layout each that every evidence condition above declines. A
-Chrome-printed fixture (`fixtures/wrapped-table`) reproduces a table tagged as
-layout that continues on the next page. Validation results
-are recorded by the coordinator after the source is frozen.
+and one layout each that every evidence condition above declines; for tables
+cut by page breaks, repeated, missing and empty header rows, running headers and
+footers, text or OCR between the parts and a new table at the top of a page;
+and for painted bullets, rings, swatches, checkboxes, inline squares and a
+bulleted sidebar. A Chrome-printed fixture (`fixtures/wrapped-table`)
+reproduces a table tagged as layout that continues on the next page. Validation
+results are recorded by the coordinator after the source is frozen.

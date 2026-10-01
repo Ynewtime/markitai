@@ -78,6 +78,10 @@ struct State {
     shaped_clip: bool,
     white_fill: bool,
     white_stroke: bool,
+    /// The fill and stroke colours in sRGB, as the page reader converts
+    /// device colours for text.
+    fill: [u8; 3],
+    stroke: [u8; 3],
 }
 
 impl State {
@@ -217,13 +221,25 @@ pub(super) fn rule_resources(pdf: &lopdf::Document, id: ObjectId) -> RuleResourc
 }
 
 /// A small painted shape — the disc, ring or square a browser draws as a
-/// list bullet instead of a bullet character — in frame coordinates.
-#[derive(Clone, Copy, Debug)]
-pub(super) struct Mark {
-    pub x0: f32,
-    pub y0: f32,
-    pub x1: f32,
-    pub y1: f32,
+/// list bullet instead of a bullet character — in frame coordinates: filled,
+/// or stroked with curves only (a stroked shape with straight sides is a
+/// checkbox or a frame).
+pub(super) use pdf_inspector::painted_bullets::PaintedMark as Mark;
+
+/// A device colour in sRGB, as the page reader converts it for text: gray,
+/// RGB, or each of red, green and blue `1 - min(1, c + k)` for CMYK.
+fn srgb(values: &[f32]) -> Option<[u8; 3]> {
+    let unit = |v: f32| v.clamp(0., 1.);
+    let byte = |v: f32| (unit(v) * 255.).round() as u8;
+    match *values {
+        [gray] => Some([byte(gray); 3]),
+        [r, g, b] => Some([byte(r), byte(g), byte(b)]),
+        [c, m, y, k] => {
+            let channel = |ink: f32| byte(1. - (unit(ink) + unit(k)).min(1.));
+            Some([channel(c), channel(m), channel(y)])
+        }
+        _ => None,
+    }
 }
 
 const MAX_MARKS: usize = 4096;
@@ -246,6 +262,8 @@ fn shapes(
         white_fill: false,
         white_stroke: false,
         shaped_clip: false,
+        fill: [0; 3],
+        stroke: [0; 3],
     };
     let mut stack = Vec::new();
     let mut points = Vec::<[f32; 2]>::new();
@@ -255,6 +273,9 @@ fn shapes(
     let mut rectangular = false;
     let mut pending_clip = false;
     let mut curved = false;
+    // The path has a straight segment (`l`, `re`); `h` closing a curved
+    // outline adds none.
+    let mut straight = false;
     let mut output = Vec::new();
     let mut marks = Vec::new();
     for op in &content.operations {
@@ -298,10 +319,13 @@ fn shapes(
                     [c, m, y, k] => c.max(*m).max(*y).max(*k) <= 0.02,
                     _ => return None,
                 };
+                let colour = srgb(&n)?;
                 if op.operator.chars().all(char::is_uppercase) {
                     state.white_stroke = white;
+                    state.stroke = colour;
                 } else {
                     state.white_fill = white;
+                    state.fill = colour;
                 }
             }
             "m" | "l" => {
@@ -315,6 +339,7 @@ fn shapes(
                 } else if let Some(previous) = current {
                     segments.push((previous, p));
                 }
+                straight |= op.operator == "l";
                 current = Some(p);
                 points.push(p);
                 rectangular = false;
@@ -331,6 +356,7 @@ fn shapes(
                     state.point(*x, y + h)?,
                 ];
                 rectangular = points.is_empty();
+                straight = true;
                 for i in 0..4 {
                     segments.push((p[i], p[(i + 1) % 4]));
                 }
@@ -429,10 +455,12 @@ fn shapes(
                         });
                     }
                 }
-                // A compact painted shape, curved or not, may be a bullet.
+                // A compact filled shape, curved or not, or a stroked ring
+                // may be a bullet; a stroked shape with straight sides is a
+                // checkbox or a frame.
                 let [x0, y0, x1, y1] = bounds;
                 let (width, height) = (x1 - x0, y1 - y0);
-                if (fill || stroke)
+                if (fill || (stroke && curved && !straight))
                     && !clipping
                     && marks.len() < MAX_MARKS
                     && (MARK_MIN..=MARK_MAX).contains(&width)
@@ -440,7 +468,13 @@ fn shapes(
                     && width.max(height) <= width.min(height) * 1.5
                     && points.iter().all(|&p| state.inside(p))
                 {
-                    marks.push(Mark { x0, y0, x1, y1 });
+                    marks.push(Mark {
+                        x0,
+                        y0,
+                        x1,
+                        y1,
+                        color: if fill { state.fill } else { state.stroke },
+                    });
                 }
                 if output.len() > MAX_EDGES {
                     return None;
@@ -451,6 +485,7 @@ fn shapes(
                 start = None;
                 rectangular = false;
                 curved = false;
+                straight = false;
             }
             "gs" if op
                 .operands
@@ -631,6 +666,50 @@ mod tests {
             frame,
             &RuleResources::default(),
         )
+    }
+
+    #[test]
+    fn bullet_sized_marks_are_filled_shapes_or_rings_in_their_colour() {
+        let frame = Frame {
+            x: 0.,
+            y: 0.,
+            width: 300.,
+            height: 400.,
+        };
+        let marks = |bytes: &str| {
+            shapes(
+                &Content::decode(bytes.as_bytes()).unwrap(),
+                frame,
+                &RuleResources::default(),
+            )
+            .unwrap()
+            .1
+            .iter()
+            .map(|m| (m.x0, m.y0, m.color))
+            .collect::<Vec<_>>()
+        };
+        let ring = "10 7 m 10 8.4 8.4 10 7 10 c 5.6 10 4 8.4 4 7 c 4 5.6 5.6 4 7 4 c 8.4 4 10 5.6 10 7 c h";
+        // A filled square and disc keep their fill, a stroked ring its stroke.
+        assert_eq!(
+            marks(&format!(
+                "0.2 0.4 0.6 rg 20 20 5 5 re f 0 0 1 0 k {ring} f 0.5 G {ring} S"
+            )),
+            [
+                (20., 20., [51, 102, 153]),
+                (4., 4., [255, 255, 0]),
+                (4., 4., [128, 128, 128])
+            ]
+        );
+        // Stroked squares (checkboxes, one with rounded corners), a white
+        // fill, a clip, a rule.
+        assert_eq!(
+            marks(
+                "20 20 5 5 re S 60 20 m 65 20 l 65 25 l 60 25 l h S \
+                 71 20 m 74 20 l 75 20 75 21 75 21 c 75 25 l 70 25 l h S \
+                 1 g 30 20 5 5 re f 40 20 5 5 re W n 50 20 8 1 re f"
+            ),
+            []
+        );
     }
     #[test]
     fn separate_strokes_and_thin_fills_form_one_complete_grid() {

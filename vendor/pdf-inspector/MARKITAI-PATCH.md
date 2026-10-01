@@ -281,11 +281,41 @@ The local changes, each marked `markitai` (or, for sorts, made through
   2,874 times in one file, well below the roughly 5,000 lookups per process
   at which the search would cost more than building the map.
 
+- `src/painted_bullets.rs` (new, `pub mod painted_bullets` in `src/lib.rs`)
+  and `src/lib.rs` (`LoadedPdf::pages_markdown_with_marks`, one parameter of
+  `extract_pages_markdown_from_doc`): list bullets painted as shapes. A
+  browser paints a list item's marker as a small filled disc or square or a
+  stroked ring, so the text layer holds no marker and the page reader ran the
+  items into one paragraph (a bulleted sidebar became one line of words). A
+  caller that reads the page's vector graphics passes a function giving each
+  1-indexed page's such marks (`PaintedMark`: a box in the page's user space
+  and the colour it is painted in; the caller keeps out stroked shapes with
+  straight sides, which are checkboxes or frames). `targets` decides which marks start a text
+  line: both extents 0.15 to 0.5 of the item's font size, ending no more than
+  two em before the item and at most half a point inside it, centred between
+  its baseline and 0.8 em above it, painted in a dark neutral, in the item's
+  colour or in the colour of most of the page's text, no other text on that
+  baseline ending within three em before the mark, one mark per item. Each
+  such mark becomes a `•` item just before the first item of its line, on
+  that line's baseline and otherwise a copy of that item (font, size, marked
+  content), which the reader's list detection takes like a bullet character.
+  Font statistics and folio decisions are made before the bullets are added,
+  and a bullet is never a folio. `pages_markdown` is
+  `pages_markdown_with_marks` without marks, so its output is unchanged, as is
+  every other reading. Markitai's layout reader applies `targets` to its own
+  lines. Three added tests cover the rule's colour, size, position and
+  neighbour conditions and the page reader's output with and without marks;
+  of 13 mutations of the rule and of the injection, 12 fail them and the
+  other (a centre below the baseline) is already excluded by the window of
+  candidate lines. The isolated copy's unit tests give 1,624 passed and the
+  same 21 failed.
+
 The page-level OCR, font decoding, repair, limits and reliability routing remain
 the upstream paths. Markitai's own visibility warnings and layout agreement
 checks remain enabled. The only new public APIs are `TextLine::text_with_markup`,
 `LoadedPdf` (`load_mem`, `document`, `as_loaded_by_lopdf`, `pages_markdown`,
-`text_with_positions_and_rotations`, `forget_page_runs`) and
+`pages_markdown_with_marks`, `text_with_positions_and_rotations`,
+`forget_page_runs`), `painted_bullets` (`PaintedMark`, `targets`) and
 `glyph_names::glyph_to_unicode`; no optional runtime dependency is added.
 Opacity, masks, occlusion, full text clipping and mixed-visibility marked content
 are not claimed to be solved by this patch.

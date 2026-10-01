@@ -466,7 +466,18 @@ fn a_wrapped_table_without_tagged_cells_continues_on_the_next_page() {
     // its geometry gives the rows. Labels and header cells wrap, values are
     // centred between their lines, two header words share one text run,
     // and the last four rows are printed on the next page without a header.
-    let document = extract(include_bytes!("fixtures/wrapped-table.pdf")).unwrap();
+    let pages = extract_pages(include_bytes!("fixtures/wrapped-table.pdf")).unwrap();
+    // On its own, the next page's part is headed by its first row.
+    assert!(pages.pages[1].continues_table);
+    assert!(
+        pages.pages[1].markdown.starts_with(
+            "|Fibre cement board|X|X||X|X|\n|---|---|---|---|---|---|\n|Zinc||X|X|X|X|\n"
+        ),
+        "{}",
+        pages.pages[1].markdown
+    );
+    // Assembled, its rows join the table.
+    let document = pages.finish().unwrap();
     assert!(
         document.markdown.contains(
             "Blank cells mean the property was not tested.\n\n\
@@ -475,14 +486,12 @@ fn a_wrapped_table_without_tagged_cells_continues_on_the_next_page() {
              |Brick|X|X|X|X||\n\
              |Stainless steel sheet||X|X|X|X|\n\
              |Cross-laminated timber panel|X||X||X|\n\
-             |Glass||X|X|X||\n\n\
-             <!-- Page number: 2 -->\n\n\
-             | | | | | | |\n\
-             |---|---|---|---|---|---|\n\
+             |Glass||X|X|X||\n\
              |Fibre cement board|X|X||X|X|\n\
              |Zinc||X|X|X|X|\n\
              |Recycled plastic composite|X|X|||X|\n\
              |Copper||X|X|X||\n\n\
+             <!-- Page number: 2 -->\n\n\
              Brick and zinc were shortlisted for the street facade."
         ),
         "{}",

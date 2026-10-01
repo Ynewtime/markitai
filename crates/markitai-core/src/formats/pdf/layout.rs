@@ -21,14 +21,31 @@ pub(super) struct Layout {
 struct Carry {
     /// The prose line pitch, in em, of the last page that showed one.
     pitch: Option<f32>,
-    /// The page whose last block was a borderless table, with its shape.
-    table: Option<(u32, unruled::Shape)>,
+    /// The page whose last block was a table that may continue, with what
+    /// its continuation keeps to.
+    table: Option<(u32, Ending)>,
 }
+
+/// A table that ends a page, low enough on it to continue on the next.
+enum Ending {
+    /// A ruled table's column borders and header cells.
+    Ruled { xs: Vec<f32>, header: Vec<String> },
+    /// A borderless table's columns and line pitch.
+    Unruled(unruled::Shape),
+}
+
+/// A table continues on the next page only when it ends in the lowest
+/// fifth of its page: a table the page break did not cut ends higher, and a
+/// table at the top of the next page is then a new one.
+const CONTINUED_BAND: f32 = 0.2;
+/// Column borders of a table and of its continuation agree within this many
+/// points.
+const SAME_BORDER: f32 = 1.5;
 
 /// What borderless-table detection on a page needs beyond the page's text.
 struct Tables<'a> {
-    /// The shape of a borderless table that ended the previous page.
-    continued: Option<&'a unruled::Shape>,
+    /// The table that ended the previous page.
+    continued: Option<&'a Ending>,
     /// The running text's line pitch on the last page that showed one;
     /// this page's own replaces it.
     pitch: &'a mut Option<f32>,
@@ -104,10 +121,11 @@ impl Layout {
         })
     }
 
-    /// Pages are rendered in ascending order: a borderless table ending one
-    /// page may continue at the top of the next. `tagged` tells whether the
-    /// page's structure tree holds table cells; it is asked only when a
-    /// borderless table is found.
+    /// Pages are rendered in ascending order: a table ending one page may
+    /// continue at the top of the next. `tagged` tells whether the page's
+    /// structure tree holds table cells; it is asked only when a borderless
+    /// table is found. Also whether the page's Markdown starts with a table
+    /// that continues the table ending the previous page's Markdown.
     pub(super) fn page(
         &mut self,
         number: u32,
@@ -116,7 +134,7 @@ impl Layout {
         marks: &[Mark],
         baseline: &str,
         tagged: &dyn Fn() -> bool,
-    ) -> Option<String> {
+    ) -> Option<(String, bool)> {
         let items = self.pages.remove(&number)?;
         let continued = self
             .carry
@@ -129,7 +147,7 @@ impl Layout {
             pitch: &mut self.carry.pitch,
             tagged,
         };
-        let (markdown, ending) = render(
+        let page = render(
             items,
             &self.headings,
             frame,
@@ -138,8 +156,11 @@ impl Layout {
             baseline,
             &mut tables,
         )?;
-        self.carry.table = ending.map(|shape| (number, shape));
-        Some(markdown)
+        self.carry.table = page
+            .ending
+            .filter(|(bottom, _)| *bottom <= frame.height * CONTINUED_BAND)
+            .map(|(_, ending)| (number, ending));
+        Some((page.markdown, page.continues))
     }
 }
 
@@ -619,25 +640,73 @@ struct Marker {
     number: Option<String>,
 }
 
-/// The painted bullet of a line: a compact shape of at most half the line's
-/// size, ending no more than two em before the line's first run, centred on
-/// the lower part of its text (a browser centres its disc near the x-height).
-fn painted_bullet(line: &Line, marks: &[Mark]) -> Option<f32> {
-    let first = line.items.first()?;
-    let size = line.size;
-    marks
-        .iter()
-        .find(|m| {
-            let (width, height) = (m.x1 - m.x0, m.y1 - m.y0);
-            let centre = (m.y0 + m.y1) / 2.;
-            width.max(height) <= size * 0.5
-                && width.min(height) >= size * 0.15
-                && m.x1 <= first.x + 0.5
-                && first.x - m.x1 <= size * 2.
-                && centre >= line.y
-                && centre <= line.y + size * 0.8
-        })
-        .map(|m| m.x0)
+/// The painted bullets of a page's lines, by the position of the first item
+/// of each bulleted line: where its bullet starts. The rule is the one the
+/// page reader is given marks for (`pdf_inspector::painted_bullets::targets`):
+/// a compact filled shape or ring at most half the text's size, ending no
+/// more than two em before the line's first run with no other text close
+/// before it, centred on the lower part of the text (a browser centres its
+/// disc near the x-height), and dark or in the text's colour.
+struct Bullets(Vec<((u32, u32), f32)>);
+
+impl Bullets {
+    fn new(items: &[TextItem], marks: &[Mark]) -> Self {
+        Self(
+            pdf_inspector::painted_bullets::targets(items, marks)
+                .into_iter()
+                .map(|(mark, item)| {
+                    let item = &items[item];
+                    ((item.x.to_bits(), item.y.to_bits()), marks[mark].x0)
+                })
+                .collect(),
+        )
+    }
+
+    fn of(&self, line: &Line) -> Option<f32> {
+        let first = line.items.first()?;
+        let at = (first.x.to_bits(), first.y.to_bits());
+        self.0.iter().find(|(item, _)| *item == at).map(|(_, x)| *x)
+    }
+}
+
+/// Whether `line` stands beside `above` rather than below it: within three
+/// quarters of an em, with no horizontal overlap. Two columns whose
+/// baselines interleave (a bulleted sidebar beside an article) read as one
+/// otherwise, each line of one joining the other's paragraph. A marker on
+/// a line of its own, a short run such as a footnote mark set off its
+/// line's baseline, or code (a highlighted listing's runs need not share a
+/// baseline) is no column.
+fn beside(above: &Line, line: &Line) -> bool {
+    let short = |line: &Line| {
+        line.items
+            .iter()
+            .flat_map(|i| i.text.chars())
+            .filter(|c| !c.is_whitespace())
+            .count()
+            < 4
+    };
+    if short(above) || short(line) || is_code(above, true) || is_code(line, true) {
+        return false;
+    }
+    let span = |line: &Line| {
+        let start = line.items.first().map_or(0., |i| i.x);
+        let end = line
+            .items
+            .iter()
+            .map(|i| i.x + i.width)
+            .fold(f32::NEG_INFINITY, f32::max);
+        (start, end)
+    };
+    let marker = |line: &Line| {
+        let text: String = line.items.iter().map(|i| i.text.as_str()).collect();
+        list_prefix(&text).is_some_and(str::is_empty)
+            || number_prefix(&text).is_some_and(|(_, rest)| rest.is_empty())
+    };
+    let ((a0, a1), (b0, b1)) = (span(above), span(line));
+    above.y - line.y < above.size.min(line.size) * 0.75
+        && (b0 >= a1 || a0 >= b1)
+        && !marker(above)
+        && !marker(line)
 }
 
 /// `1.`/`1)` (up to three digits) and the text after it, when a run starts
@@ -655,7 +724,7 @@ fn number_prefix(text: &str) -> Option<(&str, &str)> {
         .then(|| (&text[..digits + delimiter.len_utf8()], after.trim_start()))
 }
 
-fn flow(lines: &[Line], headings: &[f32], marks: &[Mark]) -> Option<String> {
+fn flow(lines: &[Line], headings: &[f32], bullets: &Bullets) -> Option<String> {
     // Blocks with whether each is a list item: consecutive items are one
     // tight list.
     let mut blocks: Vec<(String, bool)> = Vec::new();
@@ -687,6 +756,9 @@ fn flow(lines: &[Line], headings: &[f32], marks: &[Mark]) -> Option<String> {
         let mut current = runs(line);
         if current.is_empty() {
             continue;
+        }
+        if index > 0 && beside(&lines[index - 1], line) {
+            return None;
         }
         // Code opens where a paragraph would: at the start, after a
         // heading, or set off from the text above. A single mono-set line
@@ -739,7 +811,7 @@ fn flow(lines: &[Line], headings: &[f32], marks: &[Mark]) -> Option<String> {
             })
         } else if heading > 0 {
             None
-        } else if let Some(x) = painted_bullet(line, marks) {
+        } else if let Some(x) = bullets.of(line) {
             Some(Marker { x, number: None })
         } else if let Some((number, rest)) = number_prefix(&current[0].text)
             // A number opens an item only where a new line of the text
@@ -780,12 +852,20 @@ fn flow(lines: &[Line], headings: &[f32], marks: &[Mark]) -> Option<String> {
         }
         let is_list = marker.is_some();
         // Side-by-side prose and unruled tables need a reading-order model.
-        // Keep the previous reader instead of concatenating their columns.
-        if !is_list
-            && line
-                .items
-                .windows(2)
-                .any(|p| p[1].x - (p[0].x + p[0].width) > line.size * 3.)
+        // Keep the previous reader instead of concatenating their columns;
+        // a list item beside other text is no exception (a bulleted sidebar
+        // beside an article). Only a marker set as an item of its own may
+        // stand apart from its text.
+        let marker_item = is_list
+            && line.items.first().is_some_and(|first| {
+                list_prefix(&first.text).is_some_and(str::is_empty)
+                    || number_prefix(&first.text).is_some_and(|(_, rest)| rest.is_empty())
+            });
+        if line
+            .items
+            .windows(2)
+            .skip(usize::from(marker_item))
+            .any(|p| p[1].x - (p[0].x + p[0].width) > line.size * 3.)
         {
             return None;
         }
@@ -849,6 +929,30 @@ struct Table {
     top: f32,
     bottom: f32,
     markdown: String,
+    /// Column borders, left to right.
+    xs: Vec<f32>,
+    /// The Markdown of the cells of its first (header) row.
+    header: Vec<String>,
+    /// Whether that row is set apart as a header: bold throughout, above a
+    /// row that is not.
+    header_styled: bool,
+}
+
+impl Table {
+    /// Whether this table, at the top of its page, continues `ending`: the
+    /// same column borders, and a first row that repeats the header there
+    /// or is no header of its own.
+    fn continues(&self, ending: &Ending) -> bool {
+        let Ending::Ruled { xs, header } = ending else {
+            return false;
+        };
+        xs.len() == self.xs.len()
+            && xs
+                .iter()
+                .zip(&self.xs)
+                .all(|(a, b)| (a - b).abs() <= SAME_BORDER)
+            && (*header == self.header || !self.header_styled)
+    }
 }
 
 fn table(grid: &Grid, items: &mut Vec<TextItem>) -> Option<Table> {
@@ -904,27 +1008,47 @@ fn table(grid: &Grid, items: &mut Vec<TextItem>) -> Option<Table> {
     {
         return None;
     }
-    let mut markdown = String::new();
+    // Each row's cells, and whether its text is bold throughout.
+    let mut rendered: Vec<(Vec<String>, bool)> = Vec::with_capacity(rows);
     for row in 0..rows {
-        markdown.push('|');
+        let mut values = Vec::with_capacity(columns);
+        let mut bold = true;
         for column in 0..columns {
-            let value = lines(std::mem::take(&mut cells[row * columns + column]))
+            let cell: Vec<Vec<Run>> = lines(std::mem::take(&mut cells[row * columns + column]))
                 .iter()
-                .map(|line| markdown_cell(&runs(line)))
-                .collect::<Vec<_>>()
-                .join("<br>");
-            markdown.push_str(&value);
+                .map(runs)
+                .collect();
+            bold &= cell.iter().flatten().all(|run| run.style.bold);
+            values.push(
+                cell.iter()
+                    .map(|runs| markdown_cell(runs))
+                    .collect::<Vec<_>>()
+                    .join("<br>"),
+            );
+        }
+        rendered.push((values, bold));
+    }
+    // An empty header row heads nothing: the first row with text is the
+    // header. Two rows hold text, so one follows it.
+    let first = rendered
+        .iter()
+        .position(|(values, _)| values.iter().any(|v| !v.is_empty()))?;
+    let rendered = &rendered[first..];
+    let mut markdown = String::new();
+    for (index, (values, _)) in rendered.iter().enumerate() {
+        markdown.push('|');
+        for value in values {
+            markdown.push_str(value);
             markdown.push('|');
         }
         markdown.push('\n');
-        if row == 0 {
+        if index == 0 {
             markdown.push('|');
-            for _ in 0..columns {
-                markdown.push_str("---|");
-            }
+            markdown.push_str(&"---|".repeat(columns));
             markdown.push('\n');
         }
     }
+    let header_styled = rendered[0].1 && rendered.get(1).is_some_and(|(_, bold)| !bold);
     let mut index = 0;
     let selected = selected.into_iter().collect::<HashSet<_>>();
     items.retain(|_| {
@@ -936,6 +1060,9 @@ fn table(grid: &Grid, items: &mut Vec<TextItem>) -> Option<Table> {
         top,
         bottom,
         markdown: markdown.trim_end().into(),
+        xs: grid.xs.clone(),
+        header: rendered[0].0.clone(),
+        header_styled,
     })
 }
 
@@ -943,16 +1070,24 @@ fn markdown_cell(runs: &[Run]) -> String {
     markdown(runs).replace('|', "\\|")
 }
 
+/// What `segment` makes of the lines between ruled tables.
+struct Segment {
+    markdown: String,
+    /// Whether its first block is a table continuing the previous page's.
+    continues: bool,
+    /// The bottom and shape of a borderless table that is its last block.
+    ending: Option<(f32, unruled::Shape)>,
+}
+
 /// Lines between ruled tables: borderless tables found among them, and the
-/// paragraph flow around those. Also the shape of a borderless table that is
-/// the last block, which the next page may continue.
+/// paragraph flow around those.
 fn segment(
     lines: &[Line],
     headings: &[f32],
-    marks: &[Mark],
+    bullets: &Bullets,
     context: &Tables,
     continued: Option<&unruled::Shape>,
-) -> Option<(String, Option<unruled::Shape>)> {
+) -> Option<Segment> {
     let mut found = unruled::find(lines, *context.pitch, headings, continued);
     if !found.is_empty() && (context.tagged)() {
         found.clear();
@@ -960,22 +1095,36 @@ fn segment(
     let mut blocks = Vec::new();
     let mut start = 0;
     let mut ending = None;
+    let mut continues = false;
     for table in found {
         if table.lines.start > start {
-            blocks.push(flow(&lines[start..table.lines.start], headings, marks)?);
+            blocks.push(flow(&lines[start..table.lines.start], headings, bullets)?);
         }
+        continues |= table.continued && blocks.is_empty();
         blocks.push(table.markdown);
         start = table.lines.end;
-        ending = Some(table.shape);
+        ending = Some((table.bottom, table.shape));
     }
     if start < lines.len() {
-        blocks.push(flow(&lines[start..], headings, marks)?);
+        blocks.push(flow(&lines[start..], headings, bullets)?);
         ending = None;
     }
-    Some((blocks.join("\n\n"), ending))
+    Some(Segment {
+        markdown: blocks.join("\n\n"),
+        continues,
+        ending,
+    })
 }
 
-/// The page's Markdown, and the shape of a borderless table ending it.
+/// A page's Markdown, whether it starts with a table continuing the
+/// previous page's, and the bottom of a table ending it, with what a
+/// continuation of that table keeps to.
+struct Rendered {
+    markdown: String,
+    continues: bool,
+    ending: Option<(f32, Ending)>,
+}
+
 fn render(
     mut items: Vec<TextItem>,
     headings: &[f32],
@@ -984,7 +1133,7 @@ fn render(
     marks: &[Mark],
     baseline: &str,
     context: &mut Tables,
-) -> Option<(String, Option<unruled::Shape>)> {
+) -> Option<Rendered> {
     // Link annotations carry a target, not page text; the existing reader
     // does not render them either. Form-field values are page text whose
     // semantics this reconstruction does not know.
@@ -1018,6 +1167,7 @@ fn render(
     if character_counts(&all_text) != character_counts(baseline) {
         return None;
     }
+    let bullets = Bullets::new(&items, marks);
     let mut tables = Vec::new();
     for grid in grids {
         if let Some(table) = table(&grid, &mut items) {
@@ -1032,17 +1182,29 @@ fn render(
     if let Some(own) = unruled::prose_pitch(&all_lines) {
         *context.pitch = Some(own);
     }
+    // A borderless table ending the previous page continues only in the
+    // page's first lines.
+    let unruled_continued = |start: usize, blocks: &[String]| match context.continued {
+        Some(Ending::Unruled(shape)) if start == 0 && blocks.is_empty() => Some(shape),
+        _ => None,
+    };
     let mut start = 0;
-    let mut blocks = Vec::new();
+    let mut blocks: Vec<String> = Vec::new();
     let mut ending = None;
+    let mut continues = false;
     for table in tables {
         let end = start + all_lines[start..].partition_point(|line| line.y > table.top);
         if end > start {
-            let continued = context
-                .continued
-                .filter(|_| start == 0 && blocks.is_empty());
-            let (text, _) = segment(&all_lines[start..end], headings, marks, context, continued)?;
-            blocks.push(text);
+            let continued = unruled_continued(start, &blocks);
+            let part = segment(
+                &all_lines[start..end],
+                headings,
+                &bullets,
+                context,
+                continued,
+            )?;
+            continues |= part.continues;
+            blocks.push(part.markdown);
         }
         // Any non-table text beside it is ambiguous multi-column layout.
         if all_lines
@@ -1051,19 +1213,34 @@ fn render(
         {
             return None;
         }
+        // A ruled table opening the page may continue the previous page's.
+        continues |= blocks.iter().all(|b| b.trim().is_empty())
+            && context.continued.is_some_and(|e| table.continues(e));
         blocks.push(table.markdown);
         start = end;
+        ending = Some((
+            table.bottom,
+            Ending::Ruled {
+                xs: table.xs,
+                header: table.header,
+            },
+        ));
     }
     if start < all_lines.len() {
-        let continued = context
-            .continued
-            .filter(|_| start == 0 && blocks.is_empty());
-        let (text, last) = segment(&all_lines[start..], headings, marks, context, continued)?;
-        blocks.push(text);
-        ending = last;
+        let continued = unruled_continued(start, &blocks);
+        let part = segment(&all_lines[start..], headings, &bullets, context, continued)?;
+        continues |= part.continues;
+        blocks.push(part.markdown);
+        ending = part
+            .ending
+            .map(|(bottom, shape)| (bottom, Ending::Unruled(shape)));
     }
-    let output = blocks.join("\n\n");
-    (!output.is_empty()).then_some((output, ending))
+    let markdown = blocks.join("\n\n");
+    (!markdown.is_empty()).then_some(Rendered {
+        markdown,
+        continues,
+        ending,
+    })
 }
 
 #[cfg(test)]
@@ -1218,6 +1395,187 @@ mod tests {
             "{}",
             output.markdown
         );
+    }
+
+    /// The layout pass's Markdown for a one-page PDF, with the page's own
+    /// rule grids and marks; `None` when it leaves the page to the reader.
+    fn layout_page(ops: Vec<Operation>) -> Option<String> {
+        let bytes = pdf(vec![ops], None);
+        let loaded = pdf_inspector::LoadedPdf::load_mem(&bytes).unwrap();
+        let doc = lopdf::Document::load_mem(&bytes).unwrap();
+        let id = doc.get_pages()[&1];
+        let frame = super::super::geometry::frame(&doc, id).unwrap();
+        let (_, content) = super::super::inspect_page(&doc, id);
+        let (grids, marks) = super::super::geometry::page_shapes(
+            &content.unwrap(),
+            frame,
+            &super::super::geometry::rule_resources(&doc, id),
+        );
+        let baseline = loaded.pages_markdown(None).unwrap();
+        let mut layout =
+            Layout::read(Some(&loaded), &HashSet::from([1]), &BTreeMap::new()).unwrap();
+        layout
+            .page(
+                1,
+                frame,
+                grids,
+                &marks,
+                &baseline.pages[0].markdown,
+                &|| false,
+            )
+            .map(|(markdown, _)| markdown)
+    }
+
+    const SIDEBAR: [&str; 4] = [
+        "River lantern",
+        "Lantern orchard",
+        "Orchard copper",
+        "Copper meadow",
+    ];
+
+    /// A bulleted list at x 64, a line every 15pt from 720 down.
+    fn sidebar() -> Vec<Operation> {
+        let mut page = Vec::new();
+        for (index, item) in SIDEBAR.iter().enumerate() {
+            let y = 720 - 15 * index as i64;
+            page.extend(bullet(52., y as f32 + 2., 4.5));
+            page.extend(text("F1", 12, 64, y, item));
+        }
+        page
+    }
+
+    #[test]
+    fn list_items_beside_other_text_leave_the_page_to_the_reader() {
+        let words = "Main column words run on across the page.";
+        assert!(layout_page(sidebar()).is_some_and(|m| m.starts_with("- River lantern\n- ")));
+        // The article's lines interleave with the sidebar's, three points
+        // lower (two would put them on its lines), or share their baselines.
+        for offset in [3, 0] {
+            let mut page = sidebar();
+            for index in 0..12 {
+                page.extend(text("F1", 12, 220, 720 - offset - 15 * index, words));
+            }
+            assert_eq!(layout_page(page), None, "offset {offset}");
+        }
+    }
+
+    #[test]
+    fn the_page_reader_reads_the_painted_bullets_of_a_page_left_to_it() {
+        // Two runs far apart on one line keep the page with the page
+        // reader, whose text is in the page's own coordinates: the page box
+        // starts at (100, 100).
+        let mut ops = vec![
+            Operation::new("q", vec![]),
+            Operation::new("cm", [1, 0, 0, 1, 100, 100].map(Object::from).to_vec()),
+        ];
+        ops.extend(sidebar());
+        ops.extend(text("F1", 12, 40, 600, "Total"));
+        ops.extend(text("F1", 12, 400, 600, "Four trees"));
+        ops.push(Operation::new("Q", vec![]));
+        let mut doc = lopdf::Document::load_mem(&pdf(vec![ops], None)).unwrap();
+        let pages = doc
+            .catalog()
+            .unwrap()
+            .get(b"Pages")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        doc.get_dictionary_mut(pages)
+            .unwrap()
+            .set("MediaBox", [100, 100, 700, 900].map(Object::from).to_vec());
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        let markdown = super::super::extract(&bytes).unwrap().markdown;
+        let items = SIDEBAR.map(|item| format!("- {item}")).join("\n");
+        assert!(markdown.contains(&items), "{markdown}");
+    }
+
+    /// A stroked circle of radius `r` around (`x`, `y`), drawn with curves.
+    fn ring(x: f32, y: f32, r: f32) -> Vec<Operation> {
+        let k = 0.5523 * r;
+        let curve = |p: [f32; 6]| Operation::new("c", p.iter().map(|&v| v.into()).collect());
+        vec![
+            Operation::new("m", vec![(x + r).into(), y.into()]),
+            curve([x + r, y + k, x + k, y + r, x, y + r]),
+            curve([x - k, y + r, x - r, y + k, x - r, y]),
+            curve([x - r, y - k, x - k, y - r, x, y - r]),
+            curve([x + k, y - r, x + r, y - k, x + r, y]),
+            Operation::new("h", vec![]),
+            Operation::new("S", vec![]),
+        ]
+    }
+
+    #[test]
+    fn only_a_mark_in_the_list_colour_shaped_as_a_bullet_makes_an_item() {
+        let lines = ["Alder and ash", "Birch and beech", "Cedar and cypress"];
+        let page = |mark: &dyn Fn(f32) -> Vec<Operation>| {
+            let mut page = text("F1", 12, 40, 750, "Three kinds of tree grow here.");
+            for (index, line) in lines.iter().enumerate() {
+                let y = 720 - 15 * index as i64;
+                page.extend(mark(y as f32));
+                page.extend(text("F1", 12, 64, y, line));
+            }
+            page
+        };
+        let items = lines.map(|line| format!("- {line}")).join("\n");
+        // A ring, as a nested list's bullet, makes items.
+        let rings = layout_page(page(&|y| ring(54.25, y + 4.25, 2.25))).unwrap();
+        assert!(rings.contains(&items), "{rings}");
+        // A coloured swatch, a stroked box (a checkbox), or a square inside
+        // the line does not.
+        let red = |y: f32| {
+            let mut ops = vec![Operation::new(
+                "rg",
+                vec![0.87.into(), 0.2.into(), 0.2.into()],
+            )];
+            ops.extend(bullet(52., y + 2., 4.5));
+            ops.push(Operation::new("rg", vec![0.into(), 0.into(), 0.into()]));
+            ops
+        };
+        let boxed = |y: f32| {
+            vec![
+                Operation::new(
+                    "re",
+                    vec![52.into(), (y + 2.).into(), 4.5.into(), 4.5.into()],
+                ),
+                Operation::new("S", vec![]),
+            ]
+        };
+        let inline = |y: f32| bullet(130., y + 2., 4.5);
+        for mark in [&red as &dyn Fn(f32) -> Vec<Operation>, &boxed, &inline] {
+            let markdown = layout_page(page(mark)).unwrap();
+            assert!(!markdown.contains("- "), "{markdown}");
+        }
+    }
+
+    #[test]
+    fn a_marker_set_apart_from_its_text_is_no_column() {
+        // A numbered list with a wide hanging indent: the number is an item
+        // of its own, four em before its text.
+        let mut page = text("F1", 12, 40, 750, "Follow the steps.");
+        for (index, step) in ["Open the valve", "Close the valve"].iter().enumerate() {
+            let y = 720 - 15 * index as i64;
+            page.extend(text("F1", 12, 40, y, &format!("{}.", index + 1)));
+            page.extend(text("F1", 12, 100, y, step));
+        }
+        let markdown = layout_page(page).unwrap();
+        assert!(
+            markdown.contains("1. Open the valve\n2. Close the valve"),
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn a_footnote_mark_or_a_listing_off_the_baseline_is_no_column() {
+        // A raised mark the extractor keeps as a line of its own, and a
+        // highlighted listing whose runs stand on two baselines.
+        let mut page = text("F1", 12, 40, 720, "A sentence that ends with a mark.");
+        page.extend(text("F1", 8, 230, 725, "[a]"));
+        page.extend(text("F1", 12, 40, 690, "The listing reads:"));
+        page.extend(text("F3", 10, 40, 660, "#include"));
+        page.extend(text("F3", 10, 100, 663, "<stdio.h>"));
+        page.extend(text("F3", 10, 40, 645, "int main(void);"));
+        assert!(layout_page(page).is_some());
     }
 
     #[test]
@@ -1776,20 +2134,177 @@ mod tests {
         let mut bytes = Vec::new();
         pdf.save_to(&mut bytes).unwrap();
         let markdown = super::super::extract(&bytes).unwrap().markdown;
-        for row in 1..=54 {
-            assert!(
-                markdown.contains(&format!(
-                    "|Row {row}|{}|long cell text long<br>cell text|",
-                    row * row
-                )),
-                "row {row}: {markdown}"
+        // Each page repeats the header row: one table, its header once, and
+        // the next pages keep only their markers.
+        let rows = (1..=54)
+            .map(|row| format!("|Row {row}|{}|long cell text long<br>cell text|", row * row))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            markdown.contains(&format!(
+                "|Name|Square|Notes|\n|---|---|---|\n{rows}\n\n\
+                 <!-- Page number: 2 -->\n\n<!-- Page number: 3 -->"
+            )),
+            "{markdown}"
+        );
+        assert_eq!(markdown.matches("|Name|Square|Notes|").count(), 1);
+    }
+
+    /// A ruled three-column table between the column borders `xs` from
+    /// `top` down, rows 30pt high, each row's cells in its font.
+    fn ruled(xs: [i64; 4], top: i64, rows: &[(&str, [String; 3])]) -> Vec<Operation> {
+        let bottom = top - 30 * rows.len() as i64;
+        let mut ops = Vec::new();
+        let mut rule = |from: (i64, i64), to: (i64, i64)| {
+            ops.push(Operation::new("m", vec![from.0.into(), from.1.into()]));
+            ops.push(Operation::new("l", vec![to.0.into(), to.1.into()]));
+            ops.push(Operation::new("S", vec![]));
+        };
+        for x in xs {
+            rule((x, bottom), (x, top));
+        }
+        for k in 0..=rows.len() as i64 {
+            rule((xs[0], top - 30 * k), (xs[3], top - 30 * k));
+        }
+        for (index, (font, values)) in rows.iter().enumerate() {
+            let y = top - 20 - 30 * index as i64;
+            for (x, value) in xs.iter().zip(values) {
+                ops.extend(text(font, 12, x + 6, y, value));
+            }
+        }
+        ops
+    }
+
+    const XS: [i64; 4] = [40, 200, 360, 520];
+
+    /// `Row n | n² | note n` for each `n`, in `font`.
+    fn numbered(font: &str, rows: std::ops::Range<i64>) -> Vec<(&str, [String; 3])> {
+        rows.map(|n| {
+            (
+                font,
+                [format!("Row {n}"), (n * n).to_string(), format!("note {n}")],
+            )
+        })
+        .collect()
+    }
+
+    /// A ruled table of `XS` from `top` down: a bold header row when given,
+    /// then the numbered rows `rows`.
+    fn ruled_table(
+        top: i64,
+        header: Option<[&str; 3]>,
+        rows: std::ops::Range<i64>,
+    ) -> Vec<Operation> {
+        let mut all: Vec<(&str, [String; 3])> = header
+            .map(|header| ("F2", header.map(String::from)))
+            .into_iter()
+            .collect();
+        all.extend(numbered("F1", rows));
+        ruled(XS, top, &all)
+    }
+
+    const HEADER: [&str; 3] = ["Name", "Square", "Notes"];
+
+    fn rows_markdown(rows: std::ops::Range<i64>) -> String {
+        rows.map(|n| format!("|Row {n}|{}|note {n}|", n * n))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn a_ruled_table_cut_by_a_page_break_is_one_table() {
+        // The table runs into the page's lowest fifth (it ends at 150 of
+        // 800pt), and the next page opens with the same columns.
+        let mut first = text("F1", 12, 40, 770, "The register follows.");
+        first.extend(ruled_table(750, Some(HEADER), 1..20));
+        let header = "|**Name**|**Square**|**Notes**|\n|---|---|---|";
+        // The header row repeated, or no header row: either continues.
+        for repeated in [Some(HEADER), None] {
+            let mut second = ruled_table(770, repeated, 20..24);
+            second.extend(text("F1", 12, 40, 560, "The register ends here."));
+            let pages =
+                super::super::extract_pages(&pdf(vec![first.clone(), second], None)).unwrap();
+            assert!(pages.pages[1].continues_table);
+            let markdown = pages.finish().unwrap().markdown;
+            assert_eq!(
+                markdown,
+                format!(
+                    "<!-- Page number: 1 -->\n\nThe register follows.\n\n{header}\n{}\n\n\
+                     <!-- Page number: 2 -->\n\nThe register ends here.",
+                    rows_markdown(1..24)
+                )
             );
         }
-        assert_eq!(
-            markdown
-                .matches("|Name|Square|Notes|\n|---|---|---|")
-                .count(),
-            3,
+    }
+
+    #[test]
+    fn a_new_table_at_the_top_of_the_next_page_stays_a_table_of_its_own() {
+        let mut first = text("F1", 12, 40, 770, "The register follows.");
+        first.extend(ruled_table(750, Some(HEADER), 1..20));
+        // A header of its own, with the same columns.
+        let second = ruled_table(770, Some(["City", "Code", "Region"]), 20..24);
+        let pages = super::super::extract_pages(&pdf(vec![first.clone(), second], None)).unwrap();
+        assert!(!pages.pages[1].continues_table);
+        let markdown = pages.finish().unwrap().markdown;
+        assert!(
+            markdown.contains(&format!(
+                "<!-- Page number: 2 -->\n\n|**City**|**Code**|**Region**|\n|---|---|---|\n{}",
+                rows_markdown(20..24)
+            )),
+            "{markdown}"
+        );
+        // Other column borders, or a caption above it: a new table.
+        for second in [
+            ruled([40, 240, 360, 520], 770, &numbered("F1", 20..24)),
+            [
+                text("F1", 12, 40, 775, "Cities by code."),
+                ruled(XS, 750, &numbered("F1", 20..24)),
+            ]
+            .concat(),
+        ] {
+            let pages =
+                super::super::extract_pages(&pdf(vec![first.clone(), second], None)).unwrap();
+            assert!(!pages.pages[1].continues_table);
+            let markdown = pages.finish().unwrap().markdown;
+            assert_eq!(markdown.matches("|---|---|---|").count(), 2, "{markdown}");
+        }
+        // A first row in bold above other bold rows is not set apart as a
+        // header: the table continues.
+        let second = ruled(XS, 770, &numbered("F2", 20..24));
+        let pages = super::super::extract_pages(&pdf(vec![first.clone(), second], None)).unwrap();
+        assert!(pages.pages[1].continues_table);
+        // A table ending well above the page's foot was not cut: a table
+        // without a header at the top of the next page starts anew.
+        let mut first = text("F1", 12, 40, 770, "The register follows.");
+        first.extend(ruled_table(750, Some(HEADER), 1..6));
+        let second = ruled_table(770, None, 20..24);
+        let pages = super::super::extract_pages(&pdf(vec![first, second], None)).unwrap();
+        assert!(!pages.pages[1].continues_table);
+        let markdown = pages.finish().unwrap().markdown;
+        assert!(
+            markdown.contains(&format!(
+                "{}\n\n<!-- Page number: 2 -->\n\n|Row 20|400|note 20|\n|---|---|---|\n{}",
+                rows_markdown(1..6),
+                rows_markdown(21..24)
+            )),
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn an_empty_first_row_of_a_ruled_table_is_no_header() {
+        // A row with nothing in it above the header row.
+        let mut page = text("F1", 12, 40, 770, "The register follows.");
+        page.extend(ruled_table(750, Some(["", "", ""]), 1..1));
+        page.extend(ruled_table(720, Some(HEADER), 1..4));
+        let markdown = super::super::extract(&pdf(vec![page], None))
+            .unwrap()
+            .markdown;
+        assert!(
+            markdown.contains(&format!(
+                "The register follows.\n\n|**Name**|**Square**|**Notes**|\n|---|---|---|\n{}",
+                rows_markdown(1..4)
+            )),
             "{markdown}"
         );
     }

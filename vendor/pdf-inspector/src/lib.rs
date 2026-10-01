@@ -41,6 +41,7 @@ pub mod glyph_names;
 mod mac_glyph_order;
 pub mod markdown;
 mod overlong_numerals;
+pub mod painted_bullets; // markitai: caller-supplied list bullets
 pub mod process_mode;
 mod sort; // markitai: shared sort instantiations
 pub mod structure_tree;
@@ -666,6 +667,18 @@ impl LoadedPdf {
         &self,
         pages: Option<&[u32]>,
     ) -> Result<PagesExtractionResult, PdfError> {
+        self.pages_markdown_with_marks(pages, &|_| Vec::new())
+    }
+
+    /// [`LoadedPdf::pages_markdown`], with list bullets the caller found
+    /// painted as shapes: `marks` gives a 1-indexed page's, in the page's
+    /// user space. A mark that starts a text line is read as a bullet
+    /// character there (see [`painted_bullets::targets`]).
+    pub fn pages_markdown_with_marks(
+        &self,
+        pages: Option<&[u32]>,
+        marks: &dyn Fn(u32) -> Vec<painted_bullets::PaintedMark>,
+    ) -> Result<PagesExtractionResult, PdfError> {
         extract_pages_markdown_from_doc(
             &self.doc,
             self.page_count,
@@ -675,6 +688,7 @@ impl LoadedPdf {
             &MarkdownOptions::default(),
             false,
             false,
+            marks,
         )
         .map(|extraction| extraction.result)
     }
@@ -1052,6 +1066,7 @@ fn extract_pages_markdown_mem_impl(
         markdown_options,
         strip_repeated_headers_footers,
         preserve_ocr_candidates,
+        &|_| Vec::new(),
     )?;
     // A renderer reading the original bytes would clip a repaired form
     // to nothing, so the OCR pipeline renders the repaired document.
@@ -1088,6 +1103,7 @@ fn extract_pages_markdown_from_doc(
     markdown_options: &MarkdownOptions,
     strip_repeated_headers_footers: bool,
     preserve_ocr_candidates: bool,
+    painted_marks: &dyn Fn(u32) -> Vec<painted_bullets::PaintedMark>,
 ) -> Result<InternalPagesExtraction, PdfError> {
     // Extract ALL pages to get accurate, document-wide font stats. A malformed
     // unselected page cannot make a valid requested page fail, but errors on a
@@ -1201,6 +1217,32 @@ fn extract_pages_markdown_from_doc(
             })
             .map(|(item, remove)| (item.clone(), *remove))
             .unzip();
+        // markitai: list bullets painted as shapes, each before the first
+        // item of its line. Font statistics and folio decisions above were
+        // made without them; a bullet is no page number.
+        let marks = painted_marks(page_1idx);
+        let (page_items, page_number_removal_mask) = match marks.as_slice() {
+            [] => (page_items, page_number_removal_mask),
+            marks => {
+                let marked = painted_bullets::targets(&page_items, marks);
+                let mut items = Vec::with_capacity(page_items.len() + marked.len());
+                let mut mask = Vec::with_capacity(items.capacity());
+                let mut next = marked.into_iter().peekable();
+                for (index, (item, remove)) in page_items
+                    .into_iter()
+                    .zip(page_number_removal_mask)
+                    .enumerate()
+                {
+                    if let Some((mark, _)) = next.next_if(|&(_, target)| target == index) {
+                        items.push(painted_bullets::bullet(&item, &marks[mark]));
+                        mask.push(false);
+                    }
+                    items.push(item);
+                    mask.push(remove);
+                }
+                (items, mask)
+            }
+        };
 
         let page_rects: Vec<PdfRect> = all_rects
             .iter()

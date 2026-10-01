@@ -2,6 +2,8 @@ use crate::{Asset, Document, Error, Result};
 use lopdf::{Dictionary, Object, ObjectId, Stream, content::Content};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
+#[path = "pdf/continued.rs"]
+mod continued;
 #[path = "pdf/geometry.rs"]
 mod geometry;
 #[path = "pdf/layout.rs"]
@@ -583,6 +585,9 @@ pub(crate) struct PdfPage {
     // Deferred missing-text diagnostics retain their original position among
     // inspection/image warnings. Callers may append warnings before finishing.
     warning_index: usize,
+    /// The native body starts with a table that layout geometry found to
+    /// continue the table ending the previous page's body.
+    continues_table: bool,
 }
 
 #[derive(Debug)]
@@ -604,16 +609,27 @@ impl PdfPages {
 
     fn assemble(self, allow_empty: bool) -> Result<Document> {
         let Self {
-            pages,
+            mut pages,
             mut document,
         } = self;
+        let readable: Vec<bool> = pages
+            .iter()
+            .map(|page| !page.needs_ocr && !page.markdown.trim().is_empty())
+            .collect();
+        continued::join_tables(&mut pages);
         let mut sections = Vec::with_capacity(pages.len());
         let mut readable_pages = 0;
         let mut deferred = Vec::new();
-        for page in pages {
-            readable_pages += usize::from(!page.needs_ocr && !page.markdown.trim().is_empty());
+        for (page, readable) in pages.into_iter().zip(readable) {
+            readable_pages += usize::from(readable);
             let mut warning = Vec::new();
-            let mut section = page_markdown(&page, &mut warning);
+            // A page whose text all continued the previous page's table
+            // keeps only its marker.
+            let mut section = if readable && page.markdown.trim().is_empty() {
+                format!("<!-- Page number: {} -->", page.number)
+            } else {
+                page_markdown(&page, &mut warning)
+            };
             if let Some(warning) = warning.pop() {
                 deferred.push((page.warning_index, warning));
             }
@@ -810,6 +826,36 @@ fn recover_plain_text(
     warnings.push(format!("PDF page {number}: recovered bounded font-decoded text after {reason}. Reading order, paragraph boundaries and text styling may differ."));
 }
 
+/// A page's bullet-sized marks as the page reader is given them, in the
+/// page's own coordinates (the reader's text is not moved to the page box).
+/// A mark inside a ruled table is a status dot or an icon in a cell, not a
+/// list bullet.
+fn reader_marks(
+    frame: geometry::Frame,
+    grids: &[geometry::Grid],
+    marks: &[geometry::Mark],
+) -> Vec<geometry::Mark> {
+    let in_table = |mark: &geometry::Mark| {
+        grids.iter().any(|grid| {
+            mark.x0 >= grid.xs[0]
+                && mark.x1 <= grid.xs[grid.xs.len() - 1]
+                && mark.y0 >= grid.ys[0]
+                && mark.y1 <= grid.ys[grid.ys.len() - 1]
+        })
+    };
+    marks
+        .iter()
+        .filter(|mark| !in_table(mark))
+        .map(|mark| geometry::Mark {
+            x0: mark.x0 + frame.x,
+            y0: mark.y0 + frame.y,
+            x1: mark.x1 + frame.x,
+            y1: mark.y1 + frame.y,
+            ..*mark
+        })
+        .collect()
+}
+
 /// Pages holding cells of a table in the structure tree: the page reader reads
 /// those tables from the tags, which layout geometry does not override.
 fn tagged_table_pages(pdf: &lopdf::Document, pages: &BTreeMap<u32, ObjectId>) -> HashSet<u32> {
@@ -864,10 +910,36 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
         )));
     }
     let mut document = Document::default();
+    // Each page's content is inspected first: the shapes of a page whose
+    // inspection is clean (its rule grids and bullet-sized marks) serve the
+    // layout reader, and its painted list bullets the page reader too.
+    let mut inspections = BTreeMap::new();
+    let mut shapes = BTreeMap::new();
+    for (&number, &id) in &page_ids {
+        let (inspection, content) = inspect_page(pdf, id);
+        if inspection.signals.is_empty()
+            && inspection.warnings.is_empty()
+            && let Some(frame) = geometry::frame(pdf, id)
+            && let Some(content) = content.as_ref()
+        {
+            let resources = geometry::rule_resources(pdf, id);
+            let (grids, marks) = geometry::page_shapes(content, frame, &resources);
+            shapes.insert(number, (frame, grids, marks));
+        }
+        // Retain only bounded table coordinates across pages, never their
+        // expanded streams or parsed operation trees.
+        inspections.insert(number, inspection);
+    }
+    let painted = |page: u32| {
+        shapes
+            .get(&page)
+            .map(|(frame, grids, marks)| reader_marks(*frame, grids, marks))
+            .unwrap_or_default()
+    };
     // A file the reader cannot load fails each reading with the load's error.
     let whole = match &loaded {
         Ok(loaded) => loaded
-            .pages_markdown(None)
+            .pages_markdown_with_marks(None, &painted)
             .map_err(|error| error.to_string()),
         Err(error) => Err(error.to_string()),
     };
@@ -883,7 +955,11 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
                     loaded
                         .as_ref()
                         .ok()
-                        .and_then(|loaded| loaded.pages_markdown(Some(&[page - 1])).ok())
+                        .and_then(|loaded| {
+                            loaded
+                                .pages_markdown_with_marks(Some(&[page - 1]), &painted)
+                                .ok()
+                        })
                         .and_then(|mut result| result.pages.pop())
                         .unwrap_or(pdf_inspector::PageMarkdown {
                             page: page - 1,
@@ -899,29 +975,20 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
         .into_iter()
         .map(|page| (page.page + 1, page))
         .collect::<BTreeMap<_, _>>();
-    let mut inspections = BTreeMap::new();
     let mut layout_pages = HashSet::new();
     let mut page_geometry = BTreeMap::new();
     for (&number, &id) in &page_ids {
-        let (inspection, content) = inspect_page(pdf, id);
         if let Some(page) = pages.get_mut(&number) {
-            recover_plain_text(pdf, number, id, page, &inspection, &mut document.warnings);
+            let inspection = &inspections[&number];
+            recover_plain_text(pdf, number, id, page, inspection, &mut document.warnings);
             if !page.needs_ocr
                 && !page.markdown.trim().is_empty()
-                && inspection.signals.is_empty()
-                && inspection.warnings.is_empty()
-                && let Some(frame) = geometry::frame(pdf, id)
-                && let Some(content) = content.as_ref()
+                && let Some(geometry) = shapes.remove(&number)
             {
                 layout_pages.insert(number);
-                let resources = geometry::rule_resources(pdf, id);
-                let (grids, marks) = geometry::page_shapes(content, frame, &resources);
-                page_geometry.insert(number, (frame, grids, marks));
+                page_geometry.insert(number, geometry);
             }
         }
-        // Retain only bounded table coordinates across pages, never their
-        // expanded streams or parsed operation trees.
-        inspections.insert(number, inspection);
     }
     let mut layout = if layout_pages.is_empty() {
         None
@@ -960,12 +1027,14 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
                 .get_or_init(|| tagged_table_pages(pdf, &page_ids))
                 .contains(&number)
         };
+        let mut continues_table = false;
         if let Some((frame, grids, marks)) = page_geometry.remove(&number)
-            && let Some(refined) = layout.as_mut().and_then(|layout| {
+            && let Some((refined, continues)) = layout.as_mut().and_then(|layout| {
                 layout.page(number, frame, grids, &marks, &page.markdown, &tagged)
             })
         {
             page.markdown = refined;
+            continues_table = continues;
         }
         let warning_index = document.warnings.len();
         let visibility_suspect = !inspection.signals.is_empty();
@@ -1028,6 +1097,7 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
             visibility_suspect,
             ocr_completed: false,
             warning_index,
+            continues_table,
         });
     }
     document
@@ -1402,6 +1472,7 @@ mod tests {
                 visibility_suspect: false,
                 ocr_completed: false,
                 warning_index: 0,
+                continues_table: false,
             },
             &mut warnings,
         );
@@ -1417,6 +1488,7 @@ mod tests {
                 visibility_suspect: false,
                 ocr_completed: false,
                 warning_index: 0,
+                continues_table: false,
             },
             &mut warnings,
         );
@@ -1427,6 +1499,33 @@ mod tests {
             [
                 "PDF page 3: native text was not recovered (image-only); OCR is required for this page."
             ]
+        );
+    }
+
+    #[test]
+    fn the_page_reader_gets_marks_outside_ruled_tables_in_page_coordinates() {
+        let frame = geometry::Frame {
+            x: 100.,
+            y: 50.,
+            width: 400.,
+            height: 600.,
+        };
+        let grid = geometry::Grid {
+            xs: vec![10., 60., 200.],
+            ys: vec![300., 320., 340.],
+        };
+        let mark = |x0: f32, y0: f32| geometry::Mark {
+            x0,
+            y0,
+            x1: x0 + 4.,
+            y1: y0 + 4.,
+            color: [0; 3],
+        };
+        // A dot in a cell stays out; a bullet beside the table moves into
+        // the page's coordinates.
+        assert_eq!(
+            reader_marks(frame, &[grid], &[mark(14., 304.), mark(14., 360.)]),
+            [mark(114., 410.)]
         );
     }
 

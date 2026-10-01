@@ -38,6 +38,10 @@ pub(super) struct Found {
     pub(super) markdown: String,
     /// What a continuation on the next page keeps to.
     pub(super) shape: Shape,
+    /// The bottom of its last line.
+    pub(super) bottom: f32,
+    /// Whether it continues the table that ended the previous page.
+    pub(super) continued: bool,
 }
 
 /// A table's column left edges and line pitch (in em).
@@ -544,12 +548,15 @@ fn build(lines: &[Line], range: Range<usize>, columns: &[f32], pitch: Pitch) -> 
     }
     let lines = || cells.iter().flat_map(|c| &c.lines).map(|l| l.line);
     let (start, end) = (lines().min()?, lines().max()? + 1);
+    let bottom = cells
+        .iter()
+        .flat_map(|c| &c.lines)
+        .map(|l| l.baseline - l.size * 0.2)
+        .fold(f32::INFINITY, f32::min);
+    // A continuation's header stayed on the previous page; standing alone,
+    // its first row heads it, as for any table. Joined to the table it
+    // continues, the first row is a body row again.
     let mut markdown = String::new();
-    let separator = format!("|{}", "---|".repeat(columns.len()));
-    if continued {
-        // The header stayed on the previous page.
-        markdown.push_str(&format!("|{}\n{separator}\n", " |".repeat(columns.len())));
-    }
     for (index, (_, row)) in rows.into_iter().enumerate() {
         markdown.push('|');
         for cell in row {
@@ -559,8 +566,9 @@ fn build(lines: &[Line], range: Range<usize>, columns: &[f32], pitch: Pitch) -> 
             markdown.push('|');
         }
         markdown.push('\n');
-        if index == 0 && !continued {
-            markdown.push_str(&separator);
+        if index == 0 {
+            markdown.push('|');
+            markdown.push_str(&"---|".repeat(columns.len()));
             markdown.push('\n');
         }
     }
@@ -571,6 +579,8 @@ fn build(lines: &[Line], range: Range<usize>, columns: &[f32], pitch: Pitch) -> 
             columns: columns.to_vec(),
             pitch,
         },
+        bottom,
+        continued,
     })
 }
 
