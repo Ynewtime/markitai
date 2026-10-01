@@ -88,6 +88,12 @@ pub(super) fn run(cfg: &Value, path: Option<&Path>, json: bool, fix: bool) -> Cl
         );
     } else {
         println!("Markitai {} — native diagnostics", markitai_core::VERSION);
+        match path {
+            Some(path) => println!("Configuration: {}", path.display()),
+            None => println!(
+                "Configuration: built-in defaults (no configuration file; create one with `markitai init`)"
+            ),
+        }
         for check in checks.values() {
             println!(
                 "{}: {}{} — {}",
@@ -104,6 +110,7 @@ pub(super) fn run(cfg: &Value, path: Option<&Path>, json: bool, fix: bool) -> Cl
                 println!("  {}", check.install_hint);
             }
         }
+        println!("{}", summary(&checks));
     }
     if fix && !repair_missing {
         eprintln!(
@@ -111,6 +118,36 @@ pub(super) fn run(cfg: &Value, path: Option<&Path>, json: bool, fix: bool) -> Cl
         );
     }
     Ok(i32::from(failed || repair_failed))
+}
+
+/// One closing line that states the verdict the exit status encodes.
+fn summary(checks: &IndexMap<&'static str, Check>) -> String {
+    let failed: Vec<_> = checks
+        .values()
+        .filter(|check| check.failed())
+        .map(|check| check.name)
+        .collect();
+    let ok = checks.values().filter(|check| check.status == "ok").count();
+    let attention = checks.len() - ok;
+    if failed.is_empty() && attention == 0 {
+        format!("Summary: all {ok} checks ok.")
+    } else if failed.is_empty() {
+        format!(
+            "Summary: nothing the configuration requires is blocked; {ok} ok, {attention} optional {} not ready (see the hints above).",
+            if attention == 1 { "check" } else { "checks" }
+        )
+    } else {
+        let (noun, verb) = if failed.len() == 1 {
+            ("check", "is")
+        } else {
+            ("checks", "are")
+        };
+        format!(
+            "Summary: {} {noun} required by the configuration {verb} not ready: {}. Fix the hints above, then rerun `markitai doctor`.",
+            failed.len(),
+            failed.join(", ")
+        )
+    }
 }
 
 fn checks(
@@ -148,6 +185,19 @@ fn checks(
                     .is_some_and(|value| !value.is_empty())))
         || config::enabled(cfg, "/screenshot/enabled")
         || config::enabled(cfg, "/screenshot/screenshot_only");
+    // An explicit executable replaces discovery, and --fix will not replace it,
+    // so a failed check must point at the variable rather than suggest --fix.
+    if browser.status != "ok"
+        && let Some(explicit) = std::env::var_os("MARKITAI_BROWSER_EXECUTABLE")
+    {
+        if browser.status == "missing" {
+            browser.message = format!(
+                "MARKITAI_BROWSER_EXECUTABLE does not name an executable file: {}",
+                Path::new(&explicit).display()
+            );
+        }
+        browser.install_hint = "MARKITAI_BROWSER_EXECUTABLE is set, so only that path is tried and doctor --fix will not replace it: point it at a working Chrome/Chromium executable, or unset it to use an installed browser or markitai doctor --fix".into();
+    }
     result.insert("playwright", browser);
     let mut office = backend(
         "LibreOffice",
@@ -453,10 +503,34 @@ fn model_check(
         "",
     );
     check.required = !providers.is_empty() || unsupported;
-    if models.is_empty() {
+    // Without llm.model_list, conversions fall back to MODEL or provider API
+    // keys in the environment; report what --llm would actually use.
+    let detected = models
+        .is_empty()
+        .then(|| markitai_core::llm_capabilities(cfg))
+        .filter(|detected| !detected.models.is_empty());
+    if let Some(detected) = detected {
+        let names = detected.models.join(", ");
+        if detected.routable {
+            check.message = format!(
+                "No llm.model_list; --llm uses {names} detected from MODEL or provider API keys in the environment"
+            );
+            check.install_hint =
+                "Optional: run markitai init to save the detected model in a configuration file"
+                    .into();
+        } else {
+            check.status = "warning";
+            check.message = format!(
+                "No llm.model_list; the environment names {names}, but its provider API key is not set"
+            );
+            check.install_hint =
+                "Set the provider's API key (for example OPENAI_API_KEY) or configure llm.model_list"
+                    .into();
+        }
+    } else if models.is_empty() {
         check.status = "missing";
         check.message = "No models configured in llm.model_list".into();
-        check.install_hint = path.map(|path| format!("Configure llm.model_list in {}", path.display())).unwrap_or_else(|| "Run markitai init or configure llm.model_list; environment-only auto-detection is separate from saved configuration".into());
+        check.install_hint = path.map(|path| format!("Configure llm.model_list in {}", path.display())).unwrap_or_else(|| "Set a provider API key such as OPENAI_API_KEY (optionally with MODEL), or run markitai init or configure llm.model_list".into());
     } else if active.is_empty() {
         check.status = "warning";
         check.message = "Models are configured, but all have weight 0 (disabled)".into();

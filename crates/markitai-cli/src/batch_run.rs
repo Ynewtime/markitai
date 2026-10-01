@@ -1326,7 +1326,7 @@ fn run_with_namespace(
             }
         }
         if !cli.quiet {
-            for line in crate::report::batch_summary(&records, clock.elapsed()) {
+            for line in crate::report::batch_summary(&records, clock.elapsed(), output) {
                 eprintln!("{line}");
             }
         }

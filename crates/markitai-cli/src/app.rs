@@ -25,185 +25,274 @@ use crate::report::{
     self, ItemKind, ItemStatus, ReportOptions, RunFinished, RunInfo, RunItem, RunMode,
 };
 use chrono::{Local, SecondsFormat};
-use clap::{ArgAction, CommandFactory, Parser, Subcommand};
+use clap::{ArgAction, CommandFactory, FromArgMatches, Parser, Subcommand};
 use markitai_core::{ConversionOutput, ConversionUsage, ConvertContext, ConvertOptions, config};
 use serde_json::{Value, json};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+// Help sections. Clap prints them in order of first use.
+const OUTPUT_HELP: &str = "Output";
+const CONFIG_HELP: &str = "Configuration";
+const ENHANCE_HELP: &str = "LLM, OCR and screenshots";
+const FETCH_HELP: &str = "URL fetching and backends";
+const BATCH_HELP: &str = "Batch processing";
+const CACHE_HELP: &str = "Cache and images";
+const MESSAGES_HELP: &str = "Messages and logging";
+
+const ROOT_AFTER_HELP: &str = "\
+Presets (-p):
+  minimal   plain conversion, no model processing
+  standard  --llm --alt --desc
+  rich      --llm --alt --desc --screenshot
+
+Examples:
+  markitai report.docx                     Print Markdown on stdout
+  markitai report.pdf -o out/              Write out/report.pdf.md
+  markitai notes.html -o out/notes.md      Choose the exact output file
+  markitai ./docs -o out/ -g '**/*.pdf'    Convert the PDFs in a directory
+  markitai links.urls -o out/ --resume     Continue an interrupted URL list
+  markitai https://example.com -o out/     Convert a web page
+  markitai scan.png --ocr                  Read the text of an image
+  markitai report.pdf -p standard -o out/  Enhance with the configured model
+  markitai init                            Create a configuration file
+  markitai doctor                          Check models and optional backends
+
+Exit status: 0 success; 1 failure; 2 usage error or provider batch still pending;
+10 some batch items failed; 130/143 interrupted.";
+
+const CONFIG_AFTER_HELP: &str = "\
+Keys use dot notation, e.g. llm.enabled or llm.model_list[0].model_name. The file in
+use is -c, then MARKITAI_CONFIG, then ./markitai.json, then the user config.json.
+
+Examples:
+  markitai config list -f table           Show every effective setting
+  markitai config get llm.enabled         Read one value
+  markitai config set output.dir ./out    Validate and save one value
+  markitai config path                    Show which file is in use";
+
+const CACHE_AFTER_HELP: &str = "\
+Examples:
+  markitai cache stats                    Entry counts and disk use
+  markitai cache stats -v --limit 10      Recent LLM entries per model
+  markitai cache clear -y                 Clear without a confirmation prompt";
+
 #[derive(Parser, Debug, Clone)]
 #[command(name="markitai", version=markitai_core::VERSION,
-    about="Convert documents and URLs to Markdown", disable_help_subcommand=true, args_override_self=true)]
+    about="Convert documents and URLs to Markdown", after_help=ROOT_AFTER_HELP,
+    disable_help_subcommand=true, args_override_self=true)]
 struct Cli {
     #[arg(value_name = "INPUT")]
     /// Document, URL, .urls list, directory or atomic .numbers package.
     input: Option<String>,
     #[command(subcommand)]
     command: Option<Command>,
-    #[arg(short = 'o', long, value_name = "PATH")]
+    #[arg(short = 'o', long, value_name = "PATH", help_heading = OUTPUT_HELP)]
     /// Output directory, or exact .md path for a single input. Omit for Markdown on stdout.
     output: Option<PathBuf>,
-    #[arg(long, requires="output", conflicts_with_all=["dry_run","llm_batch_collect"])]
+    // Requires -o; checked in execute() so the message can explain why.
+    #[arg(long, conflicts_with_all=["dry_run","llm_batch_collect"], help_heading = OUTPUT_HELP)]
     /// Print one JSON result on stdout; requires -o. Usage errors remain on stderr.
     json: bool,
-    #[arg(short = 'c', long, global = true)]
-    /// Configuration path; must exist except for config set/edit, which can create it.
-    config: Option<PathBuf>,
-    #[arg(long, global = true)]
-    /// Deep-merge inline JSON over the config file; explicit conversion flags still win.
-    config_json: Option<String>,
-    #[arg(short = 'p', long)]
-    /// Use minimal, standard, rich or a configured preset (case-insensitive).
-    preset: Option<String>,
-    #[arg(long, value_parser=["rag","obsidian","okf"], ignore_case=true)]
-    /// Shape assets/frontmatter for rag, obsidian or okf; independent of the preset.
-    profile: Option<String>,
-    #[arg(long, overrides_with = "no_llm")]
-    /// Enable model processing; paired flags use the last occurrence and otherwise inherit config.
-    llm: bool,
-    #[arg(long, overrides_with = "llm")]
-    /// Disable model processing.
-    no_llm: bool,
-    #[arg(long, overrides_with = "no_alt")]
-    /// Generate image alt text when LLM processing is enabled.
-    alt: bool,
-    #[arg(long, overrides_with = "alt")]
-    /// Disable image alt text generation.
-    no_alt: bool,
-    #[arg(long, overrides_with = "no_desc")]
-    /// Write image descriptions when LLM processing is enabled.
-    desc: bool,
-    #[arg(long, overrides_with = "desc")]
-    /// Disable image descriptions.
-    no_desc: bool,
-    #[arg(long, overrides_with = "no_ocr")]
-    /// Read scanned content: macOS Vision locally, or page images with a vision model.
-    ocr: bool,
-    #[arg(long, overrides_with = "ocr")]
-    /// Disable OCR.
-    no_ocr: bool,
-    #[arg(long, overrides_with = "no_screenshot")]
-    /// Capture supported document pages or browser pages; optional backends may be required.
-    screenshot: bool,
-    #[arg(long, overrides_with = "screenshot")]
-    /// Disable screenshots.
-    no_screenshot: bool,
-    #[arg(long, overrides_with = "no_screenshot_only")]
-    /// Use screenshots as content (implies --screenshot). With --llm, read pixels; without --llm, ordinary web pages save images without Markdown. PDF media retains Markdown. URL --pure takes precedence.
-    screenshot_only: bool,
-    #[arg(long, overrides_with = "screenshot_only")]
-    /// Disable screenshot-only content selection.
-    no_screenshot_only: bool,
-    #[arg(long, overrides_with = "no_pure")]
-    /// Preserve source text without ordinary generated metadata; URL pure takes precedence over visual LLM input.
-    pure: bool,
-    #[arg(long, overrides_with = "pure")]
-    /// Disable pure mode.
-    no_pure: bool,
-    #[arg(long)]
-    /// Keep the base Markdown alongside enhanced output.
-    keep_base: bool,
-    #[arg(long)]
-    /// Resume a directory or .urls batch with matching paths/options; completed entries stay completed.
-    resume: bool,
-    #[arg(long, overrides_with = "compress")]
-    /// Disable image compression.
-    no_compress: bool,
-    #[arg(long, overrides_with = "no_compress")]
-    /// Enable image compression.
-    compress: bool,
-    #[arg(long, overrides_with = "cache")]
-    /// Bypass cache reads while still writing successful fresh results.
-    no_cache: bool,
-    #[arg(long, overrides_with = "no_cache")]
-    /// Allow cache reads without forcing a disabled cache on.
-    cache: bool,
-    #[arg(long)]
-    /// Comma-separated glob patterns that bypass cache reads for matching inputs.
-    no_cache_for: Option<String>,
-    #[arg(short='j', long, value_parser=clap::value_parser!(u32).range(1..))]
-    /// Maximum concurrent file conversions; independent of URL and model request limits.
-    batch_concurrency: Option<u32>,
-    #[arg(long, value_parser=clap::value_parser!(u32).range(1..))]
-    /// Maximum concurrent URL conversions, separately from file processing.
-    url_concurrency: Option<u32>,
-    #[arg(long, value_parser=clap::value_parser!(u32).range(1..))]
-    /// Maximum in-flight model requests shared by this conversion run.
-    llm_concurrency: Option<u32>,
-    #[arg(short='g', long="glob", action=ArgAction::Append)]
-    /// Include/exclude relative directory paths; repeatable, ! prefix excludes. Quote patterns in the shell.
-    globs: Vec<String>,
-    #[arg(long)]
-    /// Directory scan depth; 0 scans only the input directory.
-    max_depth: Option<usize>,
-    #[arg(long)]
-    /// Submit directory text enhancement to the OpenAI Batch API; --resume continues frozen work in -o.
-    llm_batch: bool,
-    #[arg(long, value_parser=clap::value_parser!(u64).range(60..))]
-    /// Maximum local wait for a provider batch (seconds, at least 60); expiry does not cancel it.
-    llm_batch_timeout: Option<u64>,
-    #[arg(long)]
-    /// Collect a saved provider batch into its original -o directory; no input is required.
-    llm_batch_collect: Option<String>,
-    #[arg(short='s', long, value_parser=["auto","static","playwright","defuddle","jina","cloudflare"])]
-    /// URL strategy: auto/static/playwright are local; remote strategies remain explicitly unsupported.
-    strategy: Option<String>,
-    #[arg(short='b', long, value_parser=["native","cloudflare"])]
-    /// File backend; native is implemented, cloudflare remains explicitly unsupported.
-    backend: Option<String>,
-    #[arg(long)]
-    /// Forbid remote extraction services; does not disable explicitly configured model requests.
-    no_remote_fetch: bool,
-    #[arg(short = 'v', long)]
-    /// Show details for single inputs that are quiet by default; stdout Markdown stays clean.
-    verbose: bool,
-    #[arg(short = 'q', long)]
-    /// Suppress progress/info; single inputs are already quiet by default, unlike batch runs.
-    quiet: bool,
-    #[arg(long, value_parser=["DEBUG","INFO","WARNING","ERROR","CRITICAL"])]
-    /// Conversion file-log level; needs log.dir. Console output still follows --verbose/--quiet.
-    log_level: Option<String>,
-    #[arg(long)]
+    #[arg(long, help_heading = OUTPUT_HELP)]
     /// Preview discovery without conversion or output publication.
     dry_run: bool,
-    #[arg(long, overrides_with = "no_record_history")]
-    /// Archive this run for serve history; stdout-only conversions are not archived.
+    #[arg(long, overrides_with = "no_record_history", help_heading = OUTPUT_HELP)]
+    /// Archive this run for `markitai serve` history (--no-record-history disables); stdout-only conversions are not archived.
     record_history: bool,
-    #[arg(long, overrides_with = "record_history")]
+    #[arg(long, overrides_with = "record_history", hide = true)]
     /// Disable history recording for this run.
     no_record_history: bool,
-    #[arg(short = 'I', long)]
+    #[arg(short = 'c', long, global = true, value_name = "PATH", help_heading = CONFIG_HELP)]
+    /// Configuration path; must exist except for config set/edit, which can create it.
+    config: Option<PathBuf>,
+    #[arg(long, global = true, value_name = "JSON", help_heading = CONFIG_HELP)]
+    /// Deep-merge inline JSON over the config file; explicit conversion flags still win.
+    config_json: Option<String>,
+    #[arg(short = 'p', long, value_name = "NAME", help_heading = CONFIG_HELP)]
+    /// Use minimal, standard, rich or a configured preset (case-insensitive).
+    preset: Option<String>,
+    #[arg(long, value_name = "NAME", value_parser=["rag","obsidian","okf"], ignore_case=true, help_heading = CONFIG_HELP)]
+    /// Shape assets/frontmatter for rag, obsidian or okf; independent of the preset.
+    profile: Option<String>,
+    #[arg(short = 'I', long, help_heading = CONFIG_HELP)]
     /// Choose a conversion in a terminal; edits apply to this session only.
     interactive: bool,
+    #[arg(long, overrides_with = "no_llm", help_heading = ENHANCE_HELP)]
+    /// Enable model processing (--no-llm disables). The last of a flag pair wins; without either, the configuration decides.
+    llm: bool,
+    #[arg(long, overrides_with = "llm", hide = true)]
+    /// Disable model processing.
+    no_llm: bool,
+    #[arg(long, overrides_with = "no_alt", help_heading = ENHANCE_HELP)]
+    /// Generate image alt text when LLM processing is enabled (--no-alt disables).
+    alt: bool,
+    #[arg(long, overrides_with = "alt", hide = true)]
+    /// Disable image alt text generation.
+    no_alt: bool,
+    #[arg(long, overrides_with = "no_desc", help_heading = ENHANCE_HELP)]
+    /// Write image descriptions when LLM processing is enabled (--no-desc disables).
+    desc: bool,
+    #[arg(long, overrides_with = "desc", hide = true)]
+    /// Disable image descriptions.
+    no_desc: bool,
+    #[arg(long, overrides_with = "no_ocr", help_heading = ENHANCE_HELP)]
+    /// Read scanned content: macOS Vision locally, or page images with a vision model (--no-ocr disables).
+    ocr: bool,
+    #[arg(long, overrides_with = "ocr", hide = true)]
+    /// Disable OCR.
+    no_ocr: bool,
+    #[arg(long, overrides_with = "no_screenshot", help_heading = ENHANCE_HELP)]
+    /// Capture supported document pages or browser pages; optional backends may be required (--no-screenshot disables).
+    screenshot: bool,
+    #[arg(long, overrides_with = "screenshot", hide = true)]
+    /// Disable screenshots.
+    no_screenshot: bool,
+    #[arg(long, overrides_with = "no_screenshot_only", help_heading = ENHANCE_HELP)]
+    /// Use screenshots as content (implies --screenshot). With --llm, read pixels; without --llm, ordinary web pages save images without Markdown. PDF media retains Markdown. URL --pure takes precedence.
+    screenshot_only: bool,
+    #[arg(long, overrides_with = "screenshot_only", hide = true)]
+    /// Disable screenshot-only content selection.
+    no_screenshot_only: bool,
+    #[arg(long, overrides_with = "no_pure", help_heading = ENHANCE_HELP)]
+    /// Preserve source text without ordinary generated metadata; URL pure takes precedence over visual LLM input (--no-pure disables).
+    pure: bool,
+    #[arg(long, overrides_with = "pure", hide = true)]
+    /// Disable pure mode.
+    no_pure: bool,
+    #[arg(long, help_heading = ENHANCE_HELP)]
+    /// Keep the base Markdown alongside enhanced output.
+    keep_base: bool,
+    #[arg(long, value_name = "N", value_parser = at_least_one, help_heading = ENHANCE_HELP)]
+    /// Maximum in-flight model requests shared by this conversion run.
+    llm_concurrency: Option<u32>,
+    #[arg(short='s', long, value_name = "NAME", value_parser=["auto","static","playwright","defuddle","jina","cloudflare"], help_heading = FETCH_HELP)]
+    /// URL strategy: auto (static, then the local browser), static or playwright run locally; defuddle and jina send the URL to that remote service; cloudflare is not implemented.
+    strategy: Option<String>,
+    #[arg(short='b', long, value_name = "NAME", value_parser=["native","cloudflare"], help_heading = FETCH_HELP)]
+    /// File backend; native is implemented, cloudflare remains explicitly unsupported.
+    backend: Option<String>,
+    #[arg(long, help_heading = FETCH_HELP)]
+    /// Forbid remote extraction services; does not disable explicitly configured model requests.
+    no_remote_fetch: bool,
+    #[arg(long, help_heading = BATCH_HELP)]
+    /// Resume a directory or .urls batch with matching paths/options; completed entries stay completed.
+    resume: bool,
+    #[arg(short='j', long, value_name = "N", value_parser = at_least_one, help_heading = BATCH_HELP)]
+    /// Maximum concurrent file conversions; independent of URL and model request limits.
+    batch_concurrency: Option<u32>,
+    #[arg(long, value_name = "N", value_parser = at_least_one, help_heading = BATCH_HELP)]
+    /// Maximum concurrent URL conversions, separately from file processing.
+    url_concurrency: Option<u32>,
+    #[arg(short='g', long="glob", value_name = "PATTERN", action=ArgAction::Append, help_heading = BATCH_HELP)]
+    /// Include/exclude relative directory paths; repeatable, ! prefix excludes. Quote patterns in the shell.
+    globs: Vec<String>,
+    #[arg(long, value_name = "N", help_heading = BATCH_HELP)]
+    /// Directory scan depth; 0 scans only the input directory.
+    max_depth: Option<usize>,
+    #[arg(long, help_heading = BATCH_HELP)]
+    /// Submit directory text enhancement to the OpenAI Batch API; --resume continues frozen work in -o.
+    llm_batch: bool,
+    #[arg(long, value_name = "SECONDS", value_parser=clap::value_parser!(u64).range(60..), help_heading = BATCH_HELP)]
+    /// Maximum local wait for a provider batch (seconds, at least 60); expiry does not cancel it.
+    llm_batch_timeout: Option<u64>,
+    #[arg(long, value_name = "BATCH_ID", help_heading = BATCH_HELP)]
+    /// Collect a saved provider batch into its original -o directory; no input is required.
+    llm_batch_collect: Option<String>,
+    #[arg(long, overrides_with = "cache", help_heading = CACHE_HELP)]
+    /// Bypass cache reads while still writing successful fresh results (--cache restores reads).
+    no_cache: bool,
+    #[arg(long, overrides_with = "no_cache", hide = true)]
+    /// Allow cache reads without forcing a disabled cache on.
+    cache: bool,
+    #[arg(long, value_name = "PATTERNS", help_heading = CACHE_HELP)]
+    /// Comma-separated glob patterns that bypass cache reads for matching inputs.
+    no_cache_for: Option<String>,
+    #[arg(long, overrides_with = "compress", help_heading = CACHE_HELP)]
+    /// Disable image compression (--compress enables it).
+    no_compress: bool,
+    #[arg(long, overrides_with = "no_compress", hide = true)]
+    /// Enable image compression.
+    compress: bool,
+    #[arg(short = 'v', long, help_heading = MESSAGES_HELP)]
+    /// Show details such as the report path. Single inputs are otherwise quiet by default: only the written path, warnings and errors; stdout Markdown stays clean.
+    verbose: bool,
+    #[arg(short = 'q', long, help_heading = MESSAGES_HELP)]
+    /// Print errors only: no written path, warnings, progress or batch summary.
+    quiet: bool,
+    #[arg(long, value_name = "LEVEL", value_parser=["DEBUG","INFO","WARNING","ERROR","CRITICAL"], help_heading = MESSAGES_HELP)]
+    /// Conversion file-log level; needs log.dir. Console output still follows --verbose/--quiet.
+    log_level: Option<String>,
+}
+
+/// The root command as printed and parsed. Option help sits on its own line:
+/// without terminal wrapping, long descriptions stay readable that way, while
+/// the short command list keeps its one-line layout.
+fn cli_command() -> clap::Command {
+    Cli::command().mut_args(|arg| arg.next_line_help(true))
+}
+
+/// Clap's built-in range message prints the whole u32 range; say the rule instead.
+fn at_least_one(value: &str) -> Result<u32, String> {
+    match value.trim().parse::<u32>() {
+        Ok(0) => Err("must be at least 1".into()),
+        Ok(number) => Ok(number),
+        Err(_) => Err("expected a whole number of at least 1".into()),
+    }
 }
 
 #[derive(Subcommand, Debug, Clone)]
 enum Command {
     /// Inspect or edit configuration.
+    #[command(after_help = CONFIG_AFTER_HELP)]
     Config {
         #[command(subcommand)]
         command: ConfigCommand,
     },
-    /// Create a minimal configuration file.
+    /// Create or update a configuration file with detected API models.
+    #[command(
+        long_about = "Create or update a configuration file with detected API models.\n\n\
+            Detects API models from the environment (MODEL and provider API keys) without\n\
+            making requests or saving key values. LLM processing stays disabled in the\n\
+            generated file; enable it per run with --llm or with\n\
+            `markitai config set llm.enabled true`.",
+        after_help = "Examples:\n  markitai init                Choose the location and how to treat an existing file\n  markitai init -y             Create or update the user configuration without prompts\n  markitai init --local        Write ./markitai.json for this project\n  markitai init -o cfg.json    Write to a custom path"
+    )]
     Init {
         #[arg(short = 'y', long)]
+        /// Do not prompt: create the file, or add newly detected models to an existing one.
         yes: bool,
-        #[arg(short = 'o', long)]
+        #[arg(short = 'o', long, value_name = "PATH")]
+        /// Write this file, or markitai.json inside this directory.
         output: Option<PathBuf>,
         #[arg(long)]
+        /// Write ./markitai.json in the current directory instead of the user configuration.
         local: bool,
     },
     /// Diagnose configured workflows and optional native backends.
+    #[command(
+        long_about = "Diagnose configured workflows and optional native backends.\n\n\
+            Missing optional backends are reported but do not fail. The exit status is 1\n\
+            only when the configuration asks for something this machine cannot deliver:\n\
+            an active model whose credentials are missing, a configured browser workflow\n\
+            that cannot launch, an unavailable subscription runtime, or a failed --fix\n\
+            repair. No model request is sent and no remote page is opened.",
+        after_help = "Examples:\n  markitai doctor           Human-readable report\n  markitai doctor --json    Machine-readable checks\n  markitai doctor --fix     Install a browser when no working one is found"
+    )]
     Doctor {
         #[arg(long)]
+        /// Print the checks as one JSON object.
         json: bool,
         #[arg(long)]
+        /// Install the official Chrome headless shell when no working browser is found.
         fix: bool,
         #[arg(long)]
+        /// Python package extras; not applicable to this native build and rejected.
         suggest_extras: bool,
     },
-    /// Inspect and clear persistent document enhancement cache.
+    /// Inspect or clear the LLM and URL fetch caches.
+    #[command(after_help = CACHE_AFTER_HELP)]
     Cache {
         #[command(subcommand)]
         command: CacheCommand,
@@ -213,17 +302,25 @@ enum Command {
         #[command(subcommand)]
         command: Option<auth::Command>,
     },
-    /// Run the native REST conversion service.
+    /// Run the native REST conversion service and web interface.
+    #[command(
+        after_help = "Examples:\n  markitai serve                          http://127.0.0.1:3600, opens a browser\n  markitai serve --port 8080 --no-open    Another port, no browser\n  markitai serve --host 0.0.0.0           LAN access with the printed access token"
+    )]
     Serve {
         #[arg(long, default_value = "127.0.0.1")]
+        /// Interface to bind. Clients other than this machine need the access token printed at startup (or MARKITAI_SERVE_TOKEN).
         host: String,
         #[arg(long, default_value_t = 3600)]
+        /// Port to listen on.
         port: u16,
         #[arg(long)]
+        /// Do not open a browser after startup.
         no_open: bool,
         #[arg(long)]
+        /// Do not require the access token from other machines. They can then upload files and read or delete history; URL conversion and model settings stay blocked for them.
         no_auth: bool,
         #[arg(long, action = ArgAction::Append, value_name = "HOSTNAME")]
+        /// Also accept this name in Host/Origin headers (repeatable); localhost and IP addresses are always accepted.
         allowed_host: Vec<String>,
     },
     /// Run the native MCP service over standard input/output.
@@ -232,52 +329,75 @@ enum Command {
 
 #[derive(Subcommand, Debug, Clone)]
 enum CacheCommand {
+    /// Show cache entry counts and disk use.
     Stats {
         #[arg(long)]
+        /// Print the statistics as JSON.
         json: bool,
         #[arg(short, long)]
+        /// List recent LLM cache entries per model.
         verbose: bool,
-        #[arg(long, default_value_t = 20)]
+        #[arg(long, value_name = "N", default_value_t = 20)]
+        /// Maximum entries listed with --verbose.
         limit: usize,
     },
+    /// Clear the LLM and URL fetch caches.
     Clear {
         #[arg(short, long)]
+        /// Clear without asking for confirmation.
         yes: bool,
         #[arg(long)]
+        /// Also forget learned browser-only domains.
         include_spa_domains: bool,
     },
     /// Inspect or clear learned browser-domain routing.
     SpaDomains {
         #[arg(long)]
+        /// Print the domains as JSON.
         json: bool,
         #[arg(long)]
+        /// Forget every learned domain.
         clear: bool,
     },
 }
 
 #[derive(Subcommand, Debug, Clone)]
 enum ConfigCommand {
+    /// Show the effective configuration; secrets are redacted.
     List {
         #[arg(short='f', long="format", default_value="json", value_parser=["json","yaml","table"], ignore_case=true)]
+        /// Output format.
         format: String,
         #[arg(long)]
+        /// Show secret values instead of redacting them (unsafe for shared logs).
         show_secrets: bool,
     },
+    /// Show which configuration file is in use.
     Path,
+    /// Check a configuration file against the schema.
     Validate {
+        /// File to check; defaults to the configuration in use.
         config_file: Option<PathBuf>,
     },
+    /// Print one value; sections print as JSON.
     Get {
+        /// Dot-notation key, e.g. llm.enabled.
         key: String,
         #[arg(long)]
+        /// Show secret values instead of redacting them (unsafe for shared logs).
         show_secrets: bool,
     },
+    /// Validate and save one value; invalid values are not written.
     Set {
+        /// Dot-notation key, e.g. output.on_conflict.
         key: String,
+        /// New value; parsed according to the key's declared type.
         value: String,
         #[arg(long)]
+        /// Echo secret values instead of redacting them (unsafe for shared logs).
         show_secrets: bool,
     },
+    /// Edit settings in a terminal; each value is validated and saved at once.
     Edit,
 }
 
@@ -295,17 +415,21 @@ pub fn run() -> i32 {
         arguments.insert(1, "mcp".into());
     }
     if arguments.len() == 1 {
-        let _ = Cli::command().print_help();
+        let _ = cli_command().print_help();
         println!();
         return 0;
     }
     if let Some(message) = compat::removed_option(&arguments[1..]) {
-        let _ = Cli::command()
+        let _ = cli_command()
             .error(clap::error::ErrorKind::UnknownArgument, message)
             .print();
         return 2;
     }
-    let cli = Cli::parse_from(arguments);
+    let mut command = cli_command();
+    let cli = command
+        .try_get_matches_from_mut(arguments)
+        .and_then(|matches| Cli::from_arg_matches(&matches))
+        .unwrap_or_else(|error| error.format(&mut command).exit());
     // Serve and MCP drain active work on the signals their asynchronous
     // runtime owns; the remaining terminating signals kill external runtimes.
     crate::signals::install_fatal_cleanup(match cli.command {
@@ -351,6 +475,12 @@ fn tri(yes: bool, no: bool) -> Option<bool> {
 }
 
 fn execute(cli: &Cli) -> CliResult<i32> {
+    if cli.json && cli.output.is_none() {
+        return Err((
+            2,
+            "--json requires -o: stdout carries the JSON result, so the Markdown needs an output directory or .md file".into(),
+        ));
+    }
     if cli.command.is_some()
         && (cli.input.is_some()
             || cli.interactive
@@ -412,7 +542,7 @@ fn execute(cli: &Cli) -> CliResult<i32> {
         return provider_batch::resume(cli, conversion_config(cli, overrides)?);
     }
     if cli.input.is_none() && !cli.interactive {
-        Cli::command().print_help().map_err(runtime)?;
+        cli_command().print_help().map_err(runtime)?;
         println!();
         return Ok(0);
     }
@@ -446,10 +576,22 @@ fn conversion_config(cli: &Cli, overrides: Option<Value>) -> CliResult<Value> {
             }
             "standard" => json!({"llm":true,"alt":true,"desc":true,"ocr":false,"screenshot":false}),
             "rich" => json!({"llm":true,"alt":true,"desc":true,"ocr":false,"screenshot":true}),
-            _ => cfg["presets"]
-                .get(&name)
-                .cloned()
-                .ok_or_else(|| (1, format!("Unknown preset: {name}")))?,
+            _ => cfg["presets"].get(&name).cloned().ok_or_else(|| {
+                let mut custom: Vec<_> = cfg["presets"]
+                    .as_object()
+                    .map(|presets| presets.keys().cloned().collect())
+                    .unwrap_or_default();
+                custom.sort();
+                let mut available = vec!["minimal".to_owned(), "rich".into(), "standard".into()];
+                available.extend(custom);
+                (
+                    1,
+                    format!(
+                        "Unknown preset '{name}'. Available: {}",
+                        available.join(", ")
+                    ),
+                )
+            })?,
         };
         for (key, section, field) in [
             ("llm", "llm", "enabled"),
@@ -576,7 +718,10 @@ fn execute_conversion(
                 .extension()
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("urls")));
     if cli.resume && !batch {
-        return Err(unsupported("--resume for a single file or URL"));
+        return Err((
+            1,
+            "--resume for a single file or URL is not implemented: only directory and .urls batches save progress. Run it again without --resume.".into(),
+        ));
     }
     let mode = if directory {
         RunMode::Directory
@@ -606,7 +751,10 @@ fn execute_conversion(
         output = cfg["output"]["dir"].as_str().map(PathBuf::from);
     }
     if batch && output.is_none() {
-        return Err((1, "Batch conversion needs -o or output.dir".into()));
+        return Err((
+            1,
+            "A directory or .urls batch needs an output directory: pass -o DIR or set output.dir in the configuration".into(),
+        ));
     }
     if let Some(path) = &output
         && path
@@ -627,6 +775,24 @@ fn execute_conversion(
                 .unwrap_or(Path::new("."))
                 .to_owned(),
         );
+    }
+    if let Some(problem) = output.as_deref().and_then(output_location_problem) {
+        // A preview publishes nothing, so it reports the problem and still lists targets.
+        if !cli.dry_run {
+            return Err((1, problem));
+        }
+        eprintln!("Warning: {problem}");
+    }
+    if !cli.quiet
+        && !config::enabled(&cfg, "/llm/enabled")
+        && let Some(flags) = match (cli.alt, cli.desc) {
+            (true, true) => Some("--alt and --desc have"),
+            (true, false) => Some("--alt has"),
+            (false, true) => Some("--desc has"),
+            (false, false) => None,
+        }
+    {
+        eprintln!("Warning: {flags} no effect without --llm (or the standard/rich preset)");
     }
     let mut tasks = if directory {
         discover(input_path, output.as_deref().unwrap(), cli, &cfg)?
@@ -671,9 +837,23 @@ fn execute_conversion(
                     .unwrap_or_else(|| "stdout".into())
             );
         }
+        if batch && !cli.quiet {
+            eprintln!("{}", dry_run_summary(&tasks, input_path));
+        }
         return Ok(0);
     }
     if tasks.is_empty() && !cli.resume {
+        if !cli.quiet {
+            eprintln!(
+                "No supported files or .urls lists {} {}; nothing to convert.",
+                if cli.globs.is_empty() {
+                    "found in"
+                } else {
+                    "match --glob in"
+                },
+                input_path.display()
+            );
+        }
         if cli.json {
             emit_json(&[], None);
         }
@@ -735,17 +915,39 @@ fn execute_conversion(
     };
     if !batch {
         let mut task = tasks.remove(0);
-        let claim =
-            batch_run::claim(&mut task, &cfg, None, None, &Default::default()).map_err(runtime)?;
-        let (record, result) = convert_item(
-            &task,
-            0,
-            &cfg,
-            context,
-            claim
-                .as_ref()
-                .map(|claim| claim as &dyn markitai_core::output::Publication),
-        );
+        // A missing or unreadable local input fails before any output directory
+        // is created for it; the converter reports a missing one itself.
+        let local = mode == RunMode::SingleFile;
+        let unreadable = local.then(|| unreadable_input(input)).flatten();
+        let absent = local && std::fs::symlink_metadata(config::expand_home(input_path)).is_err();
+        let claim = if unreadable.is_some() || absent {
+            None
+        } else {
+            batch_run::claim(&mut task, &cfg, None, None, &Default::default()).map_err(|error| {
+                match output.as_deref() {
+                    Some(directory) => runtime(format!(
+                        "Cannot write to output directory {}: {error}",
+                        directory.display()
+                    )),
+                    None => runtime(error),
+                }
+            })?
+        };
+        let (record, result) = match unreadable {
+            Some(error) => {
+                let progress = begin_item(&task, &cfg);
+                complete_item(&task, 0, &cfg, progress, Err(error.into()))
+            }
+            None => convert_item(
+                &task,
+                0,
+                &cfg,
+                context,
+                claim
+                    .as_ref()
+                    .map(|claim| claim as &dyn markitai_core::output::Publication),
+            ),
+        };
         let item = outcome(&record);
         let failed = result.is_err();
         let report_error = if record.status == ItemStatus::Completed {
@@ -762,31 +964,44 @@ fn execute_conversion(
         if let Some(error) = &report_error {
             eprintln!("Error: {error}");
         }
-        if let Some(plan) = &history_plan {
-            plan.record(std::slice::from_ref(&record));
-        }
         if cli.json {
             emit_json(&[item], report_error.as_deref());
         } else {
             match result {
                 Ok(result) => {
                     if task.output.is_none() {
-                        print_stdout(&result, &cfg).map_err(runtime)?;
+                        let rendered = print_stdout(&result, &cfg).map_err(runtime)?;
+                        if !cli.quiet
+                            && let Some(warning) = unsaved_assets(&rendered, &cfg)
+                        {
+                            eprintln!("{warning}");
+                        }
                     }
                     if !cli.quiet {
                         for warning in &result.warnings {
                             eprintln!("Warning: {warning}");
                         }
-                    }
-                    if cli.verbose
-                        && !cli.quiet
-                        && let Some(path) = result.llm_output_path.or(result.output_path)
-                    {
-                        eprintln!("Wrote {}", path.display());
+                        if let Some(reason) = result.skip_reason.as_deref() {
+                            eprintln!("{}", skip_notice(&task.display, reason));
+                        } else if task.output.is_some()
+                            && let Some(path) = &record.output
+                        {
+                            // The name can differ from the input's (rename on conflict).
+                            eprintln!("Wrote {}", path.display());
+                        }
                     }
                 }
-                Err(error) => eprintln!("Error: {error}"),
+                Err(failure) => {
+                    eprintln!("Error: {failure}");
+                    if matches!(failure.error, markitai_core::Error::NoModelConfigured) {
+                        eprintln!("{NO_MODEL_HINT}");
+                    }
+                }
             }
+        }
+        // After the result lines, so "Recorded in history" follows "Wrote".
+        if let Some(plan) = &history_plan {
+            plan.record(std::slice::from_ref(&record));
         }
         return Ok(if failed || report_error.is_some() {
             1
@@ -1261,7 +1476,14 @@ fn round(value: f64, factor: f64) -> f64 {
 }
 fn envelope(items: &[Value], error: Option<&str>) -> Value {
     let count = |status: &str| items.iter().filter(|i| i["status"] == status).count();
-    let mut value = json!({"version":"1.0","ok":count("failed")==0 && count("pending")==0 && error.is_none(),"error":error,"batch":null,"items":items,"totals":{"total":items.len(),"completed":count("completed"),"failed":count("failed"),"skipped":count("skipped"),"pending":count("pending"),"cost_usd":round(items.iter().filter_map(|i|i["cost_usd"].as_f64()).sum(),1_000_000.0),"duration_s":round(items.iter().filter_map(|i|i["duration_s"].as_f64()).sum(),1000.0)}});
+    // `Sum` for f64 starts at -0.0, which JSON would print as `-0.0` for no items.
+    let total = |field: &str| {
+        items
+            .iter()
+            .filter_map(|i| i[field].as_f64())
+            .fold(0.0, |sum, value| sum + value)
+    };
+    let mut value = json!({"version":"1.0","ok":count("failed")==0 && count("pending")==0 && error.is_none(),"error":error,"batch":null,"items":items,"totals":{"total":items.len(),"completed":count("completed"),"failed":count("failed"),"skipped":count("skipped"),"pending":count("pending"),"cost_usd":round(total("cost_usd"),1_000_000.0),"duration_s":round(total("duration_s"),1000.0)}});
     let pricing = items
         .iter()
         .filter_map(|item| item.get("pricing"))
@@ -1280,9 +1502,10 @@ fn emit_json(items: &[Value], error: Option<&str>) {
         serde_json::to_string_pretty(&envelope(items, error)).expect("JSON values serialize")
     );
 }
-fn print_stdout(result: &ConversionOutput, cfg: &Value) -> io::Result<()> {
+/// Write the document to stdout and return what was written.
+fn print_stdout(result: &ConversionOutput, cfg: &Value) -> io::Result<String> {
     if result.skip_reason.is_some() {
-        return Ok(());
+        return Ok(String::new());
     }
     let mut stdout = io::stdout().lock();
     let rendered = markitai_core::output::content(result, cfg, result.llm_markdown.is_some())
@@ -1291,10 +1514,172 @@ fn print_stdout(result: &ConversionOutput, cfg: &Value) -> io::Result<()> {
     if !rendered.ends_with('\n') {
         stdout.write_all(b"\n")?;
     }
-    Ok(())
+    Ok(rendered)
+}
+
+/// Stdout mode publishes no files, yet extracted images keep their output-
+/// directory references (`image.stdout_persist` is not implemented). Say so
+/// instead of leaving links that silently point nowhere.
+fn unsaved_assets(markdown: &str, cfg: &Value) -> Option<String> {
+    let profile = cfg["output"]["profile"].as_str();
+    let prefix = if matches!(profile, Some("rag" | "obsidian")) {
+        "assets/"
+    } else {
+        ".markitai/assets/"
+    };
+    let mut targets = std::collections::BTreeSet::new();
+    for opener in ["](", "[["] {
+        for (index, _) in markdown.match_indices(opener) {
+            let rest = &markdown[index + opener.len()..];
+            if let Some(target) = rest.strip_prefix(prefix) {
+                let end = target.find([')', ']', '|', ' ']).unwrap_or(target.len());
+                targets.insert(&target[..end]);
+            }
+        }
+    }
+    let count = targets.len();
+    (count > 0).then(|| {
+        format!(
+            "Warning: {count} image {} {prefix}, which stdout mode does not write (image.stdout_persist is not implemented yet); use -o DIR to keep images",
+            if count == 1 { "reference points into" } else { "references point into" }
+        )
+    })
 }
 fn is_url(s: &str) -> bool {
     s.starts_with("http://") || s.starts_with("https://")
+}
+
+const NO_MODEL_HINT: &str = "Hint: set a provider API key such as OPENAI_API_KEY or ANTHROPIC_API_KEY (optionally with MODEL), or configure llm.model_list; `markitai init` saves a detected model. Run without --llm (or an LLM preset) to convert without a model.";
+
+/// Why a single item produced no document, and what would change that.
+fn skip_notice(display: &str, reason: &str) -> String {
+    match reason {
+        "image_only" => format!(
+            "Skipped {display}: an image has no text to extract without --ocr or --llm. Use --ocr for local text recognition or --llm for a vision model."
+        ),
+        "exists" => format!(
+            "Skipped {display}: its output already exists and output.on_conflict is skip. Set it to rename or overwrite to convert again."
+        ),
+        other => format!("Skipped {display} ({other})."),
+    }
+}
+
+/// The preview's closing line; the listing itself stays on stdout.
+fn dry_run_summary(tasks: &[Task], input: &Path) -> String {
+    let urls = tasks.iter().filter(|task| is_url(&task.source)).count();
+    let files = tasks.len() - urls;
+    if tasks.is_empty() {
+        return format!(
+            "Dry run: no supported files or URLs in {}; nothing would be converted.",
+            input.display()
+        );
+    }
+    let mut parts = Vec::new();
+    if files > 0 {
+        parts.push(format!(
+            "{files} {}",
+            if files == 1 { "file" } else { "files" }
+        ));
+    }
+    if urls > 0 {
+        parts.push(format!("{urls} {}", if urls == 1 { "URL" } else { "URLs" }));
+    }
+    format!(
+        "Dry run: {} would be converted; nothing was written.",
+        parts.join(" and ")
+    )
+}
+
+/// A single local input whose bytes cannot be read, named with its path.
+fn unreadable_input(input: &str) -> Option<markitai_core::Error> {
+    let path = config::expand_home(Path::new(input));
+    // Symlinks, directories and special files keep the converter's own checks.
+    if !std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file()) {
+        return None;
+    }
+    match std::fs::File::open(&path) {
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => Some(
+            markitai_core::Error::InvalidInput(format!("Cannot read {input}: {error}")),
+        ),
+        _ => None,
+    }
+}
+
+/// Explain an unusable output location before claim, state or report storage
+/// reports it in its own terms. Advisory only: publication still performs
+/// its own checks, so a later change of the directory still fails safely.
+fn output_location_problem(directory: &Path) -> Option<String> {
+    let directory = config::expand_home(directory);
+    let mut existing = directory.as_path();
+    loop {
+        match std::fs::metadata(existing) {
+            Ok(meta) if meta.is_dir() => break,
+            Ok(_) if existing == directory => {
+                return Some(format!(
+                    "Output path {} exists and is not a directory; pass a directory with -o (a single input may also name a .md file)",
+                    directory.display()
+                ));
+            }
+            Ok(_) => {
+                return Some(format!(
+                    "Cannot create output directory {}: {} is not a directory",
+                    directory.display(),
+                    existing.display()
+                ));
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+                ) =>
+            {
+                let parent = match existing.parent() {
+                    Some(parent) if parent.as_os_str().is_empty() => Path::new("."),
+                    Some(parent) => parent,
+                    None => return None,
+                };
+                if parent == existing {
+                    return None;
+                }
+                existing = parent;
+            }
+            Err(error) => {
+                return Some(format!(
+                    "Cannot use output directory {}: {error}",
+                    directory.display()
+                ));
+            }
+        }
+    }
+    if writable(existing) {
+        None
+    } else if existing == directory {
+        Some(format!(
+            "Output directory {} is not writable",
+            directory.display()
+        ))
+    } else {
+        Some(format!(
+            "Cannot create output directory {}: {} is not writable",
+            directory.display(),
+            existing.display()
+        ))
+    }
+}
+
+#[cfg(unix)]
+fn writable(directory: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(path) = std::ffi::CString::new(directory.as_os_str().as_bytes()) else {
+        return true;
+    };
+    // SAFETY: `path` is a NUL-terminated string that outlives the call.
+    unsafe { libc::access(path.as_ptr(), libc::W_OK | libc::X_OK) == 0 }
+}
+
+#[cfg(not(unix))]
+fn writable(_: &Path) -> bool {
+    true
 }
 
 fn discover(input: &Path, output: &Path, cli: &Cli, cfg: &Value) -> CliResult<Vec<Task>> {
@@ -1410,12 +1795,22 @@ fn absolute(path: &Path) -> PathBuf {
     })
 }
 fn parse_urls(path: &Path, output: &Path) -> CliResult<Vec<Task>> {
-    let raw = std::fs::read_to_string(path).map_err(runtime)?;
-    let raw = raw.trim_start_matches('\u{feff}').trim();
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| runtime(format!("Cannot read {}: {error}", path.display())))?;
+    let body = text.trim_start_matches('\u{feff}');
+    let raw = body.trim();
+    // Each entry keeps where it came from, so a rejected one can be located
+    // without echoing its text (which may hold credentials).
     let mut entries = Vec::new();
     if raw.starts_with('[') {
-        let values: Vec<Value> = serde_json::from_str(raw).map_err(runtime)?;
-        for value in values {
+        let values: Vec<Value> = serde_json::from_str(raw).map_err(|error| {
+            runtime(format!(
+                "Cannot parse {} as a JSON URL list: {error}",
+                path.display()
+            ))
+        })?;
+        for (index, value) in values.into_iter().enumerate() {
+            let location = format!("entry {}", index + 1);
             let pair = if let Some(url) = value.as_str() {
                 Some((url.to_string(), None))
             } else {
@@ -1426,28 +1821,36 @@ fn parse_urls(path: &Path, output: &Path) -> CliResult<Vec<Task>> {
                     )
                 })
             };
-            if let Some(pair) = pair {
-                entries.push(pair);
+            match pair {
+                Some((url, name)) => entries.push((location, url, name)),
+                None => eprintln!(
+                    "Warning: skipping {location} in {}: expected a URL string or an object with \"url\"",
+                    path.display()
+                ),
             }
         }
     } else {
-        for line in raw
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        {
+        // Untrimmed lines keep their numbers; blank ones are skipped anyway.
+        for (number, line) in body.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
             let (url, name) = line
                 .split_once(char::is_whitespace)
                 .map(|(u, n)| (u, Some(n.trim().trim_matches(['\'', '"']).to_string())))
                 .unwrap_or((line, None));
-            entries.push((url.into(), name));
+            entries.push((format!("line {}", number + 1), url.into(), name));
         }
     }
     let mut tasks = Vec::new();
-    for (url, name) in entries {
+    for (location, url, name) in entries {
         let url = url.trim();
         if !is_url(url) {
-            eprintln!("Warning: skipping invalid URL entry in {}", path.display());
+            eprintln!(
+                "Warning: skipping {location} in {}: not an HTTP(S) URL",
+                path.display()
+            );
             continue;
         }
         let name = name.filter(|name| !name.is_empty());
@@ -1497,7 +1900,9 @@ fn subcommand(cli: &Cli, command: &Command, overrides: Option<Value>) -> CliResu
                 if let Some(path) = selected_config(cli) {
                     println!("{}", path.display());
                 } else {
-                    println!("No configuration file found; using built-in defaults");
+                    println!(
+                        "No configuration file found; using built-in defaults. Create one with `markitai init`."
+                    );
                 }
             }
             ConfigCommand::Validate { config_file } => {
@@ -1531,9 +1936,14 @@ fn subcommand(cli: &Cli, command: &Command, overrides: Option<Value>) -> CliResu
             ConfigCommand::Get { key, show_secrets } => {
                 let cfg = config::load(cli.config.as_deref(), overrides).map_err(runtime)?;
                 let pointer = key_pointer(key)?;
-                let value = cfg
-                    .pointer(&pointer)
-                    .ok_or_else(|| (1, format!("Unknown configuration key: {key}")))?;
+                let value = cfg.pointer(&pointer).ok_or_else(|| {
+                    (
+                        1,
+                        format!(
+                            "Unknown configuration key: {key}. Run `markitai config list -f table` to see every key."
+                        ),
+                    )
+                })?;
                 if value.is_null() {
                     println!("null");
                     return Ok(0);
@@ -1572,10 +1982,20 @@ fn subcommand(cli: &Cli, command: &Command, overrides: Option<Value>) -> CliResu
                 let value = config::parse_cli_value(&raw, key, value).map_err(runtime)?;
                 let value = config::set_value(&mut raw, key, value).map_err(runtime)?;
                 write_config(&path, &raw)?;
-                let mut visible = value;
-                if !show_secrets {
-                    visible = config::redact_for_key(key, &visible);
-                }
+                // Echo what `config get` shows: unset model fields are omitted
+                // rather than displayed as redacted secrets.
+                let visible = if value.is_null() {
+                    value
+                } else {
+                    let shown = config::normalize(&raw)
+                        .and_then(|cfg| config::display_value(&cfg, Some(key)))
+                        .unwrap_or(value);
+                    if *show_secrets {
+                        shown
+                    } else {
+                        config::redact_for_key(key, &shown)
+                    }
+                };
                 println!("{key} = {visible}");
             }
             ConfigCommand::Edit => {
@@ -1656,11 +2076,7 @@ fn cache_command(command: &CacheCommand, cfg: &Value) -> CliResult<i32> {
                 if let Some(error) = stats["cache"].get("error") {
                     println!("LLM cache: {}", error.as_str().unwrap_or("unavailable"));
                 } else {
-                    println!(
-                        "LLM cache: {} entries ({} bytes)",
-                        stats["cache"]["count"].as_u64().unwrap_or(0),
-                        stats["cache"]["size_bytes"].as_u64().unwrap_or(0)
-                    );
+                    println!("LLM cache: {}", cache_size(&stats["cache"]));
                     if *verbose && !stats["cache"].is_null() {
                         println!(
                             "{}",
@@ -1674,11 +2090,7 @@ fn cache_command(command: &CacheCommand, cfg: &Value) -> CliResult<i32> {
                         error.as_str().unwrap_or("unavailable")
                     );
                 } else {
-                    println!(
-                        "URL fetch cache: {} entries ({} bytes)",
-                        stats["fetch_cache"]["count"].as_u64().unwrap_or(0),
-                        stats["fetch_cache"]["size_bytes"].as_u64().unwrap_or(0)
-                    );
+                    println!("URL fetch cache: {}", cache_size(&stats["fetch_cache"]));
                 }
             }
             Ok(i32::from(failed))
@@ -1726,9 +2138,10 @@ fn cache_command(command: &CacheCommand, cfg: &Value) -> CliResult<i32> {
             } else {
                 None
             };
+            let cleared = llm_count.saturating_add(fetch_count);
             println!(
-                "Cleared {} cache entries",
-                llm_count.saturating_add(fetch_count)
+                "Cleared {cleared} cache {}",
+                if cleared == 1 { "entry" } else { "entries" }
             );
             if let Some(count) = spa_count {
                 println!("Cleared {count} learned SPA domains");
@@ -1773,6 +2186,30 @@ fn cache_command(command: &CacheCommand, cfg: &Value) -> CliResult<i32> {
         }
     }
 }
+fn entries(count: u64) -> String {
+    format!("{count} {}", if count == 1 { "entry" } else { "entries" })
+}
+
+/// "3 entries (1.2 MiB)"; the JSON form keeps exact byte counts.
+fn cache_size(stats: &Value) -> String {
+    let bytes = stats["size_bytes"].as_u64().unwrap_or(0);
+    let size = if bytes < 1024 {
+        format!("{bytes} B")
+    } else {
+        let mut value = bytes as f64 / 1024.0;
+        let mut unit = "KiB";
+        for next in ["MiB", "GiB", "TiB"] {
+            if value < 1024.0 {
+                break;
+            }
+            value /= 1024.0;
+            unit = next;
+        }
+        format!("{value:.1} {unit}")
+    };
+    format!("{} ({size})", entries(stats["count"].as_u64().unwrap_or(0)))
+}
+
 fn key_pointer(key: &str) -> CliResult<String> {
     config::key_pointer(key).map_err(runtime)
 }
@@ -1834,6 +2271,53 @@ mod tests {
         assert_eq!(result["ok"], false);
         assert_eq!(result["totals"]["failed"], 1);
         assert_eq!(result["totals"]["cost_usd"], 0.123457);
+        // No items must not serialize as negative zero.
+        let empty = serde_json::to_string(&envelope(&[], Some("run failed"))).unwrap();
+        assert!(empty.contains(r#""cost_usd":0.0"#), "{empty}");
+        assert!(empty.contains(r#""duration_s":0.0"#), "{empty}");
+    }
+    #[test]
+    fn stdout_documents_warn_about_unwritten_asset_references() {
+        let cfg = config::defaults();
+        let markdown = "![a](.markitai/assets/one.png) ![b](.markitai/assets/one.png)\n\
+            ![c](.markitai/assets/two.jpg)\n`.markitai/assets/literal`\n";
+        let warning = unsaved_assets(markdown, &cfg).unwrap();
+        assert!(
+            warning.starts_with("Warning: 2 image references point into .markitai/assets/"),
+            "{warning}"
+        );
+        assert!(warning.contains("use -o DIR"));
+        assert_eq!(
+            unsaved_assets("![x](https://example.com/x.png)\n", &cfg),
+            None
+        );
+        let mut obsidian = cfg.clone();
+        obsidian["output"]["profile"] = json!("obsidian");
+        let warning = unsaved_assets("![[assets/one.png|caption]]\n", &obsidian).unwrap();
+        assert!(warning.starts_with("Warning: 1 image reference points into assets/"));
+    }
+    #[test]
+    fn numeric_limits_and_previews_state_their_rule_plainly() {
+        assert_eq!(at_least_one("4"), Ok(4));
+        assert_eq!(at_least_one("0").unwrap_err(), "must be at least 1");
+        assert!(at_least_one("-1").is_err());
+        let task = |source: &str| Task {
+            source: source.into(),
+            display: source.into(),
+            report_key: source.into(),
+            output: None,
+            filename: None,
+            reserved_stem: None,
+            source_file: None,
+        };
+        assert_eq!(
+            dry_run_summary(
+                &[task("a.txt"), task("https://example.com/")],
+                Path::new("in")
+            ),
+            "Dry run: 1 file and 1 URL would be converted; nothing was written."
+        );
+        assert!(dry_run_summary(&[], Path::new("in")).contains("nothing would be converted"));
     }
     #[test]
     fn credentials_remain_redacted_at_nested_paths() {

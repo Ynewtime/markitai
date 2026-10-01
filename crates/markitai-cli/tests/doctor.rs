@@ -190,3 +190,72 @@ fn vlm_optout_is_reported_without_contacting_the_configured_endpoint() {
     );
     assert!(!String::from_utf8_lossy(&output.stdout).contains("private-test-key"));
 }
+
+#[test]
+fn environment_models_and_text_summary_match_what_a_conversion_uses() {
+    let dir = tempfile::tempdir().unwrap();
+    // Without llm.model_list, --llm uses MODEL or detected provider keys.
+    let output = command(dir.path(), json!({}))
+        .env("MODEL", "openai/env-model")
+        .env("OPENAI_API_KEY", "doctor-fixture-key")
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let value = decode(&output);
+    assert_eq!(value["llm-api"]["status"], "ok");
+    let message = value["llm-api"]["message"].as_str().unwrap();
+    assert!(message.contains("openai/env-model"), "{message}");
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("doctor-fixture-key"));
+    let output = command(dir.path(), json!({}))
+        .env("MODEL", "openai/env-model")
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(decode(&output)["llm-api"]["status"], "warning");
+
+    // An explicit executable is what failed, and --fix will not replace it.
+    let value = decode(
+        &command(dir.path(), json!({}))
+            .arg("--json")
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(value["playwright"]["status"], "missing");
+    assert!(
+        value["playwright"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("MARKITAI_BROWSER_EXECUTABLE does not name an executable file")
+    );
+    let hint = value["playwright"]["install_hint"].as_str().unwrap();
+    assert!(hint.contains("doctor --fix will not replace it"), "{hint}");
+
+    let output = command(dir.path(), json!({})).output().unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        text.lines()
+            .nth(1)
+            .is_some_and(|line| line.starts_with("Configuration: built-in defaults")),
+        "{text}"
+    );
+    assert!(
+        text.trim_end().lines().last().is_some_and(
+            |line| line.starts_with("Summary: nothing the configuration requires is blocked")
+        ),
+        "{text}"
+    );
+    let output = command(dir.path(), json!({"fetch":{"strategy":"playwright"}}))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        text.contains(
+            "Summary: 1 check required by the configuration is not ready: Chromium (native CDP)."
+        ),
+        "{text}"
+    );
+}

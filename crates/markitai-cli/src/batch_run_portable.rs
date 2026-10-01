@@ -125,7 +125,8 @@ pub(super) fn run(
             }
         }
         if !cli.quiet {
-            for line in crate::report::batch_summary(&records, clock.elapsed()) {
+            for line in crate::report::batch_summary(&records, clock.elapsed(), destination.output)
+            {
                 eprintln!("{line}");
             }
         }

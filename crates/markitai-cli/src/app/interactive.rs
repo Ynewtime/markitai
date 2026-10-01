@@ -658,6 +658,23 @@ pub(super) fn init(yes: bool, output: Option<&Path>, local: bool) -> CliResult<(
         },
         path.display()
     );
+    if action != "update" {
+        // Guidance stays on stderr; stdout keeps the one-line result for scripts.
+        let models = existing
+            .pointer("/llm/model_list")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        let llm = if models > 0 {
+            "Detected models are saved, but LLM processing stays off: add --llm to a conversion or run `markitai config set llm.enabled true`."
+        } else {
+            "No API model was detected: set a provider API key such as OPENAI_API_KEY, then run `markitai init -y` again to add it."
+        };
+        writeln!(
+            console,
+            "Next steps:\n  markitai FILE -o DIR    Convert a document\n  markitai doctor         Check models and optional backends\n{llm}"
+        )
+        .map_err(runtime)?;
+    }
     Ok(())
 }
 

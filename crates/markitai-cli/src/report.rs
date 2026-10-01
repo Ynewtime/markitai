@@ -659,7 +659,8 @@ fn summary(mode: RunMode, items: &[&RunItem], finished: &RunFinished) -> Ordered
     if mode == RunMode::Directory {
         fields.push((
             "processing_time",
-            duration(items.iter().map(|item| item.elapsed_s).sum()),
+            // A plain f64 sum of no items is -0.0, which would print "-0.0s".
+            duration(items.iter().fold(0.0, |total, item| total + item.elapsed_s)),
         ));
     }
     object(fields)
@@ -1270,9 +1271,13 @@ pub(crate) fn render_resumed(
 
 /// A batch's closing lines on the terminal: what was converted, how long it
 /// took and what it cost, then skipped items by reason with the next step,
-/// then the failed and unfinished counts (each failure's error is printed
-/// before).
-pub(crate) fn batch_summary(records: &[RunItem], elapsed: std::time::Duration) -> Vec<String> {
+/// then failed and unfinished items (each failure's error is printed before)
+/// and where the results are.
+pub(crate) fn batch_summary(
+    records: &[RunItem],
+    elapsed: std::time::Duration,
+    output: &Path,
+) -> Vec<String> {
     const EXAMPLES: usize = 2;
     let noun = |count: usize, one: &str, many: &str| {
         format!("{count} {}", if count == 1 { one } else { many })
@@ -1334,18 +1339,38 @@ pub(crate) fn batch_summary(records: &[RunItem], elapsed: std::time::Duration) -
             noun(names.len(), "item", "items")
         ));
     }
-    for (status, label) in [
-        (ItemStatus::Failed, "Failed"),
-        (ItemStatus::Pending, "Not finished"),
+    for (status, label, hint) in [
+        (ItemStatus::Failed, "Failed", " See the errors above."),
+        (ItemStatus::Pending, "Not finished", ""),
     ] {
-        let count = records
+        let names: Vec<_> = records
             .iter()
             .filter(|record| record.status == status)
-            .count();
-        if count > 0 {
-            lines.push(format!("{label}: {}", noun(count, "item", "items")));
+            .map(|record| record.display.as_str())
+            .collect();
+        if names.is_empty() {
+            continue;
         }
+        let mut examples = names[..names.len().min(EXAMPLES)].join(", ");
+        if names.len() > EXAMPLES {
+            examples.push_str(", ...");
+        }
+        lines.push(format!(
+            "{label} {}: {examples}.{hint}",
+            noun(names.len(), "item", "items")
+        ));
     }
+    // Every item failing for want of a model has one cause and one remedy.
+    let no_model = markitai_core::Error::NoModelConfigured.to_string();
+    if records
+        .iter()
+        .any(|record| record.error.as_deref() == Some(no_model.as_str()))
+    {
+        lines.push(
+            "No LLM model is configured: set a provider API key such as OPENAI_API_KEY (optionally with MODEL) or configure llm.model_list, or rerun without --llm.".into(),
+        );
+    }
+    lines.push(format!("Output: {}", output.display()));
     lines
 }
 
@@ -1377,11 +1402,16 @@ mod tests {
         // A request without a reviewed price leaves the cost incomplete.
         records[3].usage.requests = 1;
         assert_eq!(
-            batch_summary(&records, std::time::Duration::from_secs(75)),
+            batch_summary(
+                &records,
+                std::time::Duration::from_secs(75),
+                Path::new("out")
+            ),
             [
                 "Done: 1 file, 1 URL (1:15, $0.013, cost incomplete)",
                 "Skipped 3 items (image_only): display-k1, display-k2, .... Use --llm or --ocr for content extraction.",
-                "Failed: 1 item",
+                "Failed 1 item: display-k5. See the errors above.",
+                "Output: out",
             ]
         );
         records.iter_mut().for_each(|record| {
@@ -1391,13 +1421,32 @@ mod tests {
         });
         records[1].status = ItemStatus::Pending;
         records[1].usage.requests = 0;
-        let lines = batch_summary(&records[..2], std::time::Duration::from_secs(3));
+        let lines = batch_summary(
+            &records[..2],
+            std::time::Duration::from_secs(3),
+            Path::new("out"),
+        );
         assert_eq!(lines[0], "Done: nothing converted (0:03)");
-        assert_eq!(lines[2], "Not finished: 1 item");
+        assert_eq!(lines[2], "Not finished 1 item: display-k1.");
         assert!(
             lines[1].starts_with("Skipped 1 item (exists): display-k0. Set output.on_conflict"),
             "{lines:?}"
         );
+        // Items that all failed for want of a model get one remedy, not one per item.
+        for record in &mut records {
+            record.status = ItemStatus::Failed;
+            record.error = Some(markitai_core::Error::NoModelConfigured.to_string());
+        }
+        let lines = batch_summary(&records, std::time::Duration::ZERO, Path::new("out"));
+        assert_eq!(
+            lines[1],
+            "Failed 6 items: display-k0, display-k1, .... See the errors above."
+        );
+        assert!(
+            lines[2].starts_with("No LLM model is configured"),
+            "{lines:?}"
+        );
+        assert_eq!(lines.len(), 4);
     }
 
     fn item(index: usize, kind: ItemKind, key: &str) -> RunItem {
