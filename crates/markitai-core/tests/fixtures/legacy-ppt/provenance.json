@@ -1,0 +1,16 @@
+{
+  "provenance": "Original fixture authored for Markitai Rust; project license applies. Written record by record by generate.py with the Python standard library from [MS-CFB], [MS-PPT], [MS-XLS] and OpenDocument 1.2; no Office application produced or opened it.",
+  "files": {
+    "embedded-objects.ppt": {
+      "bytes": 13312,
+      "sha256": "6ce44edaf1e8e9b36b5a22a513d10c75c16b2fab74074d44a66f4ff445b682c1"
+    }
+  },
+  "slides": {
+    "1 Revenue": "LibreOffice.ChartDocument.1, compressed: title 'Quarterly revenue', series North/South over Q1-Q3, trailing repeated empty cells/rows",
+    "2 Budget": "Excel.Sheet.8, uncompressed: shown sheet Budget (SST strings, currency and percent formats); empty sheet Notes",
+    "3 Visitors": "MSGraph.Chart.8, compressed: a Workbook that is one chart substream, title 'Weekly visitors', series Web/Store, #,##0",
+    "4 Sales": "Excel.Chart.8, compressed: chart sheet Chart1 shown over Sheet1, series 2025/2026 over Jan/Feb; Sheet1 also has a cell the chart does not plot",
+    "5 Formula": "Equation.3, uncompressed: no data, contributes nothing"
+  }
+}

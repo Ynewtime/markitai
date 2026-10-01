@@ -55,6 +55,9 @@ mod proxy;
 #[path = "conversion/stdout_assets.rs"]
 mod stdout_assets;
 
+#[path = "conversion/legacy_ppt_objects.rs"]
+mod legacy_ppt_objects;
+
 fn options() -> ConvertOptions {
     ConvertOptions {
         config: Some(json!({})),

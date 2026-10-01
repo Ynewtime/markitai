@@ -6,6 +6,8 @@
 //! files whose persist directory is unusable. Speaker notes are included
 //! (fixed policy), rendered as a quote after their slide.
 
+// markitai: embedded objects read as their data.
+mod ole;
 mod styletext;
 
 use crate::error::ConvertError;
@@ -123,7 +125,7 @@ enum SegmentKind {
 }
 
 #[derive(Default)]
-struct Extractor {
+struct Extractor<'a> {
     /// Finished segments: (blocks, pairing id, kind).
     segments: Vec<(Vec<Block>, Option<u32>, SegmentKind)>,
     current: Vec<Block>,
@@ -142,6 +144,8 @@ struct Extractor {
     records: u64,
     /// markitai: the cells of a table group are being read.
     in_table: bool,
+    /// markitai: the embedded objects shapes may show.
+    objects: ole::Objects<'a>,
 }
 
 /// The persist-resolved layout of the presentation: slide/notes lists from
@@ -151,6 +155,8 @@ struct DocLayout<'a> {
     slide_list: &'a [u8],
     notes_list: Option<&'a [u8]>,
     master_list: Option<&'a [u8]>,
+    /// markitai: the ExObjList, when the document has one.
+    objects: Option<&'a [u8]>,
 }
 
 /// Resolve the UserEditAtom chain into the persist directory and find the
@@ -205,7 +211,8 @@ fn locate_document<'a>(data: &'a [u8], current_user: &[u8]) -> Option<DocLayout<
     let master_list = children(doc)
         .find(|&(ver_inst, rec_type, _)| rec_type == 0x0FF0 && ver_inst >> 4 == 1)
         .map(|(.., body)| body);
-    Some(DocLayout { persist, slide_list, notes_list, master_list })
+    let objects = children(doc).find(|&(_, rec_type, _)| rec_type == 0x0409).map(|(.., body)| body);
+    Some(DocLayout { persist, slide_list, notes_list, master_list, objects })
 }
 
 /// One master's TxMasterStyleAtoms, keyed by text-type instance.
@@ -256,16 +263,17 @@ fn collect_masters(
     out
 }
 
-impl Extractor {
+impl<'a> Extractor<'a> {
     /// Walk slides in presentation order: the UserEditAtom chain yields the
     /// persist directory, the DocumentContainer's SlideListWithText yields
     /// slide order and outline text, each slide container its own textboxes.
     /// `Ok(false)` means the persist directory was unusable.
-    fn parse_slides(&mut self, data: &[u8], current_user: &[u8]) -> Result<bool, ConvertError> {
+    fn parse_slides(&mut self, data: &'a [u8], current_user: &[u8]) -> Result<bool, ConvertError> {
         let Some(layout) = locate_document(data, current_user) else {
             return Ok(false);
         };
         self.masters = collect_masters(layout.master_list, &layout.persist, data);
+        self.objects = ole::Objects::new(layout.objects, &layout.persist, data);
         self.walk_slide_list(layout.slide_list, &layout.persist, data, false, 0x03EE)?;
         if let Some(notes_list) = layout.notes_list {
             self.walk_slide_list(notes_list, &layout.persist, data, true, 0x03F0)?;
@@ -427,6 +435,12 @@ impl Extractor {
             };
             *pos += 8 + body.len();
             self.charge_record()?;
+            // markitai: ExObjRefAtom, in a shape's client data: the shape
+            // shows an embedded object, read as its data where the shape is.
+            if rec_type == 0x0BC1 && ver_inst & 0xF != 0xF {
+                self.object(body)?;
+                continue;
+            }
             if ver_inst & 0xF != 0xF {
                 self.atom(rec_type, body);
                 continue;
@@ -538,6 +552,21 @@ impl Extractor {
             }
             _ => {}
         }
+    }
+
+    /// markitai: the data of the embedded object an `ExObjRefAtom` names,
+    /// after the text read so far.
+    fn object(&mut self, atom: &[u8]) -> Result<(), ConvertError> {
+        let Some(id) = get_u32(atom, 0) else {
+            return Ok(());
+        };
+        let blocks = self.objects.blocks(id)?;
+        if !blocks.is_empty() {
+            self.flush_shape();
+            flush_list(&mut self.current, &mut self.list_run);
+            self.current.extend(blocks);
+        }
+        Ok(())
     }
 
     /// markitai: read a table group. Each cell is a shape of the group with

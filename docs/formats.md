@@ -20,7 +20,7 @@ network policy and optional model enhancement belong to the orchestration layer.
 | RST, Org, TeX | native markup readers | Structured sections, lists, code, math, links and tables; unsupported constructs retained with warnings |
 | JPEG, PNG, GIF, BMP, TIFF, WebP | image + native LLM transport + macOS Vision | Standalone vision inputs, shared raster assets and complete TIFF page OCR/vision with bounded decoding |
 | DOC, DOCX, DOCM | anydoc document model | Headings, styled text, lists, tables, links, formulas, notes and embedded assets |
-| PPT, PPS, POT | anydoc document model | Legacy presentation content through the shared Markdown renderer, behind a numbered slide marker per slide |
+| PPT, PPS, POT | anydoc document model | Legacy presentation content through the shared Markdown renderer, behind a numbered slide marker per slide; embedded charts and worksheets read as their data tables |
 | PPTX, PPTM, PPSX, PPSM | bounded ZIP + PresentationML reader | Ordered slide markers, title placeholders, plain text frames, grouped shapes, tables, referenced images, cached chart data and speaker notes |
 | XLS, XLSX, XLSM, XLSB | anydoc document model | Native sheet content; XLS/XLSX/XLSM single-sheet names are recovered from package metadata; exact cell-format compatibility has not been established |
 | ODT, ODS, ODP, RTF | anydoc document model | Native structured documents through the same Markdown renderer; ODP slides carry numbered slide markers |
@@ -157,6 +157,46 @@ adds the text of a shape stored over a cell to that cell, and takes the first
 row as the header, as PowerPoint styles it. Border lines are ignored, trailing
 empty rows are dropped, and a group with a cell that has no anchor keeps its
 cells' text as paragraphs, as before.
+
+A legacy PPT shape that shows an embedded OLE object (an `ExObjRefAtom` in its
+client data) reads as the data the object holds, at the shape's place in the
+slide's drawing order; before, such a slide kept only its text. The deck's
+`ExObjList` names the object's storage (`ExOleObjStg`, zlib-compressed or not),
+a compound file read by what it contains:
+
+- a BIFF workbook (`Workbook` or `Book` stream). When the workbook window shows
+  a chart sheet (an Excel chart object), or the stream has no sheet directory
+  and holds a chart substream (MS Graph), the chart's cached series become a
+  table under the chart's title: categories down the first column, one column
+  per series named by its cached name (`Series N` when it has none), points
+  without a category numbered from 1, and trendlines or error bars that cache
+  no values of their own left out. Otherwise (an Excel worksheet object) the
+  workbook reads as the XLS reader reads it; the name of a lone sheet with data
+  is dropped and several sheets keep their names as paragraphs, because a
+  heading would read as another slide title. Values show their number formats
+  in both cases.
+- LibreOffice's `package_stream`, an OpenDocument package: a chart reads as its
+  title and the data table it keeps, first row as the header, as in an ODP,
+  and a spreadsheet as its tables.
+- an Excel 2007 object's `Package` stream, an OOXML workbook, read as one.
+
+Equations, documents, pictures, linked objects and controls still add no
+text; a debug log names each object left out and why. The object's preview
+picture stays a document asset as before, while an image inside an embedded
+spreadsheet keeps only its alt text. Decompression stops at the 128 MiB
+entry cap and at 512 MiB for all of a deck's objects, chart caches nested
+more than 64 `Begin` levels deep are rejected, and an object's tables count
+against the 4,000,000-position grid budget each time a shape shows it.
+An embedded worksheet is read whole, not only the cell range the object
+displays on the slide.
+
+The chart of the reference `sample.ppt` is a LibreOffice object; its table
+matches both the chart's own data and the bar heights of the preview picture
+PowerPoint displays. Excel and MS Graph objects are read by the [MS-XLS] chart
+cache layout and tested with objects generated from the specifications
+(`crates/markitai-core/tests/fixtures/legacy-ppt`); no object saved by Excel,
+MS Graph or PowerPoint was available, so their real-world layout is not yet
+verified. PPTX `p:oleObj` frames are not read this way.
 
 The presentation reader limits packages to 16,384 entries and 10,000 slides,
 each XML part to 16 MiB, each asset to 64 MiB and total decompressed parts to

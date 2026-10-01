@@ -11,12 +11,12 @@ use super::xlsx::{
 };
 use super::{error_literal, rk_number};
 use crate::error::ConvertError;
-use crate::model::{Block, Document, Inline};
+use crate::model::{Block, Cell, Document, Inline, Table, TableKind};
 use crate::package::limits;
 use crate::shared::binary::{get_u16, get_u32, read_ole_stream, utf16le_units};
 use crate::shared::officeart;
-use crate::shared::text::clean_text;
-use std::collections::HashMap;
+use crate::shared::text::{clean_text, collapse_ws};
+use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 
 // Record types ([MS-XLS] 2.3.2), BIFF5-BIFF8 numbering.
@@ -48,6 +48,24 @@ const TXO: u16 = 0x01B6;
 
 /// BOF `dt` value for a worksheet (or dialog sheet) substream.
 const WORKSHEET_SUBSTREAM: u16 = 0x0010;
+
+// markitai: the records an embedded chart's data is read from ([MS-XLS]
+// 2.3.2): the workbook window's shown sheet, the series and their names,
+// attached labels, and the cached values after an SIIndex.
+const WINDOW1: u16 = 0x003D;
+const BLANK: u16 = 0x0201;
+const SERIES: u16 = 0x1003;
+const SERIESTEXT: u16 = 0x100D;
+const SERPARENT: u16 = 0x104A;
+const TEXT: u16 = 0x1025;
+const OBJECTLINK: u16 = 0x1027;
+const BEGIN: u16 = 0x1033;
+const END: u16 = 0x1034;
+const BRAI: u16 = 0x1051;
+const SIINDEX: u16 = 0x1065;
+
+/// markitai: BOF `dt` value for a chart substream.
+const CHART_SUBSTREAM: u16 = 0x0020;
 
 /// The BIFF8 grid is 256 columns; a larger column index is not a real cell.
 const MAX_COLS: u32 = 256;
@@ -334,6 +352,8 @@ struct Globals {
     /// The XF table in record order; a cell's ixfe indexes it directly.
     xfs: Vec<CellFormat>,
     sheets: Vec<BoundSheet>,
+    /// markitai: the sheet the workbook window shows (WINDOW1 `itabCur`).
+    shown: Option<usize>,
 }
 
 impl Globals {
@@ -366,6 +386,7 @@ fn read_globals(data: &[u8], records: &mut u64) -> Result<Globals, ConvertError>
         sst: Vec::new(),
         xfs: Vec::new(),
         sheets: Vec::new(),
+        shown: None,
     };
     let mut formats: HashMap<u32, String> = HashMap::new();
     let mut xf_ifmts: Vec<u16> = Vec::new();
@@ -388,6 +409,10 @@ fn read_globals(data: &[u8], records: &mut u64) -> Result<Globals, ConvertError>
                 }
             }
             DATEMODE => globals.date1904 = get_u16(body, 0) == Some(1),
+            // markitai: the first window's shown sheet.
+            WINDOW1 if globals.shown.is_none() => {
+                globals.shown = get_u16(body, 10).map(usize::from);
+            }
             BOUNDSHEET => {
                 if let Some(sheet) = read_boundsheet(body, &globals) {
                     globals.sheets.push(sheet);
@@ -835,6 +860,251 @@ fn string_reader<'a>(segs: &'a [&'a [u8]], skip: usize) -> Option<SegReader<'a>>
     parts.push(segs.first()?.get(skip..)?);
     parts.extend(&segs[1..]);
     Some(SegReader::new(parts))
+}
+
+/// markitai: the data of a workbook embedded as a chart, as the chart
+/// plots it: an Excel chart object, whose window shows a chart sheet, or a
+/// stream with no sheet directory holding a chart substream (MS Graph).
+/// `None` when the shown sheet is a worksheet or the chart caches no values;
+/// the caller then reads the worksheets.
+pub(super) fn chart_data(bytes: &[u8]) -> Result<Option<Vec<Block>>, ConvertError> {
+    let mut ole = cfb::CompoundFile::open(Cursor::new(bytes))
+        .map_err(|e| ConvertError::malformed(format!("not an OLE2 compound file: {e}")))?;
+    let data = workbook_stream(&mut ole)?;
+    let mut records = 0u64;
+    let globals = read_globals(&data, &mut records)?;
+    let offset = if globals.sheets.is_empty() {
+        first_chart(&data, &mut records)?
+    } else {
+        globals
+            .shown
+            .and_then(|index| globals.sheets.get(index))
+            .filter(|sheet| sheet.visible)
+            .or_else(|| globals.sheets.iter().find(|sheet| sheet.visible))
+            .map(|sheet| sheet.offset)
+            .filter(|&offset| substream_type(&data, offset) == Some(CHART_SUBSTREAM))
+    };
+    match offset {
+        Some(offset) => read_chart(&data, &globals, offset, &mut records),
+        None => Ok(None),
+    }
+}
+
+/// The `dt` of the BOF record at `offset`, if one starts there.
+fn substream_type(data: &[u8], offset: usize) -> Option<u16> {
+    record_at(data, offset)
+        .filter(|&(rec_type, ..)| rec_type == BOF)
+        .and_then(|(_, b, _)| get_u16(b, 2))
+}
+
+/// The offset of the first chart substream that no other substream holds.
+fn first_chart(data: &[u8], records: &mut u64) -> Result<Option<usize>, ConvertError> {
+    let mut pos = 0usize;
+    let mut depth = 0usize;
+    while let Some((rec_type, body, next)) = next_record(data, pos, records)? {
+        match rec_type {
+            BOF if depth == 0 && get_u16(body, 2) == Some(CHART_SUBSTREAM) => return Ok(Some(pos)),
+            BOF => depth += 1,
+            EOF_REC => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        pos = next;
+    }
+    Ok(None)
+}
+
+/// What a chart substream caches: its series in series order, the title,
+/// and the values (SIIndex 1) and category labels (SIIndex 2) by (point,
+/// series).
+#[derive(Default)]
+struct ChartCache {
+    series: Vec<ChartSeries>,
+    title: Option<String>,
+    values: HashMap<(u32, u32), String>,
+    categories: HashMap<(u32, u32), String>,
+}
+
+/// A `Series` record's block: its name, and whether it is a trendline or
+/// error bars drawn for another series (`SerParent`) rather than data.
+#[derive(Default)]
+struct ChartSeries {
+    name: Option<String>,
+    auxiliary: bool,
+}
+
+/// One chart substream's cached data as its title and a table: categories
+/// down the first column, one column per series. Series names come from the
+/// `SeriesText` after each series' name reference (BRAI 0), the title from
+/// the attached label an `ObjectLink` ties to the chart (1).
+fn read_chart(
+    data: &[u8],
+    globals: &Globals,
+    offset: usize,
+    records: &mut u64,
+) -> Result<Option<Vec<Block>>, ConvertError> {
+    let Some((BOF, _, mut pos)) = record_at(data, offset) else {
+        return Ok(None);
+    };
+    let mut chart = ChartCache::default();
+    let mut depth = 1usize;
+    // The record each open Begin follows: the block it belongs to.
+    let mut open: Vec<u16> = Vec::new();
+    let mut previous = BOF;
+    let mut reference: Option<u8> = None;
+    let mut label: Option<String> = None;
+    let mut group = 0u16;
+    while let Some((rec_type, body, next)) = next_record(data, pos, records)? {
+        pos = next;
+        let before = std::mem::replace(&mut previous, rec_type);
+        match rec_type {
+            BOF => depth += 1,
+            EOF_REC => {
+                if depth == 1 {
+                    break;
+                }
+                depth -= 1;
+            }
+            _ if depth > 1 => {}
+            BEGIN => {
+                if open.len() >= limits::MAX_RECORD_DEPTH {
+                    return Err(ConvertError::ResourceLimit {
+                        limit: "max_record_depth",
+                        detail: format!("chart nesting exceeds {}", limits::MAX_RECORD_DEPTH),
+                    });
+                }
+                open.push(before);
+            }
+            END => {
+                open.pop();
+            }
+            SERIES => chart.series.push(ChartSeries::default()),
+            SERPARENT if open.last() == Some(&SERIES) => {
+                if let Some(series) = chart.series.last_mut() {
+                    series.auxiliary = true;
+                }
+            }
+            BRAI => reference = body.first().copied(),
+            SERIESTEXT => {
+                let Some(text) = body
+                    .get(2..)
+                    .and_then(|rest| globals.read_string(&mut SegReader::new(vec![rest]), true))
+                else {
+                    continue;
+                };
+                let text = collapse_ws(&clean_text(&text)).trim().to_string();
+                match open.last() {
+                    Some(&SERIES) if reference == Some(0) => {
+                        if let Some(series) = chart.series.last_mut() {
+                            series.name = Some(text);
+                        }
+                    }
+                    Some(&TEXT) => label = Some(text),
+                    _ => {}
+                }
+            }
+            OBJECTLINK if open.last() == Some(&TEXT) => {
+                if get_u16(body, 0) == Some(1) && chart.title.is_none() {
+                    chart.title = label.take().filter(|t| !t.is_empty());
+                }
+            }
+            SIINDEX => group = get_u16(body, 0).unwrap_or(0),
+            NUMBER | RK | LABEL | BOOLERR | BLANK if group != 0 => {
+                let (segs, after) = continued(data, body, pos, records)?;
+                pos = after;
+                let Some((point, series, ixfe)) = cell_ref(body) else {
+                    continue;
+                };
+                let text = match rec_type {
+                    NUMBER => get_f64(body, 6)
+                        .map(|n| render_number(globals.format(ixfe), n, globals.date1904)),
+                    RK => get_u32(body, 6).map(|rk| {
+                        render_number(globals.format(ixfe), rk_number(rk), globals.date1904)
+                    }),
+                    LABEL => string_reader(&segs, 6)
+                        .and_then(|mut r| globals.read_string(&mut r, false))
+                        .map(|text| format_as_text(globals.format(ixfe), &clean_text(&text))),
+                    BOOLERR => match (body.get(6), body.get(7)) {
+                        (Some(0), Some(0)) => Some("FALSE".to_string()),
+                        (Some(_), Some(0)) => Some("TRUE".to_string()),
+                        (Some(&code), Some(1)) => error_literal(code).map(str::to_string),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let Some(text) = text.filter(|t| !t.is_empty()) else {
+                    continue;
+                };
+                match group {
+                    1 => chart.values.insert((point, series), text),
+                    2 => chart.categories.insert((point, series), text),
+                    _ => None,
+                };
+            }
+            _ => {}
+        }
+    }
+    chart_table(chart)
+}
+
+/// The title paragraph and the table of a chart's cached data. Points
+/// without a category label are numbered from 1, series without a name are
+/// `Series N`, as the presentation reader writes a PPTX chart. A column is
+/// a series that caches values or a data series that caches none; a
+/// trendline or error bars without values of their own get no column.
+fn chart_table(chart: ChartCache) -> Result<Option<Vec<Block>>, ConvertError> {
+    if chart.values.is_empty() {
+        return Ok(None);
+    }
+    let plotted: HashSet<u32> = chart.values.keys().map(|&(_, series)| series).collect();
+    let count = plotted.iter().map(|&s| s as usize + 1).max().unwrap_or(0).max(chart.series.len());
+    let columns: Vec<u32> = (0..count as u32)
+        .filter(|&index| {
+            plotted.contains(&index)
+                || chart.series.get(index as usize).is_some_and(|series| !series.auxiliary)
+        })
+        .collect();
+    let points =
+        chart.values.keys().chain(chart.categories.keys()).map(|&(p, _)| p + 1).max().unwrap_or(0);
+    let positions = (u64::from(points) + 1).saturating_mul(columns.len() as u64 + 1);
+    if positions > limits::MAX_GRID_SLOTS {
+        return Err(ConvertError::ResourceLimit {
+            limit: "max_grid_slots",
+            detail: format!("chart cache covers {positions} grid positions"),
+        });
+    }
+    // Each point's label from the first series that caches one.
+    let mut labels: HashMap<u32, (u32, &str)> = HashMap::new();
+    for (&(point, series), text) in &chart.categories {
+        let entry = labels.entry(point).or_insert((series, text.as_str()));
+        if series < entry.0 {
+            *entry = (series, text.as_str());
+        }
+    }
+    let cell = |text: String| Cell::from_inlines(vec![Inline::plain(text)]);
+    let mut header = vec![Cell::new(Vec::new())];
+    for &index in &columns {
+        let name = chart.series.get(index as usize).and_then(|series| series.name.clone());
+        let name = name.filter(|name| !name.is_empty());
+        header.push(cell(name.unwrap_or_else(|| format!("Series {}", index + 1))));
+    }
+    let mut rows = vec![header];
+    for point in 0..points {
+        let label = labels.get(&point).map_or_else(|| (point + 1).to_string(), |&(_, t)| t.into());
+        let mut row = vec![cell(label)];
+        for &index in &columns {
+            row.push(match chart.values.get(&(point, index)) {
+                Some(value) => cell(value.clone()),
+                None => Cell::new(Vec::new()),
+            });
+        }
+        rows.push(row);
+    }
+    let mut blocks = Vec::new();
+    if let Some(title) = chart.title {
+        blocks.push(Block::Paragraph(vec![Inline::plain(title)]));
+    }
+    blocks.push(Block::Table(Table::from_rows(rows, 1, TableKind::Data)));
+    Ok(Some(blocks))
 }
 
 #[cfg(test)]
@@ -1303,5 +1573,221 @@ mod tests {
         records.extend(obj(0x0B, 1));
         let doc = parse(&one_sheet(records).build()).unwrap();
         assert_eq!(texts(first_table(&doc)), vec![vec!["14", "", "", "[x] Roof", "[ ]"]]);
+    }
+
+    // markitai: the cached data of an embedded chart.
+
+    fn brai(id: u8, rt: u8) -> Vec<u8> {
+        rec(BRAI, &[id, rt, 0, 0, 0, 0, 0, 0])
+    }
+
+    fn series_text(text: &str) -> Vec<u8> {
+        let mut body = 0u16.to_le_bytes().to_vec();
+        body.extend(short_ustr(text));
+        rec(SERIESTEXT, &body)
+    }
+
+    /// An attached label (Text ... End) whose ObjectLink ties it to `link`.
+    fn attached_label(text: &str, link: u16) -> Vec<u8> {
+        let mut out = rec(TEXT, &[0; 32]);
+        out.extend(rec(BEGIN, &[]));
+        out.extend(brai(0, 1));
+        out.extend(series_text(text));
+        let mut object_link = link.to_le_bytes().to_vec();
+        object_link.extend([0; 4]);
+        out.extend(rec(OBJECTLINK, &object_link));
+        out.extend(rec(END, &[]));
+        out
+    }
+
+    /// A chart substream (without its BOF): `series` by name, each with a
+    /// data label of its own, an axis title and the chart `title`, then the
+    /// cached `categories` and `values` (by point, series) at `ixfe`.
+    fn chart_records(
+        title: Option<&str>,
+        series: &[Option<&str>],
+        categories: &[(u16, u16, &str)],
+        values: &[(u16, u16, f64)],
+        ixfe: u16,
+    ) -> Vec<u8> {
+        let mut out = rec(0x1002, &[0; 16]);
+        out.extend(rec(BEGIN, &[]));
+        for name in series {
+            out.extend(rec(SERIES, &[0; 12]));
+            out.extend(rec(BEGIN, &[]));
+            out.extend(brai(0, 1));
+            if let Some(name) = name {
+                out.extend(series_text(name));
+            }
+            out.extend(brai(1, 2));
+            out.extend(brai(2, 2));
+            out.extend(attached_label("data label", 4));
+            out.extend(rec(END, &[]));
+        }
+        // A trendline of the first series: a series of its own, without
+        // values.
+        out.extend(rec(SERIES, &[0; 12]));
+        out.extend(rec(BEGIN, &[]));
+        out.extend(brai(0, 1));
+        out.extend(series_text("Trend"));
+        out.extend(rec(SERPARENT, &1u16.to_le_bytes()));
+        out.extend(rec(END, &[]));
+        out.extend(attached_label("Axis", 2));
+        if let Some(title) = title {
+            out.extend(attached_label(title, 1));
+        }
+        out.extend(rec(END, &[]));
+        out.extend(rec(SIINDEX, &2u16.to_le_bytes()));
+        for &(point, series, text) in categories {
+            out.extend(label(point, series, 0, text));
+        }
+        out.extend(rec(SIINDEX, &1u16.to_le_bytes()));
+        for &(point, series, value) in values {
+            out.extend(number(point, series, ixfe, value));
+        }
+        out.extend(rec(SIINDEX, &3u16.to_le_bytes()));
+        out
+    }
+
+    /// A workbook of a chart sheet over its data sheet, the window showing
+    /// sheet `shown`.
+    fn chart_workbook(shown: u16, chart: Vec<u8>) -> Vec<u8> {
+        let mut stream = bof(0x0005, 0x0600);
+        let mut window = vec![0u8; 18];
+        window[10..12].copy_from_slice(&shown.to_le_bytes());
+        stream.extend(rec(WINDOW1, &window));
+        stream.extend(rec(FORMAT, &[&164u16.to_le_bytes()[..], &ustr("0.0%")].concat()));
+        for ifmt in [0u16, 164] {
+            let mut body = vec![0u8; 20];
+            body[2..4].copy_from_slice(&ifmt.to_le_bytes());
+            stream.extend(rec(XF, &body));
+        }
+        let mut patch_at = Vec::new();
+        for (name, kind) in [("Chart1", 2u8), ("Sheet1", 0)] {
+            let mut body = vec![0u8; 4];
+            body.extend([0, kind]);
+            body.extend(short_ustr(name));
+            patch_at.push(stream.len() + 4);
+            stream.extend(rec(BOUNDSHEET, &body));
+        }
+        stream.extend(rec(EOF_REC, &[]));
+        let at = (stream.len() as u32).to_le_bytes();
+        stream[patch_at[0]..patch_at[0] + 4].copy_from_slice(&at);
+        stream.extend(bof(CHART_SUBSTREAM, 0x0600));
+        stream.extend(chart);
+        stream.extend(rec(EOF_REC, &[]));
+        let at = (stream.len() as u32).to_le_bytes();
+        stream[patch_at[1]..patch_at[1] + 4].copy_from_slice(&at);
+        stream.extend(bof(WORKSHEET_SUBSTREAM, 0x0600));
+        stream.extend(label(0, 0, 0, "sheet cell"));
+        stream.extend(rec(EOF_REC, &[]));
+        ole_with("Workbook", &stream)
+    }
+
+    fn chart_texts(blocks: &[Block]) -> (Vec<String>, Vec<Vec<String>>) {
+        let paragraphs = blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(i) => Some(inlines_to_plain_text(i)),
+                _ => None,
+            })
+            .collect();
+        let table = blocks.iter().find_map(|b| match b {
+            Block::Table(t) => Some(t),
+            _ => None,
+        });
+        (paragraphs, table.map(texts).unwrap_or_default())
+    }
+
+    #[test]
+    fn a_shown_chart_sheet_reads_as_its_cached_series() {
+        // Two series, the second unnamed; a point with no category label;
+        // category labels cached under both series, the first one's winning;
+        // values in a percent format.
+        let chart = chart_records(
+            Some("Share by region"),
+            &[Some("North"), None],
+            &[(0, 1, "later"), (0, 0, "Jan"), (1, 0, "Feb")],
+            &[(0, 0, 0.25), (1, 0, 0.5), (0, 1, 0.125), (2, 1, 1.0)],
+            1,
+        );
+        let blocks = chart_data(&chart_workbook(0, chart)).unwrap().unwrap();
+        let (paragraphs, table) = chart_texts(&blocks);
+        // Neither the data labels nor the axis title is the chart's title.
+        assert_eq!(paragraphs, ["Share by region"]);
+        assert_eq!(
+            table,
+            [
+                ["", "North", "Series 2"],
+                ["Jan", "25.0%", "12.5%"],
+                ["Feb", "50.0%", ""],
+                ["3", "", "100.0%"],
+            ]
+        );
+        let Some(Block::Table(table)) = blocks.last() else { unreachable!() };
+        assert_eq!(table.header_rows, 1);
+    }
+
+    #[test]
+    fn a_shown_worksheet_is_left_to_the_worksheet_reader() {
+        let chart = chart_records(None, &[Some("A")], &[], &[(0, 0, 1.0)], 0);
+        assert!(chart_data(&chart_workbook(1, chart.clone())).unwrap().is_none());
+        // A window showing a sheet that does not exist falls back to the
+        // first visible one, the chart.
+        assert!(chart_data(&chart_workbook(7, chart)).unwrap().is_some());
+    }
+
+    #[test]
+    fn a_chart_without_cached_values_has_no_data() {
+        let chart = chart_records(Some("Empty"), &[Some("A")], &[(0, 0, "x")], &[], 0);
+        assert!(chart_data(&chart_workbook(0, chart)).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_stream_holding_only_a_chart_reads_it() {
+        // MS Graph keeps no sheet directory: the stream is the chart
+        // substream, its cell formats inside it.
+        let mut stream = bof(CHART_SUBSTREAM, 0x0600);
+        for ifmt in [0u16, 3] {
+            let mut body = vec![0u8; 20];
+            body[2..4].copy_from_slice(&ifmt.to_le_bytes());
+            stream.extend(rec(XF, &body));
+        }
+        stream.extend(chart_records(
+            None,
+            &[Some("Web")],
+            &[(0, 0, "Mon"), (1, 0, "Tue")],
+            &[(0, 0, 1250.0), (1, 0, 980.0)],
+            1,
+        ));
+        stream.extend(rec(EOF_REC, &[]));
+        let blocks = chart_data(&ole_with("Workbook", &stream)).unwrap().unwrap();
+        assert_eq!(
+            chart_texts(&blocks),
+            (
+                vec![],
+                vec![
+                    vec!["".to_string(), "Web".into()],
+                    vec!["Mon".into(), "1,250".into()],
+                    vec!["Tue".into(), "980".into()],
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn a_chart_whose_points_reach_past_the_grid_budget_is_refused() {
+        // 61 series of 65,536 points: one cached value each describes
+        // more than 4 million positions.
+        let values: Vec<_> = (0..61).map(|series| (65_535, series, 1.0)).collect();
+        let chart = chart_records(None, &[Some("A")], &[], &values, 0);
+        assert!(matches!(
+            chart_data(&chart_workbook(0, chart)),
+            Err(ConvertError::ResourceLimit { limit: "max_grid_slots", .. })
+        ));
+        // A series index with neither a series nor a value gets no column.
+        let chart = chart_records(None, &[Some("A")], &[], &[(0, 0, 1.0), (0, 3, 2.0)], 0);
+        let blocks = chart_data(&chart_workbook(0, chart)).unwrap().unwrap();
+        assert_eq!(chart_texts(&blocks).1, [["", "A", "Series 4"], ["1", "1", "2"]]);
     }
 }

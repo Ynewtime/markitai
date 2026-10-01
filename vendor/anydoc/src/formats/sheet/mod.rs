@@ -54,6 +54,17 @@ pub(crate) fn format_number(code: &str, value: f64, date1904: bool) -> String {
     xlsx::render_number(&format, value, date1904)
 }
 
+/// markitai: the data a BIFF workbook embedded in another document shows
+/// (`bytes` is its compound file): the cached series of the chart it shows,
+/// as a table under the chart's title, or else its worksheets as `parse`
+/// reads them.
+pub(crate) fn embedded_workbook(bytes: &[u8]) -> Result<Vec<crate::model::Block>, ConvertError> {
+    match xls::chart_data(bytes)? {
+        Some(blocks) => Ok(blocks),
+        None => Ok(parse(bytes)?.blocks),
+    }
+}
+
 fn not_a_workbook() -> ConvertError {
     ConvertError::malformed("not a readable workbook container")
 }

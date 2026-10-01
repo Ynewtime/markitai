@@ -41,6 +41,36 @@ upstream files:
   skipped, and the first row is the header. A table group inside a cell is
   read as plain shapes, and a group with an unanchored cell, or one drawing
   more positions than `MAX_GRID_SLOTS`, keeps upstream's paragraphs.
+- `src/formats/ppt/mod.rs` and the added `src/formats/ppt/ole.rs`: a shape
+  whose client data holds an `ExObjRefAtom` shows an embedded OLE object,
+  which is read as its data where the shape is (upstream read nothing for
+  it). The `ExObjList`'s `ExEmbed` entries map object ids through the
+  persist directory to `ExOleObjStg` records, decoded on first use and
+  zlib-inflated (instance 1) under `MAX_ENTRY_BYTES` per object and
+  `MAX_TOTAL_BYTES` per deck. The storage is a compound file: a BIFF
+  `Workbook`/`Book` stream goes to `sheet::embedded_workbook`; LibreOffice's
+  `package_stream` is an ODF package whose chart reads as its title and
+  local data table (first row the header; repeated cells and rows expand only
+  up to content, charged against `MAX_GRID_SLOTS`) and whose spreadsheet goes
+  to `odf::parse`; an OOXML `Package` stream goes to `sheet::parse`. A lone
+  sheet's name heading is dropped and several become paragraphs; the
+  object's own images keep only their alt text (its asset ids are not the
+  deck's) and its note references are dropped. Anything else adds nothing
+  and logs at debug level. Each time a shape shows an object, its table
+  positions are charged against `MAX_GRID_SLOTS`.
+- `src/formats/sheet/xls.rs`, `src/formats/sheet/mod.rs`: the XLS reader
+  gains `chart_data`, behind `sheet::embedded_workbook` (no change to `parse`).
+  The globals keep WINDOW1's shown sheet; when it is a chart sheet, or the
+  stream has no sheet directory and holds a top-level chart substream (MS
+  Graph), the chart's cached data ([MS-XLS] SERIESDATA: SIIndex 1 values and
+  2 category labels by point and series, through their XFs), series names
+  (the SeriesText after BRAI 0 in a Series block) and title (the attached
+  label whose ObjectLink names the chart) become a table under a title
+  paragraph. Series marked SerParent (trendlines, error bars) without values
+  get no column, unnamed series are `Series N`, points without a label are
+  numbered from 1; Begin nesting past `MAX_RECORD_DEPTH` and a cache past
+  `MAX_GRID_SLOTS` are resource limits. Otherwise the worksheets are read by
+  `parse`.
 - `src/formats/docx/content.rs`, `src/formats/docx/styles.rs`,
   `src/formats/docx/numbering.rs`, `src/formats/docx/mod.rs` (module
   declarations and tests only), and three files added beside them
@@ -158,4 +188,4 @@ package; it reproduces upstream's formatting, so `cargo fmt` in this directory
 changes nothing upstream wrote.
 
 Tests covering these changes were added beside the upstream ones; the upstream
-suite passes in an isolated copy (347 tests).
+suite passes in an isolated copy (362 tests).
