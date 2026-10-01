@@ -71,6 +71,39 @@ pub(super) struct DateParts {
     pub(super) elapsed: bool,
     /// Whether a time shows its seconds (markitai): `h:mm` shows none.
     pub(super) seconds: bool,
+    /// The largest and smallest units an elapsed span shows (markitai): the
+    /// bracketed unit carries the whole span, so `[mm]:ss` is minutes and
+    /// seconds and `[s]` seconds alone.
+    pub(super) span: (Unit, Unit),
+}
+
+/// A unit of an elapsed span, largest first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub(super) enum Unit {
+    #[default]
+    Hour,
+    Minute,
+    Second,
+}
+
+impl Unit {
+    fn of(run: char) -> Option<Unit> {
+        match run {
+            'h' => Some(Unit::Hour),
+            'm' => Some(Unit::Minute),
+            's' => Some(Unit::Second),
+            _ => None,
+        }
+    }
+
+    /// Seconds in one of this unit.
+    pub(super) fn seconds(self) -> u64 {
+        match self {
+            Unit::Hour => 3600,
+            Unit::Minute => 60,
+            Unit::Second => 1,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -345,8 +378,8 @@ fn decoration(toks: &[Tok]) -> String {
 
 /// Which parts a date/time section asks for. `m` is minutes when an hour run
 /// precedes it or a seconds run follows it, and months otherwise.
-fn date_parts(runs: &[char], elapsed: bool) -> DateParts {
-    let mut parts = DateParts { elapsed, ..DateParts::default() };
+fn date_parts(runs: &[char], elapsed: Option<char>) -> DateParts {
+    let mut parts = DateParts { elapsed: elapsed.is_some(), ..DateParts::default() };
     for (i, &run) in runs.iter().enumerate() {
         match run {
             'y' | 'd' => parts.date = true,
@@ -370,10 +403,16 @@ fn date_parts(runs: &[char], elapsed: bool) -> DateParts {
     // came from a bracket alone: both are a time and only a time.
     // markitai: an elapsed span shows seconds only when it names them
     // (`[h]:mm` is hours and minutes); a bracket alone keeps them.
-    if elapsed || (!parts.date && !parts.time) {
-        parts.seconds = !elapsed || runs.contains(&'s');
+    if parts.elapsed || (!parts.date && !parts.time) {
+        parts.seconds = !parts.elapsed || runs.contains(&'s');
         parts.date = false;
         parts.time = true;
+    }
+    // The span runs from the bracketed unit, which `runs` holds, down to the
+    // smallest unit the section names.
+    if let Some(largest) = elapsed.and_then(Unit::of) {
+        let smallest = runs.iter().filter_map(|&run| Unit::of(run)).max().unwrap_or(largest);
+        parts.span = (largest, smallest);
     }
     parts
 }
@@ -392,7 +431,8 @@ fn parse_section(s: &str) -> Option<Section> {
     let mut general_at = 0usize;
     let mut condition: Option<Cond> = None;
     let mut has_date = false;
-    let mut elapsed = false;
+    // The unit of the first `[h]`, `[m]` or `[s]`.
+    let mut elapsed: Option<char> = None;
     // The date/time runs in order, one letter each, so `m` can be read as
     // months or minutes from what sits beside it.
     let mut runs: Vec<char> = Vec::new();
@@ -550,7 +590,7 @@ fn bracket(
     raw: &mut Vec<Tok>,
     condition: &mut Option<Cond>,
     has_date: &mut bool,
-    elapsed: &mut bool,
+    elapsed: &mut Option<char>,
     runs: &mut Vec<char>,
 ) -> Option<()> {
     match inner.chars().next()? {
@@ -585,7 +625,7 @@ fn bracket(
             if inner.chars().all(|x| x.eq_ignore_ascii_case(&c)) =>
         {
             *has_date = true;
-            *elapsed = true;
+            elapsed.get_or_insert(c.to_ascii_lowercase());
             runs.push(c.to_ascii_lowercase());
         }
         _ => {
@@ -1215,37 +1255,28 @@ mod tests {
         let f = NumberFormat::parse("yyyy\\-mm\\-dd").unwrap();
         assert_eq!(
             f.format_number(45000.0),
-            Rendered::DateTime(DateParts {
-                date: true,
-                time: false,
-                elapsed: false,
-                seconds: false
-            })
+            Rendered::DateTime(DateParts { date: true, ..DateParts::default() })
         );
         let f = NumberFormat::parse("[hh]:mm:ss").unwrap();
         assert_eq!(
             f.format_number(1.5),
-            Rendered::DateTime(DateParts { date: false, time: true, elapsed: true, seconds: true })
+            Rendered::DateTime(DateParts {
+                date: false,
+                time: true,
+                elapsed: true,
+                seconds: true,
+                span: (Unit::Hour, Unit::Second)
+            })
         );
         let f = NumberFormat::parse("h:mm AM/PM").unwrap();
         assert_eq!(
             f.format_number(0.5),
-            Rendered::DateTime(DateParts {
-                date: false,
-                time: true,
-                elapsed: false,
-                seconds: false
-            })
+            Rendered::DateTime(DateParts { time: true, ..DateParts::default() })
         );
         let f = NumberFormat::parse("h:mm:ss").unwrap();
         assert_eq!(
             f.format_number(0.5),
-            Rendered::DateTime(DateParts {
-                date: false,
-                time: true,
-                elapsed: false,
-                seconds: true
-            })
+            Rendered::DateTime(DateParts { time: true, seconds: true, ..DateParts::default() })
         );
     }
 
@@ -1308,6 +1339,27 @@ mod tests {
         assert!(!seconds("[h]:mm"));
         assert!(seconds("[h]:mm:ss"));
         assert!(seconds("[mm]:ss"));
+    }
+
+    #[test]
+    fn an_elapsed_span_runs_from_its_bracketed_unit_to_its_smallest() {
+        // markitai: the bracket names the unit that carries the whole span.
+        let span = |code: &str| match NumberFormat::parse(code).unwrap().format_number(1.5) {
+            Rendered::DateTime(p) => p.span,
+            other => panic!("expected a date/time section, got {other:?}"),
+        };
+        use Unit::*;
+        assert_eq!(span("[h]:mm:ss"), (Hour, Second));
+        assert_eq!(span("[h]:mm"), (Hour, Minute));
+        assert_eq!(span("[h]"), (Hour, Hour));
+        assert_eq!(span("[mm]:ss"), (Minute, Second));
+        assert_eq!(span("[m]"), (Minute, Minute));
+        assert_eq!(span("[ss]"), (Second, Second));
+        // The first bracket decides, and a larger unit beside it adds nothing.
+        assert_eq!(span("[m]:[ss]"), (Minute, Second));
+        assert_eq!(span("[s] h"), (Second, Second));
+        // A clock time is no span.
+        assert_eq!(span("h:mm:ss"), (Hour, Hour));
     }
 
     #[test]

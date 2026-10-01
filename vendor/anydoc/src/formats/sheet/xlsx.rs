@@ -577,7 +577,7 @@ fn render_serial(serial: f64, parts: DateParts, date1904: bool) -> String {
         return format_float(serial);
     }
     if parts.elapsed {
-        return format_duration_days(serial, parts.seconds);
+        return format_duration_days(serial, parts.span);
     }
     if !parts.date {
         return format_time_of_day(serial.fract(), parts.seconds);
@@ -693,6 +693,7 @@ fn bool_attr(v: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::super::numfmt::Unit;
     use super::*;
     use crate::model::{CellSlot, inlines_to_plain_text};
     use std::io::Write;
@@ -1015,8 +1016,13 @@ mod tests {
         );
     }
 
-    const DATE_ONLY: DateParts =
-        DateParts { date: true, time: false, elapsed: false, seconds: false };
+    const DATE_ONLY: DateParts = DateParts {
+        date: true,
+        time: false,
+        elapsed: false,
+        seconds: false,
+        span: (Unit::Hour, Unit::Hour),
+    };
 
     #[test]
     fn the_fictitious_leap_day_keeps_its_own_value() {
@@ -1033,7 +1039,7 @@ mod tests {
 
     #[test]
     fn a_sub_day_serial_keeps_the_clock_a_combined_format_names() {
-        let both = DateParts { date: true, time: true, elapsed: false, seconds: true };
+        let both = DateParts { date: true, time: true, seconds: true, ..DateParts::default() };
         assert_eq!(render_serial(0.5, both, false), "12:00:00");
         // A clock without seconds drops them (markitai).
         let minutes = DateParts { seconds: false, ..both };
@@ -1047,9 +1053,21 @@ mod tests {
     fn an_elapsed_span_shows_the_seconds_its_format_names() {
         // markitai: 27 hours 5 minutes, as `[h]:mm` and `[h]:mm:ss` show it.
         let serial = (27.0 * 60.0 + 5.0) / 1_440.0;
-        let span = DateParts { date: false, time: true, elapsed: true, seconds: true };
+        let span = DateParts {
+            date: false,
+            time: true,
+            elapsed: true,
+            seconds: true,
+            span: (Unit::Hour, Unit::Second),
+        };
         assert_eq!(render_serial(serial, span, false), "27:05:00");
-        assert_eq!(render_serial(serial, DateParts { seconds: false, ..span }, false), "27:05");
+        let minutes = DateParts { seconds: false, span: (Unit::Hour, Unit::Minute), ..span };
+        assert_eq!(render_serial(serial, minutes, false), "27:05");
+        // markitai: `[mm]:ss` and `[s]` carry the whole span in their unit.
+        let total = DateParts { span: (Unit::Minute, Unit::Second), ..span };
+        assert_eq!(render_serial(serial, total, false), "1625:00");
+        let total = DateParts { span: (Unit::Second, Unit::Second), ..span };
+        assert_eq!(render_serial(serial, total, false), "97500");
     }
 
     const VML_REL: &str =
