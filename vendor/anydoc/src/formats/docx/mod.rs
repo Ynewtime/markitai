@@ -62,8 +62,10 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
 
     let counters = RefCell::new(Counters::default());
     let assets = RefCell::new(AssetSink::new());
-    // markitai: how the body's text looks, for headings set by hand.
+    // markitai: how the body's text looks, for headings set by hand, and
+    // the paragraphs that may be rows of tables set with tab stops.
     let looks = RefCell::new(crate::shared::visual::Looks::default());
+    let tab_rows = RefCell::new(crate::shared::tabs::TabRows::default());
 
     let footnotes_part =
         typed_part_path(&doc_rels, &main_part, rel_type::FOOTNOTES, "footnotes.xml");
@@ -81,10 +83,14 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
         cell_depth: Default::default(),
         looks: Some(&looks),
         block_depth: Default::default(),
+        tabs: Some(&tab_rows),
     };
     let mut blocks = content::parse_blocks(body, &ctx)?;
-    // markitai: headings set by hand (see `crate::shared::visual`).
-    looks.take().apply(&mut blocks);
+    // markitai: tables set with tab stops, then headings set by hand (see
+    // `crate::shared::tabs` and `crate::shared::visual`), and a table laying
+    // out a code listing is its code (`crate::shared::code`).
+    crate::shared::tabs::finish(tab_rows.take(), Some(looks.take()), &mut blocks, &mut []);
+    crate::shared::code::listing_tables(&mut blocks);
 
     let mut notes = Vec::new();
     for (part, root_name, elem_name, prefix, kind) in [
@@ -113,6 +119,10 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
                 blocks: content::parse_blocks(note, &note_ctx)?,
             });
         }
+    }
+    // markitai: a note's table laying out a code listing is its code too.
+    for note in &mut notes {
+        crate::shared::code::listing_tables(&mut note.blocks);
     }
 
     let assets = std::mem::take(&mut assets.borrow_mut().assets);
@@ -663,5 +673,72 @@ mod tests {
         let heading =
             r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Real</w:t></w:r></w:p>"#;
         assert_eq!(shapes(&read(&format!("{body}{heading}"))), ["p", "p", "p", "h1"]);
+    }
+
+    #[test]
+    fn columns_set_with_tab_stops_are_a_table_and_a_code_box_is_code() {
+        // markitai: the stops of a paragraph style, inherited through
+        // `basedOn`, and a stop a paragraph clears; a table of contents
+        // style; a one-cell table of code; a tab in a line of code.
+        let styles = format!(
+            r#"<w:styles {W}>
+            <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+            <w:style w:type="paragraph" w:styleId="Stops"><w:name w:val="Stops"/>
+              <w:pPr><w:tabs><w:tab w:val="left" w:pos="2880"/></w:tabs></w:pPr></w:style>
+            <w:style w:type="paragraph" w:styleId="Cols"><w:name w:val="Columns"/>
+              <w:basedOn w:val="Stops"/>
+              <w:pPr><w:tabs><w:tab w:val="end" w:pos="5760"/></w:tabs></w:pPr></w:style>
+            <w:style w:type="paragraph" w:styleId="TOC1"><w:name w:val="toc 1"/></w:style>
+            </w:styles>"#
+        );
+        let run = |text: &str| format!(r#"<w:r><w:t xml:space="preserve">{text}</w:t></w:r>"#);
+        let row = |ppr: &str, cells: &[&str]| {
+            let runs: Vec<String> = cells.iter().map(|cell| run(cell)).collect();
+            format!("<w:p><w:pPr>{ppr}</w:pPr>{}</w:p>", runs.join("<w:r><w:tab/></w:r>"))
+        };
+        let menlo = r#"<w:rPr><w:rFonts w:ascii="Menlo"/></w:rPr>"#;
+        let code = |text: &str| format!(r#"<w:p><w:r>{menlo}<w:t>{text}</w:t></w:r></w:p>"#);
+        let cols = r#"<w:pStyle w:val="Cols"/>"#;
+        let cleared =
+            r#"<w:pStyle w:val="Cols"/><w:tabs><w:tab w:val="clear" w:pos="5760"/></w:tabs>"#;
+        let inherited =
+            r#"<w:pStyle w:val="Cols"/><w:tabs><w:tab w:val="clear" w:pos="2880"/></w:tabs>"#;
+        let toc = r#"<w:pStyle w:val="TOC1"/>"#;
+        let body = [
+            row(cols, &["Item", "Qty", "Price"]),
+            row(cols, &["Apple", "3", "1.20"]),
+            row(cols, &["Pear", "12", "0.50"]),
+            row(inherited, &["Fig", "1", "0.10"]),
+            row(cleared, &["Plum", "7", "0.20"]),
+            row(toc, &["1", "Introduction", "Page one"]),
+            row(toc, &["2", "Methods", "Page two"]),
+            row(toc, &["3", "Results", "Page three"]),
+            format!(
+                "<w:tbl><w:tr><w:tc>{}{}</w:tc></w:tr></w:tbl>",
+                code("make"),
+                code("make install")
+            ),
+            format!(r#"<w:p><w:r>{menlo}<w:t>a</w:t><w:tab/><w:t>b</w:t></w:r></w:p>"#),
+            row("", &["And the prose of the document goes on in its own face for a while."]),
+        ]
+        .concat();
+        let document = format!(r#"<w:document {W}><w:body>{body}</w:body></w:document>"#);
+        let doc =
+            parse(&docx_parts(&[("word/document.xml", &document), ("word/styles.xml", &styles)]))
+                .unwrap();
+        assert_eq!(
+            crate::shared::code::describe(&doc.blocks),
+            [
+                "table:p:Item|p:Qty|p:Price/p:Apple|p:3|p:1.20/p:Pear|p:12|p:0.50",
+                "p:Fig 1 0.10",
+                "p:Plum 7 0.20",
+                "p:1 Introduction Page one",
+                "p:2 Methods Page two",
+                "p:3 Results Page three",
+                "code:make\nmake install",
+                "code:a b",
+                "p:And the prose of the document goes on in its own face for a while.",
+            ]
+        );
     }
 }

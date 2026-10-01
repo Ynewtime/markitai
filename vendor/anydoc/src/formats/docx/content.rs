@@ -12,10 +12,12 @@ use crate::package::Package;
 use crate::package::relationships::{RelTarget, Relationships, TargetMode, rel_target_bytes};
 use crate::package::xml::{Element, ns};
 use crate::shared::blockstyle::{BlockStyle, StyledRun};
+use crate::shared::code::{RunFonts, without_code};
 use crate::shared::delta::rebase_emphasis;
 use crate::shared::fields::{FieldFrame, field_result};
 use crate::shared::list::{ListEntry, ListKey, flush_list};
 use crate::shared::math::{omath_para_to_tex, omath_to_tex};
+use crate::shared::tabs::{self, Stops, TabRows};
 use crate::shared::text::clean_text;
 use crate::shared::visual::{Looks, ParaSize, Size};
 use std::cell::RefCell;
@@ -57,6 +59,10 @@ pub(super) struct Ctx<'a, 'b> {
     /// looked at.
     pub looks: Option<&'b RefCell<Looks>>,
     pub block_depth: std::cell::Cell<u32>,
+    /// markitai: the body's paragraphs that could be rows of a table set
+    /// with tab stops (see [`crate::shared::tabs`]); while it is set, a tab
+    /// is read as [`tabs::TAB`]. Notes are not looked at.
+    pub tabs: Option<&'b RefCell<TabRows>>,
 }
 
 /// markitai: content read one level deeper (inside a table cell, or a block
@@ -92,6 +98,7 @@ impl<'a, 'b> Ctx<'a, 'b> {
             cell_depth: Default::default(),
             looks: None,
             block_depth: Default::default(),
+            tabs: None,
         }
     }
 
@@ -209,9 +216,18 @@ fn collect_blocks(
                     && matches!(&pieces[..], [Piece::Inlines(_)])
                     && ctx.block_depth.get() == 1
                     && ctx.cell_depth.get() == 0;
+                // markitai: and it may be a row of a table set with tab stops.
+                let row = plain
+                    && matches!(&pieces[..], [Piece::Inlines(inlines)] if tabs::has_tab(inlines));
                 emit_paragraph(kind, pieces, blocks, runs);
                 if plain && let Some(looks) = ctx.looks {
                     looks.borrow_mut().paragraph(blocks.len() - 1, size);
+                }
+                if row
+                    && let Some(tab_rows) = ctx.tabs
+                    && let Some(stops) = paragraph_stops(child, ctx.styles)?
+                {
+                    tab_rows.borrow_mut().paragraph(blocks.len() - 1, stops);
                 }
             }
             "tbl" => {
@@ -393,60 +409,77 @@ fn parse_paragraph(
     Ok((kind, pieces, size))
 }
 
-/// markitai: inline content with no code styling.
-fn without_code(inlines: &mut [Inline]) {
-    for inline in inlines {
-        match inline {
-            Inline::Text { style, .. } => style.code = false,
-            Inline::Link { content, .. } => without_code(content),
-            _ => {}
+/// markitai: count a run of a paragraph in `fonts` (see
+/// [`crate::shared::code::RunFonts`]): a run with no text is not counted,
+/// and one of only spaces is blank.
+fn count_run(fonts: &mut RunFonts, run: &Element, mono: bool) {
+    let mut texts = run.child_elems().filter(|c| c.is(ns::W, "t")).peekable();
+    if texts.peek().is_none() {
+        return;
+    }
+    let blank = !texts.any(|t| !t.text().trim().is_empty());
+    fonts.run(blank, mono);
+}
+
+/// markitai: the tab stops a paragraph is set at: its style's, through
+/// `basedOn`, then its own `w:tabs` (a `clear` stop removes an inherited
+/// one; a bar tab only draws a line). `None` for a paragraph of a table of
+/// contents or an index, whose tabs lead to page numbers.
+fn paragraph_stops(p: &Element, styles: &Styles) -> Result<Option<Stops>, ConvertError> {
+    let ppr = p.find(ns::W, "pPr");
+    let style = ppr
+        .and_then(|pr| pr.find(ns::W, "pStyle"))
+        .and_then(|e| e.attr(ns::W, "val"))
+        .or(styles.default_paragraph);
+    let mut set = std::collections::BTreeMap::new();
+    if let Some(id) = style {
+        if styles.style_name(id).is_some_and(lists_pages) {
+            return Ok(None);
         }
+        for tabs in styles.style_tabs(id)?.into_iter().rev() {
+            tab_stops(tabs, &mut set);
+        }
+    }
+    if let Some(tabs) = ppr.and_then(|pr| pr.find(ns::W, "tabs")) {
+        tab_stops(tabs, &mut set);
+    }
+    let mut stops = Stops::default();
+    for (position, (align, leader)) in set {
+        stops.add(position, align, leader);
+    }
+    Ok(Some(stops))
+}
+
+/// markitai: apply a `w:tabs` element to the stops set so far, by position.
+fn tab_stops(tabs: &Element, set: &mut std::collections::BTreeMap<i64, (&'static str, bool)>) {
+    for tab in tabs.child_elems().filter(|c| c.is(ns::W, "tab")) {
+        let Some(position) = tab.attr(ns::W, "pos").and_then(|v| v.trim().parse::<i64>().ok())
+        else {
+            continue;
+        };
+        let align = match tab.attr(ns::W, "val").unwrap_or("left") {
+            "clear" => {
+                set.remove(&position);
+                continue;
+            }
+            "bar" => continue,
+            "end" | "right" => "right",
+            "center" => "center",
+            "decimal" => "decimal",
+            "num" => "num",
+            _ => "left",
+        };
+        let leader = !matches!(tab.attr(ns::W, "leader"), None | Some("none"));
+        set.insert(position, (align, leader));
     }
 }
 
-/// markitai: the runs of a paragraph that carry text, and how many of them
-/// are set in a monospaced font; runs of only spaces are counted apart.
-#[derive(Debug, Default, Clone, Copy)]
-struct RunFonts {
-    text: usize,
-    mono: usize,
-    blank: usize,
-    blank_mono: usize,
-}
-
-impl RunFonts {
-    fn count(&mut self, run: &Element, mono: bool) {
-        let mut texts = run.child_elems().filter(|c| c.is(ns::W, "t")).peekable();
-        if texts.peek().is_none() {
-            return;
-        }
-        if texts.any(|t| !t.text().trim().is_empty()) {
-            self.text += 1;
-            self.mono += usize::from(mono);
-        } else {
-            self.blank += 1;
-            self.blank_mono += usize::from(mono);
-        }
-    }
-
-    fn add(&mut self, other: RunFonts) {
-        self.text += other.text;
-        self.mono += other.mono;
-        self.blank += other.blank;
-        self.blank_mono += other.blank_mono;
-    }
-
-    /// Whether every run with text, or with none every blank run, is
-    /// monospaced; `None` without either.
-    fn all_mono(self) -> Option<bool> {
-        if self.text > 0 {
-            Some(self.mono == self.text)
-        } else if self.blank > 0 {
-            Some(self.blank_mono == self.blank)
-        } else {
-            None
-        }
-    }
+/// markitai: a paragraph style of a table of contents or an index.
+fn lists_pages(name: &str) -> bool {
+    let name = name.trim().to_ascii_lowercase();
+    name.starts_with("toc ")
+        || name.starts_with("index ")
+        || matches!(name.as_str(), "table of figures" | "table of authorities")
 }
 
 /// Resolve a paragraph's effective numbering per ECMA-376: the direct
@@ -709,7 +742,7 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
                 .or(self.font),
             };
             let mono = font.is_some_and(is_monospace);
-            self.fonts.count(run, mono);
+            count_run(&mut self.fonts, run, mono);
             style.code |= mono;
         }
         // markitai: the run's size: its own, else its character style's,
@@ -776,6 +809,9 @@ impl<'a, 'b, 'e> InlineWalker<'a, 'b, 'e> {
                         self.push(Inline::Text { text, style });
                     }
                 }
+                // markitai: a tab of the body is kept until the tables set
+                // with tab stops are found (see `crate::shared::tabs`).
+                "tab" if self.ctx.tabs.is_some() => self.push(tabs::tab(Style::PLAIN)),
                 "tab" | "ptab" => self.push(Inline::Text { text: " ".into(), style: Style::PLAIN }),
                 // Markdown has no pages or columns, but every w:br still
                 // separates the runs around it: dropping a page break

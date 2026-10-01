@@ -99,7 +99,9 @@ upstream files:
     superscript or subscript forms when every character has one ("10⁻³",
     "H₂O"; `scripts.rs`), and left at the baseline otherwise ("1st").
 - `src/formats/docx/content.rs`, `src/formats/docx/styles.rs`,
-  `src/formats/docx/mod.rs` and the added `src/formats/docx/code.rs`: a run in
+  `src/formats/docx/mod.rs` and the added `src/formats/docx/code.rs` (the
+  body's monospace share; the face list and the shared decisions are in
+  `src/shared/code.rs`, below): a run in
   a monospaced font (its `w:rFonts`, else its character style's, else its
   paragraph style's, the `w:default` paragraph style's or `docDefaults`) is
   code (`Style::code`, which upstream never set for Word); a paragraph whose
@@ -110,6 +112,51 @@ upstream files:
   blank line of its block (upstream dropped it, also for `HTML Preformatted`),
   and a code block whose lines carry their numbers (as a leading column or
   alternating) loses them.
+- `src/shared/code.rs` (added, declared in `src/shared/mod.rs`; the face list,
+  share, run counting and line-number removal moved here from
+  `src/formats/docx/code.rs`), `src/formats/odf/text.rs`, `styles.rs`,
+  `table.rs`, `mod.rs`, `src/formats/rtf/mod.rs`, `tables.rs`: code set in a
+  monospaced font in OpenDocument text and RTF, as for Word:
+  - an ODF run's font is the face its `style:font-name` names
+    (`office:font-face-decls`, by `svg:font-family`), else `fo:font-family`
+    (a list ending in the generic `monospace` counts), through
+    `parent-style-name` over the paragraph default style; RTF reads the font
+    table's names (TextEdit's fonts one after another and Word's group per
+    font, `\*\panose` and `\*\falt` groups aside) and `\deff`;
+  - a face matches by name, also in PostScript form (`Menlo-Regular`,
+    `CourierNewPSMT`, `SFMono-Regular`); a face only declared fixed-pitch
+    (ODF `style:font-pitch="fixed"` or the `modern` generic family, RTF
+    `\fmodern` or `\fprq1`) counts unless its name or RTF charset is CJK;
+  - a paragraph all in such a font is a line of code outside table cells
+    and lists (ODF) or list items (RTF), unless it is a heading (which drops
+    the code style) or holds an image or a displayed formula; a blank one in
+    such a font is a blank line of the listing;
+  - the readers count the share while reading; when monospace sets more than
+    three quarters of the body (notes aside) the document is read a second
+    time without code;
+  - in all three readers (`listing_tables`, also called from
+    `src/formats/docx/mod.rs`), a table that only lays out a code listing (one
+    row of code after an optional cell of line numbers, one numbered line per
+    row, or one cell of code) becomes that code block, and ODF and RTF code
+    blocks lose their line numbers as Word's do.
+- `src/shared/tabs.rs` (added, declared in `src/shared/mod.rs`),
+  `src/shared/blockstyle.rs`, `src/shared/visual.rs`, and
+  `src/formats/docx/content.rs`, `styles.rs`, `mod.rs`,
+  `src/formats/odf/text.rs`, `styles.rs`, `mod.rs`, `src/formats/rtf/mod.rs`:
+  columns set with tab stops are a table (rules in the module):
+  - in the body, a reader keeps each tab (`w:tab`, `text:tab`, `\tab`) as a
+    text inline of exactly `\t` (upstream wrote a space at once) and records
+    each plain top-level paragraph holding one with its tab stops: Word's
+    `w:tabs` over the paragraph style's `basedOn` chain (`clear` removes a
+    stop, bar tabs draw only a line; table-of-contents and index styles
+    are skipped), the nearest ODF `style:tab-stops`, RTF `\tx` with the
+    alignment and leader words before it, reset by `\pard`;
+  - `tabs::finish` turns each qualifying run of such paragraphs into a
+    `Block::Table` and writes every other tab back as a space, so nothing
+    else renders differently: `StyledRun::push` reads a code line's tabs as
+    spaces, an ODF heading's tabs become spaces before its anchor is taken,
+    and `Looks::skip` keeps a table's rows out of the heading guess;
+    `w:ptab`, notes in Word and presentations keep upstream's space.
 
 - `src/formats/rtf/tables.rs`, `src/formats/rtf/mod.rs`, `src/formats/rtf/table.rs`;
   RTF content lost or misread in documents TextEdit and Word save:
@@ -188,4 +235,4 @@ package; it reproduces upstream's formatting, so `cargo fmt` in this directory
 changes nothing upstream wrote.
 
 Tests covering these changes were added beside the upstream ones; the upstream
-suite passes in an isolated copy (362 tests).
+suite passes in an isolated copy (385 tests).

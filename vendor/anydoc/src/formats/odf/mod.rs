@@ -5,10 +5,12 @@ mod table;
 mod text;
 
 use crate::error::ConvertError;
-use crate::model::{Block, Document, Inline, inlines_are_empty};
+use crate::model::{Block, Document, Inline, Note, inlines_are_empty};
 use crate::package::Package;
 use crate::package::xml::{Element, ns};
 use crate::shared::assets::AssetSink;
+use crate::shared::code::{MonoShare, drop_line_gutters, listing_tables};
+use crate::shared::tabs;
 use std::cell::RefCell;
 use text::{Ctx, parse_container};
 
@@ -36,21 +38,25 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
         .ok_or_else(|| ConvertError::malformed_part("content.xml", "no office:body"))?;
 
     let assets = RefCell::new(AssetSink::new());
-    let mut ctx = Ctx::new(&styles, &pkg, &assets);
+    let ctx = Ctx::new(&styles, &pkg, &assets);
 
     let mut slide_starts = Vec::new();
-    let blocks = if let Some(text) = body.find(ns::OFFICE, "text") {
-        // markitai: a text document's headings may be set by hand.
-        ctx.looks = Some(RefCell::default());
-        let mut blocks = parse_container(text, &ctx)?;
-        if let Some(looks) = ctx.looks.take() {
-            looks.into_inner().apply(&mut blocks);
+    let (blocks, notes) = if let Some(text) = body.find(ns::OFFICE, "text") {
+        // markitai: a text document's code may be set in a monospaced font,
+        // unless that font sets most of its text, which is then read again
+        // without code.
+        let (blocks, notes, share) = read_text(text, ctx, true)?;
+        if share.sets_code_apart() {
+            (blocks, notes)
+        } else {
+            *assets.borrow_mut() = AssetSink::new();
+            let (blocks, notes, _) = read_text(text, Ctx::new(&styles, &pkg, &assets), false)?;
+            (blocks, notes)
         }
-        blocks
     } else if let Some(sheet) = body.find(ns::OFFICE, "spreadsheet") {
-        table::parse_spreadsheet(sheet, &ctx)?
+        (table::parse_spreadsheet(sheet, &ctx)?, ctx.notes.into_inner())
     } else if let Some(pres) = body.find(ns::OFFICE, "presentation") {
-        parse_presentation(pres, &ctx, &mut slide_starts)?
+        (parse_presentation(pres, &ctx, &mut slide_starts)?, ctx.notes.into_inner())
     } else {
         return Err(ConvertError::malformed_part(
             "content.xml",
@@ -58,9 +64,34 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
         ));
     };
 
-    let notes = ctx.notes.into_inner();
     let assets = std::mem::take(&mut assets.borrow_mut().assets);
     Ok(Document { blocks, notes, assets, slide_starts })
+}
+
+/// markitai: a text document's body and notes, and how much of its text is
+/// set in a monospaced font. Its headings may be set by hand (see
+/// [`crate::shared::visual`]), its tables with tab stops
+/// ([`crate::shared::tabs`]) and, with `code_fonts`, its code in a
+/// monospaced font ([`crate::shared::code`]): a table laying out a listing
+/// is its code, and a numbered listing loses its line numbers.
+fn read_text(
+    text: &Element,
+    mut ctx: Ctx,
+    code_fonts: bool,
+) -> Result<(Vec<Block>, Vec<Note>, MonoShare), ConvertError> {
+    ctx.looks = Some(RefCell::default());
+    ctx.tabs = Some(RefCell::default());
+    ctx.code_fonts = code_fonts;
+    let mut blocks = parse_container(text, &ctx)?;
+    let mut notes = ctx.notes.take();
+    let rows = ctx.tabs.take().map(RefCell::into_inner).unwrap_or_default();
+    tabs::finish(rows, ctx.looks.take().map(RefCell::into_inner), &mut blocks, &mut notes);
+    for blocks in std::iter::once(&mut blocks).chain(notes.iter_mut().map(|note| &mut note.blocks))
+    {
+        listing_tables(blocks);
+        drop_line_gutters(blocks);
+    }
+    Ok((blocks, notes, ctx.share.get()))
 }
 
 /// Encrypted ODF packages carry `manifest:encryption-data` elements on file
@@ -599,5 +630,172 @@ mod tests {
         assert_eq!(shapes(""), ["p", "h1", "p", "h2", "p", "list", "h2", "p", "p"]);
         let styled = r#"<text:h text:outline-level="1">Real</text:h>"#;
         assert_eq!(shapes(styled), ["p", "p", "p", "p", "p", "list", "p", "p", "p", "h1"]);
+    }
+
+    /// markitai: a text document with these font faces and styles, its body
+    /// described (see `crate::shared::code::describe`), and its notes'.
+    fn described(default_font: &str, body: &str) -> (Vec<String>, Vec<String>) {
+        let content = format!(
+            r#"<office:document-content
+            xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+            xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"
+            xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+            xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
+            xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"
+            xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"
+            xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
+            xmlns:xlink="http://www.w3.org/1999/xlink">
+            <office:font-face-decls>
+              <style:font-face style:name="Menlo" svg:font-family="Menlo"/>
+              <style:font-face style:name="Gothic" svg:font-family="'Letter Gothic'"
+                style:font-pitch="fixed"/>
+              <style:font-face style:name="MS Gothic" svg:font-family="'MS Gothic'"
+                style:font-family-generic="modern" style:font-pitch="fixed"/>
+              <style:font-face style:name="Times" svg:font-family="Times"/>
+            </office:font-face-decls>
+            <office:styles>
+              <style:default-style style:family="paragraph">
+                <style:text-properties style:font-name="{default_font}"/></style:default-style>
+              <style:style style:name="Code" style:family="paragraph">
+                <style:text-properties style:font-name="Menlo"/></style:style>
+              <style:style style:name="Cols" style:family="paragraph"><style:paragraph-properties>
+                <style:tab-stops><style:tab-stop style:position="2in"/>
+                <style:tab-stop style:position="4in" style:type="right"/></style:tab-stops>
+              </style:paragraph-properties></style:style>
+              <style:style style:name="Dots" style:family="paragraph"><style:paragraph-properties>
+                <style:tab-stops><style:tab-stop style:position="6in" style:type="right"
+                  style:leader-style="dotted" style:leader-text="."/></style:tab-stops>
+              </style:paragraph-properties></style:style>
+            </office:styles>
+            <office:automatic-styles>
+              <style:style style:name="P1" style:family="paragraph" style:parent-style-name="Code"/>
+              <style:style style:name="P2" style:family="paragraph" style:parent-style-name="Cols"/>
+              <style:style style:name="T1" style:family="text">
+                <style:text-properties style:font-name="Gothic"/></style:style>
+              <style:style style:name="T2" style:family="text">
+                <style:text-properties fo:font-family="'Iosevka Term', monospace"/></style:style>
+              <style:style style:name="T3" style:family="text">
+                <style:text-properties style:font-name="MS Gothic"/></style:style>
+              <style:style style:name="T4" style:family="text">
+                <style:text-properties fo:font-family="Georgia, serif"/></style:style>
+              <style:style style:name="T5" style:family="text">
+                <style:text-properties style:font-name="Times"/></style:style>
+            </office:automatic-styles>
+            <office:body><office:text>{body}</office:text></office:body>
+            </office:document-content>"#
+        );
+        let doc = parse(&odt_with_content(&content)).unwrap();
+        let notes = doc.notes.iter().flat_map(|note| crate::shared::code::describe(&note.blocks));
+        (crate::shared::code::describe(&doc.blocks), notes.collect())
+    }
+
+    const PROSE: &str = "<text:p>And then the prose of the document goes on for a while, in the face \
+        the document is set in.</text:p>";
+
+    #[test]
+    fn text_in_a_monospaced_font_is_code() {
+        let body = format!(
+            r#"<text:h text:outline-level="1"><text:span text:style-name="T1">Setup</text:span></text:h>
+            <text:p>Run <text:span text:style-name="T1">make</text:span> or <text:span
+              text:style-name="T2">cargo</text:span>; <text:span text:style-name="T3">kanji</text:span>
+              and <text:span text:style-name="T4">serif</text:span> are text.</text:p>
+            <text:p text:style-name="P1">fn main() {{</text:p>
+            <text:p text:style-name="P1"><text:span text:style-name="T2"/></text:p>
+            <text:p text:style-name="P1"><text:s text:c="4"/>go();</text:p>
+            <text:p text:style-name="P1">}}</text:p>
+            <text:list><text:list-item><text:p text:style-name="P1">listed</text:p></text:list-item></text:list>
+            <table:table><table:table-row><table:table-cell><text:p text:style-name="P1">celled</text:p>
+              </table:table-cell><table:table-cell><text:p>prose cell</text:p></table:table-cell>
+            </table:table-row></table:table>
+            <table:table><table:table-row><table:table-cell><text:p text:style-name="P1">1</text:p>
+              <text:p text:style-name="P1">2</text:p></table:table-cell><table:table-cell>
+              <text:p text:style-name="P1">a = 1</text:p><text:p text:style-name="P1">b = 2</text:p>
+            </table:table-cell></table:table-row></table:table>
+            <text:p text:style-name="P1">1</text:p><text:p text:style-name="P1">x</text:p>
+            <text:p text:style-name="P1">2</text:p><text:p text:style-name="P1">y</text:p>
+            <text:p text:style-name="P1">fig.<draw:frame><draw:image xlink:href="Pictures/none.png"/>
+              <svg:title>A figure</svg:title></draw:frame></text:p>
+            {PROSE}"#
+        );
+        let (blocks, _) = described("Times", &body);
+        assert_eq!(
+            blocks,
+            [
+                "h1:Setup",
+                "p:Run `make` or `cargo`; kanji and serif are text.",
+                "code:fn main() {\n\n    go();\n}",
+                "list:p:`listed`",
+                "table:p:`celled`|p:prose cell",
+                "code:a = 1\nb = 2",
+                "code:x\ny",
+                // A paragraph with a picture is no line of code.
+                "p:`fig.`",
+                &format!("p:{}", &PROSE[8..PROSE.len() - 9]),
+            ]
+        );
+        // A document set in a monospaced font marks no code.
+        let typed = format!(r#"<text:p>INT. KITCHEN - NIGHT</text:p>{PROSE}"#);
+        let (blocks, _) = described("Menlo", &typed);
+        assert_eq!(blocks[0], "p:INT. KITCHEN - NIGHT");
+        assert!(!blocks[1].contains('`'), "{blocks:?}");
+        // Where the default face is monospaced but the text is mostly set
+        // in another, a paragraph in the default face is code.
+        let spans = format!(
+            r#"<text:p>ls -la</text:p><text:p><text:span text:style-name="T5">{}</text:span></text:p>"#,
+            &PROSE[8..PROSE.len() - 9]
+        );
+        let (blocks, _) = described("Menlo", &spans);
+        assert_eq!(blocks[0], "code:ls -la");
+    }
+
+    #[test]
+    fn columns_set_with_tab_stops_are_a_table() {
+        let row = |style: &str, cells: &[&str]| {
+            format!(r#"<text:p text:style-name="{style}">{}</text:p>"#, cells.join("<text:tab/>"))
+        };
+        let body = [
+            row("P2", &["Item", "Qty", "Price"]),
+            row("P2", &["Apple", "3", "1.20"]),
+            row("P2", &["Pear", "12", "0.50"]),
+            row("Dots", &["Part 1", "Intro", "Page one"]),
+            row("Dots", &["Part 2", "Methods", "Page two"]),
+            row("Dots", &["Part 3", "Results", "Page three"]),
+            r#"<text:h text:outline-level="1">A<text:tab/>B<text:tab/>C</text:h>"#.into(),
+            r#"<text:list><text:list-item><text:p>a<text:tab/>b<text:tab/>c</text:p></text:list-item>
+              <text:list-item><text:p>d<text:tab/>e<text:tab/>f</text:p></text:list-item>
+              <text:list-item><text:p>g<text:tab/>h<text:tab/>i</text:p></text:list-item></text:list>"#
+                .into(),
+            r#"<text:p>Noted<text:note><text:note-body><text:p>x<text:tab/>y</text:p></text:note-body>
+              </text:note></text:p>"#
+                .into(),
+        ]
+        .concat();
+        let (blocks, notes) = described("Times", &body);
+        assert_eq!(
+            blocks,
+            [
+                "table:p:Item|p:Qty|p:Price/p:Apple|p:3|p:1.20/p:Pear|p:12|p:0.50",
+                "p:Part 1 Intro Page one",
+                "p:Part 2 Methods Page two",
+                "p:Part 3 Results Page three",
+                "h1:A B C",
+                "list:p:a b c|p:d e f|p:g h i",
+                "p:Noted",
+            ]
+        );
+        assert_eq!(notes, ["p:x y"]);
+        // A heading is linked to by its text, tabs read as spaces.
+        let content = format!(
+            r#"<office:document-content
+            xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+            xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">
+            <office:body><office:text>{}</office:text></office:body></office:document-content>"#,
+            r#"<text:h text:outline-level="1">A<text:tab/>B</text:h>"#
+        );
+        let doc = parse(&odt_with_content(&content)).unwrap();
+        let [Block::Heading { anchor: Some(anchor), .. }] = &doc.blocks[..] else {
+            panic!("{:?}", doc.blocks)
+        };
+        assert_eq!(anchor, "A B");
     }
 }

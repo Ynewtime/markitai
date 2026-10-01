@@ -11,9 +11,11 @@ use crate::model::{
 use crate::package::Package;
 use crate::package::xml::{Element, Node, ns};
 use crate::shared::assets::{AssetSink, media_type_for};
-use crate::shared::blockstyle::StyledRun;
+use crate::shared::blockstyle::{BlockStyle, StyledRun};
+use crate::shared::code::{MonoShare, RunFonts, has_image, without_code};
 use crate::shared::delta::{StyleDelta, rebase_emphasis};
 use crate::shared::math::mathml_to_tex;
+use crate::shared::tabs::{self, TabRows};
 use crate::shared::text::{clean_text, collapse_ws};
 use crate::shared::visual::{Looks, ParaSize, Size};
 use std::cell::{Cell, RefCell};
@@ -39,6 +41,20 @@ pub struct Ctx<'a, 'b> {
     para_size: Cell<ParaSize>,
     depth: Cell<u32>,
     note_depth: Cell<u32>,
+    /// markitai: in a text document, whether monospaced text is code (see
+    /// [`crate::shared::code`]); how much of the body's text is
+    /// monospaced; the runs of the paragraph being read; and how many table
+    /// cells and lists deep the content being read sits (neither holds a
+    /// code block).
+    pub code_fonts: bool,
+    pub share: Cell<MonoShare>,
+    para_fonts: Cell<RunFonts>,
+    cell_depth: Cell<u32>,
+    list_depth: Cell<u32>,
+    /// markitai: in a text document, the body's paragraphs that may be rows
+    /// of a table set with tab stops (see [`crate::shared::tabs`]); while it
+    /// is set, a tab is read as [`tabs::TAB`].
+    pub tabs: Option<RefCell<TabRows>>,
 }
 
 impl<'a, 'b> Ctx<'a, 'b> {
@@ -59,6 +75,30 @@ impl<'a, 'b> Ctx<'a, 'b> {
             para_size: Default::default(),
             depth: Default::default(),
             note_depth: Default::default(),
+            code_fonts: false,
+            share: Default::default(),
+            para_fonts: Default::default(),
+            cell_depth: Default::default(),
+            list_depth: Default::default(),
+            tabs: None,
+        }
+    }
+
+    /// markitai: content read inside a table cell, for as long as the
+    /// guard lives.
+    pub(super) fn in_cell(&self) -> Deeper<'_> {
+        Deeper::enter(&self.cell_depth)
+    }
+
+    /// markitai: visible text was read, in a monospaced font or not.
+    fn saw_font(&self, text: &str, mono: bool) {
+        let mut fonts = self.para_fonts.get();
+        fonts.run(text.trim().is_empty(), mono);
+        self.para_fonts.set(fonts);
+        if self.note_depth.get() == 0 {
+            let mut share = self.share.get();
+            share.text(text, mono);
+            self.share.set(share);
         }
     }
 
@@ -76,7 +116,7 @@ impl<'a, 'b> Ctx<'a, 'b> {
 
 /// markitai: content read one container, list or note deeper, for as long
 /// as it lives.
-struct Deeper<'c>(&'c Cell<u32>);
+pub(super) struct Deeper<'c>(&'c Cell<u32>);
 
 impl<'c> Deeper<'c> {
     fn enter(depth: &'c Cell<u32>) -> Self {
@@ -120,7 +160,13 @@ fn parse_block_elem(
                     .attr(ns::TEXT, "outline-level")
                     .and_then(|v| v.parse::<u8>().ok())
                     .unwrap_or(1);
-                let (inlines, boxes, _) = parse_inline_content(elem, ctx)?;
+                let (mut inlines, boxes, _, mono) = parse_inline_content(elem, ctx)?;
+                // markitai: a heading's tabs are spaces (it is no row of a
+                // table), and a heading set in a monospaced font is no code.
+                tabs::spaces(&mut inlines);
+                if mono {
+                    without_code(&mut inlines);
+                }
                 if !inlines_are_empty(&inlines) {
                     let mut content = inlines;
                     rebase_emphasis(&mut content, paragraph_base(elem, ctx)?.resolve());
@@ -136,21 +182,31 @@ fn parse_block_elem(
                 return Ok(());
             }
             "p" => {
-                let (inlines, boxes, size) = parse_inline_content(elem, ctx)?;
-                let style =
-                    elem.attr(ns::TEXT, "style-name").and_then(|n| ctx.styles.block_style(n));
+                let (inlines, boxes, size, mono) = parse_inline_content(elem, ctx)?;
+                let name = elem.attr(ns::TEXT, "style-name");
+                let style = name.and_then(|n| ctx.styles.block_style(n));
+                // markitai: a paragraph all in a monospaced font is a line
+                // of code, except in a table cell or a list.
+                let style = style.or_else(|| {
+                    (mono && ctx.cell_depth.get() == 0 && ctx.list_depth.get() == 0)
+                        .then_some(BlockStyle::Code)
+                });
                 match style {
                     Some(style) => run.push(style, inlines, blocks),
                     None => {
                         run.flush(blocks);
-                        blocks.push(Block::Paragraph(inlines));
                         // markitai: a plain paragraph of the body itself may
-                        // turn out to be a heading set by hand.
-                        if boxes.is_empty()
-                            && ctx.depth.get() == 1
-                            && let Some(looks) = &ctx.looks
-                        {
+                        // turn out to be a heading set by hand, or a row of
+                        // a table set with tab stops.
+                        let plain = boxes.is_empty() && ctx.depth.get() == 1;
+                        let row = plain && tabs::has_tab(&inlines);
+                        blocks.push(Block::Paragraph(inlines));
+                        if plain && let Some(looks) = &ctx.looks {
                             looks.borrow_mut().paragraph(blocks.len() - 1, size);
+                        }
+                        if row && let Some(tab_rows) = &ctx.tabs {
+                            let stops = name.map(|n| ctx.styles.tab_stops(n)).unwrap_or_default();
+                            tab_rows.borrow_mut().paragraph(blocks.len() - 1, stops);
                         }
                     }
                 }
@@ -209,8 +265,10 @@ fn parse_list(
     inherited_style: Option<&str>,
     ancestors: &[u64],
 ) -> Result<Vec<Block>, ConvertError> {
-    // markitai: a list's paragraphs are not the body's own (see `Ctx::depth`).
+    // markitai: a list's paragraphs are not the body's own (see `Ctx::depth`),
+    // nor lines of code (see `Ctx::list_depth`).
     let _deeper = Deeper::enter(&ctx.depth);
+    let _in_list = Deeper::enter(&ctx.list_depth);
     let style_name = elem.attr(ns::TEXT, "style-name").or(inherited_style);
     let level = ctx.styles.list_level(style_name.unwrap_or(""), depth);
     let ordered = level.marker.ordered();
@@ -364,6 +422,8 @@ struct RunMarks {
     hidden: bool,
     /// markitai: the text size, in half-points.
     size: Size,
+    /// markitai: whether the text is set in a monospaced font.
+    mono: bool,
 }
 
 impl RunMarks {
@@ -377,6 +437,7 @@ impl RunMarks {
                 .styles
                 .font_size(family, name)
                 .map_or(self.size, |size| size.within(self.size)),
+            mono: ctx.styles.font_mono(family, name).unwrap_or(self.mono),
         }
     }
 }
@@ -384,24 +445,36 @@ impl RunMarks {
 /// Inline content of a paragraph plus block attachments (text boxes) that
 /// were anchored in it.
 ///
-/// markitai: and the sizes of its visible text.
+/// markitai: and the sizes of its visible text, and whether it is all set
+/// in a monospaced font (see [`crate::shared::code`]): every run with text,
+/// or with none the paragraph's own font (a blank line of a listing); a
+/// paragraph holding an image never is.
 fn parse_inline_content(
     elem: &Element,
     ctx: &Ctx,
-) -> Result<(Vec<Inline>, Vec<Block>, ParaSize), ConvertError> {
+) -> Result<(Vec<Inline>, Vec<Block>, ParaSize, bool), ConvertError> {
     let base = paragraph_base(elem, ctx)?;
-    let unstyled = RunMarks { size: ctx.styles.base_size(), ..RunMarks::default() };
+    let unstyled = RunMarks {
+        size: ctx.styles.base_size(),
+        mono: ctx.styles.base_mono(),
+        ..RunMarks::default()
+    };
     let marks = match elem.attr(ns::TEXT, "style-name") {
         Some(name) => unstyled.under(ctx, "paragraph", name),
         None => unstyled,
     };
     let mut out = Vec::new();
     let mut boxes = Vec::new();
-    // A text box read inside the paragraph gathers its own sizes.
+    // A text box read inside the paragraph gathers its own sizes and fonts.
     let outer = ctx.para_size.take();
+    let outer_fonts = ctx.para_fonts.take();
     walk_inlines(elem, ctx, base, marks, &mut out, &mut boxes)?;
     let size = ctx.para_size.replace(outer);
-    Ok((out, boxes, size))
+    let fonts = ctx.para_fonts.replace(outer_fonts);
+    let mono = ctx.code_fonts
+        && !has_image(&out)
+        && fonts.all_mono().unwrap_or_else(|| inlines_are_empty(&out) && marks.mono);
+    Ok((out, boxes, size, mono))
 }
 
 /// The style a paragraph's runs cascade from. An unstyled paragraph still sits
@@ -430,9 +503,12 @@ fn walk_inlines(
                 // markitai: raised or lowered text ("x₁", "library¹").
                 let text = marks.script.and_then(|script| script.convert(&text)).unwrap_or(text);
                 if !text.is_empty() {
-                    // markitai: visible text and its size.
+                    // markitai: visible text and its size, and text set in a
+                    // monospaced font is code.
                     ctx.saw_text(marks.size, &text);
-                    out.push(Inline::Text { text, style });
+                    ctx.saw_font(&text, marks.mono);
+                    let code = style.code || (ctx.code_fonts && marks.mono);
+                    out.push(Inline::Text { text, style: Style { code, ..style } });
                 }
             }
             Node::Elem(child) => {
@@ -490,7 +566,12 @@ fn walk_inlines(
                             continue;
                         }
                         "tab" => {
-                            out.push(Inline::Text { text: " ".into(), style: Style::PLAIN });
+                            // markitai: a tab of a text document is kept until
+                            // the tables set with tab stops are found.
+                            out.push(match ctx.tabs {
+                                Some(_) => tabs::tab(Style::PLAIN),
+                                None => Inline::Text { text: " ".into(), style: Style::PLAIN },
+                            });
                             continue;
                         }
                         "line-break" => {

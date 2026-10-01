@@ -65,6 +65,78 @@ fn odt_comments_stay_out_with_a_warning_and_a_chart_reads_as_its_data() {
 }
 
 #[test]
+fn odt_code_set_in_a_monospaced_font_and_columns_set_with_tab_stops() {
+    // As `textutil` saves a web page: faces named by `style:font-name` (here
+    // a generated face name, its family declared apart), a listing one
+    // paragraph per line, inline code in prose, a highlighter's
+    // table of line numbers and code. Tab-set columns with a bold first
+    // row are a table with that row as its header.
+    let content = format!(
+        r#"<office:document-content {NAMESPACES}
+        xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"
+        xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0">
+        <office:font-face-decls><style:font-face style:name="F2" svg:font-family="Courier"/>
+          <style:font-face style:name="Times" svg:font-family="Times"/></office:font-face-decls>
+        <office:automatic-styles>
+          <style:style style:name="P1" style:family="paragraph">
+            <style:text-properties style:font-name="Times"/></style:style>
+          <style:style style:name="P3" style:family="paragraph">
+            <style:text-properties style:font-name="F2"/></style:style>
+          <style:style style:name="P4" style:family="paragraph"><style:paragraph-properties>
+            <style:tab-stops><style:tab-stop style:position="2in"/>
+            <style:tab-stop style:position="4in" style:type="char" style:char="."/></style:tab-stops>
+            </style:paragraph-properties></style:style>
+          <style:style style:name="T1" style:family="text">
+            <style:text-properties fo:font-weight="bold"/></style:style>
+          <style:style style:name="T3" style:family="text">
+            <style:text-properties style:font-name="F2"/></style:style>
+        </office:automatic-styles>
+        <office:body><office:text>
+        <text:p text:style-name="P1">This script uses the <text:span text:style-name="T3">read</text:span><text:s/>command:</text:p>
+        <text:p text:style-name="P3">#!/bin/bash</text:p>
+        <text:p text:style-name="P3"><text:span/></text:p>
+        <text:p text:style-name="P3"><text:s text:c="2"/>read -p "Name: " name</text:p>
+        <table:table><table:table-row><table:table-cell><text:p text:style-name="P3">1</text:p>
+          <text:p text:style-name="P3">2</text:p></table:table-cell><table:table-cell>
+          <text:p text:style-name="P3">echo "$name"</text:p><text:p text:style-name="P3">exit 0</text:p>
+        </table:table-cell></table:table-row></table:table>
+        <text:p text:style-name="P4"><text:span text:style-name="T1">Item<text:tab/>Qty<text:tab/>Price</text:span></text:p>
+        <text:p text:style-name="P4">Apple<text:tab/>3<text:tab/>1.20</text:p>
+        <text:p text:style-name="P4">Pear<text:tab/>12<text:tab/>0.50</text:p>
+        <text:p text:style-name="P1">That is all for this page, set in the body face as text is.</text:p>
+        </office:text></office:body></office:document-content>"#
+    );
+    let doc = extract(&odt(&[("content.xml", &content)]), "odt").unwrap();
+    assert_eq!(
+        doc.markdown,
+        "This script uses the `read` command:\n\n```\n#!/bin/bash\n\n  read -p \"Name: \" name\n```\n\n```\necho \"$name\"\nexit 0\n```\n\n| **Item** | **Qty** | **Price** |\n| --- | --- | --- |\n| Apple | 3 | 1.20 |\n| Pear | 12 | 0.50 |\n\nThat is all for this page, set in the body face as text is.\n"
+    );
+}
+
+#[test]
+fn rtf_code_set_in_a_monospaced_font_and_columns_set_with_tab_stops() {
+    // TextEdit's font table (PostScript names, one font after another) and
+    // Word's tab stops (`\tx`, a right-aligned `\tqr`); a heading set in the
+    // code face is no code, and a contents line with a dot leader is text.
+    let rtf = "{\\rtf1\\ansi{\\fonttbl\\f0\\froman\\fcharset0 Times-Roman;\\f1\\fnil\\fcharset0 Menlo-Regular;}\n\
+{\\stylesheet{\\s1\\outlinelevel0 heading 1;}}\n\
+\\pard\\s1\\outlinelevel0\\f1 Usage\\par\n\
+\\pard\\f0 Run \\f1 make\\f0  first:\\par\n\
+\\pard\\f1 make all\\par\n\
+make install\\par\n\
+\\pard\\tx2880\\tqr\\tx5760\\f0 Item\\tab Qty\\tab Price\\par\n\
+\\pard\\tx2880\\tqr\\tx5760 Apple\\tab 3\\tab 1.20\\par\n\
+\\pard\\tx2880\\tqr\\tx5760 Pear\\tab 12\\tab 0.50\\par\n\
+\\pard\\tqr\\tldot\\tx8640 Contents\\tab 1\\par\n\
+\\pard That is all for this page, set in the body face as text is.\\par}";
+    let doc = extract(rtf.as_bytes(), "rtf").unwrap();
+    assert_eq!(
+        doc.markdown,
+        "# Usage\n\nRun `make` first:\n\n```\nmake all\nmake install\n```\n\n|  |  |  |\n| --- | --- | --- |\n| Item | Qty | Price |\n| Apple | 3 | 1.20 |\n| Pear | 12 | 0.50 |\n\nContents 1\n\nThat is all for this page, set in the body face as text is.\n"
+    );
+}
+
+#[test]
 fn textedit_rtf_reads_like_the_same_page_saved_as_docx() {
     // TextEdit on a Chinese system: `\ansicpg936` over charset-0 fonts whose
     // bytes are Windows-1252; a comment thread nested two tables deep and

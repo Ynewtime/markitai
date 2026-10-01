@@ -132,6 +132,24 @@ impl<'a> Styles<'a> {
         self.chains.walk(id, |style| run_font(style.find(ns::W, "rPr")?))
     }
 
+    /// markitai: a style's name (`w:name`), as written.
+    pub fn style_name(&self, id: &str) -> Option<&'a str> {
+        self.chains.definition(id)?.find(ns::W, "name")?.attr(ns::W, "val")
+    }
+
+    /// markitai: the tab stops (`w:pPr/w:tabs`) a style and the styles it
+    /// is `basedOn` set, nearest first; see [`crate::shared::tabs`].
+    pub fn style_tabs(&self, id: &str) -> Result<Vec<&'a Element>, ConvertError> {
+        let mut found = Vec::new();
+        self.chains.walk::<()>(id, |style| {
+            if let Some(tabs) = style.find(ns::W, "pPr").and_then(|ppr| ppr.find(ns::W, "tabs")) {
+                found.push(tabs);
+            }
+            None
+        })?;
+        Ok(found)
+    }
+
     /// The size a style sets its text in (`w:sz`), inherited through
     /// `basedOn`; the nearest specification wins.
     ///

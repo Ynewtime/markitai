@@ -9,8 +9,10 @@ use crate::error::ConvertError;
 use crate::formats::docx::scripts::Script;
 use crate::package::xml::{Element, ns};
 use crate::shared::blockstyle::{self, BlockStyle};
+use crate::shared::code::{is_fixed_pitch_code_face, is_monospace};
 use crate::shared::delta::StyleDelta;
 use crate::shared::list::MarkerKind;
+use crate::shared::tabs::Stops;
 use crate::shared::visual::Size;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -82,6 +84,13 @@ pub struct OdfStyles<'a> {
     /// each style's size by family and name, as [`Self::font_size`] finds it.
     default_size: Option<Size>,
     size_memo: RefCell<HashMap<String, HashMap<String, Option<FontSize>>>>,
+    /// markitai: whether each declared font face (`style:font-face`, by
+    /// `style:name`) is monospaced, whether the paragraph default style's
+    /// font is, and each style's answer by family and name, as
+    /// [`Self::font_mono`] finds it.
+    faces: HashMap<String, bool>,
+    default_mono: Option<bool>,
+    mono_memo: RefCell<HashMap<String, HashMap<String, Option<bool>>>>,
 }
 
 /// markitai: a text size (`fo:font-size`), in half-points or as a
@@ -128,12 +137,43 @@ fn key(family: &str, name: &str) -> String {
     format!("{family}\u{0}{name}")
 }
 
+/// markitai: whether a font family (`svg:font-family` or `fo:font-family`:
+/// one name, quoted or not, or a list ending in a generic family) is
+/// monospaced; `fixed` when the document declares it fixed-pitch.
+fn family_mono(family: &str, fixed: bool) -> bool {
+    let mut names = family.split(',').map(|name| name.trim().trim_matches(['\'', '"']).trim());
+    let first = names.next().unwrap_or_default();
+    is_monospace(first)
+        || (fixed && is_fixed_pitch_code_face(first))
+        || names.any(|name| name.eq_ignore_ascii_case("monospace"))
+}
+
+/// markitai: whether a font face or text properties declare the font
+/// fixed-pitch (`style:font-pitch`, or the `modern` generic family).
+fn fixed_pitch(elem: &Element) -> bool {
+    elem.attr(ns::STYLE, "font-pitch") == Some("fixed")
+        || elem.attr(ns::STYLE, "font-family-generic") == Some("modern")
+}
+
 impl<'a> OdfStyles<'a> {
     /// Collect styles from one document tree (`styles.xml` or `content.xml`).
     /// Call for styles.xml first so content.xml definitions chain onto it.
     pub fn collect(&mut self, tree: &'a Element) {
         for root in tree.child_elems() {
             for section in root.child_elems() {
+                // markitai: the font faces styles name.
+                if section.is(ns::OFFICE, "font-face-decls") {
+                    for face in section.child_elems().filter(|c| c.is(ns::STYLE, "font-face")) {
+                        if let Some(name) = face.attr(ns::STYLE, "name") {
+                            let family = face.attr(ns::SVG_COMPAT, "font-family").unwrap_or(name);
+                            let mono = is_monospace(name)
+                                || family_mono(family, fixed_pitch(face))
+                                || (fixed_pitch(face) && is_fixed_pitch_code_face(name));
+                            self.faces.insert(name.to_string(), mono);
+                        }
+                    }
+                    continue;
+                }
                 if !(section.is(ns::OFFICE, "automatic-styles") || section.is(ns::OFFICE, "styles"))
                 {
                     continue;
@@ -151,6 +191,14 @@ impl<'a> OdfStyles<'a> {
                                 .and_then(FontSize::parse)
                         {
                             self.default_size = Some(size);
+                        }
+                        // markitai: and the font of text no style sets one for.
+                        if family == "paragraph"
+                            && let Some(mono) = style
+                                .find(ns::STYLE, "text-properties")
+                                .and_then(|props| self.props_mono(props))
+                        {
+                            self.default_mono = Some(mono);
                         }
                     }
                     if style.is(ns::STYLE, "style")
@@ -216,16 +264,83 @@ impl<'a> OdfStyles<'a> {
         name: &str,
         read: impl Fn(&Element) -> Option<T>,
     ) -> Option<T> {
+        self.nearest_in(family, name, "text-properties", read)
+    }
+
+    /// markitai: the nearest value `read` finds in a style's `properties`
+    /// element (`style:text-properties`, `style:paragraph-properties`) on
+    /// its `parent-style-name` chain.
+    fn nearest_in<T>(
+        &self,
+        family: &str,
+        name: &str,
+        properties: &str,
+        read: impl Fn(&Element) -> Option<T>,
+    ) -> Option<T> {
         let mut id = key(family, name);
         let mut visited: HashSet<String> = HashSet::new();
         while visited.insert(id.clone()) {
             let (def, parent) = self.raw.get(&id)?;
-            if let Some(hit) = def.find(ns::STYLE, "text-properties").and_then(&read) {
+            if let Some(hit) = def.find(ns::STYLE, properties).and_then(&read) {
                 return Some(hit);
             }
             id = parent.clone()?;
         }
         None
+    }
+
+    /// markitai: whether the font `style:text-properties` names is
+    /// monospaced (see [`crate::shared::code`]): its `style:font-name`
+    /// face, which wins, else its `fo:font-family`. `None` when it names
+    /// no font.
+    fn props_mono(&self, props: &Element) -> Option<bool> {
+        if let Some(name) = props.attr(ns::STYLE, "font-name") {
+            return Some(self.faces.get(name).copied().unwrap_or_else(|| family_mono(name, false)));
+        }
+        let family = props.attr(ns::FO, "font-family")?;
+        Some(family_mono(family, fixed_pitch(props)))
+    }
+
+    /// markitai: whether a style sets its text in a monospaced font,
+    /// through `parent-style-name`; `None` when no style on the chain names
+    /// a font.
+    pub fn font_mono(&self, family: &str, name: &str) -> Option<bool> {
+        if let Some(hit) = self.mono_memo.borrow().get(family).and_then(|names| names.get(name)) {
+            return *hit;
+        }
+        let mono = self.nearest(family, name, |props| self.props_mono(props));
+        self.mono_memo
+            .borrow_mut()
+            .entry(family.to_string())
+            .or_default()
+            .insert(name.to_string(), mono);
+        mono
+    }
+
+    /// markitai: whether text no style sets a font for is monospaced: the
+    /// paragraph default style's font.
+    pub fn base_mono(&self) -> bool {
+        self.default_mono.unwrap_or(false)
+    }
+
+    /// markitai: the tab stops a paragraph style sets (the nearest
+    /// `style:tab-stops` on its chain); see [`crate::shared::tabs`].
+    pub fn tab_stops(&self, name: &str) -> Stops {
+        let stops = self.nearest_in("paragraph", name, "paragraph-properties", |props| {
+            let tabs = props.find(ns::STYLE, "tab-stops")?;
+            let mut stops = Stops::default();
+            for stop in tabs.child_elems().filter(|c| c.is(ns::STYLE, "tab-stop")) {
+                let leader = stop.attr(ns::STYLE, "leader-style").is_some_and(|s| s != "none")
+                    || stop.attr(ns::STYLE, "leader-text").is_some_and(|t| !t.trim().is_empty());
+                stops.add(
+                    stop.attr(ns::STYLE, "position").unwrap_or_default(),
+                    stop.attr(ns::STYLE, "type").unwrap_or("left"),
+                    leader,
+                );
+            }
+            Some(stops)
+        });
+        stops.unwrap_or_default()
     }
 
     /// markitai: the raised or lowered position a style gives its text

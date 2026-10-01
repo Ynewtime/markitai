@@ -515,3 +515,62 @@ fn a_listing_loses_its_line_numbers_and_a_cell_keeps_code_inline() {
         "Example:\n\n```\necho hello\nexit 0\n```\n\n|  |  |\n| --- | --- |\n| `make` | builds it |"
     );
 }
+
+/// A paragraph of `cells` separated by tabs, at the tab stops `tabs` sets.
+fn tab_row(tabs: &str, cells: &[&str]) -> String {
+    let runs: Vec<String> = cells
+        .iter()
+        .map(|cell| format!(r#"<w:r><w:t xml:space="preserve">{cell}</w:t></w:r>"#))
+        .collect();
+    format!(
+        "<w:p><w:pPr>{tabs}</w:pPr>{}</w:p>",
+        runs.join("<w:r><w:tab/></w:r>")
+    )
+}
+
+#[test]
+fn columns_set_with_tab_stops_are_a_table_and_other_tabs_stay_spaces() {
+    // Three rows at the stops the author set are a table, every row data as
+    // in a Word table with no header row. A contents page (a dot leader),
+    // a verse indented with a tab and a lone tab stay text, each tab a space.
+    let stops =
+        r#"<w:tabs><w:tab w:val="left" w:pos="3000"/><w:tab w:val="right" w:pos="6000"/></w:tabs>"#;
+    let dots = r#"<w:tabs><w:tab w:val="right" w:leader="dot" w:pos="8000"/></w:tabs>"#;
+    let body = [
+        paragraph("Price list follows."),
+        tab_row(stops, &["Item", "Quantity", "Price"]),
+        tab_row(stops, &["Apple", "3", "1.20"]),
+        tab_row(stops, &["Banana", "12", "0.50"]),
+        tab_row(dots, &["Introduction", "1"]),
+        tab_row(dots, &["Results", "15"]),
+        tab_row(dots, &["Discussion", "22"]),
+        tab_row("", &["", "Whose woods these are I think I know."]),
+        tab_row("", &["", "His house is in the village though;"]),
+        tab_row("", &["", "He will not see me stopping here"]),
+        tab_row("", &["A sentence with", "one tab inside it."]),
+    ]
+    .concat();
+    assert_eq!(
+        markdown(&body, &[]),
+        "Price list follows.\n\n|  |  |  |\n| --- | --- | --- |\n| Item | Quantity | Price |\n| Apple | 3 | 1.20 |\n| Banana | 12 | 0.50 |\n\nIntroduction 1\n\nResults 15\n\nDiscussion 22\n\n Whose woods these are I think I know.\n\n His house is in the village though;\n\n He will not see me stopping here\n\nA sentence with one tab inside it."
+    );
+}
+
+#[test]
+fn a_listing_laid_out_in_a_table_is_a_code_block() {
+    // A highlighter's table: a cell of line numbers, then the code.
+    let body = [
+        paragraph("Example:"),
+        table(&[format!(
+            "<w:tr>{}{}</w:tr>",
+            cell(&[code_line("1"), code_line("2")].concat()),
+            cell(&[code_line("let a = 1;"), code_line("let b = 2;")].concat())
+        )]),
+        paragraph("The prose of the document goes on in its own face for a while."),
+    ]
+    .concat();
+    assert_eq!(
+        markdown(&body, &[styles()]),
+        "Example:\n\n```\nlet a = 1;\nlet b = 2;\n```\n\nThe prose of the document goes on in its own face for a while."
+    );
+}

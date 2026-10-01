@@ -338,7 +338,11 @@ fn flush_gap(state: &mut TableState, pending: &mut u64) -> Result<(), ConvertErr
 /// A cell's blocks: its text content, or a typed value-attribute fallback
 /// when the producer wrote no display text.
 fn cell_blocks(cell: &Element, ctx: &Ctx) -> Result<Vec<Block>, ConvertError> {
-    let blocks = parse_container(cell, ctx)?;
+    // markitai: a cell holds no code block (see `Ctx::cell_depth`).
+    let blocks = {
+        let _in_cell = ctx.in_cell();
+        parse_container(cell, ctx)?
+    };
     let has_content = blocks.iter().any(|b| match b {
         Block::Paragraph(inlines) => !crate::model::inlines_are_empty(inlines),
         _ => true,

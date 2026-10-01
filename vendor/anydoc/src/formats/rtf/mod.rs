@@ -12,10 +12,14 @@ use crate::formats::docx::scripts::Script;
 use crate::model::{Block, Document, Inline, Note, NoteKind, Style, inlines_are_empty};
 use crate::package::xml::{Element, Node, ns};
 use crate::shared::blockstyle::{BlockStyle, StyledRun};
+use crate::shared::code::{
+    MonoShare, RunFonts, drop_line_gutters, has_image, listing_tables, without_code,
+};
 use crate::shared::delta::rebase_emphasis;
 use crate::shared::fields::field_result;
 use crate::shared::list::{ListEntry, ListKey, MarkerKind, flush_list};
 use crate::shared::math::{math_lines, omath_para_to_tex};
+use crate::shared::tabs::{self, Stops, TabRows};
 use crate::shared::text::clean_text;
 use crate::shared::visual::{Looks, ParaSize, Size};
 use lexer::{Lexer, Token};
@@ -32,8 +36,17 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
     // header for \ansicpg first.
     let default_encoding = scan_codepage(bytes);
     let prelude = parse_prelude(bytes, default_encoding);
+    // markitai: text in a monospaced font is code, unless that font sets
+    // most of the text; the document is then read again without code (see
+    // `crate::shared::code`).
+    let code_fonts = !prelude.mono_fonts.is_empty();
     let mut parser = Parser::new(bytes, prelude, default_encoding);
+    parser.code_fonts = code_fonts;
     parser.run()?;
+    if code_fonts && !parser.share.sets_code_apart() {
+        parser = Parser::new(bytes, parse_prelude(bytes, default_encoding), default_encoding);
+        parser.run()?;
+    }
     parser.finish()
 }
 
@@ -85,6 +98,12 @@ struct CharState {
     script: Option<Script>,
     /// markitai: the text size (`\fs`), in half-points.
     size: Size,
+    /// markitai: the paragraph's tab stops (`\tx`, until `\pard`), and the
+    /// alignment (`\tqr`, `\tqc`, `\tqdec`) and leader (`\tldot`, ...) the
+    /// next stop takes; see [`crate::shared::tabs`].
+    stops: Stops,
+    tab_align: &'static str,
+    tab_leader: bool,
 }
 
 impl Default for CharState {
@@ -106,6 +125,9 @@ impl Default for CharState {
             note: None,
             script: None,
             size: 24,
+            stops: Stops::default(),
+            tab_align: "left",
+            tab_leader: false,
         }
     }
 }
@@ -655,6 +677,17 @@ struct Parser<'a> {
     /// paragraph being read (see [`crate::shared::visual`]).
     looks: Looks,
     para_size: ParaSize,
+    /// markitai: whether monospaced text is code (see
+    /// [`crate::shared::code`]), how much of the body's text is monospaced,
+    /// the runs of the paragraph being read, and the font of text no `\f`
+    /// names (`\deff`).
+    code_fonts: bool,
+    share: MonoShare,
+    para_fonts: RunFonts,
+    default_font: Option<i32>,
+    /// markitai: the body's paragraphs that may be rows of a table set with
+    /// tab stops (see [`crate::shared::tabs`]).
+    tab_rows: TabRows,
 }
 
 impl<'a> Parser<'a> {
@@ -681,6 +714,11 @@ impl<'a> Parser<'a> {
             nested_row_closed: None,
             looks: Looks::default(),
             para_size: ParaSize::default(),
+            code_fonts: false,
+            share: MonoShare::default(),
+            para_fonts: RunFonts::default(),
+            default_font: None,
+            tab_rows: TabRows::default(),
         }
     }
 
@@ -878,7 +916,32 @@ impl<'a> Parser<'a> {
                 self.state.outline = None;
                 self.state.block = None;
                 self.state.style_base = Style::PLAIN;
+                // markitai: and the tab stops.
+                self.state.stops = Stops::default();
+                self.state.tab_align = "left";
+                self.state.tab_leader = false;
             }
+            // markitai: the paragraph's tab stops, for the tables set with
+            // them; a bar tab only draws a line.
+            "tx" => {
+                let align = std::mem::replace(&mut self.state.tab_align, "left");
+                let leader = std::mem::take(&mut self.state.tab_leader);
+                if let Some(position) = param {
+                    self.state.stops.add(position, align, leader);
+                }
+            }
+            "tb" => {
+                self.state.tab_align = "left";
+                self.state.tab_leader = false;
+            }
+            "tqr" => self.state.tab_align = "right",
+            "tqc" => self.state.tab_align = "center",
+            "tqdec" => self.state.tab_align = "decimal",
+            "tldot" | "tlmdot" | "tlhyph" | "tlul" | "tlth" | "tleq" => {
+                self.state.tab_leader = true;
+            }
+            // markitai: the font of text no `\f` names.
+            "deff" => self.default_font = param,
             // \page and \column break the flow without ending the
             // paragraph; the page they start is unrepresentable, the word
             // boundary they carry is not.
@@ -888,7 +951,7 @@ impl<'a> Parser<'a> {
                     self.inlines.push(Inline::LineBreak);
                 }
             }
-            "tab" => self.push_char(' '),
+            "tab" => self.push_tab(),
             "emdash" => self.push_char('\u{2014}'),
             "endash" => self.push_char('\u{2013}'),
             "lquote" => self.push_char('\u{2018}'),
@@ -1195,6 +1258,35 @@ impl<'a> Parser<'a> {
         self.push_text(c.to_string());
     }
 
+    /// markitai: a tab. In body text it is kept until the tables set with
+    /// tab stops are found (see `crate::shared::tabs`); anywhere else it
+    /// is the space it was.
+    fn push_tab(&mut self) {
+        if self.state.capture != Capture::None || self.state.suppress {
+            self.push_char(' ');
+            return;
+        }
+        if self.decoder.skip_char() {
+            return;
+        }
+        self.flush_pending();
+        let style = self.text_style();
+        self.inlines.push(tabs::tab(style));
+    }
+
+    /// markitai: whether the text being read is set in a monospaced font.
+    fn font_mono(&self) -> bool {
+        self.state.font.or(self.default_font).is_some_and(|f| self.prelude.mono_fonts.contains(&f))
+    }
+
+    /// markitai: the style of the text being read: monospaced text is code.
+    fn text_style(&self) -> Style {
+        Style {
+            code: self.state.style.code || (self.code_fonts && self.font_mono()),
+            ..self.state.style
+        }
+    }
+
     fn flush_pending(&mut self) {
         let encoding = self.state.font.and_then(|f| self.prelude.fonts.get(&f).copied());
         if let Some(text) = self.decoder.take_pending(encoding) {
@@ -1230,11 +1322,15 @@ impl<'a> Parser<'a> {
                 if !self.state.suppress {
                     let text =
                         self.state.script.and_then(|script| script.convert(&text)).unwrap_or(text);
-                    // markitai: a note's text is not the body's.
+                    // markitai: a note's text is not the body's; text set in
+                    // a monospaced font is code.
                     if self.state.note.is_none() {
                         self.looks.text(&mut self.para_size, self.state.size, &text);
+                        let mono = self.font_mono();
+                        self.share.text(&text, mono);
+                        self.para_fonts.run(text.trim().is_empty(), mono);
                     }
-                    self.inlines.push(Inline::Text { text, style: self.state.style });
+                    self.inlines.push(Inline::Text { text, style: self.text_style() });
                 }
             }
         }
@@ -1252,8 +1348,9 @@ impl<'a> Parser<'a> {
     fn end_paragraph(&mut self) -> Result<(), ConvertError> {
         self.dest.split_open_links(&mut self.inlines);
         let inlines = std::mem::take(&mut self.inlines);
-        // markitai: the sizes this paragraph's text gathered.
+        // markitai: the sizes and fonts this paragraph's text gathered.
         let size = std::mem::take(&mut self.para_size);
+        let fonts = std::mem::take(&mut self.para_fonts);
         let listtext = self.dest.listtext.take();
         let math_display = std::mem::take(&mut self.dest.math_display);
 
@@ -1273,6 +1370,22 @@ impl<'a> Parser<'a> {
             self.styled.push(style, inlines, &mut self.blocks);
             return Ok(());
         }
+        // markitai: a paragraph all in a monospaced font (its text runs, or
+        // without text the font at its mark: a blank line of a listing) is a
+        // line of code, unless it is a heading or a list item; one holding
+        // an image or a displayed formula never is.
+        let mono = self.code_fonts
+            && !math_display
+            && !has_image(&inlines)
+            && fonts.all_mono().unwrap_or_else(|| inlines_are_empty(&inlines) && self.font_mono());
+        let listed = self.state.ls.is_some()
+            || self.state.legacy_list.is_some()
+            || listtext.as_deref().is_some_and(|text| !text.trim().is_empty());
+        if mono && self.state.outline.is_none() && !listed {
+            flush_list(&mut self.blocks, &mut self.list_run);
+            self.styled.push(BlockStyle::Code, inlines, &mut self.blocks);
+            return Ok(());
+        }
         if inlines_are_empty(&inlines) {
             self.flush_runs();
             return Ok(());
@@ -1285,6 +1398,10 @@ impl<'a> Parser<'a> {
             self.flush_runs();
             let mut content = inlines;
             rebase_emphasis(&mut content, self.state.style_base);
+            // markitai: a heading set in a monospaced font is no code.
+            if mono {
+                without_code(&mut content);
+            }
             if let Some((key, _, number, label)) = &entry
                 && key.marker.ordered()
             {
@@ -1309,10 +1426,14 @@ impl<'a> Parser<'a> {
         match math_lines(&inlines).filter(|_| math_display) {
             Some(lines) => self.blocks.extend(lines.into_iter().map(Block::Math)),
             None => {
+                let row = tabs::has_tab(&inlines);
                 self.blocks.push(Block::Paragraph(inlines));
                 // markitai: a plain paragraph may turn out to be a heading
-                // set by hand.
+                // set by hand, or a row of a table set with tab stops.
                 self.looks.paragraph(self.blocks.len() - 1, size);
+                if row {
+                    self.tab_rows.paragraph(self.blocks.len() - 1, self.state.stops);
+                }
             }
         }
         Ok(())
@@ -1386,8 +1507,10 @@ impl<'a> Parser<'a> {
     fn end_cell(&mut self, depth: usize) -> Result<(), ConvertError> {
         self.dest.split_open_links(&mut self.inlines);
         let inlines = std::mem::take(&mut self.inlines);
-        // markitai: a cell's paragraph is never a heading set by hand.
+        // markitai: a cell's paragraph is never a heading set by hand, nor a
+        // line of code.
         self.para_size = ParaSize::default();
+        self.para_fonts = RunFonts::default();
         let listtext = self.dest.listtext.take();
         let inlines =
             self.cell_list_entry(depth, inlines, listtext.as_deref())?.unwrap_or_default();
@@ -1439,15 +1562,20 @@ impl<'a> Parser<'a> {
         self.table.collapse_nested()?;
         self.flush_top_table()?;
         self.flush_runs();
-        // markitai: headings set by hand (see `crate::shared::visual`).
+        // markitai: tables set with tab stops, then headings set by hand (see
+        // `crate::shared::tabs` and `crate::shared::visual`); a table laying
+        // out a listing is its code, and a numbered listing keeps its code,
+        // not its line numbers (see `crate::shared::code`).
         let mut blocks = self.blocks;
-        self.looks.apply(&mut blocks);
-        Ok(Document {
-            blocks,
-            notes: self.dest.notes,
-            assets: self.assets.assets,
-            slide_starts: Vec::new(),
-        })
+        let mut notes = self.dest.notes;
+        tabs::finish(self.tab_rows, Some(self.looks), &mut blocks, &mut notes);
+        for blocks in
+            std::iter::once(&mut blocks).chain(notes.iter_mut().map(|note| &mut note.blocks))
+        {
+            listing_tables(blocks);
+            drop_line_gutters(blocks);
+        }
+        Ok(Document { blocks, notes, assets: self.assets.assets, slide_starts: Vec::new() })
     }
 }
 
@@ -1703,5 +1831,141 @@ mod tests {
             ["# Real"],
             "{markdown}"
         );
+    }
+
+    /// markitai: a document's blocks, described (see
+    /// `crate::shared::code::describe`).
+    fn described(rtf: &str) -> Vec<String> {
+        crate::shared::code::describe(&parse(rtf.as_bytes()).unwrap().blocks)
+    }
+
+    /// A font table as TextEdit writes it (PostScript names, one font after
+    /// another) and as Word does (a group per font, a fixed-pitch face).
+    const FONTS: &str = r"{\fonttbl\f0\froman\fcharset0 Times-Roman;\f1\fnil\fcharset0 Menlo-Regular;
+        {\f2\fmodern\fcharset0\fprq1{\*\panose 02070309020205020404}Letter Gothic;}
+        {\f3\fmodern\fcharset128\fprq1 MS Gothic;}}";
+
+    #[test]
+    fn text_in_a_monospaced_font_is_code() {
+        let rtf = format!(
+            r"{{\rtf1\ansi\deff0{FONTS}
+\pard\outlinelevel0\f1 Setup\par
+\pard\f0 Run \f1 make\f0  or \f2 cargo\f0 ; \f3 kanji\f0  is body text.\par
+\pard\f1 fn main() \{{\par
+\par
+    go();\par
+\}}\par
+\pard\ls1\ilvl0{{\listtext 1.\tab}}listed\par
+\pard\intbl celled\cell\f0 prose cell\cell\row
+\pard\f1\pard 1\par
+\pard\f0 And then the prose of the document goes on for a while in its own face.\par}}"
+        );
+        assert_eq!(
+            described(&rtf),
+            [
+                "h1:Setup",
+                "p:Run `make` or `cargo`; kanji is body text.",
+                "code:fn main() {\n\n    go();\n}",
+                "list:p:`listed`",
+                "table:p:`celled`|p:prose cell",
+                "code:1",
+                "p:And then the prose of the document goes on for a while in its own face.",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_default_font_and_a_pictures_paragraph() {
+        // Text no `\f` names is in the `\deff` font; a paragraph holding a
+        // picture is never a line of code, which would keep only its text.
+        let rtf = format!(
+            r"{{\rtf1\ansi\deff1{FONTS}
+\pard ls -la\par
+\pard fig.{{\pict\pngblip 89504e47}}\par
+\pard\f0 And then the prose of the document goes on for a while in its own face.\par}}"
+        );
+        assert_eq!(
+            described(&rtf),
+            [
+                "code:ls -la",
+                "p:`fig.`",
+                "p:And then the prose of the document goes on for a while in its own face.",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_document_set_in_a_monospaced_font_is_not_code() {
+        // Courier sets most of the text: it is the typewriter's face.
+        let rtf = r"{\rtf1\ansi{\fonttbl{\f0\fmodern\fcharset0\fprq1 Courier New;}{\f1\froman Times;}}
+\pard\f0 INT. KITCHEN - NIGHT\par
+\pard She opens the door.\par
+\pard\f1 Page 1\par}";
+        assert_eq!(described(rtf), ["p:INT. KITCHEN - NIGHT", "p:She opens the door.", "p:Page 1"]);
+    }
+
+    #[test]
+    fn a_listing_table_and_numbered_lines_are_code() {
+        let rtf = format!(
+            r"{{\rtf1\ansi{FONTS}
+\pard\f0 A listing as a highlighter lays it out, and one numbered line by line.\par
+\trowd\cellx1000\cellx8000
+\pard\intbl\f1 1\par 2\cell a = 1\par b = 2\cell\row
+\pard\f1 1\par x\par 2\par y\par
+\pard\f0 Then the prose of the document goes on in the body face for long enough.\par}}"
+        );
+        assert_eq!(
+            described(&rtf),
+            [
+                "p:A listing as a highlighter lays it out, and one numbered line by line.",
+                "code:a = 1\nb = 2",
+                "code:x\ny",
+                "p:Then the prose of the document goes on in the body face for long enough.",
+            ]
+        );
+    }
+
+    #[test]
+    fn columns_set_with_tab_stops_are_a_table() {
+        let row = |stops: &str, text: &str| format!(r"\pard{stops} {text}\par ");
+        let cols = r"\tx2880\tqr\tx5760";
+        let dots = r"\tqr\tldot\tx8640";
+        let rtf = [
+            r"{\rtf1\ansi ",
+            &row(cols, r"Item\tab Qty\tab Price"),
+            &row(cols, r"Apple\tab 3\tab 1.20"),
+            &row(cols, r"Pear\tab 12\tab 0.50"),
+            &row(dots, r"Part 1\tab Intro\tab Page one"),
+            &row(dots, r"Part 2\tab Methods\tab Page two"),
+            &row(dots, r"Part 3\tab Results\tab Page three"),
+            // `\pard` clears the stops: these rows are at the default ones.
+            &row("", r"North\tab Ann\tab 1a"),
+            &row("", r"South\tab Ben\tab 2b"),
+            &row("", r"West\tab Cleo\tab 3c"),
+            // Two columns at the default stops stay text.
+            &row("", r"Oak\tab Ash"),
+            &row("", r"Elm\tab Yew"),
+            &row("", r"Fir\tab Box"),
+            r"\pard\outlinelevel0 A\tab B\tab C\par ",
+            r"\pard{\footnote Note\tab text}\par}",
+        ]
+        .concat();
+        let doc = parse(rtf.as_bytes()).unwrap();
+        assert_eq!(
+            crate::shared::code::describe(&doc.blocks),
+            [
+                "table:p:Item|p:Qty|p:Price/p:Apple|p:3|p:1.20/p:Pear|p:12|p:0.50",
+                "p:Part 1 Intro Page one",
+                "p:Part 2 Methods Page two",
+                "p:Part 3 Results Page three",
+                "table:p:North|p:Ann|p:1a/p:South|p:Ben|p:2b/p:West|p:Cleo|p:3c",
+                "p:Oak Ash",
+                "p:Elm Yew",
+                "p:Fir Box",
+                "h1:A B C",
+                "p:",
+            ]
+        );
+        assert_eq!(crate::shared::code::describe(&doc.notes[0].blocks), ["p:Note text"]);
     }
 }

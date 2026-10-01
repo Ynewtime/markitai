@@ -3,7 +3,7 @@
 //! paragraph style name rather than dedicated markup, so the name is the
 //! only signal a frontend has.
 
-use crate::model::{Block, Inline, inlines_are_empty, inlines_to_plain_text};
+use crate::model::{Block, Inline, inlines_are_empty};
 
 /// The block container a paragraph style designates.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -58,7 +58,10 @@ impl StyledRun {
         match self {
             // Code is literal text; character styling is presentation the
             // source applied to its syntax, never content.
-            StyledRun::Code(lines) => lines.push(inlines_to_plain_text(&inlines)),
+            //
+            // markitai: a tab a reader keeps for a table set with tab stops
+            // (see `crate::shared::tabs`) is the space it was before.
+            StyledRun::Code(lines) => lines.push(crate::shared::tabs::plain_text(&inlines)),
             StyledRun::Quote(blocks) => {
                 if !inlines_are_empty(&inlines) {
                     blocks.push(Block::Paragraph(inlines));

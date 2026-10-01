@@ -52,24 +52,69 @@ a marker (`a)`, `(1)`, `一、`) is kept as text, one item to a line. Emphasis
 beside a letter has its edge punctuation moved outside the markers
 (`**注意**：请`), since CommonMark would not open or close it otherwise.
 Indentation typed with spaces is kept, because code pasted into Word depends
-on it; four or more leading spaces therefore render as a code block. Tab-aligned
-columns are not turned into tables (tabs read as single spaces), fields keep
+on it; four or more leading spaces therefore render as a code block. Fields keep
 their last computed result, and floating shapes appear where their anchor
 paragraph is.
 Text set in a monospaced font (Courier, Consolas, Menlo, or a family named
-`… Mono`, by the run's own font, else its character style's, else its paragraph
-style's or the document default) is code: a paragraph that is all such text is
-a line of a fenced code block, blank lines of the listing included, and such
-text inside prose is inline code. A heading set in it stays a plain heading and
-a table cell keeps it inline. When monospace carries more than three quarters of
-the document's visible characters it is the document's typeface (a typewriter
-manuscript) and marks nothing. A code block whose lines carry their own numbers,
-as a column before them or alternating with them (a web page's numbered listing
-saved as a document), loses the numbers.
+`… Mono`, also by its PostScript name such as `Menlo-Regular`; by the run's own
+font, else its character style's, else its paragraph style's or the document
+default) is code: a paragraph that is all such text is a line of a fenced code
+block, blank lines of the listing included, and such text inside prose is
+inline code. A heading set in it stays a plain heading, a list item stays a list
+item, and a table cell keeps it inline. When monospace carries more than three
+quarters of the document's visible characters it is the document's typeface (a
+typewriter manuscript) and marks nothing. A code block whose lines carry their
+own numbers, as a column before them or alternating with them (a web page's
+numbered listing saved as a document), loses the numbers, and a table that only
+lays out a listing (one row holding the code after an optional cell of line
+numbers, as syntax highlighters build it; one numbered line per row; or a single
+cell of code) is that code block, without the numbers.
 
-OpenDocument text and RTF follow the same conventions. Raised and lowered
-text (`style:text-position`; RTF `\super` and `\sub`) is written in Unicode
-super/subscript forms where every character has one. ODF text a style hides
+Columns set with tab stops become a table. A run of at least three consecutive
+plain body paragraphs (not headings, list items, table cells, text boxes, notes
+or code) at the same tab stops, each split by its tabs into the same number of
+cells and no longer than one printed line (100 characters, no line break), is a
+table's rows. At the default stops a run of tabs separates one pair of columns,
+since authors press Tab until the text lines up; at stops the author set each
+tab moves to the next column, so a cell may be empty. A column no row fills,
+such as a tab that indents every row, is dropped. Three columns are enough; two
+need stops the author set and a first column that is not a list label (`1.`,
+`a)`) or a field label (`Date:`). A first column of bullets (a list typed by
+hand, as `textutil` saves HTML lists in DOCX), a tab stop with a leader or a
+table-of-contents or index style, or a last column of page numbers counting up
+with no header above them (a contents page) keeps the paragraphs as text. The
+first row is the header only when it alone is bold; otherwise every row is data
+and the header line is blank, as for Word tables. Every other tab, including
+those in headings, lists, cells, notes and code, reads as a single space as
+before. On 27 cases written as DOCX, ODT and RTF (stops set on the paragraph or
+its style, default stops pressed several times, decimal stops, empty cells,
+links in cells, an indented table, a typewriter document; contents pages with
+leaders, by hand and in a contents style, verse, a lone tab, two rows, lists
+typed by hand, memo labels, two default-stop columns, prose, and rows inside
+lists, headings, code, cells or one paragraph's lines), each format finds all
+9 tables and makes no table of the 18 text cases. The 108 `textutil` pages,
+whose only tabs belong to lists typed by hand, convert as before.
+
+OpenDocument text and RTF follow the same conventions. An ODT run's font is
+the face `style:font-name` names (its `svg:font-family`), else `fo:font-family`
+(a list ending in the generic `monospace` counts), through `parent-style-name`
+over the paragraph default style; RTF reads the font table's names (TextEdit's
+fonts one after another or Word's group per font) and `\deff`. A face the
+document only declares fixed-pitch (ODF `style:font-pitch="fixed"` or the
+`modern` family, RTF `\fmodern` or `\fprq1`) is a code face too, unless its
+name or RTF charset is CJK (MS Gothic, SimSun), whose Latin letters are
+fixed-width under body text. Tab stops are a paragraph style's
+`style:tab-stops` (a `style:leader-style` other than `none` is a leader) and RTF
+`\tx` after `\tqr`, `\tqc`, `\tqdec` or a leader such as `\tldot`, until
+`\pard`. On the 108 `textutil` pages, where ODT and RTF had no code at all, each
+now gives 64 code blocks against DOCX's 65 on the same pages (DOCX's extra one
+is a hand-typed list item set in Menlo, which ODT and RTF read as a list item
+with inline code) and 35 inline code spans against 34; DOCX output is unchanged
+and the only words that leave ODT and RTF output are 55 listing line numbers.
+
+Raised and lowered text (`style:text-position`; RTF `\super` and `\sub`) is
+written in Unicode super/subscript forms where every character has one. ODF
+text a style hides
 (`text:display="none"`) is left out, the base text of a phonetic guide is kept
 without the guide, and comments (`office:annotation`) are left out with a
 warning naming their number, as for Word. A chart embedded in an ODT or ODP

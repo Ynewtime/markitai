@@ -3,10 +3,11 @@
 
 use crate::formats::rtf::lexer::{Lexer, Token, destination_groups};
 use crate::shared::blockstyle::{self, BlockStyle};
+use crate::shared::code::{is_fixed_pitch_code_face, is_monospace};
 use crate::shared::delta::StyleDelta;
 use crate::shared::list::MarkerKind;
 use crate::shared::numbering::{NumberPattern, NumberText};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub const LIST_LEVELS: usize = 9;
 
@@ -76,6 +77,9 @@ pub struct StyleDef {
 pub struct Prelude {
     /// Font number -> encoding, from `\fcharsetN`.
     pub fonts: HashMap<i32, &'static encoding_rs::Encoding>,
+    /// markitai: the numbers of the monospaced fonts (see
+    /// [`crate::shared::code`]).
+    pub mono_fonts: HashSet<i32>,
     /// Paragraph style id (`\sN`) -> definition.
     pub styles: HashMap<i32, StyleDef>,
     /// `\lsN` -> resolved list definition (through the override table).
@@ -87,6 +91,7 @@ pub fn parse_prelude(bytes: &[u8], default_encoding: &'static encoding_rs::Encod
 
     for group in destination_groups(bytes, "fonttbl") {
         parse_fonttbl(group, &mut prelude.fonts, default_encoding);
+        mono_fonts(group, &mut prelude.mono_fonts, default_encoding);
     }
     for group in destination_groups(bytes, "stylesheet") {
         parse_stylesheet(group, &mut prelude.styles, default_encoding);
@@ -157,6 +162,98 @@ fn parse_fonttbl(
                 _ => {}
             }
         }
+    }
+}
+
+/// markitai: a font the font table is declaring.
+struct FontDecl {
+    id: i32,
+    /// The group depth its `\f` stands at; its name is the text there.
+    depth: usize,
+    name: Vec<u8>,
+    /// The name ended at its `;`.
+    named: bool,
+    charset: Option<i32>,
+    /// Declared fixed-pitch: `\fmodern` or `\fprq1`.
+    fixed: bool,
+}
+
+/// markitai: the monospaced fonts of a font table (see
+/// [`crate::shared::code`]): a monospaced name, or a fixed-pitch declaration
+/// (`\fmodern`, `\fprq1`) on a face that is not CJK (by its charset or
+/// name). Word writes each font in a group of its own (`{\f2\fmodern
+/// \fcharset0\fprq1{\*\panose ...}Courier New;}`); TextEdit writes them one
+/// after another (`\f2\fnil\fcharset0 Menlo-Regular;`).
+fn mono_fonts(
+    group: &[u8],
+    mono: &mut HashSet<i32>,
+    default_encoding: &'static encoding_rs::Encoding,
+) {
+    let finish = |font: FontDecl, mono: &mut HashSet<i32>| {
+        let encoding = font
+            .charset
+            .map_or(default_encoding, |charset| charset_encoding(charset, default_encoding));
+        let (name, _, _) = encoding.decode(&font.name);
+        let name = name.trim();
+        let cjk =
+            font.charset.is_some_and(|charset| matches!(charset, 128 | 129 | 130 | 134 | 136));
+        if is_monospace(name) || (font.fixed && !cjk && is_fixed_pitch_code_face(name)) {
+            mono.insert(font.id);
+        }
+    };
+    let mut lexer = Lexer::new(group);
+    let mut depth = 0usize;
+    let mut current: Option<FontDecl> = None;
+    while let Some(token) = lexer.next_token() {
+        match token {
+            Token::Open => depth += 1,
+            Token::Close => {
+                depth = depth.saturating_sub(1);
+                if current.as_ref().is_some_and(|font| font.depth > depth)
+                    && let Some(font) = current.take()
+                {
+                    finish(font, mono);
+                }
+            }
+            Token::Word { name: "f", param: Some(id) } => {
+                if let Some(font) = current.take() {
+                    finish(font, mono);
+                }
+                current = Some(FontDecl {
+                    id,
+                    depth,
+                    name: Vec::new(),
+                    named: false,
+                    charset: None,
+                    fixed: false,
+                });
+            }
+            Token::Word { name, param } => {
+                if let Some(font) = current.as_mut().filter(|font| font.depth == depth) {
+                    match name {
+                        "fmodern" => font.fixed = true,
+                        "fprq" => font.fixed |= param == Some(1),
+                        "fcharset" => font.charset = param,
+                        _ => {}
+                    }
+                }
+            }
+            Token::Byte(b) | Token::Hex(b) => {
+                if let Some(font) =
+                    current.as_mut().filter(|font| font.depth == depth && !font.named)
+                {
+                    if b == b';' {
+                        font.named = true;
+                    } else {
+                        font.name.push(b);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(font) = current {
+        finish(font, mono);
     }
 }
 
@@ -507,5 +604,44 @@ pub fn codepage_encoding(cp: u32) -> &'static encoding_rs::Encoding {
         1258 => encoding_rs::WINDOWS_1258,
         874 => encoding_rs::WINDOWS_874,
         _ => encoding_rs::WINDOWS_1252,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// markitai: the monospaced fonts of a font table.
+    fn mono(table: &str) -> Vec<i32> {
+        let mut found = HashSet::new();
+        mono_fonts(table.as_bytes(), &mut found, encoding_rs::WINDOWS_1252);
+        let mut found: Vec<i32> = found.into_iter().collect();
+        found.sort_unstable();
+        found
+    }
+
+    #[test]
+    fn monospaced_fonts_are_named_or_declared_fixed_pitch() {
+        // TextEdit: one font after another, PostScript names.
+        assert_eq!(
+            mono(
+                r"\f0\froman\fcharset0 Times-Bold;\f1\fnil\fcharset0 Menlo-Regular;\f2\fmodern\fcharset0 Courier;
+                \f3\fnil\fcharset0 Monaco;\f4\fnil\fcharset0 HelveticaNeue;"
+            ),
+            [1, 2, 3]
+        );
+        // Word: a group per font, the name after a panose group; a fixed
+        // pitch (`\fprq1`) or the modern family marks an unnamed code face,
+        // unless its charset or name is CJK.
+        assert_eq!(
+            mono(
+                r"{\f0\froman\fcharset0\fprq2{\*\panose 02020603050405020304}Times New Roman;}
+                {\f1\fswiss\fcharset0\fprq1 Iosevka;}{\f2\fmodern\fcharset0 Letter Gothic;}
+                {\f3\fmodern\fcharset128\fprq1 MS Mincho;}{\f4\fmodern\fcharset0\fprq1 MS Gothic Western;}
+                {\f5\fnil\fcharset134\fprq1 \'cb\'ce\'cc\'e5;}{\f6\fswiss\fcharset0\fprq2 Arial{\*\falt  Mono};}
+                {\f7\fmodern\fcharset128\fprq1 BIZ UDGothic;}"
+            ),
+            [1, 2]
+        );
     }
 }

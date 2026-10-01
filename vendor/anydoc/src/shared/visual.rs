@@ -112,6 +112,13 @@ impl Looks {
         self.paragraphs.push((index, size.uniform()));
     }
 
+    /// Leave out of [`Self::apply`] the plain paragraphs at the indices
+    /// `skip` names (the rows of a table set with tab stops; see
+    /// [`crate::shared::tabs`]).
+    pub fn skip(&mut self, skip: impl Fn(usize) -> bool) {
+        self.paragraphs.retain(|&(index, _)| !skip(index));
+    }
+
     /// The body text size: the size most visible characters are set in (the
     /// larger one on a tie, which finds fewer headings).
     fn body_size(&mut self) -> Option<Size> {
