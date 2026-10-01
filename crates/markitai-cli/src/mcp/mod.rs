@@ -74,9 +74,15 @@ impl State {
             .map_err(|_| "internal conversion error".to_owned())?
     }
 
-    async fn shutdown(&self) {
+    /// Stop admitting conversions and starting queued batch items; work
+    /// already running continues.
+    fn close_dispatch(&self) {
         self.closing.store(true, Ordering::SeqCst);
         self.work.lock().unwrap().closing = true;
+    }
+
+    async fn shutdown(&self) {
+        self.close_dispatch();
         let tasks = std::mem::take(&mut *self.background.lock().unwrap());
         for task in tasks {
             let _ = task.await;
@@ -86,6 +92,45 @@ impl State {
             let _ = task.await;
         }
         self.browser_runtime.close();
+    }
+}
+
+/// The client's input, which calls `on_end` the first time it reaches its
+/// end. A client closing its input ends the session; dispatch stops then,
+/// not only once the MCP session has finished tearing down, so a batch
+/// does not start a queued item (and a paid request) after the client left.
+struct ClosingInput<R, F> {
+    inner: R,
+    on_end: Option<F>,
+}
+
+impl<R, F> ClosingInput<R, F> {
+    fn new(inner: R, on_end: F) -> Self {
+        ClosingInput {
+            inner,
+            on_end: Some(on_end),
+        }
+    }
+}
+
+impl<R: tokio::io::AsyncRead + Unpin, F: FnOnce() + Unpin> tokio::io::AsyncRead
+    for ClosingInput<R, F>
+{
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+        buffer: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let (room, before) = (buffer.remaining() > 0, buffer.filled().len());
+        let poll = std::pin::Pin::new(&mut self.inner).poll_read(context, buffer);
+        if room
+            && matches!(poll, std::task::Poll::Ready(Ok(())))
+            && buffer.filled().len() == before
+            && let Some(on_end) = self.on_end.take()
+        {
+            on_end();
+        }
+        poll
     }
 }
 
@@ -180,7 +225,13 @@ pub fn run(config_path: Option<PathBuf>, overrides: Option<Value>) -> Result<(),
         let handler = Handler(state.clone());
         let session = async {
             let service = handler
-                .serve(rmcp::transport::stdio())
+                .serve((
+                    ClosingInput::new(tokio::io::stdin(), {
+                        let state = state.clone();
+                        move || state.close_dispatch()
+                    }),
+                    tokio::io::stdout(),
+                ))
                 .await
                 .map_err(|_| "Cannot establish MCP stdio session".to_owned())?;
             service
@@ -200,4 +251,30 @@ pub fn run(config_path: Option<PathBuf>, overrides: Option<Value>) -> Result<(),
     // after SIGINT until the parent closes its pipe; it must not delay exit.
     runtime.shutdown_timeout(Duration::from_millis(100));
     result
+}
+
+#[cfg(test)]
+mod closing_input_tests {
+    use super::ClosingInput;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::AsyncReadExt;
+
+    #[tokio::test]
+    async fn the_end_of_input_is_reported_once_and_only_at_the_end() {
+        let ends = std::sync::Arc::new(AtomicUsize::new(0));
+        let counter = ends.clone();
+        let mut input = ClosingInput::new(&b"request\n"[..], move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        });
+        let mut line = [0u8; 4];
+        input.read_exact(&mut line).await.unwrap();
+        assert_eq!(ends.load(Ordering::SeqCst), 0);
+        let mut rest = Vec::new();
+        input.read_to_end(&mut rest).await.unwrap();
+        assert_eq!(rest, b"est\n");
+        assert_eq!(ends.load(Ordering::SeqCst), 1);
+        // Reading past the end again does not report it twice.
+        assert_eq!(input.read(&mut line).await.unwrap(), 0);
+        assert_eq!(ends.load(Ordering::SeqCst), 1);
+    }
 }

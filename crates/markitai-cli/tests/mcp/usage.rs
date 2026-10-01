@@ -414,9 +414,9 @@ fn eof_drains_the_admitted_response_without_starting_queued_batch_items() {
     );
     model.wait(1);
     client.input.take();
-    // The server stops dispatching once its MCP session has ended after end
-    // of input; under a heavily loaded machine that teardown has taken longer
-    // than 200 ms, so the queued item started. Wait long enough for it.
+    // The server stops dispatching as soon as it reads the end of its input;
+    // the margin covers a heavily loaded machine (gate r84 started the queued
+    // item when dispatch waited for the whole session to end).
     thread::sleep(Duration::from_millis(1000));
     assert!(
         client.child.try_wait().unwrap().is_none(),

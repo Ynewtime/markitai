@@ -124,6 +124,7 @@
 
 ### Fixed
 
+- Stop starting queued MCP batch items as soon as the client closes its input, rather than once the MCP session has finished tearing down, so a departed client cannot cause another (possibly paid) conversion.
 - Write the data of charts and worksheets embedded in legacy PPT slides as tables (LibreOffice charts, Excel worksheets and charts, MS Graph), where the slide showed only its title; the reference sample deck's chart now gives its 4×3 data.
 - Keep repeated table rows, quotes, fences and comments at the end of pages or slides instead of removing them as page footers, which broke tables that ended several slides.
 - Explain an OCR failure under Rosetta 2 (Vision text recognition is unavailable to a translated process) and suggest the arm64 build, and show it as a `doctor` warning; the x86_64 macOS build was checked under Rosetta with 2,345 corpus outputs identical to arm64.
