@@ -48,7 +48,13 @@ spelling. It does not turn an edited path into permission to overwrite a documen
 Each codec operation (decode, encode, event preparation or application) is pure
 and observes each ancestor's `lstat`/`readlink` once, reusing it for every saved
 path in that operation; the rules equal the core symlink policy and the report
-path resolver, and each new operation observes the filesystem again.
+path resolver, and each new operation observes the filesystem again. Recording
+one event prepares and applies it under a single such observation (a compaction
+between the two ends it, and the application observes afresh). The store's own
+checks of a step (output spelling and its resolution, the states directory, base
+and journal) likewise share one observation of their common ancestors; every
+step, including the recheck before the base is renamed, observes again, and no
+observation outlives the call that made it.
 The existing core path policy is reused; hostile parent-directory replacement
 races are not closed by these path checks.
 
@@ -164,6 +170,48 @@ if the process dies after base replacement but before journal removal. The Pytho
 reader can ignore added fields but does not understand the fence; it does not
 inherit the native crash guarantees. No protocol can promise exactly-once paid
 requests across a process kill between a provider response and durable completion.
+
+### Ordering and durability fences
+
+The fences mean what they mean for [output ownership](output-ownership.md#ordering-and-durability-fences):
+an ordering fence keeps every later write to the same device from reaching stable
+storage first; a durability fence returns once what it covers is on stable storage.
+
+| Step | Fence |
+|---|---|
+| Created `.markitai/states` chain and the parent that received its first entry | ordering |
+| `begin`, or a compaction forced by journal capacity: snapshot bytes, then the base name before the old journal's removal | ordering, ordering |
+| `flush` of a new or replaced journal: its bytes before its directory entry | ordering |
+| `flush` acknowledgement (journal, directory, everything ordered before it) | durability |
+| `flush` with nothing pending after an ordered checkpoint | durability |
+| Final compaction: snapshot bytes; base name before the journal's removal; removal | ordering, ordering, durability |
+| Legacy-pair backup; corrupt-state quarantine | durability, as before |
+
+An ordered checkpoint does not advance the acknowledged sequence: the next `flush`
+completes a durability fence even when no event is pending. The scheduler flushes
+admission before any dispatch and compacts durably at the end, so each
+acknowledgement it relies on is as durable as before. Until that fence, an
+operating-system crash or power loss can leave the previous base with its journal
+(every acknowledged event; after `begin`, nothing has been dispatched yet), the
+new base with the superseded journal (whose events the generation and sequence
+fence ignores), or the new base alone; only unacknowledged events can be lost,
+as before. A base
+or journal name never refers to incomplete bytes, and a journal is never removed
+while the base it supersedes remains. The created directory chain can only be lost
+while nothing inside it can be on stable storage; a chain that reaches another
+volume than the checkpoint keeps an immediate durability fence. A process kill
+needs no fence: renames are atomic in the operating system's cache.
+
+On a verified local macOS APFS or HFS volume each object is synchronized with
+`fsync`, and each fence is one `F_BARRIERFSYNC` (ordering) or `F_FULLFSYNC`
+(durability) per volume, through the output claims' synchronization group.
+Elsewhere, including Linux, each object still receives `File::sync_all` when it is
+staged; there, the only change is that a journal removed under an ordered
+checkpoint has its directory synchronized by the next flush instead of at once.
+Counted with an interposed `fsync`/`fcntl` library on release builds (macOS 27,
+APFS), a fresh 24- or 32-file directory run now spends 3 full-cache flushes and
+6 barriers on recovery state (9 full flushes before): one flush per admission
+flush (two in these runs) and one for the final compaction.
 
 ## Atomic Numbers packages
 

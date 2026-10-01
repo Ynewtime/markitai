@@ -66,8 +66,14 @@ also has [per-member publication ownership](output-ownership.md); this does not
 turn the in-process binding API into a batch recovery coordinator. CLI document
 publication orders its intermediate steps and completes one
 [durability fence](output-ownership.md#ordering-and-durability-fences) per volume
-before reporting success; assets keep the core's per-file synchronization. Existing
-content-addressed asset bytes are verified before reuse. Malformed input
+before reporting success. The core never synchronizes the directory entry of an
+asset, sidecar or immediate (binding) document it writes, so none was guaranteed
+durable when the write returned; each staged file is synchronized and then ordered before its
+rename (`F_BARRIERFSYNC` on a verified local macOS APFS/HFS volume, `File::sync_all`
+elsewhere), so a name that survives a crash refers to complete bytes. Existing
+content-addressed asset bytes are verified before reuse. The policy checks of a
+document's base and enhanced members share one walk of their common parent, and
+every write observes the path afresh. Malformed input
 frontmatter remains content. [Round-eleven measurements](validation/html-media-round11.md)
 record a limited asset-heavy CLI comparison; binding overhead and peak memory
 remain unmeasured by that experiment.

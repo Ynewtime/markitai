@@ -2,6 +2,7 @@
 mod assets;
 mod image_metadata;
 
+use crate::output_claims::sync_group::SyncGroup;
 use crate::report::{ItemKind, ItemStatus, RunItem, RunMode};
 use chrono::{DateTime, Local, SecondsFormat};
 use markitai_core::config;
@@ -219,7 +220,6 @@ impl Plan {
                         budget.replace_bytes(old_size, rewritten.len() as u64)?;
                         let mut file = OpenOptions::new().write(true).truncate(true).open(&path)?;
                         file.write_all(rewritten.as_bytes())?;
-                        file.sync_all()?;
                     }
                 }
             }
@@ -268,13 +268,20 @@ impl Plan {
         bytes.write_all(b"\n")?;
         let mut file = private_file(&stage.path().join("meta.json"), true)?;
         file.write_all(&bytes.0)?;
-        file.sync_all()?;
-        sync_directories(stage.path())?;
+        drop(file);
+        // Every file and directory of the stage is ordered before the job's
+        // name: a job that survives a crash is complete. The parent's durable
+        // fence on the same volume then persists all of it before returning.
+        let mut contents = SyncGroup::new();
+        stage_tree(stage.path(), &mut contents)?;
+        contents.commit_ordered()?;
         if crate::signals::interrupted().is_some() {
             return Ok(None);
         }
         fs::rename(stage.path(), &target)?;
-        sync_directory(&self.jobs_root)?;
+        let mut name = SyncGroup::new();
+        stage_directory(&self.jobs_root, &mut name)?;
+        name.commit()?;
         Ok(Some(target))
     }
 }
@@ -525,25 +532,44 @@ fn publication_lock(root: &Path) -> io::Result<File> {
     private_file(&path, false)
 }
 
-fn sync_directory(path: &Path) -> io::Result<()> {
+fn stage_directory(path: &Path, fence: &mut SyncGroup) -> io::Result<()> {
     #[cfg(unix)]
-    File::open(path)?.sync_all()?;
+    fence.stage(&File::open(path)?)?;
     #[cfg(not(unix))]
-    let _ = path;
+    let _ = (path, fence);
     Ok(())
 }
 
-fn sync_directories(root: &Path) -> io::Result<()> {
+/// Synchronize every regular file and directory of the private stage, each
+/// directory after its contents, without following links, for one fence.
+/// Returns the number of entries staged.
+fn stage_tree(root: &Path, fence: &mut SyncGroup) -> io::Result<usize> {
+    let mut staged = 0;
     for entry in walkdir::WalkDir::new(root)
         .contents_first(true)
         .follow_links(false)
     {
         let entry = entry?;
         if entry.file_type().is_dir() {
-            sync_directory(entry.path())?;
+            stage_directory(entry.path(), fence)?;
+            staged += 1;
+        } else if entry.file_type().is_file() {
+            let mut options = OpenOptions::new();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options
+                    .read(true)
+                    .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+            }
+            // Flushing a Windows handle requires write access; nothing is written.
+            #[cfg(not(unix))]
+            options.write(true);
+            fence.stage(&options.open(entry.path())?)?;
+            staged += 1;
         }
     }
-    Ok(())
+    Ok(staged)
 }
 
 struct BoundedJson(Vec<u8>);
@@ -678,6 +704,57 @@ mod tests {
             job.file_name().unwrap().to_str().unwrap()
         );
         assert_eq!(meta["job_id"].as_str().unwrap().len(), 12);
+    }
+
+    /// One ordering fence covers the whole stage before the job's name, and
+    /// one durable fence follows the rename; every entry of the job is staged.
+    #[test]
+    fn whole_stage_is_ordered_before_the_job_name_and_then_made_durable() {
+        use crate::output_claims::sync_group::take_commits;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let first = root.join("output/a/doc.md");
+        let second = root.join("output/b/doc.md");
+        put(&first, b"![one](.markitai/assets/p.png)\n");
+        put(&second, b"![two](.markitai/assets/p.png)\n");
+        put(
+            &root.join("output/a/.markitai/assets/p.png"),
+            b"first image",
+        );
+        put(
+            &root.join("output/b/.markitai/assets/p.png"),
+            b"second image",
+        );
+        take_commits();
+        let job = plan(root, RunMode::Directory)
+            .publish(&[
+                record(0, "a/doc.txt", Some(first)),
+                record(1, "b/doc.txt", Some(second)),
+            ])
+            .unwrap()
+            .unwrap();
+        assert_eq!(take_commits(), ["ordered", "durable"]);
+        assert!(
+            fs::read_to_string(job.join("out/doc (2).md"))
+                .unwrap()
+                .contains("p-2.png")
+        );
+        let entries: Vec<_> = walkdir::WalkDir::new(&job)
+            .into_iter()
+            .map(Result::unwrap)
+            .filter(|entry| entry.file_type().is_file() || entry.file_type().is_dir())
+            .collect();
+        let files = entries
+            .iter()
+            .filter(|entry| entry.file_type().is_file())
+            .count();
+        // Two documents, two assets and the metadata, plus their directories.
+        assert_eq!(files, 5);
+        let mut group = SyncGroup::new();
+        assert_eq!(stage_tree(&job, &mut group).unwrap(), entries.len());
+        group.commit_ordered().unwrap();
+        // Nothing staged twice or left for a separate per-file flush.
+        assert_eq!(take_commits(), ["ordered"]);
     }
 
     #[test]

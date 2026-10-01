@@ -122,7 +122,11 @@ issued 15 and 17 flushes with 7 and 10 barriers (22 and 27 flushes before).
 Directory counts follow the number of publication groups and admission windows,
 which depends on conversion timing: each group now issues two barriers and one
 flush instead of three flushes, and each namespace window and the run's ancestor
-preparation one barrier instead of one flush.
+preparation one barrier instead of one flush. Recovery state now orders its
+checkpoint steps the same way ([its fences](state-storage.md#ordering-and-durability-fences)),
+and each new asset is ordered rather than flushed: the same 24-file run issues
+5 flushes and 13 barriers, the 32-file corpus (four assets) 5 flushes and 17
+barriers, at one or four jobs.
 
 Ordinary parent preparation failures fail only the affected items. A failed
 namespace fence stops new dispatch; earlier unsent reservations are restored.

@@ -116,7 +116,10 @@ and can exceed wall time when work runs concurrently.
 results remain separate from this report conflict decision.
 
 The native writer stages and syncs a same-directory temporary file before atomic
-publication. Rename and skip use no-clobber publication, including when another
+publication; on a verified local macOS APFS/HFS volume that is `fsync` plus an
+ordering barrier rather than a full cache flush. The report's name is not
+synchronized, so, as before, a report is not guaranteed durable when the CLI exits,
+but one that survives a crash has complete bytes. Rename and skip use no-clobber publication, including when another
 process claims a name concurrently. Output symlink policy applies to report
 paths. This is not a transaction with document output or provider requests, and
 does not supply recovery after interruption.

@@ -103,9 +103,15 @@ fn publish_new(path: &Path, bytes: &[u8]) -> Result<()> {
         .unwrap_or_else(|| Path::new("."));
     let mut staged = crate::output::deliverable_builder().tempfile_in(parent)?;
     staged.write_all(bytes)?;
-    staged.as_file().sync_all()?;
+    // A content-addressed name must never survive a crash with incomplete
+    // bytes; that is ordering. The name itself is not synchronized, so the
+    // asset was never durable on return and a cache flush bought nothing.
+    crate::output::fence::order_staged(staged.as_file())?;
     match staged.persist_noclobber(path) {
-        Ok(_) => Ok(()),
+        Ok(_) => {
+            crate::output::fence::note("published");
+            Ok(())
+        }
         Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => {
             drop(error.file);
             if verify_existing(path, bytes)? {
@@ -162,6 +168,21 @@ mod tests {
         fs::create_dir(&directory).unwrap();
         assert!(insert_or_verify(&directory, &[]).is_err());
         assert!(directory.is_dir());
+    }
+
+    #[test]
+    fn new_asset_bytes_are_ordered_before_their_name_and_reuse_is_not_fenced() {
+        use crate::output::fence;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("asset.bin");
+        fence::take();
+        insert_or_verify(&path, b"content-addressed bytes").unwrap();
+        assert_eq!(fence::take(), [fence::expected(root.path()), "published"]);
+        assert_eq!(fs::read(&path).unwrap(), b"content-addressed bytes");
+        insert_or_verify(&path, b"content-addressed bytes").unwrap();
+        assert!(fence::take().is_empty());
+        assert!(insert_or_verify(&path, b"other bytes").is_err());
+        assert!(fence::take().is_empty());
     }
 
     #[cfg(unix)]

@@ -327,7 +327,12 @@ fn stage_report(
         .suffix(".tmp")
         .tempfile_in(directory)?;
     write(temp.as_file_mut())?;
-    temp.as_file().sync_all()?;
+    // Complete bytes must precede the report's name. That name is never
+    // synchronized, so the report was not durable on return before either;
+    // an ordering fence gives the same crash outcomes without a cache flush.
+    let mut fence = crate::output_claims::sync_group::SyncGroup::new();
+    fence.stage(temp.as_file())?;
+    fence.commit_ordered()?;
     Ok(temp)
 }
 
@@ -529,6 +534,23 @@ mod tests {
         assert_eq!(fs::read(&first).unwrap(), b"replacement");
         assert_eq!(fs::read(&second).unwrap(), b"second");
         assert_eq!(fs::read_dir(first.parent().unwrap()).unwrap().count(), 2);
+    }
+
+    /// Each staged report is fenced for ordering once before its rename; a
+    /// skipped existing report stages nothing.
+    #[test]
+    fn staged_report_bytes_are_ordered_before_publication() {
+        use crate::output_claims::sync_group::take_commits;
+        let dir = tempfile::tempdir().unwrap();
+        take_commits();
+        let first =
+            written(publish(dir.path(), "a12b34", "rename", false, false, b"first").unwrap());
+        assert_eq!(take_commits(), ["ordered"]);
+        publish(dir.path(), "a12b34", "skip", false, false, b"ignored").unwrap();
+        assert!(take_commits().is_empty());
+        written(publish(dir.path(), "a12b34", "overwrite", false, false, b"new").unwrap());
+        assert_eq!(take_commits(), ["ordered"]);
+        assert_eq!(fs::read(first).unwrap(), b"new");
     }
 
     #[test]

@@ -94,6 +94,7 @@
 
 ### Changed
 
+- Order run-state, report, history and asset writes with barriers where only their order matters and keep one full flush where a step is acknowledged: directory runs are 16–36 ms faster, and runs with reports and history 110–169 ms (40–47%) faster, with outputs, ownership records and state byte-identical and every acknowledged step still durable.
 - Look up PDF glyph names in pdf-inspector through a packed table built at compile time instead of a 4,528-entry map filled at first use (108,960 bytes of code): release binary −82,576 bytes, PDF output byte-identical on 216 corpus PDFs and every glyph name.
 - Link the macOS frameworks behind OCR, HEIF/AVIF decoding and PDF rasterization delay-initialized in the command-line executables, so conversions that need none of them start about 1 ms (≈25%) faster on macOS 15 and later; explain why the first OCR after an install takes 25–45 seconds (Vision compiles its models per executable).
 - Load each PDF once and walk each page's content stream once for its text: the page reader, layout reconstruction and Markitai's own inspection share one parsed document whenever both loaders would read the same objects, cutting PDF conversion CPU by about 25% (wall time 6%, large PDFs 14%) with byte-identical output.

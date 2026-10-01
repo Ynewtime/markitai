@@ -46,6 +46,12 @@ impl Scope {
     }
 }
 
+/// Whether this thread currently reuses observations; writers assert it is not.
+#[cfg(test)]
+pub(super) fn active() -> bool {
+    MEMO.with(|memo| memo.borrow().is_some())
+}
+
 impl Drop for Scope {
     fn drop(&mut self) {
         MEMO.with(|memo| {

@@ -236,7 +236,7 @@ fn copy_opened(
     let result = (|| {
         let fingerprint = stream(&mut input, Some(&mut output), before.len())?;
         confirm(source, &input, &before)?;
-        output.sync_all()?;
+        // Synchronized with the whole stage before the job is named.
         Ok(fingerprint)
     })();
     drop(output);
@@ -686,7 +686,7 @@ pub(super) fn write_index(
     }
     let mut file = options.open(path)?;
     file.write_all(bytes)?;
-    file.sync_all()?;
+    // Synchronized with the whole stage before the job is named.
     budget.bytes += bytes.len() as u64;
     budget.files += 1;
     Ok(())

@@ -25,6 +25,10 @@ pub(crate) struct StateStore {
     // Set only after the current journal entry and data are durably synced.
     journal_synced_identity: Option<(u64, u64)>,
     durable_sequence: u64,
+    // Set while an ordered checkpoint or created states directory still awaits
+    // the durable fence of its volume; `durable_sequence` stays behind until a
+    // flush or durable compaction completes one.
+    unfenced: bool,
     begun: bool,
     poisoned: bool,
     legacy_backup: Option<PathBuf>,
@@ -73,23 +77,30 @@ impl StateStore {
         {
             return Err(Error::Invalid("storage limits must be positive".into()));
         }
-        check_policy(scope.output_spelling(), allow_symlinks)?;
-        if crate::report_store::resolve_path(scope.output_spelling())? != scope.output {
-            return Err(Error::ForeignScope(
-                "output path changed while planning recovery".into(),
-            ));
-        }
         let requested = scope.output_spelling().join(".markitai/states");
-        check_policy(&requested, allow_symlinks)?;
         let directory = scope.output.join(".markitai/states");
-        check_policy(&directory, allow_symlinks)?;
-        create_directory(&directory)?;
-        check_policy(&requested, allow_symlinks)?;
-        check_policy(&directory, allow_symlinks)?;
+        {
+            // One observation of these paths' shared ancestors per step.
+            let _paths = super::paths::Scope::enter();
+            check_policy(scope.output_spelling(), allow_symlinks)?;
+            if super::paths::resolve(scope.output_spelling())? != scope.output {
+                return Err(Error::ForeignScope(
+                    "output path changed while planning recovery".into(),
+                ));
+            }
+            check_policy(&requested, allow_symlinks)?;
+            check_policy(&directory, allow_symlinks)?;
+        }
+        let unfenced = create_directory(&directory)?;
         let base = directory.join(format!("markitai.{task_hash}.state.json"));
         let journal = directory.join(format!("markitai.{task_hash}.state.jsonl"));
         let lock_path = directory.join(format!("markitai.{task_hash}.state.lock"));
-        regular_file(&lock_path, allow_symlinks)?;
+        {
+            let _paths = super::paths::Scope::enter();
+            check_policy(&requested, allow_symlinks)?;
+            check_policy(&directory, allow_symlinks)?;
+            regular_file(&lock_path, allow_symlinks)?;
+        }
         let lock = OpenOptions::new()
             .read(true)
             .write(true)
@@ -119,6 +130,7 @@ impl StateStore {
             journal_bytes: 0,
             journal_synced_identity: None,
             durable_sequence: 0,
+            unfenced,
             begun: false,
             poisoned: false,
             legacy_backup: None,
@@ -314,7 +326,9 @@ impl StateStore {
             )?);
         }
         self.snapshot = Some(snapshot);
-        let result = self.replace_base(&bytes);
+        // Ordering suffices: nothing relies on this checkpoint before the
+        // durable fence of the first flush (admission) or the final compaction.
+        let result = self.replace_base(&bytes, Commit::Ordered);
         if result.is_err() {
             self.poisoned = true;
         } else {
@@ -352,6 +366,9 @@ impl StateStore {
                 sequence,
             }),
         };
+        // Preparing and applying this event validate the same paths: one
+        // observation serves both, unless compaction writes in between.
+        let mut paths = Some(super::paths::Scope::enter());
         let event = codec::prepare_event(snapshot, event, &self.scope, self.allow_symlinks)?;
         let mut line = codec::encode_event_limited(&event, self.limits.line_bytes)?;
         if line.len() > self.limits.line_bytes {
@@ -367,12 +384,16 @@ impl StateStore {
             .saturating_add(line.len())
             > self.limits.journal_bytes
         {
-            self.compact()?;
+            drop(paths.take());
+            // The next flush completes this compaction's durable fence.
+            self.compact_with(Commit::Ordered)?;
+            paths = Some(super::paths::Scope::enter());
         }
         let snapshot = self.snapshot.as_mut().unwrap();
         if !codec::apply_event(snapshot, &event, &self.scope, self.allow_symlinks)? {
             return Err(Error::Invalid("state mutation was not applied".into()));
         }
+        drop(paths);
         self.pending_bytes += line.len();
         self.pending.push(line);
         Ok(sequence)
@@ -380,7 +401,7 @@ impl StateStore {
 
     pub(crate) fn flush(&mut self) -> Result<u64> {
         self.writable()?;
-        if self.pending.is_empty() {
+        if self.pending.is_empty() && !self.unfenced {
             return Ok(self.durable_sequence);
         }
         let result = self.append_pending();
@@ -390,7 +411,13 @@ impl StateStore {
         result
     }
 
+    /// Replace the base with the complete snapshot and remove the journal,
+    /// durably: on success the compacted state is on stable storage.
     pub(crate) fn compact(&mut self) -> Result<()> {
+        self.compact_with(Commit::Durable)
+    }
+
+    fn compact_with(&mut self, commit: Commit) -> Result<()> {
         self.writable()?;
         let bytes = codec::encode(
             self.snapshot.as_ref().unwrap(),
@@ -398,7 +425,7 @@ impl StateStore {
             self.allow_symlinks,
             self.limits,
         )?;
-        let result = self.replace_base(&bytes);
+        let result = self.replace_base(&bytes, commit);
         if result.is_err() {
             self.poisoned = true;
         }
@@ -406,9 +433,12 @@ impl StateStore {
     }
 
     fn read_base(&self) -> Result<DiskBase> {
-        self.check_paths()?;
-        let Some(bytes) = read_limited(&self.base, self.allow_symlinks, self.limits.base_bytes)?
-        else {
+        let bytes = {
+            let _paths = super::paths::Scope::enter();
+            self.check_paths()?;
+            read_limited(&self.base, self.allow_symlinks, self.limits.base_bytes)?
+        };
+        let Some(bytes) = bytes else {
             return Ok(DiskBase::Missing);
         };
         if bytes.len() > self.limits.base_bytes {
@@ -422,8 +452,24 @@ impl StateStore {
     }
 
     fn append_pending(&mut self) -> Result<u64> {
-        self.check_paths()?;
-        regular_file(&self.journal, self.allow_symlinks)?;
+        #[cfg(test)]
+        assert!(
+            !super::paths::active(),
+            "journal write under an earlier observation"
+        );
+        if self.pending.is_empty() {
+            // An ordered checkpoint or created directory awaits its fence.
+            self.check_paths()?;
+            let mut fence = Staged::new();
+            fence.directory(&self.directory)?;
+            fence.durable()?;
+            return Ok(self.fenced());
+        }
+        {
+            let _paths = super::paths::Scope::enter();
+            self.check_paths()?;
+            regular_file(&self.journal, self.allow_symlinks)?;
+        }
         let mut options = OpenOptions::new();
         options.create(true).append(true);
         #[cfg(unix)]
@@ -448,20 +494,32 @@ impl StateStore {
         file.flush()?;
         #[cfg(test)]
         self.fail_at(FaultPoint::BeforeJournalSync)?;
-        file.sync_all()?;
         let identity = journal_identity(&metadata);
+        let mut fence = Staged::new();
+        fence.file(&file)?;
         // Appending changes file data, not an already durable directory entry.
-        // A fresh/replaced journal must sync the namespace before acknowledging
-        // its sequence. Platforms without native identity retain the barrier.
-        if identity.is_none() || identity != self.journal_synced_identity {
+        // A fresh/replaced journal, or one an ordered checkpoint still precedes,
+        // also needs the namespace: its bytes are ordered before its entry,
+        // then one durable fence covers both. Platforms without native
+        // identity retain the directory synchronization.
+        if identity.is_none() || identity != self.journal_synced_identity || self.unfenced {
+            fence.ordered()?;
             #[cfg(test)]
             self.fail_at(FaultPoint::BeforeJournalDirectorySync)?;
-            sync_directory(&self.directory)?;
+            fence = Staged::new();
+            fence.directory(&self.directory)?;
         }
+        fence.durable()?;
         self.journal_synced_identity = identity;
         self.journal_bytes += self.pending_bytes;
         self.pending_bytes = 0;
         self.pending.clear();
+        Ok(self.fenced())
+    }
+
+    /// Everything applied so far is on stable storage.
+    fn fenced(&mut self) -> u64 {
+        self.unfenced = false;
         self.durable_sequence = self
             .snapshot
             .as_ref()
@@ -470,48 +528,72 @@ impl StateStore {
             .as_ref()
             .unwrap()
             .applied_sequence;
-        Ok(self.durable_sequence)
+        self.durable_sequence
     }
 
-    fn replace_base(&mut self, bytes: &[u8]) -> Result<()> {
-        self.check_paths()?;
-        regular_file(&self.base, self.allow_symlinks)?;
-        regular_file(&self.journal, self.allow_symlinks)?;
+    /// Publish `bytes` as the base and remove the journal it supersedes.
+    ///
+    /// The snapshot's bytes are ordered before its name, and its name before
+    /// the journal's removal, so a crash leaves the old base with its journal,
+    /// the new base with a stale journal (ignored by the replay fence) or the
+    /// new base alone. A durable commit then fences the directory before
+    /// returning; an ordered one leaves that to the next flush.
+    fn replace_base(&mut self, bytes: &[u8], commit: Commit) -> Result<()> {
+        // Every step of this write observes the paths afresh.
+        #[cfg(test)]
+        assert!(
+            !super::paths::active(),
+            "checkpoint write under an earlier observation"
+        );
+        {
+            let _paths = super::paths::Scope::enter();
+            self.check_paths()?;
+            regular_file(&self.base, self.allow_symlinks)?;
+            regular_file(&self.journal, self.allow_symlinks)?;
+        }
         let mut temp = tempfile::Builder::new()
             .prefix(".markitai-state-")
             .suffix(".tmp")
             .tempfile_in(&self.directory)?;
         temp.write_all(bytes)?;
-        temp.as_file().sync_all()?;
+        let mut fence = Staged::new();
+        fence.file(temp.as_file())?;
+        fence.ordered()?;
         #[cfg(test)]
         self.fail_at(FaultPoint::AfterTempSync)?;
         self.check_paths()?;
         temp.persist(&self.base)
             .map_err(|error| Error::Io(error.error))?;
-        sync_directory(&self.directory)?;
+        let journal = regular_file(&self.journal, self.allow_symlinks)?;
+        let mut fence = Staged::new();
+        fence.directory(&self.directory)?;
+        if journal || commit == Commit::Ordered {
+            fence.ordered()?;
+        } else {
+            fence.durable()?;
+        }
         #[cfg(test)]
         self.fail_at(FaultPoint::AfterBaseSync)?;
-        let removed_journal = regular_file(&self.journal, self.allow_symlinks)?;
-        if removed_journal {
+        if journal {
             fs::remove_file(&self.journal)?;
         }
         #[cfg(test)]
         self.fail_at(FaultPoint::AfterJournalRemove)?;
-        if removed_journal {
-            sync_directory(&self.directory)?;
+        if journal && commit == Commit::Durable {
+            let mut fence = Staged::new();
+            fence.directory(&self.directory)?;
+            fence.durable()?;
         }
         self.journal_synced_identity = None;
         self.journal_bytes = 0;
         self.pending_bytes = 0;
         self.pending.clear();
-        self.durable_sequence = self
-            .snapshot
-            .as_ref()
-            .unwrap()
-            .checkpoint
-            .as_ref()
-            .unwrap()
-            .applied_sequence;
+        match commit {
+            Commit::Durable => {
+                self.fenced();
+            }
+            Commit::Ordered => self.unfenced = true,
+        }
         Ok(())
     }
 
@@ -567,9 +649,12 @@ impl StateStore {
         result
     }
 
+    /// The storage paths under one observation of their shared ancestors (or
+    /// the caller's, when it holds one); each call otherwise observes afresh.
     fn check_paths(&self) -> Result<()> {
+        let _paths = super::paths::Scope::enter();
         check_policy(self.scope.output_spelling(), self.allow_symlinks)?;
-        if crate::report_store::resolve_path(self.scope.output_spelling())? != self.scope.output {
+        if super::paths::resolve(self.scope.output_spelling())? != self.scope.output {
             return Err(Error::ForeignScope(
                 "output path changed during recovery".into(),
             ));
@@ -634,10 +719,14 @@ fn contains_key(snapshot: &Snapshot, key: &ItemKey) -> bool {
     }
 }
 
+/// `markitai_core::output::check_path`, sharing an active path observation.
 fn check_policy(path: &Path, allow_symlinks: bool) -> Result<()> {
-    markitai_core::output::check_path(path, allow_symlinks).map_err(|_| {
-        Error::ForeignScope("symbolic link access is disabled for recovery storage".into())
-    })
+    match super::paths::symlinks_permitted(path, allow_symlinks) {
+        Ok(true) => Ok(()),
+        _ => Err(Error::ForeignScope(
+            "symbolic link access is disabled for recovery storage".into(),
+        )),
+    }
 }
 
 fn regular_file(path: &Path, allow_symlinks: bool) -> Result<bool> {
@@ -687,7 +776,9 @@ fn sync_directory(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn create_directory(path: &Path) -> Result<()> {
+/// Create the states directory chain. True when created directories were only
+/// ordered and still await the durable fence of the checkpoint volume.
+fn create_directory(path: &Path) -> Result<bool> {
     let mut missing = Vec::new();
     for ancestor in path.ancestors() {
         match fs::metadata(ancestor) {
@@ -699,18 +790,85 @@ fn create_directory(path: &Path) -> Result<()> {
     fs::create_dir_all(path)?;
     // Sync each new parent entry too: syncing only `states` does not make a
     // previously absent output/.markitai/states chain durable on Unix. All
-    // creation precedes synchronization; one media fence per verified local
-    // volume then covers the chain (per-object durable sync elsewhere).
+    // creation precedes synchronization; one ordering fence per verified local
+    // volume then puts the chain before any checkpoint file created in it
+    // (per-object durable sync elsewhere). Nothing relies on the chain before
+    // the checkpoint's own durable fence, which on the same volume persists it.
+    // A chain that reaches another volume keeps the immediate durable fence.
     #[cfg(unix)]
     {
+        use std::os::unix::fs::MetadataExt;
+        let Some(parent) = missing.last().and_then(|directory| directory.parent()) else {
+            return Ok(false);
+        };
+        let device = fs::metadata(path)?.dev();
+        let mut one_volume = true;
         let mut group = crate::output_claims::sync_group::SyncGroup::new();
-        let parent = missing.last().and_then(|directory| directory.parent());
-        for directory in missing.iter().copied().chain(parent) {
-            group.stage(&File::open(directory)?)?;
+        for directory in missing.iter().copied().chain([parent]) {
+            let handle = File::open(directory)?;
+            one_volume &= handle.metadata()?.dev() == device;
+            group.stage(&handle)?;
+        }
+        if one_volume {
+            group.commit_ordered()?;
+            return Ok(true);
         }
         group.commit()?;
     }
-    Ok(())
+    Ok(false)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Commit {
+    /// Later writes on the volume cannot reach stable storage first.
+    Ordered,
+    /// On stable storage when the call returns.
+    Durable,
+}
+
+/// Checkpoint files and their directory: per-object synchronization, then one
+/// ordering or durable fence per verified volume (the output claims'
+/// synchronization group); other platforms keep `File::sync_all`.
+struct Staged {
+    #[cfg(unix)]
+    group: crate::output_claims::sync_group::SyncGroup,
+}
+
+impl Staged {
+    fn new() -> Self {
+        Self {
+            #[cfg(unix)]
+            group: crate::output_claims::sync_group::SyncGroup::new(),
+        }
+    }
+
+    fn file(&mut self, file: &File) -> Result<()> {
+        #[cfg(unix)]
+        self.group.stage(file)?;
+        #[cfg(not(unix))]
+        file.sync_all()?;
+        Ok(())
+    }
+
+    fn directory(&mut self, path: &Path) -> Result<()> {
+        #[cfg(unix)]
+        self.group.stage(&File::open(path)?)?;
+        #[cfg(not(unix))]
+        let _ = path;
+        Ok(())
+    }
+
+    fn ordered(self) -> Result<()> {
+        #[cfg(unix)]
+        self.group.commit_ordered()?;
+        Ok(())
+    }
+
+    fn durable(self) -> Result<()> {
+        #[cfg(unix)]
+        self.group.commit()?;
+        Ok(())
+    }
 }
 
 fn warn(warnings: &mut Vec<String>, message: &str) {
@@ -1289,6 +1447,172 @@ mod tests {
                 0o600
             );
         }
+    }
+
+    /// Fence kinds of each step: bytes before names, a checkpoint name before
+    /// its journal's removal, and exactly one durable fence per acknowledgement.
+    #[cfg(unix)]
+    #[test]
+    fn checkpoint_steps_are_ordered_and_each_acknowledgement_is_one_durable_fence() {
+        use crate::output_claims::sync_group::take_commits;
+        let (_dir, scope, snapshot) = setup();
+        take_commits();
+        let mut store = open(&scope);
+        // The created output/.markitai/states chain precedes the checkpoint.
+        assert_eq!(take_commits(), ["ordered"]);
+        assert!(store.unfenced);
+        store.begin(snapshot).unwrap();
+        // Snapshot bytes, then its name; no acknowledgement yet.
+        assert_eq!(take_commits(), ["ordered", "ordered"]);
+        assert_eq!(store.durable_sequence, 0);
+        // The first flush completes the checkpoint's fence even when idle.
+        assert_eq!(store.flush().unwrap(), 0);
+        assert_eq!(take_commits(), ["durable"]);
+        assert_eq!(store.flush().unwrap(), 0);
+        assert!(take_commits().is_empty());
+        store
+            .record(file_key(), json!({"status": "failed", "error": "first"}))
+            .unwrap();
+        // A new journal's bytes precede its directory entry.
+        assert_eq!(store.flush().unwrap(), 1);
+        assert_eq!(take_commits(), ["ordered", "durable"]);
+        store
+            .record(file_key(), json!({"status": "completed"}))
+            .unwrap();
+        assert_eq!(store.flush().unwrap(), 2);
+        assert_eq!(take_commits(), ["durable"]);
+        // Base bytes, base name before the journal's removal, then durable.
+        store.compact().unwrap();
+        assert_eq!(take_commits(), ["ordered", "ordered", "durable"]);
+        assert!(!store.journal.exists());
+        assert!(!store.unfenced);
+        // Without a journal to remove, the name's fence is the durable one.
+        store.compact().unwrap();
+        assert_eq!(take_commits(), ["ordered", "durable"]);
+        assert_eq!(store.flush().unwrap(), 2);
+        assert!(take_commits().is_empty());
+        store
+            .record(file_key(), json!({"status": "completed"}))
+            .unwrap();
+        assert_eq!(store.flush().unwrap(), 3);
+        assert_eq!(take_commits(), ["ordered", "durable"]);
+        // Reopening an existing chain creates nothing and fences nothing.
+        drop(store);
+        let mut reopened = open(&scope);
+        assert!(take_commits().is_empty());
+        assert!(!reopened.unfenced);
+        let (saved, _) = loaded(&mut reopened);
+        assert_eq!(saved.documents["a.txt"].status, Status::Completed);
+        assert_eq!(saved.checkpoint.as_ref().unwrap().applied_sequence, 3);
+        reopened
+            .record(file_key(), json!({"status": "failed"}))
+            .unwrap_err();
+        // A resumed checkpoint names its base before removing the journal,
+        // whose removal then waits for the next durable fence.
+        assert!(reopened.journal.exists());
+        reopened.begin(saved).unwrap();
+        assert_eq!(take_commits(), ["ordered", "ordered"]);
+        assert!(!reopened.journal.exists());
+        assert_eq!(reopened.durable_sequence, 3);
+        reopened
+            .record(file_key(), json!({"status": "failed", "error": "again"}))
+            .unwrap();
+        assert_eq!(reopened.flush().unwrap(), 4);
+        assert_eq!(take_commits(), ["ordered", "durable"]);
+    }
+
+    /// An ordered checkpoint never advances the acknowledged sequence; only a
+    /// durable fence does, including after a compaction forced by capacity.
+    #[cfg(unix)]
+    #[test]
+    fn ordered_compaction_waits_for_the_next_flush_to_acknowledge() {
+        use crate::output_claims::sync_group::take_commits;
+        let (_dir, scope, snapshot) = setup();
+        let limits = Limits {
+            journal_bytes: 300,
+            line_bytes: 299,
+            ..Limits::default()
+        };
+        let mut store = StateStore::open(scope.clone(), "abc123", false, limits).unwrap();
+        store.begin(snapshot).unwrap();
+        assert_eq!(store.flush().unwrap(), 0);
+        take_commits();
+        store
+            .record(
+                file_key(),
+                json!({"status": "failed", "error": "x".repeat(70)}),
+            )
+            .unwrap();
+        assert!(take_commits().is_empty());
+        // Capacity compacts the buffered sequence 1 into the base: ordered,
+        // so it is not acknowledged until the next flush.
+        store
+            .record(file_key(), json!({"status": "completed"}))
+            .unwrap();
+        assert_eq!(take_commits(), ["ordered", "ordered"]);
+        let base: Value = serde_json::from_slice(&fs::read(&store.base).unwrap()).unwrap();
+        assert_eq!(base["_markitai"]["applied_sequence"], 1);
+        assert_eq!(store.durable_sequence, 0);
+        assert!(store.unfenced);
+        assert_eq!(store.flush().unwrap(), 2);
+        assert_eq!(take_commits(), ["ordered", "durable"]);
+        assert!(!store.unfenced);
+        drop(store);
+        let mut reopened = StateStore::open(scope.clone(), "abc123", false, limits).unwrap();
+        let (saved, warnings) = loaded(&mut reopened);
+        assert_eq!(saved.documents["a.txt"].status, Status::Completed);
+        assert_eq!(saved.checkpoint.unwrap().applied_sequence, 2);
+        assert!(warnings.is_empty());
+    }
+
+    /// Store operations share one observation of their own paths, never one
+    /// from an earlier call: an output parent replaced by a link is rejected
+    /// by the next operation, and an ordinary directory is accepted again.
+    #[cfg(unix)]
+    #[test]
+    fn each_storage_operation_observes_a_substituted_output_afresh() {
+        use std::os::unix::fs::symlink;
+        let (dir, scope, snapshot) = setup();
+        let mut store = open(&scope);
+        assert!(!crate::run_state::paths::active());
+        store.begin(snapshot).unwrap();
+        store
+            .record(file_key(), json!({"status": "failed", "error": "first"}))
+            .unwrap();
+        assert!(!crate::run_state::paths::active());
+        let output = dir.path().join("out");
+        let moved = dir.path().join("moved");
+        fs::rename(&output, &moved).unwrap();
+        symlink(&moved, &output).unwrap();
+        assert!(matches!(store.flush(), Err(Error::ForeignScope(_))));
+        assert_eq!(store.durable_sequence, 0);
+        assert!(!crate::run_state::paths::active());
+        // The rejected flush poisoned this writer; a new one sees the link.
+        drop(store);
+        assert!(matches!(
+            StateStore::open(scope.clone(), "abc123", false, Limits::default()),
+            Err(Error::ForeignScope(_))
+        ));
+        fs::remove_file(&output).unwrap();
+        fs::rename(&moved, &output).unwrap();
+        let mut store = open(&scope);
+        let (saved, _) = loaded(&mut store);
+        store.begin(saved).unwrap();
+        store
+            .record(file_key(), json!({"status": "completed"}))
+            .unwrap();
+        // A link substituted for the states directory between a record and
+        // its flush is caught at the flush, as before.
+        let states = scope.output.join(".markitai/states");
+        let held = dir.path().join("held-states");
+        fs::rename(&states, &held).unwrap();
+        symlink(&held, &states).unwrap();
+        assert!(matches!(store.flush(), Err(Error::ForeignScope(_))));
+        fs::remove_file(&states).unwrap();
+        fs::rename(&held, &states).unwrap();
+        drop(store);
+        let (saved, _) = loaded(&mut open(&scope));
+        assert_eq!(saved.documents["a.txt"].status, Status::Pending);
     }
 
     #[test]

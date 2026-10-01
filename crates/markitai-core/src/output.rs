@@ -8,6 +8,7 @@ use std::path::{Component, Path};
 use std::sync::Mutex;
 
 static OUTPUT_LOCK: Mutex<()> = Mutex::new(());
+pub(crate) mod fence;
 mod image_metadata;
 
 /// Relocate complete asset destinations when archiving Markdown and its assets.
@@ -20,28 +21,63 @@ pub fn rewrite_asset_references(
 }
 
 pub fn check_path(path: &Path, allow_symlinks: bool) -> Result<()> {
+    check_paths(&[path], allow_symlinks)
+}
+
+/// `check_path` for each path in order, under one observation: an ancestor
+/// that several of them share (the common parent of a document family) is
+/// examined once, never the leaf of another path. Every call observes the
+/// filesystem afresh; nothing is retained after it returns.
+pub(crate) fn check_paths(paths: &[&Path], allow_symlinks: bool) -> Result<()> {
     if allow_symlinks {
         return Ok(());
     }
-    let absolute = std::path::absolute(path)?;
-    for ancestor in absolute.ancestors() {
-        if let Ok(metadata) = std::fs::symlink_metadata(ancestor)
-            && metadata.file_type().is_symlink()
-        {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::MetadataExt;
-                if ancestor != absolute && metadata.uid() == 0 {
-                    continue;
+    // (ancestor, symbolic link owned by root); `None` is an ordinary entry or
+    // a failed lookup, which this policy has always ignored.
+    let mut observed: Vec<(std::path::PathBuf, Option<bool>)> = Vec::new();
+    let shared = paths.len() > 1;
+    for path in paths {
+        let absolute = std::path::absolute(path)?;
+        for ancestor in absolute.ancestors() {
+            let link = match observed.iter().find(|(seen, _)| seen == ancestor) {
+                Some((_, link)) => *link,
+                None => {
+                    let link = std::fs::symlink_metadata(ancestor)
+                        .ok()
+                        .filter(|metadata| metadata.file_type().is_symlink())
+                        .map(|metadata| root_owned(&metadata));
+                    if shared {
+                        observed.push((ancestor.to_owned(), link));
+                    }
+                    link
+                }
+            };
+            match link {
+                None => (),
+                Some(true) if ancestor != absolute => (),
+                Some(_) => {
+                    return Err(Error::InvalidInput(format!(
+                        "Symlink access is disabled: {} (set output.allow_symlinks to true to follow it)",
+                        ancestor.display()
+                    )));
                 }
             }
-            return Err(Error::InvalidInput(format!(
-                "Symlink access is disabled: {} (set output.allow_symlinks to true to follow it)",
-                ancestor.display()
-            )));
         }
     }
     Ok(())
+}
+
+fn root_owned(metadata: &std::fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        metadata.uid() == 0
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        false
+    }
 }
 
 pub fn split_frontmatter(text: &str) -> (Map<String, Value>, &str) {
@@ -418,8 +454,10 @@ pub fn should_skip(dir: &Path, name: &str, cfg: &Value) -> Result<bool> {
     }
     let base = dir.join(format!("{name}.md"));
     let llm = dir.join(format!("{name}.llm.md"));
-    check_path(&base, config::enabled(cfg, "/output/allow_symlinks"))?;
-    check_path(&llm, config::enabled(cfg, "/output/allow_symlinks"))?;
+    check_paths(
+        &[&base, &llm],
+        config::enabled(cfg, "/output/allow_symlinks"),
+    )?;
     Ok(base.exists() || llm.exists())
 }
 
@@ -445,13 +483,16 @@ fn atomic_write(path: &Path, bytes: &[u8], overwrite: bool) -> Result<()> {
         .ok_or_else(|| Error::InvalidInput("Output has no parent".into()))?;
     let mut temp = deliverable_builder().tempfile_in(parent)?;
     temp.write_all(bytes)?;
-    temp.as_file().sync_all()?;
+    // The bytes precede the name; neither this write nor its rename was ever
+    // followed by a directory synchronization.
+    fence::order_staged(temp.as_file())?;
     if overwrite {
         temp.persist(path).map_err(|e| Error::Io(e.error))?;
     } else {
         temp.persist_noclobber(path)
             .map_err(|e| Error::Io(e.error))?;
     }
+    fence::note("published");
     Ok(())
 }
 
@@ -602,8 +643,7 @@ pub(crate) fn write_document_mode(
     loop {
         let base = dir.join(format!("{stem}.md"));
         let enhanced = dir.join(format!("{stem}.llm.md"));
-        check_path(&base, allow_symlinks)?;
-        check_path(&enhanced, allow_symlinks)?;
+        check_paths(&[&base, &enhanced], allow_symlinks)?;
         if publication.is_some() || !base.exists() && !enhanced.exists() || mode == "overwrite" {
             break;
         }
@@ -1311,6 +1351,32 @@ mod tests {
         );
     }
     #[test]
+    fn immediate_writes_order_each_assets_and_documents_bytes_before_its_name() {
+        let root = tempfile::tempdir().unwrap();
+        let cfg = config::defaults();
+        let mut result = ConversionOutput {
+            markdown: "![a](.markitai/assets/a.bin)\n".into(),
+            ..Default::default()
+        };
+        let assets = [Asset {
+            name: "a.bin".into(),
+            bytes: b"asset bytes".to_vec(),
+        }];
+        fence::take();
+        write(root.path(), "doc", &mut result, &assets, &cfg).unwrap();
+        let ordered = fence::expected(root.path());
+        // Asset, then document: each fence precedes its own rename.
+        assert_eq!(fence::take(), [ordered, "published", ordered, "published"]);
+        let mut again = ConversionOutput {
+            markdown: "![a](.markitai/assets/a.bin)\n".into(),
+            ..Default::default()
+        };
+        write(root.path(), "doc", &mut again, &assets, &cfg).unwrap();
+        // The verified asset is reused; only the renamed document is staged.
+        assert_eq!(fence::take(), [ordered, "published"]);
+        assert!(again.output_path.unwrap().ends_with("doc.v2.md"));
+    }
+    #[test]
     fn malformed_frontmatter_remains_content() {
         let text = "---\ninvalid: [\n---\nbody";
         assert_eq!(split_frontmatter(text).1, text);
@@ -1336,6 +1402,106 @@ mod tests {
             )
             .is_err()
         );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod path_check_tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    fn outcome(result: Result<()>) -> std::result::Result<(), String> {
+        result.map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn family_check_equals_separate_member_checks() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("real/sub")).unwrap();
+        std::fs::write(root.join("real/sub/file.md"), b"x").unwrap();
+        symlink(root.join("real"), root.join("link")).unwrap();
+        symlink(root.join("real/sub/file.md"), root.join("real/sub/leaf.md")).unwrap();
+        let paths = [
+            root.join("real/sub/file.md"),
+            root.join("real/sub/file.llm.md"),
+            root.join("real/sub/leaf.md"),
+            root.join("link/sub/file.md"),
+            root.join("missing/deeper/file.md"),
+            root.join("real/sub/file.md/below"),
+        ];
+        for first in &paths {
+            for second in &paths {
+                for allow in [false, true] {
+                    let separate =
+                        check_path(first, allow).and_then(|()| check_path(second, allow));
+                    assert_eq!(
+                        outcome(check_paths(&[first, second], allow)),
+                        outcome(separate),
+                        "{first:?} {second:?} {allow}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_member_leaf_is_never_taken_from_its_sibling() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("doc.md");
+        let enhanced = dir.path().join("doc.llm.md");
+        std::fs::write(&base, b"base").unwrap();
+        symlink(&base, &enhanced).unwrap();
+        let error = check_paths(&[&base, &enhanced], false)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("doc.llm.md"), "{error}");
+        let error = check_paths(&[&enhanced, &base], false)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("doc.llm.md"), "{error}");
+    }
+
+    #[test]
+    fn each_family_check_observes_a_replaced_parent_afresh() {
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("out");
+        std::fs::create_dir(&parent).unwrap();
+        let members = [parent.join("doc.md"), parent.join("doc.llm.md")];
+        let members = [members[0].as_path(), members[1].as_path()];
+        check_paths(&members, false).unwrap();
+        // Substitute the shared parent with a link to another directory.
+        std::fs::rename(&parent, dir.path().join("moved")).unwrap();
+        symlink(dir.path().join("moved"), &parent).unwrap();
+        let error = check_paths(&members, false).unwrap_err().to_string();
+        assert!(error.contains("Symlink access is disabled"), "{error}");
+        assert!(check_path(members[1], false).is_err());
+        // Restore an ordinary directory: the next call accepts it again.
+        std::fs::remove_file(&parent).unwrap();
+        std::fs::rename(dir.path().join("moved"), &parent).unwrap();
+        check_paths(&members, false).unwrap();
+    }
+
+    /// A root-owned system link is accepted above a path but not as its leaf,
+    /// even when an earlier member of the same check walked through it.
+    #[test]
+    fn root_owned_link_exception_is_decided_for_each_member() {
+        use std::os::unix::fs::MetadataExt;
+        let system = ["/var", "/tmp", "/etc"]
+            .into_iter()
+            .map(Path::new)
+            .find(|path| {
+                std::fs::symlink_metadata(path)
+                    .is_ok_and(|metadata| metadata.file_type().is_symlink() && metadata.uid() == 0)
+            });
+        let Some(system) = system else {
+            return; // No root-owned top-level link on this host.
+        };
+        let below = system.join("markitai-absent-member.md");
+        check_path(&below, false).unwrap();
+        assert!(check_path(system, false).is_err());
+        assert!(check_paths(&[&below, system], false).is_err());
+        check_paths(&[&below, &below], false).unwrap();
     }
 }
 

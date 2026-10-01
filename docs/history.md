@@ -152,10 +152,15 @@ requiring rewriting and 16 MiB of serialized metadata. Copying streams through
 scans. Rewriting shares a lookup across documents at the same root depth and
 releases that lookup before processing the next depth.
 
-Work happens in a private `.tmp-*` sibling. Copies and rewritten files are synced;
-metadata is written last. A stable `.publish.lock` serializes only final naming,
-metadata and directory publication, with a five-second wait limit. The staged
-directory is renamed to its unique ID and the parent synced on Unix. Ordinary
+Work happens in a private `.tmp-*` sibling; metadata is written last. A stable
+`.publish.lock` serializes only final naming, metadata and directory publication,
+with a five-second wait limit. Every file and directory of the stage is then
+synchronized and ordered before the stage is renamed to its unique ID, and the
+parent's durable synchronization follows on Unix: a job that survives a crash is
+complete, and a published job is durable when publication returns. On a verified
+local macOS APFS/HFS volume this is per-object `fsync`, one `F_BARRIERFSYNC` and
+one `F_FULLFSYNC` (a full cache flush per file and directory before); elsewhere
+each object keeps `File::sync_all`. Ordinary
 errors remove the stage. A hard process kill may leave an unpublished `.tmp-*`
 directory, which readers must ignore. Published jobs and the stable lock are not
 automatically pruned. This is cooperative local-process protection, not a defense

@@ -135,6 +135,13 @@ by a durability fence; every other phase boundary uses an ordering fence:
 | Receipt copied for an adopted URL owner, before the checkpoint names it | durability |
 | Records directory created by this call; directory created after a concurrent removal | durability (unchanged immediate synchronization) |
 
+Recovery state outside the publication protocol has its own
+[fence table](state-storage.md#ordering-and-durability-fences). Writers that never
+synchronize the published name (the core's content-addressed assets and immediate
+documents, reports) order the staged bytes before the rename with the same kind
+of ordering fence: such a file was not guaranteed durable on return before
+either, and a name that survives a crash still refers to complete bytes.
+
 On a verified local macOS APFS or HFS volume, each object is synchronized with
 `fsync`, then a retained descriptor on that volume issues one `F_BARRIERFSYNC`
 (ordering) or `F_FULLFSYNC` (durability). The [fcntl manual](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/fcntl.2.html)
