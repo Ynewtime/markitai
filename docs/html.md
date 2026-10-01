@@ -2,7 +2,8 @@
 
 The Rust HTML reader parses a DOM with `scraper`, selects an article candidate,
 writes an allowlisted representation of it as the tree `htmd` renders to Markdown,
-and parses the page only once (see [single parse](#single-parse)).
+and parses the page only once (see [single parse](#single-parse)); what its
+passes ask of an element is computed once (see [facts read once](#facts-read-once)).
 It does not run JavaScript, fetch images, follow links, start a browser, or call
 the Python implementation. The same reader serves local HTML and fetched HTML;
 fetching itself belongs to the separate HTTP layer.
@@ -131,6 +132,39 @@ email files 167, 134, 134 and 132 ms. Whole-directory CLI runs (`-j 1`, `-o`,
 publication included): CPU −16% and wall −12% for the pages, CPU −4% and wall
 −4% for the email files (A/A spread under 0.5%). The tree writer and its
 fallback add about 37 KB of code (the CLI grows by 49,632 bytes).
+
+### Facts read once
+
+The choice of the content region, the reading of its furniture, footnote
+recovery and the cleaner all read the elements of a full page and asked them
+the same questions again (is it hidden, page chrome, a note, a note's
+context), some of them for every ancestor of an element. Each answer is now
+kept the first time it is computed, in a table with a cell for every node of
+the page's tree (ego_tree numbers a tree's nodes by their place in its
+vector), so an element is classified once however often it is asked about.
+Footnote recovery reads what it asks of every element (inside a literal
+container, in scope, in a note's context) in one walk in document order, each
+element after its ancestors; one walk over the region finds its links around
+blocks, reference candidates and inline notes, and one walk the saved page's
+base and canonical addresses. The page's metadata and the site readers' tests
+(Steam event data, Substack, X, Hacker News) take the elements they look for
+from one walk over the page's nodes, in the order and with the selection
+`Html::select` uses, instead of about a dozen selector walks. Class tests read
+an element's classes once and without interning each name (as scraper's
+`classes` does); a copy header longer than any language name is not read
+further; word counts read ASCII text a byte at a time; the page is searched for
+shadow-root templates with the regex engine's literal search; a table of
+contents' heading targets are read only for a list of in-page links; and a
+link whose text is neither a number nor a note sign is not collected as a
+footnote reference.
+
+On the same 2,049 inputs every output is byte-identical. Converting the 1,740
+pages in process (release profile, macOS arm64, medians of 30 passes; two
+copies of one binary differed by under 0.4%): 717 ms CPU before, 538 ms after
+(−25%); the 265 email files 122 and 103 ms (−16%). Whole-directory CLI runs
+(`-j 1`, `-o`, publication included): CPU −6.4% and wall −4.6% for the pages,
+CPU −3.0% and wall −3.2% for the email files (A/A spread 0.1–0.8%). The CLI
+shrinks by 33,008 bytes (`__text` −12,660 bytes).
 
 ## Content region and site readers
 

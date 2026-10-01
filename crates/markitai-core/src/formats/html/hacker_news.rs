@@ -3,7 +3,7 @@
 //! structure of a discussion is only visible in each comment's indent.
 
 use super::Attribute;
-use super::{Announcement, render_clean, selector};
+use super::{Announcement, Landmarks, render_clean, selector};
 use crate::Result;
 use scraper::{ElementRef, Html};
 use serde_json::{Map, Value};
@@ -14,13 +14,8 @@ const SITE: &str = "https://news.ycombinator.com/";
 const INDENT_PIXELS: usize = 40;
 const TITLE_EXCERPT: usize = 50;
 
-fn is_hacker_news(document: &Html, base: Option<&Url>) -> bool {
-    base.and_then(Url::host_str) == Some("news.ycombinator.com")
-        || (document.select(&selector("#hnmain")).next().is_some()
-            && document
-                .select(&selector("tr.athing, tr.comtr"))
-                .next()
-                .is_some())
+fn is_hacker_news(page: &Landmarks<'_>, base: Option<&Url>) -> bool {
+    base.and_then(Url::host_str) == Some("news.ycombinator.com") || (page.hn_main && page.hn_rows)
 }
 
 fn text_of(element: ElementRef<'_>) -> String {
@@ -323,8 +318,12 @@ fn listing(document: &Html, site: &Url) -> Option<Announcement> {
     Some(Announcement { markdown, metadata })
 }
 
-pub(super) fn page(document: &Html, base: Option<&Url>) -> Result<Option<Announcement>> {
-    if !is_hacker_news(document, base) {
+pub(super) fn page(
+    document: &Html,
+    landmarks: &Landmarks<'_>,
+    base: Option<&Url>,
+) -> Result<Option<Announcement>> {
+    if !is_hacker_news(landmarks, base) {
         return Ok(None);
     }
     let site = base
@@ -369,6 +368,10 @@ mod tests {
         format!(
             r#"<tr class="athing comtr" id="{id}"><td><table><tr><td class="ind" {indent}></td><td class="default"><div class="comhead"><a class="hnuser" href="user?id={user}">{user}</a> <span class="age" title="2025-01-15T10:00:00 1736935200"><a href="item?id={id}">2 hours ago</a></span></div><div class="comment"><div class="commtext c00">{text}</div><div class="reply"><a href="reply?id={id}">reply</a></div></div></td></tr></table></td></tr>"#
         )
+    }
+
+    fn page(document: &Html, base: Option<&Url>) -> Result<Option<Announcement>> {
+        super::page(document, &Landmarks::read(document), base)
     }
 
     fn convert(html: &str) -> Announcement {

@@ -1,11 +1,20 @@
 use super::Attribute;
+use super::facts::{Fact, Facts};
 use scraper::{ElementRef, Html, Node};
 
 fn token(element: ElementRef<'_>, attribute: &str, expected: &str) -> bool {
+    any_token(element, attribute, &[expected])
+}
+
+/// Whether a word of the attribute is one of `expected`, in any case, reading
+/// the attribute once.
+fn any_token(element: ElementRef<'_>, attribute: &str, expected: &[&str]) -> bool {
     element.value().attribute(attribute).is_some_and(|value| {
-        value
-            .split_ascii_whitespace()
-            .any(|part| part.eq_ignore_ascii_case(expected))
+        value.split_ascii_whitespace().any(|part| {
+            expected
+                .iter()
+                .any(|expected| part.eq_ignore_ascii_case(expected))
+        })
     })
 }
 
@@ -22,31 +31,35 @@ fn named(element: ElementRef<'_>, names: &[&str]) -> bool {
         .any(|word| names.iter().any(|name| word.eq_ignore_ascii_case(name)))
 }
 
-pub(super) fn note(element: ElementRef<'_>) -> bool {
-    super::note_context(element)
-        || [
-            "doc-footnote",
-            "doc-endnote",
-            "doc-endnotes",
-            "doc-bibliography",
-        ]
-        .iter()
-        .any(|role| token(element, "role", role))
-        || named(
-            element,
-            &[
-                "footnotes",
-                "endnotes",
-                "sidenote",
-                "sidenotes",
-                "footnote-content",
-                "footnoteContent",
-            ],
-        )
+pub(super) fn note(facts: &Facts, element: ElementRef<'_>) -> bool {
+    facts.remember(element, Fact::Note, || {
+        super::note_context(facts, element)
+            || any_token(
+                element,
+                "role",
+                &[
+                    "doc-footnote",
+                    "doc-endnote",
+                    "doc-endnotes",
+                    "doc-bibliography",
+                ],
+            )
+            || named(
+                element,
+                &[
+                    "footnotes",
+                    "endnotes",
+                    "sidenote",
+                    "sidenotes",
+                    "footnote-content",
+                    "footnoteContent",
+                ],
+            )
+    })
 }
 
-fn ancillary(element: ElementRef<'_>) -> bool {
-    if element.value().name() == "aside" || note(element) {
+fn ancillary(facts: &Facts, element: ElementRef<'_>) -> bool {
+    if element.value().name() == "aside" || note(facts, element) {
         return true;
     }
     if !matches!(element.value().name(), "div" | "section" | "ul" | "ol") {
@@ -166,7 +179,7 @@ fn card(element: ElementRef<'_>) -> bool {
     linked && title_or_image
 }
 
-fn related_cards(element: ElementRef<'_>) -> bool {
+fn related_cards(facts: &Facts, element: ElementRef<'_>) -> bool {
     if !related_heading(element) {
         return false;
     }
@@ -183,7 +196,8 @@ fn related_cards(element: ElementRef<'_>) -> bool {
             count += 1;
             continue;
         }
-        if matches!(node.value().name(), "p" | "pre" | "table" | "blockquote") || note(node) {
+        if matches!(node.value().name(), "p" | "pre" | "table" | "blockquote") || note(facts, node)
+        {
             return false;
         }
         // Unlabelled prose beside cards belongs to the article, not a widget.
@@ -251,7 +265,11 @@ fn contains_math(element: ElementRef<'_>) -> bool {
 
 /// Full-page chrome only. Fragment conversion must leave this policy disabled:
 /// the same table of contents can be essential text in a book or email.
-pub(super) fn excluded(element: ElementRef<'_>) -> bool {
+pub(super) fn excluded(facts: &Facts, element: ElementRef<'_>) -> bool {
+    facts.remember(element, Fact::Excluded, || chrome(facts, element))
+}
+
+fn chrome(facts: &Facts, element: ElementRef<'_>) -> bool {
     if hidden_class(element) && !contains_math(element) {
         return true;
     }
@@ -273,7 +291,7 @@ pub(super) fn excluded(element: ElementRef<'_>) -> bool {
     ) {
         return true;
     }
-    if note(element)
+    if note(facts, element)
         || !matches!(
             element.value().name(),
             "div" | "section" | "aside" | "nav" | "ul" | "ol"
@@ -281,10 +299,7 @@ pub(super) fn excluded(element: ElementRef<'_>) -> bool {
     {
         return false;
     }
-    if ["doc-toc", "navigation"]
-        .iter()
-        .any(|role| token(element, "role", role))
-    {
+    if any_token(element, "role", &["doc-toc", "navigation"]) {
         return true;
     }
     if named(
@@ -347,7 +362,7 @@ pub(super) fn excluded(element: ElementRef<'_>) -> bool {
     {
         return true;
     }
-    matches!(element.value().name(), "div" | "section" | "aside") && related_cards(element)
+    matches!(element.value().name(), "div" | "section" | "aside") && related_cards(facts, element)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -411,9 +426,9 @@ pub(super) fn structured_page(root: ElementRef<'_>) -> bool {
     matches!(kind(root), Kind::Readme | Kind::Discussion)
 }
 
-pub(super) fn discarded(element: ElementRef<'_>) -> bool {
-    super::is_hidden(element)
-        || excluded(element)
+pub(super) fn discarded(facts: &Facts, element: ElementRef<'_>) -> bool {
+    facts.hidden(element)
+        || excluded(facts, element)
         || matches!(
             element.value().name(),
             "script"
@@ -547,35 +562,9 @@ static TEASER_LINK: std::sync::LazyLock<scraper::Selector> =
 /// carry that structure, and the links would not resolve in Markdown.
 pub(super) fn contents<'a>(root: ElementRef<'a>, document: ElementRef<'a>) -> Vec<ElementRef<'a>> {
     const MIN_LINKS: usize = 3;
-    let mut targets = std::collections::HashSet::new();
-    for node in document.descendants().filter_map(ElementRef::wrap) {
-        let value = node.value();
-        let Some(id) = value.attribute("id").or_else(|| {
-            (value.name() == "a")
-                .then(|| value.attribute("name"))
-                .flatten()
-        }) else {
-            continue;
-        };
-        let labels_heading = heading(node)
-            || node
-                .ancestors()
-                .filter_map(ElementRef::wrap)
-                .take(4)
-                .any(heading)
-            || first_heading(node).is_some()
-            || (node.text().all(|text| text.trim().is_empty())
-                && node
-                    .next_siblings()
-                    .find_map(ElementRef::wrap)
-                    .is_some_and(heading));
-        if labels_heading {
-            targets.insert(id);
-        }
-    }
-    if targets.is_empty() {
-        return Vec::new();
-    }
+    // The page's heading targets, read for the first list that could be a
+    // table of contents (most pages have none).
+    let mut targets = None;
     let mut found = Vec::new();
     for list in root.descendants().filter_map(ElementRef::wrap) {
         if !matches!(list.value().name(), "ul" | "ol")
@@ -586,14 +575,15 @@ pub(super) fn contents<'a>(root: ElementRef<'a>, document: ElementRef<'a>) -> Ve
         {
             continue;
         }
-        let mut links = 0usize;
-        let only_heading_links = list.descendants().all(|node| match node.value() {
+        // Every link names a fragment, and the other text is numbering.
+        let mut fragments = Vec::new();
+        let fragment_links = list.descendants().all(|node| match node.value() {
             Node::Element(element) if element.name() == "a" => {
-                links += 1;
-                element
+                let fragment = element
                     .attribute("href")
-                    .and_then(|href| href.trim().strip_prefix('#'))
-                    .is_some_and(|fragment| targets.contains(decoded(fragment).as_ref()))
+                    .and_then(|href| href.trim().strip_prefix('#'));
+                fragments.extend(fragment);
+                fragment.is_some()
             }
             Node::Text(text) => {
                 !text.chars().any(char::is_alphabetic)
@@ -605,7 +595,14 @@ pub(super) fn contents<'a>(root: ElementRef<'a>, document: ElementRef<'a>) -> Ve
             }
             _ => true,
         });
-        if !only_heading_links || links < MIN_LINKS {
+        if !fragment_links || fragments.len() < MIN_LINKS {
+            continue;
+        }
+        let targets = targets.get_or_insert_with(|| heading_targets(document));
+        if !fragments
+            .iter()
+            .all(|fragment| targets.contains(decoded(fragment).as_ref()))
+        {
             continue;
         }
         let mut wrapper = list;
@@ -642,6 +639,38 @@ pub(super) fn contents<'a>(root: ElementRef<'a>, document: ElementRef<'a>) -> Ve
         found.push(wrapper);
     }
     found
+}
+
+/// The ids and anchor names of the page that label a heading: on the heading,
+/// around it, or on an empty element right before it.
+fn heading_targets(document: ElementRef<'_>) -> std::collections::HashSet<&str> {
+    let mut targets = std::collections::HashSet::new();
+    for node in document.descendants().filter_map(ElementRef::wrap) {
+        let value = node.value();
+        let Some(id) = value.attribute("id").or_else(|| {
+            (value.name() == "a")
+                .then(|| value.attribute("name"))
+                .flatten()
+        }) else {
+            continue;
+        };
+        let labels_heading = heading(node)
+            || node
+                .ancestors()
+                .filter_map(ElementRef::wrap)
+                .take(4)
+                .any(heading)
+            || first_heading(node).is_some()
+            || (node.text().all(|text| text.trim().is_empty())
+                && node
+                    .next_siblings()
+                    .find_map(ElementRef::wrap)
+                    .is_some_and(heading));
+        if labels_heading {
+            targets.insert(id);
+        }
+    }
+    targets
 }
 
 /// A table of contents' title: a few words without links to other places,
@@ -702,17 +731,17 @@ struct Scored<'a> {
 
 /// Choose one coherent content region. Scoring is accumulated once per DOM node;
 /// nested main/article candidates never rescan their complete text subtrees.
-pub(super) fn select(document: &Html) -> ElementRef<'_> {
+pub(super) fn select<'a>(document: &'a Html, facts: &Facts) -> ElementRef<'a> {
     let mut nodes: Vec<Scored<'_>> = Vec::new();
     let mut stack = vec![(document.root_element(), None, None, false)];
     let mut body = None;
     while let Some((element, parent, content_parent, ancillary_parent)) = stack.pop() {
-        if discarded(element) {
+        if discarded(facts, element) {
             continue;
         }
         let index = nodes.len();
         let kind = kind(element);
-        let ancillary = ancillary_parent || ancillary(element);
+        let ancillary = ancillary_parent || ancillary(facts, element);
         let score = if ancillary {
             0
         } else {
@@ -831,6 +860,14 @@ pub(super) fn select(document: &Html) -> ElementRef<'_> {
 mod tests {
     use super::*;
     use scraper::Selector;
+
+    fn excluded(element: ElementRef<'_>) -> bool {
+        super::excluded(&Facts::new(element), element)
+    }
+
+    fn select(document: &Html) -> ElementRef<'_> {
+        super::select(document, &Facts::new(document.root_element()))
+    }
 
     fn element<'a>(document: &'a Html, query: &str) -> ElementRef<'a> {
         document

@@ -1,6 +1,7 @@
 mod article;
 mod callouts;
 mod code;
+mod facts;
 mod furniture;
 mod hacker_news;
 mod mail;
@@ -8,6 +9,7 @@ mod social;
 mod stream;
 
 use crate::{Document, Error, Result};
+use facts::{Fact, Facts};
 use scraper::{ElementRef, Html, Selector};
 use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
@@ -17,6 +19,51 @@ fn selector(query: &str) -> Selector {
     Selector::parse(query).expect("static selector")
 }
 
+/// The elements inside `element` in document order, as `ElementRef::select`
+/// walks them (the element itself is not one of them).
+fn inside<'a>(element: ElementRef<'a>) -> impl Iterator<Item = ElementRef<'a>> {
+    element.descendants().skip(1).filter_map(ElementRef::wrap)
+}
+
+/// `a[href]`: a link.
+fn link(element: ElementRef<'_>) -> bool {
+    element.value().name() == "a" && element.value().attribute("href").is_some()
+}
+
+/// `[id], a[name]`: an element a fragment can name.
+fn fragment_target(element: ElementRef<'_>) -> bool {
+    let value = element.value();
+    value.attribute("id").is_some() || (value.name() == "a" && value.attribute("name").is_some())
+}
+
+/// `a[href], sup, span[data-definition], label.footref`: what can mark a
+/// note's reference.
+fn reference_markup(element: ElementRef<'_>) -> bool {
+    let value = element.value();
+    link(element)
+        || match value.name() {
+            "sup" => true,
+            "span" => value.attribute("data-definition").is_some(),
+            "label" => value.class_names().any(|class| class == "footref"),
+            _ => false,
+        }
+}
+
+/// A `span` of one of these classes (`span.a, span.b`).
+fn span_of(element: ElementRef<'_>, classes: &[&str]) -> bool {
+    element.value().name() == "span"
+        && element
+            .value()
+            .class_names()
+            .any(|class| classes.contains(&class))
+}
+
+/// Whether a link's `rel` names the page's canonical address.
+fn canonical_rel(rel: &str) -> bool {
+    rel.split_whitespace()
+        .any(|token| token.eq_ignore_ascii_case("canonical"))
+}
+
 /// An element's attribute by name, compared as text. scraper's `Element::attr`
 /// gives the same answer (the attribute with this local name and no namespace)
 /// but interns the name on every call, which for a name outside html5ever's
@@ -24,6 +71,17 @@ fn selector(query: &str) -> Selector {
 /// attributes of every element several times over.
 trait Attribute {
     fn attribute(&self, name: &str) -> Option<&str>;
+
+    /// The class names, split at ASCII whitespace as scraper's
+    /// `Element::classes` splits them, in the attribute's order and without
+    /// interning each one: `classes` interns them the first time it is asked
+    /// about an element, a global lock and an allocation for every name
+    /// outside html5ever's static set.
+    fn class_names(&self) -> std::str::SplitAsciiWhitespace<'_> {
+        self.attribute("class")
+            .unwrap_or_default()
+            .split_ascii_whitespace()
+    }
 }
 
 impl Attribute for scraper::node::Element {
@@ -44,9 +102,126 @@ fn plain(element: ElementRef<'_>) -> String {
         .join(" ")
 }
 
-fn meta(document: &Html, keys: &[&str]) -> Option<String> {
+/// What the page's metadata and the site readers' tests look for on every
+/// page, read in one walk over its nodes in the order `Html::select` reads
+/// them (the order the parser made them in, nodes taken out of the tree
+/// included). Each field stands for the selector in its comment.
+struct Landmarks<'a> {
+    /// `meta`
+    metas: Vec<ElementRef<'a>>,
+    /// `script`
+    scripts: Vec<ElementRef<'a>>,
+    /// The first `title` and the first `h1`.
+    title: Option<ElementRef<'a>>,
+    heading: Option<ElementRef<'a>>,
+    /// The first `link[rel]` whose `rel` names the canonical address.
+    canonical: Option<ElementRef<'a>>,
+    /// `time[datetime]`
+    times: Vec<ElementRef<'a>>,
+    /// `[data-partnereventstore]`: Steam's event data.
+    events: Vec<ElementRef<'a>>,
+    /// Substack: the first `[class*="feedPermalinkUnit"]`, every
+    /// `link[href], script[src]`, and whether there is a `div.body.markup`.
+    permalink: Option<ElementRef<'a>>,
+    assets: Vec<ElementRef<'a>>,
+    rendered_body: bool,
+    /// X: whether there is a `[data-testid="primaryColumn"]
+    /// article[data-testid="tweet"]`, and every `img[src], video[poster]`.
+    column_post: bool,
+    media: Vec<ElementRef<'a>>,
+    /// Hacker News: whether there are a `#hnmain` and a `tr.athing, tr.comtr`.
+    hn_main: bool,
+    hn_rows: bool,
+}
+
+impl<'a> Landmarks<'a> {
+    fn read(document: &'a Html) -> Self {
+        let mut found = Self {
+            metas: Vec::new(),
+            scripts: Vec::new(),
+            title: None,
+            heading: None,
+            canonical: None,
+            times: Vec::new(),
+            events: Vec::new(),
+            permalink: None,
+            assets: Vec::new(),
+            rendered_body: false,
+            column_post: false,
+            media: Vec::new(),
+            hn_main: false,
+            hn_rows: false,
+        };
+        let classes = |element: ElementRef<'_>, wanted: &[&str]| {
+            wanted
+                .iter()
+                .all(|class| element.value().class_names().any(|name| name == *class))
+        };
+        // `Html::select` leaves out an element without a parent (taken out of
+        // the tree), but not the elements inside it.
+        let elements = document.tree.nodes().filter_map(ElementRef::wrap);
+        for element in elements.filter(|element| element.parent().is_some()) {
+            let value = element.value();
+            let has = |name| value.attribute(name).is_some();
+            match value.name() {
+                "meta" => found.metas.push(element),
+                "script" => {
+                    found.scripts.push(element);
+                    if has("src") {
+                        found.assets.push(element);
+                    }
+                }
+                "link" => {
+                    if has("href") {
+                        found.assets.push(element);
+                    }
+                    if found.canonical.is_none()
+                        && value.attribute("rel").is_some_and(canonical_rel)
+                    {
+                        found.canonical = Some(element);
+                    }
+                }
+                "title" if found.title.is_none() => found.title = Some(element),
+                "h1" if found.heading.is_none() => found.heading = Some(element),
+                "time" if has("datetime") => found.times.push(element),
+                "img" if has("src") => found.media.push(element),
+                "video" if has("poster") => found.media.push(element),
+                "div" if classes(element, &["body", "markup"]) => found.rendered_body = true,
+                "tr" if classes(element, &["athing"]) || classes(element, &["comtr"]) => {
+                    found.hn_rows = true;
+                }
+                // A selector's descendant reads element parents only.
+                "article"
+                    if value.attribute("data-testid") == Some("tweet")
+                        && std::iter::successors(element.parent(), |node| node.parent())
+                            .map_while(ElementRef::wrap)
+                            .any(|parent| {
+                                parent.value().attribute("data-testid") == Some("primaryColumn")
+                            }) =>
+                {
+                    found.column_post = true;
+                }
+                _ => {}
+            }
+            if has("data-partnereventstore") {
+                found.events.push(element);
+            }
+            if found.permalink.is_none()
+                && value
+                    .attribute("class")
+                    .is_some_and(|class| class.contains("feedPermalinkUnit"))
+            {
+                found.permalink = Some(element);
+            }
+            found.hn_main |= value.attribute("id") == Some("hnmain");
+        }
+        found
+    }
+}
+
+fn meta(metas: &[ElementRef<'_>], keys: &[&str]) -> Option<String> {
     for key in keys {
-        for element in document.select(&selector("meta")) {
+        for element in metas {
             let name = element
                 .value()
                 .attribute("property")
@@ -65,7 +240,7 @@ fn meta(document: &Html, keys: &[&str]) -> Option<String> {
     None
 }
 
-fn jsonld_documents(document: &Html) -> Vec<Value> {
+fn jsonld_documents(scripts: &[ElementRef<'_>]) -> Vec<Value> {
     fn collect(value: Value, documents: &mut Vec<Value>, depth: usize) {
         if depth > 64 {
             return;
@@ -87,7 +262,7 @@ fn jsonld_documents(document: &Html) -> Vec<Value> {
         }
     }
     let mut documents = Vec::new();
-    for script in document.select(&selector("script")) {
+    for script in scripts {
         if script
             .value()
             .attribute("type")
@@ -144,10 +319,10 @@ fn clean_title(value: &str, site: Option<&str>) -> Option<String> {
     (!title.is_empty()).then_some(title)
 }
 
-fn page_title(document: &Html, jsonld: &[Value], site: Option<&str>) -> Option<String> {
+fn page_title(page: &Landmarks<'_>, jsonld: &[Value], site: Option<&str>) -> Option<String> {
     let headline = jsonld_text(jsonld, "headline");
-    let document_title = document.select(&selector("title")).next().map(plain);
-    let social = meta(document, &["og:title", "twitter:title"]);
+    let document_title = page.title.map(plain);
+    let social = meta(&page.metas, &["og:title", "twitter:title"]);
     let mut title = [
         headline.clone(),
         jsonld_text(jsonld, "name"),
@@ -177,7 +352,7 @@ fn page_title(document: &Html, jsonld: &[Value], site: Option<&str>) -> Option<S
         }
     }
     if title.contains(" | ") {
-        let heading = document.select(&selector("h1")).next().map(plain);
+        let heading = page.heading.map(plain);
         for candidate in [headline, heading].into_iter().flatten() {
             let candidate = candidate.split_whitespace().collect::<Vec<_>>().join(" ");
             if !candidate.is_empty() && title.starts_with(&format!("{candidate} | ")) {
@@ -345,26 +520,29 @@ fn saved_page_base(document: ElementRef<'_>) -> Option<(Url, bool)> {
             .ok()
             .filter(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
     };
-    if let Some(base) = document
-        .select(&selector("base[href]"))
-        .next()
-        .and_then(|node| web(node.value().attribute("href")?))
-    {
+    // The first `<base href>` and the first canonical `<link href>`, in one
+    // walk over the page.
+    let (mut base, mut canonical) = (None, None);
+    for element in inside(document) {
+        let value = element.value();
+        match value.name() {
+            "base" if base.is_none() => base = value.attribute("href"),
+            "link" if canonical.is_none() && value.attribute("rel").is_some_and(canonical_rel) => {
+                canonical = value.attribute("href");
+            }
+            _ => {}
+        }
+        if base.is_some() && canonical.is_some() {
+            break;
+        }
+    }
+    if let Some(base) = base.and_then(web) {
         return Some((base, true));
     }
-    document
-        .select(&selector("link[rel][href]"))
-        .find(|node| {
-            node.value().attribute("rel").is_some_and(|rel| {
-                rel.split_whitespace()
-                    .any(|token| token.eq_ignore_ascii_case("canonical"))
-            })
-        })
-        .and_then(|node| web(node.value().attribute("href")?))
-        .map(|canonical| {
-            let directory = !canonical.path().trim_matches('/').is_empty();
-            (canonical, directory)
-        })
+    canonical.and_then(web).map(|canonical| {
+        let directory = !canonical.path().trim_matches('/').is_empty();
+        (canonical, directory)
+    })
 }
 
 /// A link of a page read without its URL: relative links resolve against the
@@ -372,16 +550,14 @@ fn saved_page_base(document: ElementRef<'_>) -> Option<(Url, bool)> {
 /// that is its home page); fragments stay in the page.
 fn saved_page_link(value: &str, link_base: Option<&(Url, bool)>) -> Option<String> {
     let trimmed = value.trim();
-    match link_base {
-        Some((base, directory))
-            if !trimmed.starts_with('#')
-                && Url::parse(trimmed).is_err()
-                && (*directory || trimmed.starts_with('/')) =>
-        {
-            safe_url(trimmed, Some(base))
-        }
-        _ => safe_url(trimmed, None),
-    }
+    // An absolute address keeps its own spelling: `safe_url` reads it before
+    // it would resolve against the base, so it is parsed once.
+    let base = link_base
+        .filter(|(_, directory)| {
+            !trimmed.starts_with('#') && (*directory || trimmed.starts_with('/'))
+        })
+        .map(|(base, _)| base);
+    safe_url(trimmed, base)
 }
 
 /// Inline image data is not an addressable resource. Like the reference, keep
@@ -662,10 +838,15 @@ fn is_hidden(element: ElementRef<'_>) -> bool {
 }
 
 fn has_class(element: ElementRef<'_>, class: &str) -> bool {
+    has_any_class(element, &[class])
+}
+
+/// Whether the element has one of these classes, reading its classes once.
+fn has_any_class(element: ElementRef<'_>, classes: &[&str]) -> bool {
     element
         .value()
         .attribute("class")
-        .is_some_and(|classes| classes.split_whitespace().any(|value| value == class))
+        .is_some_and(|names| names.split_whitespace().any(|name| classes.contains(&name)))
 }
 
 fn tex_script(element: ElementRef<'_>) -> Option<bool> {
@@ -930,16 +1111,17 @@ fn mathml(element: ElementRef<'_>, depth: usize) -> Result<String> {
 fn math_container(element: ElementRef<'_>) -> bool {
     element.value().name() == "math"
         || element.value().name() == "mjx-container"
-        || [
-            "katex",
-            "katex-display",
-            "math-inline",
-            "math-block",
-            "hurmet-tex",
-            "mwe-math-element",
-        ]
-        .into_iter()
-        .any(|class| has_class(element, class))
+        || has_any_class(
+            element,
+            &[
+                "katex",
+                "katex-display",
+                "math-inline",
+                "math-block",
+                "hurmet-tex",
+                "mwe-math-element",
+            ],
+        )
 }
 
 /// Whether decoded text carries a TeX command (a backslash and two letters),
@@ -1198,24 +1380,23 @@ fn math_expression(element: ElementRef<'_>) -> Result<Option<(String, bool)>> {
 }
 
 fn duplicate_math_preview(element: ElementRef<'_>) -> bool {
-    [
-        "MathJax_Preview",
-        "MathJax",
-        "MathJax_Display",
-        "MathJax_SVG",
-        "MathJax_MathML",
-    ]
-    .into_iter()
-    .any(|class| has_class(element, class))
-        && element
-            .parent()
-            .and_then(ElementRef::wrap)
-            .is_some_and(|parent| {
-                parent.child_elements().any(|sibling| {
-                    tex_script(sibling).is_some()
-                        && sibling.text().any(|text| !text.trim().is_empty())
-                })
+    has_any_class(
+        element,
+        &[
+            "MathJax_Preview",
+            "MathJax",
+            "MathJax_Display",
+            "MathJax_SVG",
+            "MathJax_MathML",
+        ],
+    ) && element
+        .parent()
+        .and_then(ElementRef::wrap)
+        .is_some_and(|parent| {
+            parent.child_elements().any(|sibling| {
+                tex_script(sibling).is_some() && sibling.text().any(|text| !text.trim().is_empty())
             })
+        })
 }
 
 fn emit_math(latex: &str, block: bool, output: &mut Out) {
@@ -1291,36 +1472,38 @@ fn leading_note_marker(element: ElementRef<'_>) -> Option<(String, ElementRef<'_
         .then(|| note_number(&plain(first)).map(|number| (number, first)))?
 }
 
-fn note_context(element: ElementRef<'_>) -> bool {
-    element.value().attribute("role").is_some_and(|role| {
-        matches!(
-            role,
-            "doc-footnote" | "doc-endnote" | "doc-endnotes" | "doc-footnotes"
-        )
-    }) || element
-        .value()
-        .attribute("id")
-        .is_some_and(|id| matches!(id, "footnotes" | "endnotes"))
-        || element.value().attribute("data-footnotes").is_some()
-        || element.value().attribute("data-type") == Some("footnote")
-        || element.value().classes().any(|class| {
+fn note_context(facts: &Facts, element: ElementRef<'_>) -> bool {
+    facts.remember(element, Fact::NoteContext, || {
+        let value = element.value();
+        value.attribute("role").is_some_and(|role| {
             matches!(
-                class,
-                "footnotes"
-                    | "footnote"
-                    | "footnotes-list"
-                    | "references"
-                    | "reflist"
-                    | "footnote-definition"
-                    | "footnote-definitions"
-                    | "footdef"
-                    | "footnotes-footer"
-                    | "footnote-footer"
-                    | "easy-footnotes-wrapper"
-                    | "wp-block-footnotes"
-                    | "footnotes-segment"
+                role,
+                "doc-footnote" | "doc-endnote" | "doc-endnotes" | "doc-footnotes"
             )
-        })
+        }) || value
+            .attribute("id")
+            .is_some_and(|id| matches!(id, "footnotes" | "endnotes"))
+            || value.attribute("data-footnotes").is_some()
+            || value.attribute("data-type") == Some("footnote")
+            || value.class_names().any(|class| {
+                matches!(
+                    class,
+                    "footnotes"
+                        | "footnote"
+                        | "footnotes-list"
+                        | "references"
+                        | "reflist"
+                        | "footnote-definition"
+                        | "footnote-definitions"
+                        | "footdef"
+                        | "footnotes-footer"
+                        | "footnote-footer"
+                        | "easy-footnotes-wrapper"
+                        | "wp-block-footnotes"
+                        | "footnotes-segment"
+                )
+            })
+    })
 }
 
 fn note_fragment(link: ElementRef<'_>, base: Option<&Url>) -> Option<String> {
@@ -1360,10 +1543,21 @@ fn reference_candidate(element: ElementRef<'_>) -> bool {
             .is_some_and(|role| matches!(role, "doc-noteref" | "doc-biblioref"))
         || element
             .value()
-            .classes()
+            .class_names()
             .any(|class| matches!(class, "footnote-ref" | "footnote-anchor" | "noteref"))
     {
         return true;
+    }
+    // A marker is digits in brackets or note signs; the text of a link that
+    // says anything else is not collected.
+    if element.text().flat_map(str::chars).any(|ch| {
+        !ch.is_whitespace()
+            && !matches!(
+                ch,
+                '0'..='9' | '[' | ']' | '(' | ')' | '.' | '*' | '†' | '‡'
+            )
+    }) {
+        return false;
     }
     let text = plain(element);
     note_number(&text).is_some() || (!text.is_empty() && text.chars().all(|ch| "*†‡".contains(ch)))
@@ -1376,12 +1570,12 @@ fn literal_container(element: ElementRef<'_>) -> bool {
         || duplicate_math_preview(element)
 }
 
-fn visible_reference(element: ElementRef<'_>, prune_chrome: bool) -> bool {
+fn visible_reference(facts: &Facts, element: ElementRef<'_>, prune_chrome: bool) -> bool {
     std::iter::once(element)
         .chain(element.ancestors().filter_map(ElementRef::wrap))
         .all(|parent| {
-            !is_hidden(parent)
-                && !(prune_chrome && article::excluded(parent))
+            !facts.hidden(parent)
+                && !(prune_chrome && article::excluded(facts, parent))
                 && !matches!(
                     parent.value().name(),
                     "script"
@@ -1403,7 +1597,7 @@ fn visible_reference(element: ElementRef<'_>, prune_chrome: bool) -> bool {
         })
 }
 
-fn generic_note_section(element: ElementRef<'_>) -> bool {
+fn generic_note_section(facts: &Facts, element: ElementRef<'_>) -> bool {
     let label = |heading: ElementRef<'_>| {
         note_heading(heading)
             || (matches!(
@@ -1414,7 +1608,7 @@ fn generic_note_section(element: ElementRef<'_>) -> bool {
                 "references and notes" | "notes and references" | "bibliography"
             ))
     };
-    note_context(element)
+    note_context(facts, element)
         || ["id", "class"].iter().any(|attr| {
             element.value().attribute(attr).is_some_and(|value| {
                 value
@@ -1435,10 +1629,10 @@ fn generic_continuation(element: ElementRef<'_>) -> bool {
         element.value().name(),
         "p" | "ul" | "ol" | "blockquote" | "pre"
     ) || element.value().attribute("id").is_some()
-        || element.select(&selector("[id],a[name]")).next().is_some()
+        || inside(element).any(fragment_target)
         || element
             .value()
-            .classes()
+            .class_names()
             .any(|class| matches!(class, "seealso" | "see-also" | "related" | "notetitle"))
     {
         return false;
@@ -1488,7 +1682,7 @@ fn note_has_content(
         || (depth > 0 && is_hidden(element))
         || element.value().attribute("role") == Some("doc-backlink")
         || element.value().attribute("data-footnote-backref").is_some()
-        || element.value().classes().any(|class| {
+        || element.value().class_names().any(|class| {
             matches!(
                 class,
                 "footnote-backref"
@@ -1562,6 +1756,105 @@ fn note_has_content(
     })
 }
 
+/// What footnote recovery asks of every element of a page, read once in
+/// document order (an element after its ancestors) instead of from each
+/// element's ancestors again, and kept by position in the tree.
+struct Reach {
+    /// Inside a literal container: code or math (whose classification may
+    /// read a subtree), `pre`, `code`, `script` or `style`.
+    literal: Vec<bool>,
+    /// In scope: inside the region, or inside a notes container outside it.
+    scope: Vec<bool>,
+    /// In a note's context: the element, or one around it reached through
+    /// elements in scope.
+    context: Vec<bool>,
+}
+
+impl Reach {
+    /// `elements`: those of `document`, in document order.
+    fn read(
+        root: ElementRef<'_>,
+        document: ElementRef<'_>,
+        elements: &[ElementRef<'_>],
+        facts: &Facts,
+    ) -> Self {
+        let nodes = document.tree().values().len();
+        let at = |element: ElementRef<'_>| facts::position(element.id());
+        let mut reach = Self {
+            literal: vec![false; nodes],
+            scope: vec![false; nodes],
+            context: vec![false; nodes],
+        };
+        // Inside the region; the region or an element around it; below an
+        // element whose content is inert.
+        let (mut region, mut around, mut inert) =
+            (vec![false; nodes], vec![false; nodes], vec![false; nodes]);
+        for node in std::iter::once(*root).chain(root.ancestors()) {
+            around[facts::position(node.id())] = true;
+        }
+        let inert_content = |element: ElementRef<'_>| {
+            matches!(
+                element.value().name(),
+                "head" | "template" | "noscript" | "iframe" | "object" | "embed"
+            )
+        };
+        for &element in elements {
+            let index = at(element);
+            let parent = element.parent().and_then(ElementRef::wrap);
+            reach.literal[index] = parent.is_some_and(|parent| reach.literal[at(parent)])
+                || literal_container(element);
+            // The closest element around this one; for the document element,
+            // one outside the elements read here.
+            let up = element.ancestors().find_map(ElementRef::wrap);
+            region[index] = element == root || up.is_some_and(|up| region[at(up)]);
+            inert[index] = if element == document {
+                element
+                    .ancestors()
+                    .filter_map(ElementRef::wrap)
+                    .any(inert_content)
+            } else {
+                up.is_some_and(|up| inert[at(up)] || inert_content(up))
+            };
+            // A container of notes outside the region.
+            let external = !region[index]
+                && !around[index]
+                && matches!(
+                    element.value().name(),
+                    "div" | "section" | "aside" | "ol" | "ul" | "p" | "li"
+                )
+                && !reach.literal[index]
+                && !inert[index]
+                && (note_context(facts, element)
+                    || (["id", "class"].iter().any(|attr| {
+                        element.value().attribute(attr).is_some_and(|value| {
+                            value
+                                .as_bytes()
+                                .windows(8)
+                                .any(|word| word.eq_ignore_ascii_case(b"footnote"))
+                        })
+                    }) && inside(element).any(note_heading)));
+            let up = up.map(at);
+            reach.scope[index] = region[index] || external || up.is_some_and(|up| reach.scope[up]);
+            // (An element in a note's context is in scope.)
+            reach.context[index] = reach.scope[index]
+                && (note_context(facts, element) || up.is_some_and(|up| reach.context[up]));
+        }
+        reach
+    }
+
+    fn literal(&self, element: ElementRef<'_>) -> bool {
+        self.literal[facts::position(element.id())]
+    }
+
+    fn in_scope(&self, element: ElementRef<'_>) -> bool {
+        self.scope[facts::position(element.id())]
+    }
+
+    fn context(&self, element: ElementRef<'_>) -> bool {
+        self.context[facts::position(element.id())]
+    }
+}
+
 struct Footnote<'a> {
     nodes: Vec<ElementRef<'a>>,
     aliases: Vec<String>,
@@ -1570,8 +1863,8 @@ struct Footnote<'a> {
     text_marker: Option<String>,
 }
 
-#[derive(Default)]
 struct Footnotes<'a> {
+    facts: &'a Facts,
     prune_chrome: bool,
     definitions: Vec<Footnote<'a>>,
     references: HashMap<usize, usize>,
@@ -1650,9 +1943,16 @@ impl<'a> Footnotes<'a> {
         document: ElementRef<'a>,
         base: Option<&Url>,
         prune_chrome: bool,
+        facts: &'a Facts,
     ) -> Self {
         let mut notes = Self {
+            facts,
             prune_chrome,
+            definitions: Vec::new(),
+            references: HashMap::new(),
+            removed: HashSet::new(),
+            markers: HashSet::new(),
+            text_markers: HashMap::new(),
             contents: if prune_chrome {
                 article::contents(root, document)
                     .into_iter()
@@ -1662,7 +1962,7 @@ impl<'a> Footnotes<'a> {
                 HashSet::new()
             },
             furniture: if prune_chrome {
-                furniture::beside_body(root)
+                furniture::beside_body(facts, root)
                     .into_iter()
                     .chain(mail::quoted_history(root))
                     .map(element_key)
@@ -1670,28 +1970,38 @@ impl<'a> Footnotes<'a> {
             } else {
                 HashSet::new()
             },
-            ..Self::default()
+            link_base: None,
+            block_links: HashSet::new(),
+            link_targets: HashMap::new(),
         };
         if prune_chrome && base.is_none() {
             notes.link_base = saved_page_base(document);
         }
-        for anchor in root.select(&selector("a[href]")) {
-            if let Some(target) = block_link_target(anchor) {
-                notes.block_links.insert(element_key(anchor));
-                notes.link_targets.insert(element_key(target), anchor);
+        // Links around blocks, reference candidates and inline popovers, in
+        // one walk over the region.
+        let mut references = Vec::new();
+        let mut inline = Vec::new();
+        for element in inside(root) {
+            if link(element)
+                && let Some(target) = block_link_target(element)
+            {
+                notes.block_links.insert(element_key(element));
+                notes.link_targets.insert(element_key(target), element);
+            }
+            if reference_markup(element) && reference_candidate(element) {
+                references.push(element);
+            }
+            if span_of(
+                element,
+                &[
+                    "footnote-container",
+                    "sidenote-container",
+                    "inline-footnote",
+                ],
+            ) {
+                inline.push(element);
             }
         }
-        let references = root
-            .select(&selector(
-                "a[href], sup, span[data-definition], label.footref",
-            ))
-            .filter(|element| reference_candidate(*element))
-            .collect::<Vec<_>>();
-        let inline = root
-            .select(&selector(
-                "span.footnote-container, span.sidenote-container, span.inline-footnote",
-            ))
-            .collect::<Vec<_>>();
         // Definitions only move when a reference or inline popover resolves.
         // Ordinary documents need no document-wide ID, literal or note indexes.
         if references.is_empty() && inline.is_empty() {
@@ -1701,26 +2011,14 @@ impl<'a> Footnotes<'a> {
             .descendants()
             .filter_map(ElementRef::wrap)
             .collect::<Vec<_>>();
-        // DOM traversal is in parent-before-child order. Structural code
-        // classification may inspect a subtree; never repeat it for every
-        // descendant's ancestry during the separate footnote collection passes.
-        let mut literal_elements = HashSet::new();
-        for &element in &elements {
-            if element
-                .parent()
-                .and_then(ElementRef::wrap)
-                .is_some_and(|parent| literal_elements.contains(&element_key(parent)))
-                || literal_container(element)
-            {
-                literal_elements.insert(element_key(element));
-            }
-        }
-        let in_literal = |element| literal_elements.contains(&element_key(element));
+        let reach = Reach::read(root, document, &elements, facts);
+        let in_literal = |element| reach.literal(element);
+        let in_scope = |element| reach.in_scope(element);
         let mut ids = HashMap::new();
         for element in &elements {
             for attribute in ["id", "name"] {
                 if let Some(id) = element.value().attribute(attribute) {
-                    ids.entry(id.to_owned()).or_insert(*element);
+                    ids.entry(id).or_insert(*element);
                 }
             }
         }
@@ -1728,58 +2026,19 @@ impl<'a> Footnotes<'a> {
             .into_iter()
             .filter(|element| {
                 !in_literal(*element)
-                    && visible_reference(*element, prune_chrome)
+                    && visible_reference(facts, *element, prune_chrome)
                     && !notes.inside_left_out(*element)
             })
             .collect::<Vec<_>>();
-        let external = elements
-            .iter()
-            .copied()
-            .filter(|element| {
-                !contains_element(root, *element)
-                    && !contains_element(*element, root)
-                    && matches!(
-                        element.value().name(),
-                        "div" | "section" | "aside" | "ol" | "ul" | "p" | "li"
-                    )
-                    && !in_literal(*element)
-                    && !element
-                        .ancestors()
-                        .filter_map(ElementRef::wrap)
-                        .any(|parent| {
-                            matches!(
-                                parent.value().name(),
-                                "head" | "template" | "noscript" | "iframe" | "object" | "embed"
-                            )
-                        })
-                    && (note_context(*element)
-                        || (["id", "class"].iter().any(|attr| {
-                            element.value().attribute(attr).is_some_and(|value| {
-                                value.to_ascii_lowercase().contains("footnote")
-                            })
-                        }) && element
-                            .select(&selector("h1,h2,h3,h4,h5,h6"))
-                            .any(note_heading)))
-            })
-            .collect::<Vec<_>>();
-        let in_scope = |element| {
-            contains_element(root, element)
-                || external
-                    .iter()
-                    .any(|container| contains_element(*container, element))
-        };
 
         // Inline popovers have a definition and a reference at the same DOM
         // position. Only the identified content root bypasses hidden styling.
         for container in inline {
-            if in_literal(container) || !visible_reference(container, prune_chrome) {
+            if in_literal(container) || !visible_reference(facts, container, prune_chrome) {
                 continue;
             }
-            if let Some(content) = container
-                .select(&selector(
-                    "span.footnote,span.sidenote,span.footnoteContent",
-                ))
-                .next()
+            if let Some(content) = inside(container)
+                .find(|node| span_of(*node, &["footnote", "sidenote", "footnoteContent"]))
             {
                 if content
                     .ancestors()
@@ -1836,12 +2095,7 @@ impl<'a> Footnotes<'a> {
                 notes.add(items, vec![format!("num:{number}")], vec![], vec![]);
                 continue;
             }
-            let context = note_context(element)
-                || element
-                    .ancestors()
-                    .filter_map(ElementRef::wrap)
-                    .take_while(|parent| in_scope(*parent))
-                    .any(note_context);
+            let context = reach.context(element);
             let id = element.value().attribute("id").unwrap_or("");
             let known_id = ["fn:", "fn-", "fn.", "ftnt", "cite_note-", "footnote-"]
                 .iter()
@@ -1868,7 +2122,7 @@ impl<'a> Footnotes<'a> {
                 aliases.push(format!("num:{number}"));
                 markers.push(marker);
             }
-            for anchor in element.select(&selector("[id],a[name]")) {
+            for anchor in inside(element).filter(|node| fragment_target(*node)) {
                 if matches!(anchor.value().name(), "a" | "span" | "sup")
                     && (plain(anchor).is_empty() || note_number(&plain(anchor)).is_some())
                     && let Some(id) = anchor
@@ -1912,7 +2166,7 @@ impl<'a> Footnotes<'a> {
             if notes.inside_definition(paragraph) {
                 continue;
             }
-            if let Some(link) = paragraph.select(&selector("a[href]")).next()
+            if let Some(link) = inside(paragraph).find(|node| link(*node))
                 && let Some(number) = link
                     .value()
                     .attribute("href")
@@ -1951,7 +2205,7 @@ impl<'a> Footnotes<'a> {
                 .or_default()
                 .push(*reference);
             let Some(target) = ids
-                .get(&fragment)
+                .get(fragment.as_str())
                 .copied()
                 .filter(|target| in_scope(*target))
             else {
@@ -1973,9 +2227,7 @@ impl<'a> Footnotes<'a> {
                     })
             };
             if let Some(node) = node
-                && !node
-                    .select(&selector("a[href]"))
-                    .any(|link| link == *reference)
+                && !inside(node).any(|node| node == *reference && link(node))
                 && !generic.iter().any(|(id, _, _)| *id == fragment)
             {
                 generic.push((fragment, node, target));
@@ -1993,7 +2245,7 @@ impl<'a> Footnotes<'a> {
                 .iter()
                 .filter(|(_, node, _)| contains_element(container, *node))
                 .collect::<Vec<_>>();
-            if matches.len() < 2 || !generic_note_section(container) {
+            if matches.len() < 2 || !generic_note_section(facts, container) {
                 continue;
             }
             let external_count = numeric_references
@@ -2139,7 +2391,7 @@ impl<'a> Footnotes<'a> {
             let alias = if reference.value().name() == "a" {
                 note_fragment(reference, base)
             } else if reference.value().name() == "sup"
-                && reference.select(&selector("a")).next().is_none()
+                && !inside(reference).any(|node| node.value().name() == "a")
             {
                 note_number(&plain(reference)).map(|number| format!("num:{number}"))
             } else {
@@ -2174,7 +2426,7 @@ impl<'a> Footnotes<'a> {
                 for element in root.descendants().filter_map(ElementRef::wrap) {
                     let explicit = element.value().attribute("role") == Some("doc-backlink")
                         || element.value().attribute("data-footnote-backref").is_some()
-                        || element.value().classes().any(|class| {
+                        || element.value().class_names().any(|class| {
                             matches!(
                                 class,
                                 "footnote-backref"
@@ -2254,7 +2506,7 @@ impl<'a> Footnotes<'a> {
         }
         // A duplicated sidenote is dropped only when its text matches the
         // adjacent resolved definition; unrelated marginal text stays visible.
-        for sidenote in root.select(&selector("span.sidenote")) {
+        for sidenote in inside(root).filter(|node| span_of(*node, &["sidenote"])) {
             if notes.inside_definition(sidenote) {
                 continue;
             }
@@ -2321,7 +2573,8 @@ fn serialize_clean(
     // removal: a collapsed body is content; hidden elements inside it are not.
     let callout = callouts::detect(element);
     if callout.is_none()
-        && (is_hidden(element) || (notes.prune_chrome && article::excluded(element)))
+        && (notes.facts.hidden(element)
+            || (notes.prune_chrome && article::excluded(notes.facts, element)))
         && !(definition && depth == 0)
     {
         return Ok(());
@@ -2355,7 +2608,7 @@ fn serialize_clean(
                     .take_while(|parent| *parent != element)
                     .any(|parent| {
                         notes.removed.contains(&element_key(parent))
-                            || !visible_reference(parent, notes.prune_chrome)
+                            || !visible_reference(notes.facts, parent, notes.prune_chrome)
                     }))
                 .then_some(&**text)
             })
@@ -2414,12 +2667,11 @@ fn serialize_clean(
     if duplicate_math_preview(element) {
         return Ok(());
     }
-    if !element
+    let in_code = element
         .ancestors()
         .filter_map(ElementRef::wrap)
-        .any(|ancestor| matches!(ancestor.value().name(), "pre" | "code"))
-        && let Some((latex, block)) = math_expression(element)?
-    {
+        .any(|ancestor| matches!(ancestor.value().name(), "pre" | "code"));
+    if !in_code && let Some((latex, block)) = math_expression(element)? {
         emit_math(&latex, block, output);
         return Ok(());
     }
@@ -2454,7 +2706,7 @@ fn serialize_clean(
     if notes.prune_chrome {
         // A list item that shows nothing (an icon, a share button) is an
         // empty bullet.
-        if name == "li" && shows_nothing_kept(element) {
+        if name == "li" && shows_nothing_kept(notes.facts, element) {
             return Ok(());
         }
         // A heading's link to its own page (a permalink around its text or an
@@ -2477,11 +2729,7 @@ fn serialize_clean(
         .attribute("data-src")
         .or_else(|| value.attribute("data-original"))
         .or_else(|| value.attribute("src"));
-    let preformatted = matches!(name, "pre" | "code")
-        || element
-            .ancestors()
-            .filter_map(ElementRef::wrap)
-            .any(|parent| matches!(parent.value().name(), "pre" | "code"));
+    let preformatted = in_code || matches!(name, "pre" | "code");
     let styled_code = name == "code"
         && value.attribute("style").is_some_and(|style| {
             style
@@ -2634,12 +2882,10 @@ fn table_span(cell: ElementRef<'_>, attribute: &str) -> usize {
 /// A list item of a full page with no text and no image once the blocks that
 /// page conversion drops (buttons, forms, hidden or navigation content, an
 /// icon) are gone.
-fn shows_nothing_kept(item: ElementRef<'_>) -> bool {
+fn shows_nothing_kept(facts: &Facts, item: ElementRef<'_>) -> bool {
     let mut stack = vec![item];
     while let Some(element) = stack.pop() {
-        if element != item
-            && (is_hidden(element) || article::excluded(element) || article::discarded(element))
-        {
+        if element != item && article::discarded(facts, element) {
             continue;
         }
         if element.value().name() == "img" && small_image(element).is_none() {
@@ -2936,7 +3182,7 @@ fn serialize_children(
 }
 
 fn render_clean(root: ElementRef<'_>, base: Option<&Url>) -> Result<String> {
-    render_with_footnotes(root, root, base, false)
+    render_with_footnotes(root, root, base, false, &Facts::new(root))
 }
 
 fn render_with_footnotes<'a>(
@@ -2944,8 +3190,9 @@ fn render_with_footnotes<'a>(
     document: ElementRef<'a>,
     base: Option<&Url>,
     prune_chrome: bool,
+    facts: &Facts,
 ) -> Result<String> {
-    let notes = Footnotes::collect(root, document, base, prune_chrome);
+    let notes = Footnotes::collect(root, document, base, prune_chrome, facts);
     let mut markdown =
         render_cleaned(&|output| serialize_clean(root, base, output, 0, &notes, false))?;
     for (index, note) in notes.definitions.iter().enumerate() {
@@ -3541,8 +3788,11 @@ struct Announcement {
     metadata: Map<String, Value>,
 }
 
-fn structured_announcement(document: &Html, base: Option<&Url>) -> Result<Option<Announcement>> {
-    for carrier in document.select(&selector("[data-partnereventstore]")) {
+fn structured_announcement(
+    page: &Landmarks<'_>,
+    base: Option<&Url>,
+) -> Result<Option<Announcement>> {
+    for carrier in &page.events {
         let raw = carrier
             .value()
             .attribute("data-partnereventstore")
@@ -3616,30 +3866,25 @@ fn structured_announcement(document: &Html, base: Option<&Url>) -> Result<Option
 /// A page is a Substack page by its host, its permalink container or its
 /// CDN assets; an article with its own rendered body is left to the
 /// ordinary reader.
-fn substack_note(document: &Html, base: Option<&Url>) -> Result<Option<Announcement>> {
+fn substack_note(
+    document: &Html,
+    page: &Landmarks<'_>,
+    base: Option<&Url>,
+) -> Result<Option<Announcement>> {
     let substack_host = |host: &str| host == "substack.com" || host.ends_with(".substack.com");
     let cdn_host = |host: &str| host == "substackcdn.com" || host.ends_with(".substackcdn.com");
-    let permalink = document
-        .select(&selector(r#"[class*="feedPermalinkUnit"]"#))
-        .next();
+    let permalink = page.permalink;
     let substack = base.and_then(Url::host_str).is_some_and(substack_host)
         || permalink.is_some()
-        || document
-            .select(&selector("link[href], script[src]"))
-            .any(|asset| {
-                asset
-                    .value()
-                    .attribute("href")
-                    .or_else(|| asset.value().attribute("src"))
-                    .and_then(|source| Url::parse(source).ok())
-                    .is_some_and(|url| url.host_str().is_some_and(cdn_host))
-            });
-    if !substack
-        || document
-            .select(&selector("div.body.markup"))
-            .next()
-            .is_some()
-    {
+        || page.assets.iter().any(|asset| {
+            asset
+                .value()
+                .attribute("href")
+                .or_else(|| asset.value().attribute("src"))
+                .and_then(|source| Url::parse(source).ok())
+                .is_some_and(|url| url.host_str().is_some_and(cdn_host))
+        });
+    if !substack || page.rendered_body {
         return Ok(None);
     }
     let note_selector = selector("div.ProseMirror.FeedProseMirror");
@@ -3651,7 +3896,7 @@ fn substack_note(document: &Html, base: Option<&Url>) -> Result<Option<Announcem
         return Ok(None);
     };
     let mut html = note.html();
-    if let Some(image) = meta(document, &["og:image"]).or_else(|| substack_note_image(note)) {
+    if let Some(image) = meta(&page.metas, &["og:image"]).or_else(|| substack_note_image(note)) {
         html.push_str("<img alt=\"\" src=\"");
         escaped(&image, &mut html);
         html.push_str("\">");
@@ -3663,7 +3908,7 @@ fn substack_note(document: &Html, base: Option<&Url>) -> Result<Option<Announcem
     }
     let mut metadata = Map::new();
     metadata.insert("site".into(), "Substack".into());
-    if let Some(title) = meta(document, &["og:title"]) {
+    if let Some(title) = meta(&page.metas, &["og:title"]) {
         // "Test User (@testuser)" names the note's author before the handle.
         let author = match title.rfind(" (@") {
             Some(at) if title.ends_with(')') => title[..at].trim().to_owned(),
@@ -3726,12 +3971,13 @@ pub(super) fn fragment(source: &str) -> Result<String> {
 /// attach that markup, while a static parser leaves it inert. Other templates
 /// are unchanged.
 fn flatten_shadow_roots(source: &str) -> std::borrow::Cow<'_, str> {
+    static MENTION: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     static OPENING: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    if !source
-        .as_bytes()
-        .windows(10)
-        .any(|w| w.eq_ignore_ascii_case(b"shadowroot"))
-    {
+    // The word in any ASCII case, found by the regex engine's literal
+    // search: several times faster than comparing every ten bytes of a page.
+    let mention =
+        MENTION.get_or_init(|| regex::Regex::new("(?i-u)shadowroot").expect("static pattern"));
+    if !mention.is_match(source) {
         return std::borrow::Cow::Borrowed(source);
     }
     let opening = OPENING.get_or_init(|| {
@@ -3791,20 +4037,29 @@ fn flatten_shadow_roots(source: &str) -> std::borrow::Cow<'_, str> {
 /// text counts whitespace-separated runs after punctuation becomes space.
 fn count_words(text: &str) -> usize {
     let cjk = |ch: char| matches!(ch as u32, 0x3040..=0x30ff | 0x3400..=0x4dbf | 0x4e00..=0x9fff | 0xac00..=0xd7af | 0xf900..=0xfaff | 0x20000..=0x2a6df);
+    let bytes = text.as_bytes();
     let mut words = 0;
     let mut in_word = false;
-    for ch in text.chars() {
-        if cjk(ch) {
-            words += 1;
-            in_word = false;
-        } else if ch.is_alphanumeric() || ch == '_' {
-            if !in_word {
-                words += 1;
-                in_word = true;
-            }
+    let mut at = 0;
+    while at < bytes.len() {
+        // Most text is ASCII, read a byte at a time: no CJK range to test
+        // and no Unicode table to look up.
+        let byte = bytes[at];
+        let word = if byte.is_ascii() {
+            at += 1;
+            byte.is_ascii_alphanumeric() || byte == b'_'
         } else {
-            in_word = false;
-        }
+            let ch = text[at..].chars().next().unwrap_or_default();
+            at += ch.len_utf8();
+            if cjk(ch) {
+                words += 1;
+                in_word = false;
+                continue;
+            }
+            ch.is_alphanumeric()
+        };
+        words += usize::from(word && !in_word);
+        in_word = word;
     }
     words
 }
@@ -3815,15 +4070,17 @@ pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
     let mut document = Html::parse_document(&source);
     stream::restore(&mut document)?;
     let base = base_url.and_then(|value| Url::parse(value).ok());
-    let root = article::select(&document);
+    let facts = Facts::new(document.root_element());
+    let root = article::select(&document, &facts);
+    let landmarks = Landmarks::read(&document);
     let mut metadata = Map::new();
-    let jsonld = jsonld_documents(&document);
-    let site = meta(&document, &["og:site_name", "application-name"]);
-    let title = page_title(&document, &jsonld, site.as_deref());
+    let jsonld = jsonld_documents(&landmarks.scripts);
+    let site = meta(&landmarks.metas, &["og:site_name", "application-name"]);
+    let title = page_title(&landmarks, &jsonld, site.as_deref());
     if let Some(title) = title.filter(|value| !value.is_empty()) {
         metadata.insert("title".into(), title.into());
     }
-    let author = meta(&document, &["author", "article:author"]).or_else(|| {
+    let author = meta(&landmarks.metas, &["author", "article:author"]).or_else(|| {
         jsonld.iter().find_map(|doc| {
             let value = doc.get("author")?;
             value
@@ -3834,20 +4091,18 @@ pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
                 .map(str::to_owned)
         })
     });
-    let published = meta(&document, &["article:published_time"])
+    let published = meta(&landmarks.metas, &["article:published_time"])
         .or_else(|| jsonld_text(&jsonld, "datePublished"))
         .or_else(|| {
-            document
-                .select(&selector("time[datetime]"))
-                .find_map(|time| {
-                    let value = time.value().attribute("datetime")?.trim();
-                    let bytes = value.as_bytes();
-                    (bytes.len() >= 7
-                        && bytes[..4].iter().all(u8::is_ascii_digit)
-                        && bytes[4] == b'-'
-                        && bytes[5..7].iter().all(u8::is_ascii_digit))
-                    .then(|| value.to_owned())
-                })
+            landmarks.times.iter().find_map(|time| {
+                let value = time.value().attribute("datetime")?.trim();
+                let bytes = value.as_bytes();
+                (bytes.len() >= 7
+                    && bytes[..4].iter().all(u8::is_ascii_digit)
+                    && bytes[4] == b'-'
+                    && bytes[5..7].iter().all(u8::is_ascii_digit))
+                .then(|| value.to_owned())
+            })
         });
     for (key, value) in [
         ("author", author),
@@ -3856,7 +4111,7 @@ pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
         (
             "description",
             meta(
-                &document,
+                &landmarks.metas,
                 &["description", "og:description", "twitter:description"],
             ),
         ),
@@ -3865,14 +4120,8 @@ pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
             metadata.insert(key.into(), value.into());
         }
     }
-    if let Some(canonical) = document
-        .select(&selector("link[rel]"))
-        .find(|node| {
-            node.value().attribute("rel").is_some_and(|rel| {
-                rel.split_whitespace()
-                    .any(|token| token.eq_ignore_ascii_case("canonical"))
-            })
-        })
+    if let Some(canonical) = landmarks
+        .canonical
         .and_then(|node| node.value().attribute("href"))
         .and_then(|value| safe_url(value, base.as_ref()))
         .filter(|value| {
@@ -3891,20 +4140,20 @@ pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
             metadata.insert("domain".into(), host.into());
         }
     }
-    let markdown = if let Some(announcement) = structured_announcement(&document, base.as_ref())? {
+    let markdown = if let Some(announcement) = structured_announcement(&landmarks, base.as_ref())? {
         metadata.extend(announcement.metadata);
         announcement.markdown
-    } else if let Some(note) = substack_note(&document, base.as_ref())? {
+    } else if let Some(note) = substack_note(&document, &landmarks, base.as_ref())? {
         metadata.extend(note.metadata);
         note.markdown
-    } else if let Some(post) = social::post(&document, base.as_ref())? {
+    } else if let Some(post) = social::post(&document, &landmarks, base.as_ref())? {
         metadata.extend(post.metadata);
         post.markdown
-    } else if let Some(page) = hacker_news::page(&document, base.as_ref())? {
+    } else if let Some(page) = hacker_news::page(&document, &landmarks, base.as_ref())? {
         metadata.extend(page.metadata);
         page.markdown
     } else {
-        render_with_footnotes(root, document.root_element(), base.as_ref(), true)?
+        render_with_footnotes(root, document.root_element(), base.as_ref(), true, &facts)?
     };
     if markdown.is_empty() {
         return Err(Error::Conversion(
@@ -4949,6 +5198,13 @@ mod tests {
             assert!(!text.contains(inert), "{inert}: {text}");
         }
         assert_eq!(flatten_shadow_roots("<p>plain</p>"), "<p>plain</p>");
+        // The attribute is found in any ASCII case, and only in ASCII.
+        assert_eq!(
+            flatten_shadow_roots("<template SHADOWROOT=open><p>x</p></template>"),
+            "<p>x</p>"
+        );
+        let long_s = "<template \u{17f}hadowrootmode=open><p>x</p></template>";
+        assert_eq!(flatten_shadow_roots(long_s), long_s);
         // An unclosed shadow template is left for the parser, unchanged.
         let unclosed = r#"<template shadowrootmode="open"><p>Never closed"#;
         assert_eq!(flatten_shadow_roots(unclosed), unclosed);
@@ -5730,5 +5986,598 @@ mod tests {
             inline.markdown,
             "Before[^1]After.\n\n[^1]: Hidden definition."
         );
+    }
+
+    /// Elements of hidden, chrome, note and plain kinds, nested in each other.
+    const KINDS: &str = r##"<html><body>
+        <div hidden><p>Hidden.</p></div><p style="display:none">None.</p>
+        <nav class="md:hidden"><ul><li><a href="/a">A</a></li></ul></nav>
+        <div class="hidden md:block">Shown.</div><div role="tooltip">Tip</div>
+        <span class="mw-editsection">edit</span><div id="SiteSub">From</div>
+        <section class="related-posts"><h2>Related</h2></section>
+        <div role="navigation"><a href="/b">B</a></div>
+        <aside class="toc"><ol><li><a href="#x">X</a></li></ol></aside>
+        <div data-testid="issue-viewer-metadata-pane">Meta</div>
+        <div class="related-posts" role="doc-endnotes"><p>Note kept.</p></div>
+        <section id="footnotes"><ol><li id="fn1">One.</li></ol></section>
+        <div class="footnote-content"><p>Content.</p></div>
+        <div><h3>Related stories</h3><article><a href="/c"><h4>C</h4></a></article><article><a href="/d"><h4>D</h4></a></article></div>
+        <p class="note">Plain <em>text</em>.</p></body></html>"##;
+
+    #[test]
+    fn facts_answer_as_the_tests_they_keep() {
+        let document = Html::parse_document(KINDS);
+        let root = document.root_element();
+        let elements: Vec<_> = root.descendants().filter_map(ElementRef::wrap).collect();
+        // Asked children first, twice, against a fresh table for each answer.
+        let kept = Facts::new(root);
+        let mut answers = [0; 4];
+        for _ in 0..2 {
+            for &element in elements.iter().rev() {
+                let fresh = || Facts::new(root);
+                let pairs = [
+                    (kept.hidden(element), is_hidden(element)),
+                    (
+                        article::excluded(&kept, element),
+                        article::excluded(&fresh(), element),
+                    ),
+                    (
+                        article::note(&kept, element),
+                        article::note(&fresh(), element),
+                    ),
+                    (
+                        note_context(&kept, element),
+                        note_context(&fresh(), element),
+                    ),
+                ];
+                for (index, (remembered, computed)) in pairs.into_iter().enumerate() {
+                    assert_eq!(
+                        remembered,
+                        computed,
+                        "fact {index} of {:?}",
+                        element.value()
+                    );
+                    answers[index] += usize::from(computed);
+                }
+            }
+        }
+        // Each fact holds for some elements and not for others.
+        assert!(answers.iter().all(|count| *count > 0), "{answers:?}");
+        assert!(answers[1] >= 2 * 9, "{answers:?}");
+        // Positions are the tree's own numbering of its nodes.
+        for (index, node) in document.tree.nodes().enumerate() {
+            assert_eq!(facts::position(node.id()), index);
+        }
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "an element of another tree")]
+    fn facts_are_kept_for_one_tree_only() {
+        let (one, other) = (
+            Html::parse_document("<p>a</p>"),
+            Html::parse_document("<p>b</p>"),
+        );
+        Facts::new(one.root_element()).hidden(other.root_element());
+    }
+
+    #[test]
+    fn element_tests_answer_as_the_selectors_they_replace() {
+        let document = Html::parse_document(
+            r#"<html><body><a>no address</a><a href="">empty</a><a name="n">named</a>
+            <span id="i">id</span><div name="d">named div</div><sup>1</sup><span data-definition="d">definition</span>
+            <span class="x footnote-container">container</span><span class="sidenote">side</span>
+            <span class="Sidenote">case</span><span class="footnoteContent">content</span>
+            <span class="sidenote-container inline-footnote">two</span><div class="footnote">div</div>
+            <label class="footref">label</label><label class="footrefs">labels</label>
+            <span class="a&#9;footnote&#12;b">tab</span><span class="x&#160;sidenote">nbsp</span>
+            <svg><a href="/svg">vector link</a><title id="t">vector title</title></svg>
+            <template><a href="/t" id="u">template</a><sup>2</sup></template></body></html>"#,
+        );
+        type Test = fn(ElementRef<'_>) -> bool;
+        let cases: [(&str, Test); 6] = [
+            ("a[href]", link),
+            ("[id],a[name]", fragment_target),
+            (
+                "a[href], sup, span[data-definition], label.footref",
+                reference_markup,
+            ),
+            (
+                "span.footnote-container, span.sidenote-container, span.inline-footnote",
+                |element| {
+                    span_of(
+                        element,
+                        &[
+                            "footnote-container",
+                            "sidenote-container",
+                            "inline-footnote",
+                        ],
+                    )
+                },
+            ),
+            (
+                "span.footnote,span.sidenote,span.footnoteContent",
+                |element| span_of(element, &["footnote", "sidenote", "footnoteContent"]),
+            ),
+            ("span.sidenote", |element| span_of(element, &["sidenote"])),
+        ];
+        let root = document.root_element();
+        for (query, test) in cases {
+            let selected: Vec<_> = root.select(&Selector::parse(query).unwrap()).collect();
+            let walked: Vec<_> = inside(root).filter(|element| test(*element)).collect();
+            assert!(!selected.is_empty(), "{query}");
+            assert_eq!(walked, selected, "{query}");
+        }
+    }
+
+    #[test]
+    fn class_names_are_scrapers_classes_without_interning() {
+        let document = Html::parse_document(
+            "<p class=\" a  b\tc\nd\u{c}e a f\u{a0}g \">x</p><p>y</p><p class=\"\">z</p>",
+        );
+        for element in document
+            .root_element()
+            .descendants()
+            .filter_map(ElementRef::wrap)
+        {
+            let value = element.value();
+            for name in ["a", "b", "c", "d", "e", "f", "g", "f\u{a0}g", "", "x"] {
+                assert_eq!(
+                    value.class_names().any(|class| class == name),
+                    value.classes().any(|class| class == name),
+                    "{name:?}"
+                );
+            }
+        }
+    }
+
+    /// Two pages: one with every landmark (one of them only in an element
+    /// taken out of the tree), one with their look-alikes.
+    fn landmark_pages() -> [Html; 2] {
+        let mut with = Html::parse_document(
+            r#"<html><head><title>First</title><meta name="a" content="1"><meta property="b">
+            <link rel="alternate canonical"><link rel="canonical" href="/c"><link href="/s.css">
+            <script src="/s.js"></script><script type="application/ld+json">{}</script></head>
+            <body><svg><title>Vector</title></svg><h1>One</h1><h1>Two</h1>
+            <time>soon</time><time datetime="2026-01-01">then</time>
+            <div data-partnereventstore="[]"></div><div class="x feedPermalinkUnit-y">unit</div>
+            <div class="markup body">rendered</div><div data-testid="primaryColumn"><section>
+            <article data-testid="tweet">post</article></section></div>
+            <img src="/i.png"><img alt="none"><video poster="/p.png"></video>
+            <table id="hnmain"><tr class="athing"><td>row</td></tr></table>
+            <div id="gone"><meta name="moved" content="2"><title>Moved</title></div>
+            <meta id="lone" name="lone" content="3"></body></html>"#,
+        );
+        for id in ["gone", "lone"] {
+            let node = with
+                .root_element()
+                .descendants()
+                .filter_map(ElementRef::wrap)
+                .find(|element| element.value().attribute("id") == Some(id))
+                .unwrap()
+                .id();
+            with.tree.get_mut(node).unwrap().detach();
+        }
+        let without = Html::parse_document(
+            r#"<html><head><link rel="stylesheet" href="/s.css"></head>
+            <body><div class="feedpermalinkunit">unit</div><div class="body">body</div>
+            <span class="body markup">not a div</span>
+            <div data-testid="primaryColumn"><template><article data-testid="tweet">post</article></template></div>
+            <article data-testid="tweet">outside</article><div id="HNmain"></div>
+            <tr class="athing"><td>no table</td></tr><table><tr class="comtrs"><td>x</td></tr></table></body></html>"#,
+        );
+        [with, without]
+    }
+
+    #[test]
+    fn landmarks_find_what_their_selectors_find() {
+        for (index, document) in landmark_pages().iter().enumerate() {
+            let page = Landmarks::read(document);
+            let all = |query: &str| {
+                document
+                    .select(&Selector::parse(query).unwrap())
+                    .collect::<Vec<_>>()
+            };
+            let first = |query: &str| all(query).first().copied();
+            let canonical = all("link[rel]").into_iter().find(|link| {
+                link.value().attribute("rel").is_some_and(|rel| {
+                    rel.split_whitespace()
+                        .any(|t| t.eq_ignore_ascii_case("canonical"))
+                })
+            });
+            assert_eq!(page.metas, all("meta"), "{index}");
+            assert_eq!(page.scripts, all("script"), "{index}");
+            assert_eq!(page.title, first("title"), "{index}");
+            assert_eq!(page.heading, first("h1"), "{index}");
+            assert_eq!(page.canonical, canonical, "{index}");
+            assert_eq!(page.times, all("time[datetime]"), "{index}");
+            assert_eq!(page.events, all("[data-partnereventstore]"), "{index}");
+            assert_eq!(
+                page.permalink,
+                first(r#"[class*="feedPermalinkUnit"]"#),
+                "{index}"
+            );
+            assert_eq!(page.assets, all("link[href], script[src]"), "{index}");
+            assert_eq!(
+                page.rendered_body,
+                first("div.body.markup").is_some(),
+                "{index}"
+            );
+            assert_eq!(
+                page.column_post,
+                first(r#"[data-testid="primaryColumn"] article[data-testid="tweet"]"#).is_some(),
+                "{index}"
+            );
+            assert_eq!(page.media, all("img[src], video[poster]"), "{index}");
+            assert_eq!(page.hn_main, first("#hnmain").is_some(), "{index}");
+            assert_eq!(
+                page.hn_rows,
+                first("tr.athing, tr.comtr").is_some(),
+                "{index}"
+            );
+            // Every flag differs between the pages.
+            let flags = [
+                page.rendered_body,
+                page.column_post,
+                page.hn_main,
+                page.hn_rows,
+                page.permalink.is_some(),
+                page.canonical.is_some(),
+            ];
+            assert!(
+                flags.iter().all(|flag| *flag == (index == 0)),
+                "{index}: {flags:?}"
+            );
+        }
+        // An element taken out of the tree is left out, what it holds is not.
+        let [with, _] = landmark_pages();
+        let page = Landmarks::read(&with);
+        assert_eq!(page.title.map(plain).as_deref(), Some("First"));
+        assert!(meta(&page.metas, &["moved"]).is_some());
+        assert!(meta(&page.metas, &["lone"]).is_none());
+    }
+
+    /// Footnote recovery's questions about every element, asked of its
+    /// ancestors as the passes did before they were read once: the elements
+    /// (by address) inside a literal container, in scope, in a note's context.
+    fn reach_by_ancestors(
+        root: ElementRef<'_>,
+        document: ElementRef<'_>,
+        facts: &Facts,
+    ) -> [HashSet<usize>; 3] {
+        let elements: Vec<_> = document
+            .descendants()
+            .filter_map(ElementRef::wrap)
+            .collect();
+        let mut literal = HashSet::new();
+        for &element in &elements {
+            if element
+                .parent()
+                .and_then(ElementRef::wrap)
+                .is_some_and(|parent| literal.contains(&element_key(parent)))
+                || literal_container(element)
+            {
+                literal.insert(element_key(element));
+            }
+        }
+        let external: Vec<_> = elements
+            .iter()
+            .copied()
+            .filter(|element| {
+                !contains_element(root, *element)
+                    && !contains_element(*element, root)
+                    && matches!(
+                        element.value().name(),
+                        "div" | "section" | "aside" | "ol" | "ul" | "p" | "li"
+                    )
+                    && !literal.contains(&element_key(*element))
+                    && !element
+                        .ancestors()
+                        .filter_map(ElementRef::wrap)
+                        .any(|parent| {
+                            matches!(
+                                parent.value().name(),
+                                "head" | "template" | "noscript" | "iframe" | "object" | "embed"
+                            )
+                        })
+                    && (note_context(facts, *element)
+                        || (["id", "class"].iter().any(|attr| {
+                            element.value().attribute(attr).is_some_and(|value| {
+                                value.to_ascii_lowercase().contains("footnote")
+                            })
+                        }) && element
+                            .select(&selector("h1,h2,h3,h4,h5,h6"))
+                            .any(note_heading)))
+            })
+            .collect();
+        let in_scope = |element: ElementRef<'_>| {
+            contains_element(root, element)
+                || external
+                    .iter()
+                    .any(|container| contains_element(*container, element))
+        };
+        let scope = elements
+            .iter()
+            .copied()
+            .filter(|element| in_scope(*element))
+            .map(element_key)
+            .collect();
+        let context = elements
+            .iter()
+            .copied()
+            .filter(|element| {
+                in_scope(*element)
+                    && (note_context(facts, *element)
+                        || element
+                            .ancestors()
+                            .filter_map(ElementRef::wrap)
+                            .take_while(|parent| in_scope(*parent))
+                            .any(|parent| note_context(facts, parent)))
+            })
+            .map(element_key)
+            .collect();
+        [literal, scope, context]
+    }
+
+    #[test]
+    fn reach_answers_what_each_element_asked_of_its_ancestors() {
+        let page = Html::parse_document(
+            r##"<html><head><div class="footnotes"><p>In the head.</p></div></head><body>
+            <div class="wrap"><article id="root"><p>Text<sup><a href="#fn1">1</a></sup>.</p>
+            <div class="footnotes"><ol><li id="r1">Inner.</li></ol></div>
+            <pre><div class="footnotes"><p>Literal.</p></div></pre>
+            <span class="katex"><span class="footnotes">Math.</span></span></article>
+            <section role="doc-endnotes"><ol><li id="fn1"><p>External <b>note</b>.</p></li></ol></section>
+            <div id="Footnotes-list"><h3>Notes</h3><p>Named.</p></div>
+            <div class="FOOTNOTE-box"><p>No heading.</p></div>
+            <template><div class="footnotes"><p>Inert.</p></div></template>
+            <noscript><div class="footnotes">raw</div></noscript>
+            <aside><div role="doc-footnote"><p>Nested context.</p></div></aside></div></body></html>"##,
+        );
+        fn root_of<'a>(document: &'a Html, id: &str) -> ElementRef<'a> {
+            document
+                .root_element()
+                .descendants()
+                .filter_map(ElementRef::wrap)
+                .find(|element| element.value().attribute("id") == Some(id))
+                .unwrap()
+        }
+        // A whole page around its region; a region inside a notes container,
+        // which is not one outside it; a fragment inside a template, as a
+        // site reader converts one element; a region in a document inside
+        // inert content further up.
+        let wrapped = Html::parse_document(
+            r#"<div id="footnotes"><article id="root"><p>x</p></article><p>Beside.</p></div>"#,
+        );
+        let template = Html::parse_document(
+            r#"<template><div id="doc"><div class="footnotes"><p>x</p></div><pre><b>y</b></pre></div></template>"#,
+        );
+        let inert = Html::parse_document(
+            r#"<template><section><div id="doc"><article id="root"><p>x</p></article><div class="footnotes"><p>y</p></div></div></section></template>"#,
+        );
+        let cases = [
+            (root_of(&page, "root"), page.root_element()),
+            (root_of(&wrapped, "root"), wrapped.root_element()),
+            (root_of(&template, "doc"), root_of(&template, "doc")),
+            (root_of(&inert, "root"), root_of(&inert, "doc")),
+        ];
+        let mut counts = [0; 3];
+        for (root, document) in cases {
+            let facts = Facts::new(document);
+            let elements: Vec<_> = document
+                .descendants()
+                .filter_map(ElementRef::wrap)
+                .collect();
+            let reach = Reach::read(root, document, &elements, &facts);
+            let [literal, scope, context] = reach_by_ancestors(root, document, &facts);
+            for &element in &elements {
+                let name = element
+                    .value()
+                    .attribute("id")
+                    .unwrap_or(element.value().name());
+                let key = element_key(element);
+                assert_eq!(
+                    reach.literal(element),
+                    literal.contains(&key),
+                    "literal {name}"
+                );
+                assert_eq!(
+                    reach.in_scope(element),
+                    scope.contains(&key),
+                    "scope {name}"
+                );
+                if scope.contains(&key) {
+                    assert_eq!(
+                        reach.context(element),
+                        context.contains(&key),
+                        "context {name}"
+                    );
+                }
+            }
+            counts[0] += literal.len();
+            counts[1] += scope.len();
+            counts[2] += context.len();
+        }
+        assert!(counts.iter().all(|count| *count > 3), "{counts:?}");
+    }
+
+    #[test]
+    fn saved_pages_take_the_first_base_then_the_first_canonical_link() {
+        fn by_selectors(document: ElementRef<'_>) -> Option<(Url, bool)> {
+            let web = |value: &str| {
+                Url::parse(value.trim()).ok().filter(|url| {
+                    matches!(url.scheme(), "http" | "https") && url.host_str().is_some()
+                })
+            };
+            if let Some(base) = document
+                .select(&selector("base[href]"))
+                .next()
+                .and_then(|node| web(node.value().attribute("href")?))
+            {
+                return Some((base, true));
+            }
+            document
+                .select(&selector("link[rel][href]"))
+                .find(|node| node.value().attribute("rel").is_some_and(canonical_rel))
+                .and_then(|node| web(node.value().attribute("href")?))
+                .map(|canonical| {
+                    let directory = !canonical.path().trim_matches('/').is_empty();
+                    (canonical, directory)
+                })
+        }
+        let mut found = 0;
+        for head in [
+            r#"<base><base href="https://a.test/dir/"><base href="https://b.test/">"#,
+            r#"<base href="/relative"><link rel="canonical" href="https://c.test/post">"#,
+            r#"<link rel="canonical"><link rel="Alternate CANONICAL" href=" https://d.test/ ">"#,
+            r#"<link rel="icon" href="https://e.test/i"><link href="https://e.test/x" rel="canonical">"#,
+            r#"<link rel="canonical" href="ftp://f.test/"><link rel="canonical" href="https://g.test/">"#,
+            "<title>No address</title>",
+        ] {
+            for document in [
+                format!("<html><head>{head}</head><body><p>x</p></body></html>"),
+                format!("<p>x</p><base href=\"https://h.test/late/\">{head}"),
+            ] {
+                let document = Html::parse_document(&document);
+                let expected = by_selectors(document.root_element());
+                assert_eq!(saved_page_base(document.root_element()), expected, "{head}");
+                found += usize::from(expected.is_some());
+            }
+        }
+        assert!(found >= 7, "{found}");
+    }
+
+    #[test]
+    fn saved_page_links_resolve_as_before_with_one_parse() {
+        fn twice(value: &str, link_base: Option<&(Url, bool)>) -> Option<String> {
+            let trimmed = value.trim();
+            match link_base {
+                Some((base, directory))
+                    if !trimmed.starts_with('#')
+                        && Url::parse(trimmed).is_err()
+                        && (*directory || trimmed.starts_with('/')) =>
+                {
+                    safe_url(trimmed, Some(base))
+                }
+                _ => safe_url(trimmed, None),
+            }
+        }
+        let bases = [
+            None,
+            Some((Url::parse("https://example.test/dir/page").unwrap(), true)),
+            Some((Url::parse("https://example.test/").unwrap(), false)),
+        ];
+        for value in [
+            "#part",
+            "",
+            "  /root  ",
+            "file.html",
+            "../up",
+            "//cdn.test/a",
+            "?q=1",
+            "https://Other.test/P?q#f",
+            "mailto:a@b.test",
+            "tel:+1",
+            "javascript:alert(1)",
+            "data:text/html,x",
+            "a:b",
+            "http://exa mple/",
+            "x\u{0}y",
+            "<tag>\"",
+        ] {
+            for base in &bases {
+                assert_eq!(
+                    saved_page_link(value, base.as_ref()),
+                    twice(value, base.as_ref()),
+                    "{value:?} {base:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn word_counts_read_ascii_bytes_and_other_characters_alike() {
+        fn by_characters(text: &str) -> usize {
+            let cjk = |ch: char| matches!(ch as u32, 0x3040..=0x30ff | 0x3400..=0x4dbf | 0x4e00..=0x9fff | 0xac00..=0xd7af | 0xf900..=0xfaff | 0x20000..=0x2a6df);
+            let (mut words, mut in_word) = (0, false);
+            for ch in text.chars() {
+                if cjk(ch) {
+                    words += 1;
+                    in_word = false;
+                } else if ch.is_alphanumeric() || ch == '_' {
+                    words += usize::from(!in_word);
+                    in_word = true;
+                } else {
+                    in_word = false;
+                }
+            }
+            words
+        }
+        for text in [
+            "",
+            "one",
+            "two words",
+            "snake_case, camel42 and __x__",
+            "naïve café—déjà vu",
+            "日本語のテキスト",
+            "한국어 문장입니다",
+            "mixed日本text and 漢字x",
+            "emoji 🎉 between",
+            "tab\tnew\nline\r\n",
+            "٣٤ digits ²",
+            "ǅ title case",
+            "\u{20000}\u{2a6df}\u{2a6e0}x",
+            "end.",
+        ] {
+            assert_eq!(count_words(text), by_characters(text), "{text:?}");
+        }
+        assert_eq!(count_words("日本 word"), 3);
+    }
+
+    #[test]
+    fn inline_code_keeps_its_line_breaks_as_text() {
+        // Code is preformatted itself, not only inside a `pre` or `code`.
+        let page = extract_html(
+            "<article><p>Run <code>make\n  all</code> now.</p></article>",
+            None,
+        )
+        .unwrap();
+        assert_eq!(page.markdown, "Run `make\n  all` now.");
+    }
+
+    #[test]
+    fn hidden_articles_do_not_compete_with_the_visible_one() {
+        let visible = "The visible article explains its subject at some length. ".repeat(6);
+        let hidden = "A hidden article that would be another candidate. ".repeat(6);
+        let page = extract_html(
+            &format!(
+                "<body><div hidden><article><p>{hidden}</p></article></div><article><p>{visible}</p></article><div><p>A short line beside it.</p></div></body>"
+            ),
+            None,
+        )
+        .unwrap();
+        assert!(
+            page.markdown.contains("visible article"),
+            "{}",
+            page.markdown
+        );
+        assert!(!page.markdown.contains("short line"), "{}", page.markdown);
+    }
+
+    #[test]
+    fn note_reference_markers_are_numbers_in_brackets_or_note_signs() {
+        let candidate = |text: &str| {
+            let document = Html::parse_fragment(&format!("<a href=\"#n\">{text}</a>"));
+            let link = document.select(&selector("a")).next().unwrap();
+            reference_candidate(link)
+        };
+        for marker in ["1", "[2]", "(3).", " 4 ", "*", "†‡", "[[5]]", "<b>6</b>"] {
+            assert!(candidate(marker), "{marker:?}");
+        }
+        for text in [
+            "1a", "see 1", "", "0", "12345", "1 2", "Note", "[1] more", "1\u{a0}x", "[\n7\n]",
+        ] {
+            assert!(!candidate(text), "{text:?}");
+        }
     }
 }

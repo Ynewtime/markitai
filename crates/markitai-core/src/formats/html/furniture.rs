@@ -10,6 +10,7 @@
 
 use super::Attribute;
 use super::article::{discarded, featured_comment, heading, note, structured_page, teaser};
+use super::facts::Facts;
 use scraper::{ElementRef, Node};
 
 /// The body must have this many words of running text ...
@@ -99,9 +100,9 @@ struct Mass<'a> {
     inline: bool,
 }
 
+/// The elements of a region in document order, each before its descendants.
 struct Region<'a> {
     nodes: Vec<Mass<'a>>,
-    children: Vec<Vec<usize>>,
 }
 
 /// Elements whose text is a sentence, a cell or code: what stands inside them
@@ -124,14 +125,11 @@ fn sentence_or_cell(element: ElementRef<'_>) -> bool {
 
 impl<'a> Region<'a> {
     /// Measure every element of `root` that is not itself left out of a page.
-    fn scan(root: ElementRef<'a>) -> Self {
-        let mut region = Self {
-            nodes: Vec::new(),
-            children: Vec::new(),
-        };
+    fn scan(facts: &Facts, root: ElementRef<'a>) -> Self {
+        let mut region = Self { nodes: Vec::new() };
         let mut stack = vec![(root, None, true, false)];
         while let Some((element, parent, plain, inline)) = stack.pop() {
-            if discarded(element) && parent.is_some() {
+            if discarded(facts, element) && parent.is_some() {
                 continue;
             }
             let index = region.nodes.len();
@@ -159,7 +157,7 @@ impl<'a> Region<'a> {
                 links: usize::from(name == "a" && value.attribute("href").is_some()),
                 paragraphs,
                 keep: matches!(name, "pre" | "math")
-                    || note(element)
+                    || note(facts, element)
                     || (heading(element) && scholarly_label(&super::plain(element))),
                 grid: name == "table" && {
                     let (_, rows) = super::table_rows(element);
@@ -182,10 +180,6 @@ impl<'a> Region<'a> {
                         })),
                 inline,
             });
-            region.children.push(Vec::new());
-            if let Some(parent) = parent {
-                region.children[parent].push(index);
-            }
             let inline = inline || sentence_or_cell(element);
             stack.extend(
                 element
@@ -234,14 +228,27 @@ impl<'a> Region<'a> {
         region
     }
 
+    /// An element's children: the first follows it, and each next one starts
+    /// where the subtree of the one before ends.
+    fn children(&self, parent: usize) -> impl Iterator<Item = usize> + '_ {
+        let end = self.nodes[parent].end;
+        let mut next = parent + 1;
+        std::iter::from_fn(move || {
+            (next < end).then(|| {
+                let child = next;
+                next = self.nodes[child].end;
+                child
+            })
+        })
+    }
+
     /// From the region's root down to the body: each element holds three fifths
     /// of its parent's running text.
     fn chain(&self) -> Vec<usize> {
         let mut chain = vec![0];
         let mut current = 0;
-        while let Some(next) = self.children[current]
-            .iter()
-            .copied()
+        while let Some(next) = self
+            .children(current)
             .find(|child| self.nodes[*child].text * 5 >= self.nodes[current].text * 3)
         {
             chain.push(next);
@@ -256,21 +263,21 @@ impl<'a> Region<'a> {
     /// Replies that repeat the post they follow stay, and so does the block
     /// right after the body when the body introduces it with a colon or when
     /// it is a conclusion of plain prose.
-    fn around(&self, chain: &[usize], found: &mut Vec<ElementRef<'a>>) {
+    fn around(&self, facts: &Facts, chain: &[usize], found: &mut Vec<ElementRef<'a>>) {
         let last = *chain.last().unwrap_or(&0);
         let body = self.nodes[last].text;
         // The first block after the body, from its own level outwards.
         let next = chain.windows(2).rev().find_map(|pair| {
-            let siblings = &self.children[pair[0]];
+            let siblings: Vec<usize> = self.children(pair[0]).collect();
             let at = siblings.iter().position(|child| *child == pair[1])?;
             siblings[at + 1..].iter().copied().find(|child| {
                 let node = &self.nodes[*child];
                 node.total > 0 || node.links > 0 || node.media
             })
         });
-        let introduced = next.is_some() && introduces(self.nodes[last].element);
+        let introduced = next.is_some() && introduces(facts, self.nodes[last].element);
         for pair in chain.windows(2) {
-            let siblings = &self.children[pair[0]];
+            let siblings: Vec<usize> = self.children(pair[0]).collect();
             let at = siblings
                 .iter()
                 .position(|child| *child == pair[1])
@@ -443,7 +450,7 @@ impl<'a> Region<'a> {
         if !matches!(node.element.value().name(), "ul" | "ol") || node.inline || node.media {
             return false;
         }
-        let steps = &self.children[list];
+        let steps: Vec<usize> = self.children(list).collect();
         let Some((page, links)) = steps.split_last() else {
             return false;
         };
@@ -491,11 +498,7 @@ impl<'a> Region<'a> {
     /// The innermost card inside a card (the card, not the wrapper of the
     /// page's front matter around it).
     fn smallest_card(&self, mut index: usize) -> usize {
-        while let Some(inner) = self.children[index]
-            .iter()
-            .copied()
-            .find(|child| self.card(*child))
-        {
+        while let Some(inner) = self.children(index).find(|child| self.card(*child)) {
             index = inner;
         }
         index
@@ -548,7 +551,8 @@ impl<'a> Region<'a> {
         let Some(parent) = self.nodes[title].parent else {
             return;
         };
-        for &sibling in self.children[parent]
+        let siblings: Vec<usize> = self.children(parent).collect();
+        for &sibling in siblings
             .iter()
             .rev()
             .skip_while(|child| **child != title)
@@ -575,7 +579,7 @@ impl<'a> Region<'a> {
     /// and next. A paragraph or a list is text however short, a heading
     /// starts a section that stays, and a row that a sentence ending with a
     /// colon introduces is the article's.
-    fn tail(&self, body: usize, found: &mut Vec<ElementRef<'a>>) {
+    fn tail(&self, facts: &Facts, body: usize, found: &mut Vec<ElementRef<'a>>) {
         let node = &self.nodes[body];
         if node.text < MIN_TAIL
             || node.paragraphs < MIN_PARAGRAPHS
@@ -588,7 +592,7 @@ impl<'a> Region<'a> {
         }
         let mut tail = Vec::new();
         let mut sealed = false;
-        let mut cursor = 0;
+        let mut blocks = self.children(body).peekable();
         // The block of text right before, which may introduce a row.
         let mut text = None;
         for child in node.element.children() {
@@ -599,13 +603,13 @@ impl<'a> Region<'a> {
                     text = None;
                 }
                 Node::Element(_) => {
-                    let Some(&index) = self.children[body].get(cursor) else {
+                    let Some(&index) = blocks.peek() else {
                         continue;
                     };
                     if self.nodes[index].element.id() != child.id() {
                         continue;
                     }
-                    cursor += 1;
+                    blocks.next();
                     let block = &self.nodes[index];
                     let sentence = matches!(
                         block.element.value().name(),
@@ -624,7 +628,7 @@ impl<'a> Region<'a> {
                         sealed = true;
                         text = None;
                     } else if !sealed && !sentence && block.links >= MIN_LINKS {
-                        if text.take().is_some_and(introduces) {
+                        if text.take().is_some_and(|text| introduces(facts, text)) {
                             tail.clear();
                         } else {
                             tail.push(block.element);
@@ -640,7 +644,7 @@ impl<'a> Region<'a> {
 
 /// Whether an element ends with a sentence that ends with a colon: an
 /// introduction to what follows it. A label ("Related:", "Tags:") is not one.
-fn introduces(element: ElementRef<'_>) -> bool {
+fn introduces(facts: &Facts, element: ElementRef<'_>) -> bool {
     let mut stack: Vec<_> = element.children().collect();
     while let Some(node) = stack.pop() {
         match node.value() {
@@ -687,7 +691,7 @@ fn introduces(element: ElementRef<'_>) -> bool {
             }
             Node::Element(_) => {
                 if let Some(child) = ElementRef::wrap(node)
-                    && !discarded(child)
+                    && !discarded(facts, child)
                 {
                     stack.extend(child.children());
                 }
@@ -773,23 +777,23 @@ fn counter(words: &[&str]) -> bool {
 /// links) always stays. A short label right above the first `h1`, and a row of
 /// links after the body's last text (see [`Region::tail`]), go too. A region
 /// without such a body keeps everything.
-pub(super) fn beside_body(root: ElementRef<'_>) -> Vec<ElementRef<'_>> {
+pub(super) fn beside_body<'a>(facts: &Facts, root: ElementRef<'a>) -> Vec<ElementRef<'a>> {
     if structured_page(root) {
         return Vec::new();
     }
-    let region = Region::scan(root);
+    let region = Region::scan(facts, root);
     let chain = region.chain();
     let body = chain.last().copied().unwrap_or(0);
     let mut found = Vec::new();
     if region.nodes[body].paragraphs >= MIN_PARAGRAPHS && region.nodes[body].text >= MIN_BODY {
-        region.around(&chain, &mut found);
+        region.around(facts, &chain, &mut found);
         region.marks(&chain, &mut found);
         region.featured(body, &mut found);
     }
     if region.nodes[0].paragraphs >= MIN_PARAGRAPHS {
         region.eyebrow(&mut found);
     }
-    region.tail(body, &mut found);
+    region.tail(facts, body, &mut found);
     found
 }
 
@@ -820,7 +824,8 @@ mod tests {
     /// The ids of the elements left out of the page's content region.
     fn left_out(html: &str) -> Vec<String> {
         let document = Html::parse_document(html);
-        let mut ids = beside_body(select(&document))
+        let facts = Facts::new(document.root_element());
+        let mut ids = beside_body(&facts, select(&document, &facts))
             .into_iter()
             .map(|element| {
                 element

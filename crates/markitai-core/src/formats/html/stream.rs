@@ -35,7 +35,7 @@ fn hidden(element: ElementRef<'_>) -> bool {
         || element.value().attribute("aria-hidden") == Some("true")
         || element
             .value()
-            .classes()
+            .class_names()
             .any(|c| matches!(c, "hidden" | "invisible"))
 }
 
@@ -66,7 +66,7 @@ fn segment(element: ElementRef<'_>) -> bool {
         && element.value().attribute("aria-hidden").is_none()
         && !element
             .value()
-            .classes()
+            .class_names()
             .any(|class| matches!(class, "hidden" | "invisible"))
         && !inert_ancestor(element)
 }
@@ -328,7 +328,7 @@ fn semantic(element: ElementRef<'_>) -> bool {
             .value()
             .attribute("id")
             .into_iter()
-            .chain(element.value().classes())
+            .chain(element.value().class_names())
             .any(|name| {
                 matches!(
                     name.to_ascii_lowercase().as_str(),

@@ -9,12 +9,12 @@ const MAX_DEPTH: usize = 256;
 type CodeTarget<'a> = (ElementRef<'a>, usize);
 
 fn has_class(element: ElementRef<'_>, name: &str) -> bool {
-    element.value().classes().any(|class| class == name)
+    element.value().class_names().any(|class| class == name)
 }
 fn any_class(element: ElementRef<'_>, names: &[&str]) -> bool {
     element
         .value()
-        .classes()
+        .class_names()
         .any(|class| names.contains(&class))
 }
 
@@ -300,6 +300,9 @@ fn language_attribute(element: ElementRef<'_>) -> Option<String> {
     }
     None
 }
+/// The longest text [`language_label`] knows ("shell script").
+const MAX_LABEL: usize = 12;
+
 fn header_label(element: ElementRef<'_>) -> Option<String> {
     let mut text = String::new();
     for node in element.descendants() {
@@ -313,6 +316,11 @@ fn header_label(element: ElementRef<'_>) -> Option<String> {
                 continue;
             }
             text.push_str(value);
+            // A longer header (a page's whole banner) names no language,
+            // whatever follows; only text that is not blank lengthens it.
+            if !value.trim().is_empty() && text.trim().len() > MAX_LABEL {
+                return None;
+            }
         }
     }
     language_label(&text)
@@ -821,6 +829,24 @@ mod tests {
             )
             .0
         );
+    }
+    #[test]
+    fn a_copy_header_names_its_language_in_at_most_the_longest_label() {
+        // The longest label, in pieces between blank text and controls.
+        let header = |label: &str| {
+            format!(
+                "<div><div>\n  <span>{label}</span>\n  <button>Copy code</button>\n</div><pre>x</pre></div>"
+            )
+        };
+        let source = header("Shell <b>Script</b>");
+        assert_eq!(
+            code(&source, "div"),
+            "<pre><code class=\"language-bash\">x</code></pre>"
+        );
+        // A banner that starts with a language name is not a label.
+        for longer in ["Shell Script!", "Rust tips and tricks"] {
+            assert!(!normalized(&header(longer), "div").0, "{longer}");
+        }
     }
     #[test]
     fn hidden_and_executable_nodes_never_enter_code_but_escaped_examples_do() {

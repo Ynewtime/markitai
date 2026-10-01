@@ -6,7 +6,7 @@
 //! one carries `data-tweet-id` on the post and no test ids at all.
 
 use super::Attribute;
-use super::{Announcement, render_clean, selector};
+use super::{Announcement, Landmarks, render_clean, selector};
 use crate::Result;
 use scraper::{ElementRef, Html};
 use serde_json::{Map, Value};
@@ -189,7 +189,7 @@ fn published(iso: Option<&str>, shown: Option<&str>) -> Option<String> {
 
 /// Whether a page is an X post page: by its host (a status URL), else by
 /// X's own test ids or its media host.
-fn is_x_page(document: &Html, base: Option<&Url>) -> bool {
+fn is_x_page(page: &Landmarks<'_>, base: Option<&Url>) -> bool {
     let x_host = |host: &str| {
         matches!(
             host,
@@ -200,30 +200,26 @@ fn is_x_page(document: &Html, base: Option<&Url>) -> bool {
         return x_host(host) && base.is_some_and(|url| url.path().contains("/status/"));
     }
     // X's own column and post test ids, or its media host.
-    if document
-        .select(&selector(
-            r#"[data-testid="primaryColumn"] article[data-testid="tweet"]"#,
-        ))
-        .next()
-        .is_some()
-    {
+    if page.column_post {
         return true;
     }
-    document
-        .select(&selector("img[src], video[poster]"))
-        .any(|element| {
-            element
-                .value()
-                .attribute("src")
-                .or_else(|| element.value().attribute("poster"))
-                .and_then(|source| Url::parse(source).ok())
-                .is_some_and(|url| url.host_str() == Some("pbs.twimg.com"))
-        })
+    page.media.iter().any(|element| {
+        element
+            .value()
+            .attribute("src")
+            .or_else(|| element.value().attribute("poster"))
+            .and_then(|source| Url::parse(source).ok())
+            .is_some_and(|url| url.host_str() == Some("pbs.twimg.com"))
+    })
 }
 
 /// The post of an X status page as Markdown with its metadata.
-pub(super) fn post(document: &Html, base: Option<&Url>) -> Result<Option<Announcement>> {
-    if !is_x_page(document, base) {
+pub(super) fn post(
+    document: &Html,
+    page: &Landmarks<'_>,
+    base: Option<&Url>,
+) -> Result<Option<Announcement>> {
+    if !is_x_page(page, base) {
         return Ok(None);
     }
     let column = document

@@ -214,6 +214,14 @@ fn admonition(element: ElementRef<'_>) -> Option<Callout<'_>> {
 }
 
 pub(super) fn detect(element: ElementRef<'_>) -> Option<Callout<'_>> {
+    // Every kind is known by a class, or by its element (an aside); the
+    // classes are read once for an element of none of them.
+    if element.value().name() != "aside"
+        && !classes(element)
+            .any(|class| matches!(class, "callout" | "markdown-alert" | "alert" | "admonition"))
+    {
+        return None;
+    }
     obsidian(element)
         .or_else(|| github(element))
         .or_else(|| bootstrap(element))
@@ -223,19 +231,16 @@ pub(super) fn detect(element: ElementRef<'_>) -> Option<Callout<'_>> {
 
 /// Whether `element` is the title a surrounding callout's marker replaces.
 pub(super) fn replaced_title(element: ElementRef<'_>) -> bool {
-    [
-        "markdown-alert-title",
-        "alert-heading",
-        "alert-title",
-        "admonition-title",
-    ]
-    .into_iter()
-    .any(|class| has_class(element, class))
-        && element
-            .ancestors()
-            .filter_map(ElementRef::wrap)
-            .find_map(detect)
-            .is_some_and(|callout| callout.omit == Some(element))
+    classes(element).any(|class| {
+        matches!(
+            class,
+            "markdown-alert-title" | "alert-heading" | "alert-title" | "admonition-title"
+        )
+    }) && element
+        .ancestors()
+        .filter_map(ElementRef::wrap)
+        .find_map(detect)
+        .is_some_and(|callout| callout.omit == Some(element))
 }
 
 /// The marker line: `[!type]fold Title`, the title defaulting to the
