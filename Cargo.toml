@@ -1,6 +1,6 @@
 [workspace]
 members = ["crates/*"]
-exclude = ["vendor/pdf-inspector", "vendor/anydoc", "vendor/lopdf"]
+exclude = ["vendor/pdf-inspector", "vendor/anydoc", "vendor/lopdf", "vendor/htmd"]
 default-members = ["crates/markitai-core", "crates/markitai-cli", "crates/markitai-ffi"]
 resolver = "2"
 
@@ -117,5 +117,6 @@ lto = "fat"
 
 [patch.crates-io]
 anydoc = { path = "vendor/anydoc" }
+htmd = { path = "vendor/htmd" }
 lopdf = { path = "vendor/lopdf" }
 pdf-inspector = { path = "vendor/pdf-inspector" }

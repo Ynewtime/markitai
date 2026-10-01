@@ -94,6 +94,7 @@
 
 ### Changed
 
+- Vendor htmd 0.5.5 to convert directly over scraper's parsed tree with html5ever 0.39, dropping the second HTML parser stack (html5ever, markup5ever, markup5ever_rcdom and xml5ever 0.38) and building the converter once per process: release binary −215,088 bytes (−0.93%), every HTML, e-mail and EPUB corpus output byte-identical, directory HTML runs slightly faster.
 - Order run-state, report, history and asset writes with barriers where only their order matters and keep one full flush where a step is acknowledged: directory runs are 16–36 ms faster, and runs with reports and history 110–169 ms (40–47%) faster, with outputs, ownership records and state byte-identical and every acknowledged step still durable.
 - Look up PDF glyph names in pdf-inspector through a packed table built at compile time instead of a 4,528-entry map filled at first use (108,960 bytes of code): release binary −82,576 bytes, PDF output byte-identical on 216 corpus PDFs and every glyph name.
 - Link the macOS frameworks behind OCR, HEIF/AVIF decoding and PDF rasterization delay-initialized in the command-line executables, so conversions that need none of them start about 1 ms (≈25%) faster on macOS 15 and later; explain why the first OCR after an install takes 25–45 seconds (Vision compiles its models per executable).

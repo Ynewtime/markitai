@@ -2963,6 +2963,17 @@ fn tight_blockquote(markdown: &str) -> String {
 }
 
 fn render_sanitized(cleaned: &str) -> Result<String> {
+    // The converter keeps no state between documents, so its handler table is
+    // built once per process instead of once per call.
+    static CONVERTER: std::sync::OnceLock<htmd::HtmlToMarkdown> = std::sync::OnceLock::new();
+    CONVERTER
+        .get_or_init(sanitized_converter)
+        .convert(cleaned)
+        .map(|markdown| markdown.trim().to_owned())
+        .map_err(|error| Error::Conversion(format!("HTML rendering failed: {error}")))
+}
+
+fn sanitized_converter() -> htmd::HtmlToMarkdown {
     htmd::HtmlToMarkdown::builder()
         // The reference's list and rule spelling: one space after a list
         // marker (`* item`, `1. item`) and `---` rules.
@@ -2975,13 +2986,7 @@ fn render_sanitized(cleaned: &str) -> Result<String> {
         .add_handler(
             vec!["markitai-footnote"],
             |_: &dyn htmd::element_handler::Handlers, element: htmd::Element| {
-                let number = element
-                    .attrs
-                    .iter()
-                    .find(|attr| attr.name.local.as_ref() == "data-number")?
-                    .value
-                    .parse::<usize>()
-                    .ok()?;
+                let number = element.attr("data-number")?.parse::<usize>().ok()?;
                 Some(format!("[^{number}]").into())
             },
         )
@@ -2989,29 +2994,17 @@ fn render_sanitized(cleaned: &str) -> Result<String> {
             vec!["markitai-callout"],
             |_: &dyn htmd::element_handler::Handlers, element: htmd::Element| {
                 // Generated marker text (`[!type]fold`), never page markup.
-                let marker = element
-                    .attrs
-                    .iter()
-                    .find(|attr| attr.name.local.as_ref() == "data-marker")?
-                    .value
-                    .as_ref();
+                let marker = element.attr("data-marker")?;
                 Some(marker.to_owned().into())
             },
         )
         .add_handler(
             vec!["markitai-math"],
             |_: &dyn htmd::element_handler::Handlers, element: htmd::Element| {
-                let latex = element
-                    .attrs
-                    .iter()
-                    .find(|attr| attr.name.local.as_ref() == "data-latex")?
-                    .value
-                    .as_ref();
+                let latex = element.attr("data-latex")?;
                 // Emit TeX syntax as data, never HTML supplied in an annotation.
                 let latex = latex.replace('<', r"\lt ").replace('>', r"\gt ");
-                let block = element.attrs.iter().any(|attr| {
-                    attr.name.local.as_ref() == "data-display" && attr.value.as_ref() == "block"
-                });
+                let block = element.attr("data-display") == Some("block");
                 Some(
                     if block {
                         format!("\n\n$${latex}$$\n\n")
@@ -3092,9 +3085,6 @@ fn render_sanitized(cleaned: &str) -> Result<String> {
             },
         )
         .build()
-        .convert(cleaned)
-        .map(|markdown| markdown.trim().to_owned())
-        .map_err(|error| Error::Conversion(format!("HTML rendering failed: {error}")))
 }
 
 #[derive(Debug)]

@@ -1,0 +1,111 @@
+# Markitai's HTML-to-Markdown converter
+
+This directory contains the published `htmd` 0.5.5 package's library source,
+integration tests, the example page one of those tests reads
+(`examples/page-to-markdown/html/Hacker News.html`), `README.md`, `LICENSE`
+(Apache-2.0, unchanged) and its package manifest. `UPSTREAM.json` records the
+original archive checksum, upstream commit and every copied file's original
+checksum. No Cargo registry source was modified. The workspace coordinator
+owns the path patch and lockfile.
+
+## Why
+
+Markitai parses a page with scraper (html5ever 0.39), cleans it, and gives
+htmd the cleaned markup as a string. Upstream htmd parsed that string with
+html5ever 0.38 into a markup5ever_rcdom tree, so the binary carried a second
+copy of html5ever's tokenizer and tree builder (generic code instantiated for
+the rcdom sink, about 137 KB) beside markup5ever 0.38 and markup5ever_rcdom,
+which also pulled in xml5ever. This copy parses with scraper's own entry point
+and walks scraper's tree, so one parser instance serves both parses and those
+crates leave the dependency graph.
+
+## Changes
+
+Each change is marked `markitai` in a comment.
+
+- `Cargo.toml`: depends on scraper 0.27 (without default features),
+  html5ever 0.39 and ego-tree 0.11 instead of html5ever 0.38 and
+  markup5ever_rcdom 0.38. The benches and examples are not vendored, so their
+  targets and the criterion dev-dependency are gone; the tests use the regular
+  scraper dependency instead of scraper 0.26. A `scripting-option` feature (on
+  by default) keeps `HtmlToMarkdownBuilder::scripting_enabled`: parsing with
+  scripting disabled needs this crate's own instance of html5ever's generic
+  parser (scraper's entry point takes no options), which measured 123,616
+  bytes of code in a release CLI. Markitai never disables scripting and
+  depends on this crate without default features. A `markitai_tests` target
+  is added.
+- `src/lib.rs`: `Node` is scraper's node and `NodeRef<'a>` names a node of its
+  tree. `Element::node` is a `NodeRef` and `Element::attrs` scraper's
+  attributes; `Element::attr` returns the first attribute with a local name,
+  as the built-in handlers look one up. `html_to_tree` returns a
+  `scraper::Html` (through `Html::parse_document`, or with scripting disabled
+  through html5ever's driver with scraper's sink) and `tree_to_markdown` takes
+  any `NodeRef`.
+- `src/element_handler/mod.rs`: `Handlers` is implemented by a per-conversion
+  `Walker` instead of `ElementHandlers`, and gains `node_children` and
+  `node_text`. While walking a node's children upstream merged each inline
+  element into an identical previous sibling holding only text, by editing its
+  `Rc` tree: the second element left the parent's children and its text was
+  appended to the first's. The scraper tree is shared and not edited; the
+  walker records the same removals and appended text, and every read of
+  children or text in this crate goes through it. A merge therefore applies
+  from the moment the parent's children are first walked, as the edit did,
+  and children that are never walked (an ordered list's, read one by one) are
+  never merged. `can_combine` moved here from `dom_walker.rs`; a template's
+  contents, which scraper keeps in a fragment child and markup5ever_rcdom kept
+  outside the children, are not among the children.
+- `src/dom_walker.rs`, `src/node_util.rs` and the handlers in
+  `src/element_handler/` (`code.rs`, `pre.rs`, `list.rs`, `li.rs`, `span.rs`,
+  `table.rs`, `td_th.rs`, `html.rs`, `img.rs`, `anchor.rs`): read scraper nodes
+  and attributes, and children and text through `Handlers`. `pre.rs` computes
+  its faithful-mode test only in faithful mode.
+- `src/element_handler/element_util.rs`: faithful-mode HTML serializes a
+  subtree as markup5ever_rcdom's `SerializableHandle` did, with the children
+  and text the conversion sees.
+- `tests/code_tests.rs`, `tests/basic_tests.rs`: the three tests that used the
+  rcdom tree or `Attribute` directly use the scraper equivalents;
+  `faithful_mode_inline` expects attributes in name order (below).
+- `tests/markitai_tests.rs` (added): merging as upstream, including what is
+  never merged, text read after a merge (math spans, faithful HTML), template
+  contents, an unchanged tree after converting it twice, the scripting option
+  and `Element::attr`. Each expected string is htmd 0.5.5's output for the
+  same input.
+
+## Differences from upstream
+
+- Attributes come in name order, as scraper stores them. Faithful-mode HTML
+  writes them in that order; where two attributes set the same value (an
+  image's `href` and `src`, both its link) the later in name order wins
+  rather than the later in source order; and similar adjacent elements merge
+  when their attribute sets are equal in any order (upstream: the same order).
+  Markitai's cleaned markup writes every element's attributes in one fixed
+  order, `href` before `src`, so its output is unaffected.
+- html5ever 0.39 reconstructs active formatting elements before an `<svg>` or
+  `<math>` start tag, as the HTML standard requires and 0.38 did not, so a
+  formatting element closed implicitly just before foreign content wraps it.
+
+## Verification
+
+A program linking this crate and htmd 0.5.5 from crates.io compared both on
+the same inputs with Markitai's handlers, default options, faithful mode, two
+other option sets and scripting disabled. On 3,788 real pages (the reference
+repository's HTML, the HTML corpora under `.local`, every twentieth page of
+the Rust documentation) the outputs were identical except faithful mode,
+where all 7,162 differences were attribute order. Of 200,000 generated
+documents with attributes in name order, every difference was faithful-mode
+attribute order on the same tree or a document with `<svg>`/`<math>` whose
+trees differ, and renaming those two tags removed all of them. With shuffled
+attributes, every difference outside faithful mode disappeared once the
+attributes were sorted.
+
+The upstream suite, run in an isolated copy with default features, passes
+(96 tests, one expectation updated for attribute order) with the 7 added
+tests; each of 13 mutations of the port fails an added test. `cargo clippy
+--all-targets` reports nothing, as for upstream.
+
+`rustfmt` 1.9 with default settings leaves the modified files unchanged and
+would join one call onto a line in three unmodified upstream files
+(`caption.rs`, `tbody.rs`, `thead.rs`); no setting reproduces upstream's
+formatting exactly, so they are kept as published and there is no
+`rustfmt.toml`. The workspace's `cargo fmt --all` does not reach this
+directory.

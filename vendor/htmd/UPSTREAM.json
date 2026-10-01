@@ -1,0 +1,221 @@
+{
+  "name": "htmd",
+  "version": "0.5.5",
+  "repository": "https://github.com/letmutex/htmd",
+  "upstream_git_commit": "b1e330e060d3bc677750faae09df13b93ce405bd",
+  "registry_archive_sha256": "a5a1c7113c831fec68cbd79cd8bf281a84e5b6943f51473dc266b0b88a6a017e",
+  "license": "Apache-2.0",
+  "copy_scope": "The published package's library source (src), integration tests (tests, including tests/html/turndown_test_index.html), the example page the table tests read (examples/page-to-markdown/html/Hacker News.html), README.md, LICENSE and its package manifest. No Cargo.lock, Cargo.toml.orig, registry markers, benches, other examples or CI files copied.",
+  "copied_files": [
+    {
+      "path": "Cargo.toml",
+      "bytes": 2266,
+      "upstream_sha256": "b54619251f79bee7d40b38e113a0e8a4635b72117588470722caa35ae9a37569"
+    },
+    {
+      "path": "LICENSE",
+      "bytes": 11358,
+      "upstream_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "path": "README.md",
+      "bytes": 3970,
+      "upstream_sha256": "7ddfbe9799595bce8d911f451e4eb1068febc51f86995929f4020768bde345db"
+    },
+    {
+      "path": "examples/page-to-markdown/html/Hacker News.html",
+      "bytes": 43151,
+      "upstream_sha256": "f7d99419d04382c68bfc115bffbe99be8e2f6429f70eb62d58271163efd48dad"
+    },
+    {
+      "path": "src/dom_walker.rs",
+      "bytes": 16171,
+      "upstream_sha256": "931940f00c2ecbd6dd68a572babf509f89a577b8245375e95e6e0609d3fae3bb"
+    },
+    {
+      "path": "src/element_handler/anchor.rs",
+      "bytes": 6556,
+      "upstream_sha256": "3f4fd83e1b92725ad8fc010d8b1b86952e339c817f75757cecfe43fc5a1f9b3c"
+    },
+    {
+      "path": "src/element_handler/blockquote.rs",
+      "bytes": 677,
+      "upstream_sha256": "e2db70d8f1923b8a31a58a19788a83a0c0c0d0ee25b374ed634863b419396477"
+    },
+    {
+      "path": "src/element_handler/br.rs",
+      "bytes": 423,
+      "upstream_sha256": "52cb453a7de00099ba9865104ddf65bd08e6abea3527572a947bc28da8250c0b"
+    },
+    {
+      "path": "src/element_handler/caption.rs",
+      "bytes": 457,
+      "upstream_sha256": "b407423af2bcd8e675638a4208f35f8aa89dfa17d44ad1a55d2c34f2feb5eecc"
+    },
+    {
+      "path": "src/element_handler/code.rs",
+      "bytes": 6048,
+      "upstream_sha256": "78bad7462b100f88372797399a22f74a0a8556cb432ce40b486227466e2937b2"
+    },
+    {
+      "path": "src/element_handler/element_util.rs",
+      "bytes": 8778,
+      "upstream_sha256": "95d128b72a3a2298cd2f3063ecb4f3d4915fc8cef1599a727e79c29be0b06e93"
+    },
+    {
+      "path": "src/element_handler/emphasis.rs",
+      "bytes": 1023,
+      "upstream_sha256": "b7b4c2732deddf1112b90dc867578ca003911e6dfae1f6b66e977eea5477ee95"
+    },
+    {
+      "path": "src/element_handler/head_body.rs",
+      "bytes": 330,
+      "upstream_sha256": "fcd21d4fe39465bfa88d8f3e6205c56b5aa69d37771c9aa5278ba19e41cdde1a"
+    },
+    {
+      "path": "src/element_handler/headings.rs",
+      "bytes": 1153,
+      "upstream_sha256": "b4a4b36912144f39a5ef27cfcb041bd0fd4c315a4236dcb65756eee5c5f9ab9e"
+    },
+    {
+      "path": "src/element_handler/hr.rs",
+      "bytes": 499,
+      "upstream_sha256": "2ca943f36ee55e9f622aa1142ccb39ab4224a111059b05ced9849a855d688de7"
+    },
+    {
+      "path": "src/element_handler/html.rs",
+      "bytes": 1172,
+      "upstream_sha256": "1fb3055311cb4b026dbdcca937cec353555986ab406ea3f9e46d101a707b3bfb"
+    },
+    {
+      "path": "src/element_handler/img.rs",
+      "bytes": 1864,
+      "upstream_sha256": "34d580a6f11bd919fbd0938cdd763166a35fdd695720be278dc74a2fe7e97f56"
+    },
+    {
+      "path": "src/element_handler/li.rs",
+      "bytes": 1430,
+      "upstream_sha256": "80189d86a19f3cec7791ba1740bf41cfba87cf1eda51ea4bf94919536bd54a4f"
+    },
+    {
+      "path": "src/element_handler/list.rs",
+      "bytes": 5300,
+      "upstream_sha256": "f8cca97626ced5ce19cb1b7cbfeffae9c7a194fe7685fa93dc359b37a363811c"
+    },
+    {
+      "path": "src/element_handler/mod.rs",
+      "bytes": 11170,
+      "upstream_sha256": "6165b1b14c20f2ab4010ac2c50a41952e14b27527d8cbfebead09ffec690fbd1"
+    },
+    {
+      "path": "src/element_handler/p.rs",
+      "bytes": 450,
+      "upstream_sha256": "831bd80e8bc5f831e159305845d5c84df16ae901a77f0fce8f14aa1b0ac4e871"
+    },
+    {
+      "path": "src/element_handler/pre.rs",
+      "bytes": 1812,
+      "upstream_sha256": "b36d5b16e72e91b310b34f7372dfd69e91a55ca40a5ccdc18738c7295b78aa59"
+    },
+    {
+      "path": "src/element_handler/span.rs",
+      "bytes": 1236,
+      "upstream_sha256": "a1a320e541ab1f81fe937a69f490fd052727019dd049bc13d6dc93034525877d"
+    },
+    {
+      "path": "src/element_handler/table.rs",
+      "bytes": 11063,
+      "upstream_sha256": "d5e0e473f348a1f2ade7d69f3be17c8eb61bdfa561f441e51cf169611212c2b0"
+    },
+    {
+      "path": "src/element_handler/tbody.rs",
+      "bytes": 572,
+      "upstream_sha256": "ba90473e80af5f47cb38f8dc069fc7b5d570f7f4ac6faad62df162409826721a"
+    },
+    {
+      "path": "src/element_handler/td_th.rs",
+      "bytes": 974,
+      "upstream_sha256": "bb6fdc000662654fddd3fdad4e1c212c69301a92078c223b2aee5c4cae48b08d"
+    },
+    {
+      "path": "src/element_handler/thead.rs",
+      "bytes": 572,
+      "upstream_sha256": "cedd687049469dc82abaf4d387b9cbbe5902731bd0096232b67ee41adb65cb12"
+    },
+    {
+      "path": "src/element_handler/tr.rs",
+      "bytes": 578,
+      "upstream_sha256": "477013f7ea8ccd00fb7647975cdbbd6a93e19d31ef5284bba62cb0f7f4b1d673"
+    },
+    {
+      "path": "src/html_escape.rs",
+      "bytes": 2747,
+      "upstream_sha256": "f8119de83b73db65a2689fd6fde6beb851615dd50a708e2e188e4d7c5f81d654"
+    },
+    {
+      "path": "src/lib.rs",
+      "bytes": 6953,
+      "upstream_sha256": "33e10a404204b16118c088ed3c31fe37ec60f3a68b5b581bc1e72c4ce6a419c7"
+    },
+    {
+      "path": "src/node_util.rs",
+      "bytes": 1132,
+      "upstream_sha256": "726d857344f0db93ba3f971189e12b97081f94e49f2c34508056e71b9707fd44"
+    },
+    {
+      "path": "src/options.rs",
+      "bytes": 2953,
+      "upstream_sha256": "dae87a8cec99c2997fb0187fa9b3e704e7f9c1b2584906a1fff2ee4623334119"
+    },
+    {
+      "path": "src/text_util.rs",
+      "bytes": 10723,
+      "upstream_sha256": "19d36892ea8277e4d34da48341b369fd0aedbb2e9086baac71b82549d3112ec3"
+    },
+    {
+      "path": "tests/basic_tests.rs",
+      "bytes": 17410,
+      "upstream_sha256": "8e213f1998218a9a87ef00d569b8a237e978be149d47bb59c446866ce71da993"
+    },
+    {
+      "path": "tests/code_tests.rs",
+      "bytes": 4739,
+      "upstream_sha256": "aac30dade76a42b1360e38c8a634029af7a010f82dd711cf43a9137b96896184"
+    },
+    {
+      "path": "tests/common/mod.rs",
+      "bytes": 450,
+      "upstream_sha256": "d2eaa2e6a0a0922bc5031fd2a5b2d39f18c26f369733a31c05a52f4ca64ebb80"
+    },
+    {
+      "path": "tests/html/turndown_test_index.html",
+      "bytes": 35952,
+      "upstream_sha256": "f619546d9679005cf51fa7c8be13a5dee2cba1d0ebcb3eb171ab45e846f07135"
+    },
+    {
+      "path": "tests/link_tests.rs",
+      "bytes": 1743,
+      "upstream_sha256": "08d7d72df6d14340b6f81ac7abd988e12b1056d39227f8444e2c136ff3998a92"
+    },
+    {
+      "path": "tests/list_tests.rs",
+      "bytes": 2426,
+      "upstream_sha256": "1991cba7d96b40930e4f6c417c27b6b26ed553de308d5e760f6a4c2987ded67b"
+    },
+    {
+      "path": "tests/table_tests.rs",
+      "bytes": 13016,
+      "upstream_sha256": "2febadc3c2408ea8e547b071a431abe3b01b8a070a115e82f43bd0620e7440a2"
+    },
+    {
+      "path": "tests/turndown_cases_tests.rs",
+      "bytes": 5210,
+      "upstream_sha256": "201e3d8a05ed25690df78e20ea75902ff9366271e42a1212cd88776f60a76eaf"
+    },
+    {
+      "path": "tests/turndown_online_demo_tests.rs",
+      "bytes": 2230,
+      "upstream_sha256": "1e2884f67d59faf7e523d241aeacff0abb5c8fe7d151fb91ab30b9cfea936cb4"
+    }
+  ]
+}
