@@ -201,6 +201,71 @@ private state:
 MARKITAI_HOME="$PWD/.local/test-home" .local/py/bin/python -m unittest discover -s bindings/python/tests -v
 ```
 
+### Import cost
+
+`import markitai` loads the native extension, the package and `markitai.api`
+(exception classes, `convert`, `aconvert`) and, from the standard library, only
+`__future__`. The rest loads on first use:
+
+| First use | Loads |
+|---|---|
+| `markitai.convert(...)` | `json`, `pathlib` and `dataclasses` (with `inspect`, `re`, ...) through `markitai._records`, which holds the result dataclasses |
+| `markitai.ConversionOutput`, `ConversionUsage`, `OutputProfileName`, `markitai.api.ConfigModel` | `markitai._records` |
+| `await markitai.aconvert(...)` | `asyncio`; a caller running the coroutine has imported it already |
+| `markitai.MarkitaiConfig`, `markitai.config` | `markitai.config`: the native schema, its model classes, `copy`, `json` and `pathlib` |
+
+`convert` rejects a running event loop by looking at `sys.modules`: a loop can
+only be running once `asyncio` is imported, so a synchronous caller never
+imports it. Names, signatures, `from markitai import ...` and `import *`,
+`dir()`, `markitai.config` as an attribute, `__all__`, the dataclass behavior of
+the results (`dataclasses.is_dataclass`, module `markitai.api`, pickling,
+`typing.get_type_hints(ConversionOutput)`) and the types mypy and pyright infer
+are unchanged. Imports that only annotate sit under `if TYPE_CHECKING:` with
+`TYPE_CHECKING = False` defined locally, so `typing` itself stays out of the
+import. `bindings/python/tests/test_import.py` pins the modules each step loads.
+
+Differences: `typing.get_type_hints(markitai.convert)` (and any tool that
+evaluates the string annotations of `convert`, `aconvert` or
+`ConversionError.__init__`) raises `NameError` until a lazy name has been used,
+because `Path`, `Mapping`, `Any` and the record names are then not yet module
+attributes of `markitai.api`; touching `markitai.ConversionOutput` first
+resolves them, and `inspect.signature` is unaffected. `markitai.api` no longer
+exposes the modules it used to import incidentally (`asyncio`, `json`, ...).
+mypy prints the record types as `markitai._records.ConversionOutput`; pyright
+shows the same names as before. The extension still loads at import, so a
+broken installation fails there rather than at the first call.
+
+Release wheel (`maturin build --release --locked`, `MACOSX_DEPLOYMENT_TARGET=11.0`,
+byte-identical extension in both builds), macOS 27.0.1 on an Apple M5 Max,
+CPython 3.13.15, `.pyc` compiled at install, one fresh interpreter per sample,
+medians of 101 interleaved samples. "In process" is `time.perf_counter()`
+around the statements; "whole process" runs from spawn to exit (`python -c
+pass` takes 9.8 ms of it):
+
+| Statements | In process, before | After | Whole process, before | After |
+|---|---|---|---|---|
+| `import markitai` | 20.83 ms | 1.89 ms | 34.44 ms | 12.37 ms |
+| `import markitai` and `from markitai import MarkitaiConfig` | 21.08 ms | 6.96 ms | 35.22 ms | 18.29 ms |
+| `import markitai` and one Markdown `convert(..., config={}, llm=False)` | 21.53 ms | 11.69 ms | 35.65 ms | 24.24 ms |
+| `import markitai` and `convert(..., config=MarkitaiConfig())` | 21.90 ms | 12.30 ms | 36.22 ms | 24.89 ms |
+
+CPython 3.12.14 (51 samples) gives 20.58 → 1.85 ms for the import and
+21.12 → 12.36 ms for import plus conversion. The deferred imports are paid by
+the first call, so a process that converts once saves about 10 ms rather than
+20; a process that only imports the package saves about 19 ms. Most of the
+remaining 1.89 ms is loading the extension (1.5-2.0 ms in `-X importtime`
+runs); the package's own modules take about 0.3 ms. Check the import with
+`python -X importtime -c 'import markitai'` (the `markitai` row is cumulative)
+and the median with:
+
+```sh
+for i in $(seq 101); do .local/py/bin/python -c 'import time; t = time.perf_counter(); import markitai; print((time.perf_counter() - t) * 1000)'; done | sort -n | sed -n 51p
+```
+
+The 22.82 ms `import markitai` row of the table under
+[macOS system frameworks](#macos-system-frameworks) was taken before this change
+and counts the package's own modules.
+
 ## Node.js
 
 The addon targets Node-API 8 and Node.js 18+. `convert` uses a native async
@@ -364,7 +429,7 @@ initialized are those `DYLD_PRINT_LIBRARIES` reports mapped and not postponed:
 |---|---|---|---|---|
 | Node.js 24.21 | `require()` of the package, in process | 4.88 ms | 3.58 ms | 510 → 390 (Node alone: 389) |
 | CPython 3.13.15 | loading `markitai._native`, in process | 2.30 ms | 1.54 ms | 511 → 393 (Python alone: 392) |
-| CPython 3.13.15 | `import markitai`, in process | 23.46 ms | 22.82 ms | as above |
+| CPython 3.13.15 | `import markitai`, in process | 23.46 ms | 22.82 ms | as above; 1.89 ms after deferred imports (see [Import cost](#import-cost)) |
 | Go 1.27.1 | process printing `Version()`, dynamic library | 7.99 ms | 5.68 ms | 510 → 85 |
 
 The first OCR, HEIF/AVIF or PDF page in a process pays the postponed

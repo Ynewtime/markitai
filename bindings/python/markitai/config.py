@@ -14,9 +14,14 @@ from collections.abc import Mapping
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
 
 from . import _native
+
+# `Any` only appears in annotations, which are strings here; keep `typing` out
+# of the import.
+TYPE_CHECKING = False
+if TYPE_CHECKING:
+    from typing import Any
 
 _SCHEMA = json.loads(_native.config_json("{}", schema=True))
 _MODELS: dict[str, type[_Section]] = {}
