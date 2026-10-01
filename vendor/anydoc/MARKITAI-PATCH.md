@@ -19,8 +19,8 @@ upstream files:
   `src/formats/sheet/xlsx.rs`: a date/time format records whether it shows
   seconds, and a time of day, alone or after a date, is written `hh:mm` when
   it does not (`h:mm`, `yyyy-mm-dd hh:mm`); seconds are dropped as a
-  spreadsheet displays them, not rounded into the minute. Elapsed durations
-  are unchanged.
+  spreadsheet displays them, not rounded into the minute. An elapsed duration
+  likewise shows seconds only when its format names them (`[h]:mm` → `27:05`).
 - `src/model/mod.rs`, `src/formats/odf/mod.rs`, `src/formats/ppt/mod.rs`, and
   the other places that build a `Document` (`docx`, `doc`, `rtf`, `pptx`, the
   Markdown renderer's tests): `Document` gains `slide_starts`, the index in
@@ -130,4 +130,4 @@ package; it reproduces upstream's formatting, so `cargo fmt` in this directory
 changes nothing upstream wrote.
 
 Tests covering these changes were added beside the upstream ones; the upstream
-suite passes in an isolated copy (333 tests).
+suite passes in an isolated copy (335 tests).

@@ -114,12 +114,14 @@ fn format_time_of_day(days: f64, seconds: bool) -> String {
     if seconds { format!("{h:02}:{m:02}:{s:02}") } else { format!("{h:02}:{m:02}") }
 }
 
-/// Render an Excel duration (stored in days) as `[h]:mm:ss`.
-fn format_duration_days(days: f64) -> String {
+/// Render an Excel duration (stored in days) as `[h]:mm:ss`, or `[h]:mm`
+/// when its format shows no seconds (markitai): they are dropped as a
+/// spreadsheet displays them, not rounded into the minute.
+fn format_duration_days(days: f64, seconds: bool) -> String {
     let sign = if days < 0.0 { "-" } else { "" };
     let total_secs = (days.abs() * 86_400.0).round() as u64;
     let (h, m, s) = (total_secs / 3600, (total_secs % 3600) / 60, total_secs % 60);
-    format!("{sign}{h}:{m:02}:{s:02}")
+    if seconds { format!("{sign}{h}:{m:02}:{s:02}") } else { format!("{sign}{h}:{m:02}") }
 }
 
 /// Decode an RK value, the packed number both binary containers use. Bit 0
@@ -184,8 +186,13 @@ mod tests {
     fn durations_render_as_clock_time() {
         // 26h30m15s = 1.104340277... days
         let days = (26.0 * 3600.0 + 30.0 * 60.0 + 15.0) / 86_400.0;
-        assert_eq!(format_duration_days(days), "26:30:15");
-        assert_eq!(format_duration_days(-0.5), "-12:00:00");
+        assert_eq!(format_duration_days(days, true), "26:30:15");
+        assert_eq!(format_duration_days(-0.5, true), "-12:00:00");
+        // markitai: without seconds they are dropped, not rounded up.
+        assert_eq!(format_duration_days(days, false), "26:30");
+        assert_eq!(format_duration_days(days + 25.0 / 86_400.0, false), "26:30");
+        assert_eq!(format_duration_days(days + 45.0 / 86_400.0, false), "26:31");
+        assert_eq!(format_duration_days(-0.5, false), "-12:00");
     }
 
     #[test]

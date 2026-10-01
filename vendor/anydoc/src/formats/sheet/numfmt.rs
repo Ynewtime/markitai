@@ -368,10 +368,12 @@ fn date_parts(runs: &[char], elapsed: bool) -> DateParts {
     // An elapsed span is a duration whatever else the section names (`[m]`
     // is elapsed minutes, never months), and a section with no run at all
     // came from a bracket alone: both are a time and only a time.
+    // markitai: an elapsed span shows seconds only when it names them
+    // (`[h]:mm` is hours and minutes); a bracket alone keeps them.
     if elapsed || (!parts.date && !parts.time) {
+        parts.seconds = !elapsed || runs.contains(&'s');
         parts.date = false;
         parts.time = true;
-        parts.seconds = true;
     }
     parts
 }
@@ -1294,6 +1296,18 @@ mod tests {
         // show 7.5, not 7.4.
         assert_eq!(fmt("0.0%", 0.075), "7.5%");
         assert_eq!(fmt("0", 2.5), "3");
+    }
+
+    #[test]
+    fn an_elapsed_span_shows_seconds_only_when_it_names_them() {
+        // markitai: `[h]:mm` is hours and minutes, not a clock with seconds.
+        let seconds = |code: &str| match NumberFormat::parse(code).unwrap().format_number(1.5) {
+            Rendered::DateTime(p) => p.seconds,
+            other => panic!("expected a date/time section, got {other:?}"),
+        };
+        assert!(!seconds("[h]:mm"));
+        assert!(seconds("[h]:mm:ss"));
+        assert!(seconds("[mm]:ss"));
     }
 
     #[test]

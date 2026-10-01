@@ -577,7 +577,7 @@ fn render_serial(serial: f64, parts: DateParts, date1904: bool) -> String {
         return format_float(serial);
     }
     if parts.elapsed {
-        return format_duration_days(serial);
+        return format_duration_days(serial, parts.seconds);
     }
     if !parts.date {
         return format_time_of_day(serial.fract(), parts.seconds);
@@ -1041,6 +1041,15 @@ mod tests {
         assert_eq!(render_serial(0.396_5, minutes, false), "09:30");
         // A date-only format still has nothing to show but the number.
         assert_eq!(render_serial(0.5, DATE_ONLY, false), "0.5");
+    }
+
+    #[test]
+    fn an_elapsed_span_shows_the_seconds_its_format_names() {
+        // markitai: 27 hours 5 minutes, as `[h]:mm` and `[h]:mm:ss` show it.
+        let serial = (27.0 * 60.0 + 5.0) / 1_440.0;
+        let span = DateParts { date: false, time: true, elapsed: true, seconds: true };
+        assert_eq!(render_serial(serial, span, false), "27:05:00");
+        assert_eq!(render_serial(serial, DateParts { seconds: false, ..span }, false), "27:05");
     }
 
     const VML_REL: &str =
