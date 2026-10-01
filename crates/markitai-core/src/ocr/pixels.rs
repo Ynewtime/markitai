@@ -1,6 +1,7 @@
 use super::{Result, failure};
+use crate::images::ImageBytes;
 use image::{DynamicImage, ImageDecoder, ImageEncoder, ImageFormat, ImageReader, Rgb, RgbImage};
-use std::io::{Cursor, Write};
+use std::io::Write;
 
 const MAX_INPUT: usize = 64 * 1024 * 1024;
 pub(super) const MAX_PIXELS: u64 = 32_000_000;
@@ -34,11 +35,11 @@ pub(super) fn prepare(bytes: &[u8]) -> Result<Prepared> {
     if bytes.is_empty() || bytes.len() > MAX_INPUT {
         return Err(failure("image input is empty or exceeds 64 MiB"));
     }
-    let mut reader = ImageReader::new(Cursor::new(bytes))
+    let mut reader = ImageReader::new(ImageBytes::new(bytes))
         .with_guessed_format()
         .map_err(|_| failure("cannot identify image encoding"))?;
     if reader.format() == Some(ImageFormat::Tiff) {
-        let tiff = tiff::decoder::Decoder::new(Cursor::new(bytes))
+        let tiff = tiff::decoder::Decoder::new(ImageBytes::new(bytes))
             .map_err(|_| failure("cannot decode TIFF image"))?;
         if tiff.more_images() {
             return Err(crate::Error::Unsupported(
@@ -128,7 +129,7 @@ pub(super) fn enlarge(image: &Prepared, factor: f32) -> Result<Prepared> {
     if width * height > MAX_PIXELS as f64 {
         return Err(failure("enlarged OCR image exceeds 32 million pixels"));
     }
-    let mut reader = ImageReader::with_format(Cursor::new(&image.png), ImageFormat::Png);
+    let mut reader = ImageReader::with_format(ImageBytes::new(&image.png), ImageFormat::Png);
     let mut limits = image::Limits::default();
     limits.max_alloc = Some(MAX_DECODED);
     reader.limits(limits);
@@ -148,7 +149,7 @@ pub(super) fn enlarge(image: &Prepared, factor: f32) -> Result<Prepared> {
 
 #[cfg(test)]
 pub(super) fn encode_test_image(image: DynamicImage) -> Vec<u8> {
-    let mut buffer = Cursor::new(Vec::new());
+    let mut buffer = std::io::Cursor::new(Vec::new());
     image.write_to(&mut buffer, ImageFormat::Png).unwrap();
     buffer.into_inner()
 }

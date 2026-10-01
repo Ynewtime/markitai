@@ -262,12 +262,7 @@ fn redact_named(key: &str, value: &Value) -> Option<Value> {
     let key_normalized = normalized_key(key);
     if key_normalized == "extra_http_headers" || key_normalized.ends_with("_extra_http_headers") {
         return Some(match value.as_object() {
-            Some(headers) => Value::Object(
-                headers
-                    .keys()
-                    .map(|key| (key.clone(), json!(REDACTED)))
-                    .collect(),
-            ),
+            Some(headers) => object(headers.keys().map(|key| (key.clone(), json!(REDACTED)))),
             None => json!(REDACTED),
         });
     }
@@ -312,17 +307,12 @@ fn redact_named(key: &str, value: &Value) -> Option<Value> {
 /// Header values are always inline, while API base URLs expose only their origin.
 pub fn redact(value: &Value) -> Value {
     match value {
-        Value::Object(values) => Value::Object(
-            values
-                .iter()
-                .map(|(key, value)| {
-                    (
-                        key.clone(),
-                        redact_named(key, value).unwrap_or_else(|| redact(value)),
-                    )
-                })
-                .collect(),
-        ),
+        Value::Object(values) => object(values.iter().map(|(key, value)| {
+            (
+                key.clone(),
+                redact_named(key, value).unwrap_or_else(|| redact(value)),
+            )
+        })),
         Value::Array(values) => Value::Array(values.iter().map(redact).collect()),
         value => value.clone(),
     }
@@ -370,21 +360,16 @@ fn omit_model_nulls(value: &Value, node: &Value) -> Value {
     match value {
         Value::Object(values) => {
             let properties = node.get("properties").and_then(Value::as_object);
-            Value::Object(
-                values
-                    .iter()
-                    .filter_map(|(key, value)| {
-                        if properties.is_some() && value.is_null() {
-                            return None;
-                        }
-                        let child = properties
-                            .and_then(|properties| properties.get(key))
-                            .or_else(|| node.get("additionalProperties"))
-                            .unwrap_or(&Value::Null);
-                        Some((key.clone(), omit_model_nulls(value, child)))
-                    })
-                    .collect(),
-            )
+            object(values.iter().filter_map(|(key, value)| {
+                if properties.is_some() && value.is_null() {
+                    return None;
+                }
+                let child = properties
+                    .and_then(|properties| properties.get(key))
+                    .or_else(|| node.get("additionalProperties"))
+                    .unwrap_or(&Value::Null);
+                Some((key.clone(), omit_model_nulls(value, child)))
+            }))
         }
         Value::Array(values) => Value::Array(
             values
@@ -394,6 +379,15 @@ fn omit_model_nulls(value: &Value, node: &Value) -> Value {
         ),
         value => value.clone(),
     }
+}
+
+/// `Value::Object(entries.collect())` without the sort that collecting runs
+/// first, compiled again for every iterator type. The keys come from one map,
+/// so they are distinct and inserting them in turn builds the same map.
+fn object(entries: impl Iterator<Item = (String, Value)>) -> Value {
+    let mut map = Map::new();
+    map.extend(entries);
+    Value::Object(map)
 }
 
 fn invalid(path: &str, reason: &str) -> Error {

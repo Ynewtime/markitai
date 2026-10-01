@@ -214,7 +214,7 @@ fn recover(
                 Some((left, text.to_string()))
             })
             .collect();
-        parts.sort_by(|a, b| a.0.total_cmp(&b.0));
+        crate::sort::by(&mut parts, |a, b| a.0.total_cmp(&b.0));
         let reading: String = parts.into_iter().map(|(_, text)| text).collect();
         if let Some(found) = cjk::insertion(&characters, suspect.index, &reading, script)
             && !insertions.iter().any(|(index, _)| *index == found.0)
@@ -224,7 +224,7 @@ fn recover(
     }
     if !insertions.is_empty() {
         let mut characters = characters;
-        insertions.sort_by_key(|&(index, _)| std::cmp::Reverse(index));
+        crate::sort::by_key(&mut insertions, |&(index, _)| std::cmp::Reverse(index));
         for (index, character) in insertions {
             characters.insert(index, character);
         }

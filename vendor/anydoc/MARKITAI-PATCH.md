@@ -419,6 +419,19 @@ upstream files:
   readers and the Markdown renderer's tests): `Document` gains `warnings`,
   sentences about content a reader left out on purpose (so far only the
   altChunk warnings); empty for every other reader.
+- `src/sort.rs` (added, declared in `src/lib.rs`), `src/formats/doc/mod.rs`,
+  `src/render/markdown/mod.rs`, `src/shared/html.rs` and the added
+  `src/shared/tabs.rs` and `src/shared/visual.rs`: a `sort_by_key` call
+  compiles the standard library's stable sort again for its element type and
+  key closure. The four such calls, all with integer keys, go through one
+  compiled sort instead (`sort::by_key` sorts the positions with the caller's
+  key, then moves the elements into that order); an integer key is a total
+  order, which has exactly one stable order, so the order is the one
+  `sort_by_key` gave. Heading sizes are sorted with the `u32` `sort_unstable`
+  the crate already compiles and then reversed (equal sizes are identical).
+  Sort code in an unstripped release build of markitai's CLI: 16,528 → 6,524
+  bytes (the one shared sort). The CLI's output for 601 DOCX, ODT, RTF, DOC,
+  PPTX, XLSX, EPUB and other office inputs is byte-identical.
 
 `Cargo.toml` asks `zip` for `deflate-flate2-zlib-rs` instead of `deflate`, as
 the workspace crates do: the same deflate backend without the zopfli encoder,
@@ -429,7 +442,7 @@ package; it reproduces upstream's formatting, so `cargo fmt` in this directory
 changes nothing upstream wrote.
 
 Tests covering these changes were added beside the upstream ones; the upstream
-suite passes in an isolated copy (443 tests), and so does its own
+suite passes in an isolated copy (445 tests), and so does its own
 `cargo clippy --all-targets -- -D warnings` after one upstream line in
 `src/formats/docx/numbering.rs` passes `level_value` by value instead of by
 reference (`needless_borrows_for_generic_args`).

@@ -168,7 +168,7 @@ pub(super) fn suspects(
     if widths.len() < MIN_LETTERS {
         return Vec::new();
     }
-    widths.sort_by(f64::total_cmp);
+    crate::sort::by(&mut widths, f64::total_cmp);
     let median = widths[widths.len() / 2];
     // Vision boxes the first syllable of a Korean line up to about twice as
     // wide as the others: three quarters of the wide Korean boxes measured.
@@ -419,6 +419,16 @@ mod tests {
         assert!(suspects(&short[..3], &boxes(&[0.05, 0.2, 0.05]), Script::Chinese).is_empty());
         // Mismatched geometry is ignored rather than indexed.
         assert!(suspects(&characters, &boxes(&[0.05; 3]), Script::Chinese).is_empty());
+    }
+
+    #[test]
+    fn the_median_width_is_the_middle_of_the_sorted_widths() {
+        // The wide box sits in the middle of the line, where an unsorted
+        // "median" would take it as the typical width.
+        let characters: Vec<char> = "采用参考版单一环境".chars().collect();
+        let widths = [0.03, 0.03, 0.03, 0.03, 0.10, 0.04, 0.04, 0.04, 0.04];
+        let found = suspects(&characters, &boxes(&widths), Script::Chinese);
+        assert_eq!(found.iter().map(|s| s.index).collect::<Vec<_>>(), [4]);
     }
 
     #[test]

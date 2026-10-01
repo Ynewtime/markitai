@@ -733,7 +733,7 @@ impl Reader<'_> {
             .iter()
             .map(|shape| (position(shape, layout, master), shape))
             .collect::<Vec<_>>();
-        children.sort_by_key(|&(at, _)| at);
+        crate::sort::by_key(&mut children, |&(at, _)| at);
         let mut output = String::new();
         for (_, shape) in children {
             if shape.is(Ns::Compatibility, "AlternateContent") {

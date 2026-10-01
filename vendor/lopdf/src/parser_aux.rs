@@ -112,22 +112,23 @@ impl Document {
 
         let page_id = *pages.get(&page_number).ok_or(Error::PageNumberNotFound(page_number))?;
         let fonts = self.get_page_fonts(page_id)?;
-        let encodings: BTreeMap<Vec<u8>, Encoding> = fonts
-            .into_iter()
-            .filter_map(|(name, font)| {
-                let encoding = match limit {
-                    Some(max) => font.get_font_encoding_with_limit(self, max),
-                    None => font.get_font_encoding(self),
-                };
-                match encoding {
-                    Ok(it) => Some((name, it)),
-                    Err(err) => {
-                        collected_chunks_and_errs.push(Err(err));
-                        None
-                    }
+        // markitai: inserted in turn (the names are a map's distinct keys)
+        // instead of collected, which sorts first with a sort compiled for
+        // this iterator.
+        let mut encodings: BTreeMap<Vec<u8>, Encoding> = BTreeMap::new();
+        encodings.extend(fonts.into_iter().filter_map(|(name, font)| {
+            let encoding = match limit {
+                Some(max) => font.get_font_encoding_with_limit(self, max),
+                None => font.get_font_encoding(self),
+            };
+            match encoding {
+                Ok(it) => Some((name, it)),
+                Err(err) => {
+                    collected_chunks_and_errs.push(Err(err));
+                    None
                 }
-            })
-            .collect();
+            }
+        }));
         let content_data = match limit {
             Some(max) => self.get_page_content_with_limit(page_id, max)?,
             None => self.get_page_content(page_id),

@@ -115,7 +115,8 @@ fn inventory(path: &Path) -> Result<Inventory> {
             entries.push(Entry { name, metadata });
         }
     }
-    entries.sort_unstable_by(|left, right| left.name.cmp(&right.name));
+    // Names are distinct paths, so the stable order is the only one.
+    crate::sort::by(&mut entries, |left, right| left.name.cmp(&right.name));
     Ok(Inventory {
         root,
         root_metadata,

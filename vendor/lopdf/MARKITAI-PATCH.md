@@ -8,8 +8,8 @@ changes) and every copied file's original checksum. The original MIT license
 remains in place. No Cargo registry source was modified. The workspace
 coordinator owns the path patch and lockfile.
 
-The local change, marked `markitai` in its comments, touches one upstream file
-and adds three:
+The first local change, marked `markitai` in its comments, touches one upstream
+file and adds three (later changes are described at the end):
 
 - `src/encodings/glyphnames.rs`: `Glyph::from_name` finds a name by binary
   search instead of one `match` arm per glyph name. The `match` had 4,495 arms
@@ -71,3 +71,44 @@ moved −0.17% and −0.86%: no measurable difference. The corpus's
 without the change gives identical `extract_text` and per-code
 `decode_text` results on those 250 distinct files and on a generated PDF
 that names all 4,495 glyphs through `/Differences`.
+
+## Later changes
+
+Also marked `markitai`, these touch three more upstream files and add one
+test:
+
+- `src/document.rs` (`get_pages`), `src/parser_aux.rs` (the font encodings of
+  `extract_text_chunks_from_page`) and `src/reader.rs` (`load_objects_raw`):
+  maps that were collected from iterators are built by inserting their
+  entries in turn, and the map from compressed objects to their containers
+  becomes a list searched by halves. Collecting a `BTreeMap` first sorts the
+  entries with the standard library's stable sort, compiled again for every
+  source iterator type: 21,276 bytes of sort code for these four in an
+  unstripped release build of markitai's CLI. Their keys arrive ascending and
+  distinct (page numbers, another map's font names, the cross-reference
+  table's object numbers), so inserting builds the same maps; the filtered
+  object-stream map still keeps a repeated id's last object, as collecting
+  did. The container list is collected in the table's order, so
+  `binary_search_by_key` finds exactly the entries `BTreeMap::get` found.
+- `tests/linearized_objstm_test.rs`: one test, with its own small builder,
+  loads a file whose two object streams each hold an object no other stream
+  holds, one where the cross-reference stream puts it and one where it does
+  not, with and without a filter function (the two branches of
+  `load_objects_raw`). It passes on this copy before and after the change,
+  and catches each of four mutants of the new code (the container rule
+  ignored, a neighbouring entry's container, the rule dropped from the filter
+  branch, pages numbered from 0).
+
+Measured at `452bf47` with `cargo build --release --locked -p markitai-cli
+--bin markitai` (rustc 1.98.1, macOS 27 on an Apple M5 Max): the sort code
+for these maps falls to none, and the stripped CLI loses 28,440 bytes of
+`__TEXT` sections (33,088 bytes of file, which grows in 16 KiB pages). The
+upstream suite, prepared as above: 308 passed (the added test), the same 33
+failed, 3 ignored; `cargo clippy --all-targets` reports the same findings as
+before (none in the changed code). The CLI's output for 219 PDFs (the 216
+Chrome- and Quartz-printed PDFs of the R41 corpus, two trial prints and the
+reference's `sample.pdf`) is byte-identical apart from each run's
+`markitai_processed` time. Timing the CLI with these and the same round's other size changes on
+50 of those PDFs (the largest and a sample; five alternating rounds after a
+warm-up) moved the total by −0.22%, against −0.47% for an identical copy of
+the old build: no measurable difference.

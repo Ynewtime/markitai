@@ -148,7 +148,10 @@ impl Looks {
             })
             .collect();
         let mut sizes: Vec<Size> = found.iter().map(|&(_, size)| size).collect();
-        sizes.sort_unstable_by(|a, b| b.cmp(a));
+        // Largest first; equal sizes are identical, so this is the descending
+        // sort through the `u32` sort the crate already compiles.
+        sizes.sort_unstable();
+        sizes.reverse();
         sizes.dedup();
         for (index, size) in found {
             let rank = sizes.iter().position(|&s| s == size).unwrap_or(0);

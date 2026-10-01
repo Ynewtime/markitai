@@ -322,7 +322,7 @@ async fn convert_one(
     };
     let mut cfg = cfg;
     cfg["output"]["filename"] = json!(format!("{base}.md"));
-    let result = tokio::task::spawn_blocking(move || {
+    let result = crate::task::blocking(move || {
         let _permit = permit;
         markitai_core::convert_with_context_detailed(
             &target,
@@ -421,7 +421,7 @@ pub(super) fn start(state: Arc<State>, job: Arc<Job>, cfg: Value) -> ApiResult<(
         .as_str()
         .map(str::to_owned);
     let task_state = state.clone();
-    let task = tokio::spawn(async move {
+    let task = crate::task::spawn(async move {
         let mut pending = FuturesUnordered::new();
         for index in 0..count {
             pending.push(convert_one(
@@ -438,7 +438,7 @@ pub(super) fn start(state: Arc<State>, job: Arc<Job>, cfg: Value) -> ApiResult<(
             complete(&task_state, job.clone()).await;
         }
         // History retains no Chromium processes or authenticated sessions.
-        let _ = tokio::task::spawn_blocking(move || browser_runtime.close()).await;
+        let _ = crate::task::blocking(move || browser_runtime.close()).await;
     });
     state.tasks.lock().unwrap().push(task);
     Ok(())
@@ -446,7 +446,7 @@ pub(super) fn start(state: Arc<State>, job: Arc<Job>, cfg: Value) -> ApiResult<(
 
 // Admission and finalization take access before data; no network work holds either.
 pub(super) async fn complete(state: &Arc<State>, job: Arc<Job>) {
-    let finalized = tokio::task::spawn_blocking(move || {
+    let finalized = crate::task::blocking(move || {
         let _access = job.access.lock().unwrap();
         if job.active.fetch_sub(1, Ordering::SeqCst) == 1 {
             store::finish(&job)

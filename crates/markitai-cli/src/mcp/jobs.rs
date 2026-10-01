@@ -138,7 +138,7 @@ pub(super) fn start(
     drop(table);
     let ack = json!({"job_id":id,"status":"running","total":total,"output_dir":directory});
     let state = state.clone();
-    background.push(tokio::spawn(async move {
+    background.push(crate::task::spawn(async move {
         let mut next = sources.into_iter().enumerate();
         let mut pending = FuturesUnordered::new();
         let mut exhausted = false;

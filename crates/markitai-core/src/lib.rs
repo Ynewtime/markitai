@@ -24,6 +24,8 @@ mod pricing;
 mod process_groups;
 mod proxy;
 #[doc(hidden)]
+pub mod sort;
+#[doc(hidden)]
 pub use preparation::{PreparedConversion, prepare_with_publication};
 #[doc(hidden)]
 pub mod provider_batch;

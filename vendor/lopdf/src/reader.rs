@@ -964,7 +964,12 @@ impl Reader<'_> {
         // Build a map of which container each compressed object belongs to
         // according to the xref. This prevents stale ObjStm copies (e.g., from
         // linearization first-page sections) from overriding the correct version.
-        let compressed_obj_containers: BTreeMap<u32, u32> = self
+        //
+        // markitai: a list in ascending object number (the table's order, with
+        // distinct numbers) searched by halves, instead of a `BTreeMap`
+        // collected from it, which sorted it again with a sort compiled for
+        // this iterator alone.
+        let compressed_obj_containers: Vec<(u32, u32)> = self
             .document
             .reference_table
             .entries
@@ -977,6 +982,12 @@ impl Reader<'_> {
                 }
             })
             .collect();
+        let container_of = |id: &u32| {
+            compressed_obj_containers
+                .binary_search_by_key(id, |&(id, _)| id)
+                .ok()
+                .map(|index| compressed_obj_containers[index].1)
+        };
         let normal_offsets = &self.normal_offsets;
 
         let entries_filter_map = |(_, entry): (&_, &_)| -> Result<Option<(ObjectId, Object)>> {
@@ -1022,23 +1033,25 @@ impl Reader<'_> {
                         let container_id = object_id.0;
                         let mut object_streams = object_streams.lock().unwrap();
                         if let Some(filter_func) = filter_func {
-                            let objects: BTreeMap<(u32, u16), Object> = obj_stream
-                                .objects
-                                .into_iter()
-                                .filter(|((obj_num, _), _)| {
-                                    compressed_obj_containers
-                                        .get(obj_num)
-                                        .is_none_or(|&c| c == container_id)
-                                })
-                                .filter_map(|(object_id, mut object)| filter_func(object_id, &mut object))
-                                .collect();
+                            // markitai: inserted in turn instead of collected,
+                            // which sorts first with a sort compiled for this
+                            // iterator; a repeated id keeps its last object, as
+                            // collecting kept it.
+                            let mut objects: BTreeMap<(u32, u16), Object> = BTreeMap::new();
+                            objects.extend(
+                                obj_stream
+                                    .objects
+                                    .into_iter()
+                                    .filter(|((obj_num, _), _)| container_of(obj_num).is_none_or(|c| c == container_id))
+                                    .filter_map(|(object_id, mut object)| filter_func(object_id, &mut object)),
+                            );
                             object_streams.extend(objects);
                         } else {
-                            object_streams.extend(obj_stream.objects.into_iter().filter(|((obj_num, _), _)| {
-                                compressed_obj_containers
-                                    .get(obj_num)
-                                    .is_none_or(|&c| c == container_id)
-                            }));
+                            object_streams.extend(
+                                obj_stream.objects.into_iter().filter(|((obj_num, _), _)| {
+                                    container_of(obj_num).is_none_or(|c| c == container_id)
+                                }),
+                            );
                         }
                     } else if stream.content.is_empty() {
                         let mut zero_length_streams = zero_length_streams.lock().unwrap();

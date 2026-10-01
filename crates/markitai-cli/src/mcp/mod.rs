@@ -27,7 +27,7 @@ use tokio::task::JoinHandle;
 
 struct Work {
     closing: bool,
-    handles: Vec<JoinHandle<()>>,
+    handles: Vec<crate::task::Blocking<()>>,
 }
 
 struct State {
@@ -61,7 +61,7 @@ impl State {
             }
             work.handles.retain(|handle| !handle.is_finished());
             let state = self.clone();
-            work.handles.push(tokio::task::spawn_blocking(move || {
+            work.handles.push(crate::task::blocking(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     tools::convert(&state, &source, directory, options, runtime.as_deref())
                 }))

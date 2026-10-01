@@ -5,13 +5,15 @@
 //! here, and collecting into a `BTreeMap` or `BTreeSet` sorts the collected
 //! pairs the same way, once per source iterator type. [`by`] and [`by_key`]
 //! sort the positions `0..len` through one compiled sort with the caller's
-//! comparator and then move the elements into that order; [`map`] and [`set`]
+//! comparator (the library's [`stable_order`], which its own sorts use too)
+//! and then move the elements into that order; [`map`] and [`set`]
 //! insert one entry at a time. Every comparator given to them is a total order
 //! (integers, strings, booleans, `Option`s and tuples of these), which has
 //! exactly one stable order, so the order produced is the one `sort_by` gave.
 //! Keys that compare equal are equal strings or integers here, so it does not
 //! matter which of two equal keys a collection keeps.
 
+use markitai_core::sort::stable_order;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -44,14 +46,6 @@ pub(crate) fn set<T: Ord>(iter: impl IntoIterator<Item = T>) -> BTreeSet<T> {
         set.insert(item);
     }
     set
-}
-
-/// The stable order of the positions `0..len` under `compare`.
-#[inline(never)]
-fn stable_order(len: usize, compare: &mut dyn FnMut(usize, usize) -> Ordering) -> Vec<usize> {
-    let mut order: Vec<usize> = (0..len).collect();
-    order.sort_by(|&a, &b| compare(a, b));
-    order
 }
 
 /// Moves the element at `order[i]` to position `i`, walking each cycle of the

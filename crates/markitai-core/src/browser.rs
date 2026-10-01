@@ -149,7 +149,7 @@ pub(crate) fn discover() -> Option<PathBuf> {
             })
             .map(|entry| entry.path())
             .collect::<Vec<_>>();
-        directories.sort_by(|a, b| b.cmp(a));
+        crate::sort::by(&mut directories, |a, b| b.cmp(a));
         for directory in directories {
             for suffix in [
                 "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
@@ -329,8 +329,12 @@ fn capture(
             .decode(encoded)
             .map_err(|_| Error::Fetch("Invalid Chromium screenshot payload".into()))?;
         if options.tile_height == 0 && height > options.max_height {
-            let image = image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg)
-                .map_err(|_| Error::Fetch("Cannot decode browser screenshot".into()))?;
+            let image = image::ImageReader::with_format(
+                crate::images::ImageBytes::new(&bytes),
+                image::ImageFormat::Jpeg,
+            )
+            .decode()
+            .map_err(|_| Error::Fetch("Cannot decode browser screenshot".into()))?;
             let image = image.resize(
                 width as u32,
                 options.max_height as u32,

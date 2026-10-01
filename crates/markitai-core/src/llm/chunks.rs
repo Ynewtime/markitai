@@ -66,7 +66,7 @@ impl Protected {
             inline_ranges(source, cursor, range.start, &mut ranges);
             cursor = range.end;
         }
-        ranges.sort_by_key(|r| r.start);
+        crate::sort::by_key(&mut ranges, |r| r.start);
         // Record semantic boundaries before adjacent literal ranges coalesce.
         // A fence ending immediately before page 1 must not hide that page.
         let mut page_starts = Vec::new();

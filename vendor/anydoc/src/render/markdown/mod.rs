@@ -43,7 +43,7 @@ pub fn document_to_markdown(doc: &Document) -> String {
     let mut rendered_defs: HashSet<usize> = HashSet::new();
     let mut ordered: Vec<(&Note, usize)> =
         doc.notes.iter().filter_map(|n| rc.nums.get(&n.id).map(|&num| (n, num))).collect();
-    ordered.sort_by_key(|(_, num)| *num);
+    crate::sort::by_key(&mut ordered, |(_, num)| *num); // markitai: shared sort
     for (note, num) in ordered {
         let body = render_blocks(&note.blocks, &rc);
         if body.is_empty() {

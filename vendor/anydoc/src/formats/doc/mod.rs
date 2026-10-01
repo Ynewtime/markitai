@@ -435,7 +435,7 @@ struct Runs {
 
 impl Runs {
     fn new(mut runs: Vec<Run>) -> Self {
-        runs.sort_by_key(|r| r.fc_start);
+        crate::sort::by_key(&mut runs, |r| r.fc_start); // markitai: shared sort
         Runs { runs }
     }
 

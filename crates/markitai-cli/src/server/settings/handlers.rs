@@ -62,7 +62,7 @@ async fn credentials(
     state.settings.credentials(&id).map(Json)
 }
 async fn mutate(state: Arc<State>, command: Mutation) -> ApiResult<Json<Value>> {
-    tokio::task::spawn_blocking(move || state.settings.mutate(command))
+    crate::task::blocking(move || state.settings.mutate(command))
         .await
         .map_err(|_| super::failure())?
         .map(Json)
@@ -183,7 +183,7 @@ async fn delete_provider(
     .await
 }
 async fn open(ExtractState(state): ExtractState<Arc<State>>) -> ApiResult<StatusCode> {
-    tokio::task::spawn_blocking(move || {
+    crate::task::blocking(move || {
         let path = state.settings.config_path()?;
         crate::server::open_config(&path).map_err(|_| {
             super::ApiError::new(

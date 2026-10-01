@@ -531,7 +531,11 @@ impl Document {
 
     /// Get page numbers and corresponding object ids.
     pub fn get_pages(&self) -> BTreeMap<u32, ObjectId> {
-        self.page_iter().enumerate().map(|(i, p)| ((i + 1) as u32, p)).collect()
+        // markitai: inserted in turn (the numbers are distinct) instead of
+        // collected, which sorts first with a sort compiled for this iterator.
+        let mut pages = BTreeMap::new();
+        pages.extend(self.page_iter().enumerate().map(|(i, p)| ((i + 1) as u32, p)));
+        pages
     }
 
     pub fn page_iter(&self) -> impl Iterator<Item = ObjectId> + '_ {

@@ -13,6 +13,7 @@ mod formats;
 mod package;
 mod render;
 mod shared;
+mod sort; // markitai: shared sort instantiations
 
 pub use error::ConvertError;
 

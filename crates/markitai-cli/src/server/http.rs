@@ -237,7 +237,7 @@ pub(super) async fn create(
         transactions: Vec::new(),
     };
     let publication_state = state.clone();
-    let job = tokio::task::spawn_blocking(move || {
+    let job = crate::task::blocking(move || {
         store::persist(stage.path(), &data).map_err(ApiError::internal)?;
         // The stable OS lock is shared with CLI history writers. Waiting for it
         // must not occupy a runtime worker or hold the in-memory registry lock.
@@ -296,7 +296,7 @@ pub(super) async fn create(
     if let Err(error) = jobs::start(state.clone(), job.clone(), cfg) {
         state.jobs.lock().unwrap().remove(&id);
         let folder = job.folder.clone();
-        match tokio::task::spawn_blocking(move || std::fs::remove_dir_all(folder)).await {
+        match crate::task::blocking(move || std::fs::remove_dir_all(folder)).await {
             Ok(Ok(())) => {}
             Ok(Err(cleanup)) => eprintln!("Serve: rejected job cleanup failed: {cleanup}"),
             Err(cleanup) => eprintln!("Serve: rejected job cleanup task failed: {cleanup}"),
@@ -423,7 +423,7 @@ pub(super) async fn events(
 
 pub(super) async fn refresh(state: &Arc<State>) -> ApiResult<()> {
     let state = state.clone();
-    tokio::task::spawn_blocking(move || store::rehydrate(&state.root, &state.jobs))
+    crate::task::blocking(move || store::rehydrate(&state.root, &state.jobs))
         .await
         .map_err(ApiError::internal)?
         .map_err(ApiError::internal)
@@ -453,7 +453,7 @@ pub(super) async fn delete(
 ) -> ApiResult<StatusCode> {
     let job = jobs::get(&state, &id)?;
     let state = state.clone();
-    tokio::task::spawn_blocking(move || remove_registered(job, &state.jobs, &id))
+    crate::task::blocking(move || remove_registered(job, &state.jobs, &id))
         .await
         .map_err(ApiError::internal)?
 }

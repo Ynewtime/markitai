@@ -196,7 +196,7 @@ pub(crate) fn process_document_with_runtime(
             }
         });
         let mut results = results.into_inner().unwrap_or_else(|e| e.into_inner());
-        results.sort_by_key(|(index, _, _)| *index);
+        crate::sort::by_key(&mut results, |(index, _, _)| *index);
         // All started requests have settled before reporting any failed chunk.
         for (index, answer, warning) in results {
             if let Some(warning) = warning {

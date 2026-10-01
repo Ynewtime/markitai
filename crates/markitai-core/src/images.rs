@@ -9,7 +9,7 @@ use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Rgb, RgbImage}
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, Cursor, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 const MAX_PIXELS: u64 = 32_000_000;
@@ -45,7 +45,7 @@ fn decode(bytes: &[u8]) -> Result<(DynamicImage, DecodedFormat)> {
         let decoded = heif::decode(bytes)?;
         return Ok((decoded.image, DecodedFormat::Heif(decoded.info)));
     }
-    let mut reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
+    let mut reader = ImageReader::new(ImageBytes::new(bytes)).with_guessed_format()?;
     let format = reader
         .format()
         .ok_or_else(|| error("unrecognized image format"))?;
@@ -178,6 +178,91 @@ impl Write for EncodedBuffer {
 impl Seek for EncodedBuffer {
     fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
         self.inner.seek(position)
+    }
+}
+
+/// The reader every image and TIFF decode reads through: a byte slice whose
+/// first bytes may be replaced by a TIFF header that points at another page's
+/// directory (see `tiff::page_reader`). The decoders are generic over their
+/// reader and compiled again for every reader type, so one type for all of
+/// them keeps one copy of each, where a `Cursor` here beside the TIFF page
+/// reader kept two (about 60 KB of code).
+pub(crate) struct ImageBytes<'a> {
+    bytes: &'a [u8],
+    header: [u8; 16],
+    header_len: usize,
+    position: u64,
+}
+
+impl<'a> ImageBytes<'a> {
+    /// The bytes as they are, read as a `Cursor` over them reads.
+    pub(crate) fn new(bytes: &'a [u8]) -> Self {
+        Self {
+            bytes,
+            header: [0; 16],
+            header_len: 0,
+            position: 0,
+        }
+    }
+}
+
+impl Read for ImageBytes<'_> {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        let source = self.fill_buf()?;
+        let count = out.len().min(source.len());
+        out[..count].copy_from_slice(&source[..count]);
+        self.consume(count);
+        Ok(count)
+    }
+
+    /// Copies the rest at once, as a `Cursor` does, rather than through the
+    /// default's growing reads.
+    fn read_to_end(&mut self, out: &mut Vec<u8>) -> std::io::Result<usize> {
+        let start = out.len();
+        loop {
+            let source = self.fill_buf()?;
+            if source.is_empty() {
+                return Ok(out.len() - start);
+            }
+            out.extend_from_slice(source);
+            let count = source.len();
+            self.consume(count);
+        }
+    }
+}
+
+impl BufRead for ImageBytes<'_> {
+    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+        let position = usize::try_from(self.position).unwrap_or(usize::MAX);
+        if position < self.header_len {
+            return Ok(&self.header[position..self.header_len]);
+        }
+        Ok(self.bytes.get(position..).unwrap_or_default())
+    }
+
+    fn consume(&mut self, amount: usize) {
+        self.position = self.position.saturating_add(amount as u64);
+    }
+}
+
+impl Seek for ImageBytes<'_> {
+    fn seek(&mut self, from: SeekFrom) -> std::io::Result<u64> {
+        let position = match from {
+            SeekFrom::Start(position) => Some(position),
+            SeekFrom::End(delta) => (self.bytes.len() as u64).checked_add_signed(delta),
+            SeekFrom::Current(delta) => self.position.checked_add_signed(delta),
+        }
+        .ok_or_else(|| {
+            // The messages a `Cursor` and the TIFF page reader gave.
+            let message = if self.header_len == 0 {
+                "invalid seek to a negative or overflowing position"
+            } else {
+                "invalid TIFF seek"
+            };
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, message)
+        })?;
+        self.position = position;
+        Ok(position)
     }
 }
 
@@ -1050,6 +1135,115 @@ mod tests {
         assert_eq!(vision[0].mime, "image/png");
         let decoded = image::load_from_memory(&vision[0].bytes).unwrap();
         assert_eq!((decoded.width(), decoded.height()), (80, 120));
+    }
+
+    /// Every step a decoder takes gives what a `Cursor` over the same bytes
+    /// gives: data, positions and errors (kind and message).
+    #[test]
+    fn image_bytes_reads_and_seeks_as_a_cursor_does() {
+        use std::io::BufRead;
+        let bytes: Vec<u8> = (0..1000u32).map(|i| (i * 7 % 251) as u8).collect();
+        let mut ours = ImageBytes::new(&bytes);
+        let mut cursor = Cursor::new(bytes.as_slice());
+        let error = |e: std::io::Error| (e.kind(), e.to_string());
+        for step in 0..14 {
+            match step {
+                0 | 6 | 11 => {
+                    let (mut a, mut b) = ([0; 7], [0; 7]);
+                    assert_eq!(ours.read(&mut a).unwrap(), cursor.read(&mut b).unwrap());
+                    assert_eq!(a, b);
+                }
+                1 => assert_eq!(ours.fill_buf().unwrap(), cursor.fill_buf().unwrap()),
+                2 => {
+                    ours.consume(3);
+                    cursor.consume(3);
+                }
+                3 => assert_eq!(
+                    ours.seek(SeekFrom::Current(-5)).unwrap(),
+                    cursor.seek(SeekFrom::Current(-5)).unwrap()
+                ),
+                4 => {
+                    let (mut a, mut b) = (vec![9], vec![9]);
+                    assert_eq!(
+                        ours.read_to_end(&mut a).unwrap(),
+                        cursor.read_to_end(&mut b).unwrap()
+                    );
+                    assert_eq!(a, b);
+                    assert_eq!(a.len(), 1 + bytes.len() - 5);
+                }
+                5 => assert_eq!(
+                    ours.seek(SeekFrom::End(-10)).unwrap(),
+                    cursor.seek(SeekFrom::End(-10)).unwrap()
+                ),
+                7 => assert_eq!(
+                    error(ours.seek(SeekFrom::Current(-2000)).unwrap_err()),
+                    error(cursor.seek(SeekFrom::Current(-2000)).unwrap_err())
+                ),
+                8 => assert_eq!(
+                    error(ours.seek(SeekFrom::End(-2000)).unwrap_err()),
+                    error(cursor.seek(SeekFrom::End(-2000)).unwrap_err())
+                ),
+                9 => {
+                    let (mut a, mut b) = ([0; 20], [0; 20]);
+                    assert_eq!(
+                        error(ours.read_exact(&mut a).unwrap_err()),
+                        error(cursor.read_exact(&mut b).unwrap_err())
+                    );
+                }
+                10 => assert_eq!(
+                    ours.seek(SeekFrom::Start(5000)).unwrap(),
+                    cursor.seek(SeekFrom::Start(5000)).unwrap()
+                ),
+                12 => assert_eq!(
+                    ours.seek(SeekFrom::Start(2)).unwrap(),
+                    cursor.seek(SeekFrom::Start(2)).unwrap()
+                ),
+                _ => {
+                    let (mut a, mut b) = ([0; 64], [0; 64]);
+                    ours.read_exact(&mut a).unwrap();
+                    cursor.read_exact(&mut b).unwrap();
+                    assert_eq!(a, b);
+                }
+            }
+            assert_eq!(
+                ours.stream_position().unwrap(),
+                cursor.stream_position().unwrap(),
+                "step {step}"
+            );
+        }
+    }
+
+    /// Every raster format decodes through `ImageBytes` to the pixels it
+    /// decodes to from a `Cursor`.
+    #[test]
+    fn image_bytes_decode_every_format_as_a_cursor_does() {
+        let image = DynamicImage::ImageRgb8(RgbImage::from_fn(37, 23, |x, y| {
+            Rgb([(x * 7) as u8, (y * 11) as u8, ((x + y) * 5) as u8])
+        }));
+        for format in [
+            ImageFormat::Png,
+            ImageFormat::Jpeg,
+            ImageFormat::Gif,
+            ImageFormat::Bmp,
+            ImageFormat::Tiff,
+            ImageFormat::WebP,
+        ] {
+            let mut encoded = Cursor::new(Vec::new());
+            image.write_to(&mut encoded, format).unwrap();
+            let encoded = encoded.into_inner();
+            let through_cursor = ImageReader::new(Cursor::new(encoded.as_slice()))
+                .with_guessed_format()
+                .unwrap()
+                .decode()
+                .unwrap();
+            let (decoded, found) = decode(&encoded).unwrap();
+            assert!(
+                matches!(found, DecodedFormat::Raster(f) if f == format),
+                "{format:?}"
+            );
+            assert_eq!(decoded, through_cursor, "{format:?}");
+            assert_eq!((decoded.width(), decoded.height()), (37, 23), "{format:?}");
+        }
     }
 }
 

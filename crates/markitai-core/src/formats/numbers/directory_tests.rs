@@ -284,3 +284,16 @@ fn fifo_is_rejected_before_open_and_same_size_replacement_is_detected() {
             .contains("changed")
     );
 }
+
+#[test]
+fn the_inventory_lists_entries_by_name_whatever_the_directory_order() {
+    let (_temp, root) = fixture();
+    let names: Vec<String> = inventory(&root)
+        .unwrap()
+        .entries
+        .into_iter()
+        .map(|entry| entry.name)
+        .collect();
+    assert!(names.len() > 3 && names.iter().any(|name| name.contains('/')));
+    assert!(names.windows(2).all(|pair| pair[0] < pair[1]), "{names:?}");
+}

@@ -309,7 +309,8 @@ impl Builder<'_> {
             entries.push((INLINE_PRIORITY, decls.normal));
             entries.push((IMPORTANT_PRIORITY + INLINE_PRIORITY, decls.important));
         }
-        entries.sort_by_key(|&(priority, _)| priority); // stable: keeps source order
+        // stable: keeps source order (markitai: through the shared sort)
+        crate::sort::by_key(&mut entries, |&(priority, _)| priority);
         let mut props = StyleProps::default();
         for (_, entry) in entries {
             props = props.merge(entry);

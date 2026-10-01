@@ -278,7 +278,9 @@ pub(crate) fn process_vision_with_runtime(
         }
     }
     if !failures.is_empty() {
-        failures.sort_by_key(|(index, failure)| (failure.allow_text_fallback, *index));
+        crate::sort::by_key(&mut failures, |(index, failure)| {
+            (failure.allow_text_fallback, *index)
+        });
         return Err(failures.remove(0).1);
     }
     let answers: Vec<_> = answers

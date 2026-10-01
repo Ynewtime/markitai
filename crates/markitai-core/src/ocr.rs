@@ -300,7 +300,7 @@ fn columns(mut lines: Vec<Line>, depth: usize) -> Vec<Vec<Line>> {
     const MIN_COLUMN_LINES: usize = 3;
     const MIN_PROSE_CHARS: usize = 12;
     const SPANNING: f32 = 0.6;
-    lines.sort_by(top_then_left);
+    crate::sort::by(&mut lines, top_then_left);
     if depth >= MAX_DEPTH || lines.len() < 2 * MIN_COLUMN_LINES {
         return vec![lines];
     }
@@ -322,7 +322,7 @@ fn columns(mut lines: Vec<Line>, depth: usize) -> Vec<Vec<Line>> {
         .filter(|line| !spanning(line))
         .map(|line| (line.bounds[0], line.bounds[2]))
         .collect();
-    spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+    crate::sort::by(&mut spans, |a, b| a.0.total_cmp(&b.0));
     let mut gutter: Option<(f32, f32)> = None;
     let mut reach = f32::NEG_INFINITY;
     for (start, end) in spans {
@@ -394,7 +394,7 @@ fn columns(mut lines: Vec<Line>, depth: usize) -> Vec<Vec<Line>> {
 /// band form a left-to-right row, and a wide vertical gap starts a paragraph.
 #[cfg(any(target_os = "macos", test))]
 fn rows(mut lines: Vec<Line>, text: &mut String, boxes: &mut Vec<[f32; 4]>, confidence: &mut f32) {
-    lines.sort_by(top_then_left);
+    crate::sort::by(&mut lines, top_then_left);
     let mut index = 0;
     let mut previous: Option<[f32; 4]> = None;
     while index < lines.len() {
@@ -411,7 +411,9 @@ fn rows(mut lines: Vec<Line>, text: &mut String, boxes: &mut Vec<[f32; 4]>, conf
             }
             end += 1;
         }
-        lines[index..end].sort_by(|a, b| a.bounds[0].total_cmp(&b.bounds[0]));
+        crate::sort::by(&mut lines[index..end], |a, b| {
+            a.bounds[0].total_cmp(&b.bounds[0])
+        });
         let mut row = first;
         if let Some(last) = previous {
             text.push('\n');
@@ -805,6 +807,109 @@ pub(crate) mod tests {
         }
         let text = assemble(stacked, 300, 100).unwrap().text;
         assert!(text.starts_with(&prose("Right", 0)), "{text}");
+    }
+
+    /// The gutter is looked for left to right: a right column set a little
+    /// higher than the left one is still a column.
+    #[test]
+    fn a_right_column_starting_higher_is_still_read_after_the_left_one() {
+        let line = |text: String, left: f32, top: f32, right: f32| Line {
+            text,
+            bounds: [left, top, right, top + 10.],
+            confidence: 1.0,
+        };
+        let mut page = Vec::new();
+        for row in 0..4 {
+            let top = 14. * row as f32;
+            page.push(line(
+                format!("Left column prose line {row}"),
+                0.,
+                top + 3.,
+                140.,
+            ));
+            page.push(line(
+                format!("Right column prose line {row}"),
+                160.,
+                top,
+                300.,
+            ));
+        }
+        let text = assemble(page, 300, 60).unwrap().text;
+        let left = (0..4)
+            .map(|row| format!("Left column prose line {row}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let right = (0..4)
+            .map(|row| format!("Right column prose line {row}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(text, format!("{left}\n\n{right}"));
+    }
+
+    /// The reading order comes from the lines' positions alone: the same page
+    /// handed over in any order reads the same.
+    #[test]
+    fn reading_order_does_not_depend_on_the_recognizer_order() {
+        let line = |text: String, left: f32, top: f32, right: f32| Line {
+            text,
+            bounds: [left, top, right, top + 10.],
+            confidence: 1.0,
+        };
+        let mut page = vec![line(
+            "A title across both columns of the page".into(),
+            0.,
+            0.,
+            300.,
+        )];
+        for row in 0..4 {
+            let top = 20. + 14. * row as f32;
+            page.push(line(format!("Left column prose line {row}"), 0., top, 140.));
+            page.push(line(
+                format!("Right column prose line {row}"),
+                160.,
+                top,
+                300.,
+            ));
+        }
+        page.push(line(
+            "A closing line across both columns".into(),
+            0.,
+            80.,
+            300.,
+        ));
+        page.push(line("Last paragraph".into(), 0., 160., 120.));
+        let copy = |lines: &[Line]| -> Vec<Line> {
+            lines
+                .iter()
+                .map(|l| line(l.text.clone(), l.bounds[0], l.bounds[1], l.bounds[2]))
+                .collect()
+        };
+        let expected = assemble(copy(&page), 300, 200).unwrap().text;
+        assert!(
+            expected.starts_with(
+                "A title across both columns of the page\n\nLeft column prose line 0\n"
+            ) && expected.ends_with("A closing line across both columns\n\nLast paragraph"),
+            "{expected}"
+        );
+        let mut state = 7_u64;
+        for round in 0..6 {
+            let mut shuffled = copy(&page);
+            if round == 0 {
+                shuffled.reverse();
+            } else {
+                for index in (1..shuffled.len()).rev() {
+                    state = state
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407);
+                    shuffled.swap(index, (state >> 33) as usize % (index + 1));
+                }
+            }
+            assert_eq!(
+                assemble(shuffled, 300, 200).unwrap().text,
+                expected,
+                "round {round}"
+            );
+        }
     }
 
     /// True, after saying why, when `result` is Vision's explicit failure in a

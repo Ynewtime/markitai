@@ -231,7 +231,7 @@ fn markdown_caption(value: &str) -> String {
 }
 
 fn apply_edits(source: &str, mut edits: Vec<(Range<usize>, String)>) -> String {
-    edits.sort_by_key(|(range, _)| range.start);
+    crate::sort::by_key(&mut edits, |(range, _)| range.start);
     let mut output = String::with_capacity(source.len());
     let mut cursor = 0;
     for (range, next) in edits {

@@ -129,3 +129,98 @@ fn test_conflicting_objstm_uses_xref_container() {
         "Should load 2 pages from ObjStm 4, not 1 from stale ObjStm 2"
     );
 }
+
+/// markitai: an object stream holding `objects` (number and text) as object
+/// `number`.
+fn object_stream(number: u32, objects: &[(u32, &str)]) -> Vec<u8> {
+    let (mut header, mut body) = (String::new(), String::new());
+    for (id, object) in objects {
+        header.push_str(&format!("{id} {} ", body.len()));
+        body.push_str(object);
+        body.push(' ');
+    }
+    let data = format!("{header}{body}");
+    format!(
+        "{number} 0 obj\n<</Type/ObjStm/N {}/First {}/Length {}>>\nstream\n{data}\nendstream\nendobj\n",
+        objects.len(),
+        header.len(),
+        data.len()
+    )
+    .into_bytes()
+}
+
+/// markitai: as `build_conflicting_objstm_pdf`, and each stream also holds an
+/// object that only it holds: object 8 in ObjStm 2, where the xref puts it,
+/// and object 9 in ObjStm 4, though the xref puts it in ObjStm 2. Whichever
+/// stream is read first, object 8 must load and object 9 must not.
+fn build_two_container_pdf() -> Vec<u8> {
+    let mut buf = b"%PDF-1.5\n".to_vec();
+    let mut offsets = [0u32; 10];
+    offsets[1] = buf.len() as u32;
+    buf.extend_from_slice(b"1 0 obj\n<</Type/Catalog/Pages 3 0 R>>\nendobj\n");
+    offsets[2] = buf.len() as u32;
+    buf.extend(object_stream(
+        2,
+        &[(3, "<</Type/Pages/Count 1/Kids[5 0 R]>>"), (8, "<</Marker/Two>>")],
+    ));
+    offsets[4] = buf.len() as u32;
+    buf.extend(object_stream(
+        4,
+        &[
+            (3, "<</Type/Pages/Count 2/Kids[5 0 R 6 0 R]>>"),
+            (9, "<</Marker/Stale>>"),
+        ],
+    ));
+    for id in [5, 6] {
+        offsets[id as usize] = buf.len() as u32;
+        buf.extend_from_slice(
+            format!("{id} 0 obj\n<</Type/Page/Parent 3 0 R/MediaBox[0 0 612 792]>>\nendobj\n").as_bytes(),
+        );
+    }
+    offsets[7] = buf.len() as u32;
+    let mut xref = vec![0, 0, 0, 0, 0];
+    for (id, &off) in offsets.iter().enumerate().skip(1) {
+        match id {
+            3 => xref.extend_from_slice(&[2, 0, 0, 4, 0]),
+            8 => xref.extend_from_slice(&[2, 0, 0, 2, 1]),
+            9 => xref.extend_from_slice(&[2, 0, 0, 2, 2]),
+            _ => xref.extend_from_slice(&[1, (off >> 16) as u8, (off >> 8) as u8, off as u8, 0]),
+        }
+    }
+    buf.extend_from_slice(
+        format!(
+            "7 0 obj\n<</Type/XRef/Size 10/W[1 3 1]/Root 1 0 R/Length {}>>\nstream\n",
+            xref.len()
+        )
+        .as_bytes(),
+    );
+    buf.extend_from_slice(&xref);
+    buf.extend_from_slice(b"\nendstream\nendobj\n");
+    buf.extend_from_slice(format!("startxref\n{}\n%%EOF", offsets[7]).as_bytes());
+    buf
+}
+
+/// markitai: each compressed object loads only from the container the xref
+/// names, with and without a filter function (the two branches of
+/// `load_objects_raw`).
+#[test]
+fn test_compressed_objects_load_only_from_their_xref_container() {
+    fn keep(id: (u32, u16), object: &mut lopdf::Object) -> Option<((u32, u16), lopdf::Object)> {
+        Some((id, object.clone()))
+    }
+    let pdf = build_two_container_pdf();
+    for doc in [
+        Document::load_mem(&pdf).unwrap(),
+        Document::load_mem_with_options(&pdf, lopdf::LoadOptions::with_filter(keep)).unwrap(),
+    ] {
+        assert_eq!(
+            doc.get_pages().into_iter().collect::<Vec<_>>(),
+            [(1, (5, 0)), (2, (6, 0))]
+        );
+        assert!(doc.objects.contains_key(&(8, 0)), "object 8 is in its own container");
+        assert!(
+            !doc.objects.contains_key(&(9, 0)),
+            "object 9 is not in the container the xref names"
+        );
+    }
+}

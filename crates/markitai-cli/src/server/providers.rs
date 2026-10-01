@@ -111,7 +111,7 @@ async fn network(request: Value, is_probe: bool) -> ApiResult<Value> {
                 "Too many provider requests are active",
             )
         })?;
-    let task = tokio::task::spawn_blocking(move || {
+    let task = crate::task::blocking(move || {
         let _permit = permit;
         if is_probe {
             markitai_core::provider_management::probe(&request)

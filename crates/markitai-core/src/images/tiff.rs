@@ -1,10 +1,9 @@
 //! TIFF page discovery and bounded decoding, with one pixel buffer at a time.
 
-use super::{MAX_DECODED, MAX_PIXELS, error};
+use super::{ImageBytes, MAX_DECODED, MAX_PIXELS, error};
 use crate::{Error, Result};
 use ::tiff::decoder::Decoder;
 use image::{DynamicImage, ImageDecoder};
-use std::io::{self, BufRead, Cursor, Read, Seek, SeekFrom};
 
 pub(super) const MAX_PAGES: usize = 1_000;
 pub(super) const MAX_TOTAL_PIXELS: u64 = 2_000_000_000;
@@ -18,7 +17,7 @@ pub(super) fn signature(bytes: &[u8]) -> bool {
 }
 
 pub(super) fn multiple(bytes: &[u8]) -> Result<bool> {
-    Ok(Decoder::new(Cursor::new(bytes))
+    Ok(Decoder::new(ImageBytes::new(bytes))
         .map_err(error)?
         .more_images())
 }
@@ -30,7 +29,7 @@ pub(super) struct Pages<'a> {
 
 impl<'a> Pages<'a> {
     pub(super) fn new(bytes: &'a [u8]) -> Result<Self> {
-        let mut directory = Decoder::new(Cursor::new(bytes)).map_err(error)?;
+        let mut directory = Decoder::new(ImageBytes::new(bytes)).map_err(error)?;
         if directory.more_images() && bytes.len() > MAX_INPUT {
             return Err(error("multi-page TIFF input exceeds 100 MiB"));
         }
@@ -97,9 +96,9 @@ impl<'a> Pages<'a> {
 fn page_decoder(
     bytes: &[u8],
     offset: u64,
-) -> Result<image::codecs::tiff::TiffDecoder<PageReader<'_>>> {
+) -> Result<image::codecs::tiff::TiffDecoder<ImageBytes<'_>>> {
     let mut decoder =
-        image::codecs::tiff::TiffDecoder::new(PageReader::new(bytes, offset)?).map_err(error)?;
+        image::codecs::tiff::TiffDecoder::new(page_reader(bytes, offset)?).map_err(error)?;
     let (width, height) = decoder.dimensions();
     if width == 0 || height == 0 || u64::from(width) * u64::from(height) > MAX_PIXELS {
         return Err(error(
@@ -118,76 +117,35 @@ fn page_decoder(
 // The image crate handles sample formats, planar data and orientation. Give its
 // single-page decoder a virtual first-IFD pointer instead of copying a whole TIFF
 // for every page or implementing a second set of color conversions.
-struct PageReader<'a> {
-    bytes: &'a [u8],
-    header: [u8; 16],
-    header_len: usize,
-    position: u64,
-}
-impl<'a> PageReader<'a> {
-    fn new(bytes: &'a [u8], offset: u64) -> Result<Self> {
-        let little = bytes.starts_with(b"II");
-        let big = bytes.starts_with(b"II+\0") || bytes.starts_with(b"MM\0+");
-        let header_len = if big { 16 } else { 8 };
-        if bytes.len() < header_len || !signature(bytes) {
-            return Err(error("invalid TIFF header"));
-        }
-        let mut header = [0; 16];
-        header[..header_len].copy_from_slice(&bytes[..header_len]);
-        if big {
-            header[8..16].copy_from_slice(&if little {
-                offset.to_le_bytes()
-            } else {
-                offset.to_be_bytes()
-            });
+fn page_reader(bytes: &[u8], offset: u64) -> Result<ImageBytes<'_>> {
+    let little = bytes.starts_with(b"II");
+    let big = bytes.starts_with(b"II+\0") || bytes.starts_with(b"MM\0+");
+    let header_len = if big { 16 } else { 8 };
+    if bytes.len() < header_len || !signature(bytes) {
+        return Err(error("invalid TIFF header"));
+    }
+    let mut header = [0; 16];
+    header[..header_len].copy_from_slice(&bytes[..header_len]);
+    if big {
+        header[8..16].copy_from_slice(&if little {
+            offset.to_le_bytes()
         } else {
-            let offset = u32::try_from(offset).map_err(error)?;
-            header[4..8].copy_from_slice(&if little {
-                offset.to_le_bytes()
-            } else {
-                offset.to_be_bytes()
-            });
-        }
-        Ok(Self {
-            bytes,
-            header,
-            header_len,
-            position: 0,
-        })
+            offset.to_be_bytes()
+        });
+    } else {
+        let offset = u32::try_from(offset).map_err(error)?;
+        header[4..8].copy_from_slice(&if little {
+            offset.to_le_bytes()
+        } else {
+            offset.to_be_bytes()
+        });
     }
-}
-impl Read for PageReader<'_> {
-    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
-        let source = self.fill_buf()?;
-        let count = out.len().min(source.len());
-        out[..count].copy_from_slice(&source[..count]);
-        self.consume(count);
-        Ok(count)
-    }
-}
-impl BufRead for PageReader<'_> {
-    fn fill_buf(&mut self) -> io::Result<&[u8]> {
-        let position = usize::try_from(self.position).unwrap_or(usize::MAX);
-        if position < self.header_len {
-            return Ok(&self.header[position..self.header_len]);
-        }
-        Ok(self.bytes.get(position..).unwrap_or_default())
-    }
-    fn consume(&mut self, amount: usize) {
-        self.position = self.position.saturating_add(amount as u64);
-    }
-}
-impl Seek for PageReader<'_> {
-    fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
-        let position = match from {
-            SeekFrom::Start(position) => Some(position),
-            SeekFrom::End(delta) => (self.bytes.len() as u64).checked_add_signed(delta),
-            SeekFrom::Current(delta) => self.position.checked_add_signed(delta),
-        }
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid TIFF seek"))?;
-        self.position = position;
-        Ok(position)
-    }
+    Ok(ImageBytes {
+        bytes,
+        header,
+        header_len,
+        position: 0,
+    })
 }
 
 #[cfg(test)]
@@ -198,6 +156,7 @@ mod tests {
         tags::Tag,
     };
     use image::Rgb;
+    use std::io::Cursor;
 
     fn rgb_pages(orientations: &[u16]) -> Vec<u8> {
         let mut buffer = Cursor::new(Vec::new());
@@ -269,6 +228,73 @@ mod tests {
         assert_eq!(pages.len(), 2);
         assert_eq!(pages.decode(0).unwrap().to_luma16().into_raw(), [0, 65535]);
         assert_eq!(pages.decode(1).unwrap().to_luma16().into_raw(), [65535, 0]);
+    }
+
+    /// A page reader reads the file with only its first-directory pointer
+    /// replaced, whichever way it is read or sought.
+    #[test]
+    fn a_page_reader_reads_the_file_with_the_page_pointer() {
+        use std::io::{BufRead, Read, Seek, SeekFrom};
+        let body: Vec<u8> = (0..40u8).collect();
+        for (magic, offset, at, pointer) in [
+            (&b"II*\0"[..], 0x0102_0304_u64, 4..8, vec![4, 3, 2, 1]),
+            (&b"MM\0*"[..], 0x0102_0304, 4..8, vec![1, 2, 3, 4]),
+            (
+                &b"II+\0"[..],
+                0x0102_0304_0506,
+                8..16,
+                vec![6, 5, 4, 3, 2, 1, 0, 0],
+            ),
+            (
+                &b"MM\0+"[..],
+                0x0102_0304_0506,
+                8..16,
+                vec![0, 0, 1, 2, 3, 4, 5, 6],
+            ),
+        ] {
+            let file: Vec<u8> = magic.iter().copied().chain(body.iter().copied()).collect();
+            let mut expected = file.clone();
+            expected[at].copy_from_slice(&pointer);
+
+            let mut whole = Vec::new();
+            page_reader(&file, offset)
+                .unwrap()
+                .read_to_end(&mut whole)
+                .unwrap();
+            assert_eq!(whole, expected);
+
+            let mut reader = page_reader(&file, offset).unwrap();
+            let mut pieces = Vec::new();
+            let mut piece = [0; 3];
+            loop {
+                let count = reader.read(&mut piece).unwrap();
+                if count == 0 {
+                    break;
+                }
+                pieces.extend_from_slice(&piece[..count]);
+            }
+            assert_eq!(pieces, expected);
+
+            assert_eq!(reader.seek(SeekFrom::Start(2)).unwrap(), 2);
+            assert_eq!(reader.fill_buf().unwrap()[0], expected[2]);
+            reader.consume(5);
+            let mut rest = Vec::new();
+            reader.read_to_end(&mut rest).unwrap();
+            assert_eq!(rest, expected[7..]);
+            assert_eq!(
+                reader.seek(SeekFrom::End(-4)).unwrap(),
+                file.len() as u64 - 4
+            );
+            let mut tail = [0; 4];
+            reader.read_exact(&mut tail).unwrap();
+            assert_eq!(tail, expected[file.len() - 4..]);
+            let error = reader.seek(SeekFrom::Current(-1000)).unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+            assert_eq!(error.to_string(), "invalid TIFF seek");
+        }
+        // A classic TIFF cannot point past 4 GiB, and a short file has no header.
+        assert!(page_reader(b"II*\0\0\0\0\0", 1 << 32).is_err());
+        assert!(page_reader(b"II*\0", 8).is_err());
     }
 
     #[test]

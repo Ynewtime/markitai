@@ -153,7 +153,9 @@ impl Table {
             return None;
         }
         let mut pool: Vec<_> = candidates.iter().map(|&index| keys[index]).collect();
-        pool.sort_unstable();
+        // Equal keys are identical, so a stable sort orders them as an
+        // unstable one does.
+        crate::sort::by(&mut pool, Key::cmp);
         pool.dedup();
         let mut hash = Sha256::new();
         hash.update(self.salt);
@@ -355,7 +357,9 @@ impl State {
                 .collect();
             if idle.len() > MAX_IDLE {
                 removed = true;
-                idle.sort_unstable_by_key(|(_, touched)| *touched);
+                // Ties keep the map's iteration order, which was already
+                // arbitrary.
+                crate::sort::by_key(&mut idle, |(_, touched)| *touched);
                 for (key, _) in idle.iter().take(idle.len() - MAX_IDLE) {
                     self.metrics.remove(key);
                 }
@@ -785,6 +789,17 @@ mod tests {
                 group,
                 deployment: key
             }));
+            // The least recently touched idle metrics went first.
+            let metric = |index: u64| {
+                let mut bytes = [0; 32];
+                bytes[..8].copy_from_slice(&index.to_le_bytes());
+                MetricKey {
+                    group: Key(bytes),
+                    deployment: Key(bytes),
+                }
+            };
+            assert!(!state.metrics.contains_key(&metric(0)));
+            assert!(state.metrics.contains_key(&metric(MAX_IDLE as u64 + 4)));
             assert_eq!(state.groups.len(), MAX_IDLE + 1);
         }
         drop(lease);

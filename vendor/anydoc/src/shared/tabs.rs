@@ -418,7 +418,7 @@ pub fn finish(
         spaces_in_blocks(&mut note.blocks);
     }
     placed.extend(tables.into_iter().map(|(range, table)| (range, vec![Block::Table(table)])));
-    placed.sort_by_key(|(range, _)| range.start);
+    crate::sort::by_key(&mut placed, |(range, _)| range.start);
     for (range, replacement) in placed.into_iter().rev() {
         let _paragraphs: Vec<Block> = blocks.splice(range, replacement).collect();
     }

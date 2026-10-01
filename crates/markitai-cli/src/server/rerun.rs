@@ -92,7 +92,7 @@ pub(super) async fn retry(
     let job = jobs::get(&state, &id)?;
     let admission_state = state.clone();
     let admission_job = job.clone();
-    let (created,drain)=tokio::task::spawn_blocking(move|| {
+    let (created,drain)=crate::task::blocking(move|| {
         let job=admission_job;let state=admission_state;
         let _access=job.access.lock().unwrap();
         if state.closing.load(Ordering::SeqCst){return Err(ApiError::new(503,"shutting_down","server is shutting down"));}
@@ -142,7 +142,7 @@ pub(super) async fn retry(
     }).await.map_err(ApiError::internal)??;
     if drain {
         let task_state = state.clone();
-        let task = tokio::spawn(async move {
+        let task = crate::task::spawn(async move {
             loop {
                 let work = {
                     let mut queue = job.retry_queue.lock().unwrap();
@@ -213,7 +213,7 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
     }
     let worker = job.clone();
     let fallback = (work.index, work.prior.clone());
-    let result = tokio::task::spawn_blocking(move || {
+    let result = crate::task::blocking(move || {
         let _permit = permit;
         let started = Instant::now();
         let mut attempt_usage = markitai_core::ConversionUsage::default();
@@ -470,7 +470,7 @@ pub(super) async fn delete(
 ) -> ApiResult<StatusCode> {
     http::refresh(&state).await?;
     let job = jobs::get(&state, &id)?;
-    tokio::task::spawn_blocking(move || {
+    crate::task::blocking(move || {
         let _access = job.access.lock().unwrap();
         if !state
             .jobs

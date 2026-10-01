@@ -94,7 +94,7 @@ pub(super) async fn download(
 ) -> ApiResult<Response> {
     let job = jobs::get(&state, &id)?;
     let filename = relative.clone();
-    let file = tokio::task::spawn_blocking(move || {
+    let file = crate::task::blocking(move || {
         let _guard = job.access.lock().unwrap();
         if !public_member(&relative) {
             return Err(ApiError::new(404, "file_not_found", "file not found"));
@@ -117,7 +117,7 @@ pub(super) async fn result(
     Path((id, item_id)): Path<(String, String)>,
 ) -> ApiResult<Json<Value>> {
     let job = jobs::get(&state, &id)?;
-    tokio::task::spawn_blocking(move||{
+    crate::task::blocking(move||{
         let _guard=job.access.lock().unwrap();let data=job.data.lock().unwrap();
         let item=data.items.iter().find(|item|item.item_id==item_id).ok_or_else(||ApiError::new(404,"item_not_found","item not found"))?;
         let selected=item.output.as_deref().filter(|_|item.status=="done").ok_or_else(||ApiError::new(404,"result_unavailable","item result not available"))?;
@@ -245,7 +245,7 @@ pub(super) async fn job_archive(
 ) -> ApiResult<Response> {
     let job = jobs::get(&state, &id)?;
     let root = state.root.clone();
-    let (file, temp) = tokio::task::spawn_blocking(move || zip_jobs(&root, vec![job]))
+    let (file, temp) = crate::task::blocking(move || zip_jobs(&root, vec![job]))
         .await
         .map_err(ApiError::internal)??;
     body(
@@ -272,7 +272,7 @@ pub(super) async fn history_archive(
         return Err(ApiError::new(404, "history_empty", "history is empty"));
     }
     let root = state.root.clone();
-    let (file, temp) = tokio::task::spawn_blocking(move || zip_jobs(&root, jobs))
+    let (file, temp) = crate::task::blocking(move || zip_jobs(&root, jobs))
         .await
         .map_err(ApiError::internal)??;
     body(file, Some(temp), "application/zip", "markitai-all.zip")
