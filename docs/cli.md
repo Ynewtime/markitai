@@ -42,6 +42,17 @@ markitai -c isolated.json doctor --json
 当作旧开关；例如 `--output=--static` 是路径值。原版简单扫描每个 argv token，
 原生这里有意保留正常参数/路径解析；其他无效用法仍由 Clap 拒绝。
 
+## 终端语言
+
+`doctor`、`cache stats/clear/spa-domains` 与 `config path/validate` 的终端文字可显示中文或英文，范围对应参考版本做了本地化的命令。语言选择沿用参考规则：非空的 `MARKITAI_LANG` 单独决定；未设置或为空时先读 `LANG`，再读 `LC_ALL`。取值以 `zh` 开头（不分大小写）为中文，其他取值和未设置均为英文；非空但不是 `zh` 的 `MARKITAI_LANG`（如 `en`、`fr`）不会再回退到 `LANG`。参考先读 `LANG` 后读 `LC_ALL`，与 POSIX 中 `LC_ALL` 优先的约定相反，这里保持参考顺序。变量读取与配置选择相同：进程环境优先，其次是当前目录 `.env` 和 `MARKITAI_HOME/.env`。
+
+```sh
+MARKITAI_LANG=zh markitai doctor
+LANG=zh_CN.UTF-8 markitai cache stats
+```
+
+翻译的是面向人的句子：标题、配置来源、状态词和“配置要求”标注、总结、浏览器修复进度、缓存条目与清理结果、清理确认与取消。doctor 每项的名称、说明和安装提示与 `--json` 字段同源，仍为英文；核心给出的错误原因、路径和大小单位不变。`--json`、`config path` 找到文件时打印的路径、`config list/get/set`、`--help`、参数错误、日志与退出码在两种语言下逐字节相同。参考同样未翻译的 `init`、`-I` 向导、`config edit`、转换进度与批量摘要、`auth`、`serve`/`mcp` 终端输出保持英文；网页工作台另有自己的语言切换。
+
 ## 已实现的命令行为
 
 - 单文件和 URL 未给 `-o` 时输出 Markdown 到 stdout；`--pure` 去除 frontmatter；提供 `-o chosen.md` 可选择准确文件名。

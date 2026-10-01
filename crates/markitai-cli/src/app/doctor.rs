@@ -1,4 +1,5 @@
 //! Configuration-aware diagnostics; explicit browser repair uses the native installer.
+use super::i18n::{Lang, lang};
 use super::{CliResult, runtime};
 use indexmap::IndexMap;
 use markitai_core::config;
@@ -59,15 +60,28 @@ pub(super) fn run(cfg: &Value, path: Option<&Path>, json: bool, fix: bool) -> Cl
     let repair_missing = fix && !matches!(&browser, Ok(Some(_)));
     let mut repair_failed = false;
     if repair_missing {
-        eprintln!("Installing the official Chrome headless shell in the private Markitai home...");
+        eprintln!(
+            "{}",
+            text!(
+                "Installing the official Chrome headless shell in the private Markitai home...",
+                "正在 Markitai 私有目录中安装官方 Chrome headless shell……"
+            )
+        );
         match markitai_core::install_browser() {
             Ok(path) => {
-                eprintln!("Installed and verified {}", path.display());
+                let shown = path.display();
+                eprintln!(
+                    "{}",
+                    text!("Installed and verified {shown}", "已安装并验证 {shown}")
+                );
                 browser = Ok(Some(path));
             }
             Err(error) => {
                 repair_failed = true;
-                eprintln!("Browser repair failed: {error}");
+                eprintln!(
+                    "{}",
+                    text!("Browser repair failed: {error}", "浏览器修复失败：{error}")
+                );
             }
         }
     }
@@ -87,41 +101,81 @@ pub(super) fn run(cfg: &Value, path: Option<&Path>, json: bool, fix: bool) -> Cl
             serde_json::to_string_pretty(&checks).map_err(runtime)?
         );
     } else {
-        println!("Markitai {} — native diagnostics", markitai_core::VERSION);
-        match path {
-            Some(path) => println!("Configuration: {}", path.display()),
-            None => println!(
-                "Configuration: built-in defaults (no configuration file; create one with `markitai init`)"
+        let lang = lang();
+        let version = markitai_core::VERSION;
+        println!(
+            "{}",
+            text!(lang =>
+                "Markitai {version} — native diagnostics",
+                "Markitai {version} — 原生诊断"
+            )
+        );
+        let source = match path {
+            Some(path) => {
+                let path = path.display();
+                text!(lang => "Configuration: {path}", "配置文件：{path}")
+            }
+            None => text!(lang =>
+                "Configuration: built-in defaults (no configuration file; create one with `markitai init`)",
+                "配置文件：内建默认值（未找到配置文件；可运行 `markitai init` 创建）"
             ),
-        }
+        };
+        println!("{source}");
         for check in checks.values() {
-            println!(
-                "{}: {}{} — {}",
-                check.name,
-                check.status,
-                if check.required {
-                    " (required by configuration)"
-                } else {
-                    ""
-                },
-                check.message
-            );
+            println!("{}", check_line(check, lang));
             if !check.install_hint.is_empty() {
                 println!("  {}", check.install_hint);
             }
         }
-        println!("{}", summary(&checks));
+        println!("{}", summary(&checks, lang));
     }
     if fix && !repair_missing {
         eprintln!(
-            "Chromium launches successfully; no browser repair is needed. Other diagnostic hints require manual action."
+            "{}",
+            text!(
+                "Chromium launches successfully; no browser repair is needed. Other diagnostic hints require manual action.",
+                "Chromium 可以正常启动，无需修复浏览器。其他诊断提示需要手动处理。"
+            )
         );
     }
     Ok(i32::from(failed || repair_failed))
 }
 
+/// "Name: status — message". The name, message and hint are the JSON values
+/// and stay in English; the status word and the requirement note follow the
+/// terminal language.
+fn check_line(check: &Check, lang: Lang) -> String {
+    let (name, message) = (check.name, &check.message);
+    match lang {
+        Lang::En => {
+            let status = check.status;
+            let required = if check.required {
+                " (required by configuration)"
+            } else {
+                ""
+            };
+            format!("{name}: {status}{required} — {message}")
+        }
+        Lang::Zh => {
+            let status = match check.status {
+                "ok" => "正常",
+                "warning" => "警告",
+                "missing" => "缺失",
+                "error" => "错误",
+                other => other,
+            };
+            let required = if check.required {
+                "（配置要求）"
+            } else {
+                ""
+            };
+            format!("{name}：{status}{required} — {message}")
+        }
+    }
+}
+
 /// One closing line that states the verdict the exit status encodes.
-fn summary(checks: &IndexMap<&'static str, Check>) -> String {
+fn summary(checks: &IndexMap<&'static str, Check>, lang: Lang) -> String {
     let failed: Vec<_> = checks
         .values()
         .filter(|check| check.failed())
@@ -130,23 +184,37 @@ fn summary(checks: &IndexMap<&'static str, Check>) -> String {
     let ok = checks.values().filter(|check| check.status == "ok").count();
     let attention = checks.len() - ok;
     if failed.is_empty() && attention == 0 {
-        format!("Summary: all {ok} checks ok.")
+        text!(lang =>
+            "Summary: all {ok} checks ok.",
+            "总结：全部 {ok} 项检查正常。"
+        )
     } else if failed.is_empty() {
-        format!(
-            "Summary: nothing the configuration requires is blocked; {ok} ok, {attention} optional {} not ready (see the hints above).",
-            if attention == 1 { "check" } else { "checks" }
+        let noun = if attention == 1 { "check" } else { "checks" };
+        text!(lang =>
+            "Summary: nothing the configuration requires is blocked; {ok} ok, {attention} optional {noun} not ready (see the hints above).",
+            "总结：配置要求的检查均已就绪；{ok} 项正常，{attention} 项可选检查未就绪（见上方提示）。"
         )
     } else {
-        let (noun, verb) = if failed.len() == 1 {
+        let count = failed.len();
+        let (noun, verb) = if count == 1 {
             ("check", "is")
         } else {
             ("checks", "are")
         };
-        format!(
-            "Summary: {} {noun} required by the configuration {verb} not ready: {}. Fix the hints above, then rerun `markitai doctor`.",
-            failed.len(),
-            failed.join(", ")
-        )
+        match lang {
+            Lang::En => {
+                let names = failed.join(", ");
+                format!(
+                    "Summary: {count} {noun} required by the configuration {verb} not ready: {names}. Fix the hints above, then rerun `markitai doctor`."
+                )
+            }
+            Lang::Zh => {
+                let names = failed.join("、");
+                format!(
+                    "总结：{count} 项配置要求的检查未就绪：{names}。请按上方提示处理后重新运行 `markitai doctor`。"
+                )
+            }
+        }
     }
 }
 
@@ -608,6 +676,76 @@ mod tests {
             ]
         );
     }
+    fn checks_of(states: &[(&'static str, &'static str, bool)]) -> IndexMap<&'static str, Check> {
+        states
+            .iter()
+            .map(|&(name, status, required)| {
+                let mut check = Check::new(name, "description", status, "message", "");
+                check.required = required;
+                (name, check)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn summaries_state_the_same_verdict_in_both_languages() {
+        let all = checks_of(&[("A", "ok", true), ("B", "ok", false)]);
+        assert_eq!(summary(&all, Lang::En), "Summary: all 2 checks ok.");
+        assert_eq!(summary(&all, Lang::Zh), "总结：全部 2 项检查正常。");
+        let one = checks_of(&[("A", "ok", false), ("B", "warning", false)]);
+        assert_eq!(
+            summary(&one, Lang::En),
+            "Summary: nothing the configuration requires is blocked; 1 ok, 1 optional check not ready (see the hints above)."
+        );
+        assert_eq!(
+            summary(&one, Lang::Zh),
+            "总结：配置要求的检查均已就绪；1 项正常，1 项可选检查未就绪（见上方提示）。"
+        );
+        let blocked = checks_of(&[("A", "missing", true), ("B", "error", true)]);
+        assert_eq!(
+            summary(&blocked, Lang::En),
+            "Summary: 2 checks required by the configuration are not ready: A, B. Fix the hints above, then rerun `markitai doctor`."
+        );
+        assert_eq!(
+            summary(&blocked, Lang::Zh),
+            "总结：2 项配置要求的检查未就绪：A、B。请按上方提示处理后重新运行 `markitai doctor`。"
+        );
+    }
+
+    #[test]
+    fn check_lines_translate_only_the_status_and_requirement() {
+        let states = checks_of(&[
+            ("A", "ok", false),
+            ("B", "warning", false),
+            ("C", "missing", true),
+            ("D", "error", false),
+        ]);
+        let lines = |lang| {
+            states
+                .values()
+                .map(|check| check_line(check, lang))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            lines(Lang::Zh),
+            [
+                "A：正常 — message",
+                "B：警告 — message",
+                "C：缺失（配置要求） — message",
+                "D：错误 — message"
+            ]
+        );
+        assert_eq!(
+            lines(Lang::En),
+            [
+                "A: ok — message",
+                "B: warning — message",
+                "C: missing (required by configuration) — message",
+                "D: error — message"
+            ]
+        );
+    }
+
     #[test]
     fn credentialed_auto_requires_browser_but_explicit_static_does_not() {
         for (field, identity) in [

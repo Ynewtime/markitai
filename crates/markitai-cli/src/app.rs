@@ -1,3 +1,7 @@
+// Declared first so its `text!` macro is visible in the modules below.
+#[macro_use]
+#[path = "app/i18n.rs"]
+mod i18n;
 #[path = "app/auth.rs"]
 mod auth;
 #[path = "app/compat.rs"]
@@ -1901,7 +1905,11 @@ fn subcommand(cli: &Cli, command: &Command, overrides: Option<Value>) -> CliResu
                     println!("{}", path.display());
                 } else {
                     println!(
-                        "No configuration file found; using built-in defaults. Create one with `markitai init`."
+                        "{}",
+                        text!(
+                            "No configuration file found; using built-in defaults. Create one with `markitai init`.",
+                            "未找到配置文件，正在使用内建默认值。可运行 `markitai init` 创建。"
+                        )
                     );
                 }
             }
@@ -1916,7 +1924,7 @@ fn subcommand(cli: &Cli, command: &Command, overrides: Option<Value>) -> CliResu
                 }
                 config::load(config_file.as_deref().or(cli.config.as_deref()), overrides)
                     .map_err(runtime)?;
-                println!("Configuration is valid");
+                println!("{}", text!("Configuration is valid", "配置有效"));
             }
             ConfigCommand::List {
                 format,
@@ -2072,26 +2080,28 @@ fn cache_command(command: &CacheCommand, cfg: &Value) -> CliResult<i32> {
             if *as_json {
                 println!("{}", serde_json::to_string_pretty(&stats).map_err(runtime)?);
             } else {
-                println!("Cache enabled: {}", stats["enabled"]);
-                if let Some(error) = stats["cache"].get("error") {
-                    println!("LLM cache: {}", error.as_str().unwrap_or("unavailable"));
-                } else {
-                    println!("LLM cache: {}", cache_size(&stats["cache"]));
-                    if *verbose && !stats["cache"].is_null() {
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&stats["cache"]).map_err(runtime)?
-                        );
+                let enabled = &stats["enabled"];
+                println!(
+                    "{}",
+                    match (i18n::lang(), enabled.as_bool()) {
+                        (i18n::Lang::Zh, Some(true)) => "缓存：已启用".to_owned(),
+                        (i18n::Lang::Zh, Some(false)) => "缓存：已禁用".to_owned(),
+                        _ => text!("Cache enabled: {enabled}", "缓存已启用：{enabled}"),
                     }
-                }
-                if let Some(error) = stats["fetch_cache"].get("error") {
+                );
+                let llm = cache_state(&stats["cache"]);
+                println!("{}", text!("LLM cache: {llm}", "LLM 缓存：{llm}"));
+                if *verbose && !stats["cache"].is_null() && stats["cache"].get("error").is_none() {
                     println!(
-                        "URL fetch cache: {}",
-                        error.as_str().unwrap_or("unavailable")
+                        "{}",
+                        serde_json::to_string_pretty(&stats["cache"]).map_err(runtime)?
                     );
-                } else {
-                    println!("URL fetch cache: {}", cache_size(&stats["fetch_cache"]));
                 }
+                let fetch = cache_state(&stats["fetch_cache"]);
+                println!(
+                    "{}",
+                    text!("URL fetch cache: {fetch}", "URL 抓取缓存：{fetch}")
+                );
             }
             Ok(i32::from(failed))
         }
@@ -2103,17 +2113,24 @@ fn cache_command(command: &CacheCommand, cfg: &Value) -> CliResult<i32> {
                 cfg["cache"]["global_dir"].as_str().unwrap_or("~/.markitai"),
             ));
             if !yes {
-                let stores = if *include_spa_domains {
-                    "LLM + URL fetch caches + learned browser domains"
+                let dir = dir.display();
+                let question = if *include_spa_domains {
+                    text!(
+                        "Clear LLM + URL fetch caches + learned browser domains ({dir})? [y/N]: ",
+                        "清理 LLM 与 URL 抓取缓存及已学习的浏览器域名（{dir}）？[y/N]："
+                    )
                 } else {
-                    "LLM + URL fetch caches"
+                    text!(
+                        "Clear LLM + URL fetch caches ({dir})? [y/N]: ",
+                        "清理 LLM 与 URL 抓取缓存（{dir}）？[y/N]："
+                    )
                 };
-                print!("Clear {stores} ({})? [y/N]: ", dir.display());
+                print!("{question}");
                 io::stdout().flush().map_err(runtime)?;
                 let mut answer = String::new();
                 io::stdin().read_line(&mut answer).map_err(runtime)?;
                 if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
-                    println!("Aborted");
+                    println!("{}", text!("Aborted", "已取消"));
                     return Ok(0);
                 }
             }
@@ -2124,27 +2141,29 @@ fn cache_command(command: &CacheCommand, cfg: &Value) -> CliResult<i32> {
             }
             let llm_count = markitai_core::llm_cache::clear(cfg).map_err(runtime)?;
             let fetch_count = markitai_core::fetch_cache::clear(cfg).map_err(|error| {
-                runtime(format!(
-                    "LLM cache cleared ({llm_count} entries); URL fetch cache clear failed: {error}"
+                runtime(text!(
+                    "LLM cache cleared ({llm_count} entries); URL fetch cache clear failed: {error}",
+                    "已清理 LLM 缓存（{llm_count} 条）；URL 抓取缓存清理失败：{error}"
                 ))
             })?;
+            let cleared = llm_count.saturating_add(fetch_count);
             let spa_count = if *include_spa_domains {
                 Some(markitai_core::spa_domains::clear(cfg).map_err(|error| {
-                    runtime(format!(
-                        "LLM and URL fetch caches cleared ({} entries); learned browser-domain clear failed: {error}",
-                        llm_count.saturating_add(fetch_count)
+                    runtime(text!(
+                        "LLM and URL fetch caches cleared ({cleared} entries); learned browser-domain clear failed: {error}",
+                        "已清理 LLM 与 URL 抓取缓存（{cleared} 条）；已学习的浏览器域名清理失败：{error}"
                     ))
                 })?)
             } else {
                 None
             };
-            let cleared = llm_count.saturating_add(fetch_count);
+            let noun = if cleared == 1 { "entry" } else { "entries" };
             println!(
-                "Cleared {cleared} cache {}",
-                if cleared == 1 { "entry" } else { "entries" }
+                "{}",
+                text!("Cleared {cleared} cache {noun}", "已清理 {cleared} 条缓存")
             );
             if let Some(count) = spa_count {
-                println!("Cleared {count} learned SPA domains");
+                println!("{}", spa_cleared(count));
             }
             Ok(0)
         }
@@ -2157,7 +2176,7 @@ fn cache_command(command: &CacheCommand, cfg: &Value) -> CliResult<i32> {
                 if *as_json {
                     println!("{}", json!({"cleared":count}));
                 } else {
-                    println!("Cleared {count} learned SPA domains");
+                    println!("{}", spa_cleared(count));
                 }
             } else {
                 let entries = markitai_core::spa_domains::list(cfg).map_err(runtime)?;
@@ -2167,9 +2186,18 @@ fn cache_command(command: &CacheCommand, cfg: &Value) -> CliResult<i32> {
                         serde_json::to_string_pretty(&entries).map_err(runtime)?
                     );
                 } else if entries.is_empty() {
-                    println!("No learned SPA domains.");
+                    println!(
+                        "{}",
+                        text!("No learned SPA domains.", "没有已学习的 SPA 域名。")
+                    );
                 } else {
-                    println!("Domain\tHits\tLearned at\tLast hit\tExpired");
+                    println!(
+                        "{}",
+                        text!(
+                            "Domain\tHits\tLearned at\tLast hit\tExpired",
+                            "域名\t命中次数\t学习时间\t最近命中\t已过期"
+                        )
+                    );
                     for entry in entries {
                         println!(
                             "{}\t{}\t{}\t{}\t{}",
@@ -2186,8 +2214,22 @@ fn cache_command(command: &CacheCommand, cfg: &Value) -> CliResult<i32> {
         }
     }
 }
-fn entries(count: u64) -> String {
-    format!("{count} {}", if count == 1 { "entry" } else { "entries" })
+fn spa_cleared(count: u64) -> String {
+    let noun = if count == 1 { "domain" } else { "domains" };
+    text!(
+        "Cleared {count} learned SPA {noun}",
+        "已清理 {count} 个已学习的 SPA 域名"
+    )
+}
+
+/// The size line of one store, or the reason it could not be read.
+fn cache_state(stats: &Value) -> String {
+    match stats.get("error") {
+        Some(error) => error
+            .as_str()
+            .map_or_else(|| text!("unavailable", "不可用"), str::to_owned),
+        None => cache_size(stats),
+    }
 }
 
 /// "3 entries (1.2 MiB)"; the JSON form keeps exact byte counts.
@@ -2207,7 +2249,9 @@ fn cache_size(stats: &Value) -> String {
         }
         format!("{value:.1} {unit}")
     };
-    format!("{} ({size})", entries(stats["count"].as_u64().unwrap_or(0)))
+    let count = stats["count"].as_u64().unwrap_or(0);
+    let noun = if count == 1 { "entry" } else { "entries" };
+    text!("{count} {noun} ({size})", "{count} 条（{size}）")
 }
 
 fn key_pointer(key: &str) -> CliResult<String> {

@@ -4,6 +4,7 @@
 
 ### Added
 
+- Show `doctor`, `cache` and `config path`/`config validate` messages in Chinese or English as the reference does: a non-empty `MARKITAI_LANG` decides, otherwise `LANG` then `LC_ALL`, and a value starting with `zh` selects Chinese; JSON output, help, errors and exit codes stay as they were.
 - Give the `markitai serve` workspace a Chinese and English interface that follows the browser language, light, dark and automatic themes (printing stays light), page-wide drag and drop, upload cancellation and a `POST /api/jobs/{id}/cancel` route that stops queued items, a bottom notice region that stays in view, offline detection with reconnection, oversized files named before upload, plain explanations for skipped and failed items, a working 375-pixel layout, kept focus and expanded details across updates, and AA contrast.
 - Manual operating-system proxy discovery for static fetch and the native browser (macOS, Windows, KDE and GNOME), with the reference's single environment proxy order, exception semantics and loopback bypass.
 - Optional pinned official Codex CLI adapter for ChatGPT subscription conversion, authentication and Unix login, with bounded process cleanup and aggregate usage accounting.

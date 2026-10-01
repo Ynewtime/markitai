@@ -89,7 +89,7 @@ JSON envelope `version="1.0"`，顶层字段为 `version, ok, error, batch, item
 
 注意参考 API docstring 曾写 `.markitai.json`，实际常量和代码是 `markitai.json`，迁移按代码和测试执行。配置格式为 UTF-8 JSON object，支持 `env:VAR_NAME` 密钥引用；非法 JSON、错误类型、范围错误要给可操作诊断。未知键的保留/忽略策略需通过契约测试明确，不能假定所有类都 `deny_unknown_fields`。`config set` 支持 `llm.model_list[0].model_name` 一类数组路径；保存应为最小差异，不把临时 override 写入。
 
-CLI 在启动时按当前 `.env`、用户 `~/.markitai/.env` 顺序补充环境，已经存在的进程环境优先。关键环境名：`MODEL`、`MARKITAI_CONFIG`、`MARKITAI_PURE`、`MARKITAI_RECORD_HISTORY`、`MARKITAI_NO_REMOTE_FETCH`、`MARKITAI_NO_VLM_OCR`、`MARKITAI_LOG_DIR`、`MARKITAI_LOG_FORMAT`、`MARKITAI_LANG`、`MARKITAI_SERVE_TOKEN`、`MARKITAI_PDF_WORKERS`、`MARKITAI_STATIC_HTTP`、`PLAYWRIGHT_BROWSERS_PATH`。代理服从标准 HTTP(S)/ALL_PROXY 和 NO_PROXY 系列变量。以上是参考版本的清单；本构建实际读取的变量见[配置](configuration.md#环境变量)，其中 `MARKITAI_LANG`、`MARKITAI_PDF_WORKERS`、`MARKITAI_STATIC_HTTP` 不读取。
+CLI 在启动时按当前 `.env`、用户 `~/.markitai/.env` 顺序补充环境，已经存在的进程环境优先。关键环境名：`MODEL`、`MARKITAI_CONFIG`、`MARKITAI_PURE`、`MARKITAI_RECORD_HISTORY`、`MARKITAI_NO_REMOTE_FETCH`、`MARKITAI_NO_VLM_OCR`、`MARKITAI_LOG_DIR`、`MARKITAI_LOG_FORMAT`、`MARKITAI_LANG`、`MARKITAI_SERVE_TOKEN`、`MARKITAI_PDF_WORKERS`、`MARKITAI_STATIC_HTTP`、`PLAYWRIGHT_BROWSERS_PATH`。代理服从标准 HTTP(S)/ALL_PROXY 和 NO_PROXY 系列变量。以上是参考版本的清单；本构建实际读取的变量见[配置](configuration.md#环境变量)，其中 `MARKITAI_PDF_WORKERS`、`MARKITAI_STATIC_HTTP` 不读取；`MARKITAI_LANG` 的范围见 [CLI 终端语言](cli.md#终端语言)。
 
 云服务凭据名：`OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, DEEPSEEK_API_KEY, OPENROUTER_API_KEY, JINA_API_KEY, CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID`。Copilot 另支持 `COPILOT_GITHUB_TOKEN/GH_TOKEN/GITHUB_TOKEN`。LLM 模型解析顺序是已有 model_list > MODEL > 可检测的供应商；可能形成跨供应商池，须保留对应通知。测试使用用户环境时，只读取必要值传给隔离子进程；严禁输出值、复制进 Git，或写入用户现有缓存/历史/登录文件。
 

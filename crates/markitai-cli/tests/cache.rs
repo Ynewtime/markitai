@@ -364,8 +364,10 @@ fn invoke_spa(root: &Path, args: &[&str]) -> Output {
             cmd.env(name, value);
         }
     }
+    // LANG passes through, so pin the terminal language these assertions read.
     cmd.current_dir(root)
         .env("MARKITAI_HOME", root.join("home"))
+        .env("MARKITAI_LANG", "en")
         .env("NO_PROXY", "127.0.0.1,localhost")
         .stdin(Stdio::null())
         .args(["--config", "markitai.json"])

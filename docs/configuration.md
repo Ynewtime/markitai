@@ -96,6 +96,7 @@ markitai config edit                 # 终端中的交互编辑器
 | `MARKITAI_NO_VLM_OCR` | 非空且不是 `0`/`false`/`no` 时，LLM 开启的 OCR 先本地识别再只发送文字 |
 | `MARKITAI_LOG_DIR` / `MARKITAI_LOG_FORMAT` | 覆盖 `log.dir` 与 `log.format`（`text`/`json`） |
 | `MARKITAI_SERVE_TOKEN` | `serve` 远程访问令牌，见 [REST 服务](serve.md) |
+| `MARKITAI_LANG` | `doctor`、`cache`、`config path/validate` 的终端语言：以 `zh` 开头为中文，其他值为英文；为空时依次看 `LANG`、`LC_ALL`，见 [CLI](cli.md#终端语言) |
 | `MARKITAI_BROWSER_EXECUTABLE` | 指定 Chrome/Chromium 可执行文件 |
 | `PLAYWRIGHT_BROWSERS_PATH` | 额外搜索的 Playwright 浏览器缓存目录 |
 | `MODEL` | 未配置 `llm.model_list` 时使用的模型，如 `openai/gpt-4.1-mini` |
@@ -106,7 +107,7 @@ markitai config edit                 # 终端中的交互编辑器
 | `COPILOT_CLI_PATH`、`COPILOT_HOME`、`COPILOT_CACHE_HOME`、`COPILOT_GITHUB_TOKEN`/`GH_TOKEN`/`GITHUB_TOKEN`、`CLAUDE_CLI_PATH`、`CLAUDE_CONFIG_DIR`、`CODEX_CLI_PATH`、`CODEX_HOME` | 订阅运行时的可执行文件、状态目录与令牌，见[订阅](subscriptions.md) |
 | `HTTPS_PROXY`、`HTTP_PROXY`、`ALL_PROXY`、`NO_PROXY` | 代理，见[抓取](fetch.md#proxies) |
 
-CLI 启动时依次从进程环境、当前目录 `.env`、`MARKITAI_HOME/.env`（`~/.markitai/.env`）读取变量，已存在的值优先，不修改宿主进程环境。参考版本的 `MARKITAI_LANG`、`MARKITAI_PDF_WORKERS`、`MARKITAI_STATIC_HTTP` 以及 Cloudflare 凭据在本构建中不读取。
+CLI 启动时依次从进程环境、当前目录 `.env`、`MARKITAI_HOME/.env`（`~/.markitai/.env`）读取变量，已存在的值优先，不修改宿主进程环境。参考版本的 `MARKITAI_PDF_WORKERS`、`MARKITAI_STATIC_HTTP` 以及 Cloudflare 凭据在本构建中不读取。
 
 ## 默认值与配置选择
 
