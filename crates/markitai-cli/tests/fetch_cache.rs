@@ -302,8 +302,9 @@ fn validators_stats_and_combined_clear_work_across_processes() {
     let plain_stats = invoke(root.path(), &["cache", "stats"]);
     assert!(plain_stats.status.success());
     assert!(String::from_utf8_lossy(&plain_stats.stdout).contains("URL fetch cache: 1 entry ("));
+    // No answer on stdin: nothing is cleared and the run fails.
     let abort = invoke(root.path(), &["cache", "clear"]);
-    assert!(abort.status.success());
+    assert_eq!(abort.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&abort.stdout).contains("Aborted"));
     let stats = success(invoke(root.path(), &["cache", "stats", "--json"]));
     assert_eq!(stats["cache"]["count"], 1);
