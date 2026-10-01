@@ -1,18 +1,20 @@
 # Validation records
 
-最新完整检查点：[R24 结构化协议、认证 PDF、完整工作表与浏览器安装](structured-media-round24.md)。项目按用户要求继续推进。
+最新交付：[R45](delivery-round45.md)（macOS arm64 与 Linux amd64 打包、三绑定），对应的改动与语料对照见
+[R47 并行改进](parallel-round47.md)，冻结性能见[性能记录](performance-round36.md)（`all-r12`）。当前状态与剩余
+事项见 [STATUS](../STATUS.md) 与 [剩余工作](../remaining-work.md)。
 
 An implementation checkpoint is reproducible only when it records the command,
 source revision, test inputs, build profile, and platform. Passing new unit
-tests establishes specific contracts; it does not imply reference parity.
+tests establishes specific contracts; it does not imply reference parity. Each
+record below stays tied to its own source revision and artifacts.
 
-Latest: [round twenty-three](vision-auth-cli-round23.md), typed visual batches,
-pixel-aware caching, origin-scoped browser Basic authentication, guided CLI and
-runtime diagnostics. The unchanged-source gate passes 1,072 Rust executions,
-31 Python harness checks, formatting and strict Clippy, plus seven actual browser
-and six Office core/API tests. The retained CLI passes 13 workflows and 163
-assertions; installed Node (3), Python (16) and Go race acceptance pass.
-The project is paused at the user's request; see the [full summary](../STATUS.md).
+Earlier checkpoints, oldest at the bottom of each series: delivery rounds
+`delivery-round36.md` through `delivery-round44.md`, quality records
+(`pdf-quality-round41.md`, `office-quality-round42.md`, `html-quality-round43.md`,
+`html-quality-round44.md`, `ocr-quality-round45.md`, `epub-quality-round46.md`),
+and, before them, [round twenty-four](structured-media-round24.md) and
+[round twenty-three](vision-auth-cli-round23.md).
 
 [Round twenty-two](media-llm-round22.md) retains Office/Numbers/text processing
 acceptance; [round twenty-one](service-ui-round21.md) retains actual web workspace
