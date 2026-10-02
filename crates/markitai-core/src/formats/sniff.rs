@@ -18,8 +18,9 @@ const EMPTY_IS_A_DOCUMENT: &[&str] = &[
 
 /// Office, OpenDocument and e-book extensions that a PDF is often saved under.
 const PACKAGED_DOCUMENTS: &[&str] = &[
-    "doc", "docx", "docm", "xls", "xlsx", "xlsm", "xlsb", "ppt", "pps", "pot", "pptx", "pptm",
-    "ppsx", "ppsm", "odt", "ods", "odp", "epub",
+    "doc", "dot", "docx", "docm", "dotx", "dotm", "xls", "xlt", "xlsx", "xlsm", "xltx", "xltm",
+    "xlsb", "ppt", "pps", "pot", "pptx", "pptm", "ppsx", "ppsm", "potx", "potm", "odt", "ott",
+    "ods", "ots", "odp", "otp", "epub",
 ];
 
 const PDF: &[u8] = b"%PDF-";
@@ -72,9 +73,9 @@ pub(crate) fn real_extension(path: &Path, extension: &str) -> Option<&'static st
     if head.starts_with(OLE) {
         // An old binary document saved under the name of its modern successor.
         return match extension {
-            "docx" | "docm" => Some("doc"),
-            "xlsx" | "xlsm" | "xlsb" => Some("xls"),
-            "pptx" | "pptm" | "ppsx" | "ppsm" => Some("ppt"),
+            "docx" | "docm" | "dotx" | "dotm" => Some("doc"),
+            "xlsx" | "xlsm" | "xlsb" | "xltx" | "xltm" => Some("xls"),
+            "pptx" | "pptm" | "ppsx" | "ppsm" | "potx" | "potm" => Some("ppt"),
             _ => None,
         };
     }
@@ -82,7 +83,10 @@ pub(crate) fn real_extension(path: &Path, extension: &str) -> Option<&'static st
 }
 
 fn is_legacy(extension: &str) -> bool {
-    matches!(extension, "doc" | "xls" | "ppt" | "pps" | "pot")
+    matches!(
+        extension,
+        "doc" | "dot" | "xls" | "xlt" | "ppt" | "pps" | "pot"
+    )
 }
 
 /// The document type of a ZIP package, from the parts that define each type.

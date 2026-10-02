@@ -9,9 +9,9 @@ mod sprm;
 mod stsh;
 
 use crate::error::ConvertError;
+use crate::formats::docx::scripts::Script;
 use crate::model::{
     Block, Document, ImageSource, Inline, Note, NoteKind, Style, inlines_are_empty,
-    inlines_to_plain_text,
 };
 use crate::package::limits;
 use crate::shared::assets::AssetSink;
@@ -657,6 +657,8 @@ struct ParaBuilder {
     fields: Vec<FieldFrame>,
     text: String,
     style: Style,
+    /// markitai: the run's superscript or subscript position.
+    script: Option<Script>,
 }
 
 impl ParaBuilder {
@@ -666,6 +668,7 @@ impl ParaBuilder {
             fields: Vec::new(),
             text: String::new(),
             style: Style::PLAIN,
+            script: None,
         }
     }
 
@@ -674,18 +677,28 @@ impl ParaBuilder {
             return;
         }
         let text = std::mem::take(&mut self.text);
+        // markitai: a raised or lowered run in its Unicode forms, as the Word
+        // and RTF readers write one (`H₂O`, `10⁻³`), or at the baseline when
+        // some character has none; a field's instructions stay as written.
+        if let Some(f) = self.fields.last_mut()
+            && !f.in_result
+        {
+            f.instr.push_str(&text);
+            return;
+        }
+        let text = self.script.and_then(|script| script.convert(&text)).unwrap_or(text);
         let inline = Inline::Text { text, style: self.style };
         match self.fields.last_mut() {
-            Some(f) if !f.in_result => f.instr.push_str(&inlines_to_plain_text(&[inline])),
             Some(f) => f.inlines.push(inline),
             None => self.inlines.push(inline),
         }
     }
 
-    fn push_char(&mut self, c: char, style: Style) {
-        if style != self.style {
+    fn push_char(&mut self, c: char, (style, script): (Style, Option<Script>)) {
+        if style != self.style || script != self.script {
             self.flush_text();
             self.style = style;
+            self.script = script;
         }
         self.text.push(c);
     }
@@ -859,7 +872,7 @@ impl Assembler {
                     // lists typed by hand are found (`tabs::finish` writes
                     // them back as spaces); elsewhere a tab is a space.
                     if lists.is_some() && para.shows_text() {
-                        para.push_inline(tabs::tab(style));
+                        para.push_inline(tabs::tab(style.0));
                     } else {
                         para.push_char(' ', style);
                     }
@@ -920,18 +933,28 @@ impl Assembler {
 
     /// Effective character style in specification order: paragraph/character
     /// style chain -> CHPX (toggles vs the style base) -> piece Prm.
-    fn char_style(&self, fc: u32, char_index: usize) -> Style {
+    ///
+    /// markitai: with the superscript or subscript position (`sprmCIss`) in
+    /// the same order, the character style's chain before the paragraph
+    /// style's, as for the text size.
+    fn char_style(&self, fc: u32, char_index: usize) -> (Style, Option<Script>) {
         let para_istd = self.papx.lookup(fc).map(|p| p.istd).unwrap_or(0);
         let chpx = self.chpx.lookup(fc).map(|p| p.chpx.as_slice()).unwrap_or(&[]);
-        let istd = chpx_istd(chpx).unwrap_or(para_istd);
+        let char_istd = chpx_istd(chpx);
+        let istd = char_istd.unwrap_or(para_istd);
         let base = self.stylesheet.get(istd).chp;
         let mut style = apply_chpx(chpx, base, base);
+        let mut iss = char_istd
+            .and_then(|istd| self.stylesheet.get(istd).iss)
+            .or(self.stylesheet.get(para_istd).iss);
+        iss = sprm::chpx_iss(chpx).or(iss);
         if let Some(&piece_idx) = self.text.piece_of.get(char_index)
             && let Some(piece_prc) = self.piece_prm(piece_idx as usize)
         {
             style = apply_chpx(piece_prc, style, base);
+            iss = sprm::chpx_iss(piece_prc).or(iss);
         }
-        style
+        (style, iss.and_then(sprm::iss_script))
     }
 
     /// markitai: the effective text size, in the same order: the character

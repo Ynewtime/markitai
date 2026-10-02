@@ -347,7 +347,12 @@ another face) joins the line it is raised from, rendered `<sup>`: at most
 twelve characters, all smaller than that line's text, raised at most 0.6 of
 its size, within its extent or two em before or after it, and overlapping
 none of its runs. On a baseline of its own it would otherwise form a line
-that joins the paragraph above.
+that joins the paragraph above. In the page reader, a footnote's mark
+opening its line (up to three digits, one or two of `*†‡§¶#`, or one
+lower-case letter), smaller than the note's text and raised off it, is set
+apart from the text when 0.12 em or more separates them:
+`1 Corresponding author`, not `1Corresponding author`. Set against the text,
+or inside a line, a raised run attaches to its neighbours as before.
 
 The page reader keeps a paragraph set in a heading size together: three or
 more consecutive lines at the same heading level, each at wrap spacing below
@@ -370,16 +375,71 @@ is read again only for a document with such a candidate. A paragraph that
 opens every page at the body size is kept; footers other than page numbers
 are not removed.
 
-A document information `/Title` that is only the name of the source file is
-not taken as the document title, so the first heading names it: a name with a
-document or image extension (`multi.html`, `report.docx`), an Office print
-driver's `Microsoft Word - …`, or a single lower-case slug (`code`,
-`layout-table`, as a browser writes for a page without `<title>`).
+A document information `/Title` that names no document is not taken as the
+document title, so the first heading names it: the name of the source file (a
+name with a document or image extension, `multi.html`, `report.docx`; an
+Office print driver's `Microsoft Word - …`; a single lower-case slug, `code`,
+`layout-table`, as a browser writes for a page without `<title>`), or the name
+an application gives a document nobody named, in any case and with a number
+or separators after it: `Untitled`, `Untitled Document`, `Untitled-2`,
+`PowerPoint Presentation`, `Title`, `Sans titre`, `无标题`, and, numbered,
+`Document1`, `Presentation1`, `Book1`, `文档1`. `Untitled Love Song`,
+`Document Management Policy` and a bare `Book` are kept.
 
 Vector charts are not reproduced. Their axis labels and legends remain text
 where they stand; rendering a chart's region needs the platform page renderer
 in the text reader and a reliable chart detector, which the media pipeline's
 explicit rendering does not provide yet.
+
+## Forms, annotations and protected files
+
+A PDF encrypted with an empty user password (an owner password that only
+restricts printing, copying or editing) opens as other readers open it,
+whether it is encrypted with RC4 (40 or 128 bits), AES-128 or AES-256, and
+also when its encryption dictionary is written in the trailer itself, as
+MuPDF and PyMuPDF write it: lopdf read the dictionary only through a
+reference, so such a file loaded with its strings and streams still
+encrypted and was reported as needing a password. A PDF that asks for a
+password fails with `the PDF is encrypted and needs a password to open`.
+
+A form field's value is read where its widget stands, as the text beside
+it labels it: after the nearest run on the widget's row to its left (with no
+other widget between), else after the nearest run just above it across its
+width, following a colon when the label ends in a letter, a digit or a
+bracket (`1. First name: Maria`, `Email: m@x.org`); a multi-line value runs
+on, and a line holding a value is no heading in the page reader. A check box or radio
+button shows `☒` or `☐` (its appearance state, `/AS`, else the field's
+value), as Word's and RTF's legacy check boxes do, and is labelled first by
+the run just to its right (`☒ I agree to the terms`). A field's kind, flags,
+value and options pass down to its widgets, so each widget of a radio group
+or of a field shown twice reads its own state or the shared value. A choice
+shows the display text `/Opt` pairs with its export value. A widget no text
+labels keeps its own rectangle and is labelled `label: value` with the
+field's tooltip (`/TU`), else the last part of its name (`f1_01` for
+`topmostSubform[0].Page1[0].f1_01[0]`), never the full name; such values
+follow the page's text. Password fields, push buttons, signatures, empty text
+fields and hidden widgets show nothing. A page of more than 2,000 widgets or
+20,000 runs keeps every value under its field's own label.
+
+A FreeText annotation draws its text from its own appearance, outside the
+page content: each line of its `/Contents` (else of its rich text, `/RC`,
+without the markup) is read as page text at the annotation's `/DA` size,
+inside its box (`/Rect` less `/RD`) and its alignment (`/Q`), before the
+first run below it. A Text annotation (a sticky note) and the other markup
+annotations reviewers comment with (highlights, underlines, strike-outs,
+squiggles, carets, shapes, lines, ink, stamps and file attachments) carry a
+comment that is no page content: each page's comments follow it, after its
+images, as a `**Comments**` section of one quotation each, in the order of
+the page's `/Annots` with each reply after the comment it answers:
+`> Comment (Reviewer) on "thirty days": Should this be 45 days?`,
+`> Reply (Author): …`, `> Stamp: Approved`. A text markup annotation quotes
+the words its `/QuadPoints` boxes cover (half of a word's characters or
+more, their places estimated from Helvetica's widths across each run; at
+most 200 characters), except on a turned page; an annotation without
+`/Contents` or rich text, a hidden one, a pop-up (which shows another
+annotation's comment) and media annotations give no comment. At most 1,000
+annotations of a page are read. Link annotations and form widgets are read
+as described above.
 
 ## Right-to-left text
 

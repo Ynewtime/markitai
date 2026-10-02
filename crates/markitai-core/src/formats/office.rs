@@ -22,6 +22,7 @@ enum Ns {
     Presentation,
     Drawing,
     Chart,
+    Diagram,
     Relationships,
     Compatibility,
     #[default]
@@ -36,6 +37,8 @@ fn namespace(uri: &[u8]) -> Ns {
         | b"http://purl.oclc.org/ooxml/drawingml/main" => Ns::Drawing,
         b"http://schemas.openxmlformats.org/drawingml/2006/chart"
         | b"http://purl.oclc.org/ooxml/drawingml/chart" => Ns::Chart,
+        b"http://schemas.openxmlformats.org/drawingml/2006/diagram"
+        | b"http://purl.oclc.org/ooxml/drawingml/diagram" => Ns::Diagram,
         b"http://schemas.openxmlformats.org/package/2006/relationships" => Ns::Relationships,
         b"http://schemas.openxmlformats.org/markup-compatibility/2006" => Ns::Compatibility,
         _ => Ns::Other,
@@ -445,6 +448,24 @@ fn paragraph(node: &Node, output: &mut String) {
             paragraph(child, output);
         }
     }
+}
+
+/// The nodes below `node` with one of `names` as their local name, whatever
+/// their namespace (a Microsoft 365 part uses its own), not searching inside
+/// a match.
+fn collect_named<'a>(node: &'a Node, names: &[&str], out: &mut Vec<&'a Node>) {
+    for child in &node.children {
+        if names.contains(&child.name.as_str()) {
+            out.push(child);
+        } else {
+            collect_named(child, names, out);
+        }
+    }
+}
+
+/// Text on one line, its whitespace runs collapsed.
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn text_body(node: &Node) -> String {
@@ -882,6 +903,129 @@ impl Reader<'_> {
         Ok((!blocks.is_empty()).then(|| super::object_markdown(&blocks)))
     }
 
+    /// A SmartArt diagram's text points as a Markdown list, read from its
+    /// data part (`dgm:relIds/@r:dm`) as the Word reader reads one; `None`
+    /// for a diagram whose data part is missing or holds no text, which then
+    /// keeps the frame's own DrawingML text.
+    fn diagram(
+        &mut self,
+        ids: &Node,
+        part: &str,
+        rels: &BTreeMap<String, Relationship>,
+        slide: usize,
+    ) -> Option<String> {
+        let rel = ids.relation("dm").and_then(|rid| rels.get(rid))?;
+        if rel.external {
+            return None;
+        }
+        let read = resolve(part, &rel.target).and_then(|path| self.package.read(&path, MAX_PART));
+        let bytes = match read {
+            Ok(bytes) => bytes?,
+            Err(e) => {
+                self.warn(slide, format!("diagram data not read: {e}"));
+                return None;
+            }
+        };
+        match anydoc::diagram_data(&bytes) {
+            Ok(blocks) if !blocks.is_empty() => Some(super::object_markdown(&blocks)),
+            Ok(_) => None,
+            Err(e) => {
+                self.warn(slide, format!("diagram data not read: {e}"));
+                None
+            }
+        }
+    }
+
+    /// The names of the deck's comment authors by id, from the legacy
+    /// `commentAuthors` part and the modern `authors` part.
+    fn comment_authors(
+        &mut self,
+        presentation: &str,
+        rels: &BTreeMap<String, Relationship>,
+    ) -> HashMap<String, String> {
+        let mut authors = HashMap::new();
+        for rel in rels.values().filter(|rel| {
+            !rel.external
+                && (rel.kind.ends_with("/commentAuthors") || rel.kind.ends_with("/authors"))
+        }) {
+            let Ok(tree) =
+                resolve(presentation, &rel.target).and_then(|path| self.package.tree(&path))
+            else {
+                continue;
+            };
+            let mut nodes = Vec::new();
+            collect_named(&tree, &["cmAuthor", "author"], &mut nodes);
+            for node in nodes {
+                if let (Some(id), Some(name)) = (node.attr("id"), node.attr("name")) {
+                    authors.insert(id.to_owned(), one_line(name));
+                }
+            }
+        }
+        authors
+    }
+
+    /// A slide's review comments, legacy (`p:cmLst`) and modern (Microsoft
+    /// 365 threads with their replies), each as `Author: text` on one line,
+    /// in the order their parts list them.
+    fn slide_comments(
+        &mut self,
+        part: &str,
+        rels: &BTreeMap<String, Relationship>,
+        authors: &HashMap<String, String>,
+        slide: usize,
+    ) -> Vec<String> {
+        let mut paths = rels
+            .values()
+            .filter(|rel| !rel.external && rel.kind.ends_with("/comments"))
+            .filter_map(|rel| resolve(part, &rel.target).ok())
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths.dedup();
+        let mut comments = Vec::new();
+        for path in paths {
+            let tree = match self.package.tree(&path) {
+                Ok(tree) => tree,
+                Err(e) => {
+                    self.warn(slide, format!("comments unavailable: {e}"));
+                    continue;
+                }
+            };
+            let mut nodes = Vec::new();
+            collect_named(&tree, &["cm"], &mut nodes);
+            for comment in nodes {
+                let mut replies = Vec::new();
+                if let Some(list) = comment.children.iter().find(|n| n.name == "replyLst") {
+                    collect_named(list, &["reply"], &mut replies);
+                }
+                for entry in std::iter::once(comment).chain(replies) {
+                    let text = entry
+                        .children
+                        .iter()
+                        .find_map(|child| match child.name.as_str() {
+                            "text" => Some(child.text.clone()),
+                            "txBody" => Some(text_body(child)),
+                            _ => None,
+                        })
+                        .map(|text| one_line(&text))
+                        .unwrap_or_default();
+                    if text.is_empty() {
+                        continue;
+                    }
+                    let text = super::escape(&text);
+                    comments.push(
+                        match entry.attr("authorId").and_then(|id| authors.get(id)) {
+                            Some(name) if !name.is_empty() => {
+                                format!("{}: {text}", super::escape(name))
+                            }
+                            _ => text,
+                        },
+                    );
+                }
+            }
+        }
+        comments
+    }
+
     fn table(
         &mut self,
         table: &Node,
@@ -1110,6 +1254,14 @@ impl Reader<'_> {
                                 output.push('\n');
                             }
                         }
+                    } else if let Some(Some(list)) = shape
+                        .descendant(Ns::Diagram, "relIds")
+                        .map(|ids| self.diagram(ids, part, rels, slide))
+                    {
+                        // A SmartArt diagram's text points, as a list.
+                        output.push_str("\n\n");
+                        output.push_str(list.trim());
+                        output.push_str("\n\n");
                     } else {
                         let mut text = String::new();
                         paragraph(shape, &mut text);
@@ -1234,6 +1386,7 @@ pub(super) fn extract_presentation(bytes: &[u8]) -> Result<Document> {
     if slides.is_empty() || slides.len() > MAX_SLIDES {
         return Err(error("slide count is empty or exceeds 10,000"));
     }
+    let authors = reader.comment_authors(&presentation, &rels);
     let mut pages = Vec::new();
     let mut readable = 0usize;
     for (index, node) in slides.iter().enumerate() {
@@ -1250,6 +1403,8 @@ pub(super) fn extract_presentation(bytes: &[u8]) -> Result<Document> {
             let shapes = tree
                 .descendant(Ns::Presentation, "spTree")
                 .ok_or_else(|| error("slide has no shape tree"))?;
+            // A slide hidden from the slide show keeps its content, marked.
+            let hidden = matches!(tree.attr("show"), Some("0" | "false"));
             let relationships = match reader.package.relationships(&path) {
                 Ok(rels) => rels,
                 Err(e) => {
@@ -1290,6 +1445,9 @@ pub(super) fn extract_presentation(bytes: &[u8]) -> Result<Document> {
                 title,
             };
             let mut content = reader.shapes(shapes, &context);
+            if hidden {
+                content.insert_str(0, "<!-- Hidden slide -->\n");
+            }
             let notes_path = match related(&relationships, &path, "/notesSlide") {
                 Ok(path) => path,
                 Err(e) => {
@@ -1324,6 +1482,16 @@ pub(super) fn extract_presentation(bytes: &[u8]) -> Result<Document> {
                         }
                     }
                     Err(e) => reader.warn(number, format!("notes unavailable: {e}")),
+                }
+            }
+            // Review comments close the slide, after its speaker notes.
+            let comments = reader.slide_comments(&path, &relationships, &authors, number);
+            if !comments.is_empty() {
+                content.push_str("\n\n### Comments:\n");
+                for comment in comments {
+                    content.push_str("* ");
+                    content.push_str(&comment);
+                    content.push('\n');
                 }
             }
             Ok(content)
@@ -2165,5 +2333,87 @@ mod tests {
         let mut package = Package::new(&bytes).unwrap();
         package.remaining = 2;
         assert!(package.read("ppt/presentation.xml", MAX_PART).is_err());
+    }
+
+    #[test]
+    fn smartart_hidden_slides_and_review_comments_are_kept() {
+        let diagram = r#"<p:graphicFrame><p:xfrm><a:off x="1" y="50"/></p:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"><dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" r:dm="rD" r:lo="rLo"/></a:graphicData></a:graphic></p:graphicFrame>"#;
+        let data = r#"<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><dgm:ptLst><dgm:pt modelId="0" type="doc"><dgm:t><a:p/></dgm:t></dgm:pt><dgm:pt modelId="1"><dgm:t><a:p><a:r><a:t>Discover</a:t></a:r></a:p></dgm:t></dgm:pt><dgm:pt modelId="2"><dgm:t><a:p><a:r><a:t>Deliver</a:t></a:r></a:p></dgm:t></dgm:pt></dgm:ptLst></dgm:dataModel>"#;
+        let hidden =
+            slide(&shape("Backup slide", "", 10)).replace("<p:sld ", r#"<p:sld show="0" "#);
+        let legacy = format!(
+            r#"<p:cmLst xmlns:p="{P}"><p:cm authorId="0" idx="1"><p:text>Please verify   this number.</p:text></p:cm></p:cmLst>"#
+        );
+        let modern = format!(
+            r#"<p188:cmLst xmlns:p188="http://schemas.microsoft.com/office/powerpoint/2018/8/main" xmlns:a="{A}"><p188:cm id="{{C1}}" authorId="{{A1}}"><p188:txBody><a:bodyPr/><a:p><a:r><a:t>Is *this* final?</a:t></a:r></a:p></p188:txBody><p188:replyLst><p188:reply id="{{R1}}" authorId="{{A2}}"><p188:txBody><a:p><a:r><a:t>Yes.</a:t></a:r></a:p></p188:txBody></p188:reply></p188:replyLst></p188:cm></p188:cmLst>"#
+        );
+        let parts: Vec<(&str, Vec<u8>)> = vec![
+            (
+                "ppt/presentation.xml",
+                format!(r#"<p:presentation xmlns:p="{P}" xmlns:r="{R}"><p:sldIdLst><p:sldId id="256" r:id="r1"/><p:sldId id="257" r:id="r2"/></p:sldIdLst></p:presentation>"#).into_bytes(),
+            ),
+            (
+                "ppt/_rels/presentation.xml.rels",
+                relationships(&[
+                    ("r1", "slide", "slides/one.xml"),
+                    ("r2", "slide", "slides/two.xml"),
+                    ("rA", "commentAuthors", "commentAuthors.xml"),
+                ])
+                .replace(
+                    "</Relationships>",
+                    r#"<Relationship Id="rB" Type="http://schemas.microsoft.com/office/2018/10/relationships/authors" Target="authors.xml"/></Relationships>"#,
+                )
+                .into_bytes(),
+            ),
+            (
+                "ppt/commentAuthors.xml",
+                format!(r#"<p:cmAuthorLst xmlns:p="{P}"><p:cmAuthor id="0" name="Reviewer One"/></p:cmAuthorLst>"#).into_bytes(),
+            ),
+            (
+                "ppt/authors.xml",
+                r#"<p188:authorLst xmlns:p188="http://schemas.microsoft.com/office/powerpoint/2018/8/main"><p188:author id="{A1}" name="Ann"/><p188:author id="{A2}" name="Bo"/></p188:authorLst>"#.as_bytes().to_vec(),
+            ),
+            (
+                "ppt/slides/one.xml",
+                slide(&format!("{}{diagram}", shape("Process", "title", 10))).into_bytes(),
+            ),
+            (
+                "ppt/slides/_rels/one.xml.rels",
+                relationships(&[
+                    ("rD", "diagramData", "../diagrams/data1.xml"),
+                    ("rC", "comments", "../comments/comment1.xml"),
+                ])
+                .into_bytes(),
+            ),
+            ("ppt/diagrams/data1.xml", data.as_bytes().to_vec()),
+            ("ppt/comments/comment1.xml", legacy.into_bytes()),
+            ("ppt/slides/two.xml", hidden.into_bytes()),
+            (
+                "ppt/slides/_rels/two.xml.rels",
+                relationships(&[])
+                    .replace(
+                        "</Relationships>",
+                        r#"<Relationship Id="rM" Type="http://schemas.microsoft.com/office/2018/10/relationships/comments" Target="../comments/modernComment_1.xml"/></Relationships>"#,
+                    )
+                    .into_bytes(),
+            ),
+            ("ppt/comments/modernComment_1.xml", modern.into_bytes()),
+        ];
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for (name, bytes) in parts {
+            writer
+                .start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(&bytes).unwrap();
+        }
+        let document = extract_presentation(&writer.finish().unwrap().into_inner()).unwrap();
+        assert_eq!(
+            document.markdown,
+            "<!-- Slide number: 1 -->\n# Process\n\n* Discover\n* Deliver\n\n\
+             ### Comments:\n* Reviewer One: Please verify this number.\n\n\
+             <!-- Slide number: 2 -->\n<!-- Hidden slide -->\nBackup slide\n\n\
+             ### Comments:\n* Ann: Is \\*this\\* final?\n* Bo: Yes."
+        );
+        assert!(document.warnings.is_empty(), "{:?}", document.warnings);
     }
 }

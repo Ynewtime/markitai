@@ -2,7 +2,7 @@
 //! `istdBase` inheritance chains and UPX formatting payloads, resolved into
 //! effective per-style character formatting and paragraph properties.
 
-use crate::formats::doc::sprm::{PapDelta, apply_pap_sprms, apply_style_chpx, chpx_size};
+use crate::formats::doc::sprm::{PapDelta, apply_pap_sprms, apply_style_chpx, chpx_iss, chpx_size};
 use crate::model::Style;
 use crate::shared::binary::{get_u16, get_u32, utf16le_units};
 use crate::shared::blockstyle::{self, BlockStyle};
@@ -22,6 +22,9 @@ pub struct ResolvedStyle {
     pub block: Option<BlockStyle>,
     /// markitai: the text size of the chain (`sprmCHps`), in half-points.
     pub size: Option<crate::shared::visual::Size>,
+    /// markitai: the superscript or subscript position of the chain
+    /// (`sprmCIss`; 0 is the baseline).
+    pub iss: Option<u8>,
 }
 
 #[derive(Debug, Default)]
@@ -192,6 +195,8 @@ fn resolve(
         base.chp = apply_style_chpx(&std.upx_chpx, base.chp);
         // markitai: the text size, for headings set by hand.
         base.size = chpx_size(&std.upx_chpx).or(base.size);
+        // markitai: and its superscript or subscript position.
+        base.iss = chpx_iss(&std.upx_chpx).or(base.iss);
         if let sti @ 1..=9 = std.sti {
             base.heading = Some(sti as u8);
         }

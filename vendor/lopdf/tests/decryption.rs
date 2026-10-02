@@ -1602,3 +1602,83 @@ fn test_was_encrypted_method() {
         "encryption_state not set when auth failed"
     );
 }
+
+/// markitai: a one-page document encrypted for the passwords given, with its
+/// encryption dictionary held in the trailer itself, as MuPDF writes it,
+/// instead of in an object the trailer refers to.
+#[cfg(not(feature = "async"))]
+fn encrypted_with_trailer_dictionary(owner: &str, user: &str) -> Document {
+    let mut doc = Document::with_version("1.7");
+    let id = Object::string_literal("trailer-encryption-dictionary");
+    doc.trailer.set("ID", vec![id.clone(), id]);
+    let pages_id = doc.new_object_id();
+    let font_id = doc.add_object(lopdf::dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica"
+    });
+    let content_id = doc.add_object(lopdf::Stream::new(
+        lopdf::dictionary! {},
+        b"BT /F1 12 Tf 72 700 Td (Readable behind a trailer dictionary) Tj ET".to_vec(),
+    ));
+    let page_id = doc.add_object(lopdf::dictionary! {
+        "Type" => "Page", "Parent" => pages_id, "Contents" => content_id,
+        "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        "Resources" => lopdf::dictionary! { "Font" => lopdf::dictionary! { "F1" => font_id } }
+    });
+    doc.objects.insert(
+        pages_id,
+        lopdf::dictionary! { "Type" => "Pages", "Kids" => vec![page_id.into()], "Count" => 1 }.into(),
+    );
+    let catalog_id = doc.add_object(lopdf::dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+    doc.trailer.set("Root", catalog_id);
+    let version = lopdf::EncryptionVersion::V2 {
+        document: &doc,
+        owner_password: owner,
+        user_password: user,
+        key_length: 128,
+        permissions: lopdf::Permissions::all(),
+    };
+    let state = lopdf::EncryptionState::try_from(version).unwrap();
+    doc.encrypt(&state).unwrap();
+    let encrypt_id = doc.trailer.get(b"Encrypt").unwrap().as_reference().unwrap();
+    let dictionary = doc.objects.remove(&encrypt_id).unwrap();
+    doc.trailer.set("Encrypt", dictionary);
+    doc
+}
+
+#[cfg(not(feature = "async"))]
+fn saved(mut doc: Document) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).unwrap();
+    bytes
+}
+
+#[cfg(not(feature = "async"))]
+#[test]
+fn an_encryption_dictionary_in_the_trailer_is_authenticated_and_decrypted() {
+    const TEXT: &str = "Readable behind a trailer dictionary";
+    // Only an owner password: the empty user password opens it on load.
+    let doc = Document::load_mem(&saved(encrypted_with_trailer_dictionary("owner", ""))).unwrap();
+    assert!(doc.was_encrypted());
+    assert!(!doc.is_encrypted());
+    assert!(doc.trailer.get(b"Encrypt").is_err());
+    assert!(doc.extract_text(&[1]).unwrap().contains(TEXT));
+
+    // A user password: the empty one fails, so the document stays encrypted
+    // and says so; the right password opens it.
+    let bytes = saved(encrypted_with_trailer_dictionary("owner", "user"));
+    let locked = Document::load_mem(&bytes).unwrap();
+    assert!(locked.is_encrypted());
+    assert!(!locked.was_encrypted());
+    assert!(locked.get_encrypted().unwrap().get(b"Filter").is_ok());
+    let opened = Document::load_mem_with_password(&bytes, "user").unwrap();
+    assert!(!opened.is_encrypted());
+    assert!(opened.extract_text(&[1]).unwrap().contains(TEXT));
+
+    // `decrypt` reads the dictionary in the trailer too, and removes it.
+    let mut doc = encrypted_with_trailer_dictionary("owner", "user");
+    assert!(doc.is_encrypted());
+    doc.decrypt("user").unwrap();
+    assert!(!doc.is_encrypted());
+    assert!(doc.trailer.get(b"Encrypt").is_err());
+    assert!(doc.extract_text(&[1]).unwrap().contains(TEXT));
+}

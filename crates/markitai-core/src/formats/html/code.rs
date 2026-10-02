@@ -206,6 +206,8 @@ fn explicit_wrapper(element: ElementRef<'_>) -> bool {
                 "CodeBlock",
                 "cm-editor",
                 "CodeMirror",
+                // MediaWiki's SyntaxHighlight (`mw-highlight-lang-rust`).
+                "mw-highlight",
             ],
         ) || element
             .value()
@@ -281,9 +283,12 @@ fn language_attribute(element: ElementRef<'_>) -> Option<String> {
         }
     }
     for class in element.value().classes() {
+        // MediaWiki's SyntaxHighlight writes `mw-highlight-lang-rust` on the
+        // wrapper around the `pre`.
         if let Some(value) = class
             .strip_prefix("language-")
             .or_else(|| class.strip_prefix("lang-"))
+            .or_else(|| class.strip_prefix("mw-highlight-lang-"))
             .and_then(safe_language)
         {
             return Some(value);

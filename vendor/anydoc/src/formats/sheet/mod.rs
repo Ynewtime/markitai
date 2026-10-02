@@ -4,6 +4,7 @@
 //! assembly, so one workbook saved in any of them converts identically.
 
 mod controls;
+mod notes;
 mod numfmt;
 mod xls;
 mod xlsb;

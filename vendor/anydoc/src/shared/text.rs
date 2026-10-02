@@ -26,6 +26,20 @@ pub fn clean_text(text: &str) -> String {
     out
 }
 
+/// markitai: [`clean_text`] for a spreadsheet cell, whose line breaks (Alt+Enter
+/// in Excel) are content: each break, a CRLF pair included, stays one `\n`.
+pub fn clean_cell_text(text: &str) -> String {
+    if !text.contains(['\r', '\n']) {
+        return clean_text(text);
+    }
+    text.replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .split('\n')
+        .map(clean_text)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Collapse whitespace runs to single spaces.
 pub fn collapse_ws(text: &str) -> String {
     let mut out = String::with_capacity(text.len());

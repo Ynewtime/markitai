@@ -331,7 +331,9 @@ fn chrome(facts: &Facts, element: ElementRef<'_>) -> bool {
         return true;
     }
     // MediaWiki's section edit links, "From Wikipedia" tagline, redirect
-    // note and skip links.
+    // note, skip links and the menu of the article in other languages (the
+    // Vector 2022 skin writes it above the article, with its "30 languages"
+    // label and the link that edits the list).
     if named(
         element,
         &[
@@ -340,6 +342,8 @@ fn chrome(facts: &Facts, element: ElementRef<'_>) -> bool {
             "siteSub",
             "contentSub",
             "jump-to-nav",
+            "mw-portlet-lang",
+            "p-lang-btn",
         ],
     ) {
         return true;
@@ -479,27 +483,9 @@ pub(super) fn structured_page(root: ElementRef<'_>) -> bool {
     matches!(kind(root), Kind::Readme | Kind::Discussion)
 }
 
+/// Hidden, page chrome, or never page text (see [`super::boxes::left_out`]).
 pub(super) fn discarded(facts: &Facts, element: ElementRef<'_>) -> bool {
-    facts.hidden(element)
-        || excluded(facts, element)
-        || matches!(
-            element.value().name(),
-            "script"
-                | "style"
-                | "nav"
-                | "footer"
-                | "form"
-                | "button"
-                | "input"
-                | "select"
-                | "textarea"
-                | "iframe"
-                | "object"
-                | "embed"
-                | "head"
-                | "template"
-                | "noscript"
-        )
+    facts.hidden(element) || excluded(facts, element) || super::boxes::left_out(element)
 }
 
 /// Words of class and id names that mark page furniture around an article:

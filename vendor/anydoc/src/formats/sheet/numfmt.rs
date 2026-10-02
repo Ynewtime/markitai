@@ -10,17 +10,26 @@
 
 use std::cmp::Ordering;
 
-/// Implied format codes for built-in numFmtIds. Ids 5-8 are absent
-/// deliberately: the standard leaves them to the file's own formatCode, so
-/// an unresolved reference falls back to General rather than a guessed
-/// currency format. Ids 27-36 and 50-81 are locale-specific (zh, ja, ko, th)
-/// and unresolvable without a locale.
+/// Implied format codes for built-in numFmtIds. Ids 27-36 and 50-81 are
+/// locale-specific (zh, ja, ko, th) and unresolvable without a locale.
+///
+/// markitai: the currency ids 5-8 and the accounting ids 41-44 are left to
+/// the file's own formatCode, which Excel always writes and openpyxl does not.
+/// Excel shows them in the system locale's currency, which the file does not
+/// name, so they render as the grouping, decimals and negative parentheses
+/// every locale's version shares, without a currency symbol (`(1,234.50)`);
+/// a code that writes its own symbol (`"$"#,##0.00`, `[$€-407]`) keeps it.
+/// Upstream fell back to General, so a negative amount lost its parentheses.
 pub(super) fn builtin_code(id: u32) -> Option<&'static str> {
     Some(match id {
         1 => "0",
         2 => "0.00",
         3 => "#,##0",
         4 => "#,##0.00",
+        5 => "#,##0_);(#,##0)",
+        6 => "#,##0_);[Red](#,##0)",
+        7 => "#,##0.00_);(#,##0.00)",
+        8 => "#,##0.00_);[Red](#,##0.00)",
         9 => "0%",
         10 => "0.00%",
         11 => "0.00E+00",
@@ -39,6 +48,10 @@ pub(super) fn builtin_code(id: u32) -> Option<&'static str> {
         38 => "#,##0 ;[Red](#,##0)",
         39 => "#,##0.00;(#,##0.00)",
         40 => "#,##0.00;[Red](#,##0.00)",
+        41 => "_(* #,##0_);_(* (#,##0);_(* \"-\"_);_(@_)",
+        42 => "_(* #,##0_);_(* (#,##0);_(* \"-\"_);_(@_)",
+        43 => "_(* #,##0.00_);_(* (#,##0.00);_(* \"-\"??_);_(@_)",
+        44 => "_(* #,##0.00_);_(* (#,##0.00);_(* \"-\"??_);_(@_)",
         45 => "mm:ss",
         46 => "[h]:mm:ss",
         47 => "mmss.0",
@@ -56,8 +69,30 @@ pub(super) enum Rendered<'a> {
     /// The section is a date/time format: render the serial as the parts it
     /// asks for.
     DateTime(DateParts),
+    /// markitai: a date format that names its month and shows a four-digit
+    /// year, which reads the same in every locale's order: render the serial
+    /// through these pieces as the format writes it.
+    Spelled(&'a [DatePiece]),
     /// The formatted text, ready to emit.
     Text(String),
+}
+
+/// markitai: one piece of a spelled date format, as [`Rendered::Spelled`]
+/// writes it; each count is the length of its letter run.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) enum DatePiece {
+    Literal(String),
+    /// `yy` two digits, `yyyy` four.
+    Year(usize),
+    /// `m`, `mm`, `mmm` (`Mar`), `mmmm` (`March`).
+    Month(usize),
+    /// `d`, `dd`, `ddd` (`Wed`), `dddd` (`Wednesday`).
+    Day(usize),
+    Hour(usize),
+    Minute(usize),
+    Second(usize),
+    /// `AM/PM` (`true`) or `A/P`; the hours are then on a 12-hour clock.
+    AmPm(bool),
 }
 
 /// Which of a date/time format's parts it asks to see. A code naming only
@@ -138,6 +173,10 @@ enum Tok {
     At,
     /// `_x`: skip the width of one character (one space here).
     Skip,
+    /// markitai: a date/time letter run, lowercased, and its length.
+    Run(char, usize),
+    /// markitai: `AM/PM` (`true`) or `A/P`.
+    AmPm(bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -195,6 +234,8 @@ enum Body {
         suffix: String,
     },
     DateTime(DateParts),
+    /// markitai: see [`Rendered::Spelled`].
+    Spelled(Vec<DatePiece>),
     Number(NumSpec),
     Text(Vec<Tok>),
 }
@@ -260,6 +301,7 @@ impl NumberFormat {
         match &section.body {
             Body::General { prefix, suffix } => Rendered::General { value, prefix, suffix },
             Body::DateTime(parts) => Rendered::DateTime(*parts),
+            Body::Spelled(pieces) => Rendered::Spelled(pieces),
             Body::Number(spec) => {
                 match render_number(spec, value.abs(), auto_minus && value < 0.0) {
                     Some(s) => Rendered::Text(s),
@@ -371,9 +413,101 @@ fn decoration(toks: &[Tok]) -> String {
     toks.iter()
         .map(|t| match t {
             Tok::Literal(s) => s.as_str(),
+            // markitai: date letters, which are no part of a decoration.
+            Tok::Run(..) | Tok::AmPm(_) => "",
             _ => " ",
         })
         .collect()
+}
+
+/// markitai: what a `[$sym-lcid]` locale tag says about the names a date
+/// format shows: English ones, the system's (`F800`, `F400`, `x-sysdate`),
+/// or another language's, which [`spelled_date`] cannot write.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Locale {
+    English,
+    System,
+    Other,
+}
+
+impl Locale {
+    fn of(tag: &str) -> Locale {
+        if tag.to_ascii_lowercase().starts_with("x-sys") {
+            return Locale::System;
+        }
+        match u32::from_str_radix(tag.trim(), 16) {
+            Ok(lcid) if matches!(lcid & 0xFFFF, 0xF800 | 0xF400) => Locale::System,
+            // The primary language is the low ten bits; 0x09 is English.
+            Ok(lcid) if lcid & 0x3FF == 0x09 => Locale::English,
+            _ => Locale::Other,
+        }
+    }
+}
+
+/// markitai: the pieces of a date section that reads the same in every
+/// locale's order, so it is written as the format shows it rather than as an
+/// ISO date: it shows a four-digit year, and names its month or weekday
+/// (`dddd, mmmm d, yyyy`, `d mmm yyyy`) in English, or labels a numeric
+/// month the CJK way (`yyyy"年"m"月"d"日"`). A two-digit year, a numeric
+/// date (`m/d/yy`, whose order is ambiguous), a one-letter month (`mmmmm`),
+/// an elapsed span or fractional seconds keep the ISO rendering.
+fn spelled_date(raw: &[Tok], elapsed: bool, locale: Option<Locale>) -> Option<Vec<DatePiece>> {
+    if elapsed {
+        return None;
+    }
+    let runs: Vec<(usize, char)> = raw
+        .iter()
+        .enumerate()
+        .filter_map(|(i, t)| match t {
+            Tok::Run(c, _) => Some((i, *c)),
+            _ => None,
+        })
+        .collect();
+    let (mut year4, mut named, mut labeled) = (false, false, false);
+    let mut pieces = Vec::with_capacity(raw.len());
+    for (i, tok) in raw.iter().enumerate() {
+        pieces.push(match tok {
+            Tok::Literal(s) => DatePiece::Literal(s.clone()),
+            Tok::Skip => DatePiece::Literal(" ".into()),
+            Tok::Slash => DatePiece::Literal("/".into()),
+            Tok::Comma => DatePiece::Literal(",".into()),
+            Tok::AmPm(full) => DatePiece::AmPm(*full),
+            &Tok::Run(c, n) => match c {
+                'y' => {
+                    year4 |= n >= 3;
+                    DatePiece::Year(n)
+                }
+                'd' => {
+                    named |= n >= 3;
+                    DatePiece::Day(n)
+                }
+                'h' => DatePiece::Hour(n),
+                's' => DatePiece::Second(n),
+                'm' => {
+                    // Minutes beside an hour or before seconds, as in
+                    // `date_parts`.
+                    let k = runs.iter().position(|&(at, _)| at == i)?;
+                    let minute = (k > 0 && runs[k - 1].1 == 'h')
+                        || runs.get(k + 1).is_some_and(|&(_, next)| next == 's');
+                    if minute {
+                        DatePiece::Minute(n)
+                    } else {
+                        if n >= 5 {
+                            return None;
+                        }
+                        named |= n >= 3;
+                        labeled |= matches!(raw.get(i + 1),
+                            Some(Tok::Literal(s)) if s.starts_with(['月', '월']));
+                        DatePiece::Month(n)
+                    }
+                }
+                _ => return None,
+            },
+            _ => return None,
+        });
+    }
+    let readable = if named { locale != Some(Locale::Other) } else { labeled };
+    (year4 && readable).then_some(pieces)
 }
 
 /// Which parts a date/time section asks for. `m` is minutes when an hour run
@@ -437,6 +571,8 @@ fn parse_section(s: &str) -> Option<Section> {
     // months or minutes from what sits beside it.
     let mut runs: Vec<char> = Vec::new();
     let mut has_general = false;
+    // markitai: the locale a `[$…-lcid]` bracket names.
+    let mut locale = None;
     while i < chars.len() {
         let c = chars[i];
         match c {
@@ -444,6 +580,9 @@ fn parse_section(s: &str) -> Option<Section> {
                 let end = chars[i..].iter().position(|&c| c == ']')? + i;
                 let inner: String = chars[i + 1..end].iter().collect();
                 i = end + 1;
+                if let Some((_, tag)) = inner.strip_prefix('$').and_then(|r| r.split_once('-')) {
+                    locale = Some(Locale::of(tag));
+                }
                 bracket(&inner, &mut raw, &mut condition, &mut has_date, &mut elapsed, &mut runs)?;
             }
             '"' => {
@@ -494,9 +633,11 @@ fn parse_section(s: &str) -> Option<Section> {
             'y' | 'Y' | 'd' | 'D' | 'h' | 'H' | 's' | 'S' | 'm' | 'M' => {
                 has_date = true;
                 runs.push(c.to_ascii_lowercase());
+                let start = i;
                 while i < chars.len() && chars[i].eq_ignore_ascii_case(&c) {
                     i += 1;
                 }
+                raw.push(Tok::Run(c.to_ascii_lowercase(), i - start));
             }
             'g' | 'G' => {
                 let word: String = chars[i..chars.len().min(i + 7)].iter().collect();
@@ -524,6 +665,7 @@ fn parse_section(s: &str) -> Option<Section> {
                     .map(|t| t.len())?;
                 has_date = true;
                 runs.push('a');
+                raw.push(Tok::AmPm(len == 5));
                 i += len;
             }
             '1'..='9' => {
@@ -546,6 +688,8 @@ fn parse_section(s: &str) -> Option<Section> {
         }
     }
     let body = if has_general {
+        // markitai: date letters beside `General` never were tokens.
+        raw.retain(|t| !matches!(t, Tok::Run(..) | Tok::AmPm(_)));
         if raw.iter().any(|t| !matches!(t, Tok::Literal(_) | Tok::Skip)) {
             return None;
         }
@@ -556,7 +700,10 @@ fn parse_section(s: &str) -> Option<Section> {
         if raw.iter().any(|t| matches!(t, Tok::At | Tok::Exp { .. } | Tok::BareDigits(_))) {
             return None;
         }
-        Body::DateTime(date_parts(&runs, elapsed))
+        match spelled_date(&raw, elapsed.is_some(), locale) {
+            Some(pieces) => Body::Spelled(pieces),
+            None => Body::DateTime(date_parts(&runs, elapsed)),
+        }
     } else if raw.iter().any(|t| matches!(t, Tok::At)) {
         if raw.iter().any(|t| {
             matches!(
@@ -944,7 +1091,13 @@ fn emit(
                 }
             }
             Tok::Skip => out.push(' '),
-            Tok::Slash | Tok::At | Tok::Comma | Tok::BareDigits(_) => {}
+            // A number section holds no date letters (markitai).
+            Tok::Slash
+            | Tok::At
+            | Tok::Comma
+            | Tok::BareDigits(_)
+            | Tok::Run(..)
+            | Tok::AmPm(_) => {}
         }
     }
     out
@@ -1369,7 +1522,8 @@ mod tests {
             other => panic!("expected a date/time section, got {other:?}"),
         };
         assert_eq!(parts("yyyy-mm-dd"), (true, false, false));
-        assert_eq!(parts("d mmm yyyy"), (true, false, false));
+        // markitai: with a four-digit year a named month is spelled instead.
+        assert_eq!(parts("d mmm yy"), (true, false, false));
         assert_eq!(parts("h:mm"), (false, true, false));
         assert_eq!(parts("yyyy-mm-dd hh:mm:ss"), (true, true, false));
         assert_eq!(parts("[h]:mm:ss"), (false, true, true));
@@ -1378,6 +1532,45 @@ mod tests {
         // `m` is minutes beside an hour or a second, and months otherwise.
         assert_eq!(parts("mm:ss"), (false, true, false));
         assert_eq!(parts("mm/dd/yyyy"), (true, false, false));
+    }
+
+    // markitai: a date format that reads the same in every locale's order is
+    // written as it shows; the rest keep the ISO rendering.
+    #[test]
+    fn only_dates_that_name_their_month_and_year_are_spelled() {
+        let spelled = |code: &str| {
+            matches!(
+                NumberFormat::parse(code).unwrap().format_number(46_085.0),
+                Rendered::Spelled(_)
+            )
+        };
+        for code in [
+            "dddd, mmmm d, yyyy",
+            "d mmm yyyy",
+            "mmmm yyyy",
+            "yyyy\"年\"m\"月\"d\"日\"",
+            "[$-409]dddd, mmmm d, yyyy",
+            "[$-F800]dddd, mmmm dd, yyyy",
+            "[$-x-sysdate]dddd, mmmm dd, yyyy",
+            "mmm d, yyyy h:mm AM/PM",
+        ] {
+            assert!(spelled(code), "{code}");
+        }
+        for code in [
+            "m/d/yy",
+            "mm/dd/yyyy",
+            "d-mmm-yy",
+            "d-mmm",
+            "mmmmm yyyy",
+            "yyyy-mm-dd hh:mm",
+            "[$-407]dddd, d. mmmm yyyy",
+            "[h]:mm",
+            "dd/mm/yyyy hh:mm:ss.000",
+        ] {
+            assert!(!spelled(code), "{code}");
+        }
+        // A labelled numeric month reads the same under any locale.
+        assert!(spelled("[$-804]yyyy\"年\"m\"月\"d\"日\""));
     }
 
     #[test]

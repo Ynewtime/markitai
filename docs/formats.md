@@ -10,8 +10,8 @@ network policy and optional model enhancement belong to the orchestration layer.
 | Inputs | Reader | Current behavior |
 | --- | --- | --- |
 | TXT, MD, MARKDOWN | Rust text decoder | Preserves text and existing frontmatter; accepts UTF-8, BOM-marked UTF-16, Windows-1252 and detected GBK/GB18030, Big5, Shift_JIS, EUC-JP and EUC-KR (see [text encodings](#text-encodings)) |
-| HTML, HTM, XHTML | scraper + htmd | Honors a `<meta>` charset declaration; selects an article/main candidate, extracts metadata, removes navigation/scripts/hidden content, resolves relative HTTP links and images |
-| CSV, TSV | csv | Decoded like TXT; both keep every field (the table is as wide as the widest row) and escape `|`, backslashes and line breaks in cells; the reference cut CSV rows to the header's width and left those characters raw |
+| HTML, HTM, XHTML | scraper + htmd | Honors a `<meta>` charset declaration; selects an article/main candidate, extracts metadata, removes navigation/scripts/hidden content, controls, entry-box forms and the page footer (keeping a form's prose and a part's footer), resolves relative HTTP links and images; `<br>` is a hard break, task lists keep `[x]`, ruby reads `漢字(kanji)`, table cells use `<br>` and `\|` ([HTML](html.md#rendering-and-url-handling)) |
+| CSV, TSV | csv | Decoded like TXT; the delimiter (`,`, `;`, tab or `|`) is sniffed from the first records (see [delimited text](#delimited-text)); both keep every field (the table is as wide as the widest row) and escape `|`, backslashes and line breaks in cells; the reference cut CSV rows to the header's width and left those characters raw |
 | IPYNB | serde_json | Markdown cells, fenced code and raw cells; metadata title and code language; code fences sized to protect embedded backticks; each code cell's printed text, results, errors and images follow it, and markdown-cell image attachments are assets (see [notebook outputs](#notebook-outputs)) |
 | JSON | serde_json | Validated, pretty-printed fenced JSON; an additive Rust format |
 | XML | quick-xml | Structured headings, attributes and mixed text, plus a source fence for small inputs; document types are rejected |
@@ -19,13 +19,13 @@ network policy and optional model enhancement belong to the orchestration layer.
 | MSG | cfb + native properties | Outlook headers, Unicode/ANSI body, HTML fallback and bounded by-value attachments |
 | RST, Org, TeX | native markup readers | Structured sections, lists, code, math, links and tables; unsupported constructs retained with warnings |
 | JPEG, PNG, GIF, BMP, TIFF, WebP | image + native LLM transport + macOS Vision | Standalone vision inputs, shared raster assets and complete TIFF page OCR/vision with bounded decoding |
-| DOC, DOCX, DOCM | anydoc document model | Headings, styled text, lists, tables, links, formulas, notes and embedded assets |
+| DOC, DOCX, DOCM; templates DOT, DOTX, DOTM | anydoc document model | Headings, styled text, lists, tables, links, formulas, notes and embedded assets |
 | PPT, PPS, POT | anydoc document model | Legacy presentation content through the shared Markdown renderer, behind a numbered slide marker per slide; embedded charts and worksheets read as their data tables |
-| PPTX, PPTM, PPSX, PPSM | bounded ZIP + PresentationML reader | Ordered slide markers, title placeholders, text frames with bullets as nested lists and web/mail hyperlinks as links, grouped shapes, tables, referenced images, cached chart data and speaker notes |
-| XLS, XLSX, XLSM, XLSB | anydoc document model | Native sheet content; XLS/XLSX/XLSM single-sheet names are recovered from package metadata; exact cell-format compatibility has not been established |
-| ODT, ODS, ODP, RTF | anydoc document model | Native structured documents through the same Markdown renderer; ODP slides carry numbered slide markers |
+| PPTX, PPTM, PPSX, PPSM; templates POTX, POTM | bounded ZIP + PresentationML reader | Ordered slide markers, hidden-slide markers, title placeholders, text frames with bullets as nested lists and web/mail hyperlinks as links, grouped shapes, tables, referenced images, cached chart data, SmartArt text as lists, speaker notes and review comments |
+| XLS, XLSX, XLSM, XLSB; templates XLT, XLTX, XLTM | anydoc document model | Native sheet content with number formats, cell links, cell notes and the text of uncalculated formulas (see [spreadsheets](#spreadsheets)); XLS/XLSX/XLSM single-sheet names are recovered from package metadata; exact cell-format compatibility has not been established |
+| ODT, ODS, ODP, RTF; templates OTT, OTS, OTP | anydoc document model | Native structured documents through the same Markdown renderer; ODP slides carry numbered slide markers |
 | NUMBERS | bounded ZIP/directory IWA preflight + iwork | Ordered sheets/tables, rectangular saved values and explicit formatting/unsupported-content warnings; see [Numbers](numbers.md) |
-| EPUB | anydoc + OPF metadata | Spine content and the original title/authors/language/publisher/date/description/identifier preamble |
+| EPUB | anydoc + OPF metadata | Spine content and the original title/authors/language/publisher/date/description/identifier preamble; ruby as base text then reading (`漢字(kanji)`), definition terms as bold paragraphs, and footnote marks the author wrote as Markdown (`[^5]`, `[^5]: …`) kept unescaped |
 | PDF | pdf-inspector + lopdf; optional macOS CoreGraphics/Vision | Per-page text/layout, link targets, partial recovery and embedded images; explicit local-file page OCR and screenshots through the shared media pipeline |
 
 ### Text encodings
@@ -426,11 +426,20 @@ Cached numbers read through their cache's (or point's) format code with the
 spreadsheet readers' engine, so date categories are ISO dates rather than
 serial numbers (`c:date1904` honoured) and `0%` values are percentages; text
 points and General numbers are unchanged.
-Speaker notes follow their slide under `### Notes:`. Missing or malformed slides
-retain their numbered marker with a warning, while readable slides survive; a
-package with no readable slide fails. Unknown shapes retain available DrawingML
-text with a warning, and unsupported charts are explicitly identified. These
-fallbacks do not imply complete drawing, chart-type or SmartArt support.
+Speaker notes follow their slide under `### Notes:`, and its review comments
+close it under `### Comments:`, one item per comment or reply, `Author: text`
+on one line: legacy comments (`p:cmLst`, authors from `commentAuthors.xml`) and
+Microsoft 365 threads (`modernComment_*.xml`, authors from `authors.xml`). A
+slide hidden from the slide show (`show="0"`) keeps its content, with
+`<!-- Hidden slide -->` after its slide marker. A SmartArt diagram reads as the
+text points of its data part (`dgm:relIds/@r:dm`) as a bullet list in the order
+the part lists them, as the Word reader reads one; its hierarchy and layout are
+not kept, and a diagram whose data part is missing or holds no text keeps the
+frame's own text with a warning. Missing or malformed slides retain their
+numbered marker with a warning, while readable slides survive; a package with
+no readable slide fails. Unknown shapes retain available DrawingML text with a
+warning, and unsupported charts are explicitly identified. These fallbacks do
+not imply complete drawing or chart-type support.
 
 The vendored anydoc records where each slide of an ODP or a legacy PPT begins
 (`slide_starts`, see its `MARKITAI-PATCH.md`), and the renderer writes the same
@@ -552,6 +561,74 @@ The browser runtime is outside this module. No Python interpreter,
 Node runtime, Office installation, LibreOffice or hosted extraction service is
 used by the readers above.
 
+### Delimited text
+
+A CSV or TSV file names no delimiter, and the extension is often wrong: Excel
+in a European locale exports `;`-separated `.csv` files with decimal commas,
+its "Unicode Text" export is tab-separated UTF-16 (with a byte-order mark)
+under any name, and dumps use `|`. After decoding (see
+[text encodings](#text-encodings)), each of `,`, tab, `;` and `|` splits the
+first 50 records (at most 64 KiB), quote-aware, blank lines left out. A
+delimiter qualifies when its most common field count is more than one and at
+least four in five records have it, so a title line or a total row does not
+outvote the table. The qualifying delimiter whose count the most records share
+wins, then the one that gives more fields, then the extension's (`,` for
+`.csv`, a tab for `.tsv`); when none qualifies the extension's stays, so
+single-column and ragged files read as before. Commas never compete with a
+qualifying `;` or tab when every field holding one is a number written with a
+decimal comma (`1.234,50`, `99,00`, `€ 12,5`), so a European amount stays one
+value even in a file without a header whose every row has one. A file whose
+header and rows split the same way on two delimiters (`a,b;c`) keeps the
+extension's. The reference sniffs only `.tsv` files, from their first line.
+
+### Spreadsheets
+
+Workbooks (XLSX, XLSM, XLSB, XLS and their templates) are read through one
+grid assembly, so a workbook saved in any container converts the same:
+
+- A formula cell saved without its value (openpyxl, pandas and other writers
+  that do not calculate leave `<v>` out or empty) shows its formula as code,
+  `` `=B2*C2` ``, and the workbook gets one warning counting such formulas
+  with the remedy: open and save it in Excel or LibreOffice to compute them.
+  A cached value, an empty string result included, is always what shows; no
+  formula is evaluated. A shared formula's later cells, which carry no text of
+  their own, stay empty but are counted.
+- Hidden rows and columns are omitted, as hidden sheets are, and a warning
+  names how many held content (`Worksheet "Data" has 1 hidden row and 1
+  hidden column holding content; …`); hidden empty rows and columns are not
+  counted.
+- A cell's hyperlink to an `http`, `https` or `mailto` address is a
+  `[text](url)` link (XLSX, XLSM). Links into the workbook (`#Sheet2!A1`) and
+  other schemes keep the text.
+- Cell notes follow the sheet's table as a list under `### Notes`, in reading
+  order, each led by its cell (`* B3: text`), on one line. A legacy note's text
+  is what the note box shows, which Excel begins with the author's name; a
+  threaded comment (Microsoft 365) is one item per message, `Author: text`,
+  and replaces the placeholder Excel writes for it into the legacy part. Notes
+  of hidden rows and columns are omitted with them (XLSX, XLSM). Word and
+  OpenDocument text comments stay out of the Markdown with a count warning:
+  they annotate a span of text rather than a cell.
+- A line break inside a cell is `<br>`.
+- Number formats render as Excel shows them in the en-US locale. The currency (5–8) and
+  accounting (41–44) format ids, which Excel always defines in the file and
+  openpyxl does not, show their currency in the system locale, which the file
+  does not name: they render with grouping, decimals and negative parentheses
+  but no currency symbol (`(1,234.50)`), while a code that writes its own
+  symbol keeps it (`"$"#,##0.00` gives `($1,234.50)`, `[$€-407]` gives `€`). Sections, conditions,
+  `[Red]` and other colours, grouping, scaling, fractions and scientific
+  notation follow their codes. Dates stay ISO (`2026-03-04`), since `m/d` and
+  `d/m` are ambiguous, except a date format that names its month or weekday in
+  English, or labels a numeric month the CJK way, and shows a four-digit year:
+  `dddd, mmmm d, yyyy` gives `Wednesday, March 4, 2026` and
+  `yyyy"年"m"月"d"日"` gives `2026年3月4日`. A format whose `[$-lcid]`
+  locale is not English keeps the ISO date, since its month names are not
+  English.
+- A sheet's first row is its header. A first row that holds one cell merged
+  across every column with content (a title) is written as a line above the
+  table when the row it leads to holds at least two cells and no merge, which
+  then is the header; a title that repeats the sheet's heading is not written
+  again. ODS sheets do the same.
+
 ### Notebook outputs
 
 A code cell is followed by what it produced, one block per output, in order:
@@ -635,6 +712,12 @@ unused mini stream; a file whose mini stream holds a stream is never changed,
 the original error stands if the copy fails too, and a warning reports the
 repair ([record](validation/office-quality-round42.md)).
 
+Word 97 text raised or lowered (`sprmCIss`, set directly, by a character style
+or by a paragraph style) is written in Unicode superscript or subscript forms
+when every character of the run has one (`claim.¹`, `H₂O`, `x₁`), as the DOCX,
+RTF and ODT readers write it; a run with a character that has none (`1st`)
+stays at the baseline rather than half converted.
+
 That exporter also writes a picture as the object replacement character U+FFFC
 and stores no picture data (the file has no Data stream). The reader drops the
 character, so no stray `\ufffc` paragraph remains where the picture was, and
@@ -663,8 +746,10 @@ tables keep their first row as data with a blank Markdown header. ODS uses its
 first row as the header and removes trailing columns that are empty in every row,
 whatever the sheet declares or a merged title spans (a title merged over five
 columns above three columns of data gives three, as the reference renders the
-ODS fixture); empty columns between filled ones stay. RTF heading bold markers are omitted while other emphasis is
-retained. Hidden XLS/XLSX worksheets are currently omitted by the upstream parser
+ODS fixture); empty columns between filled ones stay. A merged title row above
+the real header is text above the table, as in XLSX (see
+[spreadsheets](#spreadsheets)); the reference makes it the header. RTF heading bold markers are omitted while other emphasis is
+retained. Hidden XLS/XLSX worksheets, rows and columns are omitted by the upstream parser
 and reported explicitly. XLSB sheet metadata, older XLS code pages other than
 Windows-1252, exact presentation image encoding, PDF table
 layout and PDF image placement require further compatibility work.

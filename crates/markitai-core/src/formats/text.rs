@@ -27,12 +27,187 @@ pub(super) fn plain(bytes: &[u8]) -> Result<Document> {
     })
 }
 
-/// CSV or TSV bytes as a table document.
-pub(super) fn delimited_bytes(bytes: &[u8], delimiter: u8) -> Result<Document> {
+/// CSV or TSV bytes as a table document. `default` is the delimiter the
+/// extension names; the decoded text may show another (see [`sniff_delimiter`]).
+pub(super) fn delimited_bytes(bytes: &[u8], default: u8) -> Result<Document> {
     let (source, warning) = decode_legacy(bytes)?;
-    let mut document = delimited(&source, delimiter)?;
+    let mut document = delimited(&source, sniff_delimiter(&source, default))?;
     document.warnings.extend(warning);
     Ok(document)
+}
+
+/// Delimiters a delimited text file is read with, in the order that breaks a
+/// tie after the extension's own.
+const DELIMITERS: [u8; 4] = *b",\t;|";
+/// Records the delimiter is judged on.
+const SNIFF_RECORDS: usize = 50;
+/// Bytes the judged records are cut from, so one long line costs little.
+const SNIFF_BYTES: usize = 64 * 1024;
+/// Share of the judged records that must have the most common field count, as
+/// a numerator over [`SHARE_DEN`]: a title line or a total row may differ.
+const SHARE_NUM: usize = 4;
+const SHARE_DEN: usize = 5;
+
+/// What one delimiter makes of the first records.
+struct Reading {
+    delimiter: u8,
+    /// The most common field count (the larger one on a tie).
+    width: usize,
+    /// Records with that count, and records judged.
+    agree: usize,
+    records: usize,
+    /// Whether every field holding a comma reads as a number written with a
+    /// decimal comma (`1.234,50`, `99,00`), and at least one does.
+    decimal_commas: bool,
+}
+
+/// The delimiter of delimited text, which carries none of its own: a
+/// semicolon-separated export from a European Excel, a tab-separated
+/// "Unicode Text" file named `.csv`, a pipe-separated dump.
+///
+/// Each of `,` `\t` `;` `|` splits the first [`SNIFF_RECORDS`] records,
+/// quote-aware (a delimiter inside a quoted field does not split it). A
+/// delimiter qualifies when it splits records into more than one field and
+/// at least four in five records have its most common field count. The
+/// qualifying delimiter whose count the most records share wins, then the
+/// one that splits into more fields, then `default` (the extension's: `,` for
+/// `.csv`, a tab for `.tsv`). When none qualifies `default` stays.
+///
+/// Commas inside a semicolon or tab file are decimal separators when every
+/// field holding one reads as such a number; the comma then never competes,
+/// so `José;Zürich;1.234,50` keeps `1.234,50` whole even in a file whose
+/// every row has one amount.
+pub(super) fn sniff_delimiter(source: &str, default: u8) -> u8 {
+    let sample = sniff_sample(source);
+    let truncated = sample.len() < source.len();
+    let readings: Vec<Reading> = DELIMITERS
+        .iter()
+        .filter_map(|&delimiter| reading(sample, delimiter, truncated))
+        .collect();
+    let decimal_commas = readings
+        .iter()
+        .any(|r| r.delimiter != b',' && qualifies(r) && r.decimal_commas);
+    let mut best: Option<&Reading> = None;
+    for candidate in readings.iter().filter(|r| qualifies(r)) {
+        if candidate.delimiter == b',' && decimal_commas {
+            continue;
+        }
+        let better = match best {
+            None => true,
+            Some(current) => {
+                // Shares compared exactly, as cross products.
+                let (a, b) = (
+                    candidate.agree * current.records,
+                    current.agree * candidate.records,
+                );
+                a > b
+                    || (a == b && candidate.width > current.width)
+                    || (a == b
+                        && candidate.width == current.width
+                        && candidate.delimiter == default)
+            }
+        };
+        if better {
+            best = Some(candidate);
+        }
+    }
+    best.map_or(default, |reading| reading.delimiter)
+}
+
+fn qualifies(reading: &Reading) -> bool {
+    reading.width > 1 && reading.agree * SHARE_DEN >= reading.records * SHARE_NUM
+}
+
+/// The first [`SNIFF_RECORDS`] lines of `source`, at most [`SNIFF_BYTES`]
+/// and cut at a line end where there is one; a quoted field may still run
+/// past the cut, which the caller then leaves out of the judgement.
+fn sniff_sample(source: &str) -> &str {
+    let mut end = source.len().min(SNIFF_BYTES);
+    while !source.is_char_boundary(end) {
+        end -= 1;
+    }
+    let head = &source[..end];
+    let mut lines = 0;
+    for (at, byte) in head.bytes().enumerate() {
+        if byte == b'\n' {
+            lines += 1;
+            if lines == SNIFF_RECORDS {
+                return &head[..=at];
+            }
+        }
+    }
+    if end < source.len()
+        && let Some(at) = head.rfind('\n')
+    {
+        return &head[..=at];
+    }
+    head
+}
+
+fn reading(sample: &str, delimiter: u8, truncated: bool) -> Option<Reading> {
+    let mut reader = csv::ReaderBuilder::new()
+        .delimiter(delimiter)
+        .has_headers(false)
+        .flexible(true)
+        .from_reader(sample.as_bytes());
+    let mut widths = Vec::new();
+    let mut commas = 0usize;
+    let mut decimal = true;
+    for record in reader.records().take(SNIFF_RECORDS) {
+        let Ok(record) = record else {
+            break;
+        };
+        // A blank line is no record of the table.
+        if record.len() == 1 && record[0].trim().is_empty() {
+            continue;
+        }
+        widths.push(record.len());
+        for field in record.iter().filter(|field| field.contains(',')) {
+            commas += 1;
+            decimal &= is_decimal_comma_number(field);
+        }
+    }
+    // The last record of a cut sample may be a quoted field cut short.
+    if truncated {
+        widths.pop();
+    }
+    if widths.is_empty() {
+        return None;
+    }
+    let mut counts: std::collections::BTreeMap<usize, usize> = std::collections::BTreeMap::new();
+    for &width in &widths {
+        *counts.entry(width).or_default() += 1;
+    }
+    let (width, agree) = counts
+        .iter()
+        .max_by_key(|&(&width, &count)| (count, width))
+        .map(|(&width, &count)| (width, count))?;
+    Some(Reading {
+        delimiter,
+        width,
+        agree,
+        records: widths.len(),
+        decimal_commas: decimal && commas > 0,
+    })
+}
+
+/// A number written with a decimal comma: an optional sign or currency
+/// symbol, digits optionally grouped by `.`, spaces or apostrophes, one
+/// comma, then digits (`-1.234,50`, `99,00`, `€ 12,5`, `12,5 %`).
+fn is_decimal_comma_number(field: &str) -> bool {
+    let field = field.trim().trim_start_matches(['-', '+', '(']);
+    let field = field.trim_end_matches([')', '%', ' ', '€', '$', '£']);
+    let field = field.trim_start_matches(['€', '$', '£', ' ']);
+    let Some((whole, fraction)) = field.split_once(',') else {
+        return false;
+    };
+    !whole.is_empty()
+        && !fraction.is_empty()
+        && whole.starts_with(|c: char| c.is_ascii_digit())
+        && whole
+            .chars()
+            .all(|c| c.is_ascii_digit() || matches!(c, '.' | ' ' | '\'' | '\u{a0}'))
+        && fraction.chars().all(|c| c.is_ascii_digit())
 }
 
 fn decode_with(
@@ -635,6 +810,57 @@ mod tests {
         assert!(doc.markdown.contains("| a | b |  |"));
         assert!(doc.markdown.contains("x\\|y | line<br>break | extra"));
     }
+    #[test]
+    fn the_delimiter_is_sniffed_from_the_first_records() {
+        let sniff = |text: &str, default: u8| sniff_delimiter(text, default) as char;
+        // A European Excel export, decimal commas kept whole.
+        let euro = "Name;Ville;Montant\nJosé;Zürich;1.234,50\nÉlodie;São Paulo;99,00\n";
+        assert_eq!(sniff(euro, b','), ';');
+        assert_eq!(
+            delimited_bytes(euro.as_bytes(), b',').unwrap().markdown,
+            "| Name | Ville | Montant |\n| --- | --- | --- |\n| José | Zürich | 1.234,50 |\n| Élodie | São Paulo | 99,00 |"
+        );
+        // Without a header every row splits the same on its decimal comma
+        // too; decimal commas never compete with the semicolon.
+        assert_eq!(sniff("A;B;1,5\nC;D;2,5\n", b','), ';');
+        assert_eq!(sniff("A;1,5;2,5\nB;3,5;4,5\n", b','), ';');
+        assert_eq!(sniff("a\t1,5\nb\t2,25\n", b','), '\t');
+        // Tabs in a `.csv`, commas in a `.tsv`, semicolons in a `.tsv`, pipes.
+        assert_eq!(sniff("Name\tCity\nJosé\tZürich\n", b','), '\t');
+        assert_eq!(sniff("a,b,c\n1,2,3\n", b'\t'), ',');
+        assert_eq!(sniff("Name;Ville;Montant\nJosé;Zürich;1,234\n", b'\t'), ';');
+        assert_eq!(sniff("a|b|c\n1|2|3\n4|5|6\n", b','), '|');
+        // Quoted delimiters do not split, and ragged comma rows stay commas.
+        assert_eq!(sniff("id,text\n1,\"a;b;c\"\n2,\"d;e\"\n", b','), ',');
+        assert_eq!(sniff("a,b,c\n1,2\n3,4,5,6\n\n7,8,9\n", b','), ',');
+        // Ambiguous or single-column text keeps the extension's delimiter.
+        assert_eq!(sniff("a,b;c\n1,2;3\n", b','), ',');
+        assert_eq!(sniff("a,b;c\n1,2;3\n", b';'), ';');
+        assert_eq!(sniff("name\nAlice\nBob\n", b'\t'), '\t');
+        assert_eq!(sniff("", b','), ',');
+        // A title line before the records does not outvote them.
+        let titled = "Report 2026\nx;y;z\n1;2;3\n4;5;6\n7;8;9\n10;11;12\n";
+        assert_eq!(sniff(titled, b','), ';');
+        // A quoted field the sample cuts short is left out of the count.
+        let mut long = "a;b\n".repeat(60);
+        long.push_str(&format!("\"{}", "x\n".repeat(100)));
+        assert_eq!(sniff(&long, b','), ';');
+    }
+
+    #[test]
+    fn a_utf16_unicode_text_export_named_csv_splits_on_tabs() {
+        let mut bytes = vec![0xff, 0xfe];
+        for unit in "Name\tCity\nJosé\tZürich\nLi\t北京\n".encode_utf16() {
+            bytes.extend(unit.to_le_bytes());
+        }
+        assert_eq!(
+            delimited_bytes(&bytes, b',').unwrap().markdown,
+            "| Name | City |\n| --- | --- |\n| José | Zürich |\n| Li | 北京 |"
+        );
+        assert!(is_decimal_comma_number("-1.234,50") && is_decimal_comma_number("€ 12,5"));
+        assert!(!is_decimal_comma_number("Paris, France") && !is_decimal_comma_number("1,"));
+    }
+
     #[test]
     fn notebook_preserves_all_cell_types_and_long_fences() {
         let doc = notebook(r##"{"metadata":{"title":"Notebook","language_info":{"name":"python"}},"cells":[{"cell_type":"markdown","source":["# Title\n","text"]},{"cell_type":"code","source":"print('```')\n"},{"cell_type":"raw","source":"raw"}]}"##).unwrap();

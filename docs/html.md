@@ -64,9 +64,67 @@ documented article heuristic; ordinary hidden descendants remain hidden.
 - `<q>` retains quotation marks and nested inline markup. Source newlines remain
   soft Markdown line breaks outside code; structural block elements establish
   paragraph boundaries. This follows the source renderer's line behavior, which
-  can differ from a browser's visual whitespace collapse.
+  can differ from a browser's visual whitespace collapse. A heading, a link's
+  text and a table cell are one line: a source newline there is a space (a link
+  split over lines lost the words after the break to the link repair of normal
+  output, and a heading ended at the break).
+- `<br>` in running text (a poem, an address, a list item, a quotation) is a hard
+  line break, written `\` at the line's end as the document formats write one
+  (two trailing spaces would not survive normal output's cleanup of line ends);
+  a source newline right after it adds nothing. Two or more in a row end the
+  paragraph, as old pages that space paragraphs with `<br><br>` mean, unless
+  emphasis or a link around them would be split (then one hard break). A break
+  at the edge of its block is left out, and one that opens or ends an inline
+  element (`<span>now.<br></span>`, `<b>bold<br></b>`) is moved outside it, so
+  the next line is not joined to it. In a heading or a link's text `<br>` is a
+  space; in a table cell it is a line of the cell (below).
 - Tables with a header use the reference's compact spelling: `| a | b |` rows and
   one `---` per column, without width padding. Tables kept as HTML are unchanged.
+  A cell's lines (a `<br>`, paragraphs, list items) are joined with `<br>` and a
+  literal pipe is written `\|`, as the document formats write a cell (`* x<br>* y`,
+  `A \| B`, also inside inline code and math, where `&#124;` showed as written);
+  a code block in a cell stays one code span, its lines joined with spaces.
+- A form's prose is page text; its controls (`input`, `select`, `textarea`,
+  `button`) are not. A form is left out whole only when it is an entry box: it
+  has visible fields and at most 20 words of text, or it names itself one (a
+  search, password or e-mail field, `role="search"`, or a class, id, name or
+  action word starting with `search`, `login`, `signin`, `signup`, `register`,
+  `subscribe`, `newsletter`, `comment` or `password`) and has at most 60. Hidden
+  fields do not count, so an ASP.NET page wrapped in `<form id="aspnetForm">`
+  and old Reddit's `form.usertext` post bodies (with their hidden editor) are
+  read as text.
+- A `footer` whose nearest sectioning ancestor is an `article`, `section`,
+  `figure` or `blockquote` belongs to that part (a note, a figure's source, a
+  quotation's attribution) and is kept; a footer of the body, a `main`, an
+  `aside` or a navigation block, one with `role="contentinfo"`, and one of a
+  section or article that wraps the page's `main` region are the page's and are
+  left out. A quotation's footer (or Bootstrap's `blockquote-footer` line) is its
+  attribution, written `— Name` in the quote; a footer that only repeats notes
+  resolved beside the text (CSS sidenotes printed again below) is left out.
+- A checkbox that opens a list item is a task marker: `* [x] Done`, `* [ ] Open`
+  (GitHub task lists, also in the item's paragraph or label). Other checkboxes,
+  like other controls, are left out.
+- Ruby is its base text followed by its reading in parentheses, once per ruby
+  group: `<ruby>漢<rt>kan</rt>字<rt>ji</rt></ruby>` is `漢字(kanji)`, with or
+  without `<rp>` (whose parentheses are written by the reader instead); each
+  `rtc` container is a group of its own, groups joined with `, `. The EPUB reader
+  writes ruby the same way.
+- A definition list's term is a bold paragraph above its definitions
+  (`**Term**`, then the definition's paragraph); a term that holds emphasis or
+  blocks of its own is written as it is.
+- A `video` or `audio` element is a link to its file (`src`, else the first
+  `source`), with a video's poster as the link's picture, labelled by its
+  `title` or `aria-label`, else `Video` or `Audio`: `[![Video](poster.jpg)](movie.mp4)`.
+  The text inside it is what a browser without media support shows ("Your
+  browser does not support video.") and is left out.
+- An inline SVG drawing is written as the text it shows: its title, then its
+  labels (each `text` element, a `tspan` placed on a line of its own, the text of
+  a `foreignObject`, only the first child of a `switch`) set apart by spaces,
+  where the markup ran them together (`Start hereFinish there`); definitions,
+  styles and inner tooltips draw nothing. A drawing in a block of its own is a
+  paragraph, one inside a line of text (an icon in a link) its words.
+- Soft hyphens (U+00AD) are removed from text: they only mark where a browser
+  may break a word. Code keeps its characters.
 - A table with header cells is written to htmd as a regular grid, since htmd
   keeps only the first row's `th` cells as the header and only `td` cells after
   it: one header row (the first `thead` row, a first row of only `th` cells, or
@@ -132,8 +190,9 @@ documented article heuristic; ordinary hidden descendants remain hidden.
   is never retained. `data:text/html`, `data:image/svg+xml` and
   `data:text/javascript` images are removed, and links never accept `data:`.
 - URL attributes with control characters or unsafe schemes are removed. Event
-  handlers and arbitrary styles are not emitted. Script, form, frame, template,
-  hidden and navigation content is excluded. A hidden ancestor also disqualifies
+  handlers and arbitrary styles are not emitted. Script, frame, template, hidden
+  and navigation content, controls, entry-box forms and the page's own footer
+  are excluded (see forms and footers above). A hidden ancestor also disqualifies
   an article candidate. Content nested deeper than 256 levels (unclosed legacy
   tags such as `<font>` reach that depth) is kept as plain text without its
   formatting, with a warning.
@@ -162,8 +221,9 @@ elements it implies, head elements written before the body (an email's
 elements closed at once (`</param>`), and the content of raw-text elements read
 as text. Where the parser would rearrange the markup (a block closing an open
 paragraph, nested headings, list items or links, text moved out of a table) or
-read it as foreign content (inline SVG or MathML left as markup), the markup is
-written and parsed as before. Either way the tree, and so the Markdown, is the
+read it as foreign content (MathML left as markup), the markup is written and
+parsed as before. Inline SVG, which needed the markup parsed in the R44
+measurement below, is now written as its text and is built directly. Either way the tree, and so the Markdown, is the
 one the cleaned markup parses into; tests compare the two trees for every
 conversion they make.
 
@@ -229,8 +289,11 @@ page text for that comparison. One article beside teaser cards (articles
 titled by a link to another page) is chosen the same way, the cards counting
 as furniture; several full articles keep their page. Names only weigh the
 choice: nothing is removed for its name. GitHub's Primer page sidebar and
-MediaWiki's section edit links, tagline, redirect note and skip links are page
-chrome.
+MediaWiki's section edit links, tagline, redirect note, skip links and the menu
+of the article in other languages (`#p-lang-btn`, `mw-portlet-lang`: the "57
+languages" list the Vector 2022 skin writes above the article) are page chrome.
+MediaWiki's SyntaxHighlight blocks keep their language from the
+`mw-highlight-lang-<lang>` class of their wrapper (a fence labelled `rust`).
 
 An in-page table of contents is left out of a full page: an outermost list of
 at least three links that all point to headings of the page, with no other

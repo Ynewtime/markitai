@@ -504,6 +504,31 @@ The local changes, each marked `markitai` (or, for sorts, made through
 - `src/extractor/links.rs`: a link action's `/URI` that is an indirect
   string object (Quartz) is read; it was read as no URI.
 
+- `src/extractor/links.rs`, `src/extractor/mod.rs` (the two call sites in
+  `extract_positioned_text_impl`): an AcroForm value is read beside the page
+  text labelling its widget (the nearest run on its row to the left with no
+  widget between, else just above it; a check box's or radio button's first
+  on its right), inserted among the items after that run so the line reads
+  `1. First name: Maria`; check boxes and radio buttons show `☒`/`☐` from
+  their `/AS`; kind, flags, value and options are inherited by widgets; a
+  choice shows its `/Opt` display text; strings are decoded as text strings
+  (UTF-16 values were read as Latin-1); password fields and push buttons
+  show nothing (a password value was printed); a multi-line value runs on.
+  A widget no text labels keeps its rectangle under its `/TU`, else the last
+  part of its name, instead of the full dotted name. A FreeText annotation's
+  lines become text items at their place in the page's item order
+  (`add_page_annotations`). `extract_form_fields` returns the crate-private
+  `FormValue`; no public API changes.
+- `src/markdown/convert.rs` (`find_isolated_lines`): a line holding a form
+  value is no isolated-line heading candidate (`Name: Charles Babbage` set
+  apart from its neighbours read as `## Name: …`).
+- `src/types.rs`: a footnote's mark opening its line, smaller and raised, is
+  set apart from the note's text by the gap that separates them
+  (`1 Corresponding author`).
+
+  Run in the isolated copy, the crate's unit tests give 1,683 passed (7
+  added) and the same 21 failed.
+
 - `src/markdown/convert.rs`, `src/markdown/heading.rs`: three or more
   consecutive lines at one heading level at wrap spacing with more than 30
   words are one paragraph, not a heading per line (an abstract set larger

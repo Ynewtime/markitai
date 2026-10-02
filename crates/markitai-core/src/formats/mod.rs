@@ -33,12 +33,35 @@ pub(crate) fn extract_pdf(bytes: &[u8]) -> Result<Document> {
 /// Extensions with an implemented local reader (leading dots are accepted).
 /// Document extensions (without the dot) that `extract` reads, including
 /// those anydoc recognizes; images are listed in `images::IMAGE_EXTENSIONS`.
+/// Templates (`.dotx`, `.xltx`, `.potx`, `.ott`, `.ots`, `.otp` and the
+/// macro-enabled and legacy ones) are the containers of the documents they
+/// make and read as those.
 pub const DOCUMENT_EXTENSIONS: &[&str] = &[
     "txt", "md", "markdown", "html", "htm", "xhtml", "csv", "tsv", "ipynb", "json", "xml", "eml",
-    "msg", "rst", "org", "tex", "latex", "numbers", "doc", "docx", "docm", "odt", "pdf", "pptx",
-    "pptm", "ppsx", "ppsm", "ppt", "pps", "pot", "rtf", "epub", "xlsx", "xlsm", "xlsb", "xls",
-    "ods", "odp",
+    "msg", "rst", "org", "tex", "latex", "numbers", "doc", "dot", "docx", "docm", "dotx", "dotm",
+    "odt", "ott", "pdf", "pptx", "pptm", "ppsx", "ppsm", "potx", "potm", "ppt", "pps", "pot",
+    "rtf", "epub", "xlsx", "xlsm", "xltx", "xltm", "xlsb", "xls", "xlt", "ods", "ots", "odp",
+    "otp",
 ];
+
+/// The document extension a template's reader goes by: a template is read,
+/// and its Markdown written, as the document it makes.
+pub(crate) fn document_extension(extension: &str) -> &str {
+    match extension {
+        "dot" => "doc",
+        "dotx" => "docx",
+        "dotm" => "docm",
+        "ott" => "odt",
+        "potx" => "pptx",
+        "potm" => "pptm",
+        "xltx" => "xlsx",
+        "xltm" => "xlsm",
+        "xlt" => "xls",
+        "ots" => "ods",
+        "otp" => "odp",
+        other => other,
+    }
+}
 
 pub fn supports_extension(extension: &str) -> bool {
     let extension = extension.trim_start_matches('.').to_ascii_lowercase();
@@ -207,6 +230,28 @@ mod tests {
         for extension in ["", "exe", "png", "heic"] {
             assert!(!supports_extension(extension), "{extension}");
         }
+        // Templates are read by their documents' readers.
+        for (template, document) in [
+            ("dot", "doc"),
+            ("dotx", "docx"),
+            ("dotm", "docm"),
+            ("ott", "odt"),
+            ("potx", "pptx"),
+            ("potm", "pptm"),
+            ("xltx", "xlsx"),
+            ("xltm", "xlsm"),
+            ("xlt", "xls"),
+            ("ots", "ods"),
+            ("otp", "odp"),
+        ] {
+            assert!(supports_extension(template), "{template}");
+            assert_eq!(document_extension(template), document);
+            assert_eq!(
+                anydoc::Format::from_extension(template),
+                anydoc::Format::from_extension(document)
+            );
+        }
+        assert_eq!(document_extension("docx"), "docx");
     }
 
     #[test]

@@ -2,6 +2,8 @@ use crate::{Asset, Document, Error, Result};
 use lopdf::{Dictionary, Object, ObjectId, Stream, content::Content};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
+#[path = "pdf/annotations.rs"]
+mod annotations;
 #[path = "pdf/continued.rs"]
 mod continued;
 #[path = "pdf/geometry.rs"]
@@ -31,15 +33,17 @@ fn password_required() -> Error {
     )
 }
 
-/// Whether a document information `/Title` is only the name of the file the
-/// PDF was made from, which a producer writes when the source has no title of
-/// its own: a browser printing a page without `<title>` (`multi.html`,
-/// `layout-table`), an Office print driver (`Microsoft Word - report.doc`).
-/// Such a title is not taken, so the document's first heading names it.
-/// A name with a document or image extension, an Office driver's prefix, or
-/// a single lowercase slug (`code`, `layout-table`) counts; a title with an
+/// Whether a document information `/Title` names no document: it is only the
+/// name of the file the PDF was made from, which a producer writes when the
+/// source has no title of its own (a browser printing a page without
+/// `<title>`: `multi.html`, `layout-table`; an Office print driver:
+/// `Microsoft Word - report.doc`), or the name an application gives a
+/// document nobody named (see [`default_name`]). Such a title is not taken,
+/// so the document's first heading names it. A name with a document or image
+/// extension, an Office driver's prefix, a single lowercase slug (`code`,
+/// `layout-table`) or a default name counts; another title with an
 /// upper-case letter or a space and no extension is kept.
-fn file_name_title(title: &str) -> bool {
+fn placeholder_title(title: &str) -> bool {
     const EXTENSIONS: &[&str] = &[
         "htm", "html", "xhtml", "mht", "mhtml", "pdf", "doc", "docx", "docm", "dot", "dotx", "odt",
         "ott", "rtf", "txt", "md", "tex", "ppt", "pptx", "pps", "ppsx", "odp", "key", "xls",
@@ -63,10 +67,64 @@ fn file_name_title(title: &str) -> bool {
     {
         return true;
     }
-    title.chars().any(|c| c.is_ascii_lowercase())
-        && title
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_'))
+    default_name(title)
+        || title.chars().any(|c| c.is_ascii_lowercase())
+            && title
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_'))
+}
+
+/// Whether `title` is a name an application gives a new document, in any
+/// case and with a number or separators after it: `Untitled`,
+/// `Untitled Document`, `Untitled-2`, `PowerPoint Presentation`, `Title`, and
+/// in a few languages (`Sans titre`, `无标题`); or, numbered only, Word's
+/// `Document1`, PowerPoint's `Presentation1`, Excel's `Book1` and their
+/// Chinese names (`文档1`, `演示文稿1`, `工作簿1`).
+fn default_name(title: &str) -> bool {
+    const NAMES: &[&str] = &[
+        "untitled",
+        "untitled document",
+        "untitled presentation",
+        "untitled spreadsheet",
+        "untitled form",
+        "untitled design",
+        "untitled drawing",
+        "title",
+        "document",
+        "presentation",
+        "new document",
+        "word document",
+        "microsoft word document",
+        "new microsoft word document",
+        "powerpoint presentation",
+        "microsoft powerpoint presentation",
+        "sans titre",
+        "unbenannt",
+        "sin título",
+        "sem título",
+        "senza titolo",
+        "无标题",
+        "未命名",
+        "無題",
+        "無標題",
+    ];
+    const NUMBERED: &[&str] = &[
+        "document",
+        "presentation",
+        "book",
+        "workbook",
+        "drawing",
+        "publication",
+        "doc",
+        "文档",
+        "演示文稿",
+        "工作簿",
+    ];
+    let lower = title.trim().to_lowercase();
+    let stem = lower
+        .trim_end_matches(|c: char| c.is_ascii_digit() || matches!(c, ' ' | '-' | '_' | '(' | ')'));
+    let numbered = lower[stem.len()..].chars().any(|c| c.is_ascii_digit());
+    NAMES.contains(&stem) || numbered && NUMBERED.contains(&stem)
 }
 
 fn decoded(stream: &Stream) -> std::result::Result<Vec<u8>, String> {
@@ -653,6 +711,9 @@ pub(crate) struct PdfPage {
 pub(crate) struct PdfPages {
     pub pages: Vec<PdfPage>,
     pub document: Document,
+    /// Each page's "Comments" section, by page number (see
+    /// `annotations`): it follows the page, whatever reads the page.
+    comments: BTreeMap<usize, String>,
 }
 
 impl PdfPages {
@@ -670,6 +731,7 @@ impl PdfPages {
         let Self {
             mut pages,
             mut document,
+            mut comments,
         } = self;
         let readable: Vec<bool> = pages
             .iter()
@@ -709,6 +771,10 @@ impl PdfPages {
             if let Some(name) = page.screenshot_name {
                 section.push_str("\n\n");
                 section.push_str(&screenshot_reference(page.number, &name));
+            }
+            if let Some(comments) = comments.remove(&page.number) {
+                section.push_str("\n\n");
+                section.push_str(&comments);
             }
             sections.push(section);
         }
@@ -1209,6 +1275,22 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
             running::strip(&mut page.markdown);
         }
     }
+    // Reviewers' comments follow their pages.
+    let comments = annotations::sections(pdf, &page_ids, &|pages| {
+        loaded
+            .as_ref()
+            .ok()
+            .and_then(|loaded| {
+                loaded
+                    .text_with_positions_and_rotations(
+                        Some(pages),
+                        pdf_inspector::PositionOptions::new(),
+                    )
+                    .ok()
+            })
+            .map(|(items, rotations)| (items, rotations.into_keys().collect()))
+            .unwrap_or_default()
+    });
     document
         .metadata
         .insert("converter".into(), "pdf-inspector".into());
@@ -1219,7 +1301,7 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
         .and_then(|id| pdf.get_dictionary(id))
         && let Ok(title) = info.get(b"Title").and_then(lopdf::decode_text_string)
         && !title.trim().is_empty()
-        && !file_name_title(title.trim())
+        && !placeholder_title(title.trim())
     {
         document
             .metadata
@@ -1228,6 +1310,7 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
     Ok(PdfPages {
         pages: extracted_pages,
         document,
+        comments,
     })
 }
 
@@ -2050,8 +2133,10 @@ mod tests {
     const PROTECTED_TEXT: &str = "Words behind the lock stay readable.";
 
     /// One page of text, encrypted with the given passwords by `version`
-    /// (1: RC4 40-bit, 2: RC4 128-bit, 4: AES 128-bit).
-    fn protected(version: u8, owner: &str, user: &str) -> Vec<u8> {
+    /// (1: RC4 40-bit, 2: RC4 128-bit, 4: AES 128-bit, 5: AES 256-bit), its
+    /// encryption dictionary an object the trailer refers to, as lopdf
+    /// writes it, or held in the trailer itself, as MuPDF writes it.
+    fn protected(version: u8, owner: &str, user: &str, in_trailer: bool) -> Vec<u8> {
         let mut pdf = lopdf::Document::with_version("1.7");
         let tree = pdf.new_object_id();
         let font = pdf.add_object(dictionary! {
@@ -2075,8 +2160,15 @@ mod tests {
         );
         let catalog = pdf.add_object(dictionary! { "Type" => "Catalog", "Pages" => tree });
         pdf.trailer.set("Root", catalog);
+        let info =
+            pdf.add_object(dictionary! { "Title" => Object::string_literal("Locked report") });
+        pdf.trailer.set("Info", info);
         let id = Object::string_literal("protected-pdf-test-id");
         pdf.trailer.set("ID", vec![id.clone(), id]);
+        let aes = |filter: std::sync::Arc<dyn lopdf::encryption::crypt_filters::CryptFilter>| {
+            BTreeMap::from([(b"StdCF".to_vec(), filter)])
+        };
+        let key = [7u8; 32];
         let version = match version {
             1 => lopdf::EncryptionVersion::V1 {
                 document: &pdf,
@@ -2091,23 +2183,38 @@ mod tests {
                 key_length: 128,
                 permissions: lopdf::Permissions::all(),
             },
-            _ => {
-                let filter: std::sync::Arc<dyn lopdf::encryption::crypt_filters::CryptFilter> =
-                    std::sync::Arc::new(lopdf::encryption::crypt_filters::Aes128CryptFilter);
-                lopdf::EncryptionVersion::V4 {
-                    document: &pdf,
-                    encrypt_metadata: true,
-                    crypt_filters: BTreeMap::from([(b"StdCF".to_vec(), filter)]),
-                    stream_filter: b"StdCF".to_vec(),
-                    string_filter: b"StdCF".to_vec(),
-                    owner_password: owner,
-                    user_password: user,
-                    permissions: lopdf::Permissions::all(),
-                }
-            }
+            4 => lopdf::EncryptionVersion::V4 {
+                document: &pdf,
+                encrypt_metadata: true,
+                crypt_filters: aes(std::sync::Arc::new(
+                    lopdf::encryption::crypt_filters::Aes128CryptFilter,
+                )),
+                stream_filter: b"StdCF".to_vec(),
+                string_filter: b"StdCF".to_vec(),
+                owner_password: owner,
+                user_password: user,
+                permissions: lopdf::Permissions::all(),
+            },
+            _ => lopdf::EncryptionVersion::V5 {
+                encrypt_metadata: true,
+                crypt_filters: aes(std::sync::Arc::new(
+                    lopdf::encryption::crypt_filters::Aes256CryptFilter,
+                )),
+                file_encryption_key: &key,
+                stream_filter: b"StdCF".to_vec(),
+                string_filter: b"StdCF".to_vec(),
+                owner_password: owner,
+                user_password: user,
+                permissions: lopdf::Permissions::all(),
+            },
         };
         let state = lopdf::EncryptionState::try_from(version).unwrap();
         pdf.encrypt(&state).unwrap();
+        if in_trailer {
+            let id = pdf.trailer.get(b"Encrypt").unwrap().as_reference().unwrap();
+            let dictionary = pdf.objects.remove(&id).unwrap();
+            pdf.trailer.set("Encrypt", dictionary);
+        }
         let mut bytes = Vec::new();
         pdf.save_to(&mut bytes).unwrap();
         bytes
@@ -2115,35 +2222,48 @@ mod tests {
 
     #[test]
     fn a_pdf_that_asks_for_a_password_is_reported_as_encrypted() {
-        for version in [1, 2, 4] {
-            let bytes = protected(version, "owner-secret", "user-secret");
+        for (version, in_trailer) in [1, 2, 4, 5]
+            .into_iter()
+            .flat_map(|v| [(v, false), (v, true)])
+        {
+            let bytes = protected(version, "owner-secret", "user-secret", in_trailer);
             for result in [
                 extract(&bytes).map(|_| ()),
                 extract_pages(&bytes).map(|_| ()),
                 extract_pages_bounded(&bytes, 10).map(|_| ()),
             ] {
                 let message = result.unwrap_err().to_string();
-                assert!(
-                    message.contains("encrypted and needs a password"),
-                    "version {version}: {message}"
-                );
-                assert!(
-                    !message.contains("no pages"),
-                    "version {version}: {message}"
-                );
+                let case = format!("version {version}, in trailer {in_trailer}: {message}");
+                assert!(message.contains("encrypted and needs a password"), "{case}");
+                assert!(!message.contains("no pages"), "{case}");
             }
         }
     }
 
+    /// A PDF whose user password is empty opens as every reader opens it,
+    /// whichever way its encryption dictionary is written: MuPDF (and so
+    /// PyMuPDF) writes it in the trailer itself.
     #[test]
     fn a_pdf_with_only_an_owner_password_still_converts() {
-        for version in [1, 2, 4] {
-            let bytes = protected(version, "owner-secret", "");
+        for (version, in_trailer) in [1, 2, 4, 5]
+            .into_iter()
+            .flat_map(|v| [(v, false), (v, true)])
+        {
+            let bytes = protected(version, "owner-secret", "", in_trailer);
             let document = extract(&bytes).unwrap();
             assert!(
                 document.markdown.contains(PROTECTED_TEXT),
-                "version {version}: {}",
+                "version {version}, in trailer {in_trailer}: {}",
                 document.markdown
+            );
+            // The Info strings are decrypted too.
+            assert_eq!(
+                document
+                    .metadata
+                    .get("title")
+                    .and_then(|title| title.as_str()),
+                Some("Locked report"),
+                "version {version}, in trailer {in_trailer}"
             );
         }
     }

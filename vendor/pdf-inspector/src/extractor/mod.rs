@@ -122,7 +122,7 @@ impl PositionOptions {
         }
     }
 }
-use links::{extract_form_fields, extract_page_links};
+use links::{add_page_annotations, extract_form_fields, extract_page_links, place_form_values};
 pub(crate) use page_box::{visible_page_box, PageBox};
 
 // Re-export public types so existing `crate::extractor::X` paths keep working.
@@ -1053,6 +1053,7 @@ fn extract_positioned_text_impl(
             frame_box.translate_page(&mut items, &mut rects, &mut lines, coords_rotated);
         }
         page_boxes.insert(*page_num, frame_box);
+        let page_start = all_items.len();
         all_items.extend(items);
         all_rects.extend(rects);
         all_lines.extend(lines);
@@ -1080,34 +1081,35 @@ fn extract_positioned_text_impl(
             // the same turned shift as the page's items.
             frame_box.translate_items(&mut links, coords_rotated);
         }
-        all_items.extend(links);
+        // markitai: the text of a FreeText annotation joins the page's text
+        // where it reads; links follow the text, as before.
+        add_page_annotations(&mut all_items, page_start, links);
     }
 
     // Extract AcroForm field values. Widgets on a turned page turn with it,
     // like links, so positional consumers keep them on the text they cover;
     // in the visible-box frame they take the page's (turned) shift as well.
-    let form_items: Vec<TextItem> = extract_form_fields(doc, &page_id_to_num)
-        .into_iter()
-        .filter(|item| page_filter.is_none_or(|filter| filter.contains(&item.page)))
-        .map(|mut item| {
-            let rotation = page_rotations
-                .get(&item.page)
-                .copied()
-                .unwrap_or(geometry::PageRotation::Upright);
-            rotation.rotate_box(&mut item.x, &mut item.y, &mut item.width, &mut item.height);
-            if frame == CoordinateFrame::VisiblePageBox {
-                let frame_box = page_boxes.get(&item.page).copied().unwrap_or_else(|| {
-                    pages
-                        .get(&item.page)
-                        .and_then(|&id| visible_page_box(doc, id))
-                        .unwrap_or(PageBox::LETTER)
-                });
-                frame_box.translate_items(std::slice::from_mut(&mut item), rotation);
-            }
-            item
-        })
-        .collect();
-    all_items.extend(form_items);
+    let mut form_values = extract_form_fields(doc, &page_id_to_num);
+    form_values.retain(|value| page_filter.is_none_or(|filter| filter.contains(&value.item.page)));
+    for value in &mut form_values {
+        let item = &mut value.item;
+        let rotation = page_rotations
+            .get(&item.page)
+            .copied()
+            .unwrap_or(geometry::PageRotation::Upright);
+        rotation.rotate_box(&mut item.x, &mut item.y, &mut item.width, &mut item.height);
+        if frame == CoordinateFrame::VisiblePageBox {
+            let frame_box = page_boxes.get(&item.page).copied().unwrap_or_else(|| {
+                pages
+                    .get(&item.page)
+                    .and_then(|&id| visible_page_box(doc, id))
+                    .unwrap_or(PageBox::LETTER)
+            });
+            frame_box.translate_items(std::slice::from_mut(item), rotation);
+        }
+    }
+    // markitai: each value goes beside the page text that labels its widget.
+    place_form_values(form_values, &mut all_items);
 
     Ok((
         (all_items, all_rects, all_lines),

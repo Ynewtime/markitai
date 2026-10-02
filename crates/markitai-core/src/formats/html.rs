@@ -1,4 +1,5 @@
 mod article;
+mod boxes;
 mod callouts;
 mod charset;
 mod code;
@@ -773,16 +774,18 @@ fn image_source(value: &str, base: Option<&Url>) -> Option<String> {
 
 /// htmd pads every cell to its column width. The reference writes compact GFM
 /// rows (`| a | b |`) with one `---` per column, so a table with a header
-/// separator is rewritten to that spelling. Cell text is unchanged (htmd has
-/// already replaced literal pipes with `&#124;`); any other output, such as a
-/// table kept as HTML, is left alone.
+/// separator is rewritten to that spelling. htmd writes a literal pipe in a
+/// cell as `&#124;`, which a Markdown renderer shows as is inside code and
+/// math; it is written `\|`, as the document formats write it, which GFM
+/// reads as a pipe in every part of a cell. Any other output, such as a table
+/// kept as HTML, is left alone.
 fn compact_table(markdown: &str) -> Option<String> {
     let cells = |line: &str| -> Option<Vec<String>> {
         let inner = line.strip_prefix('|')?.strip_suffix('|')?;
         Some(
             inner
                 .split('|')
-                .map(|cell| cell.trim().to_owned())
+                .map(|cell| cell.trim().replace("&#124;", "\\|"))
                 .collect(),
         )
     };
@@ -886,6 +889,16 @@ fn block_tag(name: &str) -> bool {
 }
 
 fn escaped_text(value: &str, output: &mut Out) {
+    // A soft hyphen (U+00AD) marks where a browser may break a word; it shows
+    // nothing on an unbroken line, and in Markdown text it would split the
+    // word for search and comparison.
+    let unhyphenated;
+    let value = if value.contains('\u{ad}') {
+        unhyphenated = value.replace('\u{ad}', "");
+        unhyphenated.as_str()
+    } else {
+        value
+    };
     // HTML source line boundaries remain soft Markdown line breaks. The marker
     // prevents the renderer from collapsing them with ordinary inline spaces.
     let mut start = 0;
@@ -1755,24 +1768,7 @@ fn visible_reference(facts: &Facts, element: ElementRef<'_>, prune_chrome: bool)
         .all(|parent| {
             !facts.hidden(parent)
                 && !(prune_chrome && article::excluded(facts, parent))
-                && !matches!(
-                    parent.value().name(),
-                    "script"
-                        | "style"
-                        | "nav"
-                        | "footer"
-                        | "form"
-                        | "button"
-                        | "input"
-                        | "select"
-                        | "textarea"
-                        | "iframe"
-                        | "object"
-                        | "embed"
-                        | "head"
-                        | "template"
-                        | "noscript"
-                )
+                && !boxes::left_out(parent)
         })
 }
 
@@ -1877,24 +1873,7 @@ fn note_has_content(
     if name == "script" && tex_script(element).is_some() {
         return !plain(element).is_empty();
     }
-    if matches!(
-        name,
-        "script"
-            | "style"
-            | "nav"
-            | "footer"
-            | "form"
-            | "button"
-            | "input"
-            | "select"
-            | "textarea"
-            | "iframe"
-            | "object"
-            | "embed"
-            | "head"
-            | "template"
-            | "noscript"
-    ) {
+    if boxes::left_out(element) {
         return false;
     }
     if name == "img" {
@@ -2710,6 +2689,43 @@ impl<'a> Footnotes<'a> {
                 }
             }
         }
+        // An article's footer that only repeats notes resolved elsewhere
+        // (sidenotes beside the text, printed again as a list below it) is
+        // left out with its heading: each of its `doc-footnote` entries says
+        // what a resolved definition says. A footer that holds the notes
+        // themselves has them resolved and moved instead.
+        let unnumbered = |text: &str| {
+            text.trim_start_matches(|ch: char| {
+                ch.is_ascii_digit() || ch == '.' || ch.is_whitespace()
+            })
+            .to_owned()
+        };
+        let resolved: HashSet<String> = notes
+            .definitions
+            .iter()
+            .map(|note| {
+                unnumbered(
+                    &note
+                        .nodes
+                        .iter()
+                        .map(|node| plain(*node))
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                )
+            })
+            .collect();
+        for footer in inside(root).filter(|node| node.value().name() == "footer") {
+            let mut entries = inside(footer)
+                .filter(|node| node.value().attribute("role") == Some("doc-footnote"))
+                .peekable();
+            if entries.peek().is_some()
+                && entries.all(|entry| {
+                    !notes.inside_definition(entry) && resolved.contains(&unnumbered(&plain(entry)))
+                })
+            {
+                notes.removed.insert(element_key(footer));
+            }
+        }
         notes
     }
 
@@ -2887,24 +2903,57 @@ fn serialize_clean(
         emit_math(&latex, block, output);
         return Ok(());
     }
-    if matches!(
-        name,
-        "script"
-            | "style"
-            | "nav"
-            | "footer"
-            | "form"
-            | "button"
-            | "input"
-            | "select"
-            | "textarea"
-            | "iframe"
-            | "object"
-            | "embed"
-            | "head"
-            | "template"
-            | "noscript"
-    ) {
+    // A task list's checkbox is its item's `[x]` or `[ ]`.
+    if let Some(checked) = boxes::task_checkbox(element) {
+        output.start("markitai-task");
+        output.attribute("data-checked", if checked { "true" } else { "false" });
+        output.end("markitai-task");
+        return Ok(());
+    }
+    if boxes::left_out(element) {
+        return Ok(());
+    }
+    if !in_code {
+        match name {
+            "ruby" => {
+                serialize_children(
+                    element, name, false, None, base, output, depth, notes, definition,
+                )?;
+                let reading = ruby_reading(element);
+                if !reading.is_empty() {
+                    escaped_text(&format!("({reading})"), output);
+                }
+                return Ok(());
+            }
+            "rt" | "rp" | "rtc"
+                if element
+                    .ancestors()
+                    .filter_map(ElementRef::wrap)
+                    .any(|ancestor| ancestor.value().name() == "ruby") =>
+            {
+                return Ok(());
+            }
+            "video" | "audio" => {
+                media_link(element, base, notes, output);
+                return Ok(());
+            }
+            "svg" => {
+                svg_text(element, output);
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
+    // A quotation's footer is its attribution, written `— Name`.
+    if boxes::quote_attribution(element) {
+        output.start("p");
+        if !boxes::opens_with_dash(&plain(element)) {
+            output.text("— ");
+        }
+        serialize_children(
+            element, "p", false, None, base, output, depth, notes, definition,
+        )?;
+        output.end("p");
         return Ok(());
     }
     // A link that shows nothing (an icon drawn by a style sheet, a vote
@@ -2978,6 +3027,11 @@ fn serialize_clean(
         name
     };
     output.start(serialized_name);
+    if name == "br" {
+        // The break is the line's end: a source line break right after it
+        // adds no second one (which would end the paragraph).
+        output.soft_break = true;
+    }
     for attribute in [
         "href", "src", "alt", "title", "colspan", "rowspan", "start", "class", "id",
     ] {
@@ -3086,6 +3140,232 @@ fn label_gap(label: ElementRef<'_>, output: &mut Out) {
     };
     if joined && label.text().any(|text| !text.trim().is_empty()) {
         output.text(" ");
+    }
+}
+
+/// The reading of a ruby group: the text of its `rt` annotations, joined as
+/// they are written (`<ruby>漢<rt>kan</rt>字<rt>ji</rt></ruby>` reads `kanji`),
+/// the annotations of each `rtc` container as a group of its own, the groups
+/// joined with `, `. The base text is written as it stands and the reading
+/// after it in parentheses, once per group: `漢字(kanji)`. `rp` holds the
+/// parentheses a browser without ruby shows, which this writes itself.
+fn ruby_reading(ruby: ElementRef<'_>) -> String {
+    let text = |element: ElementRef<'_>| {
+        element
+            .text()
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let mut groups: Vec<String> = Vec::new();
+    let mut direct = String::new();
+    for child in ruby.child_elements() {
+        match child.value().name() {
+            "rt" => direct.push_str(&text(child)),
+            "rtc" => {
+                let group: String = child
+                    .child_elements()
+                    .filter(|annotation| annotation.value().name() == "rt")
+                    .map(text)
+                    .collect();
+                let group = if group.is_empty() { text(child) } else { group };
+                if !group.is_empty() {
+                    groups.push(group);
+                }
+            }
+            _ => {}
+        }
+    }
+    if !direct.is_empty() {
+        groups.insert(0, direct);
+    }
+    groups.join(", ")
+}
+
+/// A `video` or `audio` element as a link to its file: the `src` attribute,
+/// else its first `source`; a video's poster is the link's picture. The text
+/// inside the element is what a browser without media support shows ("Your
+/// browser does not support video.") and is left out. The label is the
+/// element's title or accessible name, else `Video` or `Audio`.
+fn media_link(
+    element: ElementRef<'_>,
+    base: Option<&Url>,
+    notes: &Footnotes<'_>,
+    output: &mut Out,
+) {
+    let value = element.value();
+    let address = |raw: &str| {
+        if base.is_none() {
+            saved_page_link(raw, notes.link_base.as_ref())
+        } else {
+            safe_url(raw, base)
+        }
+    };
+    let file = value
+        .attribute("src")
+        .or_else(|| {
+            element
+                .child_elements()
+                .filter(|child| child.value().name() == "source")
+                .find_map(|source| source.value().attribute("src"))
+        })
+        .and_then(address);
+    let poster = (value.name() == "video")
+        .then(|| value.attribute("poster"))
+        .flatten()
+        .and_then(|raw| image_source(raw, base));
+    let label = ["title", "aria-label"]
+        .iter()
+        .filter_map(|attribute| value.attribute(attribute))
+        .map(|label| label.split_whitespace().collect::<Vec<_>>().join(" "))
+        .find(|label| !label.is_empty())
+        .unwrap_or_else(|| {
+            if value.name() == "video" {
+                "Video"
+            } else {
+                "Audio"
+            }
+            .to_owned()
+        });
+    if file.is_none() && poster.is_none() {
+        return;
+    }
+    let alone = stands_alone(element);
+    if alone {
+        output.start("p");
+    }
+    if let Some(file) = &file {
+        output.start("a");
+        output.attribute("href", file);
+    }
+    match &poster {
+        Some(poster) => {
+            output.start("img");
+            output.attribute("src", poster);
+            output.attribute("alt", &label);
+        }
+        None => escaped_text(&label, output),
+    }
+    if file.is_some() {
+        output.end("a");
+    }
+    if alone {
+        output.end("p");
+    }
+}
+
+/// Whether an embedded object (a drawing, a video) stands in a block of its
+/// own rather than inside a line of text: its parent is a container of
+/// blocks with no text of its own beside it.
+fn stands_alone(element: ElementRef<'_>) -> bool {
+    element
+        .parent()
+        .and_then(ElementRef::wrap)
+        .is_none_or(|parent| {
+            matches!(
+                parent.value().name(),
+                "html"
+                    | "body"
+                    | "article"
+                    | "main"
+                    | "section"
+                    | "div"
+                    | "figure"
+                    | "header"
+                    | "footer"
+                    | "aside"
+                    | "blockquote"
+                    | "dd"
+                    | "details"
+            ) && !parent.children().any(|child| match child.value() {
+                scraper::Node::Text(text) => !text.trim().is_empty(),
+                _ => false,
+            })
+        })
+}
+
+/// The text an inline SVG drawing shows: its title, then its labels (each
+/// `text` element, a `tspan` placed on a line of its own, the text of a
+/// `foreignObject`), set apart by spaces instead of run together as the markup
+/// writes them (`Start hereFinish there`). Definitions, styles, scripts and
+/// tooltips (`title` and `desc` inside the drawing) draw no text, and a
+/// `switch` draws only its first child. A drawing in a block of its own is
+/// written as paragraphs; one inside a line of text (an icon in a link) as
+/// words.
+fn svg_text(svg: ElementRef<'_>, output: &mut Out) {
+    let words = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let title = svg
+        .child_elements()
+        .find(|child| child.value().name() == "title")
+        .map(|title| words(&title.text().collect::<String>()))
+        .filter(|title| !title.is_empty());
+    let mut labels: Vec<String> = Vec::new();
+    let mut stack = vec![svg];
+    while let Some(element) = stack.pop() {
+        let name = element.value().name();
+        if matches!(
+            name,
+            "defs"
+                | "style"
+                | "script"
+                | "symbol"
+                | "clipPath"
+                | "mask"
+                | "pattern"
+                | "marker"
+                | "metadata"
+                | "title"
+                | "desc"
+                | "linearGradient"
+                | "radialGradient"
+                | "filter"
+        ) || is_hidden(element)
+        {
+            continue;
+        }
+        if name == "text" || name == "foreignObject" {
+            let mut piece = String::new();
+            for node in element.descendants() {
+                match node.value() {
+                    scraper::Node::Element(inner)
+                        if inner.name() == "tspan"
+                            && ["x", "y", "dy"]
+                                .iter()
+                                .any(|attribute| inner.attribute(attribute).is_some()) =>
+                    {
+                        labels.push(words(&std::mem::take(&mut piece)));
+                    }
+                    scraper::Node::Element(inner) if block_tag(inner.name()) => piece.push(' '),
+                    scraper::Node::Text(text) => piece.push_str(text),
+                    _ => {}
+                }
+            }
+            labels.push(words(&piece));
+            continue;
+        }
+        let children: Vec<ElementRef<'_>> = if name == "switch" {
+            element.child_elements().take(1).collect()
+        } else {
+            element.child_elements().collect()
+        };
+        stack.extend(children.into_iter().rev());
+    }
+    labels.retain(|label| !label.is_empty());
+    let labels = (!labels.is_empty()).then(|| labels.join(" "));
+    if stands_alone(svg) {
+        for paragraph in [title, labels].into_iter().flatten() {
+            output.start("p");
+            escaped_text(&paragraph, output);
+            output.end("p");
+        }
+    } else {
+        let text = [title, labels]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" ");
+        escaped_text(&text, output);
     }
 }
 
@@ -3429,12 +3709,16 @@ fn serialize_children(
                 let next = child
                     .next_siblings()
                     .find(|node| !matches!(node.value(), scraper::Node::Comment(_)));
-                let trim_start = previous.map_or(block_tag(name), |node| {
-                    ElementRef::wrap(node).is_some_and(|element| block_tag(element.value().name()))
-                });
-                let trim_end = next.map_or(block_tag(name), |node| {
-                    ElementRef::wrap(node).is_some_and(|element| block_tag(element.value().name()))
-                });
+                // Spaces at a line's edge show nothing: next to a block, and
+                // next to a line break.
+                let edge = |node: htmd::NodeRef<'_>| {
+                    ElementRef::wrap(node).is_some_and(|element| {
+                        let name = element.value().name();
+                        block_tag(name) || name == "br"
+                    })
+                };
+                let trim_start = previous.map_or(block_tag(name), edge);
+                let trim_end = next.map_or(block_tag(name), edge);
                 let text = if trim_start { text.trim_start() } else { text };
                 let text = if trim_end { text.trim_end() } else { text };
                 prose(text, element, output);
@@ -3638,6 +3922,222 @@ fn tight_blockquote(markdown: &str) -> String {
         .join("\n")
 }
 
+/// Where a line break of the cleaned page stands, which decides how it is
+/// written.
+#[derive(Clone, Copy, PartialEq)]
+enum BreakPlace {
+    /// Code keeps its line breaks.
+    Code,
+    /// A heading or a link's text is one line: a break is a space (a link
+    /// split over lines would lose its words to the link repair of normal
+    /// output, a heading would end at the break).
+    OneLine,
+    /// A table cell's lines are joined with `<br>` (see [`cell_lines`]).
+    Cell,
+    /// Running text: paragraphs, list items, quotes.
+    Text,
+}
+
+fn break_place(node: htmd::NodeRef<'_>) -> BreakPlace {
+    for ancestor in node.ancestors() {
+        let scraper::Node::Element(element) = ancestor.value() else {
+            continue;
+        };
+        match element.name() {
+            "pre" | "code" => return BreakPlace::Code,
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "a" => return BreakPlace::OneLine,
+            "td" | "th" => return BreakPlace::Cell,
+            _ => {}
+        }
+    }
+    BreakPlace::Text
+}
+
+/// An element that starts a line of its own in the cleaned page.
+fn line_block(name: &str) -> bool {
+    block_tag(name)
+        || matches!(
+            name,
+            "address" | "aside" | "caption" | "center" | "fieldset" | "legend" | "nav" | "menu"
+        )
+}
+
+/// What stands next to a line break in its block.
+#[derive(Clone, Copy, PartialEq)]
+enum Beside {
+    /// The block's edge, or a block inside it.
+    Edge,
+    /// Another `<br>`.
+    Break,
+    /// Text or a picture.
+    Content,
+}
+
+/// What stands beside `node` in reading order (`forward`) or before it, in
+/// its block: inline elements are looked through, and an element that shows
+/// nothing (an empty anchor, a source line break) is passed over, as are
+/// other breaks when `past_breaks`.
+fn beside(node: htmd::NodeRef<'_>, forward: bool, past_breaks: bool) -> Beside {
+    let shows = |node: htmd::NodeRef<'_>| {
+        node.descendants().any(|inner| match inner.value() {
+            scraper::Node::Text(text) => !text.trim().is_empty(),
+            scraper::Node::Element(element) => {
+                matches!(
+                    element.name(),
+                    "img" | "markitai-footnote" | "markitai-math"
+                )
+            }
+            _ => false,
+        })
+    };
+    let mut current = node;
+    loop {
+        let mut sibling = if forward {
+            current.next_sibling()
+        } else {
+            current.prev_sibling()
+        };
+        while let Some(node) = sibling {
+            match node.value() {
+                scraper::Node::Text(text) if !text.trim().is_empty() => return Beside::Content,
+                scraper::Node::Element(element) => match element.name() {
+                    "br" if !past_breaks => return Beside::Break,
+                    "br" | SOFT_BREAK => {}
+                    name if line_block(name) => return Beside::Edge,
+                    "markitai-task" | "markitai-callout" => return Beside::Content,
+                    _ if shows(node) => return Beside::Content,
+                    _ => {}
+                },
+                _ => {}
+            }
+            sibling = if forward {
+                node.next_sibling()
+            } else {
+                node.prev_sibling()
+            };
+        }
+        match current.parent() {
+            Some(parent) => match parent.value() {
+                scraper::Node::Element(element) if !line_block(element.name()) => current = parent,
+                _ => return Beside::Edge,
+            },
+            None => return Beside::Edge,
+        }
+    }
+}
+
+/// A `<br>` in running text is a hard line break, written `\` at the line's
+/// end (two trailing spaces would not survive normal output's cleanup of line
+/// ends); two or more in a row end the paragraph, as the old pages that space
+/// their paragraphs so mean, unless emphasis or a link around them would be
+/// split. A break at the edge of its block shows nothing and is left out. In a
+/// heading or a link's text it is a space, in code a line feed, and in a table
+/// cell a line of the cell.
+fn line_break(node: htmd::NodeRef<'_>) -> &'static str {
+    match break_place(node) {
+        BreakPlace::Code | BreakPlace::Cell => "\n",
+        BreakPlace::OneLine => " ",
+        BreakPlace::Text => {
+            if beside(node, false, false) != Beside::Content {
+                return "";
+            }
+            match beside(node, true, false) {
+                Beside::Content => "\\\n",
+                Beside::Edge => "",
+                Beside::Break if beside(node, true, true) != Beside::Content => "",
+                Beside::Break => {
+                    let marked = node
+                        .ancestors()
+                        .map_while(|ancestor| match ancestor.value() {
+                            scraper::Node::Element(element) if !line_block(element.name()) => {
+                                Some(element.name())
+                            }
+                            _ => None,
+                        })
+                        .any(|name| {
+                            matches!(
+                                name,
+                                "b" | "strong" | "i" | "em" | "q" | "sub" | "sup" | "code"
+                            )
+                        });
+                    if marked { "\\\n" } else { "\n\n" }
+                }
+            }
+        }
+    }
+}
+
+/// A source line break: a line feed in running text (none right before a
+/// `<br>`, which ends the line itself), a space where a line cannot break (a
+/// heading, a link's text, a table cell).
+fn soft_break(node: htmd::NodeRef<'_>) -> &'static str {
+    match break_place(node) {
+        BreakPlace::Code => "\n",
+        BreakPlace::OneLine | BreakPlace::Cell => " ",
+        BreakPlace::Text if beside(node, true, false) == Beside::Break => "",
+        BreakPlace::Text => "\n",
+    }
+}
+
+/// A table cell's content as one Markdown cell, as the document formats write
+/// one: its lines (a `<br>`, paragraphs, list items) joined with `<br>`, at
+/// most one empty line between two, none at its edges. A code block in the
+/// cell stays one code span, its lines joined with spaces (a `<br>` would be
+/// literal text inside it). htmd writes a literal pipe as `&#124;`, which
+/// [`compact_table`] writes `\|`.
+fn cell_lines(content: &str) -> String {
+    let mut cell = String::new();
+    let mut blank = false;
+    // Inside a fenced block, and whether the previous line was one of its.
+    let (mut fence, mut previous_code) = (false, false);
+    for line in content.trim().split('\n') {
+        let line = line.trim_end();
+        let marker = {
+            let start = line.trim_start();
+            start.starts_with("```") || start.starts_with("~~~")
+        };
+        let code = fence || marker;
+        if marker {
+            fence = !fence;
+        }
+        if line.trim().is_empty() && !code {
+            blank = !cell.is_empty();
+            continue;
+        }
+        if !cell.is_empty() {
+            if code && previous_code {
+                cell.push(' ');
+            } else {
+                cell.push_str("<br>");
+                if std::mem::take(&mut blank) {
+                    cell.push_str("<br>");
+                }
+            }
+        }
+        blank = false;
+        cell.push_str(if code { line.trim() } else { line });
+        previous_code = code;
+    }
+    cell
+}
+
+/// A definition list's term, as the document formats write one: bold, on a
+/// paragraph of its own above its definitions. A term that holds blocks or
+/// emphasis of its own is written as it is.
+fn defined_term(content: &str) -> String {
+    if content.is_empty()
+        || content.contains("\n\n")
+        || content.contains("**")
+        || content.starts_with(['#', '>', '|'])
+        || ["```", "~~~", "* ", "- ", "+ "]
+            .iter()
+            .any(|block| content.starts_with(block))
+    {
+        return content.to_owned();
+    }
+    format!("**{content}**")
+}
+
 fn converter() -> &'static htmd::HtmlToMarkdown {
     // The converter keeps no state between documents, so its handler table is
     // built once per process instead of once per call.
@@ -3670,22 +4170,131 @@ fn render_cleaned(write: &dyn Fn(&mut Out) -> Result<()>) -> Result<String> {
             None => tests::markup_parsed(),
         }
     }
-    if let Some(document) = document {
-        return Ok(converter()
-            .tree_to_markdown(document.tree.root())
-            .trim()
-            .to_owned());
-    }
-    let mut output = Out::markup();
-    write(&mut output)?;
-    render_sanitized(&output.into_markup())
+    let mut document = match document {
+        Some(document) => document,
+        None => {
+            let mut output = Out::markup();
+            write(&mut output)?;
+            Html::parse_document(&output.into_markup())
+        }
+    };
+    hoist_edge_breaks(&mut document);
+    Ok(converter()
+        .tree_to_markdown(document.tree.root())
+        .trim()
+        .to_owned())
 }
 
+/// The Markdown of cleaned markup, parsed (the code block tests' path).
+#[cfg(test)]
 fn render_sanitized(cleaned: &str) -> Result<String> {
-    converter()
-        .convert(cleaned)
-        .map(|markdown| markdown.trim().to_owned())
-        .map_err(|error| Error::Conversion(format!("HTML rendering failed: {error}")))
+    let mut document = Html::parse_document(cleaned);
+    hoist_edge_breaks(&mut document);
+    Ok(converter()
+        .tree_to_markdown(document.tree.root())
+        .trim()
+        .to_owned())
+}
+
+/// Whether a node of the cleaned page is a line break: a `<br>` or a source
+/// line break.
+fn is_line_break(node: htmd::NodeRef<'_>) -> bool {
+    match node.value() {
+        scraper::Node::Element(element) => matches!(element.name(), "br" | SOFT_BREAK),
+        _ => false,
+    }
+}
+
+/// Whether a node of the cleaned page shows nothing between two breaks: blank
+/// text, a comment or another break.
+fn blank_beside_break(node: htmd::NodeRef<'_>) -> bool {
+    match node.value() {
+        scraper::Node::Text(text) => text.trim().is_empty(),
+        scraper::Node::Comment(_) => true,
+        _ => is_line_break(node),
+    }
+}
+
+/// Moves each line break (`<br>` or a source line break) that opens or ends
+/// an inline element (`<span>a<br></span>`, `<b>a<br></b>`) out of it, before
+/// or after the element, as often as it opens or ends the element around that.
+/// htmd trims line ends at the edges of inline content, which would join the
+/// line after the break to it (`a\b`, `now.Alex`) or put the break's
+/// backslash before an emphasis marker; outside the element the break means
+/// the same. Code keeps its own line breaks.
+fn hoist_edge_breaks(document: &mut Html) {
+    let breaks: Vec<_> = document
+        .tree
+        .root()
+        .descendants()
+        .filter(|node| is_line_break(*node))
+        .map(|node| node.id())
+        .collect();
+    if breaks.is_empty() {
+        return;
+    }
+    // Breaks that open an element move before it in document order, those
+    // that end one after it in reverse order, so a run keeps its order.
+    for leading in [true, false] {
+        let order: Vec<_> = if leading {
+            breaks.clone()
+        } else {
+            breaks.iter().rev().copied().collect()
+        };
+        for id in order {
+            while let Some(node) = document.tree.get(id) {
+                let Some(parent) = node.parent() else {
+                    break;
+                };
+                let scraper::Node::Element(element) = parent.value() else {
+                    break;
+                };
+                if line_block(element.name())
+                    || matches!(element.name(), "code" | "kbd" | "samp" | "tt")
+                {
+                    break;
+                }
+                let at_edge = if leading {
+                    node.prev_siblings().all(blank_beside_break)
+                } else {
+                    node.next_siblings().all(blank_beside_break)
+                };
+                if !at_edge {
+                    break;
+                }
+                // A source line break that would stand next to another break
+                // outside the element adds nothing to it.
+                let soft = matches!(
+                    node.value(),
+                    scraper::Node::Element(element) if element.name() == SOFT_BREAK
+                );
+                let shown = |sibling: &htmd::NodeRef<'_>| {
+                    is_line_break(*sibling) || !blank_beside_break(*sibling)
+                };
+                let beside_break = if leading {
+                    parent.prev_siblings().find(shown)
+                } else {
+                    parent.next_siblings().find(shown)
+                }
+                .is_some_and(is_line_break);
+                let parent = parent.id();
+                if soft && beside_break {
+                    if let Some(mut node) = document.tree.get_mut(id) {
+                        node.detach();
+                    }
+                    break;
+                }
+                let Some(mut parent) = document.tree.get_mut(parent) else {
+                    break;
+                };
+                if leading {
+                    parent.insert_id_before(id);
+                } else {
+                    parent.insert_id_after(id);
+                }
+            }
+        }
+    }
 }
 
 fn sanitized_converter() -> htmd::HtmlToMarkdown {
@@ -3732,7 +4341,36 @@ fn sanitized_converter() -> htmd::HtmlToMarkdown {
         )
         .add_handler(
             vec!["markitai-soft-break"],
-            |_: &dyn htmd::element_handler::Handlers, _: htmd::Element| Some("\n".into()),
+            |_: &dyn htmd::element_handler::Handlers, element: htmd::Element| {
+                Some(soft_break(element.node).into())
+            },
+        )
+        .add_handler(
+            vec!["br"],
+            |_: &dyn htmd::element_handler::Handlers, element: htmd::Element| {
+                Some(line_break(element.node).into())
+            },
+        )
+        .add_handler(
+            vec!["markitai-task"],
+            |_: &dyn htmd::element_handler::Handlers, element: htmd::Element| {
+                Some(
+                    if element.attr("data-checked") == Some("true") {
+                        "[x] "
+                    } else {
+                        "[ ] "
+                    }
+                    .into(),
+                )
+            },
+        )
+        .add_handler(
+            vec!["td", "th"],
+            |handlers: &dyn htmd::element_handler::Handlers, element: htmd::Element| {
+                let mut result = handlers.fallback(element)?;
+                result.content = cell_lines(&result.content);
+                Some(result)
+            },
         )
         .add_handler(
             vec!["q"],
@@ -3775,6 +4413,13 @@ fn sanitized_converter() -> htmd::HtmlToMarkdown {
                     )
                     .into(),
                 )
+            },
+        )
+        .add_handler(
+            vec!["dt"],
+            |handlers: &dyn htmd::element_handler::Handlers, element: htmd::Element| {
+                let content = handlers.walk_children(element.node).content;
+                Some(format!("\n\n{}\n\n", defined_term(content.trim())).into())
             },
         )
         .add_handler(
@@ -4708,11 +5353,17 @@ mod tests {
             // A table without rows keeps its text, which the parser moves
             // before the table.
             "<table>\n  <caption>Cap\n  tion</caption>\n  <colgroup><col></colgroup>\n</table>",
-            // Foreign content: SVG names with capitals, MathML without TeX.
-            "<p>Figure <svg viewBox='0 0 1 1'><foreignObject><div>inside</div></foreignObject><clipPath id='c'></clipPath></svg> after <math><mrow><mi>x</mi></mrow></math></p>",
         ] {
             assert!(markup_parsed_for(source) > 0, "{source}");
         }
+        // An inline SVG drawing is written as its text, so its foreign
+        // names (with capitals) never reach the tree writer.
+        assert_eq!(
+            markup_parsed_for(
+                "<p>Figure <svg viewBox='0 0 1 1'><foreignObject><div>inside</div></foreignObject><clipPath id='c'></clipPath></svg> after</p>"
+            ),
+            0
+        );
         // Script content needs the markup parsed (the cleaner writes none).
         let before = MARKUP.with(std::cell::Cell::get);
         let markdown = render_cleaned(&|output| {
@@ -5687,9 +6338,10 @@ map(callbackFn, thisArg)
             None,
         )
         .unwrap();
+        // A literal pipe is `\|`, as the document formats write it.
         assert!(
             doc.markdown
-                .contains("| Station | Count |\n| --- | --- |\n| North-12 | 7 |\n| a&#124;b |  |"),
+                .contains("| Station | Count |\n| --- | --- |\n| North-12 | 7 |\n| a\\|b |  |"),
             "{}",
             doc.markdown
         );
@@ -7291,5 +7943,223 @@ map(callbackFn, thisArg)
         ] {
             assert!(!candidate(text), "{text:?}");
         }
+    }
+
+    fn body(html: &str) -> String {
+        extract_html(html, None).unwrap().markdown
+    }
+
+    #[test]
+    fn forms_keep_their_prose_and_lose_their_controls_and_entry_boxes() {
+        let prose =
+            "This article body has plenty of words so that extraction keeps it as the page text. "
+                .repeat(3);
+        // A section of the article inside a form.
+        let partial = body(&format!(
+            r#"<body><h1>Title</h1><p>{prose}</p><form action="/x" method="post"><h2>Inside</h2><p>{prose} Inside words.</p><ul><li>Item one</li></ul></form><p>Closing {prose}</p></body>"#
+        ));
+        for kept in ["## Inside", "Inside words.", "* Item one"] {
+            assert!(partial.contains(kept), "{kept}: {partial}");
+        }
+        // ASP.NET wraps the whole page in a form.
+        let aspnet = body(&format!(
+            r#"<body><form id="aspnetForm" method="post"><input type="hidden" name="__VIEWSTATE" value="x"><div id="content"><h1>Story</h1><p>{prose}</p><input type="submit" value="Go"></div></form></body>"#
+        ));
+        assert!(
+            aspnet.contains("# Story") && aspnet.contains("plenty of words"),
+            "{aspnet}"
+        );
+        assert!(!aspnet.contains("Go"), "{aspnet}");
+        // Old Reddit writes every post body in a form, with a hidden editor.
+        let reddit = body(
+            r##"<body><div class="thing"><p class="tagline"><a href="/user/a">a</a> 3 points</p><form action="#" class="usertext"><input type="hidden" name="thing_id"><div class="usertext-body"><div class="md"><p>The comment body says something.</p></div></div><div class="usertext-edit" style="display: none"><textarea>The comment body says something.</textarea><button>save</button></div></form></div></body>"##,
+        );
+        assert_eq!(
+            reddit.matches("The comment body says something.").count(),
+            1,
+            "{reddit}"
+        );
+        // Entry boxes and controls leave nothing.
+        let boxes = body(&format!(
+            r#"<body><article><p>{prose}</p><form role="search"><label>Search <input type="search" name="q"></label><button>Go</button></form><form class="newsletter"><p>Get our weekly letter in your inbox.</p><input type="email"><button>Subscribe</button></form><form><label>Name <input type="text" value="John"></label><select><option>One</option></select><textarea>Area text</textarea><button>Submit</button></form></article></body>"#
+        ));
+        for gone in [
+            "Search",
+            "weekly letter",
+            "Subscribe",
+            "Name",
+            "One",
+            "Area text",
+            "Submit",
+        ] {
+            assert!(!boxes.contains(gone), "{gone}: {boxes}");
+        }
+    }
+
+    #[test]
+    fn footers_of_parts_are_kept_and_the_page_footer_is_left_out() {
+        let prose =
+            "Introduction with sufficient words to be the main content of the page. ".repeat(3);
+        let markdown = body(&format!(
+            r#"<body><article><h1>Title</h1><p>{prose}</p>
+            <section><h2>Pricing</h2><p>Plans start at ten dollars.</p><footer><p>Prices exclude tax.</p></footer></section>
+            <figure><img src="x.png" alt="chart"><figcaption>Chart</figcaption><footer>Source: Census 2024</footer></figure>
+            <blockquote><p>Be the change.</p><footer>Mahatma Gandhi</footer></blockquote>
+            <blockquote><p>Love what you do.</p><footer>— <cite>Steve Jobs</cite></footer></blockquote>
+            <blockquote><p>Another.</p><p class="blockquote-footer">Someone famous</p></blockquote>
+            </article><footer><p>Copyright 2026 Example Site</p></footer></body>"#
+        ));
+        for kept in [
+            "Prices exclude tax.",
+            "Source: Census 2024",
+            "> Be the change.\n>\n> — Mahatma Gandhi",
+            "> — Steve Jobs",
+            "> — Someone famous",
+        ] {
+            assert!(markdown.contains(kept), "{kept}: {markdown}");
+        }
+        assert!(!markdown.contains("Copyright"), "{markdown}");
+        assert!(!markdown.contains("— —"), "{markdown}");
+        // A footer that only repeats notes resolved beside the text (CSS
+        // sidenotes) is left out with its heading.
+        let sidenotes = body(
+            r##"<article><p>Claim.<label class="footref" for="fn.1">1</label><input id="fn.1" class="footref-toggle" type="checkbox"><span class="sidenote"><sup>1</sup> The note.</span> More.</p>
+            <footer><h1>Sidenotes</h1><div class="footdef"><sup><a id="fn.1" class="footnum" href="#fnr.1" role="doc-backlink">1</a></sup> <div class="footpara" role="doc-footnote"><p>The note.</p></div></div></footer></article>"##,
+        );
+        assert_eq!(sidenotes.matches("The note.").count(), 1, "{sidenotes}");
+        assert!(!sidenotes.contains("Sidenotes"), "{sidenotes}");
+    }
+
+    #[test]
+    fn task_list_checkboxes_are_written_as_markers() {
+        let markdown = body(
+            r#"<ul><li><input type="checkbox" checked disabled> Done item</li><li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled> Open item</li><li>Plain item <input type="checkbox"></li></ul><ul><li><p><input type="checkbox" checked> In a paragraph</p></li></ul><p><input type="checkbox"> Not a list</p>"#,
+        );
+        assert_eq!(
+            markdown,
+            "* [x] Done item\n* [ ] Open item\n* Plain item\n\n* [x] In a paragraph\n\nNot a list"
+        );
+    }
+
+    #[test]
+    fn ruby_is_its_base_text_then_its_reading_once() {
+        assert_eq!(
+            body(
+                "<p>Ruby: <ruby>漢<rp>(</rp><rt>kan</rt><rp>)</rp>字<rp>(</rp><rt>ji</rt><rp>)</rp></ruby> and <ruby>東京<rt>とうきょう</rt></ruby> done.</p>"
+            ),
+            "Ruby: 漢字(kanji) and 東京(とうきょう) done."
+        );
+        assert_eq!(
+            body(
+                "<p><ruby><b>明</b><rtc><rt>ming</rt></rtc><rtc><rt>bright</rt></rtc></ruby><ruby>空<rt> </rt></ruby></p>"
+            ),
+            "**明**(ming, bright)空"
+        );
+    }
+
+    #[test]
+    fn line_breaks_are_hard_breaks_paragraph_breaks_or_spaces() {
+        // A poem's lines, with and without a source line break after `<br>`.
+        assert_eq!(
+            body("<p>Poem:<br>Roses are red,<br>\n   Violets are blue,<br>Sugar is sweet.<br></p>"),
+            "Poem:\\\nRoses are red,\\\nViolets are blue,\\\nSugar is sweet."
+        );
+        // Two breaks end a paragraph; breaks at a block's edges show nothing.
+        assert_eq!(
+            body("<div><br>One<br><br>\n<br>Two<br><br></div><p>Three</p>"),
+            "One\n\nTwo\n\nThree"
+        );
+        // A break that ends an inline element breaks the line after it.
+        assert_eq!(
+            body("<p><span>now.<br>\n<br>Alex<br></span>Next and <b>bold<br></b>after</p>"),
+            "now.\n\nAlex\\\nNext and **bold**\\\nafter"
+        );
+        // Emphasis is not split into paragraphs.
+        assert_eq!(body("<p><b>bold<br><br>more</b></p>"), "**bold\\\nmore**");
+        // A heading and a link's text are one line.
+        assert_eq!(
+            body(
+                "<h2>Long title\n  continued<br>more</h2><p>See <a href=\"/x\">first\nsecond<br>third</a>.</p>"
+            ),
+            "## Long title continued more\n\nSee [first second third](/x)."
+        );
+        // In a list item and a quotation the break keeps their markers.
+        assert_eq!(
+            body("<ul><li>a<br>b</li></ul><blockquote>c<br>d<br><br>e</blockquote>"),
+            "* a\\\n  b\n\n> c\\\n> d\n>\n> e"
+        );
+    }
+
+    #[test]
+    fn table_cells_join_their_lines_with_br_and_escape_pipes() {
+        let markdown = body(
+            "<table><thead><tr><th>A</th><th>B</th></tr></thead><tbody>\
+             <tr><td>one\n two<br>three</td><td><p>p1</p><p>p2</p></td></tr>\
+             <tr><td>A | B and <code>c|d</code></td><td><ul><li>x</li><li>y</li></ul></td></tr>\
+             <tr><td><pre>typedef x;\nint y;</pre></td><td>$|x|$</td></tr></tbody></table>",
+        );
+        assert!(
+            markdown.contains(
+                "| A | B |\n| --- | --- |\n| one two<br>three | p1<br><br>p2 |\n| A \\| B and `c\\|d` | * x<br>* y |\n| ``` typedef x; int y; ``` | $\\|x\\|$ |"
+            ),
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn definition_terms_are_bold_paragraphs() {
+        assert_eq!(
+            body(
+                "<dl><dt>Term</dt><dd>Definition text</dd><dt><code>flag</code></dt><dd>Second</dd><dt><b>Bold</b> term</dt><dd>Third</dd></dl>"
+            ),
+            "**Term**\n\nDefinition text\n\n**`flag`**\n\nSecond\n\n**Bold** term\n\nThird"
+        );
+    }
+
+    #[test]
+    fn soft_hyphens_are_removed_from_text() {
+        assert_eq!(
+            body(
+                "<p>&shy;soft&shy;hyphen\u{ad}ated words</p><pre><code>keep\u{ad}code</code></pre>"
+            ),
+            "softhyphenated words\n\n```\nkeep\u{ad}code\n```"
+        );
+    }
+
+    #[test]
+    fn media_elements_are_links_to_their_files_without_fallback_text() {
+        let markdown = body(
+            r#"<article><h1>Media</h1><video controls poster="poster.jpg"><source src="movie.mp4" type="video/mp4">Your browser does not support video.</video>
+            <audio controls src="sound.mp3">Audio fallback</audio>
+            <video poster="only.jpg" title="Launch film"></video><video>No source at all.</video>
+            <p>Inline <audio src="a.ogg" aria-label="Pronunciation"></audio> clip.</p></article>"#,
+        );
+        assert_eq!(
+            markdown,
+            "# Media\n\n[![Video](poster.jpg)](movie.mp4)\n\n[Audio](sound.mp3)\n\n![Launch film](only.jpg)\n\nInline [Pronunciation](a.ogg) clip."
+        );
+    }
+
+    #[test]
+    fn inline_svg_text_is_set_apart_by_spaces() {
+        assert_eq!(
+            body(
+                r#"<article><p>Intro.</p><svg width="200" height="100" viewBox="0 0 200 100"><title>Flow diagram</title><defs><text>hidden</text></defs><rect/><text x="10">Start here</text><text x="115">Finish <tspan>there</tspan></text><text><tspan x="1">Line one</tspan><tspan x="1" dy="1">Line two</tspan></text><switch><foreignObject><div>Label</div></foreignObject><text>Label</text></switch></svg>
+                <p>An <svg><title>icon</title></svg> inline.</p></article>"#
+            ),
+            "Intro.\n\nFlow diagram\n\nStart here Finish there Line one Line two Label\n\nAn icon inline."
+        );
+    }
+
+    #[test]
+    fn mediawiki_code_language_and_language_menu() {
+        let markdown = body(
+            r#"<main><h1>Rust</h1><div id="p-lang-btn" class="vector-dropdown mw-portlet mw-portlet-lang"><input type="checkbox" id="p-lang-btn-checkbox"><label>57 languages</label><div class="vector-dropdown-content"><ul><li class="interlanguage-link"><a href="https://de.wikipedia.org/wiki/Rust">Deutsch</a></li></ul><div class="wb-langlinks-edit"><a href="https://www.wikidata.org/wiki/Q1">Edit links</a></div></div></div>
+            <p>Rust is a language.</p><div class="mw-highlight mw-highlight-lang-rust mw-content-ltr" dir="ltr"><pre><span class="k">fn</span> main() {}</pre></div></main>"#,
+        );
+        assert_eq!(
+            markdown,
+            "# Rust\n\nRust is a language.\n\n```rust\nfn main() {}\n```"
+        );
     }
 }

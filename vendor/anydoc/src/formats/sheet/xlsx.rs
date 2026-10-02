@@ -4,16 +4,20 @@
 //! and merge regions are remapped onto the surviving grid.
 
 use super::controls::{Checkboxes, cell_inlines, read_vml_checkboxes};
-use super::numfmt::{DateParts, NumberFormat, Rendered, builtin_code};
+use super::notes;
+use super::numfmt::{DateParts, DatePiece, NumberFormat, Rendered, builtin_code};
 use super::{format_duration_days, format_float, format_time_of_day};
 use crate::error::ConvertError;
-use crate::model::{Block, Cell, Document, GridBuilder, Inline, Table, TableKind};
+use crate::model::{
+    Block, Cell, Document, GridBuilder, Inline, LinkTarget, List, ListItem, MarkerKind, Style,
+    Table, TableKind,
+};
 use crate::package::limits;
 use crate::package::relationships::{Relationships, read_rels, rel_type, rels_part_for};
 use crate::package::xml::{Element, ns};
 use crate::package::{Package, path};
 use crate::shared::header::resolve_header_rows;
-use crate::shared::text::clean_text;
+use crate::shared::text::{clean_cell_text, clean_text};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -75,6 +79,9 @@ pub(super) fn parse(pkg: &mut Package, wb_part: &str) -> Result<Document, Conver
     let mut failed = 0usize;
     // One budget for the workbook, so sheets cannot multiply the cap.
     let mut slots = 0u64;
+    // markitai: formulas whose cell carries no cached value, workbook-wide.
+    let mut uncached = 0usize;
+    let mut people = None;
     for (name, part) in &sheets {
         let worksheet = pkg.optional_xml_part(part)?;
         let Some(worksheet) = worksheet.as_ref().and_then(|r| r.find(ns::SML, "worksheet")) else {
@@ -84,18 +91,99 @@ pub(super) fn parse(pkg: &mut Package, wb_part: &str) -> Result<Document, Conver
         };
         let mut content = read_sheet(worksheet, &shared, &styles, date1904);
         content.checkboxes = read_vml_checkboxes(pkg, part)?;
-        let Some(table) = build_table(content, &mut slots)? else {
-            continue;
+        // markitai: cell hyperlinks and notes.
+        let sheet_rels = read_rels(pkg, &rels_part_for(part))?;
+        content.links = notes::hyperlinks(worksheet, &sheet_rels);
+        let people = match &people {
+            Some(people) => people,
+            None => people.insert(notes::people(pkg, &wb_rels, wb_part)?),
         };
-        if multi_sheet {
-            doc.blocks.push(Block::heading(2, vec![Inline::plain(name.clone())]));
-        }
-        doc.blocks.push(Block::Table(table));
+        content.notes = notes::cell_notes(pkg, part, &sheet_rels, people)?;
+        uncached += content.uncached_formulas;
+        push_sheet(&mut doc, name, multi_sheet, build_table(content, &mut slots)?);
     }
     if !sheets.is_empty() && failed == sheets.len() {
         return Err(ConvertError::malformed("no sheet in the workbook could be read"));
     }
+    if uncached > 0 {
+        doc.warnings.push(if uncached == 1 {
+            "1 formula in the workbook has no cached value, so its formula text is shown; open and save the workbook in Excel or LibreOffice to compute it.".to_string()
+        } else {
+            format!("{uncached} formulas in the workbook have no cached value, so their formula text is shown; open and save the workbook in Excel or LibreOffice to compute them.")
+        });
+    }
     Ok(doc)
+}
+
+/// markitai: a built sheet: its grid, the notes of its visible cells, and how
+/// many hidden rows and columns held content.
+#[derive(Default)]
+pub(super) struct Built {
+    pub(super) table: Option<Table>,
+    pub(super) notes: Vec<(u32, u32, String)>,
+    pub(super) hidden_rows: usize,
+    pub(super) hidden_cols: usize,
+}
+
+/// markitai: append a built sheet to the workbook document, as every
+/// container does: the sheet's name heading when the workbook shows several,
+/// its table, then its cell notes as a list under a `Notes` heading, each
+/// item led by the cell's reference (`B3: text`). Hidden rows and columns
+/// that held content are omitted as hidden sheets are, with a warning naming
+/// how many.
+pub(super) fn push_sheet(doc: &mut Document, name: &str, multi_sheet: bool, built: Built) {
+    let Built { table, notes, hidden_rows, hidden_cols } = built;
+    if hidden_rows + hidden_cols > 0 {
+        let count = |n: usize, what: &str| match n {
+            0 => None,
+            1 => Some(format!("1 hidden {what}")),
+            n => Some(format!("{n} hidden {what}s")),
+        };
+        let parts: Vec<String> = [count(hidden_rows, "row"), count(hidden_cols, "column")]
+            .into_iter()
+            .flatten()
+            .collect();
+        let pronoun = if hidden_rows + hidden_cols == 1 { "it is" } else { "they are" };
+        doc.warnings.push(format!(
+            "Worksheet {name:?} has {} holding content; {pronoun} omitted by the native spreadsheet reader.",
+            parts.join(" and ")
+        ));
+    }
+    if table.is_none() && notes.is_empty() {
+        return;
+    }
+    if multi_sheet {
+        doc.blocks.push(Block::heading(2, vec![Inline::plain(name.to_string())]));
+    }
+    if let Some(table) = table {
+        doc.blocks.push(Block::Table(table));
+    }
+    if !notes.is_empty() {
+        doc.blocks.push(Block::heading(3, vec![Inline::plain("Notes")]));
+        let items = notes
+            .into_iter()
+            .map(|(row, col, text)| ListItem {
+                blocks: vec![Block::Paragraph(vec![Inline::plain(format!(
+                    "{}: {text}",
+                    cell_reference(row, col)
+                ))])],
+                marker_label: None,
+            })
+            .collect();
+        doc.blocks.push(Block::List(List { marker: MarkerKind::Bullet, start: 1, items }));
+    }
+}
+
+/// markitai: a zero-based (row, column) as an A1 reference (`B3`).
+pub(super) fn cell_reference(row: u32, col: u32) -> String {
+    let mut letters = Vec::new();
+    let mut n = col + 1;
+    while n > 0 {
+        let rem = (n - 1) % 26;
+        letters.push(char::from(b'A' + rem as u8));
+        n = (n - 1) / 26;
+    }
+    letters.iter().rev().collect::<String>() + &(row + 1).to_string()
 }
 
 /// Part name for a workbook-level sibling: the relationship of the given
@@ -132,12 +220,13 @@ fn shared_strings(root: &Element) -> Vec<String> {
     let Some(sst) = root.find(ns::SML, "sst") else {
         return Vec::new();
     };
-    sst.find_all(ns::SML, "si").map(|si| clean_text(&rich_text(si))).collect()
+    // markitai: a cell's line breaks are content.
+    sst.find_all(ns::SML, "si").map(|si| clean_cell_text(&rich_text(si))).collect()
 }
 
 /// Text of an `si` or `is`: a single `t`, or rich-text `r` runs
 /// concatenated. Phonetic guides (`rPh`) are not content.
-fn rich_text(item: &Element) -> String {
+pub(super) fn rich_text(item: &Element) -> String {
     let mut out = String::new();
     for child in item.child_elems() {
         if child.is(ns::SML, "t") {
@@ -234,8 +323,19 @@ pub(super) fn resolve_format(id: u32, custom: &HashMap<u32, &str>) -> CellFormat
 /// BIFF reader, which fills it from records instead of XML.
 #[derive(Default)]
 pub(super) struct SheetContent {
-    /// Rendered text by zero-based (row, col); empty results are absent.
+    /// Rendered text by zero-based (row, col); empty results are absent. A
+    /// line break in a cell's text is `\n` (markitai).
     pub(super) cells: HashMap<(u32, u32), String>,
+    /// markitai: cells whose text is a formula, written because the cell
+    /// caches no value.
+    pub(super) formulas: HashSet<(u32, u32)>,
+    /// markitai: formulas without a cached value, shown or not (a shared
+    /// formula's later cells carry no text of their own).
+    pub(super) uncached_formulas: usize,
+    /// markitai: the web or mail address a cell links to.
+    pub(super) links: HashMap<(u32, u32), String>,
+    /// markitai: cell notes and comments by cell, in reading order.
+    pub(super) notes: Vec<(u32, u32, String)>,
     /// Form control checkboxes by the cell they are anchored in.
     pub(super) checkboxes: Checkboxes,
     pub(super) hidden_rows: HashSet<u32>,
@@ -296,7 +396,38 @@ fn read_sheet(
             if cr >= MAX_ROWS || cc >= MAX_COLS {
                 continue;
             }
-            let text = cell_text(c, shared, styles, date1904);
+            // markitai: a formula cell saved without its value (openpyxl and
+            // other writers that do not calculate) shows its formula. An
+            // empty value caches nothing but for a string result, which may
+            // be empty.
+            let (mut formula, mut value) = (None, None);
+            for child in c.child_elems() {
+                if child.is(ns::SML, "f") {
+                    formula = formula.or(Some(child));
+                } else if child.is(ns::SML, "v") {
+                    value = value.or(Some(child));
+                }
+            }
+            let uncached = || match value {
+                None => true,
+                Some(v) => {
+                    !matches!(c.attr_unqualified("t"), Some("str" | "s" | "inlineStr"))
+                        && v.text().trim().is_empty()
+                }
+            };
+            if let Some(formula) = formula
+                && uncached()
+            {
+                out.uncached_formulas += 1;
+                let formula = clean_text(&formula.text());
+                let formula = formula.trim();
+                if !formula.is_empty() {
+                    out.cells.insert((cr, cc), format!("={formula}"));
+                    out.formulas.insert((cr, cc));
+                }
+                continue;
+            }
+            let text = cell_text(c, value, shared, styles, date1904);
             if !text.is_empty() {
                 out.cells.insert((cr, cc), text);
             }
@@ -318,9 +449,16 @@ fn read_sheet(
 }
 
 /// A cell's rendered text, per its `t` type and resolved number format.
-fn cell_text(c: &Element, shared: &[String], styles: &Styles, date1904: bool) -> String {
+/// markitai: `v` is the cell's first `v` child, which the caller has found.
+fn cell_text(
+    c: &Element,
+    v: Option<&Element>,
+    shared: &[String],
+    styles: &Styles,
+    date1904: bool,
+) -> String {
     let fmt = styles.for_cell(c.attr_unqualified("s"));
-    let value = || c.find(ns::SML, "v").map(|v| v.text()).unwrap_or_default();
+    let value = || v.map(|v| v.text()).unwrap_or_default();
     match c.attr_unqualified("t").unwrap_or("n") {
         "s" => {
             let v = value();
@@ -332,9 +470,9 @@ fn cell_text(c: &Element, shared: &[String], styles: &Styles, date1904: bool) ->
                 }
             }
         }
-        "str" => format_as_text(fmt, &clean_text(&value())),
+        "str" => format_as_text(fmt, &clean_cell_text(&value())),
         "inlineStr" => {
-            let text = c.find(ns::SML, "is").map(|is| clean_text(&rich_text(is)));
+            let text = c.find(ns::SML, "is").map(|is| clean_cell_text(&rich_text(is)));
             format_as_text(fmt, &text.unwrap_or_default())
         }
         "b" => match value().trim() {
@@ -369,6 +507,7 @@ pub(super) fn render_number(fmt: &CellFormat, n: f64, date1904: bool) -> String 
             }
             Rendered::Text(s) => s,
             Rendered::DateTime(parts) => render_serial(n, parts, date1904),
+            Rendered::Spelled(pieces) => render_spelled(n, pieces, date1904),
         },
     };
     clean_text(&text)
@@ -388,10 +527,7 @@ pub(super) fn format_as_text(fmt: &CellFormat, text: &str) -> String {
 /// widened to cover intersecting merge regions (a merge anchored on the
 /// only populated cell must survive at full size), and merges remapped onto
 /// the surviving rows and columns.
-pub(super) fn build_table(
-    mut sheet: SheetContent,
-    slots: &mut u64,
-) -> Result<Option<Table>, ConvertError> {
+pub(super) fn build_table(mut sheet: SheetContent, slots: &mut u64) -> Result<Built, ConvertError> {
     // Hidden coordinates as sorted lists: lookups and first-visible scans
     // stay logarithmic, so an adversarial pile of hidden rows or column
     // ranges cannot force quadratic work.
@@ -413,7 +549,18 @@ pub(super) fn build_table(
         }
     }
     for (at, text) in sheet.cells.drain() {
-        cells.insert(at, vec![Inline::plain(text)]);
+        // markitai: a formula shown for its missing value reads as code, a
+        // line break stays one, and a linked cell is its link.
+        let mut inlines = if sheet.formulas.contains(&at) {
+            vec![Inline::Text { text, style: Style { code: true, ..Style::PLAIN } }]
+        } else {
+            cell_lines(text)
+        };
+        if let Some(url) = sheet.links.get(&at) {
+            inlines =
+                vec![Inline::Link { content: inlines, target: LinkTarget::External(url.clone()) }];
+        }
+        cells.insert(at, inlines);
     }
     // A merge with no surviving row or column disappears with its content.
     // One whose origin is hidden keeps its content at the first surviving
@@ -432,6 +579,28 @@ pub(super) fn build_table(
         true
     });
 
+    // markitai: the hidden rows and columns that hold content, which the
+    // caller reports, and the notes of the cells that stay visible.
+    let mut built = Built::default();
+    {
+        let mut rows = HashSet::new();
+        let mut cols = HashSet::new();
+        for &(r, c) in cells.keys() {
+            if hidden_row(r) {
+                rows.insert(r);
+            }
+            if hidden_col(c) {
+                cols.insert(c);
+            }
+        }
+        built.hidden_rows = rows.len();
+        built.hidden_cols = cols.len();
+    }
+    built.notes = std::mem::take(&mut sheet.notes)
+        .into_iter()
+        .filter(|&(r, c, _)| !hidden_row(r) && !hidden_col(c))
+        .collect();
+
     // Populated extent over visible cells only.
     let mut bounds: Option<(u32, u32, u32, u32)> = None;
     for &(r, c) in cells.keys() {
@@ -444,7 +613,7 @@ pub(super) fn build_table(
         });
     }
     let Some((mut r1, mut c1, mut r2, mut c2)) = bounds else {
-        return Ok(None);
+        return Ok(built);
     };
     // Merge regions touching the populated extent widen it to their full
     // size; the rest are dropped, so a crafted merge list can neither force
@@ -457,7 +626,7 @@ pub(super) fn build_table(
     let row_map: Vec<u32> = (r1..=r2).filter(|&r| !hidden_row(r)).collect();
     let col_map: Vec<u32> = (c1..=c2).filter(|&c| !hidden_col(c)).collect();
     if row_map.is_empty() || col_map.is_empty() {
-        return Ok(None);
+        return Ok(built);
     }
     // Charged before materializing, and across the workbook rather than per
     // sheet: the extent comes from cell coordinates, so a handful of cells
@@ -529,10 +698,28 @@ pub(super) fn build_table(
     // A spreadsheet marks no header row, so the shape of the data decides.
     let mut table = builder.finish(TableKind::Data);
     if table.grid.is_empty() {
-        return Ok(None);
+        return Ok(built);
     }
     table.header_rows = resolve_header_rows(&table, 0);
-    Ok(Some(table))
+    built.table = Some(table);
+    Ok(built)
+}
+
+/// markitai: a cell's text as inlines, each line break kept as one.
+fn cell_lines(text: String) -> Vec<Inline> {
+    if !text.contains('\n') {
+        return vec![Inline::plain(text)];
+    }
+    let mut inlines = Vec::new();
+    for (i, line) in text.split('\n').enumerate() {
+        if i > 0 {
+            inlines.push(Inline::LineBreak);
+        }
+        if !line.is_empty() {
+            inlines.push(Inline::plain(line));
+        }
+    }
+    inlines
 }
 
 /// Flatten inclusive ranges into a sorted, deduplicated coordinate list.
@@ -627,6 +814,88 @@ fn render_serial(serial: f64, parts: DateParts, date1904: bool) -> String {
     out
 }
 
+/// markitai: a date serial written through a spelled date format's pieces
+/// (`dddd, mmmm d, yyyy` → `Wednesday, March 4, 2026`), with English names.
+/// A serial outside the date range shows the number, as [`render_serial`]
+/// does.
+fn render_spelled(serial: f64, pieces: &[DatePiece], date1904: bool) -> String {
+    const MONTHS: [&str; 12] = [
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ];
+    const DAYS: [&str; 7] =
+        ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    if !serial.is_finite() || !(1.0..2_958_466.0).contains(&serial) {
+        return format_float(serial);
+    }
+    let mut days = serial.trunc() as i64;
+    if !date1904 && days == 60 {
+        return format_float(serial);
+    }
+    let mut secs = (serial.fract() * 86_400.0).round() as i64;
+    if secs >= 86_400 {
+        secs = 0;
+        days += 1;
+    }
+    let civil = if date1904 {
+        days + days_from_civil(1904, 1, 1)
+    } else {
+        days - i64::from(days >= 60) + days_from_civil(1899, 12, 31)
+    };
+    let (y, m, d) = civil_from_days(civil);
+    if !(1..=9999).contains(&y) {
+        return format_float(serial);
+    }
+    // 1970-01-01 was a Thursday.
+    let weekday = (civil + 4).rem_euclid(7) as usize;
+    let clock12 = pieces.iter().any(|p| matches!(p, DatePiece::AmPm(_)));
+    let hour = secs / 3600;
+    let pad = |value: i64, width: usize| {
+        if width >= 2 { format!("{value:02}") } else { value.to_string() }
+    };
+    let mut out = String::new();
+    for piece in pieces {
+        match piece {
+            DatePiece::Literal(text) => out.push_str(text),
+            DatePiece::Year(n) if *n <= 2 => out.push_str(&format!("{:02}", y % 100)),
+            DatePiece::Year(_) => out.push_str(&format!("{y:04}")),
+            DatePiece::Month(n) => match n {
+                1 | 2 => out.push_str(&pad(i64::from(m), *n)),
+                3 => out.push_str(&MONTHS[m as usize - 1][..3]),
+                _ => out.push_str(MONTHS[m as usize - 1]),
+            },
+            DatePiece::Day(n) => match n {
+                1 | 2 => out.push_str(&pad(i64::from(d), *n)),
+                3 => out.push_str(&DAYS[weekday][..3]),
+                _ => out.push_str(DAYS[weekday]),
+            },
+            DatePiece::Hour(n) => {
+                let shown = if clock12 { (hour + 11) % 12 + 1 } else { hour };
+                out.push_str(&pad(shown, *n));
+            }
+            DatePiece::Minute(n) => out.push_str(&pad(secs / 60 % 60, *n)),
+            DatePiece::Second(n) => out.push_str(&pad(secs % 60, *n)),
+            DatePiece::AmPm(full) => out.push_str(match (hour < 12, full) {
+                (true, true) => "AM",
+                (false, true) => "PM",
+                (true, false) => "A",
+                (false, false) => "P",
+            }),
+        }
+    }
+    out
+}
+
 /// Days from 1970-01-01 to a civil date (Howard Hinnant's algorithm).
 fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
     let y = y - i64::from(m <= 2);
@@ -654,7 +923,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 
 /// A cell reference (`C3`) as zero-based (row, column); the column letters
 /// are bijective base-26.
-fn parse_ref(r: &str) -> Option<(u32, u32)> {
+pub(super) fn parse_ref(r: &str) -> Option<(u32, u32)> {
     let digits_at = r.find(|c: char| c.is_ascii_digit())?;
     let (letters, digits) = r.split_at(digits_at);
     if letters.is_empty() {
@@ -679,7 +948,7 @@ fn parse_ref(r: &str) -> Option<(u32, u32)> {
 
 /// A merge reference (`F1:O3`, or a single cell) as an inclusive normalized
 /// region.
-fn parse_region(r: &str) -> Option<(u32, u32, u32, u32)> {
+pub(super) fn parse_region(r: &str) -> Option<(u32, u32, u32, u32)> {
     let (a, b) = r.split_once(':').unwrap_or((r, r));
     let (r1, c1) = parse_ref(a.trim())?;
     let (r2, c2) = parse_ref(b.trim())?;
@@ -850,17 +1119,219 @@ mod tests {
 
     #[test]
     fn unresolvable_numfmt_ids_render_general() {
-        // Id 5 is not an implied built-in and id 30 is locale-specific:
-        // with no numFmt element the code is unknown, and guessing (a
-        // currency format, a date shape) would be worse than General.
+        // Id 23 is not an implied built-in and id 30 is locale-specific:
+        // with no numFmt element the code is unknown, and guessing (a date
+        // shape) would be worse than General.
         let wb = Wb {
-            styles: Some(r#"<cellXfs><xf numFmtId="5"/><xf numFmtId="30"/></cellXfs>"#),
+            styles: Some(r#"<cellXfs><xf numFmtId="23"/><xf numFmtId="30"/></cellXfs>"#),
             ..one_sheet(
                 r#"<sheetData><row r="1"><c r="A1" s="0"><v>1234.5</v></c><c r="B1" s="1"><v>1234.5</v></c></row></sheetData>"#,
             )
         };
         let doc = parse(&wb.build()).unwrap();
         assert_eq!(texts(first_table(&doc)), vec![vec!["1234.5", "1234.5"]]);
+    }
+
+    // markitai: the currency and accounting ids openpyxl writes without a
+    // code: grouping, decimals and negative parentheses, but no currency
+    // symbol, which depends on a locale the file does not name. A code that
+    // writes its own symbol keeps it.
+    #[test]
+    fn currency_and_accounting_ids_without_a_code_show_parentheses() {
+        let wb = Wb {
+            styles: Some(
+                r#"<numFmts><numFmt numFmtId="164" formatCode="&quot;$&quot;#,##0.00_);[Red](&quot;$&quot;#,##0.00)"/><numFmt numFmtId="165" formatCode="[$€-407] #,##0.00"/></numFmts><cellXfs><xf numFmtId="8"/><xf numFmtId="7"/><xf numFmtId="5"/><xf numFmtId="44"/><xf numFmtId="43"/><xf numFmtId="164"/><xf numFmtId="165"/></cellXfs>"#,
+            ),
+            ..one_sheet(
+                r#"<sheetData><row r="1"><c r="A1" s="0"><v>-1234.5</v></c><c r="B1" s="1"><v>1234.5</v></c><c r="C1" s="2"><v>-1234.5</v></c><c r="D1" s="3"><v>-1234.5</v></c><c r="E1" s="4"><v>1234.5</v></c><c r="F1" s="5"><v>-1234.5</v></c><c r="G1" s="6"><v>1234.5</v></c></row></sheetData>"#,
+            )
+        };
+        let doc = parse(&wb.build()).unwrap();
+        let row: Vec<String> =
+            texts(first_table(&doc))[0].iter().map(|cell| cell.trim().to_string()).collect();
+        assert_eq!(
+            row,
+            [
+                "(1,234.50)",
+                "1,234.50",
+                "(1,235)",
+                "(1,234.50)",
+                "1,234.50",
+                "($1,234.50)",
+                "€ 1,234.50"
+            ]
+        );
+    }
+
+    // markitai: what openpyxl and other writers that do not calculate leave
+    // in a formula cell, and what a sheet attaches to its cells.
+    #[test]
+    fn formulas_without_a_cached_value_show_their_text_once_warned() {
+        let wb = one_sheet(
+            r#"<sheetData><row r="1"><c r="A1"><v>2</v></c><c r="B1"><f>A1*3</f><v></v></c><c r="C1"><f>A1*4</f></c><c r="D1" t="str"><f>""</f><v></v></c><c r="E1"><f>A1*5</f><v>10</v></c><c r="F1"><f t="shared" si="0"/></c></row></sheetData>"#,
+        );
+        let doc = parse(&wb.build()).unwrap();
+        let table = first_table(&doc);
+        // A shared formula's later cell has no text of its own to show.
+        assert_eq!(texts(table), vec![vec!["2", "=A1*3", "=A1*4", "", "10"]]);
+        let CellSlot::Origin(cell) = &table.grid[0][1] else { panic!() };
+        assert!(matches!(&cell.blocks[0], Block::Paragraph(i)
+            if matches!(&i[0], Inline::Text { style, .. } if style.code)));
+        assert_eq!(
+            doc.warnings,
+            [
+                "3 formulas in the workbook have no cached value, so their formula text is shown; open and save the workbook in Excel or LibreOffice to compute them."
+            ]
+        );
+        // A cached workbook warns about nothing.
+        let cached = one_sheet(
+            r#"<sheetData><row r="1"><c r="A1"><f>1+1</f><v>2</v></c></row></sheetData>"#,
+        );
+        assert!(parse(&cached.build()).unwrap().warnings.is_empty());
+    }
+
+    const HYPERLINK_REL: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
+    const COMMENTS_REL: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
+
+    #[test]
+    fn hyperlinks_notes_hidden_cells_and_line_breaks() {
+        let rels = format!(
+            r##"<?xml version="1.0"?><Relationships xmlns="{PKG_RELS}"><Relationship Id="rId1" Type="{HYPERLINK_REL}" Target="https://example.com/page" TargetMode="External"/><Relationship Id="rId2" Type="{HYPERLINK_REL}" Target="#Sheet2!A1" TargetMode="External"/><Relationship Id="rId3" Type="{HYPERLINK_REL}" Target="mailto:bob@example.com" TargetMode="External"/><Relationship Id="rId4" Type="{HYPERLINK_REL}" Target="file:///etc/passwd" TargetMode="External"/><Relationship Id="rId5" Type="{COMMENTS_REL}" Target="/xl/comments1.xml"/></Relationships>"##
+        );
+        let comments = format!(
+            r#"<?xml version="1.0"?><comments xmlns="{SML}"><authors><author>Ann</author></authors><commentList><comment ref="B2" authorId="0"><text><r><rPr><b/></rPr><t>Ann:</t></r><r><t xml:space="preserve">
+Check this
+value</t></r></text></comment><comment ref="A1" authorId="0"><text><t>First</t></text></comment><comment ref="C3" authorId="0"><text><t>On a hidden row</t></text></comment></commentList></comments>"#
+        );
+        let wb = Wb {
+            sheets: vec![(
+                "S",
+                "",
+                r#"<cols><col min="6" max="6" hidden="1"/></cols><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Name</t></is></c><c r="B1" t="inlineStr"><is><t>Site</t></is></c><c r="F1" t="inlineStr"><is><t>secret</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>line one
+line two</t></is></c><c r="B2" t="inlineStr"><is><t>example.com</t></is></c><c r="C2" t="inlineStr"><is><t>Sheet2</t></is></c><c r="D2" t="inlineStr"><is><t>mail</t></is></c><c r="E2" t="inlineStr"><is><t>file</t></is></c></row><row r="3" hidden="1"><c r="C3" t="inlineStr"><is><t>hidden</t></is></c></row></sheetData><hyperlinks xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><hyperlink ref="B2" r:id="rId1"/><hyperlink ref="C2" r:id="rId2"/><hyperlink ref="D2" r:id="rId3"/><hyperlink ref="E2" r:id="rId4"/></hyperlinks>"#,
+            )],
+            extra: vec![
+                ("xl/worksheets/_rels/sheet1.xml.rels", &rels),
+                ("xl/comments1.xml", &comments),
+            ],
+            ..Wb::default()
+        };
+        let doc = parse(&wb.build()).unwrap();
+        let table = first_table(&doc);
+        let CellSlot::Origin(link) = &table.grid[1][1] else { panic!() };
+        assert!(matches!(&link.blocks[0], Block::Paragraph(i) if matches!(&i[0],
+            Inline::Link { target: LinkTarget::External(url), .. } if url == "https://example.com/page")));
+        // Links into the workbook and to other schemes keep their text only.
+        let CellSlot::Origin(mail) = &table.grid[1][3] else { panic!() };
+        assert!(matches!(&mail.blocks[0], Block::Paragraph(i) if matches!(&i[0],
+            Inline::Link { target: LinkTarget::External(url), .. } if url == "mailto:bob@example.com")));
+        for col in [2, 4] {
+            let CellSlot::Origin(plain) = &table.grid[1][col] else { panic!() };
+            assert!(
+                matches!(&plain.blocks[0], Block::Paragraph(i) if matches!(&i[0], Inline::Text { .. }))
+            );
+        }
+        let CellSlot::Origin(lines) = &table.grid[1][0] else { panic!() };
+        assert!(matches!(&lines.blocks[0], Block::Paragraph(i)
+            if matches!(i.as_slice(), [Inline::Text { .. }, Inline::LineBreak, Inline::Text { .. }])));
+        // The hidden row's note goes with it; the rest follow the table in
+        // reading order, on one line each.
+        let Some(Block::List(notes)) = doc.blocks.last() else { panic!("{:?}", doc.blocks) };
+        let notes: Vec<String> = notes
+            .items
+            .iter()
+            .map(|item| match &item.blocks[0] {
+                Block::Paragraph(i) => inlines_to_plain_text(i),
+                _ => String::new(),
+            })
+            .collect();
+        assert_eq!(notes, ["A1: First", "B2: Ann: Check this value"]);
+        assert!(matches!(&doc.blocks[doc.blocks.len() - 2], Block::Heading { level: 3, .. }));
+        assert_eq!(
+            doc.warnings,
+            [
+                "Worksheet \"S\" has 1 hidden row and 1 hidden column holding content; they are omitted by the native spreadsheet reader."
+            ]
+        );
+    }
+
+    #[test]
+    fn threaded_comments_replace_their_legacy_placeholder() {
+        let rels = format!(
+            r#"<?xml version="1.0"?><Relationships xmlns="{PKG_RELS}"><Relationship Id="rId1" Type="{COMMENTS_REL}" Target="../comments1.xml"/><Relationship Id="rId2" Type="http://schemas.microsoft.com/office/2017/10/relationships/threadedComment" Target="../threadedComments/threadedComment1.xml"/></Relationships>"#
+        );
+        let legacy = format!(
+            r#"<?xml version="1.0"?><comments xmlns="{SML}"><authors><author>tc={{1}}</author></authors><commentList><comment ref="A1" authorId="0"><text><t>[Threaded comment] Your version of Excel allows you to read this threaded comment</t></text></comment><comment ref="A2" authorId="0"><text><t>A plain note</t></text></comment></commentList></comments>"#
+        );
+        let threaded = r#"<?xml version="1.0"?><ThreadedComments xmlns="http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments"><threadedComment ref="A1" personId="{P1}" id="{1}"><text>Is this right?</text></threadedComment><threadedComment ref="A1" personId="{P2}" id="{2}" parentId="{1}"><text>Yes.</text></threadedComment></ThreadedComments>"#;
+        let persons = r#"<?xml version="1.0"?><personList xmlns="http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments"><person displayName="Ann Lee" id="{P1}"/><person displayName="Bo" id="{P2}"/></personList>"#;
+        let mut book = one_sheet(
+            r#"<sheetData><row r="1"><c r="A1"><v>1</v></c></row><row r="2"><c r="A2"><v>2</v></c></row></sheetData>"#,
+        );
+        book.extra = vec![
+            ("xl/worksheets/_rels/sheet1.xml.rels", &rels),
+            ("xl/comments1.xml", &legacy),
+            ("xl/threadedComments/threadedComment1.xml", threaded),
+            ("xl/persons/person.xml", persons),
+        ];
+        let mut bytes = book.build();
+        // The persons part hangs off the workbook's own relationships.
+        bytes = with_workbook_rel(
+            &bytes,
+            r#"<Relationship Id="rId99" Type="http://schemas.microsoft.com/office/2017/10/relationships/person" Target="persons/person.xml"/>"#,
+        );
+        let doc = parse(&bytes).unwrap();
+        let Some(Block::List(notes)) = doc.blocks.last() else { panic!("{:?}", doc.blocks) };
+        let notes: Vec<String> = notes
+            .items
+            .iter()
+            .map(|item| match &item.blocks[0] {
+                Block::Paragraph(i) => inlines_to_plain_text(i),
+                _ => String::new(),
+            })
+            .collect();
+        assert_eq!(notes, ["A1: Ann Lee: Is this right?", "A1: Bo: Yes.", "A2: A plain note"]);
+    }
+
+    /// A built workbook with one more relationship in its workbook part's
+    /// relationships.
+    fn with_workbook_rel(bytes: &[u8], rel: &str) -> Vec<u8> {
+        use std::io::Read;
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default();
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i).unwrap();
+            let name = file.name().to_string();
+            let mut body = String::new();
+            file.read_to_string(&mut body).unwrap();
+            if name == "xl/_rels/workbook.xml.rels" {
+                body = body.replace("</Relationships>", &format!("{rel}</Relationships>"));
+            }
+            zip.start_file(name, opts).unwrap();
+            zip.write_all(body.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn spelled_dates_write_names_and_a_twelve_hour_clock() {
+        let pieces = |code: &str| match NumberFormat::parse(code).unwrap().format_number(0.0) {
+            Rendered::Spelled(p) => p.to_vec(),
+            other => panic!("{other:?}"),
+        };
+        // 2026-03-04 15:30, a Wednesday.
+        let serial = 46_085.0 + 15.5 / 24.0;
+        let spell = |code: &str| render_spelled(serial, &pieces(code), false);
+        assert_eq!(spell("dddd, mmmm d, yyyy"), "Wednesday, March 4, 2026");
+        assert_eq!(spell("ddd dd mmm yyyy"), "Wed 04 Mar 2026");
+        assert_eq!(spell("mmm d, yyyy h:mm AM/PM"), "Mar 4, 2026 3:30 PM");
+        assert_eq!(spell("yyyy\"年\"m\"月\"d\"日\""), "2026年3月4日");
+        assert_eq!(render_spelled(46_085.0, &pieces("d mmmm yyyy"), true), "5 March 2030");
+        assert_eq!(render_spelled(60.0, &pieces("d mmmm yyyy"), false), "60");
+        assert_eq!(render_spelled(0.5, &pieces("d mmmm yyyy"), false), "0.5");
     }
 
     #[test]

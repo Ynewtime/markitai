@@ -26,11 +26,12 @@ use std::path::Path;
 /// [`Format::from_extension`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Format {
-    /// Binary Word 97-2003 (`.doc`).
+    /// Binary Word 97-2003 (`.doc`, template `.dot`).
     Doc,
-    /// WordprocessingML (`.docx`, `.docm`), both Transitional and Strict.
+    /// WordprocessingML (`.docx`, `.docm`, templates `.dotx`, `.dotm`), both
+    /// Transitional and Strict.
     Docx,
-    /// OpenDocument Text (`.odt`).
+    /// OpenDocument Text (`.odt`, template `.ott`).
     Odt,
     /// Converted with [pdf-inspector], which emits Markdown directly:
     /// [`to_document`] is unsupported for PDFs. Scanned or image-only pages
@@ -41,18 +42,19 @@ pub enum Format {
     Pdf,
     /// Binary PowerPoint 97-2003 (`.ppt`, `.pps`, `.pot`).
     Ppt,
-    /// PresentationML (`.pptx`, `.pptm`, `.ppsx`, `.ppsm`).
+    /// PresentationML (`.pptx`, `.pptm`, `.ppsx`, `.ppsm`, templates `.potx`,
+    /// `.potm`).
     Pptx,
     /// Rich Text Format (`.rtf`).
     Rtf,
     /// EPUB 2 and 3 (`.epub`).
     Epub,
     /// Excel workbooks: `.xlsx`, `.xlsm`, binary `.xlsb`, and legacy
-    /// OLE-based `.xls`.
+    /// OLE-based `.xls`, with their templates `.xltx`, `.xltm` and `.xlt`.
     Excel,
-    /// OpenDocument Spreadsheet (`.ods`).
+    /// OpenDocument Spreadsheet (`.ods`, template `.ots`).
     Ods,
-    /// OpenDocument Presentation (`.odp`).
+    /// OpenDocument Presentation (`.odp`, template `.otp`).
     Odp,
     /// Delimiter-separated text (`.csv`). Carries no signature, so it has to
     /// be named rather than detected.
@@ -72,18 +74,20 @@ impl Format {
     /// The format a bare extension names (no leading dot), matched
     /// case-insensitively. `None` for anything unrecognized.
     pub fn from_extension(ext: &str) -> Option<Format> {
+        // markitai: templates are the containers of the documents they make
+        // (`.dotx` a WordprocessingML package, `.ott` an OpenDocument text).
         Some(match ext.to_ascii_lowercase().as_str() {
-            "doc" => Format::Doc,
-            "docx" | "docm" => Format::Docx,
-            "odt" => Format::Odt,
+            "doc" | "dot" => Format::Doc,
+            "docx" | "docm" | "dotx" | "dotm" => Format::Docx,
+            "odt" | "ott" => Format::Odt,
             "pdf" => Format::Pdf,
-            "pptx" | "pptm" | "ppsx" | "ppsm" => Format::Pptx,
+            "pptx" | "pptm" | "ppsx" | "ppsm" | "potx" | "potm" => Format::Pptx,
             "ppt" | "pps" | "pot" => Format::Ppt,
             "rtf" => Format::Rtf,
             "epub" => Format::Epub,
-            "xlsx" | "xlsm" | "xlsb" | "xls" => Format::Excel,
-            "ods" => Format::Ods,
-            "odp" => Format::Odp,
+            "xlsx" | "xlsm" | "xlsb" | "xls" | "xltx" | "xltm" | "xlt" => Format::Excel,
+            "ods" | "ots" => Format::Ods,
+            "odp" | "otp" => Format::Odp,
             "csv" => Format::Csv,
             _ => return None,
         })
@@ -149,6 +153,24 @@ pub fn format_number(code: &str, value: f64, date1904: bool) -> String {
 /// `ppt/embeddings` parts) read as a legacy deck's do.
 pub fn embedded_object(bytes: &[u8]) -> Result<Vec<model::Block>, ConvertError> {
     formats::embedded_object(bytes)
+}
+
+/// The text points of a SmartArt diagram's data part (`dgm:dataModel`), as a
+/// bullet list in the order the part lists them; the DOCX reader reads a
+/// diagram the same way. Empty when the part holds no text or is not
+/// readable XML; only a resource limit is an error.
+///
+/// markitai: exposed so an OOXML presentation's diagrams (`ppt/diagrams`)
+/// read as a Word document's do.
+pub fn diagram_data(bytes: &[u8]) -> Result<Vec<model::Block>, ConvertError> {
+    match package::xml::parse_xml(bytes) {
+        Ok(root) => Ok(shared::drawingml::diagram_blocks(&root)),
+        Err(e) if e.is_fatal() => Err(e),
+        Err(e) => {
+            log::warn!("skipping corrupt diagram part: {e}");
+            Ok(Vec::new())
+        }
+    }
 }
 
 /// Parse an in-memory document into the document model. Pass a [`Format`] to

@@ -355,7 +355,64 @@ impl Builder<'_> {
         if text.is_empty() {
             return;
         }
-        self.inlines.push(Inline::Text { text, style: delta.resolve() });
+        let style = delta.resolve();
+        // markitai: a footnote mark the author wrote as Markdown (`text.[^5]`,
+        // a `[^5]: …` definition) is a note reference, which the renderer
+        // writes as the mark itself instead of escaping its brackets. Code
+        // keeps its text.
+        if !style.code && text.contains("[^") {
+            let mut rest = text.as_str();
+            while let Some((before, label, after)) = footnote_mark(rest) {
+                if !before.is_empty() {
+                    self.inlines.push(Inline::Text { text: before.to_string(), style });
+                }
+                self.inlines.push(Inline::NoteRef(label.to_string()));
+                rest = after;
+            }
+            if !rest.is_empty() {
+                self.inlines.push(Inline::Text { text: rest.to_string(), style });
+            }
+            return;
+        }
+        self.inlines.push(Inline::Text { text, style });
+    }
+
+    /// markitai: a ruby group is its base text followed by its reading in
+    /// parentheses, once per group (`<ruby>漢<rt>kan</rt>字<rt>ji</rt></ruby>`
+    /// reads `漢字(kanji)`); the annotations of each `rtc` container are a
+    /// group of their own, joined with `, `. `rp` holds the parentheses a
+    /// reader without ruby support shows, which this writes itself. The HTML
+    /// reader writes ruby the same way. (Upstream ran base and reading
+    /// together: `漢kan字ji`.)
+    fn walk_ruby(&mut self, elem: &Element, delta: StyleDelta) -> Result<(), ConvertError> {
+        let words = |e: &Element| collapse_ws(&clean_text(&e.text())).trim().to_string();
+        let mut groups: Vec<String> = Vec::new();
+        let mut direct = String::new();
+        for node in &elem.children {
+            match node {
+                Node::Text(t) => self.push_text(t, delta),
+                Node::Elem(e) => match e.local.as_str() {
+                    "rt" => direct.push_str(&words(e)),
+                    "rtc" => {
+                        let group: String =
+                            e.child_elems().filter(|a| a.local == "rt").map(words).collect();
+                        let group = if group.is_empty() { words(e) } else { group };
+                        if !group.is_empty() {
+                            groups.push(group);
+                        }
+                    }
+                    "rp" => {}
+                    _ => self.walk_elem(e, delta)?,
+                },
+            }
+        }
+        if !direct.is_empty() {
+            groups.insert(0, direct);
+        }
+        if !groups.is_empty() {
+            self.push_text(&format!("({})", groups.join(", ")), delta);
+        }
+        Ok(())
     }
 
     fn walk_elem(&mut self, elem: &Element, delta: StyleDelta) -> Result<(), ConvertError> {
@@ -445,6 +502,27 @@ impl Builder<'_> {
                     self.inlines.push(Inline::Math(tex));
                 }
             }
+            // markitai: a definition list's term is a bold paragraph above
+            // its definitions, and each definition a block of its own, as the
+            // HTML reader writes them (upstream ran `<dt>Term</dt><dd>Text</dd>`
+            // together as `TermText`).
+            "dt" => {
+                self.flush_paragraph();
+                self.push_anchor(elem);
+                let mut content = std::mem::take(&mut self.inlines);
+                let mut term = delta;
+                term.bold = Some(true);
+                content.extend(self.inline_children(elem, term)?);
+                if keeps_paragraph(&content) {
+                    self.blocks.push(Block::Paragraph(content));
+                }
+            }
+            "dd" => {
+                self.flush_paragraph();
+                self.push_anchor(elem);
+                self.walk_children(elem, delta)?;
+                self.flush_paragraph();
+            }
             name if is_container_tag(name) => {
                 self.push_anchor(elem);
                 if has_block_children(elem) {
@@ -490,6 +568,7 @@ impl Builder<'_> {
                     None => self.inlines.extend(content),
                 }
             }
+            "ruby" => self.walk_ruby(elem, delta)?,
             _ => self.walk_children(elem, delta)?,
         }
         Ok(())
@@ -689,6 +768,25 @@ impl Builder<'_> {
         table.header_rows = resolve_header_rows(&table, header_rows);
         Ok(Some(Block::Table(table)))
     }
+}
+
+/// markitai: the first Markdown footnote mark in `text` (`[^5]`, `[^note-2]`:
+/// a label of up to 32 bytes of letters, digits, `-` and `_`), as the text
+/// before it, its label and the text after it.
+fn footnote_mark(text: &str) -> Option<(&str, &str, &str)> {
+    let mut from = 0;
+    while let Some(found) = text[from..].find("[^") {
+        let start = from + found;
+        let rest = &text[start + 2..];
+        let end = rest
+            .find(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_'))
+            .unwrap_or(rest.len());
+        if (1..=32).contains(&end) && rest[end..].starts_with(']') {
+            return Some((&text[..start], &rest[..end], &rest[end + 1..]));
+        }
+        from = start + 2;
+    }
+    None
 }
 
 fn merge_inline_tag(elem: &Element, mut delta: StyleDelta) -> StyleDelta {
@@ -946,6 +1044,57 @@ mod tests {
         );
         let out = blocks(&html);
         assert!(!out.is_empty());
+    }
+
+    #[test]
+    fn ruby_reads_base_text_then_its_reading_once_per_group() {
+        let out = blocks(
+            "<body><p>A <ruby>漢<rt>kan</rt>字<rt>ji</rt></ruby> and <ruby>東京<rp>(</rp><rt>とうきょう</rt><rp>)</rp></ruby>, <ruby><rb>明</rb><rtc><rt>ming</rt></rtc><rtc><rt>bright</rt></rtc></ruby>.</p></body>",
+        );
+        assert_eq!(para_text(&out[0]), "A 漢字(kanji) and 東京(とうきょう), 明(ming, bright).");
+        let out = blocks("<body><p><ruby>空<rt> </rt></ruby>白</p></body>");
+        assert_eq!(para_text(&out[0]), "空白");
+    }
+
+    #[test]
+    fn definition_terms_are_bold_paragraphs_above_their_definitions() {
+        let out =
+            blocks("<body><dl><dt>Term</dt><dd>Definition text</dd><dd>Second</dd></dl></body>");
+        assert_eq!(out.len(), 3, "{out:?}");
+        let Block::Paragraph(term) = &out[0] else { panic!("{out:?}") };
+        assert_eq!(crate::model::inlines_to_plain_text(term), "Term");
+        assert!(first_text_style(term).bold);
+        assert_eq!(para_text(&out[1]), "Definition text");
+        assert!(
+            !first_text_style(match &out[1] {
+                Block::Paragraph(inlines) => inlines,
+                other => panic!("{other:?}"),
+            })
+            .bold
+        );
+        assert_eq!(para_text(&out[2]), "Second");
+    }
+
+    #[test]
+    fn markdown_footnote_marks_in_text_are_note_references() {
+        let out = blocks(
+            "<body><p>Text.[^5] More[^note-2] and [^ x] or a[^].</p><p>[^5]: The note.</p><pre><code>[^7]</code></pre><p><code>[^8]</code></p></body>",
+        );
+        let Block::Paragraph(first) = &out[0] else { panic!("{out:?}") };
+        let refs: Vec<&str> = first
+            .iter()
+            .filter_map(|inline| match inline {
+                Inline::NoteRef(id) => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(refs, ["5", "note-2"]);
+        assert_eq!(crate::model::inlines_to_plain_text(first), "Text. More and [^ x] or a[^].");
+        let Block::Paragraph(definition) = &out[1] else { panic!("{out:?}") };
+        assert!(matches!(&definition[0], Inline::NoteRef(id) if id == "5"), "{definition:?}");
+        assert!(matches!(&out[2], Block::CodeBlock { text, .. } if text == "[^7]"));
+        let Block::Paragraph(code) = &out[3] else { panic!("{out:?}") };
+        assert!(!code.iter().any(|inline| matches!(inline, Inline::NoteRef(_))), "{code:?}");
     }
 
     #[test]

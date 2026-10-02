@@ -14,7 +14,14 @@ upstream files:
   markup names, a `language-…` or `lang-…` class on the `pre` or its `code`
   child (upstream always left it empty), so EPUB code fences carry their info
   string. Other class spellings and characters outside `[A-Za-z0-9+#._-]` give
-  no language.
+  no language. A ruby group is its base text followed by its reading in
+  parentheses, once per group (`漢字(kanji)`; each `rtc` a group of its own,
+  `rp` left out), where upstream ran them together (`漢kan字ji`). A definition
+  list's `dt` is a bold paragraph and each `dd` a block of its own (upstream
+  joined them as `TermText`). A Markdown footnote mark written in text
+  (`[^5]`, a label of letters, digits, `-` and `_` up to 32 bytes), outside
+  code, is a note reference, so a book's `text.[^5]` and `[^5]: …` definition
+  are written as marks instead of escaped text.
 - `src/formats/sheet/numfmt.rs`, `src/formats/sheet/mod.rs`,
   `src/formats/sheet/xlsx.rs`: a date/time format records whether it shows
   seconds, and a time of day, alone or after a date, is written `hh:mm` when
@@ -443,6 +450,35 @@ upstream files:
   in `crates/markitai-core/src/formats/native/docx_tests.rs`, on the added
   fixture `textedit-word97-picture.doc`.
 
+- `src/formats/sheet/xlsx.rs`, `xls.rs`, `xlsb.rs` and the added
+  `src/formats/sheet/notes.rs`: every container appends a sheet through
+  `push_sheet`, and `build_table` returns the grid with what it left out. A
+  formula cell whose `<v>` is absent, or empty for a non-string result (openpyxl
+  writes `<v></v>`), shows `=formula` as code and is counted in one workbook
+  warning; hidden rows and columns that hold content are counted in a warning
+  per sheet; an `http`, `https` or `mailto` cell hyperlink (`hyperlinks`,
+  through the worksheet's relationships) becomes a link; legacy notes
+  (`comments`) and threaded comments (`threadedComment`, authors from the
+  workbook's `person` part, replacing their legacy placeholder) follow the
+  table as a list under a `Notes` heading, notes of hidden cells left out; and
+  a cell's line breaks stay `LineBreak`s (`shared::text::clean_cell_text`).
+  Upstream dropped all four silently and turned line breaks into spaces.
+- `src/formats/sheet/numfmt.rs`, `xlsx.rs`: the built-in currency (5-8) and
+  accounting (41-44) ids, whose currency is the system locale's, resolve to
+  their grouping, decimals and negative parentheses without a currency symbol
+  (`(1,234.50)`; upstream: General), and a date section that names its month or weekday
+  with an English or system locale, or labels a numeric month `月`/`월`, and
+  shows a four-digit year is `Rendered::Spelled`, written as the format shows
+  it (`Wednesday, March 4, 2026`, `2026年3月4日`) instead of an ISO date.
+- `src/formats/doc/sprm.rs`, `stsh.rs`, `mod.rs`: `sprmCIss` (0x2A48) from the
+  style chain, the CHPX and the piece Prm writes raised and lowered runs in
+  Unicode forms through `docx::scripts::Script`, as the DOCX and RTF readers
+  do; a field's instructions are not converted.
+- `src/lib.rs`: `Format::from_extension` maps the templates (`dot`, `dotx`,
+  `dotm`, `ott`, `potx`, `potm`, `xlt`, `xltx`, `xltm`, `ots`, `otp`) to their
+  documents' formats (content detection already did), and `diagram_data`
+  exposes `shared::drawingml::diagram_blocks` for a PPTX's SmartArt.
+
 `Cargo.toml` asks `zip` for `deflate-flate2-zlib-rs` instead of `deflate`, as
 the workspace crates do: the same deflate backend without the zopfli encoder,
 which zip uses only above level 9 and Markitai never requests.
@@ -452,7 +488,7 @@ package; it reproduces upstream's formatting, so `cargo fmt` in this directory
 changes nothing upstream wrote.
 
 Tests covering these changes were added beside the upstream ones; the upstream
-suite passes in an isolated copy (445 tests), and so does its own
+suite passes in an isolated copy (451 tests), and so does its own
 `cargo clippy --all-targets -- -D warnings` after one upstream line in
 `src/formats/docx/numbering.rs` passes `level_value` by value instead of by
 reference (`needless_borrows_for_generic_args`).

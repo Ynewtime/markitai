@@ -279,6 +279,7 @@ mod tests {
         PdfPages {
             pages,
             document: Document::default(),
+            comments: Default::default(),
         }
         .finish()
         .unwrap()

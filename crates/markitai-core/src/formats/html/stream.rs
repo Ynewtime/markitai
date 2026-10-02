@@ -381,8 +381,9 @@ fn content(root: ElementRef<'_>, ignore_root_hidden: bool) -> Option<Content> {
         if (hidden(element) && !(ignore_root_hidden && element == root))
             || matches!(
                 element.value().name(),
-                "head" | "script" | "style" | "template" | "nav" | "footer" | "form" | "button"
+                "head" | "script" | "style" | "template" | "nav" | "button"
             )
+            || super::boxes::page_box(element)
         {
             continue;
         }

@@ -7,16 +7,16 @@
 use super::controls::read_vml_checkboxes;
 use super::xlsx::{
     CellFormat, MAX_COLS, MAX_ROWS, SHARED_STRINGS_REL, SheetContent, build_table, format_as_text,
-    render_number, resolve_format, sibling_part_name,
+    push_sheet, render_number, resolve_format, sibling_part_name,
 };
 use super::{error_literal, rk_number};
 use crate::error::ConvertError;
-use crate::model::{Block, Document, Inline};
+use crate::model::Document;
 use crate::package::limits;
 use crate::package::relationships::{read_rels, rel_type, rels_part_for};
 use crate::package::{Package, path};
 use crate::shared::binary::utf16le_units;
-use crate::shared::text::clean_text;
+use crate::shared::text::{clean_cell_text, clean_text};
 use std::collections::HashMap;
 
 // MS-XLSB record type values (section 2.3, "By Number").
@@ -95,13 +95,7 @@ pub(super) fn parse(pkg: &mut Package, wb_part: &str) -> Result<Document, Conver
             }
         };
         content.checkboxes = read_vml_checkboxes(pkg, part)?;
-        let Some(table) = build_table(content, &mut slots)? else {
-            continue;
-        };
-        if multi_sheet {
-            doc.blocks.push(Block::heading(2, vec![Inline::plain(name.clone())]));
-        }
-        doc.blocks.push(Block::Table(table));
+        push_sheet(&mut doc, name, multi_sheet, build_table(content, &mut slots)?);
     }
     if !sheets.is_empty() && failed == sheets.len() {
         return Err(ConvertError::malformed("no sheet in the workbook could be read"));
@@ -205,7 +199,7 @@ fn read_shared_strings(data: &[u8]) -> Result<Vec<String>, ConvertError> {
         if id == BRT_SST_ITEM {
             let mut f = Fields::new(payload);
             f.u8()?; // fRichStr / fExtStr flags
-            out.push(clean_text(&f.wide_string()?));
+            out.push(clean_cell_text(&f.wide_string()?));
         }
     }
     Ok(out)
@@ -295,10 +289,10 @@ fn cell_text(
     Ok(match id {
         BRT_CELL_RK => render_number(fmt, rk_number(f.u32()?), date1904),
         BRT_CELL_REAL | BRT_FMLA_NUM => render_number(fmt, f.f64()?, date1904),
-        BRT_CELL_ST | BRT_FMLA_STRING => format_as_text(fmt, &clean_text(&f.wide_string()?)),
+        BRT_CELL_ST | BRT_FMLA_STRING => format_as_text(fmt, &clean_cell_text(&f.wide_string()?)),
         BRT_CELL_RSTRING => {
             f.u8()?; // RichStr flags; runs and phonetic data trail the string
-            format_as_text(fmt, &clean_text(&f.wide_string()?))
+            format_as_text(fmt, &clean_cell_text(&f.wide_string()?))
         }
         BRT_CELL_ISST => {
             let isst = f.u32()?;
@@ -460,7 +454,7 @@ impl<'a> Fields<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{CellSlot, Table, inlines_to_plain_text};
+    use crate::model::{Block, CellSlot, Table, inlines_to_plain_text};
     use std::io::Write;
 
     const PKG_RELS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";

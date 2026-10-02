@@ -83,6 +83,31 @@ pub fn chpx_size(grpprl: &[u8]) -> Option<crate::shared::visual::Size> {
     size
 }
 
+/// markitai: the superscript or subscript position a CHPX grpprl sets
+/// (`sprmCIss`: 0 the baseline, 1 raised, 2 lowered), the last one winning;
+/// see `crate::formats::docx::scripts`.
+pub fn chpx_iss(grpprl: &[u8]) -> Option<u8> {
+    let mut iss = None;
+    walk_sprms(grpprl, |sprm, operand| {
+        if sprm == 0x2A48
+            && let Some(&value) = operand.first()
+        {
+            iss = Some(value);
+        }
+    });
+    iss
+}
+
+/// markitai: the script an `sprmCIss` value names.
+pub fn iss_script(iss: u8) -> Option<crate::formats::docx::scripts::Script> {
+    use crate::formats::docx::scripts::Script;
+    match iss {
+        1 => Some(Script::Superscript),
+        2 => Some(Script::Subscript),
+        _ => None,
+    }
+}
+
 /// Apply a CHPX grpprl over `current`, resolving toggle operands against the
 /// style chain's value (`style_base`), per the published algorithm.
 pub fn apply_chpx(grpprl: &[u8], current: Style, style_base: Style) -> Style {

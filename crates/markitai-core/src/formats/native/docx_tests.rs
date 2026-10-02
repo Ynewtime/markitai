@@ -369,6 +369,17 @@ fn review_comments_are_reported_as_left_out_of_the_markdown() {
     );
     // The comment text itself stays out of the Markdown.
     assert_eq!(markdown(&body, &[comments(2)]), "Reviewed text.");
+    // A Word template is the same package and reads, warns and is laid out
+    // as the document it makes.
+    let bytes = docx(&body, &[comments(2)]);
+    let document = extract(&bytes, "docx").unwrap();
+    for template in ["dotx", "dotm"] {
+        let read = extract(&bytes, template).unwrap();
+        assert_eq!(
+            (read.markdown, read.warnings),
+            (document.markdown.clone(), document.warnings.clone())
+        );
+    }
 }
 
 #[test]

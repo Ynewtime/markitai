@@ -650,6 +650,16 @@ pub struct TextLine {
 /// its normal-sized neighbor are separate words. Attached markers sit at
 /// ~0 gap (kerned ones slightly negative); a word space is ≥ 0.2 em.
 const SCRIPT_WORD_GAP: f32 = 0.12;
+
+/// markitai: whether `text` can be a footnote's mark: up to three digits,
+/// one or two of `*†‡§¶#`, or one lower-case letter.
+fn footnote_mark(text: &str) -> bool {
+    let count = text.chars().count();
+    (1..=3).contains(&count) && text.chars().all(|c| c.is_ascii_digit())
+        || (1..=2).contains(&count) && text.chars().all(|c| "*†‡§¶#".contains(c))
+        || count == 1 && text.chars().all(|c| c.is_ascii_lowercase())
+}
+
 /// Spacing at the edge of a super/subscript run — the single policy shared
 /// by line rendering (`TextLine::text`) and table-cell joining. `None` when
 /// neither item is a script run, so the caller's ordinary rules apply.
@@ -1019,6 +1029,19 @@ impl TextLine {
         let is_sub_super = font_ratio < 0.85 && y_diff > 1.0;
         let was_sub_super = reverse_font_ratio < 0.85 && y_diff > 1.0;
 
+        // markitai: a footnote's own number opening its line, smaller and
+        // raised, is set apart from the note's text, which starts after a
+        // visible gap ("¹ Corresponding author", not "1Corresponding").
+        // A raised run within a line keeps attaching to its neighbours.
+        if was_sub_super
+            && std::ptr::eq(prev_item, &self.items[0])
+            && prev_item.y > item.y
+            && footnote_mark(prev_item.text.trim())
+            && item.x - (prev_item.x + prev_item.width) >= item.font_size * SCRIPT_WORD_GAP
+        {
+            return true;
+        }
+
         // Use position-based spacing detection
         let should_join = should_join_items(prev_item, item, single_char_threshold);
 
@@ -1110,6 +1133,41 @@ mod formatting_tests {
             line.text_with_formatting(true, true, true),
             "The mode prop sets **SanityImage** at https://example.com/a"
         );
+    }
+
+    /// markitai: a small raised run the extractor did not flag as a script,
+    /// `rise` points above the 12pt baseline.
+    fn raised(text: &str, x: f32, width: f32, rise: f32) -> TextItem {
+        let mut it = item(text, x, width, false);
+        it.font_size = 8.0;
+        it.height = 8.0;
+        it.y += rise;
+        it
+    }
+
+    #[test]
+    fn a_footnote_number_opening_its_line_is_set_apart_from_the_note() {
+        // A raised number 2.7pt before the note's text (0.22 em).
+        let note = line(vec![
+            raised("1", 72.0, 3.3, 2.0),
+            body("Corresponding author", 78.0, 110.0),
+        ]);
+        assert_eq!(note.text_plain(), "1 Corresponding author");
+        assert_eq!(
+            note.text_with_formatting(true, true, true),
+            "1 Corresponding author"
+        );
+        for mark in ["12", "*", "†", "a"] {
+            let note = line(vec![raised(mark, 72.0, 3.3, 2.0), body("Note", 78.0, 30.0)]);
+            assert_eq!(note.text_plain(), format!("{mark} Note"));
+        }
+        // Set against the text that follows, a raised number attaches to
+        // it as before (a mass number before its element).
+        let attached = line(vec![
+            raised("235", 72.0, 12.0, 2.0),
+            body("U decays", 84.2, 50.0),
+        ]);
+        assert_eq!(attached.text_plain(), "235U decays");
     }
 
     /// A script run at 8pt, `shift` points off the 12pt body baseline

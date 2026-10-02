@@ -62,6 +62,16 @@ fn odt_comments_stay_out_with_a_warning_and_a_chart_reads_as_its_data() {
         doc.warnings,
         ["The document has 1 review comment; comments are not included in the Markdown."]
     );
+    // An OpenDocument text template reads as the document it makes.
+    let template = extract(
+        &odt(&[("content.xml", &content), ("Object 1/content.xml", &chart)]),
+        "ott",
+    )
+    .unwrap();
+    assert_eq!(
+        (template.markdown, template.warnings),
+        (doc.markdown, doc.warnings)
+    );
 }
 
 #[test]

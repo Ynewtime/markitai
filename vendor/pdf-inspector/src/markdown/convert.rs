@@ -255,6 +255,15 @@ fn find_isolated_lines(lines: &[TextLine], base_size: f32, para_threshold: f32) 
         if is_list_item(trimmed) || is_caption_line(trimmed) {
             continue;
         }
+        // markitai: a line holding a form field's value is a label and its
+        // answer (`Name: Charles Babbage`), not a heading.
+        if line
+            .items
+            .iter()
+            .any(|item| matches!(item.item_type, crate::types::ItemType::FormField))
+        {
+            continue;
+        }
 
         // Reject lines that look like wrapped paragraph text:
         // ends with hyphen, comma, preposition, or lowercase continuation

@@ -112,3 +112,23 @@ reference's `sample.pdf`) is byte-identical apart from each run's
 50 of those PDFs (the largest and a sample; five alternating rounds after a
 warm-up) moved the total by −0.22%, against −0.47% for an identical copy of
 the old build: no measurable difference.
+
+A further change, also marked `markitai`, touches `src/document.rs` and adds
+one test to `tests/decryption.rs`:
+
+- `get_encrypted` (and so `is_encrypted`, authentication and
+  `EncryptionState::decode`) reads a trailer `/Encrypt` that holds the
+  dictionary itself, as MuPDF and PyMuPDF write it, as well as a reference to
+  one. Only a reference was read, so such a file looked unencrypted, was never
+  authenticated, and loaded with every string and stream still encrypted;
+  markitai then reported an owner-password-only PDF (RC4 40/128, AES-128,
+  AES-256) as needing a password. `decrypt_raw` skips and removes the
+  dictionary's object only when there is one; a document so decrypted records
+  no `/Encrypt` object id, so its incremental save is refused as before.
+- `an_encryption_dictionary_in_the_trailer_is_authenticated_and_decrypted`
+  moves the dictionary lopdf writes into the trailer: with the empty user
+  password the file opens on load; with a user password it stays encrypted
+  without one and opens with it; `decrypt` reads the trailer's dictionary.
+
+The upstream suite, prepared as above: 309 passed (the added test), the same
+33 failed, 3 ignored.

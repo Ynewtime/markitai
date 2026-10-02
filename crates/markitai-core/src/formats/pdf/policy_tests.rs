@@ -325,15 +325,28 @@ fn a_running_header_on_every_page_is_removed_like_a_folio() {
 }
 
 #[test]
-fn an_info_title_that_is_a_file_name_is_not_the_document_title() {
+fn an_info_title_that_is_a_file_name_or_a_default_name_is_not_the_document_title() {
     for title in [
         "multi.html",
         "report.docx",
         "Microsoft Word - notes.doc",
         "layout-table",
         "code",
+        "Untitled",
+        "untitled-3",
+        "Untitled Document",
+        "Untitled (2)",
+        "PowerPoint Presentation",
+        "Document1",
+        "Document 12",
+        "Presentation1",
+        "Book1",
+        "Title",
+        "Sans titre",
+        "无标题",
+        "演示文稿1",
     ] {
-        assert!(file_name_title(title), "{title}");
+        assert!(placeholder_title(title), "{title}");
     }
     for title in [
         "Placeholder topic - Wikipedia",
@@ -341,7 +354,135 @@ fn an_info_title_that_is_a_file_name_is_not_the_document_title() {
         "A Study of Reading Order",
         "Defuddle on Cloudflare Workers · Issue #56",
         "v1.2",
+        "Untitled Love Song",
+        "Document Management Policy",
+        "Book",
+        "The Presentation of Self",
+        "Real Title Here",
     ] {
-        assert!(!file_name_title(title), "{title}");
+        assert!(!placeholder_title(title), "{title}");
     }
+}
+
+/// The Info title of a document nobody named gives way to its first heading.
+#[test]
+fn a_default_info_title_gives_way_to_the_first_heading() {
+    for (info, expected) in [
+        ("Untitled", None),
+        ("Quarterly Results", Some("Quarterly Results")),
+    ] {
+        let mut doc = lopdf::Document::with_version("1.7");
+        let tree = doc.new_object_id();
+        let font = doc.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica"
+        });
+        let content = doc.add_object(Stream::new(
+            Dictionary::new(),
+            b"BT /F1 12 Tf 72 700 Td (A body paragraph long enough to be read as page text.) Tj ET"
+                .to_vec(),
+        ));
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page", "Parent" => tree, "Contents" => content,
+            "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } }
+        });
+        doc.objects.insert(
+            tree,
+            dictionary! {
+                "Type" => "Pages", "Count" => 1, "Kids" => vec![page.into()],
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()]
+            }
+            .into(),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => tree });
+        doc.trailer.set("Root", catalog);
+        let meta = doc.add_object(dictionary! { "Title" => Object::string_literal(info) });
+        doc.trailer.set("Info", meta);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        let document = extract(&bytes).unwrap();
+        assert_eq!(
+            document.metadata.get("title").and_then(|t| t.as_str()),
+            expected,
+            "{info}"
+        );
+    }
+}
+
+/// A form's values read beside the questions that label them, under no
+/// internal field name, and its password unread.
+#[test]
+fn form_values_read_beside_their_labels() {
+    let mut doc = lopdf::Document::with_version("1.7");
+    let tree = doc.new_object_id();
+    let page = doc.new_object_id();
+    let font = doc.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+        "Encoding" => "WinAnsiEncoding",
+    });
+    let content = doc.add_object(Stream::new(
+        Dictionary::new(),
+        b"BT /F1 16 Tf 60 762 Td (Employee Information) Tj ET \
+          BT /F1 11 Tf 60 712 Td (1. First name) Tj ET \
+          BT /F1 11 Tf 60 676 Td (2. Last name) Tj ET \
+          BT /F1 11 Tf 60 640 Td (3. PIN) Tj ET"
+            .to_vec(),
+    ));
+    let widget = |doc: &mut lopdf::Document, y: i64, name: &str, value: &str, flags: i64| {
+        doc.add_object(dictionary! {
+            "Type" => "Annot", "Subtype" => "Widget", "FT" => "Tx", "Ff" => flags, "P" => page,
+            "T" => Object::string_literal(name), "V" => Object::string_literal(value),
+            "Rect" => vec![220.into(), (y - 6).into(), 500.into(), (y + 14).into()],
+        })
+    };
+    let fields = [
+        widget(
+            &mut doc,
+            712,
+            "topmostSubform[0].Page1[0].f1_01[0]",
+            "Maria",
+            0,
+        ),
+        widget(
+            &mut doc,
+            676,
+            "topmostSubform[0].Page1[0].f1_02[0]",
+            "Garcia",
+            0,
+        ),
+        widget(
+            &mut doc,
+            640,
+            "topmostSubform[0].Page1[0].f1_03[0]",
+            "4321",
+            1 << 13,
+        ),
+    ];
+    let annots: Vec<Object> = fields.iter().map(|&id| Object::Reference(id)).collect();
+    doc.objects.insert(
+        page,
+        dictionary! {
+            "Type" => "Page", "Parent" => tree, "Contents" => content, "Annots" => annots.clone(),
+            "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } }
+        }
+        .into(),
+    );
+    doc.objects.insert(
+        tree,
+        dictionary! {
+            "Type" => "Pages", "Count" => 1, "Kids" => vec![page.into()],
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()]
+        }
+        .into(),
+    );
+    let catalog = doc.add_object(dictionary! {
+        "Type" => "Catalog", "Pages" => tree, "AcroForm" => dictionary! { "Fields" => annots },
+    });
+    doc.trailer.set("Root", catalog);
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).unwrap();
+    let markdown = extract(&bytes).unwrap().markdown;
+    assert!(markdown.contains("1. First name: Maria"), "{markdown}");
+    assert!(markdown.contains("2. Last name: Garcia"), "{markdown}");
+    assert!(!markdown.contains("topmostSubform"), "{markdown}");
+    assert!(!markdown.contains("4321"), "{markdown}");
 }

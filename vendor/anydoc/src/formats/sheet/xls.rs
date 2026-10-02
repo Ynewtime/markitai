@@ -7,7 +7,8 @@
 
 use super::controls::Checkbox;
 use super::xlsx::{
-    CellFormat, SheetContent, build_table, format_as_text, render_number, resolve_format,
+    CellFormat, SheetContent, build_table, format_as_text, push_sheet, render_number,
+    resolve_format,
 };
 use super::{error_literal, rk_number};
 use crate::error::ConvertError;
@@ -15,7 +16,7 @@ use crate::model::{Block, Cell, Document, Inline, Table, TableKind};
 use crate::package::limits;
 use crate::shared::binary::{get_u16, get_u32, read_ole_stream, utf16le_units};
 use crate::shared::officeart;
-use crate::shared::text::{clean_text, collapse_ws};
+use crate::shared::text::{clean_cell_text, clean_text, collapse_ws};
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 
@@ -89,13 +90,7 @@ pub(super) fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
             failed += 1;
             continue;
         };
-        let Some(table) = build_table(content, &mut slots)? else {
-            continue;
-        };
-        if multi_sheet {
-            doc.blocks.push(Block::heading(2, vec![Inline::plain(sheet.name.clone())]));
-        }
-        doc.blocks.push(Block::Table(table));
+        push_sheet(&mut doc, &sheet.name, multi_sheet, build_table(content, &mut slots)?);
     }
     if !visible.is_empty() && failed == visible.len() {
         return Err(ConvertError::malformed("no sheet in the workbook could be read"));
@@ -490,7 +485,7 @@ fn read_sst(segs: &[&[u8]]) -> Vec<String> {
             }
             break;
         };
-        out.push(clean_text(&text));
+        out.push(clean_cell_text(&text));
     }
     out
 }
@@ -604,7 +599,7 @@ fn read_sheet(
                         &mut out,
                         row,
                         col,
-                        format_as_text(globals.format(ixfe), &clean_text(&text)),
+                        format_as_text(globals.format(ixfe), &clean_cell_text(&text)),
                     );
                 }
             }
@@ -731,7 +726,7 @@ fn read_sheet(
                         &mut out,
                         row,
                         col,
-                        format_as_text(globals.format(ixfe), &clean_text(&text)),
+                        format_as_text(globals.format(ixfe), &clean_cell_text(&text)),
                     );
                 }
             }

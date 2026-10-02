@@ -257,11 +257,16 @@ impl Document {
     }
 
     /// Return dictionary with encryption information
+    ///
+    /// markitai: the trailer's `/Encrypt` may hold the dictionary itself, as
+    /// MuPDF writes it, as well as a reference to it. Only a reference was
+    /// read, so such a file looked unencrypted, was never authenticated, and
+    /// loaded with its strings and streams still encrypted.
     pub fn get_encrypted(&self) -> Result<&Dictionary> {
-        self.trailer
-            .get(b"Encrypt")
-            .and_then(Object::as_reference)
-            .and_then(|id| self.get_dictionary(id))
+        match self.trailer.get(b"Encrypt")? {
+            Object::Reference(id) => self.get_dictionary(*id),
+            direct => direct.as_dict(),
+        }
     }
 
     /// Return true if PDF document is currently encrypted
@@ -458,14 +463,15 @@ impl Document {
 
         self.authenticate_raw_password(&password)?;
 
-        // Find the ID of the encryption dict; we'll want to skip it when decrypting
-        let encryption_obj_id = self.trailer.get(b"Encrypt").and_then(Object::as_reference)?;
+        // Find the ID of the encryption dict; we'll want to skip it when decrypting.
+        // markitai: a dictionary held in the trailer itself has no object.
+        let encryption_obj_id = self.trailer.get(b"Encrypt").and_then(Object::as_reference).ok();
 
         let mut state = EncryptionState::decode(&*self, password)?;
 
         for (&id, obj) in self.objects.iter_mut() {
             // The encryption dictionary is not encrypted, leave it alone
-            if id == encryption_obj_id {
+            if Some(id) == encryption_obj_id {
                 continue;
             }
 
@@ -498,14 +504,17 @@ impl Document {
             self.objects.entry(id).or_insert(entry);
         }
 
-        let object_id = self.trailer.remove(b"Encrypt").unwrap().as_reference()?;
-        self.objects.remove(&object_id);
+        self.trailer.remove(b"Encrypt");
+        if let Some(object_id) = encryption_obj_id {
+            self.objects.remove(&object_id);
+        }
 
         // Remember the object id of the original /Encrypt dictionary so that
         // callers doing an incremental save can point the appended trailer's
         // /Encrypt back at the (still-intact) dictionary bytes in the previous
-        // revision. See `IncrementalDocument::save_internal`.
-        state.encrypt_object_id = Some(object_id);
+        // revision. See `IncrementalDocument::save_internal`. A dictionary
+        // held in the trailer has none, and such a save is refused there.
+        state.encrypt_object_id = encryption_obj_id;
 
         self.encryption_state = Some(state);
 

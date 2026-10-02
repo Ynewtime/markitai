@@ -32,6 +32,13 @@ Related Posts/Stories heading requires at least two structurally identifiable
 linked cards and no independent prose, table, quotation or note content in the
 surrounding block. A heading by itself is insufficient.
 
+Forms and footers weigh the choice as the cleaner writes them
+([rendering](html.md#rendering-and-url-handling)): a form's prose and the footer
+of an article, section, figure or quotation are page text, so a page an ASP.NET
+`<form id="aspnetForm">` wraps whole has its article chosen instead of no
+content at all, while entry-box forms (search, sign-in, newsletter, comment
+entry), controls and the page's own footer count for nothing.
+
 ## Furniture beside the article body
 
 Names only weigh the choice of region; a second pass reads what stands beside

@@ -584,7 +584,11 @@ impl Renderer<'_> {
         let sheet_layout = matches!(self.extension, "xlsx" | "xlsm" | "xls");
         let mut joined = String::new();
         let mut previous_heading = false;
+        // The last heading's text, which a sheet's merged title may repeat.
+        let mut last_heading = String::new();
         for block in blocks {
+            // Whether a table's merged title rows were written above it.
+            let mut lifted_title = false;
             let rendered = match block {
                 Block::Heading {
                     level,
@@ -602,10 +606,13 @@ impl Renderer<'_> {
                     // before the heading: inside it, `## <a id="x"></a>Title`
                     // puts markup into the words a reader or a search sees.
                     let (targets, content) = self.lifted_anchors(anchor.as_deref(), content);
+                    last_heading = self
+                        .inlines(&heading_on_one_line(&content))
+                        .trim_end()
+                        .to_owned();
                     let heading = format!(
-                        "{} {}",
-                        "#".repeat(usize::from((*level).clamp(1, 6))),
-                        self.inlines(&heading_on_one_line(&content)).trim_end()
+                        "{} {last_heading}",
+                        "#".repeat(usize::from((*level).clamp(1, 6)))
                     );
                     if targets.is_empty() {
                         heading
@@ -707,12 +714,7 @@ impl Renderer<'_> {
                                 .map(|slot| match slot {
                                     CellSlot::Covered { .. } => String::new(),
                                     CellSlot::Origin(cell) => {
-                                        self.merged_cells |= cell.row_span > 1 || cell.col_span > 1;
-                                        // Keep inline Markdown, escape table syntax only.
-                                        self.cell_text(&cell.blocks)
-                                            .trim()
-                                            .replace('|', "\\|")
-                                            .replace('\n', "<br>")
+                                        table_cell(self.cell_text(&cell.blocks).trim())
                                     }
                                 })
                                 .collect::<Vec<_>>()
@@ -732,25 +734,51 @@ impl Renderer<'_> {
                             row.truncate(width);
                         }
                     }
+                    let sheet = matches!(self.extension, "ods" | "xlsx" | "xlsm" | "xls" | "xlsb");
+                    // A sheet's merged title rows are text above its table,
+                    // where the real header row follows them.
+                    let (titles, body) = if sheet {
+                        sheet_titles(table, &rows)
+                    } else {
+                        (Vec::new(), 0)
+                    };
+                    self.merged_cells |= table.grid[body.min(table.grid.len())..]
+                        .iter()
+                        .flatten()
+                        .any(|slot| matches!(slot, CellSlot::Origin(cell) if cell.row_span > 1 || cell.col_span > 1));
                     // A sheet's first row is its header, as the reference's
                     // spreadsheet readers take it, whether or not the source
                     // marks it; a blank header row would only push it down.
                     // A document's table has a header only when the document
                     // declares one (Word's repeated header row); otherwise
                     // the header line is blank and every row is data.
-                    let header = matches!(self.extension, "ods" | "xlsx" | "xlsm" | "xls" | "xlsb")
-                        || table.header_rows > 0;
-                    super::text::table(&rows, header).trim_end().to_owned()
+                    let header = sheet || table.header_rows > 0;
+                    let markdown = super::text::table(&rows[body..], header)
+                        .trim_end()
+                        .to_owned();
+                    // A title the sheet's heading already gives is said once.
+                    let titles = titles
+                        .into_iter()
+                        .filter(|title| !(previous_heading && last_heading == *title))
+                        .collect::<Vec<_>>();
+                    lifted_title = !titles.is_empty();
+                    if titles.is_empty() {
+                        markdown
+                    } else {
+                        format!("{}\n\n{markdown}", titles.join("\n\n"))
+                    }
                 }
             };
             if !rendered.is_empty() {
                 let table = matches!(block, Block::Table(_));
                 if !joined.is_empty() {
-                    joined.push_str(if sheet_layout && previous_heading && table {
-                        "\n"
-                    } else {
-                        "\n\n"
-                    });
+                    joined.push_str(
+                        if sheet_layout && previous_heading && table && !lifted_title {
+                            "\n"
+                        } else {
+                            "\n\n"
+                        },
+                    );
                 }
                 joined.push_str(&rendered);
                 previous_heading = matches!(block, Block::Heading { .. });
@@ -790,6 +818,82 @@ impl Renderer<'_> {
     }
 }
 
+/// A cell's Markdown as one table cell, in one pass: inline Markdown is kept,
+/// `|` is escaped, and each line break is `<br>`, without the two spaces a
+/// hard break writes before it in a paragraph.
+fn table_cell(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut lines = text.split('\n').peekable();
+    let mut first = true;
+    while let Some(line) = lines.next() {
+        if !first {
+            out.push_str("<br>");
+        }
+        first = false;
+        let line = if lines.peek().is_some() {
+            line.strip_suffix("  ").unwrap_or(line)
+        } else {
+            line
+        };
+        for (index, part) in line.split('|').enumerate() {
+            if index > 0 {
+                out.push_str("\\|");
+            }
+            out.push_str(part);
+        }
+    }
+    out
+}
+
+/// A sheet's leading title rows, as their text, and the row its table starts
+/// at. A title row holds one cell, merged across every column that holds
+/// content in the sheet; the row its titles lead to (past blank rows) must
+/// be the real header: two cells or more, none merged. Without both, the
+/// table starts at its first row, which is then its header as before.
+fn sheet_titles(table: &anydoc::model::Table, rows: &[Vec<String>]) -> (Vec<String>, usize) {
+    let filled = |row: &[String]| row.iter().filter(|cell| !cell.is_empty()).count();
+    // Most sheets have no title: their first row holds several cells.
+    if rows.first().is_none_or(|row| filled(row) != 1) {
+        return (Vec::new(), 0);
+    }
+    let first = rows
+        .iter()
+        .filter_map(|row| row.iter().position(|cell| !cell.is_empty()))
+        .min();
+    let last = rows
+        .iter()
+        .filter_map(|row| row.iter().rposition(|cell| !cell.is_empty()))
+        .max();
+    let (Some(first), Some(last)) = (first, last) else {
+        return (Vec::new(), 0);
+    };
+    let mut titles = Vec::new();
+    let mut at = 0;
+    while let Some(row) = rows.get(at)
+        && filled(row) == 1
+        && let Some(column) = row.iter().position(|cell| !cell.is_empty())
+        && matches!(table.grid.get(at).and_then(|slots| slots.get(column)),
+            Some(CellSlot::Origin(cell)) if cell.row_span == 1 && cell.col_span > 1
+                && column <= first && column + cell.col_span as usize > last)
+    {
+        titles.push(row[column].clone());
+        at += 1;
+        while rows.get(at).is_some_and(|row| filled(row) == 0) {
+            at += 1;
+        }
+    }
+    let header = rows.get(at).is_some_and(|row| filled(row) >= 2)
+        && table.grid.get(at).is_some_and(|slots| {
+            slots.iter().all(|slot| {
+                matches!(slot, CellSlot::Origin(cell) if cell.row_span == 1 && cell.col_span == 1)
+            })
+        });
+    if titles.is_empty() || !header {
+        return (Vec::new(), 0);
+    }
+    (titles, at)
+}
+
 /// Markdown for the blocks an embedded object holds, which carry no assets,
 /// notes or anchors of the presentation around them (`office.rs`).
 fn object_markdown(blocks: &[Block]) -> String {
@@ -803,6 +907,8 @@ fn object_markdown(blocks: &[Block]) -> String {
 }
 
 pub(super) fn extract(bytes: &[u8], extension: &str) -> Result<Document> {
+    // A template reads as the document it makes.
+    let extension = super::document_extension(extension);
     let format = anydoc::Format::from_extension(extension)
         .ok_or_else(|| Error::Unsupported(format!("Unsupported format: {extension}")))?;
     if format == anydoc::Format::Pdf {
@@ -1393,9 +1499,11 @@ mod tests {
             anchors: BTreeSet::new(),
             extension: "ods",
         };
+        // The merged title is text above the table (see
+        // `a_merged_sheet_title_above_its_header_is_not_the_header`).
         assert_eq!(
             renderer.blocks(std::slice::from_ref(&wide)),
-            "| Cups |  |  |\n| --- | --- | --- |\n| Team |  | Count |"
+            "Cups\n\n| Team |  | Count |\n| --- | --- | --- |"
         );
         // Another format keeps the declared columns.
         renderer.extension = "docx";
@@ -1404,6 +1512,83 @@ mod tests {
                 .blocks(&[wide])
                 .starts_with("| Cups |  |  |  |  |\n| --- | --- | --- | --- | --- |\n")
         );
+    }
+
+    #[test]
+    fn a_table_cell_escapes_pipes_and_writes_breaks_without_their_spaces() {
+        assert_eq!(table_cell("a | b  \nc\n\nd  "), "a \\| b<br>c<br><br>d  ");
+        assert_eq!(table_cell("plain"), "plain");
+        assert_eq!(table_cell(""), "");
+    }
+
+    #[test]
+    fn a_merged_sheet_title_above_its_header_is_not_the_header() {
+        let text = |value: &str| CellSlot::Origin(Cell::from_inlines(vec![Inline::plain(value)]));
+        let covered = || CellSlot::Covered {
+            origin_row: 0,
+            origin_col: 0,
+        };
+        let title = |value: &str, span: u32| {
+            CellSlot::Origin(Cell::spanning(
+                vec![Block::Paragraph(vec![Inline::plain(value)])],
+                span,
+                1,
+            ))
+        };
+        let sheet = |rows: Vec<Vec<CellSlot>>| {
+            Block::Table(Table {
+                grid: rows,
+                header_rows: 0,
+                kind: TableKind::Data,
+            })
+        };
+        let mut renderer = Renderer {
+            asset_names: &[],
+            merged_cells: false,
+            anchors: BTreeSet::new(),
+            extension: "xlsx",
+        };
+        let report = sheet(vec![
+            vec![title("Q1 report", 3), covered(), covered()],
+            vec![text(""), text(""), text("")],
+            vec![text("Team"), text("City"), text("Cups")],
+            vec![text("Blues"), text("STL"), text("1")],
+        ]);
+        let heading = Block::heading(2, vec![Inline::plain("Sheet1")]);
+        assert_eq!(
+            renderer.blocks(&[heading, report.clone()]),
+            "## Sheet1\n\nQ1 report\n\n| Team | City | Cups |\n| --- | --- | --- |\n| Blues | STL | 1 |"
+        );
+        // The title is lifted out with its merge, which no longer warns.
+        assert!(!renderer.merged_cells);
+        // A title the sheet's heading already gives is not repeated, and the
+        // table follows its heading directly, as every sheet does.
+        let named = Block::heading(2, vec![Inline::plain("Q1 report")]);
+        assert_eq!(
+            renderer.blocks(&[named, report]),
+            "## Q1 report\n| Team | City | Cups |\n| --- | --- | --- |\n| Blues | STL | 1 |"
+        );
+        // A merge over some columns only groups them, and a title above a
+        // row that is not a header stays the header.
+        for grid in [
+            vec![
+                vec![title("Q1", 2), covered(), text("")],
+                vec![text("Jan"), text("Feb"), text("Total")],
+            ],
+            vec![
+                vec![title("Notes", 2), covered()],
+                vec![text("only one"), text("")],
+            ],
+        ] {
+            assert!(renderer.blocks(&[sheet(grid)]).starts_with("| "));
+        }
+        // A document's merged first row is never lifted.
+        renderer.extension = "docx";
+        let report = sheet(vec![
+            vec![title("Q1 report", 2), covered()],
+            vec![text("Team"), text("City")],
+        ]);
+        assert!(renderer.blocks(&[report]).starts_with("|  |  |\n"));
     }
 
     #[test]
