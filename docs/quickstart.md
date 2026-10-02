@@ -59,7 +59,7 @@ install it.
 
 ### Build from source
 
-You need Rust 1.89 or later (development uses current stable):
+You need Rust 1.92 or later (development uses current stable):
 
 ```sh
 cargo build --release -p markitai-cli

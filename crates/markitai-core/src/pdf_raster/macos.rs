@@ -9,8 +9,6 @@ use objc2_core_graphics::{
 use std::marker::PhantomData;
 use std::rc::Rc;
 
-const MAX_INPUT: usize = 500 * 1024 * 1024;
-
 /// A document and its immutable backing data stay alive through every draw.
 /// The session is deliberately confined to its caller's thread.
 pub(crate) struct PdfRasterSession {
@@ -61,16 +59,8 @@ fn intersection(first: CGRect, second: CGRect) -> Result<CGRect> {
 }
 
 impl PdfRasterSession {
+    /// `bytes` has passed the shared input checks (size bound, PDF header).
     pub(crate) fn open(bytes: &[u8]) -> Result<Self> {
-        if bytes.is_empty() || bytes.len() > MAX_INPUT {
-            return Err(failure("input is empty or exceeds 500 MiB"));
-        }
-        if !bytes[..bytes.len().min(1024)]
-            .windows(5)
-            .any(|window| window == b"%PDF-")
-        {
-            return Err(failure("input has no PDF header"));
-        }
         system_frameworks::open(Framework::CoreGraphics).map_err(|message| failure(&message))?;
         // SAFETY: The slice is valid for its checked length; CFDataCreate copies
         // it before returning. The caller's buffer may then be dropped.
@@ -221,5 +211,21 @@ impl PdfRasterSession {
 }
 
 #[cfg(test)]
-#[path = "tests.rs"]
-mod tests;
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_box_geometry_is_rejected_before_sdk_drawing() {
+        for rect in [
+            CGRect::new(CGPoint::new(0., 0.), CGSize::new(0., 1.)),
+            CGRect::new(CGPoint::new(f64::NAN, 0.), CGSize::new(1., 1.)),
+            CGRect::new(CGPoint::new(0., 0.), CGSize::new(f64::INFINITY, 1.)),
+            CGRect::new(CGPoint::new(f64::MAX, 0.), CGSize::new(f64::MAX, 1.)),
+        ] {
+            assert!(checked_rect(rect).is_err());
+        }
+        let first = CGRect::new(CGPoint::new(0., 0.), CGSize::new(10., 10.));
+        let disjoint = CGRect::new(CGPoint::new(20., 20.), CGSize::new(10., 10.));
+        assert!(intersection(first, disjoint).is_err());
+    }
+}

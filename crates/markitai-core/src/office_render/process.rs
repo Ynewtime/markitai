@@ -131,11 +131,16 @@ fn private_command(program: &Path, profile: &Path) -> Result<Command> {
     if let Some(value) = system_root {
         command.env("SystemRoot", value);
     }
+    // The profile itself is `-env:UserInstallation` on every platform. The
+    // temporary variables cover LibreOffice and its libraries everywhere; on
+    // Unix, libraries such as fontconfig also write caches under
+    // XDG_CACHE_HOME, which would otherwise fall back to the unset HOME.
     command
         .env("TMPDIR", profile)
         .env("TMP", profile)
-        .env("TEMP", profile)
-        .env("XDG_CACHE_HOME", profile.join("cache"));
+        .env("TEMP", profile);
+    #[cfg(unix)]
+    command.env("XDG_CACHE_HOME", profile.join("cache"));
     Ok(command)
 }
 
@@ -175,5 +180,53 @@ fn wait(mut command: Command, output: Option<(&Path, u64)>, deadline: Instant) -
             return Err(failure("Office export timed out"));
         }
         std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(test)]
+mod private_profile_tests {
+    use super::*;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn every_platform_passes_the_private_profile_and_no_inherited_environment() {
+        let workspace = tempfile::tempdir().unwrap();
+        let profile = workspace.path().join("profile");
+        fs::create_dir(&profile).unwrap();
+        let command = private_command(Path::new("soffice"), &profile).unwrap();
+        let expected = url::Url::from_directory_path(&profile).unwrap();
+        let installation = format!("-env:UserInstallation={expected}");
+        assert!(
+            expected.as_str().starts_with("file:///") && expected.as_str().ends_with("/profile/")
+        );
+        assert!(
+            command
+                .get_args()
+                .any(|arg| arg == OsStr::new(&installation))
+        );
+        let envs = command
+            .get_envs()
+            .filter_map(|(key, value)| Some((key.to_str()?.to_owned(), value?.to_owned())))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        for key in ["TMPDIR", "TMP", "TEMP"] {
+            assert_eq!(
+                envs.get(key).map(|value| value.as_os_str()),
+                Some(profile.as_os_str())
+            );
+        }
+        assert_eq!(envs.contains_key("XDG_CACHE_HOME"), cfg!(unix));
+        let allowed = [
+            "PATH",
+            "SystemRoot",
+            "TMPDIR",
+            "TMP",
+            "TEMP",
+            "XDG_CACHE_HOME",
+        ];
+        assert!(
+            envs.keys().all(|key| allowed.contains(&key.as_str())),
+            "{envs:?}"
+        );
+        assert_eq!(command.get_current_dir(), Some(profile.as_path()));
     }
 }

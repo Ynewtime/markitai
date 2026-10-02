@@ -11,7 +11,7 @@ macOS-only, exactly as in the CLI; see [quick start](quickstart.md#platform-supp
 ## Installation
 
 No packages are published to PyPI, npm or a Go module proxy yet. Build them
-from a checkout with Rust 1.89 or later; each build compiles the Rust core
+from a checkout with Rust 1.92 or later; each build compiles the Rust core
 once in the `release` profile and takes several minutes.
 
 | Language | Minimum | Build | Result |

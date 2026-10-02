@@ -1,11 +1,13 @@
 # Complete Office page rendering
 
 Office text extraction remains native Rust. Page screenshots optionally use an
-installed LibreOffice to export PDF, followed by the native macOS PDF renderer.
-LibreOffice is not bundled; its installation and fonts are additional runtime
-requirements. The CLI itself remains one executable and invokes no Python
-conversion code. macOS is the first rendering platform covered by this adapter;
-having LibreOffice installed does not make unsupported PDF platforms available.
+installed LibreOffice to export PDF, followed by the in-process
+[PDF page renderer](pdf-rendering.md) (CoreGraphics on macOS, hayro on Windows
+and Linux). LibreOffice is not bundled; its installation and fonts are
+additional runtime requirements. The CLI itself remains one executable and
+invokes no Python conversion code. Office page capture has been run on macOS;
+on Windows and Linux the export and the renderer are compiled and the renderer
+is tested, but this adapter's LibreOffice export has not been run there.
 
 When page OCR or page screenshots are requested (`--ocr`, `--screenshot`, or a
 preset that implies them such as `rich`) and LibreOffice or the page renderer is
@@ -95,10 +97,15 @@ Windows the search tries the PATHEXT extensions and prefers `soffice.exe` to the
 `soffice.com` console wrapper in the same directory. The
 executable receives argument-array parameters, never a shell command. Each export
 owns a private temporary directory containing an input copy, fresh LibreOffice
-profile, and output directory. Macros and automatic link updates are disabled in
-the private profile. Model credentials and other process environment values are
-not inherited; PATH/platform loader state is retained, temporary/cache locations
-are private, and HOME is never reassigned.
+profile, and output directory. The profile is passed as
+`-env:UserInstallation=<file URL>` on every platform, so no export reads or
+writes the user's LibreOffice profile; macros and automatic link updates are
+disabled in it. Model credentials and other process environment values are not
+inherited; PATH (and SystemRoot on Windows) is retained, TMPDIR/TMP/TEMP point
+into the private directory everywhere, XDG_CACHE_HOME too on Unix (for caches
+of libraries such as fontconfig), and HOME is never reassigned. The exported PDF
+is drawn by the platform's [page renderer](pdf-rendering.md): CoreGraphics on
+macOS, hayro on Windows and Linux.
 
 At most two exports run concurrently per process. A shared 120-second deadline
 covers admission and both legacy normalization/PDF export subprocesses. A timeout

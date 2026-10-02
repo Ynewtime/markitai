@@ -40,6 +40,23 @@ markup5ever = "0.39"
 htmd = { version = "0.5", default-features = false }
 quick-xml = "0.41"
 mail-parser = { version = "0.11", features = ["full_encoding"] }
+# Portable page renderer (docs/pdf-rendering.md). Always compiled where
+# CoreGraphics is unavailable; on macOS only with `portable-media`, so the
+# default macOS build is unchanged. `embed-fonts` adds the standard-14
+# substitutes (PDFium's Foxit faces, BSD-3-Clause, ~264 KB) and `embed-cmaps`
+# the 61 predefined CJK CMaps (Adobe, BSD-3-Clause, ~251 KB compressed).
+hayro = { version = "=0.7.1", default-features = false, features = ["embed-fonts", "embed-cmaps"], optional = true }
+memchr = { version = "2", optional = true }
+
+[features]
+# Pure-Rust page rendering (and, with the OCR package, recognition) that
+# Windows and Linux always use; on macOS it is compiled beside the native
+# frameworks for development and comparison.
+portable-media = ["dep:hayro", "dep:memchr"]
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+hayro = { version = "=0.7.1", default-features = false, features = ["embed-fonts", "embed-cmaps"] }
+memchr = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

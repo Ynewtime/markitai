@@ -7,7 +7,7 @@ resolver = "2"
 [workspace.package]
 version = "1.3.0-dev"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.92"
 license = "MIT"
 
 [workspace.dependencies]
@@ -108,6 +108,19 @@ opt-level = 3
 opt-level = 3
 
 [profile.release.package.mail-parser]
+opt-level = 3
+
+# The portable PDF renderer's rasterizer (hayro, on Windows/Linux and in macOS
+# `portable-media` builds; not in the default macOS build). Measured on 471
+# corpus pages (docs/pdf-rendering.md): these three at 3 render 1.52x faster
+# than all-"z" for +131,552 B; every hayro crate at 3 was 2.33x for +1,231,888 B.
+[profile.release.package.vello_cpu]
+opt-level = 3
+
+[profile.release.package.vello_common]
+opt-level = 3
+
+[profile.release.package.fearless_simd]
 opt-level = 3
 
 [profile.dist]

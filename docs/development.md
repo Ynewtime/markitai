@@ -1,8 +1,8 @@
 # Development and recovery
 
 Start at `docs/CONTROL.md`; inspect `git status --short --branch` before work.
-Package manifests set the floors: Rust 1.89 (workspace `rust-version`, due to
-resolved dependencies), Python 3.10 (`bindings/python/pyproject.toml`),
+Package manifests set the floors: Rust 1.92 (workspace `rust-version`, the
+floor of the portable PDF renderer hayro), Python 3.10 (`bindings/python/pyproject.toml`),
 Node.js 18 (`bindings/node/package.json`) and Go 1.23 (`bindings/go/go.mod`).
 Checkpoints are verified with current toolchains (Rust 1.99.0, Python 3.13,
 Node.js 24, Go 1.27), not with the minimum versions. User-facing build and
