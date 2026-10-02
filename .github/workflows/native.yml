@@ -39,7 +39,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       TARGET: ${{ matrix.os == 'windows-2025' && 'x86_64-pc-windows-msvc' || matrix.os == 'windows-11-arm' && 'aarch64-pc-windows-msvc' || matrix.os == 'ubuntu-24.04' && 'x86_64-unknown-linux-gnu' || matrix.os == 'macos-15' && 'aarch64-apple-darwin' || matrix.os == 'macos-15-intel' && 'x86_64-apple-darwin' || 'unknown' }}
-    timeout-minutes: 60
+    # Cold Windows release/LTO and all three bindings exceeded the former
+    # one-hour budget after native checks passed; retain the full acceptance run.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
