@@ -8,7 +8,14 @@ use std::net::{IpAddr, ToSocketAddrs};
 use std::time::Duration;
 use url::Url;
 
+mod chain;
+pub(crate) mod cloudflare;
+pub(crate) mod consent;
+mod policy;
+mod remote;
 mod sites;
+
+use remote::{Service, Services};
 
 const MAX_RESPONSE: u64 = 100 * 1024 * 1024;
 
@@ -311,44 +318,32 @@ fn is_private(ip: IpAddr) -> bool {
     }
 }
 
-fn remote_allowed(url: &Url, cfg: &Value) -> Result<()> {
-    let env = config::environment();
-    if env
-        .get("MARKITAI_NO_REMOTE_FETCH")
-        .is_some_and(|s| ["1", "true", "yes", "on"].contains(&s.to_lowercase().as_str()))
-        || cfg.pointer("/fetch/remote_consent").and_then(Value::as_str) != Some("always")
-    {
-        return Err(Error::Fetch("Remote fetching is disabled by policy".into()));
-    }
-    let sensitive_query = url.query_pairs().any(|(key, _)| {
-        [
-            "token",
-            "key",
-            "secret",
-            "password",
-            "signature",
-            "credential",
-        ]
-        .iter()
-        .any(|part| key.to_lowercase().contains(part))
-    });
-    if !url.username().is_empty() || url.password().is_some() || sensitive_query {
+/// Whether a URL may be sent to a remote extraction service at all: no
+/// credential material, no local or private host name, and a host that
+/// resolves only to public addresses.
+fn remote_target(url: &Url, services: &Services<'_>) -> Result<()> {
+    if policy::credential_material(url) {
         return Err(Error::Fetch(
             "Credentialed URLs cannot be sent to remote extraction services".into(),
         ));
     }
-    let host = url
-        .host_str()
-        .ok_or_else(|| Error::Fetch("URL has no hostname".into()))?;
-    if !host.contains('.')
-        || host.ends_with(".local")
-        || host.ends_with(".localhost")
-        || host.ends_with(".internal")
-    {
+    if (services.private_name)(url) {
         return Err(Error::Fetch(
             "Local URLs cannot be sent to remote extraction services".into(),
         ));
     }
+    (services.public_addresses)(url)
+}
+
+/// The host's addresses are all public.
+fn public_addresses(url: &Url) -> Result<()> {
+    let host = url
+        .host_str()
+        .ok_or_else(|| Error::Fetch("URL has no hostname".into()))?;
+    let host = host
+        .strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .unwrap_or(host);
     let addresses: Vec<_> = (host, url.port_or_known_default().unwrap_or(443))
         .to_socket_addrs()
         .map_err(|_| Error::Fetch("Cannot resolve URL hostname for remote policy check".into()))?
@@ -359,6 +354,15 @@ fn remote_allowed(url: &Url, cfg: &Value) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// The question for the person at the terminal, naming the page and the
+/// services this run may try.
+fn consent_request(url: &Url, services: &[Service]) -> consent::ConsentRequest {
+    consent::ConsentRequest {
+        url: shown_url(url),
+        services: services.iter().map(|service| service.name()).collect(),
+    }
 }
 
 pub(crate) enum FetchContent {
@@ -417,6 +421,24 @@ pub(crate) fn fetch_with_runtime(
     output_available: bool,
     runtime: Option<&crate::BrowserRuntime>,
 ) -> Result<FetchOutcome> {
+    fetch_with_services(
+        source,
+        cfg,
+        explicit_strategy,
+        output_available,
+        runtime,
+        &Services::production(),
+    )
+}
+
+fn fetch_with_services(
+    source: &str,
+    cfg: &Value,
+    explicit_strategy: Option<&str>,
+    output_available: bool,
+    runtime: Option<&crate::BrowserRuntime>,
+    services: &Services<'_>,
+) -> Result<FetchOutcome> {
     let url = Url::parse(source).map_err(|_| Error::InvalidInput("Invalid URL".into()))?;
     if !["http", "https"].contains(&url.scheme()) || url.host_str().is_none() {
         return Err(Error::InvalidInput(
@@ -457,9 +479,18 @@ pub(crate) fn fetch_with_runtime(
         });
     let learn = strategy == "auto" && anonymous;
     let mut learning_unavailable = false;
-    if learn && explicit_strategy.is_none() && browser::available() {
+    let mut learned_route = false;
+    // A configured priority, or a policy that is off, decides the order instead.
+    if learn
+        && explicit_strategy.is_none()
+        && policy::learned_routes_apply(&url, cfg)
+        && (services.browser_ready)()
+    {
         match spa_domains::take_hint(cfg, &url) {
-            Ok(true) => return fetch_browser(source, cfg, capture, output_available, runtime),
+            Ok(true) if capture => {
+                return fetch_browser(source, cfg, capture, output_available, runtime);
+            }
+            Ok(true) => learned_route = true,
             Ok(false) => {}
             Err(_) => learning_unavailable = true,
         }
@@ -502,79 +533,41 @@ pub(crate) fn fetch_with_runtime(
             }
             Ok(outcome)
         }
-        "auto" => auto_result(
-            fetch_static(source, &url, cfg, explicit_strategy),
-            browser::available,
-            |needs_javascript| {
-                fetch_browser_and_learn(
-                    source,
-                    &url,
-                    cfg,
-                    false,
-                    output_available,
-                    learn && needs_javascript,
-                    runtime,
-                )
-            },
+        "auto" => auto_chain(
+            source,
+            &url,
+            cfg,
+            explicit_strategy,
+            output_available,
+            runtime,
+            learn,
+            learned_route,
+            services,
         ),
         "static" => {
             fetch_static(source, &url, cfg, explicit_strategy).map_err(static_javascript_error)
         }
-        "defuddle" | "jina" => {
+        "defuddle" | "jina" | "cloudflare" => {
             require_capture_output(cfg, output_available)?;
-            remote_allowed(&url, cfg)?;
-            let client = client(30)?;
-            let remote = if strategy == "defuddle" {
-                format!(
-                    "https://defuddle.md/{}",
-                    url::form_urlencoded::byte_serialize(source.as_bytes()).collect::<String>()
-                )
-            } else {
-                format!("https://r.jina.ai/{source}")
-            };
-            let mut request = client.get(remote);
-            if strategy == "jina" {
-                request = request.header("Accept", "application/json");
-                if let Some(key) = config::environment().get("JINA_API_KEY") {
-                    request = request.bearer_auth(key);
-                }
+            let service = Service::named(strategy).expect("a remote strategy name");
+            // `-s` for this run answers `ask`; a strategy from the
+            // configuration does not, and honours local-only patterns.
+            let chosen = explicit_strategy == Some(strategy);
+            services.gate.selected(cfg, &services.vars, chosen, || {
+                consent_request(&url, &[service])
+            })?;
+            if service == Service::Cloudflare {
+                cloudflare::credentials(cfg, &services.vars, true)?
+                    .ok_or_else(cloudflare::missing_credentials)?;
             }
-            let bytes = read_body(send(request)?, Some(strategy))?;
-            let mut doc = if strategy == "jina" {
-                let value: Value = serde_json::from_slice(&bytes)?;
-                let markdown = value
-                    .pointer("/data/content")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| Error::Fetch("Jina returned no content".into()))?
-                    .to_owned();
-                let mut doc = Document {
-                    markdown,
-                    ..Default::default()
-                };
-                if let Some(title) = value.pointer("/data/title") {
-                    doc.metadata.insert("title".into(), title.clone());
-                }
-                doc
-            } else {
-                let text = String::from_utf8(bytes)
-                    .map_err(|_| Error::Fetch("Remote Markdown is not UTF-8".into()))?;
-                let (metadata, markdown) = output::split_frontmatter(&text);
-                Document {
-                    markdown: markdown.into(),
-                    metadata,
-                    ..Default::default()
-                }
-            };
-            if doc.markdown.trim().is_empty() {
-                return Err(Error::Fetch("Remote service returned empty content".into()));
+            if !chosen && policy::local_only(&url, cfg, &services.vars) {
+                return Err(Error::Fetch(format!(
+                    "{} cannot fetch a URL that fetch.policy.local_only_patterns (or NO_PROXY) keeps local; use static or playwright, or select it with -s for this run",
+                    service.name()
+                )));
             }
-            doc.metadata
-                .insert("fetch_strategy".into(), json!(strategy));
-            let mut outcome = FetchOutcome {
-                content: FetchContent::Document(doc),
-                cache_hit: false,
-                screenshots: Vec::new(),
-            };
+            remote_target(&url, services)?;
+            let mut outcome = remote::outcome(remote::fetch(service, source, &url, cfg, services)?);
             if capture {
                 attach_screenshot(source, cfg, &mut outcome, runtime)?;
             }
@@ -616,60 +609,122 @@ fn static_javascript_error(error: Error) -> Error {
     }
 }
 
-/// What `auto` makes of its static result. A page that needs JavaScript goes
-/// to the local browser, learning the authority when the page said so in its
-/// own text; one that merely looks like a script-rendered shell keeps its
-/// static text, with a warning, whenever the browser is missing or fails.
+/// What `auto` makes of its static result with only the local steps (see
+/// [`chain::run`]). A page that needs JavaScript goes to the local browser,
+/// learning the authority when the page said so in its own text; one that
+/// merely looks like a script-rendered shell keeps its static text, with a
+/// warning, whenever the browser is missing or fails.
+#[cfg(test)]
 fn auto_result(
     result: Result<FetchOutcome>,
     browser_ready: impl FnOnce() -> bool,
     render: impl FnOnce(bool) -> Result<FetchOutcome>,
 ) -> Result<FetchOutcome> {
-    match result {
-        Err(error) if browser_quality_failure(&error) => {
-            if browser_ready() {
-                let rendered =
-                    render(matches!(&error, Error::Fetch(reason) if reason == JS_REQUIRED));
-                // A site's verification page is what the reader needs to hear
-                // about, not only that the browser then failed in its own way.
-                match (&error, rendered) {
-                    (Error::Fetch(before), Err(Error::Fetch(after)))
-                        if before.contains(sites::VERIFICATION_PAGE)
-                            && !after.contains(sites::VERIFICATION_PAGE)
-                            && !after.starts_with("HTTP ") =>
+    let mut result = Some(result);
+    let browser_ready = std::cell::Cell::new(Some(browser_ready));
+    let mut render = Some(render);
+    chain::run(
+        &[policy::Step::Static, policy::Step::Browser],
+        chain::Attempts {
+            static_fetch: &mut || result.take().expect("one static result"),
+            browser_ready: &|| browser_ready.take().expect("asked once")(),
+            render: &mut |learn| render.take().expect("rendered once")(learn),
+            remote_ready: &mut |_| chain::Readiness::SkipAll(None),
+            remote: &mut |_| unreachable!("no remote step"),
+        },
+    )
+}
+
+/// The order `auto` tries for this URL, with what the host knows about the
+/// user's configuration: consent, and whether `fetch.fallback_patterns` was
+/// written (the contract's default list is not applied).
+fn auto_order(
+    url: &Url,
+    cfg: &Value,
+    learned_route: bool,
+    services: &Services<'_>,
+) -> Vec<policy::Step> {
+    policy::order(
+        url,
+        cfg,
+        &policy::Facts {
+            vars: &services.vars,
+            learned_route,
+            remote_possible: services.gate.peek(cfg, &services.vars) != Some(false),
+            private_name: (services.private_name)(url),
+            fallback_patterns: services.gate.fallback_patterns_configured(),
+        },
+    )
+}
+
+/// `auto` for an anonymous page without a capture: the strategy order of
+/// [`policy::order`], local steps first, remote services after them when
+/// consent and the target allow.
+#[allow(clippy::too_many_arguments)]
+fn auto_chain(
+    source: &str,
+    url: &Url,
+    cfg: &Value,
+    explicit_strategy: Option<&str>,
+    output_available: bool,
+    runtime: Option<&crate::BrowserRuntime>,
+    learn: bool,
+    learned_route: bool,
+    services: &Services<'_>,
+) -> Result<FetchOutcome> {
+    let steps = auto_order(url, cfg, learned_route, services);
+    let remote: Vec<Service> = steps.iter().filter_map(|step| step.remote()).collect();
+    // The target and consent are settled once, at the first remote step.
+    let mut settled: Option<std::result::Result<(), Option<String>>> = None;
+    chain::run(
+        &steps,
+        chain::Attempts {
+            static_fetch: &mut || fetch_static(source, url, cfg, explicit_strategy),
+            browser_ready: &|| (services.browser_ready)(),
+            render: &mut |javascript_said| {
+                fetch_browser_and_learn(
+                    source,
+                    url,
+                    cfg,
+                    false,
+                    output_available,
+                    learn && javascript_said,
+                    runtime,
+                )
+            },
+            remote_ready: &mut |service| {
+                if service == Service::Cloudflare && !cloudflare::configured(cfg, &services.vars) {
+                    return chain::Readiness::SkipService;
+                }
+                let settled = settled.get_or_insert_with(|| {
+                    remote_target(url, services).map_err(|error| Some(error.to_string()))?;
+                    let available: Vec<Service> = remote
+                        .iter()
+                        .copied()
+                        .filter(|service| {
+                            *service != Service::Cloudflare
+                                || cloudflare::configured(cfg, &services.vars)
+                        })
+                        .collect();
+                    if services
+                        .gate
+                        .fallback(cfg, &services.vars, || consent_request(url, &available))
                     {
-                        Err(Error::Fetch(format!(
-                            "{before}; the local browser failed as well ({after})"
-                        )))
+                        Ok(())
+                    } else {
+                        Err(None)
                     }
-                    (_, rendered) => rendered,
+                });
+                match settled {
+                    Ok(()) => chain::Readiness::Ready,
+                    Err(reason) => chain::Readiness::SkipAll(reason.clone()),
                 }
-            } else if needs_javascript(&error) {
-                Err(Error::Fetch(NO_BROWSER_FOR_JAVASCRIPT.into()))
-            } else {
-                Err(error)
-            }
-        }
-        Ok(mut outcome)
-            if matches!(&outcome.content, FetchContent::Document(document)
-                if document.warnings.iter().any(|warning| warning == JS_SHELL)) =>
-        {
-            if !browser_ready() {
-                return Ok(outcome);
-            }
-            match render(false) {
-                Ok(rendered) => Ok(rendered),
-                Err(Error::Fetch(reason)) => {
-                    outcome.content.warnings_mut().push(format!(
-                        "Browser rendering failed ({reason}); the static text was kept."
-                    ));
-                    Ok(outcome)
-                }
-                Err(error) => Err(error),
-            }
-        }
-        result => result,
-    }
+            },
+            remote: &mut |service| {
+                remote::fetch(service, source, url, cfg, services).map(remote::outcome)
+            },
+        },
+    )
 }
 
 fn add_learning_warning(outcome: &mut FetchOutcome) {
@@ -1607,7 +1662,26 @@ mod tests {
             "https://user:pass@example.com/x",
             "https://example.com/?api_key=secret",
         ] {
-            assert!(remote_allowed(&Url::parse(target).unwrap(), &cfg).is_err());
+            let fixture = remote::Fixture::new(consent::Gate::new(None, None));
+            let services = Services {
+                private_name: policy::private_name,
+                public_addresses: |_| panic!("refused before any lookup"),
+                ..fixture.services("http://127.0.0.1:9")
+            };
+            let url = Url::parse(target).unwrap();
+            assert!(remote_target(&url, &services).is_err(), "{target}");
+            let steps = policy::order(
+                &url,
+                &cfg,
+                &policy::Facts {
+                    vars: &services.vars,
+                    learned_route: false,
+                    remote_possible: true,
+                    private_name: policy::private_name(&url),
+                    fallback_patterns: false,
+                },
+            );
+            assert!(steps.iter().all(|step| step.remote().is_none()), "{target}");
         }
     }
     #[test]
@@ -2266,6 +2340,9 @@ mod pdf_tests;
 
 #[cfg(test)]
 mod robustness_tests;
+
+#[cfg(test)]
+mod remote_tests;
 
 #[cfg(test)]
 mod bounded_fixture_io {

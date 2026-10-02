@@ -72,12 +72,13 @@ LLM, OCR and screenshots:
 
 URL fetching and backends:
   -s, --strategy <NAME>
-          URL strategy: auto (static, then the local browser), static or playwright run locally;
-          defuddle and jina send the URL to that remote service; cloudflare is not implemented
-          [possible values: auto, static, playwright, defuddle, jina, cloudflare]
+          URL strategy: auto (static, then the local browser; remote services only after you opt in
+          with fetch.remote_consent), static or playwright run locally; defuddle, jina and
+          cloudflare (your account) send the URL to that remote service [possible values: auto,
+          static, playwright, defuddle, jina, cloudflare]
   -b, --backend <NAME>
-          File backend; native is implemented, cloudflare remains explicitly unsupported [possible
-          values: native, cloudflare]
+          File backend: native, or cloudflare to convert supported files with Workers AI in your
+          Cloudflare account (the file is uploaded) [possible values: native, cloudflare]
       --no-remote-fetch
           Forbid remote extraction services; does not disable explicitly configured model requests
 
@@ -213,12 +214,13 @@ LLM, OCR and screenshots:
 
 URL fetching and backends:
   -s, --strategy <NAME>
-          URL strategy: auto (static, then the local browser), static or playwright run locally;
-          defuddle and jina send the URL to that remote service; cloudflare is not implemented
-          [possible values: auto, static, playwright, defuddle, jina, cloudflare]
+          URL strategy: auto (static, then the local browser; remote services only after you opt in
+          with fetch.remote_consent), static or playwright run locally; defuddle, jina and
+          cloudflare (your account) send the URL to that remote service [possible values: auto,
+          static, playwright, defuddle, jina, cloudflare]
   -b, --backend <NAME>
-          File backend; native is implemented, cloudflare remains explicitly unsupported [possible
-          values: native, cloudflare]
+          File backend: native, or cloudflare to convert supported files with Workers AI in your
+          Cloudflare account (the file is uploaded) [possible values: native, cloudflare]
       --no-remote-fetch
           Forbid remote extraction services; does not disable explicitly configured model requests
 
@@ -1367,12 +1369,13 @@ LLM, OCR and screenshots:
 
 URL fetching and backends:
   -s, --strategy <NAME>
-          URL strategy: auto (static, then the local browser), static or playwright run locally;
-          defuddle and jina send the URL to that remote service; cloudflare is not implemented
-          [possible values: auto, static, playwright, defuddle, jina, cloudflare]
+          URL strategy: auto (static, then the local browser; remote services only after you opt in
+          with fetch.remote_consent), static or playwright run locally; defuddle, jina and
+          cloudflare (your account) send the URL to that remote service [possible values: auto,
+          static, playwright, defuddle, jina, cloudflare]
   -b, --backend <NAME>
-          File backend; native is implemented, cloudflare remains explicitly unsupported [possible
-          values: native, cloudflare]
+          File backend: native, or cloudflare to convert supported files with Workers AI in your
+          Cloudflare account (the file is uploaded) [possible values: native, cloudflare]
       --no-remote-fetch
           Forbid remote extraction services; does not disable explicitly configured model requests
 
@@ -1510,12 +1513,13 @@ LLM, OCR and screenshots:
 
 URL fetching and backends:
   -s, --strategy <NAME>
-          URL strategy: auto (static, then the local browser), static or playwright run locally;
-          defuddle and jina send the URL to that remote service; cloudflare is not implemented
-          [possible values: auto, static, playwright, defuddle, jina, cloudflare]
+          URL strategy: auto (static, then the local browser; remote services only after you opt in
+          with fetch.remote_consent), static or playwright run locally; defuddle, jina and
+          cloudflare (your account) send the URL to that remote service [possible values: auto,
+          static, playwright, defuddle, jina, cloudflare]
   -b, --backend <NAME>
-          File backend; native is implemented, cloudflare remains explicitly unsupported [possible
-          values: native, cloudflare]
+          File backend: native, or cloudflare to convert supported files with Workers AI in your
+          Cloudflare account (the file is uploaded) [possible values: native, cloudflare]
       --no-remote-fetch
           Forbid remote extraction services; does not disable explicitly configured model requests
 

@@ -100,6 +100,14 @@ pub fn selected_path(explicit: Option<&Path>) -> Option<PathBuf> {
 }
 
 pub fn load(explicit: Option<&Path>, overrides: Option<Value>) -> Result<Value> {
+    normalize(&raw(explicit, overrides)?)
+}
+
+/// The selected file with `overrides` merged over it, before defaults are
+/// filled in. A caller that must tell a value the user wrote from the same
+/// value as a default (such as `fetch.remote_consent`) reads it here and
+/// normalizes the result itself; [`load`] is `normalize(&raw(..))`.
+pub fn raw(explicit: Option<&Path>, overrides: Option<Value>) -> Result<Value> {
     let selected = selected_path(explicit);
     let mut value = json!({});
     if let Some(path) = selected {
@@ -134,7 +142,7 @@ pub fn load(explicit: Option<&Path>, overrides: Option<Value>) -> Result<Value> 
         }
         merge(&mut value, overrides);
     }
-    normalize(&value)
+    Ok(value)
 }
 
 /// Return the effective configuration, including defaults for nested model entries.

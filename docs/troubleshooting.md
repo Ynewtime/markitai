@@ -172,15 +172,39 @@ parameter (`?id=…`, `?v=…`, `?p=…`) appended, so `…/item?id=8863` become
 single URL, `-o chosen.md` sets the exact file name; an existing name is renamed
 `….v2.md` unless `output.on_conflict` says otherwise.
 
-**`Fetch strategy 'cloudflare' is not implemented` / `Cloudflare file conversion is not implemented`.**
-The Cloudflare strategy and `-b cloudflare` backend are not available in this
-build. Use `-s auto`, `static`, `playwright`, `jina` or `defuddle`, and the
-default native file backend.
+**`Cloudflare needs an API token and an account ID: …`.** `-s cloudflare`
+(Browser Rendering) and `-b cloudflare` (Workers AI file conversion) run in your
+own Cloudflare account. Create a token at dash.cloudflare.com/profile/api-tokens
+with Account / Browser Rendering / Edit and Account / Workers AI / Read, copy the
+account ID from the account's home page, then set `fetch.cloudflare.api_token`
+and `fetch.cloudflare.account_id` (a value or an `env:NAME` reference) or export
+`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. `Environment variable not
+found: NAME` means an `env:NAME` reference names a variable that is not set.
+`HTTP 401/403 from the cloudflare service: …` means Cloudflare refused the token
+(check its permissions and the account ID). `-b cloudflare` uploads the file;
+formats Workers AI does not read, and files converted with `--ocr` or
+`--screenshot`, keep the native reader. See [URL fetching](fetch.md#remote-services).
 
-**`Remote fetching is disabled by policy`.** `-s jina` and `-s defuddle` send the
-URL to a third-party service. They are refused when `--no-remote-fetch` or
-`MARKITAI_NO_REMOTE_FETCH=1` is set or `fetch.remote_consent` is not `always`.
-Local, private and credential-bearing URLs are never sent to these services.
+**`Remote fetching is disabled by policy`.** `-s defuddle`, `-s jina` and
+`-s cloudflare` send the URL to a third-party service. They are refused when
+`--no-remote-fetch` or `MARKITAI_NO_REMOTE_FETCH=1` is set or
+`fetch.remote_consent` is `never`; under `ask` a strategy chosen with `-s` runs,
+while one set in `fetch.strategy` needs a yes at the terminal. Local, private and
+credential-bearing URLs are never sent to these services, and a configured remote
+strategy also honours `fetch.policy.local_only_patterns`.
+
+**A page fails with the default `auto`, and a remote service might read it.**
+`auto` never sends a URL to a remote service by default, although `config list`
+shows `fetch.remote_consent` as `always` (the reference's default, which this
+build does not take as an opt-in). Write it yourself to opt in:
+`markitai config set fetch.remote_consent ask` asks once per run on a terminal
+before the first remote attempt (without a terminal, or with `--quiet`, the run
+skips them and says so once); `always` tries defuddle, Jina and (with
+credentials) Cloudflare after the local strategies fail, with a one-time notice.
+They are not tried for a 404 or 410, or for local, private or credentialed URLs.
+When all fail, the message keeps the local failure first and adds `remote
+services failed as well (…)`. See
+[strategy order and remote fallback](fetch.md#strategy-order-and-remote-fallback).
 
 **`Chromium is not installed; install Chrome/Chromium or set MARKITAI_BROWSER_EXECUTABLE …`.**
 JavaScript pages, `-s playwright` and web screenshots need Chrome or Chromium.

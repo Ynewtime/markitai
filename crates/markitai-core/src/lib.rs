@@ -37,6 +37,9 @@ mod system_frameworks;
 mod types;
 
 pub use browser_runtime::BrowserRuntime;
+/// Remote-fallback consent a host installs once per process (the CLI does;
+/// without it `auto` never sends a URL to a remote service).
+pub use fetch::consent::{ConsentRequest, RemoteFallback, RemoteNotice, set_remote_fallback};
 pub use images::is_image_extension;
 pub use llm_runtime::LlmRuntime;
 /// Lowercase hexadecimal spelling of digest bytes, as `{:x}` rendered them
@@ -308,6 +311,20 @@ fn convert_inner(
             "Office screenshots require an installed LibreOffice (soffice on PATH) and the native PDF page renderer, and --screenshot-only publishes nothing else. Install LibreOffice (macOS: brew install --cask libreoffice), or drop --screenshot-only to convert the document's text".into(),
         ));
     }
+    // `-b cloudflare` (fetch.cloudflare.convert_enabled): Workers AI converts
+    // the formats it reads into text. OCR and screenshots need the native
+    // reader's pages, so such a file keeps the native path, with a warning.
+    let cloudflare_extension = if image_input {
+        name_extension.as_str()
+    } else {
+        document_extension
+    };
+    let cloudflare_wanted =
+        !is_url && fetch::cloudflare::converts(&cfg, &input_path, cloudflare_extension);
+    let cloudflare_backend = cloudflare_wanted
+        && !config::enabled(&cfg, "/ocr/enabled")
+        && !config::enabled(&cfg, "/screenshot/enabled");
+    let image_input = image_input && !cloudflare_backend;
     if image_input
         && !config::enabled(&cfg, "/llm/enabled")
         && !config::enabled(&cfg, "/ocr/enabled")
@@ -352,7 +369,9 @@ fn convert_inner(
     let local_ocr = image_input
         && config::enabled(&cfg, "/ocr/enabled")
         && (!config::enabled(&cfg, "/llm/enabled") || vlm_disabled);
-    let mut doc = if image_input {
+    let mut doc = if cloudflare_backend {
+        fetch::cloudflare::convert_file(&input_path, cloudflare_extension, &cfg)?
+    } else if image_input {
         let (document, images) = images::extract(&input_path, &cfg, local_ocr)?;
         vision = images;
         document
@@ -430,6 +449,9 @@ fn convert_inner(
     if let Some(real) = real_extension {
         doc.warnings
             .push(formats::retyped_warning(&name_extension, real));
+    }
+    if cloudflare_wanted && !cloudflare_backend {
+        doc.warnings.push("The Cloudflare backend was not used for this file: OCR and screenshots need the native reader's pages, so it was converted natively.".into());
     }
     if office_ocr_without_renderer {
         let install = "Install LibreOffice (macOS: brew install --cask libreoffice)";

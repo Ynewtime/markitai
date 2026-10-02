@@ -460,12 +460,12 @@ const ARGUMENTS: &[(&str, &str, &str)] = &[
     (
         ROOT,
         "strategy",
-        "URL 抓取策略：auto（先静态抓取，必要时再用本地浏览器）、static 和 playwright 在本地运行；defuddle 和 jina 会把 URL 发送给对应的远程服务；cloudflare 尚未实现",
+        "URL 抓取策略：auto（先静态抓取，必要时再用本地浏览器；只有通过 fetch.remote_consent 明确同意后才使用远程服务）、static 和 playwright 在本地运行；defuddle、jina 和 cloudflare（你的账户）会把 URL 发送给对应的远程服务",
     ),
     (
         ROOT,
         "backend",
-        "文件后端；native 已实现，cloudflare 明确不受支持",
+        "文件后端：native，或 cloudflare：在你的 Cloudflare 账户中用 Workers AI 转换受支持的文件（会上传文件）",
     ),
     (
         ROOT,

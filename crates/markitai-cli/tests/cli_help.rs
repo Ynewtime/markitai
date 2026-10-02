@@ -119,7 +119,7 @@ fn help_explains_output_privacy_cache_and_unsupported_workflows() {
             "OpenAI Batch API",
             "original -o directory",
             "does not cancel it",
-            "cloudflare remains explicitly unsupported",
+            "with Workers AI in your Cloudflare account",
         ] {
             assert!(
                 normalized.contains(phrase),

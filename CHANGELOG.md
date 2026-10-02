@@ -62,6 +62,9 @@
 - Structural HTML article selection and technical code normalization with preserved languages, literal lines and editor boundaries.
 - Static React streamed-content recovery and a bounded compatibility heuristic for script-stripped article snapshots.
 - Native PDF layout refinement with document-wide heading levels, paragraph boundaries, continuous styling and complete ruled tables.
+- `-s cloudflare` fetches pages through Cloudflare Browser Rendering in your account and `-b cloudflare` converts PDF, Office, OpenDocument, Numbers, CSV, XML and image files with Workers AI; credentials come from `fetch.cloudflare.api_token`/`account_id` (or `env:NAME`) or `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID`.
+- `auto` can fall back to defuddle, Jina and Cloudflare after local fetching fails, only after you opt in: write `fetch.remote_consent: always` yourself (one-time notice) or choose `ask` (one question per run on a terminal). The default stays local. It follows `fetch.policy.strategy_priority`, `max_strategy_hops`, domain profiles, `local_only_patterns` (with `NO_PROXY`) and a `fallback_patterns` list you write yourself; the default list is shown but not applied, so X posts stay static-first.
+- Jina and Defuddle honour their `timeout`, `rpm`, `api_key`, `no_cache`, `target_selector` and `wait_for_selector` settings; remote failures quote the service's reason without tokens or account IDs.
 - Portable native validation and installable-artifact CI for Linux, Windows and both macOS architectures; remote execution remains pending.
 - Complete 209-fixture HTML audit harness with separate compatibility and quality diagnostics.
 - Isolated contract tests, format differential audit, and reproducible CLI measurements.

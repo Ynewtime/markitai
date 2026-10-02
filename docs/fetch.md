@@ -20,10 +20,11 @@ capture therefore adds a static request. Probe transport, HTTP-status, body-read
 and size-limit failures propagate instead of being hidden by browser fallback.
 The probe does not reuse or admit HTML cache entries, so a fresh cached HTML row
 cannot conceal a URL that now downloads a PDF. The `playwright` strategy uses
-[native Chromium CDP](browser.md) for JavaScript and captures. Learned routing is
-described below; the complete reference fallback policy remains unfinished. `jina` and
-`defuddle` keep explicit remote-consent and target checks and do not use this
-cache. Explicit browser retrieval also hands initial PDF document responses
+[native Chromium CDP](browser.md) for JavaScript and captures. Learned routing,
+the [strategy order](#strategy-order-and-remote-fallback) and the opt-in remote
+fallback are described below. `defuddle`, `jina` and `cloudflare` keep their
+consent and target checks and do not use this cache. Explicit browser retrieval
+also hands initial PDF document responses
 to the native reader using bytes streamed from the same CDP session. Remote
 strategies retain their selected extraction service and do not use that handoff. Unsupported strategies fail before cache lookup, so an old page cannot
 make an unsupported strategy appear to work.
@@ -42,9 +43,13 @@ non-browser client with a redirect page, which would otherwise be written as a
 the cache is keyed by the canonical address. Other X pages (profiles, search)
 and addresses with userinfo or an explicit port are left alone. The mirrors'
 hosts are only recognized in order to avoid contacting them: no X address is
-sent to FxTwitter, oEmbed, defuddle or Jina by any strategy but an explicit
-`defuddle`/`jina` request. The post reader is described in
-[HTML conversion](html.md).
+sent to FxTwitter or oEmbed, and it reaches defuddle, Jina or Cloudflare only
+through an explicit remote strategy or an `auto` fallback the user opted in to
+(below). `auto` reads an X post from the static page with the X post reader,
+usually in one or two seconds; the `x.com` and `twitter.com` entries of the
+default `fetch.fallback_patterns` do not make it start with the browser (see
+[strategy order](#strategy-order-and-remote-fallback)). The post reader is
+described in [HTML conversion](html.md).
 
 ## Character encodings
 
@@ -82,8 +87,12 @@ usual secret names (`token`, `key`, `secret`, `password`, `signature`,
 `credential`, `auth`, `sig`, `sid`, `session`, `code` and similar) and for long
 opaque values. It is cut at 200 characters. The message keeps the status first
 and the `fetch_error` code, so the [web interface](web-ui.md) still recognizes
-it. A remote service's own failure reads `HTTP <status> from the <service> service`
-without a hint, because its status says nothing about the page.
+it. A remote service's own failure reads `HTTP <status> from the <service> service`,
+then the reason the service gave in JSON (cut to 160 characters) and a hint for
+the common refusals (a Jina key for 401/402/429/451, the Cloudflare token's
+permissions for 401/403, `rate limited; try again later` for 429); it names
+neither the page nor the endpoint, and any token or account id the service
+echoed is replaced by `REDACTED`.
 
 A site that is known to turn automated clients away is named in the hint
 instead of the generic text, with what does work: for a 401, 403, 418 or 429
@@ -237,7 +246,10 @@ persistent.
 
 Later automatic requests to that authority start with the available browser,
 avoiding another static request or anonymous page-cache lookup. Once selected,
-browser HTTP, timeout and resource failures remain errors. If no browser is
+browser HTTP, timeout and resource failures remain errors (an opted-in remote
+fallback may still read the page, see
+[strategy order](#strategy-order-and-remote-fallback)). A configured strategy
+priority or `fetch.policy.enabled=false` replaces learned routes. If no browser is
 available, ordinary static retrieval remains available. Explicit `static`,
 `playwright` and remote strategies keep their selected behavior. The CLI treats
 `-s auto` as automatic intent, exactly like its default, and both use learned
@@ -269,6 +281,152 @@ Unavailable storage leaves successful fetching intact with a fixed warning.
 Management failures are explicit and sanitized. [Cache commands](cache.md#learned-domain-management)
 inspect and clear routing knowledge independently. This implementation adds no
 browser session pool or browser-document cache.
+
+## Strategy order and remote fallback
+
+`auto` tries strategies in an order decided per URL, as the reference policy
+does. The first rule that applies wins:
+
+1. A URL whose host is local or private (`localhost`, `.local`, `.internal`,
+   `.lan`, `.home`, `.corp`, single-label names, non-public address literals,
+   userinfo), or that `fetch.policy.local_only_patterns` names, uses the local
+   steps only. With `fetch.policy.inherit_no_proxy` (the default) the entries
+   of `NO_PROXY` (or `no_proxy`) count as local-only patterns too. Patterns use
+   the `NO_PROXY` grammar: `*`, `.name` and `*.name` (subdomains only), CIDR
+   blocks (`10.0.0.0/8`, `192.168.1.0/255.255.255.0`, `fd00::/8`), and exact
+   hosts or addresses.
+2. `fetch.domain_profiles."<host[:port]>".strategy_priority` (the exact
+   authority, as the browser profile is looked up) replaces the order.
+3. That profile's `prefer_strategy` goes first, followed by the default order
+   without it.
+4. `fetch.policy.strategy_priority` replaces the order.
+5. With `fetch.policy.enabled=false`, the default order, with no browser-first
+   domains and no learned routes.
+6. An authority with a [learned browser route](#learned-browser-routing) starts
+   with the browser and does not retry static: a browser failure stays the
+   failure, as before.
+7. A domain in a `fetch.fallback_patterns` list the user wrote (configuration
+   file or `--config-json`), or one of its subdomains, starts with the browser,
+   then static. The contract's default list (`twitter.com`, `x.com`,
+   `instagram.com`, `facebook.com`, `linkedin.com`, `threads.net`), which
+   `config list` shows, is not applied: the static path and the X post reader
+   read X posts well and faster than a browser, which is slower and more
+   fragile there. As with `remote_consent`, the CLI tells the two apart from the
+   configuration before defaults are filled in; `serve`, `mcp` and the bindings
+   apply no list.
+8. Otherwise: static, browser, then the remote services defuddle, jina and
+   cloudflare.
+
+The list is cut to `fetch.policy.max_strategy_hops` (default 5, at most 6).
+Remote services are then removed for a URL with credential material: userinfo,
+a query or fragment parameter named like a secret (`token`, `key`, `secret`,
+`password`, `signature`, `credential`, `auth`, `code`, `sid`, `sig`, `ticket`,
+`session`, `jwt`, `otp`, `apiKey`, `access_key` and similar spellings), a
+`token=…` path segment, a JWT or a long random-looking path segment, or a
+token-like segment after `/reset/`, `/verify/`, `/token/`, `/invite/`,
+`/session/` and similar routes. A list left without a step that can run becomes
+the local default. Local steps keep their rules: a page that needs JavaScript,
+a challenge or a verification page goes on to the browser; a script-rendered
+shell keeps its static text when nothing better comes; any other static failure
+(an HTTP status, a transport error) ends the local steps.
+
+Remote services are tried only after the local steps could not read the page,
+unless a configured priority puts one first, and never for a 404 or 410, a
+configuration or input error, or a host that resolves to a non-public address
+(checked once, before the first remote request; the failure then says so).
+Cloudflare is passed over when its credentials are not set. The first remote
+service that reads the page wins; its result names it in `fetch_strategy` and
+is not stored in the page cache. When every step fails, the local failure comes
+first (its `HTTP <status>` stays at the start) and the remote failures follow:
+`…; remote services failed as well (HTTP 429 from the defuddle service: …; …)`.
+A kept shell gets `Remote extraction failed (…); the static text was kept.`
+
+### Consent
+
+`auto` never sends a URL to a remote service unless the user opted in. The
+contract's default for `fetch.remote_consent` is `always`, the reference's
+value, and `config list` shows it; in this build that default does not opt in,
+because the configuration a conversion receives cannot tell it from a value the
+user wrote. The CLI reads the selected configuration file and `--config-json`
+before defaults are filled in:
+
+| `fetch.remote_consent` | `auto` fallback | `-s defuddle/jina/cloudflare` | `fetch.strategy` set to one of them |
+|---|---|---|---|
+| default (`always`, not written) | never | runs | runs |
+| `always`, written by the user | runs; a one-line disclosure the first time | runs | runs |
+| `ask` | asks once per run on a terminal before the first remote fallback; otherwise skipped with one note | runs (choosing it is the answer) | asks like the fallback; refused without a terminal |
+| `never`, or `--no-remote-fetch` | never | refused | refused |
+
+`MARKITAI_NO_REMOTE_FETCH=1` (also `true`, `yes`, `on`) refuses everything, as
+`never` does. The question names the page and the services the run may try and
+defaults to no; one answer serves the whole run, other conversions of a batch
+wait for it, and the status line pauses while it is on screen. It needs a
+terminal on stdin and stderr and a run without `--quiet`. Without one, `ask`
+counts as `never` and the run prints once: `Note: remote extraction services were
+skipped: fetch.remote_consent is ask and there is no terminal to ask. …`. The
+disclosure for `always` is printed once per `MARKITAI_HOME` (a marker file
+`notices/remote-fetch`, which holds nothing, records it; a `--quiet` run does not
+print it and leaves it due). Refusals of a selected strategy start with
+`Remote fetching is disabled by policy`. A configured remote strategy also
+honours local-only patterns; `-s` for the run overrides them for a public URL.
+Credential material and private hosts are refused whatever was chosen.
+
+`serve`, `mcp` and the language bindings install no consent host: `auto` there
+never falls back to a remote service (as before), and `ask` there counts as
+`never` (`serve` already rewrites it so). Explicitly selected strategies behave
+as in the table.
+
+Differences from the reference, kept on purpose: the reference's default
+`always` sends URLs to the remote services whenever local strategies fail, and
+its default `fallback_patterns` make X and the other listed sites browser-first;
+a browser-first domain there tries the remote services before static, and a
+learned route retries static last. A refused explicit remote strategy does not
+fall back to the `auto` chain here; it fails with the service's reason.
+
+## Remote services
+
+| Service | Request | Options |
+|---|---|---|
+| defuddle | `GET https://defuddle.md/<URL, percent-encoded>`; Markdown with YAML frontmatter, which becomes metadata | `fetch.defuddle.timeout` (seconds, default 30), `rpm` (default 20) |
+| jina | `GET https://r.jina.ai/<URL>` with `Accept: application/json` | `fetch.jina.api_key` (a value or `env:NAME`, else `JINA_API_KEY`) as a bearer token; `timeout` (seconds), `rpm`; `no_cache` sends `X-No-Cache: true`; `target_selector` and `wait_for_selector` send `X-Target-Selector` and `X-Wait-For-Selector` |
+| cloudflare | `POST https://api.cloudflare.com/client/v4/accounts/<account>/browser-rendering/content` with your token | see below |
+
+Each service has its own sliding one-minute window of `rpm` requests, shared by
+every conversion of the process; a request waits for a slot. An `env:NAME` key
+whose variable is not set sends no key (and does not fall back to `JINA_API_KEY`).
+
+Cloudflare uses your own account. `fetch.cloudflare.api_token` and
+`account_id` are values or `env:NAME` references, else `CLOUDFLARE_API_TOKEN`
+and `CLOUDFLARE_ACCOUNT_ID`; for `-s cloudflare` an `env:NAME` whose variable is
+missing is an error naming the variable. The token needs Account / Browser
+Rendering / Edit for `-s cloudflare` and Account / Workers AI / Read for
+`-b cloudflare`. The request body carries the URL, `gotoOptions` with
+`timeout` (milliseconds, default 30,000) and `waitUntil` (`wait_until`, default
+`networkidle0`), `rejectRequestPattern` (`reject_resource_patterns`; by default
+style sheets and fonts), and, when set, `userAgent`, `cookies`,
+`waitForSelector` and `authenticate` (`http_credentials`; a value may be
+`env:NAME`); `cache_ttl` above 0 adds `?cacheTTL=`. At most two renders run at
+a time, and a 429 is repeated twice after 2 and 4 seconds. The rendered HTML goes
+through the native extraction and [site readers](html.md#reading-sites) like any
+other page, and a verification or challenge page is a failure. `renderer` and
+`browser_ms_used` are recorded in the metadata. The cookies and HTTP credentials
+are sent to Cloudflare's browser; configure them only for sites you accept that
+for.
+
+### The Cloudflare file backend
+
+`-b cloudflare` (`fetch.cloudflare.convert_enabled=true`; `-b native` turns it
+off) uploads local PDF, DOCX, XLSX/XLSM/XLSB, XLS/ET, ODS, ODT, Numbers (a single
+file), CSV, XML, JPEG, PNG, WebP and SVG files to Workers AI `toMarkdown` in your
+account and uses its Markdown instead of the native reader's; other formats keep
+the native readers. The result records `converter: cloudflare-tomarkdown` and
+the `tokens` Cloudflare reports. Images are converted by a model that uses the
+account's Neurons allowance, and say so in a warning. A file for which OCR or
+screenshots are requested keeps the native reader, which renders its pages,
+with a warning. The backend is refused under `--no-remote-fetch`,
+`MARKITAI_NO_REMOTE_FETCH` and `fetch.remote_consent=never`, and without
+credentials. `-s cloudflare` does not turn on the file backend (the reference's
+does); `-b` alone decides. URLs that download a document keep the native reader.
 
 ## Downloaded PDF media
 
@@ -415,7 +573,16 @@ refusals, timeouts), wrong and missing character
 encodings (GBK under a `utf-8` header, none at all, nearly valid UTF-8, Latin-1),
 script-rendered shells and JavaScript-only pages under `static` and, through the
 decision function with a stand-in browser, under `auto`, and `<meta>` refresh
-following, its limits and credential handling. They use temporary configured
+following, its limits and credential handling. `fetch/remote_tests.rs` runs the
+remote fallback, Defuddle, Jina, Cloudflare Browser Rendering and Workers AI
+`toMarkdown` against loopback services that read the request bodies: the order,
+priorities and hops, each consent setting with a stand-in terminal (one question
+per process, the once-per-home disclosure, the note without a terminal),
+local-only patterns and `NO_PROXY`, the options each service receives, pacing,
+429 repetition, and that failures carry no token, account id or endpoint.
+`fetch/policy.rs`, `fetch/chain.rs` and `fetch/consent.rs` test the order, the
+chain's decisions and the gate on their own. Credentials in these tests come
+from injected maps; no real service is contacted. They use temporary configured
 state paths;
 the older direct-fetch test explicitly disables caching. Storage and CLI/API
 integration tests exercise their respective boundaries separately. No tests

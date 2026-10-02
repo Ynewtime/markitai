@@ -25,7 +25,7 @@ markitai -c isolated.json doctor --json
 ## 参数帮助与移除提示
 
 `-h/--help` 说明输出、JSON、配置优先级、三类并发、缓存绕过、OCR/截图、
-恢复与日志的实际行为；未实现的取值（`-s cloudflare`、`-b cloudflare`）直接标明限制。
+恢复与日志的实际行为；`-s`/`-b` 写明哪些取值会把 URL 或文件发送给远程服务（defuddle、jina，以及用你自己 Cloudflare 账户的 `-s cloudflare` 与 `-b cloudflare`），以及 `auto` 只有经 `fetch.remote_consent` 明确同意后才使用远程服务。
 选项按输出、配置、LLM/OCR/截图、URL 抓取、批处理、缓存与图片、消息与日志分组，
 末尾列出 preset 含义、常用示例和退出状态。成对开关只列出主开关，帮助文本写明反向
 拼写（如 `--llm` 注明 `--no-llm`）；反向开关照常可用，只是不单独占一行。
@@ -113,7 +113,7 @@ MARKITAI_LANG=zh markitai --help
 
 ## 明确的迁移缺口
 
-仍有迁移缺口：`-s cloudflare` 抓取与 `-b cloudflare` 文件后端、非 Unix 断点恢复、Anthropic Batch API 与旧版 Python Batch 状态导入、终端内联图片显示（因此 `image.stdout_fetch_external` 可设置但无作用）。`-s jina`/`-s defuddle` 远程抽取、OpenAI Batch API、经官方运行时的订阅登录（`auth <provider> login`）和 serve 的浏览器工作区均已实现。pure 按参考行为绕过 LLM 缓存；文本、独立图片与分页视觉请求的缓存范围分别见 [LLM 处理](llm.md)，不能将一次命中理解成所有输入已支持缓存。其余未实现的开关/命令请求会失败并说明原因。Office 演示与文字文档可通过可选的独立 LibreOffice 安装获得全页截图和 OCR 补充，详见 [Office 渲染](office-rendering.md)；XLS/XLSX/ODS 支持每张完整工作表一页，包含隐藏和空表；Numbers 完整画布和其他平台本地 OCR/PDF 渲染仍未完成；未实现的选项只在遇到相关格式或图片时拒绝，不应阻断纯文本转换。独立栅格图片、完整多页 TIFF 和 SVG 可经 LLM 视觉模型读取。alt/desc 已接入真实图片引用、结构化分析及 images.json 合并，详见[图片分析](image-enrichment.md)；需要启用 LLM。rich/standard preset 仍不是对所有格式可用的完整模式。
+仍有迁移缺口：非 Unix 断点恢复、Anthropic Batch API 与旧版 Python Batch 状态导入、终端内联图片显示（因此 `image.stdout_fetch_external` 可设置但无作用）。`-s jina`/`-s defuddle` 远程抽取、`-s cloudflare`（Cloudflare Browser Rendering）抓取与 `-b cloudflare`（Workers AI）文件后端（均使用你自己的 Cloudflare 凭据，见[抓取](fetch.md#remote-services)）、经 `fetch.remote_consent` 明确同意后的 `auto` 远程回退、OpenAI Batch API、经官方运行时的订阅登录（`auth <provider> login`）和 serve 的浏览器工作区均已实现。pure 按参考行为绕过 LLM 缓存；文本、独立图片与分页视觉请求的缓存范围分别见 [LLM 处理](llm.md)，不能将一次命中理解成所有输入已支持缓存。其余未实现的开关/命令请求会失败并说明原因。Office 演示与文字文档可通过可选的独立 LibreOffice 安装获得全页截图和 OCR 补充，详见 [Office 渲染](office-rendering.md)；XLS/XLSX/ODS 支持每张完整工作表一页，包含隐藏和空表；Numbers 完整画布和其他平台本地 OCR/PDF 渲染仍未完成；未实现的选项只在遇到相关格式或图片时拒绝，不应阻断纯文本转换。独立栅格图片、完整多页 TIFF 和 SVG 可经 LLM 视觉模型读取。alt/desc 已接入真实图片引用、结构化分析及 images.json 合并，详见[图片分析](image-enrichment.md)；需要启用 LLM。rich/standard preset 仍不是对所有格式可用的完整模式。
 
 持久报告、可选历史导出和 Unix 批量恢复已实现；单项和非 Unix 恢复仍明确拒绝。普通非 Unix 转换保留既有行为，但尚未完成实机验证。混合目录分别应用文件与 URL 并发上限。URL 列表的自定义文件名只允许一个安全 basename；旧实现的名称清理细节尚待配对验收。帮助使用原生 Clap 布局，不复刻 Rich 框线；非 Unix 进程中断清理及全部非 ASCII 终端行为仍需专门测试。
 

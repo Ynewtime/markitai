@@ -62,6 +62,9 @@
 - 基于结构的 HTML 正文选择和技术代码规范化，保留语言、字面代码行及多个编辑器之间的边界。
 - 静态 React 流式正文恢复，以及用于脚本被剥离的文章快照的有界兼容启发式。
 - 原生 PDF 布局细化，支持全文件一致的标题等级、段落边界、连续样式及完整有线表格。
+- `-s cloudflare` 通过你账户中的 Cloudflare Browser Rendering 抓取网页，`-b cloudflare` 用 Workers AI 转换 PDF、Office、OpenDocument、Numbers、CSV、XML 和图片文件；凭据来自 `fetch.cloudflare.api_token`/`account_id`（或 `env:NAME`），或 `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID`。
+- 本地抓取失败后，`auto` 可以回退到 defuddle、Jina 和 Cloudflare，但只在你明确同意之后：亲手写出 `fetch.remote_consent: always`（只提示一次），或选择 `ask`（每次运行在终端询问一次）。默认仍只在本地抓取。回退遵循 `fetch.policy.strategy_priority`、`max_strategy_hops`、域名配置、`local_only_patterns`（含 `NO_PROXY`）以及你自己写出的 `fallback_patterns`；默认列表只显示、不生效，X 帖子仍静态优先。
+- Jina 和 Defuddle 使用各自的 `timeout`、`rpm`、`api_key`、`no_cache`、`target_selector` 和 `wait_for_selector` 设置；远程失败会引用服务给出的原因，但不包含令牌或账户 ID。
 - 面向 Linux、Windows 与两种 macOS 架构的可移植验证及可安装产物 CI；远程执行仍待验证。
 - 覆盖 209 个 HTML 夹具的审计工具，分别记录兼容性和质量诊断。
 - 隔离契约测试、格式差异审计与可复现的 CLI 性能测量。

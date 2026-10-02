@@ -81,7 +81,11 @@ markitai config edit                 # 终端中的交互编辑器
 | `cache.enabled` | `true` | 模型答案与网页缓存，见[缓存](cache.md) |
 | `cache.fetch_ttl_seconds` | `86400` | 无验证头网页的复用时间 |
 | `fetch.strategy` | `auto` | URL 策略，同 `-s` |
-| `fetch.remote_consent` | `always` | 是否允许把 URL 交给远程抽取服务（`ask`/`always`/`never`） |
+| `fetch.remote_consent` | `always` | 是否允许把 URL 交给远程抽取服务（`ask`/`always`/`never`）。默认值 `always` 只让显式选择的远程策略运行；`auto` 只有在你自己写出 `always`（配置文件或 `--config-json`）或选 `ask` 并在终端回答同意后，才会在本地策略失败时回退到远程服务，见[抓取：策略顺序与远程回退](fetch.md#strategy-order-and-remote-fallback) |
+| `fetch.policy.strategy_priority` / `max_strategy_hops` | `null` / `5` | `auto` 的策略顺序与最多尝试的策略数；`fetch.domain_profiles."<host[:port]>".strategy_priority`/`prefer_strategy` 按域名覆盖 |
+| `fetch.policy.local_only_patterns` | `[]` | 永不发送给远程服务的主机（`NO_PROXY` 语法；`inherit_no_proxy` 默认把 `NO_PROXY` 也算进来） |
+| `fetch.fallback_patterns` | X、Instagram 等 6 个域名 | 你自己写出的列表中的域名及其子域名在 `auto` 中先用本地浏览器，再静态抓取。默认列表不生效：X 帖子由静态抓取加 X 帖子阅读器读取，更快也更稳 |
+| `fetch.cloudflare.api_token` / `account_id` | `null` | `-s cloudflare` 与 `-b cloudflare` 使用的你自己的 Cloudflare 凭据，可写 `env:NAME`，否则读 `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID` |
 | `log.dir` / `log.level` | `null` / `INFO` | 文件日志目录与级别，默认不写日志 |
 | `history.record` | `false` | 记录供 `serve` 查看的历史，同 `--record-history` |
 
@@ -95,7 +99,7 @@ markitai config edit                 # 终端中的交互编辑器
 | `MARKITAI_CONFIG` | 配置文件路径（优先级低于 `-c`） |
 | `MARKITAI_PURE` | `1`/`true`/`yes` 时等同 `--pure` |
 | `MARKITAI_RECORD_HISTORY` | `1`/`true`/`yes`/`on`（不分大小写）开启历史，其他非空值关闭；命令行开关优先 |
-| `MARKITAI_NO_REMOTE_FETCH` | `1`/`true`/`yes`/`on` 时禁止远程抽取服务 |
+| `MARKITAI_NO_REMOTE_FETCH` | `1`/`true`/`yes`/`on` 时禁止远程抽取服务（包括显式选择的远程策略和 `-b cloudflare`） |
 | `MARKITAI_NO_VLM_OCR` | 非空且不是 `0`/`false`/`no` 时，LLM 开启的 OCR 先本地识别再只发送文字 |
 | `MARKITAI_LOG_DIR` / `MARKITAI_LOG_FORMAT` | 覆盖 `log.dir` 与 `log.format`（`text`/`json`） |
 | `MARKITAI_SERVE_TOKEN` | `serve` 远程访问令牌，见 [REST 服务](serve.md) |
@@ -106,11 +110,14 @@ markitai config edit                 # 终端中的交互编辑器
 | `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY`、`DEEPSEEK_API_KEY`、`OPENROUTER_API_KEY` | 供应商密钥；未配置模型时据此自动选择模型 |
 | `AZURE_API_KEY`、`AZURE_API_VERSION`、`OLLAMA_API_KEY` | Azure 与 Ollama 部署的凭据和 API 版本 |
 | `<PROVIDER>_API_BASE`、`OPENAI_BASE_URL` | 部署未设置 `api_base` 时的端点 |
-| `JINA_API_KEY` | `-s jina` 的可选密钥 |
+| `JINA_API_KEY` | Jina Reader 的可选密钥（未设置 `fetch.jina.api_key` 时使用） |
+| `CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID` | 未设置 `fetch.cloudflare.api_token`/`account_id` 时 Cloudflare 使用的令牌与账户 ID |
 | `COPILOT_CLI_PATH`、`COPILOT_HOME`、`COPILOT_CACHE_HOME`、`COPILOT_GITHUB_TOKEN`/`GH_TOKEN`/`GITHUB_TOKEN`、`CLAUDE_CLI_PATH`、`CLAUDE_CONFIG_DIR`、`CODEX_CLI_PATH`、`CODEX_HOME` | 订阅运行时的可执行文件、状态目录与令牌，见[订阅](subscriptions.md) |
 | `HTTPS_PROXY`、`HTTP_PROXY`、`ALL_PROXY`、`NO_PROXY` | 代理，见[抓取](fetch.md#proxies) |
 
-CLI 启动时依次从进程环境、当前目录 `.env`、`MARKITAI_HOME/.env`（`~/.markitai/.env`）读取变量，已存在的值优先，不修改宿主进程环境。参考版本的 `MARKITAI_PDF_WORKERS`、`MARKITAI_STATIC_HTTP` 以及 Cloudflare 凭据在本构建中不读取。
+CLI 启动时依次从进程环境、当前目录 `.env`、`MARKITAI_HOME/.env`（`~/.markitai/.env`）读取变量，已存在的值优先，不修改宿主进程环境。参考版本的 `MARKITAI_PDF_WORKERS`、`MARKITAI_STATIC_HTTP` 在本构建中不读取。
+
+`fetch.remote_consent` 的默认值 `always` 来自参考版本，`config list` 也这样显示；但运行时拿到的是填好默认值的配置，分不出这个 `always` 是默认值还是你写的。因此本构建中 `auto` 的远程回退只认 CLI 从所选配置文件和 `--config-json` 的原始内容中读到的、你亲手写出的 `always`（第一次回退时显示一次说明，每个 `MARKITAI_HOME` 只显示一次），或 `ask`（每次运行在终端询问一次；没有终端或使用 `--quiet` 时视为 `never` 并提示一次）。`serve`、`mcp` 和语言绑定中的 `auto` 从不回退到远程服务。`fetch.fallback_patterns` 同理：只有你在配置文件或 `--config-json` 中写出的列表才让其中的域名先用浏览器；默认列表（X、Instagram 等）虽在 `config list` 中显示但不生效，`serve`、`mcp` 和语言绑定也不应用任何列表。
 
 ## 默认值与配置选择
 
@@ -155,7 +162,7 @@ CLI 保存采用同目录临时文件和原子替换。配置路径本身是符�
 
 `env:VARIABLE` 在结构加载时保留原样，不要求变量存在。运行到需要凭据的路径时，调用 `resolve_env_value` 或 `resolve_optional`，传入环境快照与 strict 标志：strict 缺失变量报错，非 strict 返回 None。显式引用变量存在但为空字符串时仍算已找到。
 
-Jina/Cloudflare 一类可选凭据的 fallback 环境变量仅在配置值缺失或为空时使用。显式 `env:MISSING` 在非 strict 模式解析失败后，不再回退到另一个变量。读取 `.env` 的顺序为进程环境、当前目录文件、隔离用户目录文件；已存在值优先，不修改宿主进程环境。
+Jina/Cloudflare 一类可选凭据的 fallback 环境变量（`JINA_API_KEY`、`CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID`）仅在配置值缺失或为空时使用。显式 `env:MISSING` 在非 strict 模式解析失败后，不再回退到另一个变量；Jina 此时不发送密钥，`auto` 跳过 Cloudflare，而 `-s cloudflare` 与 `-b cloudflare` 以 strict 模式解析，报出缺失的变量名。读取 `.env` 的顺序为进程环境、当前目录文件、隔离用户目录文件；已存在值优先，不修改宿主进程环境。
 
 ## 证据与边界
 

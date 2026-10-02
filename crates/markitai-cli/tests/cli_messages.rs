@@ -74,9 +74,20 @@ fn help_groups_options_and_explains_every_subcommand_argument() {
     // Off-switches are described with their flag, not listed twice, yet still parse.
     assert!(help.contains("(--no-llm disables)"), "{help}");
     assert!(!help.contains("      --no-llm\n"), "{help}");
-    // jina and defuddle are implemented; only cloudflare is not.
-    assert!(help.contains("defuddle and jina send the URL"), "{help}");
-    assert!(!help.contains("remote strategies remain explicitly unsupported"));
+    // Every remote strategy is implemented, and auto names its opt-in.
+    let flat = help.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        flat.contains("defuddle, jina and cloudflare (your account) send the URL"),
+        "{help}"
+    );
+    assert!(
+        flat.contains("only after you opt in with fetch.remote_consent"),
+        "{help}"
+    );
+    assert!(
+        !flat.contains("not implemented") && !flat.contains("unsupported"),
+        "{help}"
+    );
     std::fs::write(root.path().join("note.txt"), "Text\n").unwrap();
     let parsed = invoke(root.path(), &["note.txt", "--llm", "--no-llm", "--pure"]);
     assert!(parsed.status.success(), "{}", stderr(&parsed));

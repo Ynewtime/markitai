@@ -30,6 +30,8 @@ mod interactive;
 mod logging;
 #[path = "app/progress.rs"]
 mod progress;
+#[path = "app/remote_consent.rs"]
+mod remote_consent;
 #[path = "app/warnings.rs"]
 mod warnings;
 macro_rules! eprintln {
@@ -216,10 +218,10 @@ struct Cli {
     /// Maximum in-flight model requests shared by this conversion run.
     llm_concurrency: Option<u32>,
     #[arg(short='s', long, value_name = "NAME", value_parser=["auto","static","playwright","defuddle","jina","cloudflare"], help_heading = FETCH_HELP)]
-    /// URL strategy: auto (static, then the local browser), static or playwright run locally; defuddle and jina send the URL to that remote service; cloudflare is not implemented.
+    /// URL strategy: auto (static, then the local browser; remote services only after you opt in with fetch.remote_consent), static or playwright run locally; defuddle, jina and cloudflare (your account) send the URL to that remote service.
     strategy: Option<String>,
     #[arg(short='b', long, value_name = "NAME", value_parser=["native","cloudflare"], help_heading = FETCH_HELP)]
-    /// File backend; native is implemented, cloudflare remains explicitly unsupported.
+    /// File backend: native, or cloudflare to convert supported files with Workers AI in your Cloudflare account (the file is uploaded).
     backend: Option<String>,
     #[arg(long, help_heading = FETCH_HELP)]
     /// Forbid remote extraction services; does not disable explicitly configured model requests.
@@ -777,7 +779,13 @@ fn home_relative(path: &Path) -> CliResult<PathBuf> {
 }
 
 fn conversion_config(cli: &Cli, overrides: Option<Value>) -> CliResult<Value> {
-    let mut cfg = config::load(cli.config.as_deref(), overrides).map_err(runtime)?;
+    let raw = config::raw(cli.config.as_deref(), overrides).map_err(runtime)?;
+    let mut cfg = config::normalize(&raw).map_err(runtime)?;
+    // Defaults are not choices: the default `remote_consent: always` is not an
+    // opt-in to remote fallback, nor does the default `fallback_patterns`
+    // list make X and other social sites browser-first. Values the user wrote
+    // (file or --config-json) are.
+    remote_consent::install(&raw, cli.quiet);
     if let Some(name) = &cli.preset {
         let name = name.to_lowercase();
         let preset = match name.as_str() {
@@ -886,8 +894,8 @@ fn conversion_config(cli: &Cli, overrides: Option<Value>) -> CliResult<Value> {
         cfg["fetch"]["remote_consent"] = json!("never");
         cfg["fetch"]["no_remote"] = json!(true);
     }
-    if cli.backend.as_deref() == Some("cloudflare") {
-        return Err(unsupported("Cloudflare file conversion"));
+    if let Some(backend) = &cli.backend {
+        cfg["fetch"]["cloudflare"]["convert_enabled"] = json!(backend == "cloudflare");
     }
     for (field, value) in [
         ("concurrency", cli.batch_concurrency),
