@@ -12,7 +12,11 @@ fn command(root: &Path) -> Command {
     }
     command
         .current_dir(root)
-        .env("MARKITAI_HOME", root.join("home"));
+        .env("MARKITAI_HOME", root.join("home"))
+        // Runtime fixtures are independent of commands installed on the host.
+        .env("COPILOT_CLI_PATH", root.join("missing-copilot"))
+        .env("CLAUDE_CLI_PATH", root.join("missing-claude"))
+        .env("CODEX_CLI_PATH", root.join("missing-codex"));
     command
 }
 #[test]

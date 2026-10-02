@@ -602,8 +602,22 @@ pub(super) fn init(yes: bool, output: Option<&Path>, local: bool) -> CliResult<(
         path = path.join("markitai.json");
     }
     let fresh = detected();
+    let runtimes = markitai_core::subscription::installed_runtimes(&config::environment());
     let mut input = io::stdin().lock();
     let mut console = io::stderr().lock();
+    for runtime in runtimes {
+        let label = runtime.label;
+        let provider = runtime.provider;
+        writeln!(
+            console,
+            "{}",
+            text!(
+                "Installed runtime detected: {label}. Login and version were not checked. Run `markitai auth {provider} status`; see `markitai auth {provider} --help` and the subscription guide to configure a supported model.",
+                "检测到已安装的运行时：{label}。尚未检查登录状态和版本。请运行 `markitai auth {provider} status`，再查看 `markitai auth {provider} --help` 和订阅指南以配置受支持的模型。"
+            )
+        )
+        .map_err(super::runtime)?;
+    }
     if !yes {
         writeln!(
             console,

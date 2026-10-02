@@ -488,3 +488,58 @@ mod runtime {
         assert!(!fixture.root.path().join("pid").exists());
     }
 }
+
+#[test]
+fn installed_runtime_detection_uses_only_program_locations() {
+    let root = tempfile::tempdir().unwrap();
+    let program = root
+        .path()
+        .join(if cfg!(windows) { "probe.cmd" } else { "probe" });
+    std::fs::write(&program, "not executed").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let mut env = HashMap::from([
+        ("PATH".into(), root.path().to_string_lossy().into_owned()),
+        (
+            "CODEX_CLI_PATH".into(),
+            program.to_string_lossy().into_owned(),
+        ),
+        (
+            "COPILOT_CLI_PATH".into(),
+            root.path().to_string_lossy().into_owned(),
+        ),
+        (
+            "CLAUDE_CLI_PATH".into(),
+            root.path().join("missing").to_string_lossy().into_owned(),
+        ),
+        (
+            "COPILOT_GITHUB_TOKEN".into(),
+            "invalid\nsynthetic credential".into(),
+        ),
+    ]);
+    assert_eq!(
+        installed_runtimes(&env),
+        vec![InstalledRuntime {
+            provider: "chatgpt",
+            label: "Codex CLI"
+        }]
+    );
+    env.insert(
+        "CODEX_CLI_PATH".into(),
+        root.path().join("missing").to_string_lossy().into_owned(),
+    );
+    assert!(installed_runtimes(&env).is_empty());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        env.insert(
+            "CODEX_CLI_PATH".into(),
+            program.to_string_lossy().into_owned(),
+        );
+        std::fs::set_permissions(program, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(installed_runtimes(&env).is_empty());
+    }
+}

@@ -30,7 +30,7 @@ markitai config validate markitai.json
 markitai config edit                 # 终端中的交互编辑器
 ```
 
-`config set` 按字段声明解析值，保存前完整校验，只写改动的路径并保留文件中的未知键；未知键（如 `image.qualty`）和越界的数组下标都会报错而不修改文件。`init` 生成的配置默认关闭 LLM，且不保存密钥明文。
+`config set` 按字段声明解析值，保存前完整校验，只写改动的路径并保留文件中的未知键；未知键（如 `image.qualty`）和越界的数组下标都会报错而不修改文件。`init` 生成的配置默认关闭 LLM，且不保存密钥明文。它也检查 PATH 或 `COPILOT_CLI_PATH`、`CLAUDE_CLI_PATH`、`CODEX_CLI_PATH` 指定的可执行文件，提示已安装的 Copilot CLI、Claude Code 和 Codex CLI。检查不会启动这些程序，也不读取它们的登录配置；文件存在不代表版本受支持或已登录。请按提示运行 `markitai auth <provider> status`，再参照[订阅指南](subscriptions.md)配置受支持的模型。初始化不会为订阅运行时猜测模型名。
 
 ### 示例
 
@@ -91,6 +91,28 @@ markitai config edit                 # 终端中的交互编辑器
 | `history.record` | `false` | 记录供 `serve` 查看的历史，同 `--record-history` |
 
 内建 preset：`minimal` 全部关闭；`standard` 开启 LLM、alt 和 desc；`rich` 再开启截图；都不开启 OCR。`markitai config list` 列出完整默认值。
+
+### 配置键的运行状态
+
+`config validate` 先验证类型、枚举和范围；无效配置仍是错误并退出非零。
+对于结构合法、但当前没有运行效果的兼容键，它在 stderr 输出 `Warning:`，
+stdout 仍为“配置有效”且退出 0。只检查所选文件与 `--config-json` 的原始内容，
+不把自动填充的默认键当成用户设置；普通转换、`config list` 和库加载不显示这些警告。
+显式写出一个无效用键，即使值等于默认值，也会得到提示。
+
+| 键 | 状态 | 实际行为与替代方式 |
+|---|---|---|
+| `batch.heavy_task_limit` | 无运行效果；显式配置时警告 | 不提供额外的“重任务”限额。用 `batch.concurrency`/`-j` 限制文件转换并发；模型请求用 `llm.concurrency`，URL 用 `batch.url_concurrency` |
+| `office.macos_fallback` | 无运行效果；显式配置时警告 | 不自动操作 PowerPoint 等 macOS 应用。Office 文本用原生解析；页面截图所需后端见 [Office 渲染](office-rendering.md) |
+| `image.stdout_fetch_external` | 无运行效果；显式配置时警告 | 不提供终端内联图片显示。stdout 的已提取图片仍由 `image.stdout_persist` 保存，或用 `-o DIR` 保留资产 |
+| `image.quality` | JPEG 有效；WebP 不使用 | JPEG 按设置编码；WebP 使用无损编码，不受质量值影响；PNG 也不使用有损质量值，见[图片](images.md) |
+| `llm.model_list[].model_info.max_input_tokens` | 有效 | 限制文档分块的输入窗口，不是兼容性占位键；详见上表和[长文本](llm.md#structured-documents-and-complete-long-text) |
+| `fetch.fallback_patterns` | 显式配置时有效 | CLI 的 `auto` 使用用户写出的列表；内建默认列表不改变策略顺序，`serve`、`mcp` 和绑定不应用列表 |
+| `fetch.remote_consent` | 依调用方式生效 | 远程策略明确选用时按值运行；CLI `auto` 回退需要显式同意，其他接口的 `auto` 不远程回退；见[抓取](fetch.md#strategy-order-and-remote-fallback) |
+
+这张表列出容易与参考版行为混淆的键；其余配置的类型和默认值可用
+`markitai config list` 查看。值通过结构验证，并不会安装可选后端、确认模型登录，
+或保证外部服务可用。默认值本身不产生无效用键的提示。
 
 ### 环境变量
 

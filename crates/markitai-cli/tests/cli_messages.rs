@@ -32,6 +32,10 @@ fn invoke_env(root: &Path, args: &[&str], extra: &[(&str, &str)]) -> Output {
     command
         .current_dir(root)
         .env("MARKITAI_HOME", root.join("home"))
+        // Runtime fixtures are independent of commands installed on the host.
+        .env("COPILOT_CLI_PATH", root.join("missing-copilot"))
+        .env("CLAUDE_CLI_PATH", root.join("missing-claude"))
+        .env("CODEX_CLI_PATH", root.join("missing-codex"))
         .envs(extra.iter().copied())
         .args(args)
         .output()

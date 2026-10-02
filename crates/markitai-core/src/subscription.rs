@@ -172,6 +172,30 @@ pub(crate) fn locate(
     Ok(crate::process_groups::plain(executable))
 }
 
+/// An official-runtime command found on PATH or at its configured location.
+/// Presence is not verification of its version, protocol or login state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstalledRuntime {
+    pub provider: &'static str,
+    pub label: &'static str,
+}
+
+/// Look only for executable files. No command is started and no authentication
+/// configuration, token or runtime state is read.
+pub fn installed_runtimes(env: &HashMap<String, String>) -> Vec<InstalledRuntime> {
+    [
+        ("copilot", "Copilot CLI", "COPILOT_CLI_PATH", "copilot"),
+        ("claude", "Claude Code", "CLAUDE_CLI_PATH", "claude"),
+        ("chatgpt", "Codex CLI", "CODEX_CLI_PATH", "codex"),
+    ]
+    .into_iter()
+    .filter_map(|(provider, label, explicit, program)| {
+        let path = locate(env, explicit, program, label, "Runtime is not installed").ok()?;
+        crate::process_groups::launchable(&path).then_some(InstalledRuntime { provider, label })
+    })
+    .collect()
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct AuthStatus {
     pub provider: &'static str,

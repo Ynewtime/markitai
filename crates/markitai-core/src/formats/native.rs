@@ -77,6 +77,22 @@ fn conversion_error(error: anydoc::ConvertError) -> Error {
     Error::Conversion(format!("Native document conversion failed: {error}"))
 }
 
+fn conversion_error_for_format(error: anydoc::ConvertError, format: anydoc::Format) -> Error {
+    let hint = if format == anydoc::Format::Excel
+        && matches!(
+            &error,
+            anydoc::ConvertError::ResourceLimit {
+                limit: "max_xml_nodes",
+                ..
+            }
+        ) {
+        "; this workbook has an XML part larger than the 2,000,000-node reading limit. Export the needed sheets as CSV, or split the workbook into smaller XLSX files and convert them separately"
+    } else {
+        ""
+    };
+    Error::Conversion(format!("Native document conversion failed: {error}{hint}"))
+}
+
 /// Text escaped without knowing what stands around it, as the PDF and PPTX
 /// writers use it: every `\`, `*`, `_`, `[`, `]` and backtick, and `<` or `&`
 /// that would open an HTML tag or an entity. The document renderer escapes in
@@ -1249,10 +1265,13 @@ pub(super) fn extract(bytes: &[u8], extension: &str) -> Result<Document> {
                 .and_then(|repaired| Some((anydoc::to_document(&repaired, format).ok()?, repaired)))
             {
                 Some((parsed, repaired)) => (parsed, Some(repaired)),
-                None => return Err(conversion_error(error)),
+                None => return Err(conversion_error_for_format(error, format)),
             }
         }
-        result => (result.map_err(conversion_error)?, None),
+        result => (
+            result.map_err(|error| conversion_error_for_format(error, format))?,
+            None,
+        ),
     };
     let bytes = repaired.as_deref().unwrap_or(bytes);
     let metadata = office_meta::read(bytes, extension);
@@ -1391,6 +1410,29 @@ mod tests {
         }
     }
     use anydoc::model::{AssetId, Cell, Style, Table, TableKind};
+
+    #[test]
+    fn xlsx_node_limit_preserves_the_error_and_offers_content_export_remedies() {
+        let limit = || anydoc::ConvertError::ResourceLimit {
+            limit: "max_xml_nodes",
+            detail: "part exceeds 2000000 xml nodes".into(),
+        };
+        let error = conversion_error_for_format(limit(), anydoc::Format::Excel).to_string();
+        assert!(error.contains("resource limit exceeded (max_xml_nodes)"));
+        assert!(error.contains("Export the needed sheets as CSV"));
+        assert!(error.contains("split the workbook"));
+        assert!(
+            !conversion_error_for_format(limit(), anydoc::Format::Docx)
+                .to_string()
+                .contains("CSV")
+        );
+        assert!(
+            !conversion_error_for_format(anydoc::ConvertError::Encrypted, anydoc::Format::Excel)
+                .to_string()
+                .contains("CSV")
+        );
+    }
+
     #[test]
     fn rtf_ends_with_a_newline_and_headings_drop_trailing_spaces_like_the_reference() {
         let rtf = br"{\rtf1\ansi{\stylesheet{\s1 heading 1;}}{\pard\s1 Title with space \par}{\pard Body text.\par}}";

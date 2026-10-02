@@ -217,6 +217,39 @@ pub fn validate(value: &Value) -> Result<()> {
     normalize(value).map(|_| ())
 }
 
+/// An accepted configuration key that currently has no runtime effect.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ConfigWarning {
+    pub key: &'static str,
+    pub reason: &'static str,
+}
+
+/// Inspect raw user configuration, before defaults are filled in. This is
+/// advisory; callers validate separately and decide where to display warnings.
+pub fn warnings(value: &Value) -> Vec<ConfigWarning> {
+    [
+        (
+            "/batch/heavy_task_limit",
+            "batch.heavy_task_limit",
+            "has no effect; use batch.concurrency to limit file conversions",
+        ),
+        (
+            "/office/macos_fallback",
+            "office.macos_fallback",
+            "has no effect; Office conversion does not automate macOS applications",
+        ),
+        (
+            "/image/stdout_fetch_external",
+            "image.stdout_fetch_external",
+            "has no effect; terminal inline-image display is unavailable",
+        ),
+    ]
+    .into_iter()
+    .filter(|(pointer, _, _)| value.pointer(pointer).is_some())
+    .map(|(_, key, reason)| ConfigWarning { key, reason })
+    .collect()
+}
+
 const REDACTED: &str = "[REDACTED]";
 
 fn normalized_key(key: &str) -> String {
@@ -922,6 +955,31 @@ fn assign(target: &mut Value, parts: &[String], value: Value, path: &str) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inactive_key_warnings_only_inspect_explicit_raw_fields() {
+        assert!(warnings(&json!({})).is_empty());
+        let raw = json!({
+            "batch":{"heavy_task_limit":0},
+            "office":{"macos_fallback":false},
+            "image":{"stdout_fetch_external":false},
+            "llm":{"model_list":[{"model_name":"small","litellm_params":{"model":"openai/model"},"model_info":{"max_input_tokens":1024}}]},
+            "unknown":{"heavy_task_limit":1}
+        });
+        assert!(validate(&raw).is_ok());
+        assert_eq!(
+            warnings(&raw)
+                .iter()
+                .map(|warning| warning.key)
+                .collect::<Vec<_>>(),
+            [
+                "batch.heavy_task_limit",
+                "office.macos_fallback",
+                "image.stdout_fetch_external"
+            ]
+        );
+        assert!(warnings(&json!({"batch":{},"office":{},"image":{}})).is_empty());
+    }
 
     #[test]
     fn cidr_prefixes_and_ipv6_scopes_match_reference_network_validation() {

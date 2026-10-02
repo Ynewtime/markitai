@@ -26,6 +26,8 @@ mod guided;
 mod help_zh;
 #[path = "app/interactive.rs"]
 mod interactive;
+#[path = "app/json_output.rs"]
+mod json_output;
 #[path = "app/logging.rs"]
 mod logging;
 #[path = "app/progress.rs"]
@@ -1801,10 +1803,7 @@ fn envelope(items: &[Value], error: Option<&str>) -> Value {
     value
 }
 fn emit_json(items: &[Value], error: Option<&str>) {
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&envelope(items, error)).expect("JSON values serialize")
-    );
+    println!("{}", json_output::render(&envelope(items, error)));
 }
 /// Write the document to stdout and return what was rendered. A failed write
 /// is not returned: it is settled with the rest of the run (`settle_stdout`).
@@ -2493,8 +2492,26 @@ fn subcommand(cli: &Cli, command: &Command, overrides: Option<Value>) -> CliResu
                         format!("Configuration file does not exist: {}", path.display()),
                     ));
                 }
-                config::load(config_file.as_deref().or(cli.config.as_deref()), overrides)
+                let raw = config::raw(config_file.as_deref().or(cli.config.as_deref()), overrides)
                     .map_err(runtime)?;
+                config::validate(&raw).map_err(runtime)?;
+                for warning in config::warnings(&raw) {
+                    let key = warning.key;
+                    let reason = warning.reason;
+                    let chinese = match key {
+                        "batch.heavy_task_limit" => {
+                            "没有运行效果；请用 batch.concurrency 限制文件转换并发"
+                        }
+                        "office.macos_fallback" => {
+                            "没有运行效果；Office 转换不会自动操作 macOS 应用"
+                        }
+                        "image.stdout_fetch_external" => {
+                            "没有运行效果；本构建不支持终端内联图片显示"
+                        }
+                        _ => reason,
+                    };
+                    say!("Warning: {key} {reason}", "Warning: {key} {chinese}");
+                }
                 println!("{}", text!("Configuration is valid", "配置有效"));
             }
             ConfigCommand::List {

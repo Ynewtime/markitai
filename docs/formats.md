@@ -681,6 +681,18 @@ grid assembly, so a workbook saved in any container converts the same:
   then is the header; a title that repeats the sheet's heading is not written
   again. ODS sheets do the same.
 
+Large XLSX-family workbooks have fixed reading limits: at most 2,000,000 XML
+nodes (elements and text runs) per package part, 128 MiB decompressed per part,
+and 4,000,000 grid positions per sheet table. These measure the workbook's
+structure, not its compressed file size or a fixed row count. Cell density,
+inline strings, notes and other XML content affect when the limit is reached.
+A node-limit error preserves the original reason and suggests exporting the
+needed sheets as CSV or splitting the workbook into smaller XLSX files. Neither
+`--max-depth` nor `batch.scan_max_files` changes this limit. Export each needed
+sheet separately when using CSV: CSV keeps displayed text but loses sheet
+structure, formatting, comments, links and formulas; check the exported result
+before conversion. The converter does not return a successful partial workbook.
+
 ### Notebook outputs
 
 A code cell is followed by what it produced, one block per output, in order:

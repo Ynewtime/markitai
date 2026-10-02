@@ -90,6 +90,7 @@
 
 ### Changed
 
+- `config validate` explains explicitly configured keys that have no runtime effect; initialization identifies installed subscription runtimes without launching them or guessing model names. Conversion JSON uses a stable public field order, and oversized XLSX errors suggest CSV export or splitting the workbook.
 - Repository text files keep LF line endings on every platform (`.gitattributes`; binary formats are marked binary), so fixtures, help text and embedded workbench scripts are byte-identical on a Windows checkout.
 - The minimum Rust version is 1.92 (was 1.89), required by the portable renderer; LibreOffice exports set `XDG_CACHE_HOME` only on Unix, the private profile being `-env:UserInstallation` on every platform.
 - Recovery state stores document keys with `/` on every platform, matching batch reports (keys saved with `\` load as the same items); file logs are no longer locked themselves: a running session holds a `<log name>.lock` sidecar, removed when it ends, so live logs stay readable on Windows.
