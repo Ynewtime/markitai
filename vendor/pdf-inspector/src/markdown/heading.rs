@@ -77,7 +77,7 @@ pub(super) fn dominant_font_size(line: &TextLine) -> Option<f32> {
         .map(|(bucket, _)| bucket as f32 / 10.0)
 }
 
-fn document_body_font(lines: &[TextLine]) -> Option<String> {
+pub(super) fn document_body_font(lines: &[TextLine]) -> Option<String> {
     let mut weights: HashMap<&str, usize> = HashMap::new();
     for line in lines {
         for item in &line.items {

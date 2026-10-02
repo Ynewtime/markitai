@@ -487,6 +487,73 @@ fn find_wrapped_bold_paragraph_lines(
     (set, quoted)
 }
 
+/// Lines of paragraphs set in a heading-sized face (markitai): three or more
+/// consecutive lines of one page at the same heading level, each following
+/// the one above at wrap spacing (under two font sizes) and overlapping it
+/// horizontally, with more than 30 words in all. An abstract or lead
+/// paragraph set larger than the body text is a paragraph, not one heading
+/// per wrapped line; a wrapped title is shorter. Each line maps to the first
+/// line of its paragraph, whose lines are joined whatever the body text's
+/// paragraph spacing.
+fn find_wrapped_large_paragraph_lines(
+    lines: &[TextLine],
+    base_size: f32,
+    heading_tiers: &[f32],
+) -> HashMap<usize, usize> {
+    let level = |line: &TextLine| {
+        let size = line.items.first().map(|i| i.font_size)?;
+        detect_header_level(
+            size,
+            base_size,
+            heading_tiers,
+            crate::markdown::analysis::line_is_mostly_bold(line),
+        )
+    };
+    let span = |line: &TextLine| {
+        let start = line.items.iter().map(|i| i.x).fold(f32::INFINITY, f32::min);
+        let end = line
+            .items
+            .iter()
+            .map(|i| i.x + i.width)
+            .fold(f32::NEG_INFINITY, f32::max);
+        (start, end)
+    };
+    let mut found = HashMap::new();
+    let mut start = 0;
+    while start < lines.len() {
+        let Some(run_level) = level(&lines[start]) else {
+            start += 1;
+            continue;
+        };
+        let mut end = start + 1;
+        while end < lines.len() {
+            let (above, below) = (&lines[end - 1], &lines[end]);
+            let size = below.items.first().map_or(base_size, |i| i.font_size);
+            let gap = above.y - below.y;
+            let ((a0, a1), (b0, b1)) = (span(above), span(below));
+            if below.page != above.page
+                || level(below) != Some(run_level)
+                || gap <= 0.0
+                || gap >= size * 2.0
+                || b0 >= a1
+                || a0 >= b1
+            {
+                break;
+            }
+            end += 1;
+        }
+        let words: usize = lines[start..end]
+            .iter()
+            .map(|line| line.text().split_whitespace().count())
+            .sum();
+        if end - start >= 3 && words > 30 {
+            found.extend((start..end).map(|line| (line, start)));
+        }
+        start = end;
+    }
+    found
+}
+
 fn has_enclosing_double_quotes(lines: &[TextLine]) -> bool {
     let text = lines
         .iter()
@@ -837,8 +904,13 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
     let isolated_lines = find_isolated_lines(&lines, base_size, para_threshold);
     let (wrapped_bold_paragraph_lines, wrapped_quoted_paragraph_lines) =
         find_wrapped_bold_paragraph_lines(&lines, base_size, para_threshold);
+    let wrapped_large_paragraph_lines =
+        find_wrapped_large_paragraph_lines(&lines, base_size, &heading_tiers);
+    // markitai: the face most body text is set in (see `distinct_face` below).
+    let body_font = super::heading::document_body_font(&lines);
 
     let mut sequence_excluded_lines = wrapped_bold_paragraph_lines.clone();
+    sequence_excluded_lines.extend(wrapped_large_paragraph_lines.keys().copied());
     for (line_idx, line) in lines.iter().enumerate() {
         if page_chart_regions.get(&line.page).is_some_and(|regions| {
             line.items
@@ -1026,7 +1098,12 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
         // (newspaper columns emitted sequentially on the same page).
         let y_gap = prev_y - line.y;
         let line_x = line.items.first().map(|i| i.x).unwrap_or(0.0);
-        let is_para_break = y_gap.abs() > para_threshold;
+        // markitai: a large-type paragraph's lines stay one paragraph.
+        let in_large_paragraph = line_idx > 0
+            && wrapped_large_paragraph_lines
+                .get(&line_idx)
+                .is_some_and(|run| wrapped_large_paragraph_lines.get(&(line_idx - 1)) == Some(run));
+        let is_para_break = y_gap.abs() > para_threshold && !in_large_paragraph;
         // Also break when X jumps significantly at the same Y level on
         // pages with band-split side-by-side layout.  This prevents
         // interleaved left/right band lines from merging into one paragraph.
@@ -1168,7 +1245,13 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
         // We gate on the document's paragraph threshold so genuine section
         // headings that follow a numbered paragraph (y_gap > para_threshold)
         // remain detectable.
+        // markitai: a line set larger than the line above is no wrapped
+        // line of a list item (a heading after a list at list spacing).
+        let larger_than_above = line_idx > 0
+            && line.items.first().map_or(0.0, |i| i.font_size)
+                > lines[line_idx - 1].items.first().map_or(0.0, |i| i.font_size) * 1.08;
         let looks_like_list_continuation = in_list
+            && !larger_than_above
             && match (last_list_x, line.items.first().map(|i| i.x)) {
                 (Some(list_x), Some(curr_x)) => {
                     let x_ok = curr_x >= list_x - 5.0 && curr_x <= list_x + 50.0;
@@ -1187,6 +1270,7 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
         let heuristic_heading = if options.detect_headers
             && !non_heading_role
             && !wrapped_quoted_paragraph_lines.contains(&line_idx)
+            && !wrapped_large_paragraph_lines.contains_key(&line_idx)
             && !is_code_line
             && !looks_like_list_continuation
             && plain_trimmed.len() > 3
@@ -1235,7 +1319,19 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
                 // multi-column layouts where column switches break
                 // paragraph continuity and minor font-size variation
                 // inflates rarity scores.
-                let has_strong_signal = all_bold || isolated || (rarity >= 0.97 && word_count <= 8);
+                // markitai: a line larger than the body text and set wholly
+                // in another upright face is set as a heading even when the
+                // face does not say it is bold (a browser's `<h3>`, 1.17 em,
+                // in a Type 3 font) and paragraph spacing hides its
+                // isolation.
+                let distinct_face = line_font_size >= base_size * 1.1
+                    && body_font.as_deref().is_some_and(|body| {
+                        line.items.iter().all(|i| i.font != body && !i.is_italic)
+                    });
+                let has_strong_signal = all_bold
+                    || isolated
+                    || distinct_face
+                    || (rarity >= 0.97 && word_count <= 8);
                 // Single-word headings ("IMPLEMENTATION", "CONTENTS",
                 // "Replace") are common. All-bold single words qualify when
                 // standalone (paragraph break before / page top) — headings
@@ -1635,12 +1731,16 @@ pub fn to_markdown_from_lines(lines: Vec<TextLine>, options: MarkdownOptions) ->
     let isolated_lines = find_isolated_lines(&lines, base_size, para_threshold);
     let (wrapped_bold_paragraph_lines, wrapped_quoted_paragraph_lines) =
         find_wrapped_bold_paragraph_lines(&lines, base_size, para_threshold);
+    let wrapped_large_paragraph_lines =
+        find_wrapped_large_paragraph_lines(&lines, base_size, &heading_tiers);
+    let mut sequence_excluded_lines = wrapped_bold_paragraph_lines.clone();
+    sequence_excluded_lines.extend(wrapped_large_paragraph_lines.keys().copied());
     let sequence_heading_levels = classify_heading_sequences(
         &lines,
         base_size,
         &heading_tiers,
         &isolated_lines,
-        &wrapped_bold_paragraph_lines,
+        &sequence_excluded_lines,
     );
 
     let mut output = String::new();
@@ -1678,7 +1778,12 @@ pub fn to_markdown_from_lines(lines: Vec<TextLine>, options: MarkdownOptions) ->
         // Paragraph break: large forward Y gap (normal) or large backward jump
         // (newspaper columns emitted sequentially on the same page).
         let y_gap = prev_y - line.y;
-        let is_para_break = y_gap.abs() > para_threshold;
+        // markitai: a large-type paragraph's lines stay one paragraph.
+        let in_large_paragraph = line_idx > 0
+            && wrapped_large_paragraph_lines
+                .get(&line_idx)
+                .is_some_and(|run| wrapped_large_paragraph_lines.get(&(line_idx - 1)) == Some(run));
+        let is_para_break = y_gap.abs() > para_threshold && !in_large_paragraph;
         let line_all_bold = !line.items.is_empty() && line.items.iter().all(|item| item.is_bold);
         let line_in_wrapped_bold_run = wrapped_bold_paragraph_lines.contains(&line_idx);
         let is_bold_to_regular_break = in_paragraph
@@ -1749,6 +1854,7 @@ pub fn to_markdown_from_lines(lines: Vec<TextLine>, options: MarkdownOptions) ->
         // Skip very short text (drop caps/labels) and very long text (body paragraphs)
         if options.detect_headers
             && !wrapped_quoted_paragraph_lines.contains(&line_idx)
+            && !wrapped_large_paragraph_lines.contains_key(&line_idx)
             && plain_trimmed.len() > 3
             && plain_trimmed.split_whitespace().count() <= 15
             && !is_toc_entry_line(plain_trimmed)
@@ -3231,5 +3337,88 @@ mod tests {
             !md.contains("Introduction.."),
             "a period is not a leader:\n{md}"
         );
+    }
+
+    /// A one-item line in `font` at `size`, `y` points up page 1.
+    fn sized_line(text: &str, y: f32, size: f32, font: &str) -> TextLine {
+        let mut item = make_item(text, 1, None);
+        item.y = y;
+        item.font_size = size;
+        item.height = size;
+        item.font = font.into();
+        item.width = text.chars().count() as f32 * size * 0.5;
+        make_line(vec![item])
+    }
+
+    fn reader_markdown(lines: Vec<TextLine>) -> String {
+        to_markdown_from_lines_with_tables_and_images(
+            lines,
+            MarkdownOptions::default(),
+            HashMap::new(),
+            HashMap::new(),
+            &HashMap::new(),
+            &HashSet::new(),
+            None,
+        )
+    }
+
+    /// Body text at 9pt with paragraph spacing: four paragraphs of six
+    /// lines from `top` down.
+    fn body_lines(top: f32) -> Vec<TextLine> {
+        let text = "Body text of the paper sets the size most of its lines use here";
+        (0..24)
+            .map(|row| {
+                let gap = (row / 6) as f32 * 14.0;
+                sized_line(text, top - row as f32 * 11.0 - gap, 9.0, "Body")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_paragraph_set_in_a_heading_size_is_one_paragraph() {
+        // markitai: an abstract set larger than the body text wraps over
+        // four lines of 13 words; each line on its own reads as a heading
+        // by size, and two lines are too long to merge as a wrapped title.
+        let mut lines = vec![sized_line("A Study of Reading Order", 780.0, 20.0, "Title")];
+        let abstract_lines = [
+            "Abstract. Of representations training layers on on over over on tokens corpora of",
+            "of corpora model training large attention on text over the and text of",
+            "of over over representations training learns layers model corpora large on using tokens",
+            "layers documents while while and model over using model and and while over.",
+        ];
+        for (row, text) in abstract_lines.iter().enumerate() {
+            lines.push(sized_line(text, 740.0 - row as f32 * 14.0, 12.0, "Body"));
+        }
+        lines.extend(body_lines(660.0));
+        let md = reader_markdown(lines);
+        assert!(md.contains("# A Study of Reading Order"), "{md}");
+        assert!(
+            md.contains("over on tokens corpora of of corpora model training"),
+            "{md}"
+        );
+        assert!(
+            md.lines()
+                .filter(|line| line.starts_with('#'))
+                .all(|line| !line.contains("Abstract") && !line.contains("corpora")),
+            "{md}"
+        );
+    }
+
+    #[test]
+    fn a_larger_line_in_another_face_after_a_paragraph_is_a_heading() {
+        // markitai: a browser's `<h3>` (1.17 em) in a Type 3 face whose
+        // name says nothing of its weight, set off by spacing that the
+        // document's widely spaced lines make look ordinary.
+        let mut lines = Vec::new();
+        let mut y = 760.0;
+        for row in 0..6 {
+            lines.push(sized_line(&format!("Item {row} of a widely spaced list"), y, 12.0, "F5"));
+            y -= 28.5;
+        }
+        lines.push(sized_line("Features I'd be cautious about", y - 18.0, 14.0, "F4"));
+        lines.push(sized_line("Some purifiers advertise:", y - 48.75, 12.0, "F5"));
+        let md = reader_markdown(lines);
+        assert!(md.contains("## Features I'd be cautious about\n"), "{md}");
+        assert!(!md.contains("about Some purifiers"), "{md}");
     }
 }

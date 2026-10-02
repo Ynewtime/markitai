@@ -2906,6 +2906,115 @@ BT /F1 10 Tf 0 1 -1 0 60 200 Tm [(ABCD)] TJ ET",
         let expected = format!("\u{179C}{} \u{178F}\u{17D2}", "\u{1789}".repeat(20));
         assert_eq!(texts, [expected.as_str()]);
     }
+
+    /// A page drawing a Form that draws a nested Form whose `/Resources` is
+    /// an indirect object, as MuPDF writes `insert_htmlbox` output: the font
+    /// (Identity-H, its codes 0x1F below the characters, mapped by its
+    /// ToUnicode CMap) is listed only there.
+    fn page_with_font_in_nested_form_with_indirect_resources() -> (Document, ObjectId) {
+        let mut doc = Document::new();
+        let cmap = b"/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n\
+/CMapName /Test-UCS def\n/CMapType 2 def\n1 begincodespacerange\n<0000> <FFFF>\n\
+endcodespacerange\n1 beginbfrange\n<0001> <005F> <0020>\nendbfrange\nendcmap\n\
+CMapName currentdict /CMap defineresource pop\nend\nend\n";
+        let tounicode_id = doc.add_object(Object::Stream(Stream::new(
+            dictionary! {},
+            cmap.to_vec(),
+        )));
+        let descendant_id = doc.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "CIDFontType0",
+            "BaseFont" => "TestSerif-Bold",
+            "CIDSystemInfo" => dictionary! {
+                "Registry" => Object::string_literal("Adobe"),
+                "Ordering" => Object::string_literal("Identity"),
+                "Supplement" => 0,
+            },
+            "DW" => 600,
+        });
+        let font_id = doc.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type0",
+            "BaseFont" => "TestSerif-Bold",
+            "Encoding" => "Identity-H",
+            "ToUnicode" => Object::Reference(tounicode_id),
+            "DescendantFonts" => vec![Object::Reference(descendant_id)],
+        });
+        let resources_id = doc.add_object(dictionary! {
+            "Font" => dictionary! { "F0" => Object::Reference(font_id) },
+        });
+        // `A Study` on the first line, `Papers` (short, so the UTF-16BE
+        // guess for a font without a CMap reads it as `1BQFST`) on the next.
+        let inner_id = doc.add_object(Object::Stream(Stream::new(
+            dictionary! {
+                "Type" => "XObject",
+                "Subtype" => "Form",
+                "BBox" => vec![0.into(), 0.into(), 515.into(), 80.into()],
+                "Resources" => Object::Reference(resources_id),
+            },
+            b"BT /F0 24 Tf 1 0 0 1 1 50 Tm [<002200010034005500560045005A>] TJ \
+0 -28.8 Td [<003100420051004600530054>] TJ ET"
+                .to_vec(),
+        )));
+        let outer_id = doc.add_object(Object::Stream(Stream::new(
+            dictionary! {
+                "Type" => "XObject",
+                "Subtype" => "Form",
+                "BBox" => vec![0.into(), 0.into(), 515.into(), 80.into()],
+                "Matrix" => vec![1.into(), 0.into(), 0.into(), 1.into(), 40.into(), 700.into()],
+                "Resources" => dictionary! {
+                    "XObject" => dictionary! { "fullpage" => Object::Reference(inner_id) },
+                },
+            },
+            b"/fullpage Do".to_vec(),
+        )));
+        let content_id = doc.add_object(Object::Stream(Stream::new(
+            dictionary! {},
+            b"q /Fm0 Do Q".to_vec(),
+        )));
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Contents" => Object::Reference(content_id),
+            "Resources" => dictionary! {
+                "XObject" => dictionary! { "Fm0" => Object::Reference(outer_id) },
+            },
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+        });
+        let pages_id = doc.add_object(dictionary! {
+            "Type" => "Pages",
+            "Count" => Object::Integer(1),
+            "Kids" => vec![Object::Reference(page_id)],
+        });
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        });
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+        (doc, page_id)
+    }
+
+    #[test]
+    fn a_font_listed_only_by_a_forms_indirect_resources_decodes_through_its_cmap() {
+        let (doc, page_id) = page_with_font_in_nested_form_with_indirect_resources();
+        // Both CMap collections, the full one and the fast one of the region
+        // readers, find the font behind the indirect resources.
+        let full = FontCMaps::from_doc(&doc);
+        let fast = FontCMaps::from_doc_pages_fast(&doc, None);
+        for font_cmaps in [&full, &fast] {
+            let ((items, _, _), _, _, _) = extract_page_text_items(
+                &doc,
+                page_id,
+                1,
+                font_cmaps,
+                false,
+                &mut FontStyleCache::new(),
+                &mut FormWalkBudget::new(),
+            )
+            .unwrap();
+            let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+            assert_eq!(texts, ["A Study", "Papers"]);
+        }
+    }
 }
 
 #[cfg(test)]

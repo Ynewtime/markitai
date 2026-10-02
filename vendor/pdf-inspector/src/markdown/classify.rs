@@ -70,9 +70,42 @@ pub(crate) fn is_caption_line(text: &str) -> bool {
 /// like `1.` or `a)`, which legitimately appear as section headings in many
 /// documents. Used by the heading classifier to reject bullet lines without
 /// also demoting numbered headings.
+/// Whether a line starts with a check box or check mark and a space
+/// (markitai): `✅ True HEPA filter`, `☐ Not yet`, a checklist's item. The
+/// mark is the item's state, so it stays in the item's text.
+pub(crate) fn starts_with_check_mark(text: &str) -> bool {
+    let mut chars = text.trim_start().chars();
+    let Some(mark) = chars.next() else {
+        return false;
+    };
+    if !matches!(
+        mark,
+        '\u{2705}'
+            | '\u{2714}'
+            | '\u{2713}'
+            | '\u{2611}'
+            | '\u{2610}'
+            | '\u{2612}'
+            | '\u{2717}'
+            | '\u{2718}'
+            | '\u{274C}'
+            | '\u{274E}'
+            | '\u{2B1C}'
+            | '\u{25A2}'
+    ) {
+        return false;
+    }
+    match chars.next() {
+        Some('\u{FE0E}' | '\u{FE0F}') => chars.next().is_some_and(char::is_whitespace),
+        Some(next) => next.is_whitespace(),
+        None => false,
+    }
+}
+
 pub(crate) fn starts_with_bullet_marker(text: &str) -> bool {
     let trimmed = text.trim_start();
-    trimmed.starts_with("• ")
+    starts_with_check_mark(trimmed)
+        || trimmed.starts_with("• ")
         || trimmed.starts_with("● ")
         || trimmed.starts_with("○ ")
         || trimmed.starts_with("◦ ")
@@ -85,7 +118,8 @@ pub(crate) fn is_list_item(text: &str) -> bool {
     let trimmed = text.trim_start();
 
     // Bullet patterns
-    if trimmed.starts_with("• ")
+    if starts_with_check_mark(trimmed)
+        || trimmed.starts_with("• ")
         || trimmed.starts_with("- ")
         || trimmed.starts_with("* ")
         || trimmed.starts_with("○ ")
@@ -124,6 +158,11 @@ pub(crate) fn is_list_item(text: &str) -> bool {
 /// Format list item to markdown
 pub(crate) fn format_list_item(text: &str) -> String {
     let trimmed = text.trim_start();
+
+    // markitai: a check mark is the item's state and stays in its text.
+    if starts_with_check_mark(trimmed) {
+        return format!("- {trimmed}");
+    }
 
     // Convert various bullet styles to markdown
     // Note: bullet characters like • are multi-byte in UTF-8, use char indices
@@ -349,6 +388,20 @@ mod tests {
         assert!(!is_bare_url("baseUrl=\"https://example.com/a\""));
         assert!(!is_bare_url("curl https://example.com/a"));
         assert!(!is_bare_url("://missing-scheme"));
+    }
+
+    #[test]
+    fn check_marks_start_list_items_and_stay_in_their_text() {
+        assert!(is_list_item("\u{2705} True HEPA filter"));
+        assert!(is_list_item("\u{2714}\u{FE0F} Done"));
+        assert!(starts_with_bullet_marker("\u{2610} Not yet"));
+        assert_eq!(
+            format_list_item("\u{2705} True HEPA filter"),
+            "- \u{2705} True HEPA filter"
+        );
+        // A mark without a space after it, or another symbol, is text.
+        assert!(!is_list_item("\u{2705}done"));
+        assert!(!is_list_item("\u{2192} next step"));
     }
 
     #[test]

@@ -283,3 +283,65 @@ fn an_invisible_only_page_cannot_pass_the_plain_text_fallback() {
         assert!(error.contains("no reliable native text or extractable images"));
     }
 }
+
+/// Four pages of body text under a running header (`size` points, at the
+/// top of a 792pt page) that names the page number after it.
+fn headed_pages(size: usize) -> Vec<Vec<u8>> {
+    (1..=4)
+        .map(|page| {
+            let mut content = format!(
+                "BT /F1 {size} Tf 1 0 0 1 40 770 Tm (Proc. of the Conference on Probes 2026  {page}) Tj ET\n"
+            );
+            for row in 0..8 {
+                content.push_str(&text(
+                    700 - row * 40,
+                    &format!("Body paragraph {row} of page {page} keeps its own words."),
+                ));
+            }
+            content.into_bytes()
+        })
+        .collect()
+}
+
+#[test]
+fn a_running_header_on_every_page_is_removed_like_a_folio() {
+    let document = extract(&pdf(&headed_pages(8), &[])).unwrap();
+    assert!(
+        !document.markdown.contains("Proc. of the Conference"),
+        "{}",
+        document.markdown
+    );
+    for page in 1..=4 {
+        assert!(document.markdown.contains(&format!(
+            "Body paragraph 0 of page {page} keeps its own words."
+        )));
+    }
+    // Set at the body size it is text that happens to open each page.
+    let document = extract(&pdf(&headed_pages(10), &[])).unwrap();
+    assert_eq!(
+        document.markdown.matches("Proc. of the Conference").count(),
+        4
+    );
+}
+
+#[test]
+fn an_info_title_that_is_a_file_name_is_not_the_document_title() {
+    for title in [
+        "multi.html",
+        "report.docx",
+        "Microsoft Word - notes.doc",
+        "layout-table",
+        "code",
+    ] {
+        assert!(file_name_title(title), "{title}");
+    }
+    for title in [
+        "Placeholder topic - Wikipedia",
+        "Settings",
+        "A Study of Reading Order",
+        "Defuddle on Cloudflare Workers · Issue #56",
+        "v1.2",
+    ] {
+        assert!(!file_name_title(title), "{title}");
+    }
+}

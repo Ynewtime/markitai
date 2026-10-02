@@ -3,6 +3,11 @@ use super::geometry::{Frame, Grid, Mark};
 use pdf_inspector::{TextItem, types::ItemType};
 use std::collections::{BTreeMap, HashSet};
 
+#[path = "links.rs"]
+mod links;
+#[cfg(test)]
+#[path = "structure_tests.rs"]
+mod structure_tests;
 #[path = "unruled.rs"]
 mod unruled;
 
@@ -12,8 +17,26 @@ const MAX_PAGE_ITEMS: usize = 20_000;
 
 pub(super) struct Layout {
     pages: BTreeMap<u32, Vec<TextItem>>,
-    headings: Vec<f32>,
+    faces: Faces,
     carry: Carry,
+}
+
+/// The document's type: its heading sizes, and the faces of its text, the
+/// body's and those its headings are set in. A browser sets `<h4>`–`<h6>` at
+/// or below the body size in a bold face, so size alone does not find them;
+/// the face does, when the same face sets a heading by size elsewhere or is
+/// bold.
+#[derive(Default)]
+struct Faces {
+    /// Heading sizes, largest first.
+    headings: Vec<f32>,
+    /// The body text's size.
+    body: f32,
+    /// The face with most characters at the body size.
+    body_font: Option<String>,
+    /// Faces other than the body's that set text at a heading size, and bold
+    /// faces.
+    heading_fonts: HashSet<String>,
 }
 
 /// What a page passes to the next one it renders.
@@ -75,6 +98,9 @@ impl Layout {
         }
         let mut pages: BTreeMap<u32, Vec<TextItem>> = BTreeMap::new();
         let mut sizes = BTreeMap::<i32, usize>::new();
+        // Characters per size and face, and the bold faces.
+        let mut fonts = BTreeMap::<(i32, String), usize>::new();
+        let mut bold_fonts = HashSet::new();
         for item in items {
             if rotations.contains_key(&item.page) {
                 continue;
@@ -93,9 +119,13 @@ impl Layout {
             // Fixed-pitch code blocks do not define the body size either.
             let code = item.fixed_pitch == Some(true);
             if matches!(item.item_type, ItemType::Text) && valid(&item) && !in_table && !code {
-                *sizes
-                    .entry((item.font_size * 10.).round() as i32)
-                    .or_default() += item.text.chars().filter(|c| !c.is_whitespace()).count();
+                let key = (item.font_size * 10.).round() as i32;
+                let count = item.text.chars().filter(|c| !c.is_whitespace()).count();
+                *sizes.entry(key).or_default() += count;
+                *fonts.entry((key, item.font.clone())).or_default() += count;
+                if item.is_bold && !item.is_italic {
+                    bold_fonts.insert(item.font.clone());
+                }
             }
             pages.entry(item.page).or_default().push(item);
         }
@@ -114,9 +144,29 @@ impl Layout {
                 headings.push(size);
             }
         }
+        let body_key = (body * 10.).round() as i32;
+        let body_font = fonts
+            .iter()
+            .filter(|((key, _), _)| *key == body_key)
+            .max_by_key(|(_, count)| **count)
+            .map(|((_, font), _)| font.clone());
+        let mut heading_fonts: HashSet<String> = fonts
+            .keys()
+            .filter(|(key, _)| *key as f32 / 10. > body * 1.15)
+            .map(|(_, font)| font.clone())
+            .collect();
+        heading_fonts.extend(bold_fonts);
+        if let Some(body_font) = &body_font {
+            heading_fonts.remove(body_font);
+        }
         Ok(Self {
             pages,
-            headings,
+            faces: Faces {
+                headings,
+                body,
+                body_font,
+                heading_fonts,
+            },
             carry: Carry::default(),
         })
     }
@@ -149,7 +199,7 @@ impl Layout {
         };
         let page = render(
             items,
-            &self.headings,
+            &self.faces,
             frame,
             grids,
             marks,
@@ -304,7 +354,17 @@ fn is_bare_url(text: &str) -> bool {
 struct Run {
     text: String,
     style: Style,
+    /// The target of the link annotation over the run (see [`links::apply`]).
+    link: Option<std::sync::Arc<str>>,
 }
+
+impl Run {
+    /// Whether `next` continues this run: the same style and link.
+    fn joins(&self, style: Style, link: Option<&std::sync::Arc<str>>) -> bool {
+        self.style == style && self.link.as_ref() == link
+    }
+}
+
 struct Line {
     items: Vec<TextItem>,
     y: f32,
@@ -348,7 +408,56 @@ fn lines(mut items: Vec<TextItem>) -> Vec<Line> {
     for line in &mut result {
         sort_items(&mut line.items, &mut |a, b| a.x.total_cmp(&b.x));
     }
+    attach_raised(&mut result);
     result
+}
+
+/// Short runs raised off a line that the extractor did not read as
+/// superscripts (a reference's `^ a b` back-links, a footnote mark in
+/// another face) join the line they are raised from: on a baseline of their
+/// own they would form a line between it and the line above, and join the
+/// paragraph above. Such a line has at most twelve characters, all smaller
+/// than the line below, whose baseline is at most 0.6 of that line's size
+/// below theirs (a superscript's raise), and stands within that line's extent, or two em before or
+/// after it (a footnote's leading number), without overlapping any of its
+/// runs. Its runs keep their raise, as script runs do.
+fn attach_raised(lines: &mut Vec<Line>) {
+    let mut index = 0;
+    while index + 1 < lines.len() {
+        let (raised, below) = (&lines[index], &lines[index + 1]);
+        let rise = raised.y - below.y;
+        let chars = raised
+            .items
+            .iter()
+            .map(|i| i.text.trim().chars().count())
+            .sum::<usize>();
+        let start = below.items.first().map_or(0., |i| i.x);
+        let end = below
+            .items
+            .iter()
+            .map(|i| i.x + i.width)
+            .fold(f32::NEG_INFINITY, f32::max);
+        let fits = raised.items.iter().all(|item| {
+            item.font_size <= below.size * 0.9
+                && item.baseline_shift == 0.
+                && item.x >= start - below.size * 2.
+                && item.x + item.width <= end + below.size * 2.
+                && below.items.iter().all(|other| {
+                    item.x + item.width <= other.x + 0.5 || other.x + other.width <= item.x + 0.5
+                })
+        });
+        if (1..=12).contains(&chars) && rise > 0. && rise <= below.size * 0.6 && fits {
+            let raised = lines.remove(index);
+            let below = &mut lines[index];
+            for mut item in raised.items {
+                item.baseline_shift = item.y - below.y;
+                below.items.push(item);
+            }
+            sort_items(&mut below.items, &mut |a, b| a.x.total_cmp(&b.x));
+        } else {
+            index += 1;
+        }
+    }
 }
 
 fn runs(line: &Line) -> Vec<Run> {
@@ -365,8 +474,12 @@ fn runs(line: &Line) -> Vec<Run> {
                 || item.x - (p.x + p.width) > item.font_size.min(p.font_size) * 0.12
         });
         let style = Style::from(item);
+        let link = match &item.item_type {
+            ItemType::Link(target) => Some(std::sync::Arc::<str>::from(target.as_str())),
+            _ => None,
+        };
         if let Some(last) = out.last_mut()
-            && last.style == style
+            && last.joins(style, link.as_ref())
         {
             if space {
                 last.text.push(' ');
@@ -379,6 +492,7 @@ fn runs(line: &Line) -> Vec<Run> {
             out.push(Run {
                 text: text.into(),
                 style,
+                link,
             });
         }
         previous = Some(item);
@@ -389,7 +503,7 @@ fn runs(line: &Line) -> Vec<Run> {
 fn append_runs(output: &mut Vec<Run>, source: Vec<Run>) {
     for (index, run) in source.into_iter().enumerate() {
         if let Some(last) = output.last_mut()
-            && last.style == run.style
+            && last.joins(run.style, run.link.as_ref())
         {
             if index == 0 && !last.text.ends_with(char::is_whitespace) {
                 last.text.push(' ');
@@ -407,16 +521,58 @@ fn append_runs(output: &mut Vec<Run>, source: Vec<Run>) {
     }
 }
 
+/// The Markdown of a block's runs. Text is escaped as the other readers
+/// escape it (`super::super::escape`): `<` only where it would open an HTML
+/// tag, comment or entity, so `a < b`, `x -> y` and `Vec<String>` read as
+/// written. Consecutive runs under one link annotation form one link, which
+/// its underline is the styling of; a link whose text is its target is an
+/// autolink.
 fn markdown(runs: &[Run]) -> String {
     let mut output = String::new();
+    // The link open in `output`: its target, where its text starts and that
+    // text as the page shows it.
+    let mut open: Option<(&std::sync::Arc<str>, usize, String)> = None;
+    let close = |output: &mut String,
+                 (target, start, shown): (&std::sync::Arc<str>, usize, String)| {
+        let trimmed = output.trim_end().len();
+        let space = trimmed < output.len();
+        output.truncate(trimmed);
+        if shown.trim() == &**target {
+            output.replace_range(start.., &format!("<{target}>"));
+        } else {
+            output.insert(start, '[');
+            output.push_str("](");
+            output.push_str(target);
+            output.push(')');
+        }
+        if space {
+            output.push(' ');
+        }
+    };
     for run in runs {
         let text = run.text.trim();
         if text.is_empty() {
             continue;
         }
+        if open
+            .as_ref()
+            .is_some_and(|(target, _, _)| run.link.as_ref() != Some(*target))
+        {
+            close(&mut output, open.take().expect("a link is open"));
+        }
         if run.text.starts_with(char::is_whitespace) && !output.is_empty() && !output.ends_with(' ')
         {
             output.push(' ');
+        }
+        match (&mut open, &run.link) {
+            (Some((_, _, shown)), _) => {
+                if run.text.starts_with(char::is_whitespace) && !shown.is_empty() {
+                    shown.push(' ');
+                }
+                shown.push_str(text);
+            }
+            (None, Some(target)) => open = Some((target, output.len(), text.to_owned())),
+            (None, None) => {}
         }
         let style = run.style;
         // Code is verbatim and exclusive: no emphasis or escaping inside.
@@ -429,13 +585,15 @@ fn markdown(runs: &[Run]) -> String {
             }
             continue;
         }
+        // A link's underline is how the page shows it is a link.
+        let underline = style.underline && run.link.is_none();
         if style.bold {
             output.push_str("**");
         }
         if style.italic {
             output.push('*');
         }
-        if style.underline {
+        if underline {
             output.push_str("<u>");
         }
         if style.strike {
@@ -449,18 +607,14 @@ fn markdown(runs: &[Run]) -> String {
         if let Some(tag) = tag {
             output.push_str(&format!("<{tag}>"));
         }
-        output.push_str(
-            &super::super::escape(text)
-                .replace('<', "&lt;")
-                .replace('>', "&gt;"),
-        );
+        output.push_str(&super::super::escape(text));
         if let Some(tag) = tag {
             output.push_str(&format!("</{tag}>"));
         }
         if style.strike {
             output.push_str("</s>");
         }
-        if style.underline {
+        if underline {
             output.push_str("</u>");
         }
         if style.italic {
@@ -471,9 +625,21 @@ fn markdown(runs: &[Run]) -> String {
         }
         if run.text.ends_with(char::is_whitespace) {
             output.push(' ');
+            if let Some((_, _, shown)) = &mut open {
+                shown.push(' ');
+            }
         }
     }
-    output.trim().to_owned()
+    if let Some(link) = open.take() {
+        close(&mut output, link);
+    }
+    let output = output.trim();
+    // A block whose text starts with `>` would be a quotation.
+    if output.starts_with('>') {
+        format!("\\{output}")
+    } else {
+        output.to_owned()
+    }
 }
 
 fn list_prefix(text: &str) -> Option<&str> {
@@ -506,6 +672,193 @@ fn heading_level(line: &Line, sizes: &[f32]) -> usize {
         .iter()
         .position(|s| (line.size - s).abs() <= s * 0.05)
         .map_or(0, |n| (n + 1).min(6))
+}
+
+/// Baseline gap, in the larger line's size, from which a line starts a new
+/// block in the paragraph flow.
+const NEW_BLOCK: f32 = 1.8;
+
+/// Which lines are headings set at the body size: a block of one or two
+/// lines whose runs are all in a heading face (see [`Faces`]), neither
+/// italic nor fixed-pitch, at the body size, set off from the text before
+/// and after it (or next to a heading by size, or at the start or end of
+/// the flow), and reading as a title: up to 14 words and 120 characters,
+/// with a letter, not ending like a sentence (`.`, `,` or `;`) or, past
+/// three words, like a lead-in (`:`). Such a block ranks below every
+/// heading size (`<h4>` under `<h3>`). The extractor names a run merged
+/// from several faces after its first, so a bold label opening a line
+/// (`**1** The first approach…`) can look like a line in that face: the
+/// lead-in rule and the set-off around the block keep such lines text.
+fn same_size_headings(lines: &[Line], headings: &[f32], faces: &Faces) -> Vec<bool> {
+    let face = |line: &Line| {
+        heading_level(line, headings) == 0
+            && line.size >= faces.body * 0.95
+            && line.size <= faces.body * 1.15 + 0.05
+            && line.items.iter().all(|item| {
+                !item.is_italic
+                    && item.fixed_pitch != Some(true)
+                    && item.baseline_shift == 0.
+                    && faces.body_font.as_deref() != Some(item.font.as_str())
+                    && faces.heading_fonts.contains(&item.font)
+            })
+    };
+    let faced: Vec<bool> = lines.iter().map(face).collect();
+    let apart = |above: &Line, below: &Line| {
+        above.y - below.y > above.size.max(below.size) * NEW_BLOCK
+            || heading_level(above, headings) > 0
+            || heading_level(below, headings) > 0
+    };
+    let mut result = vec![false; lines.len()];
+    let mut start = 0;
+    while start < lines.len() {
+        if !faced[start] {
+            start += 1;
+            continue;
+        }
+        let mut end = start + 1;
+        while end < lines.len()
+            && end - start < 3
+            && faced[end]
+            && !apart(&lines[end - 1], &lines[end])
+        {
+            end += 1;
+        }
+        let before = start == 0 || apart(&lines[start - 1], &lines[start]);
+        let after = end == lines.len() || apart(&lines[end - 1], &lines[end]);
+        let text = lines[start..end]
+            .iter()
+            .flat_map(|line| &line.items)
+            .map(|item| item.text.trim())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let words = text.split_whitespace().count();
+        if end - start <= 2
+            && before
+            && after
+            && (1..=14).contains(&words)
+            && text.chars().count() <= 120
+            && text.chars().any(char::is_alphabetic)
+            && !text.ends_with(['.', ',', ';'])
+            && !(text.ends_with(':') && words > 3)
+            && list_prefix(&text).is_none()
+        {
+            result[start..end].fill(true);
+        }
+        start = end;
+    }
+    result
+}
+
+/// For each line, the farthest right edge reached by the lines of `lines`
+/// starting within a point and a half of it: the right edge of its column.
+fn column_rights(lines: &[Line]) -> Vec<f32> {
+    let edge = |line: &Line| {
+        let start = line.items.first().map_or(0., |i| i.x);
+        let end = line
+            .items
+            .iter()
+            .map(|i| i.x + i.width)
+            .fold(f32::NEG_INFINITY, f32::max);
+        (start, end)
+    };
+    let mut buckets: BTreeMap<i32, f32> = BTreeMap::new();
+    for line in lines {
+        let (start, end) = edge(line);
+        let bucket = buckets.entry((start * 2.).round() as i32).or_insert(end);
+        *bucket = bucket.max(end);
+    }
+    lines
+        .iter()
+        .map(|line| {
+            let key = (edge(line).0 * 2.).round() as i32;
+            buckets
+                .range(key - 3..=key + 3)
+                .map(|(_, end)| *end)
+                .fold(f32::NEG_INFINITY, f32::max)
+        })
+        .collect()
+}
+
+/// Whether line `above` of `lines` ended short of its column (`right`) by
+/// more than the first word of line `below` and an em and a quarter: wrapped
+/// text fills each line but a paragraph's last, so `below` starts a new
+/// block even without a gap (rows of a link list, lines a `<br>` breaks,
+/// paragraphs set without spacing). A line ending in a hyphen continues, as
+/// do a label of its own (four characters at most, no letter: a footnote's
+/// number), a line followed by one starting in lower case, and a line of five
+/// words or more ending within an em of where a neighbouring line of its
+/// paragraph ends (the line below, or the line above at the text's pitch
+/// from the same left edge): those lines keep a measure of their own, as
+/// text beside a floated figure or in a narrower box does.
+fn ended_early(lines: &[Line], above: usize, below: usize, right: f32) -> bool {
+    let (upper, lower) = (&lines[above], &lines[below]);
+    let (Some(last), Some(first)) = (upper.items.last(), lower.items.first()) else {
+        return false;
+    };
+    if last.text.trim_end().ends_with('-') {
+        return false;
+    }
+    // A label of its own (a footnote's number, a marker) heads the line
+    // below it.
+    let label: String = upper.items.iter().map(|i| i.text.trim()).collect();
+    if label.chars().count() <= 4 && !label.chars().any(char::is_alphabetic) {
+        return false;
+    }
+    let end = |line: &Line| {
+        line.items
+            .iter()
+            .map(|i| i.x + i.width)
+            .fold(f32::NEG_INFINITY, f32::max)
+    };
+    let start = |line: &Line| line.items.first().map_or(0., |i| i.x);
+    let close = |other: &Line| (end(other) - end(upper)).abs() <= upper.size;
+    // Only a line of running text keeps a measure: a short line (a link,
+    // a name, a label) ends where its words do.
+    let words: usize = upper
+        .items
+        .iter()
+        .map(|i| i.text.split_whitespace().count())
+        .sum();
+    if words >= 5 && close(lower) {
+        return false;
+    }
+    if words >= 5
+        && let Some(before) = above.checked_sub(1).map(|i| &lines[i])
+        && before.y - upper.y <= before.size.max(upper.size) * NEW_BLOCK
+        && (start(before) - start(upper)).abs() <= 1.5
+        && close(before)
+    {
+        return false;
+    }
+    let text = first.text.trim_start();
+    // A line going on in lower case continues the sentence above.
+    if text.starts_with(char::is_lowercase) {
+        return false;
+    }
+    let chars = text.chars().count().max(1);
+    let word = text
+        .split_whitespace()
+        .next()
+        .map_or(0, |w| w.chars().count());
+    let word_width = first.width * word as f32 / chars as f32;
+    right - end(upper) > word_width + lower.size.max(upper.size) * 1.25
+}
+
+/// A symbol a line may start with as a list marker that stays in the text
+/// (`✅ True HEPA filter`): check marks, crosses, arrows, stars, shapes and
+/// pictographs, followed by a space.
+fn symbol_marker(text: &str) -> Option<char> {
+    let mut chars = text.trim_start().chars();
+    let symbol = chars.next()?;
+    let next = chars.next()?;
+    let symbol_range = matches!(symbol as u32,
+        0x2190..=0x21FF | 0x2300..=0x23FF | 0x25A0..=0x25FF | 0x2600..=0x27BF
+        | 0x27F0..=0x27FF | 0x2900..=0x297F | 0x2B00..=0x2BFF | 0x1F300..=0x1FAFF);
+    // A variation selector may follow an emoji before the space.
+    let spaced = next.is_whitespace()
+        || (matches!(next, '\u{FE0E}' | '\u{FE0F}')
+            && chars.next().is_some_and(char::is_whitespace));
+    (symbol_range && spaced).then_some(symbol)
 }
 
 /// Gap between baselines, in the larger line's size, from which a line is
@@ -724,12 +1077,29 @@ fn number_prefix(text: &str) -> Option<(&str, &str)> {
         .then(|| (&text[..digits + delimiter.len_utf8()], after.trim_start()))
 }
 
-fn flow(lines: &[Line], headings: &[f32], bullets: &Bullets) -> Option<String> {
+fn flow(lines: &[Line], headings: &[f32], faces: &Faces, bullets: &Bullets) -> Option<String> {
     // Blocks with whether each is a list item: consecutive items are one
     // tight list.
     let mut blocks: Vec<(String, bool)> = Vec::new();
     let mut paragraph = Vec::new();
     let mut previous: Option<&Line> = None;
+    // The index of `previous` in `lines` (see `ended_early`).
+    let mut previous_index = 0;
+    let same_size = same_size_headings(lines, headings, faces);
+    let rights = column_rights(lines);
+    // Lines starting with a symbol that two lines or more of the flow start
+    // with are items of a list that keeps the symbol (`- ✅ HEPA filter`).
+    let symbols: Vec<Option<char>> = lines
+        .iter()
+        .map(|line| {
+            line.items
+                .first()
+                .and_then(|item| symbol_marker(&item.text))
+        })
+        .collect();
+    let symbol_list = |index: usize| {
+        symbols[index].filter(|symbol| symbols.iter().filter(|s| **s == Some(*symbol)).count() >= 2)
+    };
     let mut previous_level = 0;
     let mut item: Option<String> = None;
     let mut list_left = 0f32;
@@ -743,11 +1113,32 @@ fn flow(lines: &[Line], headings: &[f32], bullets: &Bullets) -> Option<String> {
         if paragraph.is_empty() {
             return;
         }
+        // A heading keeps its links' text without their targets: a link
+        // there is navigation (a site's name, a post's permalink), and the
+        // heading names the document or section.
+        if level > 0 {
+            let mut unlinked: Vec<Run> = Vec::with_capacity(paragraph.len());
+            for mut run in paragraph.drain(..) {
+                run.link = None;
+                match unlinked.last_mut() {
+                    Some(last) if last.style == run.style => last.text.push_str(&run.text),
+                    _ => unlinked.push(run),
+                }
+            }
+            *paragraph = unlinked;
+        }
         let content = markdown(paragraph);
         let prefix = if level > 0 {
             format!("{} ", "#".repeat(level))
         } else {
             item.unwrap_or_default().to_owned()
+        };
+        // A paragraph's own text starting like a heading, list item or
+        // quotation (`# 1`, `+ note`, `2026. The year`) stays text.
+        let content = if level == 0 && item.is_none() {
+            super::super::literal_heading_marks(&content)
+        } else {
+            content
         };
         blocks.push((format!("{prefix}{content}"), item.is_some()));
         paragraph.clear();
@@ -784,6 +1175,7 @@ fn flow(lines: &[Line], headings: &[f32], bullets: &Bullets) -> Option<String> {
             }
             code.push(line);
             previous = Some(line);
+            previous_index = index;
             previous_level = 0;
             continue;
         }
@@ -795,7 +1187,10 @@ fn flow(lines: &[Line], headings: &[f32], bullets: &Bullets) -> Option<String> {
         let first_x = line.items[0].x;
         // A numbered or painted marker never turns a heading into an item
         // ("## 1. Start Here" keeps its level).
-        let heading = heading_level(line, headings);
+        let heading = match heading_level(line, headings) {
+            0 if same_size[index] => (headings.len() + 1).min(6),
+            level => level,
+        };
         let marker = if heading == 0
             && let Some(marker) = pending.take()
         {
@@ -813,6 +1208,11 @@ fn flow(lines: &[Line], headings: &[f32], bullets: &Bullets) -> Option<String> {
             None
         } else if let Some(x) = bullets.of(line) {
             Some(Marker { x, number: None })
+        } else if symbol_list(index).is_some() {
+            Some(Marker {
+                x: first_x,
+                number: None,
+            })
         } else if let Some((number, rest)) = number_prefix(&current[0].text)
             // A number opens an item only where a new line of the text
             // could: at the start, in a list, after a gap or a heading, or
@@ -847,6 +1247,7 @@ fn flow(lines: &[Line], headings: &[f32], bullets: &Bullets) -> Option<String> {
             item = None;
             pending = marker;
             previous = Some(line);
+            previous_index = index;
             previous_level = 0;
             continue;
         }
@@ -875,7 +1276,8 @@ fn flow(lines: &[Line], headings: &[f32], bullets: &Bullets) -> Option<String> {
             let gap = prev.y - line.y;
             level != previous_level
                 || is_list
-                || gap > prev.size.max(line.size) * 1.8
+                || gap > prev.size.max(line.size) * NEW_BLOCK
+                || ended_early(lines, previous_index, index, rights[previous_index])
                 || (in_list && line.items[0].x + 2. < prev.items[0].x)
                 || (level == 0
                     && !in_list
@@ -907,6 +1309,7 @@ fn flow(lines: &[Line], headings: &[f32], bullets: &Bullets) -> Option<String> {
         }
         append_runs(&mut paragraph, current);
         previous = Some(line);
+        previous_index = index;
         previous_level = level;
     }
     flush(&mut blocks, &mut paragraph, previous_level, item.as_deref());
@@ -1084,6 +1487,7 @@ struct Segment {
 fn segment(
     lines: &[Line],
     headings: &[f32],
+    faces: &Faces,
     bullets: &Bullets,
     context: &Tables,
     continued: Option<&unruled::Shape>,
@@ -1098,7 +1502,12 @@ fn segment(
     let mut continues = false;
     for table in found {
         if table.lines.start > start {
-            blocks.push(flow(&lines[start..table.lines.start], headings, bullets)?);
+            blocks.push(flow(
+                &lines[start..table.lines.start],
+                headings,
+                faces,
+                bullets,
+            )?);
         }
         continues |= table.continued && blocks.is_empty();
         blocks.push(table.markdown);
@@ -1106,7 +1515,7 @@ fn segment(
         ending = Some((table.bottom, table.shape));
     }
     if start < lines.len() {
-        blocks.push(flow(&lines[start..], headings, bullets)?);
+        blocks.push(flow(&lines[start..], headings, faces, bullets)?);
         ending = None;
     }
     Some(Segment {
@@ -1127,15 +1536,16 @@ struct Rendered {
 
 fn render(
     mut items: Vec<TextItem>,
-    headings: &[f32],
+    faces: &Faces,
     frame: Frame,
     grids: Vec<Grid>,
     marks: &[Mark],
     baseline: &str,
     context: &mut Tables,
 ) -> Option<Rendered> {
-    // Link annotations carry a target, not page text; the existing reader
-    // does not render them either. Form-field values are page text whose
+    let headings = &faces.headings[..];
+    // Link annotations carry a target, not page text: they mark the runs
+    // they cover (see `links::apply`). Form-field values are page text whose
     // semantics this reconstruction does not know.
     if items.len() > MAX_PAGE_ITEMS
         || items
@@ -1144,6 +1554,7 @@ fn render(
     {
         return None;
     }
+    let links = links::LinkBox::collect(&items);
     items.retain(|i| matches!(i.item_type, ItemType::Text) && !i.text.trim().is_empty());
     if items.is_empty()
         || items.iter().any(|i| {
@@ -1168,6 +1579,8 @@ fn render(
         return None;
     }
     let bullets = Bullets::new(&items, marks);
+    // After the bullets, which are read from text items only.
+    links::apply(&mut items, &links);
     let mut tables = Vec::new();
     for grid in grids {
         if let Some(table) = table(&grid, &mut items) {
@@ -1199,6 +1612,7 @@ fn render(
             let part = segment(
                 &all_lines[start..end],
                 headings,
+                faces,
                 &bullets,
                 context,
                 continued,
@@ -1228,7 +1642,14 @@ fn render(
     }
     if start < all_lines.len() {
         let continued = unruled_continued(start, &blocks);
-        let part = segment(&all_lines[start..], headings, &bullets, context, continued)?;
+        let part = segment(
+            &all_lines[start..],
+            headings,
+            faces,
+            &bullets,
+            context,
+            continued,
+        )?;
         continues |= part.continues;
         blocks.push(part.markdown);
         ending = part
@@ -1974,7 +2395,7 @@ mod tests {
         assert!(
             render(
                 items.clone(),
-                &[],
+                &Faces::default(),
                 frame,
                 vec![],
                 &[],
@@ -1989,7 +2410,7 @@ mod tests {
         assert!(
             render(
                 hebrew,
-                &[],
+                &Faces::default(),
                 frame,
                 vec![],
                 &[],
@@ -2005,7 +2426,7 @@ mod tests {
             assert!(
                 render(
                     bad,
-                    &[],
+                    &Faces::default(),
                     frame,
                     vec![],
                     &[],

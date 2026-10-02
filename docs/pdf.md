@@ -207,7 +207,8 @@ text.
 Before replacing page Markdown, decoded alphanumeric character counts must agree
 with the existing reader. This is a conservative agreement check, not proof that
 two decoders are independently correct. Link annotations carry targets, not page
-text, and neither reader renders them, so they do not block refinement. The body
+text, so they do not block refinement; the layout pass renders them as links
+(see [Links, escaping and block structure](#links-escaping-and-block-structure)). The body
 size that headings must exceed ignores text inside detected table grids and
 fixed-pitch text, so a table- or code-heavy page keeps its prose as paragraphs.
 Unknown form-field semantics,
@@ -279,6 +280,106 @@ inspection retains the existing shared 64 MiB page/Form byte budget, 256 content
 inspections and 32 nested Form levels; Form operations are not used as
 speculative table borders. Pages with incomplete inspection retain the original
 warning and fallback behavior.
+
+## Links, escaping and block structure
+
+A `/Link` annotation whose action is a `/URI` (also when the URI string is an
+indirect object, as Quartz writes it) becomes a Markdown link over the runs it
+covers in the layout pass: `[link text](https://…)`, or `<https://…>` when the
+text is the address. Only `http`, `https` and `mailto` targets are carried;
+spaces and angle brackets are percent-encoded and parentheses escaped. A link
+with another target (`javascript:`, `file:`, a relative or in-document
+reference) keeps its text without a link. A run belongs to a link when the
+middle of its height is inside the link's box and four fifths of its width
+overlap it; punctuation ending the run outside the box stays outside the
+link. A run the extractor merged with linked words (`See this report for…`)
+is split at word boundaries: a word belongs to the link holding its middle
+and half its width, sentence punctuation and unpaired quotation marks or
+brackets at either end of the linked words stay outside, and the split is
+made only when the words placed in each link span most of its box (half
+their union), since word positions inside a run are estimated from typical
+(Helvetica) glyph widths. The underline a browser draws under links is link
+styling: `<u>` remains only for underlines that four fifths of the run's
+width are not under links. A heading keeps a link's text without its target:
+a link there is navigation (a site's name over its home page, a post's
+permalink), and the heading may name the document. The page reader does not
+render links.
+
+Prose is escaped as the other readers escape it: `<` only where it would
+open an HTML tag, comment or entity (`Vec\<String>`, `\<div>`), so `a < b`,
+`x -> y` and `(x) => x` read as written instead of as `&lt;`/`&gt;`. A
+paragraph whose text starts like a block of its own (`# 1`, `+ note`,
+`2026. The year`, `> quote`) has that mark escaped.
+
+Headings set at the body size (a browser's `<h4>`–`<h6>`) are found by their
+face: a block of one or two lines whose runs are all in a face other than the
+body text's that either sets text at a heading size elsewhere in the document
+or is bold, neither italic nor fixed-pitch, set off from the text before and
+after it (paragraph spacing, a heading by size, the start or end of the flow),
+of up to 14 words and 120 characters, not ending in `.`, `,` or `;` and,
+past three words, not in `:` (a lead-in). It ranks below every heading size.
+The extractor names a run merged from several faces after its first, so
+such a line can be a bold label followed by body text; the lead-in and
+set-off rules keep the common cases text.
+
+A line ending short of its column starts a new paragraph even without extra
+spacing: wrapped text fills every line but a paragraph's last, so when the
+next line's first word and an em and a quarter would have fitted after it
+(the column's right edge is the farthest any line starting at the same left
+edge reaches on the page), the next line begins a new block. Rows of a link
+list, byline and metadata lines and paragraphs printed without spacing are
+separated this way. A line continues its paragraph when it ends in a hyphen,
+when it is a label of its own (at most four characters without a letter: a
+footnote's number), when the next line starts in lower case, and when it has
+five words or more and ends within an em of the line below or of the line
+above at the text's pitch (text beside a floated figure keeps a measure of
+its own).
+
+Lines starting with the same symbol followed by a space (check marks,
+crosses, arrows, stars, geometric shapes, pictographs), two lines of the flow
+or more, are list items that keep the symbol: `- ✅ True HEPA filter`. In the
+page reader, a check box or check mark (`✅ ✔ ✓ ☑ ☐ ☒ ✗ ✘ ❌ ❎`) followed by
+a space starts a list item the same way.
+
+A short run raised off a line that the extractor did not read as a
+superscript (a reference list's `^ a b` back-links, a footnote's number in
+another face) joins the line it is raised from, rendered `<sup>`: at most
+twelve characters, all smaller than that line's text, raised at most 0.6 of
+its size, within its extent or two em before or after it, and overlapping
+none of its runs. On a baseline of its own it would otherwise form a line
+that joins the paragraph above.
+
+The page reader keeps a paragraph set in a heading size together: three or
+more consecutive lines at the same heading level, each at wrap spacing below
+the one above, with more than 30 words, are one paragraph (an abstract set
+larger than the body text), not a heading per wrapped line. A line set at
+least 1.1 times the body size wholly in an upright face other than the body
+text's is a strong signal for the reader's standalone-heading rule (a
+browser's `<h3>`, 1.17 em, in a Type 3 face whose name says nothing of its
+weight), and a line larger than the one above it is no wrapped line of a list
+item. Heading tiers remain per page in the page reader, so a reader page and
+a layout page of one document can rank the same size differently.
+
+A running page header is removed like the page numbers the reader removes:
+the first block of the page Markdown, the same text (emphasis, white space
+and digits or separators at either end, a running page number, aside) on
+more than half of the pages with text and three at least, which on each
+page where it is removed is the page's topmost text, on one baseline in the
+top 15% of the page and smaller than that page's body text. Positioned text
+is read again only for a document with such a candidate. A paragraph that
+opens every page at the body size is kept; footers other than page numbers
+are not removed.
+
+A document information `/Title` that is only the name of the source file is
+not taken as the document title, so the first heading names it: a name with a
+document or image extension (`multi.html`, `report.docx`), an Office print
+driver's `Microsoft Word - …`, or a single lower-case slug (`code`,
+`layout-table`, as a browser writes for a page without `<title>`).
+
+Vector charts are not reproduced. Their axis labels and legends remain text
+where they stand; rendering a chart's region needs the platform page renderer
+in the text reader and a reliable chart detector, which the media pipeline's
+explicit rendering does not provide yet.
 
 ## Right-to-left text
 
@@ -384,6 +485,10 @@ decoded once per document, its encoding and width table taken by every page and
 Form that lists it (up to 2^18 kept codes in all; a font written in place is decoded
 where it is listed), and the reader's text pass decodes each Form XObject once per
 document (64 KiB of Form content kept at most) however often it is invoked. The
+ToUnicode CMaps of fonts that only a Form XObject lists are read with the
+page's fonts also when the Form's `/Resources` is an indirect object (MuPDF
+writes them so) and in the fast mode of the region readers; such a font's
+two-byte codes were otherwise read as UTF-16 (`Papers` shown as `1BQFST`). The
 reader's OCR signals still interpret the expanded bytes with a byte-level scan of
 their own: a scan over parsed operations would measure literal strings by their
 decoded bytes, not by the bytes it measures now. This module's inspection and the

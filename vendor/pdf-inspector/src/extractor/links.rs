@@ -154,9 +154,14 @@ pub(crate) fn extract_link_uri(doc: &Document, annot_dict: &lopdf::Dictionary) -
         };
 
         if let Some(action_dict) = action_dict {
-            // Check for URI action
+            // Check for URI action. markitai: the string may be an indirect
+            // object (Quartz writes `/URI 17 0 R`); it was read as no URI.
             if let Ok(uri_obj) = action_dict.get(b"URI") {
-                if let Ok(uri_str) = uri_obj.as_str() {
+                let uri_obj = match uri_obj {
+                    Object::Reference(id) => doc.get_object(*id).ok(),
+                    direct => Some(direct),
+                };
+                if let Some(Ok(uri_str)) = uri_obj.map(Object::as_str) {
                     return Some(String::from_utf8_lossy(uri_str).to_string());
                 }
             }

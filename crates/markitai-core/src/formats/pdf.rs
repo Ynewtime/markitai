@@ -14,6 +14,8 @@ mod page_tests;
 #[cfg(test)]
 #[path = "pdf/policy_tests.rs"]
 mod policy_tests;
+#[path = "pdf/running.rs"]
+mod running;
 
 const MAX_STREAM_BYTES: usize = 64 * 1024 * 1024;
 const MAX_ASSET_BYTES: usize = 128 * 1024 * 1024;
@@ -27,6 +29,44 @@ fn password_required() -> Error {
     conversion(
         "the PDF is encrypted and needs a password to open; remove the password first, as Markitai has no password option",
     )
+}
+
+/// Whether a document information `/Title` is only the name of the file the
+/// PDF was made from, which a producer writes when the source has no title of
+/// its own: a browser printing a page without `<title>` (`multi.html`,
+/// `layout-table`), an Office print driver (`Microsoft Word - report.doc`).
+/// Such a title is not taken, so the document's first heading names it.
+/// A name with a document or image extension, an Office driver's prefix, or
+/// a single lowercase slug (`code`, `layout-table`) counts; a title with an
+/// upper-case letter or a space and no extension is kept.
+fn file_name_title(title: &str) -> bool {
+    const EXTENSIONS: &[&str] = &[
+        "htm", "html", "xhtml", "mht", "mhtml", "pdf", "doc", "docx", "docm", "dot", "dotx", "odt",
+        "ott", "rtf", "txt", "md", "tex", "ppt", "pptx", "pps", "ppsx", "odp", "key", "xls",
+        "xlsx", "ods", "csv", "pages", "numbers", "indd", "ps", "eps", "dvi", "png", "jpg", "jpeg",
+        "gif", "tif", "tiff", "bmp", "svg",
+    ];
+    let lower = title.to_ascii_lowercase();
+    if [
+        "microsoft word - ",
+        "microsoft powerpoint - ",
+        "microsoft excel - ",
+    ]
+    .iter()
+    .any(|prefix| lower.starts_with(prefix))
+    {
+        return true;
+    }
+    if let Some((stem, extension)) = lower.rsplit_once('.')
+        && !stem.trim().is_empty()
+        && EXTENSIONS.contains(&extension)
+    {
+        return true;
+    }
+    title.chars().any(|c| c.is_ascii_lowercase())
+        && title
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_'))
 }
 
 fn decoded(stream: &Stream) -> std::result::Result<Vec<u8>, String> {
@@ -1133,6 +1173,42 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
             continues_table,
         });
     }
+    // Running page headers go like the page numbers the reader removes.
+    let text_pages: Vec<(u32, &str)> = extracted_pages
+        .iter()
+        .filter(|page| !page.needs_ocr && !page.markdown.trim().is_empty())
+        .map(|page| (page.number as u32, page.markdown.as_str()))
+        .collect();
+    let numbers: Vec<u32> = text_pages.iter().map(|(number, _)| *number).collect();
+    let headed = running::headers(
+        &text_pages,
+        &running::frames(pdf, &page_ids, &numbers),
+        &|pages| {
+            loaded
+                .as_ref()
+                .ok()
+                .and_then(|loaded| {
+                    loaded
+                        .text_with_positions_and_rotations(
+                            Some(pages),
+                            pdf_inspector::PositionOptions::new(),
+                        )
+                        .ok()
+                })
+                .map(|(items, rotations)| {
+                    items
+                        .into_iter()
+                        .filter(|item| !rotations.contains_key(&item.page))
+                        .collect()
+                })
+                .unwrap_or_default()
+        },
+    );
+    for page in &mut extracted_pages {
+        if headed.contains(&(page.number as u32)) {
+            running::strip(&mut page.markdown);
+        }
+    }
     document
         .metadata
         .insert("converter".into(), "pdf-inspector".into());
@@ -1143,6 +1219,7 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
         .and_then(|id| pdf.get_dictionary(id))
         && let Ok(title) = info.get(b"Title").and_then(lopdf::decode_text_string)
         && !title.trim().is_empty()
+        && !file_name_title(title.trim())
     {
         document
             .metadata

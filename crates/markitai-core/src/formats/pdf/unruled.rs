@@ -620,7 +620,7 @@ fn cell_markdown(cell: Cell) -> String {
                 if !hyphenated && !last.text.ends_with(char::is_whitespace) {
                     last.text.push(' ');
                 }
-                if last.style == first.style {
+                if last.joins(first.style, first.link.as_ref()) {
                     last.text.push_str(&first.text);
                 } else {
                     output.push(first);

@@ -493,6 +493,32 @@ The local changes, each marked `markitai` (or, for sorts, made through
   added) and the same 21 failed. All 25 mutations of the conditions above
   fail at least one test.
 
+- `src/tounicode.rs`: the ToUnicode CMaps of fonts listed by a Form
+  XObject are collected when the Form's `/Resources` is an indirect object
+  (it was skipped with every font in it), and in the fast mode of the region
+  readers too, with that mode's fallback policy. Such a font's strings fell
+  to the guesses for fonts without a CMap: a short two-byte string reads as
+  UTF-16BE (`Papers` as `1BQFST`, MuPDF `insert_htmlbox` output). The test
+  in `src/extractor/xobjects.rs` fails on the unmodified file.
+
+- `src/extractor/links.rs`: a link action's `/URI` that is an indirect
+  string object (Quartz) is read; it was read as no URI.
+
+- `src/markdown/convert.rs`, `src/markdown/heading.rs`: three or more
+  consecutive lines at one heading level at wrap spacing with more than 30
+  words are one paragraph, not a heading per line (an abstract set larger
+  than the body text); a line at least 1.1 times the body size wholly in an
+  upright face other than the body's (`document_body_font`, now visible to
+  the module) is a strong signal for the standalone-heading rule; a line
+  larger than the line above is no list continuation. Both tests fail
+  without the change.
+
+- `src/markdown/classify.rs`: a check box or check mark followed by a
+  space starts a list item that keeps the mark (`- ✅ True HEPA filter`).
+
+  Run in the isolated copy, the crate's unit tests give 1,676 passed (4
+  added) and the same 21 failed.
+
 The page-level OCR, font decoding, repair, limits and reliability routing remain
 the upstream paths. Markitai's own visibility warnings and layout agreement
 checks remain enabled. The only new public APIs are `TextLine::text_with_markup`,
