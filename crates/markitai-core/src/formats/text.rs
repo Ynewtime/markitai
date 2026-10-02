@@ -322,32 +322,16 @@ pub(super) fn delimited(source: &str, delimiter: u8) -> Result<Document> {
         .has_headers(false)
         .flexible(true)
         .from_reader(source.as_bytes());
-    let mut rows = reader
+    let rows = reader
         .records()
         .map(|row| {
-            row.map(|row| {
-                row.iter()
-                    .map(|value| {
-                        if delimiter == b',' {
-                            value.to_owned()
-                        } else {
-                            cell(value)
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .map_err(|e| Error::Conversion(format!("Invalid delimited text: {e}")))
+            row.map(|row| row.iter().map(cell).collect::<Vec<_>>())
+                .map_err(|e| Error::Conversion(format!("Invalid delimited text: {e}")))
         })
         .collect::<Result<Vec<_>>>()?;
-    if delimiter == b',' {
-        // CSV's public contract uses the header width, including truncating
-        // surplus fields. TSV retains its widest row instead.
-        if let Some(width) = rows.first().map(Vec::len) {
-            for row in &mut rows {
-                row.resize(width, String::new());
-            }
-        }
-    }
+    // The reference cuts CSV rows to the header's width and leaves `|` and line
+    // breaks raw, which loses fields and breaks the table; every row is kept
+    // whole and escaped instead.
     let markdown = table(&rows, true)
         .lines()
         .map(str::trim_end)
@@ -661,15 +645,15 @@ mod tests {
     }
 
     #[test]
-    fn csv_keeps_quotes_newlines_and_reference_header_width() {
+    fn csv_keeps_every_field_and_escapes_table_delimiters() {
         let doc = delimited("name,body\n\"a,b\",\"line\nbreak | text\"\nlast\n", b',').unwrap();
         assert_eq!(
             doc.markdown,
-            "| name | body |\n| --- | --- |\n| a,b | line\nbreak | text |\n| last |  |"
+            "| name | body |\n| --- | --- |\n| a,b | line<br>break \\| text |\n| last |  |"
         );
         assert_eq!(
             delimited("a,b\n1\n2,3,4\n", b',').unwrap().markdown,
-            "| a | b |\n| --- | --- |\n| 1 |  |\n| 2 | 3 |"
+            "| a | b |  |\n| --- | --- | --- |\n| 1 |  |  |\n| 2 | 3 | 4 |"
         );
         assert!(delimited("", b',').unwrap().markdown.is_empty());
     }

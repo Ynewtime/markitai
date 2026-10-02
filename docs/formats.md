@@ -11,7 +11,7 @@ network policy and optional model enhancement belong to the orchestration layer.
 | --- | --- | --- |
 | TXT, MD, MARKDOWN | Rust text decoder | Preserves text and existing frontmatter; accepts UTF-8, BOM-marked UTF-16, Windows-1252 and detected GBK/GB18030, Big5, Shift_JIS, EUC-JP and EUC-KR (see [text encodings](#text-encodings)) |
 | HTML, HTM, XHTML | scraper + htmd | Honors a `<meta>` charset declaration; selects an article/main candidate, extracts metadata, removes navigation/scripts/hidden content, resolves relative HTTP links and images |
-| CSV, TSV | csv | Decoded like TXT; CSV preserves the reference's header width and raw cells; TSV retains the widest row and escapes table delimiters |
+| CSV, TSV | csv | Decoded like TXT; both keep every field (the table is as wide as the widest row) and escape `|`, backslashes and line breaks in cells; the reference cut CSV rows to the header's width and left those characters raw |
 | IPYNB | serde_json | Markdown cells, fenced code and raw cells; metadata title and code language; code fences sized to protect embedded backticks |
 | JSON | serde_json | Validated, pretty-printed fenced JSON; an additive Rust format |
 | XML | quick-xml | Structured headings, attributes and mixed text, plus a source fence for small inputs; document types are rejected |

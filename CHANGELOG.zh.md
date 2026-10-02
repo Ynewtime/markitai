@@ -86,6 +86,7 @@
 
 ### 修复
 
+- CSV 表格保留全部字段并保持为合法的 Markdown：比表头更宽的行会加宽表格而不再丢掉多出的单元格；单元格中的 `|`、反斜杠与换行被转义（`\|`、`<br>`），不再打断表格行，与 TSV 一致。带尾斜杠的 `-o notes.md/` 表示要创建的目录而不是文件；`-o` 指向输入的 `.md` 文件本身且 `output.on_conflict` 为 `overwrite` 时拒绝执行，不再覆盖源文件。
 - 批量转换中多个文件共有的同一条警告只在首次出现处写一次，并列出涉及的文件（`Warning: a.docx, b.pptx and 3 more files: …`），不再每个文件重复一遍；例如 `--llm` 批量中模型未计价的警告不再每个文档出现一次。报告与 JSON 输出仍保留每个文件各自的警告。
 - PDF 警告用普通用户能懂的话说明发生了什么：按纯文本兜底读取的页面报告 `read as plain text because it looked like a scan but draws no image`，不再使用内部判定名称；图片位置警告只在确实写出了页面截图时才提到截图（单独使用 `--ocr` 不写截图）；本地 OCR 在内嵌照片或插图中没有识别到文字时不再警告，因为这很常见（`ocr_images_blank` 计数仍会记录）。在用 `--ocr` 转换参考夹具 `sample.pdf` 时发现。
 - 模型请求被拒绝时，错误信息除状态码外还给出已识别的原因：`LLM returned HTTP 403: the model is not available in this region`（地区限制；只看 403 会被误认为凭据问题）、`…: the account's quota or billing does not allow this request` 与 `…: the model is unavailable`。因地区限制被跳过的部署如实说明原因，不再报告认证失败；`serve` 的连接测试给出相同的原因，网页工作台显示对应的翻译。提供方的原始措辞仍不会出现在错误中。在 OpenRouter 对测试者所在地区拒绝全部模型时发现。

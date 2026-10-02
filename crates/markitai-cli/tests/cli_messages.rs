@@ -193,6 +193,40 @@ fn single_inputs_name_the_written_file_and_explain_skips() {
 }
 
 #[test]
+fn a_md_output_name_never_replaces_its_source_and_a_trailing_slash_names_a_directory() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("self.md"), "# Mine\n").unwrap();
+    let overwrite = r#"{"output":{"on_conflict":"overwrite"}}"#;
+    let refused = invoke(
+        root.path(),
+        &["self.md", "-o", "self.md", "--config-json", overwrite],
+    );
+    assert_eq!(refused.status.code(), Some(2));
+    assert!(
+        stderr(&refused).contains("Output self.md is the input file itself"),
+        "{}",
+        stderr(&refused)
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("self.md")).unwrap(),
+        "# Mine\n"
+    );
+    // Another name is still overwritten as asked.
+    std::fs::write(root.path().join("copy.md"), "old").unwrap();
+    let other = invoke(
+        root.path(),
+        &["self.md", "-o", "copy.md", "--config-json", overwrite],
+    );
+    assert!(other.status.success(), "{}", stderr(&other));
+
+    std::fs::write(root.path().join("note.txt"), "Text\n").unwrap();
+    let slash = invoke(root.path(), &["note.txt", "-o", "dir.md/"]);
+    assert!(slash.status.success(), "{}", stderr(&slash));
+    assert!(root.path().join("dir.md").is_dir());
+    assert!(root.path().join("dir.md/note.txt.md").is_file());
+}
+
+#[test]
 fn unusable_output_locations_are_named_before_any_conversion_state() {
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("note.txt"), "Text\n").unwrap();

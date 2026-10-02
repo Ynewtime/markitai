@@ -900,11 +900,31 @@ fn execute_conversion(
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
         && !path.is_dir()
+        // A trailing separator, as in `-o notes.md/`, names a directory.
+        && !path
+            .as_os_str()
+            .to_string_lossy()
+            .ends_with(std::path::is_separator)
     {
         if batch {
             return Err((
                 2,
                 "A batch requires an output directory, not a .md file".into(),
+            ));
+        }
+        if cfg["output"]["on_conflict"].as_str() == Some("overwrite")
+            && !is_url(input)
+            && std::fs::canonicalize(input_path).is_ok_and(|source| {
+                std::fs::canonicalize(config::expand_home(path))
+                    .is_ok_and(|target| target == source)
+            })
+        {
+            return Err((
+                2,
+                format!(
+                    "Output {} is the input file itself, and overwriting it would destroy the source. Choose another output name or directory.",
+                    path.display()
+                ),
             ));
         }
         cfg["output"]["filename"] = json!(path.file_name().unwrap_or_default().to_string_lossy());
