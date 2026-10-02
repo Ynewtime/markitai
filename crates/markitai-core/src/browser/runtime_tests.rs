@@ -173,6 +173,14 @@ impl Site {
                         }else{mime="application/pdf";PDF.to_vec()}
                     }else if request.path=="/fail" {
                         status=503;b"Fixture failure".to_vec()
+                    }else if request.path=="/interstitial" {
+                        if request.cookie.contains("passed=1") {
+                            b"<html><body><article><h1>Behind the interstitial</h1><p>Interstitial passed with the page's own cookie.</p></article></body></html>".to_vec()
+                        }else{
+                            status=403;b"<html><body><div>Checking</div><script>document.cookie='passed=1; path=/';location.reload();</script></body></html>".to_vec()
+                        }
+                    }else if request.path=="/refused" {
+                        status=403;format!("<html><body><h1>Access refused</h1><p>{}</p><script>window.x=1;</script></body></html>","This page explains in many words why the request was refused. ".repeat(8)).into_bytes()
                     }else if request.path=="/hang" {
                         b"<html><script>while(true){}</script></html>".to_vec()
                     }else if request.path=="/language" {
@@ -538,6 +546,31 @@ fn all_owned_pages_close_before_a_context_is_reused() {
         runtime.close();
         gone(&processes[0]);
     }
+}
+
+#[test]
+#[ignore = "requires installed Chromium; private process and loopback only"]
+fn an_interstitial_that_reloads_itself_is_awaited_and_a_refusal_with_content_is_not() {
+    if isolated("an_interstitial_that_reloads_itself_is_awaited_and_a_refusal_with_content_is_not")
+    {
+        return;
+    }
+    assert!(available());
+    let site = Site::new();
+    let runtime = BrowserRuntime::new(1).unwrap();
+    let cfg = config(false);
+    // A 403 page that sets its cookie and reloads, as a browser is expected to.
+    let page = html(&site, "/interstitial", &cfg, &runtime);
+    assert!(page.contains("Interstitial passed"), "{page}");
+    assert_eq!(site.count("/interstitial"), 2);
+    // A refusal that explains itself is reported at once.
+    let started = Instant::now();
+    let error = fetch_with_runtime(&site.url("/refused"), &cfg, false, Some(&runtime))
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(error.contains("HTTP 403"), "{error}");
+    assert!(started.elapsed() < Duration::from_secs(5));
 }
 
 #[test]

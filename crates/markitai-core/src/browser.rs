@@ -420,6 +420,15 @@ pub(crate) fn fetch_with_runtime(
 /// the certificate failed or the site turned the browser away. Nothing but
 /// that name is kept, so no address, header or credential can reach the
 /// message.
+/// A page with almost no text that runs a script: a challenge interstitial
+/// rather than an error page with content of its own.
+fn interstitial(browser: &mut cdp::Browser) -> Result<bool> {
+    Ok(browser
+        .evaluate("(() => { const t = (document.body && document.body.innerText || '').trim(); return t.length < 300 && document.scripts.length > 0; })()")?
+        .as_bool()
+        == Some(true))
+}
+
 fn navigation_failure(reason: &Value) -> String {
     match reason.as_str().map(str::trim).filter(|reason| {
         reason.len() <= 64
@@ -476,6 +485,31 @@ fn fetch_page(
             break;
         }
         browser.pause(Duration::from_millis(25))?;
+    }
+    // An interstitial answers 403, 429 or 503 with a nearly empty page whose
+    // own script sets a cookie and loads the page again, as it expects of a
+    // browser (Zhihu, Cloudflare's "Just a moment"). That reload is awaited
+    // like any navigation the page makes; nothing is solved or forged.
+    if browser
+        .status
+        .is_some_and(|status| matches!(status, 403 | 429 | 503))
+        && interstitial(browser)?
+    {
+        let deadline = Instant::now() + Duration::from_millis(options.timeout.min(15_000));
+        while Instant::now() < deadline {
+            browser.pause(Duration::from_millis(100))?;
+            if browser.navigation_failed {
+                return Err(Error::Fetch("Chromium page crashed".into()));
+            }
+            if browser.status.is_some_and(|status| status < 400)
+                && browser
+                    .evaluate("document.readyState")?
+                    .as_str()
+                    .is_some_and(|state| state != "loading")
+            {
+                break;
+            }
+        }
     }
     if let Some(status) = browser.status.filter(|status| *status >= 400) {
         return Err(Error::Fetch(format!(

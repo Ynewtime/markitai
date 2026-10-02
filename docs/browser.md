@@ -175,6 +175,13 @@ or reset connection, a certificate or protocol error, a site that turns the
 browser away) fails with Chromium's reason, for example `Browser navigation
 failed: net::ERR_NAME_NOT_RESOLVED`; only that `net::ERR_*` name is kept, never
 the address, headers or credentials. A download is reported separately.
+A page answered with 403, 429 or 503 that holds almost no text and runs a script is an
+interstitial that sets a cookie and loads the page again (Cloudflare's "Just a moment",
+some sites' JavaScript checks); its reload is awaited for up to the navigation timeout
+(at most 15 s) like any navigation the page makes, and the reloaded page is used.
+Nothing is solved, signed or disguised: a site that refuses an automated browser
+(Zhihu answers with `您当前请求存在异常` and code 40362) stays refused, and a refusal
+page with content of its own is reported at once.
 
 Screenshots are captured **before** shadow-root flattening. The configured
 viewport and JPEG quality apply. Long pages are captured as full-width vertical
