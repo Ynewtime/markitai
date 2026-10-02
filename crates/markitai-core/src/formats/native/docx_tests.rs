@@ -193,7 +193,7 @@ fn list_items_whose_labels_markdown_does_not_read_keep_a_line_each() {
     .concat();
     let markdown = markdown(&body, &parts);
     assert!(
-        markdown.contains("\n   a) sub a  \n   b) sub b\n2. Second"),
+        markdown.contains("\n   a) sub a\\\n   b) sub b\n2. Second"),
         "{markdown:?}"
     );
 }
@@ -281,6 +281,7 @@ fn renderer() -> Renderer<'static> {
     Renderer {
         asset_names: &[],
         merged_cells: false,
+        in_cell: false,
         anchors: BTreeSet::new(),
         extension: "docx",
     }

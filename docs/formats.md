@@ -19,13 +19,13 @@ network policy and optional model enhancement belong to the orchestration layer.
 | MSG | cfb + native properties | Outlook headers, Unicode/ANSI body, HTML fallback and bounded by-value attachments |
 | RST, Org, TeX | native markup readers | Structured sections, lists, code, math, links and tables; unsupported constructs retained with warnings |
 | JPEG, PNG, GIF, BMP, TIFF, WebP | image + native LLM transport + macOS Vision | Standalone vision inputs, shared raster assets and complete TIFF page OCR/vision with bounded decoding |
-| DOC, DOCX, DOCM; templates DOT, DOTX, DOTM | anydoc document model | Headings, styled text, lists, tables, links, formulas, notes and embedded assets |
+| DOC, DOCX, DOCM; templates DOT, DOTX, DOTM | anydoc document model | Headings, styled text, lists, tables, links, formulas, notes and embedded assets; a manual line break is a hard break (`\`), two end the paragraph, and text is escaped only where Markdown would read it as syntax ([below](#document-line-breaks-and-escaping)) |
 | PPT, PPS, POT | anydoc document model | Legacy presentation content through the shared Markdown renderer, behind a numbered slide marker per slide; embedded charts and worksheets read as their data tables |
 | PPTX, PPTM, PPSX, PPSM; templates POTX, POTM | bounded ZIP + PresentationML reader | Ordered slide markers, hidden-slide markers, title placeholders, text frames with bullets as nested lists and web/mail hyperlinks as links, grouped shapes, tables, referenced images, cached chart data, SmartArt text as lists, speaker notes and review comments |
 | XLS, XLSX, XLSM, XLSB; templates XLT, XLTX, XLTM | anydoc document model | Native sheet content with number formats, cell links, cell notes and the text of uncalculated formulas (see [spreadsheets](#spreadsheets)); XLS/XLSX/XLSM single-sheet names are recovered from package metadata; exact cell-format compatibility has not been established |
-| ODT, ODS, ODP, RTF; templates OTT, OTS, OTP | anydoc document model | Native structured documents through the same Markdown renderer; ODP slides carry numbered slide markers |
+| ODT, ODS, ODP, RTF; templates OTT, OTS, OTP | anydoc document model | Native structured documents through the same Markdown renderer (line breaks and escaping as for Word); ODP slides carry numbered slide markers |
 | NUMBERS | bounded ZIP/directory IWA preflight + iwork | Ordered sheets/tables, rectangular saved values and explicit formatting/unsupported-content warnings; see [Numbers](numbers.md) |
-| EPUB | anydoc + OPF metadata | Spine content and the original title/authors/language/publisher/date/description/identifier preamble; ruby as base text then reading (`漢字(kanji)`), definition terms as bold paragraphs, and footnote marks the author wrote as Markdown (`[^5]`, `[^5]: …`) kept unescaped |
+| EPUB | anydoc + OPF metadata | Spine content and the original title/authors/language/publisher/date/description/identifier preamble; ruby as base text then reading (`漢字(kanji)`), definition terms as bold paragraphs, and footnote marks the author wrote as Markdown (`[^5]`, `[^5]: …`) kept unescaped; `<br>` and text escaping as for Word (`[!tip]` stays as written) |
 | PDF | pdf-inspector + lopdf; optional macOS CoreGraphics/Vision | Per-page text/layout, link targets, partial recovery and embedded images; explicit local-file page OCR and screenshots through the shared media pipeline |
 
 ### Text encodings
@@ -295,11 +295,8 @@ writes `\ansicpg936` over 1252 text), a hyperlink spanning paragraphs links
 each paragraph's part, lists inside table cells stay lists, and a nested
 table TextEdit closes with `\nestcell` directly after `\nestrow` (no `\itap`)
 is read at the right depth; text after a nested table in a cell stays after
-it. Text that goes through the shared document renderer (Word, OpenDocument,
-RTF, EPUB, legacy PowerPoint and spreadsheets) escapes `<` before a letter,
-`/`, `!` or `?` and an `&` that starts an entity, so a Markdown renderer shows
-`std::vector<int>` or a literal `&copy;` instead of reading them as HTML; PPTX
-text frames keep their plain-text contract.
+it. How the shared document renderer writes line breaks and escapes text is
+described [below](#document-line-breaks-and-escaping).
 
 RTF is read as Word shows it. Hidden text (`\v`) and tracked deletions
 (`\deleted`) are left out, as Word's are, and a hidden or deleted paragraph
@@ -560,6 +557,61 @@ heuristics retain their documented limits in [PDF layout](pdf.md).
 The browser runtime is outside this module. No Python interpreter,
 Node runtime, Office installation, LibreOffice or hosted extraction service is
 used by the readers above.
+
+### Document line breaks and escaping
+
+Text that goes through the shared document renderer (Word, OpenDocument, RTF,
+EPUB, legacy PowerPoint and spreadsheets) follows the HTML reader's rules for
+line breaks. A manual line break (Word `w:br`, ODT `text:line-break`, RTF
+`\line`, a Word 97 vertical tab, EPUB `<br>`) is a hard break, written `\` at
+the line's end: two trailing spaces did not survive normal output's cleanup
+of line ends, so the lines ran together. Two or more breaks in a row end the
+paragraph, breaks at the edge of a paragraph show nothing, and the
+indentation after a break is dropped (it would otherwise start a code block
+after a paragraph break). In a heading or a link's text a break is a space; a
+break at the edge of a link's text moves outside the link (as a `<br>` at the
+edge of an HTML `<a>` does), and a link the renderer does not write as one
+(no destination, or a scheme other than web, mail and telephone, such as
+`file:`) leaves its text and breaks in the line. In
+a table cell a break is `<br>`. A list item whose label Markdown does not read
+(`a)`, `(1)`, `一、`) keeps its line with a hard break after a paragraph, or a
+blank line after a block a backslash cannot follow.
+
+Text is escaped only where CommonMark (with GFM tables, strikethrough and
+footnotes) would read it as syntax in that position, so `snake_case`,
+`[!tip]`, `C:\Users`, `5 * 3` and a form's `________` stay as written:
+
+- `*`, `_` and `~` runs that can open or close emphasis by CommonMark's
+  flanking rules (also micromark's, which lets a run open or close beside
+  another delimiter character) and have a partner in the line that could pair
+  with them, or stand inside the renderer's own emphasis or touch its
+  markers;
+- a backtick run that a later run of the same length could close; one
+  touching the renderer's code span is written `&#96;`, since a backslash
+  would not part it from the span's backticks;
+- `\` before punctuation or at a line's end; `<` before a letter, `/`, `!` or
+  `?` when a `>` follows or it starts a line (an HTML block); an `&` that
+  starts a character reference; `]` before `(` after a `[`; `[` that would
+  open a footnote mark (`[^1]`) or follows a `!`; `!` before a link the
+  renderer writes, as `&#33;` (normal output's image repairs would read
+  `\![` as an image); and either bracket inside a link's text or an image's
+  description;
+- at the start of a line (a paragraph's, or after a break): ATX headings,
+  `-`, `+` and `*` bullets, ordered markers, `>`, thematic breaks, fences,
+  link reference definitions and HTML blocks; after a line, also setext
+  underlines (`==`, `--`) and table delimiter rows. A delimiter mark there
+  (`***`, `___`, ```` ``` ````, `~~~`) is escaped whole, since the rest of its
+  run would still pair with one elsewhere;
+- a heading's closing `#` sequence (`## Issue \#`).
+
+A table cell holds inline content only, so block marks at the start of its
+lines are not escaped there. On 18,000 generated one-paragraph Word documents
+(text over an alphabet heavy in Markdown punctuation, with bold, italic,
+struck, monospaced and linked runs and line breaks) every output parses with
+micromark to exactly the document's text and styles, where the previous
+escaping misparsed 1,008; the outputs carry 37% fewer backslashes. PDF
+and PPTX text keep their own escaping (every `*`, `_`, `[`, `]`, backtick and
+backslash); PDF paragraphs share the start-of-line rules above.
 
 ### Delimited text
 

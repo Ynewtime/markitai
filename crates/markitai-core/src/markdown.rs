@@ -30,6 +30,38 @@ static SLIDE: LazyLock<Regex> =
     LazyLock::new(|| pattern(r"^<!--\s*Slide\s+(number:\s*)?\d+\s*-->"));
 static BLANKS: LazyLock<Regex> = LazyLock::new(|| pattern(r"\n{3,}"));
 
+/// Prose lines without the hard breaks content removed after rendering
+/// leaves behind (a filtered image between two breaks, or before one): a line
+/// that is only a hard break's `\`, and a hard break that ends a paragraph,
+/// which Markdown would show as a backslash. A line indented four spaces or
+/// more may be code and is left as it is; fenced code is not part of prose.
+fn without_dangling_breaks(mut lines: Vec<&str>) -> Vec<&str> {
+    let prose = |line: &str| line.len() - line.trim_start_matches(' ').len() < 4;
+    lines.retain(|line| !(prose(line) && line.trim_start() == "\\"));
+    for index in 0..lines.len() {
+        let line = lines[index];
+        if prose(line)
+            && ends_escaped(line)
+            && lines.get(index + 1).is_none_or(|next| next.is_empty())
+        {
+            lines[index] = line[..line.len() - 1].trim_end();
+        }
+    }
+    lines
+}
+
+/// Whether the character at byte `at` follows an odd number of backslashes,
+/// which make it text.
+fn escaped_at(text: &str, at: usize) -> bool {
+    ends_escaped(&text[..at])
+}
+
+/// Whether `text` ends in an odd number of backslashes, which make the
+/// character after it text.
+fn ends_escaped(text: &str) -> bool {
+    text.bytes().rev().take_while(|&byte| byte == b'\\').count() % 2 == 1
+}
+
 fn clean_footers(source: String) -> String {
     let markers: Vec<_> = PAGE.find_iter(&source).collect();
     if markers.len() < 3 {
@@ -291,6 +323,13 @@ pub(crate) fn normalize(source: &str) -> String {
                     if !captures[1].is_empty() {
                         return captures[0].to_owned();
                     }
+                    // A bracket written as text (`\[`, `\]`) is no link: the
+                    // repair would join a hard break's lines into one and drop
+                    // the second.
+                    let start = captures.get(0).map_or(0, |found| found.start());
+                    if escaped_at(&text, start) || ends_escaped(&captures[3]) {
+                        return captures[0].to_owned();
+                    }
                     repaired.set(true);
                     format!("[{}]({})", captures[2].trim(), &captures[4])
                 })
@@ -317,7 +356,7 @@ pub(crate) fn normalize(source: &str) -> String {
         }
         text
     });
-    let lines: Vec<_> = text.split('\n').map(str::trim_end).collect();
+    let lines = without_dangling_breaks(text.split('\n').map(str::trim_end).collect());
     let mut output: Vec<&str> = Vec::with_capacity(lines.len());
     for (index, line) in lines.iter().enumerate() {
         let hashes = line.as_bytes().iter().take_while(|&&ch| ch == b'#').count();
@@ -367,6 +406,34 @@ mod tests {
         let output = normalize(&input);
         assert!(!output.contains("Footer"));
         assert!(output.contains("Long content for page 2 that must remain."));
+    }
+
+    #[test]
+    fn hard_breaks_and_brackets_written_as_text_survive_the_link_repair() {
+        // A backslash hard break is kept where trailing spaces are trimmed.
+        assert_eq!(normalize("one\\\ntwo  \nthree"), "one\\\ntwo\nthree\n");
+        // An escaped bracket is text: nothing between it and a later `](`
+        // is a link split by a line break, and no line is dropped.
+        for source in [
+            "a \\[note\\\nsecond line\\](x)\n",
+            "a [note\\\nsecond line\\](x)\n",
+        ] {
+            assert_eq!(normalize(source), source);
+        }
+        // An escaped backslash before a real bracket leaves the repair on.
+        assert_eq!(normalize("\\\\[Title\nmore](/u)"), "\\\\[Title](/u)\n");
+    }
+
+    #[test]
+    fn hard_breaks_left_without_a_line_to_break_are_dropped() {
+        // A filtered image removed from between, before or after hard breaks.
+        assert_eq!(
+            normalize("Before.\n\n\\\nCaption\n\nText\\\n\\\nmore\\\n\nEnd\\"),
+            "Before.\n\nCaption\n\nText\\\nmore\n\nEnd\n"
+        );
+        // An escaped backslash is text, and code keeps its line ends.
+        let kept = "C:\\\\\n\n    echo \\\n\n```sh\nmake \\\n\\\n```\n";
+        assert_eq!(normalize(kept), kept);
     }
 
     #[test]

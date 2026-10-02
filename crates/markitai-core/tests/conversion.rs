@@ -61,6 +61,9 @@ mod legacy_ppt_objects;
 #[path = "conversion/html_text.rs"]
 mod html_text;
 
+#[path = "conversion/document_breaks.rs"]
+mod document_breaks;
+
 fn options() -> ConvertOptions {
     ConvertOptions {
         config: Some(json!({})),

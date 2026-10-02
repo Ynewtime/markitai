@@ -170,7 +170,7 @@ fn textedit_rtf_reads_like_the_same_page_saved_as_docx() {
     assert_eq!(
         doc.markdown,
         "Apple’s phone costs ½ as much.¹\n\n\
-         commenter\\_one 2 hours ago\n\nI agree.\n\n\
+         commenter_one 2 hours ago\n\nI agree.\n\n\
          [example.com Related Project](https://example.com/related)\n\n\
          Changes:\n\n* Preserve linked text\n* Add a test\n"
     );
@@ -224,7 +224,7 @@ fn rtf_lists_typed_by_hand_are_lists() {
     let doc = extract(rtf.as_bytes(), "rtf").unwrap();
     assert_eq!(
         doc.markdown,
-        "Options:\n\n* Fast\n  \n  * cached\n* Cheap\n\nChoose:\n\na) the first  \nb) the second\n"
+        "Options:\n\n* Fast\n  \n  * cached\n* Cheap\n\nChoose:\n\na) the first\\\nb) the second\n"
     );
 }
 

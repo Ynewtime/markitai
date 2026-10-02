@@ -106,6 +106,8 @@
 
 ### Fixed
 
+- Word, OpenDocument, RTF and EPUB: a manual line break is a hard break (`\`) that survives normal output, and two in a row end the paragraph; in a heading or a link's text it is a space, in a table cell `<br>`. Labels Markdown does not read (`a)`, `I.`, `一、`) keep one line per item.
+- Word, OpenDocument, RTF and EPUB: text is escaped only where Markdown would read it as syntax, so `snake_case`, `[!tip]`, `C:\Users` and `________` stay as written (18,000 generated DOCX paragraphs parse back to their text and styles under CommonMark/GFM); link text after a line break and italic citations around unlinked references are no longer lost or misparsed.
 - HTML: prose inside forms is kept (pages wrapped in an ASP.NET form, old Reddit post bodies); only controls and search, sign-in, newsletter and comment boxes are left out. Footers of articles, sections, figures and quotations are kept, a quotation's as `— Name`; task-list checkboxes become `[x]`/`[ ]`.
 - HTML: `<br>` is a hard line break and `<br><br>` a paragraph break; headings and link text stay on one line, so link words after a source line break are no longer lost. Table cells join lists and paragraphs with `<br>` and write pipes as `\|`; definition terms are bold; ruby reads `漢字(kanji)`; soft hyphens are removed; video and audio become links to their file; inline SVG labels are spaced; Wikipedia code keeps its language and the language menu is dropped. Cached pages extracted before this change are not replayed.
 - EPUB: ruby and definition lists read as text, and footnote marks written as Markdown (`[^5]`, `[^5]: …`) are no longer escaped.

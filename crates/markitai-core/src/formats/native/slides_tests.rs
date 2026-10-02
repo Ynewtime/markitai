@@ -12,6 +12,7 @@ fn renderer() -> Renderer<'static> {
     Renderer {
         asset_names: &[],
         merged_cells: false,
+        in_cell: false,
         anchors: BTreeSet::new(),
         extension: "odp",
     }

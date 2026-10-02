@@ -7,6 +7,9 @@ mod office;
 pub(crate) use office::extract_presentation_count;
 #[path = "native/compound.rs"]
 mod compound;
+#[path = "native/line.rs"]
+mod line;
+use line::{Line, Literal, Place};
 #[path = "office_meta.rs"]
 mod office_meta;
 #[path = "pdf.rs"]
@@ -74,6 +77,10 @@ fn conversion_error(error: anydoc::ConvertError) -> Error {
     Error::Conversion(format!("Native document conversion failed: {error}"))
 }
 
+/// Text escaped without knowing what stands around it, as the PDF and PPTX
+/// writers use it: every `\`, `*`, `_`, `[`, `]` and backtick, and `<` or `&`
+/// that would open an HTML tag or an entity. The document renderer escapes in
+/// context instead (`line.rs`).
 fn escape(text: &str) -> String {
     let mut output = String::new();
     for (index, ch) in text.char_indices() {
@@ -104,15 +111,19 @@ fn escape(text: &str) -> String {
 
 /// A paragraph's lines with the mark that would make Markdown read a line as
 /// a block of its own written as text: an ATX heading (`# text`), a bullet
-/// (`- item`, `+ item`), an ordered item (`1. item`, `1) item`), a quote
-/// (`> text`) or a thematic break (`---`), up to three spaces in. A
-/// document's own line starting so (a shell comment, a dash before a remark,
-/// a year and a full stop) is text in its source. `*` and `_` are escaped
-/// wherever they occur. A line indented four spaces or more is a code block
-/// already and stays as it is.
+/// (`- item`, `+ item`, `* item`), an ordered item (`1. item`, `1) item`), a
+/// quote (`> text`), a thematic break (`---`, `***`, `___`), a code fence
+/// (```` ``` ````, `~~~`) or a link reference definition (`[1]: …`), up to
+/// three spaces in; on a line after the first, also a setext underline (`==`,
+/// `--`) or a table's delimiter row (`| --- |`), which would turn the line
+/// above into a heading or a table header. A document's own line starting so
+/// (a shell comment, a dash before a remark, a year and a full stop) is text
+/// in its source. A line indented four spaces or more is a code block already
+/// and stays as it is.
 fn literal_heading_marks(text: &str) -> String {
     text.split('\n')
-        .map(|line| {
+        .enumerate()
+        .map(|(number, line)| {
             let indent = line.len() - line.trim_start_matches(' ').len();
             let rest = &line[indent..];
             if indent > 3 {
@@ -122,27 +133,92 @@ fn literal_heading_marks(text: &str) -> String {
             let hashes = rest.bytes().take_while(|&b| b == b'#').count();
             let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
             let heading = (1..=6).contains(&hashes) && ends(&rest[hashes..]);
-            let bullet = rest.starts_with(['-', '+']) && ends(&rest[1..]);
-            let rule = rest.len() >= 3
-                && rest.trim_end().chars().all(|c| c == '-' || c == ' ')
-                && rest.matches('-').count() >= 3;
+            let bullet = rest.starts_with(['-', '+', '*']) && ends(&rest[1..]);
+            let rule = ['-', '*', '_'].into_iter().any(|mark| {
+                rest.matches(mark).count() >= 3
+                    && rest.chars().all(|c| c == mark || c == ' ' || c == '\t')
+            });
             let ordered = (1..=9).contains(&digits)
                 && rest[digits..].starts_with(['.', ')'])
                 && ends(&rest[digits + 1..]);
-            let mark = if heading || bullet || rule || rest.starts_with('>') {
-                Some(0)
+            let fence = rest.starts_with("~~~")
+                || (rest.starts_with("```") && !rest.trim_start_matches('`').contains('`'));
+            let definition = defines_link(rest);
+            let shown = rest.trim_end_matches([' ', '\t']);
+            let underline = number > 0
+                && !shown.is_empty()
+                && (shown.chars().all(|c| c == '=') || shown.chars().all(|c| c == '-'));
+            let delimiter_row = number > 0
+                && shown.contains('|')
+                && shown.contains('-')
+                && shown
+                    .chars()
+                    .all(|c| matches!(c, '|' | '-' | ':' | ' ' | '\t'));
+            // The marks to escape, as byte offsets in `rest`. Where the mark is
+            // an emphasis or code delimiter (`***`, `___`, `~~~`, ```` ``` ````),
+            // all of it: the rest of the run would still pair with a
+            // delimiter elsewhere in the paragraph (`\___` leaves `__`).
+            let first = rest.chars().next().unwrap_or(' ');
+            let marks: Vec<usize> = if (rule || fence) && matches!(first, '*' | '_' | '~' | '`') {
+                if rule {
+                    rest.match_indices(first).map(|(at, _)| at).collect()
+                } else {
+                    (0..rest.len() - rest.trim_start_matches(first).len()).collect()
+                }
+            } else if heading
+                || bullet
+                || rule
+                || fence
+                || definition
+                || underline
+                || delimiter_row
+                || rest.starts_with('>')
+            {
+                vec![0]
             } else if ordered {
-                Some(digits)
+                vec![digits]
             } else {
-                None
+                Vec::new()
             };
-            match mark {
-                Some(at) => format!("{}{}\\{}", &line[..indent], &rest[..at], &rest[at..]),
-                None => line.to_owned(),
+            if marks.is_empty() {
+                return line.to_owned();
             }
+            let mut written = line[..indent].to_owned();
+            let mut from = 0;
+            for at in marks {
+                written.push_str(&rest[from..at]);
+                written.push('\\');
+                from = at;
+            }
+            written.push_str(&rest[from..]);
+            written
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Whether a line reads as a link reference definition (`[label]: …`): a
+/// label of at least one character, without an unescaped bracket, closed by
+/// `]:`. A footnote's (`[^1]: …`) is the renderer's own or an EPUB's
+/// written mark; text that would start one has its bracket escaped already.
+fn defines_link(line: &str) -> bool {
+    let Some(label) = line
+        .strip_prefix('[')
+        .filter(|label| !label.starts_with('^'))
+    else {
+        return false;
+    };
+    let bytes = label.as_bytes();
+    let mut at = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'\\' => at += 2,
+            b'[' => return false,
+            b']' => return at > 0 && bytes.get(at + 1) == Some(&b':'),
+            _ => at += 1,
+        }
+    }
+    false
 }
 
 fn destination(value: &str) -> String {
@@ -181,6 +257,10 @@ fn image_extension(mime: &str, origin: &str) -> String {
 struct Renderer<'a> {
     asset_names: &'a [String],
     merged_cells: bool,
+    /// Whether the blocks being written are a table cell's (see
+    /// [`Renderer::cell_text`]): inline content only, its lines joined with
+    /// `<br>`.
+    in_cell: bool,
     anchors: BTreeSet<String>,
     extension: &'a str,
 }
@@ -288,44 +368,69 @@ fn leading_char(value: &Inline) -> Option<char> {
 /// mirror rule. `**（注意）**后续` in Chinese text, whose words have no spaces
 /// around them, opens and closes nothing and shows its asterisks; the
 /// punctuation written outside (`（**注意**）后续`) does. Only the ends beside a
-/// letter or digit move, so `**Note:** text` is unchanged. A run of nothing
-/// but punctuation gets no emphasis, and comes back as the leading part.
+/// letter or digit move, so `**Note:** text` is unchanged. Whitespace the
+/// moved punctuation leaves at an end of the text moves out with it, since a
+/// marker beside whitespace neither opens nor closes (`**< **|` would show
+/// its asterisks). A run of nothing but punctuation and whitespace gets no
+/// emphasis, and comes back as the leading part.
 fn emphasis_edges(text: &str, before: Option<char>, after: Option<char>) -> (&str, &str, &str) {
     let word = |c: Option<char>| c.is_some_and(|c| !c.is_whitespace() && !is_punctuation(c));
-    let mut core = text;
-    let mut lead = "";
+    let mut start = 0;
     if word(before) {
-        let rest = core.trim_start_matches(is_punctuation);
-        lead = &core[..core.len() - rest.len()];
-        core = rest;
+        start = text.len() - text.trim_start_matches(is_punctuation).len();
     }
-    let mut trail = "";
+    let mut end = text.len();
     if word(after) {
-        let rest = core.trim_end_matches(is_punctuation);
-        trail = &core[rest.len()..];
-        core = rest;
+        end = text[start..].trim_end_matches(is_punctuation).len() + start;
     }
+    let core = text[start..end].trim();
     if core.is_empty() {
         return (text, "", "");
     }
-    (lead, core, trail)
+    let start = start + (text[start..end].len() - text[start..end].trim_start().len());
+    let end = start + core.len();
+    (&text[..start], core, &text[end..])
 }
 
-/// A heading's content on one line: a line break in the source (a Word
-/// heading with a soft return) is a space, since Markdown ends a heading at
-/// its line and the words after the break would leave it as a paragraph.
-fn heading_on_one_line(content: &[Inline]) -> Vec<Inline> {
-    content
-        .iter()
-        .map(|inline| match inline {
-            Inline::LineBreak => Inline::plain(" "),
-            Inline::Link { content, target } => Inline::Link {
-                content: heading_on_one_line(content),
-                target: target.clone(),
-            },
-            other => other.clone(),
-        })
-        .collect()
+/// What each line break among `values` is written as, as an HTML page's
+/// `<br>` is: the first break of a run of them (with nothing `shows` between)
+/// carries the run and the others are `None`. In running text one break is a
+/// hard break and two or more end the paragraph (`<br><br>` in a cell); a
+/// run at the edge of the content shows nothing (`""`); in a heading or a
+/// link's text a break is a space.
+fn break_plan(
+    values: &[Inline],
+    place: Place,
+    shows: impl Fn(&Inline) -> bool + Copy,
+) -> Vec<Option<&'static str>> {
+    let mut plan = vec![None; values.len()];
+    let mut index = 0;
+    while index < values.len() {
+        if !matches!(values[index], Inline::LineBreak) {
+            index += 1;
+            continue;
+        }
+        let (mut count, mut last) = (0, index);
+        for (at, value) in values.iter().enumerate().skip(index) {
+            if shows(value) {
+                break;
+            }
+            if matches!(value, Inline::LineBreak) {
+                count += 1;
+                last = at;
+            }
+        }
+        let edge = !values[..index].iter().any(&shows) || !values[last + 1..].iter().any(&shows);
+        plan[index] = Some(match place {
+            _ if edge => "",
+            Place::OneLine => " ",
+            Place::Text | Place::Cell if count > 1 => "\n\n",
+            Place::Text => "\\\n",
+            Place::Cell => "\n",
+        });
+        index = last + 1;
+    }
+    plan
 }
 
 /// The content of a heading that cannot be one (a table cell has no block
@@ -342,7 +447,6 @@ fn heading_as_emphasis(content: &[Inline]) -> Vec<Inline> {
                     style,
                 }
             }
-            Inline::LineBreak => Inline::plain(" "),
             Inline::Link { content, target } => Inline::Link {
                 content: heading_as_emphasis(content),
                 target: target.clone(),
@@ -352,15 +456,170 @@ fn heading_as_emphasis(content: &[Inline]) -> Vec<Inline> {
         .collect()
 }
 
+/// A heading's text with a closing sequence written as text: `## Issue #`
+/// would end in an optional closing `#` that Markdown drops.
+fn literal_closing_hashes(text: &str) -> String {
+    let kept = text.trim_end_matches('#');
+    if kept.len() < text.len() && (kept.is_empty() || kept.ends_with([' ', '\t'])) {
+        format!("{kept}\\{}", &text[kept.len()..])
+    } else {
+        text.to_owned()
+    }
+}
+
+/// A link's destination as written, or `None` where the link is not written
+/// as one (no destination, or a scheme other than web, mail and telephone):
+/// its text then stands in the line as it is.
+fn link_destination(target: &LinkTarget) -> Option<String> {
+    let target = match target {
+        LinkTarget::Anchor(anchor) => format!("#{}", destination(anchor)),
+        LinkTarget::External(url) | LinkTarget::Relative(url) => destination(url),
+    };
+    let safe = url::Url::parse(&target)
+        .map(|url| matches!(url.scheme(), "http" | "https" | "mailto" | "tel"))
+        .unwrap_or(true);
+    (!target.is_empty() && safe).then_some(target)
+}
+
+/// `values` with the text of each link not written as one in its place, and
+/// the line breaks at either edge of a written link's text moved before or
+/// after the link, where they break the line as a `<br>` at the edge of an
+/// HTML page's `<a>` does (inside, a link's text is one line). Judged in
+/// the line around them, a link's breaks follow the same rules as any
+/// other: `a<br><br>` inside a link ends the paragraph, not the link's text.
+fn link_edges(values: &[Inline]) -> std::borrow::Cow<'_, [Inline]> {
+    if !values
+        .iter()
+        .any(|value| matches!(value, Inline::Link { .. }))
+    {
+        return std::borrow::Cow::Borrowed(values);
+    }
+    let edge = |inline: &&Inline| match inline {
+        Inline::LineBreak => true,
+        Inline::Text { text, .. } => text.trim().is_empty(),
+        _ => false,
+    };
+    let breaks = |inlines: &[Inline]| {
+        inlines
+            .iter()
+            .filter(|inline| matches!(inline, Inline::LineBreak))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let mut output = Vec::with_capacity(values.len());
+    for value in values {
+        let Inline::Link { content, target } = value else {
+            output.push(value.clone());
+            continue;
+        };
+        let content = link_edges(content);
+        if link_destination(target).is_none() {
+            output.extend(content.iter().cloned());
+            continue;
+        }
+        // An edge moves out only where it holds a break; blank text alone
+        // stays the link's own.
+        let mut lead = content.iter().take_while(edge).count();
+        if !content[..lead]
+            .iter()
+            .any(|i| matches!(i, Inline::LineBreak))
+        {
+            lead = 0;
+        }
+        let mut trail = content[lead..].iter().rev().take_while(edge).count();
+        if !content[content.len() - trail..]
+            .iter()
+            .any(|i| matches!(i, Inline::LineBreak))
+        {
+            trail = 0;
+        }
+        output.extend(breaks(&content[..lead]));
+        output.push(Inline::Link {
+            content: content[lead..content.len() - trail].to_vec(),
+            target: target.clone(),
+        });
+        output.extend(breaks(&content[content.len() - trail..]));
+    }
+    std::borrow::Cow::Owned(output)
+}
+
+/// Text on one line: inside a heading, a link's text or `![…]`, a line break
+/// would end the heading or let the next line start a block of its own.
+fn one_line(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.contains(['\n', '\r']) {
+        text.split_whitespace().collect::<Vec<_>>().join(" ").into()
+    } else {
+        text.into()
+    }
+}
+
 impl Renderer<'_> {
+    /// Inline content as Markdown where it stands: a paragraph's lines, or a
+    /// table cell's in a cell.
     fn inlines(&self, values: &[Inline]) -> String {
-        let values = merged_runs(values);
-        let mut output = String::new();
+        self.inlines_in(
+            values,
+            if self.in_cell {
+                Place::Cell
+            } else {
+                Place::Text
+            },
+        )
+    }
+
+    fn inlines_in(&self, values: &[Inline], place: Place) -> String {
+        let mut line = Line::default();
+        self.write_inlines(values, place, false, &mut line);
+        line.finish(place)
+    }
+
+    /// Where an image's link points: its asset's published name, or its
+    /// external address; `None` when only its description can be written.
+    fn image_target(&self, source: &ImageSource) -> Option<String> {
+        match source {
+            ImageSource::Asset(id) => self
+                .asset_names
+                .get(id.0)
+                .map(|name| format!(".markitai/assets/{name}")),
+            ImageSource::External(url) => Some(destination(url)),
+            ImageSource::Unavailable => None,
+        }
+    }
+
+    /// Whether an inline shows anything where it stands, as it is written: a
+    /// line break, an anchor, blank text or an image with neither a picture
+    /// nor a description does not.
+    fn shows(&self, value: &Inline) -> bool {
+        match value {
+            Inline::Anchor(_) | Inline::LineBreak => false,
+            Inline::Text { text, .. } => !text.trim().is_empty(),
+            Inline::Link { content, .. } => content.iter().any(|inline| self.shows(inline)),
+            Inline::Image { alt, source } => {
+                !alt.trim().is_empty() || self.image_target(source).is_some()
+            }
+            _ => true,
+        }
+    }
+
+    /// Writes `values` into `line`; `label` when they are a link's text.
+    fn write_inlines(&self, values: &[Inline], place: Place, label: bool, line: &mut Line) {
+        let edged = link_edges(values);
+        let values = merged_runs(&edged);
+        let breaks = break_plan(&values, place, |value| self.shows(value));
+        let plain = Literal {
+            label,
+            ..Literal::default()
+        };
         for (index, value) in values.iter().enumerate() {
             match value {
                 Inline::Text { text, style } => {
+                    let text = if place == Place::OneLine {
+                        one_line(text)
+                    } else {
+                        text.as_str().into()
+                    };
                     if text.trim().is_empty() {
-                        output.push_str(text);
+                        line.text(&text, plain);
                         continue;
                     }
                     let trimmed = text.trim();
@@ -368,10 +627,7 @@ impl Renderer<'_> {
                     let suffix = &text[text.trim_end().len()..];
                     let emphasised = !style.code && (style.bold || style.italic || style.strike);
                     let (lead, core, trail) = if emphasised {
-                        let before = prefix
-                            .chars()
-                            .next_back()
-                            .or_else(|| output.chars().next_back());
+                        let before = prefix.chars().next_back().or_else(|| line.last_char());
                         let after = suffix.chars().next().or_else(|| {
                             values[index + 1..]
                                 .iter()
@@ -382,64 +638,72 @@ impl Renderer<'_> {
                     } else {
                         ("", trimmed, "")
                     };
-                    let mut rendered = if style.code {
+                    // Nothing but punctuation left to emphasise: it stays plain.
+                    let marked = !core.is_empty();
+                    let markers = [
+                        (style.strike, "~~"),
+                        (style.italic, "*"),
+                        (style.bold, "**"),
+                    ];
+                    line.text(prefix, plain);
+                    line.text(lead, plain);
+                    for (on, marker) in markers {
+                        if on && marked {
+                            line.markup(marker);
+                        }
+                    }
+                    if style.code {
                         let max_ticks =
                             trimmed.split(|c| c != '`').map(str::len).max().unwrap_or(0);
                         let ticks = "`".repeat(max_ticks + 1);
-                        if trimmed.starts_with('`') || trimmed.ends_with('`') {
+                        line.markup(&if trimmed.starts_with('`') || trimmed.ends_with('`') {
                             format!("{ticks} {trimmed} {ticks}")
                         } else {
                             format!("{ticks}{trimmed}{ticks}")
-                        }
+                        });
                     } else {
-                        escape(core)
-                    };
-                    // Nothing but punctuation left to emphasise: it stays plain.
-                    if !core.is_empty() {
-                        if style.bold {
-                            rendered = format!("**{rendered}**");
-                        }
-                        if style.italic {
-                            rendered = format!("*{rendered}*");
-                        }
-                        if style.strike {
-                            rendered = format!("~~{rendered}~~");
+                        line.text(
+                            core,
+                            Literal {
+                                label,
+                                emphasis: marked && (style.bold || style.italic),
+                                strike: marked && style.strike,
+                            },
+                        );
+                    }
+                    for (on, marker) in markers.into_iter().rev() {
+                        if on && marked {
+                            line.markup(marker);
                         }
                     }
-                    output.push_str(prefix);
-                    output.push_str(&escape(lead));
-                    output.push_str(&rendered);
-                    output.push_str(&escape(trail));
-                    output.push_str(suffix);
+                    line.text(trail, plain);
+                    line.text(suffix, plain);
                 }
-                Inline::Link { content, target } => {
-                    let label = self.inlines(content);
-                    let target = match target {
-                        LinkTarget::Anchor(anchor) => format!("#{}", destination(anchor)),
-                        LinkTarget::External(url) | LinkTarget::Relative(url) => destination(url),
-                    };
-                    let safe = url::Url::parse(&target)
-                        .map(|url| matches!(url.scheme(), "http" | "https" | "mailto" | "tel"))
-                        .unwrap_or(true);
-                    if target.is_empty() || !safe {
-                        output.push_str(&label);
-                    } else {
-                        output.push_str(&format!("[{label}]({target})"));
+                Inline::Link { content, target } => match link_destination(target) {
+                    // A link's text is one line: split over lines, normal
+                    // output's link repair would keep only its first.
+                    Some(target) => {
+                        line.markup("[");
+                        self.write_inlines(content, Place::OneLine, true, line);
+                        line.markup(&format!("]({target})"));
                     }
-                }
+                    // `link_edges` has put such a link's text in its place.
+                    None => self.write_inlines(content, place, label, line),
+                },
                 Inline::Image { alt, source } => {
-                    let target = match source {
-                        ImageSource::Asset(id) => self
-                            .asset_names
-                            .get(id.0)
-                            .map(|name| format!(".markitai/assets/{name}")),
-                        ImageSource::External(url) => Some(destination(url)),
-                        ImageSource::Unavailable => None,
-                    };
-                    if let Some(target) = target {
-                        output.push_str(&format!("![{}]({target})", escape(alt)));
+                    let alt = one_line(alt);
+                    if let Some(target) = self.image_target(source) {
+                        line.markup("![");
+                        line.text(
+                            &alt,
+                            Literal {
+                                label: true,
+                                ..Literal::default()
+                            },
+                        );
+                        line.markup(&format!("]({target})"));
                     } else {
-                        output.push_str(&escape(alt));
+                        line.text(&alt, plain);
                     }
                 }
                 Inline::Anchor(anchor) => {
@@ -450,17 +714,18 @@ impl Renderer<'_> {
                         .replace('&', "&amp;")
                         .replace('"', "&quot;")
                         .replace('<', "&lt;");
-                    output.push_str(&format!("<a id=\"{anchor}\"></a>"));
+                    line.markup(&format!("<a id=\"{anchor}\"></a>"));
                 }
-                Inline::NoteRef(id) => output.push_str(&format!("[^{}]", destination(id))),
-                Inline::LineBreak => output.push_str("  \n"),
-                Inline::Math(text) => output.push_str(&format!("${text}$")),
-                Inline::Checkbox(checked) => {
-                    output.push_str(if *checked { "[x] " } else { "[ ] " })
+                Inline::NoteRef(id) => line.markup(&format!("[^{}]", destination(id))),
+                Inline::LineBreak => {
+                    if let Some(written) = breaks[index] {
+                        line.line_break(written);
+                    }
                 }
+                Inline::Math(text) => line.markup(&format!("${text}$")),
+                Inline::Checkbox(checked) => line.markup(if *checked { "[x] " } else { "[ ] " }),
             }
         }
-        output
     }
 
     /// The anchors a heading carries that some link targets, as inlines to
@@ -532,6 +797,13 @@ impl Renderer<'_> {
     /// nested in the cell cannot be written as a Markdown table: each of its
     /// rows becomes a line of its cells' text.
     fn cell_text(&mut self, blocks: &[Block]) -> String {
+        let outer = std::mem::replace(&mut self.in_cell, true);
+        let text = self.cell_blocks(blocks);
+        self.in_cell = outer;
+        text
+    }
+
+    fn cell_blocks(&mut self, blocks: &[Block]) -> String {
         let mut parts = Vec::new();
         for block in blocks {
             let text = match block {
@@ -548,7 +820,9 @@ impl Renderer<'_> {
                         inlines.push(Inline::Anchor(anchor.clone()));
                     }
                     inlines.extend(heading_as_emphasis(content));
-                    self.inlines(&inlines).trim_end().to_owned()
+                    self.inlines_in(&inlines, Place::OneLine)
+                        .trim_end()
+                        .to_owned()
                 }
                 Block::Table(table) => table
                     .grid
@@ -606,19 +880,28 @@ impl Renderer<'_> {
                     // before the heading: inside it, `## <a id="x"></a>Title`
                     // puts markup into the words a reader or a search sees.
                     let (targets, content) = self.lifted_anchors(anchor.as_deref(), content);
+                    // A heading is one line: a line break in the source (a
+                    // Word heading with a soft return) is a space, since the
+                    // words after the break would leave it as a paragraph.
                     last_heading = self
-                        .inlines(&heading_on_one_line(&content))
+                        .inlines_in(&content, Place::OneLine)
                         .trim_end()
                         .to_owned();
                     let heading = format!(
-                        "{} {last_heading}",
-                        "#".repeat(usize::from((*level).clamp(1, 6)))
+                        "{} {}",
+                        "#".repeat(usize::from((*level).clamp(1, 6))),
+                        literal_closing_hashes(&last_heading)
                     );
                     if targets.is_empty() {
                         heading
                     } else {
                         format!("{}\n{heading}", self.inlines(&targets))
                     }
+                }
+                // A cell holds inline content only: a line that starts like
+                // a block is text there.
+                Block::Paragraph(values) if self.in_cell => {
+                    self.inlines(values).trim_end().to_owned()
                 }
                 Block::Paragraph(values) => literal_heading_marks(&self.inlines(values))
                     .trim_end()
@@ -635,7 +918,7 @@ impl Renderer<'_> {
                     .collect::<Vec<_>>()
                     .join("\n"),
                 Block::List(list) => {
-                    let mut items: Vec<(String, bool)> = Vec::new();
+                    let mut items: Vec<ListLine> = Vec::new();
                     for (index, item) in list.items.iter().enumerate() {
                         let bullet = if matches!(self.extension, "doc" | "odt") {
                             "-"
@@ -681,16 +964,27 @@ impl Renderer<'_> {
                         for line in lines {
                             item_text.push_str(&format!("\n{indent}{line}"));
                         }
-                        items.push((item_text.trim_end().to_owned(), markdown_marker));
+                        items.push(ListLine {
+                            text: item_text.trim_end().to_owned(),
+                            markdown_marker,
+                            // A bullet, or a number one, may start a list
+                            // right under a paragraph's line.
+                            interrupts: markdown_marker
+                                && (digits == 0 || marker[..digits].parse() == Ok(1u64)),
+                            ends_in_paragraph: matches!(
+                                item.blocks.iter().rev().find(|block| has_content(block)),
+                                Some(Block::Paragraph(_))
+                            ),
+                        });
                     }
-                    // A line that starts with such a label continues the line
-                    // before it in Markdown; the hard break keeps it a line.
                     let mut joined = String::new();
-                    for (text, markdown_marker) in items {
-                        if !joined.is_empty() {
-                            joined.push_str(if markdown_marker { "\n" } else { "  \n" });
+                    let mut previous: Option<&ListLine> = None;
+                    for item in &items {
+                        if let Some(previous) = previous {
+                            joined.push_str(list_separator(previous, item, self.in_cell));
                         }
-                        joined.push_str(&text);
+                        joined.push_str(&item.text);
+                        previous = Some(item);
                     }
                     joined
                 }
@@ -818,9 +1112,37 @@ impl Renderer<'_> {
     }
 }
 
+/// A list item as written, with what decides how it joins the item before.
+struct ListLine {
+    text: String,
+    /// Its marker is one Markdown reads (`*`, `1.`); a label such as `a)`,
+    /// `(1)` or `一、` is only text at the head of a line.
+    markdown_marker: bool,
+    /// Its marker may start a list right under a paragraph's line.
+    interrupts: bool,
+    /// Its last block is a paragraph, which a hard break can continue.
+    ends_in_paragraph: bool,
+}
+
+/// What stands between two list items. Markdown items follow each other on
+/// the next line. A line that starts with a label Markdown does not read (or
+/// a number other than one, under a paragraph) would continue the line
+/// before it: a hard break keeps it a line of its own after a paragraph, and
+/// a blank line after anything else (a fence or a table row cannot end with
+/// a backslash). In a table cell every item is a line of the cell.
+fn list_separator(previous: &ListLine, next: &ListLine, in_cell: bool) -> &'static str {
+    if in_cell || (next.markdown_marker && (previous.markdown_marker || next.interrupts)) {
+        "\n"
+    } else if !next.markdown_marker && previous.ends_in_paragraph {
+        "\\\n"
+    } else {
+        "\n\n"
+    }
+}
+
 /// A cell's Markdown as one table cell, in one pass: inline Markdown is kept,
-/// `|` is escaped, and each line break is `<br>`, without the two spaces a
-/// hard break writes before it in a paragraph.
+/// `|` is escaped, and each line (a line break, a paragraph, a list item; see
+/// [`Place::Cell`]) is joined with `<br>`.
 fn table_cell(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 8);
     let mut lines = text.split('\n').peekable();
@@ -900,6 +1222,7 @@ fn object_markdown(blocks: &[Block]) -> String {
     Renderer {
         asset_names: &[],
         merged_cells: false,
+        in_cell: false,
         anchors: BTreeSet::new(),
         extension: "pptx",
     }
@@ -962,6 +1285,7 @@ pub(super) fn extract(bytes: &[u8], extension: &str) -> Result<Document> {
     let mut renderer = Renderer {
         asset_names: &names,
         merged_cells: false,
+        in_cell: false,
         anchors,
         extension,
     };
@@ -1034,6 +1358,10 @@ mod docx_tests;
 mod odt_rtf_tests;
 
 #[cfg(test)]
+#[path = "native/line_tests.rs"]
+mod line_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1080,6 +1408,7 @@ mod tests {
         let mut renderer = Renderer {
             asset_names: &[],
             merged_cells: false,
+            in_cell: false,
             anchors: BTreeSet::new(),
             extension: "docx",
         };
@@ -1124,6 +1453,7 @@ mod tests {
         let mut renderer = Renderer {
             asset_names: &names,
             merged_cells: false,
+            in_cell: false,
             anchors: BTreeSet::new(),
             extension: "docx",
         };
@@ -1187,6 +1517,7 @@ mod tests {
         let mut renderer = Renderer {
             asset_names: &[],
             merged_cells: false,
+            in_cell: false,
             anchors,
             extension: "doc",
         };
@@ -1217,6 +1548,7 @@ mod tests {
         let mut renderer = Renderer {
             asset_names: &[],
             merged_cells: false,
+            in_cell: false,
             anchors,
             extension: "docx",
         };
@@ -1260,6 +1592,7 @@ mod tests {
         let mut renderer = Renderer {
             asset_names: &[],
             merged_cells: false,
+            in_cell: false,
             anchors: BTreeSet::new(),
             extension: "docx",
         };
@@ -1334,6 +1667,7 @@ mod tests {
         let mut renderer = Renderer {
             asset_names: &[],
             merged_cells: false,
+            in_cell: false,
             anchors: BTreeSet::new(),
             extension: "rtf",
         };
@@ -1348,7 +1682,7 @@ mod tests {
             )]),
             // A label Markdown does not read (`1-a)`) is text at the head of a
             // line, which the hard break keeps from joining the line before.
-            "1. First\n2. Second  \n1-a) Composite"
+            "1. First\n2. Second\\\n1-a) Composite"
         );
         assert_eq!(
             renderer.blocks(&[list(MarkerKind::Bullet, vec![item("•", "Point")])]),
@@ -1371,6 +1705,7 @@ mod tests {
         let renderer = Renderer {
             asset_names: &[],
             merged_cells: false,
+            in_cell: false,
             anchors: BTreeSet::new(),
             extension: "rtf",
         };
@@ -1412,6 +1747,7 @@ mod tests {
         let mut renderer = Renderer {
             asset_names: &[],
             merged_cells: false,
+            in_cell: false,
             anchors: BTreeSet::new(),
             extension: "odt",
         };
@@ -1496,6 +1832,7 @@ mod tests {
         let mut renderer = Renderer {
             asset_names: &[],
             merged_cells: false,
+            in_cell: false,
             anchors: BTreeSet::new(),
             extension: "ods",
         };
@@ -1545,6 +1882,7 @@ mod tests {
         let mut renderer = Renderer {
             asset_names: &[],
             merged_cells: false,
+            in_cell: false,
             anchors: BTreeSet::new(),
             extension: "xlsx",
         };
@@ -1620,6 +1958,7 @@ mod tests {
         let mut renderer = Renderer {
             asset_names: &[],
             merged_cells: false,
+            in_cell: false,
             anchors: BTreeSet::new(),
             extension: "ods",
         };
