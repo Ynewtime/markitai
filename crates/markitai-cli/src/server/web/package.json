@@ -1,0 +1,23 @@
+{
+  "name": "markitai-serve-workbench",
+  "version": "1.3.0-dev",
+  "private": true,
+  "description": "Browser workbench embedded in `markitai serve`; built into dist/ and committed.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "node build.mjs --check",
+    "test": "node --test \"src/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "css": "node scripts/check-css-scale.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "preact": "10.29.8",
+    "typescript": "6.0.3"
+  }
+}

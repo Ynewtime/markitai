@@ -35,6 +35,8 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 url = "2"
 zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# The same backend as zip: no new code. Decompresses the gzip-embedded web assets.
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

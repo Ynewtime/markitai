@@ -16,10 +16,14 @@ metadata license identifier alone is not the complete notice bundle.
 Reference test fixtures remain in the reference checkout; audit reports record
 fixture hashes and never redistribute them as newly authored fixtures.
 
-The embedded browser workspace includes Marked 18.0.14 (MIT) and DOMPurify
-3.4.16 (Apache-2.0). Their complete notices are in vendor/web/marked-LICENSE
-and vendor/web/DOMPurify-LICENSE. Download provenance, upstream package
-integrity and embedded-file hashes are recorded in vendor/web/provenance.json.
+The embedded browser workspace includes Marked 18.0.14 (MIT), DOMPurify
+3.4.16 (Apache-2.0), Preact 10.29.8 (MIT), icon path data from Phosphor Icons
+2.1.10 (MIT) and the Inter 5.3.0 variable font (SIL Open Font License 1.1).
+Their complete notices are in vendor/web/marked-LICENSE,
+vendor/web/DOMPurify-LICENSE, vendor/web/preact-LICENSE,
+vendor/web/phosphor-LICENSE and vendor/web/Inter-OFL.txt. Download provenance,
+upstream package integrity and embedded-file hashes are recorded in
+vendor/web/provenance.json.
 
 The Numbers reader uses iwork 0.2.1 (MIT), pinned in Cargo.lock. Its independently
 sourced regression documents are from numbers-parser (MIT), with the original

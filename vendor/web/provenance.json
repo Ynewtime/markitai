@@ -38,5 +38,192 @@
     "member": "package/LICENSE",
     "bytes": 11358,
     "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+  },
+  {
+    "file": "inter-latin-wght-normal.woff2",
+    "package": "@fontsource-variable/inter",
+    "version": "5.3.0",
+    "source": "https://registry.npmjs.org/@fontsource-variable/inter/-/inter-5.3.0.tgz",
+    "package_integrity": "sha512-OupL48va4JNofb97w6NYeF9S7W/kHNKM0Er8Dem5nqi4jeOLrVJDoE8tZEpnMJmtkvNbB1EIPPwHcdkF6b1oUA==",
+    "member": "package/files/inter-latin-wght-normal.woff2",
+    "bytes": 48256,
+    "sha256": "3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62",
+    "obtained": "copied from the reference webapp installation (~/work/markitai/webapp/node_modules), integrity as recorded in its bun.lock"
+  },
+  {
+    "file": "Inter-OFL.txt",
+    "package": "@fontsource-variable/inter",
+    "version": "5.3.0",
+    "source": "https://registry.npmjs.org/@fontsource-variable/inter/-/inter-5.3.0.tgz",
+    "package_integrity": "sha512-OupL48va4JNofb97w6NYeF9S7W/kHNKM0Er8Dem5nqi4jeOLrVJDoE8tZEpnMJmtkvNbB1EIPPwHcdkF6b1oUA==",
+    "member": "package/LICENSE",
+    "bytes": 4477,
+    "sha256": "3b0a5fca3d17942cde889069889dedbbbd075e9b599968c82a95f4d944e9b345",
+    "obtained": "copied from the reference webapp installation (~/work/markitai/webapp/node_modules), integrity as recorded in its bun.lock"
+  },
+  {
+    "file": "phosphor-LICENSE",
+    "package": "@phosphor-icons/react",
+    "version": "2.1.10",
+    "source": "https://registry.npmjs.org/@phosphor-icons/react/-/react-2.1.10.tgz",
+    "package_integrity": "sha512-vt8Tvq8GLjheAZZYa+YG/pW7HDbov8El/MANW8pOAz4eGxrwhnbfrQZq0Cp4q8zBEu8NIhHdnr+r8thnfRSNYA==",
+    "member": "package/LICENSE",
+    "bytes": 1071,
+    "sha256": "6918b72504641180600cbbd4a86b0dfa9dfccf788775694325b71b9a029f6eb4",
+    "obtained": "copied from the reference webapp installation (~/work/markitai/webapp/node_modules), integrity as recorded in its bun.lock"
+  },
+  {
+    "file": "preact-LICENSE",
+    "package": "preact",
+    "version": "10.29.8",
+    "source": "https://registry.npmjs.org/preact/-/preact-10.29.8.tgz",
+    "package_integrity": "sha512-ej2aVZ+vZ8WO7tvlQWRM9N63A0KzF9q4mWJfDUHgYaIofWY9hu74QdnQrjoPMmZi2/nZ5gN0bJCQF49xQqx09Q==",
+    "member": "package/LICENSE",
+    "bytes": 1087,
+    "sha256": "1fe6958409c8c257a70c587a18b6f7f412b179b456630790d30b2ec9a8e4b7d4",
+    "obtained": "npm ci from the official registry (crates/markitai-cli/src/server/web/package-lock.json); bundled into dist/app.js"
+  },
+  {
+    "file": "../../crates/markitai-cli/src/server/web/src/components/icon-paths.ts",
+    "package": "@phosphor-icons/react",
+    "version": "2.1.10",
+    "source": "https://registry.npmjs.org/@phosphor-icons/react/-/react-2.1.10.tgz",
+    "package_integrity": "sha512-vt8Tvq8GLjheAZZYa+YG/pW7HDbov8El/MANW8pOAz4eGxrwhnbfrQZq0Cp4q8zBEu8NIhHdnr+r8thnfRSNYA==",
+    "member": "package/dist/defs/*.es.js (path data of the listed icons)",
+    "bytes": 11931,
+    "sha256": "e00ad5c83af13b0cbbe964c99f60fb94ce66fd487fc4858c4272dd35b08690b4",
+    "obtained": "generated: the SVG path strings of 26 icons were extracted from the members below; bundled into dist/app.js",
+    "derived_from": [
+      {
+        "member": "package/dist/defs/FileText.es.js",
+        "bytes": 2861,
+        "sha256": "e371c9600e385cca2aeccaa08b3d9fe5b1a7f9ce8471d4da60ccca37a45af96d"
+      },
+      {
+        "member": "package/dist/defs/Globe.es.js",
+        "bytes": 5398,
+        "sha256": "7144d289e52803b8aee7b49c394def76fd80d08b1f3d557ccd6d578aa7a928da"
+      },
+      {
+        "member": "package/dist/defs/UploadSimple.es.js",
+        "bytes": 2326,
+        "sha256": "fedd2ce11ad12474a50050d8b9cf54bb4cc7e5103c0e9d331f4e8f28f9497b44"
+      },
+      {
+        "member": "package/dist/defs/DownloadSimple.es.js",
+        "bytes": 2293,
+        "sha256": "ea975f3d89053f9eff98a6e975060626b42229f59b0ad1f543c6b8f57792a895"
+      },
+      {
+        "member": "package/dist/defs/Desktop.es.js",
+        "bytes": 2497,
+        "sha256": "c76088753977aa4ba138e3cae930ebed39a015cb3bd39ae366627363e3d66cef"
+      },
+      {
+        "member": "package/dist/defs/Sun.es.js",
+        "bytes": 4380,
+        "sha256": "ec236f43cc4b16df0e7b3bb19a7e6b22e8c97f3605578879aa813f261a04f8e1"
+      },
+      {
+        "member": "package/dist/defs/Moon.es.js",
+        "bytes": 2969,
+        "sha256": "92640df13e177d8b4513fb980a051867bab919d8bd8b8647e74829c5a5801acb"
+      },
+      {
+        "member": "package/dist/defs/Palette.es.js",
+        "bytes": 4573,
+        "sha256": "bc097d1f0545899de804e3e4001463c5f36bc50358165945151533b7f4f7a02a"
+      },
+      {
+        "member": "package/dist/defs/ClockCounterClockwise.es.js",
+        "bytes": 2856,
+        "sha256": "9a34caffb9a7ae44e286f42bb8178ca25064fd0a8b6a79a194e79e473aae1eab"
+      },
+      {
+        "member": "package/dist/defs/X.es.js",
+        "bytes": 2221,
+        "sha256": "4cb8b69830ae8d98860064d57ee28def14bab4e291b95a8df0c0745fc0932009"
+      },
+      {
+        "member": "package/dist/defs/TerminalWindow.es.js",
+        "bytes": 2752,
+        "sha256": "3e422e7259e53f72f92b5b49fbf05836ef28f8d2da5cf0339c6e012357c4e583"
+      },
+      {
+        "member": "package/dist/defs/Sliders.es.js",
+        "bytes": 3685,
+        "sha256": "7429ffa0210adf25987ab88a7b7f6dfad07e334e97ba6ec91c01e39a8b49a8ab"
+      },
+      {
+        "member": "package/dist/defs/ArrowCounterClockwise.es.js",
+        "bytes": 2328,
+        "sha256": "2c9bafbf5e351e74cb4610bb5a02755593dc93b7e5e0bfc934f3231e7cdf7ca1"
+      },
+      {
+        "member": "package/dist/defs/MagicWand.es.js",
+        "bytes": 4306,
+        "sha256": "0070063e0cbc750e59d454d216a96149c4b29f5807d2564f6141e20c19190b08"
+      },
+      {
+        "member": "package/dist/defs/ArrowRight.es.js",
+        "bytes": 1776,
+        "sha256": "3c1b54e96b358833f7e5ada9f0562829707ada03eed14ac8ba3e8d551a292321"
+      },
+      {
+        "member": "package/dist/defs/Info.es.js",
+        "bytes": 2453,
+        "sha256": "5c40b462c889d4870cea63a11839236e3a91f391b17fc30166295268d48f7592"
+      },
+      {
+        "member": "package/dist/defs/CaretRight.es.js",
+        "bytes": 1624,
+        "sha256": "e58bcc72e78dbc3437111e09ba874c43fe0d4ed042db9483ea6adc018ddda044"
+      },
+      {
+        "member": "package/dist/defs/Gear.es.js",
+        "bytes": 11951,
+        "sha256": "52eb307ce08f39b2aa25abc83805ccdf5dffb27aa36a1ba60f74e1e370a47ab2"
+      },
+      {
+        "member": "package/dist/defs/Trash.es.js",
+        "bytes": 2792,
+        "sha256": "d2e05b9eac142bec8c870a46a8a38515298126aaf2733841d7a2375f45fd2169"
+      },
+      {
+        "member": "package/dist/defs/Warning.es.js",
+        "bytes": 3618,
+        "sha256": "3fff607b39ebb004bd7c2752ea13053f13ceeb8a01b29c1908622aa43ab766c3"
+      },
+      {
+        "member": "package/dist/defs/Check.es.js",
+        "bytes": 1825,
+        "sha256": "accb02e028769f92c6922547f7a76f25a752d74f6b7e2963c904d8eb396a3d7e"
+      },
+      {
+        "member": "package/dist/defs/FilePdf.es.js",
+        "bytes": 4396,
+        "sha256": "81a2702eccc85911c1906efa22a84e7ff206bad640e6dd46eddc984481f2c3ed"
+      },
+      {
+        "member": "package/dist/defs/Eye.es.js",
+        "bytes": 4484,
+        "sha256": "5594c12a58e687dfe8916a688c41c76e072f7a514b5d78fe0dc04eb2cff75ec0"
+      },
+      {
+        "member": "package/dist/defs/EyeSlash.es.js",
+        "bytes": 5809,
+        "sha256": "0963a2d13e00cf27da19dcc32531de8558b936202fa213f1e14cbeb4e1513bd1"
+      },
+      {
+        "member": "package/dist/defs/ArrowSquareOut.es.js",
+        "bytes": 2621,
+        "sha256": "04c20ed2b0f0f872d87e6e5740b08b3727ce9a22b8bf4e9602f2d25b07561840"
+      },
+      {
+        "member": "package/dist/defs/FolderSimple.es.js",
+        "bytes": 2422,
+        "sha256": "f389bdc600dee19a042cc48da3c44fc93effdfe787d7f0f04bfa85a9d6bf4c58"
+      }
+    ]
   }
 ]

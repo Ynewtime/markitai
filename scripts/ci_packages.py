@@ -153,7 +153,14 @@ def cli_attribution(root, licenses):
     """The CLI archives' attribution: the package attribution and the
     licenses of the web libraries the CLI embeds."""
     cli_licenses = dict(licenses)
-    for name in ["marked-LICENSE", "DOMPurify-LICENSE", "provenance.json"]:
+    for name in [
+        "marked-LICENSE",
+        "DOMPurify-LICENSE",
+        "preact-LICENSE",
+        "phosphor-LICENSE",
+        "Inter-OFL.txt",
+        "provenance.json",
+    ]:
         relative = "vendor/web/" + name
         cli_licenses[relative] = (root / relative).read_bytes()
     return cli_licenses

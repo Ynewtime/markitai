@@ -2,10 +2,10 @@
 
 `markitai serve --host 127.0.0.1 --port 3600 --no-open` runs an HTTP API inside
 the Rust binary. Conversion calls the same Rust core as the native bindings.
-The root URL serves an embedded browser workspace for conversion, preview,
+The root URL serves an embedded browser workbench for conversion, preview,
 history and model settings; no Node runtime or CDN is required. Without
-`--no-open`, the service asks the system URL handler to open that workspace.
-See [browser workspace](web-ui.md), [settings](service-settings.md) and
+`--no-open`, the service asks the system URL handler to open it.
+See [browser workbench](web-ui.md), [settings](service-settings.md) and
 [provider discovery and probes](provider-management.md) for their contracts.
 
 The configuration destination is fixed at startup: explicit `--config`, then
@@ -67,7 +67,7 @@ request (they only act while the LLM is on). Model processing enabled only by
 the server configuration is not a request either: it keeps following the core's
 configured failure policy, item by item.
 `GET /api/capabilities` reports `llm.routable`, which the
-[browser workspace](web-ui.md#selecting-input-and-following-a-job) uses to switch
+[browser workbench](web-ui.md#layout-and-interaction) uses to switch
 those choices off. Remote consent cannot request interactive terminal input.
 When LLM is enabled, base output is retained.
 
@@ -91,7 +91,7 @@ machine code for the specific cause, for example `job_not_found`,
 `host_not_allowed`, `provider_busy`, `stale_revision`, `config_changed` or
 `settings_read_only`. Clients that read only `detail` and `code` are unaffected.
 Clients should present text by `reason`, then `code`, and keep `detail` for
-diagnosis; the [browser workspace](web-ui.md#language-and-appearance) does so in
+diagnosis; the [browser workbench](web-ui.md#language-appearance-and-stored-values) does so in
 English and Chinese.
 
 `detail` for malformed input is always the service's own sentence. A body that is
@@ -299,7 +299,7 @@ carries `Cache-Control: no-store`. Static UI bootstrap remains accessible under
 the Host policy so a remote user can enter a service token. Browser launch places
 the token in the URL fragment; the UI removes it immediately and sends API
 requests with Bearer authentication. Credentials are retrieved only through the
-explicit connection-edit route and are never stored by the browser workspace.
+explicit connection-edit route and are never stored by the browser workbench.
 
 Host validation accepts localhost, IP literals, and explicit `--allowed-host`
 entries. State-changing requests with an Origin must satisfy the origin policy.
@@ -342,9 +342,15 @@ shared job ZIP, so concurrent downloads do not invalidate each other. Internal
 image-description metadata paths from its staging directory to the final job output
 and merges sibling entries while holding the same stable lock as the core writer.
 
-The root URL serves the embedded [browser workspace](web-ui.md). Without
-`--no-open` the service asks the system to open it, passing the startup token in
-the URL fragment; with `--no-open` it does not open anything.
+The root URL serves the embedded [browser workbench](web-ui.md), and `/jobs`
+serves the same page for its workspace view, so a reload or Back stays there.
+Other paths keep JSON 404 errors; the workbench's own files live under fixed
+`/ui/` routes. The bundle and the vendored Markdown libraries are embedded gzip
+compressed and sent that way to clients that accept gzip (decompressed once for
+others); every workbench response revalidates against a content ETag
+(`Cache-Control: no-cache`, 304 on a match). Without `--no-open` the service asks
+the system to open the workbench, passing the startup token in the URL fragment;
+with `--no-open` it does not open anything.
 
 At startup the service prints, on stderr: `Markitai server listening on http://ADDRESS`
 and, unless `--no-auth`, `Remote access token: …` (these two lines are scripted
@@ -361,7 +367,7 @@ is reachable from the network and that the token is the credential; with
 read, download or delete the whole history, and what to do instead. A port that is
 already taken stops the service with a message naming the address and suggesting
 `--port` (`--port 0` picks a free one) instead of the bare operating-system error.
-The workspace reports an unreachable service as offline, checks again
+The workbench reports an unreachable service, checks again
 every five seconds and says when it is connected again. It shows the percentage
 and bytes of an upload while it is sent, can abort it, and offers Stop remaining
 (the cancel route above) while original items wait for a slot.

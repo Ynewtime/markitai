@@ -88,6 +88,15 @@ impl Server {
         path: &str,
         host: Option<&str>,
     ) -> (u16, HashMap<String, String>, Vec<u8>) {
+        self.send(method, path, host, &[])
+    }
+    fn send(
+        &self,
+        method: &str,
+        path: &str,
+        host: Option<&str>,
+        extra: &[(&str, &str)],
+    ) -> (u16, HashMap<String, String>, Vec<u8>) {
         let mut socket = TcpStream::connect(("127.0.0.1", self.port)).unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(10)))
@@ -95,7 +104,17 @@ impl Server {
         socket
             .set_write_timeout(Some(Duration::from_secs(10)))
             .unwrap();
-        write!(socket,"{method} {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",host.map(str::to_owned).unwrap_or_else(||format!("127.0.0.1:{}",self.port))).unwrap();
+        let host = host
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("127.0.0.1:{}", self.port));
+        let mut head = format!(
+            "{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nContent-Length: 0\r\n"
+        );
+        for (name, value) in extra {
+            head.push_str(&format!("{name}: {value}\r\n"));
+        }
+        head.push_str("\r\n");
+        socket.write_all(head.as_bytes()).unwrap();
         let mut bytes = Vec::new();
         socket.read_to_end(&mut bytes).unwrap();
         let split = bytes
@@ -131,90 +150,119 @@ impl Drop for Server {
     }
 }
 
+const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' blob:; font-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+
+fn security_headers(headers: &HashMap<String, String>, path: &str) {
+    assert_eq!(headers["cache-control"], "no-cache", "{path}");
+    assert_eq!(headers["x-content-type-options"], "nosniff", "{path}");
+    assert_eq!(headers["referrer-policy"], "no-referrer", "{path}");
+    assert_eq!(headers["content-security-policy"], CSP, "{path}");
+    assert!(headers["etag"].starts_with("W/\""), "{path}");
+}
+
 #[test]
-fn embedded_interface_and_fixed_offline_assets_are_actual_http_resources() {
+fn the_workbench_shell_is_served_at_home_and_workspace_addresses() {
     let directory = tempfile::tempdir().unwrap();
     let server = Server::start(directory.path());
-    let (status, headers, html) = server.request("GET", "/", None);
-    assert_eq!(status, 200);
-    assert_eq!(headers["content-type"], "text/html; charset=utf-8");
-    assert_eq!(headers["cache-control"], "no-cache");
-    assert_eq!(headers["referrer-policy"], "no-referrer");
-    assert_eq!(headers["x-content-type-options"], "nosniff");
-    let policy = &headers["content-security-policy"];
-    for expected in [
-        "script-src 'self'",
-        "connect-src 'self'",
-        "frame-src 'none'",
-        "object-src 'none'",
-        "frame-ancestors 'none'",
-    ] {
-        assert!(policy.contains(expected), "{policy}");
+    let index = include_bytes!("../src/server/web/dist/index.html").as_slice();
+    for path in ["/", "/jobs"] {
+        let (status, headers, html) = server.request("GET", path, None);
+        assert_eq!(status, 200, "{path}");
+        assert_eq!(headers["content-type"], "text/html; charset=utf-8");
+        security_headers(&headers, path);
+        assert_eq!(html, index, "{path}");
     }
-    assert!(!policy.contains("unsafe-inline") && !policy.contains("unsafe-eval"));
-    assert_eq!(html, include_bytes!("../src/server/web/index.html"));
-    for (path, expected) in [
+    let page = String::from_utf8_lossy(index);
+    assert!(page.contains(r#"<script type="module" src="/ui/app.js"></script>"#));
+    assert!(page.contains(r#"<script src="/ui/boot.js"></script>"#));
+    assert!(!page.contains("style="));
+}
+
+#[test]
+fn built_assets_are_sent_compressed_or_plain_and_revalidate() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = Server::start(directory.path());
+    let js = "text/javascript; charset=utf-8";
+    let compressed: [(&str, &[u8], &[u8], &str); 4] = [
         (
             "/ui/app.js",
-            include_bytes!("../src/server/web/app.js").as_slice(),
+            include_bytes!("../src/server/web/dist/app.js.gz"),
+            include_bytes!("../src/server/web/dist/app.js"),
+            js,
         ),
         (
-            "/ui/api.js",
-            include_bytes!("../src/server/web/api.js").as_slice(),
-        ),
-        (
-            "/ui/settings.js",
-            include_bytes!("../src/server/web/settings.js").as_slice(),
-        ),
-        (
-            "/ui/workspace.js",
-            include_bytes!("../src/server/web/workspace.js").as_slice(),
-        ),
-        (
-            "/ui/result-tools.js",
-            include_bytes!("../src/server/web/result-tools.js").as_slice(),
-        ),
-        (
-            "/ui/preview.js",
-            include_bytes!("../src/server/web/preview.js").as_slice(),
-        ),
-        (
-            "/ui/i18n.js",
-            include_bytes!("../src/server/web/i18n.js").as_slice(),
-        ),
-        (
-            "/ui/boot.js",
-            include_bytes!("../src/server/web/boot.js").as_slice(),
+            "/ui/app.css",
+            include_bytes!("../src/server/web/dist/app.css.gz"),
+            include_bytes!("../src/server/web/dist/app.css"),
+            "text/css; charset=utf-8",
         ),
         (
             "/ui/marked.js",
-            include_bytes!("../../../vendor/web/marked.js").as_slice(),
+            include_bytes!("../src/server/web/dist/marked.js.gz"),
+            include_bytes!("../../../vendor/web/marked.js"),
+            js,
         ),
         (
             "/ui/purify.js",
-            include_bytes!("../../../vendor/web/purify.js").as_slice(),
+            include_bytes!("../src/server/web/dist/purify.js.gz"),
+            include_bytes!("../../../vendor/web/purify.js"),
+            js,
         ),
-    ] {
+    ];
+    for (path, gz, plain, content_type) in compressed {
+        let (status, headers, body) =
+            server.send("GET", path, None, &[("Accept-Encoding", "br, gzip")]);
+        assert_eq!(status, 200, "{path}");
+        assert_eq!(headers["content-encoding"], "gzip", "{path}");
+        assert_eq!(headers["vary"], "accept-encoding", "{path}");
+        assert_eq!(headers["content-type"], content_type, "{path}");
+        security_headers(&headers, path);
+        assert_eq!(body, gz, "{path}");
+        let etag = headers["etag"].clone();
         let (status, headers, body) = server.request("GET", path, None);
         assert_eq!(status, 200, "{path}");
-        assert_eq!(body, expected, "{path}");
-        assert_eq!(headers["content-type"], "text/javascript; charset=utf-8");
-        assert_eq!(headers["cache-control"], "no-cache");
-        let (status, head_headers, body) = server.request("HEAD", path, None);
-        assert_eq!(status, 200);
-        assert!(body.is_empty());
-        assert_eq!(head_headers["content-type"], headers["content-type"]);
+        assert!(!headers.contains_key("content-encoding"), "{path}");
+        assert_eq!(headers["etag"], etag, "{path}");
+        assert_eq!(body, plain, "{path}");
+        let (status, _, body) = server.send("GET", path, None, &[("Accept-Encoding", "gzip;q=0")]);
+        assert_eq!((status, body.as_slice()), (200, plain), "{path}");
+        let (status, headers, body) = server.send("GET", path, None, &[("If-None-Match", &etag)]);
+        assert_eq!(status, 304, "{path}");
+        assert!(body.is_empty(), "{path}");
+        assert_eq!(headers["etag"], etag, "{path}");
+        let (status, headers, body) = server.request("HEAD", path, None);
+        assert_eq!(status, 200, "{path}");
+        assert!(body.is_empty(), "{path}");
+        assert_eq!(headers["content-type"], content_type, "{path}");
     }
-    let (status, headers, body) = server.request("GET", "/ui/style.css", None);
-    assert_eq!(status, 200);
-    assert_eq!(headers["content-type"], "text/css; charset=utf-8");
-    assert_eq!(body, include_bytes!("../src/server/web/style.css"));
-    let (status, headers, body) = server.request("GET", "/ui/icon.svg", None);
-    assert_eq!(status, 200);
-    assert_eq!(headers["content-type"], "image/svg+xml");
-    assert_eq!(headers["x-content-type-options"], "nosniff");
-    assert!(headers["content-security-policy"].contains("default-src 'none'"));
-    assert_eq!(body, include_bytes!("../src/server/web/icon.svg"));
+    let plain: [(&str, &[u8], &str); 3] = [
+        (
+            "/ui/boot.js",
+            include_bytes!("../src/server/web/dist/boot.js"),
+            js,
+        ),
+        (
+            "/ui/logo.svg",
+            include_bytes!("../src/server/web/dist/logo.svg"),
+            "image/svg+xml",
+        ),
+        (
+            "/ui/inter-latin-wght.woff2",
+            include_bytes!("../../../vendor/web/inter-latin-wght-normal.woff2"),
+            "font/woff2",
+        ),
+    ];
+    for (path, expected, content_type) in plain {
+        let (status, headers, body) =
+            server.send("GET", path, None, &[("Accept-Encoding", "gzip")]);
+        assert_eq!(status, 200, "{path}");
+        assert!(!headers.contains_key("content-encoding"), "{path}");
+        assert_eq!(headers["content-type"], content_type, "{path}");
+        security_headers(&headers, path);
+        assert_eq!(body, expected, "{path}");
+        let (status, _, _) = server.send("GET", path, None, &[("If-None-Match", "\"stale\", *")]);
+        assert_eq!(status, 304, "{path}");
+    }
 }
 
 #[test]
@@ -228,6 +276,10 @@ fn ui_does_not_turn_unknown_api_or_working_directory_files_into_spa_routes() {
         "/ui/../../private.txt",
         "/private.txt",
         "/ui/index.html",
+        "/ui/app.js.gz",
+        "/ui/style.css",
+        "/jobs/123",
+        "/favicon.ico",
     ] {
         let (status, headers, body) = server.request("GET", path, None);
         assert_eq!(status, 404, "{path}");
