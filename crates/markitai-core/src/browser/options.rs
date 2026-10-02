@@ -16,6 +16,15 @@ pub(super) struct Options {
     pub cookies: Vec<Value>,
     pub headers: Map<String, Value>,
     pub user_agent: Option<String>,
+    /// The site turns away a browser that names itself `HeadlessChrome`: the
+    /// browser's own user agent is used without that word (a configured
+    /// `user_agent` always wins).
+    pub regular_user_agent: bool,
+    /// The site's own readers parse the dates and counters it renders in
+    /// English (X), so its page is rendered with an `en-US` locale unless the
+    /// caller sends an `Accept-Language` of its own. Other sites keep the
+    /// browser's language, as the user's own browser would.
+    pub english: bool,
     pub blocked: Vec<Regex>,
     pub proxy: Option<String>,
     pub bypass: String,
@@ -133,6 +142,24 @@ fn cookies(value: &Value, url: &Url) -> Result<Vec<Value>> {
     Ok(output)
 }
 
+/// What a site gets without configuration: its waiting hints, and whether it
+/// turns away a browser that names itself `HeadlessChrome` (such a site, X,
+/// is also rendered in English for its readers).
+fn builtin_profile(authority: &str) -> (Value, bool) {
+    match authority {
+        "github.com" => (
+            json!({"wait_for_selector":".markdown-body","wait_for":"domcontentloaded","extra_wait_ms":300,"skip_auto_scroll":true}),
+            false,
+        ),
+        // A post is an `article` whether or not the page tags it with test ids.
+        "x.com" | "twitter.com" | "www.x.com" | "www.twitter.com" | "mobile.twitter.com" => (
+            json!({"wait_for_selector":"article, [data-testid=\"tweet\"]","wait_for":"domcontentloaded","extra_wait_ms":500,"skip_auto_scroll":true,"reject_resource_patterns":["**/analytics/**","**/ads/**","**/tracking/**","**/*.mp4"]}),
+            true,
+        ),
+        _ => (json!({}), false),
+    }
+}
+
 /// The shared static-fetch proxy decision, projected into Chromium arguments.
 fn proxy(env: &HashMap<String, String>) -> Result<(Option<String>, String)> {
     crate::proxy::browser(env)
@@ -153,6 +180,8 @@ impl Options {
             cookies: Vec::new(),
             headers: Map::new(),
             user_agent: None,
+            regular_user_agent: false,
+            english: false,
             blocked: Vec::new(),
             proxy: None,
             bypass: String::new(),
@@ -202,15 +231,7 @@ impl Options {
             Some(port) => format!("{}:{port}", url.host_str().unwrap()),
             None => url.host_str().unwrap().to_owned(),
         };
-        let builtin = match authority.as_str() {
-            "github.com" => {
-                json!({"wait_for_selector":".markdown-body","wait_for":"domcontentloaded","extra_wait_ms":300,"skip_auto_scroll":true})
-            }
-            "x.com" | "twitter.com" => {
-                json!({"wait_for_selector":"article[data-tweet-id], [data-testid=\"tweet\"]","wait_for":"domcontentloaded","extra_wait_ms":500,"skip_auto_scroll":true,"reject_resource_patterns":["**/analytics/**","**/ads/**","**/tracking/**","**/*.mp4"]})
-            }
-            _ => json!({}),
-        };
+        let (builtin, regular_user_agent) = builtin_profile(&authority);
         config::merge(&mut settings, builtin);
         if let Some(profile) = cfg
             .pointer("/fetch/domain_profiles")
@@ -290,6 +311,8 @@ impl Options {
                 .get("user_agent")
                 .and_then(Value::as_str)
                 .map(str::to_owned),
+            regular_user_agent,
+            english: regular_user_agent,
             blocked,
             proxy,
             bypass,
@@ -347,6 +370,28 @@ mod tests {
         );
         assert!(resource_pattern("**/*.{js,css}").is_err());
     }
+    #[test]
+    fn x_waits_for_a_post_and_presents_a_regular_browser_and_other_sites_do_not() {
+        for authority in ["x.com", "twitter.com", "www.x.com", "mobile.twitter.com"] {
+            let (profile, regular) = builtin_profile(authority);
+            assert!(regular, "{authority}");
+            // Both the tagged posts and the untagged 2026 page have an `article`.
+            assert_eq!(
+                profile["wait_for_selector"],
+                "article, [data-testid=\"tweet\"]"
+            );
+        }
+        for authority in [
+            "github.com",
+            "example.com",
+            "x.com:8443",
+            "notx.com",
+            "x.com.example.org",
+        ] {
+            assert!(!builtin_profile(authority).1, "{authority}");
+        }
+    }
+
     #[test]
     fn proxy_credentials_are_not_put_in_process_arguments() {
         let env = HashMap::from([(

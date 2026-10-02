@@ -32,6 +32,24 @@ to the native reader using bytes streamed from the same CDP session. Remote
 strategies retain their selected extraction service and do not use that handoff. Unsupported strategies fail before cache lookup, so an old page cannot
 make an unsupported strategy appear to work.
 
+## X post addresses
+
+A post or Article on X is fetched from X itself. Before any strategy runs, a
+status or Article address on `twitter.com`, `mobile.twitter.com`, `www.x.com`,
+`www.twitter.com` or one of the mirrors `fxtwitter.com`, `vxtwitter.com`,
+`fixupx.com`, `fixvx.com` and `twittpr.com` becomes
+`https://x.com/<user>/status/<id>` (`/article/<id>` for an Article), without
+share-tracking query parameters, a fragment or a trailing `/photo/1` or language
+segment, and `/i/web/status/<id>` becomes `/i/status/<id>`. A mirror answers a
+non-browser client with a redirect page, which would otherwise be written as a
+17-word success. The output keeps the address the caller gave as its `source`;
+the cache is keyed by the canonical address. Other X pages (profiles, search)
+and addresses with userinfo or an explicit port are left alone. The mirrors'
+hosts are only recognized in order to avoid contacting them: no X address is
+sent to FxTwitter, oEmbed, defuddle or Jina by any strategy but an explicit
+`defuddle`/`jina` request. The post reader is described in
+[HTML conversion](html.md).
+
 ## Learned browser routing
 
 An anonymous automatic request can remember that an authority serves a short

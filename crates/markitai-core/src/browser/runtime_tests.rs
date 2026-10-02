@@ -83,6 +83,8 @@ struct Request {
     path: String,
     cookie: String,
     authorization: String,
+    language: String,
+    agent: String,
 }
 #[derive(Default)]
 struct State {
@@ -129,6 +131,8 @@ fn request(stream: &mut TcpStream) -> Option<Request> {
         path: text.lines().next()?.split_whitespace().nth(1)?.into(),
         cookie: header("Cookie"),
         authorization: header("Authorization"),
+        language: header("Accept-Language"),
+        agent: header("User-Agent"),
     })
 }
 impl Site {
@@ -171,6 +175,8 @@ impl Site {
                         status=503;b"Fixture failure".to_vec()
                     }else if request.path=="/hang" {
                         b"<html><script>while(true){}</script></html>".to_vec()
+                    }else if request.path=="/language" {
+                        b"<html><body><article><p id='value'></p></article><script>document.getElementById('value').textContent='Language: '+navigator.language+' Month: '+new Date(0).toLocaleDateString(undefined,{month:'long',timeZone:'UTC'})+' Agent: '+navigator.userAgent;</script></body></html>".to_vec()
                     }else{
                         let seed=if request.path.starts_with("/seed") {
                             let marker=if request.path.ends_with("b"){"MARKERB"}else{"MARKERA"};
@@ -531,6 +537,105 @@ fn all_owned_pages_close_before_a_context_is_reused() {
         assert_eq!(runtime.pool.processes(), processes);
         runtime.close();
         gone(&processes[0]);
+    }
+}
+
+#[test]
+#[ignore = "requires installed Chromium; private process and loopback only"]
+fn x_pages_are_requested_in_english_unless_the_caller_chooses_a_language() {
+    if isolated("x_pages_are_requested_in_english_unless_the_caller_chooses_a_language") {
+        return;
+    }
+    assert!(available());
+    let site = Site::new();
+    let runtime = BrowserRuntime::new(1).unwrap();
+    let cfg = config(false);
+    let text = html(&site, "/language", &cfg, &runtime);
+    let sent = |site: &Site| {
+        site.state
+            .0
+            .lock()
+            .unwrap()
+            .requests
+            .iter()
+            .rev()
+            .find(|request| request.path == "/language")
+            .cloned()
+            .unwrap()
+    };
+    let request = sent(&site);
+    // An ordinary site keeps the browser's own language and identity.
+    assert_ne!(request.language, "en-US,en;q=0.9");
+    assert!(request.agent.contains("Chrome/"), "{}", request.agent);
+    assert!(text.contains("Month: "), "{text}");
+    // A header the caller sends decides the language.
+    let mut french = cfg.clone();
+    french["fetch"]["playwright"]["extra_http_headers"] = json!({"accept-language":"fr-FR"});
+    html(&site, "/language", &french, &runtime);
+    assert_eq!(sent(&site).language, "fr-FR");
+    // X's profile (it blocks `HeadlessChrome` and its reader parses English)
+    // sees the browser's own version under the name Chrome, in English, in
+    // both the header and the page.
+    let url = Url::parse(&site.url("/language")).unwrap();
+    let mut options = options::Options::from_config(&cfg, &url, false).unwrap();
+    options.regular_user_agent = true;
+    options.english = true;
+    let mut lease = runtime
+        .pool
+        .acquire(&discover().unwrap(), &url, &cfg, &options)
+        .unwrap();
+    lease.browser().begin_page(&options).unwrap();
+    let page = match fetch_page(
+        &site.url("/language"),
+        &cfg,
+        false,
+        &url,
+        &options,
+        lease.browser(),
+    )
+    .unwrap()
+    {
+        BrowserResponse::Page(page) => page.html,
+        BrowserResponse::Pdf(_) => panic!("expected a page"),
+    };
+    lease.finish().unwrap();
+    let request = sent(&site);
+    assert!(request.agent.contains("Chrome/"), "{}", request.agent);
+    assert!(
+        !request.agent.contains("HeadlessChrome"),
+        "{}",
+        request.agent
+    );
+    assert_eq!(request.language, "en-US,en;q=0.9");
+    assert!(!page.contains("HeadlessChrome"), "{page}");
+    assert!(page.contains("Language: en-US"), "{page}");
+    assert!(page.contains("Month: January"), "{page}");
+}
+
+#[test]
+#[ignore = "requires installed Chromium; private process and loopback only"]
+fn a_failed_navigation_says_why_without_naming_the_address() {
+    if isolated("a_failed_navigation_says_why_without_naming_the_address") {
+        return;
+    }
+    assert!(available());
+    // A port nothing listens on: the connection is refused.
+    let closed = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = closed.local_addr().unwrap().port();
+    drop(closed);
+    let runtime = BrowserRuntime::new(1).unwrap();
+    let error = fetch_with_runtime(
+        &format!("http://127.0.0.1:{port}/private-path?token=secret"),
+        &config(false),
+        false,
+        Some(&runtime),
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    assert!(error.contains("net::ERR_CONNECTION_REFUSED"), "{error}");
+    for private in [port.to_string(), "private-path".into(), "secret".into()] {
+        assert!(!error.contains(&private), "{error}");
     }
 }
 

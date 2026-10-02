@@ -415,6 +415,26 @@ pub(crate) fn fetch_with_runtime(
     }
 }
 
+/// Why the browser could not navigate: Chromium's `net::ERR_*` name, which
+/// says whether the name did not resolve, the connection was refused or reset,
+/// the certificate failed or the site turned the browser away. Nothing but
+/// that name is kept, so no address, header or credential can reach the
+/// message.
+fn navigation_failure(reason: &Value) -> String {
+    match reason.as_str().map(str::trim).filter(|reason| {
+        reason.len() <= 64
+            && reason.strip_prefix("net::ERR_").is_some_and(|name| {
+                !name.is_empty()
+                    && name
+                        .bytes()
+                        .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+            })
+    }) {
+        Some(reason) => format!("Browser navigation failed: {reason}"),
+        None => "Browser navigation failed".into(),
+    }
+}
+
 fn fetch_page(
     source: &str,
     cfg: &Value,
@@ -428,12 +448,13 @@ fn fetch_page(
         cdp::Navigation::Page(value) => value,
         cdp::Navigation::Pdf(pdf) => return Ok(BrowserResponse::Pdf(pdf)),
     };
-    if navigation.get("errorText").is_some()
-        || navigation.get("isDownload").and_then(Value::as_bool) == Some(true)
-    {
+    if navigation.get("isDownload").and_then(Value::as_bool) == Some(true) {
         return Err(Error::Fetch(
-            "Browser navigation failed or returned a download".into(),
+            "Browser navigation returned a download".into(),
         ));
+    }
+    if let Some(reason) = navigation.get("errorText") {
+        return Err(Error::Fetch(navigation_failure(reason)));
     }
     browser.main_frame = navigation
         .get("frameId")
@@ -553,6 +574,24 @@ mod tests {
         );
         assert!(missing_browser(None).starts_with("Chromium is not installed"));
     }
+    #[test]
+    fn a_navigation_failure_keeps_chromiums_reason_and_nothing_else() {
+        assert_eq!(
+            navigation_failure(&json!("net::ERR_NAME_NOT_RESOLVED")),
+            "Browser navigation failed: net::ERR_NAME_NOT_RESOLVED"
+        );
+        for other in [
+            json!("net::ERR_FAILED at https://user:secret@example.test/?token=x"),
+            json!("see https://example.test/"),
+            json!("net::ERR_\u{0}"),
+            json!(format!("net::ERR_{}", "A".repeat(80))),
+            json!(7),
+            json!(null),
+        ] {
+            assert_eq!(navigation_failure(&other), "Browser navigation failed");
+        }
+    }
+
     #[test]
     fn screenshot_names_distinguish_queries_and_hash_routes_not_plain_anchors() {
         let base = filename(&Url::parse("https://example.com/a/b").unwrap());

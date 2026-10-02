@@ -7,6 +7,7 @@ mod native;
 mod numbers;
 mod text;
 
+pub(crate) use html::canonical_status_url;
 pub use html::extract_html;
 pub(crate) use html::legacy_encoding as html_legacy_encoding;
 pub(crate) use native::extract_presentation_count;

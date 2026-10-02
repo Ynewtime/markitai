@@ -153,10 +153,28 @@ not restricted to the initial navigation origin. Final source metadata redacts
 sensitive query values while link resolution uses the actual final URL.
 Exact domain profile overrides support wait
 state, selector, extra wait, scroll suppression and resource rejection patterns.
-Built-in GitHub and X/Twitter waiting hints are available; no third-party social
+Built-in GitHub and X/Twitter waiting hints are available (X waits for an
+`article`, which the tagged and the untagged 2026 pages both have); no third-party social
 content enrichment is added. Selector timeout warns and uses available content,
 as in the reference browser path. Network idle requires no tracked requests for
 500 ms.
+
+X turns away a browser whose user agent says `HeadlessChrome`, so the built-in
+x.com/twitter.com profile presents the browser's own user agent with that word
+replaced by `Chrome` (the version stays the installed browser's). A configured
+`fetch.playwright.user_agent` always wins, and every other site keeps the
+browser's default. While a user agent is overridden Chromium does not send
+client hints (`Sec-CH-UA`). The same profile renders X in English:
+its pages get `Emulation.setLocaleOverride` `en-US` and an `Accept-Language:
+en-US,en;q=0.9` header (`navigator.language` follows), so the dates and counters
+X shows do not change with the system language and stay readable by the post
+reader. Other sites keep the browser's language, as the user's own browser
+would. A caller's own `Accept-Language` in `extra_http_headers` (any case)
+replaces both. A navigation Chromium cannot make (an unresolved name, a refused
+or reset connection, a certificate or protocol error, a site that turns the
+browser away) fails with Chromium's reason, for example `Browser navigation
+failed: net::ERR_NAME_NOT_RESOLVED`; only that `net::ERR_*` name is kept, never
+the address, headers or credentials. A download is reported separately.
 
 Screenshots are captured **before** shadow-root flattening. The configured
 viewport and JPEG quality apply. Long pages are captured as full-width vertical

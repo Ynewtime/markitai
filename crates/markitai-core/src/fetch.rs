@@ -197,6 +197,12 @@ pub(crate) fn fetch_with_runtime(
             "An HTTP(S) URL with a hostname is required".into(),
         ));
     }
+    // An X post named through a mirror host answers with a redirect page; fetch the post itself.
+    let canonical = formats::canonical_status_url(&url);
+    let (url, source) = match &canonical {
+        Some(canonical) => (canonical.clone(), canonical.as_str()),
+        None => (url, source),
+    };
     let strategy = cfg
         .pointer("/fetch/strategy")
         .and_then(Value::as_str)

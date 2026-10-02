@@ -11,6 +11,7 @@ use tungstenite::{Message, WebSocket};
 use url::Url;
 
 const MAX_MESSAGE: usize = 140 * 1024 * 1024;
+const ACCEPT_LANGUAGE: &str = "en-US,en;q=0.9";
 
 fn failure(message: &str) -> Error {
     Error::Fetch(message.into())
@@ -301,14 +302,41 @@ impl Browser {
         )?;
         self.call("Fetch.enable", json!({"patterns":[{"urlPattern":"*","requestStage":"Request"},{"urlPattern":"*","resourceType":"Document","requestStage":"Response"}],"handleAuthRequests":self.auth.enabled()}))?;
         self.call("Emulation.setDeviceMetricsOverride", json!({"width":options.width,"height":options.height,"deviceScaleFactor":1,"mobile":false}))?;
-        if !options.headers.is_empty() {
-            self.call(
-                "Network.setExtraHTTPHeaders",
-                json!({"headers":options.headers}),
-            )?;
+        // A site whose reader parses English dates and counters renders in
+        // English whatever the system's language is; a header the caller
+        // sends itself decides the language instead.
+        let english = options.english
+            && !options
+                .headers
+                .keys()
+                .any(|name| name.eq_ignore_ascii_case("accept-language"));
+        let mut headers = options.headers.clone();
+        if english {
+            self.call("Emulation.setLocaleOverride", json!({"locale":"en-US"}))?;
+            headers.insert("Accept-Language".into(), json!(ACCEPT_LANGUAGE));
         }
-        if let Some(agent) = &options.user_agent {
-            self.call("Network.setUserAgentOverride", json!({"userAgent":agent}))?;
+        if !headers.is_empty() {
+            self.call("Network.setExtraHTTPHeaders", json!({"headers":headers}))?;
+        }
+        let agent = match &options.user_agent {
+            Some(agent) => Some(agent.clone()),
+            None if options.regular_user_agent => {
+                // The browser's own string, without the word that sites block.
+                let version = self.call("Browser.getVersion", json!({}))?;
+                version["userAgent"]
+                    .as_str()
+                    .filter(|agent| agent.len() <= 512)
+                    .map(|agent| agent.replace("HeadlessChrome/", "Chrome/"))
+            }
+            None => None,
+        };
+        if let Some(agent) = agent {
+            let mut parameters = json!({"userAgent":agent});
+            if english {
+                // A bare list: Chromium writes the weights itself.
+                parameters["acceptLanguage"] = json!("en-US,en");
+            }
+            self.call("Network.setUserAgentOverride", parameters)?;
         }
         if !options.cookies.is_empty() {
             self.call("Network.setCookies", json!({"cookies":options.cookies}))?;

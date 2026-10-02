@@ -86,6 +86,7 @@
 
 ### 修复
 
+- X 帖子在 X 当前的页面上重新只转换帖子本身：正文只出现一次，保留图片、视频封面，引用帖写成引用块，作者自己的后续跟帖以 `---` 分隔（不含他人回复），元数据为 `Post by @handle on X`、`author: @handle`、日期形式的 `published` 与 `content_profile: social_post`。无头浏览器访问 X 时使用常规 Chrome 用户代理和英文语言环境（其它网站保持浏览器自己的语言），导航失败时给出 Chromium 的 `net::ERR_*` 原因；镜像地址（`fxtwitter.com`、`vxtwitter.com`、`fixupx.com`、`fixvx.com`、`twittpr.com`、`mobile.twitter.com`、`twitter.com`）按规范的 x.com 帖子地址抓取。不向任何第三方服务发送内容。
 - PDF 表格边框不再被读成下划线：两端有竖向笔画的横线（单元格或框线，无论是描边线、细填充矩形还是 Chrome 的立体 `border="1"` 斜边）不再给上方文字加下划线，因此 `Gamma`、`Name Qty` 这类单元格不再带多余的 `<u>`；真正的下划线（包括链接）保留。紧挨横线的点或短线不再被当作边框。在 217 个文件的 PDF 语料上其余输出完全不变。
 - 嵌套超过 256 层的 HTML 可以转换，不再报 `HTML nesting exceeds 256 elements`：超过该深度的内容以纯文本保留文字，并给出警告。含有数百个未闭合 `<font>` 标签的旧网页会达到这个深度，参考实现可以转换它们。
 - CSV 表格保留全部字段并保持为合法的 Markdown：比表头更宽的行会加宽表格而不再丢掉多出的单元格；单元格中的 `|`、反斜杠与换行被转义（`\|`、`<br>`），不再打断表格行，与 TSV 一致。带尾斜杠的 `-o notes.md/` 表示要创建的目录而不是文件；`-o` 指向输入的 `.md` 文件本身且 `output.on_conflict` 为 `overwrite` 时拒绝执行，不再覆盖源文件。

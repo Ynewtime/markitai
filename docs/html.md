@@ -212,10 +212,33 @@ images.
 Three sites have their own reader. A Substack note page (by host, note
 permalink container or CDN assets, without a rendered article body) is its
 main note and attached image. An X post page (an x.com or twitter.com status
-URL, or X's own test ids or media host) is its main post: text with links,
-images and video posters, and the quoted post as a block quote headed
-`**Name @handle** · date`, without avatars, player controls, counters or
-timelines, in both the `data-testid` and the 2026 `data-tweet-id` markup. A
+or Article URL, or, for a page saved without an address, X's own column markup
+or media host) is its main post: text with links, photos (`name=orig` when the
+page names the format the photo was uploaded in, `jpg` or `png`; otherwise only
+raised to `large`, because the server-rendered page always asks for WebP and
+`orig` in a guessed format was a 404 for a 2014 photo), video posters (and a link to the file when the page has one, not
+a browser-local `blob:` handle), and the quoted post as a block quote headed
+`**Name @handle** · date` (`YYYY-MM-DD` from the quote's timestamp or id, which
+does not shift with the reader's time zone, else the text the page shows),
+without avatars, player controls, counters, the
+`sr-only` heading that repeats the text, or timelines. Three markups are read:
+`data-testid` tags, the `data-tweet-id` generation, and the server-rendered page
+of late 2026 that has neither (an `article` holding `[data-engagement-action]`
+buttons, text in `div[dir=auto]`, the date as the text of its `/status/<id>`
+link, a quoted post as a nested `article` in `div[role=link][data-href]`).
+Following the reference's thread policy, the author's own consecutive posts
+right after the main one continue it, each after a `---` rule; the first reply
+from anyone else ends the thread, and replies from other accounts are left out.
+Posts of the thread that come before the requested one are not included. An
+Article page (`/article/<id>`) is read as an ordinary document, because the
+`article` elements around it are cards of other Articles.
+The frontmatter uses the reference's fields: `title: Post by @handle on X`,
+`author: @handle`, `site: X (Twitter)`, `published: YYYY-MM-DD` (from the page's
+timestamp, else the post id, which carries its creation time in UTC, so a page
+rendered in another language or time zone keeps the date), `description` (the
+first 200 characters) and `content_profile: social_post`, which makes `--llm`
+keep the body verbatim and use the model for metadata only. The display name is
+added as `author_name`, which the reference does not write. A
 Hacker News story or comment page is the story link and text (or the comment
 with its author and date) followed by its comments as blockquotes nested by
 reply level, read from each comment's indent; a story list is numbered with
@@ -394,7 +417,9 @@ description, author, published date, canonical URL, domain, fetch strategy) and,
 as in the reference, `word_count`: each CJK character is one word and other text
 counts whitespace-separated runs. The internal reader identity is not written.
 The reference's `content_profile` classification comes from its site resolvers,
-which this reader does not have, so it is not emitted rather than guessed.
+which this reader does not have, so it is emitted only where this reader has a
+resolver of its own: `social_post` for an X post, which `--llm` treats as a body
+to keep verbatim. Other pages carry none rather than a guess.
 
 ## Callouts and Markdown spelling
 

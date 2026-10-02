@@ -9,6 +9,8 @@ mod mail;
 mod social;
 mod stream;
 
+pub(crate) use social::canonical_status_url;
+
 use crate::{Document, Error, Result};
 use facts::{Fact, Facts};
 use scraper::{ElementRef, Html, Selector};
@@ -127,7 +129,9 @@ struct Landmarks<'a> {
     assets: Vec<ElementRef<'a>>,
     rendered_body: bool,
     /// X: whether there is a `[data-testid="primaryColumn"]
-    /// article[data-testid="tweet"]`, and every `img[src], video[poster]`.
+    /// article[data-testid="tweet"]` or a `main article
+    /// [data-engagement-action]` (the 2026 page has no test ids), and every
+    /// `img[src], video[poster]`.
     column_post: bool,
     media: Vec<ElementRef<'a>>,
     /// Hacker News: whether there are a `#hnmain` and a `tr.athing, tr.comtr`.
@@ -206,6 +210,9 @@ impl<'a> Landmarks<'a> {
             }
             if has("data-partnereventstore") {
                 found.events.push(element);
+            }
+            if !found.column_post && has("data-engagement-action") {
+                found.column_post = social::is_engagement_in_post(element);
             }
             if found.permalink.is_none()
                 && value
@@ -6254,6 +6261,7 @@ mod tests {
             <span class="body markup">not a div</span>
             <div data-testid="primaryColumn"><template><article data-testid="tweet">post</article></template></div>
             <article data-testid="tweet">outside</article><div id="HNmain"></div>
+            <article><b data-engagement-action="like"></b></article><main><b data-engagement-action="like"></b></main>
             <tr class="athing"><td>no table</td></tr><table><tr class="comtrs"><td>x</td></tr></table></body></html>"#,
         );
         [with, without]
@@ -6295,7 +6303,8 @@ mod tests {
             );
             assert_eq!(
                 page.column_post,
-                first(r#"[data-testid="primaryColumn"] article[data-testid="tweet"]"#).is_some(),
+                first(r#"[data-testid="primaryColumn"] article[data-testid="tweet"]"#).is_some()
+                    || first("main article [data-engagement-action]").is_some(),
                 "{index}"
             );
             assert_eq!(page.media, all("img[src], video[poster]"), "{index}");
