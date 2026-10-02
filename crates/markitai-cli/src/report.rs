@@ -1357,7 +1357,31 @@ pub(crate) fn batch_summary(
         } else if !records.is_empty() && kinds(ItemKind::Url) {
             let noun = if total == 1 { "URL" } else { "URLs" };
             text!(lang => "{finished}/{total} {noun}", "{finished}/{total} 个 URL")
+        } else if unprocessed.is_empty() && resumed.converted + resumed.skipped == 0 {
+            // Files and URLs together: each kind out of its own count.
+            let mut parts = Vec::new();
+            for (kind, done) in [(ItemKind::File, files), (ItemKind::Url, urls)] {
+                let all = records.iter().filter(|record| record.kind == kind).count();
+                if all == 0 {
+                    continue;
+                }
+                let shown = if done < all {
+                    format!("{done}/{all}")
+                } else {
+                    done.to_string()
+                };
+                parts.push(match (kind, lang) {
+                    (ItemKind::File, Lang::En) => {
+                        format!("{shown} {}", if all == 1 { "file" } else { "files" })
+                    }
+                    (ItemKind::File, Lang::Zh) => format!("{shown} 个文件"),
+                    (_, Lang::En) => format!("{shown} {}", if all == 1 { "URL" } else { "URLs" }),
+                    (_, Lang::Zh) => format!("{shown} 个 URL"),
+                });
+            }
+            parts.join(list_separator)
         } else {
+            // Items not started or finished by an earlier run have no kind here.
             let noun = if total == 1 { "item" } else { "items" };
             text!(lang => "{finished}/{total} {noun}", "{finished}/{total} 项")
         }
@@ -1530,7 +1554,7 @@ mod tests {
             ),
             [
                 // Two of six finished: the line says out of how many.
-                "Done: 2/6 items (1:15, $0.013, cost incomplete)",
+                "Done: 1/3 files, 1/3 URLs (1:15, $0.013, cost incomplete)",
                 "Skipped 3 items (images with no text): display-k1, display-k2 and 1 more. Use --llm or --ocr for content extraction.",
                 "Failed 1 item: display-k5. See the errors above.",
                 "Output: out",
@@ -1621,7 +1645,7 @@ mod tests {
         assert_eq!(
             summary(&records, Lang::Zh),
             [
-                "完成：2/6 项（1:15，$0.013，费用不完整）",
+                "完成：1/3 个文件、1/3 个 URL（1:15，$0.013，费用不完整）",
                 "已跳过 1 项（输出已存在）：display-k4。将 output.on_conflict 设为 overwrite 或 rename 可重新转换。",
                 "已跳过 2 项（图片，没有可提取的文字）：display-k1、display-k2。请使用 --llm 或 --ocr 提取内容。",
                 "失败 1 项：display-k5。详见上方的错误信息。",
@@ -1713,6 +1737,42 @@ mod tests {
         assert_eq!(
             summary(&names, Lang::En).len(),
             summary(&names, Lang::Zh).len()
+        );
+    }
+
+    #[test]
+    fn a_mixed_batch_counts_files_and_urls_apart() {
+        let mut records: Vec<RunItem> = (0..4)
+            .map(|index| item(index, ItemKind::File, &format!("f{index}")))
+            .collect();
+        records[3].status = ItemStatus::Skipped;
+        records[3].skip_reason = Some("image_only".into());
+        records.extend((4..6).map(|index| item(index, ItemKind::Url, &format!("u{index}"))));
+        let summary = |records: &[RunItem], lang| {
+            batch_summary(
+                records,
+                &[],
+                Resumed::default(),
+                false,
+                std::time::Duration::from_secs(3),
+                Path::new("out"),
+                lang,
+            )[0]
+            .clone()
+        };
+        assert_eq!(
+            summary(&records, Lang::En),
+            "Done: 3/4 files, 2 URLs (0:03)"
+        );
+        assert_eq!(
+            summary(&records, Lang::Zh),
+            "完成：3/4 个文件、2 个 URL（0:03）"
+        );
+        records[3].status = ItemStatus::Completed;
+        records[5].status = ItemStatus::Failed;
+        assert_eq!(
+            summary(&records, Lang::En),
+            "Done: 4 files, 1/2 URLs (0:03)"
         );
     }
 
