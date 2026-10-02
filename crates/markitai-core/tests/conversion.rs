@@ -987,16 +987,119 @@ fn office_ocr_without_a_renderer_keeps_the_documents_own_text() {
         result.warnings
     );
     assert!(result.screenshots.is_empty());
-    let mut screenshots = base;
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("brew install --cask libreoffice") && w.contains("--no-ocr")),
+        "{:?}",
+        result.warnings
+    );
+
+    // Screenshots degrade the same way: the text is published with one warning
+    // that says how to get the pages or how to stop asking for them.
+    let mut screenshots = base.clone();
     screenshots["screenshot"] = json!({"enabled": true});
-    let error = convert(
+    let result = convert(
         input.to_str().unwrap(),
         ConvertOptions {
-            config: Some(screenshots),
+            config: Some(screenshots.clone()),
             output_dir: Some(dir.path().join("out2")),
             ..Default::default()
         },
     )
-    .unwrap_err();
-    assert!(error.to_string().contains("LibreOffice"), "{error}");
+    .unwrap();
+    assert!(
+        result.markdown.contains("WORD FIRST PAGE"),
+        "{}",
+        result.markdown
+    );
+    assert!(result.screenshots.is_empty());
+    let capture: Vec<_> = result
+        .warnings
+        .iter()
+        .filter(|w| w.contains("LibreOffice"))
+        .collect();
+    assert_eq!(capture.len(), 1, "{:?}", result.warnings);
+    assert!(
+        capture[0].starts_with("Page screenshots of Office documents need LibreOffice")
+            && capture[0].contains("brew install --cask libreoffice")
+            && capture[0].contains("--no-screenshot"),
+        "{capture:?}"
+    );
+    // Screenshots with OCR are still one warning, naming both.
+    screenshots["ocr"] = json!({"enabled": true});
+    let result = convert(
+        input.to_str().unwrap(),
+        ConvertOptions {
+            config: Some(screenshots.clone()),
+            output_dir: Some(dir.path().join("out3")),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let capture: Vec<_> = result
+        .warnings
+        .iter()
+        .filter(|w| w.contains("LibreOffice"))
+        .collect();
+    assert_eq!(capture.len(), 1, "{:?}", result.warnings);
+    assert!(
+        capture[0].starts_with("Page screenshots and OCR of Office pages"),
+        "{capture:?}"
+    );
+
+    // Only screenshots that are the whole output keep failing, and the error
+    // names the way out.
+    let mut only = screenshots;
+    only["screenshot"] = json!({"enabled": true, "screenshot_only": true});
+    only["ocr"] = json!({"enabled": false});
+    let error = convert(
+        input.to_str().unwrap(),
+        ConvertOptions {
+            config: Some(only),
+            output_dir: Some(dir.path().join("out4")),
+            ..Default::default()
+        },
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        error.contains("LibreOffice") && error.contains("brew install --cask libreoffice"),
+        "{error}"
+    );
+    assert!(!dir.path().join("out4").join("report.docx.md").exists());
+}
+
+#[test]
+fn numbers_capture_keeps_its_own_error_without_a_renderer() {
+    // No LibreOffice installation would make Numbers capture work, so the
+    // request still fails and says so instead of degrading to a warning.
+    if markitai_core::office_render_available() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let package = dir.path().join("sheet.numbers");
+    std::fs::write(
+        &package,
+        include_bytes!("../src/formats/numbers/fixtures/test-1.numbers"),
+    )
+    .unwrap();
+    let error = convert(
+        package.to_str().unwrap(),
+        ConvertOptions {
+            config: Some(json!({
+                "cache":{"enabled":false},"history":{"record":false},
+                "llm":{"enabled":false},"screenshot":{"enabled":true}
+            })),
+            output_dir: Some(dir.path().join("out")),
+            ..Default::default()
+        },
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        error.contains("Numbers") && !error.contains("brew install"),
+        "{error}"
+    );
 }

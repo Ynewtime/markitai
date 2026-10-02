@@ -8,16 +8,25 @@ use std::time::Duration;
 #[derive(Subcommand, Debug, Clone)]
 pub(super) enum Command {
     /// GitHub Copilot through the installed official CLI.
+    #[command(
+        after_help = "Examples:\n  markitai auth copilot status           Is the runtime signed in?\n  markitai auth copilot status --json    Machine-readable status\n  markitai auth copilot login            Sign in through the official runtime"
+    )]
     Copilot {
         #[command(subcommand)]
         command: Option<Action>,
     },
     /// Claude subscription adapter status.
+    #[command(
+        after_help = "Examples:\n  markitai auth claude status           Is the runtime signed in?\n  markitai auth claude status --json    Machine-readable status\n  markitai auth claude login            Sign in through the official runtime"
+    )]
     Claude {
         #[command(subcommand)]
         command: Option<Action>,
     },
     /// ChatGPT subscription adapter status.
+    #[command(
+        after_help = "Examples:\n  markitai auth chatgpt status           Is the runtime signed in?\n  markitai auth chatgpt status --json    Machine-readable status\n  markitai auth chatgpt login            Sign in through the official runtime"
+    )]
     Chatgpt {
         #[command(subcommand)]
         command: Option<Action>,
@@ -79,6 +88,14 @@ fn display(status: &subscription::AuthStatus) {
     }
     if let Some(error) = &status.error {
         println!("  {}", terminal_text(error));
+        // A signed-out runtime is one command away from working.
+        if error.contains("not signed in") {
+            let name = status
+                .provider
+                .strip_suffix("-agent")
+                .unwrap_or(status.provider);
+            println!("  Next: markitai auth {name} login");
+        }
     }
 }
 fn terminal_text(value: &str) -> String {

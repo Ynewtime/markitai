@@ -7,10 +7,19 @@ requirements. The CLI itself remains one executable and invokes no Python
 conversion code. macOS is the first rendering platform covered by this adapter;
 having LibreOffice installed does not make unsupported PDF platforms available.
 
-When OCR is requested without screenshots and LibreOffice or the page renderer is
-missing, an Office document is converted from its own text with a warning instead
-of failing, so OCR over a folder still converts its Office files; explicitly
-requested screenshots are the output itself and still fail without them.
+When page OCR or page screenshots are requested (`--ocr`, `--screenshot`, or a
+preset that implies them such as `rich`) and LibreOffice or the page renderer is
+missing, an Office document is converted from its own text with one warning
+instead of failing, so a folder of mixed documents still converts. The warning
+names what was skipped and how to get it: install LibreOffice (on macOS
+`brew install --cask libreoffice`, or put `soffice` on `PATH`), or pass
+`--no-screenshot` / `--no-ocr` to stop asking. With an LLM the text is still
+enhanced; only the page images are missing. Only `--screenshot-only`, where the
+screenshots are the whole requested output, keeps failing without them, with an
+error that names the same remedy. Numbers capture is unsupported with or without
+LibreOffice and keeps its own error (see below), so installing the program would
+not change it. `markitai doctor` reports whether LibreOffice and the renderer
+are available.
 
 The adapter accepts existing presentation aliases `ppt`, `pps`, `pot`, `pptx`,
 `pptm`, `ppsx`, `ppsm`, `odp`, and word-processing aliases `doc`, `docx`, `docm`,

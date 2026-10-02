@@ -662,9 +662,11 @@ fn run_with_namespace(
     let allow = config::enabled(cfg, "/output/allow_symlinks");
     let mut store =
         StateStore::open(scope.clone(), &hash, allow, Limits::default()).map_err(runtime)?;
+    let mut continued = false;
     let mut snapshot = if cli.resume {
         match store.load().map_err(runtime)? {
             LoadOutcome::Loaded { snapshot, warnings } => {
+                continued = true;
                 for warning in warnings {
                     eprintln!("Warning: {warning}");
                 }
@@ -834,6 +836,38 @@ fn run_with_namespace(
         })
         .map(|(index, _)| index)
         .collect();
+    // What the saved run had finished, so a resumed batch says where it picks
+    // up and its closing line counts every item, not only this run's.
+    let mut resumed = report::Resumed::default();
+    if continued {
+        for entry in snapshot
+            .documents
+            .values()
+            .chain(snapshot.urls.values())
+            .filter(|entry| entry.status == Status::Completed)
+        {
+            // A skipped item is saved as completed without an output.
+            if entry.output.is_some() {
+                resumed.converted += 1;
+            } else {
+                resumed.skipped += 1;
+            }
+        }
+        if !cli.quiet && !cli.json {
+            let done = resumed.converted + resumed.skipped;
+            let remaining = pending.len();
+            say!(
+                "Resuming: {done} already done, {remaining} remaining",
+                "继续：已完成 {done} 项，剩余 {remaining} 项"
+            );
+        }
+    }
+    // Images that cannot be converted without OCR or a model end as a skip or
+    // an error before writing anything, so they take no claim, create no
+    // ownership files or output directory, and are recorded below.
+    let (early, pending): (Vec<usize>, Vec<usize>) = pending
+        .into_iter()
+        .partition(|&index| retries[index].is_none() && publishes_nothing(&tasks[index], cfg));
     let mut ordinary: Vec<_> = pending
         .iter()
         .filter(|&&index| retries[index].is_none())
@@ -951,6 +985,20 @@ fn run_with_namespace(
     let mut last_flush = Instant::now();
     let mut active_files = 0usize;
     let mut active_urls = 0usize;
+    for &index in &early {
+        let record = convert_item(&tasks[index], index, cfg, context, None).0;
+        if let Err(error) = terminal(&mut store, &tasks[index], &record) {
+            fatal.get_or_insert_with(|| error.to_string());
+        }
+        records.push(record);
+    }
+    // One overwritten status line, only on a terminal; any line printed meanwhile
+    // erases it first (see `progress`).
+    let mut status = progress::Progress::new(
+        planned.len() + early.len(),
+        progress::wanted(cli.quiet, cli.json),
+    );
+    let mut current = String::new();
     std::thread::scope(|threads| {
         for _ in 0..count {
             let jobs = Arc::clone(&job_receiver);
@@ -976,6 +1024,9 @@ fn run_with_namespace(
         }
         drop(finished);
         loop {
+            if signal.is_none() && fatal.is_none() {
+                status.update(records.len(), &current);
+            }
             if signal.is_none()
                 && let Some(received) = crate::signals::interrupted()
             {
@@ -1165,8 +1216,10 @@ fn run_with_namespace(
                     .remove(position)
                     .expect("selected reserved work exists");
                 let url = is_url(&work.task.source);
+                let name = work.task.display.clone();
                 match jobs.send(work) {
                     Ok(()) => {
+                        current = name;
                         if url {
                             active_urls += 1;
                         } else {
@@ -1249,6 +1302,7 @@ fn run_with_namespace(
         }
         drop(jobs);
     });
+    status.finish();
     if signal.is_none()
         && let Some(received) = crate::signals::interrupted()
     {
@@ -1336,7 +1390,7 @@ fn run_with_namespace(
             }),
         );
     } else {
-        print_item_diagnostics(&records, cli.quiet);
+        print_item_diagnostics(&records, cli.quiet, cli.verbose);
         if !cli.quiet {
             let unprocessed = if signal.is_some() {
                 let started: BTreeSet<_> = records.iter().map(|record| record.index).collect();
@@ -1348,7 +1402,14 @@ fn run_with_namespace(
             } else {
                 Vec::new()
             };
-            print_batch_summary(&records, &unprocessed, clock.elapsed(), output);
+            print_batch_summary(
+                &records,
+                &unprocessed,
+                resumed,
+                cli.verbose,
+                clock.elapsed(),
+                output,
+            );
         }
     }
     Ok(if let Some(signal) = signal {

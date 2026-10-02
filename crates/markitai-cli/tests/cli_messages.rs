@@ -4,6 +4,13 @@ use serde_json::{Value, json};
 use std::path::Path;
 use std::process::{Command, Output};
 
+/// A valid 1x1 RGBA PNG (every chunk checksum correct).
+const TINY_PNG: &[u8] = &[
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0,
+    0, 0, 31, 21, 196, 137, 0, 0, 0, 11, 73, 68, 65, 84, 120, 156, 99, 96, 0, 2, 0, 0, 5, 0, 1,
+    122, 94, 171, 63, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+];
+
 fn invoke(root: &Path, args: &[&str]) -> Output {
     invoke_env(root, args, &[])
 }
@@ -139,7 +146,10 @@ fn single_inputs_name_the_written_file_and_explain_skips() {
     assert_eq!(stderr(&first).trim(), "Wrote out/note.txt.md");
     // The renamed result is the one the user has to know about.
     let second = invoke(root.path(), &["note.txt", "-o", "out"]);
-    assert_eq!(stderr(&second).trim(), "Wrote out/note.txt.v2.md");
+    assert_eq!(
+        stderr(&second).trim(),
+        "Wrote out/note.txt.v2.md (note.txt.md already exists)"
+    );
     let quiet = invoke(root.path(), &["note.txt", "-o", "out", "-q"]);
     assert!(quiet.status.success());
     assert!(quiet.stderr.is_empty(), "{}", stderr(&quiet));
@@ -166,21 +176,30 @@ fn single_inputs_name_the_written_file_and_explain_skips() {
         stderr(&skip)
     );
 
-    std::fs::write(root.path().join("scan.jpg"), b"not decoded in skip mode").unwrap();
-    for args in [vec!["scan.jpg"], vec!["scan.jpg", "-o", "images"]] {
+    std::fs::write(root.path().join("scan.png"), TINY_PNG).unwrap();
+    for args in [vec!["scan.png"], vec!["scan.png", "-o", "images"]] {
         let output = invoke(root.path(), &args);
         assert!(output.status.success(), "{args:?}");
         assert!(output.stdout.is_empty());
         assert!(
             stderr(&output).contains(
-                "Skipped scan.jpg: an image has no text to extract without --ocr or --llm"
+                "Skipped scan.png: an image has no text to extract without --ocr or --llm"
             ),
             "{}",
             stderr(&output)
         );
     }
-    assert!(invoke(root.path(), &["scan.jpg", "-q"]).stderr.is_empty());
-    assert!(!root.path().join("images/scan.jpg.md").exists());
+    assert!(invoke(root.path(), &["scan.png", "-q"]).stderr.is_empty());
+    assert!(!root.path().join("images").exists());
+    // The name is the one the report lists, even when the input is spelled as
+    // an absolute path.
+    let absolute = root.path().join("scan.png");
+    let named = invoke(root.path(), &[absolute.to_str().unwrap()]);
+    assert!(
+        stderr(&named).starts_with("Skipped scan.png: "),
+        "{}",
+        stderr(&named)
+    );
 
     std::fs::write(root.path().join("doc.txt"), "Text\n").unwrap();
     let warned = invoke(root.path(), &["doc.txt", "--alt", "--desc"]);
@@ -363,7 +382,10 @@ fn empty_batches_and_previews_say_what_would_happen() {
     );
     let preview = invoke(root.path(), &["docs", "-o", "out", "--dry-run"]);
     assert!(preview.status.success());
-    assert_eq!(stdout(&preview), "a.txt -> out/\nb.md -> out/\n");
+    assert_eq!(
+        stdout(&preview),
+        "a.txt -> out/a.txt.md\nb.md -> out/b.md.md\n"
+    );
     assert!(
         stderr(&preview).contains("Dry run: 2 files would be converted; nothing was written."),
         "{}",
@@ -382,7 +404,7 @@ fn batch_summary_names_failures_and_where_results_went() {
     assert_eq!(output.status.code(), Some(10));
     let message = stderr(&output);
     assert!(message.contains("Error: broken.docx: "), "{message}");
-    assert!(message.contains("Done: 1 file ("), "{message}");
+    assert!(message.contains("Done: 1/2 files ("), "{message}");
     assert!(
         message.contains("Failed 1 item: broken.docx. See the errors above."),
         "{message}"

@@ -18,6 +18,8 @@ mod auth;
 mod compat;
 #[path = "app/doctor.rs"]
 mod doctor;
+#[path = "app/dry_run.rs"]
+mod dry_run;
 #[path = "app/guided.rs"]
 mod guided;
 #[path = "app/help_zh.rs"]
@@ -26,6 +28,10 @@ mod help_zh;
 mod interactive;
 #[path = "app/logging.rs"]
 mod logging;
+#[path = "app/progress.rs"]
+mod progress;
+#[path = "app/warnings.rs"]
+mod warnings;
 macro_rules! eprintln {
     ($($argument:tt)*) => { $crate::app::logging::diagnostic(format_args!($($argument)*)) };
 }
@@ -102,6 +108,17 @@ Examples:
   markitai config get llm.enabled         Read one value
   markitai config set output.dir ./out    Validate and save one value
   markitai config path                    Show which file is in use";
+
+const AUTH_AFTER_HELP: &str = "\
+Examples:
+  markitai auth                         Status of every subscription runtime
+  markitai auth claude status           One runtime (add --json for scripts)
+  markitai auth chatgpt login           Sign in through the official runtime";
+
+const MCP_AFTER_HELP: &str = "\
+Examples:
+  markitai mcp                          Serve the tools to an MCP client over stdio
+  markitai -c cfg.json mcp              Serve with a particular configuration file";
 
 const CACHE_AFTER_HELP: &str = "\
 Examples:
@@ -338,6 +355,7 @@ enum Command {
         command: CacheCommand,
     },
     /// Inspect subscription authentication or delegate login to an official runtime.
+    #[command(after_help = AUTH_AFTER_HELP)]
     Auth {
         #[command(subcommand)]
         command: Option<auth::Command>,
@@ -364,12 +382,22 @@ enum Command {
         allowed_host: Vec<String>,
     },
     /// Run the native MCP service over standard input/output.
+    #[command(
+        long_about = "Run the native MCP service over standard input/output\n\n\
+            Tools: convert_document and convert_url convert one document or page,\n\
+            batch_convert starts a directory or URL-list job and job_status reports on it.\n\
+            An MCP client starts this command; it answers on stdout and logs on stderr.",
+        after_help = MCP_AFTER_HELP
+    )]
     Mcp,
 }
 
 #[derive(Subcommand, Debug, Clone)]
 enum CacheCommand {
     /// Show cache entry counts and disk use.
+    #[command(
+        after_help = "Examples:\n  markitai cache stats                  Entry counts and disk use\n  markitai cache stats --json           Exact byte counts for scripts\n  markitai cache stats -v --limit 5     The five most recent LLM entries per model"
+    )]
     Stats {
         #[arg(long)]
         /// Print the statistics as JSON.
@@ -382,6 +410,9 @@ enum CacheCommand {
         limit: usize,
     },
     /// Clear the LLM and URL fetch caches.
+    #[command(
+        after_help = "Examples:\n  markitai cache clear                           Ask before clearing\n  markitai cache clear -y                        Clear without asking\n  markitai cache clear -y --include-spa-domains  Also forget learned browser-only domains"
+    )]
     Clear {
         #[arg(short, long)]
         /// Clear without asking for confirmation.
@@ -391,6 +422,9 @@ enum CacheCommand {
         include_spa_domains: bool,
     },
     /// Inspect or clear learned browser-domain routing.
+    #[command(
+        after_help = "Examples:\n  markitai cache spa-domains           List the learned domains\n  markitai cache spa-domains --json    As JSON\n  markitai cache spa-domains --clear   Forget every learned domain"
+    )]
     SpaDomains {
         #[arg(long)]
         /// Print the domains as JSON.
@@ -404,6 +438,9 @@ enum CacheCommand {
 #[derive(Subcommand, Debug, Clone)]
 enum ConfigCommand {
     /// Show the effective configuration; secrets are redacted.
+    #[command(
+        after_help = "Examples:\n  markitai config list               The whole configuration as JSON\n  markitai config list -f table      One setting per line\n  markitai config list -f yaml       As YAML"
+    )]
     List {
         #[arg(short='f', long="format", default_value="json", value_parser=["json","yaml","table"], ignore_case=true)]
         /// Output format.
@@ -413,13 +450,22 @@ enum ConfigCommand {
         show_secrets: bool,
     },
     /// Show which configuration file is in use.
+    #[command(
+        after_help = "Examples:\n  markitai config path               The file in use, or where files are looked for\n  markitai -c other.json config path The file chosen with -c"
+    )]
     Path,
     /// Check a configuration file against the schema.
+    #[command(
+        after_help = "Examples:\n  markitai config validate                 Check the configuration in use\n  markitai config validate ./markitai.json Check a particular file"
+    )]
     Validate {
         /// File to check; defaults to the configuration in use.
         config_file: Option<PathBuf>,
     },
     /// Print one value; sections print as JSON.
+    #[command(
+        after_help = "Examples:\n  markitai config get llm.enabled     One value\n  markitai config get output          A whole section as JSON"
+    )]
     Get {
         /// Dot-notation key, e.g. llm.enabled.
         key: String,
@@ -428,6 +474,9 @@ enum ConfigCommand {
         show_secrets: bool,
     },
     /// Validate and save one value; invalid values are not written.
+    #[command(
+        after_help = "Examples:\n  markitai config set output.on_conflict skip   Never replace an existing result\n  markitai config set output.dir ~/Documents/md Where batches write by default\n  markitai config set llm.enabled true          Turn on model processing"
+    )]
     Set {
         /// Dot-notation key, e.g. output.on_conflict.
         key: String,
@@ -438,6 +487,9 @@ enum ConfigCommand {
         show_secrets: bool,
     },
     /// Edit settings in a terminal; each value is validated and saved at once.
+    #[command(
+        after_help = "Examples:\n  markitai config edit    Browse, search (/keyword) and change settings; q quits"
+    )]
     Edit,
 }
 
@@ -703,6 +755,27 @@ fn execute(cli: &Cli) -> CliResult<i32> {
     execute_conversion(cli, cli.input.as_deref().unwrap(), cfg, cli.output.clone())
 }
 
+/// An output location with a leading `~` or `~/` replaced by the home
+/// directory. Nothing else changes (`~name` and `./~` stay literal names), and
+/// a path that cannot be expanded is refused instead of becoming a directory
+/// literally called `~`.
+fn home_relative(path: &Path) -> CliResult<PathBuf> {
+    if path.strip_prefix("~").is_err() {
+        return Ok(path.to_owned());
+    }
+    let expanded = config::expand_home(path);
+    if expanded.strip_prefix("~").is_ok() {
+        return Err((
+            1,
+            format!(
+                "Cannot expand ~ in {}: HOME is not set. Spell the directory out, or use ./~ for a directory literally named ~",
+                path.display()
+            ),
+        ));
+    }
+    Ok(expanded)
+}
+
 fn conversion_config(cli: &Cli, overrides: Option<Value>) -> CliResult<Value> {
     let mut cfg = config::load(cli.config.as_deref(), overrides).map_err(runtime)?;
     if let Some(name) = &cli.preset {
@@ -835,8 +908,12 @@ fn execute_conversion(
     cli: &Cli,
     input: &str,
     mut cfg: Value,
-    mut output: Option<PathBuf>,
+    output: Option<PathBuf>,
 ) -> CliResult<i32> {
+    // A leading `~` is expanded here, once, for `-o` and `output.dir` alike:
+    // the shell leaves `--output=~/x` and a configuration value alone, and the
+    // claim, state and report layers below all take the path literally.
+    let mut output = output.as_deref().map(home_relative).transpose()?;
     // Clap accepts any spelling of a level; the logger knows the upper-case one.
     let level = cli.log_level.as_deref().map(str::to_ascii_uppercase);
     logging::start(&cfg, level.as_deref()).map_err(runtime)?;
@@ -879,15 +956,16 @@ fn execute_conversion(
         && !config::enabled(&cfg, "/llm/enabled")
         && output.is_none()
     {
-        output = Some(
-            cfg["output"]["dir"]
-                .as_str()
-                .map(PathBuf::from)
-                .unwrap_or(std::env::current_dir().map_err(runtime)?),
-        );
+        output = Some(match cfg["output"]["dir"].as_str() {
+            Some(dir) => home_relative(Path::new(dir))?,
+            None => std::env::current_dir().map_err(runtime)?,
+        });
     }
     if batch && output.is_none() {
-        output = cfg["output"]["dir"].as_str().map(PathBuf::from);
+        output = cfg["output"]["dir"]
+            .as_str()
+            .map(|dir| home_relative(Path::new(dir)))
+            .transpose()?;
     }
     if batch && output.is_none() {
         return Err((
@@ -989,18 +1067,13 @@ fn execute_conversion(
         if !is_url(input) && !input_path.exists() {
             return Err((1, format!("Input does not exist: {input}")));
         }
-        for task in &tasks {
-            println!(
-                "{} -> {}",
-                task.display,
-                task.output
-                    .as_deref()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "stdout".into())
-            );
+        // One line per item: where it would be written, or why it would not.
+        let previews = dry_run::plan(&tasks, &cfg);
+        for (task, preview) in tasks.iter().zip(&previews) {
+            println!("{} -> {}", task.display, preview.line());
         }
-        if batch && !cli.quiet {
-            say_with(|lang| dry_run_summary(&tasks, input_path, lang));
+        if !cli.quiet {
+            say_with(|lang| dry_run_summary(&tasks, &previews, input_path, lang));
         }
         return Ok(0);
     }
@@ -1095,7 +1168,7 @@ fn execute_conversion(
         let local = mode == RunMode::SingleFile;
         let unreadable = local.then(|| unreadable_input(input)).flatten();
         let absent = local && std::fs::symlink_metadata(config::expand_home(input_path)).is_err();
-        let claim = if unreadable.is_some() || absent {
+        let claim = if unreadable.is_some() || absent || publishes_nothing(&task, &cfg) {
             None
         } else {
             batch_run::claim(&mut task, &cfg, None, None, &Default::default()).map_err(|error| {
@@ -1108,6 +1181,10 @@ fn execute_conversion(
                 }
             })?
         };
+        // A conversion that takes more than a moment shows a spinner line on a
+        // terminal; it is gone before the result is printed.
+        let spinner =
+            progress::Spinner::start(progress::wanted(cli.quiet, cli.json), &task.report_key);
         let (record, result) = match unreadable {
             Some(error) => {
                 let progress = begin_item(&task, &cfg);
@@ -1123,6 +1200,7 @@ fn execute_conversion(
                     .map(|claim| claim as &dyn markitai_core::output::Publication),
             ),
         };
+        drop(spinner);
         let item = outcome(&record);
         let failed = result.is_err();
         let report_error = if record.status == ItemStatus::Completed {
@@ -1158,22 +1236,38 @@ fn execute_conversion(
                         }
                     }
                     if !cli.quiet {
-                        for warning in &result.warnings {
+                        for warning in warnings::present(&result.warnings, cli.verbose) {
                             eprintln!("Warning: {warning}");
                         }
                         if let Some(reason) = result.skip_reason.as_deref() {
-                            say_with(|lang| skip_notice(&task.display, reason, lang));
+                            // The name as the report lists it, not the path as typed.
+                            say_with(|lang| skip_notice(&task.report_key, reason, lang));
                         } else if task.output.is_some()
                             && let Some(path) = &record.output
                         {
                             // The name can differ from the input's (rename on conflict).
+                            let existing = renamed_because_of(path, &task.report_key);
                             let path = path.display();
-                            say!("Wrote {path}", "已写入 {path}");
+                            match existing {
+                                Some(existing) => say!(
+                                    "Wrote {path} ({existing} already exists)",
+                                    "已写入 {path}（{existing} 已存在）"
+                                ),
+                                None => say!("Wrote {path}", "已写入 {path}"),
+                            }
                         }
                     }
                 }
                 Err(failure) => {
-                    eprintln!("Error: {failure}");
+                    eprintln!("Error: {}", warnings::condense(&failure.to_string()));
+                    if matches!(failure.error, markitai_core::Error::NotFound(_))
+                        && let Some(command) = mistyped_subcommand(input)
+                    {
+                        say!(
+                            "Hint: did you mean 'markitai {command}'?",
+                            "Hint: 你是想运行 'markitai {command}' 吗？"
+                        );
+                    }
                     if matches!(failure.error, markitai_core::Error::NoModelConfigured) {
                         say!(
                             "Hint: set a provider API key such as OPENAI_API_KEY or ANTHROPIC_API_KEY (optionally with MODEL), or configure llm.model_list; `markitai init` saves a detected model. Run without --llm (or an LLM preset) to convert without a model.",
@@ -1334,6 +1428,20 @@ fn task_config(task: &Task, cfg: &Value) -> Value {
         cfg["output"]["reserved_stem"] = json!(name.strip_suffix(".md").unwrap_or(name));
     }
     cfg
+}
+
+/// A local image with neither OCR nor a model can only end as a skip ("no text
+/// to extract") or as an error ("not a valid image") before anything is
+/// published. It therefore needs no output claim: no ownership files, no
+/// output directory, no recovery receipt for a result that never exists.
+fn publishes_nothing(task: &Task, cfg: &Value) -> bool {
+    !is_url(&task.source)
+        && Path::new(&task.source)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(markitai_core::is_image_extension)
+        && !config::enabled(cfg, "/llm/enabled")
+        && !config::enabled(cfg, "/ocr/enabled")
 }
 
 fn image_only_result(
@@ -1757,6 +1865,54 @@ fn unsaved_assets(markdown: &str, cfg: &Value, lang: i18n::Lang) -> Option<Strin
         )
     })
 }
+/// The name a result would have had but for `output.on_conflict = rename`:
+/// `a.docx.v2.md` for source `a.docx` was written because `a.docx.md` exists.
+/// Only a name that really is the source's name plus `.vN` counts.
+pub(crate) fn renamed_because_of(written: &Path, source: &str) -> Option<String> {
+    let name = written.file_name()?.to_str()?;
+    let source = Path::new(source).file_name()?.to_str()?;
+    let (stem, suffix) = name
+        .strip_suffix(".llm.md")
+        .map(|stem| (stem, ".llm.md"))
+        .or_else(|| name.strip_suffix(".md").map(|stem| (stem, ".md")))?;
+    let version = stem.strip_prefix(source)?.strip_prefix(".v")?;
+    (version.parse::<u64>().is_ok() && !version.starts_with('+'))
+        .then(|| format!("{source}{suffix}"))
+}
+
+/// The subcommand a missing input is most likely a typo of, within two edits.
+fn mistyped_subcommand(input: &str) -> Option<&'static str> {
+    const COMMANDS: [&str; 7] = ["config", "init", "doctor", "cache", "auth", "serve", "mcp"];
+    if input.len() < 3 || !input.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return None;
+    }
+    let input = input.to_ascii_lowercase();
+    COMMANDS
+        .into_iter()
+        .map(|command| (edit_distance(&input, command), command))
+        .filter(|&(distance, command)| distance <= 2 && distance < command.len())
+        .min()
+        .map(|(_, command)| command)
+}
+
+/// Levenshtein distance between two short ASCII words.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut diagonal = row[0];
+        row[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let above = row[j + 1];
+            row[j + 1] = (diagonal + usize::from(ca != *cb))
+                .min(above + 1)
+                .min(row[j] + 1);
+            diagonal = above;
+        }
+    }
+    row[b.len()]
+}
+
 fn is_url(s: &str) -> bool {
     s.starts_with("http://") || s.starts_with("https://")
 }
@@ -1777,15 +1933,28 @@ fn skip_notice(display: &str, reason: &str, lang: i18n::Lang) -> String {
 }
 
 /// The preview's closing line; the listing itself stays on stdout.
-fn dry_run_summary(tasks: &[Task], input: &Path, lang: i18n::Lang) -> String {
-    let urls = tasks.iter().filter(|task| is_url(&task.source)).count();
-    let files = tasks.len() - urls;
+fn dry_run_summary(
+    tasks: &[Task],
+    previews: &[dry_run::Preview],
+    input: &Path,
+    lang: i18n::Lang,
+) -> String {
     if tasks.is_empty() {
         let input = input.display();
         return text!(
             lang => "Dry run: no supported files or URLs in {input}; nothing would be converted.",
             "预览：{input} 中没有受支持的文件或 URL，不会转换任何内容。"
         );
+    }
+    let (mut files, mut urls, mut skipped) = (0, 0, 0);
+    for (task, preview) in tasks.iter().zip(previews) {
+        if !preview.converts() {
+            skipped += 1;
+        } else if is_url(&task.source) {
+            urls += 1;
+        } else {
+            files += 1;
+        }
     }
     let mut parts = Vec::new();
     if files > 0 {
@@ -1800,10 +1969,20 @@ fn dry_run_summary(tasks: &[Task], input: &Path, lang: i18n::Lang) -> String {
         i18n::Lang::En => " and ",
         i18n::Lang::Zh => "和 ",
     });
-    text!(
-        lang => "Dry run: {parts} would be converted; nothing was written.",
-        "预览：将转换 {parts}；未写出任何内容。"
-    )
+    match (parts.is_empty(), skipped) {
+        (_, 0) => text!(
+            lang => "Dry run: {parts} would be converted; nothing was written.",
+            "预览：将转换 {parts}；未写出任何内容。"
+        ),
+        (true, _) => text!(
+            lang => "Dry run: nothing would be converted, {skipped} skipped; nothing was written.",
+            "预览：不会转换任何内容，将跳过 {skipped} 项；未写出任何内容。"
+        ),
+        (false, _) => text!(
+            lang => "Dry run: {parts} would be converted and {skipped} skipped; nothing was written.",
+            "预览：将转换 {parts}，将跳过 {skipped} 项；未写出任何内容。"
+        ),
+    }
 }
 
 /// Prints one stderr line built per language. The file log keeps the English
@@ -1820,38 +1999,53 @@ fn say_with(build: impl Fn(i18n::Lang) -> String) {
 
 /// Each item's warnings and error on stderr, in item order. A warning that
 /// several items share is written once, where it first occurs, naming them.
-fn print_item_diagnostics(records: &[RunItem], quiet: bool) {
-    for line in item_diagnostics(records, quiet) {
+/// `verbose` also shows the notes that only explain how a page was read.
+fn print_item_diagnostics(records: &[RunItem], quiet: bool, verbose: bool) {
+    for line in item_diagnostics(records, quiet, verbose) {
         eprintln!("{line}");
     }
 }
 
-fn item_diagnostics(records: &[RunItem], quiet: bool) -> Vec<String> {
+fn item_diagnostics(records: &[RunItem], quiet: bool, verbose: bool) -> Vec<String> {
     use std::collections::{HashMap, HashSet};
+    // What the terminal shows of each item's warnings; reports and `--json`
+    // keep them all.
+    let shown: Vec<Vec<String>> = records
+        .iter()
+        .map(|record| {
+            if quiet {
+                Vec::new()
+            } else {
+                warnings::present(&record.warnings, verbose)
+            }
+        })
+        .collect();
     let mut sharing = HashMap::<&str, Vec<&str>>::new();
-    for record in records.iter().filter(|_| !quiet) {
+    for (record, warnings) in records.iter().zip(&shown) {
         let mut seen = HashSet::new();
-        for warning in &record.warnings {
+        for warning in warnings {
             if seen.insert(warning.as_str()) {
                 sharing.entry(warning).or_default().push(&record.display);
             }
         }
     }
     let (mut lines, mut written) = (Vec::new(), HashSet::new());
-    for record in records {
-        if !quiet {
-            for warning in &record.warnings {
-                match sharing[warning.as_str()].as_slice() {
-                    [_] => lines.push(format!("Warning: {}: {warning}", record.display)),
-                    items if written.insert(warning.as_str()) => {
-                        lines.push(format!("Warning: {}: {warning}", shared_names(items)))
-                    }
-                    _ => {}
+    for (record, warnings) in records.iter().zip(&shown) {
+        for warning in warnings {
+            match sharing[warning.as_str()].as_slice() {
+                [_] => lines.push(format!("Warning: {}: {warning}", record.display)),
+                items if written.insert(warning.as_str()) => {
+                    lines.push(format!("Warning: {}: {warning}", shared_names(items)))
                 }
+                _ => {}
             }
         }
         if let Some(error) = &record.error {
-            lines.push(format!("Error: {}: {error}", record.display));
+            lines.push(format!(
+                "Error: {}: {}",
+                record.display,
+                warnings::condense(error)
+            ));
         }
     }
     lines
@@ -1871,14 +2065,28 @@ fn shared_names(items: &[&str]) -> String {
 }
 
 /// A batch's closing lines on stderr, in the terminal language. `unprocessed`
-/// names the items an interruption left unstarted.
+/// names the items an interruption left unstarted and `resumed` counts what an
+/// earlier run of a resumed batch had finished.
 fn print_batch_summary(
     records: &[RunItem],
     unprocessed: &[&str],
+    resumed: report::Resumed,
+    verbose: bool,
     elapsed: std::time::Duration,
     output: &Path,
 ) {
-    let english = report::batch_summary(records, unprocessed, elapsed, output, i18n::Lang::En);
+    let summary = |lang| {
+        report::batch_summary(
+            records,
+            unprocessed,
+            resumed,
+            verbose,
+            elapsed,
+            output,
+            lang,
+        )
+    };
+    let english = summary(i18n::Lang::En);
     match i18n::lang() {
         i18n::Lang::En => {
             for line in &english {
@@ -1886,8 +2094,7 @@ fn print_batch_summary(
             }
         }
         i18n::Lang::Zh => {
-            let chinese =
-                report::batch_summary(records, unprocessed, elapsed, output, i18n::Lang::Zh);
+            let chinese = summary(i18n::Lang::Zh);
             for (english, chinese) in english.iter().zip(&chinese) {
                 logging::diagnostic_as(format_args!("{english}"), format_args!("{chinese}"));
             }
@@ -2015,6 +2222,20 @@ fn discover(input: &Path, output: &Path, cli: &Cli, cfg: &Value) -> CliResult<Ve
     }
     let positive = positive.build().map_err(runtime)?;
     let negative = negative.build().map_err(runtime)?;
+    // Version-control and dependency folders, dot-files and Office lock files
+    // (`~$name.docx`) are not documents. A positive glob that spells such a
+    // name out (`.github/**`, `**/node_modules/**`) asks for them.
+    let spelled: Vec<&str> = cli
+        .globs
+        .iter()
+        .map(|pattern| pattern.trim())
+        .filter(|pattern| !pattern.starts_with('!'))
+        .flat_map(|pattern| pattern.split('/'))
+        .collect();
+    let hidden_wanted = spelled
+        .iter()
+        .any(|part| part.starts_with('.') && !matches!(*part, "." | ".."));
+    let dependencies_wanted = spelled.contains(&"node_modules");
     let depth = cli
         .max_depth
         .or_else(|| cfg["batch"]["scan_max_depth"].as_u64().map(|n| n as usize))
@@ -2035,6 +2256,15 @@ fn discover(input: &Path, output: &Path, cli: &Cli, cfg: &Value) -> CliResult<Ve
         }
         let path = entry.path();
         let directory = entry.file_type().is_dir();
+        let name = entry.file_name().to_string_lossy();
+        if ((name.starts_with('.') || name.starts_with("~$")) && !hidden_wanted)
+            || (name == "node_modules" && !dependencies_wanted)
+        {
+            if directory {
+                entries.skip_current_dir();
+            }
+            continue;
+        }
         if entry.file_name() == ".markitai"
             || (directory && absolute_output != absolute_input && absolute(path) == absolute_output)
         {
@@ -2235,6 +2465,16 @@ fn subcommand(cli: &Cli, command: &Command, overrides: Option<Value>) -> CliResu
                             "未找到配置文件，正在使用内建默认值。可运行 `markitai init` 创建。"
                         )
                     );
+                    // Where a file would be looked for, in the order it is used.
+                    let home = config::home().join("config.json");
+                    let home = home.display();
+                    println!(
+                        "{}",
+                        text!(
+                            "Searched in this order: -c FILE, the MARKITAI_CONFIG variable, ./markitai.json, {home}. `markitai config set KEY VALUE` creates {home}.",
+                            "查找顺序：-c FILE、环境变量 MARKITAI_CONFIG、./markitai.json、{home}。`markitai config set KEY VALUE` 会创建 {home}。"
+                        )
+                    );
                 }
             }
             ConfigCommand::Validate { config_file } => {
@@ -2329,6 +2569,9 @@ fn subcommand(cli: &Cli, command: &Command, overrides: Option<Value>) -> CliResu
                     }
                 };
                 println!("{key} = {visible}");
+                // stdout keeps the value for scripts; which file changed goes to stderr.
+                let saved = path.display();
+                say!("Saved to {saved}", "已保存到 {saved}");
             }
             ConfigCommand::Edit => {
                 if overrides.is_some() {
@@ -2665,7 +2908,7 @@ mod tests {
             item(4, &["priced"], None),
         ];
         assert_eq!(
-            item_diagnostics(&records, false),
+            item_diagnostics(&records, false, false),
             [
                 "Warning: f0.docx: own",
                 "Warning: f0.docx, f1.docx and 2 more files: priced",
@@ -2673,7 +2916,10 @@ mod tests {
                 "Warning: f2.docx, f3.docx: pair",
             ]
         );
-        assert_eq!(item_diagnostics(&records, true), ["Error: f1.docx: broken"]);
+        assert_eq!(
+            item_diagnostics(&records, true, false),
+            ["Error: f1.docx: broken"]
+        );
     }
 
     #[test]
@@ -2821,32 +3067,110 @@ mod tests {
             reserved_stem: None,
             source_file: None,
         };
+        use dry_run::Preview;
         let both = [task("a.txt"), task("https://example.com/")];
+        let converted = [Preview::Stdout, Preview::Stdout];
         assert_eq!(
-            dry_run_summary(&both, Path::new("in"), i18n::Lang::En),
+            dry_run_summary(&both, &converted, Path::new("in"), i18n::Lang::En),
             "Dry run: 1 file and 1 URL would be converted; nothing was written."
         );
         assert!(
-            dry_run_summary(&[], Path::new("in"), i18n::Lang::En)
+            dry_run_summary(&[], &[], Path::new("in"), i18n::Lang::En)
                 .contains("nothing would be converted")
         );
         assert_eq!(
-            dry_run_summary(&both, Path::new("in"), i18n::Lang::Zh),
+            dry_run_summary(&both, &converted, Path::new("in"), i18n::Lang::Zh),
             "预览：将转换 1 个文件和 1 个 URL；未写出任何内容。"
         );
         assert_eq!(
             dry_run_summary(
                 &[task("a.txt"), task("b.txt")],
+                &converted,
                 Path::new("in"),
                 i18n::Lang::Zh
             ),
             "预览：将转换 2 个文件；未写出任何内容。"
         );
         assert_eq!(
-            dry_run_summary(&[], Path::new("in"), i18n::Lang::Zh),
+            dry_run_summary(&[], &[], Path::new("in"), i18n::Lang::Zh),
             "预览：in 中没有受支持的文件或 URL，不会转换任何内容。"
         );
+        // Items that would be skipped are counted apart from those converted.
+        let mixed = [Preview::Stdout, Preview::Skip("image".into())];
+        assert_eq!(
+            dry_run_summary(&both, &mixed, Path::new("in"), i18n::Lang::En),
+            "Dry run: 1 file would be converted and 1 skipped; nothing was written."
+        );
+        assert_eq!(
+            dry_run_summary(&both, &mixed, Path::new("in"), i18n::Lang::Zh),
+            "预览：将转换 1 个文件，将跳过 1 项；未写出任何内容。"
+        );
+        let skipped = [Preview::Skip("a".into()), Preview::Skip("b".into())];
+        assert_eq!(
+            dry_run_summary(&both, &skipped, Path::new("in"), i18n::Lang::En),
+            "Dry run: nothing would be converted, 2 skipped; nothing was written."
+        );
     }
+    #[test]
+    fn a_renamed_result_names_the_file_that_was_in_the_way() {
+        let renamed = |written: &str, source: &str| renamed_because_of(Path::new(written), source);
+        assert_eq!(
+            renamed("out/a.docx.v2.md", "a.docx").as_deref(),
+            Some("a.docx.md")
+        );
+        assert_eq!(
+            renamed("out/a.docx.v13.llm.md", "dir/a.docx").as_deref(),
+            Some("a.docx.llm.md")
+        );
+        // Not renamed: the plain name, a source that is itself called v2, a
+        // version that is not a number.
+        assert_eq!(renamed("out/a.docx.md", "a.docx"), None);
+        assert_eq!(renamed("out/notes.v2.md", "notes.v2"), None);
+        assert_eq!(renamed("out/a.docx.vx.md", "a.docx"), None);
+        assert_eq!(renamed("out/b.docx.v2.md", "a.docx"), None);
+    }
+
+    #[test]
+    fn a_missing_input_close_to_a_subcommand_name_suggests_the_command() {
+        for (typed, command) in [
+            ("docter", "doctor"),
+            ("conifg", "config"),
+            ("cahce", "cache"),
+            ("inti", "init"),
+            ("Doctor", "doctor"),
+            ("serv", "serve"),
+        ] {
+            assert_eq!(mistyped_subcommand(typed), Some(command), "{typed}");
+        }
+        // Paths, file names and unrelated words never get a suggestion.
+        for typed in [
+            "notes.txt",
+            "dir/doctor",
+            "report",
+            "ab",
+            "documents",
+            "my file",
+        ] {
+            assert_eq!(mistyped_subcommand(typed), None, "{typed}");
+        }
+    }
+
+    #[test]
+    fn a_leading_tilde_names_the_home_directory_and_nothing_else_changes() {
+        // The expansion reads HOME; this check only concerns what it leaves alone.
+        for same in ["out", "./~", "~name/out", "a/~/b", "/abs/~"] {
+            assert_eq!(home_relative(Path::new(same)).unwrap(), Path::new(same));
+        }
+        if let Some(home) = std::env::var_os("HOME") {
+            let home = PathBuf::from(home);
+            assert_eq!(home_relative(Path::new("~")).unwrap(), home);
+            assert_eq!(
+                home_relative(Path::new("~/out/dir")).unwrap(),
+                home.join("out/dir")
+            );
+        }
+    }
+
     #[test]
     fn credentials_remain_redacted_at_nested_paths() {
         let mut cfg = json!({"llm":{"model_list":[{"litellm_params":{"api_key":"secret","model":"test"}}]},"fetch":{"playwright":{"extra_http_headers":{"Authorization":"secret"}}}});

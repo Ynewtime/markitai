@@ -1272,36 +1272,52 @@ pub(crate) fn render_resumed(
     serde_json::to_vec_pretty(&object(fields)).map_err(|error| error.to_string())
 }
 
-/// A batch's closing lines on the terminal: what was converted, how long it
-/// took and what it cost, then skipped items by reason with the next step,
-/// then failed and unfinished items (each failure's error is printed before)
-/// and where the results are. `unprocessed` names the items an interruption
-/// kept from starting; the summary says so and points at `--resume`. The
-/// wording follows `lang`; item names, skip reasons and paths are shown as
-/// they are.
+/// Items an earlier run of the same batch had already finished, which a
+/// `--resume` run does not convert again but still counts.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Resumed {
+    /// Finished with a document.
+    pub(crate) converted: usize,
+    /// Finished without one (skipped).
+    pub(crate) skipped: usize,
+}
+
+/// A batch's closing lines on the terminal: what was converted out of how
+/// many, how long it took and what it cost, then skipped items by reason with
+/// the next step, then failed and unfinished items (each failure's error is
+/// printed before) and where the results are. `unprocessed` names the items an
+/// interruption kept from starting; the summary says so and points at
+/// `--resume`. `resumed` counts what earlier runs had already finished, so a
+/// resumed batch reports all of its items. A group names its first two items
+/// and counts the rest, or lists them all when `verbose`. The wording follows
+/// `lang`; item names and paths are shown as they are.
 pub(crate) fn batch_summary(
     records: &[RunItem],
     unprocessed: &[&str],
+    resumed: Resumed,
+    verbose: bool,
     elapsed: std::time::Duration,
     output: &Path,
     lang: Lang,
 ) -> Vec<String> {
     const EXAMPLES: usize = 2;
-    let (list_separator, more) = match lang {
-        Lang::En => (", ", ", ..."),
-        Lang::Zh => ("、", " 等"),
+    let list_separator = match lang {
+        Lang::En => ", ",
+        Lang::Zh => "、",
     };
     let items = |count: usize| {
         let noun = if count == 1 { "item" } else { "items" };
         text!(lang => "{count} {noun}", "{count} 项")
     };
-    // The first names of a group, then a mark that there are more.
+    // The first names of a group and how many more there are; all of them
+    // when asked.
     let examples = |names: &[&str]| {
-        let mut shown = names[..names.len().min(EXAMPLES)].join(list_separator);
-        if names.len() > EXAMPLES {
-            shown.push_str(more);
+        if verbose || names.len() <= EXAMPLES {
+            return names.join(list_separator);
         }
-        shown
+        let shown = names[..EXAMPLES].join(list_separator);
+        let more = names.len() - EXAMPLES;
+        text!(lang => "{shown} and {more} more", "{shown} 及另外 {more} 项")
     };
     let completed = |kind: ItemKind| {
         records
@@ -1309,17 +1325,9 @@ pub(crate) fn batch_summary(
             .filter(|record| record.kind == kind && record.status == ItemStatus::Completed)
             .count()
     };
-    let mut parts = Vec::new();
-    let files = completed(ItemKind::File);
-    if files > 0 {
-        let noun = if files == 1 { "file" } else { "files" };
-        parts.push(text!(lang => "{files} {noun}", "{files} 个文件"));
-    }
-    let urls = completed(ItemKind::Url);
-    if urls > 0 {
-        let noun = if urls == 1 { "URL" } else { "URLs" };
-        parts.push(text!(lang => "{urls} {noun}", "{urls} 个 URL"));
-    }
+    let (files, urls) = (completed(ItemKind::File), completed(ItemKind::Url));
+    let finished = files + urls + resumed.converted;
+    let total = records.len() + unprocessed.len() + resumed.converted + resumed.skipped;
     let seconds = elapsed.as_secs();
     let mut detail = format!("{}:{:02}", seconds / 60, seconds % 60);
     let detail_separator = match lang {
@@ -1337,9 +1345,32 @@ pub(crate) fn batch_summary(
         detail.push_str(detail_separator);
         detail.push_str(&text!(lang => "cost incomplete", "费用不完整"));
     }
-    let converted = if parts.is_empty() {
+    let converted = if finished == 0 {
         text!(lang => "nothing converted", "没有转换任何内容")
+    } else if finished < total || resumed.converted + resumed.skipped > 0 {
+        // Out of how many: a count alone cannot tell a finished batch from one
+        // that lost items, and a resumed run counts the work of its first run.
+        let kinds = |kind: ItemKind| records.iter().all(|record| record.kind == kind);
+        if !records.is_empty() && kinds(ItemKind::File) {
+            let noun = if total == 1 { "file" } else { "files" };
+            text!(lang => "{finished}/{total} {noun}", "{finished}/{total} 个文件")
+        } else if !records.is_empty() && kinds(ItemKind::Url) {
+            let noun = if total == 1 { "URL" } else { "URLs" };
+            text!(lang => "{finished}/{total} {noun}", "{finished}/{total} 个 URL")
+        } else {
+            let noun = if total == 1 { "item" } else { "items" };
+            text!(lang => "{finished}/{total} {noun}", "{finished}/{total} 项")
+        }
     } else {
+        let mut parts = Vec::new();
+        if files > 0 {
+            let noun = if files == 1 { "file" } else { "files" };
+            parts.push(text!(lang => "{files} {noun}", "{files} 个文件"));
+        }
+        if urls > 0 {
+            let noun = if urls == 1 { "URL" } else { "URLs" };
+            parts.push(text!(lang => "{urls} {noun}", "{urls} 个 URL"));
+        }
         parts.join(list_separator)
     };
     let mut lines = vec![text!(
@@ -1357,6 +1388,19 @@ pub(crate) fn batch_summary(
             .push(&record.display);
     }
     for (reason, names) in skipped {
+        // The reason in words; the stored key stays in reports and JSON.
+        let why = match reason {
+            "image_only" => text!(
+                lang => "images with no text",
+                "图片，没有可提取的文字"
+            ),
+            "exists" => text!(lang => "output already exists", "输出已存在"),
+            "pending_batch" => text!(
+                lang => "waiting for a provider batch",
+                "等待供应商批处理"
+            ),
+            other => other.to_owned(),
+        };
         let hint = match reason {
             "image_only" => text!(
                 lang => " Use --llm or --ocr for content extraction.",
@@ -1374,8 +1418,27 @@ pub(crate) fn batch_summary(
         };
         let (count, shown) = (items(names.len()), examples(&names));
         lines.push(text!(
-            lang => "Skipped {count} ({reason}): {shown}.{hint}",
-            "已跳过 {count}（{reason}）：{shown}。{hint}"
+            lang => "Skipped {count} ({why}): {shown}.{hint}",
+            "已跳过 {count}（{why}）：{shown}。{hint}"
+        ));
+    }
+    // Results that took a new name because their file already existed: a
+    // rerun otherwise leaves `name.v2.md` files with no word about them.
+    let renamed: Vec<String> = records
+        .iter()
+        .filter(|record| record.status == ItemStatus::Completed && record.kind == ItemKind::File)
+        .filter_map(|record| {
+            let output = record.output.as_deref()?;
+            crate::app::renamed_because_of(output, &record.report_key)?;
+            Some(output.file_name()?.to_string_lossy().into_owned())
+        })
+        .collect();
+    if !renamed.is_empty() {
+        let names: Vec<&str> = renamed.iter().map(String::as_str).collect();
+        let (count, shown) = (items(names.len()), examples(&names));
+        lines.push(text!(
+            lang => "Renamed {count} (output already exists): {shown}. Set output.on_conflict to overwrite or skip to change this.",
+            "已改名 {count}（输出已存在）：{shown}。将 output.on_conflict 设为 overwrite 或 skip 可改变这一行为。"
         ));
     }
     for (status, label, hint) in [
@@ -1459,13 +1522,16 @@ mod tests {
             batch_summary(
                 &records,
                 &[],
+                Resumed::default(),
+                false,
                 std::time::Duration::from_secs(75),
                 Path::new("out"),
                 Lang::En
             ),
             [
-                "Done: 1 file, 1 URL (1:15, $0.013, cost incomplete)",
-                "Skipped 3 items (image_only): display-k1, display-k2, .... Use --llm or --ocr for content extraction.",
+                // Two of six finished: the line says out of how many.
+                "Done: 2/6 items (1:15, $0.013, cost incomplete)",
+                "Skipped 3 items (images with no text): display-k1, display-k2 and 1 more. Use --llm or --ocr for content extraction.",
                 "Failed 1 item: display-k5. See the errors above.",
                 "Output: out",
             ]
@@ -1480,6 +1546,8 @@ mod tests {
         let lines = batch_summary(
             &records[..2],
             &[],
+            Resumed::default(),
+            false,
             std::time::Duration::from_secs(3),
             Path::new("out"),
             Lang::En,
@@ -1487,7 +1555,9 @@ mod tests {
         assert_eq!(lines[0], "Done: nothing converted (0:03)");
         assert_eq!(lines[2], "Not finished 1 item: display-k1.");
         assert!(
-            lines[1].starts_with("Skipped 1 item (exists): display-k0. Set output.on_conflict"),
+            lines[1].starts_with(
+                "Skipped 1 item (output already exists): display-k0. Set output.on_conflict"
+            ),
             "{lines:?}"
         );
         // Items that all failed for want of a model get one remedy, not one per item.
@@ -1498,13 +1568,15 @@ mod tests {
         let lines = batch_summary(
             &records,
             &[],
+            Resumed::default(),
+            false,
             std::time::Duration::ZERO,
             Path::new("out"),
             Lang::En,
         );
         assert_eq!(
             lines[1],
-            "Failed 6 items: display-k0, display-k1, .... See the errors above."
+            "Failed 6 items: display-k0, display-k1 and 4 more. See the errors above."
         );
         assert!(
             lines[2].starts_with("No LLM model is configured"),
@@ -1539,6 +1611,8 @@ mod tests {
             batch_summary(
                 records,
                 &[],
+                Resumed::default(),
+                false,
                 std::time::Duration::from_secs(75),
                 Path::new("out"),
                 lang,
@@ -1547,9 +1621,9 @@ mod tests {
         assert_eq!(
             summary(&records, Lang::Zh),
             [
-                "完成：1 个文件、1 个 URL（1:15，$0.013，费用不完整）",
-                "已跳过 1 项（exists）：display-k4。将 output.on_conflict 设为 overwrite 或 rename 可重新转换。",
-                "已跳过 2 项（image_only）：display-k1、display-k2。请使用 --llm 或 --ocr 提取内容。",
+                "完成：2/6 项（1:15，$0.013，费用不完整）",
+                "已跳过 1 项（输出已存在）：display-k4。将 output.on_conflict 设为 overwrite 或 rename 可重新转换。",
+                "已跳过 2 项（图片，没有可提取的文字）：display-k1、display-k2。请使用 --llm 或 --ocr 提取内容。",
                 "失败 1 项：display-k5。详见上方的错误信息。",
                 "输出目录：out",
             ]
@@ -1567,7 +1641,7 @@ mod tests {
             lines,
             [
                 "完成：没有转换任何内容（1:15）",
-                "失败 5 项：display-k0、display-k2 等。详见上方的错误信息。",
+                "失败 5 项：display-k0、display-k2 及另外 3 项。详见上方的错误信息。",
                 "未完成 1 项：display-k1。",
                 "未配置 LLM 模型：请设置供应商的 API key（如 OPENAI_API_KEY，可同时设置 MODEL）或配置 llm.model_list，也可以不加 --llm 重新运行。",
                 "输出目录：out",
@@ -1584,7 +1658,7 @@ mod tests {
         };
         assert_eq!(
             pending_batch[1],
-            "已跳过 1 项（pending_batch）：u。稍后可用 --llm-batch-collect 或 --resume 收取。"
+            "已跳过 1 项（等待供应商批处理）：u。稍后可用 --llm-batch-collect 或 --resume 收取。"
         );
     }
 
@@ -1597,6 +1671,8 @@ mod tests {
             batch_summary(
                 &records,
                 unprocessed,
+                Resumed::default(),
+                false,
                 std::time::Duration::from_secs(3),
                 Path::new("out"),
                 lang,
@@ -1611,24 +1687,25 @@ mod tests {
         assert_eq!(
             summary(&names[..1], Lang::En),
             [
-                "Done: 2 files (0:03)",
+                "Done: 2/3 files (0:03)",
                 "Not processed 1 item: a.pdf. Run the same command with --resume to continue.",
                 "Output: out",
             ]
         );
+        // What was not started counts toward the total.
         assert_eq!(
             summary(&names, Lang::En),
             [
-                "Done: 2 files (0:03)",
-                "Not processed 3 items: a.pdf, b.pdf, .... Run the same command with --resume to continue.",
+                "Done: 2/5 files (0:03)",
+                "Not processed 3 items: a.pdf, b.pdf and 1 more. Run the same command with --resume to continue.",
                 "Output: out",
             ]
         );
         assert_eq!(
             summary(&names, Lang::Zh),
             [
-                "完成：2 个文件（0:03）",
-                "未处理 3 项：a.pdf、b.pdf 等。使用相同命令并加上 --resume 可继续。",
+                "完成：2/5 个文件（0:03）",
+                "未处理 3 项：a.pdf、b.pdf 及另外 1 项。使用相同命令并加上 --resume 可继续。",
                 "输出目录：out",
             ]
         );
@@ -1637,6 +1714,93 @@ mod tests {
             summary(&names, Lang::En).len(),
             summary(&names, Lang::Zh).len()
         );
+    }
+
+    #[test]
+    fn a_resumed_batch_counts_the_items_an_earlier_run_finished() {
+        let records: Vec<RunItem> = (0..2)
+            .map(|index| item(index, ItemKind::File, &format!("k{index}")))
+            .collect();
+        let summary = |records: &[RunItem], resumed, verbose, lang| {
+            batch_summary(
+                records,
+                &[],
+                resumed,
+                verbose,
+                std::time::Duration::from_secs(3),
+                Path::new("out"),
+                lang,
+            )
+        };
+        // 8 items were done before; 2 were converted now: 10 of 10.
+        let earlier = Resumed {
+            converted: 8,
+            skipped: 0,
+        };
+        assert_eq!(
+            summary(&records, earlier, false, Lang::En)[0],
+            "Done: 10/10 files (0:03)"
+        );
+        assert_eq!(
+            summary(&records, earlier, false, Lang::Zh)[0],
+            "完成：10/10 个文件（0:03）"
+        );
+        // Items an earlier run skipped count toward the total, not the done.
+        let with_skips = Resumed {
+            converted: 6,
+            skipped: 2,
+        };
+        assert_eq!(
+            summary(&records, with_skips, false, Lang::En)[0],
+            "Done: 8/10 files (0:03)"
+        );
+        // Everything was finished before: nothing is converted now, all 34 are done.
+        let all = Resumed {
+            converted: 34,
+            skipped: 0,
+        };
+        assert_eq!(
+            summary(&[], all, false, Lang::En)[0],
+            "Done: 34/34 items (0:03)"
+        );
+        // Without an earlier run a complete batch keeps its plain line.
+        assert_eq!(
+            summary(&records, Resumed::default(), false, Lang::En)[0],
+            "Done: 2 files (0:03)"
+        );
+    }
+
+    #[test]
+    fn verbose_lists_every_name_where_the_default_counts_the_rest() {
+        let mut records: Vec<RunItem> = (0..5)
+            .map(|index| item(index, ItemKind::File, &format!("k{index}")))
+            .collect();
+        for record in &mut records {
+            record.status = ItemStatus::Skipped;
+            record.skip_reason = Some("image_only".into());
+        }
+        let line = |verbose| {
+            batch_summary(
+                &records,
+                &[],
+                Resumed::default(),
+                verbose,
+                std::time::Duration::ZERO,
+                Path::new("out"),
+                Lang::En,
+            )[1]
+            .clone()
+        };
+        assert_eq!(
+            line(false),
+            "Skipped 5 items (images with no text): display-k0, display-k1 and 3 more. Use --llm or --ocr for content extraction."
+        );
+        assert_eq!(
+            line(true),
+            "Skipped 5 items (images with no text): display-k0, display-k1, display-k2, display-k3, display-k4. Use --llm or --ocr for content extraction."
+        );
+        // Neither form ever ends a list with a doubled full stop.
+        assert!(!line(false).contains(".."), "{}", line(false));
     }
 
     fn item(index: usize, kind: ItemKind, key: &str) -> RunItem {

@@ -220,6 +220,8 @@ fn emit(original: String, console: Option<String>) {
         Level::Info
     };
     event(level, &original);
+    // A status line on the terminal gives way to the line that follows it.
+    super::progress::clear();
     let _ = writeln!(io::stderr().lock(), "{message}");
 }
 

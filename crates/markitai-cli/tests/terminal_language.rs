@@ -1,4 +1,4 @@
-//! Terminal language: `MARKITAI_LANG`, then `LANG`, then `LC_ALL` choose
+//! Terminal language: `MARKITAI_LANG`, then `LC_ALL`, `LC_MESSAGES` and `LANG` choose
 //! Chinese or English for the commands the reference localizes, while JSON,
 //! help and exit codes stay the same in both languages.
 use serde_json::json;
@@ -265,9 +265,17 @@ fn config_path_and_validate_speak_chinese_but_keep_paths_and_errors() {
     let dir = tempfile::tempdir().unwrap();
     let path = run(dir.path(), ZH, &["config", "path"]);
     assert!(path.status.success());
-    assert_eq!(
-        stdout(&path),
-        "未找到配置文件，正在使用内建默认值。可运行 `markitai init` 创建。\n"
+    let message = stdout(&path);
+    assert!(
+        message.starts_with("未找到配置文件，正在使用内建默认值。可运行 `markitai init` 创建。\n"),
+        "{message}"
+    );
+    // Where a file is looked for, in the order it is used, and which one
+    // `config set` would create.
+    assert!(
+        message.contains("查找顺序：-c FILE、环境变量 MARKITAI_CONFIG、./markitai.json、")
+            && message.contains("config.json。`markitai config set KEY VALUE` 会创建 "),
+        "{message}"
     );
     let valid = run(dir.path(), ZH, &["config", "validate"]);
     assert!(valid.status.success());
@@ -297,7 +305,7 @@ fn config_path_and_validate_speak_chinese_but_keep_paths_and_errors() {
 }
 
 #[test]
-fn lang_and_lc_all_follow_the_reference_order_and_markitai_lang_wins() {
+fn lc_all_precedes_lc_messages_and_lang_and_markitai_lang_wins() {
     let dir = tempfile::tempdir().unwrap();
     let valid = |envs: &[(&str, &str)]| stdout(&run(dir.path(), envs, &["config", "validate"]));
     assert_eq!(valid(&[]), "Configuration is valid\n");
@@ -316,11 +324,30 @@ fn lang_and_lc_all_follow_the_reference_order_and_markitai_lang_wins() {
         valid(&[("MARKITAI_LANG", ""), ("LANG", "zh_CN.UTF-8")]),
         "配置有效\n"
     );
-    // LANG is consulted before LC_ALL, as in the reference.
+    // As in POSIX, LC_ALL overrides LC_MESSAGES, which overrides LANG; the
+    // reference read LANG first, so a user who exported LC_ALL got English.
     assert_eq!(
         valid(&[("LANG", "en_US.UTF-8"), ("LC_ALL", "zh_CN.UTF-8")]),
+        "配置有效\n"
+    );
+    assert_eq!(
+        valid(&[("LANG", "en_US.UTF-8"), ("LC_MESSAGES", "zh_CN.UTF-8")]),
+        "配置有效\n"
+    );
+    assert_eq!(
+        valid(&[("LC_ALL", "en_US.UTF-8"), ("LANG", "zh_CN.UTF-8")]),
         "Configuration is valid\n"
     );
+    // The C and POSIX locales name no language, so they never hide a later one.
+    assert_eq!(
+        valid(&[("LANG", "C"), ("LC_ALL", "zh_CN.UTF-8")]),
+        "配置有效\n"
+    );
+    assert_eq!(
+        valid(&[("LC_ALL", "POSIX"), ("LANG", "zh_CN.UTF-8")]),
+        "配置有效\n"
+    );
+    assert_eq!(valid(&[("LANG", "C")]), "Configuration is valid\n");
 }
 
 #[test]

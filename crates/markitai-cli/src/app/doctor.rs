@@ -304,7 +304,7 @@ fn checks(
         "Office page and slide rendering",
         office,
         "Installed executable responds to --version in an isolated profile; document export fidelity is not tested",
-        "Install LibreOffice; Office screenshots also require the native macOS PDF renderer",
+        "Install LibreOffice (macOS: brew install --cask libreoffice); Office screenshots also require the native macOS PDF renderer",
     );
     if office.status == "ok" && !markitai_core::pdf_raster_available() {
         office.status = "warning";

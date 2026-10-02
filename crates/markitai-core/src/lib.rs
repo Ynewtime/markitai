@@ -229,33 +229,41 @@ fn convert_inner(
     let output_dir = options.output_dir.map(|path| config::expand_home(&path));
     // Only a document that would otherwise publish nothing uses the store.
     let stdout_assets = context.stdout_assets.filter(|_| output_dir.is_none());
-    let mut pdf_input = !is_url
-        && input_path
-            .extension()
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"));
+    let name_extension = input_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    // A document saved under another type's extension (a PDF named .docx, a
+    // Word file named .pdf) is read as what its content says it is.
+    let real_extension = if is_url || image_input {
+        None
+    } else {
+        formats::real_extension(&input_path, &name_extension)
+    };
+    let document_extension = real_extension.unwrap_or(&name_extension);
+    let mut pdf_input = !is_url && document_extension == "pdf";
     let mut pdf_media_requested = pdf_input
         && (config::enabled(&cfg, "/ocr/enabled") || config::enabled(&cfg, "/screenshot/enabled"));
     let office_kind = if is_url {
         None
     } else {
-        input_path
-            .extension()
-            .and_then(|value| value.to_str())
-            .and_then(office_render::kind)
+        office_render::kind(document_extension)
     };
     let office_media_wanted = office_kind.is_some()
         && (config::enabled(&cfg, "/ocr/enabled") || config::enabled(&cfg, "/screenshot/enabled"));
-    // OCR of Office pages renders them through LibreOffice. Without it the
-    // document's own text is converted and the missing page OCR is a warning,
-    // so OCR over a folder still converts its Office files; requested
-    // screenshots are the output itself and still fail.
-    // Numbers OCR is unsupported with or without LibreOffice and keeps its error.
-    let office_ocr_without_renderer = office_media_wanted
-        && !config::enabled(&cfg, "/screenshot/enabled")
-        && !input_path
-            .extension()
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("numbers"))
-        && !office_render_available();
+    // Page screenshots and page OCR render the document through LibreOffice.
+    // Without it the document's own text is converted and the missing page
+    // capture is one warning, so a preset such as `rich`, or OCR over a folder,
+    // still converts its Office files. Only `screenshot_only`, where the
+    // screenshots are the whole requested output, keeps failing.
+    // Numbers capture is unsupported with or without LibreOffice: its own error
+    // says so, and no installation would change it.
+    let office_numbers = input_path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("numbers"));
+    let office_ocr_without_renderer =
+        office_media_wanted && !office_numbers && !office_render_available();
     let office_media_requested = office_media_wanted && !office_ocr_without_renderer;
     if !is_url {
         let path = &input_path;
@@ -281,11 +289,31 @@ fn convert_inner(
                 "Input exceeds the 500 MiB limit".into(),
             ));
         }
+        if meta.is_file() {
+            formats::check_not_empty(path, &name_extension)?;
+        }
+    }
+    if let Some(real) = real_extension
+        && office_media_requested
+    {
+        return Err(Error::InvalidInput(format!(
+            "The content is not a .{name_extension} file; rename it to .{real} to capture its pages"
+        )));
+    }
+    if office_ocr_without_renderer
+        && config::enabled(&cfg, "/screenshot/enabled")
+        && config::enabled(&cfg, "/screenshot/screenshot_only")
+    {
+        return Err(Error::Unsupported(
+            "Office screenshots require an installed LibreOffice (soffice on PATH) and the native PDF page renderer, and --screenshot-only publishes nothing else. Install LibreOffice (macOS: brew install --cask libreoffice), or drop --screenshot-only to convert the document's text".into(),
+        ));
     }
     if image_input
         && !config::enabled(&cfg, "/llm/enabled")
         && !config::enabled(&cfg, "/ocr/enabled")
     {
+        // A file that is not an image at all is an error, not a skip.
+        formats::check_image(&input_path, &name_extension)?;
         return Err(Error::ImageOnly(format!(
             "{} is an image file with no text to extract. Enable LLM (llm=True) or OCR (ocr=True) for content extraction.",
             input_path.file_name().unwrap_or_default().to_string_lossy()
@@ -386,7 +414,8 @@ fn convert_inner(
             output_dir.as_deref(),
             &cfg,
             vlm_disabled,
-        )?;
+        )
+        .map_err(formats::explain_damage)?;
         pdf_has_reliable_text = reliable;
         screenshots = captured;
         document.metadata.insert(
@@ -396,10 +425,29 @@ fn convert_inner(
         document.metadata.insert("format".into(), "PDF".into());
         document
     } else {
-        formats::extract(&input_path)?
+        formats::extract_as(&input_path, document_extension).map_err(formats::explain_damage)?
     };
+    if let Some(real) = real_extension {
+        doc.warnings
+            .push(formats::retyped_warning(&name_extension, real));
+    }
     if office_ocr_without_renderer {
-        doc.warnings.push("OCR of Office pages needs LibreOffice (soffice on PATH) and the native PDF page renderer; the document's own text was converted without page OCR.".into());
+        let install = "Install LibreOffice (macOS: brew install --cask libreoffice)";
+        let warning = match (
+            config::enabled(&cfg, "/screenshot/enabled"),
+            config::enabled(&cfg, "/ocr/enabled"),
+        ) {
+            (true, true) => format!(
+                "Page screenshots and OCR of Office pages need LibreOffice (soffice on PATH) and the native PDF page renderer; the document's own text was converted without them. {install}, or pass --no-screenshot and --no-ocr to skip them."
+            ),
+            (true, false) => format!(
+                "Page screenshots of Office documents need LibreOffice (soffice on PATH) and the native PDF page renderer; the document's own text was converted without them. {install}, or pass --no-screenshot to skip them."
+            ),
+            _ => format!(
+                "OCR of Office pages needs LibreOffice (soffice on PATH) and the native PDF page renderer; the document's own text was converted without page OCR. {install}, or pass --no-ocr to skip it."
+            ),
+        };
+        doc.warnings.push(warning);
     }
     if office_media_requested {
         let (captured, reliable) = office_media::prepare(

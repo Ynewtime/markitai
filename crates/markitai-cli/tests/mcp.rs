@@ -411,13 +411,14 @@ fn validation_and_expected_conversion_errors_leave_service_usable() {
         );
     }
     let png = client.root().join("image.png");
-    // A valid 1x1 RGBA image, created from a fixed authored fixture encoding.
+    // A valid 1x1 RGBA image (every chunk checksum correct: a damaged image is
+    // an error, not a skip), created from a fixed authored fixture encoding.
     std::fs::write(
         &png,
         [
             137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1,
             8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 11, 73, 68, 65, 84, 120, 156, 99, 96, 0, 2,
-            0, 0, 5, 0, 1, 165, 246, 69, 64, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+            0, 0, 5, 0, 1, 122, 94, 171, 63, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
         ],
     )
     .unwrap();

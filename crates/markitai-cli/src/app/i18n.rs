@@ -2,11 +2,13 @@
 //! `config path/validate`, `init`, the conversion and batch lines on stderr and
 //! `--help`.
 //!
-//! A nonempty `MARKITAI_LANG` decides on its own; otherwise `LANG` is used,
-//! then `LC_ALL`, in that order, as the reference does. A value that starts
-//! with `zh` in any case selects Chinese; every other value, and no value,
-//! selects English. Variables come from the process first and then from the
-//! same `.env` files that configuration selection reads.
+//! A nonempty `MARKITAI_LANG` decides on its own; otherwise the first of
+//! `LC_ALL`, `LC_MESSAGES` and `LANG` that is set to something other than the
+//! `C`/`POSIX` locale decides, in the order POSIX gives them (the reference
+//! reads `LANG` before `LC_ALL`, so a user who exports `LC_ALL` got English).
+//! A value that starts with `zh` in any case selects Chinese; every other
+//! value, and no value, selects English. Variables come from the process first
+//! and then from the same `.env` files that configuration selection reads.
 //!
 //! Only sentences meant for a person change. JSON, values shared with JSON
 //! (check names, messages and hints), usage errors from the argument parser,
@@ -27,13 +29,23 @@ pub(crate) fn lang() -> Lang {
 }
 
 fn detect(vars: &HashMap<String, String>) -> Lang {
-    let chosen = ["MARKITAI_LANG", "LANG", "LC_ALL"]
+    let chosen = ["MARKITAI_LANG", "LC_ALL", "LC_MESSAGES", "LANG"]
         .into_iter()
-        .find_map(|name| vars.get(name).filter(|value| !value.is_empty()));
+        .find_map(|name| {
+            vars.get(name).filter(|value| {
+                // The C locale names no language; it never hides a later choice.
+                !value.is_empty() && (name == "MARKITAI_LANG" || !is_c_locale(value))
+            })
+        });
     match chosen.and_then(|value| value.get(..2)) {
         Some(prefix) if prefix.eq_ignore_ascii_case("zh") => Lang::Zh,
         _ => Lang::En,
     }
+}
+
+/// `C`, `POSIX` and their encoding variants such as `C.UTF-8`.
+fn is_c_locale(value: &str) -> bool {
+    value == "C" || value == "POSIX" || value.starts_with("C.") || value.starts_with("POSIX.")
 }
 
 /// Formats the English or the Chinese literal for the active language, or for
@@ -68,7 +80,7 @@ mod tests {
     }
 
     #[test]
-    fn markitai_lang_then_lang_then_lc_all_choose_chinese_by_prefix() {
+    fn markitai_lang_then_the_locale_variables_choose_chinese_by_prefix() {
         assert_eq!(detected(&[]), Lang::En);
         assert_eq!(detected(&[("MARKITAI_LANG", "zh")]), Lang::Zh);
         assert_eq!(detected(&[("MARKITAI_LANG", "ZH_cn")]), Lang::Zh);
@@ -84,18 +96,49 @@ mod tests {
             detected(&[("MARKITAI_LANG", "fr"), ("LANG", "zh_CN.UTF-8")]),
             Lang::En
         );
-        // An empty value is skipped, and LANG is read before LC_ALL.
+        // An empty value is skipped.
         assert_eq!(
             detected(&[("MARKITAI_LANG", ""), ("LANG", "zh_CN.UTF-8")]),
             Lang::Zh
         );
+        // LC_ALL, then LC_MESSAGES, then LANG, as POSIX orders them.
         assert_eq!(
             detected(&[("LANG", "en_US.UTF-8"), ("LC_ALL", "zh_CN.UTF-8")]),
+            Lang::Zh
+        );
+        assert_eq!(
+            detected(&[("LC_ALL", "en_US.UTF-8"), ("LANG", "zh_CN.UTF-8")]),
             Lang::En
+        );
+        assert_eq!(
+            detected(&[("LC_MESSAGES", "zh_CN.UTF-8"), ("LANG", "en_US.UTF-8")]),
+            Lang::Zh
+        );
+        assert_eq!(
+            detected(&[("LC_ALL", "zh_CN.UTF-8"), ("LC_MESSAGES", "en_US.UTF-8")]),
+            Lang::Zh
         );
         assert_eq!(
             detected(&[("LANG", ""), ("LC_ALL", "zh_CN.UTF-8")]),
             Lang::Zh
+        );
+        // The C locale names no language and does not hide a later one.
+        for c in ["C", "POSIX", "C.UTF-8"] {
+            assert_eq!(
+                detected(&[("LC_ALL", c), ("LANG", "zh_CN.UTF-8")]),
+                Lang::Zh,
+                "{c}"
+            );
+            assert_eq!(
+                detected(&[("LC_ALL", "zh_CN.UTF-8"), ("LANG", c)]),
+                Lang::Zh
+            );
+            assert_eq!(detected(&[("LANG", c)]), Lang::En);
+        }
+        // MARKITAI_LANG is taken as written, even when it is `C`.
+        assert_eq!(
+            detected(&[("MARKITAI_LANG", "C"), ("LANG", "zh_CN.UTF-8")]),
+            Lang::En
         );
         // Only a leading zh counts; nothing is trimmed.
         assert_eq!(detected(&[("MARKITAI_LANG", " zh")]), Lang::En);

@@ -216,6 +216,24 @@ fn claude_status_and_login_delegate_to_official_runtime_with_private_auth_home()
             Some(if authenticated { 0 } else { 1 })
         );
     }
+    // A signed-out runtime is one command away: the text status says which.
+    fixture.state("signed-out", 0);
+    let text = command()
+        .args(["auth", "claude", "status"])
+        .output()
+        .unwrap();
+    assert_eq!(text.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&text.stdout).contains("  Next: markitai auth claude login\n"),
+        "{}",
+        String::from_utf8_lossy(&text.stdout)
+    );
+    fixture.state("normal", 0);
+    let signed_in = command()
+        .args(["auth", "claude", "status"])
+        .output()
+        .unwrap();
+    assert!(!String::from_utf8_lossy(&signed_in.stdout).contains("Next:"));
     let before = std::fs::read(fixture.root.path().join("config.json")).unwrap();
     for exit in [0, 7] {
         fixture.state("normal", exit);

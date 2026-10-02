@@ -75,7 +75,16 @@ records, receipts, recovery state and locks keep their private modes.
 
 Output names preserve the source extension: `report.pdf.md` and
 `report.pdf.llm.md`. Both share a conflict namespace; renamed results begin with
-`report.pdf.v2`. Explicit CLI filenames and batch-reserved stems reach this layer
+`report.pdf.v2`. The CLI never renames silently: a single conversion writes
+`Wrote out/report.pdf.v2.md (report.pdf.md already exists)`, a batch summary lists
+its renamed results, and `--dry-run` prints each item's final file name with the
+conflict policy already applied (`.v2.md`, `skip (…)`, or `replaces the existing
+file`), computed with the same naming rules and without creating anything. A
+batch that discovers files skips dot-files and dot-directories, `node_modules` and
+Office lock files (`~$name.docx`) unless a glob names them. An image that can only
+end as a skip or an error (no `--ocr`, no model) is decided before the output
+claim, so it creates neither an output directory nor ownership files.
+Explicit CLI filenames and batch-reserved stems reach this layer
 as private configuration fields. Assets are addressed by SHA-256 content prefixes.
 The public result contains only durable asset paths when an output directory was
 provided. Asset remapping recognizes inline images/links, wiki references,

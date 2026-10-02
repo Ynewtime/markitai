@@ -45,13 +45,21 @@ fn has_chinese(text: &str) -> bool {
     text.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c))
 }
 
+/// A valid 1x1 RGBA PNG (every chunk checksum correct): an image that is
+/// really an image is skipped without OCR, one that is not is an error.
+const TINY_PNG: &[u8] = &[
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0,
+    0, 0, 31, 21, 196, 137, 0, 0, 0, 11, 73, 68, 65, 84, 120, 156, 99, 96, 0, 2, 0, 0, 5, 0, 1,
+    122, 94, 171, 63, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+];
+
 /// A directory with two documents, an image without text and a broken file.
 fn batch_input(root: &Path) {
     std::fs::create_dir(root.join("docs")).unwrap();
     std::fs::write(root.join("docs/good.txt"), "Good\n").unwrap();
     std::fs::write(root.join("docs/second.txt"), "Second\n").unwrap();
     std::fs::write(root.join("docs/broken.docx"), "not a zip archive").unwrap();
-    std::fs::write(root.join("docs/pic.png"), "x").unwrap();
+    std::fs::write(root.join("docs/pic.png"), TINY_PNG).unwrap();
 }
 
 #[test]
@@ -64,14 +72,17 @@ fn batch_summary_and_item_lines_are_chinese_with_the_converters_reasons_kept() {
     let lines: Vec<String> = stderr(&output).lines().map(str::to_owned).collect();
     // The failure keeps the converter's English reason after a Chinese frame.
     assert!(
-        lines[0].starts_with("Error: broken.docx: Native document conversion failed: "),
+        lines[0].starts_with(
+            "Error: broken.docx: The file appears to be damaged or truncated (Native document conversion failed: "
+        ),
         "{lines:?}"
     );
-    assert!(lines[1].starts_with("完成：2 个文件（0:0"), "{lines:?}");
+    // Two of the four items were converted: the line says out of how many.
+    assert!(lines[1].starts_with("完成：2/4 个文件（0:0"), "{lines:?}");
     assert_eq!(
         &lines[2..],
         [
-            "已跳过 1 项（image_only）：pic.png。请使用 --llm 或 --ocr 提取内容。",
+            "已跳过 1 项（图片，没有可提取的文字）：pic.png。请使用 --llm 或 --ocr 提取内容。",
             "失败 1 项：broken.docx。详见上方的错误信息。",
             "输出目录：out",
         ]
@@ -90,17 +101,17 @@ fn batch_summary_and_item_lines_are_chinese_with_the_converters_reasons_kept() {
     let message = stderr(&llm);
     assert_eq!(message.matches("未配置 LLM 模型：").count(), 1, "{message}");
     assert!(
-        message.contains("失败 4 项：broken.docx、good.txt 等。"),
+        message.contains("失败 4 项：broken.docx、good.txt 及另外 2 项。"),
         "{message}"
     );
 
     // The same run in English prints the English lines it always did.
     let english = run(root.path(), EN, &["docs", "-o", "english"]);
     let message = stderr(&english);
-    assert!(message.contains("Done: 2 files ("), "{message}");
+    assert!(message.contains("Done: 2/4 files ("), "{message}");
     assert!(
         message.contains(
-            "Skipped 1 item (image_only): pic.png. Use --llm or --ocr for content extraction."
+            "Skipped 1 item (images with no text): pic.png. Use --llm or --ocr for content extraction."
         ),
         "{message}"
     );
@@ -170,7 +181,7 @@ fn the_file_log_of_a_chinese_run_holds_the_english_lines_of_the_console() {
     );
     assert_eq!(output.status.code(), Some(10));
     let console = stderr(&output);
-    assert!(console.contains("完成：2 个文件"), "{console}");
+    assert!(console.contains("完成：2/4 个文件"), "{console}");
     let file = std::fs::read_dir(&log)
         .unwrap()
         .next()
@@ -179,9 +190,9 @@ fn the_file_log_of_a_chinese_run_holds_the_english_lines_of_the_console() {
         .path();
     let text = std::fs::read_to_string(file).unwrap();
     for line in [
-        "| ERROR | cli | Error: broken.docx: Native document conversion failed: ",
-        "| INFO  | cli | Done: 2 files (0:0",
-        "| INFO  | cli | Skipped 1 item (image_only): pic.png. Use --llm or --ocr for content extraction.",
+        "| ERROR | cli | Error: broken.docx: The file appears to be damaged or truncated (Native document conversion failed: ",
+        "| INFO  | cli | Done: 2/4 files (0:0",
+        "| INFO  | cli | Skipped 1 item (images with no text): pic.png. Use --llm or --ocr for content extraction.",
         "| INFO  | cli | Failed 1 item: broken.docx. See the errors above.",
         "| INFO  | cli | Output: out",
     ] {
@@ -199,17 +210,17 @@ fn previews_empty_directories_and_url_lists_report_in_chinese() {
     assert!(preview.status.success());
     assert_eq!(
         stdout(&preview),
-        "broken.docx -> out/\ngood.txt -> out/\npic.png -> out/\nsecond.txt -> out/\n"
+        "broken.docx -> out/broken.docx.md\ngood.txt -> out/good.txt.md\npic.png -> skip (an image needs --ocr or --llm)\nsecond.txt -> out/second.txt.md\n"
     );
     assert_eq!(
         stderr(&preview),
-        "预览：将转换 4 个文件；未写出任何内容。\n"
+        "预览：将转换 3 个文件，将跳过 1 项；未写出任何内容。\n"
     );
     assert!(!root.path().join("out").exists());
     let english = run(root.path(), EN, &["docs", "-o", "out", "--dry-run"]);
     assert_eq!(
         stderr(&english),
-        "Dry run: 4 files would be converted; nothing was written.\n"
+        "Dry run: 3 files would be converted and 1 skipped; nothing was written.\n"
     );
     assert_eq!(english.stdout, preview.stdout);
 
@@ -276,7 +287,7 @@ fn previews_empty_directories_and_url_lists_report_in_chinese() {
 fn single_inputs_name_the_written_file_skips_and_missing_models_in_chinese() {
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("note.txt"), "Text\n").unwrap();
-    std::fs::write(root.path().join("pic.png"), "x").unwrap();
+    std::fs::write(root.path().join("pic.png"), TINY_PNG).unwrap();
     let first = run(root.path(), ZH, &["note.txt", "-o", "out"]);
     assert_eq!(stderr(&first), "已写入 out/note.txt.md\n");
     assert_eq!(
@@ -285,7 +296,10 @@ fn single_inputs_name_the_written_file_skips_and_missing_models_in_chinese() {
     );
     // The renamed file is the one named.
     let again = run(root.path(), ZH, &["note.txt", "-o", "out"]);
-    assert_eq!(stderr(&again), "已写入 out/note.txt.v2.md\n");
+    assert_eq!(
+        stderr(&again),
+        "已写入 out/note.txt.v2.md（note.txt.md 已存在）\n"
+    );
 
     let image = run(root.path(), ZH, &["pic.png", "-o", "out"]);
     assert_eq!(

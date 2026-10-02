@@ -243,25 +243,77 @@ fn describe(command: &str) -> Option<Description> {
             "示例:\n  markitai doctor           人类可读的报告\n  markitai doctor --json    机器可读的检查结果\n  markitai doctor --fix     没有可用浏览器时安装浏览器",
         ),
         "cache" => describe_with("查看或清理 LLM 与 URL 抓取缓存", "", CACHE_AFTER),
-        "auth" => describe_with("查看订阅认证状态，或委托官方运行时完成登录", "", ""),
+        "auth" => describe_with("查看订阅认证状态，或委托官方运行时完成登录", "", AUTH_AFTER),
         "serve" => describe_with(
             "运行原生 REST 转换服务和网页界面",
             "",
             "示例:\n  markitai serve                          http://127.0.0.1:3600，并打开浏览器\n  markitai serve --port 8080 --no-open    换一个端口，不打开浏览器\n  markitai serve --host 0.0.0.0           局域网访问，需要启动时打印的访问令牌",
         ),
-        "mcp" => describe_with("通过标准输入/输出运行原生 MCP 服务", "", ""),
-        "list" => describe_with("显示生效的配置；密钥已脱敏", "", ""),
-        "path" => describe_with("显示正在使用的配置文件", "", ""),
-        "validate" => describe_with("按 schema 校验配置文件", "", ""),
-        "get" => describe_with("输出单个配置值；配置段以 JSON 输出", "", ""),
-        "set" => describe_with("校验并保存单个配置值；无效值不会写入", "", ""),
-        "edit" => describe_with("在终端中编辑配置项；每个值校验后立即保存", "", ""),
-        "stats" => describe_with("显示缓存条目数与磁盘占用", "", ""),
-        "clear" => describe_with("清理 LLM 与 URL 抓取缓存", "", ""),
-        "spa-domains" => describe_with("查看或清空已学习的浏览器域名路由", "", ""),
-        "copilot" => describe_with("通过已安装的官方 CLI 使用 GitHub Copilot", "", ""),
-        "claude" => describe_with("Claude 订阅适配器状态", "", ""),
-        "chatgpt" => describe_with("ChatGPT 订阅适配器状态", "", ""),
+        "mcp" => describe_with(
+            "通过标准输入/输出运行原生 MCP 服务",
+            "通过标准输入/输出运行原生 MCP 服务\n\n工具：convert_document 与 convert_url 转换单个文档或网页，batch_convert 启动目录或 URL 列表任务，job_status 查询任务。由 MCP 客户端启动本命令；它在 stdout 回答，日志写 stderr。",
+            MCP_AFTER,
+        ),
+        "list" => describe_with(
+            "显示生效的配置；密钥已脱敏",
+            "",
+            "示例:\n  markitai config list               以 JSON 显示全部配置\n  markitai config list -f table      每行一项设置\n  markitai config list -f yaml       以 YAML 显示",
+        ),
+        "path" => describe_with(
+            "显示正在使用的配置文件",
+            "",
+            "示例:\n  markitai config path                 正在使用的文件，或查找位置\n  markitai -c other.json config path   用 -c 指定的文件",
+        ),
+        "validate" => describe_with(
+            "按 schema 校验配置文件",
+            "",
+            "示例:\n  markitai config validate                  校验正在使用的配置\n  markitai config validate ./markitai.json  校验指定文件",
+        ),
+        "get" => describe_with(
+            "输出单个配置值；配置段以 JSON 输出",
+            "",
+            "示例:\n  markitai config get llm.enabled     读取单个值\n  markitai config get output          以 JSON 读取整个配置段",
+        ),
+        "set" => describe_with(
+            "校验并保存单个配置值；无效值不会写入",
+            "",
+            "示例:\n  markitai config set output.on_conflict skip    永不替换已有结果\n  markitai config set output.dir ~/Documents/md  批处理默认写到这里\n  markitai config set llm.enabled true           启用模型处理",
+        ),
+        "edit" => describe_with(
+            "在终端中编辑配置项；每个值校验后立即保存",
+            "",
+            "示例:\n  markitai config edit    浏览、搜索（/关键字）并修改设置；q 退出",
+        ),
+        "stats" => describe_with(
+            "显示缓存条目数与磁盘占用",
+            "",
+            "示例:\n  markitai cache stats                  条目数与磁盘占用\n  markitai cache stats --json           供脚本使用的精确字节数\n  markitai cache stats -v --limit 5     按模型列出最近 5 条 LLM 条目",
+        ),
+        "clear" => describe_with(
+            "清理 LLM 与 URL 抓取缓存",
+            "",
+            "示例:\n  markitai cache clear                           先确认再清理\n  markitai cache clear -y                        不经确认直接清理\n  markitai cache clear -y --include-spa-domains  同时忘记已学习的浏览器域名",
+        ),
+        "spa-domains" => describe_with(
+            "查看或清空已学习的浏览器域名路由",
+            "",
+            "示例:\n  markitai cache spa-domains           列出已学习的域名\n  markitai cache spa-domains --json    以 JSON 输出\n  markitai cache spa-domains --clear   忘记全部已学习的域名",
+        ),
+        "copilot" => describe_with(
+            "通过已安装的官方 CLI 使用 GitHub Copilot",
+            "",
+            "示例:\n  markitai auth copilot status           运行时是否已登录？\n  markitai auth copilot status --json    机器可读的状态\n  markitai auth copilot login            通过官方运行时登录",
+        ),
+        "claude" => describe_with(
+            "Claude 订阅适配器状态",
+            "",
+            "示例:\n  markitai auth claude status           运行时是否已登录？\n  markitai auth claude status --json    机器可读的状态\n  markitai auth claude login            通过官方运行时登录",
+        ),
+        "chatgpt" => describe_with(
+            "ChatGPT 订阅适配器状态",
+            "",
+            "示例:\n  markitai auth chatgpt status           运行时是否已登录？\n  markitai auth chatgpt status --json    机器可读的状态\n  markitai auth chatgpt login            通过官方运行时登录",
+        ),
         "status" => describe_with("查看现有认证状态，不发起登录", "", ""),
         "login" => describe_with("打开官方运行时的交互式登录流程", "", ""),
         _ => return None,
@@ -302,6 +354,17 @@ const CACHE_AFTER: &str = "\
   markitai cache stats                    条目数与磁盘占用
   markitai cache stats -v --limit 10      按模型列出最近的 LLM 条目
   markitai cache clear -y                 不经确认直接清理";
+
+const AUTH_AFTER: &str = "\
+示例:
+  markitai auth                         全部订阅运行时的状态
+  markitai auth claude status           单个运行时（加 --json 供脚本使用）
+  markitai auth chatgpt login           通过官方运行时登录";
+
+const MCP_AFTER: &str = "\
+示例:
+  markitai mcp                          通过 stdio 向 MCP 客户端提供这些工具
+  markitai -c cfg.json mcp              使用指定的配置文件提供服务";
 
 const SECRETS_SHOWN: &str = "显示密钥的值而不是脱敏（不要写入共享日志）";
 

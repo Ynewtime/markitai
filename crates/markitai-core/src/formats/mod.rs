@@ -5,6 +5,7 @@ mod markup;
 mod msg;
 mod native;
 mod numbers;
+mod sniff;
 mod text;
 
 pub(crate) use html::canonical_status_url;
@@ -17,6 +18,9 @@ pub(crate) use native::pdf::extract_pages as extract_pdf_pages;
 pub(crate) use native::pdf::{
     PdfPages, extract_pages_bounded as extract_pdf_pages_bounded,
     screenshot_reference as pdf_screenshot_reference,
+};
+pub(crate) use sniff::{
+    check_image, check_not_empty, explain_damage, real_extension, retyped_warning,
 };
 
 use crate::{Document, Error, Result};
@@ -130,6 +134,13 @@ pub fn extract(path: &Path) -> Result<Document> {
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
+    extract_as(path, &extension)
+}
+
+/// `extract`, reading the file as the format `extension` names (lowercase,
+/// without the dot) rather than the one its own name gives.
+pub(crate) fn extract_as(path: &Path, extension: &str) -> Result<Document> {
+    let extension = extension.to_owned();
     if !supports_extension(&extension) {
         return Err(Error::Unsupported(unsupported_format_message(&extension)));
     }

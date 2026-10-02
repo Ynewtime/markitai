@@ -28,9 +28,37 @@ and exits 1.
 ## Common problems
 
 **An image produces no output.** A standalone image has no text unless you ask
-for recognition; Markitai says on stderr that it skipped the image. Add `--ocr`
-(on-device OCR, macOS) or `--llm` (vision model). With `--json` the item shows
-`"skip_reason": "image_only"`.
+for recognition; Markitai says on stderr that it skipped the image, by file
+name (`Skipped photo.png: an image has no text to extract …`), and exits 0
+because nothing went wrong. Add `--ocr` (on-device OCR, macOS) or `--llm`
+(vision model). With `--json` the item shows `"skip_reason": "image_only"`; the
+batch summary words it as `images with no text`. A skipped image creates no
+output directory and no ownership files. A file that only has an image's
+extension is an error instead: `File is empty (0 bytes)` or `File is not a valid
+image: …` (also `the file appears to be damaged or truncated` when the format is
+recognized but the data does not decode).
+
+**`Error: File is empty (0 bytes)`.** The input has no content. An empty `.txt`,
+`.md`, `.csv` or `.tsv` is still converted to an empty document; every other
+format needs content to read.
+
+**`Error: The file appears to be damaged or truncated (…)`.** The reader could
+not make sense of the container: a ZIP-based document (`.docx`, `.xlsx`,
+`.pptx`, `.odt`, `.epub`) whose end is missing, or a PDF without a usable
+cross-reference table. The reader's own wording follows in parentheses. A
+download that stopped early or a file that was saved twice is the usual cause;
+open it in its application, or fetch it again.
+
+**`Warning: The content is a PDF document although the file name ends in .docx; …`.**
+The file name and the content disagree between document types (a PDF saved as
+`.docx`, a Word file saved as `.pdf`, a modern package saved as `.doc`). Markitai
+reads the content as what it is and says so once; rename the file to silence
+the warning. Page screenshots and page OCR need the right extension.
+
+**`Warning: PDF pages 2-3, 5: native text was not recovered …`.** These pages
+have no extractable text (scans, or pages made only of pictures). Run again with
+`--ocr` to read them (macOS). The terminal shows one line per document; the
+report and `--json` keep one warning per page.
 
 **The first OCR takes half a minute.** Vision compiles its recognition models
 for this executable the first time it runs and caches them, so the first OCR
@@ -48,7 +76,10 @@ the directory and the reason, often a symbolic link refused while
 relative image paths. See [images on stdout](images.md#images-on-stdout).
 
 **The output is named `….v2.md`.** The target already existed and the default
-conflict policy is `rename`. Choose `overwrite` or `skip` with
+conflict policy is `rename`. A single conversion says `Wrote out/a.docx.v2.md
+(a.docx.md already exists)`, a batch lists the renamed results in its summary
+(`Renamed 3 items (output already exists): …`), and `--dry-run` shows the name
+in advance. Choose `overwrite` or `skip` with
 `markitai config set output.on_conflict overwrite`, or for one run with
 `--config-json '{"output":{"on_conflict":"overwrite"}}'`.
 
@@ -136,10 +167,15 @@ Install one, set `MARKITAI_BROWSER_EXECUTABLE` to its executable, or run
 points to a missing file is not replaced automatically; fix or unset it first.
 See [browser installation](browser-installation.md).
 
-**`Office screenshots require an installed LibreOffice (soffice on PATH) …`.**
-Page images of Word, PowerPoint and spreadsheet files are exported through an
-installed LibreOffice and the macOS PDF renderer. Text conversion does not need
-it. See [Office page rendering](office-rendering.md).
+**`Warning: … need LibreOffice (soffice on PATH) …`.** Page images and page OCR
+of Word, PowerPoint and spreadsheet files are exported through an installed
+LibreOffice and the macOS PDF renderer. Without it the document's own text is
+still converted and this one warning appears; install LibreOffice (macOS:
+`brew install --cask libreoffice`) to get the pages, or pass `--no-screenshot`
+/ `--no-ocr` (also for presets such as `rich`) to silence it. Only
+`--screenshot-only` fails, with `Office screenshots require an installed
+LibreOffice (soffice on PATH) …`, because nothing else would be written. See
+[Office page rendering](office-rendering.md).
 
 **OCR or PDF page images fail on Linux or Windows.** On-device OCR, PDF page
 rendering and HEIF/AVIF decoding use macOS system frameworks and return an
@@ -164,8 +200,10 @@ checks a file. See [configuration](configuration.md).
 `--resume`; completed items are kept and unfinished items are retried. Resume
 is not available on Windows. After Ctrl-C or SIGTERM the closing summary lists
 what was done and then the items that were never started, for example
-`Not processed 72 items: a.pdf, b.pdf, .... Run the same command with --resume to continue.`
-(exit status 130 or 143). `--quiet` leaves the summary out, and `--json` carries
+`Not processed 72 items: a.pdf, b.pdf and 70 more. Run the same command with --resume to continue.`
+(exit status 130 or 143; `-v` lists every name). The resumed run starts with
+`Resuming: 6 already done, 72 remaining` and its closing line counts all items
+(`Done: 78/78 files`). `--quiet` leaves the summary out, and `--json` carries
 only the items that finished.
 
 **`Error: Native PDF conversion failed: the PDF is encrypted and needs a password to open …`.**
@@ -180,7 +218,28 @@ Before converting, Markitai claims the output names with empty lock files under
 purpose: removing a lock file while another run may be opening it would put the
 two runs in different lock domains (see [output ownership](output-ownership.md)).
 The files are empty and harmless; delete the whole output directory if it holds
-nothing else you want.
+nothing else you want. An input that can only end as a skip or an error before
+anything is written, such as an image converted without `--ocr` or `--llm`, is
+decided before the claim and leaves no such files.
+
+**Hidden files and folders are not converted.** A directory batch skips
+dot-files and dot-directories (`.git`, `.cache`), `node_modules` and Office lock
+files (`~$report.docx`). Give a glob that spells the name out to include them,
+for example `-g '.notes/**/*.md'` or `-g '**/node_modules/**/*.md'`; pointing the
+command at such a directory itself (`markitai .notes -o out`) also works.
+
+**A directory called `~` appeared, or `Error: Cannot expand ~ …`.** A leading
+`~` in `-o` and in `output.dir` means your home directory, whether or not the
+shell expanded it (`--output=~/x` and a value in `config.json` are never
+expanded by the shell). Markitai expands it once, before anything is created; it
+refuses a `~` it cannot expand (no `HOME`) instead of creating a directory with
+that name. To use a directory that really is called `~`, write `./~`.
+
+**There is no progress line.** A batch shows one status line, `[12/340] name  ETA
+0:41`, only on Unix when stderr is a terminal that understands cursor control,
+and not with `-q`, `--json` or `TERM=dumb`. Piped or redirected output carries only the
+lines described above, unchanged. A single conversion that takes longer than two
+seconds shows a spinner line the same way.
 
 **`Error: Unsupported file format: '.xyz'`.** The message lists every recognized
 extension. Rename files that have the wrong extension.

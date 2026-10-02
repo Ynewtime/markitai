@@ -1,7 +1,23 @@
 //! Signal handlers only set lock-free atomics; the coordinator performs I/O.
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 static INTERRUPTED: AtomicI32 = AtomicI32::new(0);
+
+/// Whether a terminal status line (`app::progress`) is on screen. A handler
+/// that is about to end the process erases it first, so the shell prompt does
+/// not start behind a half-written status.
+pub(crate) static STATUS_LINE: AtomicBool = AtomicBool::new(false);
+
+#[cfg(unix)]
+fn erase_status_line() {
+    if STATUS_LINE.swap(false, Ordering::Relaxed) {
+        const ERASE: &[u8] = b"\r\x1b[K";
+        // SAFETY: write(2) is async-signal-safe and reads only this constant.
+        unsafe {
+            libc::write(libc::STDERR_FILENO, ERASE.as_ptr().cast(), ERASE.len());
+        }
+    }
+}
 
 pub(crate) fn interrupted() -> Option<i32> {
     match INTERRUPTED.load(Ordering::Relaxed) {
@@ -17,6 +33,7 @@ extern "C" fn interrupt(signal: libc::c_int) {
         // cleanup. External runtimes live in their own process groups, beyond
         // the terminal's reach, so kill them first (async-signal-safe).
         markitai_core::terminate_child_process_groups();
+        erase_status_line();
         unsafe { libc::_exit(128 + signal) }
     }
 }
@@ -26,6 +43,7 @@ extern "C" fn interrupt(signal: libc::c_int) {
 #[cfg(unix)]
 extern "C" fn fatal(signal: libc::c_int) {
     markitai_core::terminate_child_process_groups();
+    erase_status_line();
     unsafe {
         let mut action: libc::sigaction = std::mem::zeroed();
         action.sa_sigaction = libc::SIG_DFL;

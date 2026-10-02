@@ -96,7 +96,18 @@ pub(super) fn run(
             }
         }
         drop(sender);
-        receiver.into_iter().collect::<Vec<_>>()
+        let mut status =
+            progress::Progress::new(tasks.len(), progress::wanted(cli.quiet, cli.json));
+        let mut records = Vec::new();
+        while let Ok(record) = receiver.recv() {
+            records.push(record);
+            status.update(
+                records.len(),
+                &tasks[records[records.len() - 1].index].display,
+            );
+        }
+        status.finish();
+        records
     });
     let report_error = finish_report(report_plan, &records, clock, cli.verbose && !cli.quiet).err();
     if let Some(error) = &report_error {
@@ -114,9 +125,16 @@ pub(super) fn run(
         let items: Vec<_> = records.iter().map(outcome).collect();
         emit_json(&items, report_error.as_deref());
     } else {
-        print_item_diagnostics(&records, cli.quiet);
+        print_item_diagnostics(&records, cli.quiet, cli.verbose);
         if !cli.quiet {
-            print_batch_summary(&records, &[], clock.elapsed(), destination.output);
+            print_batch_summary(
+                &records,
+                &[],
+                report::Resumed::default(),
+                cli.verbose,
+                clock.elapsed(),
+                destination.output,
+            );
         }
     }
     Ok(if failed > 0 {

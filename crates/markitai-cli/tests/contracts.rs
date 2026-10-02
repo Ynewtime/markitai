@@ -85,15 +85,22 @@ fn single_runtime_error_retains_json_and_usage_error_has_none() {
     assert!(output.stdout.is_empty());
 }
 
+/// A valid 1x1 RGBA PNG (every chunk checksum correct).
+const TINY_PNG: &[u8] = &[
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0,
+    0, 0, 31, 21, 196, 137, 0, 0, 0, 11, 73, 68, 65, 84, 120, 156, 99, 96, 0, 2, 0, 0, 5, 0, 1,
+    122, 94, 171, 63, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+];
+
 #[test]
 fn image_only_cli_items_skip_without_writing_empty_documents() {
     let dir = fixture();
-    // Image-only detection precedes decoding when no extractor is requested.
-    std::fs::write(dir.path().join("scan.jpg"), b"not decoded in skip mode").unwrap();
-    let stdout = invoke(dir.path(), &["scan.jpg"]);
+    // A real image with no extractor requested is skipped, not converted.
+    std::fs::write(dir.path().join("scan.png"), TINY_PNG).unwrap();
+    let stdout = invoke(dir.path(), &["scan.png"]);
     assert!(stdout.status.success());
     assert!(stdout.stdout.is_empty());
-    let output = invoke(dir.path(), &["scan.jpg", "-o", "out", "--json"]);
+    let output = invoke(dir.path(), &["scan.png", "-o", "out", "--json"]);
     assert!(
         output.status.success(),
         "{}",
@@ -103,9 +110,60 @@ fn image_only_cli_items_skip_without_writing_empty_documents() {
     assert_eq!(body["items"][0]["status"], "skipped");
     assert_eq!(body["items"][0]["skip_reason"], "image_only");
     assert_eq!(body["totals"]["skipped"], 1);
-    assert!(!dir.path().join("out/scan.jpg.md").exists());
+    assert!(!dir.path().join("out/scan.png.md").exists());
+    // A skip writes nothing at all: no output directory, no ownership files.
+    assert!(!dir.path().join("out").exists());
     let missing = invoke(dir.path(), &["missing.jpg"]);
     assert_eq!(missing.status.code(), Some(1));
+}
+
+#[test]
+fn a_file_that_is_not_an_image_is_an_error_and_not_a_skip() {
+    let dir = fixture();
+    std::fs::write(dir.path().join("empty.png"), b"").unwrap();
+    std::fs::write(dir.path().join("fake.jpg"), b"not an image at all").unwrap();
+    std::fs::write(dir.path().join("cut.png"), &TINY_PNG[..TINY_PNG.len() - 20]).unwrap();
+    for (name, reason) in [
+        ("empty.png", "File is empty (0 bytes)"),
+        ("fake.jpg", "File is not a valid image: "),
+        (
+            "cut.png",
+            "File is not a valid image: the file appears to be damaged or truncated",
+        ),
+    ] {
+        let output = invoke(dir.path(), &[name, "-o", "out"]);
+        assert_eq!(output.status.code(), Some(1), "{name}");
+        let message = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            message.starts_with(&format!("Error: {reason}")),
+            "{name}: {message}"
+        );
+        assert!(!message.contains("Skipped"), "{message}");
+    }
+    // Nothing was claimed or created for any of them.
+    assert!(!dir.path().join("out").exists());
+    // In a batch they fail while a genuine image is skipped, and the summary
+    // names both without internal keys.
+    std::fs::create_dir(dir.path().join("pics")).unwrap();
+    for name in ["empty.png", "fake.jpg"] {
+        std::fs::rename(dir.path().join(name), dir.path().join("pics").join(name)).unwrap();
+    }
+    std::fs::write(dir.path().join("pics/real.png"), TINY_PNG).unwrap();
+    let output = invoke(dir.path(), &["pics", "-o", "batch-out"]);
+    assert_eq!(output.status.code(), Some(10));
+    let message = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        message.contains("Error: empty.png: File is empty (0 bytes)"),
+        "{message}"
+    );
+    assert!(
+        message.contains("Skipped 1 item (images with no text): real.png."),
+        "{message}"
+    );
+    assert!(!message.contains("image_only"), "{message}");
+    // Neither the skip nor the early failures left ownership metadata behind.
+    let ownership = dir.path().join("batch-out/.markitai/ownership");
+    assert!(!ownership.exists(), "{ownership:?}");
 }
 
 #[test]

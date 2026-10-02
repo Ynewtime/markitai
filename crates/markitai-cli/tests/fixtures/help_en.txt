@@ -519,6 +519,11 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai auth                         Status of every subscription runtime
+  markitai auth claude status           One runtime (add --json for scripts)
+  markitai auth chatgpt login           Sign in through the official runtime
 === markitai auth --help (exit 0, stderr 0 bytes) ===
 Inspect subscription authentication or delegate login to an official runtime
 
@@ -537,6 +542,11 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai auth                         Status of every subscription runtime
+  markitai auth claude status           One runtime (add --json for scripts)
+  markitai auth chatgpt login           Sign in through the official runtime
 === markitai serve -h (exit 0, stderr 0 bytes) ===
 Run the native REST conversion service and web interface
 
@@ -599,26 +609,40 @@ Run the native MCP service over standard input/output
 Usage: markitai mcp [OPTIONS]
 
 Options:
-  -h, --help  Print help
+  -h, --help  Print help (see more with '--help')
 
 Configuration:
   -c, --config <PATH>
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai mcp                          Serve the tools to an MCP client over stdio
+  markitai -c cfg.json mcp              Serve with a particular configuration file
 === markitai mcp --help (exit 0, stderr 0 bytes) ===
 Run the native MCP service over standard input/output
+
+Tools: convert_document and convert_url convert one document or page,
+batch_convert starts a directory or URL-list job and job_status reports on it.
+An MCP client starts this command; it answers on stdout and logs on stderr.
 
 Usage: markitai mcp [OPTIONS]
 
 Options:
-  -h, --help  Print help
+  -h, --help
+          Print help (see a summary with '-h')
 
 Configuration:
   -c, --config <PATH>
           Configuration path; must exist except for config set/edit, which can create it
+
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai mcp                          Serve the tools to an MCP client over stdio
+  markitai -c cfg.json mcp              Serve with a particular configuration file
 === markitai config list -h (exit 0, stderr 0 bytes) ===
 Show the effective configuration; secrets are redacted
 
@@ -634,6 +658,11 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai config list               The whole configuration as JSON
+  markitai config list -f table      One setting per line
+  markitai config list -f yaml       As YAML
 === markitai config list --help (exit 0, stderr 0 bytes) ===
 Show the effective configuration; secrets are redacted
 
@@ -649,6 +678,11 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai config list               The whole configuration as JSON
+  markitai config list -f table      One setting per line
+  markitai config list -f yaml       As YAML
 === markitai config path -h (exit 0, stderr 0 bytes) ===
 Show which configuration file is in use
 
@@ -662,6 +696,10 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai config path               The file in use, or where files are looked for
+  markitai -c other.json config path The file chosen with -c
 === markitai config path --help (exit 0, stderr 0 bytes) ===
 Show which configuration file is in use
 
@@ -675,6 +713,10 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai config path               The file in use, or where files are looked for
+  markitai -c other.json config path The file chosen with -c
 === markitai config validate -h (exit 0, stderr 0 bytes) ===
 Check a configuration file against the schema
 
@@ -691,6 +733,10 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai config validate                 Check the configuration in use
+  markitai config validate ./markitai.json Check a particular file
 === markitai config validate --help (exit 0, stderr 0 bytes) ===
 Check a configuration file against the schema
 
@@ -707,6 +753,10 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai config validate                 Check the configuration in use
+  markitai config validate ./markitai.json Check a particular file
 === markitai config get -h (exit 0, stderr 0 bytes) ===
 Print one value; sections print as JSON
 
@@ -724,6 +774,10 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai config get llm.enabled     One value
+  markitai config get output          A whole section as JSON
 === markitai config get --help (exit 0, stderr 0 bytes) ===
 Print one value; sections print as JSON
 
@@ -741,6 +795,10 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai config get llm.enabled     One value
+  markitai config get output          A whole section as JSON
 === markitai config set -h (exit 0, stderr 0 bytes) ===
 Validate and save one value; invalid values are not written
 
@@ -759,6 +817,11 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai config set output.on_conflict skip   Never replace an existing result
+  markitai config set output.dir ~/Documents/md Where batches write by default
+  markitai config set llm.enabled true          Turn on model processing
 === markitai config set --help (exit 0, stderr 0 bytes) ===
 Validate and save one value; invalid values are not written
 
@@ -777,6 +840,11 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai config set output.on_conflict skip   Never replace an existing result
+  markitai config set output.dir ~/Documents/md Where batches write by default
+  markitai config set llm.enabled true          Turn on model processing
 === markitai config edit -h (exit 0, stderr 0 bytes) ===
 Edit settings in a terminal; each value is validated and saved at once
 
@@ -790,6 +858,9 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai config edit    Browse, search (/keyword) and change settings; q quits
 === markitai config edit --help (exit 0, stderr 0 bytes) ===
 Edit settings in a terminal; each value is validated and saved at once
 
@@ -803,6 +874,9 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai config edit    Browse, search (/keyword) and change settings; q quits
 === markitai cache stats -h (exit 0, stderr 0 bytes) ===
 Show cache entry counts and disk use
 
@@ -819,6 +893,11 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai cache stats                  Entry counts and disk use
+  markitai cache stats --json           Exact byte counts for scripts
+  markitai cache stats -v --limit 5     The five most recent LLM entries per model
 === markitai cache stats --help (exit 0, stderr 0 bytes) ===
 Show cache entry counts and disk use
 
@@ -835,6 +914,11 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai cache stats                  Entry counts and disk use
+  markitai cache stats --json           Exact byte counts for scripts
+  markitai cache stats -v --limit 5     The five most recent LLM entries per model
 === markitai cache clear -h (exit 0, stderr 0 bytes) ===
 Clear the LLM and URL fetch caches
 
@@ -850,6 +934,11 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai cache clear                           Ask before clearing
+  markitai cache clear -y                        Clear without asking
+  markitai cache clear -y --include-spa-domains  Also forget learned browser-only domains
 === markitai cache clear --help (exit 0, stderr 0 bytes) ===
 Clear the LLM and URL fetch caches
 
@@ -865,6 +954,11 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai cache clear                           Ask before clearing
+  markitai cache clear -y                        Clear without asking
+  markitai cache clear -y --include-spa-domains  Also forget learned browser-only domains
 === markitai cache spa-domains -h (exit 0, stderr 0 bytes) ===
 Inspect or clear learned browser-domain routing
 
@@ -880,6 +974,11 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai cache spa-domains           List the learned domains
+  markitai cache spa-domains --json    As JSON
+  markitai cache spa-domains --clear   Forget every learned domain
 === markitai cache spa-domains --help (exit 0, stderr 0 bytes) ===
 Inspect or clear learned browser-domain routing
 
@@ -895,6 +994,11 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai cache spa-domains           List the learned domains
+  markitai cache spa-domains --json    As JSON
+  markitai cache spa-domains --clear   Forget every learned domain
 === markitai auth copilot -h (exit 0, stderr 0 bytes) ===
 GitHub Copilot through the installed official CLI
 
@@ -912,6 +1016,11 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai auth copilot status           Is the runtime signed in?
+  markitai auth copilot status --json    Machine-readable status
+  markitai auth copilot login            Sign in through the official runtime
 === markitai auth copilot --help (exit 0, stderr 0 bytes) ===
 GitHub Copilot through the installed official CLI
 
@@ -929,6 +1038,11 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai auth copilot status           Is the runtime signed in?
+  markitai auth copilot status --json    Machine-readable status
+  markitai auth copilot login            Sign in through the official runtime
 === markitai auth claude -h (exit 0, stderr 0 bytes) ===
 Claude subscription adapter status
 
@@ -946,6 +1060,11 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai auth claude status           Is the runtime signed in?
+  markitai auth claude status --json    Machine-readable status
+  markitai auth claude login            Sign in through the official runtime
 === markitai auth claude --help (exit 0, stderr 0 bytes) ===
 Claude subscription adapter status
 
@@ -963,6 +1082,11 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai auth claude status           Is the runtime signed in?
+  markitai auth claude status --json    Machine-readable status
+  markitai auth claude login            Sign in through the official runtime
 === markitai auth chatgpt -h (exit 0, stderr 0 bytes) ===
 ChatGPT subscription adapter status
 
@@ -980,6 +1104,11 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai auth chatgpt status           Is the runtime signed in?
+  markitai auth chatgpt status --json    Machine-readable status
+  markitai auth chatgpt login            Sign in through the official runtime
 === markitai auth chatgpt --help (exit 0, stderr 0 bytes) ===
 ChatGPT subscription adapter status
 
@@ -997,6 +1126,11 @@ Configuration:
           Configuration path; must exist except for config set/edit, which can create it
       --config-json <JSON>
           Deep-merge inline JSON over the config file; explicit conversion flags still win
+
+Examples:
+  markitai auth chatgpt status           Is the runtime signed in?
+  markitai auth chatgpt status --json    Machine-readable status
+  markitai auth chatgpt login            Sign in through the official runtime
 === markitai auth copilot status -h (exit 0, stderr 0 bytes) ===
 Inspect existing authentication without initiating login
 
