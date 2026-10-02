@@ -39,7 +39,10 @@ A strategy inherited from configuration does not count as explicit.
 Use the same input and scope rules with a native extraction namespace, initially
 `native-fetch-v1`, instead of the reference version `2`. A native key must not
 replay Markdown produced by a different extraction engine. Bump the namespace
-when parser changes make old extracted results incompatible. The original URL
+when parser changes make old extracted results incompatible. (Amended
+2026-10-02: the namespace is `native-fetch-<package version>-r<revision>`, so every
+release also starts a new namespace; the quality round after R48 had changed
+extraction without bumping `v1`, and a cached X post replayed the old reader.) The original URL
 is the identity; redirects, canonical links and display redaction do not replace
 it. Hashing a redacted URL could merge requests with different credentials.
 

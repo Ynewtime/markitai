@@ -239,7 +239,11 @@ later 304 or still-fresh TTL from replaying the previous representation. Failed
 or rejected refreshes retain the old row instead, except that an accepted deferred
 PDF has already changed the representation even if its later reader fails.
 
-The key hashes `native-fetch-v1`, a NUL separator and the exact original URL.
+The key hashes the extraction namespace `native-fetch-<package version>-r<revision>`
+(now `native-fetch-1.3.0-r2`), a NUL separator and the exact original URL. Rows
+hold extracted Markdown, so a new release, or a revision bumped when extraction
+changes between releases, does not replay an older extraction; older rows stay
+readable in statistics and expire by TTL or capacity.
 Query strings and fragments therefore remain part of identity. An explicitly
 selected non-`auto` strategy adds a NUL-separated strategy suffix; a strategy
 inherited from configuration does not. Default/configured `auto` and `static`

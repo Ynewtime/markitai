@@ -83,9 +83,17 @@ fn now() -> i64 {
         .min(i64::MAX as u64) as i64
 }
 
+/// The extraction a cached page belongs to. Rows hold extracted Markdown, so
+/// a page is replayed only by the extraction that produced it: the package
+/// version changes with every release, and the revision is bumped when
+/// extraction changes between releases (decision 0003). Older rows stay
+/// readable and expire by TTL or capacity.
+const NAMESPACE: &str = concat!("native-fetch-", env!("CARGO_PKG_VERSION"), "-r2");
+
 fn key(url: &str, explicit_strategy: Option<&str>) -> String {
     let mut hash = Sha256::new();
-    hash.update(b"native-fetch-v1\0");
+    hash.update(NAMESPACE.as_bytes());
+    hash.update(b"\0");
     hash.update(url.as_bytes());
     if let Some(strategy) = explicit_strategy.filter(|value| *value != "auto") {
         hash.update(b"\0");
@@ -555,6 +563,10 @@ mod tests {
         );
         let reference = crate::hex(Sha256::digest(format!("2\0{url}").as_bytes()));
         assert_ne!(key(url, None), reference[..32]);
+        // Rows of an earlier extraction are not replayed by this one.
+        let first = crate::hex(Sha256::digest(format!("native-fetch-v1\0{url}").as_bytes()));
+        assert_ne!(key(url, None), first[..32]);
+        assert!(NAMESPACE.starts_with(concat!("native-fetch-", env!("CARGO_PKG_VERSION"))));
         assert_eq!(key(url, None).len(), 32);
     }
 
