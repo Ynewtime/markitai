@@ -874,12 +874,9 @@ fn exclusive_lock_competes_across_processes_and_kill_releases_the_same_inode() {
         .unwrap()
         .generation
         .clone();
-    #[cfg(unix)]
-    let original_inode = {
-        use std::os::unix::fs::MetadataExt;
-        let metadata = std::fs::metadata(fixture.lock()).unwrap();
-        (metadata.dev(), metadata.ino())
-    };
+    let original_inode = markitai_core::platform::status(&fixture.lock())
+        .unwrap()
+        .id();
     let mut contender = child(fixture.root.path(), "expect-busy");
     wait_exit(&mut contender);
     assert_eq!(
@@ -898,12 +895,12 @@ fn exclusive_lock_competes_across_processes_and_kill_releases_the_same_inode() {
     let mut recovered = fixture.open();
     let (snapshot, _) = loaded(&mut recovered);
     assert_eq!(snapshot.checkpoint.unwrap().generation, generation);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let metadata = std::fs::metadata(fixture.lock()).unwrap();
-        assert_eq!((metadata.dev(), metadata.ino()), original_inode);
-    }
+    assert_eq!(
+        markitai_core::platform::status(&fixture.lock())
+            .unwrap()
+            .id(),
+        original_inode
+    );
 }
 
 #[test]

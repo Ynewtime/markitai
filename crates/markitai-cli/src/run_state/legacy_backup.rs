@@ -1,9 +1,10 @@
 //! Retain the original legacy pair before publishing a native checkpoint.
 //! These bytes permit state-format rollback; they do not undo output or model work.
 use super::{Error, Limits, Result, sync_directory};
+use markitai_core::platform::{self, FileId, Status};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::fs::{self, File, Metadata, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -12,22 +13,14 @@ use std::time::SystemTime;
 struct Identity {
     bytes: u64,
     modified: Option<SystemTime>,
-    #[cfg(unix)]
-    device: u64,
-    #[cfg(unix)]
-    inode: u64,
+    id: FileId,
 }
 impl Identity {
-    fn new(metadata: &Metadata) -> Self {
-        #[cfg(unix)]
-        use std::os::unix::fs::MetadataExt;
+    fn new(status: &Status) -> Self {
         Self {
-            bytes: metadata.len(),
-            modified: metadata.modified().ok(),
-            #[cfg(unix)]
-            device: metadata.dev(),
-            #[cfg(unix)]
-            inode: metadata.ino(),
+            bytes: status.metadata().len(),
+            modified: status.metadata().modified().ok(),
+            id: status.id(),
         }
     }
 }
@@ -99,6 +92,8 @@ fn preserve_with(
         .map_err(|_| Error::Invalid("legacy backup manifest could not be written".into()))?;
     file.write_all(b"\n")?;
     file.sync_all()?;
+    // Windows cannot rename a directory while a file in it is open.
+    drop(file);
     sync_directory(staged.path())?;
     let name = base
         .file_name()
@@ -114,9 +109,12 @@ fn preserve_with(
             ));
         }
     }
-    fs::rename(staged.path(), &target)?;
+    platform::rename(staged.path(), &target)?;
     // Drop only knows the old temporary path. A failed parent sync leaves the
     // complete backup in place and returns no permission to replace the base.
+    // Windows has no directory flush; the manifest's flush after the rename
+    // commits it instead.
+    platform::sync_renamed_path(&target.join("manifest.json"))?;
     sync_directory(directory)?;
     Ok(target)
 }
@@ -124,20 +122,16 @@ fn preserve_with(
 fn private_file(path: &Path) -> Result<File> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    Ok(options.open(path)?)
+    Ok(platform::private_file(&mut options).open(path)?)
 }
 
 fn open_regular(path: &Path, maximum: usize) -> Result<Option<(File, Identity)>> {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
+    let status = match platform::status(path) {
+        Ok(status) => status,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
+    let metadata = status.metadata();
     if !metadata.is_file() || metadata.file_type().is_symlink() {
         return Err(Error::Invalid(
             "legacy backup source must be a regular file without symbolic links".into(),
@@ -146,17 +140,10 @@ fn open_regular(path: &Path, maximum: usize) -> Result<Option<(File, Identity)>>
     if metadata.len() > maximum as u64 {
         return Err(Error::Limit("legacy backup bytes"));
     }
-    let expected = Identity::new(&metadata);
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    let file = options.open(path)?;
-    let opened = file.metadata()?;
-    if !opened.is_file() || Identity::new(&opened) != expected {
+    let expected = Identity::new(&status);
+    let file = platform::open_read(path, false)?;
+    let opened = platform::file_status(&file)?;
+    if !opened.metadata().is_file() || Identity::new(&opened) != expected {
         return Err(changed());
     }
     Ok(Some((file, expected)))
@@ -199,7 +186,7 @@ fn copy(source: &Path, directory: &Path, maximum: usize) -> Result<Option<Copy>>
         .ok_or_else(|| Error::Invalid("legacy backup filename is not UTF-8".into()))?;
     let mut output = private_file(&directory.join(name))?;
     let (bytes, sha256) = fingerprint(&input, Some(&mut output), maximum)?;
-    if bytes != identity.bytes || Identity::new(&input.metadata()?) != identity {
+    if bytes != identity.bytes || Identity::new(&platform::file_status(&input)?) != identity {
         return Err(changed());
     }
     output.sync_all()?;
@@ -220,14 +207,14 @@ fn verify(path: &Path, saved: Option<&Copy>, maximum: usize) -> Result<()> {
             let (bytes, sha256) = fingerprint(&file, None, maximum)?;
             if bytes != saved.entry.bytes
                 || sha256 != saved.entry.sha256
-                || Identity::new(&file.metadata()?) != identity
+                || Identity::new(&platform::file_status(&file)?) != identity
             {
                 return Err(changed());
             }
             // Reopening checked identity before hashing; ensure the path still
             // names that regular file after the bounded read.
-            let metadata = fs::symlink_metadata(path)?;
-            if !metadata.is_file() || Identity::new(&metadata) != identity {
+            let status = platform::status(path)?;
+            if !status.metadata().is_file() || Identity::new(&status) != identity {
                 return Err(changed());
             }
             Ok(())

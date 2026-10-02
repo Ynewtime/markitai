@@ -2,6 +2,7 @@ use super::{
     jobs::{Job, JobData},
     types::{ApiError, ApiResult, Item, JobOptions, now},
 };
+use markitai_core::platform;
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -32,7 +33,9 @@ pub(super) fn private_dir(path: &Path) -> std::io::Result<()> {
 /// ordinary `fsync`, and a single full flush of the directory follows; the
 /// metadata and parent-directory syncs that publish the job come after that, as
 /// before. Where `fsync` itself already includes the drive flush (Linux,
-/// Windows), each file is synced once, here, instead of as it arrives.
+/// Windows), each file is synced once, here, instead of as it arrives. Windows
+/// cannot flush the directory; the job's metadata, flushed after it is
+/// renamed into place, commits the new names.
 pub(super) fn sync_uploads(uploads: &Path, names: &[&str]) -> std::io::Result<()> {
     for name in names {
         let file = fs::OpenOptions::new()
@@ -40,7 +43,7 @@ pub(super) fn sync_uploads(uploads: &Path, names: &[&str]) -> std::io::Result<()
             .open(uploads.join(name))?;
         hand_to_drive(&file)?;
     }
-    File::open(uploads)?.sync_all()
+    platform::sync_directory(uploads)
 }
 
 #[cfg(target_vendor = "apple")]
@@ -75,10 +78,9 @@ pub(super) fn safe_file(root: &Path, name: &str) -> ApiResult<PathBuf> {
     if !path.is_file() {
         return Err(ApiError::new(404, "file_not_found", "file not found"));
     }
-    let canonical = path
-        .canonicalize()
+    let canonical = platform::canonicalize(&path)
         .map_err(|_| ApiError::new(404, "file_not_found", "file not found"))?;
-    if !canonical.starts_with(root.canonicalize().map_err(ApiError::internal)?) {
+    if !canonical.starts_with(platform::canonicalize(root).map_err(ApiError::internal)?) {
         return Err(ApiError::new(404, "file_not_found", "file not found"));
     }
     Ok(canonical)
@@ -148,10 +150,10 @@ pub(super) fn persist(folder: &Path, data: &JobData) -> std::io::Result<()> {
     serde_json::to_writer_pretty(&mut temporary, &meta).map_err(std::io::Error::other)?;
     temporary.write_all(b"\n")?;
     temporary.as_file().sync_all()?;
-    temporary
-        .persist(folder.join("meta.json"))
-        .map_err(|error| error.error)?;
-    File::open(folder)?.sync_all()?;
+    let installed =
+        platform::persist(temporary, &folder.join("meta.json")).map_err(|error| error.error)?;
+    platform::sync_renamed(&installed)?;
+    platform::sync_directory(folder)?;
     Ok(())
 }
 

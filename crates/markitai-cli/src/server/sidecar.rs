@@ -1,5 +1,8 @@
 //! Rebase staged image metadata and preserve sibling entries under the core lock.
+//! Writers hold the sidecar `.images.lock`, never `images.json`, so a Windows
+//! (mandatory) lock never refuses a reader of the index.
 use super::store;
+use markitai_core::platform;
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -19,14 +22,7 @@ fn read(path: &Path) -> io::Result<Value> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(json!({})),
         Err(e) => return Err(e),
     }
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    let file = match options.open(path) {
+    let file = match platform::open_read(path, false) {
         Ok(file) => file,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(json!({})),
         Err(e) => return Err(e),
@@ -62,24 +58,14 @@ fn lock(directory: &Path) -> io::Result<ImageMetadataLock> {
     markitai_core::output::check_path(&path, false).map_err(io::Error::other)?;
     let mut options = OpenOptions::new();
     options.read(true).write(true).create(true).truncate(false);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    let file = options.open(&path)?;
-    let metadata = file.metadata()?;
-    if !metadata.is_file() {
+    platform::private_file(&mut options);
+    let file = platform::open_no_follow(&options, &path)?;
+    let opened = platform::file_status(&file)?;
+    if !opened.metadata().is_file() {
         return Err(io::Error::other("invalid image metadata lock"));
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
-        if metadata.nlink() != 1 || metadata.permissions().mode() & 0o077 != 0 {
-            return Err(io::Error::other("image metadata lock is not private"));
-        }
+    if opened.links() != 1 || !opened.private() {
+        return Err(io::Error::other("image metadata lock is not private"));
     }
     let start = Instant::now();
     loop {
@@ -95,14 +81,9 @@ fn lock(directory: &Path) -> io::Result<ImageMetadataLock> {
         }
     }
     let held = ImageMetadataLock(file);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let current = fs::symlink_metadata(path)?;
-        if !current.is_file() || current.dev() != metadata.dev() || current.ino() != metadata.ino()
-        {
-            return Err(io::Error::other("image metadata lock changed"));
-        }
+    let current = platform::status(&path)?;
+    if !current.metadata().is_file() || current.id() != opened.id() {
+        return Err(io::Error::other("image metadata lock changed"));
     }
     Ok(held)
 }
@@ -180,7 +161,7 @@ pub(super) fn prepare(staged: &Path, final_out: &Path) -> io::Result<Vec<ImageMe
         file.write_all(&bytes)?;
         file.write_all(b"\n")?;
         file.as_file().sync_all()?;
-        file.persist(path).map_err(|e| e.error)?;
+        platform::persist(file, &path).map_err(|e| e.error)?;
     }
     Ok(locks)
 }
@@ -236,7 +217,7 @@ pub(super) fn prune(
             file.write_all(&bytes)?;
             file.write_all(b"\n")?;
             file.as_file().sync_all()?;
-            file.persist(target).map_err(|e| e.error)?;
+            platform::persist(file, &target).map_err(|e| e.error)?;
         }
     }
     Ok(locks)

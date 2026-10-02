@@ -95,7 +95,7 @@ impl Claim {
     pub(crate) fn is_skip(&self) -> bool {
         self.skip
     }
-    pub(crate) fn keys(&self) -> Vec<(u64, u64)> {
+    pub(crate) fn keys(&self) -> Vec<markitai_core::platform::FileId> {
         self.leases.keys()
     }
     pub(crate) fn evidence_digest(&self) -> Result<String> {

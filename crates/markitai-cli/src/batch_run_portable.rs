@@ -1,4 +1,5 @@
-//! Ordinary batch conversion on platforms without native ownership evidence.
+//! Ordinary batch conversion without native ownership evidence: a test reference
+//! for reports without recovery state. No platform selects it any longer.
 use super::*;
 use crate::output_claims::{Claim, Error as ClaimError, Owner};
 use std::sync::atomic::{AtomicUsize, Ordering};

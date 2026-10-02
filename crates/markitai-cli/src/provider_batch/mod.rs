@@ -10,7 +10,7 @@ use markitai_core::output::Publication;
 use markitai_core::provider_batch as provider;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::Read;
 use std::time::Duration;
 
@@ -21,14 +21,7 @@ fn digest(bytes: &[u8]) -> String {
 }
 
 fn member(path: &Path) -> CliResult<Vec<u8>> {
-    let mut open = OpenOptions::new();
-    open.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        open.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    let file = open.open(path).map_err(runtime)?;
+    let file = markitai_core::platform::open_read(path, false).map_err(runtime)?;
     let metadata = file.metadata().map_err(runtime)?;
     if !metadata.is_file() || metadata.len() > MEMBER_LIMIT {
         return Err(runtime(

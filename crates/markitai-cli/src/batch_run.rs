@@ -12,7 +12,7 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
-pub(super) type Reservations = HashMap<(u64, u64), BTreeSet<ItemKey>>;
+pub(super) type Reservations = HashMap<markitai_core::platform::FileId, BTreeSet<ItemKey>>;
 
 fn item_key(task: &Task) -> ItemKey {
     if is_url(&task.source) {
@@ -653,11 +653,8 @@ fn run_with_namespace(
         }
         return Ok(0);
     }
-    // Platform preflight precedes any request, worker or state mutation.
-    #[cfg(not(unix))]
-    return Err(runtime(
-        "Durable output ownership is not implemented for this platform yet",
-    ));
+    // Platform preflight (controlled interruption) precedes any request,
+    // worker or state mutation.
     let _signals = crate::signals::Guard::install().map_err(runtime)?;
     let allow = config::enabled(cfg, "/output/allow_symlinks");
     let mut store =

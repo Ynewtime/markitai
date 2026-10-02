@@ -1,4 +1,5 @@
 use caseless::default_case_fold_str as fold;
+use markitai_core::platform::{self, Status};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs::{self, File, Metadata, OpenOptions};
@@ -122,50 +123,35 @@ fn regular(metadata: &Metadata) -> io::Result<()> {
     Ok(())
 }
 
-fn unchanged(before: &Metadata, after: &Metadata) -> bool {
-    let common = before.file_type() == after.file_type()
-        && before.len() == after.len()
-        && before.modified().ok() == after.modified().ok();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        common
-            && before.dev() == after.dev()
-            && before.ino() == after.ino()
-            && before.ctime() == after.ctime()
-            && before.ctime_nsec() == after.ctime_nsec()
-    }
-    #[cfg(not(unix))]
-    {
-        common
-    }
+fn unchanged(before: &Status, after: &Status) -> bool {
+    let (a, b) = (before.metadata(), after.metadata());
+    a.file_type() == b.file_type()
+        && a.len() == b.len()
+        && a.modified().ok() == b.modified().ok()
+        && before.id() == after.id()
+        && before.changed() == after.changed()
 }
 
-fn open_source(path: &Path, limit: u64, allow_symlinks: bool) -> io::Result<(File, Metadata)> {
+fn open_source(path: &Path, limit: u64, allow_symlinks: bool) -> io::Result<(File, Status)> {
     policy(path, allow_symlinks)?;
-    let before = fs::symlink_metadata(path)?;
-    regular(&before)?;
-    if before.len() > limit {
+    let before = platform::status(path)?;
+    regular(before.metadata())?;
+    if before.metadata().len() > limit {
         return Err(limit_error());
     }
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    let file = options.open(path)?;
-    let opened = file.metadata()?;
-    regular(&opened)?;
+    let file = platform::open_read(path, false)?;
+    let opened = platform::file_status(&file)?;
+    regular(opened.metadata())?;
     if !unchanged(&before, &opened) {
         return Err(invalid("History source changed while opening"));
     }
     Ok((file, opened))
 }
 
-fn confirm(path: &Path, file: &File, before: &Metadata) -> io::Result<()> {
-    if !unchanged(before, &file.metadata()?) || !unchanged(before, &fs::symlink_metadata(path)?) {
+fn confirm(path: &Path, file: &File, before: &Status) -> io::Result<()> {
+    if !unchanged(before, &platform::file_status(file)?)
+        || !unchanged(before, &platform::status(path)?)
+    {
         return Err(invalid("History source changed while copying"));
     }
     Ok(())
@@ -218,23 +204,16 @@ pub(super) fn copy_file(
 fn copy_opened(
     source: &Path,
     mut input: File,
-    before: Metadata,
+    before: Status,
     target: &Path,
     budget: &mut Budget,
     allow_symlinks: bool,
 ) -> io::Result<()> {
-    budget.admit(before.len())?;
+    budget.admit(before.metadata().len())?;
     policy(target, allow_symlinks)?;
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
-    }
-    let mut output = options.open(target)?;
+    let mut output = new_private_file(target)?;
     let result = (|| {
-        let fingerprint = stream(&mut input, Some(&mut output), before.len())?;
+        let fingerprint = stream(&mut input, Some(&mut output), before.metadata().len())?;
         confirm(source, &input, &before)?;
         // Synchronized with the whole stage before the job is named.
         Ok(fingerprint)
@@ -296,8 +275,8 @@ pub(super) fn find_root(
             Err(error) => return Err(error),
         }
     }
-    let boundary = boundary.canonicalize()?;
-    let mut level = parent.canonicalize()?;
+    let boundary = platform::canonicalize(boundary)?;
+    let mut level = platform::canonicalize(parent)?;
     if !level.starts_with(&boundary) {
         return Ok(None);
     }
@@ -391,14 +370,14 @@ fn available_name(parent: &Path, name: &str, budget: &mut Budget) -> io::Result<
 }
 
 fn mkdir(path: &Path) -> io::Result<()> {
-    #[cfg_attr(not(unix), allow(unused_mut))] // Only Unix sets a mode.
-    let mut options = fs::DirBuilder::new();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        options.mode(0o700);
-    }
-    options.create(path)
+    platform::private_directory().create(path)
+}
+
+/// A new private file; creating exclusively never follows an existing link.
+fn new_private_file(path: &Path) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    platform::private_file(&mut options).open(path)
 }
 
 fn target_directory(
@@ -445,7 +424,7 @@ fn target_directory(
 
 fn fingerprint(path: &Path, limit: u64, allow_symlinks: bool) -> io::Result<Fingerprint> {
     let (mut file, before) = open_source(path, limit, allow_symlinks)?;
-    let result = stream(&mut file, None, before.len())?;
+    let result = stream(&mut file, None, before.metadata().len())?;
     confirm(path, &file, &before)?;
     Ok(result)
 }
@@ -453,12 +432,12 @@ fn fingerprint(path: &Path, limit: u64, allow_symlinks: bool) -> io::Result<Fing
 fn equal_bytes(left: &Path, right: &Path, limit: u64, allow_symlinks: bool) -> io::Result<bool> {
     let (mut a, a_before) = open_source(left, limit, allow_symlinks)?;
     let (mut b, b_before) = open_source(right, limit, allow_symlinks)?;
-    if a_before.len() != b_before.len() {
+    if a_before.metadata().len() != b_before.metadata().len() {
         return Ok(false);
     }
     let mut a_buffer = [0_u8; CHUNK];
     let mut b_buffer = [0_u8; CHUNK];
-    let mut remaining = a_before.len();
+    let mut remaining = a_before.metadata().len();
     let mut same = true;
     while remaining != 0 {
         let count = remaining.min(CHUNK as u64) as usize;
@@ -616,8 +595,8 @@ pub(super) fn merge_root(
     if !directory(source, allow_symlinks)? || !directory(out, allow_symlinks)? {
         return Err(invalid("History asset root is missing"));
     }
-    let source = source.canonicalize()?;
-    let out = out.canonicalize()?;
+    let source = platform::canonicalize(source)?;
+    let out = platform::canonicalize(out)?;
     if source == out {
         return Err(invalid("History asset source and destination overlap"));
     }
@@ -644,7 +623,7 @@ pub(super) fn merge_root(
         }
         // The job store may live below the output root (for example, a home
         // directory). Only overlap with a tree actually copied is recursive.
-        let input = input.canonicalize()?;
+        let input = platform::canonicalize(&input)?;
         if input == out || out.starts_with(&input) || input.starts_with(&out) {
             return Err(invalid("History asset source and destination overlap"));
         }
@@ -661,8 +640,10 @@ pub(super) fn merge_root(
 pub(super) fn read_index(path: &Path, limit: u64, allow_symlinks: bool) -> io::Result<Vec<u8>> {
     let (mut file, before) = open_source(path, limit, allow_symlinks)?;
     let mut bytes = Vec::new();
-    (&mut file).take(before.len() + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 != before.len() {
+    (&mut file)
+        .take(before.metadata().len() + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 != before.metadata().len() {
         return Err(invalid("History image index changed while reading"));
     }
     confirm(path, &file, &before)?;
@@ -677,14 +658,7 @@ pub(super) fn write_index(
 ) -> io::Result<()> {
     budget.admit(bytes.len() as u64)?;
     policy(path, allow_symlinks)?;
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
-    }
-    let mut file = options.open(path)?;
+    let mut file = new_private_file(path)?;
     file.write_all(bytes)?;
     // Synchronized with the whole stage before the job is named.
     budget.bytes += bytes.len() as u64;

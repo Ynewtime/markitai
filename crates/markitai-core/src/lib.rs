@@ -19,6 +19,8 @@ pub mod output;
 mod output_profiles;
 mod pdf_media;
 mod pdf_raster;
+#[doc(hidden)]
+pub mod platform;
 mod preparation;
 mod pricing;
 mod process_groups;

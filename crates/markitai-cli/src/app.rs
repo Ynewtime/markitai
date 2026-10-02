@@ -51,10 +51,11 @@ macro_rules! say {
         }
     };
 }
-#[cfg_attr(unix, path = "batch_run.rs")]
-#[cfg_attr(not(unix), path = "batch_run_portable.rs")]
+// Every platform publishes batches with native ownership. The ordinary runner
+// remains only as a test reference for reports without recovery state.
+#[path = "batch_run.rs"]
 mod batch_run;
-#[cfg(all(test, unix))]
+#[cfg(test)]
 #[path = "batch_run_portable.rs"]
 mod batch_run_portable_tests;
 #[path = "provider_batch/mod.rs"]
@@ -1516,13 +1517,11 @@ fn begin_item(task: &Task, cfg: &Value) -> ItemProgress {
 
 // The batch coordinator owns this provisional value until publication is durable.
 // Neither preparation nor transfer emits a completed record or log entry.
-#[cfg(unix)]
 struct PreparedItem {
     progress: ItemProgress,
     conversion: markitai_core::PreparedConversion,
 }
 
-#[cfg(unix)]
 fn prepare_item(
     task: &Task,
     cfg: &Value,

@@ -46,7 +46,7 @@ pub(crate) fn check_paths(paths: &[&Path], allow_symlinks: bool) -> Result<()> {
                     let link = std::fs::symlink_metadata(ancestor)
                         .ok()
                         .filter(|metadata| metadata.file_type().is_symlink())
-                        .map(|metadata| root_owned(&metadata));
+                        .map(|metadata| crate::platform::root_owned(&metadata));
                     if shared {
                         observed.push((ancestor.to_owned(), link));
                     }
@@ -66,19 +66,6 @@ pub(crate) fn check_paths(paths: &[&Path], allow_symlinks: bool) -> Result<()> {
         }
     }
     Ok(())
-}
-
-fn root_owned(metadata: &std::fs::Metadata) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        metadata.uid() == 0
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = metadata;
-        false
-    }
 }
 
 pub fn split_frontmatter(text: &str) -> (Map<String, Value>, &str) {
@@ -607,10 +594,9 @@ fn atomic_write(path: &Path, bytes: &[u8], overwrite: bool) -> Result<()> {
     // followed by a directory synchronization.
     fence::order_staged(temp.as_file())?;
     if overwrite {
-        temp.persist(path).map_err(|e| Error::Io(e.error))?;
+        crate::platform::persist(temp, path).map_err(|e| Error::Io(e.error))?;
     } else {
-        temp.persist_noclobber(path)
-            .map_err(|e| Error::Io(e.error))?;
+        crate::platform::persist_noclobber(temp, path).map_err(|e| Error::Io(e.error))?;
     }
     fence::note("published");
     Ok(())
@@ -991,15 +977,8 @@ fn screenshot_matches(path: &Path, expected: &[u8]) -> Result<Option<bool>> {
     if metadata.len() != expected.len() as u64 {
         return Ok(Some(false));
     }
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        // Do not block if a concurrently changed destination becomes a FIFO.
-        options.custom_flags(libc::O_NONBLOCK);
-    }
-    let mut file = options.open(path)?;
+    // Do not block if a concurrently changed destination becomes a FIFO.
+    let mut file = crate::platform::open_read(path, true)?;
     if !file.metadata()?.is_file() {
         return Err(Error::InvalidInput(
             "Screenshot destination changed file type".into(),
@@ -1622,6 +1601,41 @@ mod path_check_tests {
         assert!(check_path(system, false).is_err());
         assert!(check_paths(&[&below, system], false).is_err());
         check_paths(&[&below, &below], false).unwrap();
+    }
+}
+
+/// Windows has no root-owned system links; a junction is a link like any
+/// symbolic link, in either spelling of the same path.
+#[cfg(all(test, windows))]
+mod windows_path_check_tests {
+    use super::*;
+
+    #[test]
+    fn a_junction_on_the_path_is_a_link_for_the_policy() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        let link = dir.path().join("link");
+        let created = std::process::Command::new("cmd")
+            .args(["/d", "/c", "mklink", "/J"])
+            .arg(&link)
+            .arg(&real)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(created.success(), "mklink /J failed");
+        for path in [
+            link.clone(),
+            link.join("doc.md"),
+            link.join("nested").join("doc.md"),
+        ] {
+            assert!(check_path(&path, false).is_err(), "{path:?}");
+            check_path(&path, true).unwrap();
+        }
+        check_path(&real.join("doc.md"), false).unwrap();
+        let verbatim = std::fs::canonicalize(dir.path()).unwrap();
+        check_path(&verbatim.join("real").join("doc.md"), false).unwrap();
+        assert!(check_path(&verbatim.join("link").join("doc.md"), false).is_err());
     }
 }
 

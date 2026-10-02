@@ -1,7 +1,14 @@
 //! Internal preparation fence. Staging is never a durable-publication acknowledgement.
+//!
+//! Windows has no directory flush and no ordering barrier: every staged file
+//! is flushed durably (`FlushFileBuffers`) when it is staged, staging a
+//! directory only checks that it exists, and a renamed file is flushed after
+//! its rename ([`SyncGroup::stage_renamed`]), which commits the NTFS log
+//! records of that rename and of every earlier change on the volume.
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io;
+use std::path::Path;
 
 const MAX_VOLUMES: usize = 32;
 
@@ -33,6 +40,62 @@ impl SyncGroup {
     /// a commit before a later phase may depend on stable media contents.
     pub(crate) fn stage(&mut self, file: &File) -> io::Result<()> {
         self.inner.stage(file)
+    }
+
+    /// Stage the entries of the directory `path` names, following a final
+    /// link as an ordinary open does. On Windows only its existence is checked.
+    pub(crate) fn stage_directory(&mut self, path: &Path) -> io::Result<()> {
+        #[cfg(windows)]
+        {
+            self.inner
+                .guard(|| markitai_core::platform::sync_directory(path))
+        }
+        #[cfg(not(windows))]
+        {
+            match File::open(path) {
+                Ok(file) => self.stage(&file),
+                // A directory that cannot be opened fails the group too.
+                Err(error) => self.inner.guard(|| Err(error)),
+            }
+        }
+    }
+
+    /// Stage the directory entry `path` itself: a final symbolic link (or
+    /// junction) is refused instead of followed.
+    pub(crate) fn stage_directory_entry(&mut self, path: &Path) -> io::Result<()> {
+        #[cfg(windows)]
+        {
+            self.inner
+                .guard(|| markitai_core::platform::open_directory(path).map(drop))
+        }
+        #[cfg(not(windows))]
+        {
+            match markitai_core::platform::open_directory(path) {
+                Ok(file) => self.stage(&file),
+                Err(error) => self.inner.guard(|| Err(error)),
+            }
+        }
+    }
+
+    /// A rename just published `file` under its new name. Unix persists the
+    /// name through the staged parent directory; Windows flushes the file.
+    pub(crate) fn stage_renamed(&mut self, file: &File) -> io::Result<()> {
+        #[cfg(windows)]
+        {
+            self.stage(file)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = file;
+            self.inner.guard(|| Ok(()))
+        }
+    }
+
+    /// [`Self::stage_renamed`] for the file a rename published inside a
+    /// renamed directory.
+    pub(crate) fn stage_renamed_path(&mut self, path: &Path) -> io::Result<()> {
+        self.inner
+            .guard(|| markitai_core::platform::sync_renamed_path(path))
     }
 
     /// Complete all staged volume fences durably, or fail without issuing a
@@ -112,6 +175,19 @@ impl<B: Backend> Group<B> {
             return Err(io::Error::other("synchronization group already failed"));
         }
         let result = self.stage_inner(handle);
+        if result.is_err() {
+            self.poisoned = true;
+        }
+        result
+    }
+
+    /// Run a staging step that needs no handle of this group, with the same
+    /// poisoning as [`Self::stage`].
+    fn guard(&mut self, step: impl FnOnce() -> io::Result<()>) -> io::Result<()> {
+        if self.poisoned {
+            return Err(io::Error::other("synchronization group already failed"));
+        }
+        let result = step();
         if result.is_err() {
             self.poisoned = true;
         }
@@ -249,6 +325,12 @@ impl Backend for System {
     }
 
     fn durable_sync(&self, file: &File) -> io::Result<()> {
+        // A Windows directory handle cannot be flushed; its names become
+        // durable with the next file flush on the volume.
+        #[cfg(windows)]
+        if file.metadata()?.is_dir() {
+            return Ok(());
+        }
         file.sync_all()
     }
 }
@@ -451,7 +533,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
     fn real_private_files_survive_descriptor_retention_and_fence() {
         use std::io::Write;
         let directory = tempfile::tempdir().unwrap();
@@ -462,7 +543,11 @@ mod tests {
             let mut group = SyncGroup::new();
             group.stage(&file).unwrap();
             drop(file);
-            group.stage(&File::open(directory.path()).unwrap()).unwrap();
+            group.stage_directory(directory.path()).unwrap();
+            group.stage_directory_entry(directory.path()).unwrap();
+            group
+                .stage(&markitai_core::platform::open_directory(directory.path()).unwrap())
+                .unwrap();
             if ordered {
                 group.commit_ordered().unwrap();
             } else {
@@ -470,5 +555,33 @@ mod tests {
             }
             assert_eq!(std::fs::read(path).unwrap(), b"complete staged bytes");
         }
+    }
+
+    #[test]
+    fn a_renamed_file_and_a_missing_directory_follow_the_group_rules() {
+        use std::io::Write;
+        let directory = tempfile::tempdir().unwrap();
+        let mut staged = tempfile::NamedTempFile::new_in(directory.path()).unwrap();
+        staged.write_all(b"bytes").unwrap();
+        let mut group = SyncGroup::new();
+        group.stage(staged.as_file()).unwrap();
+        let target = directory.path().join("published");
+        let published = markitai_core::platform::persist_noclobber(staged, &target).unwrap();
+        group.stage_renamed(&published).unwrap();
+        group.stage_renamed_path(&target).unwrap();
+        group.stage_directory(directory.path()).unwrap();
+        group.commit().unwrap();
+        // A vanished directory fails staging and poisons the group.
+        let mut group = SyncGroup::new();
+        assert!(
+            group
+                .stage_directory(&directory.path().join("missing"))
+                .is_err()
+        );
+        assert!(group.stage_renamed(&published).is_err());
+        assert!(group.commit().is_err());
+        let mut group = SyncGroup::new();
+        assert!(group.stage_directory_entry(&target).is_err());
+        assert!(group.commit_ordered().is_err());
     }
 }

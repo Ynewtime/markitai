@@ -1,7 +1,8 @@
 //! Establish the controlled claim namespace before any admission is dispatched.
 use super::{Error, Result, leases, sync_group::SyncGroup};
+use markitai_core::platform::{self, FileId, Status};
 use std::collections::BTreeMap;
-use std::fs::{self, File, Metadata, OpenOptions};
+use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -11,24 +12,17 @@ pub(crate) const MAX_NAMESPACE_PARENTS: usize = 16;
 struct Directory {
     path: PathBuf,
     file: File,
-    identity: (u64, u64),
+    identity: FileId,
     private: bool,
 }
 
 impl Directory {
-    fn open(path: PathBuf, private: bool, device: Option<u64>) -> Result<Self> {
-        let before = checked_metadata(&path, private, device)?;
-        let mut options = OpenOptions::new();
-        options.read(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            // Check the descriptor as well: a substituted FIFO must never block.
-            options.custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_NONBLOCK);
-        }
-        let file = options.open(&path)?;
-        let identity = identity(&before)?;
-        if identity != self::identity(&file.metadata()?)? {
+    fn open(path: PathBuf, private: bool, volume: Option<u64>) -> Result<Self> {
+        let identity = checked_metadata(&path, private, volume)?.id();
+        // Check the handle as well: a substituted link or FIFO is refused
+        // without being followed or blocking.
+        let file = platform::open_directory(&path)?;
+        if identity != platform::file_status(&file)?.id() {
             return Err(invalid("namespace directory changed while opening"));
         }
         let directory = Self {
@@ -42,9 +36,9 @@ impl Directory {
     }
 
     fn validate(&self) -> Result<()> {
-        let observed = checked_metadata(&self.path, self.private, Some(self.identity.0))?;
-        if identity(&observed)? != self.identity
-            || identity(&self.file.metadata()?)? != self.identity
+        let observed = checked_metadata(&self.path, self.private, Some(self.identity.volume))?;
+        if observed.id() != self.identity
+            || platform::file_status(&self.file)?.id() != self.identity
         {
             return Err(invalid("namespace directory identity changed"));
         }
@@ -60,7 +54,7 @@ struct Namespace {
 impl Namespace {
     fn prepare(parent: PathBuf) -> Result<Self> {
         let parent = Directory::open(parent, false, None)?;
-        let device = parent.identity.0;
+        let device = parent.identity.volume;
         let mut path = parent.path.clone();
         let mut directories = vec![parent];
         for (name, private) in [(".markitai", false), ("ownership", true), ("members", true)] {
@@ -177,54 +171,24 @@ impl PreparedNamespaces {
 }
 
 fn create_metadata_directory(path: &Path) -> Result<()> {
-    #[cfg_attr(not(unix), allow(unused_mut))] // Only Unix sets a mode.
-    let mut builder = fs::DirBuilder::new();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        builder.mode(0o700);
-    }
-    match builder.create(path) {
+    match platform::private_directory().create(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
         Err(error) => Err(error.into()),
     }
 }
 
-fn checked_metadata(path: &Path, private: bool, device: Option<u64>) -> Result<Metadata> {
-    let metadata = fs::symlink_metadata(path)?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+fn checked_metadata(path: &Path, private: bool, volume: Option<u64>) -> Result<Status> {
+    let status = platform::status(path)?;
+    if !status.metadata().is_dir() || status.metadata().file_type().is_symlink() {
         return Err(invalid("namespace must contain regular directories"));
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if (private && metadata.mode() & 0o077 != 0)
-            || device.is_some_and(|device| metadata.dev() != device)
-        {
-            return Err(invalid(
-                "namespace metadata must be private on the output filesystem",
-            ));
-        }
+    if (private && !status.private()) || volume.is_some_and(|volume| status.id().volume != volume) {
+        return Err(invalid(
+            "namespace metadata must be private on the output filesystem",
+        ));
     }
-    #[cfg(not(unix))]
-    let _ = (private, device);
-    Ok(metadata)
-}
-
-fn identity(metadata: &Metadata) -> Result<(u64, u64)> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        Ok((metadata.dev(), metadata.ino()))
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = metadata;
-        Err(invalid(
-            "namespace preparation requires native file identity",
-        ))
-    }
+    Ok(status)
 }
 
 fn check_policy(path: &Path, allow_symlinks: bool) -> Result<()> {
@@ -236,5 +200,5 @@ fn invalid(message: &str) -> Error {
     Error::Invalid(message.into())
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests;

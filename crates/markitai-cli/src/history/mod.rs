@@ -5,7 +5,7 @@ mod image_metadata;
 use crate::output_claims::sync_group::SyncGroup;
 use crate::report::{ItemKind, ItemStatus, RunItem, RunMode};
 use chrono::{DateTime, Local, SecondsFormat};
-use markitai_core::config;
+use markitai_core::{config, platform};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -280,9 +280,12 @@ impl Plan {
         if crate::signals::interrupted().is_some() {
             return Ok(None);
         }
-        fs::rename(stage.path(), &target)?;
+        platform::rename(stage.path(), &target)?;
         let mut name = SyncGroup::new();
-        stage_directory(&self.jobs_root, &mut name)?;
+        // Windows has no directory flush: the job's metadata file, flushed
+        // after the rename, commits it instead.
+        name.stage_renamed_path(&target.join("meta.json"))?;
+        name.stage_directory(&self.jobs_root)?;
         name.commit()?;
         Ok(Some(target))
     }
@@ -474,14 +477,7 @@ fn invalid(message: &str) -> io::Error {
 
 fn private_directory(path: &Path) -> io::Result<()> {
     markitai_core::output::check_path(path, false).map_err(io::Error::other)?;
-    let mut builder = fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        builder.mode(0o700);
-    }
-    builder.create(path)?;
+    platform::private_directory().recursive(true).create(path)?;
     let metadata = fs::symlink_metadata(path)?;
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
         return Err(invalid("History directory is not a regular directory"));
@@ -497,24 +493,14 @@ fn private_file(path: &Path, exclusive: bool) -> io::Result<File> {
     } else {
         options.create(true).truncate(false);
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    let file = options.open(path)?;
-    let metadata = file.metadata()?;
-    if !metadata.is_file() {
+    platform::private_file(&mut options);
+    let file = platform::open_no_follow(&options, path)?;
+    let opened = platform::file_status(&file)?;
+    if !opened.metadata().is_file() {
         return Err(invalid("History metadata is not a regular file"));
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if metadata.nlink() != 1 {
-            return Err(invalid("History metadata has multiple hard links"));
-        }
+    if opened.links() != 1 {
+        return Err(invalid("History metadata has multiple hard links"));
     }
     Ok(file)
 }
@@ -534,14 +520,6 @@ fn publication_lock(root: &Path) -> io::Result<File> {
     private_file(&path, false)
 }
 
-fn stage_directory(path: &Path, fence: &mut SyncGroup) -> io::Result<()> {
-    #[cfg(unix)]
-    fence.stage(&File::open(path)?)?;
-    #[cfg(not(unix))]
-    let _ = (path, fence);
-    Ok(())
-}
-
 /// Synchronize every regular file and directory of the private stage, each
 /// directory after its contents, without following links, for one fence.
 /// Returns the number of entries staged.
@@ -553,21 +531,17 @@ fn stage_tree(root: &Path, fence: &mut SyncGroup) -> io::Result<usize> {
     {
         let entry = entry?;
         if entry.file_type().is_dir() {
-            stage_directory(entry.path(), fence)?;
+            fence.stage_directory(entry.path())?;
             staged += 1;
         } else if entry.file_type().is_file() {
             let mut options = OpenOptions::new();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options
-                    .read(true)
-                    .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-            }
             // Flushing a Windows handle requires write access; nothing is written.
-            #[cfg(not(unix))]
-            options.write(true);
-            fence.stage(&options.open(entry.path())?)?;
+            if cfg!(windows) {
+                options.write(true);
+            } else {
+                options.read(true);
+            }
+            fence.stage(&platform::open_no_follow(&options, entry.path())?)?;
             staged += 1;
         }
     }

@@ -1,7 +1,9 @@
-#![cfg(unix)]
+//! Store decisions run on every platform; mode bits and substituted symbolic
+//! links are Unix fixtures.
 use super::*;
 use markitai_core::provider_batch::BatchStatus;
 use serde_json::json;
+#[cfg(unix)]
 use std::os::unix::fs::{PermissionsExt, symlink};
 
 struct Fixture {
@@ -12,7 +14,7 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let directory = tempfile::tempdir().unwrap();
-        let root = fs::canonicalize(directory.path()).unwrap();
+        let root = platform::canonicalize(directory.path()).unwrap();
         let input = root.join("input");
         let output = root.join("output");
         fs::create_dir(&input).unwrap();
@@ -136,18 +138,28 @@ fn prepared_job_retains_frozen_plan_after_original_source_disappears() {
         restored.read_plan("item_0").unwrap()["frozen_content"],
         "original notes.llm"
     );
-    assert_eq!(
-        fs::metadata(&directory).unwrap().permissions().mode() & 0o777,
-        0o700
-    );
-    assert_eq!(
-        fs::metadata(directory.join("state.json"))
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777,
-        0o600
-    );
+    for path in [directory.clone(), directory.join("state.json")] {
+        let status = platform::status(&path).unwrap();
+        assert!(
+            status.private() && status.owned_by_current_user(),
+            "{path:?}"
+        );
+    }
+    #[cfg(unix)]
+    {
+        assert_eq!(
+            fs::metadata(&directory).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::metadata(directory.join("state.json"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
     let pending = Store::pending(&fixture.output, false, Limits::default()).unwrap();
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].input_root, fixture.input);
@@ -252,8 +264,10 @@ fn collectors_hold_one_stable_job_lock_and_reject_replaced_lock_paths() {
         .create_new(true)
         .open(&lock)
         .unwrap();
+    #[cfg(unix)]
     file.set_permissions(fs::Permissions::from_mode(0o600))
         .unwrap();
+    drop(file);
     assert!(matches!(store.validate(), Err(Error::Conflict)));
 }
 
@@ -273,6 +287,8 @@ fn missing_batch_locator_is_rebuilt_from_one_committed_state() {
     assert_eq!(restored.state().id, id);
     let index: Value = serde_json::from_slice(&fs::read(&locator).unwrap()).unwrap();
     assert_eq!(index["job_id"], id);
+    assert!(platform::status(&locator).unwrap().private());
+    #[cfg(unix)]
     assert_eq!(
         fs::metadata(locator).unwrap().permissions().mode() & 0o777,
         0o600
@@ -424,6 +440,7 @@ fn bounded_requests_and_tampered_plan_fail_without_advancing_state() {
     assert!(Store::open_by_id(&fixture.output, &id, false, limits).is_err());
 }
 
+#[cfg(unix)]
 #[test]
 fn internal_symlinks_public_evidence_and_foreign_output_families_are_rejected() {
     let fixture = Fixture::new();

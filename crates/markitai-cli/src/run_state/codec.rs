@@ -250,10 +250,19 @@ fn file_key(key: &str, scope: &Scope, allow_symlinks: bool) -> Result<String> {
     if !super::paths::resolve(&original)?.starts_with(&scope.input) {
         return Err(foreign("document key resolves outside input"));
     }
-    normalized
-        .to_str()
-        .map(str::to_owned)
-        .ok_or_else(|| invalid("document key is not UTF-8"))
+    portable_key(&normalized)
+}
+
+/// A relative document key with `/` between its names, as batch reports spell
+/// it on every platform. Windows reads `\` and `/` alike, so a key written by
+/// either separator loads as the same item; on Unix this is the path itself.
+fn portable_key(relative: &Path) -> Result<String> {
+    let names = relative
+        .components()
+        .map(|part| part.as_os_str().to_str())
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| invalid("document key is not UTF-8"))?;
+    Ok(names.join("/"))
 }
 
 fn url_identity(key: &str, explicit: Option<&str>) -> Result<String> {
@@ -1737,7 +1746,8 @@ mod tests {
     fn native_checkpoint_preparation_anchors_scope_and_url_provenance_only_at_begin() {
         let cwd = std::env::current_dir().unwrap();
         let root = tempfile::tempdir_in(&cwd).unwrap();
-        let input = root.path().join("input/pages.urls");
+        // Native separators: the prepared spelling is the absolute path.
+        let input = root.path().join("input").join("pages.urls");
         let output = root.path().join("out");
         let scope = Scope::new(Mode::UrlList, &input, &output).unwrap();
         let relative_input_dir = input.parent().unwrap().strip_prefix(&cwd).unwrap();

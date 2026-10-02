@@ -1,5 +1,8 @@
 //! Merge successful image descriptions while serializing cooperating processes.
+//! Writers hold the sidecar `.images.lock`, never `images.json` itself: a
+//! Windows lock is mandatory, and readers of the index must not be refused.
 use super::*;
+use crate::platform;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::Read;
 use std::time::{Duration, Instant};
@@ -25,26 +28,16 @@ fn lock(directory: &Path, allow_symlinks: bool) -> Result<ImageMetadataLock> {
     }
     let mut options = OpenOptions::new();
     options.read(true).write(true).create(true).truncate(false);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    let file = options.open(&path)?;
-    let metadata = file.metadata()?;
-    if !metadata.is_file() {
+    platform::private_file(&mut options);
+    let file = platform::open_no_follow(&options, &path)?;
+    let opened = platform::file_status(&file)?;
+    if !opened.metadata().is_file() {
         return Err(invalid("Image metadata lock is not a regular file"));
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
-        if metadata.nlink() != 1 || metadata.permissions().mode() & 0o077 != 0 {
-            return Err(invalid(
-                "Image metadata lock must be private and have one link",
-            ));
-        }
+    if opened.links() != 1 || !opened.private() {
+        return Err(invalid(
+            "Image metadata lock must be private and have one link",
+        ));
     }
     let started = Instant::now();
     loop {
@@ -60,28 +53,16 @@ fn lock(directory: &Path, allow_symlinks: bool) -> Result<ImageMetadataLock> {
         }
     }
     let held = ImageMetadataLock(file);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let current = std::fs::symlink_metadata(path)?;
-        if !current.is_file() || current.dev() != metadata.dev() || current.ino() != metadata.ino()
-        {
-            return Err(invalid("Image metadata lock changed during publication"));
-        }
+    let current = platform::status(&path)?;
+    if !current.metadata().is_file() || current.id() != opened.id() {
+        return Err(invalid("Image metadata lock changed during publication"));
     }
     Ok(held)
 }
 
 fn read(path: &Path, allow_symlinks: bool) -> Result<Option<Value>> {
     check_path(path, allow_symlinks)?;
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NONBLOCK | if allow_symlinks { 0 } else { libc::O_NOFOLLOW });
-    }
-    let file = match options.open(path) {
+    let file = match platform::open_read(path, allow_symlinks) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),

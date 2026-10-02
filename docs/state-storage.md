@@ -1,6 +1,6 @@
 # Recovery state storage
 
-The Unix CLI connects this store to directory and URL-list dispatch. Every batch
+The CLI connects this store to directory and URL-list dispatch. Every batch
 persists merged work and flushes each admitted target before a worker can make
 provider requests; `--resume` retains completed entries and retries unfinished
 work. Reports and optional [history archives](history.md) remain independently
@@ -32,13 +32,19 @@ The shared Python-compatible MD5 serializer supplies the filename. Six hex digit
 are not proof of ownership: the loader validates saved scope and destinations.
 
 The store holds an OS exclusive lock on the open lock file for its lifetime.
-It never removes that inode to release the lock. This excludes cooperating
+It never removes that file to release the lock. Only this sidecar is locked:
+a Windows lock is mandatory, and the base and journal stay readable. This excludes cooperating
 writers of one checkpoint, including processes that start a fresh run. It does
 not reserve document output names across different hashes or overlapping roots.
 Separate [member leases and receipts](output-ownership.md) protect document names across those run scopes.
 
 Original output path spelling is retained privately for symlink-policy checks,
-while the serialized scope contains resolved identities. Native checkpoint
+while the serialized scope contains resolved identities. On Windows a resolved
+path takes the final spelling of its longest existing prefix (as Python's
+`realpath` there), so a short (8.3) name or another case is the same scope.
+Document keys are relative paths with `/` between names on every platform, as
+batch reports spell them; a key saved with `\` (a Windows reference state)
+loads as the same item. Native checkpoint
 publication anchors scope options, URL provenance and saved destinations to
 absolute paths before durable encoding, so changing cwd cannot reinterpret them.
 New journal mutations also store validated absolute destinations. The codec interprets
@@ -109,9 +115,12 @@ exist; an empty journal is preserved as a real zero-byte file.
 Copies stream within the existing per-base/per-journal limits. The source must
 be a regular file without a symlink leaf, even when general output symlinks are
 allowed. The copy is checked against source identity and a second bounded digest
-before publication. On Unix the backup directory is 0700 and files are 0600.
+before publication. On Unix the backup directory is 0700 and files are 0600;
+Windows has no mode bits and the backup inherits the states directory's ACL.
 Files and the temporary directory are synced before the complete directory is
-renamed into place; its parent is then synced. Only after that acknowledgment may
+renamed into place; its parent is then synced (on Windows, where no directory
+can be flushed, its manifest is flushed after the rename instead). Every file in
+the staged directory is closed before that rename, which Windows requires. Only after that acknowledgment may
 the current base be replaced and the old journal removed. Copy, verification or
 backup-sync failure leaves the current base/journal unchanged. A complete backup
 may remain after a later error, including failure to sync its final parent;
@@ -177,15 +186,15 @@ The fences mean what they mean for [output ownership](output-ownership.md#orderi
 an ordering fence keeps every later write to the same device from reaching stable
 storage first; a durability fence returns once what it covers is on stable storage.
 
-| Step | Fence |
-|---|---|
-| Created `.markitai/states` chain and the parent that received its first entry | ordering |
-| `begin`, or a compaction forced by journal capacity: snapshot bytes, then the base name before the old journal's removal | ordering, ordering |
-| `flush` of a new or replaced journal: its bytes before its directory entry | ordering |
-| `flush` acknowledgement (journal, directory, everything ordered before it) | durability |
-| `flush` with nothing pending after an ordered checkpoint | durability |
-| Final compaction: snapshot bytes; base name before the journal's removal; removal | ordering, ordering, durability |
-| Legacy-pair backup; corrupt-state quarantine | durability, as before |
+| Step | Fence | Windows |
+|---|---|---|
+| Created `.markitai/states` chain and the parent that received its first entry | ordering | existence checked |
+| `begin`, or a compaction forced by journal capacity: snapshot bytes, then the base name before the old journal's removal | ordering, ordering | snapshot flushed; flushed again after its rename |
+| `flush` of a new or replaced journal: its bytes before its directory entry | ordering | journal flushed |
+| `flush` acknowledgement (journal, directory, everything ordered before it) | durability | journal flushed |
+| `flush` with nothing pending after an ordered checkpoint | durability | directory existence checked; the checkpoint was already flushed |
+| Final compaction: snapshot bytes; base name before the journal's removal; removal | ordering, ordering, durability | snapshot flushed before and after its rename |
+| Legacy-pair backup; corrupt-state quarantine | durability, as before | each copy flushed after its rename; the backup's manifest after the directory rename |
 
 An ordered checkpoint does not advance the acknowledged sequence: the next `flush`
 completes a durability fence even when no event is pending. The scheduler flushes
@@ -208,6 +217,15 @@ On a verified local macOS APFS or HFS volume each object is synchronized with
 Elsewhere, including Linux, each object still receives `File::sync_all` when it is
 staged; there, the only change is that a journal removed under an ordered
 checkpoint has its directory synchronized by the next flush instead of at once.
+Windows has no barrier and no directory flush: each file is flushed with
+`FlushFileBuffers` when it is staged, and a renamed base is flushed again after
+its rename. NTFS writes its log of renames, creations and removals in order, so
+that flush also commits the journal removal and directory creation that precede
+it on the volume; directory staging only checks existence. A journal removal
+has no file of its own to flush: until the next flush on the volume, a crash can
+bring the superseded journal back beside the new base, which the generation and
+sequence fence already ignores. The same steps make the same fence calls on
+every platform.
 Counted with an interposed `fsync`/`fcntl` library on release builds (macOS 27,
 APFS), a fresh 24- or 32-file directory run now spends 3 full-cache flushes and
 6 barriers on recovery state (9 full flushes before): one flush per admission
@@ -263,7 +281,8 @@ reads; serialization uses a bounded writer. Journal capacity triggers compaction
 and an oversized snapshot fails instead of becoming unreadable on the next run.
 Diagnostics do not dump raw state lines, provider configuration or document data.
 
-New native base and journal files use private permissions on Unix. Before
+New native base and journal files use private permissions on Unix (Windows
+files inherit the states directory's ACL). Before
 replacing a corrupt base, the store preserves both base and sidecar in
 unique same-directory quarantine files, syncs them and retains private file
 permissions. Oversized quarantine copies fail while leaving originals in place.
@@ -271,9 +290,10 @@ Foreign scope is an error, not corruption to overwrite as a fresh run. I/O failu
 poisons the writer; callers must reopen and recover rather than append after an
 uncertain partial write. Temporary staging is cleaned up when publication fails.
 
-Directory synchronization is implemented for Unix. Other platforms still require
-explicit durability and lock validation. The tests do not substitute for those
-release gates or for scheduler interruption tests.
+Directory synchronization is `fsync` on Unix and replaced on Windows by the
+post-rename file flushes above. Windows durability and lock behavior still need
+validation on Windows hosts; type checks and host tests do not substitute for
+those release gates or for scheduler interruption tests.
 
 ## Validation and next stage
 

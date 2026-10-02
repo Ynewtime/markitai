@@ -6,12 +6,13 @@
 //! `readlink` result is observed once and reused. That is a single consistent
 //! observation instead of many, never a weaker check; outside a scope every call
 //! reads the filesystem directly. The rules replicate
-//! `markitai_core::output::check_path` and `report_store::resolve_path` exactly.
+//! `markitai_core::output::check_path` and `report_store::resolve_path` exactly;
+//! on Windows each resolved path, which the file system spells, is reused.
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::io;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy)]
 enum Observed {
@@ -27,7 +28,10 @@ enum Observed {
 struct Memo {
     depth: usize,
     observed: HashMap<PathBuf, Observed>,
+    #[cfg(not(windows))]
     links: HashMap<PathBuf, PathBuf>,
+    #[cfg(windows)]
+    resolved: HashMap<PathBuf, PathBuf>,
 }
 
 thread_local! {
@@ -77,17 +81,7 @@ fn observe(path: &Path) -> io::Result<Observed> {
     let found = match fs::symlink_metadata(path) {
         Ok(metadata) => Observed::Present {
             symlink: metadata.file_type().is_symlink(),
-            root_owned: {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::MetadataExt;
-                    metadata.uid() == 0
-                }
-                #[cfg(not(unix))]
-                {
-                    false
-                }
-            },
+            root_owned: markitai_core::platform::root_owned(&metadata),
         },
         Err(error)
             if matches!(
@@ -110,6 +104,7 @@ fn observe(path: &Path) -> io::Result<Observed> {
     Ok(found)
 }
 
+#[cfg(not(windows))]
 fn read_link(path: &Path) -> io::Result<PathBuf> {
     if let Some(target) = MEMO.with(|memo| {
         memo.borrow()
@@ -152,18 +147,40 @@ pub(super) fn symlinks_permitted(path: &Path, allow_symlinks: bool) -> io::Resul
 
 /// `report_store::resolve_path`.
 pub(super) fn resolve(path: &Path) -> io::Result<PathBuf> {
-    let absolute = std::path::absolute(path)?;
-    let mut resolved = PathBuf::new();
-    resolve_components(&absolute, &mut resolved, &mut HashSet::new(), 0)?;
-    Ok(resolved)
+    #[cfg(windows)]
+    {
+        if let Some(found) = MEMO.with(|memo| {
+            memo.borrow()
+                .as_ref()
+                .and_then(|memo| memo.resolved.get(path).cloned())
+        }) {
+            return Ok(found);
+        }
+        let resolved = markitai_core::platform::resolve(path)?;
+        MEMO.with(|memo| {
+            if let Some(memo) = memo.borrow_mut().as_mut() {
+                memo.resolved.insert(path.to_owned(), resolved.clone());
+            }
+        });
+        Ok(resolved)
+    }
+    #[cfg(not(windows))]
+    {
+        let absolute = std::path::absolute(path)?;
+        let mut resolved = PathBuf::new();
+        resolve_components(&absolute, &mut resolved, &mut Default::default(), 0)?;
+        Ok(resolved)
+    }
 }
 
+#[cfg(not(windows))]
 fn resolve_components(
     path: &Path,
     resolved: &mut PathBuf,
-    active: &mut HashSet<PathBuf>,
+    active: &mut std::collections::HashSet<PathBuf>,
     depth: usize,
 ) -> io::Result<()> {
+    use std::path::Component;
     if depth > 256 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,

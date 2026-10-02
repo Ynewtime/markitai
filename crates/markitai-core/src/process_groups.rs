@@ -404,7 +404,7 @@ mod windows {
         CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
     };
     use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
         JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
         QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
@@ -413,14 +413,6 @@ mod windows {
         CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, CREATE_SUSPENDED, OpenThread, ResumeThread,
         THREAD_SUSPEND_RESUME, WaitForSingleObject,
     };
-
-    // Declared here so that creating an unnamed job with default security
-    // needs none of windows-sys's security types. The handle is not
-    // inheritable, so no runtime receives it.
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn CreateJobObjectW(attributes: *const core::ffi::c_void, name: *const u16) -> HANDLE;
-    }
 
     /// Exit code of a process ended through its job.
     const KILLED: u32 = 1;
@@ -435,6 +427,8 @@ mod windows {
     }
 
     fn job() -> std::io::Result<Owned> {
+        // An unnamed job with default security; the handle is not
+        // inheritable, so no runtime receives it.
         let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
         if job.is_null() {
             return Err(std::io::Error::last_os_error());

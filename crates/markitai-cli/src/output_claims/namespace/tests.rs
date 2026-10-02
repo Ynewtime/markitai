@@ -1,8 +1,27 @@
+//! Identity, fencing, exclusion and kill-release decisions run on every
+//! platform; substituted symbolic links and permission bits are Unix fixtures.
 use super::*;
 use crate::output_claims::MemberLeases;
-use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
+
+/// Acquire after a peer was killed. Unix releases its locks with the process;
+/// Windows releases them shortly after, "depending on available system
+/// resources" (LockFileEx), so a bounded wait covers that.
+fn acquire_after_release(parent: &Path) -> MemberLeases {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match MemberLeases::acquire(parent, &names(), false) {
+            Err(Error::Busy) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            result => return result.unwrap(),
+        }
+    }
+}
 
 fn names() -> Vec<String> {
     vec!["document.md".into(), "document.llm.md".into()]
@@ -46,7 +65,7 @@ fn new_and_existing_chains_are_fenced_before_claims_without_touching_outputs() {
         .unwrap();
     ready.validate(&parent, false).unwrap();
     assert_eq!(observed.len(), 5);
-    let actual = fs::canonicalize(&parent).unwrap();
+    let actual = platform::canonicalize(&parent).unwrap();
     assert_eq!(
         observed,
         vec![
@@ -68,7 +87,7 @@ fn new_and_existing_chains_are_fenced_before_claims_without_touching_outputs() {
         "foreign output\n"
     );
     for path in observed.iter().take(4) {
-        assert_eq!(fs::metadata(path).unwrap().mode() & 0o077, 0);
+        assert!(platform::status(path).unwrap().private(), "{path:?}");
     }
 }
 
@@ -102,7 +121,7 @@ fn a_sync_failure_never_yields_admission_authority_or_starts_work() {
 fn the_namespace_fence_orders_without_a_durable_flush_and_symlinks_still_fail() {
     use crate::output_claims::sync_group::take_commits;
     let root = tempfile::tempdir().unwrap();
-    let real = fs::canonicalize(root.path()).unwrap();
+    let real = platform::canonicalize(root.path()).unwrap();
     let parent = real.join("tree/out");
     let mut batch = NamespaceBatch::new();
     batch.prepare(&parent, false).unwrap();
@@ -114,12 +133,16 @@ fn the_namespace_fence_orders_without_a_durable_flush_and_symlinks_still_fail() 
     assert_eq!(take_commits(), ["ordered"]);
     ready.validate(&parent, false).unwrap();
     // A symbolic link substituted above the parent fails the next validation.
-    fs::rename(real.join("tree"), real.join("moved")).unwrap();
-    symlink(real.join("moved"), real.join("tree")).unwrap();
-    let error = ready.validate(&parent, false).unwrap_err().to_string();
-    assert!(error.contains("symlink policy"), "{error}");
-    let mut batch = NamespaceBatch::new();
-    assert!(batch.prepare(&parent, false).is_err());
+    // (Windows cannot rename a directory below which handles are open.)
+    #[cfg(unix)]
+    {
+        fs::rename(real.join("tree"), real.join("moved")).unwrap();
+        symlink(real.join("moved"), real.join("tree")).unwrap();
+        let error = ready.validate(&parent, false).unwrap_err().to_string();
+        assert!(error.contains("symlink policy"), "{error}");
+        let mut batch = NamespaceBatch::new();
+        assert!(batch.prepare(&parent, false).is_err());
+    }
 }
 
 #[test]
@@ -132,9 +155,7 @@ fn changed_namespace_is_rejected_before_and_after_the_fence() {
         let members = parent.join(".markitai/ownership/members");
         let replace = || {
             fs::rename(&members, parent.join("old-members")).unwrap();
-            let mut builder = fs::DirBuilder::new();
-            use std::os::unix::fs::DirBuilderExt;
-            builder.mode(0o700).create(&members).unwrap();
+            platform::private_directory().create(&members).unwrap();
             fs::write(members.join("foreign"), "keep me").unwrap();
         };
         if after_fence {
@@ -161,6 +182,7 @@ fn one_bad_parent_does_not_poison_other_preparations_or_replace_its_bytes() {
     let root = tempfile::tempdir().unwrap();
     let bad = root.path().join("bad");
     fs::create_dir_all(bad.join(".markitai/ownership")).unwrap();
+    #[cfg(unix)]
     fs::set_permissions(
         bad.join(".markitai/ownership"),
         fs::Permissions::from_mode(0o700),
@@ -178,6 +200,7 @@ fn one_bad_parent_does_not_poison_other_preparations_or_replace_its_bytes() {
     assert_eq!(fs::read_to_string(collision).unwrap(), "unrelated metadata");
 }
 
+#[cfg(unix)]
 #[test]
 fn parent_aliases_share_proof_but_metadata_symlinks_are_never_admitted() {
     let root = tempfile::tempdir().unwrap();
@@ -228,15 +251,22 @@ impl Drop for ChildGuard {
     }
 }
 fn helper(root: &Path, mode: &str) -> ChildGuard {
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command.env_clear();
+    // Windows processes need their system directory variables.
+    for name in ["PATH", "SYSTEMROOT", "TMPDIR", "TMP", "TEMP"] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
     ChildGuard(
-        Command::new(std::env::current_exe().unwrap())
+        command
             .args([
                 "--exact",
                 "output_claims::namespace::tests::namespace_process_helper",
                 "--ignored",
                 "--nocapture",
             ])
-            .env_clear()
             .env("MARKITAI_NAMESPACE_TEST_ROOT", root)
             .env("MARKITAI_NAMESPACE_TEST_MODE", mode)
             .env("MARKITAI_HOME", root.join("private-home"))
@@ -290,7 +320,7 @@ fn committed_namespace_keeps_cross_process_member_exclusion_and_kill_release() {
     let mut child = helper(root.path(), "held");
     ready(&mut child, root.path());
     let lock = parent.join(".markitai/ownership/members/document.md");
-    let before = fs::metadata(&lock).unwrap();
+    let before = platform::status(&lock).unwrap().id();
     let mut batch = NamespaceBatch::new();
     batch.prepare(&parent, false).unwrap();
     let ready = batch.commit().unwrap();
@@ -300,9 +330,8 @@ fn committed_namespace_keeps_cross_process_member_exclusion_and_kill_release() {
         Err(Error::Busy)
     ));
     drop(child);
-    let lease = MemberLeases::acquire(&parent, &names(), false).unwrap();
-    let after = fs::metadata(lock).unwrap();
-    assert_eq!((before.dev(), before.ino()), (after.dev(), after.ino()));
+    let lease = acquire_after_release(&parent);
+    assert_eq!(platform::status(&lock).unwrap().id(), before);
     assert_eq!(lease.keys().len(), 2);
 }
 

@@ -16,24 +16,18 @@ pub(crate) struct RenderedMember {
 /// Fixed-size receipts and prepared bytes must not cause an unbounded read if a
 /// noncooperating writer substitutes a much larger object during verification.
 fn observe_regular_bounded(path: &Path, limit: u64) -> Result<Option<Proof>> {
-    let before = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
+    let before = match platform::status(path) {
+        Ok(status) => status,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
-    if !before.is_file() || before.file_type().is_symlink() || before.len() > limit {
+    let metadata = before.metadata();
+    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > limit {
         return Err(mismatch("prepared regular file exceeds its expected bound"));
     }
-    let mut options = fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        // A substituted FIFO must not block before the descriptor can be checked.
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    let file = options.open(path)?;
-    if !same_observation(&before, &file.metadata()?) {
+    // A substituted FIFO must not block before the descriptor can be checked.
+    let file = platform::open_read(path, false)?;
+    if !same_observation(&before, &platform::file_status(&file)?) {
         return Err(mismatch("prepared file changed while opening"));
     }
     let mut reader = (&file).take(limit.saturating_add(1));
@@ -52,10 +46,10 @@ fn observe_regular_bounded(path: &Path, limit: u64) -> Result<Option<Proof>> {
         bytes += count as u64;
         digest.update(&buffer[..count]);
     }
-    if bytes != before.len()
+    if bytes != before.metadata().len()
         || bytes > limit
-        || !same_observation(&before, &file.metadata()?)
-        || !same_observation(&before, &fs::symlink_metadata(path)?)
+        || !same_observation(&before, &platform::file_status(&file)?)
+        || !same_observation(&before, &platform::status(path)?)
     {
         return Err(mismatch("prepared file changed while checking its proof"));
     }
@@ -70,8 +64,8 @@ fn record_proof(leases: &MemberLeases, path: &Path) -> Result<Option<Proof>> {
     let Some(directory) = records_directory(leases, false)? else {
         return Ok(None);
     };
-    match fs::symlink_metadata(path) {
-        Ok(metadata) => check_record(&metadata, &fs::metadata(directory)?)?,
+    match platform::status(path) {
+        Ok(status) => check_record(&status, &platform::followed_status(&directory)?)?,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     }
@@ -123,9 +117,9 @@ impl StagedFile {
         self.verify()?;
         let file = self.file.take().expect("verified prepared file exists");
         let result = if replace {
-            file.persist(target)
+            platform::persist(file, target)
         } else {
-            file.persist_noclobber(target)
+            platform::persist_noclobber(file, target)
         };
         match result {
             Ok(file) => Ok(file),
@@ -287,8 +281,8 @@ impl PreparedDocument {
             .map_err(|_| mismatch("publication receipt exceeds its size limit"))?;
         let stage = StagedFile::create(&directory, ".markitai-receipt-", &encoded.bytes, false)?;
         check_record(
-            &fs::symlink_metadata(stage.file().path())?,
-            &fs::metadata(&directory)?,
+            &platform::status(stage.file().path())?,
+            &platform::followed_status(&directory)?,
         )?;
         Ok(Self {
             claim,
@@ -321,8 +315,8 @@ impl PreparedDocument {
                 "publication receipt changed after group preparation",
             ));
         }
-        if let Ok(metadata) = fs::symlink_metadata(&self.receipt_target) {
-            check_record(&metadata, &fs::metadata(directory)?)?;
+        if let Ok(status) = platform::status(&self.receipt_target) {
+            check_record(&status, &platform::followed_status(&directory)?)?;
         }
         self.receipt.verify()
     }
@@ -404,7 +398,7 @@ impl PublicationGroup {
         // background directory write between the data and receipt phases.
         // Ordering suffices: no receipt can reach the media before these.
         for parent in stage_parents {
-            data.stage(&File::open(parent)?)?;
+            data.stage_directory(&parent)?;
         }
         data.commit_ordered()?;
         boundary(Boundary::DataOrdered)?;
@@ -413,10 +407,11 @@ impl PublicationGroup {
         let mut receipt_parents = BTreeSet::new();
         for (index, document) in self.documents.iter_mut().enumerate() {
             document.validate()?;
-            let _installed = document.receipt.install(
+            let installed = document.receipt.install(
                 &document.receipt_target,
                 document.receipt_expected.is_some(),
             )?;
+            receipts.stage_renamed(&installed)?;
             receipt_parents.insert(
                 document
                     .receipt_target
@@ -428,7 +423,7 @@ impl PublicationGroup {
         }
         // No document name can reach the media before its installed receipt.
         for parent in receipt_parents {
-            receipts.stage(&File::open(parent)?)?;
+            receipts.stage_directory(&parent)?;
         }
         receipts.commit_ordered()?;
         boundary(Boundary::ReceiptsOrdered)?;
@@ -441,7 +436,8 @@ impl PublicationGroup {
                 if observe(&target)? != member.expected {
                     return Err(mismatch("output changed before group installation"));
                 }
-                let _installed = member.stage.install(&target, member.expected.is_some())?;
+                let installed = member.stage.install(&target, member.expected.is_some())?;
+                outputs.stage_renamed(&installed)?;
                 output_parents.insert(document.claim.parent().to_owned());
                 boundary(Boundary::OutputInstalled(document_index, member_index))?;
             }
@@ -450,7 +446,7 @@ impl PublicationGroup {
         // its output parent's file system, so this durable flush per volume also
         // persists everything the two ordered phases staged.
         for parent in output_parents {
-            outputs.stage(&File::open(parent)?)?;
+            outputs.stage_directory(&parent)?;
         }
         outputs.commit()?;
         boundary(Boundary::OutputsDurable)?;
@@ -471,7 +467,9 @@ enum Boundary {
     OutputsDurable,
 }
 
-#[cfg(all(test, unix))]
+/// Group phases, interruption and kill recovery run on every platform; the
+/// substituted-link test is Unix-only.
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -617,10 +615,11 @@ mod tests {
         assert_eq!(take_commits(), ["ordered", "ordered"]);
     }
 
+    #[cfg(unix)]
     #[test]
     fn an_ancestor_swapped_for_a_symlink_after_preparation_installs_nothing() {
         let temp = tempfile::tempdir().unwrap();
-        let root = fs::canonicalize(temp.path()).unwrap();
+        let root = platform::canonicalize(temp.path()).unwrap();
         let parent = root.join("tree/out");
         let claim = claim(&parent, "a", None, Policy::NoClobber);
         let receipt = record(&claim);
@@ -842,6 +841,15 @@ mod tests {
         ));
         child.0.kill().unwrap();
         child.0.wait().unwrap();
+        // Windows releases a killed owner's locks shortly after it exits.
+        let until = Instant::now() + Duration::from_secs(10);
+        while matches!(
+            MemberLeases::acquire(directory.path(), &["a.md".into(), "a.llm.md".into()], false),
+            Err(Error::Busy)
+        ) && Instant::now() < until
+        {
+            std::thread::sleep(Duration::from_millis(20));
+        }
         let retry = claim(directory.path(), "a", Some(owner), Policy::RetryOwned);
         assert_eq!(fs::read(retry.parent().join("a.md")).unwrap(), b"base");
         assert_eq!(
@@ -889,21 +897,24 @@ mod tests {
 
     #[test]
     fn oversized_foreign_receipt_is_preserved_and_rejected_before_staging() {
-        use std::os::unix::fs::PermissionsExt;
         let directory = tempfile::tempdir().unwrap();
         let claim = claim(directory.path(), "a", None, Policy::NoClobber);
         records_directory(&claim.leases, true).unwrap();
         let path = record(&claim);
         let file = File::create(&path).unwrap();
-        file.set_permissions(fs::Permissions::from_mode(0o600))
-            .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(fs::Permissions::from_mode(0o600))
+                .unwrap();
+        }
         file.set_len(100 * 1024 * 1024).unwrap();
-        let before = file.metadata().unwrap();
+        let before = platform::file_status(&file).unwrap();
         assert!(
             PreparedDocument::prepare(claim.clone(), vec![rendered(&claim, "a.md", b"new")])
                 .is_err()
         );
-        assert!(same_observation(&before, &fs::metadata(&path).unwrap()));
+        assert!(same_observation(&before, &platform::status(&path).unwrap()));
         assert!(!claim.parent().join("a.md").exists());
         assert!(!fs::read_dir(claim.parent()).unwrap().any(|entry| {
             entry

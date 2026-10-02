@@ -299,16 +299,18 @@ pub(super) async fn create(
                 "job identifier collision; retry the request",
             ));
         }
-        std::fs::rename(stage.path(), &folder).map_err(ApiError::internal)?;
-        if let Err(error) =
-            std::fs::File::open(&publication_state.root).and_then(|file| file.sync_all())
+        markitai_core::platform::rename(stage.path(), &folder).map_err(ApiError::internal)?;
+        // Windows cannot flush the jobs directory; flushing the renamed job's
+        // metadata commits the rename instead.
+        if let Err(error) = markitai_core::platform::sync_renamed_path(&folder.join("meta.json"))
+            .and_then(|()| markitai_core::platform::sync_directory(&publication_state.root))
         {
             // Only this transaction's newly created UUID directory is removed.
             // Existing jobs were excluded before rename while holding the lock.
             if let Err(cleanup) = std::fs::remove_dir_all(&folder) {
                 eprintln!("Serve: rejected upload cleanup failed: {cleanup}");
             }
-            let _ = std::fs::File::open(&publication_state.root).and_then(|file| file.sync_all());
+            let _ = markitai_core::platform::sync_directory(&publication_state.root);
             return Err(ApiError::internal(error));
         }
         let job = Arc::new(Job::new(folder, data));

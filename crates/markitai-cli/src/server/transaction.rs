@@ -1,5 +1,10 @@
 //! Reversible file publication. The metadata commit decides recovery after restart.
+//!
+//! Directory synchronization below is `fsync` on Unix. Windows cannot flush a
+//! directory: each published file is flushed after its rename instead, which
+//! commits the NTFS log records of every earlier rename and removal too.
 use super::{jobs::JobData, store};
+use markitai_core::platform;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
@@ -60,12 +65,13 @@ fn copy(source: &Path, target: &Path, total: &mut u64) -> io::Result<()> {
         return Err(io::Error::other("transaction member changed while copying"));
     }
     temporary.as_file().sync_all()?;
-    temporary.persist(target).map_err(|e| e.error)?;
-    File::open(parent)?.sync_all()
+    let installed = platform::persist(temporary, target).map_err(|e| e.error)?;
+    platform::sync_renamed(&installed)?;
+    platform::sync_directory(parent)
 }
 fn sync_chain(mut path: &Path, root: &Path) -> io::Result<()> {
     loop {
-        File::open(path)?.sync_all()?;
+        platform::sync_directory(path)?;
         if path == root {
             return Ok(());
         }
@@ -97,7 +103,7 @@ fn rollback(folder: &Path, stage: &Path, journal: &Journal) -> io::Result<()> {
             }
         }
     }
-    File::open(folder)?.sync_all()
+    platform::sync_directory(folder)
 }
 
 /// Caller holds job.access; staged replacements have paths relative to the job.
@@ -153,26 +159,28 @@ pub(super) fn publish(
     let mut manifest = tempfile::NamedTempFile::new_in(stage.path())?;
     manifest.write_all(&encoded)?;
     manifest.as_file().sync_all()?;
-    manifest
-        .persist(stage.path().join("journal.json"))
-        .map_err(|e| e.error)?;
-    File::open(stage.path())?.sync_all()?;
+    let recorded =
+        platform::persist(manifest, &stage.path().join("journal.json")).map_err(|e| e.error)?;
+    platform::sync_renamed(&recorded)?;
+    drop(recorded);
+    platform::sync_directory(stage.path())?;
     let path = stage.keep();
-    File::open(folder)?.sync_all()?;
+    platform::sync_directory(folder)?;
     let result = (|| {
         for (name, source) in replacements {
             let target = folder.join(name);
             let parent = target.parent().unwrap();
             store::private_dir(parent)?;
-            File::open(&source)?.sync_all()?;
-            fs::rename(source, &target)?;
+            platform::sync_file(&source)?;
+            platform::rename(&source, &target)?;
+            platform::sync_renamed_path(&target)?;
             sync_chain(parent, folder)?;
         }
         for name in removals {
             let target = folder.join(name);
             if target.try_exists()? {
                 fs::remove_file(&target)?;
-                File::open(target.parent().unwrap())?.sync_all()?;
+                platform::sync_directory(target.parent().unwrap())?;
             }
         }
         Ok::<_, io::Error>(())
@@ -206,7 +214,7 @@ pub(super) fn clean(folder: &Path, ids: &[String]) -> io::Result<()> {
             Err(e) => return Err(e),
         }
     }
-    File::open(folder)?.sync_all()
+    platform::sync_directory(folder)
 }
 
 pub(super) fn recover(folder: &Path) -> io::Result<()> {
@@ -277,7 +285,7 @@ pub(super) fn abort(folder: &Path, id: &str) -> io::Result<()> {
     }
     rollback(folder, &stage, &journal)?;
     fs::remove_dir_all(stage)?;
-    File::open(folder)?.sync_all()
+    platform::sync_directory(folder)
 }
 
 #[cfg(test)]

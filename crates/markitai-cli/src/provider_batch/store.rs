@@ -2,6 +2,7 @@
 use crate::output_claims::Owner;
 use markitai_core::{
     ConversionUsage,
+    platform::{self, FileId, Status},
     provider_batch::{Batch, RemoteIdentity, UploadedInput},
 };
 use serde::{Deserialize, Serialize};
@@ -187,20 +188,15 @@ pub(crate) struct RecordResult {
     pub usage: ConversionUsage,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct Identity {
-    device: u64,
-    inode: u64,
-}
 struct Directory {
     path: PathBuf,
-    identity: Identity,
+    identity: FileId,
     private: bool,
 }
 struct HeldLock {
     path: PathBuf,
     file: File,
-    identity: Identity,
+    identity: FileId,
 }
 struct Root {
     output: PathBuf,
@@ -870,9 +866,8 @@ impl Store {
             return Err(Error::Io);
         }
         self.validate()?;
-        temporary
-            .persist(self.path.join("state.json"))
-            .map_err(|_| Error::Io)?;
+        let installed =
+            platform::persist(temporary, &self.path.join("state.json")).map_err(|_| Error::Io)?;
         self.state = state;
         #[cfg(test)]
         if self.fault == Some(Fault::AfterStateReplace) {
@@ -880,7 +875,7 @@ impl Store {
             self.poisoned = true;
             return Err(Error::Durability);
         }
-        if sync(&self.path).is_err() {
+        if platform::sync_renamed(&installed).is_err() || sync(&self.path).is_err() {
             self.poisoned = true;
             return Err(Error::Durability);
         }
@@ -937,9 +932,6 @@ struct Index {
 
 impl Root {
     fn open(output: &Path, allow_symlinks: bool, create: bool) -> Result<Self> {
-        if !cfg!(unix) {
-            return Err(Error::Unsupported);
-        }
         let physical = physical_output(output, allow_symlinks)?;
         if create {
             fs::create_dir_all(&physical)?;
@@ -984,16 +976,16 @@ impl Root {
 }
 impl Directory {
     fn read(path: &Path, private: bool) -> Result<Self> {
-        let metadata = fs::symlink_metadata(path)?;
-        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        let status = observe(platform::status(path))?;
+        if !status.metadata().is_dir() || status.metadata().file_type().is_symlink() {
             return Err(Error::Invalid(
                 "Provider batch directory is not a regular directory",
             ));
         }
-        check_permissions(&metadata, private)?;
+        check_permissions(&status, private)?;
         Ok(Self {
             path: path.to_owned(),
-            identity: identity(&metadata)?,
+            identity: status.id(),
             private,
         })
     }
@@ -1015,25 +1007,19 @@ impl Drop for HeldLock {
 
 impl HeldLock {
     fn open(path: &Path) -> Result<Self> {
-        if let Ok(metadata) = fs::symlink_metadata(path) {
-            regular(&metadata)?;
+        if let Ok(status) = platform::status(path) {
+            regular(&status)?;
         }
         let mut options = OpenOptions::new();
         options.read(true).write(true).create(true).truncate(false);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options
-                .mode(0o600)
-                .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-        }
-        let file = options.open(path)?;
-        let metadata = file.metadata()?;
-        regular(&metadata)?;
-        if metadata.len() != 0 {
+        platform::private_file(&mut options);
+        let file = platform::open_no_follow(&options, path)?;
+        let opened = observe(platform::file_status(&file))?;
+        regular(&opened)?;
+        if opened.metadata().len() != 0 {
             return Err(Error::Invalid("Provider batch lock is not empty"));
         }
-        let identity = identity(&metadata)?;
+        let identity = opened.id();
         file.try_lock().map_err(|error| match error {
             TryLockError::WouldBlock => Error::Busy,
             TryLockError::Error(_) => Error::Io,
@@ -1049,73 +1035,48 @@ impl HeldLock {
         Ok(held)
     }
     fn validate(&self) -> Result<()> {
-        let opened = self.file.metadata()?;
-        let current = fs::symlink_metadata(&self.path)?;
+        let opened = observe(platform::file_status(&self.file))?;
+        let current = observe(platform::status(&self.path))?;
         regular(&opened)?;
         regular(&current)?;
-        if opened.len() != 0
-            || current.len() != 0
-            || identity(&opened)? != self.identity
-            || identity(&current)? != self.identity
+        if opened.metadata().len() != 0
+            || current.metadata().len() != 0
+            || opened.id() != self.identity
+            || current.id() != self.identity
         {
             return Err(Error::Conflict);
         }
         Ok(())
     }
 }
-fn identity(metadata: &fs::Metadata) -> Result<Identity> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        Ok(Identity {
-            device: metadata.dev(),
-            inode: metadata.ino(),
-        })
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = metadata;
-        Err(Error::Unsupported)
-    }
+/// A platform without native file identity reports that this store is
+/// unsupported rather than an ordinary I/O failure.
+fn observe(status: io::Result<Status>) -> Result<Status> {
+    status.map_err(|error| match error.kind() {
+        io::ErrorKind::Unsupported => Error::Unsupported,
+        _ => Error::Io,
+    })
 }
-fn check_permissions(metadata: &fs::Metadata, private: bool) -> Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
-        if private
-            && (metadata.permissions().mode() & 0o077 != 0
-                || metadata.uid() != unsafe { libc::geteuid() })
-        {
-            return Err(Error::Invalid(
-                "Provider batch evidence must be private to the current user",
-            ));
-        }
+fn check_permissions(status: &Status, private: bool) -> Result<()> {
+    if private && (!status.private() || !status.owned_by_current_user()) {
+        return Err(Error::Invalid(
+            "Provider batch evidence must be private to the current user",
+        ));
     }
-    #[cfg(not(unix))]
-    {
-        let _ = (metadata, private);
-        Err(Error::Unsupported)
-    }
-    #[cfg(unix)]
-    {
-        Ok(())
-    }
+    Ok(())
 }
-fn regular(metadata: &fs::Metadata) -> Result<()> {
+fn regular(status: &Status) -> Result<()> {
+    let metadata = status.metadata();
     if !metadata.is_file() || metadata.file_type().is_symlink() {
         return Err(Error::Invalid(
             "Provider batch evidence must be a regular file",
         ));
     }
-    check_permissions(metadata, true)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if metadata.nlink() != 1 {
-            return Err(Error::Invalid(
-                "Provider batch evidence must not have multiple hard links",
-            ));
-        }
+    check_permissions(status, true)?;
+    if status.links() != 1 {
+        return Err(Error::Invalid(
+            "Provider batch evidence must not have multiple hard links",
+        ));
     }
     Ok(())
 }
@@ -1125,14 +1086,7 @@ fn physical_output(output: &Path, allow_symlinks: bool) -> Result<PathBuf> {
     crate::report_store::resolve_path(output).map_err(Into::into)
 }
 fn new_directory(path: &Path) -> Result<()> {
-    #[cfg_attr(not(unix), allow(unused_mut))] // Only Unix sets a mode.
-    let mut builder = fs::DirBuilder::new();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        builder.mode(0o700);
-    }
-    builder.create(path)?;
+    platform::private_directory().create(path)?;
     sync(path.parent().ok_or(Error::Io)?)?;
     Ok(())
 }
@@ -1147,28 +1101,22 @@ fn ensure_directory(path: &Path, private: bool) -> Result<()> {
     }
 }
 fn sync(path: &Path) -> Result<()> {
-    File::open(path)?.sync_all().map_err(Into::into)
+    platform::sync_directory(path).map_err(Into::into)
 }
 fn open_private(path: &Path) -> Result<File> {
-    let before = fs::symlink_metadata(path)?;
+    let before = observe(platform::status(path))?;
     regular(&before)?;
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    let file = options.open(path)?;
-    let after = file.metadata()?;
+    let file = platform::open_read(path, false)?;
+    let after = observe(platform::file_status(&file))?;
     regular(&after)?;
-    if identity(&before)? != identity(&after)? {
+    if before.id() != after.id() {
         return Err(Error::Conflict);
     }
     Ok(file)
 }
 fn read_private(path: &Path, limit: usize) -> Result<Vec<u8>> {
     let file = open_private(path)?;
+    let identity = observe(platform::file_status(&file))?.id();
     let before = file.metadata()?;
     if before.len() > limit as u64 {
         return Err(Error::Invalid(
@@ -1181,7 +1129,7 @@ fn read_private(path: &Path, limit: usize) -> Result<Vec<u8>> {
     if bytes.len() > limit
         || before.len() != after.len()
         || before.modified().ok() != after.modified().ok()
-        || identity(&fs::symlink_metadata(path)?)? != identity(&before)?
+        || observe(platform::status(path))?.id() != identity
     {
         return Err(Error::Conflict);
     }
@@ -1189,6 +1137,7 @@ fn read_private(path: &Path, limit: usize) -> Result<Vec<u8>> {
 }
 fn hash_file(path: &Path, limit: usize) -> Result<(u64, String)> {
     let mut file = open_private(path)?;
+    let identity = observe(platform::file_status(&file))?.id();
     let before = file.metadata()?;
     if before.len() > limit as u64 {
         return Err(Error::Invalid(
@@ -1215,7 +1164,7 @@ fn hash_file(path: &Path, limit: usize) -> Result<(u64, String)> {
     if before.len() != bytes
         || after.len() != bytes
         || before.modified().ok() != after.modified().ok()
-        || identity(&fs::symlink_metadata(path)?)? != identity(&before)?
+        || observe(platform::status(path))?.id() != identity
     {
         return Err(Error::Conflict);
     }
@@ -1230,7 +1179,7 @@ fn private_temp(parent: &Path) -> Result<NamedTempFile> {
     let temporary = tempfile::Builder::new()
         .prefix(".pending-")
         .tempfile_in(parent)?;
-    regular(&temporary.as_file().metadata()?)?;
+    regular(&observe(platform::file_status(temporary.as_file()))?)?;
     Ok(temporary)
 }
 struct Bounded<W> {
@@ -1272,9 +1221,8 @@ fn write_new_json(path: &Path, value: &impl Serialize, limit: usize) -> Result<(
     let mut temporary = private_temp(parent)?;
     temporary.write_all(&bytes)?;
     temporary.as_file().sync_all()?;
-    temporary
-        .persist_noclobber(path)
-        .map_err(|_| Error::Conflict)?;
+    let installed = platform::persist_noclobber(temporary, path).map_err(|_| Error::Conflict)?;
+    platform::sync_renamed(&installed)?;
     sync(parent)
 }
 fn write_json_blob(directory: &Path, relative: &Path, value: &Value, limit: usize) -> Result<Blob> {
@@ -1320,10 +1268,9 @@ fn write_blob(
             return Err(Error::Conflict);
         }
     } else {
-        output
-            .writer
-            .persist_noclobber(&destination)
+        let installed = platform::persist_noclobber(output.writer, &destination)
             .map_err(|_| Error::Conflict)?;
+        platform::sync_renamed(&installed)?;
         sync(parent)?;
     }
     Ok(blob)
@@ -1341,7 +1288,8 @@ fn inventory(directory: &Path, limits: Limits) -> Result<u64> {
                 return Err(Error::Invalid("Provider batch evidence file limit reached"));
             }
             let path = entry.path();
-            let metadata = fs::symlink_metadata(&path)?;
+            let status = observe(platform::status(&path))?;
+            let metadata = status.metadata();
             if metadata.is_dir() && !metadata.file_type().is_symlink() {
                 if path.parent() != Some(directory)
                     || !matches!(entry.file_name().to_str(), Some("plans" | "results"))
@@ -1353,7 +1301,7 @@ fn inventory(directory: &Path, limits: Limits) -> Result<u64> {
                 Directory::read(&path, true)?;
                 paths.push(path);
             } else {
-                regular(&metadata)?;
+                regular(&status)?;
                 bytes = bytes.checked_add(metadata.len()).ok_or(Error::Conflict)?;
                 if bytes > limits.total_bytes {
                     return Err(Error::Invalid("Provider batch storage limit reached"));

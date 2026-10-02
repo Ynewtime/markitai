@@ -1,11 +1,10 @@
 use md5::{Digest, Md5};
 use serde_json::Value;
-use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::io::{self, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use tempfile::NamedTempFile;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -16,19 +15,32 @@ pub(crate) enum Publication {
 
 /// Resolve existing symlinks before simplifying `..`, retaining missing tails.
 /// Planning never creates a directory or requires the final path to exist.
+///
+/// On Windows, as Python's `realpath` there: `..` is applied lexically first,
+/// then the longest existing prefix takes its final spelling (links and
+/// junctions resolved, stored case, long names), which `canonicalize` shares.
 pub(crate) fn resolve_path(path: &Path) -> io::Result<PathBuf> {
-    let absolute = std::path::absolute(path)?;
-    let mut resolved = PathBuf::new();
-    resolve_components(&absolute, &mut resolved, &mut HashSet::new(), 0)?;
-    Ok(resolved)
+    #[cfg(windows)]
+    {
+        markitai_core::platform::resolve(path)
+    }
+    #[cfg(not(windows))]
+    {
+        let absolute = std::path::absolute(path)?;
+        let mut resolved = PathBuf::new();
+        resolve_components(&absolute, &mut resolved, &mut Default::default(), 0)?;
+        Ok(resolved)
+    }
 }
 
+#[cfg(not(windows))]
 fn resolve_components(
     path: &Path,
     resolved: &mut PathBuf,
-    active: &mut HashSet<PathBuf>,
+    active: &mut std::collections::HashSet<PathBuf>,
     depth: usize,
 ) -> io::Result<()> {
+    use std::path::Component;
     if depth > 256 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -287,10 +299,10 @@ fn publish_candidates(
         check_path(&requested.join(&filename), allow_symlinks)?;
         check_path(&path, allow_symlinks)?;
         if on_conflict == "overwrite" {
-            temp.persist(&path).map_err(|error| error.error)?;
+            markitai_core::platform::persist(temp, &path).map_err(|error| error.error)?;
             return Ok(Publication::Written(path));
         }
-        match temp.persist_noclobber(&path) {
+        match markitai_core::platform::persist_noclobber(temp, &path) {
             Ok(_) => return Ok(Publication::Written(path)),
             Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => {
                 if on_conflict == "skip" {
@@ -391,6 +403,7 @@ impl Iterator for ReportNames<'_> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::collections::HashSet;
 
     fn written(result: Publication) -> PathBuf {
         match result {
@@ -452,10 +465,10 @@ mod tests {
     #[test]
     fn resolve_missing_parent_components_without_creating_paths() {
         let dir = tempfile::tempdir().unwrap();
-        let root = fs::canonicalize(dir.path()).unwrap();
+        let root = markitai_core::platform::canonicalize(dir.path()).unwrap();
         assert_eq!(
             resolve_path(&dir.path().join("missing/../future/./file")).unwrap(),
-            root.join("future/file")
+            root.join("future").join("file")
         );
         assert!(!dir.path().join("missing").exists());
         assert!(!dir.path().join("future").exists());

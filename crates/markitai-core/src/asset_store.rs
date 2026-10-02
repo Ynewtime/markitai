@@ -1,6 +1,7 @@
 //! Shared content-addressed assets are reused only after exact byte validation.
+use crate::platform::{self, Status};
 use crate::{Error, Result};
-use std::fs::{self, File, Metadata};
+use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::Path;
 
@@ -25,24 +26,24 @@ fn mismatch(path: &Path) -> Error {
 
 /// False means the directory entry itself was absent, not a dangling symlink.
 fn verify_existing(path: &Path, bytes: &[u8]) -> Result<bool> {
-    let leaf = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
+    let leaf = match platform::status(path) {
+        Ok(status) => status,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(error.into()),
     };
-    let advertised = fs::metadata(path)?;
-    if !advertised.is_file() {
+    let advertised = platform::followed_status(path)?;
+    if !advertised.metadata().is_file() {
         return Err(Error::Conversion(format!(
             "Asset is not a regular file: {}",
             path.display()
         )));
     }
-    if advertised.len() != bytes.len() as u64 {
+    if advertised.metadata().len() != bytes.len() as u64 {
         return Err(mismatch(path));
     }
     let mut file = File::open(path)?;
-    let before = file.metadata()?;
-    if !before.is_file() || !same_version(&advertised, &before) {
+    let before = platform::file_status(&file)?;
+    if !before.metadata().is_file() || !same_version(&advertised, &before) {
         return Err(Error::Conversion(format!(
             "Asset changed during verification: {}",
             path.display()
@@ -64,9 +65,9 @@ fn verify_existing(path: &Path, bytes: &[u8]) -> Result<bool> {
     if file.read(&mut buffer[..1])? != 0 {
         return Err(mismatch(path));
     }
-    if !same_version(&before, &file.metadata()?)
-        || !same_version(&before, &fs::metadata(path)?)
-        || !same_version(&leaf, &fs::symlink_metadata(path)?)
+    if !same_version(&before, &platform::file_status(&file)?)
+        || !same_version(&before, &platform::followed_status(path)?)
+        || !same_version(&leaf, &platform::status(path)?)
     {
         return Err(Error::Conversion(format!(
             "Asset changed during verification: {}",
@@ -76,21 +77,16 @@ fn verify_existing(path: &Path, bytes: &[u8]) -> Result<bool> {
     Ok(true)
 }
 
-fn same_version(left: &Metadata, right: &Metadata) -> bool {
-    let common = left.file_type() == right.file_type()
-        && left.len() == right.len()
-        && left.modified().ok() == right.modified().ok();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        // No-clobber publication may use hard-link/unlink on some filesystems;
-        // that changes ctime/link count without changing the asset bytes.
-        common && left.dev() == right.dev() && left.ino() == right.ino()
-    }
-    #[cfg(not(unix))]
-    {
-        common
-    }
+/// The same file with the same size and modification time. No-clobber
+/// publication may use hard-link/unlink on some file systems; that changes the
+/// change time and link count without changing the asset bytes, so neither is
+/// compared.
+fn same_version(left: &Status, right: &Status) -> bool {
+    let (a, b) = (left.metadata(), right.metadata());
+    a.file_type() == b.file_type()
+        && a.len() == b.len()
+        && a.modified().ok() == b.modified().ok()
+        && left.id() == right.id()
 }
 
 // Both competing writers may arrive here after observing a missing destination.
@@ -107,7 +103,7 @@ fn publish_new(path: &Path, bytes: &[u8]) -> Result<()> {
     // bytes; that is ordering. The name itself is not synchronized, so the
     // asset was never durable on return and a cache flush bought nothing.
     crate::output::fence::order_staged(staged.as_file())?;
-    match staged.persist_noclobber(path) {
+    match platform::persist_noclobber(staged, path) {
         Ok(_) => {
             crate::output::fence::note("published");
             Ok(())
@@ -130,6 +126,7 @@ fn publish_new(path: &Path, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::path::PathBuf;
     use std::process::{Child, Command, Stdio};
     use std::time::{Duration, Instant};
@@ -141,9 +138,12 @@ mod tests {
         let mut bytes = vec![0xa5; BLOCK * 2 + 7];
         bytes[BLOCK] = 0;
         insert_or_verify(&path, &bytes).unwrap();
-        let before = fs::metadata(&path).unwrap();
+        let before = platform::followed_status(&path).unwrap();
         insert_or_verify(&path, &bytes).unwrap();
-        assert!(same_version(&before, &fs::metadata(&path).unwrap()));
+        assert!(same_version(
+            &before,
+            &platform::followed_status(&path).unwrap()
+        ));
         for wrong in [
             {
                 let mut wrong = bytes.clone();

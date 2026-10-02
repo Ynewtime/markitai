@@ -3,6 +3,8 @@ mod legacy_backup;
 use super::{
     Checkpoint, Error, Event, Fence, ItemKey, Limits, LoadOutcome, Result, Scope, Snapshot, codec,
 };
+use crate::output_claims::sync_group::SyncGroup;
+use markitai_core::platform::{self, FileId};
 use serde_json::Value;
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Read, Write};
@@ -23,7 +25,7 @@ pub(crate) struct StateStore {
     pending_bytes: usize,
     journal_bytes: usize,
     // Set only after the current journal entry and data are durably synced.
-    journal_synced_identity: Option<(u64, u64)>,
+    journal_synced_identity: Option<FileId>,
     durable_sequence: u64,
     // Set while an ordered checkpoint or created states directory still awaits
     // the durable fence of its volume; `durable_sequence` stays behind until a
@@ -471,14 +473,11 @@ impl StateStore {
             regular_file(&self.journal, self.allow_symlinks)?;
         }
         let mut options = OpenOptions::new();
-        options.create(true).append(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&self.journal)?;
-        let metadata = file.metadata()?;
+        // Reading is never used; it lets every platform query the handle.
+        options.create(true).append(true).read(true);
+        let mut file = platform::private_file(&mut options).open(&self.journal)?;
+        let opened = platform::file_status(&file)?;
+        let metadata = opened.metadata();
         if !metadata.is_file() || metadata.len() != self.journal_bytes as u64 {
             return Err(Error::Invalid("journal changed outside its owner".into()));
         }
@@ -494,15 +493,14 @@ impl StateStore {
         file.flush()?;
         #[cfg(test)]
         self.fail_at(FaultPoint::BeforeJournalSync)?;
-        let identity = journal_identity(&metadata);
+        let identity = Some(opened.id());
         let mut fence = Staged::new();
         fence.file(&file)?;
         // Appending changes file data, not an already durable directory entry.
         // A fresh/replaced journal, or one an ordered checkpoint still precedes,
         // also needs the namespace: its bytes are ordered before its entry,
-        // then one durable fence covers both. Platforms without native
-        // identity retain the directory synchronization.
-        if identity.is_none() || identity != self.journal_synced_identity || self.unfenced {
+        // then one durable fence covers both.
+        if identity != self.journal_synced_identity || self.unfenced {
             fence.ordered()?;
             #[cfg(test)]
             self.fail_at(FaultPoint::BeforeJournalDirectorySync)?;
@@ -562,10 +560,11 @@ impl StateStore {
         #[cfg(test)]
         self.fail_at(FaultPoint::AfterTempSync)?;
         self.check_paths()?;
-        temp.persist(&self.base)
-            .map_err(|error| Error::Io(error.error))?;
+        let installed =
+            platform::persist(temp, &self.base).map_err(|error| Error::Io(error.error))?;
         let journal = regular_file(&self.journal, self.allow_symlinks)?;
         let mut fence = Staged::new();
+        fence.renamed(&installed)?;
         fence.directory(&self.directory)?;
         if journal || commit == Commit::Ordered {
             fence.ordered()?;
@@ -633,10 +632,10 @@ impl StateStore {
                     return Err(Error::Limit("quarantine bytes"));
                 }
                 output.as_file().sync_all()?;
-                output
-                    .persist_noclobber(&target)
+                let installed = platform::persist_noclobber(output, &target)
                     .map_err(|error| Error::Io(error.error))?;
                 copied.push(target);
+                platform::sync_renamed(&installed)?;
             }
             sync_directory(&self.directory)
         })();
@@ -755,25 +754,8 @@ fn read_limited(path: &Path, allow_symlinks: bool, limit: usize) -> Result<Optio
     Ok(Some(bytes))
 }
 
-fn journal_identity(metadata: &fs::Metadata) -> Option<(u64, u64)> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        Some((metadata.dev(), metadata.ino()))
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = metadata;
-        None
-    }
-}
-
 fn sync_directory(path: &Path) -> Result<()> {
-    #[cfg(unix)]
-    File::open(path)?.sync_all()?;
-    #[cfg(not(unix))]
-    let _ = path;
-    Ok(())
+    Ok(platform::sync_directory(path)?)
 }
 
 /// Create the states directory chain. True when created directories were only
@@ -795,26 +777,21 @@ fn create_directory(path: &Path) -> Result<bool> {
     // (per-object durable sync elsewhere). Nothing relies on the chain before
     // the checkpoint's own durable fence, which on the same volume persists it.
     // A chain that reaches another volume keeps the immediate durable fence.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let Some(parent) = missing.last().and_then(|directory| directory.parent()) else {
-            return Ok(false);
-        };
-        let device = fs::metadata(path)?.dev();
-        let mut one_volume = true;
-        let mut group = crate::output_claims::sync_group::SyncGroup::new();
-        for directory in missing.iter().copied().chain([parent]) {
-            let handle = File::open(directory)?;
-            one_volume &= handle.metadata()?.dev() == device;
-            group.stage(&handle)?;
-        }
-        if one_volume {
-            group.commit_ordered()?;
-            return Ok(true);
-        }
-        group.commit()?;
+    let Some(parent) = missing.last().and_then(|directory| directory.parent()) else {
+        return Ok(false);
+    };
+    let volume = platform::followed_status(path)?.id().volume;
+    let mut one_volume = true;
+    let mut group = SyncGroup::new();
+    for directory in missing.iter().copied().chain([parent]) {
+        one_volume &= platform::followed_status(directory)?.id().volume == volume;
+        group.stage_directory(directory)?;
     }
+    if one_volume {
+        group.commit_ordered()?;
+        return Ok(true);
+    }
+    group.commit()?;
     Ok(false)
 }
 
@@ -828,46 +805,37 @@ enum Commit {
 
 /// Checkpoint files and their directory: per-object synchronization, then one
 /// ordering or durable fence per verified volume (the output claims'
-/// synchronization group); other platforms keep `File::sync_all`.
+/// synchronization group, which on Windows flushes each file durably and
+/// persists a renamed checkpoint by flushing it after the rename).
 struct Staged {
-    #[cfg(unix)]
-    group: crate::output_claims::sync_group::SyncGroup,
+    group: SyncGroup,
 }
 
 impl Staged {
     fn new() -> Self {
         Self {
-            #[cfg(unix)]
-            group: crate::output_claims::sync_group::SyncGroup::new(),
+            group: SyncGroup::new(),
         }
     }
 
     fn file(&mut self, file: &File) -> Result<()> {
-        #[cfg(unix)]
-        self.group.stage(file)?;
-        #[cfg(not(unix))]
-        file.sync_all()?;
-        Ok(())
+        Ok(self.group.stage(file)?)
+    }
+
+    fn renamed(&mut self, file: &File) -> Result<()> {
+        Ok(self.group.stage_renamed(file)?)
     }
 
     fn directory(&mut self, path: &Path) -> Result<()> {
-        #[cfg(unix)]
-        self.group.stage(&File::open(path)?)?;
-        #[cfg(not(unix))]
-        let _ = path;
-        Ok(())
+        Ok(self.group.stage_directory(path)?)
     }
 
     fn ordered(self) -> Result<()> {
-        #[cfg(unix)]
-        self.group.commit_ordered()?;
-        Ok(())
+        Ok(self.group.commit_ordered()?)
     }
 
     fn durable(self) -> Result<()> {
-        #[cfg(unix)]
-        self.group.commit()?;
-        Ok(())
+        Ok(self.group.commit()?)
     }
 }
 
@@ -934,7 +902,6 @@ mod tests {
         ItemKey::File("a.txt".into())
     }
 
-    #[cfg(unix)]
     #[test]
     fn stable_journal_append_replays_and_compaction_requires_a_new_namespace_fence() {
         let (_dir, scope, snapshot) = setup();
@@ -973,10 +940,8 @@ mod tests {
         assert_eq!(base.checkpoint.unwrap().applied_sequence, 2);
     }
 
-    #[cfg(unix)]
     #[test]
     fn same_bytes_replacement_cannot_reuse_a_previous_journal_namespace_fence() {
-        use std::os::unix::fs::MetadataExt;
         let (_dir, scope, snapshot) = setup();
         let mut store = open(&scope);
         store.begin(snapshot).unwrap();
@@ -984,13 +949,16 @@ mod tests {
             .record(file_key(), json!({"status":"failed","error":"first"}))
             .unwrap();
         store.flush().unwrap();
-        let original_inode = fs::metadata(&store.journal).unwrap().ino();
+        let original_inode = platform::status(&store.journal).unwrap().id();
         let mut replacement = tempfile::NamedTempFile::new_in(&store.directory).unwrap();
         replacement
             .write_all(&fs::read(&store.journal).unwrap())
             .unwrap();
         replacement.persist(&store.journal).unwrap();
-        assert_ne!(original_inode, fs::metadata(&store.journal).unwrap().ino());
+        assert_ne!(
+            original_inode,
+            platform::status(&store.journal).unwrap().id()
+        );
         store.inject_fault(FaultPoint::BeforeJournalDirectorySync);
         store
             .record(file_key(), json!({"status":"completed"}))
@@ -1451,7 +1419,6 @@ mod tests {
 
     /// Fence kinds of each step: bytes before names, a checkpoint name before
     /// its journal's removal, and exactly one durable fence per acknowledgement.
-    #[cfg(unix)]
     #[test]
     fn checkpoint_steps_are_ordered_and_each_acknowledgement_is_one_durable_fence() {
         use crate::output_claims::sync_group::take_commits;
@@ -1523,7 +1490,6 @@ mod tests {
 
     /// An ordered checkpoint never advances the acknowledged sequence; only a
     /// durable fence does, including after a compaction forced by capacity.
-    #[cfg(unix)]
     #[test]
     fn ordered_compaction_waits_for_the_next_flush_to_acknowledge() {
         use crate::output_claims::sync_group::take_commits;

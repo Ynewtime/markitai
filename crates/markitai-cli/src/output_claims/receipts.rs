@@ -1,21 +1,25 @@
 //! A synced prepared receipt survives publication without a second metadata commit.
 pub(super) mod group;
 use super::{Error, MemberLeases, Owner, Policy, Result, sync_group::SyncGroup};
+use markitai_core::platform::{self, Status};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::fs::{self, File, Metadata};
+use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 
 const RECEIPT_LIMIT: usize = 64 * 1024;
 const STAGE_PREFIX: &str = ".markitai-stage-";
 
+/// The file a proof describes: `device`/`inode` on Unix, the volume serial
+/// number and 128-bit file ID on Windows. Unix values keep their spelling in
+/// existing receipts; a Windows ID beyond 64 bits is a larger JSON integer.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Identity {
     device: u64,
-    inode: u64,
+    inode: u128,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,7 +32,8 @@ enum Kind {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Proof {
-    // None is used only by ordinary publication on platforms without native receipts.
+    // Always present in a valid receipt; the field stays optional so that a
+    // receipt without one is rejected as invalid evidence, not as malformed.
     identity: Option<Identity>,
     kind: Kind,
     bytes: u64,
@@ -78,11 +83,6 @@ fn mismatch(message: &str) -> Error {
 }
 
 fn validate_owner(owner: &Owner, parent: &Path) -> Result<()> {
-    if !cfg!(unix) {
-        return Err(Error::Invalid(
-            "native output receipts are not supported on this platform".into(),
-        ));
-    }
     let valid_mode = match owner.mode.as_str() {
         "directory" => matches!(owner.kind.as_str(), "file" | "url"),
         "url_list" | "single_url" => owner.kind == "url",
@@ -315,10 +315,8 @@ pub(crate) fn adopt_owner(leases: &MemberLeases, previous: &Owner, next: &Owner)
         // An earlier attempt may have installed the receipt but failed its sync.
         // One durable fence covers the receipt and its directory entry.
         let mut durable = SyncGroup::new();
-        durable.stage(&File::open(&next_path)?)?;
-        durable.stage(&File::open(
-            next_path.parent().expect("receipt has a parent"),
-        )?)?;
+        durable.stage(&platform::open_for_sync(&next_path)?)?;
+        durable.stage_directory(next_path.parent().expect("receipt has a parent"))?;
         durable.commit()?;
         return Ok(());
     }
@@ -359,7 +357,7 @@ pub(crate) fn reservation_members(
     owner: &Owner,
     output: &Path,
 ) -> Result<Option<Vec<String>>> {
-    let parent = match fs::canonicalize(parent) {
+    let parent = match platform::canonicalize(parent) {
         Ok(parent) => parent,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
@@ -441,9 +439,9 @@ impl Pending<'_> {
         }
         let stage = self.stage.take().expect("pending stage is present");
         let result = if self.expected.is_some() {
-            stage.persist(&target)
+            platform::persist(stage, &target)
         } else {
-            stage.persist_noclobber(&target)
+            platform::persist_noclobber(stage, &target)
         };
         result.map_err(|error| Error::Io(error.error))
     }
@@ -453,9 +451,10 @@ impl Pending<'_> {
     /// so it also persists everything the earlier ordered fences staged.
     fn finish(self) -> Result<()> {
         let parent = self.leases.parent().to_owned();
-        let _published = self.install()?;
+        let published = self.install()?;
         let mut durable = SyncGroup::new();
-        durable.stage(&File::open(&parent)?)?;
+        durable.stage_renamed(&published)?;
+        durable.stage_directory(&parent)?;
         durable.commit()?;
         Ok(())
     }
@@ -610,65 +609,43 @@ fn prepare<'a>(
     Ok(pending)
 }
 
-fn identity(metadata: &Metadata) -> Option<Identity> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        Some(Identity {
-            device: metadata.dev(),
-            inode: metadata.ino(),
-        })
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = metadata;
-        None
-    }
+fn identity(status: &Status) -> Option<Identity> {
+    Some(Identity {
+        device: status.id().volume,
+        inode: status.id().file,
+    })
 }
 
-fn same_observation(before: &Metadata, after: &Metadata) -> bool {
-    let common = identity(before) == identity(after)
-        && before.len() == after.len()
-        && before.file_type() == after.file_type()
-        && before.modified().ok() == after.modified().ok();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        common && before.ctime() == after.ctime() && before.ctime_nsec() == after.ctime_nsec()
-    }
-    #[cfg(not(unix))]
-    {
-        common
-    }
+fn same_observation(before: &Status, after: &Status) -> bool {
+    let (a, b) = (before.metadata(), after.metadata());
+    before.id() == after.id()
+        && a.len() == b.len()
+        && a.file_type() == b.file_type()
+        && a.modified().ok() == b.modified().ok()
+        && before.changed() == after.changed()
 }
 
 fn observe(path: &Path) -> Result<Option<Proof>> {
-    let before = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
+    let before = match platform::status(path) {
+        Ok(status) => status,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
-    let (kind, bytes, digest) = if before.file_type().is_symlink() {
-        let target = fs::read_link(path)?;
-        #[cfg(unix)]
-        let encoded = {
-            use std::os::unix::ffi::OsStrExt;
-            target.as_os_str().as_bytes().to_vec()
-        };
-        #[cfg(not(unix))]
-        let encoded = target.as_os_str().as_encoded_bytes().to_vec();
+    let (kind, bytes, digest) = if before.metadata().file_type().is_symlink() {
+        // The encoded bytes are the Unix bytes, or WTF-8 on Windows.
+        let encoded = fs::read_link(path)?.into_os_string().into_encoded_bytes();
         (
             Kind::Symlink,
             encoded.len() as u64,
             Sha256::digest(encoded).to_vec(),
         )
-    } else if before.is_file() {
+    } else if before.metadata().is_file() {
         let file = File::open(path)?;
-        if !same_observation(&before, &file.metadata()?) {
+        if !same_observation(&before, &platform::file_status(&file)?) {
             return Err(mismatch("output changed while checking its identity"));
         }
         let mut digest = Sha256::new();
-        let mut reader = (&file).take(before.len().saturating_add(1));
+        let mut reader = (&file).take(before.metadata().len().saturating_add(1));
         let mut buffer = [0_u8; 32 * 1024];
         let mut bytes = 0_u64;
         loop {
@@ -679,7 +656,9 @@ fn observe(path: &Path) -> Result<Option<Proof>> {
             bytes += count as u64;
             digest.update(&buffer[..count]);
         }
-        if bytes != before.len() || !same_observation(&before, &file.metadata()?) {
+        if bytes != before.metadata().len()
+            || !same_observation(&before, &platform::file_status(&file)?)
+        {
             return Err(mismatch("output changed while checking its contents"));
         }
         (Kind::Regular, bytes, digest.finalize().to_vec())
@@ -688,8 +667,7 @@ fn observe(path: &Path) -> Result<Option<Proof>> {
             "output member is not a regular file or symbolic link",
         ));
     };
-    let after = fs::symlink_metadata(path)?;
-    if !same_observation(&before, &after) {
+    if !same_observation(&before, &platform::status(path)?) {
         return Err(mismatch(
             "output changed while checking publication evidence",
         ));
@@ -707,71 +685,53 @@ fn records_directory(leases: &MemberLeases, create: bool) -> Result<Option<PathB
 }
 
 fn records_directory_at(parent: &Path, create: bool) -> Result<Option<PathBuf>> {
-    let parent_meta = fs::metadata(parent)?;
+    let volume = platform::followed_status(parent)?.id().volume;
     let mut path = parent.to_owned();
     for (index, part) in [".markitai", "ownership", "records"].iter().enumerate() {
         path.push(part);
-        let metadata = match fs::symlink_metadata(&path) {
-            Ok(metadata) => metadata,
+        let status = match platform::status(&path) {
+            Ok(status) => status,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 if !create {
                     return Ok(None);
                 }
-                #[cfg_attr(not(unix), allow(unused_mut))] // Only Unix sets a mode.
-                let mut builder = fs::DirBuilder::new();
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::DirBuilderExt;
-                    builder.mode(0o700);
-                }
-                match builder.create(&path) {
+                match platform::private_directory().create(&path) {
                     Ok(()) => sync_directory(path.parent().expect("metadata has parent"))?,
                     Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
                     Err(error) => return Err(error.into()),
                 }
-                fs::symlink_metadata(&path)?
+                platform::status(&path)?
             }
             Err(error) => return Err(error.into()),
         };
-        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        if !status.metadata().is_dir() || status.metadata().file_type().is_symlink() {
             return Err(mismatch(
                 "publication metadata must use regular directories",
             ));
         }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            if metadata.dev() != parent_meta.dev() || (index > 0 && metadata.mode() & 0o077 != 0) {
-                return Err(mismatch(
-                    "publication metadata directory is not private on this filesystem",
-                ));
-            }
+        if status.id().volume != volume || (index > 0 && !status.private()) {
+            return Err(mismatch(
+                "publication metadata directory is not private on this filesystem",
+            ));
         }
-        #[cfg(not(unix))]
-        let _ = (&parent_meta, index);
     }
     Ok(Some(path))
 }
 
-fn check_record(metadata: &Metadata, directory: &Metadata) -> Result<()> {
+fn check_record(record: &Status, directory: &Status) -> Result<()> {
+    let metadata = record.metadata();
     if !metadata.is_file() || metadata.file_type().is_symlink() {
         return Err(mismatch("publication receipt is not a regular file"));
     }
-    #[cfg(unix)]
+    if record.id().volume != directory.id().volume
+        || !record.same_owner(directory)
+        || !record.private()
+        || record.links() != 1
     {
-        use std::os::unix::fs::MetadataExt;
-        if metadata.dev() != directory.dev()
-            || metadata.uid() != directory.uid()
-            || metadata.mode() & 0o077 != 0
-            || metadata.nlink() != 1
-        {
-            return Err(mismatch(
-                "publication receipt is not private on this filesystem",
-            ));
-        }
+        return Err(mismatch(
+            "publication receipt is not private on this filesystem",
+        ));
     }
-    #[cfg(not(unix))]
-    let _ = directory;
     if metadata.len() > RECEIPT_LIMIT as u64 {
         return Err(mismatch("publication receipt exceeds its size limit"));
     }
@@ -786,14 +746,14 @@ fn read_receipt_at(parent: &Path, path: &Path) -> Result<Option<Receipt>> {
     let Some(directory) = records_directory_at(parent, false)? else {
         return Ok(None);
     };
-    let before = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
+    let before = match platform::status(path) {
+        Ok(status) => status,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
-    check_record(&before, &fs::metadata(directory)?)?;
+    check_record(&before, &platform::followed_status(&directory)?)?;
     let file = File::open(path)?;
-    if !same_observation(&before, &file.metadata()?) {
+    if !same_observation(&before, &platform::file_status(&file)?) {
         return Err(mismatch("publication receipt changed while opening"));
     }
     let mut bytes = Vec::new();
@@ -801,8 +761,8 @@ fn read_receipt_at(parent: &Path, path: &Path) -> Result<Option<Receipt>> {
         .take((RECEIPT_LIMIT + 1) as u64)
         .read_to_end(&mut bytes)?;
     if bytes.len() > RECEIPT_LIMIT
-        || !same_observation(&before, &file.metadata()?)
-        || !same_observation(&before, &fs::symlink_metadata(path)?)
+        || !same_observation(&before, &platform::file_status(&file)?)
+        || !same_observation(&before, &platform::status(path)?)
     {
         return Err(mismatch("publication receipt changed while reading"));
     }
@@ -827,8 +787,8 @@ fn write_receipt(
         .map_err(|_| mismatch("publication receipt cannot be encoded within its size limit"))?;
     let directory = records_directory(leases, true)?
         .ok_or_else(|| mismatch("publication receipt directory disappeared"))?;
-    match fs::symlink_metadata(path) {
-        Ok(metadata) => check_record(&metadata, &fs::metadata(&directory)?)?,
+    match platform::status(path) {
+        Ok(status) => check_record(&status, &platform::followed_status(&directory)?)?,
         Err(error) if error.kind() == io::ErrorKind::NotFound => (),
         Err(error) => return Err(error.into()),
     }
@@ -836,11 +796,10 @@ fn write_receipt(
     stage.write_all(&bytes.bytes)?;
     data.stage(stage.as_file())?;
     data.commit_ordered()?;
-    stage
-        .persist(path)
-        .map_err(|error| Error::Io(error.error))?;
+    let installed = platform::persist(stage, path).map_err(|error| Error::Io(error.error))?;
     let mut name = SyncGroup::new();
-    name.stage(&File::open(&directory)?)?;
+    name.stage_renamed(&installed)?;
+    name.stage_directory(&directory)?;
     if durable {
         name.commit()?;
     } else {
@@ -850,13 +809,7 @@ fn write_receipt(
 }
 
 fn sync_directory(path: &Path) -> Result<()> {
-    #[cfg(unix)]
-    {
-        File::open(path)?.sync_all()?;
-    }
-    #[cfg(not(unix))]
-    let _ = path;
-    Ok(())
+    Ok(platform::sync_directory(path)?)
 }
 
 struct Bounded {
@@ -886,10 +839,18 @@ impl Write for Bounded {
     }
 }
 
-#[cfg(all(test, unix))]
+/// Receipt decisions run on every platform. Unix-only tests substitute links,
+/// change mode bits, or replace a file another handle holds open (which
+/// Windows refuses).
+#[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+    #[cfg(unix)]
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    fn file_id(path: &Path) -> u128 {
+        platform::status(path).unwrap().id().file
+    }
 
     fn setup() -> (tempfile::TempDir, MemberLeases, Owner) {
         let directory = tempfile::tempdir().unwrap();
@@ -944,10 +905,11 @@ mod tests {
         assert_eq!(take_commits(), ["durable"]);
     }
 
+    #[cfg(unix)]
     #[test]
     fn an_ancestor_swapped_for_a_symlink_after_preparation_blocks_the_rename() {
         let temp = tempfile::tempdir().unwrap();
-        let root = fs::canonicalize(temp.path()).unwrap();
+        let root = platform::canonicalize(temp.path()).unwrap();
         let parent = root.join("tree/out");
         let leases =
             MemberLeases::acquire(&parent, &["note.md".into(), "note.llm.md".into()], false)
@@ -996,7 +958,7 @@ mod tests {
         assert!(!path.exists());
         let staged_inode = pending.staged.identity.as_ref().unwrap().inode;
         pending.install().unwrap(); // Deliberately stop before the final directory sync.
-        assert_eq!(fs::metadata(&path).unwrap().ino(), staged_inode);
+        assert_eq!(file_id(&path), staged_inode);
         assert_eq!(fs::read(receipt_path).unwrap(), before);
         verify_owned(&leases, &owner).unwrap();
         publish(&leases, Some(&owner), Policy::RetryOwned, &path, b"retry").unwrap();
@@ -1084,7 +1046,7 @@ mod tests {
         let mut replacement = tempfile::NamedTempFile::new_in(leases.parent()).unwrap();
         replacement.write_all(b"identical").unwrap();
         replacement.persist(&path).unwrap();
-        let replacement_inode = fs::metadata(&path).unwrap().ino();
+        let replacement_inode = file_id(&path);
         assert!(verify_owned(&leases, &owner).is_err());
         assert!(
             publish(
@@ -1096,7 +1058,7 @@ mod tests {
             )
             .is_err()
         );
-        assert_eq!(fs::metadata(&path).unwrap().ino(), replacement_inode);
+        assert_eq!(file_id(&path), replacement_inode);
         assert_eq!(fs::read(path).unwrap(), b"identical");
     }
 
@@ -1105,9 +1067,9 @@ mod tests {
         let (_dir, leases, owner) = setup();
         let path = leases.parent().join("note.md");
         publish(&leases, Some(&owner), Policy::NoClobber, &path, b"base").unwrap();
-        let inode = fs::metadata(&path).unwrap().ino();
+        let inode = file_id(&path);
         fs::write(&path, b"edit").unwrap();
-        assert_eq!(fs::metadata(&path).unwrap().ino(), inode);
+        assert_eq!(file_id(&path), inode);
         assert!(verify_owned(&leases, &owner).is_err());
         assert!(publish(&leases, Some(&owner), Policy::RetryOwned, &path, b"replace").is_err());
         assert_eq!(fs::read(&path).unwrap(), b"edit");
@@ -1192,6 +1154,7 @@ mod tests {
         assert!(verify_owned(&leases, &owner).is_err());
     }
 
+    #[cfg(unix)]
     #[test]
     fn an_unrelated_replacement_at_the_stage_name_is_not_published_or_removed() {
         let (_dir, leases, owner) = setup();
@@ -1213,6 +1176,7 @@ mod tests {
         assert_eq!(fs::read(temporary).unwrap(), b"unrelated temporary file");
     }
 
+    #[cfg(unix)]
     #[test]
     fn leaf_symlink_replacement_uses_link_identity_without_modifying_the_referent() {
         let (dir, original_leases, owner) = setup();
@@ -1254,6 +1218,7 @@ mod tests {
         assert_eq!(fs::read(target).unwrap(), b"private referent");
     }
 
+    #[cfg(unix)]
     #[test]
     fn equivalent_symlink_replacement_has_a_different_identity() {
         let (dir, original_leases, owner) = setup();
@@ -1372,6 +1337,7 @@ mod tests {
         assert!(!leases.parent().join(".markitai/ownership/records").exists());
     }
 
+    #[cfg(unix)]
     #[test]
     fn receipt_symlinks_and_public_permissions_are_not_accepted_as_evidence() {
         let (_dir, leases, owner) = setup();
@@ -1387,6 +1353,33 @@ mod tests {
         assert!(verify_owned(&leases, &owner).is_err());
         assert!(publish(&leases, Some(&owner), Policy::RetryOwned, &path, b"no").is_err());
         assert_eq!(fs::read(path).unwrap(), b"owned");
+    }
+
+    #[test]
+    fn receipt_identities_beyond_64_bits_round_trip_and_unix_spellings_still_load() {
+        let proof = Proof {
+            identity: Some(Identity {
+                device: u64::MAX,
+                inode: u128::MAX,
+            }),
+            kind: Kind::Regular,
+            bytes: 1,
+            sha256: "0".repeat(64),
+        };
+        let encoded = serde_json::to_vec(&proof).unwrap();
+        assert_eq!(serde_json::from_slice::<Proof>(&encoded).unwrap(), proof);
+        let unix: Proof = serde_json::from_str(&format!(
+            r#"{{"identity":{{"device":16777232,"inode":123456789}},"kind":"regular","bytes":1,"sha256":"{}"}}"#,
+            "0".repeat(64)
+        ))
+        .unwrap();
+        assert_eq!(
+            unix.identity,
+            Some(Identity {
+                device: 16_777_232,
+                inode: 123_456_789,
+            })
+        );
     }
 
     #[test]

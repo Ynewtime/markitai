@@ -42,6 +42,7 @@ impl Level {
 
 struct Sink {
     file: File,
+    _session: SessionLock,
     first_path: PathBuf,
     stem: String,
     sequence: u64,
@@ -114,9 +115,11 @@ pub(super) fn start(cfg: &Value, level: Option<&str>) -> io::Result<()> {
                 std::process::id()
             );
             let first_path = directory.join(format!("{stem}.log"));
+            let session = SessionLock::acquire(&directory.join(format!("{stem}.lock")))?;
             let file = private_file(&first_path)?;
             Ok::<_, io::Error>(Sink {
                 file,
+                _session: session,
                 first_path,
                 stem,
                 sequence: 0,
@@ -299,14 +302,43 @@ fn private_directory(path: &Path) -> io::Result<()> {
 fn private_file(path: &Path) -> io::Result<File> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+    markitai_core::platform::private_file(&mut options).open(path)
+}
+
+/// A session's liveness: `<stem>.lock`, held while its logs may still grow.
+/// The logs themselves stay unlocked because a Windows lock is mandatory and
+/// would refuse anyone reading a live log. The session removes the lock when
+/// it ends; an abandoned one is pruned with the logs.
+struct SessionLock {
+    file: File,
+    path: PathBuf,
+}
+
+impl SessionLock {
+    fn acquire(path: &Path) -> io::Result<Self> {
+        let file = private_file(path)?;
+        file.lock()?;
+        Ok(Self {
+            file,
+            path: path.to_owned(),
+        })
     }
-    let file = options.open(path)?;
-    file.lock()?;
-    Ok(file)
+}
+
+impl Drop for SessionLock {
+    fn drop(&mut self) {
+        // Removed while still held, so no pruner can take it in between.
+        let _ = fs::remove_file(&self.path);
+        let _ = self.file.unlock();
+    }
+}
+
+/// Lock `path` exclusively when no live session holds it.
+fn released(path: &Path) -> Option<File> {
+    let mut options = OpenOptions::new();
+    options.read(true).write(true);
+    let file = markitai_core::platform::open_no_follow(&options, path).ok()?;
+    file.try_lock().is_ok().then_some(file)
 }
 
 fn size(value: &str) -> io::Result<u64> {
@@ -357,55 +389,89 @@ fn quantity(value: &str, units: &[(&str, f64)]) -> Option<u64> {
     let total = number * multiplier;
     (total.is_finite() && total >= 0.0 && total < u64::MAX as f64).then_some(total as u64)
 }
+/// Remove expired logs whose session has ended, then expired session locks
+/// nobody holds. A log's session is alive while its `<stem>.lock` is held; a
+/// log without one (written by an earlier version, which locked the log
+/// itself) is tested by locking the log.
 fn prune(directory: &Path, retention: Duration) -> io::Result<()> {
     let now = SystemTime::now();
+    let mut locks = Vec::new();
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
-        if !owned_name(name) {
+        let Some(owned) = owned_name(name) else {
             continue;
-        }
+        };
         let metadata = fs::symlink_metadata(entry.path())?;
-        if !metadata.is_file() || metadata.file_type().is_symlink() {
+        if !metadata.is_file()
+            || metadata.file_type().is_symlink()
+            || !now
+                .duration_since(metadata.modified()?)
+                .is_ok_and(|age| age > retention)
+        {
             continue;
         }
-        if now
-            .duration_since(metadata.modified()?)
-            .is_ok_and(|age| age > retention)
-        {
-            let mut options = OpenOptions::new();
-            options.read(true).write(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        match owned {
+            Owned::Lock => locks.push(entry.path()),
+            Owned::Log(stem) => {
+                let owner = session_lock(directory, stem).unwrap_or_else(|| entry.path());
+                if let Some(_held) = released(&owner) {
+                    fs::remove_file(entry.path())?;
+                }
             }
-            let Ok(file) = options.open(entry.path()) else {
-                continue;
-            };
-            if file.try_lock().is_ok() {
-                fs::remove_file(entry.path())?;
-            }
+        }
+    }
+    for lock in locks {
+        if let Some(_held) = released(&lock) {
+            let _ = fs::remove_file(&lock);
         }
     }
     Ok(())
 }
-fn owned_name(name: &str) -> bool {
-    let Some(stem) = name
-        .strip_prefix("markitai_")
-        .and_then(|v| v.strip_suffix(".log"))
-    else {
-        return false;
+
+enum Owned<'a> {
+    /// A log, with its name before `.log`.
+    Log(&'a str),
+    Lock,
+}
+
+/// `markitai_<date>_<time>_<micros>[_<pid>[_<sequence>]].log`, or a session
+/// lock `markitai_<date>_<time>_<micros>_<pid>.lock`.
+fn owned_name(name: &str) -> Option<Owned<'_>> {
+    let rest = name.strip_prefix("markitai_")?;
+    let (stem, owned) = match rest.strip_suffix(".log") {
+        Some(stem) => (stem, Owned::Log(&name[..name.len() - ".log".len()])),
+        None => (rest.strip_suffix(".lock")?, Owned::Lock),
     };
     let parts: Vec<_> = stem.split('_').collect();
-    (3..=5).contains(&parts.len())
+    let counts = if matches!(owned, Owned::Lock) {
+        4..=4
+    } else {
+        3..=5
+    };
+    (counts.contains(&parts.len())
         && parts[0].len() == 8
         && parts[1].len() == 6
         && parts[2].len() == 6
         && parts
             .iter()
-            .all(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))
+            .all(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit())))
+    .then_some(owned)
+}
+
+/// The session lock of a log named `stem.log`: the log's own stem, or the
+/// stem before a rotation sequence.
+fn session_lock(directory: &Path, stem: &str) -> Option<PathBuf> {
+    let session = stem.rsplit_once('_').map(|(session, _)| session);
+    [Some(stem), session.filter(|_| stem.split('_').count() == 6)]
+        .into_iter()
+        .flatten()
+        .map(|stem| directory.join(format!("{stem}.lock")))
+        .find(|path| {
+            fs::symlink_metadata(path)
+                .is_ok_and(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
+        })
 }
 
 /// Chinese text runs on without spaces, so its punctuation ends a URL; otherwise
@@ -547,6 +613,10 @@ mod tests {
         let path = temp.path().join("markitai_20260101_120000_123456_999.log");
         let mut sink = Sink {
             file: private_file(&path).unwrap(),
+            _session: SessionLock::acquire(
+                &temp.path().join("markitai_20260101_120000_123456_999.lock"),
+            )
+            .unwrap(),
             first_path: path.clone(),
             stem: path.file_stem().unwrap().to_str().unwrap().into(),
             sequence: 0,
@@ -560,7 +630,39 @@ mod tests {
             sink.write(Level::Info, &format!("{i}: \"hello\"\n世界"))
                 .unwrap();
         }
+        let logs = |directory: &Path| {
+            fs::read_dir(directory)
+                .unwrap()
+                .filter(|entry| {
+                    entry
+                        .as_ref()
+                        .unwrap()
+                        .path()
+                        .extension()
+                        .is_some_and(|extension| extension == "log")
+                })
+                .count()
+        };
+        let rotated = logs(temp.path());
+        assert!(rotated > 1);
+        // An abandoned session's lock is nobody's, even though it is a lock.
+        let abandoned = temp.path().join("markitai_20250101_120000_000001_7.lock");
+        fs::write(&abandoned, b"").unwrap();
+        // The live session's logs, rotated ones included, survive even an
+        // immediate retention.
+        prune(temp.path(), Duration::ZERO).unwrap();
+        assert!(path.exists());
+        assert_eq!(logs(temp.path()), rotated);
+        assert!(!abandoned.exists());
+        // Its logs stay readable while it runs: only the sidecar is locked.
+        assert!(!fs::read_to_string(&path).unwrap().is_empty());
         drop(sink);
+        assert!(
+            !temp
+                .path()
+                .join("markitai_20260101_120000_123456_999.lock")
+                .exists()
+        );
         let mut count = 0;
         for entry in fs::read_dir(temp.path()).unwrap() {
             let entry = entry.unwrap();

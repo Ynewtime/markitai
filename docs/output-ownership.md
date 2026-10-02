@@ -1,6 +1,6 @@
 # Output ownership and recovery
 
-The Unix CLI coordinates Markdown writers through filesystem member locks. Native
+The CLI coordinates Markdown writers through filesystem member locks. Native
 batch recovery additionally records evidence of the exact file object and bytes
 published by an item. A saved output path, the six-character state hash, matching
 frontmatter, or a content digest alone cannot authorize implicit replacement.
@@ -10,7 +10,7 @@ checks are separately scoped in [round-nine validation](validation/recovery-roun
 
 ## Where the protocol applies
 
-On Unix, single-file and single-URL CLI conversions acquire output member locks but do not
+Single-file and single-URL CLI conversions acquire output member locks but do not
 create a recovery checkpoint or publication receipt. Directory and URL-list runs
 also maintain native checkpoints and receipts. Disabling reports does not disable
 batch recovery storage. Stdout-only conversions and dry runs do not acquire
@@ -22,11 +22,39 @@ publication callback into core; rendered Markdown, asset rewriting and result
 paths still come from core. This includes a base document written before an LLM
 failure is returned. There is no process-global callback or new binding JSON field.
 
-Native claims currently require Unix file identities and locking. Other platforms
-retain ordinary single/batch conversion without claims or recovery storage;
-`--resume` fails before provider work. Windows recovery is not implemented, and
-the portable fallback has host-side tests rather than Windows release validation.
-Host conversion APIs retain their existing publication path.
+Native claims require native file identities and locking, which Unix and
+Windows provide (see [platform primitives](#platform-primitives)). A platform
+without them fails the claim before provider work; there is no weaker,
+pathname-only fallback. A directory or URL-list run also installs controlled
+interruption before its first request, and fails there with an explicit error
+where that is not available. Host conversion APIs retain their existing
+publication path. Windows builds are type-checked at each integration; release
+validation on Windows hosts is recorded separately and still in progress.
+
+### Platform primitives
+
+All of these live in one module (`markitai_core::platform`); the protocol code
+above it has no platform conditions.
+
+| Primitive | Unix | Windows |
+|---|---|---|
+| File identity | `st_dev` and `st_ino` | volume serial number and 128-bit file ID (`FILE_ID_INFO`; the 32-bit serial and 64-bit index where a file system lacks it) |
+| Hard-link count | `st_nlink` | `FILE_STANDARD_INFO.NumberOfLinks` |
+| Change detection | size, modification time, identity and `st_ctime` | size, modification time, identity and `FILE_BASIC_INFO.ChangeTime` |
+| Private entry | mode grants nothing to group or others (`0600`/`0700` on creation) | owner SID is this process's user, or its token's default owner (an elevated administrator's files belong to `BUILTIN\Administrators`); new entries inherit the parent's ACL |
+| Same owner (receipts, provider batches) | user ID | owner SID |
+| Open without following | `O_NOFOLLOW` with `O_NONBLOCK` | `FILE_FLAG_OPEN_REPARSE_POINT`; a symbolic link or junction is refused; another reparse point (a cloud placeholder) is reopened normally and must be the same file |
+| Directory identity | `O_DIRECTORY` descriptor | handle opened with `FILE_FLAG_BACKUP_SEMANTICS` |
+| Directory synchronization | `fsync` of the directory | none exists: only the directory's existence is checked |
+| Name of a renamed file | the parent directory's synchronization | `FlushFileBuffers` of the renamed file after the rename |
+| Locks | `flock` (advisory) | `LockFileEx` (mandatory): only sidecar lock files are ever locked, never a file another process reads |
+| Blocked rename | not retried | access denied, sharing or lock violations retried up to five times, 50 ms longer each, as the reference writer did |
+| Path spelling | `realpath` | final path name without `\\?\` when the plain spelling names the same file, so a short (8.3) name or a different case spells the same path; missing components keep their spelling |
+
+Case or Unicode aliases that the file system folds to one file share one
+identity, hence one lock and one reservation key, on either platform. A Windows
+junction counts as a symbolic link for `output.allow_symlinks`; Windows has no
+root-owned system links, so nothing on the path is exempt.
 
 ## Locks follow actual filesystem names
 
@@ -43,7 +71,7 @@ filenames and `llm.keep_base` still determine which member receives enhanced tex
 
 The original parent spelling is checked against `output.allow_symlinks` before
 physical resolution. Locks use the member filename itself. When case or Unicode
-spellings refer to the same lock file on the actual filesystem, its device/inode
+spellings refer to the same lock file on the actual filesystem, its file
 identity also gives the same in-process reservation key. Lowercasing strings is
 not used as a substitute for filesystem identity. Permitted parent aliases reach
 the same physical metadata directory.
@@ -87,8 +115,9 @@ sanitized output filename.
 
 Each member records its exact target and, when a write is prepared:
 
-- The private temporary basename and staged regular-file proof: device, inode,
-  byte length and SHA-256 of the actual bytes.
+- The private temporary basename and staged regular-file proof: file identity
+  (`device` and `inode`, holding the Windows volume serial number and file ID
+  there), byte length and SHA-256 of the actual bytes.
 - The expected prior object, if any, with the same proof and an explicit
   `explicit_overwrite` or `native_owned` authority.
 
@@ -125,15 +154,15 @@ any later write to the same device. A durability fence guarantees that it is on
 stable storage when the call returns. Every success acknowledgement is preceded
 by a durability fence; every other phase boundary uses an ordering fence:
 
-| Point | Fence |
-|---|---|
-| Created output, `.markitai`, `ownership` and `members` directories of a claim | ordering |
-| Run-wide output ancestors and each namespace window (see [grouped publication](grouped-publication.md)) | ordering |
-| Staged document and receipt bytes, before the receipt name | ordering |
-| Installed receipt name, before the document rename | ordering |
-| Document rename, before success is reported | durability |
-| Receipt copied for an adopted URL owner, before the checkpoint names it | durability |
-| Records directory created by this call; directory created after a concurrent removal | durability (unchanged immediate synchronization) |
+| Point | Fence | Windows |
+|---|---|---|
+| Created output, `.markitai`, `ownership` and `members` directories of a claim | ordering | existence checked; committed by the next file flush on the volume |
+| Run-wide output ancestors and each namespace window (see [grouped publication](grouped-publication.md)) | ordering | as above |
+| Staged document and receipt bytes, before the receipt name | ordering | each file flushed when staged |
+| Installed receipt name, before the document rename | ordering | the receipt flushed after its rename |
+| Document rename, before success is reported | durability | the document flushed after its rename |
+| Receipt copied for an adopted URL owner, before the checkpoint names it | durability | the receipt flushed |
+| Records directory created by this call; directory created after a concurrent removal | durability (unchanged immediate synchronization) | existence checked |
 
 Recovery state outside the publication protocol has its own
 [fence table](state-storage.md#ordering-and-durability-fences). Writers that never
@@ -150,6 +179,17 @@ describes this two-phase use of one barrier after per-descriptor `fsync`, and th
 system that rejects the barrier operation gets the full flush instead. Elsewhere,
 including Linux, every object still receives `File::sync_all` when it is staged,
 so both kinds remain per-object durable synchronization, as before.
+
+Windows has neither a barrier nor a directory flush. Each staged file is flushed
+with `FlushFileBuffers` (a full flush) when it is staged, so both fence kinds are
+per-object durable there too. NTFS journals every rename, creation and removal
+and writes its log in order; flushing a file after the rename that named it
+commits that rename and every earlier logged change on the volume, which is what
+the directory synchronization provides on Unix. A whole directory renamed into
+place (a history job, a legacy backup, a serve job) is committed by flushing the
+file inside it that the rename published. Volumes other than NTFS are not
+verified; every one of them still gets the full per-file flush, the strongest
+operation Windows offers, so no file-system check changes what is done.
 
 Claim directories, receipts and staged documents share the output parent's file
 system (the claim refuses metadata on another device), so the acknowledgement's
@@ -181,7 +221,7 @@ an atomic compare-and-replace against an uncooperative writer.
 | Matches the prepared identity, length and digest | Recognize the native publication and allow an owned retry. |
 | Matches the recorded authorized prior object | Retain the original authorization after a pre-rename interruption. |
 | Absent | Recreate using no-clobber publication, subject to owner/receipt validation. |
-| Same bytes but another inode, or changed bytes on the same inode | Preserve the object and fail the implicit retry. |
+| Same bytes but another file identity, or changed bytes on the same identity | Preserve the object and fail the implicit retry. |
 | Existing object without matching evidence | Do not infer ownership from the path or content. |
 | Malformed, foreign or conflicting native receipt | Fail without replacing the output or silently discarding evidence. |
 
@@ -241,8 +281,8 @@ content-addressed writer and are not covered by document receipts.
 
 Receipts are limited to 64 KiB and read with a bounded buffer. File proofs are
 computed with bounded streaming reads. Ownership directories and receipt files
-must be private, ordinary filesystem objects on the output filesystem; metadata
-symlinks are rejected. Normal failures remove only the staged object still
+must be private (as each platform defines it above), ordinary filesystem objects
+on the output filesystem; metadata symlinks and junctions are rejected. Normal failures remove only the staged object still
 matching the recorded proof. Crash-orphan staging and receipt garbage collection
 are not automatic.
 
