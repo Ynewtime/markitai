@@ -4,11 +4,17 @@
 //! group and then hangs. A terminal interrupt reaches only the CLI's group, so
 //! these tests signal the CLI process alone, as a terminal-to-foreground
 //! delivery would reach it and not the runtime.
+//!
+//! The CLI keeps a terminating signal that it inherits as ignored (a shell
+//! gives that to `cmd &` for SIGINT, `nohup` for SIGHUP). The children here
+//! therefore start from a known disposition instead of inheriting the one the
+//! test runner happened to be launched with: a gate started as a background
+//! job would otherwise run the CLI with SIGINT ignored.
 #![cfg(unix)]
 use serde_json::json;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
-use std::os::unix::process::ExitStatusExt;
+use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
@@ -53,6 +59,12 @@ impl Fixture {
     }
 
     fn spawn(&self, args: &[&str], stdin: Stdio) -> Child {
+        self.spawn_with(args, stdin, false)
+    }
+
+    /// Start the CLI with default terminating-signal dispositions and an empty
+    /// signal mask, or with SIGINT inherited as ignored.
+    fn spawn_with(&self, args: &[&str], stdin: Stdio, ignore_sigint: bool) -> Child {
         let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
         command.env_clear().current_dir(self.root.path());
         for key in ["HOME", "PATH", "LANG", "TMPDIR"] {
@@ -67,9 +79,29 @@ impl Fixture {
             .args(args)
             .stdin(stdin)
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap()
+            .stderr(Stdio::null());
+        // SAFETY: the closure runs between fork and exec and calls only
+        // async-signal-safe functions on stack data.
+        unsafe {
+            command.pre_exec(move || {
+                let mut mask: libc::sigset_t = std::mem::zeroed();
+                libc::sigemptyset(&mut mask);
+                libc::sigprocmask(libc::SIG_SETMASK, &mask, std::ptr::null_mut());
+                for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+                    let ignored = ignore_sigint && signal == libc::SIGINT;
+                    libc::signal(
+                        signal,
+                        if ignored {
+                            libc::SIG_IGN
+                        } else {
+                            libc::SIG_DFL
+                        },
+                    );
+                }
+                Ok(())
+            });
+        }
+        command.spawn().unwrap()
     }
 
     /// The runtime's grandchild, once the hanging turn has started.
@@ -92,15 +124,45 @@ fn signal(child: &Child, signal: i32) {
     assert_eq!(unsafe { libc::kill(child.id() as i32, signal) }, 0);
 }
 
-fn wait(child: &mut Child) -> ExitStatus {
-    let deadline = Instant::now() + Duration::from_secs(20);
+/// Time allowed from delivering the signal to the CLI's exit. The handler only
+/// kills registered groups and re-raises the signal, so a healthy exit takes
+/// milliseconds; the margin covers a workstation saturated by parallel builds
+/// while a real hang still fails.
+const EXIT_DEADLINE: Duration = Duration::from_secs(45);
+
+/// Process table rows for the processes involved, for a failure message.
+fn process_states(pids: &[i32]) -> String {
+    let list = pids
+        .iter()
+        .map(i32::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    match Command::new("ps")
+        .args(["-o", "pid,ppid,pgid,stat,etime,command", "-p", &list])
+        .output()
+    {
+        Ok(output) => String::from_utf8_lossy(&output.stdout).into_owned(),
+        Err(error) => format!("ps unavailable: {error}"),
+    }
+}
+
+/// Wait for the CLI to exit after the signal. `related` are the runtime
+/// processes that should also be gone; they are listed if the CLI is not.
+fn wait(child: &mut Child, related: &[i32]) -> ExitStatus {
+    let sent = Instant::now();
     loop {
         if let Some(status) = child.try_wait().unwrap() {
             return status;
         }
-        if Instant::now() >= deadline {
+        if sent.elapsed() >= EXIT_DEADLINE {
+            let mut pids = vec![child.id() as i32];
+            pids.extend_from_slice(related);
+            let states = process_states(&pids);
             let _ = child.kill();
-            panic!("CLI did not terminate after the signal");
+            panic!(
+                "CLI did not terminate within {:?} of the signal\n{states}",
+                sent.elapsed()
+            );
         }
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -126,8 +188,28 @@ fn single_conversion_interrupt_kills_runtime_group_and_keeps_signal_exit() {
     let mut child = f.spawn(&["inputs/source.md", "-o", "out"], Stdio::null());
     let grandchild = f.grandchild();
     signal(&child, libc::SIGINT);
-    let status = wait(&mut child);
+    let status = wait(&mut child, &[grandchild]);
     assert_eq!(status.signal(), Some(libc::SIGINT), "{status:?}");
+    assert_gone(grandchild);
+}
+
+/// A signal inherited as ignored stays ignored, as for any Unix tool started
+/// by `cmd &` or `nohup`; the other terminating signals still clean up.
+#[test]
+fn inherited_ignored_interrupt_is_kept_and_terminate_still_cleans_up() {
+    let f = Fixture::new();
+    let mut child = f.spawn_with(&["inputs/source.md", "-o", "out"], Stdio::null(), true);
+    let grandchild = f.grandchild();
+    signal(&child, libc::SIGINT);
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "SIGINT was not ignored"
+    );
+    assert_eq!(unsafe { libc::kill(grandchild, 0) }, 0);
+    signal(&child, libc::SIGTERM);
+    let status = wait(&mut child, &[grandchild]);
+    assert_eq!(status.signal(), Some(libc::SIGTERM), "{status:?}");
     assert_gone(grandchild);
 }
 
@@ -138,7 +220,7 @@ fn single_conversion_hangup_and_terminate_also_clean_up() {
         let mut child = f.spawn(&["inputs/source.md", "-o", "out"], Stdio::null());
         let grandchild = f.grandchild();
         signal(&child, sent);
-        let status = wait(&mut child);
+        let status = wait(&mut child, &[grandchild]);
         assert_eq!(status.signal(), Some(sent), "{status:?}");
         assert_gone(grandchild);
     }
@@ -155,7 +237,7 @@ fn batch_first_interrupt_waits_and_second_forces_exit_without_orphans() {
     assert!(child.try_wait().unwrap().is_none());
     assert_eq!(unsafe { libc::kill(grandchild, 0) }, 0);
     signal(&child, libc::SIGINT);
-    let status = wait(&mut child);
+    let status = wait(&mut child, &[grandchild]);
     assert_eq!(status.code(), Some(130), "{status:?}");
     assert_gone(grandchild);
 }
@@ -185,7 +267,7 @@ fn mcp_terminate_kills_runtime_group_started_by_a_tool_call() {
     );
     let grandchild = f.grandchild();
     signal(&child, libc::SIGTERM);
-    let status = wait(&mut child);
+    let status = wait(&mut child, &[grandchild]);
     assert_eq!(status.signal(), Some(libc::SIGTERM), "{status:?}");
     assert_gone(grandchild);
     drop(input);
