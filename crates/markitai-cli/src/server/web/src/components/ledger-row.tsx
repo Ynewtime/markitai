@@ -2,7 +2,7 @@
 // row whose item object changed.
 import { memo } from "preact/compat";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { filePath, fileURL } from "../api/client.ts";
+import { filePath } from "../api/client.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { itemErrorText } from "../i18n/errors.ts";
 import { interceptDownload } from "../lib/download.ts";
@@ -257,11 +257,12 @@ export const LedgerRow = memo(function LedgerRow({
             {output !== null && (
               <a
                 class="row-icon"
-                href={fileURL(item.jobId, output)}
+                href={filePath(item.jobId, output)}
                 download={basename(output)}
                 aria-label={`${t.downloadMd}: ${name}`}
                 title={`${t.downloadMd}: ${name}`}
                 onClick={(event) => interceptDownload(event, filePath(item.jobId, output), basename(output), onDownloadError)}
+                onAuxClick={(event) => interceptDownload(event, filePath(item.jobId, output), basename(output), onDownloadError)}
               >
                 <Icon name="DownloadSimple" size={15} />
               </a>

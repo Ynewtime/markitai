@@ -46,7 +46,8 @@ export function ClearButton({
   );
 }
 
-/** The archive of every saved job, fetched with the header token and saved as a Blob. */
+/** The archive of every saved job, streamed by the browser itself; with a
+ * token, through a single-use download ticket. */
 export function ZipButton({
   t,
   available,
@@ -72,7 +73,7 @@ export function ZipButton({
     if (busy) return;
     setBusy(true);
     try {
-      await download("/api/history/archive", "markitai-history.zip");
+      await download("/api/history/archive", "markitai-history.zip", true);
     } catch (error) {
       onError(error);
     } finally {

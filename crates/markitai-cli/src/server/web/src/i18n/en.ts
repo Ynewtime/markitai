@@ -318,18 +318,30 @@ export const en = {
     const label = status.replaceAll("_", " ");
     return label.charAt(0).toUpperCase() + label.slice(1);
   },
-  providerDetailHint: (kind: string, provider: string, source: string) => {
+  providerDetailHint: (
+    kind: string,
+    provider: string,
+    source: string,
+    { local = false, manualOnly = false, needsBase = false }: { local?: boolean; manualOnly?: boolean; needsBase?: boolean } = {},
+  ) => {
+    if (manualOnly) return "This provider does not list its models. Add the model IDs you want to use below.";
     if (kind === "configured") return "Available models load automatically from this saved connection.";
     if (kind === "environment") return `Using credentials from ${source}.`;
     if (provider === "ollama") return "Using the default local Ollama endpoint.";
+    if (needsBase) return "Enter your server's address to load the models it serves.";
+    if (local) return "Using the default local endpoint; a key is needed only if the server asks for one.";
     return "Enter the connection details to load available models.";
   },
+  optionalKeyVariable: (variable: string) => `${variable} (optional)`,
+  manualModelsOnly: "No model list from this provider · add a model ID below",
+  serverAddressRequired: "Server address required",
   providerGroup: (kind: string) =>
     (
       ({
         environment: "Configured environment credentials",
         configured: "Saved providers",
         common: "Common providers",
+        compatible: "More OpenAI-compatible providers",
       }) as Record<string, string>
     )[kind] ?? kind,
   providerCustom: "OpenAI-compatible endpoint",
@@ -362,8 +374,9 @@ export const en = {
   setApiKey: "API key",
   setApiBase: "API base",
   setKeyPh: "sk-… or env:OPENAI_API_KEY",
-  providerKeyPh: (provider: string) =>
+  providerKeyPh: (variable: string | null, provider = "") =>
     `sk-… or env:${
+      variable ??
       (
         {
           anthropic: "ANTHROPIC_API_KEY",
@@ -372,7 +385,8 @@ export const en = {
           gemini: "GEMINI_API_KEY",
           openrouter: "OPENROUTER_API_KEY",
         } as Record<string, string>
-      )[provider] ?? "OPENAI_API_KEY"
+      )[provider] ??
+      "OPENAI_API_KEY"
     }`,
   setBasePh: "Optional",
   revealField: (label: string) => `Show ${label}`,

@@ -409,6 +409,137 @@ fn requests_validate_types_urls_without_echoing_values() {
     );
 }
 
+#[test]
+fn the_catalog_lists_the_popular_providers_then_every_compatible_prefix() {
+    let catalog = catalog();
+    let names: Vec<_> = catalog.iter().map(|entry| entry.provider).collect();
+    assert_eq!(&names[..8], &POPULAR);
+    let compatible: Vec<_> = catalog
+        .iter()
+        .filter(|entry| entry.compatible)
+        .map(|entry| entry.provider)
+        .collect();
+    assert_eq!(
+        compatible,
+        [
+            "groq",
+            "mistral",
+            "xai",
+            "together_ai",
+            "perplexity",
+            "cerebras",
+            "fireworks_ai",
+            "deepinfra",
+            "nebius",
+            "moonshot",
+            "sambanova",
+            "zai",
+            "nvidia_nim",
+            "novita",
+            "hosted_vllm",
+            "lm_studio",
+        ]
+    );
+    for entry in &catalog {
+        assert_ne!(provider_label(entry.provider), "Unknown provider");
+        if entry.provider == "custom" {
+            assert!(entry.key_variables.is_empty() && entry.default_base.is_none());
+            continue;
+        }
+        assert!(
+            crate::llm::providers::supported(entry.provider),
+            "{entry:?}"
+        );
+        assert!(!entry.key_variables.is_empty(), "{entry:?}");
+        assert_eq!(
+            entry.discovery,
+            !["perplexity", "zai", "fireworks_ai"].contains(&entry.provider),
+            "{entry:?}"
+        );
+    }
+    let find = |name: &str| catalog.iter().find(|entry| entry.provider == name).unwrap();
+    assert_eq!(
+        find("groq").default_base,
+        Some("https://api.groq.com/openai/v1")
+    );
+    assert_eq!(find("together_ai").key_variables[0], "TOGETHER_API_KEY");
+    assert!(find("lm_studio").key_optional && find("hosted_vllm").key_optional);
+    assert_eq!(find("hosted_vllm").default_base, None);
+    assert!(!find("groq").key_optional);
+    // Discovery lists `/models` beside the inference endpoint of the added prefixes.
+    assert_eq!(
+        provider_default_base("nvidia_nim"),
+        Some("https://integrate.api.nvidia.com/v1")
+    );
+    assert_eq!(provider_default_base("hosted_vllm"), None);
+    assert_eq!(provider_default_base("ollama_chat"), None);
+}
+
+#[test]
+fn compatible_prefixes_discover_through_models_or_ask_for_manual_ids() {
+    for (provider, body, model) in [
+        (
+            "groq",
+            r#"{"object":"list","data":[{"id":"llama-test","object":"model"}]}"#,
+            "groq/llama-test",
+        ),
+        // Together AI's list is a bare array; its IDs keep their slashes.
+        (
+            "together_ai",
+            r#"[{"id":"meta-llama/Test-Turbo","display_name":"Test Turbo","type":"chat"}]"#,
+            "together_ai/meta-llama/Test-Turbo",
+        ),
+        (
+            "lm_studio",
+            r#"{"data":[{"id":"local-test"}]}"#,
+            "lm_studio/local-test",
+        ),
+    ] {
+        let server = Mock::new(move |_| reply(200, body));
+        let mut request = json!({"provider":provider,"api_base":format!("{}/v1",server.base)});
+        if provider != "lm_studio" {
+            request["api_key"] = json!("private-test-key");
+        }
+        let result = discover(&request).unwrap();
+        assert_eq!(result["status"], "ok", "{provider}: {result}");
+        assert_eq!(result["models"][0]["model"], model);
+        assert_eq!(result["models"][0]["supports_vision"], false);
+        let requests = server.requests();
+        assert!(
+            requests[0].starts_with("GET /v1/models HTTP/1.1"),
+            "{}",
+            requests[0]
+        );
+        assert_eq!(
+            requests[0].contains("authorization: Bearer private-test-key"),
+            provider != "lm_studio",
+            "{provider}"
+        );
+    }
+    // A bare array is accepted only from the provider documented to send one.
+    let server = Mock::new(|_| reply(200, r#"[{"id":"x"}]"#));
+    let refused =
+        discover(&json!({"provider":"groq","api_base":format!("{}/v1",server.base),"api_key":"k"}))
+            .unwrap();
+    assert_eq!(refused["status"], "unavailable");
+    assert!(refused["models"].as_array().unwrap().is_empty());
+    // No model list is documented: no request, an explicit manual-entry answer.
+    for provider in ["perplexity", "zai", "fireworks_ai"] {
+        let result = discover(&json!({"provider":provider,"api_key":"private-test-key"})).unwrap();
+        assert_eq!(result["status"], "unavailable");
+        assert_eq!(result["source"], "manual");
+        assert!(result["models"].as_array().unwrap().is_empty());
+        assert!(!result.to_string().contains("private-test-key"));
+    }
+    assert!(discover(&json!({"provider":"zai","api_base":"file:///x"})).is_err());
+    // vLLM has no default address.
+    assert_eq!(
+        discover(&json!({"provider":"hosted_vllm"})).unwrap()["detail"],
+        "An API endpoint is required"
+    );
+    assert!(discover(&json!({"provider":"ollama_chat"})).is_err());
+}
+
 #[cfg(test)]
 mod bounded_fixture_io {
     include!(concat!(

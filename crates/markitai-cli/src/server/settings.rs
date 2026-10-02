@@ -5,6 +5,8 @@ mod model;
 mod store;
 mod views;
 
+#[cfg(test)]
+pub(super) use handlers::ROUTES;
 pub(super) use handlers::routes;
 use serde_json::Value;
 use std::path::PathBuf;

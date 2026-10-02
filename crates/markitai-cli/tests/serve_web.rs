@@ -179,6 +179,30 @@ fn the_workbench_shell_is_served_at_home_and_workspace_addresses() {
 }
 
 #[test]
+fn the_openapi_document_and_the_download_ticket_route_are_served() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = Server::start(directory.path());
+    let (status, headers, body) = server.request("GET", "/api/openapi.json", None);
+    assert_eq!(status, 200);
+    assert_eq!(headers["content-type"], "application/json");
+    let document: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(document["openapi"], "3.1.0");
+    assert_eq!(document["info"]["version"], env!("CARGO_PKG_VERSION"));
+    for path in [
+        "/api/jobs",
+        "/api/download-tickets",
+        "/api/settings/llm/model-discovery",
+    ] {
+        assert!(document["paths"][path].is_object(), "{path}");
+    }
+    // Mounted and validating: an empty body names no download.
+    let (status, _, body) = server.send("POST", "/api/download-tickets", None, &[]);
+    assert_eq!(status, 422);
+    let refusal: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(refusal["reason"], "invalid_ticket_path");
+}
+
+#[test]
 fn built_assets_are_sent_compressed_or_plain_and_revalidate() {
     let directory = tempfile::tempdir().unwrap();
     let server = Server::start(directory.path());

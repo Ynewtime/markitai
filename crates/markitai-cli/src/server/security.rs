@@ -87,23 +87,48 @@ async fn guard_inner(state: Arc<State>, mut request: Request, next: Next) -> Res
         .and_then(|s| s.split_once(' '))
         .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
         .map(|(_, value)| value.trim().to_owned());
-    let query = request.uri().query().and_then(|s| {
-        url::form_urlencoded::parse(s.as_bytes())
-            .filter(|(key, _)| key == "token")
-            .map(|(_, v)| v.into_owned())
-            .last()
-    });
-    let authenticated = state.token.as_ref().is_some_and(|token| {
+    // Owned, so nothing borrowed from the request lives across `next.run`.
+    let query_string = request.uri().query().map(str::to_owned);
+    let parameter = |name: &str| {
+        query_string.as_deref().and_then(|s| {
+            url::form_urlencoded::parse(s.as_bytes())
+                .filter(|(key, _)| key == name)
+                .map(|(_, v)| v.into_owned())
+                .last()
+        })
+    };
+    let query = parameter("token");
+    let mut authenticated = state.token.as_ref().is_some_and(|token| {
         [header.as_deref(), query.as_deref()]
             .into_iter()
             .flatten()
             .any(|value| equal_secret(value.as_bytes(), token.as_bytes()))
     });
-    if request.uri().path().starts_with("/api/")
+    let api = request.uri().path().starts_with("/api/");
+    // A download ticket stands in for the token on exactly one GET of the path
+    // it was issued for (see `tickets`); any other use spends it for nothing.
+    if api
         && state.token.is_some()
         && !loopback
         && !authenticated
+        && let Some(ticket) = parameter("ticket")
     {
+        let redeemed =
+            state
+                .tickets
+                .redeem(&ticket, request.uri().path(), std::time::Instant::now());
+        if redeemed && request.method() == axum::http::Method::GET {
+            authenticated = true;
+        } else {
+            return ApiError::new(
+                401,
+                "ticket_invalid",
+                "download ticket is invalid, expired, already used or issued for another path",
+            )
+            .into_response();
+        }
+    }
+    if api && state.token.is_some() && !loopback && !authenticated {
         return ApiError::new(
             401,
             "token_required",
@@ -240,6 +265,7 @@ mod router_tests {
             tasks: Mutex::new(Vec::new()),
             token: token.map(str::to_owned),
             allowed_hosts: HashSet::from(["trusted.example".into()]),
+            tickets: Default::default(),
         });
         Router::new()
             .route(
@@ -255,6 +281,14 @@ mod router_tests {
                     .post(|| async { Json(json!({"ok":true})) }),
             )
             .route("/api/jobs", post(super::super::http::create))
+            .route(
+                "/api/jobs/{job_id}/archive",
+                get(|Extension(trust): Extension<Trusted>| async move {
+                    Json(json!({"trusted":trust.0}))
+                })
+                .post(|| async { Json(json!({"ok":true})) }),
+            )
+            .route("/api/download-tickets", post(super::super::tickets::issue))
             .layer(middleware::from_fn_with_state(state.clone(), guard))
             .with_state(state)
     }
@@ -459,6 +493,122 @@ mod router_tests {
             200,
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn a_download_ticket_admits_one_remote_get_of_its_path_only() {
+        let temp = tempfile::tempdir().unwrap();
+        let router = app(temp.path(), Some("private-test-token"));
+        let peer = "203.0.113.40:4321";
+        let json = [("content-type", "application/json")];
+        let bearer = [
+            ("content-type", "application/json"),
+            ("authorization", "Bearer private-test-token"),
+        ];
+        let archive = "/api/jobs/0123456789ab/archive";
+        let body = format!(r#"{{"path":"{archive}"}}"#);
+        // Issuing a ticket needs the token itself.
+        checked(
+            router.clone(),
+            request("POST", "/api/download-tickets", peer, &json, &body),
+            401,
+        )
+        .await;
+        let issue = |router: Router| {
+            let body = body.clone();
+            async move {
+                checked(
+                    router,
+                    request("POST", "/api/download-tickets", peer, &bearer, &body),
+                    201,
+                )
+                .await
+            }
+        };
+        let issued = issue(router.clone()).await;
+        let url = issued["url"].as_str().unwrap().to_owned();
+        let ticket = issued["ticket"].as_str().unwrap().to_owned();
+        assert_eq!(url, format!("{archive}?ticket={ticket}"));
+        assert_eq!(issued["expires_in"], 60);
+        assert!(!url.contains("private-test-token"));
+        assert_eq!(
+            checked(router.clone(), request("GET", &url, peer, &[], ""), 200).await["trusted"],
+            true
+        );
+        let reused = checked(router.clone(), request("GET", &url, peer, &[], ""), 401).await;
+        assert_eq!(reused["reason"], "ticket_invalid");
+
+        // Shown to another path, or with another method, a ticket is spent.
+        let ticket = issue(router.clone()).await["ticket"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let elsewhere = format!("/api/probe?ticket={ticket}");
+        assert_eq!(
+            checked(
+                router.clone(),
+                request("GET", &elsewhere, peer, &[], ""),
+                401
+            )
+            .await["reason"],
+            "ticket_invalid"
+        );
+        let spent = format!("{archive}?ticket={ticket}");
+        checked(router.clone(), request("GET", &spent, peer, &[], ""), 401).await;
+        let url = issue(router.clone()).await["url"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        checked(router.clone(), request("POST", &url, peer, &[], ""), 401).await;
+        checked(router.clone(), request("GET", &url, peer, &[], ""), 401).await;
+
+        // A trusted loopback request does not spend it.
+        let url = issue(router.clone()).await["url"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        checked(
+            router.clone(),
+            request("GET", &url, "127.0.0.1:4321", &[], ""),
+            200,
+        )
+        .await;
+        checked(router.clone(), request("GET", &url, peer, &[], ""), 200).await;
+
+        // Only download routes can be named.
+        for path in [
+            "/api/settings/llm",
+            "/api/settings/llm/providers/x/credentials",
+            "/api/jobs/0123456789ab/events",
+            "/api/history",
+        ] {
+            let value = checked(
+                router.clone(),
+                request(
+                    "POST",
+                    "/api/download-tickets",
+                    peer,
+                    &bearer,
+                    &format!(r#"{{"path":"{path}"}}"#),
+                ),
+                422,
+            )
+            .await;
+            assert_eq!(value["reason"], "invalid_ticket_path", "{path}");
+        }
+        for body in [
+            "",
+            "[]",
+            r#"{"path":1}"#,
+            r#"{"path":"/api/history/archive","x":1}"#,
+        ] {
+            checked(
+                router.clone(),
+                request("POST", "/api/download-tickets", peer, &bearer, body),
+                422,
+            )
+            .await;
+        }
     }
 
     #[tokio::test]

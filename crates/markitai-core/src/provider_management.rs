@@ -42,7 +42,23 @@ pub fn provider_label(provider: &str) -> String {
         "deepseek" => "DeepSeek",
         "openrouter" => "OpenRouter",
         "azure" => "Azure",
-        "ollama" => "Ollama",
+        "ollama" | "ollama_chat" => "Ollama",
+        "groq" => "Groq",
+        "mistral" => "Mistral AI",
+        "xai" => "xAI",
+        "together_ai" => "Together AI",
+        "perplexity" => "Perplexity",
+        "cerebras" => "Cerebras",
+        "fireworks_ai" => "Fireworks AI",
+        "deepinfra" => "DeepInfra",
+        "nebius" => "Nebius",
+        "moonshot" => "Moonshot AI",
+        "sambanova" => "SambaNova",
+        "zai" => "Z.ai",
+        "nvidia_nim" => "NVIDIA NIM",
+        "novita" => "Novita AI",
+        "hosted_vllm" => "vLLM",
+        "lm_studio" => "LM Studio",
         "custom" => "Custom",
         "claude-agent" => "Claude Agent",
         "copilot" => "Copilot",
@@ -52,7 +68,78 @@ pub fn provider_label(provider: &str) -> String {
     .into()
 }
 
+/// The providers first offered by the settings surfaces, in the reference's
+/// order; `custom` is any other OpenAI-compatible endpoint.
+const POPULAR: [&str; 8] = [
+    "openai",
+    "anthropic",
+    "gemini",
+    "ollama",
+    "deepseek",
+    "openrouter",
+    "azure",
+    "custom",
+];
+/// OpenAI-compatible prefixes whose documentation names no model list
+/// endpoint (checked 2026-10-02): their model IDs are entered by hand.
+const MANUAL_MODELS: [&str; 3] = ["perplexity", "zai", "fireworks_ai"];
+
+/// One provider the settings surfaces can connect, with what its card shows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProviderEntry {
+    /// The model prefix, or `custom` for an OpenAI-compatible endpoint.
+    pub provider: &'static str,
+    /// The documented inference endpoint; `None` when every server has its own.
+    pub default_base: Option<&'static str>,
+    /// Environment variables that replace the endpoint, in order.
+    pub base_variables: &'static [&'static str],
+    /// Environment variables read for the key, in order (empty for `custom`).
+    pub key_variables: &'static [&'static str],
+    /// A local server that works without a key.
+    pub key_optional: bool,
+    /// `discover` can list its models; otherwise model IDs are entered by hand.
+    pub discovery: bool,
+    /// One of the OpenAI-compatible prefixes added after the reference's list.
+    pub compatible: bool,
+}
+
+/// Every connectable provider: the reference's popular list first, then the
+/// further OpenAI-compatible prefixes in the order of the routing table.
+pub fn catalog() -> Vec<ProviderEntry> {
+    let listed: Vec<_> = crate::llm::providers::listings().collect();
+    let entry = |name: &'static str, compatible: bool| {
+        let listing = listed.iter().find(|listing| listing.prefix == name);
+        ProviderEntry {
+            provider: name,
+            default_base: listing.and_then(|listing| listing.base),
+            base_variables: listing.map_or(&[], |listing| listing.base_vars),
+            key_variables: listing.map_or(&[], |listing| listing.key_vars),
+            key_optional: listing.is_some_and(|listing| listing.key_optional),
+            discovery: !MANUAL_MODELS.contains(&name),
+            compatible,
+        }
+    };
+    let mut entries: Vec<_> = POPULAR.iter().map(|name| entry(name, false)).collect();
+    for listing in &listed {
+        if listing.openai_compatible
+            && !POPULAR.contains(&listing.prefix)
+            && listing.prefix != "ollama_chat"
+        {
+            entries.push(entry(listing.prefix, true));
+        }
+    }
+    entries
+}
+
+fn compatible_entry(provider: &str) -> Option<ProviderEntry> {
+    catalog()
+        .into_iter()
+        .find(|entry| entry.compatible && entry.provider == provider)
+}
+
 /// Discovery bases; Gemini and Ollama inference use different endpoint paths.
+/// The added OpenAI-compatible prefixes list `/models` beside their inference
+/// endpoint.
 pub fn provider_default_base(provider: &str) -> Option<&'static str> {
     match provider {
         "openai" => Some("https://api.openai.com/v1"),
@@ -61,7 +148,7 @@ pub fn provider_default_base(provider: &str) -> Option<&'static str> {
         "deepseek" => Some("https://api.deepseek.com"),
         "openrouter" => Some("https://openrouter.ai/api/v1"),
         "ollama" => Some("http://127.0.0.1:11434"),
-        _ => None,
+        _ => compatible_entry(provider).and_then(|entry| entry.default_base),
     }
 }
 
@@ -139,20 +226,23 @@ pub fn discover(request: &Value) -> Result<Value> {
         .ok_or_else(|| Error::InvalidInput("Provider is required".into()))?
         .trim()
         .to_ascii_lowercase();
-    if !matches!(
-        provider.as_str(),
-        "openai"
-            | "anthropic"
-            | "gemini"
-            | "deepseek"
-            | "openrouter"
-            | "azure"
-            | "ollama"
-            | "custom"
-            | "claude-agent"
-            | "copilot"
-            | "chatgpt"
-    ) {
+    let compatible = compatible_entry(&provider);
+    if compatible.is_none()
+        && !matches!(
+            provider.as_str(),
+            "openai"
+                | "anthropic"
+                | "gemini"
+                | "deepseek"
+                | "openrouter"
+                | "azure"
+                | "ollama"
+                | "custom"
+                | "claude-agent"
+                | "copilot"
+                | "chatgpt"
+        )
+    {
         return Err(Error::InvalidInput("Unknown provider".into()));
     }
     let refresh = match request.get("refresh") {
@@ -222,6 +312,17 @@ pub fn discover(request: &Value) -> Result<Value> {
             }
         });
     }
+    if let Some(entry) = compatible.as_ref().filter(|entry| !entry.discovery) {
+        // Validate the request as for any other provider, then say why no
+        // list follows: the client offers manual model entry instead.
+        resolve(field(request, "api_key")?, None, &env)?;
+        if let Some(base) = resolve(field(request, "api_base")?, None, &env)? {
+            checked_url(&base)?;
+        }
+        return Ok(
+            json!({"provider":entry.provider,"status":"unavailable","source":"manual","authoritative":false,"cached":false,"stale":false,"models":[],"detail":"This provider does not publish a model list; enter model IDs manually"}),
+        );
+    }
     let variable = match provider.as_str() {
         "openai" => Some("OPENAI_API_KEY"),
         "anthropic" => Some("ANTHROPIC_API_KEY"),
@@ -230,10 +331,32 @@ pub fn discover(request: &Value) -> Result<Value> {
         "openrouter" => Some("OPENROUTER_API_KEY"),
         "azure" => Some("AZURE_API_KEY"),
         "ollama" => Some("OLLAMA_API_KEY"),
-        _ => None,
+        // The first of the provider's key variables that holds a value.
+        _ => compatible.as_ref().and_then(|entry| {
+            entry
+                .key_variables
+                .iter()
+                .find(|name| {
+                    env.get(**name)
+                        .is_some_and(|value| !value.trim().is_empty())
+                })
+                .or(entry.key_variables.first())
+                .copied()
+        }),
     };
     let key = resolve(field(request, "api_key")?, variable, &env)?;
-    let base = resolve(field(request, "api_base")?, None, &env)?
+    // The added prefixes also honour their base variables, as inference does.
+    let base_variable = compatible.as_ref().and_then(|entry| {
+        entry
+            .base_variables
+            .iter()
+            .find(|name| {
+                env.get(**name)
+                    .is_some_and(|value| !value.trim().is_empty())
+            })
+            .copied()
+    });
+    let base = resolve(field(request, "api_base")?, base_variable, &env)?
         .or_else(|| provider_default_base(&provider).map(str::to_owned));
     if let Some(base) = &base {
         checked_url(base)?;

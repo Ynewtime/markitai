@@ -72,20 +72,14 @@ export function bearer(): Record<string, string> {
   return current ? { Authorization: `Bearer ${current}` } : {};
 }
 
-/** A URL of this service only: no other origin, scheme or embedded credentials. */
+/** A URL of this service only: no other origin, scheme or embedded credentials.
+ * The token never goes into a URL: requests send it as a header, event streams
+ * are read with fetch, images are fetched as Blobs, and a download the browser
+ * must open itself uses a single-use ticket (`/api/download-tickets`). */
 export function serviceURL(path: string, origin: string = globalThis.location?.origin ?? "http://localhost"): URL {
   const url = new URL(path, origin);
   if (url.origin !== origin || !["http:", "https:"].includes(url.protocol) || url.username || url.password) {
     throw new Error("External service URL rejected");
   }
   return url;
-}
-
-/** For requests that cannot carry a header (EventSource, images): the token
- * rides as `?token=`, and only on this service's `/api/` URLs. */
-export function withToken(path: string, origin?: string): string {
-  const url = serviceURL(path, origin);
-  if (!url.pathname.startsWith("/api/")) throw new Error("Tokens are restricted to service API URLs");
-  if (current) url.searchParams.set("token", current);
-  return url.pathname + url.search;
 }

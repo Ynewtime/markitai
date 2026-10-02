@@ -4,7 +4,8 @@
 file matches manifest.json, the manifest's source digest matches the sources
 (stale output fails without Node), compressed twins decode to their originals,
 the vendored files match vendor/web/provenance.json, and with Node and the
-pinned toolchain installed the bundle is rebuilt and compared byte for byte.
+pinned toolchain installed the bundle is rebuilt and compared byte for byte,
+and the workbench tests, the CSS scale check and the colour-contrast check run.
 """
 
 import gzip
@@ -117,10 +118,14 @@ class WebDistTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     @unittest.skipUnless(shutil.which("node"), "Node is not installed")
-    def test_the_workbench_unit_tests_and_css_scale_pass(self):
+    def test_the_workbench_unit_tests_css_scale_and_contrast_pass(self):
         tests = sorted(str(path.relative_to(WEB)) for path in (WEB / "src").rglob("*.test.ts"))
         self.assertTrue(tests)
-        for command in [["node", "--test", *tests], ["node", "scripts/check-css-scale.mjs"]]:
+        for command in [
+            ["node", "--test", *tests],
+            ["node", "scripts/check-css-scale.mjs"],
+            ["node", "scripts/check-contrast.mjs"],
+        ]:
             result = subprocess.run(command, cwd=WEB, capture_output=True, text=True, timeout=300)
             self.assertEqual(result.returncode, 0, result.stdout[-4000:] + result.stderr[-4000:])
 

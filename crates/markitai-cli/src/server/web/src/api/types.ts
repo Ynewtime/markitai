@@ -209,6 +209,12 @@ export interface ProviderCard {
   api_base?: string | null;
   model_count?: number;
   supports_discovery: boolean;
+  /** The provider's documented endpoint; null when every server has its own. */
+  default_base?: string | null;
+  /** The environment variable read for the key. */
+  key_variable?: string | null;
+  /** A local server that works without a key. */
+  key_optional?: boolean;
 }
 
 export interface ProviderCredentials {

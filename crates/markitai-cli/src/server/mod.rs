@@ -1,8 +1,23 @@
 //! Native job service. Blocking conversion work is drained before shutdown returns.
+
+/// Declares a module's API routes once: `ROUTES`, the (method, path) list that
+/// the OpenAPI document is tested against, and `api_routes()`, the router built
+/// from the same list, so a route cannot be served without being listed.
+macro_rules! api_routes {
+    ($($method:ident $path:literal => $handler:expr;)+) => {
+        #[cfg(test)]
+        pub(in crate::server) const ROUTES: &[(&str, &str)] = &[$((stringify!($method), $path)),+];
+        pub(in crate::server) fn api_routes() -> axum::Router<std::sync::Arc<crate::server::State>> {
+            axum::Router::new()$(.route($path, axum::routing::$method($handler)))+
+        }
+    };
+}
+
 mod files;
 mod http;
 mod jobs;
 mod launch;
+mod openapi;
 mod providers;
 mod rerun;
 mod security;
@@ -10,6 +25,7 @@ mod settings;
 mod sidecar;
 mod startup;
 mod store;
+mod tickets;
 mod transaction;
 mod types;
 mod web;
@@ -18,10 +34,7 @@ pub(super) use launch::open_config;
 pub(crate) use launch::settings_source;
 pub(crate) use settings::SettingsSource;
 
-use axum::{
-    Router, middleware,
-    routing::{get, post},
-};
+use axum::{Router, middleware};
 use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet},
@@ -53,6 +66,31 @@ struct State {
     tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
     token: Option<String>,
     allowed_hosts: HashSet<String>,
+    tickets: tickets::Tickets,
+}
+
+api_routes! {
+    get "/api/capabilities" => http::capabilities;
+    get "/api/openapi.json" => openapi::document;
+    post "/api/download-tickets" => tickets::issue;
+    post "/api/jobs" => http::create;
+    get "/api/jobs/{job_id}" => http::snapshot;
+    get "/api/jobs/{job_id}/events" => http::events;
+    post "/api/jobs/{job_id}/cancel" => http::stop;
+    post "/api/jobs/{job_id}/items/{item_id}/retry" => rerun::retry;
+    delete "/api/jobs/{job_id}/items/{item_id}" => rerun::delete;
+    get "/api/jobs/{job_id}/items/{item_id}/result" => files::result;
+    get "/api/jobs/{job_id}/files/{*relpath}" => files::download;
+    get "/api/jobs/{job_id}/archive" => files::job_archive;
+    get "/api/history" => http::history;
+    get "/api/history/archive" => files::history_archive;
+    delete "/api/history/{job_id}" => http::delete;
+}
+
+/// Every API route the service registers, as (method, path).
+#[cfg(test)]
+fn api_table() -> Vec<(&'static str, &'static str)> {
+    [ROUTES, settings::ROUTES, providers::ROUTES].concat()
 }
 
 pub(crate) fn settings_config(source: &SettingsSource) -> Result<Value, String> {
@@ -106,34 +144,14 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
         tasks: Mutex::new(Vec::new()),
         token,
         allowed_hosts,
+        tickets: tickets::Tickets::default(),
     });
     store::rehydrate(&state.root, &state.jobs).map_err(|e| e.to_string())?;
     let router = Router::new()
         .merge(web::routes())
         .merge(settings::routes())
         .merge(providers::routes())
-        .route("/api/capabilities", get(http::capabilities))
-        .route("/api/jobs", post(http::create))
-        .route("/api/jobs/{job_id}", get(http::snapshot))
-        .route("/api/jobs/{job_id}/events", get(http::events))
-        .route("/api/jobs/{job_id}/cancel", post(http::stop))
-        .route(
-            "/api/jobs/{job_id}/items/{item_id}/retry",
-            post(rerun::retry),
-        )
-        .route(
-            "/api/jobs/{job_id}/items/{item_id}",
-            axum::routing::delete(rerun::delete),
-        )
-        .route(
-            "/api/jobs/{job_id}/items/{item_id}/result",
-            get(files::result),
-        )
-        .route("/api/jobs/{job_id}/files/{*relpath}", get(files::download))
-        .route("/api/jobs/{job_id}/archive", get(files::job_archive))
-        .route("/api/history", get(http::history))
-        .route("/api/history/archive", get(files::history_archive))
-        .route("/api/history/{job_id}", axum::routing::delete(http::delete))
+        .merge(api_routes())
         .fallback(http::missing)
         .method_not_allowed_fallback(http::method_not_allowed)
         .layer(axum::extract::DefaultBodyLimit::max(types::MAX_REQUEST))

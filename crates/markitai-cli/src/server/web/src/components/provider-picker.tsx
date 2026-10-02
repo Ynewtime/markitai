@@ -4,12 +4,23 @@ import type { ProviderCard } from "../api/types.ts";
 import type { Dict } from "../i18n/index.ts";
 import { ConfirmPopover } from "./confirm-popover.tsx";
 
-const GROUPS = ["environment", "configured", "common"];
+// "compatible": the OpenAI-compatible providers beyond the reference's list.
+const GROUPS = ["environment", "configured", "common", "compatible"];
 
 export function providerLabel(t: Dict, card: { provider: string; label: string }): string {
   if (card.provider === "custom") return t.providerCustom;
   if (!card.label || card.label === "Unknown provider") return card.provider ? `${t.providerUnknown} (${card.provider})` : t.providerUnknown;
   return card.label;
+}
+
+/** The added OpenAI-compatible providers name their documented host on the card. */
+function endpointHost(card: ProviderCard): string | null {
+  if (card.kind !== "compatible" || !card.default_base) return null;
+  try {
+    return new URL(card.default_base).host;
+  } catch {
+    return null;
+  }
 }
 
 export function ProviderPicker({
@@ -49,7 +60,13 @@ export function ProviderPicker({
                       onClick={() => onSelect(card)}
                     >
                       <span class="provider-name">{label}</span>
-                      <span class="provider-meta">{card.api_base ?? t.providerCardMeta(card.kind, card.status, card.source)}</span>
+                      <span class="provider-meta">
+                        {card.api_base ??
+                          endpointHost(card) ??
+                          (card.kind === "compatible" && card.key_optional && card.default_base === null
+                            ? t.serverAddressRequired
+                            : t.providerCardMeta(card.kind, card.status, card.source))}
+                      </span>
                     </button>
                     {manageable && (
                       <span class="provider-tools">

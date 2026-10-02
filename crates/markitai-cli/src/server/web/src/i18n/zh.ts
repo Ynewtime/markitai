@@ -295,18 +295,25 @@ export const zh: Dict = {
     if (status === "ready") return "可用";
     return status.replaceAll("_", " ");
   },
-  providerDetailHint: (kind, provider, source) => {
+  providerDetailHint: (kind, provider, source, { local = false, manualOnly = false, needsBase = false } = {}) => {
+    if (manualOnly) return "这个服务商不提供模型列表，请在下方添加要使用的模型 ID。";
     if (kind === "configured") return "已从保存的连接自动加载可用模型。";
     if (kind === "environment") return `使用 ${source} 中的凭据。`;
     if (provider === "ollama") return "使用本机默认 Ollama 地址。";
+    if (needsBase) return "填写服务器地址后加载它提供的模型。";
+    if (local) return "使用本机默认地址；只有服务器要求时才需要 key。";
     return "填写连接信息后加载可用模型。";
   },
+  optionalKeyVariable: (variable) => `${variable}（可选）`,
+  manualModelsOnly: "这个服务商不提供模型列表，请在下方添加模型 ID",
+  serverAddressRequired: "需要服务器地址",
   providerGroup: (kind) =>
     (
       ({
         environment: "已配置的环境变量凭据",
         configured: "已保存的服务商",
         common: "常用服务商",
+        compatible: "更多 OpenAI 兼容服务商",
       }) as Record<string, string>
     )[kind] ?? kind,
   providerCustom: "OpenAI 兼容接口",
@@ -339,8 +346,9 @@ export const zh: Dict = {
   setApiKey: "API key",
   setApiBase: "API 地址",
   setKeyPh: "sk-… 或 env:OPENAI_API_KEY",
-  providerKeyPh: (provider) =>
+  providerKeyPh: (variable, provider = "") =>
     `sk-… 或 env:${
+      variable ??
       (
         {
           anthropic: "ANTHROPIC_API_KEY",
@@ -349,7 +357,8 @@ export const zh: Dict = {
           gemini: "GEMINI_API_KEY",
           openrouter: "OPENROUTER_API_KEY",
         } as Record<string, string>
-      )[provider] ?? "OPENAI_API_KEY"
+      )[provider] ??
+      "OPENAI_API_KEY"
     }`,
   setBasePh: "可选",
   revealField: (label) => `显示${label}`,

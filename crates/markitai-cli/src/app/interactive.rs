@@ -519,24 +519,22 @@ impl Echo {
     }
 }
 
+/// A model prefix this build reaches over HTTP: the routing table's providers,
+/// including every OpenAI-compatible one; the subscription runtimes have
+/// their own sign-in and are not API providers.
+pub(super) fn api_provider(prefix: &str) -> bool {
+    config::llm_provider_supported(prefix)
+        && !["copilot", "claude-agent", "chatgpt"].contains(&prefix)
+}
+
 fn detected() -> Value {
     let models = markitai_core::llm_capabilities(&config::defaults())
         .models
         .into_iter()
         .filter(|model| {
-            model.split_once('/').is_none_or(|(provider, _)| {
-                [
-                    "openai",
-                    "anthropic",
-                    "gemini",
-                    "deepseek",
-                    "openrouter",
-                    "azure",
-                    "ollama",
-                    "ollama_chat",
-                ]
-                .contains(&provider)
-            })
+            model
+                .split_once('/')
+                .is_none_or(|(provider, _)| api_provider(provider))
         })
         .map(|model| json!({"model_name":"default", "litellm_params":{"model":model}}))
         .collect::<Vec<_>>();
@@ -875,5 +873,33 @@ mod tests {
         write_config(&path, &json!({"custom":true})).unwrap();
         assert!(unchanged(&path, &bytes).is_err());
         assert_eq!(read_config(&path).unwrap().0["custom"], true);
+    }
+
+    #[test]
+    fn the_wizards_accept_every_api_prefix_of_the_routing_table() {
+        for prefix in [
+            "openai",
+            "anthropic",
+            "azure",
+            "ollama_chat",
+            "groq",
+            "together_ai",
+            "perplexity",
+            "zai",
+            "hosted_vllm",
+            "lm_studio",
+        ] {
+            assert!(api_provider(prefix), "{prefix}");
+        }
+        for prefix in [
+            "copilot",
+            "claude-agent",
+            "chatgpt",
+            "bedrock",
+            "vertex_ai",
+            "x",
+        ] {
+            assert!(!api_provider(prefix), "{prefix}");
+        }
     }
 }

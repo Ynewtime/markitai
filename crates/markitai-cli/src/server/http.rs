@@ -612,6 +612,7 @@ mod error_code_tests {
             tasks: Mutex::new(Vec::new()),
             token: None,
             allowed_hosts: HashSet::new(),
+            tickets: Default::default(),
         });
         let router = Router::new()
             .route("/api/jobs", post(create))

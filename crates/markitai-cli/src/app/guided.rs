@@ -300,17 +300,7 @@ fn configure_model(
             .map_or("openai", |(provider, _)| provider);
         if !model.is_empty()
             && !model.chars().any(char::is_control)
-            && [
-                "openai",
-                "anthropic",
-                "gemini",
-                "deepseek",
-                "openrouter",
-                "azure",
-                "ollama",
-                "ollama_chat",
-            ]
-            .contains(&provider)
+            && interactive::api_provider(provider)
         {
             break model.to_owned();
         }

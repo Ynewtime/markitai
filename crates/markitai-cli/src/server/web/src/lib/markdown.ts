@@ -43,9 +43,10 @@ const RASTER = /\.(png|jpe?g|gif|webp|avif)$/i;
 export interface RenderContext {
   documentPath: string;
   artifacts: Artifact[];
-  /** URL of an artifact for an <img> (carries the token when one is held). */
-  imageURL: (path: string) => string;
-  /** URL of an artifact for a download link. */
+  /** URL of an artifact for an <img>, or null when it must be fetched with the
+   * header token (the image then waits in `data-artifact-src`; see loadArtifactImages). */
+  imageURL: (path: string) => string | null;
+  /** URL of an artifact for a download link (never carries the token). */
   fileURL: (path: string) => string;
   placeholder: (alt: string) => string;
   fallbackAlt: string;
@@ -99,7 +100,11 @@ export function rewrite(fragment: DocumentFragment, context: RenderContext): voi
     const path = artifactPath(image.getAttribute("src") ?? "", context.documentPath, allowed);
     const alt = image.getAttribute("alt") || "";
     if (path && RASTER.test(path)) {
-      image.setAttribute("src", context.imageURL(path));
+      const url = context.imageURL(path);
+      if (url === null) {
+        image.removeAttribute("src");
+        image.setAttribute("data-artifact-src", path);
+      } else image.setAttribute("src", url);
       image.setAttribute("loading", "lazy");
       image.setAttribute("referrerpolicy", "no-referrer");
       if (!alt) image.setAttribute("alt", context.fallbackAlt);
@@ -117,6 +122,7 @@ export function rewrite(fragment: DocumentFragment, context: RenderContext): voi
     if (path) {
       link.setAttribute("href", context.fileURL(path));
       link.setAttribute("download", "");
+      link.setAttribute("data-artifact", path);
     } else {
       let safe: string | null = null;
       try {
@@ -148,4 +154,56 @@ export function rewrite(fragment: DocumentFragment, context: RenderContext): voi
     block.tabIndex = 0;
     block.setAttribute("aria-label", context.codeLabel);
   }
+}
+
+export interface ImageLoads {
+  /** Settles once every waiting image is shown or replaced. */
+  done: Promise<void>;
+  /** Stop loading and release the object URLs. */
+  dispose(): void;
+}
+
+/** Show the images that wait in `data-artifact-src`: each is fetched with the
+ * header token (at most `limit` at a time) and shown through an object URL.
+ * One that cannot be loaded is handed to `failed` (the view puts a labelled
+ * placeholder there). */
+export function loadArtifactImages(
+  root: ParentNode,
+  load: (path: string) => Promise<Blob>,
+  failed: (image: HTMLImageElement) => void,
+  { limit = 4, objectURL = URL }: { limit?: number; objectURL?: Pick<typeof URL, "createObjectURL" | "revokeObjectURL"> } = {},
+): ImageLoads {
+  const images = [...root.querySelectorAll<HTMLImageElement>("img[data-artifact-src]")];
+  const urls: string[] = [];
+  let disposed = false;
+  let next = 0;
+  const worker = async () => {
+    while (!disposed && next < images.length) {
+      const image = images[next++] as HTMLImageElement;
+      const path = image.getAttribute("data-artifact-src") ?? "";
+      let blob: Blob | null = null;
+      try {
+        blob = await load(path);
+      } catch {
+        blob = null;
+      }
+      if (disposed) return;
+      image.removeAttribute("data-artifact-src");
+      if (blob === null) {
+        failed(image);
+        continue;
+      }
+      const url = objectURL.createObjectURL(blob);
+      urls.push(url);
+      image.setAttribute("src", url);
+    }
+  };
+  const done = Promise.all(Array.from({ length: Math.min(limit, images.length) }, worker)).then(() => undefined);
+  return {
+    done,
+    dispose() {
+      disposed = true;
+      for (const url of urls.splice(0)) objectURL.revokeObjectURL(url);
+    },
+  };
 }

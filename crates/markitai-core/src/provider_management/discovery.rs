@@ -89,6 +89,8 @@ pub(super) fn parse(provider: &str, data: &Value) -> Result<Value> {
             "data"
         })
         .and_then(Value::as_array)
+        // Together AI answers with the bare array of model records.
+        .or_else(|| data.as_array().filter(|_| provider == "together_ai"))
         .ok_or_else(|| failure("Model discovery response has no model list"))?;
     if records.len() > MAX_MODELS {
         return Err(failure("Model discovery exceeds 1000 records"));

@@ -16,6 +16,21 @@ snapshot for newly admitted jobs and retries; an active job keeps its original
 snapshot. CLI model/provider session overrides remain effective and make
 settings writes unavailable until restart without those overrides.
 
+## Machine-readable API description
+
+`GET /api/openapi.json` returns an OpenAPI 3.1 document of every `/api/` route
+(jobs, history, downloads, settings, provider discovery and tests) with its
+parameters, request bodies, response schemas, the error body and its `reason`
+codes, and the three ways to authenticate (`bearerAuth`, `tokenQuery`,
+`ticketQuery`). It is the same document a code generator or API explorer can
+read; its `info.version` is the running build's version. It needs the same
+authentication as the rest of `/api/` (none for a loopback peer). The document is
+written by hand (`crates/markitai-cli/src/server/openapi.json`); module tests fail
+when a route is served but not described, or described but not served, when a
+path parameter is undeclared, a reference dangles, or the service writes a
+`reason` the error schema does not list. Response schemas describe the fields the
+workbench relies on; they are not a byte-for-byte contract of every payload.
+
 ## Job workflow
 
 1. `GET /api/capabilities` returns version, effective LLM configuration, presets,
@@ -293,13 +308,32 @@ URL conversion is explicitly rejected: a full DNS/redirect-aware public-network
 fetch policy has not been implemented. Such clients may still upload files and
 access/delete history, so expose this mode only as intended by its operator.
 
+`?token=` stays accepted for scripts and older clients, but a URL can end up in
+proxy and server logs, shell history and browser history, so prefer the header.
+For a download that a browser must open itself (a navigation cannot send
+`Authorization`), an authenticated client asks `POST /api/download-tickets` with
+`{"path": "/api/jobs/{job_id}/archive"}` (or a job file,
+`/api/jobs/{job_id}/files/{relpath}`, or `/api/history/archive`, written exactly as
+it will be requested) and receives 201 `{"ticket", "url", "expires_in": 60}`.
+`url` is that path with `?ticket=…`: 64 random hexadecimal characters that admit
+one GET of that path within 60 seconds. Only the ticket's SHA-256 is held, at most
+64 tickets are outstanding (429 `too_many_tickets`), and a path outside those three
+download routes is 422 `invalid_ticket_path`. A ticket presented a second time,
+after it expired, for another path or with another method is spent and refused
+with 401 `ticket_invalid`; a loopback request ignores it. A ticket never grants
+settings access and never lets the startup token into a URL. The event stream
+`GET /api/jobs/{job_id}/events` takes the header like any other request (a
+fetch-based reader can send it; the browser's EventSource cannot).
+
 All model settings endpoints additionally require a loopback peer or valid token,
 including with `--no-auth`. Every settings response, including rejected requests,
 carries `Cache-Control: no-store`. Static UI bootstrap remains accessible under
 the Host policy so a remote user can enter a service token. Browser launch places
-the token in the URL fragment; the UI removes it immediately and sends API
-requests with Bearer authentication. Credentials are retrieved only through the
-explicit connection-edit route and are never stored by the browser workbench.
+the token in the URL fragment; the UI removes it immediately and sends every
+request, event streams and preview images included, with Bearer authentication;
+an archive download uses a ticket, so no URL the workbench requests carries the
+token. Credentials are retrieved only through the explicit connection-edit route
+and are never stored by the browser workbench.
 
 Host validation accepts localhost, IP literals, and explicit `--allowed-host`
 entries. State-changing requests with an Origin must satisfy the origin policy.
@@ -388,7 +422,12 @@ queued cancellation, shared-asset deletion, and retry metadata failure followed 
 restart. Module tests exercise committed/uncommitted file recovery, the error
 body shape, and router-level `error_code` values for failed, retried, stopped and
 shutdown items and request `reason`s. Separate synthetic-peer router tests exercise
-remote token and trust decisions without relying on a host network interface.
+remote token and trust decisions without relying on a host network interface,
+including download tickets (issued only with the token, one GET of their own path,
+spent when shown elsewhere or with another method, ignored by loopback, refused for
+settings and other non-download paths); `server::tickets` tests the path rule,
+expiry, single use and the 64-ticket bound, and `server::openapi` the document
+against the route table.
 [`tests/serve_terminal_usage.rs`](../crates/markitai-cli/tests/serve_terminal_usage.rs)
 contains private loopback cases for paid authentication errors, zero-token recorded
 responses, SSE/GET/restart agreement, a post-core publication obstruction retaining

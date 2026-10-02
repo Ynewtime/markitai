@@ -348,15 +348,21 @@ export function SettingsModal({
   const existing =
     provider !== null && (provider.provider_id !== undefined || provider.deployment_id !== undefined || provider.kind === "environment");
   const ollama = provider?.provider === "ollama";
-  const autoLoads = existing || ollama;
-  const needsBase = provider?.provider === "azure" || provider?.provider === "custom";
+  // A local server with a known address (Ollama, LM Studio) needs no key.
+  const local = provider?.key_optional === true;
+  // The provider lists no models: IDs are entered by hand.
+  const manualOnly = provider !== null && provider.supports_discovery === false;
+  const autoLoads = !manualOnly && (existing || (local && Boolean(provider?.default_base)));
+  // Azure, a custom endpoint and servers without a default address (vLLM) need one.
+  const needsBase =
+    provider !== null && (provider.provider === "azure" || provider.provider === "custom" || (provider.default_base === null && !existing));
   const showsKey = provider !== null && !existing && !ollama;
+  const keyRequired = provider !== null && provider.provider !== "custom" && !local;
   const canLoad =
     provider !== null &&
+    !manualOnly &&
     (autoLoads ||
-      (provider.provider === "custom" && draftBase.trim() !== "") ||
-      (provider.provider === "azure" && draftKey.trim() !== "" && draftBase.trim() !== "") ||
-      (provider.provider !== "custom" && provider.provider !== "azure" && draftKey.trim() !== ""));
+      (needsBase ? draftBase.trim() !== "" && (!keyRequired || draftKey.trim() !== "") : !keyRequired || draftKey.trim() !== ""));
 
   const linked = (connection: ProviderCard) => ({
     ...(connection.provider_id === undefined || connection.provider_id.startsWith("legacy:") ? {} : { provider_id: connection.provider_id }),
@@ -674,25 +680,33 @@ export function SettingsModal({
                   <div class="provider-detail-head">
                     <div class="provider-detail-copy">
                       <h3>{autoLoads ? t.modelCatalogTitle : t.connectProviderTitle(label)}</h3>
-                      <p>{t.providerDetailHint(provider.kind, provider.provider, provider.source)}</p>
+                      <p>{t.providerDetailHint(provider.kind, provider.provider, provider.source, { local, manualOnly, needsBase: needsBase && provider.provider !== "azure" && provider.provider !== "custom" })}</p>
+                      {(provider.kind === "common" || provider.kind === "compatible") && (provider.default_base || provider.key_variable) && (
+                        <p class="provider-facts">
+                          {provider.default_base && <span class="provider-fact">{provider.default_base}</span>}
+                          {provider.key_variable && <span class="provider-fact">{local ? t.optionalKeyVariable(provider.key_variable) : provider.key_variable}</span>}
+                        </p>
+                      )}
                     </div>
-                    <button
-                      type="button"
-                      class={discovery === null && !autoLoads ? "btn btn-primary" : "btn btn-ghost"}
-                      disabled={discovering || !canLoad}
-                      onClick={() => void load(discovery !== null)}
-                    >
-                      {discovering ? t.loading : discovery === null ? t.loadModels : t.refreshModels}
-                    </button>
+                    {!manualOnly && (
+                      <button
+                        type="button"
+                        class={discovery === null && !autoLoads ? "btn btn-primary" : "btn btn-ghost"}
+                        disabled={discovering || !canLoad}
+                        onClick={() => void load(discovery !== null)}
+                      >
+                        {discovering ? t.loading : discovery === null ? t.loadModels : t.refreshModels}
+                      </button>
+                    )}
                   </div>
                   {showsKey && (
                     <div class={needsBase ? "field-grid" : "field-grid is-single"}>
                       <label class="field">
                         <span class="field-label">
                           {t.setApiKey}
-                          {provider.provider !== "custom" && <span class="field-required">{t.requiredField}</span>}
+                          {keyRequired && <span class="field-required">{t.requiredField}</span>}
                         </span>
-                        <input type="password" value={draftKey} placeholder={t.providerKeyPh(provider.provider)} autoComplete="off" onInput={(event) => setDraftKey(event.currentTarget.value)} />
+                        <input type="password" value={draftKey} placeholder={t.providerKeyPh(provider.key_variable ?? null, provider.provider)} autoComplete="off" onInput={(event) => setDraftKey(event.currentTarget.value)} />
                       </label>
                       {needsBase && (
                         <label class="field">
@@ -700,7 +714,12 @@ export function SettingsModal({
                             {t.setApiBase}
                             <span class="field-required">{t.requiredField}</span>
                           </span>
-                          <input type="url" value={draftBase} placeholder="https://example.com/v1" onInput={(event) => setDraftBase(event.currentTarget.value)} />
+                          <input
+                            type="url"
+                            value={draftBase}
+                            placeholder={provider.provider === "hosted_vllm" ? "http://127.0.0.1:8000/v1" : "https://example.com/v1"}
+                            onInput={(event) => setDraftBase(event.currentTarget.value)}
+                          />
                         </label>
                       )}
                     </div>
@@ -713,7 +732,7 @@ export function SettingsModal({
                         <input
                           type="url"
                           value={draftBase}
-                          placeholder={ollama ? "http://127.0.0.1:11434" : "https://example.com/v1"}
+                          placeholder={ollama ? "http://127.0.0.1:11434" : (provider.default_base ?? "https://example.com/v1")}
                           onInput={(event) => setDraftBase(event.currentTarget.value)}
                         />
                       </label>
@@ -738,11 +757,12 @@ export function SettingsModal({
                   </div>
                 )}
                 {/* An unavailable catalogue still leaves manual model entry. */}
-                {discovery && (
+                {(discovery || manualOnly) && (
                   <ModelPicker
                     t={t}
+                    manualOnly={manualOnly}
                     provider={provider.provider}
-                    candidates={discovery.models}
+                    candidates={discovery?.models ?? []}
                     deployments={settings.deployments}
                     apiBase={draftBase}
                     group={group}
@@ -754,7 +774,7 @@ export function SettingsModal({
                   />
                 )}
                 <div class="form-actions form-actions-ruled">
-                  {discovery && (
+                  {(discovery || manualOnly) && (
                     <button type="button" class="btn btn-primary" disabled={addBusy || !selected.size} onClick={() => void addSelected()}>
                       {addBusy ? t.saving : t.addModelsCount(selected.size)}
                     </button>

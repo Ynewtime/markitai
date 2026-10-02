@@ -404,6 +404,101 @@ fn clearing_provider_only_deployment_detaches_without_changing_siblings() {
 }
 
 #[test]
+fn every_openai_compatible_prefix_is_offered_with_its_endpoint_key_and_discovery() {
+    let (_dir, store) = setup(json!({"llm":{"enabled":false,"model_list":[]}}));
+    let cards = store.providers()["providers"].as_array().unwrap().clone();
+    let card = |name: &str| {
+        cards
+            .iter()
+            .find(|card| card["provider"] == name && card["kind"] != "environment")
+            .unwrap_or_else(|| panic!("no {name} card"))
+            .clone()
+    };
+    // The reference's eight stay first and "common"; the added ones follow.
+    let common: Vec<_> = cards
+        .iter()
+        .filter(|card| card["kind"] == "common")
+        .map(|card| card["provider"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        common,
+        [
+            "openai",
+            "anthropic",
+            "gemini",
+            "ollama",
+            "deepseek",
+            "openrouter",
+            "azure",
+            "custom"
+        ]
+    );
+    let compatible = cards
+        .iter()
+        .filter(|card| card["kind"] == "compatible")
+        .count();
+    assert_eq!(compatible, 16);
+    let groq = card("groq");
+    assert_eq!(groq["label"], "Groq");
+    assert_eq!(groq["default_base"], "https://api.groq.com/openai/v1");
+    assert_eq!(groq["key_variable"], "GROQ_API_KEY");
+    assert_eq!(groq["status"], "needs_credentials");
+    assert_eq!(
+        (
+            groq["supports_discovery"].clone(),
+            groq["key_optional"].clone()
+        ),
+        (json!(true), json!(false))
+    );
+    for name in ["perplexity", "zai", "fireworks_ai"] {
+        assert_eq!(card(name)["supports_discovery"], false, "{name}");
+    }
+    let studio = card("lm_studio");
+    assert_eq!(
+        (studio["status"].clone(), studio["key_optional"].clone()),
+        (json!("unknown"), json!(true))
+    );
+    assert_eq!(studio["default_base"], "http://localhost:1234/v1");
+    let vllm = card("hosted_vllm");
+    assert_eq!(
+        (vllm["status"].clone(), vllm["default_base"].clone()),
+        (json!("needs_credentials"), Value::Null)
+    );
+    assert_eq!(card("custom")["key_variable"], Value::Null);
+    assert_eq!(card("openai")["key_variable"], "OPENAI_API_KEY");
+}
+
+#[test]
+fn added_prefixes_count_as_routable_by_key_or_local_address() {
+    for (model, extra, routable) in [
+        ("groq/llama", json!({"api_key":"literal-test-key"}), true),
+        (
+            "groq/llama",
+            json!({"api_key":"env:MARKITAI_TEST_MISSING_KEY_VARIABLE"}),
+            false,
+        ),
+        ("lm_studio/local", json!({}), true),
+        ("hosted_vllm/local", json!({}), false),
+        (
+            "hosted_vllm/local",
+            json!({"api_base":"http://127.0.0.1:8000/v1"}),
+            true,
+        ),
+        ("ollama_chat/llama", json!({}), true),
+        ("bedrock/x", json!({"api_key":"literal-test-key"}), false),
+    ] {
+        let mut params = json!({"model":model});
+        for (key, value) in extra.as_object().unwrap() {
+            params[key] = value.clone();
+        }
+        let (_dir, store) = setup(
+            json!({"llm":{"enabled":false,"model_list":[{"model_name":"default","litellm_params":params}]}}),
+        );
+        assert_eq!(store.view()["routable"], routable, "{model} {extra}");
+    }
+}
+
+#[test]
 fn revision_uses_python_float_notation_at_decimal_and_exponent_boundaries() {
     let models = vec![json!({"extra":[1e-7,1e-6,0.0001,1e15,1e16,-0.0,1.2345678901234567e20]})];
     assert_eq!(

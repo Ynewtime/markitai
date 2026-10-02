@@ -13,7 +13,8 @@
     "check": "node build.mjs --check",
     "test": "node --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
-    "css": "node scripts/check-css-scale.mjs"
+    "css": "node scripts/check-css-scale.mjs",
+    "contrast": "node scripts/check-contrast.mjs"
   },
   "devDependencies": {
     "esbuild": "0.28.2",

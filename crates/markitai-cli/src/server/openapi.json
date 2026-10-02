@@ -1,0 +1,822 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Markitai service API",
+    "version": "set from the build when served",
+    "summary": "Convert files and URLs to Markdown, manage saved jobs and model settings.",
+    "description": "The REST API of `markitai serve`. Loopback clients are trusted; other clients send the startup token as `Authorization: Bearer` (preferred) or `?token=`. Every error body is `{detail, code, reason}`; present text by `reason`, then `code`. See docs/serve.md, docs/service-settings.md and docs/provider-management.md for the contracts this document summarizes.",
+    "license": { "name": "MIT", "identifier": "MIT" }
+  },
+  "servers": [{ "url": "/", "description": "The service that serves this document" }],
+  "security": [{}, { "bearerAuth": [] }, { "tokenQuery": [] }],
+  "tags": [
+    { "name": "service", "description": "Capabilities, this document and download tickets" },
+    { "name": "jobs", "description": "Conversion jobs, their items, events and files" },
+    { "name": "history", "description": "Saved jobs" },
+    { "name": "settings", "description": "Saved model deployments and provider connections; loopback or token only, also with --no-auth" },
+    { "name": "providers", "description": "Provider detection, model discovery and connection tests; loopback or token only" }
+  ],
+  "paths": {
+    "/api/capabilities": {
+      "get": {
+        "tags": ["service"],
+        "operationId": "getCapabilities",
+        "summary": "Version, effective model configuration, presets and limits",
+        "responses": {
+          "200": { "description": "Capabilities", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Capabilities" } } } },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/openapi.json": {
+      "get": {
+        "tags": ["service"],
+        "operationId": "getOpenApi",
+        "summary": "This OpenAPI 3.1 document, with the build's version",
+        "responses": {
+          "200": { "description": "The document", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/download-tickets": {
+      "post": {
+        "tags": ["service"],
+        "operationId": "createDownloadTicket",
+        "summary": "Issue a single-use, 60-second ticket for one download",
+        "description": "For clients that must let the browser open a download natively (a navigation cannot send `Authorization`). The returned `url` carries `?ticket=` instead of the token; it admits exactly one GET of exactly `path` within `expires_in` seconds. A ticket presented for another path or method, or a second time, is refused with 401 `ticket_invalid`. At most 64 tickets are outstanding (429 `too_many_tickets`).",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TicketRequest" } } }
+        },
+        "responses": {
+          "201": { "description": "Ticket issued", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ticket" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" },
+          "429": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/jobs": {
+      "post": {
+        "tags": ["jobs"],
+        "operationId": "createJob",
+        "summary": "Start a job from uploaded files and/or URLs",
+        "description": "Files precede URLs in the returned order. URL conversion needs a loopback peer or the token, also with --no-auth. A request that itself asks for model processing while no model is routable is refused with 422 `llm_unavailable` before anything is stored.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "files": { "type": "array", "items": { "type": "string", "contentMediaType": "application/octet-stream" }, "description": "Repeated file fields; at most 100 MiB each" },
+                  "urls": { "type": "string", "description": "A JSON array of http(s) URLs" },
+                  "options": { "type": "string", "description": "A JSON object of JobOptions" }
+                }
+              },
+              "encoding": { "files": { "contentType": "application/octet-stream" } }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "urls": { "type": "string", "description": "A JSON array of http(s) URLs" },
+                  "options": { "type": "string", "description": "A JSON object of JobOptions" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Job created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreatedJob" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/jobs/{job_id}": {
+      "get": {
+        "tags": ["jobs"],
+        "operationId": "getJob",
+        "summary": "The job's current snapshot",
+        "parameters": [{ "$ref": "#/components/parameters/JobId" }],
+        "responses": {
+          "200": { "description": "Snapshot", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/JobSnapshot" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/jobs/{job_id}/events": {
+      "get": {
+        "tags": ["jobs"],
+        "operationId": "streamJobEvents",
+        "summary": "Server-sent events: a first snapshot, then item and job events",
+        "description": "`event: snapshot` carries a JobSnapshot, `event: item` an Item, `event: job` a JobProgress; a terminal job event ends the stream. Idle keepalives are `:ping` comments every 15 seconds. A slow subscriber receives a fresh snapshot after an event-buffer overrun. Send the token as `Authorization: Bearer` (a fetch-based reader can; the browser's EventSource cannot).",
+        "parameters": [{ "$ref": "#/components/parameters/JobId" }],
+        "responses": {
+          "200": { "description": "Event stream", "content": { "text/event-stream": { "schema": { "type": "string" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/jobs/{job_id}/cancel": {
+      "post": {
+        "tags": ["jobs"],
+        "operationId": "stopJob",
+        "summary": "Stop the job's original items that still wait for a conversion slot",
+        "parameters": [{ "$ref": "#/components/parameters/JobId" }],
+        "responses": {
+          "202": { "description": "Stopping", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Stopping" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/jobs/{job_id}/items/{item_id}/retry": {
+      "post": {
+        "tags": ["jobs"],
+        "operationId": "retryItem",
+        "summary": "Queue a retry or an LLM enhancement of one terminal item",
+        "parameters": [{ "$ref": "#/components/parameters/JobId" }, { "$ref": "#/components/parameters/ItemId" }],
+        "requestBody": {
+          "required": false,
+          "content": { "application/json": { "schema": { "oneOf": [{ "$ref": "#/components/schemas/RetryRequest" }, { "type": "null" }] } } }
+        },
+        "responses": {
+          "202": { "description": "Queued", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreatedJob" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/jobs/{job_id}/items/{item_id}": {
+      "delete": {
+        "tags": ["jobs"],
+        "operationId": "deleteItem",
+        "summary": "Delete one item, its upload and the files it owns; the last item deletes the job",
+        "parameters": [{ "$ref": "#/components/parameters/JobId" }, { "$ref": "#/components/parameters/ItemId" }],
+        "responses": {
+          "204": { "description": "Deleted" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/jobs/{job_id}/items/{item_id}/result": {
+      "get": {
+        "tags": ["jobs"],
+        "operationId": "getItemResult",
+        "summary": "The item's Markdown (at most 64 MiB) and its downloadable files",
+        "parameters": [{ "$ref": "#/components/parameters/JobId" }, { "$ref": "#/components/parameters/ItemId" }],
+        "responses": {
+          "200": { "description": "Result", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ItemResult" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/jobs/{job_id}/files/{relpath}": {
+      "get": {
+        "tags": ["jobs"],
+        "operationId": "downloadFile",
+        "summary": "Download one output file as an attachment",
+        "security": [{}, { "bearerAuth": [] }, { "tokenQuery": [] }, { "ticketQuery": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/JobId" },
+          { "name": "relpath", "in": "path", "required": true, "description": "The artifact's path relative to the job output; it may span several `/`-separated segments. Traversal, absolute paths and symlinks are refused.", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "File bytes", "content": { "application/octet-stream": { "schema": { "type": "string", "contentMediaType": "application/octet-stream" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/jobs/{job_id}/archive": {
+      "get": {
+        "tags": ["jobs"],
+        "operationId": "downloadJobArchive",
+        "summary": "Download every output file of a finished job as a ZIP",
+        "security": [{}, { "bearerAuth": [] }, { "tokenQuery": [] }, { "ticketQuery": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/JobId" }],
+        "responses": {
+          "200": { "description": "ZIP archive", "content": { "application/zip": { "schema": { "type": "string", "contentMediaType": "application/zip" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/history": {
+      "get": {
+        "tags": ["history"],
+        "operationId": "listHistory",
+        "summary": "Saved jobs, newest first, including jobs other local processes added",
+        "responses": {
+          "200": { "description": "Summaries", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/HistoryEntry" } } } } },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/history/archive": {
+      "get": {
+        "tags": ["history"],
+        "operationId": "downloadHistoryArchive",
+        "summary": "Download every completed saved job as one ZIP",
+        "security": [{}, { "bearerAuth": [] }, { "tokenQuery": [] }, { "ticketQuery": [] }],
+        "responses": {
+          "200": { "description": "ZIP archive", "content": { "application/zip": { "schema": { "type": "string", "contentMediaType": "application/zip" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/history/{job_id}": {
+      "delete": {
+        "tags": ["history"],
+        "operationId": "deleteHistoryJob",
+        "summary": "Delete a terminal saved job and its files",
+        "parameters": [{ "$ref": "#/components/parameters/JobId" }],
+        "responses": {
+          "204": { "description": "Deleted" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/settings/llm": {
+      "get": {
+        "tags": ["settings"],
+        "operationId": "getSettings",
+        "summary": "Revision and secret-free saved and detected deployments",
+        "responses": {
+          "200": { "description": "Settings", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SettingsView" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/settings/llm/providers": {
+      "get": {
+        "tags": ["settings"],
+        "operationId": "listProviders",
+        "summary": "Environment, common and saved provider cards",
+        "parameters": [{ "name": "refresh", "in": "query", "required": false, "description": "Accepted for compatibility; the list is computed on every request", "schema": { "type": "boolean" } }],
+        "responses": {
+          "200": { "description": "Provider cards", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProviderList" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/settings/llm/providers/{id}/credentials": {
+      "get": {
+        "tags": ["settings"],
+        "operationId": "getProviderCredentials",
+        "summary": "The stored, editable fields of one saved connection",
+        "parameters": [{ "$ref": "#/components/parameters/SettingsId" }],
+        "responses": {
+          "200": { "description": "Stored fields (an `env:NAME` reference stays unresolved)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProviderCredentials" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/settings/llm/models": {
+      "post": {
+        "tags": ["settings"],
+        "operationId": "addModel",
+        "summary": "Add one deployment (compatible with the legacy single-model form)",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NewDeployment" } } } },
+        "responses": { "200": { "$ref": "#/components/responses/Settings" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" }, "500": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/settings/llm/models/{id}": {
+      "put": {
+        "tags": ["settings"],
+        "operationId": "updateLegacyModel",
+        "summary": "Change the one deployment of an unambiguous routing group",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "description": "The routing group (`model_name`)", "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeploymentPatch" } } } },
+        "responses": { "200": { "$ref": "#/components/responses/Settings" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" }, "500": { "$ref": "#/components/responses/Error" } }
+      },
+      "delete": {
+        "tags": ["settings"],
+        "operationId": "deleteLegacyModel",
+        "summary": "Delete the one deployment of an unambiguous routing group",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "description": "The routing group (`model_name`)", "schema": { "type": "string" } }],
+        "responses": { "200": { "$ref": "#/components/responses/Settings" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "500": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/settings/llm/deployments/batch": {
+      "post": {
+        "tags": ["settings"],
+        "operationId": "addDeployments",
+        "summary": "Atomically add 1–50 deployments",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeploymentBatch" } } } },
+        "responses": { "200": { "$ref": "#/components/responses/Settings" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" }, "500": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/settings/llm/deployments/{id}": {
+      "patch": {
+        "tags": ["settings"],
+        "operationId": "updateDeployment",
+        "summary": "Change one deployment by its stable identity",
+        "parameters": [{ "$ref": "#/components/parameters/SettingsId" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "allOf": [{ "$ref": "#/components/schemas/DeploymentPatch" }], "required": ["expected_revision"] } } } },
+        "responses": { "200": { "$ref": "#/components/responses/Settings" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" }, "500": { "$ref": "#/components/responses/Error" } }
+      },
+      "delete": {
+        "tags": ["settings"],
+        "operationId": "deleteDeployment",
+        "summary": "Delete one deployment; its connection stays saved",
+        "parameters": [{ "$ref": "#/components/parameters/SettingsId" }, { "$ref": "#/components/parameters/ExpectedRevision" }],
+        "responses": { "200": { "$ref": "#/components/responses/Settings" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" }, "500": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/settings/llm/providers/{id}": {
+      "patch": {
+        "tags": ["settings"],
+        "operationId": "updateProvider",
+        "summary": "Change a saved connection and every deployment linked to it",
+        "parameters": [{ "$ref": "#/components/parameters/SettingsId" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProviderPatch" } } } },
+        "responses": { "200": { "$ref": "#/components/responses/Settings" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" }, "500": { "$ref": "#/components/responses/Error" } }
+      },
+      "delete": {
+        "tags": ["settings"],
+        "operationId": "deleteProvider",
+        "summary": "Delete a saved connection and its deployments",
+        "parameters": [{ "$ref": "#/components/parameters/SettingsId" }, { "$ref": "#/components/parameters/ExpectedRevision" }],
+        "responses": { "200": { "$ref": "#/components/responses/Settings" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" }, "500": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/settings/llm/config/open": {
+      "post": {
+        "tags": ["settings"],
+        "operationId": "openConfig",
+        "summary": "Ask the server host's system opener to open the configuration file",
+        "responses": {
+          "204": { "description": "Opened" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/settings/llm/detected": {
+      "get": {
+        "tags": ["providers"],
+        "operationId": "listDetectedModels",
+        "summary": "Quick-add candidates from provider keys in the service's environment",
+        "responses": {
+          "200": { "description": "Candidates", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/DetectedModel" } } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/settings/llm/model-discovery": {
+      "post": {
+        "tags": ["providers"],
+        "operationId": "discoverModels",
+        "summary": "List a provider's models with the given or saved connection",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DiscoveryRequest" } } } },
+        "responses": {
+          "200": { "description": "Discovery result", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DiscoveryResult" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" },
+          "429": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/settings/llm/test": {
+      "post": {
+        "tags": ["providers"],
+        "operationId": "testModel",
+        "summary": "One short request to exactly one deployment",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProbeRequest" } } } },
+        "responses": {
+          "200": { "description": "Test outcome; a provider failure is `ok: false`", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProbeResult" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "413": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" },
+          "429": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer", "description": "The startup token (printed at start, or MARKITAI_SERVE_TOKEN). Loopback peers need none." },
+      "tokenQuery": { "type": "apiKey", "in": "query", "name": "token", "description": "The startup token as a query parameter; accepted for compatibility, but it can end up in logs and history, so prefer the header." },
+      "ticketQuery": { "type": "apiKey", "in": "query", "name": "ticket", "description": "A single-use download ticket from POST /api/download-tickets, valid for one GET of the path it was issued for within 60 seconds." }
+    },
+    "parameters": {
+      "JobId": { "name": "job_id", "in": "path", "required": true, "schema": { "type": "string" } },
+      "ItemId": { "name": "item_id", "in": "path", "required": true, "schema": { "type": "string", "examples": ["i1"] } },
+      "SettingsId": { "name": "id", "in": "path", "required": true, "description": "A deployment or provider identity from the settings views", "schema": { "type": "string" } },
+      "ExpectedRevision": { "name": "expected_revision", "in": "query", "required": true, "description": "The revision the change was drafted against", "schema": { "type": "string" } }
+    },
+    "responses": {
+      "Error": { "description": "Refusal", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "Settings": { "description": "The settings after the change", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SettingsView" } } } }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": ["detail", "code", "reason"],
+        "properties": {
+          "detail": { "description": "The service's English message, or an object for settings conflicts that carry `detail.code`", "oneOf": [{ "type": "string" }, { "type": "object" }] },
+          "code": { "type": "string", "enum": ["bad_request", "unauthorized", "forbidden", "not_found", "method_not_allowed", "conflict", "payload_too_large", "invalid_request", "rate_limited", "unavailable", "server_error"] },
+          "reason": {
+            "type": "string",
+            "description": "Stable machine code of the specific cause. The list is the set the service writes; new codes may be added.",
+            "examples": ["ambiguous_legacy_model_name", "archive_too_large", "batch_pending", "config_changed", "config_missing", "config_too_large", "discovery_timeout", "empty_job", "enhancement_failed", "file_not_found", "file_too_large", "form_field_too_large", "history_empty", "host_not_allowed", "internal_error", "invalid_allowed_host", "invalid_json", "invalid_multipart", "invalid_options", "invalid_provider_request", "invalid_retry_body", "invalid_settings_request", "invalid_ticket_path", "invalid_url", "invalid_urls", "item_busy", "item_not_found", "job_id_collision", "job_not_found", "job_not_running", "job_running", "json_required", "llm_unavailable", "method_not_allowed", "no_output", "no_source", "not_retryable", "nothing_to_stop", "origin_not_allowed", "output_conflict", "output_identity_conflict", "persistence_failed", "provider_busy", "provider_unavailable", "remote_url_forbidden", "request_too_large", "result_too_large", "result_unavailable", "route_not_found", "settings_durability_unknown", "settings_entry_missing", "settings_forbidden", "settings_io_failed", "settings_read_only", "shutting_down", "stale_revision", "ticket_invalid", "token_required", "too_many_items", "too_many_tickets", "unknown_preset", "unsupported_url_scheme", "upload_missing"]
+          }
+        }
+      },
+      "Capabilities": {
+        "type": "object",
+        "required": ["version", "llm", "presets", "preset_options", "extras", "limits"],
+        "properties": {
+          "version": { "type": "string" },
+          "llm": { "type": "object", "required": ["routable"], "properties": { "configured": { "type": "boolean" }, "effective": { "type": "boolean" }, "routable": { "type": "boolean" }, "models": { "type": "array", "items": { "type": "string" } } } },
+          "presets": { "type": "array", "items": { "type": "string" } },
+          "preset_options": { "type": "object", "additionalProperties": { "type": "object", "properties": { "llm": { "type": "boolean" }, "ocr": { "type": "boolean" }, "alt": { "type": "boolean" }, "desc": { "type": "boolean" }, "screenshot": { "type": "boolean" } } } },
+          "extras": { "type": "object", "properties": { "browser": { "type": "boolean" }, "svg": { "type": "boolean" } } },
+          "limits": { "type": "object", "properties": { "max_job_items": { "type": "integer" } } }
+        }
+      },
+      "TicketRequest": {
+        "type": "object",
+        "required": ["path"],
+        "additionalProperties": false,
+        "properties": { "path": { "type": "string", "description": "`/api/jobs/{job_id}/files/{relpath}`, `/api/jobs/{job_id}/archive` or `/api/history/archive`, exactly as it will be requested (percent-encoded ASCII, no query)", "examples": ["/api/jobs/0123456789ab/archive"] } }
+      },
+      "Ticket": {
+        "type": "object",
+        "required": ["ticket", "url", "expires_in"],
+        "properties": {
+          "ticket": { "type": "string", "description": "64 hexadecimal characters" },
+          "url": { "type": "string", "description": "The path with `?ticket=`; open it once" },
+          "expires_in": { "type": "integer", "description": "Seconds the ticket stays valid", "examples": [60] }
+        }
+      },
+      "JobOptions": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Omitted or null fields leave the server configuration in charge.",
+        "properties": {
+          "preset": { "type": ["string", "null"], "examples": ["minimal", "standard", "rich"] },
+          "llm": { "type": ["boolean", "null"] },
+          "ocr": { "type": ["boolean", "null"] },
+          "profile": { "type": ["string", "null"], "enum": ["rag", "obsidian", "okf", null] },
+          "alt": { "type": ["boolean", "null"] },
+          "desc": { "type": ["boolean", "null"] },
+          "screenshot": { "type": ["boolean", "null"] },
+          "screenshot_only": { "type": ["boolean", "null"] },
+          "pure": { "type": ["boolean", "null"] },
+          "no_cache": { "type": ["boolean", "null"] },
+          "no_compress": { "type": ["boolean", "null"] },
+          "strategy": { "type": ["string", "null"] },
+          "backend": { "type": ["string", "null"] }
+        }
+      },
+      "CreatedItem": {
+        "type": "object",
+        "required": ["item_id", "name", "kind"],
+        "properties": { "item_id": { "type": "string" }, "name": { "type": "string" }, "kind": { "type": "string", "enum": ["file", "url"] } }
+      },
+      "CreatedJob": {
+        "type": "object",
+        "required": ["job_id", "items"],
+        "properties": { "job_id": { "type": "string" }, "items": { "type": "array", "items": { "$ref": "#/components/schemas/CreatedItem" } } }
+      },
+      "Stopping": {
+        "type": "object",
+        "required": ["job_id", "stopping"],
+        "properties": { "job_id": { "type": "string" }, "stopping": { "type": "integer", "description": "Original items that were waiting when the request arrived" } }
+      },
+      "RetryRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "operation": { "type": "string", "enum": ["retry", "enhance"], "default": "retry" },
+          "options": { "oneOf": [{ "$ref": "#/components/schemas/JobOptions" }, { "type": "null" }], "description": "Replaces the item's last options; omitted or null inherits them" }
+        }
+      },
+      "Pricing": {
+        "type": "object",
+        "required": ["priced_requests", "unpriced_requests", "cost_status"],
+        "properties": {
+          "priced_requests": { "type": "integer" },
+          "unpriced_requests": { "type": "integer" },
+          "cost_status": { "type": "string", "enum": ["complete", "partial", "unknown"] },
+          "incomplete_request_observations": { "type": "integer" },
+          "pricing_snapshots": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "Diagnostics": {
+        "type": "object",
+        "properties": {
+          "last_attempt": {
+            "type": "object",
+            "required": ["operation", "status", "error"],
+            "properties": {
+              "operation": { "type": "string", "enum": ["convert", "retry", "enhance"] },
+              "status": { "type": "string", "enum": ["done", "error"] },
+              "error": { "type": ["string", "null"] },
+              "usage": { "type": "object", "description": "cost_usd, requests, input_tokens, output_tokens and by_model rows with the Pricing counters" }
+            }
+          }
+        }
+      },
+      "Item": {
+        "type": "object",
+        "required": ["item_id", "name", "kind", "status", "error", "output", "output_name", "duration_ms", "finished_at", "cost_usd", "llm_enhanced", "operation", "skipped", "skip_reason", "retryable", "warnings"],
+        "properties": {
+          "item_id": { "type": "string" },
+          "name": { "type": "string" },
+          "kind": { "type": "string", "enum": ["file", "url"] },
+          "status": { "type": "string", "enum": ["queued", "running", "done", "error"] },
+          "error": { "type": ["string", "null"] },
+          "error_code": { "type": "string", "description": "Core conversion code or service cause of a failed item" },
+          "output": { "type": ["string", "null"] },
+          "output_name": { "type": ["string", "null"] },
+          "duration_ms": { "type": ["integer", "null"] },
+          "finished_at": { "type": ["string", "null"] },
+          "cost_usd": { "type": ["number", "null"] },
+          "pricing": { "$ref": "#/components/schemas/Pricing" },
+          "diagnostics": { "$ref": "#/components/schemas/Diagnostics" },
+          "llm_enhanced": { "type": "boolean" },
+          "operation": { "type": "string", "enum": ["convert", "retry", "enhance"] },
+          "skipped": { "type": "boolean" },
+          "skip_reason": { "type": ["string", "null"] },
+          "retryable": { "type": "boolean" },
+          "warnings": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "JobProgress": {
+        "type": "object",
+        "required": ["status", "done", "failed", "total"],
+        "properties": {
+          "status": { "type": "string", "enum": ["running", "done", "error"] },
+          "done": { "type": "integer" },
+          "failed": { "type": "integer" },
+          "total": { "type": "integer" },
+          "persistence_error": { "type": "string" }
+        }
+      },
+      "JobSnapshot": {
+        "allOf": [
+          { "$ref": "#/components/schemas/JobProgress" },
+          {
+            "type": "object",
+            "required": ["job_id", "created_at", "finished_at", "options", "items"],
+            "properties": {
+              "job_id": { "type": "string" },
+              "created_at": { "type": "string" },
+              "finished_at": { "type": ["string", "null"] },
+              "options": { "$ref": "#/components/schemas/JobOptions" },
+              "items": { "type": "array", "items": { "$ref": "#/components/schemas/Item" } }
+            }
+          }
+        ]
+      },
+      "Artifact": {
+        "type": "object",
+        "required": ["relpath", "size"],
+        "properties": { "relpath": { "type": "string" }, "size": { "type": "integer" } }
+      },
+      "ItemResult": {
+        "type": "object",
+        "required": ["name", "variant", "markdown", "artifacts"],
+        "properties": {
+          "name": { "type": "string" },
+          "variant": { "type": "string", "enum": ["base", "llm"] },
+          "markdown": { "type": "string" },
+          "artifacts": { "type": "array", "items": { "$ref": "#/components/schemas/Artifact" } }
+        }
+      },
+      "HistoryEntry": {
+        "type": "object",
+        "required": ["job_id", "created_at", "status", "total", "done", "failed", "skipped", "names_preview", "kinds_preview", "size_bytes", "origin", "retryable"],
+        "properties": {
+          "job_id": { "type": "string" },
+          "created_at": { "type": "string" },
+          "finished_at": { "type": ["string", "null"] },
+          "status": { "type": "string", "enum": ["running", "done", "error"] },
+          "total": { "type": "integer" },
+          "done": { "type": "integer" },
+          "failed": { "type": "integer" },
+          "skipped": { "type": "integer" },
+          "llm_enhanced": { "type": "integer" },
+          "cost_usd": { "type": ["number", "null"] },
+          "pricing": { "$ref": "#/components/schemas/Pricing" },
+          "names_preview": { "type": "array", "items": { "type": "string" } },
+          "kinds_preview": { "type": "array", "items": { "type": "string", "enum": ["file", "url"] } },
+          "duration_ms": { "type": ["integer", "null"] },
+          "size_bytes": { "type": "integer" },
+          "origin": { "type": "string", "enum": ["web", "cli"] },
+          "retryable": { "type": "boolean" }
+        }
+      },
+      "Deployment": {
+        "type": "object",
+        "required": ["deployment_id", "routing_group", "model", "weight", "api_key_configured", "api_base_configured", "api_base", "persisted"],
+        "properties": {
+          "deployment_id": { "type": "string" },
+          "routing_group": { "type": "string" },
+          "model": { "type": "string" },
+          "weight": { "type": "integer" },
+          "api_key_configured": { "type": "boolean" },
+          "api_base_configured": { "type": "boolean" },
+          "api_base": { "type": ["string", "null"], "description": "The endpoint's HTTP(S) origin only" },
+          "persisted": { "type": "boolean" }
+        }
+      },
+      "SettingsView": {
+        "type": "object",
+        "required": ["configured", "routable", "source", "config_path", "config_origin", "revision", "deployments", "detected"],
+        "properties": {
+          "configured": { "type": "boolean" },
+          "routable": { "type": "boolean" },
+          "source": { "type": "string", "enum": ["config", "detected", "none"] },
+          "config_path": { "type": "string" },
+          "config_origin": { "type": "string" },
+          "revision": { "type": "string" },
+          "deployments": { "type": "array", "items": { "$ref": "#/components/schemas/Deployment" } },
+          "detected": { "type": "array", "items": { "$ref": "#/components/schemas/Deployment" } }
+        }
+      },
+      "ProviderCard": {
+        "type": "object",
+        "required": ["id", "provider", "label", "kind", "status", "source", "supports_discovery"],
+        "properties": {
+          "id": { "type": "string" },
+          "provider_id": { "type": "string" },
+          "deployment_id": { "type": "string" },
+          "provider": { "type": "string", "description": "A model prefix (`openai`, `groq`, …) or `custom` for an OpenAI-compatible endpoint" },
+          "label": { "type": "string" },
+          "kind": { "type": "string", "enum": ["environment", "configured", "common"] },
+          "status": { "type": "string", "examples": ["ready", "needs_credentials", "unknown", "disabled"] },
+          "source": { "type": "string", "description": "The environment variable, `config` or `built_in`" },
+          "credential": { "type": "string" },
+          "api_key_configured": { "type": "boolean" },
+          "api_base_configured": { "type": "boolean" },
+          "api_base": { "type": ["string", "null"] },
+          "default_base": { "type": ["string", "null"], "description": "The provider's documented endpoint; null when every server has its own" },
+          "key_variable": { "type": ["string", "null"], "description": "The environment variable read for the key" },
+          "key_optional": { "type": "boolean", "description": "A local server that works without a key" },
+          "model_count": { "type": "integer" },
+          "supports_discovery": { "type": "boolean", "description": "False when the provider has no model list endpoint: enter model IDs by hand" }
+        }
+      },
+      "ProviderList": {
+        "type": "object",
+        "required": ["providers"],
+        "properties": { "providers": { "type": "array", "items": { "$ref": "#/components/schemas/ProviderCard" } } }
+      },
+      "ProviderCredentials": {
+        "type": "object",
+        "required": ["api_key", "api_base", "api_base_placeholder"],
+        "properties": {
+          "api_key": { "type": ["string", "null"] },
+          "api_base": { "type": ["string", "null"] },
+          "api_base_placeholder": { "type": ["string", "null"] }
+        }
+      },
+      "NewDeployment": {
+        "type": "object",
+        "required": ["model_name", "model"],
+        "additionalProperties": false,
+        "properties": {
+          "model_name": { "type": "string", "description": "Routing group" },
+          "model": { "type": "string", "examples": ["openai/gpt-5.6-luna"] },
+          "provider": { "type": "string" },
+          "api_key": { "type": "string", "description": "A literal key or `env:NAME`" },
+          "api_base": { "type": "string" },
+          "weight": { "type": "integer", "minimum": 0, "default": 1 },
+          "credential_provider_id": { "type": "string" },
+          "credential_deployment_id": { "type": "string" },
+          "expected_revision": { "type": "string" }
+        }
+      },
+      "DeploymentBatch": {
+        "type": "object",
+        "required": ["expected_revision", "deployments"],
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": { "type": "string" },
+          "deployments": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "$ref": "#/components/schemas/NewDeployment" } }
+        }
+      },
+      "DeploymentPatch": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Omitted fields are kept; null clears api_key or api_base.",
+        "properties": {
+          "model_name": { "type": "string" },
+          "model": { "type": "string" },
+          "api_key": { "type": ["string", "null"] },
+          "api_base": { "type": ["string", "null"] },
+          "weight": { "type": "integer", "minimum": 0 },
+          "expected_revision": { "type": "string" }
+        }
+      },
+      "ProviderPatch": {
+        "type": "object",
+        "required": ["expected_revision"],
+        "additionalProperties": false,
+        "properties": {
+          "api_key": { "type": ["string", "null"] },
+          "api_base": { "type": ["string", "null"] },
+          "expected_revision": { "type": "string" }
+        }
+      },
+      "DetectedModel": {
+        "type": "object",
+        "required": ["provider", "model", "label", "requires_api_key"],
+        "properties": {
+          "provider": { "type": "string" },
+          "model": { "type": "string" },
+          "label": { "type": "string" },
+          "requires_api_key": { "type": "boolean" }
+        }
+      },
+      "DiscoveryRequest": {
+        "type": "object",
+        "required": ["provider"],
+        "additionalProperties": false,
+        "properties": {
+          "provider": { "type": "string" },
+          "provider_id": { "type": "string", "description": "Use a saved connection's credentials" },
+          "deployment_id": { "type": "string", "description": "Use a saved deployment's credentials" },
+          "api_key": { "type": "string" },
+          "api_base": { "type": "string" },
+          "refresh": { "type": "boolean" }
+        }
+      },
+      "DiscoveryResult": {
+        "type": "object",
+        "required": ["provider", "status", "models"],
+        "properties": {
+          "provider": { "type": "string" },
+          "status": { "type": "string", "enum": ["ok", "partial", "unavailable"] },
+          "source": { "type": "string" },
+          "authoritative": { "type": "boolean" },
+          "cached": { "type": "boolean" },
+          "stale": { "type": "boolean" },
+          "models": { "type": "array", "items": { "type": "object", "required": ["model", "label", "supports_vision"], "properties": { "model": { "type": "string" }, "label": { "type": "string" }, "supports_vision": { "type": "boolean" } } } },
+          "detail": { "type": "string" }
+        }
+      },
+      "ProbeRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Name a saved deployment, or a model with optional credentials.",
+        "properties": {
+          "deployment_id": { "type": "string" },
+          "model_name": { "type": "string" },
+          "model": { "type": "string" },
+          "api_key": { "type": "string" },
+          "api_base": { "type": "string" }
+        }
+      },
+      "ProbeResult": {
+        "type": "object",
+        "required": ["ok", "detail"],
+        "properties": { "ok": { "type": "boolean" }, "detail": { "type": "string" } }
+      }
+    }
+  }
+}

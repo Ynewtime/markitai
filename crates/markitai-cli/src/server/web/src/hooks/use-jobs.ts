@@ -1,16 +1,18 @@
 // Session job state. Every submission creates a job; the rows of all of them
-// form one ledger. Each running job has one EventSource; the service replays a
-// snapshot on every (re)connection, so merges are idempotent.
+// form one ledger. Each running job has one event stream (read with fetch, so
+// it carries the header token); the service replays a snapshot on every
+// (re)connection, so merges are idempotent.
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
   createJob,
   deleteItem as deleteJobItem,
-  eventsURL,
+  eventsPath,
   fetchSnapshot,
   retryItem,
   stopJob,
   type UploadHooks,
 } from "../api/client.ts";
+import { EventStream, type StreamEvent } from "../api/events.ts";
 import type { CreateJobResponse, ItemPayload, JobOptions, JobProgress, JobSnapshot } from "../api/types.ts";
 import { askNotifyPermission, notifyDone } from "../lib/notify.ts";
 import { emptyOptions, publicOptions } from "../lib/options.ts";
@@ -84,7 +86,7 @@ export function useJobs(notifyText: (done: number, failed: number) => string, co
   const [jobs, setJobs] = useState<Record<string, SessionJob>>({});
   const [submitError, setSubmitError] = useState<unknown>(null);
   const [restoreFailed, setRestoreFailed] = useState<Set<string>>(() => new Set());
-  const sources = useRef(new Map<string, EventSource>());
+  const sources = useRef(new Map<string, EventStream>());
   const notified = useRef(new Set<string>());
   const itemsRef = useRef(items);
   itemsRef.current = items;
@@ -124,11 +126,11 @@ export function useJobs(notifyText: (done: number, failed: number) => string, co
   const listen = useCallback(
     (jobId: string) => {
       close(jobId);
-      const source = new EventSource(eventsURL(jobId));
+      const source = new EventStream(eventsPath(jobId));
       sources.current.set(jobId, source);
-      const parse = <T,>(event: Event): T | null => {
+      const parse = <T,>(event: StreamEvent): T | null => {
         try {
-          return JSON.parse((event as MessageEvent<string>).data) as T;
+          return JSON.parse(event.data) as T;
         } catch {
           return null;
         }
@@ -165,7 +167,7 @@ export function useJobs(notifyText: (done: number, failed: number) => string, co
         requestCheck();
         // While CONNECTING the browser retries by itself and the service replays a
         // snapshot. CLOSED is final: reconcile by hand or rows would spin forever.
-        if (source.readyState !== EventSource.CLOSED) return;
+        if (source.readyState !== EventStream.CLOSED) return;
         const lost = () => {
           const message = textRef.current.connLost();
           setItems((previous) =>

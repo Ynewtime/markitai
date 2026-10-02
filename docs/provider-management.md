@@ -8,7 +8,11 @@ release their lock. Requests carry private snapshots; discovery and probes do
 not save credentials or change running conversions.
 
 Discovery supports OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, Azure,
-Ollama and custom OpenAI-compatible endpoints. The subscription providers
+Ollama, custom OpenAI-compatible endpoints and every OpenAI-compatible prefix of
+the routing table (`docs/llm.md`) through `GET <base>/models`, Together AI's bare
+array included; Perplexity, Z.ai and Fireworks AI answer `unavailable` with
+`source: "manual"` without a request, since they document no OpenAI-compatible
+model list, and their model IDs are typed by hand. The subscription providers
 `copilot` and `claude-agent` ask their installed official runtime for its model
 list on every request (never cached, because a stored login can change);
 `chatgpt` returns the adapter's fixed `gpt-5.5` allowlist marked

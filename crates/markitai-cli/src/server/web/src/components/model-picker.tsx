@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Deployment, ModelCandidate } from "../api/types.ts";
 import type { Dict } from "../i18n/index.ts";
+import { manualModelId } from "../lib/models.ts";
 
 export const MAX_MODELS = 50;
 
@@ -21,8 +22,11 @@ export function ModelPicker({
   onGroup,
   onWeight,
   onSelected,
+  manualOnly = false,
 }: {
   t: Dict;
+  /** The provider lists no models: manual entry is open and explained. */
+  manualOnly?: boolean;
   provider: string;
   candidates: ModelCandidate[];
   deployments: Deployment[];
@@ -84,9 +88,8 @@ export function ModelPicker({
     onSelected(next);
   };
   const addManual = () => {
-    let model = manual.trim();
+    const model = manualModelId(provider, manual);
     if (!model) return;
-    if (!model.includes("/")) model = `${provider === "custom" ? "openai" : provider}/${model}`;
     setAdded((previous) => [...previous.filter((candidate) => candidate.model !== model), { model, label: model.split("/").slice(1).join("/") || model, supports_vision: false }]);
     const next = new Set(selected);
     if (next.size < MAX_MODELS) next.add(model);
@@ -96,7 +99,8 @@ export function ModelPicker({
 
   return (
     <div class="picker">
-      <div class="picker-tools">
+      {/* Nothing to search or select in bulk when every ID is typed by hand. */}
+      <div class="picker-tools" hidden={manualOnly}>
         <input type="search" value={query} placeholder={t.searchModels} aria-label={t.searchModels} onInput={(event) => setQuery(event.currentTarget.value)} />
         <label class="check-line">
           <input ref={selectAll} type="checkbox" checked={allChosen} disabled={!selectable.length} onChange={toggleVisible} />
@@ -123,9 +127,9 @@ export function ModelPicker({
             </label>
           );
         })}
-        {visible.length === 0 && <p class="picker-note">{t.noModelsFound}</p>}
+        {visible.length === 0 && <p class="picker-note">{manualOnly && !needle ? t.manualModelsOnly : t.noModelsFound}</p>}
       </div>
-      <details class="disclosure">
+      <details class="disclosure" open={manualOnly}>
         <summary>{t.manualModelToggle}</summary>
         <div class="manual-row">
           <input

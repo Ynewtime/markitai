@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ApiError, isRevisionConflict, NetworkError, throttle, upload } from "./client.ts";
-import { bearer, hasToken, initToken, serviceURL, setToken, takeToken, withToken } from "./token.ts";
+import { download } from "../lib/download.ts";
+import { ApiError, downloadTicket, eventsPath, filePath, isRevisionConflict, NetworkError, throttle, upload } from "./client.ts";
+import { bearer, hasToken, initToken, serviceURL, setToken, takeToken } from "./token.ts";
 
 const ORIGIN = "http://127.0.0.1:3600";
 
@@ -48,16 +49,58 @@ test("blocked storage keeps a memory-only token", () => {
   setToken("", blocked);
 });
 
-test("tokens stay on this service's API URLs", () => {
-  setToken("t0", memoryStore());
-  assert.equal(withToken("/api/jobs/a b/events", ORIGIN), "/api/jobs/a%20b/events?token=t0");
-  assert.equal(withToken("/api/x?y=1", ORIGIN), "/api/x?y=1&token=t0");
-  assert.throws(() => withToken("/ui/app.js", ORIGIN), /restricted/);
-  assert.throws(() => withToken("https://evil.example/api/x", ORIGIN), /External/);
+test("requests stay on this service and the token never enters a URL", async () => {
   assert.throws(() => serviceURL("//evil.example/api", ORIGIN), /External/);
   assert.throws(() => serviceURL("http://user:pw@127.0.0.1:3600/api", ORIGIN), /External/);
-  setToken("", memoryStore());
-  assert.equal(withToken("/api/x", ORIGIN), "/api/x");
+  assert.throws(() => serviceURL("https://evil.example/api/x", ORIGIN), /External/);
+  assert.equal(serviceURL("/api/x?y=1", ORIGIN).href, `${ORIGIN}/api/x?y=1`);
+  assert.equal(eventsPath("a b"), "/api/jobs/a%20b/events");
+  assert.equal(filePath("j1", "assets/a b#.png"), "/api/jobs/j1/files/assets/a%20b%23.png");
+
+  setToken("t0", memoryStore());
+  const original = globalThis.fetch;
+  const sent: { url: string; init: RequestInit }[] = [];
+  let answer = { url: "/api/jobs/j1/archive?ticket=abc", ticket: "abc", expires_in: 60 };
+  globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+    sent.push({ url: String(url), init: init ?? {} });
+    return new Response(JSON.stringify(answer), { status: 201, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    assert.equal(await downloadTicket("/api/jobs/j1/archive"), "/api/jobs/j1/archive?ticket=abc");
+    const [request] = sent;
+    assert.ok(request && request.url.endsWith("/api/download-tickets") && !request.url.includes("t0"));
+    assert.equal(request.init.method, "POST");
+    assert.equal(new Headers(request.init.headers).get("authorization"), "Bearer t0");
+    assert.deepEqual(JSON.parse(String(request.init.body)), { path: "/api/jobs/j1/archive" });
+    // A ticket for another path, another origin or with other parameters is refused.
+    for (const url of ["/api/history/archive?ticket=abc", "https://evil.example/api/jobs/j1/archive?ticket=abc", "/api/jobs/j1/archive?ticket=abc&token=t0"]) {
+      answer = { url, ticket: "abc", expires_in: 60 };
+      await assert.rejects(downloadTicket("/api/jobs/j1/archive"), /ticket|External/i, url);
+    }
+  } finally {
+    globalThis.fetch = original;
+    setToken("", memoryStore());
+  }
+});
+
+test("archives are opened by the browser through a ticket, other files are read as Blobs", async () => {
+  const saved: string[] = [];
+  const deps = {
+    ticket: async (path: string) => `${path}?ticket=x`,
+    blob: async (path: string) => ({ blob: new Blob([path]), name: path.endsWith(".md") ? "server.md" : null }),
+    saveURL: (url: string, name: string) => void saved.push(`url ${url} ${name}`),
+    saveBlob: (_blob: Blob, name: string) => void saved.push(`blob ${name}`),
+  };
+  await download("/api/history/archive", "markitai-history.zip", true, { ...deps, tokenHeld: () => true });
+  await download("/api/history/archive", "markitai-history.zip", true, { ...deps, tokenHeld: () => false });
+  await download("/api/jobs/j/files/a.md", "a.md", false, { ...deps, tokenHeld: () => true });
+  await download("/api/jobs/j/files/b.png", "b.png", false, { ...deps, tokenHeld: () => true });
+  assert.deepEqual(saved, [
+    "url /api/history/archive?ticket=x markitai-history.zip",
+    "url /api/history/archive markitai-history.zip",
+    "blob server.md",
+    "blob b.png",
+  ]);
 });
 
 test("a refusal keeps its reason, structured code, wording and current revision", () => {

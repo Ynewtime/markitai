@@ -59,6 +59,7 @@ test("every reason the Rust service sends and every core error code has localize
     "rerun.rs",
     "jobs.rs",
     "providers.rs",
+    "tickets.rs",
     "settings.rs",
     ...readdirSync(new URL("settings/", server)).map((name) => `settings/${name}`),
   ]

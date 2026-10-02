@@ -4,7 +4,8 @@ import { cliCommand, shellQuote } from "./cli.ts";
 import { compareLines } from "./diff.ts";
 import { isHiddenName, selectFolderFiles, walkEntries } from "./files.ts";
 import { countWords, fmtBytes, fmtCost, fmtDateTime, fmtDur, splitName, timestampMs } from "./format.ts";
-import { artifactPath, markdownPair, splitFrontmatter } from "./markdown.ts";
+import { artifactPath, loadArtifactImages, markdownPair, rewrite, splitFrontmatter } from "./markdown.ts";
+import { manualModelId } from "./models.ts";
 import {
   ADVANCED_DEFAULTS,
   applyPreset,
@@ -185,4 +186,109 @@ test("dropped folders are walked in order, in batches, bounded and with unreadab
   assert.deepEqual([walked.hidden, walked.unreadable, walked.truncated], [1, 1, false]);
   const limited = await walkEntries([tree as never], { limit: 2 });
   assert.deepEqual([limited.files.length, limited.truncated], [2, true]);
+});
+
+test("a hand-typed model ID routes to the page's provider, slashes and all", () => {
+  assert.equal(manualModelId("groq", " llama-3.3 "), "groq/llama-3.3");
+  assert.equal(manualModelId("together_ai", "meta-llama/Llama-3-70b"), "together_ai/meta-llama/Llama-3-70b");
+  assert.equal(manualModelId("openrouter", "google/gemini-x"), "openrouter/google/gemini-x");
+  assert.equal(manualModelId("openrouter", "openrouter/google/gemini-x"), "openrouter/google/gemini-x");
+  assert.equal(manualModelId("custom", "local-model"), "openai/local-model");
+  assert.equal(manualModelId("custom", "openai/local-model"), "openai/local-model");
+  assert.equal(manualModelId("azure", "my-deployment"), "azure/my-deployment");
+  assert.equal(manualModelId("perplexity", "  "), "");
+});
+
+function fakeElement(tag: string, attributes: Record<string, string> = {}) {
+  const values = new Map(Object.entries(attributes));
+  const element = {
+    tag,
+    tabIndex: -1,
+    className: "",
+    textContent: "",
+    replacedBy: null as unknown,
+    getAttribute: (name: string) => values.get(name) ?? null,
+    setAttribute: (name: string, value: string) => void values.set(name, value),
+    removeAttribute: (name: string) => void values.delete(name),
+    replaceWith(node: unknown) {
+      element.replacedBy = node;
+    },
+    append: () => undefined,
+  };
+  return element;
+}
+
+test("rendered images and file links carry no token; with one, images wait to be fetched", () => {
+  const render = (imageURL: (path: string) => string | null) => {
+    const image = fakeElement("img", { src: "assets/a.png", alt: "" });
+    const external = fakeElement("img", { src: "https://example.com/x.png" });
+    const link = fakeElement("a", { href: "assets/a.png" });
+    const fragment = {
+      ownerDocument: { createElement: (tag: string) => fakeElement(tag) },
+      querySelectorAll: (selector: string) => (selector === "img" ? [image, external] : selector === "a" ? [link] : []),
+    };
+    rewrite(fragment as never, {
+      documentPath: "doc.md",
+      artifacts: [{ relpath: "assets/a.png", size: 1 }],
+      imageURL,
+      fileURL: (path) => `/api/jobs/j/files/${path}`,
+      placeholder: (alt) => `[${alt}]`,
+      fallbackAlt: "figure",
+      tableLabel: "table",
+      codeLabel: "code",
+    });
+    return { image, external, link };
+  };
+  const plain = render((path) => `/api/jobs/j/files/${path}`);
+  assert.equal(plain.image.getAttribute("src"), "/api/jobs/j/files/assets/a.png");
+  assert.equal(plain.image.getAttribute("data-artifact-src"), null);
+  assert.ok(plain.external.replacedBy, "external images stay blocked");
+  assert.equal(plain.link.getAttribute("href"), "/api/jobs/j/files/assets/a.png");
+  assert.equal(plain.link.getAttribute("data-artifact"), "assets/a.png");
+  const held = render(() => null);
+  assert.equal(held.image.getAttribute("src"), null);
+  assert.equal(held.image.getAttribute("data-artifact-src"), "assets/a.png");
+  assert.equal(held.image.getAttribute("alt"), "figure");
+});
+
+test("waiting images are fetched a few at a time, shown as object URLs and released", async () => {
+  const images = ["a.png", "b.png", "bad.png", "c.png", "d.png", "e.png"].map((name) => fakeElement("img", { "data-artifact-src": name }));
+  const root = { querySelectorAll: () => images };
+  let active = 0;
+  let peak = 0;
+  const created: string[] = [];
+  const revoked: string[] = [];
+  let failed = 0;
+  const loads = loadArtifactImages(
+    root as never,
+    async (path) => {
+      active++;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      active--;
+      if (path === "bad.png") throw new Error("401");
+      return new Blob([path]);
+    },
+    () => void failed++,
+    {
+      limit: 2,
+      objectURL: {
+        createObjectURL: () => {
+          const url = `blob:${created.length}`;
+          created.push(url);
+          return url;
+        },
+        revokeObjectURL: (url: string) => void revoked.push(url),
+      },
+    },
+  );
+  await loads.done;
+  assert.equal(peak, 2);
+  assert.equal(created.length, 5);
+  assert.equal(failed, 1);
+  assert.ok(images.every((image) => image.getAttribute("data-artifact-src") === null));
+  assert.equal(images[0]?.getAttribute("src"), "blob:0");
+  assert.equal(images[2]?.getAttribute("src"), null);
+  loads.dispose();
+  assert.deepEqual(revoked, created);
 });

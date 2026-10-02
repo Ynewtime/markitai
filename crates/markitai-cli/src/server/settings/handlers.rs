@@ -4,36 +4,28 @@ use axum::{
     Json, Router,
     extract::{Path, Query, State as ExtractState, rejection::JsonRejection},
     http::StatusCode,
-    routing::{get, patch, post, put},
 };
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
+api_routes! {
+    get "/api/settings/llm" => view;
+    get "/api/settings/llm/providers" => providers;
+    get "/api/settings/llm/providers/{id}/credentials" => credentials;
+    post "/api/settings/llm/models" => add;
+    put "/api/settings/llm/models/{id}" => update_legacy;
+    delete "/api/settings/llm/models/{id}" => delete_legacy;
+    post "/api/settings/llm/deployments/batch" => batch;
+    patch "/api/settings/llm/deployments/{id}" => update;
+    delete "/api/settings/llm/deployments/{id}" => delete;
+    patch "/api/settings/llm/providers/{id}" => update_provider;
+    delete "/api/settings/llm/providers/{id}" => delete_provider;
+    post "/api/settings/llm/config/open" => open;
+}
+
 pub(in crate::server) fn routes() -> Router<Arc<State>> {
-    Router::new()
-        .route("/api/settings/llm", get(view))
-        .route("/api/settings/llm/providers", get(providers))
-        .route(
-            "/api/settings/llm/providers/{id}/credentials",
-            get(credentials),
-        )
-        .route("/api/settings/llm/models", post(add))
-        .route(
-            "/api/settings/llm/models/{id}",
-            put(update_legacy).delete(delete_legacy),
-        )
-        .route("/api/settings/llm/deployments/batch", post(batch))
-        .route(
-            "/api/settings/llm/deployments/{id}",
-            patch(update).delete(delete),
-        )
-        .route(
-            "/api/settings/llm/providers/{id}",
-            patch(update_provider).delete(delete_provider),
-        )
-        .route("/api/settings/llm/config/open", post(open))
-        .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
+    api_routes().layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
 }
 fn body(value: Result<Json<Value>, JsonRejection>) -> ApiResult<Value> {
     value

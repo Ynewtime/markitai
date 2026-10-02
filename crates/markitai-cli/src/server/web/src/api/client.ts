@@ -1,7 +1,7 @@
 // Every request to the service goes through here: same origin only, redirects
 // refused, Bearer token when one is held, and connectivity reported as window
 // events (`markitai:offline`, `markitai:online`, `markitai:unauthorized`).
-import { bearer, serviceURL, withToken } from "./token.ts";
+import { bearer, serviceURL } from "./token.ts";
 import type {
   Capabilities,
   CreateJobResponse,
@@ -257,8 +257,16 @@ export function throttle(
 const enc = encodeURIComponent;
 export const encodePath = (relpath: string): string => relpath.split("/").map(enc).join("/");
 export const filePath = (job: string, relpath: string): string => `/api/jobs/${enc(job)}/files/${encodePath(relpath)}`;
-export const eventsURL = (job: string): string => withToken(`/api/jobs/${enc(job)}/events`);
-export const fileURL = (job: string, relpath: string): string => withToken(filePath(job, relpath));
+export const eventsPath = (job: string): string => `/api/jobs/${enc(job)}/events`;
+
+/** A single-use URL, valid for one minute, for a download the browser opens
+ * itself: the ticket stands in for the token, which never enters a URL. */
+export async function downloadTicket(path: string): Promise<string> {
+  const { url } = await json<{ url: string }>("/api/download-tickets", { method: "POST", body: { path } });
+  const parsed = serviceURL(url);
+  if (parsed.pathname !== path || [...parsed.searchParams.keys()].join() !== "ticket") throw new Error("Unexpected ticket URL");
+  return parsed.pathname + parsed.search;
+}
 
 export const fetchCapabilities = () => json<Capabilities>("/api/capabilities");
 

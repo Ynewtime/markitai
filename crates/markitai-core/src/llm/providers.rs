@@ -219,6 +219,30 @@ static PROVIDERS: [Provider; 24] = [
     },
 ];
 
+/// What provider settings need to know about one HTTP prefix, without the
+/// request protocol itself.
+pub(crate) struct Listing {
+    pub prefix: &'static str,
+    pub base: Option<&'static str>,
+    pub base_vars: &'static [&'static str],
+    pub key_vars: &'static [&'static str],
+    pub key_optional: bool,
+    /// The provider speaks OpenAI Chat Completions (and may list `/models`).
+    pub openai_compatible: bool,
+}
+
+/// Every HTTP prefix of the table, in table order.
+pub(crate) fn listings() -> impl Iterator<Item = Listing> {
+    PROVIDERS.iter().map(|provider| Listing {
+        prefix: provider.prefix,
+        base: provider.base,
+        base_vars: provider.base_vars,
+        key_vars: provider.key_vars,
+        key_optional: provider.key_optional,
+        openai_compatible: provider.protocol == Protocol::Chat,
+    })
+}
+
 /// Prefixes served by an installed official runtime instead of HTTP.
 pub(super) const SUBSCRIPTIONS: [&str; 3] = ["copilot", "claude-agent", "chatgpt"];
 

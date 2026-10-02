@@ -8,7 +8,6 @@ use axum::{
     Json, Router,
     extract::{Request, State as ExtractState},
     response::{IntoResponse, Response},
-    routing::{get, post},
 };
 use serde_json::Value;
 use std::{
@@ -17,11 +16,14 @@ use std::{
 };
 use tokio::sync::Semaphore;
 
+api_routes! {
+    get "/api/settings/llm/detected" => detected;
+    post "/api/settings/llm/model-discovery" => discover;
+    post "/api/settings/llm/test" => probe;
+}
+
 pub(super) fn routes() -> Router<Arc<State>> {
-    Router::new()
-        .route("/api/settings/llm/detected", get(detected))
-        .route("/api/settings/llm/model-discovery", post(discover))
-        .route("/api/settings/llm/test", post(probe))
+    api_routes()
 }
 fn trusted(request: &Request) -> ApiResult<()> {
     if request

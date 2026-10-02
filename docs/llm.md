@@ -247,9 +247,16 @@ authentication; neither is implemented. Gemini itself is reachable directly as
 
 These tables describe implemented request shapes, not live compatibility tests
 against every vendor. No provider network call is required by the test suite.
-`markitai doctor` accepts every prefix of this build. The model discovery and
-connection check of `serve` (provider management) still list only the original
-providers.
+`markitai doctor` accepts every prefix of this build, and so do `markitai init`'s
+guided and interactive model prompts. The browser workbench of `serve` offers
+every prefix of the table above as a provider card with its default base URL and
+first key variable; model discovery lists a provider's models through
+`GET <base>/models` with the key as Bearer (Together AI's bare-array answer
+included), using the base variable when no `api_base` is given. Perplexity, Z.ai
+and Fireworks AI document no OpenAI-compatible model list (checked 2026-10-02:
+Fireworks lists models only through its account API), so discovery answers
+`unavailable` with `source: "manual"` without a request, and their model IDs are
+entered by hand. The connection check works for every prefix.
 
 Deployment `api_key` and `api_base` take precedence. A saved provider selected
 by `model_info.provider_id` can supply missing deployment credentials and base

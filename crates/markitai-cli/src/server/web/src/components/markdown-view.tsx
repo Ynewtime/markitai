@@ -2,14 +2,15 @@
 // and Files tabs; a Base | LLM switch for paired results; PDF export and the
 // Markdown download. Rendering is sanitized and pinned to the result's files.
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { fetchResult, fetchText, filePath, fileURL } from "../api/client.ts";
+import { fetchBlob, fetchResult, fetchText, filePath } from "../api/client.ts";
+import { hasToken } from "../api/token.ts";
 import type { ItemResult } from "../api/types.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { copyText } from "../lib/clipboard.ts";
 import { compareLines, type Comparison } from "../lib/diff.ts";
 import { interceptDownload } from "../lib/download.ts";
 import { basename, countWords, fmtBytes, fmtDate, utf8Bytes } from "../lib/format.ts";
-import { markdownPair, renderMarkdown, splitFrontmatter } from "../lib/markdown.ts";
+import { type ImageLoads, loadArtifactImages, markdownPair, renderMarkdown, splitFrontmatter } from "../lib/markdown.ts";
 import { printDocument, type PrintJob } from "../lib/print.ts";
 import { Icon, Logo } from "./icons.tsx";
 import { PdfSettings, readFurniture, storeFurniture } from "./pdf-settings.tsx";
@@ -61,6 +62,7 @@ export function MarkdownView({
   const [renderError, setRenderError] = useState<unknown>(null);
   const [printError, setPrintError] = useState<string | null>(null);
   const body = useRef<HTMLDivElement>(null);
+  const images = useRef<ImageLoads | null>(null);
   const printable = useRef<HTMLDivElement>(null);
   const printing = useRef<PrintJob | null>(null);
   const tabs = useRef<Record<Tab, HTMLButtonElement | null>>({ rendered: null, source: null, diff: null, files: null });
@@ -125,22 +127,41 @@ export function MarkdownView({
     const target = body.current;
     if (!target || split === null || !result) return;
     let stale = false;
+    let loads: ImageLoads | null = null;
     setRenderError(null);
+    const placeholder = (alt: string) => t.imagePlaceholder(alt || t.imageUnavailable);
     renderMarkdown(split.body, {
       documentPath,
       artifacts: result.artifacts,
-      imageURL: (path) => fileURL(item.jobId, path),
-      fileURL: (path) => fileURL(item.jobId, path),
-      placeholder: (alt) => t.imagePlaceholder(alt || t.imageUnavailable),
+      // With a token, images are fetched with the header instead of a tokened URL.
+      imageURL: (path) => (hasToken() ? null : filePath(item.jobId, path)),
+      fileURL: (path) => filePath(item.jobId, path),
+      placeholder,
       fallbackAlt: t.figureFrom(item.name),
       tableLabel: t.tableAria,
       codeLabel: t.codeAria,
     }).then(
-      (fragment) => !stale && target.replaceChildren(fragment),
+      (fragment) => {
+        if (stale) return;
+        target.replaceChildren(fragment);
+        loads = loadArtifactImages(
+          target,
+          (path) => fetchBlob(filePath(item.jobId, path)).then((file) => file.blob),
+          (image) => {
+            const span = document.createElement("span");
+            span.className = "img-blocked";
+            span.textContent = placeholder(image.getAttribute("alt") ?? "");
+            image.replaceWith(span);
+          },
+        );
+        images.current = loads;
+      },
       (error: unknown) => !stale && setRenderError(error),
     );
     return () => {
       stale = true;
+      loads?.dispose();
+      if (images.current === loads) images.current = null;
     };
   }, [split, documentPath, result, item.jobId, item.name, t]);
 
@@ -212,11 +233,22 @@ export function MarkdownView({
     <p class={error ? "pane-note line-error" : "pane-note"}>{error ? describe(error).text : t.loading}</p>
   );
 
-  const exportPdf = () => {
+  // A link to one of the result's files: with a token, downloaded with the header.
+  const onDocumentLink = (event: MouseEvent) => {
+    const link = (event.target as Element | null)?.closest?.("a[data-artifact]");
+    const path = link?.getAttribute("data-artifact");
+    if (!path) return;
+    interceptDownload(event, filePath(item.jobId, path), basename(path), (error) => setPrintError(describe(error).text));
+  };
+
+  const exportPdf = async () => {
     if (!printable.current || markdown === null) return;
     printing.current?.cancel();
     setPrintError(null);
     const path = documentPath;
+    // Images fetched with the header token must be in place before the clone.
+    await images.current?.done;
+    if (!printable.current || path !== currentPath.current) return;
     const job = printDocument({
       source: printable.current,
       title: docName,
@@ -268,17 +300,18 @@ export function MarkdownView({
               storeFurniture(next);
             }}
           />
-          <button type="button" class="btn btn-ghost btn-sm" disabled={markdown === null} title={t.exportPdf} aria-label={t.exportPdf} onClick={exportPdf}>
+          <button type="button" class="btn btn-ghost btn-sm" disabled={markdown === null} title={t.exportPdf} aria-label={t.exportPdf} onClick={() => void exportPdf()}>
             <Icon name="FilePdf" size={13} />
             <span class="btn-label">{t.exportPdf}</span>
           </button>
           {documentPath && (
             <a
               class="btn btn-ghost btn-sm"
-              href={fileURL(item.jobId, documentPath)}
+              href={filePath(item.jobId, documentPath)}
               download={basename(documentPath)}
               aria-label={t.downloadMd}
               onClick={(event) => interceptDownload(event, filePath(item.jobId, documentPath), basename(documentPath), (error) => setPrintError(describe(error).text))}
+              onAuxClick={(event) => interceptDownload(event, filePath(item.jobId, documentPath), basename(documentPath), (error) => setPrintError(describe(error).text))}
             >
               <Icon name="DownloadSimple" size={13} />
               <span class="btn-label">{t.downloadMd}</span>
@@ -310,7 +343,7 @@ export function MarkdownView({
                 {date !== null && ` · ${date}`}
                 {versionLabel !== null && ` · ${versionLabel}`}
               </p>
-              <div ref={body} class="doc-body" />
+              <div ref={body} class="doc-body" onClick={onDocumentLink} onAuxClick={onDocumentLink} />
             </div>
             <div class="print-foot" aria-hidden="true">
               <span>{t.pdfPreparedBy}</span>
@@ -405,11 +438,14 @@ export function MarkdownView({
                 <span class="file-size">{fmtBytes(artifact.size)}</span>
                 <a
                   class="row-icon"
-                  href={fileURL(item.jobId, artifact.relpath)}
+                  href={filePath(item.jobId, artifact.relpath)}
                   download={basename(artifact.relpath)}
                   aria-label={t.downloadFile(artifact.relpath)}
                   title={artifact.relpath}
                   onClick={(event) =>
+                    interceptDownload(event, filePath(item.jobId, artifact.relpath), basename(artifact.relpath), (error) => setPrintError(describe(error).text))
+                  }
+                  onAuxClick={(event) =>
                     interceptDownload(event, filePath(item.jobId, artifact.relpath), basename(artifact.relpath), (error) => setPrintError(describe(error).text))
                   }
                 >

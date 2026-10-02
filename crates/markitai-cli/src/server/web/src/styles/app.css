@@ -28,7 +28,9 @@
   --sel: #f4f4f5;
   --text-1: #18181b;
   --text-2: #52525b;
-  --text-3: #71717a;
+  /* zinc-500 deepened a step so it keeps 4.5:1 on the strip and the diff tints */
+  --text-3: #6b6b73;
+  /* disabled controls only (exempt from contrast minimums): never informative text */
   --text-4: #a1a1aa;
   --hairline: #e4e4e7;
   --hairline-strong: #d4d4d8;
@@ -1976,6 +1978,21 @@ textarea {
   line-height: 1.55;
   color: var(--text-3);
 }
+/* the documented endpoint and key variable of a built-in provider */
+.provider-detail-copy .provider-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  max-width: none;
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+.provider-fact + .provider-fact::before {
+  content: "·";
+  margin-right: 8px;
+}
 .field-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2575,7 +2592,7 @@ textarea {
   flex: none;
   width: 42px;
   padding-right: 10px;
-  color: var(--text-4);
+  color: var(--text-3);
   text-align: right;
   user-select: none;
 }
@@ -3048,7 +3065,7 @@ textarea {
   .fact + .fact::before {
     content: "·";
     margin-right: 8px;
-    color: var(--text-4);
+    color: var(--text-3);
   }
   .row-tools {
     --actions-w: 136px;
@@ -3257,7 +3274,7 @@ textarea {
     --strip: #f4f4f5;
     --text-1: #18181b;
     --text-2: #52525b;
-    --text-3: #71717a;
+    --text-3: #6b6b73;
     --text-4: #a1a1aa;
     --hairline: #e4e4e7;
     --hairline-strong: #d4d4d8;
