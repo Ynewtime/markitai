@@ -48,7 +48,10 @@ available API credential joins the pool: Anthropic, OpenAI, Gemini, DeepSeek
 and OpenRouter. The model aliases are derived from the reference checkout's
 provider-default table, not an independent assertion about current provider
 availability. Pin `MODEL` or a configured deployment to control which provider
-receives documents. [Subscription providers](subscriptions.md) are never
+receives documents. Keys of the [OpenAI-compatible
+prefixes](#openai-compatible-prefixes) do not join this pool, because no default
+model is known for them; name one with `MODEL` (for example
+`MODEL=groq/<model>`) or in `llm.model_list`. [Subscription providers](subscriptions.md) are never
 auto-detected; configure them explicitly in `llm.model_list`.
 
 `simple-shuffle` chooses deployments in proportion to positive integer weights.
@@ -171,17 +174,89 @@ or optional quota settings that Markitai does not expose.
 | `gemini/`, `deepseek/`, `openrouter/` | Provider's OpenAI-compatible endpoint |
 | `azure/` | Azure deployment Chat Completions, with `api-version` |
 | `ollama/`, `ollama_chat/` | Ollama's OpenAI-compatible `/v1` endpoint |
+| The prefixes in the next table | The provider's OpenAI-compatible Chat Completions endpoint |
 | `copilot/`, `claude-agent/`, `chatgpt/` | Installed official subscription runtime; see [subscriptions](subscriptions.md) |
 
-Other prefixes return an unsupported error when no usable deployment remains.
-This table describes implemented request shapes, not live compatibility tests
+### OpenAI-compatible prefixes
+
+These prefixes are plain Chat Completions endpoints that the reference reaches
+through LiteLLM's routing. The prefix is the text before the first `/`; the rest
+of the model name, slashes included, is sent as the model
+(`together_ai/meta-llama/…` sends `meta-llama/…`). The base URL of every entry
+was checked against the provider's own documentation on 2026-10-02 (the page is
+in the last column); `/chat/completions` is appended to it. The key variables
+are the ones the reference's LiteLLM 1.100.1 reads, so an environment prepared
+for the reference keeps working; where they differ, the provider's documented
+name comes first and the first variable that holds a value is used.
+
+| Prefix | Default base URL | Key variables | Base variable | Checked against |
+|---|---|---|---|---|
+| `groq/` | `https://api.groq.com/openai/v1` | `GROQ_API_KEY` | `GROQ_API_BASE` | groq-python SDK client (default host and `/openai/v1/chat/completions` path); console.groq.com refused automated reads |
+| `mistral/` | `https://api.mistral.ai/v1` | `MISTRAL_API_KEY` | `MISTRAL_API_BASE` | docs.mistral.ai/api/endpoint/chat |
+| `xai/` | `https://api.x.ai/v1` | `XAI_API_KEY` | `XAI_API_BASE` | docs.x.ai/docs/api-reference |
+| `together_ai/` | `https://api.together.ai/v1` | `TOGETHER_API_KEY`, `TOGETHER_AI_API_KEY`, `TOGETHERAI_API_KEY`, `TOGETHER_AI_TOKEN` | `TOGETHER_AI_API_BASE` | docs.together.ai/docs/openai-api-compatibility |
+| `perplexity/` | `https://api.perplexity.ai/router/v1` | `PERPLEXITY_API_KEY`, `PERPLEXITYAI_API_KEY` | `PERPLEXITY_API_BASE` | docs.perplexity.ai/api-reference/gateway-chat-completions-post |
+| `cerebras/` | `https://api.cerebras.ai/v1` | `CEREBRAS_API_KEY` | `CEREBRAS_API_BASE` | inference-docs.cerebras.ai/resources/openai |
+| `fireworks_ai/` | `https://api.fireworks.ai/inference/v1` | `FIREWORKS_API_KEY`, `FIREWORKS_AI_API_KEY`, `FIREWORKSAI_API_KEY`, `FIREWORKS_AI_TOKEN` | `FIREWORKS_API_BASE` | docs.fireworks.ai/getting-started/quickstart |
+| `deepinfra/` | `https://api.deepinfra.com/v1/openai` | `DEEPINFRA_API_KEY` | `DEEPINFRA_API_BASE` | docs.deepinfra.com/chat/overview |
+| `nebius/` | `https://api.tokenfactory.nebius.com/v1` | `NEBIUS_API_KEY` | `NEBIUS_API_BASE` | docs.tokenfactory.nebius.com/quickstart |
+| `moonshot/` | `https://api.moonshot.ai/v1` | `MOONSHOT_API_KEY` | `MOONSHOT_API_BASE` | platform.kimi.ai/docs/guide/start-using-kimi-api |
+| `sambanova/` | `https://api.sambanova.ai/v1` | `SAMBANOVA_API_KEY` | `SAMBANOVA_API_BASE` | docs.sambanova.ai/docs/en/get-started/api-keys-urls |
+| `zai/` | `https://api.z.ai/api/paas/v4` | `ZAI_API_KEY` | `ZAI_API_BASE` | docs.z.ai/guides/develop/openai/python |
+| `nvidia_nim/` | `https://integrate.api.nvidia.com/v1` | `NVIDIA_NIM_API_KEY` | `NVIDIA_NIM_API_BASE` | docs.api.nvidia.com/nim/reference/llm-apis |
+| `novita/` | `https://api.novita.ai/openai` | `NOVITA_API_KEY` | `NOVITA_API_BASE` | docs.novita.ai/guides/llm-api |
+| `hosted_vllm/` | none: set `api_base` or the base variable | `HOSTED_VLLM_API_KEY` (optional) | `HOSTED_VLLM_API_BASE` | docs.vllm.ai quickstart (a key is checked only when the server was started with one) |
+| `lm_studio/` | `http://localhost:1234/v1` | `LM_STUDIO_API_KEY` (optional) | `LM_STUDIO_API_BASE` | lmstudio.ai/docs/app/api/endpoints/openai |
+
+Notes on individual entries:
+
+- Perplexity ended support for its Sonar chat completions on 2026-09-27; its
+  documented OpenAI Chat Completions route is now the Router, so the default
+  differs from LiteLLM 1.100.1's `https://api.perplexity.ai`. Router model
+  names are passed through unchanged.
+- Nebius and Novita document newer hosts than LiteLLM 1.100.1 uses
+  (`api.studio.nebius.ai`, `api.novita.ai/v3/openai`); the documented ones are
+  used. Novita's and NVIDIA's pages name no key variable, so LiteLLM's names
+  apply.
+- `vLLM` listens wherever it was started; without `api_base` or
+  `HOSTED_VLLM_API_BASE` the deployment is unavailable with an error naming
+  both. LM Studio's documented local server is the default.
+- `hosted_vllm/`, `lm_studio/`, `ollama/` and `ollama_chat/` deployments are
+  usable without a key; the hosted APIs count as routable only with one.
+  `ollama_chat/` also reads `OLLAMA_API_BASE`, as LiteLLM does.
+- Left out because a fixed default could not be verified: DashScope (its
+  current documentation gives workspace-specific hosts), GitHub Models, and the
+  smaller LiteLLM entries (Codestral, llamafile, Featherless, Hyperbolic, Lambda,
+  Nscale, Volcengine and others). Each still works as `openai/<model>` with its
+  `api_base`.
+
+None of these prefixes has a structured-output capability entry, so their
+documents use the JSON-text mode described below, and none is in the [pricing
+catalog](pricing.md): with `llm.max_cost_per_document_usd` above zero they are
+refused before any request, like every other unpriced model.
+
+### Unsupported prefixes
+
+Any other prefix fails when no usable deployment remains, with an error that
+names the working route for an OpenAI-compatible endpoint, `openai/<model>`
+with `api_base`. Bedrock (`bedrock/`, `bedrock_converse/`, `sagemaker/`) is
+refused because it needs AWS Signature Version 4 signing, and Vertex AI
+(`vertex_ai/`, `vertex_ai_beta/`) because it needs Google Cloud service-account
+authentication; neither is implemented. Gemini itself is reachable directly as
+`gemini/<model>` with `GEMINI_API_KEY`.
+
+These tables describe implemented request shapes, not live compatibility tests
 against every vendor. No provider network call is required by the test suite.
+`markitai doctor` accepts every prefix of this build. The model discovery and
+connection check of `serve` (provider management) still list only the original
+providers.
 
 Deployment `api_key` and `api_base` take precedence. A saved provider selected
 by `model_info.provider_id` can supply missing deployment credentials and base
-URL. Provider-specific environment variables then supply missing values; OpenAI
-also accepts `OPENAI_BASE_URL`. Explicit missing environment references do not
-fall through to other credentials. Azure requires `api_version` or
+URL. Provider-specific environment variables then supply missing values: the
+key variables above, and `<PREFIX>_API_BASE` for the built-in providers
+(`OPENAI_API_BASE`, then `OPENAI_BASE_URL`, for OpenAI). Explicit missing
+environment references do not fall through to other credentials. Azure requires `api_version` or
 `AZURE_API_VERSION`. Endpoint construction preserves query parameters and
 encodes the Azure deployment name as one URL segment.
 
@@ -191,7 +266,9 @@ the output cap. OpenAI/Azure GPT-5 and o1/o3/o4 names use
 requires a cap and defaults to 8192 when none is supplied. Other providers use
 their own default when no cap is configured. Nonpositive explicit deployment
 caps fail before a request. This implementation does not ship LiteLLM's model
-catalog or tokenizer and cannot reproduce its dynamic context-window sizing.
+catalog or tokenizer and does not size output caps from a context window; a
+declared `model_info.max_input_tokens` sizes document chunks instead (see
+[below](#structured-documents-and-complete-long-text)).
 
 Image requests reuse routing, authentication, budgets and retry behavior.
 OpenAI-compatible requests carry a data URL; Anthropic receives native base64
@@ -416,7 +493,30 @@ by chunking. This conservative scanner does not claim full CommonMark parsing.
 
 Remaining text is packed at blank-line or line boundaries into at most 32,000
 Unicode scalar values per chunk; an oversized prose line splits at scalar
-boundaries. No tail is dropped. Bounded worker threads process chunks concurrently
+boundaries. No tail is dropped.
+
+When an enabled deployment declares `model_info.max_input_tokens`, a chunk must
+also fit the smallest declared window among them:
+
+- The request may fill 90% of the window. The prompt without the document (the
+  system prompt with its schema, the user template and message framing) is
+  estimated and subtracted; what remains is the chunk's token allowance.
+- Tokens are estimated without a tokenizer, conservatively: two and a half ASCII
+  characters, or one other character, per token. Prose usually needs fewer
+  tokens (about four ASCII characters each), Markdown tables and digits come
+  closest to the estimate.
+- Deployments without the key keep the 32,000-character chunks, and a window
+  never makes chunks larger than that: the answer repeats the chunk, so output
+  caps and the request timeout bound the useful size more than the input window
+  does.
+- A window that leaves fewer than 256 tokens after the prompt, or a value that is
+  not a positive integer, is a configuration error before any request.
+- Visual batches are not affected; they keep ten images each.
+- For servers whose window holds both the prompt and the answer (Ollama's
+  `num_ctx`, llama.cpp's context size), declare about half the window: LiteLLM
+  defines `max_input_tokens` as the input side only, and so does this rule.
+- Provider Batch planning uses the same limit; a document that needs more than
+  one chunk is still refused there. Bounded worker threads process chunks concurrently
 through the same caller runtime and shared document accounting. Results merge in
 source order and only the first chunk supplies metadata. For multi-chunk plans,
 uncached calls plus `ceil(uncached / 5)` retry headroom must fit the remaining
@@ -557,6 +657,63 @@ exclusions. It reports eligible identities without a provider probe or guessing
 capability from model names. An unspecified capability is eligible, not evidence
 that the provider can process images.
 
+## Repeated tails
+
+A model, most often a vision model reading a page, can fall into a loop and end
+its answer with the same passage over and over. Every complete answer is checked
+for such a tail before the content guards judge it: document chunks (live,
+cached and Provider Batch results), visual batches, pure text and pure image
+requests, and the description and transcribed text of image analysis. A
+token-limit truncation is still rejected before this check, as before.
+
+- Two linear scans read the end of the answer: a run of identical lines (blank
+  lines between copies are skipped, leading indentation counts), and a
+  periodic tail of at least 16 bytes repeated back to back (found with the
+  prefix function of the reversed tail; the last 256 KiB are scanned and the run
+  is then followed backwards to its start). A passage within a line counts too.
+- A tail counts as a loop with at least six copies that add up to 120 visible
+  characters (a character outside ASCII weighs two). Passages made mostly of
+  punctuation or table cells (blank form rows, rules, fill-in lines, closing
+  braces) need 64 copies and 1,024 characters, more than a page holds.
+- Rows that differ are not repetition: tables, lists of similar items, logs with
+  timestamps and code keep every row. Repetition that ends before the answer
+  does (a byte array before its closing brace) is not a tail.
+- When the text sent to the model already holds the passage as often, it is the
+  source's own and stays. When the answer has more, the source's number of copies
+  is kept, otherwise one. Words are compared without regard to whitespace layout.
+- The cut keeps whole copies: after a line break, or for a passage within a
+  line, after a space or a sentence end. Up to three passes run, so a repeated
+  line that itself repeats one sentence is reduced to one sentence.
+
+The salvaged answer must still pass the marker, plausibility and refusal
+checks; if too little is left, it is rejected and retried like any invalid
+answer. An accepted salvage adds the warning `The model's answer ended by
+repeating one passage N times: M repeated characters were removed and one copy
+was kept. The answer is not cached, so a later run asks again.` and is never
+written to the persistent cache. The reference applies the same idea (four
+copies of a 20-character unit, or six identical lines) to visual answers only and
+compares lines after trimming both ends; this build is stricter about
+indentation and structure and covers the text paths as well.
+
+## Privacy notices
+
+The CLI shows a one-time note on stderr before data first goes to a party the
+user may not have in mind. Each note is recorded as an empty marker file under
+`MARKITAI_HOME/notices`, the store the remote-fetch disclosure already uses, and
+is shown again only in a new `MARKITAI_HOME`. A `--quiet` run shows nothing and
+records nothing, so the note comes in a later run. `serve`, `mcp` and the
+language bindings install no notice host and show none.
+
+| Marker | Shown before |
+|---|---|
+| `remote-images` | the first request that carries images (page renders, screenshots, pictures for `--alt`/`--desc`, OCR pages) to a deployment off this machine. Loopback endpoints (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`) are local; subscription runtimes and every other host, a LAN address included, are not. The note names the configured model. |
+| `remote-strategy-<service>` | a selected remote fetch strategy (`-s defuddle`, `-s jina`, `-s cloudflare`, or the same in `fetch.strategy`) first sends a URL to its service, once per service; a URL refused before sending (local, private or credentialed) shows nothing. |
+| `remote-fetch` | `auto` first falls back to remote services under an explicit `fetch.remote_consent: always` (see [fetch](fetch.md#strategy-order-and-remote-fallback)). |
+
+With `MARKITAI_NO_VLM_OCR` set, OCR pages are read locally and only text is
+sent, so no image request and no image note follows from OCR alone. The notes
+inform; they never grant or record consent.
+
 ## Verification
 
 Unit tests inside `crates/markitai-core/src/llm.rs` cover weighted boundaries,
@@ -604,6 +761,23 @@ protected literals, bounded repair, fatal errors, a shared request budget,
 image-analysis sidecars and first-visual-versus-later-cleaner behavior. These new
 cases pass the coordinator's source-frozen R24 gate; live-provider compatibility
 and installed-release evidence are separate checks.
+
+`llm/providers.rs` checks the provider table (one entry per prefix, HTTPS for
+hosted APIs, loopback for keyless local servers) and the refusal wording;
+`llm/degeneration/tests.rs` covers line, in-line, multi-line, CJK and
+over-window loops, rotations and partial last copies, source-owned repetition,
+multibyte boundaries, a 2 MiB non-repeating answer, and the cases that must stay
+untouched: differing and identical table rows, blank forms, lists, logs, rules,
+fill-in lines, closing braces and code arrays. `llm/chunks.rs` checks the
+window rule and that window-sized chunks fit the estimate for ASCII, Chinese and
+protected literals. `llm/tests/hardening.rs` uses loopback HTTP for the
+OpenAI-compatible endpoints and key variables, a Groq request carrying its key,
+the image notice's local and remote endpoints, salvaged plain, document and
+visual answers that are asked again rather than cached, and a declared window
+that splits a document into more requests (or refuses a window without room
+before any request). `fetch/consent.rs` and `fetch/remote_tests.rs` check that
+the strategy and image notices share the once-per-home store, appear only when
+shown and only after a URL passes the remote-target checks.
 
 HTTP tests bind loopback listeners, capture request headers and JSON, return
 scripted responses, and use bounded socket timeouts. Low-level retry tests inject sleeps as a recorder; integration fixtures avoid

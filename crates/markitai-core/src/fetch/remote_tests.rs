@@ -734,6 +734,44 @@ fn a_selected_strategy_follows_consent_and_local_only_patterns() {
 }
 
 #[test]
+fn a_selected_strategy_announces_its_service_once_and_only_when_a_url_leaves() {
+    let (_directory, mut cfg) = settings();
+    cfg["fetch"]["strategy"] = json!("jina");
+    let service = Mock::new(vec![
+        jina_page("# One\n\nJina."),
+        jina_page("# Two\n\nJina."),
+    ]);
+    let home = tempfile::tempdir().unwrap();
+    let terminal = Arc::new(Terminal::default());
+    let fixture = Fixture::new(gate(&terminal, false, None, Some(home.path().into())));
+    let services = fixture.services(&service.origin);
+    // Refused before anything is sent: no notice.
+    assert!(
+        fetch_with_services(
+            "https://example.com/reset?token=abc",
+            &cfg,
+            Some("jina"),
+            true,
+            None,
+            &services,
+        )
+        .is_err()
+    );
+    assert!(terminal.notices.lock().unwrap().is_empty());
+    assert!(!home.path().join("remote-strategy-jina").exists());
+    // Two pages through the strategy: one notice, recorded for the home.
+    for page in ["https://example.com/a", "https://example.com/b"] {
+        fetch_with_services(page, &cfg, None, true, None, &services).unwrap();
+    }
+    assert_eq!(
+        *terminal.notices.lock().unwrap(),
+        [RemoteNotice::Strategy { service: "jina" }]
+    );
+    assert!(home.path().join("remote-strategy-jina").is_file());
+    assert_eq!(service.requests().len(), 2);
+}
+
+#[test]
 fn defuddle_requests_are_paced_by_their_rpm() {
     let (_directory, mut cfg) = settings();
     cfg["fetch"]["strategy"] = json!("defuddle");

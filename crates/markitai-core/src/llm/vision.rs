@@ -64,6 +64,8 @@ struct Work<'a> {
 struct BatchAnswer {
     markdown: String,
     metadata: Option<DocumentMetadata>,
+    /// A repeated tail was removed: usable, but never cached.
+    salvaged: bool,
 }
 impl BatchAnswer {
     fn value(&self) -> Value {
@@ -444,6 +446,11 @@ fn checked_answer(
     markdown: String,
     metadata: Option<DocumentMetadata>,
 ) -> Result<BatchAnswer> {
+    // A repeated tail is cut before the guards below judge what is left.
+    let salvage = degeneration::salvage(&markdown, &item.protected.text);
+    let markdown = salvage
+        .as_ref()
+        .map_or(markdown, |salvage| salvage.text.clone());
     item.protected.validate(&item.protected.text, &markdown)?;
     if markdown.trim().is_empty() {
         return Err(Error::Conversion(
@@ -453,7 +460,14 @@ fn checked_answer(
     let source = item.protected.without_markers(&item.protected.text);
     let body = item.protected.without_markers(&markdown);
     quality(&source, &body)?;
-    Ok(BatchAnswer { markdown, metadata })
+    if let Some(salvage) = &salvage {
+        note_document_warning(salvage.warning());
+    }
+    Ok(BatchAnswer {
+        markdown,
+        metadata,
+        salvaged: salvage.is_some(),
+    })
 }
 
 fn quality(source: &str, body: &str) -> Result<()> {
@@ -580,6 +594,7 @@ fn complete(
         || {
             let result = run_batch(item, cfg, env, runtime, stop);
             let warning = if let (Ok(answer), Some(cache), Some(key)) = (&result, cache, &item.key)
+                && !answer.salvaged
             {
                 cache.set_json(key, pool, &answer.value()).err().map(|_| {
                     "Persistent LLM cache could not save a visual batch; processing succeeded."

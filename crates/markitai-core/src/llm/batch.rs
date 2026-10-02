@@ -199,7 +199,8 @@ impl Session {
             ));
         }
         let protected = chunks::Protected::new(markdown);
-        if protected.split().len() != 1 {
+        let limit = chunks::limit(cfg, || document::prompt_tokens(source, false, cfg))?;
+        if protected.split_within(limit).len() != 1 {
             return Err(Error::Unsupported("Provider Batch text currently requires one document request; use live processing for long documents".into()));
         }
         let prompts = document::document_prompts(&protected.text, source, false, cfg)?;
@@ -409,8 +410,9 @@ impl Plan {
             .decode(Protocol::Chat, body)
             .map_err(|failure| failure.error)?;
             let answer = self.answer(&structured::parse(&text)?, false)?;
-            let mut warnings = Vec::new();
-            if let Some(cache) = llm_cache::Cache::configured(cfg, &self.source)
+            let mut warnings: Vec<String> = answer.salvaged.iter().cloned().collect();
+            if answer.salvaged.is_none()
+                && let Some(cache) = llm_cache::Cache::configured(cfg, &self.source)
                 && cache
                     .set_json(&self.cache_key, &self.pool, &answer.value())
                     .is_err()
@@ -428,10 +430,14 @@ impl Plan {
     }
 
     fn answer(&self, value: &Value, cached: bool) -> Result<document::Answer> {
-        let answer = document::parse_value(value, cached)?;
         let protected = chunks::Protected::new(&self.markdown);
-        document::validate_answer(&protected, &protected.text, &answer.markdown, false, false)?;
-        Ok(answer)
+        document::checked(
+            document::parse_value(value, cached)?,
+            &protected,
+            &protected.text,
+            false,
+            false,
+        )
     }
 
     fn finish(

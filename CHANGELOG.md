@@ -71,6 +71,10 @@
 - Windows: Ctrl-C and Ctrl-Break are a controlled interrupt. They end external runtime trees and exit with 130; a batch with recovery state drains on the first and exits on the second. Closing the console window, logging off or shutting down cleans up and exits with 143.
 - Windows: Chromium, LibreOffice and the Copilot, Claude Code and Codex runtimes start suspended in a Job Object and a hidden console of their own. A timeout, cancellation, interrupt or Markitai's own termination ends the whole tree; the `taskkill` fallback is removed.
 - Windows: subscription runtimes are supported. Runtime, browser and LibreOffice lookup follows PATHEXT, so npm `.cmd` shims work through the command processor. `markitai auth … login` runs the official login as a child, waits for it and exits with its status.
+- LLM: 16 more OpenAI-compatible model prefixes (groq, mistral, xai, together_ai, perplexity, cerebras, fireworks_ai, deepinfra, nebius, moonshot, sambanova, zai, nvidia_nim, novita, hosted_vllm, lm_studio), each with a documented default endpoint and the reference's key variables. Bedrock and Vertex AI fail with an explicit error that names the `openai/<model>` plus `api_base` route.
+- LLM: an answer that ends by repeating one passage is cut to one copy (or the source's own number of copies), warned about and not cached. Tables, lists, code and blank forms keep their rows.
+- LLM: `model_info.max_input_tokens` now limits document chunk size to the smallest declared window; without it, chunks stay at 32,000 characters.
+- Privacy: one-time stderr notes before images first go to a model off this machine and before a selected remote fetch strategy first sends a URL to its service, recorded under `MARKITAI_HOME/notices`.
 - Portable native validation and installable-artifact CI for Linux, Windows and both macOS architectures; remote execution remains pending.
 - Complete 209-fixture HTML audit harness with separate compatibility and quality diagnostics.
 - Isolated contract tests, format differential audit, and reproducible CLI measurements.

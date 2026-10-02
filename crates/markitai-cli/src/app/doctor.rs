@@ -544,8 +544,7 @@ fn model_check(
                 local.insert("chatgpt");
                 continue;
             }
-            "openai" | "anthropic" | "gemini" | "deepseek" | "openrouter" | "azure" | "ollama"
-            | "ollama_chat" => {
+            _ if config::llm_provider_supported(provider) => {
                 providers.insert(provider);
             }
             _ => unsupported = true,

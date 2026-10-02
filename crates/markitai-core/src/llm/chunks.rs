@@ -1,8 +1,108 @@
 //! Source-owned literals are opaque to the model and restored only after validation.
 use crate::{Error, Result};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+/// Unicode scalar values per chunk when no model declares a smaller window.
 pub(super) const LIMIT: usize = 32_000;
+/// Share of a declared input window a request may fill, in percent: the
+/// token estimate is conservative, but no tokenizer is shipped to prove it.
+const WINDOW_SHARE: usize = 90;
+/// Chunks smaller than this would spend most of each request on the prompt.
+const MIN_CHUNK_TOKENS: usize = 256;
+
+/// How large one chunk may be.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Limit {
+    /// Unicode scalar values.
+    pub scalars: usize,
+    /// Estimated tokens, in fifths of a token (see [`weight`]), when a
+    /// configured model declares its input window.
+    pub fifths: Option<usize>,
+}
+
+impl Limit {
+    pub const DEFAULT: Self = Self {
+        scalars: LIMIT,
+        fifths: None,
+    };
+}
+
+/// Fifths of a token one character may cost: two and a half ASCII
+/// characters, or one other character, per token. Real tokenizers do better
+/// on prose (about four ASCII characters) and on most Han characters, so the
+/// estimate errs towards smaller chunks; Markdown tables and digits come
+/// closest to it.
+fn weight(ch: char) -> usize {
+    if ch.is_ascii() { 2 } else { 5 }
+}
+
+/// A conservative token count for text sent to a model.
+pub(super) fn estimate_tokens(text: &str) -> usize {
+    text.chars().map(weight).sum::<usize>().div_ceil(5)
+}
+
+/// The chunk size for a configuration. Without `model_info.max_input_tokens`
+/// the fixed 32,000-character chunks apply. With it, a chunk must also fit
+/// the smallest declared window among the enabled models, after the prompt
+/// (`overhead`, estimated only when needed) and a tenth of headroom. A
+/// larger window never makes chunks larger: the answer repeats the chunk,
+/// and output caps and request timeouts stay where they were.
+pub(super) fn limit(cfg: &Value, overhead: impl FnOnce() -> Result<usize>) -> Result<Limit> {
+    let Some(window) = declared_window(cfg)? else {
+        return Ok(Limit::DEFAULT);
+    };
+    let overhead = overhead()?;
+    let available = (window.saturating_mul(WINDOW_SHARE) / 100).saturating_sub(overhead);
+    if available < MIN_CHUNK_TOKENS {
+        return Err(Error::Config(format!(
+            "llm.model_list model_info.max_input_tokens is {window}, which leaves no room for document text after the prompt (about {overhead} tokens); raise it or shorten the prompt"
+        )));
+    }
+    Ok(Limit {
+        scalars: LIMIT,
+        fifths: Some(available.saturating_mul(5)),
+    })
+}
+
+/// The smallest `model_info.max_input_tokens` of the enabled deployments
+/// that declare one. A deployment without it takes the default chunks.
+fn declared_window(cfg: &Value) -> Result<Option<usize>> {
+    let Some(models) = cfg.pointer("/llm/model_list").and_then(Value::as_array) else {
+        return Ok(None);
+    };
+    let mut smallest: Option<usize> = None;
+    for model in models {
+        let enabled = model
+            .pointer("/litellm_params/weight")
+            .and_then(Value::as_u64)
+            .unwrap_or(1)
+            > 0
+            && model
+                .pointer("/litellm_params/model")
+                .and_then(Value::as_str)
+                .is_some_and(|name| !name.is_empty());
+        match model.pointer("/model_info/max_input_tokens") {
+            None | Some(Value::Null) => (),
+            Some(value) => {
+                let window = value
+                    .as_u64()
+                    .filter(|tokens| *tokens > 0)
+                    .and_then(|tokens| usize::try_from(tokens).ok())
+                    .ok_or_else(|| {
+                        Error::Config(
+                            "LLM model_info.max_input_tokens must be a positive integer when configured"
+                                .into(),
+                        )
+                    })?;
+                if enabled {
+                    smallest = Some(smallest.map_or(window, |current| current.min(window)));
+                }
+            }
+        }
+    }
+    Ok(smallest)
+}
 
 pub(super) struct Protected {
     pub text: String,
@@ -168,7 +268,11 @@ impl Protected {
     }
 
     pub fn split(&self) -> Vec<String> {
-        split(&self.text, Some(&self.prefix))
+        self.split_within(Limit::DEFAULT)
+    }
+
+    pub fn split_within(&self, limit: Limit) -> Vec<String> {
+        split(&self.text, Some(&self.prefix), limit)
     }
 
     pub fn validate(&self, original: &str, answer: &str) -> Result<()> {
@@ -402,16 +506,31 @@ fn inline_ranges(source: &str, start: usize, end: usize, ranges: &mut Vec<std::o
     }
 }
 
+/// The byte offset of the first character that does not fit the limit, or
+/// `None` when all of `text` fits. At least one character always fits.
+fn overflow(text: &str, limit: Limit) -> Option<usize> {
+    let mut fifths = 0usize;
+    for (count, (at, ch)) in text.char_indices().enumerate() {
+        if count == limit.scalars {
+            return Some(at);
+        }
+        if let Some(most) = limit.fifths {
+            fifths += weight(ch);
+            if fifths > most && count > 0 {
+                return Some(at);
+            }
+        }
+    }
+    None
+}
+
 /// Every scalar is included once; oversized prose blocks split at newline then
 /// scalar boundaries. An opaque protected marker is never bisected.
-fn split(text: &str, protected_prefix: Option<&str>) -> Vec<String> {
+fn split(text: &str, protected_prefix: Option<&str>, limit: Limit) -> Vec<String> {
     let mut chunks = Vec::new();
     let mut rest = text;
-    while rest.chars().take(LIMIT + 1).count() > LIMIT {
-        let mut end = rest
-            .char_indices()
-            .nth(LIMIT)
-            .map_or(rest.len(), |(at, _)| at);
+    while let Some(overflow) = overflow(rest, limit) {
+        let mut end = overflow;
         if let Some(prefix) = protected_prefix {
             // Include a bounded lookahead when the scalar boundary falls inside
             // the prefix itself, including its opening multibyte bracket.
@@ -485,7 +604,7 @@ mod tests {
     #[test]
     fn unicode_chunks_keep_tail_and_exact_concatenation() {
         let text = format!("{}\n\n{}TAIL", "甲".repeat(33_000), "乙".repeat(35_000));
-        let chunks = split(&text, None);
+        let chunks = split(&text, None, Limit::DEFAULT);
         assert!(chunks.len() >= 3);
         assert!(chunks.iter().all(|s| s.chars().count() <= LIMIT));
         assert_eq!(chunks.concat(), text);
@@ -548,5 +667,120 @@ mod tests {
         let protected = Protected::new(&source);
         assert!(protected.text.chars().count() < LIMIT);
         assert_eq!(protected.restore(&protected.text).unwrap(), source);
+    }
+
+    fn models(entries: serde_json::Value) -> Value {
+        serde_json::json!({"llm":{"model_list":entries}})
+    }
+
+    #[test]
+    fn a_declared_window_shrinks_chunks_and_never_grows_them() {
+        let none = |_: usize| -> Result<usize> { panic!("no window, no prompt estimate") };
+        // Nothing declared: the fixed chunks, without building a prompt.
+        for cfg in [
+            serde_json::json!({}),
+            models(
+                serde_json::json!([{"model_name":"default","litellm_params":{"model":"openai/a"}}]),
+            ),
+            models(
+                serde_json::json!([{"model_name":"default","litellm_params":{"model":"openai/a"},"model_info":{"max_input_tokens":null}}]),
+            ),
+        ] {
+            assert_eq!(limit(&cfg, || none(0)).unwrap(), Limit::DEFAULT);
+        }
+        // The smallest enabled window wins; a disabled one does not count.
+        let cfg = models(serde_json::json!([
+            {"model_name":"default","litellm_params":{"model":"ollama/small"},"model_info":{"max_input_tokens":8192}},
+            {"model_name":"default","litellm_params":{"model":"openai/large"},"model_info":{"max_input_tokens":1000000}},
+            {"model_name":"default","litellm_params":{"model":"openai/off","weight":0},"model_info":{"max_input_tokens":1000}},
+            {"model_name":"default","litellm_params":{"model":"openai/plain"}}
+        ]));
+        let sized = limit(&cfg, || Ok(700)).unwrap();
+        assert_eq!(sized.scalars, LIMIT);
+        assert_eq!(sized.fifths, Some((8192 * 90 / 100 - 700) * 5));
+        // A huge window keeps the default size.
+        let huge = models(
+            serde_json::json!([{"model_name":"default","litellm_params":{"model":"openai/a"},"model_info":{"max_input_tokens":2000000}}]),
+        );
+        let text = "word ".repeat(20_000);
+        let chunks = split(&text, None, limit(&huge, || Ok(500)).unwrap());
+        assert_eq!(chunks, split(&text, None, Limit::DEFAULT));
+        // Invalid or too small windows are explicit errors.
+        for bad in [
+            serde_json::json!(0),
+            serde_json::json!(-5),
+            serde_json::json!("8k"),
+            serde_json::json!(1.5),
+        ] {
+            let cfg = models(
+                serde_json::json!([{"model_name":"default","litellm_params":{"model":"openai/a"},"model_info":{"max_input_tokens":bad}}]),
+            );
+            let Err(Error::Config(message)) = limit(&cfg, || Ok(10)) else {
+                panic!("{bad} must be refused");
+            };
+            assert!(message.contains("positive integer"), "{message}");
+        }
+        let tiny = models(
+            serde_json::json!([{"model_name":"default","litellm_params":{"model":"openai/a"},"model_info":{"max_input_tokens":600}}]),
+        );
+        let Err(Error::Config(message)) = limit(&tiny, || Ok(400)) else {
+            panic!("a window the prompt fills must be refused");
+        };
+        assert!(
+            message.contains("600") && message.contains("400"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn window_sized_chunks_fit_the_estimate_for_ascii_and_wide_text() {
+        let limit = Limit {
+            scalars: LIMIT,
+            fifths: Some(2_000 * 5),
+        };
+        for text in [
+            format!(
+                "{}\n\n{}",
+                "Plain English prose. ".repeat(2_000),
+                "| a | 1 |\n".repeat(900)
+            ),
+            format!(
+                "{}\n{}",
+                "中文段落内容。".repeat(1_500),
+                "混合 mixed 文本 text\n".repeat(400)
+            ),
+            "x".repeat(30_000),
+        ] {
+            let chunks = split(&text, None, limit);
+            assert!(chunks.len() > 1);
+            assert_eq!(chunks.concat(), text);
+            for chunk in &chunks {
+                assert!(
+                    estimate_tokens(chunk) <= 2_000,
+                    "{}",
+                    estimate_tokens(chunk)
+                );
+                assert!(!chunk.is_empty());
+            }
+        }
+        assert_eq!(estimate_tokens("abcde"), 2);
+        assert_eq!(estimate_tokens("中文"), 2);
+        assert_eq!(estimate_tokens(""), 0);
+        // Protected markers stay whole under a token limit too.
+        let source = format!("{}`code`{}", "y".repeat(4_990), "z".repeat(6_000));
+        let protected = Protected::new(&source);
+        let chunks = protected.split_within(Limit {
+            scalars: LIMIT,
+            fifths: Some(2_000 * 5),
+        });
+        assert_eq!(chunks.concat(), protected.text);
+        assert_eq!(protected.restore(&chunks.concat()).unwrap(), source);
+        assert_eq!(
+            chunks
+                .iter()
+                .filter(|chunk| chunk.contains(&protected.literals[0].0))
+                .count(),
+            1
+        );
     }
 }

@@ -123,6 +123,19 @@ fn remote_strategies_refuse_local_urls_and_missing_credentials_before_any_reques
             "{}",
             stderr(&output)
         );
+        // Nothing left the machine, so the strategy's one-time note is not
+        // shown or recorded.
+        assert!(
+            !stderr(&output).contains("fetch strategy sends"),
+            "{}",
+            stderr(&output)
+        );
+        assert!(
+            !root
+                .path()
+                .join(format!("home/notices/remote-strategy-{strategy}"))
+                .exists()
+        );
     }
     let output = invoke(
         root.path(),

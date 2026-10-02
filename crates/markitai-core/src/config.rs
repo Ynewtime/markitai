@@ -722,6 +722,14 @@ pub fn environment() -> HashMap<String, String> {
     vars
 }
 
+/// Whether this build can route an `llm.model_list` model whose
+/// `litellm_params.model` starts with `prefix/` (a model without a prefix is
+/// `openai`). Other prefixes fail with an error naming the `openai/<model>`
+/// plus `api_base` route for OpenAI-compatible endpoints.
+pub fn llm_provider_supported(prefix: &str) -> bool {
+    crate::llm::providers::supported(prefix)
+}
+
 pub fn enabled(config: &Value, path: &str) -> bool {
     config
         .pointer(path)

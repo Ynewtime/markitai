@@ -589,6 +589,7 @@ fn fetch_with_services(
                 )));
             }
             remote_target(&url, services)?;
+            services.gate.strategy(service.name());
             let document = remote::fetch(service, source, &url, cfg, services)
                 .map_err(|error| with_what_works(error, &url))?;
             let mut outcome = remote::outcome(document);

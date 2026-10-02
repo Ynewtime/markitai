@@ -120,6 +120,17 @@ pub(super) fn notice_text(notice: &RemoteNotice, lang: Lang) -> String {
             "Note: remote extraction services were skipped: fetch.remote_consent is ask and there is no terminal to ask. Set it to always to allow them, or to never to fetch locally without this note.",
             "提示：已跳过远程抽取服务：fetch.remote_consent 为 ask，但没有可以询问的终端。设为 always 可允许使用，设为 never 则只在本地抓取且不再提示。",
         ),
+        RemoteNotice::Strategy { service } => {
+            let name = names(&[*service], lang);
+            text!(lang =>
+                "Note: the {service} fetch strategy sends page URLs to {name}, which fetches and converts the pages. Use -s static or -s playwright to fetch on this machine. This note is shown once for each service.",
+                "提示：{service} 抓取策略会把页面 URL 发送给 {name}，由其抓取并转换页面。使用 -s static 或 -s playwright 可在本机抓取。此提示对每个服务只显示一次。",
+            )
+        }
+        RemoteNotice::Images { model } => text!(lang =>
+            "Note: images from your documents (page renders, screenshots or pictures) are sent to the model {model} to be read. Use a model running on this machine, or leave out --llm, to keep them here. This note is shown once.",
+            "提示：文档中的图像（页面渲染、截图或图片）会发送给模型 {model} 进行识别。使用在本机运行的模型，或不使用 --llm，即可让图像留在本机。此提示只显示一次。",
+        ),
     }
 }
 
@@ -201,5 +212,40 @@ mod tests {
         assert!(english.contains("(defuddle.md, Jina Reader)"), "{english}");
         assert!(english.contains("--no-remote-fetch"), "{english}");
         assert!(notice_text(&RemoteNotice::NotAsked, Lang::En).starts_with("Note: "));
+    }
+
+    #[test]
+    fn strategy_and_image_notices_name_the_receiver_and_the_local_route() {
+        let jina = RemoteNotice::Strategy { service: "jina" };
+        let english = notice_text(&jina, Lang::En);
+        assert!(
+            english.starts_with("Note: the jina fetch strategy"),
+            "{english}"
+        );
+        assert!(
+            english.contains("Jina Reader") && english.contains("-s static"),
+            "{english}"
+        );
+        let chinese = notice_text(
+            &RemoteNotice::Strategy {
+                service: "cloudflare",
+            },
+            Lang::Zh,
+        );
+        assert!(
+            chinese.starts_with("提示：") && chinese.contains("Cloudflare（你的账户）"),
+            "{chinese}"
+        );
+        let images = RemoteNotice::Images {
+            model: "openai/gpt-test".into(),
+        };
+        for lang in [Lang::En, Lang::Zh] {
+            let text = notice_text(&images, lang);
+            assert!(
+                text.contains("openai/gpt-test") && text.contains("--llm"),
+                "{text}"
+            );
+        }
+        assert!(notice_text(&images, Lang::En).ends_with("This note is shown once."));
     }
 }

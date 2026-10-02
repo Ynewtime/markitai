@@ -62,7 +62,8 @@ markitai config edit                 # 终端中的交互编辑器
 | `output.profile` | `null` | `rag`、`obsidian` 或 `okf` 输出形态，同 `--profile` |
 | `output.report` | `null` | 批量报告；`null` 表示目录/URL 列表开启、单项关闭 |
 | `llm.enabled` | `false` | 模型增强，同 `--llm` |
-| `llm.model_list` | `[]` | 模型部署；为空时按 `MODEL` 和供应商密钥自动选择 |
+| `llm.model_list` | `[]` | 模型部署；为空时按 `MODEL` 和供应商密钥自动选择。前缀见 [LLM：供应商](llm.md#providers-and-request-parameters)，其中包括 `groq/`、`mistral/`、`xai/`、`together_ai/` 等兼容 OpenAI 的前缀 |
+| `llm.model_list[].model_info.max_input_tokens` | `null` | 模型的输入窗口（token）。设置后文档分块还须放进所有启用部署中最小的窗口（扣除提示词后按保守估算取 90%），只会变小、不会超过 32,000 字符；见 [LLM：长文本](llm.md#structured-documents-and-complete-long-text) |
 | `llm.keep_base` | `false` | 增强后同时保留基础 Markdown，同 `--keep-base` |
 | `llm.on_failure` | `fallback` | 增强失败时保留基础结果并警告；`fail` 判为失败 |
 | `llm.concurrency` | `10` | 同时进行的模型请求上限 |
@@ -109,7 +110,8 @@ markitai config edit                 # 终端中的交互编辑器
 | `MODEL` | 未配置 `llm.model_list` 时使用的模型，如 `openai/gpt-4.1-mini` |
 | `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY`、`DEEPSEEK_API_KEY`、`OPENROUTER_API_KEY` | 供应商密钥；未配置模型时据此自动选择模型 |
 | `AZURE_API_KEY`、`AZURE_API_VERSION`、`OLLAMA_API_KEY` | Azure 与 Ollama 部署的凭据和 API 版本 |
-| `<PROVIDER>_API_BASE`、`OPENAI_BASE_URL` | 部署未设置 `api_base` 时的端点 |
+| `GROQ_API_KEY`、`MISTRAL_API_KEY`、`XAI_API_KEY`、`TOGETHER_API_KEY` 等 | 兼容 OpenAI 的前缀的密钥（完整列表及 LiteLLM 的别名见 [LLM：兼容 OpenAI 的前缀](llm.md#openai-compatible-prefixes)）；不参与自动选择，需用 `MODEL` 或 `llm.model_list` 指定模型。`hosted_vllm/`、`lm_studio/` 无需密钥 |
+| `<PREFIX>_API_BASE`、`OPENAI_BASE_URL` | 部署未设置 `api_base` 时的端点；内置供应商为 `<PREFIX>_API_BASE`（OpenAI 另读 `OPENAI_BASE_URL`，`ollama_chat` 另读 `OLLAMA_API_BASE`），兼容前缀的变量名见上述表格。`hosted_vllm/` 没有默认端点，须设置 `api_base` 或 `HOSTED_VLLM_API_BASE` |
 | `JINA_API_KEY` | Jina Reader 的可选密钥（未设置 `fetch.jina.api_key` 时使用） |
 | `CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID` | 未设置 `fetch.cloudflare.api_token`/`account_id` 时 Cloudflare 使用的令牌与账户 ID |
 | `COPILOT_CLI_PATH`、`COPILOT_HOME`、`COPILOT_CACHE_HOME`、`COPILOT_GITHUB_TOKEN`/`GH_TOKEN`/`GITHUB_TOKEN`、`CLAUDE_CLI_PATH`、`CLAUDE_CONFIG_DIR`、`CODEX_CLI_PATH`、`CODEX_HOME` | 订阅运行时的可执行文件、状态目录与令牌，见[订阅](subscriptions.md) |
@@ -118,6 +120,8 @@ markitai config edit                 # 终端中的交互编辑器
 CLI 启动时依次从进程环境、当前目录 `.env`、`MARKITAI_HOME/.env`（`~/.markitai/.env`）读取变量，已存在的值优先，不修改宿主进程环境。参考版本的 `MARKITAI_PDF_WORKERS`、`MARKITAI_STATIC_HTTP` 在本构建中不读取。
 
 `fetch.remote_consent` 的默认值 `always` 来自参考版本，`config list` 也这样显示；但运行时拿到的是填好默认值的配置，分不出这个 `always` 是默认值还是你写的。因此本构建中 `auto` 的远程回退只认 CLI 从所选配置文件和 `--config-json` 的原始内容中读到的、你亲手写出的 `always`（第一次回退时显示一次说明，每个 `MARKITAI_HOME` 只显示一次），或 `ask`（每次运行在终端询问一次；没有终端或使用 `--quiet` 时视为 `never` 并提示一次）。`serve`、`mcp` 和语言绑定中的 `auto` 从不回退到远程服务。`fetch.fallback_patterns` 同理：只有你在配置文件或 `--config-json` 中写出的列表才让其中的域名先用浏览器；默认列表（X、Instagram 等）虽在 `config list` 中显示但不生效，`serve`、`mcp` 和语言绑定也不应用任何列表。
+
+同一套一次性提示（`MARKITAI_HOME/notices` 下的空标记文件）还用于两种情况：选定的远程抓取策略（`-s defuddle`/`jina`/`cloudflare` 或 `fetch.strategy`）第一次把 URL 发给该服务之前，每个服务提示一次；以及第一次把图像（页面渲染、截图、`--alt`/`--desc` 的图片、OCR 页面）发给不在本机的模型之前（回环地址上的模型不算）。`--quiet` 不显示也不记录，下次运行再显示；`serve`、`mcp` 和语言绑定不显示。见 [LLM：隐私提示](llm.md#privacy-notices)。
 
 ## 默认值与配置选择
 

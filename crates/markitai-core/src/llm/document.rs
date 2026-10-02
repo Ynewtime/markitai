@@ -15,6 +15,9 @@ pub(crate) struct DocumentMetadata {
 pub(super) struct Answer {
     pub markdown: String,
     pub metadata: DocumentMetadata,
+    /// The warning for a repeated tail that was removed; such an answer is
+    /// used but never cached.
+    pub salvaged: Option<String>,
 }
 impl Answer {
     pub(super) fn value(&self) -> Value {
@@ -45,7 +48,9 @@ pub(crate) fn process_document_with_runtime(
     let accounting = DocumentScope::shared().expect("document scope installed");
     let before = document_usage().expect("document scope installed");
     let protected = chunks::Protected::new(markdown);
-    let sources = protected.split();
+    let limit = chunks::limit(cfg, || prompt_tokens(source_label, metadata_only, cfg))?;
+    let sources = protected.split_within(limit);
+    let multiple = sources.len() > 1;
 
     // Hits from configured model identities need no credential or dotenv reads.
     let ambient = std::cell::OnceCell::new();
@@ -98,8 +103,7 @@ pub(crate) fn process_document_with_runtime(
         if let (Some(cache), Some(key)) = (&cache, &key) {
             match cache.get_json(key) {
                 Ok(Some(value)) => match parse_value(&value, true).and_then(|answer| {
-                    validate_answer(&protected, &source, &answer.markdown, metadata_only, !work.is_empty() || protected.text.chars().count() > chunks::LIMIT)?;
-                    Ok(answer)
+                    checked(answer, &protected, &source, metadata_only, multiple)
                 }) {
                     Ok(answer) => cached = Some(answer),
                     Err(_) => warnings.push("A malformed document cache entry was ignored.".into()),
@@ -169,9 +173,7 @@ pub(crate) fn process_document_with_runtime(
                         let slot = next.fetch_add(1, Ordering::Relaxed);
                         let Some(&(index, item)) = jobs.get(slot) else { break };
                         let validate = |value: &Value| {
-                            let answer = parse_value(value, true)?;
-                            validate_answer(protected, &item.source, &answer.markdown, metadata_only, total > 1)?;
-                            Ok(answer)
+                            checked(parse_value(value, true)?, protected, &item.source, metadata_only, total > 1)
                         };
                         let key = flight::key(runtime, item.key.as_deref(), cache_context, &item.prompts, cfg, environment, std::iter::empty());
                         let (answer, warning, shared) = flight::execute(
@@ -182,6 +184,7 @@ pub(crate) fn process_document_with_runtime(
                                 let answer = run_chunk(item, protected, metadata_only, total > 1, cfg, environment, runtime);
                                 let mut warning = None;
                                 if let (Ok(answer), Some(cache), Some(key)) = (&answer, cache, &item.key)
+                                    && answer.salvaged.is_none()
                                     && cache.set_json(key, pool, &answer.value()).is_err()
                                 {
                                     warning = Some("Persistent LLM cache could not save a document chunk; processing succeeded.".to_owned());
@@ -209,6 +212,7 @@ pub(crate) fn process_document_with_runtime(
         .into_iter()
         .map(|answer| answer.expect("all chunks settled"))
         .collect();
+    warnings.extend(answers.iter().filter_map(|answer| answer.salvaged.clone()));
     let metadata = answers[0].metadata.clone();
     let merged = if answers.len() == 1 {
         answers[0].markdown.clone()
@@ -246,6 +250,13 @@ pub(crate) fn process_document_with_runtime(
     };
     drop(own_scope);
     Ok(result)
+}
+
+/// The estimated tokens of a document request without its content: the
+/// system prompt with its schema, the user template and message framing.
+pub(super) fn prompt_tokens(source: &str, metadata_only: bool, cfg: &Value) -> Result<usize> {
+    let empty = document_prompts("", source, metadata_only, cfg)?;
+    Ok(chunks::estimate_tokens(&empty.system) + chunks::estimate_tokens(&empty.user) + 16)
 }
 
 pub(super) fn document_prompts(
@@ -313,15 +324,13 @@ fn run_chunk(
         env,
         Some(runtime),
         |value| {
-            let answer = parse_value(value, false)?;
-            validate_answer(
+            checked(
+                parse_value(value, false)?,
                 protected,
                 &item.source,
-                &answer.markdown,
                 metadata_only,
                 multiple,
-            )?;
-            Ok(answer)
+            )
         },
     )
     .map(|(answer, _)| answer)
@@ -415,7 +424,32 @@ pub(super) fn parse_value(value: &Value, cached: bool) -> Result<Answer> {
             description,
             tags: normalized,
         },
+        salvaged: None,
     })
+}
+
+/// Removes a repeated tail from a fresh, cached or shared answer before the
+/// content guards judge what is left. A social post's body is the source's,
+/// so its answer body is never inspected.
+pub(super) fn checked(
+    mut answer: Answer,
+    protected: &chunks::Protected,
+    original: &str,
+    metadata_only: bool,
+    multiple: bool,
+) -> Result<Answer> {
+    if !metadata_only && let Some(salvage) = degeneration::salvage(&answer.markdown, original) {
+        answer.salvaged = Some(salvage.warning());
+        answer.markdown = salvage.text;
+    }
+    validate_answer(
+        protected,
+        original,
+        &answer.markdown,
+        metadata_only,
+        multiple,
+    )?;
+    Ok(answer)
 }
 
 fn grams(text: &[char], width: usize) -> HashSet<String> {

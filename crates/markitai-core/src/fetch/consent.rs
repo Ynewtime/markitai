@@ -13,6 +13,11 @@
 //! `ask` and the person at the terminal answers yes. One answer serves the
 //! whole process, and a disclosure for `always` is shown once per
 //! `MARKITAI_HOME`.
+//!
+//! The same once-per-home store (empty marker files under
+//! `MARKITAI_HOME/notices`) carries the other privacy notices: before a
+//! selected remote strategy first sends a URL to its service, and before
+//! images first go to a model that is not on this machine.
 
 use crate::{Error, Result};
 use serde_json::Value;
@@ -40,6 +45,13 @@ pub enum RemoteNotice {
     /// `fetch.remote_consent` is `ask` and nobody could be asked, so remote
     /// services were skipped. Shown once per process.
     NotAsked,
+    /// A selected remote strategy (`-s` or `fetch.strategy`) is about to send
+    /// a URL to this service. Shown once per `MARKITAI_HOME` and service.
+    Strategy { service: &'static str },
+    /// Images (page renders, screenshots or pictures) are about to be sent to
+    /// a model that is not on this machine, named as configured. Shown once
+    /// per `MARKITAI_HOME`.
+    Images { model: String },
 }
 
 type Ask = Box<dyn Fn(&ConsentRequest) -> bool + Send + Sync>;
@@ -79,7 +91,7 @@ static INSTALLED: OnceLock<Gate> = OnceLock::new();
 static ABSENT: Gate = Gate {
     host: None,
     decision: Mutex::new(None),
-    disclosed: AtomicBool::new(false),
+    shown: Mutex::new(Vec::new()),
     hinted: AtomicBool::new(false),
     notices: None,
 };
@@ -115,9 +127,11 @@ pub(crate) const DISABLED: &str = "Remote fetching is disabled by policy";
 pub(crate) struct Gate {
     host: Option<RemoteFallback>,
     decision: Mutex<Option<bool>>,
-    disclosed: AtomicBool,
+    /// Keys of the once-per-home notices this process has shown (or is
+    /// showing).
+    shown: Mutex<Vec<String>>,
     hinted: AtomicBool,
-    /// Where the once-per-home disclosure marker lives.
+    /// Where the once-per-home notice markers live.
     notices: Option<PathBuf>,
 }
 
@@ -126,7 +140,7 @@ impl Gate {
         Self {
             host,
             decision: Mutex::new(None),
-            disclosed: AtomicBool::new(false),
+            shown: Mutex::new(Vec::new()),
             hinted: AtomicBool::new(false),
             notices,
         }
@@ -237,22 +251,49 @@ impl Gate {
         }
     }
 
-    /// The disclosure for `always`, once per process and, through a marker
-    /// file that holds nothing, once per `MARKITAI_HOME`.
+    /// The disclosure for `always`.
     fn disclose(&self, services: Vec<&'static str>) {
-        if self.disclosed.swap(true, Ordering::SeqCst) {
-            return;
-        }
+        self.once("remote-fetch", || RemoteNotice::Disclosure { services });
+    }
+
+    /// The notice before a selected remote strategy first sends a URL to
+    /// `service`.
+    pub(crate) fn strategy(&self, service: &'static str) {
+        self.once(&format!("remote-strategy-{service}"), || {
+            RemoteNotice::Strategy { service }
+        });
+    }
+
+    /// The notice before images first go to a model off this machine.
+    pub(crate) fn images(&self, model: &str) {
+        self.once("remote-images", || RemoteNotice::Images {
+            model: model.to_owned(),
+        });
+    }
+
+    /// Show a notice once per process and, through a marker file named
+    /// `key` that holds nothing, once per `MARKITAI_HOME`. A notice the host
+    /// did not show (a quiet run) stays due for a later run.
+    fn once(&self, key: &str, notice: impl FnOnce() -> RemoteNotice) {
         let Some(host) = &self.host else {
             return;
         };
-        let marker = self.notices.as_ref().map(|dir| dir.join("remote-fetch"));
+        {
+            let mut shown = self.shown.lock().unwrap_or_else(PoisonError::into_inner);
+            if shown.iter().any(|seen| seen == key) {
+                return;
+            }
+            shown.push(key.to_owned());
+        }
+        let marker = self.notices.as_ref().map(|dir| dir.join(key));
         if marker.as_ref().is_some_and(|marker| marker.exists()) {
             return;
         }
-        if !(host.notify)(&RemoteNotice::Disclosure { services }) {
-            // Not shown (a quiet run): a later run shows it.
-            self.disclosed.store(false, Ordering::SeqCst);
+        if !(host.notify)(&notice()) {
+            self.shown
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .retain(|seen| seen != key);
             return;
         }
         if let Some(marker) = marker {
@@ -378,6 +419,64 @@ mod tests {
         let gate = Gate::new(Some(again), Some(home.path().into()));
         assert!(gate.fallback(&cfg("always"), &vars, request));
         assert!(again_seen.notices.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn strategy_and_image_notices_use_the_same_store_once_per_key_and_only_when_shown() {
+        let home = tempfile::tempdir().unwrap();
+        // A quiet run shows nothing and records nothing.
+        let (quiet, quiet_seen) = host(false, None, false);
+        let gate = Gate::new(Some(quiet), Some(home.path().into()));
+        gate.strategy("jina");
+        gate.images("openai/gpt-test");
+        assert_eq!(quiet_seen.notices.lock().unwrap().len(), 2);
+        assert!(std::fs::read_dir(home.path()).unwrap().next().is_none());
+        // Shown: once per key, whatever the number of calls.
+        let (loud, seen) = host(false, None, true);
+        let gate = Gate::new(Some(loud), Some(home.path().into()));
+        for _ in 0..3 {
+            gate.strategy("jina");
+            gate.strategy("defuddle");
+            gate.images("openai/gpt-test");
+            gate.images("gemini/another");
+        }
+        assert_eq!(
+            *seen.notices.lock().unwrap(),
+            [
+                RemoteNotice::Strategy { service: "jina" },
+                RemoteNotice::Strategy {
+                    service: "defuddle"
+                },
+                RemoteNotice::Images {
+                    model: "openai/gpt-test".into()
+                },
+            ]
+        );
+        for key in [
+            "remote-strategy-jina",
+            "remote-strategy-defuddle",
+            "remote-images",
+        ] {
+            assert_eq!(std::fs::read(home.path().join(key)).unwrap(), b"", "{key}");
+        }
+        // The next process with the same home only hears about a new service.
+        let (again, again_seen) = host(false, None, true);
+        let gate = Gate::new(Some(again), Some(home.path().into()));
+        gate.strategy("jina");
+        gate.images("openai/gpt-test");
+        gate.strategy("cloudflare");
+        assert_eq!(
+            *again_seen.notices.lock().unwrap(),
+            [RemoteNotice::Strategy {
+                service: "cloudflare"
+            }]
+        );
+        // Without a host (bindings, serve, mcp) nothing is shown or written.
+        let other = tempfile::tempdir().unwrap();
+        let gate = Gate::new(None, Some(other.path().into()));
+        gate.strategy("jina");
+        gate.images("openai/gpt-test");
+        assert!(std::fs::read_dir(other.path()).unwrap().next().is_none());
     }
 
     #[test]

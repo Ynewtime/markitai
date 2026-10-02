@@ -71,6 +71,10 @@
 - Windows：Ctrl-C 与 Ctrl-Break 为可控中断。结束外部运行时进程树并以 130 退出；带恢复状态的批处理第一次排空、第二次退出。关闭控制台窗口、注销或关机时清理后以 143 退出。
 - Windows：Chromium、LibreOffice 以及 Copilot、Claude Code、Codex 运行时以挂起方式启动，置于独立的 Job Object 和隐藏控制台中。超时、取消、中断或 Markitai 自身被终止都会结束整棵进程树；移除 `taskkill` 后备。
 - Windows：支持订阅运行时。运行时、浏览器与 LibreOffice 的查找遵循 PATHEXT，npm 的 `.cmd` 垫片经命令处理器启动。`markitai auth … login` 以子进程运行官方登录，等待并透传其退出码。
+- LLM：新增 16 个兼容 OpenAI 的模型前缀（groq、mistral、xai、together_ai、perplexity、cerebras、fireworks_ai、deepinfra、nebius、moonshot、sambanova、zai、nvidia_nim、novita、hosted_vllm、lm_studio），每个都有文档核实过的默认端点，并沿用参考版本的密钥变量名。Bedrock 和 Vertex AI 给出明确错误，并说明可改用 `openai/<model>` 加 `api_base`。
+- LLM：回答结尾反复重复同一段内容时，只保留一份（或原文本身的份数），给出警告且不写入缓存；表格、列表、代码和空白表单的行不受影响。
+- LLM：`model_info.max_input_tokens` 现在会把文档分块限制在已声明的最小窗口内；未设置时仍为每块 32,000 字符。
+- 隐私：第一次把图像发给不在本机的模型之前，以及选定的远程抓取策略第一次把 URL 发给其服务之前，在 stderr 显示一次性提示，记录在 `MARKITAI_HOME/notices`。
 - 面向 Linux、Windows 与两种 macOS 架构的可移植验证及可安装产物 CI；远程执行仍待验证。
 - 覆盖 209 个 HTML 夹具的审计工具，分别记录兼容性和质量诊断。
 - 隔离契约测试、格式差异审计与可复现的 CLI 性能测量。

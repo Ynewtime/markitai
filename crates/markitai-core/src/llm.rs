@@ -5,8 +5,10 @@ mod chatgpt;
 mod chunks;
 mod claude;
 mod copilot;
+mod degeneration;
 mod document;
 pub(crate) mod flight;
+pub(crate) mod providers;
 pub(crate) mod routing;
 mod service_probe;
 mod structured;
@@ -343,6 +345,9 @@ pub(crate) fn analyze_images_with_runtime(
             (caption.trim().to_owned(), description, String::new())
         }
     };
+    // The pictures are the only source: nothing excuses a repeated tail.
+    let description = salvaged(description, "");
+    let extracted_text = salvaged(extracted_text, "");
     if caption.trim().is_empty()
         && description.trim().is_empty()
         && extracted_text.trim().is_empty()
@@ -579,18 +584,32 @@ fn enhance_cached(
             Err(_) => warnings.push("Persistent LLM cache is unavailable; enhancement continued without a cached answer.".into()),
         }
     }
-    let (markdown, usage) = run_with_runtime(&prompts, cfg, environment(), sleep, runtime)?;
+    let (answer, usage) = run_with_runtime(&prompts, cfg, environment(), sleep, runtime)?;
+    // A repeated tail is cut; the salvaged answer is used but not cached.
+    let salvage = degeneration::salvage(&answer, markdown);
+    let salvaged = salvage.is_some();
+    let answer = match salvage {
+        Some(salvage) => {
+            // Pure callers keep only the text; the conversion's scope still
+            // reports the warning (the publisher drops duplicates).
+            note_document_warning(salvage.warning());
+            warnings.push(salvage.warning());
+            salvage.text
+        }
+        None => answer,
+    };
     // run only returns complete, nonblank answers; failures and token-limit
     // truncation cannot reach cache admission.
     if let (Some(cache), Some(key), Some(scope)) = (&cache, &cache_key, &scope)
-        && cache.set(key, scope, &markdown).is_err()
+        && !salvaged
+        && cache.set(key, scope, &answer).is_err()
         && warnings.is_empty()
     {
         warnings
             .push("Persistent LLM cache could not save this answer; enhancement succeeded.".into());
     }
     Ok(Enhancement {
-        markdown,
+        markdown: answer,
         usage,
         cache_hit: false,
         warnings,
@@ -646,13 +665,25 @@ pub(crate) fn enhance_images_with_source_and_runtime(
         })
         .collect();
     let prompts = prompts(markdown, source, cfg, Some(images))?;
-    run_with_runtime(
+    let (answer, usage) = run_with_runtime(
         &prompts,
         cfg,
         &config::environment(),
         &mut std::thread::sleep,
         runtime,
-    )
+    )?;
+    Ok((salvaged(answer, markdown), usage))
+}
+
+/// The answer without a repeated tail; the warning goes to the conversion.
+fn salvaged(answer: String, source: &str) -> String {
+    match degeneration::salvage(&answer, source) {
+        Some(salvage) => {
+            note_document_warning(salvage.warning());
+            salvage.text
+        }
+        None => answer,
+    }
 }
 
 fn prompts(
@@ -771,10 +802,8 @@ pub(crate) fn capabilities(cfg: &Value, env: &HashMap<String, String>) -> crate:
         .collect();
     let routable = deployments(cfg, env).is_ok_and(|entries| {
         entries.iter().any(|entry| {
-            matches!(
-                entry.provider.as_str(),
-                "ollama" | "ollama_chat" | "copilot" | "claude-agent" | "chatgpt"
-            ) || entry.key.as_ref().is_some_and(|key| !key.is_empty())
+            providers::key_optional(&entry.provider)
+                || entry.key.as_ref().is_some_and(|key| !key.is_empty())
         })
     });
     crate::LlmCapabilities {
@@ -799,10 +828,8 @@ pub(crate) fn vision_models(cfg: &Value, env: &HashMap<String, String>) -> Vec<S
         .filter(|entry| {
             groups.contains(&entry.group)
                 && entry.supports_vision != Some(false)
-                && (matches!(
-                    entry.provider.as_str(),
-                    "ollama" | "ollama_chat" | "copilot" | "claude-agent" | "chatgpt"
-                ) || entry.key.as_ref().is_some_and(|key| !key.is_empty()))
+                && (providers::key_optional(&entry.provider)
+                    || entry.key.as_ref().is_some_and(|key| !key.is_empty()))
                 && seen.insert(entry.id.clone())
         })
         .map(|entry| entry.id)
@@ -855,45 +882,11 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
             }
             continue;
         }
-        let (key_var, base, protocol) = match provider {
-            "openai" => (
-                "OPENAI_API_KEY",
-                "https://api.openai.com/v1",
-                Protocol::Chat,
-            ),
-            "anthropic" => (
-                "ANTHROPIC_API_KEY",
-                "https://api.anthropic.com/v1",
-                Protocol::Anthropic,
-            ),
-            "gemini" => (
-                "GEMINI_API_KEY",
-                "https://generativelanguage.googleapis.com/v1beta/openai",
-                Protocol::Chat,
-            ),
-            "deepseek" => (
-                "DEEPSEEK_API_KEY",
-                "https://api.deepseek.com/v1",
-                Protocol::Chat,
-            ),
-            "openrouter" => (
-                "OPENROUTER_API_KEY",
-                "https://openrouter.ai/api/v1",
-                Protocol::Chat,
-            ),
-            "azure" => ("AZURE_API_KEY", "", Protocol::Azure),
-            "ollama" | "ollama_chat" => (
-                "OLLAMA_API_KEY",
-                "http://localhost:11434/v1",
-                Protocol::Chat,
-            ),
-            _ => {
-                last_error = Some(Error::Unsupported(format!(
-                    "LLM provider '{provider}' is not implemented in this build"
-                )));
-                continue;
-            }
+        let Some(known) = providers::find(provider) else {
+            last_error = Some(providers::unsupported(provider));
+            continue;
         };
+        let protocol = known.protocol;
         let saved_provider = nonempty(entry.pointer("/model_info/provider_id")).and_then(|id| {
             providers.and_then(|items| {
                 items
@@ -901,6 +894,14 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
                     .find(|provider| provider.get("id").and_then(Value::as_str) == Some(id))
             })
         });
+        // The first key variable that holds a value; with none set, the
+        // first name decides (it may be present but empty).
+        let key_var = known
+            .key_vars
+            .iter()
+            .copied()
+            .find(|name| env.get(*name).is_some_and(|value| !value.is_empty()))
+            .unwrap_or(known.key_vars[0]);
         let key = config::resolve_optional(
             nonempty(params.get("api_key"))
                 .or_else(|| nonempty(saved_provider.and_then(|provider| provider.get("api_key")))),
@@ -924,20 +925,19 @@ fn deployments(cfg: &Value, env: &HashMap<String, String>) -> Result<Vec<Deploym
         };
         let endpoint_base = endpoint_base
             .or_else(|| {
-                env.get(&format!("{}_API_BASE", provider.to_ascii_uppercase()))
-                    .filter(|value| !value.is_empty())
-                    .cloned()
+                known
+                    .base_vars
+                    .iter()
+                    .find_map(|name| env.get(*name).filter(|value| !value.is_empty()).cloned())
             })
-            .or_else(|| {
-                (provider == "openai")
-                    .then(|| {
-                        env.get("OPENAI_BASE_URL")
-                            .filter(|value| !value.is_empty())
-                            .cloned()
-                    })
-                    .flatten()
-            })
-            .unwrap_or_else(|| base.into());
+            .or_else(|| known.base.map(str::to_owned));
+        let Some(endpoint_base) = endpoint_base else {
+            last_error = Some(Error::Config(format!(
+                "LLM provider '{provider}' has no default endpoint; set api_base or {}",
+                known.base_vars.join(" or ")
+            )));
+            continue;
+        };
         let api_version = nonempty(params.get("api_version"))
             .map(str::to_owned)
             .or_else(|| {
@@ -1348,6 +1348,9 @@ fn run_mode(
                     return Err(VisionFailure::blocked(error));
                 }
                 attempts = attempts.saturating_add(1);
+                if prompts.image.is_some() {
+                    disclose_images(crate::fetch::consent::Gate::installed(), &entries[selected]);
+                }
                 let mut observation = routing::Observation::default();
                 let response = if entries[selected].provider == "copilot" {
                     copilot::request(
@@ -1492,6 +1495,33 @@ fn run_mode(
         }
     }
     Err(last_error)
+}
+
+/// Whether a request to this deployment leaves the machine: subscription
+/// runtimes always do, HTTP endpoints unless they are loopback addresses.
+fn leaves_machine(entry: &Deployment) -> bool {
+    if providers::SUBSCRIPTIONS.contains(&entry.provider.as_str()) {
+        return true;
+    }
+    match url::Url::parse(&entry.endpoint)
+        .ok()
+        .and_then(|url| url.host().map(|host| host.to_owned()))
+    {
+        Some(url::Host::Domain(name)) => {
+            let name = name.trim_end_matches('.').to_ascii_lowercase();
+            name != "localhost" && !name.ends_with(".localhost")
+        }
+        Some(url::Host::Ipv4(address)) => !address.is_loopback(),
+        Some(url::Host::Ipv6(address)) => !address.is_loopback(),
+        None => true,
+    }
+}
+
+/// The one-time notice before images first go to a model off this machine.
+fn disclose_images(gate: &crate::fetch::consent::Gate, entry: &Deployment) {
+    if leaves_machine(entry) {
+        gate.images(&entry.id);
+    }
 }
 
 fn payload(entry: &Deployment, prompts: &Prompts) -> Value {
@@ -1893,6 +1923,7 @@ fn record_usage_class(
 #[cfg(test)]
 mod tests {
     mod auth_fallback;
+    mod hardening;
     use super::*;
     use std::io::Write;
     use std::net::{TcpListener, TcpStream};
