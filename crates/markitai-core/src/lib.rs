@@ -243,8 +243,20 @@ fn convert_inner(
             .and_then(|value| value.to_str())
             .and_then(office_render::kind)
     };
-    let office_media_requested = office_kind.is_some()
+    let office_media_wanted = office_kind.is_some()
         && (config::enabled(&cfg, "/ocr/enabled") || config::enabled(&cfg, "/screenshot/enabled"));
+    // OCR of Office pages renders them through LibreOffice. Without it the
+    // document's own text is converted and the missing page OCR is a warning,
+    // so OCR over a folder still converts its Office files; requested
+    // screenshots are the output itself and still fail.
+    // Numbers OCR is unsupported with or without LibreOffice and keeps its error.
+    let office_ocr_without_renderer = office_media_wanted
+        && !config::enabled(&cfg, "/screenshot/enabled")
+        && !input_path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("numbers"))
+        && !office_render_available();
+    let office_media_requested = office_media_wanted && !office_ocr_without_renderer;
     if !is_url {
         let path = &input_path;
         output::check_path(path, config::enabled(&cfg, "/output/allow_symlinks"))?;
@@ -386,6 +398,9 @@ fn convert_inner(
     } else {
         formats::extract(&input_path)?
     };
+    if office_ocr_without_renderer {
+        doc.warnings.push("OCR of Office pages needs LibreOffice (soffice on PATH) and the native PDF page renderer; the document's own text was converted without page OCR.".into());
+    }
     if office_media_requested {
         let (captured, reliable) = office_media::prepare(
             &mut doc,

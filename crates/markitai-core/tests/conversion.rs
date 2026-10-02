@@ -607,6 +607,19 @@ fn url_names_and_explicit_pure_output_follow_existing_contracts() {
             "https://example.com:8080/search?q=x",
             "example_com_8080_search",
         ),
+        // Non-ASCII paths, written plainly or percent-encoded, name their
+        // output readably; an encoded slash or control character stays safe,
+        // and bytes that are not UTF-8 keep their encoding.
+        ("https://ynewtime.com/posts/人是什么单位", "人是什么单位"),
+        (
+            "https://ynewtime.com/posts/%E4%BA%BA%E6%98%AF%E4%BB%80%E4%B9%88%E5%8D%95%E4%BD%8D/",
+            "人是什么单位",
+        ),
+        ("https://example.com/caf%C3%A9?lang=fr", "example_com_café"),
+        ("https://example.com/a%2Fb", "a_b"),
+        ("https://example.com/line%0Abreak", "line_break"),
+        ("https://example.com/%FF%FE", "%FF%FE"),
+        ("https://example.com/%2E%2E", "example_com"),
     ] {
         assert_eq!(
             markitai_core::output::url_name(url, &Default::default()),
@@ -845,4 +858,59 @@ mod bounded_fixture_io {
         env!("CARGO_MANIFEST_DIR"),
         "/../../tests/support/bounded_read.rs"
     ));
+}
+
+#[test]
+fn office_ocr_without_a_renderer_keeps_the_documents_own_text() {
+    // OCR over a folder must not fail its Office files where LibreOffice is
+    // absent; explicitly requested screenshots still do.
+    if markitai_core::office_render_available() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("report.docx");
+    std::fs::write(
+        &input,
+        include_bytes!("../src/office_render/fixtures/blank-middle-three.docx"),
+    )
+    .unwrap();
+    let base =
+        json!({"cache":{"enabled":false},"history":{"record":false},"llm":{"enabled":false}});
+    let mut ocr = base.clone();
+    ocr["ocr"] = json!({"enabled": true});
+    let result = convert(
+        input.to_str().unwrap(),
+        ConvertOptions {
+            config: Some(ocr),
+            output_dir: Some(dir.path().join("out")),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        result.markdown.contains("WORD FIRST PAGE"),
+        "{}",
+        result.markdown
+    );
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.starts_with("OCR of Office pages needs LibreOffice")),
+        "{:?}",
+        result.warnings
+    );
+    assert!(result.screenshots.is_empty());
+    let mut screenshots = base;
+    screenshots["screenshot"] = json!({"enabled": true});
+    let error = convert(
+        input.to_str().unwrap(),
+        ConvertOptions {
+            config: Some(screenshots),
+            output_dir: Some(dir.path().join("out2")),
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("LibreOffice"), "{error}");
 }

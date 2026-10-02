@@ -418,9 +418,13 @@ pub fn url_name(source: &str, _meta: &Map<String, Value>) -> String {
         Some(port) => format!("{host}_{port}"),
         None => host,
     };
+    // The parser percent-encodes every non-ASCII character of the path, so a
+    // URL written as `/人是什么单位` would name its output `%E4%BA%BA….md`;
+    // the segment is decoded when it decodes to UTF-8.
     let segment = parsed
         .as_ref()
-        .and_then(|u| u.path_segments()?.rfind(|s| !s.is_empty()));
+        .and_then(|u| u.path_segments()?.rfind(|s| !s.is_empty()))
+        .map(|segment| percent_decoded(segment).unwrap_or_else(|| segment.to_owned()));
     let raw = match segment {
         Some(path) if parsed.as_ref().is_some_and(|u| u.query().is_some()) => {
             format!("{host}_{path}")
@@ -430,7 +434,13 @@ pub fn url_name(source: &str, _meta: &Map<String, Value>) -> String {
     };
     let safe: String = raw
         .chars()
-        .map(|c| if "<>:\"/\\|?*".contains(c) { '_' } else { c })
+        .map(|c| {
+            if "<>:\"/\\|?*".contains(c) || c.is_control() {
+                '_'
+            } else {
+                c
+            }
+        })
         .collect();
     let safe: String = safe.trim_matches([' ', '.']).chars().take(200).collect();
     if safe.is_empty() {
@@ -438,6 +448,28 @@ pub fn url_name(source: &str, _meta: &Map<String, Value>) -> String {
     } else {
         safe
     }
+}
+
+/// `%XX` sequences of a URL path segment as bytes, when the result is UTF-8.
+fn percent_decoded(segment: &str) -> Option<String> {
+    let bytes = segment.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && let Some(byte) = bytes
+                .get(index + 1..index + 3)
+                .and_then(|hex| std::str::from_utf8(hex).ok())
+                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+        {
+            decoded.push(byte);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).ok()
 }
 
 pub fn should_skip(dir: &Path, name: &str, cfg: &Value) -> Result<bool> {

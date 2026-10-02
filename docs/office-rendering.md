@@ -7,6 +7,11 @@ requirements. The CLI itself remains one executable and invokes no Python
 conversion code. macOS is the first rendering platform covered by this adapter;
 having LibreOffice installed does not make unsupported PDF platforms available.
 
+When OCR is requested without screenshots and LibreOffice or the page renderer is
+missing, an Office document is converted from its own text with a warning instead
+of failing, so OCR over a folder still converts its Office files; explicitly
+requested screenshots are the output itself and still fail without them.
+
 The adapter accepts existing presentation aliases `ppt`, `pps`, `pot`, `pptx`,
 `pptm`, `ppsx`, `ppsm`, `odp`, and word-processing aliases `doc`, `docx`, `docm`,
 `odt`, `rtf`. Workbook capture accepts `xls`, `xlsx`, `xlsm`, `xlsb` and `ods`
