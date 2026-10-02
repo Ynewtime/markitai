@@ -31,8 +31,65 @@ use std::rc::Rc;
 /// covered.
 const COVERING_IMAGE_MIN_PAGE_FRACTION: f64 = 0.5;
 
+/// markitai: the share of the grid cells within the bounding box of an
+/// invisible text layer that the images drawn must cover for the layer to
+/// read as a transcript of them (see `ContentScanState::transcript`).
+const TRANSCRIPT_MIN_BOX_COVERAGE: f64 = 0.9;
+
+/// markitai: the effective size, in points, below which a transcript
+/// layer's text is too small to describe a printed line, and the share of
+/// the page height above which it is too large.
+const TRANSCRIPT_MIN_TEXT_SIZE: f64 = 2.0;
+const TRANSCRIPT_MAX_TEXT_SIZE_PAGE_FRACTION: f64 = 0.25;
+
+/// markitai: the share of a transcript layer's text-showing operators that
+/// may be set at a size outside those bounds.
+const TRANSCRIPT_MAX_ODD_SIZE_FRACTION: f64 = 0.1;
+
+/// markitai: the bytes of text a transcript layer may show per square inch
+/// of the images it lies on. A dense printed page carries about 50
+/// characters per square inch — 100 bytes in a two-byte font — so a layer
+/// past this is stuffed, not transcribed.
+const TRANSCRIPT_MAX_BYTES_PER_SQUARE_INCH: f64 = 400.0;
+
+/// markitai: the left halves of a transcript layer's glyph boxes, added
+/// up, may cover the images they lie on this many times over: text set
+/// line after line covers them less than once, and text shown over itself
+/// again and again many times.
+const TRANSCRIPT_MAX_GLYPH_OVERLAP: f64 = 3.0;
+
+/// markitai: the cells of the coverage grid, a row per `u64`, over the
+/// visible page box from its bottom row up.
+pub(crate) type CellGrid = [u64; COVERAGE_GRID];
+
+/// markitai: an invisible text layer whose geometry makes it a transcript
+/// of the images under it — an OCR text layer over a scan (see
+/// `ContentScanState::transcript`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct TranscriptLayer {
+    /// The visible page box the grids span: `[x0, y0, x1, y1]`.
+    pub(crate) page_box: [f64; 4],
+    /// The cells the left half of each text-showing operator's estimated
+    /// glyph box touches: where the layer surely puts text.
+    pub(crate) text_cells: CellGrid,
+    /// The cells the whole estimated glyph boxes touch: as far as the
+    /// layer's text may reach.
+    pub(crate) reach_cells: CellGrid,
+    /// The image drawn, when exactly one image draw landed on the page and
+    /// it was an image XObject: its object and the matrix it was drawn
+    /// under, which places its unit square on the page.
+    pub(crate) image: Option<DrawnImage>,
+}
+
+/// markitai: an image XObject drawn, and the matrix in force at its `Do`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DrawnImage {
+    pub(crate) id: ObjectId,
+    pub(crate) matrix: [f64; 6],
+}
+
 /// What a page's content executed, for the classification rule.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) struct ExecutedContent {
     /// Text-showing operators executed: in the page's own content and in
     /// the Form XObjects that content invokes.
@@ -59,6 +116,10 @@ pub(super) struct ExecutedContent {
     /// or is itself past `FORM_CONTENT_CACHE_MAX_BYTES` — from which point
     /// no form is followed and the evidence is incomplete.
     pub(super) form_bytes_exceeded: bool,
+    /// markitai: the page's hidden text layer, when its geometry makes it
+    /// a transcript of the images drawn (see `ContentScanState::transcript`);
+    /// only ever with `shows_only_a_hidden_text_layer`.
+    pub(super) transcript: Option<TranscriptLayer>,
 }
 
 /// The page's content streams read as one — the text render mode and the
@@ -375,6 +436,13 @@ struct ContentScanState<'a> {
     /// The images' own areas on the page added up, each no more than its
     /// box there — a turned image's box would overstate it.
     own_image_area: f64,
+    /// markitai: what the transcript test of `transcript` weighs, tallied
+    /// as the text-showing operators run.
+    hidden: HiddenTextTally,
+    /// markitai: image draws that landed within the clip in force, and the
+    /// first of them when it was an image XObject.
+    images_on_page: u32,
+    first_image: Option<DrawnImage>,
     /// The forms being run, innermost last — through whose resources the
     /// names in force resolve.
     active_forms: Vec<ObjectId>,
@@ -436,6 +504,9 @@ impl<'a> ContentScanState<'a> {
             executed_hidden_text_ops: 0,
             covered_cells: [0; COVERAGE_GRID],
             own_image_area: 0.0,
+            hidden: HiddenTextTally::default(),
+            images_on_page: 0,
+            first_image: None,
             active_forms: Vec::new(),
             form_invocations: 0,
             executed_form_bytes: 0,
@@ -572,7 +643,10 @@ impl<'a> ContentScanState<'a> {
     fn text_shown(&mut self, bytes: usize) {
         self.executed_text_ops += 1;
         match self.render_mode {
-            3 => self.executed_hidden_text_ops += 1,
+            3 => {
+                self.executed_hidden_text_ops += 1;
+                self.invisible_text_shown(bytes);
+            }
             7 => {
                 self.executed_hidden_text_ops += 1;
                 self.clip_text_ops_open += 1;
@@ -597,6 +671,47 @@ impl<'a> ContentScanState<'a> {
             _ => {}
         }
         self.pen_advanced(bytes);
+    }
+
+    /// markitai: a text-showing operator ran in mode 3, over `bytes` bytes,
+    /// at the pen: its size and where its glyph box lies are tallied for
+    /// the transcript test. The box is `glyph_box`'s, half an em per byte —
+    /// twice the width of a two-byte code's glyph, and blind to horizontal
+    /// scaling — so its left half is where the text surely lies and the
+    /// whole box how far it may reach. Text placed nowhere the scan can
+    /// tell, or off the page, is unplaced.
+    fn invisible_text_shown(&mut self, bytes: usize) {
+        let tally = &mut self.hidden;
+        tally.mode3_ops += 1;
+        tally.bytes += bytes;
+        let (Some(size), Some(position)) = (self.font_size, self.text_position) else {
+            tally.unplaced += 1;
+            return;
+        };
+        let size = size.abs();
+        let matrix = multiply(position.matrix, self.ctm);
+        let [a, b, c, d, ..] = matrix;
+        let effective = size * (a * d - b * c).abs().sqrt();
+        let page_height = self.page.y1 - self.page.y0;
+        if !(TRANSCRIPT_MIN_TEXT_SIZE..=TRANSCRIPT_MAX_TEXT_SIZE_PAGE_FRACTION * page_height)
+            .contains(&effective)
+        {
+            tally.odd_size += 1;
+        }
+        let width = 0.5 * size * bytes as f64;
+        let left = box_under(matrix, [0.0, -0.25 * size, width / 2.0, size]);
+        let whole = box_under(matrix, [0.0, -0.25 * size, width, size]);
+        let (Some(left), Some(whole)) = (
+            left.and_then(|left| left.clamped(&self.page)),
+            whole.and_then(|whole| whole.clamped(&self.page)),
+        ) else {
+            tally.unplaced += 1;
+            return;
+        };
+        mark_touched(&mut tally.text_cells, &self.page, &left);
+        mark_touched(&mut tally.reach_cells, &self.page, &whole);
+        tally.glyph_area += left.area();
+        tally.text_box = Some(tally.text_box.map_or(left, |text| text.union(&left)));
     }
 
     /// `ET`: the clip the text object's mode-7 text built takes effect,
@@ -699,8 +814,21 @@ impl<'a> ContentScanState<'a> {
         };
         self.drew_image = true;
         self.drew_image_on_page = true;
+        self.image_landed(None);
         self.own_image_area += painted.area();
         self.mark_cells(&painted);
+    }
+
+    /// markitai: an image draw landed within the clip in force; `id` is
+    /// the image XObject drawn, `None` for an inline image or a pattern's.
+    fn image_landed(&mut self, id: Option<ObjectId>) {
+        self.images_on_page += 1;
+        if self.images_on_page == 1 {
+            self.first_image = id.map(|id| DrawnImage {
+                id,
+                matrix: self.ctm,
+            });
+        }
     }
 
     /// Whether the clip in force has any extent for a paint to land in.
@@ -779,8 +907,9 @@ impl<'a> ContentScanState<'a> {
 
     /// `Do` of an image, or `BI` of an inline image: it paints the unit
     /// square under the matrix in force, of which the part within the clip
-    /// in force counts.
-    fn image_drawn(&mut self) {
+    /// in force counts. `id` is the image XObject drawn (markitai), `None`
+    /// for an inline image.
+    fn image_drawn(&mut self, id: Option<ObjectId>) {
         self.drew_image = true;
         let Some(drawn) = self.transformed_box([0.0, 0.0, 1.0, 1.0]) else {
             return;
@@ -793,6 +922,7 @@ impl<'a> ContentScanState<'a> {
         };
         self.painted(Some(on_page));
         self.drew_image_on_page = true;
+        self.image_landed(id);
         let [a, b, c, d, _, _] = self.ctm;
         self.own_image_area += (a * d - b * c).abs().min(on_page.area());
         self.mark_cells(&on_page);
@@ -1011,6 +1141,74 @@ impl<'a> ContentScanState<'a> {
             && self.covers_page()
     }
 
+    /// markitai: the page's hidden text layer when its geometry makes it a
+    /// transcript of the images drawn — an OCR text layer over a scan,
+    /// which a reader may take as the page's text. All of:
+    ///
+    /// 1. the page shows only a hidden text layer (complete evidence,
+    ///    images covering the page), and every text-showing operator ran in
+    ///    mode 3: clip-only (mode 7) text or any visible text refuses it;
+    /// 2. every operator is placed — a font size set, the text object
+    ///    positioned — and on the page;
+    /// 3. the left half of every estimated glyph box lies on the images,
+    ///    within one grid cell of a cell they cover, and they cover at
+    ///    least `TRANSCRIPT_MIN_BOX_COVERAGE` of the cells of the layer's
+    ///    bounding box: no line of it runs off the scan;
+    /// 4. no more than `TRANSCRIPT_MAX_ODD_SIZE_FRACTION` of the operators
+    ///    are set below `TRANSCRIPT_MIN_TEXT_SIZE` or above
+    ///    `TRANSCRIPT_MAX_TEXT_SIZE_PAGE_FRACTION` of the page height;
+    /// 5. the text is no denser than `TRANSCRIPT_MAX_BYTES_PER_SQUARE_INCH`
+    ///    of the images' area, and its glyph boxes do not cover that area
+    ///    more than `TRANSCRIPT_MAX_GLYPH_OVERLAP` times over.
+    ///
+    /// The geometry says where the text lies, not what it says: a layer
+    /// that passes may still say something the scan does not show, which
+    /// only a reading of the pixels can tell. Who produced the file plays
+    /// no part.
+    fn transcript(&self) -> Option<TranscriptLayer> {
+        let hidden = &self.hidden;
+        if !self.shows_only_a_hidden_text_layer()
+            || hidden.mode3_ops != self.executed_text_ops
+            || hidden.unplaced > 0
+            || f64::from(hidden.odd_size)
+                > TRANSCRIPT_MAX_ODD_SIZE_FRACTION * f64::from(hidden.mode3_ops)
+        {
+            return None;
+        }
+        let near_images = dilated(&self.covered_cells);
+        if hidden
+            .text_cells
+            .iter()
+            .zip(&near_images)
+            .any(|(text, near)| text & !near != 0)
+        {
+            return None;
+        }
+        let mut in_box = [0; COVERAGE_GRID];
+        mark_touched(&mut in_box, &self.page, &hidden.text_box?);
+        let box_cells: u32 = in_box.iter().map(|row| row.count_ones()).sum();
+        let covered: u32 = in_box
+            .iter()
+            .zip(&self.covered_cells)
+            .map(|(cells, covered)| (cells & covered).count_ones())
+            .sum();
+        if f64::from(covered) < TRANSCRIPT_MIN_BOX_COVERAGE * f64::from(box_cells) {
+            return None;
+        }
+        let image_area = self.covered_image_area();
+        if hidden.bytes as f64 > TRANSCRIPT_MAX_BYTES_PER_SQUARE_INCH * image_area / (72.0 * 72.0)
+            || hidden.glyph_area > TRANSCRIPT_MAX_GLYPH_OVERLAP * image_area
+        {
+            return None;
+        }
+        Some(TranscriptLayer {
+            page_box: [self.page.x0, self.page.y0, self.page.x1, self.page.y1],
+            text_cells: hidden.text_cells,
+            reach_cells: hidden.reach_cells,
+            image: self.first_image.filter(|_| self.images_on_page == 1),
+        })
+    }
+
     /// What the content executed, for the classification rule.
     fn executed(&self) -> ExecutedContent {
         ExecutedContent {
@@ -1021,8 +1219,99 @@ impl<'a> ContentScanState<'a> {
             shows_only_a_hidden_text_layer: self.shows_only_a_hidden_text_layer(),
             form_bytes: self.executed_form_bytes,
             form_bytes_exceeded: self.form_bytes_exceeded,
+            transcript: self.transcript(),
         }
     }
+}
+
+/// markitai: what a page's mode-3 text-showing operators tallied for the
+/// transcript test (see `ContentScanState::transcript`).
+struct HiddenTextTally {
+    /// Text-showing operators run in mode 3.
+    mode3_ops: u32,
+    /// The bytes of text the mode-3 operators showed.
+    bytes: usize,
+    /// Mode-3 operators placed nowhere the scan can tell, or off the page.
+    unplaced: u32,
+    /// Mode-3 operators set at an effective size outside the bounds.
+    odd_size: u32,
+    /// The cells the left halves of their glyph boxes touch, and those the
+    /// whole boxes touch.
+    text_cells: CellGrid,
+    reach_cells: CellGrid,
+    /// The bounding box of the left halves, and their areas added up.
+    text_box: Option<UserBox>,
+    glyph_area: f64,
+}
+
+impl Default for HiddenTextTally {
+    fn default() -> Self {
+        Self {
+            mode3_ops: 0,
+            bytes: 0,
+            unplaced: 0,
+            odd_size: 0,
+            text_cells: [0; COVERAGE_GRID],
+            reach_cells: [0; COVERAGE_GRID],
+            text_box: None,
+            glyph_area: 0.0,
+        }
+    }
+}
+
+/// markitai: mark in `grid`, which spans `page`, every cell `area` (on the
+/// page) touches, its edges included.
+fn mark_touched(grid: &mut CellGrid, page: &UserBox, area: &UserBox) {
+    let cells = COVERAGE_GRID as f64;
+    let cell_w = (page.x1 - page.x0) / cells;
+    let cell_h = (page.y1 - page.y0) / cells;
+    if !(cell_w > 0.0 && cell_h > 0.0) {
+        return;
+    }
+    let index = |offset: f64, cell: f64| (offset / cell).floor().clamp(0.0, cells - 1.0) as usize;
+    let (first_col, last_col) = (
+        index(area.x0 - page.x0, cell_w),
+        index(area.x1 - page.x0, cell_w),
+    );
+    let (first_row, last_row) = (
+        index(area.y0 - page.y0, cell_h),
+        index(area.y1 - page.y0, cell_h),
+    );
+    let width = last_col - first_col + 1;
+    let mask = if width >= COVERAGE_GRID {
+        u64::MAX
+    } else {
+        ((1u64 << width) - 1) << first_col
+    };
+    for row in &mut grid[first_row..=last_row] {
+        *row |= mask;
+    }
+}
+
+/// markitai: `grid` grown by one cell in every direction, diagonals
+/// included.
+fn dilated(grid: &CellGrid) -> CellGrid {
+    let spread = |row: u64| row | (row << 1) | (row >> 1);
+    let mut out = [0; COVERAGE_GRID];
+    for (index, cell) in out.iter_mut().enumerate() {
+        let below = index.checked_sub(1).map_or(0, |row| grid[row]);
+        let above = grid.get(index + 1).copied().unwrap_or(0);
+        *cell = spread(below | grid[index] | above);
+    }
+    out
+}
+
+/// markitai: the object the first of `resources` that binds `name` as an
+/// XObject holds by reference — the image `resolve_xobject` found there.
+fn xobject_id(doc: &Document, resources: &[&lopdf::Dictionary], name: &[u8]) -> Option<ObjectId> {
+    resources.iter().find_map(|scope| {
+        let xobjects = match scope.get(b"XObject").ok()? {
+            Object::Dictionary(dict) => dict,
+            Object::Reference(id) => doc.get_dictionary(*id).ok()?,
+            _ => return None,
+        };
+        xobjects.get(name).ok()?.as_reference().ok()
+    })
 }
 
 /// Fast scan of content stream bytes for text operators
@@ -1214,7 +1503,9 @@ fn scan_masked_content<'a>(
                         operand_floor = i;
                         if state.follow_do {
                             match resolve_xobject(state.doc, resources, &name) {
-                                Some(XObjectDrawn::Image) => state.image_drawn(),
+                                Some(XObjectDrawn::Image) => {
+                                    state.image_drawn(xobject_id(state.doc, resources, &name))
+                                }
                                 Some(XObjectDrawn::Form(id, form)) => {
                                     state.form_drawn(id, form, resources)
                                 }
@@ -1240,7 +1531,7 @@ fn scan_masked_content<'a>(
                     // state.
                     if state.follow_do {
                         counts.image_count += 1;
-                        state.image_drawn();
+                        state.image_drawn(None);
                     }
                 }
                 b'B' if token_at(i, b"BT") => {
@@ -1421,3 +1712,6 @@ mod fixtures;
 #[cfg(test)]
 #[path = "content_scan_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "content_scan_transcript_tests.rs"]
+mod transcript_tests;

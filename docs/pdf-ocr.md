@@ -21,6 +21,17 @@ Disabling routing recognizes every page. Other pages retain their original
 Markdown, including headings, links and tables. This uses typed reliability
 evidence rather than the reference reader's raw character-count threshold.
 
+A searchable scan's page read from its embedded OCR text layer (see
+[Searchable scans](pdf.md#searchable-scans)) is a reliable native page: routing
+keeps the layer rather than recognizing the page again, since the layer is the
+recognizer the producer chose and may read scripts local OCR does not. Its scan
+is not recognized again as a picture of the page either. To have local OCR
+replace such layers, disable routing (`ocr.per_page_routing: false`): every page
+is then recognized, the layer warning and `ocr_layer_pages` drop those pages,
+and the recognized text replaces the layer's. A page whose layer was refused
+(off the print, past the inspection's reach, or with other hidden text) is a
+scan and is recognized as before.
+
 Extracted pictures of at least 40,000 pixels on retained native pages are also
 recognized; their text follows the corresponding image reference. Shared images
 are recognized once. Unreadable pictures or a missing backend keep the native
@@ -129,8 +140,9 @@ These limits fail the document instead of truncating its page sequence. They are
 not a measured peak-memory ceiling: readers, system renderers and image encoders
 also allocate working storage.
 
-Internal document metadata distinguishes native pages and attempted, nonempty
-and blank local OCR pages/pictures. Successful blank recognition counts as OCR
+Internal document metadata distinguishes native pages (pages read from an OCR
+text layer count among them; `ocr_layer_pages` lists those) and attempted,
+nonempty and blank local OCR pages/pictures. Successful blank recognition counts as OCR
 use; failed picture attempts do not. The selected `ocr_path` is recorded;
 pixel buffers, page plans and internal image arrays are not exposed as metadata.
 These internal diagnostics do not add fields to the existing local-file public

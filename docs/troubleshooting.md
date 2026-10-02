@@ -60,6 +60,23 @@ have no extractable text (scans, or pages made only of pictures). Run again with
 `--ocr` to read them (macOS). The terminal shows one line per document; the
 report and `--json` keep one warning per page.
 
+**`Warning: PDF pages 1-3: the text was read from the invisible OCR text layer laid over each page image …`.**
+The PDF is a searchable scan: a scanning or OCR program (named in brackets when
+the file says which) laid its recognized words, invisibly, over each page image.
+Markitai used those words as the pages' text after checking that they sit on
+the page and, when it can read the image, on its print. It did not recognize
+the pages itself, so the program's recognition errors stay, and words that sit
+on the print but say something else would not be noticed. When the warning says
+the layer `could not be checked against the image`, the image is in a format
+Markitai does not decode (JBIG2, CCITT fax, JPEG 2000) or the page has several
+images. To read such pages with Markitai's own OCR instead, run with `--ocr` and
+`ocr.per_page_routing` set to `false` (macOS).
+
+**`Warning: PDF page 2: an invisible OCR text layer lies over the page image, but it does not line up with the text in the image …`.**
+The page carries hidden words that are not where the image's print is (a layer
+from another page, a misplaced layer, or text hidden on purpose), so they were
+not used and the page is treated as a scan; run with `--ocr` to read it.
+
 **`Warning: PDF page 4: 2 text runs (37 characters) could not be decoded and were omitted; …`.**
 Some text on the page is in a font whose characters cannot be identified (no
 character map the reader knows, or one that maps its codes to nothing usable).

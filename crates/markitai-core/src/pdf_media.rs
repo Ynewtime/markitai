@@ -422,9 +422,12 @@ fn recognize_native_pictures(
     let mut recognized: HashMap<usize, Option<String>> = HashMap::new();
     let mut counts = OcrCounts::default();
     for (page_index, page) in pages.pages.iter_mut().enumerate() {
+        // A page read from the OCR layer over its scan already holds the
+        // scan's text: reading the scan again as a picture would repeat it.
         if plan.recognize[page_index]
             || page.needs_ocr
             || page.visibility_suspect
+            || page.ocr_layer.is_some()
             || page.markdown.trim().is_empty()
         {
             continue;
@@ -660,6 +663,8 @@ pub(crate) fn prepare(
             page.needs_ocr = false;
             page.ocr_reason = None;
             page.ocr_completed = true;
+            // The page's text is now this recognition's, not its OCR layer's.
+            page.ocr_layer = None;
             if page.markdown.trim().is_empty() {
                 counts.blank += 1;
                 pages.document.warnings.push(format!(
@@ -1092,5 +1097,115 @@ mod tests {
         assert!(document.warnings.iter().any(|warning| {
             warning.contains("page 3: local OCR completed with no recognized text")
         }));
+    }
+
+    /// A searchable scan's page (a raster with strokes where its lines are
+    /// printed, and Tesseract-style invisible text on them) and a native
+    /// text page.
+    fn searchable_and_native() -> Vec<u8> {
+        use lopdf::{Dictionary, Object, Stream, dictionary};
+        let lines: Vec<(String, usize)> = (0..8)
+            .map(|row| {
+                (
+                    format!("Line {row} of the scanned report reads as its print."),
+                    700 - row * 16,
+                )
+            })
+            .collect();
+        let (width, height) = (612usize, 792usize);
+        let mut pixels = vec![245u8; width * height];
+        let mut layer = String::from("q 612 0 0 792 0 0 cm /Scan Do Q\n");
+        for (text, baseline) in &lines {
+            for y in *baseline..baseline + 8 {
+                for x in (72..72 + text.len() * 11 / 2).step_by(3) {
+                    pixels[(height - 1 - y) * width + x] = 20;
+                }
+            }
+            layer.push_str(&format!(
+                "BT 3 Tr 1 0 0 1 72 {baseline} Tm /F1 11 Tf ({text}) Tj ET\n"
+            ));
+        }
+        let mut doc = lopdf::Document::with_version("1.5");
+        let tree = doc.new_object_id();
+        let font = doc.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica"
+        });
+        let mut scan = Stream::new(
+            dictionary! {
+                "Type" => "XObject", "Subtype" => "Image", "Width" => 612, "Height" => 792,
+                "ColorSpace" => "DeviceGray", "BitsPerComponent" => 8
+            },
+            pixels,
+        );
+        scan.compress().unwrap();
+        let scan = doc.add_object(scan);
+        let mut kids = Vec::new();
+        for (content, xobjects) in [
+            (layer, dictionary! { "Scan" => scan }),
+            (
+                "BT /F1 12 Tf 1 0 0 1 72 700 Tm (A native page of visible text.) Tj ET".into(),
+                dictionary! {},
+            ),
+        ] {
+            let content = doc.add_object(Stream::new(Dictionary::new(), content.into_bytes()));
+            kids.push(Object::Reference(doc.add_object(dictionary! {
+                "Type" => "Page", "Parent" => tree, "Contents" => content,
+                "Resources" => dictionary! { "Font" => dictionary! { "F1" => font }, "XObject" => xobjects }
+            })));
+        }
+        doc.objects.insert(
+            tree,
+            dictionary! {
+                "Type" => "Pages", "Count" => 2, "Kids" => kids,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()]
+            }
+            .into(),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => tree });
+        doc.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        bytes
+    }
+
+    #[test]
+    fn a_page_read_from_its_ocr_layer_is_not_recognized_again_unless_routing_is_off() {
+        let bytes = searchable_and_native();
+        let pages = extract_pdf_pages(&bytes).unwrap();
+        assert!(pages.pages[0].ocr_layer.is_some());
+        assert!(!pages.pages[0].needs_ocr && !pages.pages[0].visibility_suspect);
+        let cfg = json!({"ocr":{"enabled":true}});
+        let plan = Plan::new(&pages, &cfg, false).unwrap();
+        assert_eq!(plan.recognize, [false, false]);
+        // The scan is not read again as a picture of the page either.
+        let mut pages = pages;
+        let counts =
+            recognize_native_pictures(&mut pages, &plan, &cfg, &mut Budget::default()).unwrap();
+        assert_eq!(counts.attempted, 0);
+        assert!(pages.pages[0].asset_ocr.is_empty());
+        let cfg = json!({"ocr":{"enabled":true,"per_page_routing":false}});
+        assert_eq!(Plan::new(&pages, &cfg, false).unwrap().recognize, [true; 2]);
+    }
+
+    #[test]
+    fn ocr_without_pages_to_recognize_keeps_the_layer_and_counts_it_native() {
+        let prepared = prepare(
+            &searchable_and_native(),
+            "scan.pdf",
+            &json!({"ocr":{"enabled":true},"llm":{"enabled":false},"screenshot":{"enabled":false}}),
+            false,
+        )
+        .unwrap();
+        assert!(prepared.has_reliable_text);
+        let (document, screenshots) = prepared.finish().unwrap();
+        assert!(screenshots.is_empty());
+        assert_eq!(document.metadata["native_pages"], 2);
+        assert_eq!(document.metadata["ocr_pages_attempted"], 0);
+        assert_eq!(document.metadata["ocr_images_attempted"], 0);
+        assert_eq!(document.metadata["ocr_layer_pages"], json!([1]));
+        assert!(document.markdown.contains("Line 7 of the scanned report"));
+        assert!(document.warnings.iter().any(|warning| warning.starts_with(
+            "PDF page 1: the text was read from the invisible OCR text layer laid over the page image;"
+        )));
     }
 }

@@ -726,6 +726,25 @@ impl PageRunCache {
     }
 }
 
+thread_local! {
+    /// markitai: the pages a document-level extraction on this thread reads
+    /// with their invisible (mode 3) text, set by
+    /// [`with_invisible_text_pages`].
+    static INVISIBLE_TEXT_PAGES: std::cell::RefCell<HashSet<u32>> =
+        std::cell::RefCell::new(HashSet::new());
+}
+
+/// Run `run` with `pages` (1-indexed) read with their invisible text by the
+/// document-level extractions it makes (markitai): the per-page Markdown
+/// reads a page whose invisible layer transcribes its scan this way, and
+/// every other reading as before.
+pub(crate) fn with_invisible_text_pages<T>(pages: HashSet<u32>, run: impl FnOnce() -> T) -> T {
+    let previous = INVISIBLE_TEXT_PAGES.with(|set| set.replace(pages));
+    let result = run();
+    INVISIBLE_TEXT_PAGES.with(|set| set.replace(previous));
+    result
+}
+
 /// [`extract_page_text_items_with_options`] for one page of a document-level
 /// extraction, taking the page's runs from `runs` or keeping them there
 /// when the reading can share them (markitai).
@@ -747,6 +766,18 @@ fn read_page_text(
     ),
     PdfError,
 > {
+    // markitai: a page whose invisible layer transcribes its scan is read
+    // with that layer, which the page-run cache does not serve.
+    let options = if !options.include_invisible
+        && INVISIBLE_TEXT_PAGES.with(|pages| pages.borrow().contains(&page_num))
+    {
+        TextExtractionOptions {
+            include_invisible: true,
+            ..options
+        }
+    } else {
+        options
+    };
     let Some(runs) = runs.filter(|_| PageRunCache::serves(options)) else {
         return extract_page_text_items_with_options(
             doc,

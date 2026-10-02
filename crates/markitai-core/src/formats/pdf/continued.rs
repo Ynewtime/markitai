@@ -273,6 +273,7 @@ mod tests {
             omitted_text: None,
             warning_index: 0,
             continues_table,
+            ocr_layer: None,
         }
     }
 
@@ -281,6 +282,7 @@ mod tests {
             pages,
             document: Document::default(),
             comments: Default::default(),
+            ocr_layer_producer: None,
         }
         .finish()
         .unwrap()

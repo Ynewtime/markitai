@@ -32,8 +32,9 @@ schema changes are required. Native media still has the platform and accuracy
 limitations described in [PDF rendering](pdf-rendering.md) and [OCR](ocr.md).
 
 Layout refinement runs only after the existing page checks. A page requiring
-OCR, containing suspicious hidden text, or having incomplete content inspection
-does not enter refinement. Text size for the hidden-text check is the effective
+OCR, containing suspicious hidden text, read from an embedded OCR text layer
+(see [Searchable scans](#searchable-scans)), or having incomplete content
+inspection does not enter refinement. Text size for the hidden-text check is the effective
 size after the text matrix, transformation and Form matrices: Quartz writes
 `1 Tf` and scales with the text matrix, which is ordinary 12pt text. The existing narrowly guarded font-decoded recovery
 for a false scan verdict remains in place. A missing or unreadable page keeps
@@ -82,14 +83,83 @@ clipping-only text in pages and Form XObjects. Hidden text still advances the
 text cursor, so following visible glyphs keep their positions. An `ActualText`
 replacement whose glyphs are all nonpainting cannot restore hidden text. The
 dependency's explicit OCR-layer path may still request mode 3; clipping-only
-mode 7 is never treated as an OCR layer. The core does not use that recovery
-path and retains the existing guard against plain-text recovery of suspicious
-pages.
+mode 7 is never treated as an OCR layer. The only mode-3 text the core reads is
+a searchable scan's OCR text layer that passes the checks below; it retains the
+existing guard against plain-text recovery of suspicious pages.
 
 These rules do not establish complete rendered visibility: transparency,
 blending, soft masks, occlusion, arbitrary clipping and mixed-visibility
 `ActualText` spans still need broader interpretation. Pages with visibility
 signals retain an explicit warning and do not enter layout refinement.
+
+## Searchable scans
+
+A searchable scan (OCRmyPDF, Tesseract, Acrobat "searchable image", a scanner's
+own OCR) is a page image with the recognizer's words laid over it in render mode
+3: invisible, but placed where the printed words are. Markitai reads such a page
+from that layer instead of reporting it as a scan needing OCR, but only when all
+of the following hold, and never silently.
+
+The page reader judges the layer by the geometry its content scan already
+follows (no further pass over the content): every text-showing operator the page
+and the forms it invokes execute runs in mode 3 (one visible or mode-7 operator
+refuses the page: mixed pages keep their visible text only); the images drawn
+cover at least half of the page; every operator has a font size and a position,
+and lies on the page; the left half of each estimated glyph box (half an em per
+byte, so a two-byte code's box is twice its glyph) lies within one cell of the
+images on a 64 × 64 grid, and the images cover 90% of the cells of the layer's
+bounding box, so no line runs off the scan; no more than a tenth of the
+operators are under 2 points or over a quarter of the page height (sizes include
+the text matrix and transformation, so `1 Tf` scaled by `Tm` is ordinary text);
+the text is no denser than 400 bytes per square inch of image and its glyph
+boxes cover the image at most three times over (no stuffing). The layer's text,
+read as the page's text, must then carry at least 40 letters and digits, pass
+the garbage and decoding checks every page passes, and come from fonts whose
+glyphs have identities. The producer named in the file plays no part.
+
+This module then requires its own inspection of the page to agree: all of the
+page read (no budget, nesting or decoding failure) and no visibility signal but
+the invisible rendering mode — white, transparent or one-point text elsewhere
+keeps the page a scan. When the page draws exactly one image XObject whose
+samples it can read (JPEG; Flate, LZW, run-length and ASCII filters; 1- to
+16-bit gray, RGB, CMYK, indexed or stencil samples), the layer is compared with
+the image's ink on the same grid: the paper is the 90th percentile of the
+image's luminance, a pixel darker than 60% of it is ink, and a cell is print
+when 1–50% of its pixels are ink (more is a photograph's shadow, a fill or a
+border). At least 90% of the cells the layer's text surely covers must lie
+within a cell of print, and at least 60% of the print cells within a cell of
+where the text may reach. A layer that fails is not used, with a warning that
+says how much of it lies on print; the page then reads as before. JBIG2, CCITT
+fax, JPEG 2000 and inline images, a page drawing several images, and an image
+too dark to tell paper from ink leave the layer unchecked: it is read, and the
+warning says why it could not be checked.
+
+The thresholds were measured on 59 Tesseract 5.5 layers over 200–300 dpi gray,
+RGB JPEG, bitonal and OCRmyPDF-style (layer in a Form XObject) renderings of
+Chrome-printed corpus pages: at least 97.8% of each layer's cells lay on print
+and all of the print under the layers' reach. Another page's layer laid over a
+page of the same layout reached 86.7%, injected words longer than the lines they
+covered 89.0%, and words over blank paper 7%; all three are refused.
+
+A page read from its layer has no visibility warning; one warning names every
+such page, checked alike, its producer and that recognition errors in the layer
+are kept (`PDF pages 1-3: the text was read from the invisible OCR text layer
+laid over each page image (Tesseract 5.5.3); it lines up with the text in the
+image, …`). Metadata `ocr_layer_pages` lists the pages. Such a page is read
+without headings, code, bold, italic or underline (an OCR layer's font is a
+stand-in and its sizes are line heights), does not set the body size other pages'
+headings are judged against, does not enter layout refinement and takes no part
+in running-header detection, since its text has no visible positions. Its page
+image is extracted as an asset as before.
+
+The comparison checks where the layer's words lie, not what they say. A layer
+whose words differ from the print but sit on its lines — another page's layer
+over a page of the same layout, or deliberately injected text of the same line
+lengths — is read; the warning and metadata always say where the text came from,
+and such text has the trust of an OCR engine reading the same pixels. Only
+recognizing the page again can tell them apart (see [PDF OCR](pdf-ocr.md)).
+Whole-document classification (`detect_pdf_type`) still reports such pages as
+`invisible_text_layer`: they show a raster and nothing else.
 
 ## Typed pages and final assembly
 
@@ -99,6 +169,10 @@ native Markdown body, the reader's OCR verdict and reason, and the names of
 successfully extracted assets. The body has neither generated page markers nor
 appended image references. `visibility_suspect` comes directly from graphics-state
 inspection; orchestration does not recover that decision by parsing warnings.
+`ocr_layer` marks a page whose body is its searchable scan's OCR text layer and
+says whether the layer was checked against the image; the warning naming those
+pages, and the `ocr_layer_pages` metadata, are written at assembly for the pages
+still read from their layer, so a page recognized again by OCR drops out.
 Embedded objects shared between pages still produce a single asset, with each
 page retaining its own reference.
 

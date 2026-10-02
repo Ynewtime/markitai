@@ -14,6 +14,7 @@ mod content_mask;
 mod content_resources;
 mod content_scan;
 use content_scan::ContentCounts;
+use content_scan::TranscriptLayer;
 
 /// PDF type classification
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -646,6 +647,13 @@ struct PageAnalysis {
     /// `has_invisible_text_layer`.
     executed_form_bytes: usize,
     form_bytes_exceeded: bool,
+    /// markitai: the hidden text layer, when its geometry makes it a
+    /// transcript of the images under it (see
+    /// `content_scan::ContentScanState::transcript`). Classification still
+    /// counts such a page as `has_invisible_text_layer`: it shows a raster
+    /// and nothing else. The per-page Markdown reader decides whether the
+    /// layer's text stands for it.
+    ocr_layer: Option<TranscriptLayer>,
     /// Total image area in pixels (reserved for future use)
     #[allow(dead_code)]
     total_image_area: u64,
@@ -976,6 +984,7 @@ fn analyze_page_content_from(
     let has_invisible_text_layer = executed.shows_only_a_hidden_text_layer;
     let executed_form_bytes = executed.form_bytes;
     let form_bytes_exceeded = executed.form_bytes_exceeded;
+    let ocr_layer = executed.transcript;
 
     let unique_alphanum_chars = all_unique_chars
         .iter()
@@ -1033,6 +1042,7 @@ fn analyze_page_content_from(
         has_invisible_text_layer,
         executed_form_bytes,
         form_bytes_exceeded,
+        ocr_layer,
         total_image_area,
         image_count,
         unique_text_chars: all_unique_chars.len() as u32,
@@ -2291,12 +2301,13 @@ pub(crate) fn page_ocr_signals_from(
         template_image_needs_ocr: needs_ocr_for_template_image,
         has_vector_text: analysis.has_vector_text,
         has_invisible_text_layer: analysis.has_invisible_text_layer,
+        ocr_layer: analysis.ocr_layer,
     }
 }
 
 /// The per-page signals [`page_ocr_signals`] shares between classification
 /// and per-page extraction.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct PageOcrSignals {
     /// The page's template image is a scan needing OCR rather than a
     /// watermark, letterhead or figure under a text page.
@@ -2306,6 +2317,10 @@ pub(crate) struct PageOcrSignals {
     /// Every text-showing operator on the page is invisible while an image
     /// covers the page.
     pub(crate) has_invisible_text_layer: bool,
+    /// markitai: that invisible layer, when its geometry makes it a
+    /// transcript of the images under it (an OCR text layer over a scan);
+    /// only ever with `has_invisible_text_layer`, which keeps its value.
+    pub(crate) ocr_layer: Option<TranscriptLayer>,
 }
 
 /// Recursively collect image dimensions from XObject resources,

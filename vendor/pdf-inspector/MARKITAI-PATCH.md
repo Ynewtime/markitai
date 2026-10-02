@@ -621,6 +621,50 @@ The local changes, each marked `markitai` (or, for sorts, made through
   Run in the isolated copy, the crate's unit tests give 1,687 passed (4
   added) and the same 21 failed. Each added test fails without its change.
 
+- `src/detector/content_scan.rs`, `src/detector.rs`: the executed-content
+  scan also tells whether a page's hidden text layer is, by its geometry, a
+  transcript of the images it lies on — an OCR text layer over a scan
+  (`ContentScanState::transcript`, `ExecutedContent::transcript`,
+  `PageAnalysis::ocr_layer`, `PageOcrSignals::ocr_layer`). All of: the page
+  shows only a hidden layer (complete evidence, images covering half the
+  page) and every text-showing operator ran in mode 3 (any mode-7 or
+  visible operator refuses it); every operator placed (font size set, text
+  object positioned) and on the page; the left half of each estimated glyph
+  box (half an em per byte, so a two-byte code's box is twice its glyph)
+  within one cell of the image coverage grid and the images covering 90% of
+  the cells of the layer's bounding box; at most a tenth of the operators
+  below 2 points or above a quarter of the page height (effective size, text
+  matrix and CTM included); at most 400 bytes per square inch of image and
+  glyph boxes covering the images at most three times over. The producer
+  plays no part. The scan records the image drawn when exactly one image
+  XObject is (`image_landed`, `xobject_id`) and the cells the layer's text
+  touches. Classification is unchanged: such a page is still
+  `has_invisible_text_layer` and `invisible_text_layer` for
+  `detect_pdf_type` and `process_pdf`, which read it as a raster (their
+  whole-document reading would otherwise skip mode 3 on a text page).
+- `src/lib.rs`, `src/extractor/mod.rs`: per-page Markdown reads the OCR
+  signals of the pages returned before their text, and reads a transcript
+  page with its mode-3 text (`with_invisible_text_pages`, which
+  `read_page_text` consults; the page-run cache does not serve such a
+  reading). The layer's text stands for the page when it carries at least
+  `OCR_LAYER_MIN_ALNUM` letters and digits, is no garbage and passes the
+  page's text-quality, decoding, glyph-identity and vector-text checks;
+  otherwise the page reads as before (empty, `invisible_text_layer`). Its
+  Markdown is read without heading, code, bold, italic or underline
+  detection, and transcript pages do not set the document's body size.
+  `PagesExtractionResult::ocr_layer_by_page` (`PageOcrLayer`: page, page
+  box, the cells the text surely and possibly covers, the image and its
+  matrix) reports the pages read so. `src/ocr_layer_tests.rs` and
+  `src/detector/content_scan_transcript_tests.rs` cover accepted layers
+  (Tesseract-style, in a form, image drawn after, turned page, `Tm`-scaled
+  size), refused ones (small image, a line off the scan, off the page,
+  visible or mode-7 text, tiny, huge, unplaced, stuffed), the quality
+  fallback, font statistics and page selection; each of three mutations
+  (quality floor, heading switch, font statistics) fails a test.
+
+  Run in the isolated copy, the crate's unit tests give 1,716 passed (14
+  added) and the same 21 failed.
+
 The page-level OCR, font decoding, repair, limits and reliability routing remain
 the upstream paths, except as listed above. Markitai's own visibility warnings and layout agreement
 checks remain enabled. The only new public APIs are `TextLine::text_with_markup`,
@@ -633,6 +677,9 @@ checks remain enabled. The only new public APIs are `TextLine::text_with_markup`
 dependency is added.
 `glyph_names::glyph_to_unicode` and the `MarkdownOptions::heading_tiers`
 field; no optional runtime dependency is added.
+`glyph_names::glyph_to_unicode`, `PageOmittedText`, `PageOcrLayer` and the
+`PagesExtractionResult::omitted_text_by_page` and `ocr_layer_by_page`
+fields; no optional runtime dependency is added.
 Opacity, masks, occlusion, full text clipping and mixed-visibility marked content
 are not claimed to be solved by this patch.
 

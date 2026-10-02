@@ -54,6 +54,10 @@ pub mod types;
 pub mod vision;
 mod xref_repair;
 
+#[cfg(test)]
+#[path = "ocr_layer_tests.rs"]
+mod ocr_layer_tests; // markitai: pages read from their OCR text layer
+
 pub use detector::{
     detect_pdf_type, detect_pdf_type_mem, detect_pdf_type_mem_with_config,
     detect_pdf_type_with_config, DetectionConfig, PdfType, PdfTypeResult, ScanStrategy,
@@ -162,6 +166,35 @@ pub struct PageOmittedText {
     /// The page lists a font that names its glyphs by index only: any text
     /// shown in it reads as nothing.
     pub unidentified_glyphs: bool,
+}
+
+/// A page whose Markdown is the text of an invisible OCR layer over the
+/// scan it transcribes (markitai): every text-showing operator the page
+/// executes runs in render mode 3, lies on the images that cover the
+/// page, at a plausible size and density (see the detector's transcript
+/// test), and what the layer reads as passes the page's text checks. The
+/// geometry says where the layer's text lies, not that it says what the
+/// scan shows; the grids let a caller compare it with the image.
+///
+/// The grids span the visible page box in 64 rows of 64 cells, the bottom
+/// row first, a row's leftmost cell in its lowest bit.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PageOcrLayer {
+    /// 1-indexed page number.
+    pub page: u32,
+    /// The visible page box, `[x0, y0, x1, y1]` in user space.
+    pub page_box: [f64; 4],
+    /// The cells where the layer surely puts text: those the left half of
+    /// each estimated glyph box touches (the estimate allows half an em
+    /// per byte, twice a two-byte code's width).
+    pub text_cells: [u64; 64],
+    /// The cells the layer's text may reach: those the whole estimated
+    /// glyph boxes touch.
+    pub reach_cells: [u64; 64],
+    /// The image under the layer, when the page draws exactly one image
+    /// and it is an image XObject: its object, and the matrix in force at
+    /// its `Do`, which places the image's unit square on the page.
+    pub image: Option<(lopdf::ObjectId, [f64; 6])>,
 }
 
 /// OCR reasons for a single 1-indexed page.
@@ -571,6 +604,9 @@ pub struct PagesExtractionResult {
     /// markitai: the text each returned page that does not need OCR left
     /// out or could only partly decode, for the pages with any.
     pub omitted_text_by_page: Vec<PageOmittedText>,
+    /// markitai: the returned pages whose Markdown is the text of an
+    /// invisible OCR layer over their scan, in the order returned.
+    pub ocr_layer_by_page: Vec<PageOcrLayer>,
     /// True if any page has tables or columns.
     pub is_complex: bool,
 }
@@ -1465,26 +1501,63 @@ fn extract_pages_markdown_from_doc(
         .flat_map(|row| &row.cells)
         .flat_map(|cell| cell.mcids.iter().map(|&(mcid, page)| (page, mcid)))
         .collect();
+    // When caller doesn't specify pages, return every page in document order.
+    let all_pages: Vec<u32>;
+    let pages_slice: &[u32] = match pages {
+        Some(p) => p,
+        None => {
+            all_pages = (0..page_count).collect();
+            &all_pages
+        }
+    };
+    let lopdf_pages = doc.get_pages();
+    // The OCR signals of the pages returned, read before their text so
+    // that a page whose invisible layer transcribes its scan is read with
+    // that layer (markitai): one scan per page, as before, which a loaded
+    // document may have made already.
+    let page_signals: HashMap<u32, detector::PageOcrSignals> = pages_slice
+        .iter()
+        .filter(|&&page| page < page_count)
+        .map(|&page| {
+            let page_1idx = page + 1;
+            let signals = runs
+                .and_then(|runs| runs.ocr_signals(page_1idx))
+                .or_else(|| {
+                    lopdf_pages
+                        .get(&page_1idx)
+                        .map(|&page_id| detector::page_ocr_signals(doc, page_id))
+                })
+                .unwrap_or_default();
+            (page_1idx, signals)
+        })
+        .collect();
+    let transcript_pages: HashSet<u32> = page_signals
+        .iter()
+        .filter(|(_, signals)| signals.ocr_layer.is_some())
+        .map(|(&page, _)| page)
+        .collect();
     let ((all_items, all_rects, all_lines), page_thresholds, gid_pages, _page_rotations, _) =
         extractor::with_table_cells(table_cells, || {
-            // markitai: a loaded document keeps each page's runs for its
-            // later readings.
-            if let Some(runs) = runs {
-                extractor::extract_positioned_text_with_runs(
-                    doc,
-                    font_cmaps,
-                    required_pages.as_ref(),
-                    runs,
-                )
-            } else if let Some(required_pages) = required_pages.as_ref() {
-                extractor::extract_positioned_text_for_document_analysis(
-                    doc,
-                    font_cmaps,
-                    required_pages,
-                )
-            } else {
-                extractor::extract_positioned_text_from_doc(doc, font_cmaps, None)
-            }
+            extractor::with_invisible_text_pages(transcript_pages.clone(), || {
+                // markitai: a loaded document keeps each page's runs for its
+                // later readings.
+                if let Some(runs) = runs {
+                    extractor::extract_positioned_text_with_runs(
+                        doc,
+                        font_cmaps,
+                        required_pages.as_ref(),
+                        runs,
+                    )
+                } else if let Some(required_pages) = required_pages.as_ref() {
+                    extractor::extract_positioned_text_for_document_analysis(
+                        doc,
+                        font_cmaps,
+                        required_pages,
+                    )
+                } else {
+                    extractor::extract_positioned_text_from_doc(doc, font_cmaps, None)
+                }
+            })
         })?;
     // markitai: a run no reading of its font decodes is left out of its
     // page, not the page's whole text; the page then needs OCR only when
@@ -1510,37 +1583,38 @@ fn extract_pages_markdown_from_doc(
     );
 
     // Compute font stats from full document (cross-page consistency).
-    let font_stats = markdown::analysis::calculate_font_stats_from_items(&filtered_items);
+    // markitai: an OCR layer's sizes are line heights, not typography, and
+    // do not set the size other pages' headings are judged against.
+    let typeset: Vec<TextItem>;
+    let typography: &[TextItem] = if transcript_pages.is_empty() {
+        &filtered_items
+    } else {
+        typeset = filtered_items
+            .iter()
+            .filter(|item| !transcript_pages.contains(&item.page))
+            .cloned()
+            .collect();
+        &typeset
+    };
+    let font_stats = markdown::analysis::calculate_font_stats_from_items(typography);
     // markitai: and the heading ladder, when the text spans several pages.
-    let heading_tiers = filtered_items
+    let heading_tiers = typography
         .iter()
-        .any(|item| item.page != filtered_items[0].page)
-        .then(|| {
-            markdown::analysis::document_heading_tiers(&filtered_items, font_stats.most_common_size)
-        });
+        .any(|item| item.page != typography[0].page)
+        .then(|| markdown::analysis::document_heading_tiers(typography, font_stats.most_common_size));
     let repeated_header_footer_items = if strip_repeated_headers_footers {
         repeated_header_footer_item_keys(&all_items, &page_thresholds, &chart_regions, page_count)
     } else {
         HashSet::new()
     };
 
-    // When caller doesn't specify pages, return every page in document order.
-    let all_pages: Vec<u32>;
-    let pages_slice: &[u32] = match pages {
-        Some(p) => p,
-        None => {
-            all_pages = (0..page_count).collect();
-            &all_pages
-        }
-    };
-
     let mut results = Vec::with_capacity(pages_slice.len());
     let mut pages_needing_ocr = Vec::new();
     let mut ocr_reasons_by_page = BTreeMap::new();
     let mut omitted_text_by_page = Vec::new();
+    let mut ocr_layer_by_page = Vec::new();
     #[cfg(all(feature = "ocr", not(target_arch = "wasm32")))]
     let mut supplemental_ocr_regions = BTreeMap::new();
-    let lopdf_pages = doc.get_pages();
 
     for &page_0idx in pages_slice {
         // Out-of-range pages → empty + needs_ocr
@@ -1644,29 +1718,47 @@ fn extract_pages_markdown_from_doc(
         // text layer it extracts describes the raster rather than being
         // the page's content. All three signals share one
         // analyze_page_content pass — see page_ocr_signals's doc comment.
-        // markitai: a loaded document may have scanned them already.
-        let signals = runs
-            .and_then(|runs| runs.ocr_signals(page_1idx))
-            .or_else(|| {
-                lopdf_pages
-                    .get(&page_1idx)
-                    .map(|&page_id| detector::page_ocr_signals(doc, page_id))
-            })
-            .unwrap_or_default();
-        let has_template_image = signals.template_image_needs_ocr;
-        let has_vector_text = signals.has_vector_text;
-        let has_invisible_text_layer = signals.has_invisible_text_layer;
+        // markitai: read before the pages' text (see `page_signals`).
+        let signals = page_signals.get(&page_1idx).copied().unwrap_or_default();
+        // markitai: a page whose invisible layer transcribes its scan was
+        // read with that layer (`with_invisible_text_pages`). The layer's
+        // text stands for the page only when it reads as text — letters
+        // and digits enough for an OCR layer, no garbage, none of the
+        // page's own checks failing — and the page is otherwise read as it
+        // was before: a scan, its hidden text left out.
+        let layer = signals.ocr_layer.filter(|_| {
+            let text: String = page_items
+                .iter()
+                .filter(|item| !matches!(item.item_type, types::ItemType::Image))
+                .map(|item| item.text.as_str())
+                .collect();
+            !has_text_quality_issue
+                && !gid_dominates
+                && !signals.has_vector_text
+                && non_placeholder_alnum(&page_items) >= OCR_LAYER_MIN_ALNUM
+                && !is_garbage_text(&text)
+        });
 
         // Build markdown with document-wide font stats
-        let options = MarkdownOptions {
+        let mut options = MarkdownOptions {
             base_font_size: Some(font_stats.most_common_size),
             include_page_numbers: false,
             strip_headers_footers: false,
             heading_tiers: heading_tiers.clone(),
             ..markdown_options.clone()
         };
+        if layer.is_some() {
+            // markitai: an OCR layer's font is a stand-in and its sizes are
+            // line heights: no heading, code, emphasis or underline is read
+            // from them.
+            options.detect_headers = false;
+            options.detect_code = false;
+            options.detect_bold = false;
+            options.detect_italic = false;
+            options.detect_underline = false;
+        }
 
-        let md = if has_text_quality_issue {
+        let md = if has_text_quality_issue || (signals.ocr_layer.is_some() && layer.is_none()) {
             String::new()
         } else {
             markdown::to_markdown_from_items_with_rects_and_lines(
@@ -1691,6 +1783,18 @@ fn extract_pages_markdown_from_doc(
         let has_decoding_issue = has_text_quality_issue
             || (!md.is_empty()
                 && (is_cid_garbage(&md) || detect_encoding_issues_beyond_replacement(&md)));
+        // markitai: the layer's Markdown is held to the same checks; a
+        // layer refused here leaves the page as it was without it.
+        let layer =
+            layer.filter(|_| !has_decoding_issue && !md.trim().is_empty() && !is_garbage_text(&md));
+        let (md, has_decoding_issue) = if signals.ocr_layer.is_some() && layer.is_none() {
+            (String::new(), has_text_quality_issue)
+        } else {
+            (md, has_decoding_issue)
+        };
+        let has_template_image = signals.template_image_needs_ocr && layer.is_none();
+        let has_vector_text = signals.has_vector_text;
+        let has_invisible_text_layer = signals.has_invisible_text_layer && layer.is_none();
         // First among a page's reasons, as classification's
         // `page_ocr_reasons` lists it too, so a page whose whole text layer
         // is hidden under a scan — a scan whatever its fonts are — gets the
@@ -1726,6 +1830,15 @@ fn extract_pages_markdown_from_doc(
             || has_vector_text
             || has_invisible_text_layer;
 
+        if let Some(layer) = layer.filter(|_| !needs_ocr) {
+            ocr_layer_by_page.push(PageOcrLayer {
+                page: page_1idx,
+                page_box: layer.page_box,
+                text_cells: layer.text_cells,
+                reach_cells: layer.reach_cells,
+                image: layer.image.map(|image| (image.id, image.matrix)),
+            });
+        }
         if needs_ocr {
             pages_needing_ocr.push(page_1idx);
         } else if tally.dropped_runs > 0 || tally.replacement_chars > 0 || has_gid {
@@ -1762,6 +1875,7 @@ fn extract_pages_markdown_from_doc(
             pages_needing_ocr,
             ocr_reasons_by_page: page_ocr_reasons_vec(ocr_reasons_by_page),
             omitted_text_by_page,
+            ocr_layer_by_page,
             is_complex: complexity.is_complex,
         },
         #[cfg(all(feature = "ocr", not(target_arch = "wasm32")))]

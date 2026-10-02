@@ -10,6 +10,11 @@ mod continued;
 mod geometry;
 #[path = "pdf/layout.rs"]
 mod layout;
+#[path = "pdf/ocr_layer.rs"]
+mod ocr_layer;
+#[cfg(test)]
+#[path = "pdf/ocr_layer_tests.rs"]
+mod ocr_layer_tests;
 #[cfg(test)]
 #[path = "pdf/page_tests.rs"]
 mod page_tests;
@@ -22,6 +27,8 @@ mod running;
 const MAX_STREAM_BYTES: usize = 64 * 1024 * 1024;
 const MAX_ASSET_BYTES: usize = 128 * 1024 * 1024;
 const MAX_IMAGE_PIXELS: usize = 32 * 1024 * 1024;
+/// The visibility signal of text in render mode 3 or 7.
+const INVISIBLE_RENDERING: &str = "invisible text rendering mode";
 
 fn conversion(message: impl std::fmt::Display) -> Error {
     Error::Conversion(format!("Native PDF conversion failed: {message}"))
@@ -380,7 +387,7 @@ impl Default for GraphicsState {
 impl GraphicsState {
     fn suspicious(self) -> Option<&'static str> {
         if matches!(self.render_mode, 3 | 7) {
-            Some("invisible text rendering mode")
+            Some(INVISIBLE_RENDERING)
         } else if self.invisible_alpha {
             Some("transparent text graphics state")
         } else if (self.font_size * self.ctm_scale * self.text_scale).abs() <= 1.0 {
@@ -401,6 +408,9 @@ struct PageInspection {
     images: Vec<ObjectId>,
     signals: BTreeSet<&'static str>,
     warnings: Vec<String>,
+    /// Some of the page's content went unread or could not be parsed: its
+    /// signals may be incomplete.
+    incomplete: bool,
     inspected_bytes: usize,
     inspected_streams: usize,
 }
@@ -430,6 +440,7 @@ fn inspect_content(
     {
         out.warnings
             .push("Expanded page/Form content exceeds the inspection budget.".into());
+        out.incomplete = true;
         return None;
     }
     out.inspected_bytes += bytes.len();
@@ -437,6 +448,7 @@ fn inspect_content(
     if depth > 32 {
         out.warnings
             .push("Form nesting exceeds the inspection limit.".into());
+        out.incomplete = true;
         return None;
     }
     let content = match Content::decode(bytes) {
@@ -444,6 +456,7 @@ fn inspect_content(
         Err(error) => {
             out.warnings
                 .push(format!("Content stream inspection failed: {error}"));
+            out.incomplete = true;
             return None;
         }
     };
@@ -469,6 +482,7 @@ fn inspect_operations(
                 if states.len() >= 1024 {
                     out.warnings
                         .push("Graphics-state nesting exceeds the inspection limit.".into());
+                    out.incomplete = true;
                     return;
                 }
                 states.push(state);
@@ -616,9 +630,11 @@ fn inspect_operations(
                                     out,
                                 );
                             }
-                            Err(error) => out
-                                .warnings
-                                .push(format!("Form stream inspection failed: {error}")),
+                            Err(error) => {
+                                out.warnings
+                                    .push(format!("Form stream inspection failed: {error}"));
+                                out.incomplete = true;
+                            }
                         }
                         seen_forms.remove(&id);
                     }
@@ -655,6 +671,7 @@ fn inspect_page(pdf: &lopdf::Document, id: ObjectId) -> (PageInspection, Option<
         Err(error) => {
             out.warnings
                 .push(format!("Page resource inspection failed: {error}"));
+            out.incomplete = true;
             return (out, None);
         }
     };
@@ -681,6 +698,7 @@ fn inspect_page(pdf: &lopdf::Document, id: ObjectId) -> (PageInspection, Option<
         Err(error) => {
             out.warnings
                 .push(format!("Page content inspection failed: {error}"));
+            out.incomplete = true;
             None
         }
     };
@@ -709,6 +727,9 @@ pub(crate) struct PdfPage {
     /// The native body starts with a table that layout geometry found to
     /// continue the table ending the previous page's body.
     continues_table: bool,
+    /// The body is the invisible OCR text layer laid over the page image,
+    /// and how it was checked against the image.
+    pub ocr_layer: Option<ocr_layer::LayerCheck>,
 }
 
 #[derive(Debug)]
@@ -718,6 +739,9 @@ pub(crate) struct PdfPages {
     /// Each page's "Comments" section, by page number (see
     /// `annotations`): it follows the page, whatever reads the page.
     comments: BTreeMap<usize, String>,
+    /// The document's producer, as the warning for pages read from their
+    /// OCR layer names it.
+    ocr_layer_producer: Option<String>,
 }
 
 impl PdfPages {
@@ -736,6 +760,7 @@ impl PdfPages {
             mut pages,
             mut document,
             mut comments,
+            ocr_layer_producer,
         } = self;
         let readable: Vec<bool> = pages
             .iter()
@@ -745,6 +770,35 @@ impl PdfPages {
         let mut sections = Vec::with_capacity(pages.len());
         let mut readable_pages = 0;
         let mut deferred = Vec::new();
+        // The pages whose text is their OCR layer: one warning for those
+        // checked alike, where the first of them stands.
+        let mut layer_groups: Vec<(ocr_layer::LayerCheck, Vec<usize>, usize)> = Vec::new();
+        for page in &pages {
+            let Some(check) = page
+                .ocr_layer
+                .filter(|_| !page.ocr_completed && !page.needs_ocr)
+            else {
+                continue;
+            };
+            match layer_groups.iter_mut().find(|(group, ..)| *group == check) {
+                Some((_, numbers, _)) => numbers.push(page.number),
+                None => layer_groups.push((check, vec![page.number], page.warning_index)),
+            }
+        }
+        let mut layer_pages = Vec::new();
+        for (check, numbers, index) in layer_groups {
+            deferred.push((
+                index,
+                ocr_layer::warning(&numbers, check, ocr_layer_producer.as_deref()),
+            ));
+            layer_pages.extend(numbers);
+        }
+        if !layer_pages.is_empty() {
+            layer_pages.sort_unstable();
+            document
+                .metadata
+                .insert("ocr_layer_pages".into(), layer_pages.into());
+        }
         for (page, readable) in pages.into_iter().zip(readable) {
             readable_pages += usize::from(readable);
             let mut warning = Vec::new();
@@ -1138,6 +1192,8 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
     };
     // What each page's reading left out, by page number.
     let mut omitted = BTreeMap::new();
+    // The pages the reader read from their OCR text layer, by page number.
+    let mut layers = BTreeMap::new();
     let extracted = match whole {
         Ok(result) => {
             omitted.extend(
@@ -1145,6 +1201,12 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
                     .omitted_text_by_page
                     .into_iter()
                     .map(|text| (text.page, text)),
+            );
+            layers.extend(
+                result
+                    .ocr_layer_by_page
+                    .into_iter()
+                    .map(|layer| (layer.page, layer)),
             );
             result.pages
         }
@@ -1170,6 +1232,12 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
                                     .into_iter()
                                     .map(|text| (text.page, text)),
                             );
+                            layers.extend(
+                                result
+                                    .ocr_layer_by_page
+                                    .into_iter()
+                                    .map(|layer| (layer.page, layer)),
+                            );
                             result.pages.pop()
                         })
                         .unwrap_or(pdf_inspector::PageMarkdown {
@@ -1188,8 +1256,58 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
         .collect::<BTreeMap<_, _>>();
     let mut layout_pages = HashSet::new();
     let mut page_geometry = BTreeMap::new();
+    // How each page read from its OCR layer was checked against its image,
+    // in the reader's own document, whose objects the layer names.
+    let mut layer_checks = BTreeMap::new();
+    let layer_document = loaded
+        .as_ref()
+        .map(pdf_inspector::LoadedPdf::document)
+        .unwrap_or(pdf);
     for (&number, &id) in &page_ids {
         if let Some(page) = pages.get_mut(&number) {
+            let inspection = inspections
+                .get_mut(&number)
+                .expect("every page was inspected");
+            if let Some(layer) = layers.remove(&number) {
+                // The layer stands for the page when this module's own
+                // inspection agrees that it is all the page's text and, if
+                // the image can be read, it lies on the image's text.
+                // Otherwise the page is what the reader makes of it without
+                // the layer: a scan whose hidden text is left out.
+                let alignment = (ocr_layer::inspection_agrees(inspection) && !page.needs_ocr)
+                    .then(|| ocr_layer::check(layer_document, &layer));
+                let check = match alignment {
+                    Some(ocr_layer::Alignment::Aligned) => Some(ocr_layer::LayerCheck::Aligned),
+                    Some(ocr_layer::Alignment::Unverified(why)) => {
+                        Some(ocr_layer::LayerCheck::Unverified(why))
+                    }
+                    Some(ocr_layer::Alignment::Misaligned {
+                        text_on_ink,
+                        ink_under_text,
+                    }) => {
+                        document.warnings.push(ocr_layer::misaligned(
+                            number,
+                            text_on_ink,
+                            ink_under_text,
+                        ));
+                        None
+                    }
+                    None => None,
+                };
+                match check {
+                    Some(check) => {
+                        // The invisible rendering is the layer itself.
+                        inspection.signals.remove(INVISIBLE_RENDERING);
+                        layer_checks.insert(number, check);
+                    }
+                    None => {
+                        page.markdown.clear();
+                        page.needs_ocr = true;
+                        page.ocr_reason =
+                            Some(pdf_inspector::OCR_REASON_INVISIBLE_TEXT_LAYER.into());
+                    }
+                }
+            }
             let inspection = &inspections[&number];
             recover_plain_text(pdf, number, id, page, inspection, &mut document.warnings);
             if !page.needs_ocr
@@ -1310,12 +1428,16 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
             omitted_text: omitted.remove(&number).filter(|_| !page.needs_ocr),
             warning_index,
             continues_table,
+            ocr_layer: layer_checks.remove(&number),
         });
     }
-    // Running page headers go like the page numbers the reader removes.
+    // Running page headers go like the page numbers the reader removes. A
+    // page read from its OCR layer has no positioned text to confirm one.
     let text_pages: Vec<(u32, &str)> = extracted_pages
         .iter()
-        .filter(|page| !page.needs_ocr && !page.markdown.trim().is_empty())
+        .filter(|page| {
+            !page.needs_ocr && !page.markdown.trim().is_empty() && page.ocr_layer.is_none()
+        })
         .map(|page| (page.number as u32, page.markdown.as_str()))
         .collect();
     let numbers: Vec<u32> = text_pages.iter().map(|(number, _)| *number).collect();
@@ -1380,10 +1502,16 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
             .metadata
             .insert("title".into(), title.trim().into());
     }
+    let ocr_layer_producer = extracted_pages
+        .iter()
+        .any(|page| page.ocr_layer.is_some())
+        .then(|| ocr_layer::producer(pdf))
+        .flatten();
     Ok(PdfPages {
         pages: extracted_pages,
         document,
         comments,
+        ocr_layer_producer,
     })
 }
 
@@ -1746,6 +1874,7 @@ mod tests {
                 omitted_text: None,
                 warning_index: 0,
                 continues_table: false,
+                ocr_layer: None,
             },
             &mut warnings,
         );
@@ -1763,6 +1892,7 @@ mod tests {
                 omitted_text: None,
                 warning_index: 0,
                 continues_table: false,
+                ocr_layer: None,
             },
             &mut warnings,
         );
@@ -2188,6 +2318,7 @@ mod tests {
             images: Vec::new(),
             signals: BTreeSet::new(),
             warnings: Vec::new(),
+            incomplete: false,
             inspected_bytes: 0,
             inspected_streams: 0,
         };
@@ -2501,6 +2632,7 @@ mod tests {
             omitted_text: Some(omitted),
             warning_index: 0,
             continues_table: false,
+            ocr_layer: None,
         };
         let omitted = pdf_inspector::PageOmittedText {
             page: 2,
