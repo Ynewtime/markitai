@@ -138,14 +138,29 @@ signed-in cookies with `fetch.playwright.cookies` and use `-s playwright` (see
 [your own cookies](fetch.md#your-own-cookies-for-the-local-browser)). A JSON body
 the site sent with the refusal is quoted in the message as `the site said: …`.
 
-**`Error: <Site> served a verification page instead of the content`.**
+**`Error: <Site> served a verification page instead of the content`** (or **`a login page`**).
 The site answered with status 200 but its page is a security or human check
-(WeChat's `环境异常`, Douban's `sec.douban.com`, Reddit's "Prove your humanity",
-Toutiao's script challenge, Zhihu's login check), not the article. `auto` tries
-the local browser first (WeChat articles are read that way); when that is shown
-the same check, or fails as well (the message then ends with the browser's own
-reason), the page can only be read from a copy you saved in your browser, as
-above.
+(WeChat's `环境异常`, Douban's `sec.douban.com`, Weibo's visitor check, Reddit's
+"Prove your humanity", Toutiao's script challenge, Zhihu's `安全验证` login
+check) or only a request to log in, not the article. `auto` tries the local
+browser first (WeChat articles are read that way); when that is shown the same
+check, or fails as well (the message then ends with the browser's own reason),
+the page can only be read from a copy you saved in your browser, as above.
+
+**`The jina service was shown Zhihu's verification page instead of the content`** (or `The defuddle service …`, `… a challenge page …`, `… received HTTP 403 from the site instead of the content`).
+A remote service read the site's refusal, not the page; that service counts as
+failing, the next one is tried, and nothing is written. When none reads the page
+the message says once what works, the same advice as for the static refusal
+above: save the page from your own browser, or use your own cookies with the
+local browser. See
+[remote readings that are refusals](fetch.md#remote-readings-that-are-refusals).
+
+**A warning `The jina service said: This is a cached snapshot of the original page …`.**
+Jina answered from its own cache, which can be old or wrong (on 2026-10-02 its
+snapshot of `example.com` was a test page). Run with `--no-cache` (or
+`--no-cache-for <pattern>`, or set `fetch.jina.no_cache`): when Markitai's page
+cache is bypassed for a URL, Jina is sent `X-No-Cache: true` too. defuddle.md
+has no such opt-out; its answers may be up to five minutes old.
 
 **`Error: The page needs JavaScript; use -s playwright or the default auto strategy`.**
 `-s static` read a page that is empty or asks for JavaScript. Use `-s playwright`
@@ -202,8 +217,9 @@ before the first remote attempt (without a terminal, or with `--quiet`, the run
 skips them and says so once); `always` tries defuddle, Jina and (with
 credentials) Cloudflare after the local strategies fail, with a one-time notice.
 They are not tried for a 404 or 410, or for local, private or credentialed URLs.
-When all fail, the message keeps the local failure first and adds `remote
-services failed as well (…)`. See
+A service that is shown the site's verification, login or challenge page fails
+like any other. When all fail, the message keeps the local failure first and
+adds `remote services failed as well (…)`, with what works said once. See
 [strategy order and remote fallback](fetch.md#strategy-order-and-remote-fallback).
 
 **`Chromium is not installed; install Chrome/Chromium or set MARKITAI_BROWSER_EXECUTABLE …`.**

@@ -8,7 +8,7 @@
 //! contains a token, an account id or the service's endpoint.
 
 use super::consent::Gate;
-use super::{FetchContent, FetchOutcome, client, request_error, send};
+use super::{FetchContent, FetchOutcome, client, request_error, send, sites};
 use crate::{Document, Error, Result, config, output};
 use reqwest::blocking::Response;
 use serde_json::{Value, json};
@@ -338,8 +338,8 @@ pub(crate) fn fetch(
     services: &Services<'_>,
 ) -> Result<Document> {
     let mut document = match service {
-        Service::Defuddle => defuddle(source, cfg, services)?,
-        Service::Jina => jina(source, cfg, services)?,
+        Service::Defuddle => defuddle(source, url, cfg, services)?,
+        Service::Jina => jina(source, url, cfg, services)?,
         Service::Cloudflare => super::cloudflare::render(source, url, cfg, services)?,
     };
     if document.markdown.trim().is_empty() {
@@ -362,7 +362,46 @@ pub(crate) fn outcome(document: Document) -> FetchOutcome {
     }
 }
 
-fn defuddle(source: &str, cfg: &Value, services: &Services<'_>) -> Result<Document> {
+/// Whether this conversion asked for a fresh reading of `source`: markitai's
+/// own page cache is bypassed for it (`--no-cache`, or a `--no-cache-for` /
+/// `cache.no_cache_patterns` entry that matches), so a remote service's own
+/// cache should not answer either.
+fn fresh_reading(cfg: &Value, source: &str) -> bool {
+    if config::enabled(cfg, "/cache/no_cache") {
+        return true;
+    }
+    let patterns: Vec<String> = cfg
+        .pointer("/cache/no_cache_patterns")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect();
+    crate::fetch_cache::url_matches_patterns(source, &patterns)
+}
+
+/// A reading that is the site's refusal page (a verification or login page,
+/// a challenge, a notice that asks for JavaScript) is the service failing,
+/// judged as the local readers judge markup (see [`sites::Shown`]). `url` is
+/// where the service says it read the page.
+fn judge(service: Service, url: &Url, document: &Document) -> Result<()> {
+    let title = document.metadata.get("title").and_then(Value::as_str);
+    match sites::Shown::markdown(url, title, &document.markdown).refusal() {
+        Some(refusal) => Err(Error::Fetch(refusal.read_by(service.name()))),
+        None => Ok(()),
+    }
+}
+
+/// The address a service says it read, when it is an http(s) URL; else the
+/// requested one.
+fn read_at(said: Option<&str>, url: &Url) -> Url {
+    said.and_then(|said| Url::parse(said.trim()).ok())
+        .filter(|read| matches!(read.scheme(), "http" | "https") && read.host_str().is_some())
+        .unwrap_or_else(|| url.clone())
+}
+
+fn defuddle(source: &str, url: &Url, cfg: &Value, services: &Services<'_>) -> Result<Document> {
     services
         .limits
         .acquire("defuddle", per_minute(cfg, "/fetch/defuddle/rpm"));
@@ -372,20 +411,146 @@ fn defuddle(source: &str, cfg: &Value, services: &Services<'_>) -> Result<Docume
         url::form_urlencoded::byte_serialize(source.as_bytes()).collect::<String>()
     );
     let client = client(seconds(cfg, "/fetch/defuddle/timeout"))?;
+    // defuddle.md documents no cache opt-out; its answers carry
+    // `Cache-Control: s-maxage=300`, so a reading can be minutes old.
     let response = send(client.get(endpoint)).map_err(|error| named(Service::Defuddle, error))?;
     let bytes = answer(Service::Defuddle, response, &[])?;
     let text = String::from_utf8(bytes).map_err(|_| {
         Error::Fetch("The defuddle service returned Markdown that is not UTF-8".into())
     })?;
     let (metadata, markdown) = output::split_frontmatter(&text);
-    Ok(Document {
+    let document = Document {
         markdown: markdown.trim().into(),
         metadata,
         ..Default::default()
-    })
+    };
+    judge(Service::Defuddle, url, &document)?;
+    Ok(document)
 }
 
-fn jina(source: &str, cfg: &Value, services: &Services<'_>) -> Result<Document> {
+/// What Jina Reader said about a page: its JSON `data` fields, or the header
+/// lines of its text answer (`Title:`, `URL Source:`, `Warning:`, …, then
+/// `Markdown Content:` and the page).
+#[derive(Default)]
+struct JinaReading {
+    title: Option<String>,
+    url: Option<String>,
+    warnings: Vec<String>,
+    /// The status the page itself answered Jina with.
+    status: Option<u16>,
+    content: String,
+}
+
+/// A header name of Jina's text answer: a few capitalized words.
+fn jina_header(key: &str) -> bool {
+    (1..=40).contains(&key.len())
+        && key.starts_with(|ch: char| ch.is_ascii_uppercase())
+        && key
+            .chars()
+            .all(|ch| ch.is_ascii_alphabetic() || ch == ' ' || ch == '-')
+}
+
+/// Jina's text answer, when `text` is one: header lines (blank lines between
+/// them allowed), then a `… Content:` line after which the page follows.
+/// Anything else is not taken for headers, so a page is never cut.
+fn jina_text(text: &str) -> Option<JinaReading> {
+    let mut reading = JinaReading::default();
+    let mut rest = text.trim_start_matches('\u{feff}');
+    while !rest.is_empty() {
+        let (line, after) = rest.split_once('\n').unwrap_or((rest, ""));
+        rest = after;
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let (key, value) = line.split_once(':')?;
+        let (key, value) = (key.trim(), value.trim());
+        if !jina_header(key) {
+            return None;
+        }
+        if key.ends_with(" Content") {
+            let content = if value.is_empty() {
+                after.to_owned()
+            } else {
+                format!("{value}\n{after}")
+            };
+            reading.content = content.replace("\r\n", "\n");
+            return Some(reading);
+        }
+        if value.is_empty() {
+            continue;
+        }
+        match key.to_ascii_lowercase().as_str() {
+            "title" => reading.title = Some(value.to_owned()),
+            "url source" => reading.url = Some(value.to_owned()),
+            "warning" => reading.warnings.push(value.to_owned()),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The status in a Jina warning such as `Target URL returned error 403: Forbidden`.
+fn warned_status(warning: &str) -> Option<u16> {
+    let (_, after) = warning.split_once("returned error ")?;
+    after
+        .split(|ch: char| !ch.is_ascii_digit())
+        .next()?
+        .parse()
+        .ok()
+        .filter(|status| (100..600).contains(status))
+}
+
+/// Jina's answer: JSON (`{"data": {"title", "url", "content", "warning",
+/// "httpStatus", …}}`), or the text form when the JSON was not honoured.
+fn jina_reading(bytes: &[u8], secrets: &[&str]) -> Result<JinaReading> {
+    let Ok(value) = serde_json::from_slice::<Value>(bytes) else {
+        return std::str::from_utf8(bytes)
+            .ok()
+            .and_then(jina_text)
+            .ok_or_else(|| {
+                Error::Fetch("The jina service returned an answer that is not JSON".into())
+            });
+    };
+    let Some(data) = value.get("data").filter(|data| data.is_object()) else {
+        return Err(Error::Fetch(match service_said(bytes, secrets) {
+            Some(said) => format!("The jina service returned no page: {said}"),
+            None => "The jina service returned no page".into(),
+        }));
+    };
+    let text = |key: &str| {
+        data.get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_owned)
+    };
+    let content = data
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    // Header lines of the text form inside the content are Jina's, not the page's.
+    let mut reading = jina_text(content)
+        .filter(|_| content.trim_start().starts_with("Title:"))
+        .unwrap_or_else(|| JinaReading {
+            content: content.to_owned(),
+            ..Default::default()
+        });
+    if let Some(title) = text("title") {
+        reading.title = Some(title);
+    }
+    if let Some(url) = text("url") {
+        reading.url = Some(url);
+    }
+    reading.warnings.extend(text("warning"));
+    reading.status = data
+        .get("httpStatus")
+        .and_then(Value::as_u64)
+        .and_then(|status| u16::try_from(status).ok());
+    Ok(reading)
+}
+
+fn jina(source: &str, url: &Url, cfg: &Value, services: &Services<'_>) -> Result<Document> {
     let text = |pointer: &str| {
         cfg.pointer(pointer)
             .and_then(Value::as_str)
@@ -417,7 +582,8 @@ fn jina(source: &str, cfg: &Value, services: &Services<'_>) -> Result<Document> 
     if let Some(key) = &key {
         request = request.bearer_auth(key);
     }
-    if config::enabled(cfg, "/fetch/jina/no_cache") {
+    let fresh = config::enabled(cfg, "/fetch/jina/no_cache") || fresh_reading(cfg, source);
+    if fresh {
         request = request.header("X-No-Cache", "true");
     }
     for (pointer, header) in [
@@ -431,29 +597,48 @@ fn jina(source: &str, cfg: &Value, services: &Services<'_>) -> Result<Document> 
     let secrets: Vec<&str> = key.as_deref().into_iter().collect();
     let response = send(request).map_err(|error| named(Service::Jina, error))?;
     let bytes = answer(Service::Jina, response, &secrets)?;
-    let value: Value = serde_json::from_slice(&bytes)
-        .map_err(|_| Error::Fetch("The jina service returned an answer that is not JSON".into()))?;
-    let Some(data) = value.get("data").filter(|data| data.is_object()) else {
-        return Err(Error::Fetch(match service_said(&bytes, &secrets) {
-            Some(said) => format!("The jina service returned no page: {said}"),
-            None => "The jina service returned no page".into(),
+    let reading = jina_reading(&bytes, &secrets)?;
+    let read_at = read_at(reading.url.as_deref(), url);
+    // The page's own status, read as local fetching reads it: a refusal is
+    // the site turning Jina away, any other failure is the page's.
+    if let Some(status) = reading
+        .status
+        .or_else(|| {
+            reading
+                .warnings
+                .iter()
+                .find_map(|warning| warned_status(warning))
+        })
+        .filter(|status| *status >= 400)
+    {
+        return Err(Error::Fetch(if super::refusal_status(status) {
+            sites::refused_status(Service::Jina.name(), status)
+        } else {
+            match super::status_hint(status, &read_at, false) {
+                Some(hint) => {
+                    format!("The jina service received HTTP {status} from the site: {hint}")
+                }
+                None => format!("The jina service received HTTP {status} from the site"),
+            }
         }));
-    };
+    }
     let mut document = Document {
-        markdown: data
-            .get("content")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
+        markdown: reading.content,
         ..Default::default()
     };
-    if let Some(title) = data
-        .get("title")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|title| !title.is_empty())
-    {
+    if let Some(title) = reading.title {
         document.metadata.insert("title".into(), json!(title));
+    }
+    judge(Service::Jina, &read_at, &document)?;
+    for warning in reading.warnings {
+        let warning = without_secrets(&warning, &secrets);
+        let mut said = format!("The jina service said: {warning}");
+        if !fresh && warning.to_ascii_lowercase().contains("cached snapshot") {
+            said.push_str(
+                " Run with --no-cache (or set fetch.jina.no_cache) to ask Jina for a fresh reading.",
+            );
+        }
+        document.warnings.push(said);
     }
     Ok(document)
 }
@@ -466,5 +651,62 @@ fn named(service: Service, error: Error) -> Error {
             service.name()
         )),
         other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jina_text_header_lines_are_read_and_anything_else_is_left_alone() {
+        let reading = jina_text("\u{feff}Title: A: B\r\n\r\nURL Source: https://example.com/a\r\nPublished Time: 2026-01-01\r\nWarning: first\r\nWarning: second\r\n\r\nMarkdown Content:\r\n# A\r\n\r\nBody.").unwrap();
+        assert_eq!(reading.title.as_deref(), Some("A: B"));
+        assert_eq!(reading.url.as_deref(), Some("https://example.com/a"));
+        assert_eq!(reading.warnings, ["first", "second"]);
+        assert_eq!(reading.content, "# A\n\nBody.");
+        // Other content markers, and content on the marker's line.
+        assert_eq!(
+            jina_text("Title: T\nText Content: one line")
+                .unwrap()
+                .content,
+            "one line\n"
+        );
+        for not_headers in [
+            "# A heading\n\nTitle: later",
+            "Title: Only headers\nURL Source: https://example.com/",
+            "title: lower case\nMarkdown Content:\nx",
+            "Plain text without a colon",
+            "",
+        ] {
+            assert!(jina_text(not_headers).is_none(), "{not_headers}");
+        }
+        assert_eq!(
+            warned_status("Target URL returned error 403: Forbidden"),
+            Some(403)
+        );
+        assert_eq!(warned_status("Target URL returned error 99999"), None);
+        assert_eq!(warned_status("This is a cached snapshot"), None);
+    }
+
+    #[test]
+    fn a_fresh_reading_follows_the_page_cache_bypass() {
+        let url = "https://example.com/docs/page";
+        assert!(!fresh_reading(&json!({}), url));
+        assert!(fresh_reading(&json!({"cache": {"no_cache": true}}), url));
+        assert!(fresh_reading(
+            &json!({"cache": {"no_cache_patterns": ["example.com"]}}),
+            url
+        ));
+        assert!(fresh_reading(
+            &json!({"cache": {"no_cache_patterns": ["https://example.com/docs/*"]}}),
+            url
+        ));
+        assert!(!fresh_reading(
+            &json!({"cache": {"no_cache_patterns": ["other.test"]}}),
+            url
+        ));
+        // A cache that is off is not a request for a fresh reading.
+        assert!(!fresh_reading(&json!({"cache": {"enabled": false}}), url));
     }
 }

@@ -88,7 +88,7 @@ fn now() -> i64 {
 /// version changes with every release, and the revision is bumped when
 /// extraction changes between releases (decision 0003). Older rows stay
 /// readable and expire by TTL or capacity.
-const NAMESPACE: &str = concat!("native-fetch-", env!("CARGO_PKG_VERSION"), "-r4");
+const NAMESPACE: &str = concat!("native-fetch-", env!("CARGO_PKG_VERSION"), "-r5");
 
 fn key(url: &str, explicit_strategy: Option<&str>) -> String {
     let mut hash = Sha256::new();

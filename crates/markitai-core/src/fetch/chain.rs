@@ -7,6 +7,9 @@
 //! transport error) ends the local steps. Remote steps run only when consent
 //! and the target allow them, and only for a failure a remote service could
 //! repair: never after a 404 or 410, or a configuration or input error.
+//! A remote reading that is the site's refusal (a verification or login page,
+//! a challenge, a refusal status) is that service failing: the next one is
+//! tried, and when none reads the page the failure says once what works.
 
 use super::policy::Step;
 use super::remote::Service;
@@ -34,6 +37,9 @@ pub(super) struct Attempts<'a> {
     pub render: &'a mut dyn FnMut(bool) -> Result<FetchOutcome>,
     pub remote_ready: &'a mut dyn FnMut(Service) -> Readiness,
     pub remote: &'a mut dyn FnMut(Service) -> Result<FetchOutcome>,
+    /// What works instead for this page ([`sites::what_works`]), said when a
+    /// remote service was turned away and no other failure says it already.
+    pub what_works: String,
 }
 
 const NO_BROWSER_FOR_ROUTE: &str = "No local browser (Chrome or Chromium) was found for a strategy order that needs one; install one or set MARKITAI_BROWSER_EXECUTABLE (see 'markitai doctor')";
@@ -111,8 +117,8 @@ pub(super) fn run(steps: &[Step], attempts: Attempts<'_>) -> Result<FetchOutcome
                             // then failed in its own way.
                             failure = Some(match failure.take() {
                                 Some(Error::Fetch(before))
-                                    if before.contains(sites::VERIFICATION_PAGE)
-                                        && !after.contains(sites::VERIFICATION_PAGE)
+                                    if sites::refusal_page(&before)
+                                        && !sites::refusal_page(&after)
                                         && !after.starts_with("HTTP ") =>
                                 {
                                     Error::Fetch(format!(
@@ -163,11 +169,22 @@ pub(super) fn run(steps: &[Step], attempts: Attempts<'_>) -> Result<FetchOutcome
         }
         return Ok(outcome);
     }
+    let turned_away = remote_failures
+        .iter()
+        .any(|failure| sites::refused_reading(failure));
     let error = match failure {
         Some(error) if browser_missing && needs_javascript(&error) => {
             Error::Fetch(NO_BROWSER_FOR_JAVASCRIPT.into())
         }
         Some(error) => error,
+        // The site's refusal leads, then every service tried and why.
+        None if turned_away && !attempts.what_works.is_empty() => {
+            return Err(Error::Fetch(format!(
+                "{}; the remote services tried failed ({})",
+                capitalized(&attempts.what_works),
+                remote_failures.join("; ")
+            )));
+        }
         None if !remote_failures.is_empty() => {
             return Err(Error::Fetch(format!(
                 "No strategy could read the page: {}",
@@ -180,15 +197,27 @@ pub(super) fn run(steps: &[Step], attempts: Attempts<'_>) -> Result<FetchOutcome
         ),
     };
     if remote_failures.is_empty() {
-        Err(error)
-    } else {
-        Err(appended(
-            error,
-            &format!(
-                "remote services failed as well ({})",
-                remote_failures.join("; ")
-            ),
-        ))
+        return Err(error);
+    }
+    let error = appended(
+        error,
+        &format!(
+            "remote services failed as well ({})",
+            remote_failures.join("; ")
+        ),
+    );
+    if turned_away && !attempts.what_works.is_empty() && !sites::says_what_works(&error.to_string())
+    {
+        return Err(appended(error, &attempts.what_works));
+    }
+    Err(error)
+}
+
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
     }
 }
 
@@ -237,6 +266,8 @@ mod tests {
         static_answer: RefCell<Option<Result<FetchOutcome>>>,
         browser: Option<RefCell<Option<Result<FetchOutcome>>>>,
         remote_ok: Option<Service>,
+        /// A service that is shown the site's refusal page.
+        turned_away: Option<Service>,
         ready: fn(Service) -> Readiness,
         asked: RefCell<Vec<Service>>,
         rendered: Cell<bool>,
@@ -248,6 +279,7 @@ mod tests {
                 static_answer: RefCell::new(Some(static_answer)),
                 browser: None,
                 remote_ok: None,
+                turned_away: None,
                 ready: |_| Readiness::Ready,
                 asked: RefCell::new(Vec::new()),
                 rendered: Cell::new(false),
@@ -259,6 +291,10 @@ mod tests {
         }
         fn remote_ok(mut self, service: Service) -> Self {
             self.remote_ok = Some(service);
+            self
+        }
+        fn turned_away(mut self, service: Service) -> Self {
+            self.turned_away = Some(service);
             self
         }
         fn ready(mut self, ready: fn(Service) -> Readiness) -> Self {
@@ -291,6 +327,10 @@ mod tests {
                         self.asked.borrow_mut().push(service);
                         if self.remote_ok == Some(service) {
                             Ok(page(&format!("from {}", service.name())))
+                        } else if self.turned_away == Some(service) {
+                            Err(Error::Fetch(
+                                sites::Refusal::Challenge.read_by(service.name()),
+                            ))
                         } else {
                             Err(Error::Fetch(format!(
                                 "HTTP 503 from the {} service",
@@ -298,9 +338,14 @@ mod tests {
                             )))
                         }
                     },
+                    what_works: sites::what_works(&zhihu()),
                 },
             )
         }
+    }
+
+    fn zhihu() -> url::Url {
+        url::Url::parse("https://www.zhihu.com/question/1").unwrap()
     }
 
     fn refused() -> Error {
@@ -455,5 +500,72 @@ mod tests {
         let run = Run::new(Ok(page("unused")));
         let message = run.go(&[Step::Browser]).err().unwrap().to_string();
         assert!(message.starts_with("No local browser"), "{message}");
+    }
+
+    #[test]
+    fn a_service_turned_away_is_a_failure_and_what_works_is_said_once() {
+        // The next service reads the page.
+        let run = Run::new(Err(refused()))
+            .turned_away(Service::Defuddle)
+            .remote_ok(Service::Jina);
+        assert_eq!(text(&run.go(&DEFAULT).unwrap()), "from jina");
+        // Every service fails: the local failure leads, each service says
+        // why, and what works follows once.
+        let run = Run::new(Err(refused())).turned_away(Service::Jina);
+        let message = run.go(&DEFAULT).err().unwrap().to_string();
+        assert!(
+            message.starts_with(&format!(
+                "{}; remote services failed as well (HTTP 503 from the defuddle service; The jina service was shown a challenge page instead of the content; HTTP 503 from the cloudflare service); Zhihu refuses automated clients; open the page in your browser",
+                refused()
+            )),
+            "{message}"
+        );
+        assert_eq!(
+            message.matches("Webpage, HTML Only").count(),
+            1,
+            "{message}"
+        );
+        // A local failure that already says what works is not repeated.
+        let site = super::super::http_failure(
+            reqwest::StatusCode::FORBIDDEN,
+            None,
+            &zhihu(),
+            &Default::default(),
+        );
+        let shown = site.to_string();
+        let run = Run::new(Err(site)).turned_away(Service::Jina);
+        let message = run.go(&DEFAULT).err().unwrap().to_string();
+        assert!(message.starts_with(&shown), "{message}");
+        assert_eq!(
+            message.matches("Webpage, HTML Only").count(),
+            1,
+            "{message}"
+        );
+        // Remote services only: the site's refusal leads.
+        let run = Run::new(Ok(page("unused"))).turned_away(Service::Jina);
+        let message = run
+            .go(&[Step::Remote(Service::Defuddle), Step::Remote(Service::Jina)])
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(
+            message.starts_with("Zhihu refuses automated clients; open the page in your browser"),
+            "{message}"
+        );
+        assert!(
+            message.ends_with("; the remote services tried failed (HTTP 503 from the defuddle service; The jina service was shown a challenge page instead of the content)"),
+            "{message}"
+        );
+        // Ordinary service failures keep their wording.
+        let run = Run::new(Ok(page("unused")));
+        let message = run
+            .go(&[Step::Remote(Service::Defuddle)])
+            .err()
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            message,
+            "No strategy could read the page: HTTP 503 from the defuddle service"
+        );
     }
 }

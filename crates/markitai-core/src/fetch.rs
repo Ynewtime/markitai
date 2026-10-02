@@ -193,21 +193,7 @@ fn http_failure(
         None => {
             message.push_str(" for ");
             message.push_str(&shown_url(url));
-            let refused = matches!(status.as_u16(), 401 | 403 | 418 | 429);
-            let site = refused
-                .then(|| sites::refusal_hint(url, evidence.cloudflare_challenge))
-                .flatten();
-            let hint = match status.as_u16() {
-                _ if site.is_some() => site,
-                404 | 410 => Some("the page may have been removed or is not public".into()),
-                401 | 403 => Some(
-                    "the site refused access; it may block automated clients or need a login"
-                        .into(),
-                ),
-                429 => Some("rate limited; try again later".into()),
-                500..=599 => Some("the site had a server error".into()),
-                _ => None,
-            };
+            let hint = status_hint(status.as_u16(), url, evidence.cloudflare_challenge);
             let said = evidence
                 .said
                 .as_ref()
@@ -220,6 +206,29 @@ fn http_failure(
         }
     }
     Error::Fetch(message)
+}
+
+/// Whether a page's status is the site turning the reader away.
+fn refusal_status(status: u16) -> bool {
+    matches!(status, 401 | 403 | 418 | 429)
+}
+
+/// What a page's failed status means for the reader: the site's own advice
+/// for a refusal from a site that is known (see [`sites`]), else a short hint.
+fn status_hint(status: u16, url: &Url, cloudflare_challenge: bool) -> Option<String> {
+    let site = refusal_status(status)
+        .then(|| sites::refusal_hint(url, cloudflare_challenge))
+        .flatten();
+    match status {
+        _ if site.is_some() => site,
+        404 | 410 => Some("the page may have been removed or is not public".into()),
+        401 | 403 => {
+            Some("the site refused access; it may block automated clients or need a login".into())
+        }
+        429 => Some("rate limited; try again later".into()),
+        500..=599 => Some("the site had a server error".into()),
+        _ => None,
+    }
 }
 
 /// The evidence a refused answer gives: its Cloudflare header and, for a
@@ -354,6 +363,19 @@ fn public_addresses(url: &Url) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// A remote service's failure because the site turned it away, followed by
+/// what works instead unless the message says it already.
+fn with_what_works(error: Error, url: &Url) -> Error {
+    match error {
+        Error::Fetch(message)
+            if sites::refused_reading(&message) && !sites::says_what_works(&message) =>
+        {
+            Error::Fetch(format!("{message}; {}", sites::what_works(url)))
+        }
+        other => other,
+    }
 }
 
 /// The question for the person at the terminal, naming the page and the
@@ -567,7 +589,9 @@ fn fetch_with_services(
                 )));
             }
             remote_target(&url, services)?;
-            let mut outcome = remote::outcome(remote::fetch(service, source, &url, cfg, services)?);
+            let document = remote::fetch(service, source, &url, cfg, services)
+                .map_err(|error| with_what_works(error, &url))?;
+            let mut outcome = remote::outcome(document);
             if capture {
                 attach_screenshot(source, cfg, &mut outcome, runtime)?;
             }
@@ -631,6 +655,7 @@ fn auto_result(
             render: &mut |learn| render.take().expect("rendered once")(learn),
             remote_ready: &mut |_| chain::Readiness::SkipAll(None),
             remote: &mut |_| unreachable!("no remote step"),
+            what_works: String::new(),
         },
     )
 }
@@ -723,6 +748,7 @@ fn auto_chain(
             remote: &mut |service| {
                 remote::fetch(service, source, url, cfg, services).map(remote::outcome)
             },
+            what_works: sites::what_works(url),
         },
     )
 }
@@ -748,7 +774,7 @@ fn fetch_browser_and_learn(
     // A challenge or still-unrendered shell is not evidence that this domain
     // has a usable browser representation. PDFs never teach HTML routing.
     let admissible = learn
-        && matches!(&response, browser::BrowserResponse::Page(page) if html_rejection(&page.html).is_none());
+        && matches!(&response, browser::BrowserResponse::Page(page) if html_rejection(url, &page.html).is_none());
     let mut outcome = browser_response_outcome(response, cfg, output_available)?;
     if admissible
         && matches!(&outcome.content, FetchContent::Document(document) if !document.markdown.trim().is_empty())
@@ -780,7 +806,7 @@ fn browser_quality_failure(error: &Error) -> bool {
             message == JS_REQUIRED
                 || message == JS_EMPTY
                 || message.contains("HTML challenge page cannot be extracted")
-                || message.contains(sites::VERIFICATION_PAGE)
+                || sites::refusal_page(message)
                 || message == "URL returned no extractable content"
         }
         Error::Conversion(message) => message == "HTML contains no extractable content",
@@ -854,7 +880,9 @@ fn browser_response_outcome(
 
 fn browser_outcome(page: browser::BrowserPage, cfg: &Value) -> Result<FetchOutcome> {
     if let Ok(url) = Url::parse(&page.final_url)
-        && let Some(message) = sites::verification_page(&url, &page.html)
+        && let Some(message) = sites::Shown::html(&url, &page.html)
+            .site_refusal()
+            .and_then(sites::Refusal::message)
     {
         return Err(Error::Fetch(message));
     }
@@ -1113,102 +1141,25 @@ fn decode_text<'a>(
     (encoding.decode(bytes).0, None)
 }
 
-// Restrict checks to HTML and visible non-code text. Vendor names in an article,
-// literal code examples or a plain-text document are not challenge evidence.
-fn html_rejection(html: &str) -> Option<&'static str> {
-    let tree = scraper::Html::parse_document(html);
-    let mut text = String::new();
-    let mut title = String::new();
-    let mut widget = false;
-    let mut authored_article = false;
-    for node in tree.tree.nodes() {
-        if let Some(element) = scraper::ElementRef::wrap(node) {
-            let name = element.value().name();
-            if name == "article" {
-                authored_article |= element.text().any(|value| !value.trim().is_empty());
-            }
-            if name == "title" {
-                title = element.text().collect::<String>().to_lowercase();
-            }
-            for attr in ["id", "class", "src", "action"] {
-                if let Some(value) = element.value().attr(attr) {
-                    let value = value.to_ascii_lowercase();
-                    widget |= [
-                        "cf-browser-verification",
-                        "cf-chl-",
-                        "cf_chl_",
-                        "/cdn-cgi/challenge-platform/",
-                        "google.com/recaptcha",
-                        "hcaptcha.com",
-                        "g-recaptcha",
-                        "h-captcha",
-                    ]
-                    .iter()
-                    .any(|marker| value.contains(marker));
-                }
-            }
-        } else if let scraper::Node::Text(value) = node.value() {
-            let ignored = node
-                .ancestors()
-                .filter_map(scraper::ElementRef::wrap)
-                .any(|element| {
-                    matches!(
-                        element.value().name(),
-                        "head" | "script" | "style" | "pre" | "code" | "template"
-                    )
-                });
-            if !ignored {
-                text.push_str(value);
-                text.push(' ');
-            }
-        }
+/// The failure a challenge page reads as.
+const CHALLENGE_PAGE: &str =
+    "HTML challenge page cannot be extracted; browser challenge fallback is not implemented";
+
+/// The failure for markup that is a challenge page or only asks for
+/// JavaScript (see [`sites::Shown::notice`]).
+fn html_rejection(url: &Url, html: &str) -> Option<&'static str> {
+    sites::Shown::html(url, html)
+        .notice()
+        .and_then(notice_failure)
+}
+
+/// What a challenge or a JavaScript notice reads as for a local reader.
+fn notice_failure(refusal: sites::Refusal) -> Option<&'static str> {
+    match refusal {
+        sites::Refusal::Challenge => Some(CHALLENGE_PAGE),
+        sites::Refusal::JavaScript => Some(JS_REQUIRED),
+        sites::Refusal::Verification(_) | sites::Refusal::Login(_) => None,
     }
-    let text = text
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase();
-    let short = text.len() <= 2000;
-    let challenge_instruction = [
-        "checking your browser before accessing",
-        "verify you are human",
-        "verify that you are human",
-        "智能验证检测中",
-        "由极验提供技术支持",
-    ]
-    .iter()
-    .any(|phrase| text.starts_with(phrase));
-    let challenge_title = [
-        "just a moment",
-        "attention required",
-        "security verification",
-        "verify you are human",
-    ]
-    .iter()
-    .any(|phrase| title.trim_start().starts_with(phrase));
-    if short
-        && ((!authored_article && challenge_instruction)
-            || (widget && (challenge_title || text.is_empty())))
-    {
-        return Some(
-            "HTML challenge page cannot be extracted; browser challenge fallback is not implemented",
-        );
-    }
-    if short
-        && !authored_article
-        && [
-            "please enable javascript",
-            "javascript is disabled",
-            "javascript is not available",
-            "you need to enable javascript",
-            "enable javascript to continue",
-        ]
-        .iter()
-        .any(|phrase| text.starts_with(phrase))
-    {
-        return Some(JS_REQUIRED);
-    }
-    None
 }
 
 fn defer_pdf(cfg: &Value) -> bool {
@@ -1339,8 +1290,10 @@ fn probe_pdf(
     if !response.is_pdf() {
         let needs_javascript = inspect_learning
             && response.kind() == StaticKind::Html
-            && html_rejection(&decode_text(&response.bytes, &response.content_type, true).0)
-                == Some(JS_REQUIRED);
+            && html_rejection(
+                &response.effective_url,
+                &decode_text(&response.bytes, &response.content_type, true).0,
+            ) == Some(JS_REQUIRED);
         return Ok((None, needs_javascript));
     }
     let mut content = FetchContent::Pdf(response.into_pdf());
@@ -1378,11 +1331,13 @@ fn decode_static(response: Response, defer_pdf: bool) -> Result<StaticPage> {
     let mut doc = match kind {
         StaticKind::Html => {
             let (html, decode_warning) = decode_text(&response.bytes, &response.content_type, true);
-            if let Some(message) = sites::verification_page(&response.effective_url, &html) {
-                return Err(Error::Fetch(message));
-            }
-            if let Some(reason) = html_rejection(&html) {
-                return Err(Error::Fetch(reason.into()));
+            // A site's verification or login page, a challenge or a notice
+            // that asks for JavaScript is a failure, not the page.
+            if let Some(refusal) = sites::Shown::html(&response.effective_url, &html).refusal() {
+                return Err(Error::Fetch(match refusal.message() {
+                    Some(message) => message,
+                    None => notice_failure(refusal).unwrap_or(CHALLENGE_PAGE).into(),
+                }));
             }
             let extracted = formats::extract_html(&html, Some(response.effective_url.as_str()));
             let words = extracted

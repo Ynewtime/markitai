@@ -65,6 +65,9 @@
 - `-s cloudflare` 通过你账户中的 Cloudflare Browser Rendering 抓取网页，`-b cloudflare` 用 Workers AI 转换 PDF、Office、OpenDocument、Numbers、CSV、XML 和图片文件；凭据来自 `fetch.cloudflare.api_token`/`account_id`（或 `env:NAME`），或 `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID`。
 - 本地抓取失败后，`auto` 可以回退到 defuddle、Jina 和 Cloudflare，但只在你明确同意之后：亲手写出 `fetch.remote_consent: always`（只提示一次），或选择 `ask`（每次运行在终端询问一次）。默认仍只在本地抓取。回退遵循 `fetch.policy.strategy_priority`、`max_strategy_hops`、域名配置、`local_only_patterns`（含 `NO_PROXY`）以及你自己写出的 `fallback_patterns`；默认列表只显示、不生效，X 帖子仍静态优先。
 - Jina 和 Defuddle 使用各自的 `timeout`、`rpm`、`api_key`、`no_cache`、`target_selector` 和 `wait_for_selector` 设置；远程失败会引用服务给出的原因，但不包含令牌或账户 ID。
+- 远程抓取结果与本地抓取采用同一判断：defuddle、Jina Reader 或 Cloudflare Browser Rendering 读到的若是站点的验证页、登录页、人机挑战或拒绝状态（如知乎的“安全验证 - 知乎”），即视为该服务失败；继续尝试下一个服务、不写出文件；全部失败时只报告一次站点感知的拒绝说明，并列出尝试过的每个服务及其失败原因。本地抓取同样能识别微博访客页与 Cloudflare 的“verifying you are human”提示。
+- Jina Reader：其 `Warning:`（如缓存快照）作为转换警告给出；`--no-cache` 及匹配的 `--no-cache-for` / `cache.no_cache_patterns` 同时发送 `X-No-Cache: true`；解析文本应答的 `Title:` / `URL Source:` / `Warning:` / `Markdown Content:` 头行；页面自身的错误状态视为失败。
+- `-b cloudflare` 去除 Workers AI 的外层包装（`# <文件名>`、`## Metadata`、`## Contents`）；标题、作者、创建日期写入 `title`、`author`、`date`，PDF 的 `### Page N` 标题改为与原生读取器一致的 `<!-- Page number: N -->` 分页标记（页数记于 `pages`）。`-s cloudflare` 的 `browser_ms_used` 以整数毫秒写出。
 - 面向 Linux、Windows 与两种 macOS 架构的可移植验证及可安装产物 CI；远程执行仍待验证。
 - 覆盖 209 个 HTML 夹具的审计工具，分别记录兼容性和质量诊断。
 - 隔离契约测试、格式差异审计与可复现的 CLI 性能测量。

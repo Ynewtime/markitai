@@ -114,13 +114,26 @@ status stays first in all of them.
 A page that is a site's verification or security check but is served with
 status 200 is a failure as well, never a short Markdown "page": WeChat's
 `环境异常 / 去验证` page (the answer to a static client), Douban's `sec.douban.com`
-script check, Reddit's `Prove your humanity`, Toutiao's script challenge page
-and Zhihu's `zse-ck` interstitial and `account/unhuman` check. The message reads
-`<Site> served a verification page instead of the content: it … ; open the page
-in your browser and save it …`. `auto` renders such a page with the local
-browser first, which is how WeChat articles are read; when the browser fails
-or is shown the same check, the site's message is the failure (a browser failure
-of another kind is added in parentheses).
+script check, Weibo's `Sina Visitor System`, Reddit's `Prove your humanity`,
+Toutiao's script challenge page and Zhihu's `zse-ck` interstitial, its
+`account/unhuman` check and its `安全验证 - 知乎` security check. The message
+reads `<Site> served a verification page instead of the content: it … ; open the
+page in your browser and save it …`. A site that expects a login (Zhihu, Douban,
+Weibo, Reddit) and shows little more than a request to log in (`请您登录后查看…`,
+`Log in to continue`; at most 60 words) reads `<Site> served a login page instead
+of the content: …`. `auto` renders such a page with the local browser first,
+which is how WeChat articles are read; when the browser fails or is shown the
+same check, the site's message is the failure (a browser failure of another kind
+is added in parentheses).
+
+The same judgement applies to every reader: the static client, the local
+browser, Cloudflare Browser Rendering (all on the page's markup) and defuddle
+and Jina Reader (on the Markdown and title they return, and the address Jina says
+it read). Markup also shows a challenge widget; Markdown cannot, so there a
+challenge title (`Just a moment…`, `Attention Required`, `Security verification`,
+`Verify you are human`) over at most 60 words of text counts as a challenge,
+while an article with such a title stays a page. See
+[remote readings](#remote-readings-that-are-refusals).
 
 A GET whose connection cannot be established because the peer reset it or cut
 it off, such as a TLS handshake that ends early (`tls handshake eof`) or
@@ -192,7 +205,7 @@ requests) found:
 | Juejin, CSDN, Jianshu, cnblogs, SegmentFault, sspai, 36Kr, Huxiu, InfoQ China, V2EX, dev.to, GitHub Discussions, Hacker News, Weibo (`weibo.com/2/detail/comos:…` article pages) | yes, from the static page | [site readers](html.md#reading-sites) clean up cnblogs, Jianshu, 36Kr and (with the browser) WeChat |
 | WeChat articles (`mp.weixin.qq.com`) | yes, with the local browser | a static client is sent to a verification page; `auto` renders the page in the local browser and reads it with the WeChat reader; `-s static` fails naming the verification |
 | Bilibili columns and `opus`, OSCHINA, Yuque, public Notion pages | yes, with the local browser | rendered by scripts; the text is read but may carry page chrome (menus, comments, recommendations) |
-| Zhihu (answers, `zhuanlan.zhihu.com/p/…`, questions) | no | a static client gets a 403 script interstitial (`zse-ck`); the local browser gets a JSON refusal (code 40362) or a redirect to a security check that asks for a login. Save the page from your own browser and convert the file ([Zhihu reader](html.md#reading-sites)), or give the local browser your own cookies (below) |
+| Zhihu (answers, `zhuanlan.zhihu.com/p/…`, questions) | no | a static client gets a 403 script interstitial (`zse-ck`); the local browser gets a JSON refusal (code 40362) or a redirect to a security check that asks for a login; Jina Reader was shown the same check (`安全验证 - 知乎`, "请您登录后查看更多专业优质内容"), which is a failure, not the page. Save the page from your own browser and convert the file ([Zhihu reader](html.md#reading-sites)), or give the local browser your own cookies (below) |
 | Douban notes | no | a script check (`sec.douban.com`) that the local browser fails in this version |
 | Toutiao | no | a bytecode script challenge; the local browser fails in this version |
 | Reddit | no | the local browser is sent to `Prove your humanity` after a script redirect (later requests from the survey machine did not connect at all) |
@@ -341,6 +354,35 @@ first (its `HTTP <status>` stays at the start) and the remote failures follow:
 `…; remote services failed as well (HTTP 429 from the defuddle service: …; …)`.
 A kept shell gets `Remote extraction failed (…); the static text was kept.`
 
+### Remote readings that are refusals
+
+A service's reading that is the site's refusal rather than the page counts as
+that service failing, judged as the local readers judge a page (see
+[failures](#failures-retries-and-redirects)): a verification or login page, a
+challenge, a page that only asks for JavaScript, or, from Jina, the page's own
+refusal status (`httpStatus` 401, 403, 418 or 429, or a warning `Target URL
+returned error 403`). The next service in the order is tried; nothing is
+written. The service's failure names it and what it was shown:
+`The jina service was shown Zhihu's verification page instead of the content`,
+`The defuddle service was shown a challenge page instead of the content`,
+`The jina service received HTTP 403 from the site instead of the content`.
+Another failed status of the page is the page's failure:
+`The jina service received HTTP 404 from the site: the page may have been
+removed or is not public`.
+
+When no step reads the page, what works instead is said once: the local failure
+already says it for a site that refused the static client (`HTTP 403 for
+https://www.zhihu.com/…: Zhihu refuses automated clients; open the page in your
+browser and save it …; remote services failed as well (HTTP 502 from the defuddle
+service: …; The jina service was shown Zhihu's verification page instead of the
+content)`); otherwise it is added after the failures, or, when only remote
+services ran, leads: `Zhihu refuses automated clients; open the page …; the
+remote services tried failed (…)`. For a site that is not known it reads `the
+site turns automated readers away; open the page in your browser and save it …`.
+A strategy selected with `-s` reports its service's failure the same way:
+`The jina service was shown Zhihu's login page instead of the content; Zhihu
+refuses automated clients; …`.
+
 ### Consent
 
 `auto` never sends a URL to a remote service unless the user opted in. The
@@ -395,6 +437,29 @@ Each service has its own sliding one-minute window of `rpm` requests, shared by
 every conversion of the process; a request waits for a slot. An `env:NAME` key
 whose variable is not set sends no key (and does not fall back to `JINA_API_KEY`).
 
+Jina answers JSON (`data.title`, `url`, `content`, `warning`, `httpStatus`). Its
+text form, which it sends when the JSON is not honoured, is read as well: the
+header lines `Title:`, `URL Source:`, `Published Time:`, `Warning:` (each
+optional, blank lines between them allowed, `\r\n` accepted), then a
+`Markdown Content:` line and the page; the same header lines at the start of a
+JSON `content` are removed. A body that is neither stays a failure (`The jina
+service returned an answer that is not JSON`), and a page whose own first line
+merely looks like a header is kept whole. A `Warning:` (such as `This is a
+cached snapshot of the original page, consider retry with caching opt-out.`)
+becomes a conversion warning, `The jina service said: …`, with `Run with
+--no-cache (or set fetch.jina.no_cache) to ask Jina for a fresh reading.` added
+to a cached-snapshot warning when no opt-out was sent.
+
+When this conversion bypasses Markitai's own page cache for the URL
+(`--no-cache` or `cache.no_cache`, or a matching `--no-cache-for` /
+`cache.no_cache_patterns` entry), Jina is sent `X-No-Cache: true` as well, so a
+stale or poisoned snapshot of Jina's (seen for `example.com` on 2026-10-02) is
+not returned instead of a fresh reading; `fetch.jina.no_cache` sends it always.
+`cache.enabled=false` alone does not. defuddle.md documents no cache opt-out (its
+answers carry `Cache-Control: s-maxage=300`, so a reading may be up to five
+minutes old); nothing is sent for it. Cloudflare's `cacheTTL` is only what
+`fetch.cloudflare.cache_ttl` sets.
+
 Cloudflare uses your own account. `fetch.cloudflare.api_token` and
 `account_id` are values or `env:NAME` references, else `CLOUDFLARE_API_TOKEN`
 and `CLOUDFLARE_ACCOUNT_ID`; for `-s cloudflare` an `env:NAME` whose variable is
@@ -408,8 +473,11 @@ style sheets and fonts), and, when set, `userAgent`, `cookies`,
 `env:NAME`); `cache_ttl` above 0 adds `?cacheTTL=`. At most two renders run at
 a time, and a 429 is repeated twice after 2 and 4 seconds. The rendered HTML goes
 through the native extraction and [site readers](html.md#reading-sites) like any
-other page, and a verification or challenge page is a failure. `renderer` and
-`browser_ms_used` are recorded in the metadata. The cookies and HTTP credentials
+other page, and a verification, login or challenge page is a failure (see
+[remote readings](#remote-readings-that-are-refusals)). `renderer` and
+`browser_ms_used` (Cloudflare's `X-Browser-Ms-Used`, rounded to a whole number
+of milliseconds and written as a number, like `duration_ms`) are recorded in the
+metadata. The cookies and HTTP credentials
 are sent to Cloudflare's browser; configure them only for sites you accept that
 for.
 
@@ -420,7 +488,26 @@ off) uploads local PDF, DOCX, XLSX/XLSM/XLSB, XLS/ET, ODS, ODT, Numbers (a singl
 file), CSV, XML, JPEG, PNG, WebP and SVG files to Workers AI `toMarkdown` in your
 account and uses its Markdown instead of the native reader's; other formats keep
 the native readers. The result records `converter: cloudflare-tomarkdown` and
-the `tokens` Cloudflare reports. Images are converted by a model that uses the
+the `tokens` Cloudflare reports.
+
+Workers AI frames every document: a `# <file name>` heading, a `## Metadata`
+list of the file's properties (`- PDFFormatVersion=1.4`, `- Creator=Writer`,
+`- Producer=…`, `- CreationDate=D:20170816144228+02'00'`, …) and a `## Contents`
+heading over the content, and a PDF's pages as `### Page N` headings. The frame
+is removed and the content kept. Of the properties, `Title` becomes `title`
+(unless it only names a file, such as `report.docx` or `Microsoft Word - …`),
+`Author` becomes `author` and `CreationDate` becomes `date` in RFC 3339
+(`2017-08-16T14:42:28+02:00`), the names the native readers use; the others
+describe the file and are dropped. `### Page N` headings, numbered from 1 in
+order, become the native PDF reader's page markers, `<!-- Page number: N -->`
+followed by a blank line and the page's text, and their count is `pages`: a page
+is not a section of the document, so it is no heading (it would otherwise be
+taken for the title and misplace the document's own headings), and a PDF then
+splits by page alike with `-b native` and `-b cloudflare`. A heading that is not
+the next page number is the document's own and stays. Markdown without the frame
+is used as it came. As for every local file, only `title` reaches the output
+frontmatter; the other fields stay in the conversion's metadata, as the native
+readers' `pages` does. Images are converted by a model that uses the
 account's Neurons allowance, and say so in a warning. A file for which OCR or
 screenshots are requested keeps the native reader, which renders its pages,
 with a warning. The backend is refused under `--no-remote-fetch`,
@@ -579,7 +666,15 @@ remote fallback, Defuddle, Jina, Cloudflare Browser Rendering and Workers AI
 priorities and hops, each consent setting with a stand-in terminal (one question
 per process, the once-per-home disclosure, the note without a terminal),
 local-only patterns and `NO_PROXY`, the options each service receives, pacing,
-429 repetition, and that failures carry no token, account id or endpoint.
+429 repetition, and that failures carry no token, account id or endpoint. They
+also replay the Jina answer recorded for a Zhihu question in the real-service
+check of 2026-10-02 (its `安全验证 - 知乎` security check) through the chain after
+the recorded 403 and through `-s jina`, defuddle's Markdown of the same page, a
+challenge and an article titled like one, Jina's warnings, text form, header lines
+in its JSON content and page statuses, `X-No-Cache` under `--no-cache` and
+matching patterns, and the Workers AI answers recorded in that check for the
+reference's public `sample.pdf` and `sample.docx`
+(`crates/markitai-core/tests/fixtures/cloudflare-tomarkdown/`).
 `fetch/policy.rs`, `fetch/chain.rs` and `fetch/consent.rs` test the order, the
 chain's decisions and the gate on their own. Credentials in these tests come
 from injected maps; no real service is contacted. They use temporary configured

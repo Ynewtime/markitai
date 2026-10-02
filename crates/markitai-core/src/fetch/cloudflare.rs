@@ -10,7 +10,7 @@
 
 use super::consent::{self, Consent};
 use super::remote::{self, Service, Services};
-use super::{client, html_rejection, sites};
+use super::{client, sites};
 use crate::{Document, Error, Result, config, formats};
 use reqwest::blocking::multipart;
 use serde_json::{Map, Value, json};
@@ -169,6 +169,15 @@ fn payload(source: &str, settings: &Value, vars: &HashMap<String, String>) -> Re
     Ok(payload)
 }
 
+/// `X-Browser-Ms-Used` (`2378.702880859375`) as a whole number of
+/// milliseconds, the way other durations are recorded (`duration_ms`).
+fn whole_milliseconds(header: &str) -> Option<u64> {
+    let milliseconds: f64 = header.trim().parse().ok()?;
+    // Rounded, and bounded to what a u64 holds exactly.
+    (milliseconds.is_finite() && (0.0..9.0e15).contains(&milliseconds))
+        .then(|| milliseconds.round() as u64)
+}
+
 /// The page rendered by Cloudflare Browser Rendering's `/content`, read by the
 /// native HTML extraction. A 429 is repeated twice, after a pause that
 /// doubles; at most two renders run at a time.
@@ -223,7 +232,7 @@ pub(crate) fn render(
             .headers()
             .get("x-browser-ms-used")
             .and_then(|value| value.to_str().ok())
-            .map(str::to_owned);
+            .and_then(whole_milliseconds);
         (
             remote::answer(Service::Cloudflare, response, &secrets)?,
             browser_ms,
@@ -243,16 +252,10 @@ pub(crate) fn render(
         .and_then(Value::as_str)
         .filter(|html| !html.trim().is_empty())
         .ok_or_else(|| Error::Fetch("The cloudflare service returned no content".into()))?;
-    // The same checks as the local browser's page: a verification or
-    // challenge page is a failure, not the content.
-    if let Some(message) = sites::verification_page(url, html) {
-        return Err(Error::Fetch(message));
-    }
-    if html_rejection(html).is_some() {
-        return Err(Error::Fetch(
-            "The cloudflare service was shown a challenge or JavaScript notice instead of the content"
-                .into(),
-        ));
+    // The same judgement as every other reader's page: a verification or
+    // login page, a challenge or a JavaScript notice is a failure.
+    if let Some(refusal) = sites::Shown::html(url, html).refusal() {
+        return Err(Error::Fetch(refusal.read_by(Service::Cloudflare.name())));
     }
     let mut document = match formats::extract_html(html, Some(source)) {
         Err(Error::Conversion(_)) => {
@@ -349,7 +352,7 @@ pub(crate) fn convert_file_with(
         .unwrap_or_else(|| format!("document.{extension}"));
     let bytes = std::fs::read(path)?;
     let part = multipart::Part::bytes(bytes)
-        .file_name(name)
+        .file_name(name.clone())
         .mime_str(mime)
         .map_err(|error| remote::transport(Service::Cloudflare, error))?;
     let form = multipart::Form::new().part("files", part);
@@ -397,8 +400,10 @@ pub(crate) fn convert_file_with(
             "The cloudflare service returned an empty conversion".into(),
         ));
     }
+    let (markdown, metadata) = unwrapped(markdown, &name);
     let mut document = Document {
-        markdown: markdown.to_owned(),
+        markdown,
+        metadata,
         ..Default::default()
     };
     document
@@ -413,4 +418,254 @@ pub(crate) fn convert_file_with(
         );
     }
     Ok(document)
+}
+
+// ---- the toMarkdown wrapper -----------------------------------------------
+
+/// Workers AI's Markdown without the frame it puts around every document:
+/// a `# <file name>` heading, a `## Metadata` list of the file's properties
+/// (`- PDFFormatVersion=1.4`, `- Creator=Writer`, …) and a `## Contents`
+/// heading over the content. Of the properties, the title, the author and the
+/// creation date become metadata under the names the native readers use
+/// (`title`, `author`, `date`); the rest describe the file, not the document.
+/// A PDF's `### Page N` headings become the native PDF reader's page markers
+/// (`<!-- Page number: N -->`), and their number `pages`: a page is not a
+/// section of the document, so it is no heading, and a file reads alike with
+/// either backend. Markdown without the frame is returned as it came.
+fn unwrapped(markdown: &str, name: &str) -> (String, Map<String, Value>) {
+    let mut metadata = Map::new();
+    let lines: Vec<&str> = markdown.lines().collect();
+    let mut at = 0;
+    let skip_blank = |at: &mut usize| {
+        while lines.get(*at).is_some_and(|line| line.trim().is_empty()) {
+            *at += 1;
+        }
+    };
+    skip_blank(&mut at);
+    let wrapper = lines
+        .get(at)
+        .and_then(|line| line.strip_prefix("# "))
+        .is_some_and(|heading| heading.trim().replace('\\', "").eq_ignore_ascii_case(name));
+    if !wrapper {
+        return (markdown.to_owned(), metadata);
+    }
+    at += 1;
+    skip_blank(&mut at);
+    let mut properties = Vec::new();
+    if lines
+        .get(at)
+        .is_some_and(|line| line.trim() == "## Metadata")
+    {
+        at += 1;
+        // Only the list itself: whatever follows it is the document's.
+        while let Some(line) = lines.get(at).map(|line| line.trim()) {
+            if line.is_empty() {
+                at += 1;
+                continue;
+            }
+            let Some((key, value)) = line
+                .strip_prefix("- ")
+                .or_else(|| line.strip_prefix("* "))
+                .and_then(|property| {
+                    property
+                        .split_once('=')
+                        .or_else(|| property.split_once(": "))
+                })
+            else {
+                break;
+            };
+            properties.push((key.trim().to_owned(), value.trim().to_owned()));
+            at += 1;
+        }
+    }
+    let contents = lines
+        .get(at)
+        .is_some_and(|line| line.trim() == "## Contents");
+    if contents {
+        at += 1;
+    }
+    let mut pages = 0;
+    let body: Vec<String> = lines[at..]
+        .iter()
+        .map(|line| {
+            if contents && line.trim() == format!("### Page {}", pages + 1) {
+                pages += 1;
+                format!("<!-- Page number: {pages} -->")
+            } else {
+                (*line).to_owned()
+            }
+        })
+        .collect();
+    for (key, value) in properties {
+        let value = value.trim_matches('"').trim();
+        if value.is_empty() {
+            continue;
+        }
+        match key.to_ascii_lowercase().as_str() {
+            "title" if !file_title(value, name) => {
+                metadata.insert("title".into(), json!(value));
+            }
+            "author" => {
+                metadata.insert("author".into(), json!(value));
+            }
+            "creationdate" => {
+                if let Some(date) = pdf_date(value) {
+                    metadata.insert("date".into(), json!(date));
+                }
+            }
+            _ => {}
+        }
+    }
+    if pages > 0 {
+        metadata.insert("pages".into(), json!(pages));
+    }
+    (body.join("\n").trim().to_owned(), metadata)
+}
+
+/// A title property that only names the file the document was made from
+/// (`report.docx`, `Microsoft Word - report.doc`) or this file, which the
+/// document's first heading names better.
+fn file_title(title: &str, name: &str) -> bool {
+    let lower = title.to_ascii_lowercase();
+    let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
+    lower == name.to_ascii_lowercase()
+        || lower == stem.to_ascii_lowercase()
+        || [
+            "microsoft word - ",
+            "microsoft powerpoint - ",
+            "microsoft excel - ",
+        ]
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+        || lower.rsplit_once('.').is_some_and(|(stem, extension)| {
+            !stem.trim().is_empty()
+                && (media_type(extension).is_some()
+                    || matches!(
+                        extension,
+                        "doc" | "html" | "htm" | "txt" | "md" | "pptx" | "ppt" | "rtf"
+                    ))
+        })
+}
+
+/// A PDF date (`D:20170816144228+02'00'`, any trailing part optional) as
+/// RFC 3339 (`2017-08-16T14:42:28+02:00`), or the date alone when it has no
+/// time. `None` when it is not one.
+fn pdf_date(value: &str) -> Option<String> {
+    let text = value.strip_prefix("D:").unwrap_or(value);
+    let digits: String = text.chars().take_while(char::is_ascii_digit).collect();
+    let rest = &text[digits.len()..];
+    let part = |from: usize, to: usize, default: u32| -> Option<u32> {
+        match digits.get(from..to) {
+            Some(part) => part.parse().ok(),
+            None if digits.len() <= from => Some(default),
+            None => None,
+        }
+    };
+    if digits.len() < 4 {
+        return None;
+    }
+    let year = part(0, 4, 0)?;
+    let (month, day) = (part(4, 6, 1)?, part(6, 8, 1)?);
+    let (hour, minute, second) = (part(8, 10, 0)?, part(10, 12, 0)?, part(12, 14, 0)?);
+    chrono::NaiveDate::from_ymd_opt(i32::try_from(year).ok()?, month, day)?;
+    if hour > 23 || minute > 59 || second > 60 {
+        return None;
+    }
+    let date = format!("{year:04}-{month:02}-{day:02}");
+    if digits.len() <= 8 {
+        return Some(date);
+    }
+    let offset = match rest.chars().next() {
+        Some('Z') => "Z".to_owned(),
+        Some(sign @ ('+' | '-')) => {
+            // `HH'mm'`, as the PDF format writes it, or `HHmm`.
+            let groups: Vec<&str> = rest[1..]
+                .split(|ch: char| !ch.is_ascii_digit())
+                .filter(|group| !group.is_empty())
+                .collect();
+            let (hours, minutes): (u32, u32) = match groups.as_slice() {
+                [both] if both.len() == 4 => (both[..2].parse().ok()?, both[2..].parse().ok()?),
+                [hours] => (hours.parse().ok()?, 0),
+                [hours, minutes, ..] => (hours.parse().ok()?, minutes.parse().ok()?),
+                [] => return None,
+            };
+            if hours > 23 || minutes > 59 {
+                return None;
+            }
+            format!("{sign}{hours:02}:{minutes:02}")
+        }
+        _ => String::new(),
+    };
+    Some(format!("{date}T{hour:02}:{minute:02}:{second:02}{offset}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pdf_dates_become_rfc_3339() {
+        assert_eq!(
+            pdf_date("D:20170816144228+02'00'").as_deref(),
+            Some("2017-08-16T14:42:28+02:00")
+        );
+        assert_eq!(
+            pdf_date("D:20240102030405Z").as_deref(),
+            Some("2024-01-02T03:04:05Z")
+        );
+        assert_eq!(
+            pdf_date("D:20240102030405-0530").as_deref(),
+            Some("2024-01-02T03:04:05-05:30")
+        );
+        assert_eq!(
+            pdf_date("D:202401020304").as_deref(),
+            Some("2024-01-02T03:04:00")
+        );
+        assert_eq!(pdf_date("D:20240102").as_deref(), Some("2024-01-02"));
+        assert_eq!(pdf_date("D:2024").as_deref(), Some("2024-01-01"));
+        for not_a_date in [
+            "",
+            "D:",
+            "D:12",
+            "D:20241302",
+            "D:20240230",
+            "D:2024010225",
+            "D:20240102030405+25'00'",
+            "yesterday",
+        ] {
+            assert!(pdf_date(not_a_date).is_none(), "{not_a_date}");
+        }
+    }
+
+    #[test]
+    fn browser_time_is_a_whole_number_of_milliseconds() {
+        assert_eq!(whole_milliseconds("2378.702880859375"), Some(2379));
+        assert_eq!(whole_milliseconds(" 1234 "), Some(1234));
+        assert_eq!(whole_milliseconds("0.4"), Some(0));
+        for not_one in ["", "-1", "abc", "1e30", "NaN", "inf"] {
+            assert_eq!(whole_milliseconds(not_one), None, "{not_one}");
+        }
+    }
+
+    #[test]
+    fn markdown_without_the_frame_is_left_alone() {
+        let (text, metadata) = unwrapped("# Report\n\nConverted by Workers AI.", "report.pdf");
+        assert_eq!(text, "# Report\n\nConverted by Workers AI.");
+        assert!(metadata.is_empty());
+        // The wrapper alone, as for a DOCX file.
+        let (text, _) = unwrapped("# notes.docx\n\n# Notes\n\nText.", "notes.docx");
+        assert_eq!(text, "# Notes\n\nText.");
+        // A property list followed by the content, without `## Contents`.
+        let (text, metadata) = unwrapped(
+            "# data.csv\n\n## Metadata\n\n- Rows=2\n\n| a | b |\n|---|---|\n| 1 | 2 |",
+            "data.csv",
+        );
+        assert_eq!(text, "| a | b |\n|---|---|\n| 1 | 2 |");
+        assert!(metadata.is_empty());
+        assert!(file_title("report.docx", "report.pdf"));
+        assert!(file_title("Report", "report.pdf"));
+        assert!(file_title("Microsoft Word - Q3.doc", "q3.pdf"));
+        assert!(!file_title("Version 2.0 notes", "q3.pdf"));
+        assert!(!file_title("Node.js in practice", "book.pdf"));
+    }
 }

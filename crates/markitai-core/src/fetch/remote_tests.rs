@@ -795,7 +795,7 @@ fn cloudflare_renders_with_its_options_and_repeats_a_429() {
     let service = Mock::new(vec![
         Answer::json(429, json!({"success": false})),
         Answer::json(200, json!({"success": true, "result": html}))
-            .header("X-Browser-Ms-Used", "1234"),
+            .header("X-Browser-Ms-Used", "2378.702880859375"),
     ]);
     let terminal = Arc::new(Terminal::default());
     let fixture = Fixture::new(gate(&terminal, false, None, None));
@@ -811,7 +811,8 @@ fn cloudflare_renders_with_its_options_and_repeats_a_429() {
     let metadata = &outcome.document().metadata;
     assert_eq!(metadata["fetch_strategy"], "cloudflare");
     assert_eq!(metadata["renderer"], "cloudflare");
-    assert_eq!(metadata["browser_ms_used"], "1234");
+    // A whole number of milliseconds, written as a number like duration_ms.
+    assert_eq!(metadata["browser_ms_used"], json!(2379));
     assert_eq!(metadata["title"], "Rendered page");
     let requests = service.requests();
     assert_eq!(requests.len(), 2);
@@ -939,7 +940,12 @@ fn a_verification_page_cloudflare_rendered_is_a_failure() {
     ) else {
         panic!("a challenge is not content");
     };
-    assert!(message.contains("challenge"), "{message}");
+    assert!(
+        message.starts_with(
+            "The cloudflare service was shown a challenge page instead of the content; the site turns automated readers away; open the page in your browser and save it"
+        ),
+        "{message}"
+    );
 }
 
 #[test]
@@ -1052,4 +1058,451 @@ fn workers_ai_converts_a_local_file_and_refuses_without_consent_or_credentials()
         Err(Error::Config(message)) if message.contains("CLOUDFLARE_ACCOUNT_ID")
     ));
     assert_eq!(service.requests().len(), 4);
+}
+
+// ---- remote readings that are the site's refusal --------------------------
+
+const ZHIHU_QUESTION: &str = "https://www.zhihu.com/question/19550225";
+const ZHIHU_LOGIN: &str = "请您登录后查看更多专业优质内容。";
+
+/// Jina's answer for a Zhihu question in the real-service check of 2d01ccb
+/// (2026-10-02, `fetch.remote_consent: always`): Zhihu's security check,
+/// which was written as the page. `title: None` leaves only the login request.
+fn zhihu_login_wall(title: Option<&str>) -> Answer {
+    let mut data = json!({
+        "description": "",
+        "url": ZHIHU_QUESTION,
+        "content": format!("![Image 1](https://www.zhihu.com/question/19550225)\n\n![Image 2: ZhiHu logo](https://static.zhihu.com/heifetz/assets/wechat-share-logo.39ea9ecd.png)\n\n{ZHIHU_LOGIN}"),
+        "httpStatus": 200,
+        "httpStatusText": "OK",
+    });
+    if let Some(title) = title {
+        data["title"] = json!(title);
+    }
+    Answer::json(200, json!({"code": 200, "status": 20000, "data": data}))
+}
+
+/// The local refusal the real check recorded for the same question.
+fn zhihu_refusal(url: &Url) -> Error {
+    http_failure(
+        reqwest::StatusCode::FORBIDDEN,
+        None,
+        url,
+        &Evidence::default(),
+    )
+}
+
+#[test]
+fn a_zhihu_login_wall_from_jina_fails_with_the_site_aware_refusal_and_every_service_tried() {
+    let (_directory, mut cfg) = auto_settings();
+    cfg["fetch"]["remote_consent"] = json!("always");
+    let service = Mock::new(vec![
+        Answer::text(502, "bad gateway"),
+        zhihu_login_wall(Some("安全验证 - 知乎")),
+    ]);
+    let terminal = Arc::new(Terminal::default());
+    let fixture = Fixture::new(gate(&terminal, true, None, None));
+    let services = fixture.services(&service.origin);
+    let url = Url::parse(ZHIHU_QUESTION).unwrap();
+    // The default order for the page, with the static request answered as
+    // Zhihu answered it (no request leaves the machine).
+    let steps = auto_order(&url, &cfg, false, &services);
+    let mut local = Some(zhihu_refusal(&url));
+    let result = chain::run(
+        &steps,
+        chain::Attempts {
+            static_fetch: &mut || Err(local.take().expect("one static request")),
+            browser_ready: &|| false,
+            render: &mut |_| unreachable!("the static refusal ends the local steps"),
+            remote_ready: &mut |service| match service {
+                Service::Cloudflare => chain::Readiness::SkipService,
+                _ => chain::Readiness::Ready,
+            },
+            remote: &mut |service| {
+                remote::fetch(service, ZHIHU_QUESTION, &url, &cfg, &services).map(remote::outcome)
+            },
+            what_works: sites::what_works(&url),
+        },
+    );
+    let Err(Error::Fetch(message)) = result else {
+        panic!("Zhihu's security check is not the page");
+    };
+    assert_eq!(
+        message,
+        format!(
+            "{}; remote services failed as well (HTTP 502 from the defuddle service: the service had a server error; The jina service was shown Zhihu's verification page instead of the content)",
+            zhihu_refusal(&url)
+        )
+    );
+    assert!(
+        message.starts_with("HTTP 403 for https://www.zhihu.com/question/19550225: Zhihu refuses automated clients; open the page in your browser and save it"),
+        "{message}"
+    );
+    assert_eq!(
+        message.matches("Webpage, HTML Only").count(),
+        1,
+        "{message}"
+    );
+    assert_eq!(service.requests().len(), 2);
+}
+
+#[test]
+fn a_remote_reading_that_is_a_refusal_page_goes_on_to_the_next_service() {
+    let (_directory, mut cfg) = auto_settings();
+    cfg["fetch"]["remote_consent"] = json!("always");
+    cfg["fetch"]["policy"]["strategy_priority"] = json!(["defuddle", "jina"]);
+    let answer = "这个问题有很多回答。".repeat(30);
+    let service = Mock::new(vec![
+        // defuddle's Markdown of the security check, then Jina's page.
+        Answer::text(
+            200,
+            &format!("---\ntitle: \"安全验证 - 知乎\"\n---\n\n{ZHIHU_LOGIN}"),
+        ),
+        jina_page(&format!("# 问题\n\n{answer}\n\n{ZHIHU_LOGIN}")),
+        // Both are shown the check.
+        Answer::text(
+            200,
+            &format!("---\ntitle: \"安全验证 - 知乎\"\n---\n\n{ZHIHU_LOGIN}"),
+        ),
+        zhihu_login_wall(None),
+    ]);
+    let terminal = Arc::new(Terminal::default());
+    let fixture = Fixture::new(gate(&terminal, true, None, None));
+    let services = fixture.services(&service.origin);
+    // A page with the same words among its own content is read.
+    let outcome = fetch_with_services(ZHIHU_QUESTION, &cfg, None, true, None, &services).unwrap();
+    assert!(markdown(&outcome).starts_with("# 问题\n\n这个问题有很多回答。"));
+    assert_eq!(outcome.document().metadata["fetch_strategy"], "jina");
+    // Every service turned away: the site's refusal leads, then each service.
+    let Err(Error::Fetch(message)) =
+        fetch_with_services(ZHIHU_QUESTION, &cfg, None, true, None, &services)
+    else {
+        panic!("no service read the page");
+    };
+    assert!(
+        message.starts_with("Zhihu refuses automated clients; open the page in your browser and save it (File > Save Page As…, 'Webpage, HTML Only'), then convert the saved file; or give the local browser your own logged-in cookies for zhihu.com"),
+        "{message}"
+    );
+    assert!(
+        message.ends_with("; the remote services tried failed (The defuddle service was shown Zhihu's verification page instead of the content; The jina service was shown Zhihu's login page instead of the content)"),
+        "{message}"
+    );
+    assert_eq!(service.requests().len(), 4);
+}
+
+#[test]
+fn a_selected_service_shown_a_refusal_says_so_and_what_works() {
+    let (_directory, mut cfg) = settings();
+    cfg["fetch"]["strategy"] = json!("jina");
+    let service = Mock::new(vec![
+        zhihu_login_wall(None),
+        Answer::json(
+            200,
+            json!({"code": 200, "status": 20000, "data": {"title": "Just a moment...", "url": "https://example.com/a", "content": "## example.com\n\nVerifying you are human. This may take a few seconds.\n\nexample.com needs to review the security of your connection before proceeding.\n\nPerformance & security by Cloudflare"}}),
+        ),
+        Answer::json(
+            200,
+            json!({"code": 200, "status": 20000, "data": {"title": "Just a moment: notes on waiting", "url": "https://example.com/b", "content": format!("# Just a moment\n\n{}", "An essay about waiting, long enough to be a page of its own. ".repeat(12))}}),
+        ),
+    ]);
+    let terminal = Arc::new(Terminal::default());
+    let fixture = Fixture::new(gate(&terminal, false, None, None));
+    let services = fixture.services(&service.origin);
+    let Err(Error::Fetch(message)) =
+        fetch_with_services(ZHIHU_QUESTION, &cfg, Some("jina"), true, None, &services)
+    else {
+        panic!("a login page is not the page");
+    };
+    assert!(
+        message.starts_with("The jina service was shown Zhihu's login page instead of the content; Zhihu refuses automated clients; open the page in your browser"),
+        "{message}"
+    );
+    // A challenge on a site that is not known says what works in general.
+    let Err(Error::Fetch(message)) = fetch_with_services(
+        "https://example.com/a",
+        &cfg,
+        Some("jina"),
+        true,
+        None,
+        &services,
+    ) else {
+        panic!("a challenge is not the page");
+    };
+    assert_eq!(
+        message,
+        "The jina service was shown a challenge page instead of the content; the site turns automated readers away; open the page in your browser and save it (File > Save Page As…, 'Webpage, HTML Only'), then convert the saved file"
+    );
+    // An article that merely has such a title is read.
+    let essay = fetch_with_services(
+        "https://example.com/b",
+        &cfg,
+        Some("jina"),
+        true,
+        None,
+        &services,
+    )
+    .unwrap();
+    assert!(markdown(&essay).contains("An essay about waiting"));
+}
+
+#[test]
+fn jina_warnings_are_kept_and_a_bypassed_cache_asks_jina_for_a_fresh_reading() {
+    let (_directory, mut cfg) = settings();
+    cfg["fetch"]["strategy"] = json!("jina");
+    let cached =
+        "This is a cached snapshot of the original page, consider retry with caching opt-out.";
+    let reading = |content: &str| {
+        Answer::json(
+            200,
+            json!({"code": 200, "status": 20000, "data": {"title": "Example Domain", "url": "https://example.com/", "content": content, "warning": cached, "httpStatus": 200}}),
+        )
+    };
+    let service = Mock::new(vec![
+        reading("# One\n\nFirst reading."),
+        reading("# Two\n\nSecond reading."),
+        reading("# Three\n\nThird reading."),
+        reading("# Four\n\nFourth reading."),
+    ]);
+    let terminal = Arc::new(Terminal::default());
+    let fixture = Fixture::new(gate(&terminal, false, None, None));
+    let services = fixture.services(&service.origin);
+    let source = "https://example.com/";
+    let read = |cfg: &Value| {
+        fetch_with_services(source, cfg, Some("jina"), true, None, &services)
+            .unwrap()
+            .document()
+            .warnings
+            .clone()
+    };
+    // The cache is in use: no opt-out, and the warning says how to get one.
+    assert_eq!(
+        read(&cfg),
+        [format!(
+            "The jina service said: {cached} Run with --no-cache (or set fetch.jina.no_cache) to ask Jina for a fresh reading."
+        )]
+    );
+    // --no-cache, and a --no-cache-for pattern that matches, ask for a fresh
+    // reading; the warning is kept as Jina said it.
+    cfg["cache"]["no_cache"] = json!(true);
+    assert_eq!(read(&cfg), [format!("The jina service said: {cached}")]);
+    cfg["cache"]["no_cache"] = json!(false);
+    cfg["cache"]["no_cache_patterns"] = json!(["example.com"]);
+    assert_eq!(read(&cfg), [format!("The jina service said: {cached}")]);
+    // A pattern for another site does not.
+    cfg["cache"]["no_cache_patterns"] = json!(["other.test"]);
+    read(&cfg);
+    let sent: Vec<Option<&str>> = service
+        .requests()
+        .iter()
+        .map(|request| request.header("X-No-Cache").map(|_| "sent"))
+        .collect();
+    assert_eq!(sent, [None, Some("sent"), Some("sent"), None]);
+    for request in service.requests() {
+        if let Some(value) = request.header("X-No-Cache") {
+            assert_eq!(value, "true");
+        }
+    }
+}
+
+#[test]
+fn jina_text_answers_header_lines_and_page_statuses_are_read() {
+    let (_directory, mut cfg) = settings();
+    cfg["fetch"]["strategy"] = json!("jina");
+    let plain = |body: &str| Answer {
+        status: 200,
+        headers: vec![("Content-Type".into(), "text/plain; charset=utf-8".into())],
+        body: body.as_bytes().to_vec(),
+    };
+    let data = |data: Value| Answer::json(200, json!({"code": 200, "status": 20000, "data": data}));
+    let service = Mock::new(vec![
+        // The text form, as `r.jina.ai` answers without `Accept: application/json`.
+        plain(
+            "Title: Example Domain\r\n\r\nURL Source: https://example.com/\r\n\r\nWarning: This is a cached snapshot of the original page, consider retry with caching opt-out.\r\n\r\nMarkdown Content:\r\n# Example\r\n\r\nBody text of the page.",
+        ),
+        // Header lines inside the JSON content are Jina's.
+        data(
+            json!({"url": "https://example.com/", "content": "Title: Inner\nURL Source: https://example.com/\nPublished Time: 2026-01-01\n\nMarkdown Content:\n# Inner\n\nText of the page."}),
+        ),
+        // A page whose own first line looks like a header is kept whole.
+        data(
+            json!({"title": "Notes", "content": "Title: a working note\n\nThe paragraph after it."}),
+        ),
+        // The page's own status.
+        data(json!({"title": "Forbidden", "content": "403 Forbidden", "httpStatus": 403})),
+        data(
+            json!({"title": "Not found", "content": "This page does not exist.", "httpStatus": 404}),
+        ),
+        data(
+            json!({"title": "Blocked", "content": "Blocked.", "warning": "Target URL returned error 429: Too Many Requests"}),
+        ),
+        // Neither JSON nor the text form.
+        plain("<html>an interstitial</html>"),
+    ]);
+    let terminal = Arc::new(Terminal::default());
+    let fixture = Fixture::new(gate(&terminal, false, None, None));
+    let services = fixture.services(&service.origin);
+    let run = || {
+        fetch_with_services(
+            "https://example.com/",
+            &cfg,
+            Some("jina"),
+            true,
+            None,
+            &services,
+        )
+    };
+
+    let text = run().unwrap();
+    assert_eq!(markdown(&text), "# Example\n\nBody text of the page.");
+    assert_eq!(text.document().metadata["title"], "Example Domain");
+    assert!(
+        text.document().warnings[0].starts_with("The jina service said: This is a cached snapshot"),
+        "{:?}",
+        text.document().warnings
+    );
+    let inner = run().unwrap();
+    assert_eq!(markdown(&inner), "# Inner\n\nText of the page.");
+    assert_eq!(inner.document().metadata["title"], "Inner");
+    let note = run().unwrap();
+    assert_eq!(
+        markdown(&note),
+        "Title: a working note\n\nThe paragraph after it."
+    );
+    let failure = |result: Result<FetchOutcome>| match result {
+        Err(Error::Fetch(message)) => message,
+        other => panic!(
+            "not a fetch failure: {:?}",
+            other.map(|outcome| outcome.document().markdown.clone())
+        ),
+    };
+    assert_eq!(
+        failure(run()),
+        "The jina service received HTTP 403 from the site instead of the content; the site turns automated readers away; open the page in your browser and save it (File > Save Page As…, 'Webpage, HTML Only'), then convert the saved file"
+    );
+    assert_eq!(
+        failure(run()),
+        "The jina service received HTTP 404 from the site: the page may have been removed or is not public"
+    );
+    assert!(
+        failure(run()).starts_with(
+            "The jina service received HTTP 429 from the site instead of the content;"
+        )
+    );
+    assert_eq!(
+        failure(run()),
+        "The jina service returned an answer that is not JSON"
+    );
+}
+
+// ---- Workers AI toMarkdown's frame ------------------------------------------
+
+/// Workers AI `toMarkdown` answers recorded in the real-service check of
+/// 2d01ccb (2026-10-02) for the reference repository's public fixtures
+/// `tests/fixtures/sample.pdf` and `sample.docx`.
+const TOMARKDOWN_PDF: &str =
+    include_str!("../../tests/fixtures/cloudflare-tomarkdown/sample.pdf.md");
+const TOMARKDOWN_DOCX: &str =
+    include_str!("../../tests/fixtures/cloudflare-tomarkdown/sample.docx.md");
+
+#[test]
+fn workers_ai_output_loses_its_frame_and_pages_read_like_the_native_pdf_reader() {
+    let directory = tempfile::tempdir().unwrap();
+    let pdf = directory.path().join("sample.pdf");
+    std::fs::write(&pdf, b"%PDF-1.4 fixture bytes").unwrap();
+    let docx = directory.path().join("sample.docx");
+    std::fs::write(&docx, b"PK fixture bytes").unwrap();
+    let report = directory.path().join("report.pdf");
+    std::fs::write(&report, b"%PDF-1.4 fixture bytes").unwrap();
+    let mut cfg = config::defaults();
+    cfg["fetch"]["cloudflare"] = json!({"convert_enabled": true, "account_id": "acc0123"});
+    let converted = |name: &str, data: &str| {
+        Answer::json(
+            200,
+            json!({"success": true, "result": [{"name": name, "format": "markdown", "tokens": 1200, "data": data}]}),
+        )
+    };
+    let service = Mock::new(vec![
+        converted("sample.pdf", TOMARKDOWN_PDF),
+        converted("sample.docx", TOMARKDOWN_DOCX),
+        converted(
+            "report.pdf",
+            "# report.pdf\n\n## Metadata\n\n- PDFFormatVersion=1.7\n- Title=Quarterly Report\n- Author=Ada Lovelace\n- CreationDate=D:20240102\n\n## Contents\n\n### Page 1\n\nFirst page.\n\n### Page 2\n\n### Page 3\n\n### Page 7\n\nA heading of the document's own.",
+        ),
+        converted(
+            "report.pdf",
+            "# report.pdf\n\n## Metadata\n\n- Title=Microsoft Word - report.docx\n- CreationDate=not a date\n\n## Contents\n\n### Page 1\n\nText.",
+        ),
+    ]);
+    let terminal = Arc::new(Terminal::default());
+    let fixture = Fixture::new(gate(&terminal, false, None, None));
+    let mut services = fixture.services(&service.origin);
+    services.vars = vars(&[("CLOUDFLARE_API_TOKEN", "workers-token-0123")]);
+
+    let document = cloudflare::convert_file_with(&pdf, "pdf", &cfg, &services).unwrap();
+    let text = &document.markdown;
+    assert!(
+        text.starts_with("<!-- Page number: 1 -->\n\nLorem ipsumLorem ipsum dolor sit amet"),
+        "{text}"
+    );
+    for gone in [
+        "# sample.pdf",
+        "## Metadata",
+        "PDFFormatVersion",
+        "Producer=",
+        "## Contents",
+        "### Page",
+    ] {
+        assert!(!text.contains(gone), "{gone}: {text}");
+    }
+    let markers: Vec<&str> = text
+        .lines()
+        .filter(|line| line.starts_with("<!-- Page number: "))
+        .collect();
+    assert_eq!(
+        markers,
+        (1..=5)
+            .map(|page| format!("<!-- Page number: {page} -->"))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        text.contains("\n\n<!-- Page number: 2 -->\n\nIn non mauris justo."),
+        "{text}"
+    );
+    assert!(
+        text.ends_with("sed turpis imperdiet eleifend sit amet id sapien."),
+        "{text}"
+    );
+    let metadata = &document.metadata;
+    assert_eq!(metadata["pages"], 5);
+    assert_eq!(metadata["date"], "2017-08-16T14:42:28+02:00");
+    assert_eq!(metadata["converter"], "cloudflare-tomarkdown");
+    assert_eq!(metadata["tokens"], 1200);
+    for absent in ["title", "author", "Creator", "Producer", "PDFFormatVersion"] {
+        assert!(!metadata.contains_key(absent), "{absent}: {metadata:?}");
+    }
+
+    let document = cloudflare::convert_file_with(&docx, "docx", &cfg, &services).unwrap();
+    assert!(
+        document
+            .markdown
+            .starts_with("# Markitai Snapshot Fixture\n\nThis is a synthetic paragraph"),
+        "{}",
+        document.markdown
+    );
+    assert!(!document.metadata.contains_key("pages"));
+
+    let document = cloudflare::convert_file_with(&report, "pdf", &cfg, &services).unwrap();
+    assert_eq!(
+        document.markdown,
+        "<!-- Page number: 1 -->\n\nFirst page.\n\n<!-- Page number: 2 -->\n\n<!-- Page number: 3 -->\n\n### Page 7\n\nA heading of the document's own."
+    );
+    assert_eq!(document.metadata["title"], "Quarterly Report");
+    assert_eq!(document.metadata["author"], "Ada Lovelace");
+    assert_eq!(document.metadata["date"], "2024-01-02");
+    assert_eq!(document.metadata["pages"], 3);
+    // A title that only names a file, and a date that is none, are dropped.
+    let document = cloudflare::convert_file_with(&report, "pdf", &cfg, &services).unwrap();
+    assert_eq!(document.markdown, "<!-- Page number: 1 -->\n\nText.");
+    assert!(!document.metadata.contains_key("title"));
+    assert!(!document.metadata.contains_key("date"));
 }
