@@ -114,16 +114,7 @@ pub(super) fn run(
         let items: Vec<_> = records.iter().map(outcome).collect();
         emit_json(&items, report_error.as_deref());
     } else {
-        for record in &records {
-            if !cli.quiet {
-                for warning in &record.warnings {
-                    eprintln!("Warning: {}: {warning}", record.display);
-                }
-            }
-            if let Some(error) = &record.error {
-                eprintln!("Error: {}: {error}", record.display);
-            }
-        }
+        print_item_diagnostics(&records, cli.quiet);
         if !cli.quiet {
             print_batch_summary(&records, &[], clock.elapsed(), destination.output);
         }

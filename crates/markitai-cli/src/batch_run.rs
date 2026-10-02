@@ -1336,16 +1336,7 @@ fn run_with_namespace(
             }),
         );
     } else {
-        for record in &records {
-            if !cli.quiet {
-                for warning in &record.warnings {
-                    eprintln!("Warning: {}: {warning}", record.display);
-                }
-            }
-            if let Some(error) = &record.error {
-                eprintln!("Error: {}: {error}", record.display);
-            }
-        }
+        print_item_diagnostics(&records, cli.quiet);
         if !cli.quiet {
             let unprocessed = if signal.is_some() {
                 let started: BTreeSet<_> = records.iter().map(|record| record.index).collect();

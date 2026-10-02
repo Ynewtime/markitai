@@ -86,6 +86,7 @@
 
 ### 修复
 
+- 批量转换中多个文件共有的同一条警告只在首次出现处写一次，并列出涉及的文件（`Warning: a.docx, b.pptx and 3 more files: …`），不再每个文件重复一遍；例如 `--llm` 批量中模型未计价的警告不再每个文档出现一次。报告与 JSON 输出仍保留每个文件各自的警告。
 - PDF 警告用普通用户能懂的话说明发生了什么：按纯文本兜底读取的页面报告 `read as plain text because it looked like a scan but draws no image`，不再使用内部判定名称；图片位置警告只在确实写出了页面截图时才提到截图（单独使用 `--ocr` 不写截图）；本地 OCR 在内嵌照片或插图中没有识别到文字时不再警告，因为这很常见（`ocr_images_blank` 计数仍会记录）。在用 `--ocr` 转换参考夹具 `sample.pdf` 时发现。
 - 模型请求被拒绝时，错误信息除状态码外还给出已识别的原因：`LLM returned HTTP 403: the model is not available in this region`（地区限制；只看 403 会被误认为凭据问题）、`…: the account's quota or billing does not allow this request` 与 `…: the model is unavailable`。因地区限制被跳过的部署如实说明原因，不再报告认证失败；`serve` 的连接测试给出相同的原因，网页工作台显示对应的翻译。提供方的原始措辞仍不会出现在错误中。在 OpenRouter 对测试者所在地区拒绝全部模型时发现。
 - 路径含非 ASCII 字符的网址输出文件名可读：`https://…/人是什么单位` 写成 `人是什么单位.md`，不再是 `%E4%BA%BA….md`（路径段能解码为 UTF-8 时做百分号解码，编码的斜杠与控制字符仍会被替换）。只要求 OCR、未要求截图时，没有 LibreOffice 的机器上 Office 文档改用文档自身文字转换并给出警告，不再失败，因此对整个目录使用 `--ocr` 时 Office 文件也能转换。

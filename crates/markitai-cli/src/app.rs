@@ -1798,6 +1798,58 @@ fn say_with(build: impl Fn(i18n::Lang) -> String) {
     }
 }
 
+/// Each item's warnings and error on stderr, in item order. A warning that
+/// several items share is written once, where it first occurs, naming them.
+fn print_item_diagnostics(records: &[RunItem], quiet: bool) {
+    for line in item_diagnostics(records, quiet) {
+        eprintln!("{line}");
+    }
+}
+
+fn item_diagnostics(records: &[RunItem], quiet: bool) -> Vec<String> {
+    use std::collections::{HashMap, HashSet};
+    let mut sharing = HashMap::<&str, Vec<&str>>::new();
+    for record in records.iter().filter(|_| !quiet) {
+        let mut seen = HashSet::new();
+        for warning in &record.warnings {
+            if seen.insert(warning.as_str()) {
+                sharing.entry(warning).or_default().push(&record.display);
+            }
+        }
+    }
+    let (mut lines, mut written) = (Vec::new(), HashSet::new());
+    for record in records {
+        if !quiet {
+            for warning in &record.warnings {
+                match sharing[warning.as_str()].as_slice() {
+                    [_] => lines.push(format!("Warning: {}: {warning}", record.display)),
+                    items if written.insert(warning.as_str()) => {
+                        lines.push(format!("Warning: {}: {warning}", shared_names(items)))
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if let Some(error) = &record.error {
+            lines.push(format!("Error: {}: {error}", record.display));
+        }
+    }
+    lines
+}
+
+/// Up to three item names, or the first two and how many more.
+fn shared_names(items: &[&str]) -> String {
+    if items.len() <= 3 {
+        items.join(", ")
+    } else {
+        format!(
+            "{} and {} more files",
+            items[..2].join(", "),
+            items.len() - 2
+        )
+    }
+}
+
 /// A batch's closing lines on stderr, in the terminal language. `unprocessed`
 /// names the items an interruption left unstarted.
 fn print_batch_summary(
@@ -2558,6 +2610,52 @@ fn write_config(path: &Path, value: &Value) -> CliResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_warning_several_items_share_is_written_once_naming_them() {
+        let item = |index: usize, warnings: &[&str], error: Option<&str>| RunItem {
+            index,
+            kind: report::ItemKind::File,
+            display: format!("f{index}.docx"),
+            report_key: format!("f{index}.docx"),
+            source_file: None,
+            status: ItemStatus::Completed,
+            output: None,
+            history_output: None,
+            history_eligible: true,
+            error: error.map(str::to_owned),
+            warnings: warnings.iter().map(|&warning| warning.to_owned()).collect(),
+            skip_reason: None,
+            started_at: String::new(),
+            completed_at: String::new(),
+            elapsed_s: 0.0,
+            conversion_duration_s: None,
+            images: 0,
+            screenshots: 0,
+            usage: ConversionUsage::default(),
+            diagnostics: None,
+            llm_cache_hit: false,
+            fetch_cache_hit: false,
+            fetch_strategy: None,
+        };
+        let records = [
+            item(0, &["own", "priced"], None),
+            item(1, &["priced", "priced"], Some("broken")),
+            item(2, &["pair"], None),
+            item(3, &["priced", "pair"], None),
+            item(4, &["priced"], None),
+        ];
+        assert_eq!(
+            item_diagnostics(&records, false),
+            [
+                "Warning: f0.docx: own",
+                "Warning: f0.docx, f1.docx and 2 more files: priced",
+                "Error: f1.docx: broken",
+                "Warning: f2.docx, f3.docx: pair",
+            ]
+        );
+        assert_eq!(item_diagnostics(&records, true), ["Error: f1.docx: broken"]);
+    }
+
     #[test]
     fn after_a_failed_write_later_writes_are_dropped_and_the_first_failure_stays() {
         let mut failure = None;
