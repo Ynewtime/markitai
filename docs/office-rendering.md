@@ -93,8 +93,10 @@ See [PDF rendering](pdf-rendering.md) for page pixel and encoding limits.
 
 Discovery searches absolute PATH entries and standard LibreOffice locations;
 relative/empty PATH entries do not select a document-local executable. On
-Windows the search tries the PATHEXT extensions and prefers `soffice.exe` to the
-`soffice.com` console wrapper in the same directory. The
+Windows the search tries the PATHEXT extensions and prefers `soffice.com`, the
+[documented command-line entry](https://help.libreoffice.org/latest/en-GB/text/shared/guide/start_parameters.html?DbPAR=WRITER&System=WIN),
+to `soffice.exe` in the same installation; the GUI launcher remains a fallback
+when the console wrapper is absent. The
 executable receives argument-array parameters, never a shell command. Each export
 owns a private temporary directory containing an input copy, fresh LibreOffice
 profile, and output directory. The profile is passed as

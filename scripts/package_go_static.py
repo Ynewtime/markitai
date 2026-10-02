@@ -54,6 +54,7 @@ TARGETS = {target.triple: target for target in [
 # A Linux consumer may load only the C library's own objects and the GCC
 # unwinder that Rust's standard library names, from the system directories.
 EM_X86_64 = 62
+LINUX_NOEXECSTACK = "-Wl,-z,noexecstack"
 SYSTEM_SONAMES = frozenset(["libc.so.6", "libm.so.6", "libpthread.so.0", "libdl.so.2", "librt.so.1",
                             "libutil.so.1", "libresolv.so.2", "libgcc_s.so.1", "ld-linux-x86-64.so.2"])
 SYSTEM_DIRECTORIES = ("/lib/x86_64-linux-gnu/", "/usr/lib/x86_64-linux-gnu/", "/lib64/", "/usr/lib64/")
@@ -150,7 +151,12 @@ def validate_linkage(text, required, directory="darwin_arm64"):
     prefix = f"${{SRCDIR}}/native/{directory}/libmarkitai_ffi.a "
     if len(lines) != 1 or not lines[0].startswith(prefix):
         raise RuntimeError("Static linkage must name the packaged archive explicitly")
-    configured = parse_native_flags("native-static-libs: " + lines[0][len(prefix):])
+    flags = shlex.split(lines[0][len(prefix):])
+    if directory == "linux_amd64":
+        if flags.count(LINUX_NOEXECSTACK) != 1:
+            raise RuntimeError("Linux static linkage requires exactly one fixed non-executable-stack option")
+        flags.remove(LINUX_NOEXECSTACK)
+    configured = parse_native_flags("native-static-libs: " + shlex.join(flags))
     if not set(map(tuple, required)).issubset(set(configured)):
         raise RuntimeError("Static Go linkage omits a compiler-reported native dependency")
     return configured
@@ -181,6 +187,42 @@ def elf_archive_objects(path, machine):
     if not count:
         raise RuntimeError("Static archive contains no objects")
     return count
+
+
+def elf_stack_permissions(path):
+    """Read a Linux x86-64 consumer's bounded program table; require a RW stack.
+
+    An absent GNU_STACK header leaves target-specific defaults, so absence or
+    any permission other than RW is rejected along with malformed ELF input.
+    This checks the real linked executable without running it.
+    """
+    path = Path(path)
+    if not stat.S_ISREG(path.lstat().st_mode):
+        raise RuntimeError("Expected a regular non-symlink Linux consumer")
+    with path.open("rb") as stream:
+        size = os.fstat(stream.fileno()).st_size
+        header = stream.read(64)
+        if len(header) != 64 or header[:7] != b"\x7fELF\x02\x01\x01":
+            raise RuntimeError("Consumer is not a complete little-endian ELF64 executable")
+        kind, machine, version = struct.unpack_from("<HHI", header, 16)
+        offset = struct.unpack_from("<Q", header, 32)[0]
+        header_size, entry_size, count = struct.unpack_from("<HHH", header, 52)
+        if (kind not in {2, 3} or machine != EM_X86_64 or version != 1 or header_size != 64
+                or entry_size != 56 or not 0 < count <= 4096 or offset < 64
+                or offset + entry_size * count > size):
+            raise RuntimeError("Invalid Linux x86-64 consumer program-header table")
+        stream.seek(offset)
+        stacks = []
+        for _ in range(count):
+            entry = stream.read(entry_size)
+            if len(entry) != entry_size:
+                raise RuntimeError("Truncated Linux consumer program-header table")
+            tag, flags = struct.unpack_from("<II", entry)
+            if tag == 0x6474e551:  # PT_GNU_STACK
+                stacks.append(flags)
+        if len(stacks) != 1 or stacks[0] != 6:  # PF_R | PF_W; never PF_X.
+            raise RuntimeError("Linux consumer must have exactly one non-executable RW GNU_STACK header")
+    return {"header": "GNU_STACK", "flags": 6, "permissions": "RW", "executable": False}
 
 
 def elf_dynamic_entries(text):
@@ -627,7 +669,8 @@ def main(argv=None):
                 raise RuntimeError("Static consumer unexpectedly retains an rpath")
         else:
             libraries = linked_libraries(run("consumer-dynamic-section", ["readelf", "-d", executable]))
-            linked = {"resolved_libraries": loaded_libraries(run("consumer-loader", ["ldd", executable]), libraries),
+            linked = {"stack_permissions": elf_stack_permissions(executable),
+                      "resolved_libraries": loaded_libraries(run("consumer-loader", ["ldd", executable]), libraries),
                       **symbol_versions(run("consumer-symbol-versions", ["objdump", "-T", executable]))}
         relocated = work / "relocated"
         relocated.mkdir()

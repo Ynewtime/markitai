@@ -116,6 +116,8 @@
 
 ### Fixed
 
+- Windows LibreOffice discovery prefers the documented `soffice.com` command-line entry, retaining `soffice.exe` as a fallback; this prevents the GUI launcher from stalling readiness checks on supported installations.
+- Linux static Go packages request a non-executable stack through their public cgo linkage; package acceptance rejects an executable or missing GNU stack header in the actual consumer. CI evidence uploads retain the hidden dependency provenance files listed in their inventories.
 - PDF: searchable scans (a page image with an invisible OCR text layer, as OCRmyPDF, Tesseract or Acrobat write them) are read from that layer when every text operator is invisible, lies on the scan at plausible sizes and density, and — where the image can be decoded — lines up with its print; one warning names those pages and their producer, metadata records `ocr_layer_pages`, and `--ocr` keeps the layer unless `ocr.per_page_routing` is `false` (a scanned page then takes about 60 instead of 290 ms). Layers off the print, mixed with visible or clip-only text, tiny or stuffed stay scans.
 - PDF: text set in columns side by side (a résumé's contact sidebar, a bulleted sidebar beside an article, a newspaper's justified columns) reads one column after another instead of line by line across them; borderless tables, key-value lists and card grids stay as they were. The page reader no longer turns justified newspaper columns into a many-column table, and reads a sparse page's sidebar before its main column.
 - PDF: page-reader headings rank on one size ladder for the whole document, so a section heading keeps its level on pages without the title (`## 3 Method`, not `# 3 Method`).

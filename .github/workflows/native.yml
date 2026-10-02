@@ -71,6 +71,7 @@ jobs:
         with:
           name: native-${{ env.TARGET }}
           path: .local/ci-artifacts/
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 14
 

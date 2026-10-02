@@ -3,14 +3,16 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import stat
 import struct
 import tarfile
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
-from package_go_static import (EM_X86_64, TARGETS, bundle_licenses, dependency_closure,
-                              elf_archive_objects, host_target, identity, inventory,
+from package_go_static import (EM_X86_64, LINUX_NOEXECSTACK, TARGETS, bundle_licenses, dependency_closure,
+                              elf_archive_objects, elf_stack_permissions, host_target, identity, inventory,
                               linked_libraries, loaded_libraries, package_archive,
                               parse_native_flags, symbol_versions, unpack_verified,
                               validate_linkage, verify_build)
@@ -38,6 +40,17 @@ def ar_archive(members, magic=b"!<arch>\n"):
         data += f"{name:<16}{0:<12}{0:<6}{0:<6}{644:<8}{len(payload):<10}`\n".encode()
         data += payload + (b"\n" if len(payload) % 2 else b"")
     return bytes(data)
+
+
+def elf_executable(programs, kind=2):
+    """An ELF64 header and real program entries, independent of the checker."""
+    header = bytearray(64)
+    header[:16] = b"\x7fELF\x02\x01\x01" + bytes(9)
+    struct.pack_into("<HHI", header, 16, kind, EM_X86_64, 1)
+    struct.pack_into("<Q", header, 32, 64)
+    struct.pack_into("<HHH", header, 52, 64, 56, len(programs))
+    return bytes(header) + b"".join(struct.pack("<IIQQQQQQ", tag, flags, 0, 0, 0, 0, 0, 16)
+                                   for tag, flags in programs)
 
 
 # A Go consumer's dynamic section and loader output on Ubuntu 24.04 amd64. Go
@@ -105,7 +118,84 @@ class StaticGoPackageTests(unittest.TestCase):
         linux = parse_native_flags(NOTES["x86_64-unknown-linux-gnu"])
         prefix = "#cgo LDFLAGS: ${SRCDIR}/native/linux_amd64/libmarkitai_ffi.a "
         with self.assertRaisesRegex(RuntimeError, "omits"):
-            validate_linkage(prefix + "-lutil -lrt -lpthread -lm -ldl -lc", linux, "linux_amd64")
+            validate_linkage(prefix + LINUX_NOEXECSTACK + " -lutil -lrt -lpthread -lm -ldl -lc", linux, "linux_amd64")
+
+    def test_linux_public_linkage_requires_the_exact_single_noexecstack_option(self):
+        required = parse_native_flags(NOTES["x86_64-unknown-linux-gnu"])
+        prefix = "#cgo LDFLAGS: ${SRCDIR}/native/linux_amd64/libmarkitai_ffi.a "
+        libraries = " -lgcc_s -lutil -lrt -lpthread -lm -ldl -lc"
+        self.assertEqual(validate_linkage(prefix + LINUX_NOEXECSTACK + libraries, required, "linux_amd64"), required)
+        for options in ["", LINUX_NOEXECSTACK + " " + LINUX_NOEXECSTACK,
+                        "-Wl,-z,execstack", "-Wl,-z,noexecstack,-z,execstack",
+                        "-Wl,-z,noexecstackX", "-z noexecstack", "-Xlinker -z -Xlinker noexecstack",
+                        LINUX_NOEXECSTACK + " -Wl,-z,execstack",
+                        LINUX_NOEXECSTACK + " -Wl,-rpath,/tmp",
+                        LINUX_NOEXECSTACK + " -Wl,-z,relro"]:
+            with self.subTest(options=options), self.assertRaises(RuntimeError):
+                validate_linkage(prefix + options + libraries, required, "linux_amd64")
+        good = prefix + LINUX_NOEXECSTACK + libraries
+        with self.assertRaisesRegex(RuntimeError, "archive explicitly"):
+            validate_linkage(good + "\n" + good, required, "linux_amd64")
+
+    def test_linux_hardening_does_not_broaden_compiler_notes_or_darwin_linkage(self):
+        with self.assertRaisesRegex(RuntimeError, "Unsupported"):
+            parse_native_flags("native-static-libs: " + LINUX_NOEXECSTACK + " -lc")
+        required = parse_native_flags("native-static-libs: -framework Vision -lobjc")
+        prefix = "#cgo LDFLAGS: ${SRCDIR}/native/darwin_arm64/libmarkitai_ffi.a "
+        self.assertIn(("framework", "Vision"), validate_linkage(prefix + "-framework Vision -lobjc -lc", required))
+        with self.assertRaisesRegex(RuntimeError, "Unsupported"):
+            validate_linkage(prefix + LINUX_NOEXECSTACK + " -framework Vision -lobjc", required)
+
+    def test_linux_consumer_requires_an_actual_non_executable_rw_stack_header(self):
+        path = self.root / "consumer"
+        for kind in (2, 3):  # ET_EXEC and PIE/ET_DYN consumers.
+            with self.subTest(kind=kind):
+                path.write_bytes(elf_executable([(1, 5), (0x6474e551, 6)], kind))
+                self.assertEqual(elf_stack_permissions(path),
+                                 {"header": "GNU_STACK", "flags": 6, "permissions": "RW", "executable": False})
+        bad = {"executable RWE": [(0x6474e551, 7)], "read-only": [(0x6474e551, 4)],
+               "write-only": [(0x6474e551, 2)], "empty": [(0x6474e551, 0)],
+               "unknown flags": [(0x6474e551, 14)], "absent": [(1, 5)],
+               "duplicate": [(0x6474e551, 6), (0x6474e551, 6)],
+               "conflicting": [(0x6474e551, 6), (0x6474e551, 7)]}
+        for name, programs in bad.items():
+            with self.subTest(name=name), self.assertRaisesRegex(RuntimeError, "RW GNU_STACK"):
+                path.write_bytes(elf_executable(programs))
+                elf_stack_permissions(path)
+
+    def test_linux_consumer_rejects_malformed_or_other_target_elf_before_stack_acceptance(self):
+        good = elf_executable([(0x6474e551, 6)])
+        bad = {"short header": good[:63], "short table": good[:-1], "bad magic": b"bad!" + good[4:]}
+        for name, offset, form, value in [
+                ("ELF32", 4, "B", 1), ("big endian", 5, "B", 2), ("ident version", 6, "B", 0),
+                ("relocatable", 16, "H", 1), ("other machine", 18, "H", 183), ("ELF version", 20, "I", 0),
+                ("header size", 52, "H", 63), ("entry size", 54, "H", 55),
+                ("inside header", 32, "Q", 63), ("past file", 32, "Q", 2 ** 63),
+                ("no table", 56, "H", 0), ("over bound", 56, "H", 4097), ("extended count", 56, "H", 65535)]:
+            value_bytes = bytearray(good)
+            struct.pack_into("<" + form, value_bytes, offset, value)
+            bad[name] = bytes(value_bytes)
+        path = self.root / "consumer"
+        for name, data in bad.items():
+            with self.subTest(name=name), self.assertRaises(RuntimeError):
+                path.write_bytes(data)
+                elf_stack_permissions(path)
+
+    def test_linux_consumer_stack_check_rejects_nonregular_files(self):
+        path = self.root / "consumer"
+        path.mkdir()
+        with self.assertRaisesRegex(RuntimeError, "regular non-symlink"):
+            elf_stack_permissions(path)
+        path.rmdir()
+        target = self.root / "other-consumer"
+        target.write_bytes(elf_executable([(0x6474e551, 6)]))
+        # The Linux-only parser's counterexample also runs on Windows without
+        # requiring the unrelated symbolic-link creation privilege.
+        with patch.object(Path, "lstat", return_value=SimpleNamespace(st_mode=stat.S_IFLNK | 0o777)), \
+                patch.object(Path, "open") as opened:
+            with self.assertRaisesRegex(RuntimeError, "regular non-symlink"):
+                elf_stack_permissions(target)
+            opened.assert_not_called()
 
     def test_linux_archive_holds_only_relocatable_x86_64_objects(self):
         good = [("/", b"\0\0\0\0"), ("//", b"long_member_name.rcgu.o/\n"), ("a.o/", elf_object(extra=b"x")),

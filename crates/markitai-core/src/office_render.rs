@@ -59,11 +59,13 @@ fn executable(path: &Path) -> bool {
     crate::process_groups::launchable(path)
 }
 
+const WINDOWS_PROGRAM_NAMES: &[&str] = &["soffice.com", "soffice.exe", "soffice", "libreoffice"];
+
 fn discover() -> Option<PathBuf> {
-    // On Windows the GUI launcher is preferred to the `soffice.com` console
-    // wrapper beside it; both wait for the export.
+    // LibreOffice documents soffice.com as its Windows command-line entry.
+    // Keep the GUI launcher as a fallback for installs without that wrapper.
     let names: &[&str] = if cfg!(windows) {
-        &["soffice.exe", "soffice", "libreoffice"]
+        WINDOWS_PROGRAM_NAMES
     } else {
         &["soffice", "libreoffice"]
     };
@@ -104,19 +106,21 @@ fn windows_locations(get: impl Fn(&str) -> Option<std::ffi::OsString>) -> Vec<Pa
     let mut add = |root: std::ffi::OsString, suffix: &str| {
         let root = PathBuf::from(root);
         if root.is_absolute() {
-            let candidate = root.join(suffix);
-            if !candidates.contains(&candidate) {
-                candidates.push(candidate);
+            for name in ["soffice.com", "soffice.exe"] {
+                let candidate = root.join(suffix).join(name);
+                if !candidates.contains(&candidate) {
+                    candidates.push(candidate);
+                }
             }
         }
     };
     for variable in ["ProgramFiles", "ProgramFiles(x86)"] {
         if let Some(root) = get(variable) {
-            add(root, "LibreOffice/program/soffice.exe");
+            add(root, "LibreOffice/program");
         }
     }
     if let Some(root) = get("LOCALAPPDATA") {
-        add(root, "Programs/LibreOffice/program/soffice.exe");
+        add(root, "Programs/LibreOffice/program");
     }
     let user_scoop = get("SCOOP").or_else(|| {
         get("USERPROFILE").map(|root| PathBuf::from(root).join("scoop").into_os_string())
@@ -125,11 +129,8 @@ fn windows_locations(get: impl Fn(&str) -> Option<std::ffi::OsString>) -> Vec<Pa
         get("ProgramData").map(|root| PathBuf::from(root).join("scoop").into_os_string())
     });
     for root in [user_scoop, global_scoop].into_iter().flatten() {
-        add(root.clone(), "apps/libreoffice/current/program/soffice.exe");
-        add(
-            root,
-            "apps/libreoffice/current/LibreOffice/program/soffice.exe",
-        );
+        add(root.clone(), "apps/libreoffice/current/program");
+        add(root, "apps/libreoffice/current/LibreOffice/program");
     }
     candidates
 }

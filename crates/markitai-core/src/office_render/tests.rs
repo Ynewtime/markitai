@@ -428,7 +428,14 @@ fn windows_discovery_includes_machine_user_and_scoop_installs_without_relative_r
     .into_iter()
     .collect();
     let candidates = windows_locations(|key| env.get(key).cloned());
-    assert_eq!(candidates.len(), 6);
+    assert_eq!(candidates.len(), 12);
+    let (pairs, remainder) = candidates.as_chunks::<2>();
+    assert!(remainder.is_empty());
+    for pair in pairs {
+        assert_eq!(pair[0].file_name().unwrap(), "soffice.com");
+        assert_eq!(pair[1].file_name().unwrap(), "soffice.exe");
+        assert_eq!(pair[0].parent(), pair[1].parent());
+    }
     assert!(
         candidates.contains(
             &root
@@ -462,6 +469,53 @@ fn windows_discovery_includes_machine_user_and_scoop_installs_without_relative_r
         "SCOOP" => Some(root.path().join("custom").into_os_string()),
         _ => None,
     });
-    assert_eq!(explicit.len(), 2);
+    assert_eq!(explicit.len(), 4);
     assert!(explicit[0].starts_with(root.path().join("custom")));
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_path_discovery_prefers_console_entry_and_keeps_exe_fallback() {
+    let root = tempfile::tempdir().unwrap();
+    let console = root.path().join("soffice.com");
+    let gui = root.path().join("soffice.exe");
+    fs::write(&console, b"fixture console entry").unwrap();
+    fs::write(&gui, b"fixture GUI entry").unwrap();
+    let path = std::env::join_paths([root.path()]).unwrap();
+    let select = || {
+        crate::process_groups::find_program(
+            WINDOWS_PROGRAM_NAMES,
+            Some(&path),
+            Some(std::ffi::OsStr::new(".EXE;.COM")),
+        )
+    };
+    assert_eq!(select(), Some(console.clone()));
+    fs::remove_file(console).unwrap();
+    assert_eq!(select(), Some(gui.clone()));
+    fs::remove_file(gui).unwrap();
+    assert_eq!(select(), None);
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_fixed_discovery_prefers_console_entry_and_keeps_exe_fallback() {
+    let root = tempfile::tempdir().unwrap();
+    let programs = root.path().join("LibreOffice/program");
+    fs::create_dir_all(&programs).unwrap();
+    let console = programs.join("soffice.com");
+    let gui = programs.join("soffice.exe");
+    fs::write(&console, b"fixture console entry").unwrap();
+    fs::write(&gui, b"fixture GUI entry").unwrap();
+    let select = || {
+        windows_locations(|name| {
+            (name == "ProgramFiles").then(|| root.path().as_os_str().to_os_string())
+        })
+        .into_iter()
+        .find(|candidate| executable(candidate))
+    };
+    assert_eq!(select(), Some(console.clone()));
+    fs::remove_file(console).unwrap();
+    assert_eq!(select(), Some(gui.clone()));
+    fs::remove_file(gui).unwrap();
+    assert_eq!(select(), None);
 }
