@@ -1,9 +1,18 @@
 name: Native validation
 
+# Run by hand only: hosted macOS minutes cost ten times Linux minutes in a
+# private repository, so each run names the runners it needs.
 on:
-  push:
-  pull_request:
   workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'JSON list of runners: windows-2025, windows-11-arm, ubuntu-24.04, macos-15, macos-15-intel'
+        required: true
+        default: '["windows-2025", "ubuntu-24.04"]'
+      minimum_rust:
+        description: 'Also check the declared minimum toolchain'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -14,23 +23,17 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: never
-  RUSTUP_TOOLCHAIN: 1.98.1
+  RUSTUP_TOOLCHAIN: 1.99.0
 
 jobs:
   native:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-          - os: windows-2025
-            target: x86_64-pc-windows-msvc
-          - os: macos-15
-            target: aarch64-apple-darwin
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
+        os: ${{ fromJSON(inputs.platforms) }}
     runs-on: ${{ matrix.os }}
+    env:
+      TARGET: ${{ matrix.os == 'windows-2025' && 'x86_64-pc-windows-msvc' || matrix.os == 'windows-11-arm' && 'aarch64-pc-windows-msvc' || matrix.os == 'ubuntu-24.04' && 'x86_64-unknown-linux-gnu' || matrix.os == 'macos-15' && 'aarch64-apple-darwin' || matrix.os == 'macos-15-intel' && 'x86_64-apple-darwin' || 'unknown' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -48,23 +51,24 @@ jobs:
           go-version: '1.27.1'
           cache: false
       - name: Install Rust components
-        run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
+        run: rustup toolchain install ${{ env.RUSTUP_TOOLCHAIN }} --profile minimal --component rustfmt --component clippy
       - name: Formatting, native tests, lint and harness tests
         run: python scripts/check.py
       - name: Install wheel build tool
         run: python -m pip install "maturin>=1.9,<2"
       - name: Build and exercise installable artifacts
-        run: python scripts/ci_packages.py --expected-host ${{ matrix.target }} --output .local/ci-artifacts
+        run: python scripts/ci_packages.py --expected-host ${{ env.TARGET }} --output .local/ci-artifacts
       - name: Retain per-platform artifacts and evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: native-${{ matrix.target }}
+          name: native-${{ env.TARGET }}
           path: .local/ci-artifacts/
           if-no-files-found: warn
           retention-days: 14
 
   minimum-rust:
+    if: ${{ inputs.minimum_rust }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:

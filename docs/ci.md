@@ -1,10 +1,16 @@
 # Native CI and package acceptance
 
 `scripts/check.py` runs the development gate without a Unix-shell dependency.
-The workflow in `.github/workflows/native.yml` selects native host jobs. A matrix
-entry describes intended coverage; it is not evidence that the job has run or
-that its artifacts work. Only a completed job and its retained logs establish
-that host's result.
+The workflow in `.github/workflows/native.yml` selects native host jobs. It runs
+only when started by hand (`gh workflow run native.yml -f platforms='["windows-2025"]'`
+or the Actions page), because the repository is private and hosted macOS minutes
+are billed at ten times Linux minutes and Windows at twice: the `platforms`
+input lists the runners (`windows-2025`, `windows-11-arm`, `ubuntu-24.04`,
+`macos-15`, `macos-15-intel`; default Windows x86-64 and Linux), and
+`minimum_rust` adds the declared-minimum toolchain check. A matrix entry
+describes intended coverage; it is not evidence that the job has run or that its
+artifacts work. Only a completed job and its retained logs establish that host's
+result.
 
 Runner contents change over time. Record the actual compiler host and version,
 and retain the workflow's `Set up job` runner-image details. GitHub documents
