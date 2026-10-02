@@ -905,6 +905,18 @@ fn doctor_gives_the_install_command_for_a_missing_libreoffice() {
         ],
     );
     let body: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(body["libreoffice"]["status"], "missing", "{body}");
     let hint = body["libreoffice"]["install_hint"].as_str().unwrap();
-    assert!(hint.contains("brew install --cask libreoffice"), "{hint}");
+    let expected = match std::env::consts::OS {
+        "windows" => {
+            "Install LibreOffice: winget install --id TheDocumentFoundation.LibreOffice --exact; Office screenshots also require the native PDF page renderer"
+        }
+        "macos" => {
+            "Install LibreOffice: brew install --cask libreoffice; Office screenshots also require the native PDF page renderer"
+        }
+        _ => {
+            "Install LibreOffice using your distribution package manager and put soffice on PATH; Office screenshots also require the native PDF page renderer"
+        }
+    };
+    assert_eq!(hint, expected);
 }

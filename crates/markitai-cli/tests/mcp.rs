@@ -525,22 +525,9 @@ fn batch_files_isolate_duplicate_names_and_keep_error_slots() {
 #[test]
 fn batch_expands_home_paths_but_retains_the_callers_source_label() {
     let mut client = Client::start(false);
-    let source = client.file("home-source.md", "# Isolated home document\n");
-    let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) else {
-        return;
-    };
-    let home = PathBuf::from(home);
-    // A relative spelling from the real home reaches only our private fixture.
-    // No test input or state is written into the actual user home.
-    let Some(common) = home.ancestors().find(|parent| source.starts_with(parent)) else {
-        return; // Different Windows volumes cannot have a home-relative spelling.
-    };
-    let mut relative = PathBuf::from("~");
-    for _ in home.strip_prefix(common).unwrap().components() {
-        relative.push("..");
-    }
-    relative.push(source.strip_prefix(common).unwrap());
-    let label = relative.to_string_lossy().into_owned();
+    // Client sets the server's HOME and USERPROFILE to its own private home.
+    client.file("home/home-source.md", "# Isolated home document\n");
+    let label = "~/home-source.md";
     let ack = client.success("batch_convert", json!({"sources":[label],"concurrency":1}));
     let status = client.completed(ack["job_id"].as_str().unwrap());
     assert_eq!(status["failed"], 0, "{status}");

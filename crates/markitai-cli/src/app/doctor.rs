@@ -994,6 +994,42 @@ mod tests {
     }
 
     #[test]
+    fn missing_libreoffice_has_the_platform_install_hint_and_is_nonblocking() {
+        let checks = checks(
+            &config::defaults(),
+            None,
+            &HashMap::new(),
+            Ok(None),
+            Ok(None),
+            Vec::new(),
+        );
+        let office = &checks["libreoffice"];
+        assert_eq!(office.status, "missing");
+        assert!(!office.required);
+        assert!(!office.failed());
+        assert_eq!(office.path, None);
+        assert_eq!(office.optional, None);
+        let expected = match std::env::consts::OS {
+            "windows" => {
+                "Install LibreOffice: winget install --id TheDocumentFoundation.LibreOffice --exact; Office screenshots also require the native PDF page renderer"
+            }
+            "macos" => {
+                "Install LibreOffice: brew install --cask libreoffice; Office screenshots also require the native PDF page renderer"
+            }
+            _ => {
+                "Install LibreOffice using your distribution package manager and put soffice on PATH; Office screenshots also require the native PDF page renderer"
+            }
+        };
+        assert_eq!(office.install_hint, expected);
+        let value = serde_json::to_value(office).unwrap();
+        assert_eq!(value["status"], "missing");
+        assert_eq!(value["install_hint"], expected);
+        for field in ["optional", "path", "required", "available"] {
+            assert!(value.get(field).is_none(), "{field}: {value}");
+        }
+    }
+
+    #[test]
     fn check_lines_translate_only_the_status_and_requirement() {
         let states = checks_of(&[
             ("A", "ok", false),

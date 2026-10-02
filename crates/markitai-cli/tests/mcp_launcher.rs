@@ -182,7 +182,17 @@ fn the_main_command_and_its_mcp_subcommand_keep_their_names() {
     let output = launcher.run_as("markitai", "en", &["mcp", "--help"]);
     assert_eq!(output.status.code(), Some(0));
     let help = text(&output.stdout);
-    assert!(help.contains("Usage: markitai mcp [OPTIONS]"), "{help}");
+    let basename = if cfg!(windows) {
+        "markitai.exe"
+    } else {
+        "markitai"
+    };
+    let expected = format!("Usage: {basename} mcp [OPTIONS]");
+    assert_eq!(
+        help.lines().find(|line| line.starts_with("Usage: ")),
+        Some(expected.as_str()),
+        "{help}"
+    );
     assert!(!help.contains("--version"), "{help}");
 }
 
