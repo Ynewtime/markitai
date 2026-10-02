@@ -24,13 +24,14 @@
     "max_concurrency": 4
   },
   "summary": {
-    "requested_packages": 15,
-    "exact_commit_manifest_matches": 15,
-    "full_license_text_packages": 15,
+    "requested_packages": 17,
+    "exact_commit_manifest_matches": 16,
+    "full_license_text_packages": 17,
     "notice_only_packages": 0,
-    "overlay_files": 25,
-    "source_archives": 1,
-    "historical_text_packages": 3
+    "overlay_files": 29,
+    "source_archives": 3,
+    "historical_text_packages": 3,
+    "reviewed_publication_version_stamps": 1
   },
   "packages": [
     {
@@ -1076,6 +1077,201 @@
           "content_kind": "full_license_text"
         }
       ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#nom-language@0.1.0",
+      "name": "nom-language",
+      "version": "0.1.0",
+      "declared_license": "MIT",
+      "repository": "https://github.com/rust-bakery/nom",
+      "commit": "2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1",
+      "path_in_vcs": "nom-language",
+      "package_manifest_matches_published_original": true,
+      "license_inherited_from_workspace": false,
+      "version_inherited_from_workspace": false,
+      "content_kind": "full_license_text",
+      "complete_license_options_present": [
+        "MIT"
+      ],
+      "unresolved_full_text_reason": null,
+      "evidence": [
+        {
+          "path": "local-evidence/nom-language-0.1.0/Cargo.toml.orig",
+          "bytes": 311,
+          "sha256": "b5a35572e79e9645bc8e2d676ba8e1eaba7301ab864a906960adf9684addc249"
+        },
+        {
+          "path": "local-evidence/nom-language-0.1.0/.cargo_vcs_info.json",
+          "bytes": 106,
+          "sha256": "61ef2d6baf5b25fca61349550a397663c558fdd4cc3d06e1c8bde24360ea04f6"
+        },
+        {
+          "path": "upstream/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/Cargo.toml",
+          "bytes": 2632,
+          "sha256": "74762db5ea3fb7dbb7aed12c1851e05cca0a37c8fd7bfef82e0d5b0d9aef7e95",
+          "source_url": "https://raw.githubusercontent.com/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/Cargo.toml"
+        },
+        {
+          "path": "upstream/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/Cargo.toml",
+          "bytes": 311,
+          "sha256": "b5a35572e79e9645bc8e2d676ba8e1eaba7301ab864a906960adf9684addc249",
+          "source_url": "https://raw.githubusercontent.com/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/Cargo.toml"
+        },
+        {
+          "path": "upstream/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/src/error.rs",
+          "bytes": 7499,
+          "sha256": "e0df3aecd5d1bce88d5a3ace27653d61dac66c4d1adffc5f8f2dd14872d3daf0",
+          "source_url": "https://raw.githubusercontent.com/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/src/error.rs"
+        },
+        {
+          "path": "upstream/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/src/lib.rs",
+          "bytes": 321,
+          "sha256": "67d772d35d00ac350cc12496aaa8badc6c51b64ae1cba495d803437e4f6300b1",
+          "source_url": "https://raw.githubusercontent.com/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/src/lib.rs"
+        },
+        {
+          "path": "upstream/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/src/precedence/mod.rs",
+          "bytes": 16528,
+          "sha256": "c9f56d9c2256e43af883f773b9065372f6fa95137030eb66a90c3e236c6c92d8",
+          "source_url": "https://raw.githubusercontent.com/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/src/precedence/mod.rs"
+        },
+        {
+          "path": "upstream/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/src/precedence/tests.rs",
+          "bytes": 1786,
+          "sha256": "bec5f416d2e300e664ba1d974d3fdc1e731fca98d87cb32d9d7b29b462df14ec",
+          "source_url": "https://raw.githubusercontent.com/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/src/precedence/tests.rs"
+        },
+        {
+          "path": "upstream/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/LICENSE",
+          "bytes": 1065,
+          "sha256": "4dbda04344456f09a7a588140455413a9ac59b6b26a1ef7cdf9c800c012d87f0",
+          "source_url": "https://raw.githubusercontent.com/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/LICENSE"
+        }
+      ],
+      "assets": [
+        {
+          "path": "overlay/licenses/nom-language-0.1.0/LICENSE",
+          "bytes": 1065,
+          "sha256": "4dbda04344456f09a7a588140455413a9ac59b6b26a1ef7cdf9c800c012d87f0",
+          "destination": "licenses/nom-language-0.1.0/LICENSE",
+          "source_path": "upstream/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/LICENSE",
+          "source_url": "https://raw.githubusercontent.com/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/LICENSE",
+          "source_sha256": "4dbda04344456f09a7a588140455413a9ac59b6b26a1ef7cdf9c800c012d87f0",
+          "content_kind": "full_license_text"
+        }
+      ],
+      "applicability": "The exact child manifest directly declares MIT, equals the published original, and belongs to the same-commit workspace. The repository root MIT LICENSE equals the published nom 8.0.0 parent original; all four published Rust files equal this commit."
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#tract-extra@0.23.8",
+      "name": "tract-extra",
+      "version": "0.23.8",
+      "declared_license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/sonos/tract",
+      "commit": "248335349c0f59a5772d737480b8b39250097374",
+      "path_in_vcs": "extra",
+      "package_manifest_matches_published_original": false,
+      "license_inherited_from_workspace": false,
+      "version_inherited_from_workspace": false,
+      "content_kind": "full_license_text",
+      "complete_license_options_present": [
+        "MIT",
+        "Apache-2.0"
+      ],
+      "unresolved_full_text_reason": null,
+      "evidence": [
+        {
+          "path": "local-evidence/tract-extra-0.23.8/Cargo.toml.orig",
+          "bytes": 939,
+          "sha256": "b6027b969552e2f7bffa346c0dfcd908c37659595ca22e70279b23a7ea7cc04c"
+        },
+        {
+          "path": "local-evidence/tract-extra-0.23.8/.cargo_vcs_info.json",
+          "bytes": 118,
+          "sha256": "27516d0f04ba415e01c4e6c506f2e5d402ac3f53d9afd1d34339bdce97b51cf1"
+        },
+        {
+          "path": "upstream/sonos/tract/248335349c0f59a5772d737480b8b39250097374/Cargo.toml",
+          "bytes": 7975,
+          "sha256": "20ad6ca64d23d87cd87b0dc5db1e255af1e1c2133867582905ea1ead4c10fd56",
+          "source_url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/Cargo.toml"
+        },
+        {
+          "path": "upstream/sonos/tract/248335349c0f59a5772d737480b8b39250097374/extra/Cargo.toml",
+          "bytes": 943,
+          "sha256": "c3b1bd149734cb869157c50391a213a5435debecd88062e9dfe8dd44d724c990",
+          "source_url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/extra/Cargo.toml"
+        },
+        {
+          "path": "upstream/sonos/tract/248335349c0f59a5772d737480b8b39250097374/extra/src/exp_unit_norm.rs",
+          "bytes": 8845,
+          "sha256": "47a3ccdb9e03c4187a0789b624a5d5e2e83ba5833d90cac7d8970afcab4a54c2",
+          "source_url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/extra/src/exp_unit_norm.rs"
+        },
+        {
+          "path": "upstream/sonos/tract/248335349c0f59a5772d737480b8b39250097374/extra/src/lib.rs",
+          "bytes": 623,
+          "sha256": "6067a911c32c79b2310351fa79a82bced196460a012e61c30efd623952dcc245",
+          "source_url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/extra/src/lib.rs"
+        },
+        {
+          "path": "upstream/sonos/tract/248335349c0f59a5772d737480b8b39250097374/LICENSE",
+          "bytes": 495,
+          "sha256": "f7ef673bf046d823dcd775bdd0768432bd8855f81d0e5e1290a0a48c42e2dca3",
+          "source_url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/LICENSE"
+        },
+        {
+          "path": "upstream/sonos/tract/248335349c0f59a5772d737480b8b39250097374/LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+          "source_url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/LICENSE-MIT"
+        },
+        {
+          "path": "upstream/sonos/tract/248335349c0f59a5772d737480b8b39250097374/LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+          "source_url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/LICENSE-APACHE"
+        }
+      ],
+      "assets": [
+        {
+          "path": "overlay/licenses/tract-extra-0.23.8/LICENSE",
+          "bytes": 495,
+          "sha256": "f7ef673bf046d823dcd775bdd0768432bd8855f81d0e5e1290a0a48c42e2dca3",
+          "destination": "licenses/tract-extra-0.23.8/LICENSE",
+          "source_path": "upstream/sonos/tract/248335349c0f59a5772d737480b8b39250097374/LICENSE",
+          "source_url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/LICENSE",
+          "source_sha256": "f7ef673bf046d823dcd775bdd0768432bd8855f81d0e5e1290a0a48c42e2dca3",
+          "content_kind": "notice_only"
+        },
+        {
+          "path": "overlay/licenses/tract-extra-0.23.8/LICENSE-MIT",
+          "bytes": 1023,
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+          "destination": "licenses/tract-extra-0.23.8/LICENSE-MIT",
+          "source_path": "upstream/sonos/tract/248335349c0f59a5772d737480b8b39250097374/LICENSE-MIT",
+          "source_url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/LICENSE-MIT",
+          "source_sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+          "content_kind": "full_license_text"
+        },
+        {
+          "path": "overlay/licenses/tract-extra-0.23.8/LICENSE-APACHE",
+          "bytes": 10847,
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+          "destination": "licenses/tract-extra-0.23.8/LICENSE-APACHE",
+          "source_path": "upstream/sonos/tract/248335349c0f59a5772d737480b8b39250097374/LICENSE-APACHE",
+          "source_url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/LICENSE-APACHE",
+          "source_sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+          "content_kind": "full_license_text"
+        }
+      ],
+      "applicability": "The child directly declares MIT OR Apache-2.0. Only the reviewed publication stamp differs (0.23.8-pre to 0.23.8); dirty VCS, pinned archive, both raw manifests and both identical Rust sources are retained. The workspace root LICENSE notice and complete MIT/Apache terms equal the published tract-core 0.23.8 originals. No general dirty-source allowance or license election.",
+      "publication_version_stamp": {
+        "kind": "reviewed_publication_version_stamp",
+        "upstream_version": "0.23.8-pre",
+        "published_version": "0.23.8",
+        "legal_review": "not_performed"
+      }
     }
   ],
   "unresolved_full_license_text": [],
@@ -1089,6 +1285,26 @@
       "commit": "572ecba2d1600e7c3d490586692a209faf703baa",
       "source_url": "https://static.crates.io/crates/selectors/selectors-0.38.0.crate",
       "scope": "Original covered source, unmodified; SHA equals the pinned Cargo.lock checksum and all 22 files matched the local published registry source."
+    },
+    {
+      "path": "source-archives/nom-language-0.1.0.crate",
+      "bytes": 7648,
+      "sha256": "2de2bc5b451bfedaef92c90b8939a8fff5770bdcc1fafd6239d086aab8fa6b29",
+      "package": "nom-language",
+      "version": "0.1.0",
+      "commit": "2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1",
+      "source_url": "https://static.crates.io/crates/nom-language/nom-language-0.1.0.crate",
+      "scope": "Unmodified official crates.io source archive; Cargo.lock checksum and all 7 regular original members equal the actual published local registry source. Raw VCS/original manifest and fixed-commit Rust source comparisons are preserved."
+    },
+    {
+      "path": "source-archives/tract-extra-0.23.8.crate",
+      "bytes": 15844,
+      "sha256": "2a05c86ece0c47880c7726e08dabb72d68e9cba0cd36d44bc0aa90e2291a05db",
+      "package": "tract-extra",
+      "version": "0.23.8",
+      "commit": "248335349c0f59a5772d737480b8b39250097374",
+      "source_url": "https://static.crates.io/crates/tract-extra/tract-extra-0.23.8.crate",
+      "scope": "Unmodified official crates.io source archive; Cargo.lock checksum and all 6 regular original members equal the actual published local registry source. Raw VCS/original manifest and fixed-commit Rust source comparisons are preserved."
     }
   ],
   "round30_provenance": {
@@ -1099,7 +1315,8 @@
   "classification_review": {
     "scope": "Mechanical full-text supply and exact historical provenance; legal_review=not_performed.",
     "original_collection_evidence": "round30/provenance.json",
-    "historical_original_is_not_a_current_commit_file": true
+    "historical_original_is_not_a_current_commit_file": true,
+    "publication_version_stamp_scope": "Only tract-extra 0.23.8 / 248335349c0f59a5772d737480b8b39250097374; both raw manifests, dirty VCS, fixed archive and identical Rust source bytes retained; not a raw manifest match."
   },
   "historical_collection": {
     "source": "input-manifest.json",
@@ -1115,5 +1332,10 @@
       "registry+https://github.com/rust-lang/crates.io-index#objc2-vision@0.3.2",
       "registry+https://github.com/rust-lang/crates.io-index#selectors@0.38.0"
     ]
+  },
+  "license_gap_collection": {
+    "path": "license-gaps-r49-provenance.json",
+    "bytes": 19746,
+    "sha256": "e54f65005e561173e9761aaf1bcdf16d0bfeb2957999e9bcf9262460f63258ff"
   }
 }

@@ -32,6 +32,14 @@ class LicenseOverlayTests(unittest.TestCase):
             source.mkdir(parents=True)
             for name in [".cargo_vcs_info.json", "Cargo.toml.orig"]:
                 shutil.copyfile(self.vendor / "local-evidence" / label / name, source / name)
+            if item["name"] in {"nom-language", "tract-extra"}:
+                with tarfile.open(self.vendor / "source-archives" / (label + ".crate")) as archive:
+                    for member in archive:
+                        name = member.name.removeprefix(label + "/")
+                        if name.startswith("src/") and name.endswith(".rs"):
+                            target = source / name
+                            target.parent.mkdir(parents=True, exist_ok=True)
+                            target.write_bytes(archive.extractfile(member).read())
             self.packages.append({"id": item["id"], "name": item["name"], "version": item["version"],
                                   "source": "registry+fixture", "license": item["declared_license"],
                                   "license_file": None, "repository": item["repository"],
@@ -68,7 +76,7 @@ class LicenseOverlayTests(unittest.TestCase):
         self.destination.parent.parent.mkdir(parents=True)
         record = bundle_licenses(metadata, self.destination.parent, self.repository, sysroot)
         self.assertEqual(record["legal_review"], "not_performed")
-        self.assertEqual(record["upstream_overlay"]["complete_text_packages"], 15)
+        self.assertEqual(record["upstream_overlay"]["complete_text_packages"], 17)
         self.assertEqual(record["upstream_overlay"]["notice_only_packages"], 0)
         self.assertEqual(record["unresolved"], [])
         self.assertEqual(record["upstream_overlay"]["historical_text_packages"], 3)
@@ -77,7 +85,7 @@ class LicenseOverlayTests(unittest.TestCase):
                       if p.get("upstream_evidence", {}).get("historical_provenance")]
         self.assertEqual({p["name"] for p in historical}, {"objc2", "objc2-encode", "objc2-foundation"})
         copied = [text for p in record["dependencies"] for text in p["texts"] if text.get("origin") == "verified_upstream_overlay"]
-        self.assertEqual(len(copied), 22)
+        self.assertEqual(len(copied), 26)
         for text in copied:
             raw = (self.destination.parent.parent / text["path"]).read_bytes()
             self.assertEqual(raw, Path(text["source"]).read_bytes())
@@ -94,7 +102,7 @@ class LicenseOverlayTests(unittest.TestCase):
         self.assertEqual(len(historical), 9)
         self.assertEqual(self.manifest["historical_collection"]["source"], "input-manifest.json")
         result = stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertEqual(result["record"]["complete_text_packages"], 15)
+        self.assertEqual(result["record"]["complete_text_packages"], 17)
         self.assertEqual(result["record"]["historical_text_packages"], 3)
         self.assertEqual(result["record"]["legal_review"], "not_performed")
         copied = json.loads((self.destination / "manifest.json").read_text())
@@ -106,6 +114,7 @@ class LicenseOverlayTests(unittest.TestCase):
         variants = [("unresolved", None), ("historical_text_packages", 0),
                     ("full_license_text_packages", 14), ("notice_only_packages", 3),
                     ("requested_packages", 14), ("exact_commit_manifest_matches", 14),
+                    ("exact_commit_manifest_matches", 17), ("reviewed_publication_version_stamps", 0),
                     ("overlay_files", 24), ("source_archives", True)]
         for field, value in variants:
             with self.subTest(field=field):
@@ -381,6 +390,194 @@ class LicenseOverlayTests(unittest.TestCase):
         self.seal(row["path"])
         self.save_manifest()
         with self.assertRaisesRegex(RuntimeError, "reviewed exact package"):
+            stage_overlay(self.vendor, self.destination, self.packages)
+        self.assertFalse(self.destination.exists())
+
+    def test_parent_terms_close_both_gaps_with_truthful_manifest_provenance(self):
+        result = stage_overlay(self.vendor, self.destination, self.packages)
+        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 16)
+        self.assertEqual(result["record"]["reviewed_publication_version_stamps"], 1)
+        expected = {"nom-language": ("raw_exact_match", ["LICENSE"], 7),
+                    "tract-extra": ("reviewed_publication_version_stamp",
+                                    ["LICENSE", "LICENSE-MIT", "LICENSE-APACHE"], 6)}
+        for name, (provenance, terms, members) in expected.items():
+            entry = next(p for p in self.manifest["packages"] if p["name"] == name)
+            record = result["packages"][entry["id"]]
+            self.assertEqual(record["manifest_provenance"], provenance)
+            self.assertTrue(record["complete_text"])
+            self.assertIsNone(record["full_text_gap"])
+            self.assertFalse(record["historical_provenance"])
+            self.assertEqual([Path(text["source"]).name for text in record["texts"]], terms)
+            archive = next(a for a in self.manifest["source_archives"] if a["package"] == name)
+            with tarfile.open(self.vendor / archive["path"]) as source:
+                self.assertEqual(len(source.getmembers()), members)
+                prefix = f"{name}-{entry['version']}/"
+                for filename in ["Cargo.toml.orig", ".cargo_vcs_info.json"]:
+                    self.assertEqual(source.extractfile(prefix + filename).read(),
+                                     (self.vendor / "local-evidence" / prefix / filename).read_bytes())
+            if name == "tract-extra":
+                original = (self.vendor / "local-evidence/tract-extra-0.23.8/Cargo.toml.orig").read_bytes()
+                upstream = (self.vendor / f"upstream/sonos/tract/{entry['commit']}/extra/Cargo.toml").read_bytes()
+                self.assertNotEqual(original, upstream)
+                self.assertEqual(upstream.replace(b'\nversion = "0.23.8-pre"\n', b'\nversion = "0.23.8"\n'), original)
+                vcs = json.loads((self.vendor / "local-evidence/tract-extra-0.23.8/.cargo_vcs_info.json").read_bytes())
+                self.assertIs(vcs["git"]["dirty"], True)
+        self.assertEqual(result["record"]["legal_review"], "not_performed")
+
+    def test_publication_stamp_is_not_a_general_dirty_version_or_identity_allowlist(self):
+        entry = next(p for p in self.manifest["packages"] if p["name"] == "tract-extra")
+        variants = [("id", entry["id"] + "-other"), ("version", "0.23.9"),
+                    ("commit", "0" * 40), ("repository", "https://github.com/example/tract"),
+                    ("path_in_vcs", "other"), ("declared_license", "MIT"),
+                    ("package_manifest_matches_published_original", True),
+                    ("publication_version_stamp", None),
+                    ("publication_version_stamp", {**entry["publication_version_stamp"], "legal_review": "approved"})]
+        for field, value in variants:
+            with self.subTest(field=field, value=value):
+                old = entry[field]
+                entry[field] = value
+                self.save_manifest()
+                with self.assertRaises(RuntimeError):
+                    stage_overlay(self.vendor, self.destination, self.packages)
+                self.assertFalse(self.destination.exists())
+                entry[field] = old
+        self.save_manifest()
+
+    def test_new_archives_require_original_vcs_and_both_raw_manifests(self):
+        entry = next(p for p in self.manifest["packages"] if p["name"] == "tract-extra")
+        names = [f"upstream/sonos/tract/{entry['commit']}/extra/Cargo.toml",
+                 "local-evidence/tract-extra-0.23.8/Cargo.toml.orig",
+                 "local-evidence/tract-extra-0.23.8/.cargo_vcs_info.json"]
+        for name in names:
+            previous = (self.vendor / name).read_bytes()
+            variants = [previous + b"\n"]
+            if name.endswith(".cargo_vcs_info.json"):
+                value = json.loads(previous)
+                value["git"]["dirty"] = False
+                variants.append(json.dumps(value).encode())
+            for raw in variants:
+                with self.subTest(name=name, raw=raw):
+                    proof = next(p for p in entry["evidence"] if p["path"] == name)
+                    old = dict(proof)
+                    (self.vendor / name).write_bytes(raw)
+                    proof.update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+                    self.seal(name)
+                    self.save_manifest()
+                    with self.assertRaises(RuntimeError):
+                        stage_overlay(self.vendor, self.destination, self.packages)
+                    self.assertFalse(self.destination.exists())
+                    (self.vendor / name).write_bytes(previous)
+                    proof.clear()
+                    proof.update(old)
+                    self.seal(name)
+            self.save_manifest()
+
+    def test_resealed_upstream_or_current_rust_changes_do_not_inherit_stamp(self):
+        entry = next(p for p in self.manifest["packages"] if p["name"] == "tract-extra")
+        name = f"upstream/sonos/tract/{entry['commit']}/extra/src/lib.rs"
+        proof = next(p for p in entry["evidence"] if p["path"] == name)
+        previous, old = (self.vendor / name).read_bytes(), dict(proof)
+        raw = previous + b"\n// changed source\n"
+        (self.vendor / name).write_bytes(raw)
+        proof.update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+        self.seal(name)
+        self.save_manifest()
+        with self.assertRaisesRegex(RuntimeError, "Rust source differs"):
+            stage_overlay(self.vendor, self.destination, self.packages)
+        self.assertFalse(self.destination.exists())
+        (self.vendor / name).write_bytes(previous)
+        proof.clear()
+        proof.update(old)
+        self.seal(name)
+        self.save_manifest()
+        package = next(p for p in self.packages if p["name"] == "tract-extra")
+        current = Path(package["manifest_path"]).parent / "src/lib.rs"
+        current.write_bytes(raw)
+        with self.assertRaisesRegex(RuntimeError, "Current package Rust source differs"):
+            stage_overlay(self.vendor, self.destination, self.packages)
+        self.assertFalse(self.destination.exists())
+
+    def test_resealed_parent_terms_and_workspace_claims_cannot_change(self):
+        for package in ["nom-language", "tract-extra"]:
+            entry = next(p for p in self.manifest["packages"] if p["name"] == package)
+            for field in ["license_inherited_from_workspace", "version_inherited_from_workspace"]:
+                entry[field] = True
+                self.save_manifest()
+                with self.assertRaisesRegex(RuntimeError, "parent license package scope"):
+                    stage_overlay(self.vendor, self.destination, self.packages)
+                self.assertFalse(self.destination.exists())
+                entry[field] = False
+            for asset in entry["assets"]:
+                previous, old = (self.vendor / asset["path"]).read_bytes(), dict(asset)
+                raw = previous + b"\nSubstituted terms\n"
+                for name in [asset["path"], asset["source_path"]]:
+                    (self.vendor / name).write_bytes(raw)
+                    self.seal(name)
+                proof = next(p for p in entry["evidence"] if p["path"] == asset["source_path"])
+                old_proof = dict(proof)
+                proof.update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+                asset.update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest(),
+                             source_sha256=hashlib.sha256(raw).hexdigest())
+                self.save_manifest()
+                with self.assertRaisesRegex(RuntimeError, "parent original terms hash"):
+                    stage_overlay(self.vendor, self.destination, self.packages)
+                self.assertFalse(self.destination.exists())
+                for name in [asset["path"], asset["source_path"]]:
+                    (self.vendor / name).write_bytes(previous)
+                    self.seal(name)
+                asset.clear()
+                asset.update(old)
+                proof.clear()
+                proof.update(old_proof)
+                self.save_manifest()
+
+    def test_all_three_archives_are_required_and_digest_pinned_before_copying(self):
+        original = json.loads(json.dumps(self.manifest))
+        for package in ["nom-language", "tract-extra"]:
+            self.manifest = json.loads(json.dumps(original))
+            self.manifest["source_archives"] = [a for a in self.manifest["source_archives"] if a["package"] != package]
+            self.save_manifest()
+            with self.assertRaisesRegex(RuntimeError, "archive inventory is incomplete"):
+                stage_overlay(self.vendor, self.destination, self.packages)
+            self.assertFalse(self.destination.exists())
+            self.manifest = json.loads(json.dumps(original))
+            row = next(a for a in self.manifest["source_archives"] if a["package"] == package)
+            previous = (self.vendor / row["path"]).read_bytes()
+            raw = previous + b"changed"
+            (self.vendor / row["path"]).write_bytes(raw)
+            row.update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+            self.seal(row["path"])
+            self.save_manifest()
+            with self.assertRaisesRegex(RuntimeError, "reviewed exact package"):
+                stage_overlay(self.vendor, self.destination, self.packages)
+            self.assertFalse(self.destination.exists())
+            (self.vendor / row["path"]).write_bytes(previous)
+            self.seal(row["path"])
+        self.manifest = original
+        self.save_manifest()
+
+    def test_stamp_cannot_be_reclassified_as_raw_exact_or_copied_to_another_package(self):
+        nom = next(p for p in self.manifest["packages"] if p["name"] == "nom-language")
+        tract = next(p for p in self.manifest["packages"] if p["name"] == "tract-extra")
+        nom["publication_version_stamp"] = tract["publication_version_stamp"]
+        self.save_manifest()
+        with self.assertRaisesRegex(RuntimeError, "Raw manifest match has inconsistent provenance"):
+            stage_overlay(self.vendor, self.destination, self.packages)
+        self.assertFalse(self.destination.exists())
+
+    def test_resealed_normalized_tract_manifest_cannot_be_claimed_as_raw_exact(self):
+        entry = next(p for p in self.manifest["packages"] if p["name"] == "tract-extra")
+        name = f"upstream/sonos/tract/{entry['commit']}/extra/Cargo.toml"
+        raw = (self.vendor / "local-evidence/tract-extra-0.23.8/Cargo.toml.orig").read_bytes()
+        (self.vendor / name).write_bytes(raw)
+        proof = next(p for p in entry["evidence"] if p["path"] == name)
+        proof.update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+        self.seal(name)
+        entry["package_manifest_matches_published_original"] = True
+        del entry["publication_version_stamp"]
+        self.manifest["summary"].update(exact_commit_manifest_matches=17, reviewed_publication_version_stamps=0)
+        self.save_manifest()
+        with self.assertRaisesRegex(RuntimeError, "reviewed stamp"):
             stage_overlay(self.vendor, self.destination, self.packages)
         self.assertFalse(self.destination.exists())
 

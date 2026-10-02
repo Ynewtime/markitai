@@ -116,6 +116,7 @@
 
 ### 修复
 
+- 补充包配送 nom-language 与 tract-extra 的原始许可证全文及固定校验值的发布源码包；tract-extra 已核实的发布版本行差异与 manifest 逐字节一致项分别记录。
 - Windows LibreOffice 发现优先使用官方指定的 `soffice.com` 命令行入口，保留 `soffice.exe` 回退，避免受影响安装上的 GUI 启动器阻塞就绪检查。
 - Linux 静态 Go 包通过公开 cgo 链接参数要求非执行栈；打包验收拒绝实际消费程序中可执行或缺失的 GNU 栈程序头。CI 证据上传保留清单中列出的隐藏依赖来源文件。
 - PDF：可检索扫描件（页面图像上叠加隐形 OCR 文字层，如 OCRmyPDF、Tesseract、Acrobat 所生成）在全部文字均为隐形、位于扫描图内、字号与密度合理且（图像可解码时）与印刷墨迹对齐时，直接读取该文字层；一条警告列出这些页及生成工具，元数据记录 `ocr_layer_pages`；`--ocr` 默认保留该层（扫描页约 60 ms 而非 290 ms），`ocr.per_page_routing` 为 `false` 时重新识别。偏离印刷、与可见或仅裁剪文字混排、过小或堆叠的隐形文字仍按扫描页处理。

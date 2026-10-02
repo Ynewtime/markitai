@@ -1,0 +1,436 @@
+{
+  "schema": 1,
+  "scope": "Mechanical R49 missing-text supply for two exact published Cargo packages; legal_review=not_performed. Earlier collection network/history and original R49 unresolved records are preserved, not rewritten.",
+  "legal_review": "not_performed",
+  "original_collection": {
+    "directory": "license-gap-advice-r1",
+    "evidence_files": {
+      "cache-evidence.json": {
+        "bytes": 3472,
+        "sha256": "5f4a9a1befbf2352d612cb3747d9a6cd2ad50d434ae0d2a5fda5f71953e21818",
+        "mode": "0o644"
+      },
+      "evidence/download-results.json": {
+        "bytes": 7899,
+        "sha256": "d8a635d2aa7996245e2e2222ffc07f5acd24f94ae3518551e7080da5180ecbbe",
+        "mode": "0o644"
+      },
+      "evidence/comparison.json": {
+        "bytes": 4606,
+        "sha256": "8e12ad73f3b6095d806b87b7ab765bd7d7b697e5175d618b16f8753a8b96eb4f",
+        "mode": "0o644"
+      }
+    },
+    "http_requests": 14,
+    "http_successes": 14,
+    "requests": [
+      {
+        "url": "https://raw.githubusercontent.com/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/LICENSE",
+        "destination": "upstream/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/LICENSE",
+        "package": "nom-language",
+        "repository_relative": "LICENSE",
+        "status": 200,
+        "final_url": "https://raw.githubusercontent.com/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/LICENSE",
+        "bytes": 1065,
+        "sha256": "4dbda04344456f09a7a588140455413a9ac59b6b26a1ef7cdf9c800c012d87f0"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/Cargo.toml",
+        "destination": "upstream/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/Cargo.toml",
+        "package": "nom-language",
+        "repository_relative": "Cargo.toml",
+        "status": 200,
+        "final_url": "https://raw.githubusercontent.com/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/Cargo.toml",
+        "bytes": 2632,
+        "sha256": "74762db5ea3fb7dbb7aed12c1851e05cca0a37c8fd7bfef82e0d5b0d9aef7e95"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/Cargo.toml",
+        "destination": "upstream/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/Cargo.toml",
+        "package": "nom-language",
+        "repository_relative": "nom-language/Cargo.toml",
+        "status": 200,
+        "final_url": "https://raw.githubusercontent.com/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/Cargo.toml",
+        "bytes": 311,
+        "sha256": "b5a35572e79e9645bc8e2d676ba8e1eaba7301ab864a906960adf9684addc249"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/src/error.rs",
+        "destination": "upstream/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/src/error.rs",
+        "package": "nom-language",
+        "repository_relative": "nom-language/src/error.rs",
+        "status": 200,
+        "final_url": "https://raw.githubusercontent.com/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/src/error.rs",
+        "bytes": 7499,
+        "sha256": "e0df3aecd5d1bce88d5a3ace27653d61dac66c4d1adffc5f8f2dd14872d3daf0"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/src/lib.rs",
+        "destination": "upstream/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/src/lib.rs",
+        "package": "nom-language",
+        "repository_relative": "nom-language/src/lib.rs",
+        "status": 200,
+        "final_url": "https://raw.githubusercontent.com/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/src/lib.rs",
+        "bytes": 321,
+        "sha256": "67d772d35d00ac350cc12496aaa8badc6c51b64ae1cba495d803437e4f6300b1"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/src/precedence/mod.rs",
+        "destination": "upstream/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/src/precedence/mod.rs",
+        "package": "nom-language",
+        "repository_relative": "nom-language/src/precedence/mod.rs",
+        "status": 200,
+        "final_url": "https://raw.githubusercontent.com/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/src/precedence/mod.rs",
+        "bytes": 16528,
+        "sha256": "c9f56d9c2256e43af883f773b9065372f6fa95137030eb66a90c3e236c6c92d8"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/src/precedence/tests.rs",
+        "destination": "upstream/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/src/precedence/tests.rs",
+        "package": "nom-language",
+        "repository_relative": "nom-language/src/precedence/tests.rs",
+        "status": 200,
+        "final_url": "https://raw.githubusercontent.com/rust-bakery/nom/2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1/nom-language/src/precedence/tests.rs",
+        "bytes": 1786,
+        "sha256": "bec5f416d2e300e664ba1d974d3fdc1e731fca98d87cb32d9d7b29b462df14ec"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/LICENSE",
+        "destination": "upstream/sonos/tract/248335349c0f59a5772d737480b8b39250097374/LICENSE",
+        "package": "tract-extra",
+        "repository_relative": "LICENSE",
+        "status": 200,
+        "final_url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/LICENSE",
+        "bytes": 495,
+        "sha256": "f7ef673bf046d823dcd775bdd0768432bd8855f81d0e5e1290a0a48c42e2dca3"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/Cargo.toml",
+        "destination": "upstream/sonos/tract/248335349c0f59a5772d737480b8b39250097374/Cargo.toml",
+        "package": "tract-extra",
+        "repository_relative": "Cargo.toml",
+        "status": 200,
+        "final_url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/Cargo.toml",
+        "bytes": 7975,
+        "sha256": "20ad6ca64d23d87cd87b0dc5db1e255af1e1c2133867582905ea1ead4c10fd56"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/extra/Cargo.toml",
+        "destination": "upstream/sonos/tract/248335349c0f59a5772d737480b8b39250097374/extra/Cargo.toml",
+        "package": "tract-extra",
+        "repository_relative": "extra/Cargo.toml",
+        "status": 200,
+        "final_url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/extra/Cargo.toml",
+        "bytes": 943,
+        "sha256": "c3b1bd149734cb869157c50391a213a5435debecd88062e9dfe8dd44d724c990"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/LICENSE-MIT",
+        "destination": "upstream/sonos/tract/248335349c0f59a5772d737480b8b39250097374/LICENSE-MIT",
+        "package": "tract-extra",
+        "repository_relative": "LICENSE-MIT",
+        "status": 200,
+        "final_url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/LICENSE-MIT",
+        "bytes": 1023,
+        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/LICENSE-APACHE",
+        "destination": "upstream/sonos/tract/248335349c0f59a5772d737480b8b39250097374/LICENSE-APACHE",
+        "package": "tract-extra",
+        "repository_relative": "LICENSE-APACHE",
+        "status": 200,
+        "final_url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/LICENSE-APACHE",
+        "bytes": 10847,
+        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/extra/src/exp_unit_norm.rs",
+        "destination": "upstream/sonos/tract/248335349c0f59a5772d737480b8b39250097374/extra/src/exp_unit_norm.rs",
+        "package": "tract-extra",
+        "repository_relative": "extra/src/exp_unit_norm.rs",
+        "status": 200,
+        "final_url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/extra/src/exp_unit_norm.rs",
+        "bytes": 8845,
+        "sha256": "47a3ccdb9e03c4187a0789b624a5d5e2e83ba5833d90cac7d8970afcab4a54c2"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/extra/src/lib.rs",
+        "destination": "upstream/sonos/tract/248335349c0f59a5772d737480b8b39250097374/extra/src/lib.rs",
+        "package": "tract-extra",
+        "repository_relative": "extra/src/lib.rs",
+        "status": 200,
+        "final_url": "https://raw.githubusercontent.com/sonos/tract/248335349c0f59a5772d737480b8b39250097374/extra/src/lib.rs",
+        "bytes": 623,
+        "sha256": "6067a911c32c79b2310351fa79a82bced196460a012e61c30efd623952dcc245"
+      }
+    ]
+  },
+  "published_cache": {
+    "packages": [
+      {
+        "name": "nom-language",
+        "version": "0.1.0",
+        "repository": "https://github.com/rust-bakery/nom",
+        "commit": "2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1",
+        "path_in_vcs": "nom-language",
+        "published_crate": {
+          "bytes": 7648,
+          "sha256": "2de2bc5b451bfedaef92c90b8939a8fff5770bdcc1fafd6239d086aab8fa6b29"
+        },
+        "members": [
+          {
+            "path": ".cargo_vcs_info.json",
+            "bytes": 106,
+            "sha256": "61ef2d6baf5b25fca61349550a397663c558fdd4cc3d06e1c8bde24360ea04f6"
+          },
+          {
+            "path": "Cargo.toml",
+            "bytes": 914,
+            "sha256": "dc6111b76b82592e83f88c749a5607678b3bbd922e834c9de9fb90afa852dfdd"
+          },
+          {
+            "path": "Cargo.toml.orig",
+            "bytes": 311,
+            "sha256": "b5a35572e79e9645bc8e2d676ba8e1eaba7301ab864a906960adf9684addc249"
+          },
+          {
+            "path": "src/error.rs",
+            "bytes": 7499,
+            "sha256": "e0df3aecd5d1bce88d5a3ace27653d61dac66c4d1adffc5f8f2dd14872d3daf0"
+          },
+          {
+            "path": "src/lib.rs",
+            "bytes": 321,
+            "sha256": "67d772d35d00ac350cc12496aaa8badc6c51b64ae1cba495d803437e4f6300b1"
+          },
+          {
+            "path": "src/precedence/mod.rs",
+            "bytes": 16528,
+            "sha256": "c9f56d9c2256e43af883f773b9065372f6fa95137030eb66a90c3e236c6c92d8"
+          },
+          {
+            "path": "src/precedence/tests.rs",
+            "bytes": 1786,
+            "sha256": "bec5f416d2e300e664ba1d974d3fdc1e731fca98d87cb32d9d7b29b462df14ec"
+          }
+        ],
+        "vcs": {
+          "git": {
+            "sha1": "2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1"
+          },
+          "path_in_vcs": "nom-language"
+        }
+      },
+      {
+        "name": "tract-extra",
+        "version": "0.23.8",
+        "repository": "https://github.com/sonos/tract",
+        "commit": "248335349c0f59a5772d737480b8b39250097374",
+        "path_in_vcs": "extra",
+        "published_crate": {
+          "bytes": 15844,
+          "sha256": "2a05c86ece0c47880c7726e08dabb72d68e9cba0cd36d44bc0aa90e2291a05db"
+        },
+        "members": [
+          {
+            "path": ".cargo_vcs_info.json",
+            "bytes": 118,
+            "sha256": "27516d0f04ba415e01c4e6c506f2e5d402ac3f53d9afd1d34339bdce97b51cf1"
+          },
+          {
+            "path": "Cargo.lock",
+            "bytes": 43554,
+            "sha256": "98d67c0ceed11e62e8ac6aee7d9c1268c160731f376ec7730d02758e9fb9b294"
+          },
+          {
+            "path": "Cargo.toml",
+            "bytes": 1506,
+            "sha256": "5f99deae8e22f87173bd96813659b0e32d2f6f49efaf25d2113024448d590512"
+          },
+          {
+            "path": "Cargo.toml.orig",
+            "bytes": 939,
+            "sha256": "b6027b969552e2f7bffa346c0dfcd908c37659595ca22e70279b23a7ea7cc04c"
+          },
+          {
+            "path": "src/exp_unit_norm.rs",
+            "bytes": 8845,
+            "sha256": "47a3ccdb9e03c4187a0789b624a5d5e2e83ba5833d90cac7d8970afcab4a54c2"
+          },
+          {
+            "path": "src/lib.rs",
+            "bytes": 623,
+            "sha256": "6067a911c32c79b2310351fa79a82bced196460a012e61c30efd623952dcc245"
+          }
+        ],
+        "vcs": {
+          "git": {
+            "sha1": "248335349c0f59a5772d737480b8b39250097374",
+            "dirty": true
+          },
+          "path_in_vcs": "extra"
+        }
+      }
+    ],
+    "scope": "Only pinned official Cargo registry/cache package directories; all published archive members equal actual local cache source bytes"
+  },
+  "source_comparisons": {
+    "manifest_and_all_rust_sources": [
+      {
+        "package": "nom-language",
+        "published_relative": "Cargo.toml.orig",
+        "upstream_relative": "nom-language/Cargo.toml",
+        "same": true,
+        "published_bytes": 311,
+        "upstream_bytes": 311,
+        "published_sha256": "b5a35572e79e9645bc8e2d676ba8e1eaba7301ab864a906960adf9684addc249",
+        "upstream_sha256": "b5a35572e79e9645bc8e2d676ba8e1eaba7301ab864a906960adf9684addc249"
+      },
+      {
+        "package": "nom-language",
+        "published_relative": "src/error.rs",
+        "upstream_relative": "nom-language/src/error.rs",
+        "same": true,
+        "published_bytes": 7499,
+        "upstream_bytes": 7499,
+        "published_sha256": "e0df3aecd5d1bce88d5a3ace27653d61dac66c4d1adffc5f8f2dd14872d3daf0",
+        "upstream_sha256": "e0df3aecd5d1bce88d5a3ace27653d61dac66c4d1adffc5f8f2dd14872d3daf0"
+      },
+      {
+        "package": "nom-language",
+        "published_relative": "src/lib.rs",
+        "upstream_relative": "nom-language/src/lib.rs",
+        "same": true,
+        "published_bytes": 321,
+        "upstream_bytes": 321,
+        "published_sha256": "67d772d35d00ac350cc12496aaa8badc6c51b64ae1cba495d803437e4f6300b1",
+        "upstream_sha256": "67d772d35d00ac350cc12496aaa8badc6c51b64ae1cba495d803437e4f6300b1"
+      },
+      {
+        "package": "nom-language",
+        "published_relative": "src/precedence/mod.rs",
+        "upstream_relative": "nom-language/src/precedence/mod.rs",
+        "same": true,
+        "published_bytes": 16528,
+        "upstream_bytes": 16528,
+        "published_sha256": "c9f56d9c2256e43af883f773b9065372f6fa95137030eb66a90c3e236c6c92d8",
+        "upstream_sha256": "c9f56d9c2256e43af883f773b9065372f6fa95137030eb66a90c3e236c6c92d8"
+      },
+      {
+        "package": "nom-language",
+        "published_relative": "src/precedence/tests.rs",
+        "upstream_relative": "nom-language/src/precedence/tests.rs",
+        "same": true,
+        "published_bytes": 1786,
+        "upstream_bytes": 1786,
+        "published_sha256": "bec5f416d2e300e664ba1d974d3fdc1e731fca98d87cb32d9d7b29b462df14ec",
+        "upstream_sha256": "bec5f416d2e300e664ba1d974d3fdc1e731fca98d87cb32d9d7b29b462df14ec"
+      },
+      {
+        "package": "tract-extra",
+        "published_relative": "Cargo.toml.orig",
+        "upstream_relative": "extra/Cargo.toml",
+        "same": false,
+        "published_bytes": 939,
+        "upstream_bytes": 943,
+        "published_sha256": "b6027b969552e2f7bffa346c0dfcd908c37659595ca22e70279b23a7ea7cc04c",
+        "upstream_sha256": "c3b1bd149734cb869157c50391a213a5435debecd88062e9dfe8dd44d724c990",
+        "diff": "--- published\n+++ upstream\n@@ -1,6 +1,6 @@\n [package]\n name = \"tract-extra\"\n-version = \"0.23.8\"\n+version = \"0.23.8-pre\"\n license = \"MIT OR Apache-2.0\"\n authors = [\"Mathieu Poumeyrol <kali@zoy.org>\"]\n description = \"Tiny, no-nonsense, self contained, TensorFlow and ONNX inference\"\n"
+      },
+      {
+        "package": "tract-extra",
+        "published_relative": "src/exp_unit_norm.rs",
+        "upstream_relative": "extra/src/exp_unit_norm.rs",
+        "same": true,
+        "published_bytes": 8845,
+        "upstream_bytes": 8845,
+        "published_sha256": "47a3ccdb9e03c4187a0789b624a5d5e2e83ba5833d90cac7d8970afcab4a54c2",
+        "upstream_sha256": "47a3ccdb9e03c4187a0789b624a5d5e2e83ba5833d90cac7d8970afcab4a54c2"
+      },
+      {
+        "package": "tract-extra",
+        "published_relative": "src/lib.rs",
+        "upstream_relative": "extra/src/lib.rs",
+        "same": true,
+        "published_bytes": 623,
+        "upstream_bytes": 623,
+        "published_sha256": "6067a911c32c79b2310351fa79a82bced196460a012e61c30efd623952dcc245",
+        "upstream_sha256": "6067a911c32c79b2310351fa79a82bced196460a012e61c30efd623952dcc245"
+      }
+    ],
+    "parent_terms": [
+      {
+        "package": "nom-language",
+        "name": "LICENSE",
+        "bytes": 1065,
+        "sha256": "4dbda04344456f09a7a588140455413a9ac59b6b26a1ef7cdf9c800c012d87f0",
+        "same_as_parent_published_cache": true
+      },
+      {
+        "package": "tract-extra",
+        "name": "LICENSE",
+        "bytes": 495,
+        "sha256": "f7ef673bf046d823dcd775bdd0768432bd8855f81d0e5e1290a0a48c42e2dca3",
+        "same_as_parent_published_cache": true
+      },
+      {
+        "package": "tract-extra",
+        "name": "LICENSE-MIT",
+        "bytes": 1023,
+        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+        "same_as_parent_published_cache": true
+      },
+      {
+        "package": "tract-extra",
+        "name": "LICENSE-APACHE",
+        "bytes": 10847,
+        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+        "same_as_parent_published_cache": true
+      }
+    ]
+  },
+  "parent_original_identities": {
+    "parent-cache/nom-8.0.0/.cargo_vcs_info.json": {
+      "bytes": 94,
+      "sha256": "e10f44062736af6c6ad421467db3f7d0ccc3c1dc65a2ee1d5e9530e0d793e60c",
+      "mode": "0o644"
+    },
+    "parent-cache/nom-8.0.0/Cargo.toml.orig": {
+      "bytes": 2632,
+      "sha256": "74762db5ea3fb7dbb7aed12c1851e05cca0a37c8fd7bfef82e0d5b0d9aef7e95",
+      "mode": "0o644"
+    },
+    "parent-cache/nom-8.0.0/LICENSE": {
+      "bytes": 1065,
+      "sha256": "4dbda04344456f09a7a588140455413a9ac59b6b26a1ef7cdf9c800c012d87f0",
+      "mode": "0o644"
+    },
+    "parent-cache/tract-core-0.23.8/.cargo_vcs_info.json": {
+      "bytes": 117,
+      "sha256": "3a77514f7ed45c0b013d8774a337beafef057b350e819c5a1484f3f47d4aff43",
+      "mode": "0o644"
+    },
+    "parent-cache/tract-core-0.23.8/Cargo.toml.orig": {
+      "bytes": 1763,
+      "sha256": "7a0d5b0e6f41787f2f010b6a6a4ace86ccb9288f01ec7588cece3698275a9ec2",
+      "mode": "0o644"
+    },
+    "parent-cache/tract-core-0.23.8/LICENSE": {
+      "bytes": 495,
+      "sha256": "f7ef673bf046d823dcd775bdd0768432bd8855f81d0e5e1290a0a48c42e2dca3",
+      "mode": "0o644"
+    },
+    "parent-cache/tract-core-0.23.8/LICENSE-APACHE": {
+      "bytes": 10847,
+      "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+      "mode": "0o644"
+    },
+    "parent-cache/tract-core-0.23.8/LICENSE-MIT": {
+      "bytes": 1023,
+      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+      "mode": "0o644"
+    }
+  },
+  "tract_manifest_method": "Fixed tuple only: raw upstream version line 0.23.8-pre becomes published 0.23.8; all other bytes and both Rust sources unchanged. Raw git.dirty=true is evidence, not a generic allowance."
+}

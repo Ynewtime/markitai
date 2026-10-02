@@ -4,13 +4,33 @@ Packaging validates this directory offline before copying it. Package manifests,
 published VCS records, original source notices and exact byte identities remain
 part of the payload. This is mechanical evidence collection, not legal review.
 
-All fifteen supplemental crate versions now carry complete license terms. Six
+All seventeen supplemental crate versions now carry complete license terms. Six
 were collected directly from their exact upstream commits in R29. R30 adds five
 Apache-2.0 options and selectors' MPL-2.0 terms from the official publishers
 expressly linked by each pinned source notice. Three complete MIT originals have
 separately verified historical provenance. The helper permits only the reviewed
 package/version/commit and URL/digest combinations; arbitrary URLs, later versions
 or unrelated historical licenses cannot inherit this classification.
+
+R49 adds nom-language 0.1.0's original MIT text and tract-extra 0.23.8's
+original workspace notice plus MIT and Apache-2.0 texts. Both child manifests
+directly declare these options; neither is relabeled as a workspace-inherited
+license. Their parent published originals agree with the pinned repository terms.
+There are sixteen raw exact manifest matches and one explicitly reviewed
+publication version stamp. For tract-extra alone, the pinned upstream version
+`0.23.8-pre` becomes published `0.23.8`; all other manifest bytes and both Rust
+files agree. The raw `dirty: true` VCS record and both manifests are retained.
+The helper binds this exception to the complete fixed package/commit/checksum
+and source identities. It does not normalize other manifests or trust arbitrary
+dirty sources. These mechanical facts do not constitute legal review.
+
+The unmodified nom-language and tract-extra crates.io source archives are also
+included, making three pinned archives with selectors. Their seven and six
+original regular files, respectively, are verified against the published source;
+package VCS/original manifests and the same-commit Rust files remain in the
+payload. `license-gaps-r49-provenance.json` records the fourteen actual anonymous
+pinned-URL retrievals and source comparisons. Original R49 records reporting two
+missing texts remain historical evidence; new collections derive their own state.
 
 For objc2 0.6.4, objc2-encode 4.1.0 and objc2-foundation 0.3.2, the complete
 original upstream MIT text, including Steven Sheldon's notice, is retained

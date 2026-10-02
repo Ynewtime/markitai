@@ -116,6 +116,7 @@
 
 ### Fixed
 
+- Supplemental packages include the original nom-language and tract-extra license texts and pinned published source archives; tract-extra's verified publication version change is recorded separately from exact manifest matches.
 - Windows LibreOffice discovery prefers the documented `soffice.com` command-line entry, retaining `soffice.exe` as a fallback; this prevents the GUI launcher from stalling readiness checks on supported installations.
 - Linux static Go packages request a non-executable stack through their public cgo linkage; package acceptance rejects an executable or missing GNU stack header in the actual consumer. CI evidence uploads retain the hidden dependency provenance files listed in their inventories.
 - PDF: searchable scans (a page image with an invisible OCR text layer, as OCRmyPDF, Tesseract or Acrobat write them) are read from that layer when every text operator is invisible, lies on the scan at plausible sizes and density, and — where the image can be decoded — lines up with its print; one warning names those pages and their producer, metadata records `ocr_layer_pages`, and `--ocr` keeps the layer unless `ocr.per_page_routing` is `false` (a scanned page then takes about 60 instead of 290 ms). Layers off the print, mixed with visible or clip-only text, tiny or stuffed stay scans.

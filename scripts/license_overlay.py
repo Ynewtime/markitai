@@ -104,6 +104,42 @@ _MIT_TARGETS = {
 }
 _MIT_PROOFS = {'https://github.com/madsmtm/objc2/commits/8d214f5477365ffcbcbb7de058c86ed9a518efb7/LICENSE.txt': '0a1efed6cc84aac1d931fe09facf2883ae2fb13caa4e131ddc3bf61aca0d9e3a', 'https://github.com/madsmtm/objc2/commit/cfb199226661ec6e4939fcd7cd7531b3c5453076.patch': 'b4ecc7d6db95a78e1cf777636049b4a9156783f326edf016a1461b24c84d1872', 'https://github.com/madsmtm/objc2/commit/9961247c1a82027d6edbe6c516011b1363b9354c.patch': '13127f39976ceecdadb86870d2448867fba8601ad21a376724f242fbd67e86fb', 'https://github.com/madsmtm/objc2/commits/8852b424193ca41602281b3d7540d7c8ed51e49a/LICENSE.txt': 'cce3f980b9088bf6533102997510603f50a5fbdda6fd34c055f797777fc20e0b', 'https://github.com/madsmtm/objc2/commits/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.txt': 'ab00bc3db74112a44b17ac776fab3a16bc6122ffc8ccf2708a80e5d96206b4de'}
 _SELECTORS_ARCHIVE_SHA = "8adfa1c298912827b8a28b223b3b874357397ae706e6190acd9bf28cee99114d"
+# Published source and the one version-stamp exception are fixed review facts,
+# never a general permission to normalize manifests or accept dirty sources.
+_SOURCE_PACKAGES = {
+    ("selectors", "0.38.0", "572ecba2d1600e7c3d490586692a209faf703baa"): {
+        "sha256": _SELECTORS_ARCHIVE_SHA, "path_in_vcs": "selectors", "members": 22,
+    },
+    ("nom-language", "0.1.0", "2cec1b3e4c9ccac62c902d60c00de6d1549ccbe1"): {
+        "sha256": "2de2bc5b451bfedaef92c90b8939a8fff5770bdcc1fafd6239d086aab8fa6b29",
+        "path_in_vcs": "nom-language", "members": 7,
+        "repository": "rust-bakery/nom", "declared_license": "MIT",
+        "rust": {
+            "src/error.rs": "e0df3aecd5d1bce88d5a3ace27653d61dac66c4d1adffc5f8f2dd14872d3daf0",
+            "src/lib.rs": "67d772d35d00ac350cc12496aaa8badc6c51b64ae1cba495d803437e4f6300b1",
+            "src/precedence/mod.rs": "c9f56d9c2256e43af883f773b9065372f6fa95137030eb66a90c3e236c6c92d8",
+            "src/precedence/tests.rs": "bec5f416d2e300e664ba1d974d3fdc1e731fca98d87cb32d9d7b29b462df14ec",
+        },
+        "terms": {"LICENSE": "4dbda04344456f09a7a588140455413a9ac59b6b26a1ef7cdf9c800c012d87f0"},
+    },
+    ("tract-extra", "0.23.8", "248335349c0f59a5772d737480b8b39250097374"): {
+        "sha256": "2a05c86ece0c47880c7726e08dabb72d68e9cba0cd36d44bc0aa90e2291a05db",
+        "path_in_vcs": "extra", "members": 6,
+        "repository": "sonos/tract", "declared_license": "MIT OR Apache-2.0",
+        "rust": {
+            "src/exp_unit_norm.rs": "47a3ccdb9e03c4187a0789b624a5d5e2e83ba5833d90cac7d8970afcab4a54c2",
+            "src/lib.rs": "6067a911c32c79b2310351fa79a82bced196460a012e61c30efd623952dcc245",
+        },
+        "terms": {
+            "LICENSE": "f7ef673bf046d823dcd775bdd0768432bd8855f81d0e5e1290a0a48c42e2dca3",
+            "LICENSE-MIT": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+            "LICENSE-APACHE": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+        },
+    },
+}
+_TRACT_IDENTITY = ("tract-extra", "0.23.8", "248335349c0f59a5772d737480b8b39250097374")
+_TRACT_STAMP = {"kind": "reviewed_publication_version_stamp", "upstream_version": "0.23.8-pre",
+                "published_version": "0.23.8", "legal_review": "not_performed"}
 
 
 def _same_commit_source(asset, data, root, repo, commit):
@@ -195,25 +231,75 @@ def _historical_terms(asset, entry, data, recorded, repo, commit):
 
 def _source_archives(manifest, data, recorded):
     records = manifest.get("source_archives", [])
-    if type(records) is not list or len(records) > 1:
+    if type(records) is not list or len(records) > len(_SOURCE_PACKAGES):
         raise RuntimeError("Unreviewed source archive inventory")
-    result = []
+    expected = {(p["name"], p["version"], p["commit"]) for p in manifest["packages"]} & _SOURCE_PACKAGES.keys()
+    result, sources = [], {}
     for row in records:
         raw = recorded(row)
-        if (row.get("package") != "selectors" or row.get("version") != "0.38.0"
-                or row.get("commit") != "572ecba2d1600e7c3d490586692a209faf703baa"
-                or row.get("source_url") != "https://static.crates.io/crates/selectors/selectors-0.38.0.crate"
-                or hashlib.sha256(raw).hexdigest() != _SELECTORS_ARCHIVE_SHA):
+        identity = (row.get("package"), row.get("version"), row.get("commit"))
+        reviewed = _SOURCE_PACKAGES.get(identity)
+        label = f"{row.get('package')}-{row.get('version')}"
+        if (reviewed is None or identity not in expected or identity in sources
+                or row.get("path") != f"source-archives/{label}.crate"
+                or row.get("source_url") != f"https://static.crates.io/crates/{row.get('package')}/{label}.crate"
+                or hashlib.sha256(raw).hexdigest() != reviewed["sha256"]):
             raise RuntimeError("Source archive is not the reviewed exact package")
         # Fixed compressed digest bounds all archive members. Never extract paths.
+        members, total = {}, 0
         with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as archive:
-            vcs = _json(archive.extractfile("selectors-0.38.0/.cargo_vcs_info.json").read())
-            original = archive.extractfile("selectors-0.38.0/Cargo.toml.orig").read()
-        if (vcs.get("git", {}).get("sha1") != row["commit"] or vcs.get("path_in_vcs") != "selectors"
-                or original != data["local-evidence/selectors-0.38.0/Cargo.toml.orig"]):
+            for member in archive:
+                name = str(_relative(member.name))
+                if (not member.isreg() or not name.startswith(label + "/")
+                        or name in members or len(members) >= reviewed["members"]
+                        or not 0 <= member.size <= MAX_FILE):
+                    raise RuntimeError("Source archive has unreviewed members")
+                total += member.size
+                if total > MAX_TOTAL:
+                    raise RuntimeError("Source archive exceeds its bound")
+                body = archive.extractfile(member).read(MAX_FILE + 1)
+                if len(body) != member.size:
+                    raise RuntimeError("Source archive member size differs")
+                members[name] = body
+        original = f"local-evidence/{label}/"
+        if (len(members) != reviewed["members"]
+                or any(members.get(label + "/" + name) != data.get(original + name)
+                       for name in [".cargo_vcs_info.json", "Cargo.toml.orig"])):
             raise RuntimeError("Source archive version differs from license evidence")
+        vcs = _json(members[label + "/.cargo_vcs_info.json"])
+        if vcs.get("git", {}).get("sha1") != row["commit"] or vcs.get("path_in_vcs") != reviewed["path_in_vcs"]:
+            raise RuntimeError("Source archive VCS differs from reviewed package")
+        for name, digest in reviewed.get("rust", {}).items():
+            body = members.get(label + "/" + name)
+            upstream = f"upstream/{reviewed['repository']}/{row['commit']}/{reviewed['path_in_vcs']}/{name}"
+            if body is None or hashlib.sha256(body).hexdigest() != digest or body != data.get(upstream):
+                raise RuntimeError("Reviewed published Rust source differs from upstream bytes")
+        sources[identity] = members
         result.append(row)
-    return result
+    if set(sources) != expected:
+        raise RuntimeError("Reviewed source archive inventory is incomplete")
+    return result, sources
+
+
+def _manifest_provenance(entry, repo, vcs, upstream, published, sources):
+    identity = (entry["name"], entry["version"], entry["commit"])
+    if upstream == published and identity != _TRACT_IDENTITY:
+        if (entry.get("publication_version_stamp") is not None
+                or entry.get("package_manifest_matches_published_original") is not True):
+            raise RuntimeError("Raw manifest match has inconsistent provenance")
+        return "raw_exact_match"
+    if (identity != _TRACT_IDENTITY or repo != "sonos/tract" or entry["path_in_vcs"] != "extra"
+            or entry["id"] != "registry+https://github.com/rust-lang/crates.io-index#tract-extra@0.23.8"
+            or entry["declared_license"] != "MIT OR Apache-2.0"
+            or entry.get("package_manifest_matches_published_original") is not False
+            or entry.get("publication_version_stamp") != _TRACT_STAMP
+            or vcs.get("git", {}).get("dirty") is not True or identity not in sources
+            or hashlib.sha256(upstream).hexdigest() != "c3b1bd149734cb869157c50391a213a5435debecd88062e9dfe8dd44d724c990"
+            or hashlib.sha256(published).hexdigest() != "b6027b969552e2f7bffa346c0dfcd908c37659595ca22e70279b23a7ea7cc04c"
+            or upstream.count(b'\nversion = "0.23.8-pre"\n') != 1
+            or upstream.replace(b'\nversion = "0.23.8-pre"\n', b'\nversion = "0.23.8"\n') != published):
+        raise RuntimeError("Upstream package manifest differs from published original outside reviewed stamp")
+    return "reviewed_publication_version_stamp"
 
 
 def stage_overlay(source, destination, packages):
@@ -260,8 +346,12 @@ def stage_overlay(source, destination, packages):
     if manifest.get("schema") != 1 or type(manifest.get("packages")) is not list or len(manifest["packages"]) > MAX_FILES:
         raise RuntimeError("Invalid license overlay manifest")
     recorded(manifest["input_manifest"])
+    if "license_gap_collection" in manifest:
+        recorded(manifest["license_gap_collection"])
+    source_archives, published_sources = _source_archives(manifest, data, recorded)
     available = {package["id"]: package for package in packages}
     matched, all_ids, all_assets = {}, set(), set()
+    exact_matches, publication_stamps = 0, 0
     for entry in manifest["packages"]:
         key = entry["id"]
         if key in all_ids:
@@ -284,8 +374,30 @@ def stage_overlay(source, destination, packages):
         vcs = _json(data[original + ".cargo_vcs_info.json"])
         if vcs.get("git", {}).get("sha1") != commit or vcs.get("path_in_vcs") != path:
             raise RuntimeError("License overlay VCS attribution differs")
-        if data[upstream_manifest] != data[original + "Cargo.toml.orig"]:
-            raise RuntimeError("Upstream package manifest differs from published original")
+        provenance = _manifest_provenance(entry, repo, vcs, data[upstream_manifest],
+                                          data[original + "Cargo.toml.orig"], published_sources)
+        exact_matches += provenance == "raw_exact_match"
+        publication_stamps += provenance == "reviewed_publication_version_stamp"
+        reviewed = _SOURCE_PACKAGES.get((entry["name"], entry["version"], commit), {})
+        if "terms" in reviewed:
+            if (repo != reviewed["repository"] or path != reviewed["path_in_vcs"]
+                    or key != f"registry+https://github.com/rust-lang/crates.io-index#{entry['name']}@{entry['version']}"
+                    or entry["declared_license"] != reviewed["declared_license"]
+                    or entry.get("license_inherited_from_workspace") is not False
+                    or entry.get("version_inherited_from_workspace") is not False
+                    or entry["complete_license_options_present"] != reviewed["declared_license"].split(" OR ")
+                    or len(entry["assets"]) != len(reviewed["terms"])
+                    or {asset.get("source_path") for asset in entry["assets"]}
+                    != {root + name for name in reviewed["terms"]}):
+                raise RuntimeError("Reviewed parent license package scope differs")
+            for asset in entry["assets"]:
+                name = asset["source_path"][len(root):]
+                if (asset.get("source_kind", "same_commit") != "same_commit"
+                        or asset.get("source_byte_range") is not None
+                        or asset.get("source_sha256") != reviewed["terms"][name]
+                        or hashlib.sha256(data.get(root + name, b"")).hexdigest() != reviewed["terms"][name]
+                        or asset.get("content_kind") != ("notice_only" if name == "LICENSE" and entry["name"] == "tract-extra" else "full_license_text")):
+                    raise RuntimeError("Reviewed parent original terms hash or classification differs")
         kind = entry["content_kind"]
         options = entry["complete_license_options_present"]
         if kind not in {"full_license_text", "notice_only"} or type(options) is not list or any(not isinstance(value, str) or not value for value in options):
@@ -345,11 +457,14 @@ def stage_overlay(source, destination, packages):
         for name in [".cargo_vcs_info.json", "Cargo.toml.orig"]:
             if _read(directory, name) != data[original + name]:
                 raise RuntimeError("Current package source differs from exact-commit evidence")
+        for name in reviewed.get("rust", {}):
+            if _read(directory, name) != published_sources[(entry["name"], entry["version"], commit)][f"{entry['name']}-{entry['version']}/{name}"]:
+                raise RuntimeError("Current package Rust source differs from reviewed publication")
         matched[key] = {"texts": texts, "complete_text": kind == "full_license_text",
                         "content_kind": kind, "commit": commit,
                         "full_text_gap": entry["unresolved_full_text_reason"],
-                        "historical_provenance": bool(supplements)}
-    source_archives = _source_archives(manifest, data, recorded)
+                        "historical_provenance": bool(supplements),
+                        "manifest_provenance": provenance}
     entries = manifest["packages"]
     current_unresolved = [entry["id"] for entry in entries
                           if entry["content_kind"] != "full_license_text"
@@ -358,7 +473,7 @@ def stage_overlay(source, destination, packages):
         raise RuntimeError("Current license unresolved summary differs from its packages")
     expected_summary = {
         "requested_packages": len(entries),
-        "exact_commit_manifest_matches": len(entries),
+        "exact_commit_manifest_matches": exact_matches,
         "full_license_text_packages": sum(entry["content_kind"] == "full_license_text" for entry in entries),
         "notice_only_packages": sum(entry["content_kind"] == "notice_only" for entry in entries),
         "overlay_files": len(all_assets),
@@ -366,6 +481,10 @@ def stage_overlay(source, destination, packages):
         "historical_text_packages": sum(bool(entry.get("supplemental")) for entry in entries),
     }
     summary = manifest.get("summary")
+    # The retained pre-R49 overlay legitimately has zero stamps and no new
+    # summary field. A stamp can never disappear into the raw-exact count.
+    if publication_stamps or (type(summary) is dict and "reviewed_publication_version_stamps" in summary):
+        expected_summary["reviewed_publication_version_stamps"] = publication_stamps
     if (type(summary) is not dict
             or any(type(summary.get(key)) is not int or summary[key] != value
                    for key, value in expected_summary.items())):
@@ -384,6 +503,8 @@ def stage_overlay(source, destination, packages):
         "complete_text_packages": sum(value["complete_text"] for value in matched.values()),
         "notice_only_packages": sum(not value["complete_text"] for value in matched.values()),
         "historical_text_packages": sum(value["historical_provenance"] for value in matched.values()),
+        "exact_commit_manifest_matches": exact_matches,
+        "reviewed_publication_version_stamps": publication_stamps,
         "legal_review": "not_performed",
         "source_archives": [{**row, "path": (destination / row["path"]).relative_to(destination.parent.parent).as_posix()} for row in source_archives],
         "archived_evidence_files": len(data),
