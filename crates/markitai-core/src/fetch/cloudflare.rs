@@ -247,15 +247,32 @@ pub(crate) fn render(
             None => "The cloudflare service could not render the page".into(),
         }));
     }
+    // `meta` (optional, as each of its fields) describes the origin's answer:
+    // `finalUrl` after redirects and `status`, the HTTP status the origin
+    // returned, read like Jina's `httpStatus`. Without it the page is judged
+    // by its markup alone.
+    let read_at = remote::read_at(
+        envelope.pointer("/meta/finalUrl").and_then(Value::as_str),
+        url,
+    );
+    if let Some(failure) = envelope
+        .pointer("/meta/status")
+        .and_then(Value::as_u64)
+        .and_then(|status| u16::try_from(status).ok())
+        .and_then(|status| remote::origin_status(Service::Cloudflare, status, &read_at))
+    {
+        return Err(failure);
+    }
     let html = envelope
         .get("result")
         .and_then(Value::as_str)
         .filter(|html| !html.trim().is_empty())
         .ok_or_else(|| Error::Fetch("The cloudflare service returned no content".into()))?;
     // The same judgement as every other reader's page: a verification or
-    // login page, a challenge or a JavaScript notice is a failure.
-    if let Some(refusal) = sites::Shown::html(url, html).refusal() {
-        return Err(Error::Fetch(refusal.read_by(Service::Cloudflare.name())));
+    // login page, a challenge, a JavaScript notice or a JSON error answer the
+    // browser showed as the page is a failure.
+    if let Some(failure) = sites::Shown::html(&read_at, html).read_by(Service::Cloudflare.name()) {
+        return Err(Error::Fetch(failure));
     }
     let mut document = match formats::extract_html(html, Some(source)) {
         Err(Error::Conversion(_)) => {

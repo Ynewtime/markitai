@@ -382,20 +382,43 @@ fn fresh_reading(cfg: &Value, source: &str) -> bool {
 }
 
 /// A reading that is the site's refusal page (a verification or login page,
-/// a challenge, a notice that asks for JavaScript) is the service failing,
-/// judged as the local readers judge markup (see [`sites::Shown`]). `url` is
-/// where the service says it read the page.
+/// a challenge, a notice that asks for JavaScript) or the site's JSON error
+/// answer is the service failing, judged as the local readers judge markup
+/// (see [`sites::Shown::read_by`]). `url` is where the service says it read
+/// the page.
 fn judge(service: Service, url: &Url, document: &Document) -> Result<()> {
     let title = document.metadata.get("title").and_then(Value::as_str);
-    match sites::Shown::markdown(url, title, &document.markdown).refusal() {
-        Some(refusal) => Err(Error::Fetch(refusal.read_by(service.name()))),
+    match sites::Shown::markdown(url, title, &document.markdown).read_by(service.name()) {
+        Some(failure) => Err(Error::Fetch(failure)),
         None => Ok(()),
     }
 }
 
+/// The failure for the status the page itself answered a service with
+/// (Jina's `httpStatus`, Cloudflare's `meta.status`), read as local fetching
+/// reads a status: a refusal (401, 403, 418, 429) is the site turning the
+/// service away, any other status from 400 up is the page's failure. `url`
+/// is where the service says it read the page; `None` below 400.
+pub(crate) fn origin_status(service: Service, status: u16, url: &Url) -> Option<Error> {
+    if status < 400 {
+        return None;
+    }
+    let name = service.name();
+    Some(Error::Fetch(if super::refusal_status(status) {
+        sites::refused_status(name, status)
+    } else {
+        match super::status_hint(status, url, false) {
+            Some(hint) => {
+                format!("The {name} service received HTTP {status} from the site: {hint}")
+            }
+            None => format!("The {name} service received HTTP {status} from the site"),
+        }
+    }))
+}
+
 /// The address a service says it read, when it is an http(s) URL; else the
 /// requested one.
-fn read_at(said: Option<&str>, url: &Url) -> Url {
+pub(crate) fn read_at(said: Option<&str>, url: &Url) -> Url {
     said.and_then(|said| Url::parse(said.trim()).ok())
         .filter(|read| matches!(read.scheme(), "http" | "https") && read.host_str().is_some())
         .unwrap_or_else(|| url.clone())
@@ -601,7 +624,7 @@ fn jina(source: &str, url: &Url, cfg: &Value, services: &Services<'_>) -> Result
     let read_at = read_at(reading.url.as_deref(), url);
     // The page's own status, read as local fetching reads it: a refusal is
     // the site turning Jina away, any other failure is the page's.
-    if let Some(status) = reading
+    if let Some(failure) = reading
         .status
         .or_else(|| {
             reading
@@ -609,18 +632,9 @@ fn jina(source: &str, url: &Url, cfg: &Value, services: &Services<'_>) -> Result
                 .iter()
                 .find_map(|warning| warned_status(warning))
         })
-        .filter(|status| *status >= 400)
+        .and_then(|status| origin_status(Service::Jina, status, &read_at))
     {
-        return Err(Error::Fetch(if super::refusal_status(status) {
-            sites::refused_status(Service::Jina.name(), status)
-        } else {
-            match super::status_hint(status, &read_at, false) {
-                Some(hint) => {
-                    format!("The jina service received HTTP {status} from the site: {hint}")
-                }
-                None => format!("The jina service received HTTP {status} from the site"),
-            }
-        }));
+        return Err(failure);
     }
     let mut document = Document {
         markdown: reading.content,

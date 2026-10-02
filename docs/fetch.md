@@ -359,16 +359,45 @@ A kept shell gets `Remote extraction failed (…); the static text was kept.`
 A service's reading that is the site's refusal rather than the page counts as
 that service failing, judged as the local readers judge a page (see
 [failures](#failures-retries-and-redirects)): a verification or login page, a
-challenge, a page that only asks for JavaScript, or, from Jina, the page's own
-refusal status (`httpStatus` 401, 403, 418 or 429, or a warning `Target URL
-returned error 403`). The next service in the order is tried; nothing is
-written. The service's failure names it and what it was shown:
+challenge, a page that only asks for JavaScript, a JSON error answer that is
+the whole reading, or the page's own refusal status as the service reports it
+(Jina's `httpStatus` 401, 403, 418 or 429, or a warning `Target URL returned
+error 403`; Cloudflare's `meta.status`, the HTTP status the origin returned).
+The next service in the order is tried; nothing is written. The service's
+failure names it and what it was shown:
 `The jina service was shown Zhihu's verification page instead of the content`,
 `The defuddle service was shown a challenge page instead of the content`,
 `The jina service received HTTP 403 from the site instead of the content`.
-Another failed status of the page is the page's failure:
+Another failed status of the page (400 and above) is the page's failure:
 `The jina service received HTTP 404 from the site: the page may have been
-removed or is not public`.
+removed or is not public`, `The cloudflare service received HTTP 503 from the
+site: the site had a server error`.
+
+Cloudflare's `meta` object, and each of its fields, is optional in the
+Browser Rendering API reference (read 2026-10-02) for `/content`, the endpoint
+Markitai calls, and for `/markdown`: `status`,
+`finalUrl`, `title`, `headers`, `redirectChain`. Without `status` the rendered
+markup alone is judged, as before; `finalUrl`, when it is an http(s) address,
+is where the page is judged to have been read, as Jina's `url` is.
+
+A JSON error answer is recognized only when it is the whole reading: the
+Markdown raw, or the only content of its only fenced code block (with or
+without an info string such as `json`); or markup whose only visible text is
+the object, or holds it in a preformatted block with nothing else beside a
+browser's `Pretty-print` switch (how a browser shows a JSON answer). The
+object is at most 8 KiB, as much as local fetching reads of a refused answer,
+and has an error's shape: an `error` object or text, an `errors` list with a
+`message`, a `message` (`msg`, `errmsg`, `error_description`, `detail`) with a
+failing `code` or `status` (400 and above), a non-zero `errcode`, `success` or
+`ok` false or `status: "error"`, or a known site's refusal code (Zhihu's
+`40362`, which counts alone). An object that also holds `data`, `result`,
+`results` or `items` is content. An article or API document that shows a JSON
+error as an example, a heading over the block, a second block or any other
+text keeps the page. The failure quotes the service's reading as local
+fetching quotes a refused answer (cleaned, at most 120 characters, then the
+code): `The cloudflare service was shown Zhihu's JSON refusal instead of the
+content, which said: 您当前请求存在异常，暂时限制本次访问。… (code 40362)`; on a
+site that is not known, `… was shown a JSON error instead of the content, …`.
 
 When no step reads the page, what works instead is said once: the local failure
 already says it for a site that refused the static client (`HTTP 403 for

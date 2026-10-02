@@ -14,6 +14,8 @@
 //! and the Markdown and title that defuddle and Jina Reader return. Markup
 //! gives more evidence (a challenge widget, a site's script marker); Markdown
 //! gives the visible text and the title, which is what a refusal page says.
+//! A remote service's reading is also the site's refusal when all of it is a
+//! JSON error answer, which a browser shows as a page ([`Shown::read_by`]).
 
 use serde_json::Value;
 use std::sync::LazyLock;
@@ -132,6 +134,11 @@ pub(super) fn refusal_hint(url: &Url, cloudflare_challenge: bool) -> Option<Stri
 /// cut to 120 characters.
 pub(super) fn json_refusal(body: &[u8]) -> Option<String> {
     let value: Value = serde_json::from_slice(body).ok()?;
+    json_said(&value)
+}
+
+/// The words and code of a JSON error object, as [`json_refusal`] quotes them.
+fn json_said(value: &Value) -> Option<String> {
     value.as_object()?;
     let text = |pointer: &str| {
         value
@@ -155,10 +162,11 @@ pub(super) fn json_refusal(body: &[u8]) -> Option<String> {
         "/error_description",
         "/detail",
         "/error",
+        "/errors/0/message",
     ]
     .iter()
     .find_map(|pointer| text(pointer))?;
-    let code = ["/error/code", "/code", "/errcode"]
+    let code = ["/error/code", "/code", "/errcode", "/errors/0/code"]
         .iter()
         .find_map(|pointer| value.pointer(pointer)?.as_i64());
     let mut said: String = message.chars().take(120).collect();
@@ -269,6 +277,127 @@ pub(super) fn refused_status(service: &str, status: u16) -> String {
     format!("The {service} service received HTTP {status} from the site {INSTEAD}")
 }
 
+/// The most of a reading that can be a JSON refusal: as much as local
+/// fetching reads of a refused answer for its words.
+const JSON_BYTES: usize = 8 * 1024;
+
+/// The JSON refusal codes of sites this module knows, which make an object
+/// a refusal on their own: Zhihu's `40362` (`您当前请求存在异常，暂时限制本次访问`).
+const REFUSAL_CODES: [(&str, i64); 1] = [("Zhihu", 40362)];
+
+/// Keys whose filled value is a JSON answer's content, not its error.
+const DATA_KEYS: [&str; 4] = ["data", "result", "results", "items"];
+
+/// The text, when all of it can be one JSON object.
+fn raw_json(text: &str) -> Option<&str> {
+    let text = text.trim();
+    (text.starts_with('{') && text.ends_with('}')).then_some(text)
+}
+
+/// The JSON of Markdown that is one JSON object and nothing else: raw, or
+/// the only thing in its only fenced code block.
+fn whole_json(markdown: &str) -> Option<&str> {
+    let text = markdown.trim();
+    if text.starts_with('{') {
+        return raw_json(text);
+    }
+    let (open, rest) = text.split_once('\n')?;
+    let fence = open.chars().next().filter(|ch| matches!(ch, '`' | '~'))?;
+    let width = open.chars().take_while(|ch| *ch == fence).count();
+    // An info string (`json`) may follow the opening fence, but no backtick.
+    if width < 3 || open[width..].contains('`') {
+        return None;
+    }
+    let (inner, close) = rest.trim_end().rsplit_once('\n')?;
+    let close = close.trim();
+    let closed = close.chars().count() >= width && close.chars().all(|ch| ch == fence);
+    raw_json(inner).filter(|_| closed)
+}
+
+/// What a JSON object says when it has the shape of an error answer rather
+/// than of content (`""` when it gives no words): an `error` object or text,
+/// an `errors` list with a message, a message with a failing code or status
+/// (`code` or `status` 400 and above, a non-zero `errcode`, `success` or `ok`
+/// false, `status: "error"`), or a refusal code of the site (`site`). An
+/// object that also carries data (`data`, `result`, `results`, `items`) is
+/// an answer with content.
+fn json_error(json: &str, site: Option<&Site>) -> Option<String> {
+    if json.len() > JSON_BYTES {
+        return None;
+    }
+    let value: Value = serde_json::from_str(json).ok()?;
+    let object = value.as_object()?;
+    let filled = |value: &Value| match value {
+        Value::Null | Value::Bool(false) => false,
+        Value::String(text) => !text.trim().is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(fields) => !fields.is_empty(),
+        _ => true,
+    };
+    if DATA_KEYS
+        .iter()
+        .any(|key| object.get(*key).is_some_and(filled))
+    {
+        return None;
+    }
+    let number = |pointer: &str| {
+        let value = value.pointer(pointer)?;
+        value
+            .as_i64()
+            .or_else(|| value.as_str()?.trim().parse().ok())
+    };
+    let words = |value: Option<&Value>| {
+        value
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.trim().is_empty())
+    };
+    let error = match object.get("error") {
+        Some(Value::Object(fields)) => !fields.is_empty(),
+        Some(Value::String(text)) => !text.trim().is_empty(),
+        _ => false,
+    };
+    let errors = object
+        .get("errors")
+        .and_then(Value::as_array)
+        .and_then(|errors| errors.first())
+        .is_some_and(|first| words(first.get("message")));
+    let message = ["message", "msg", "errmsg", "error_description", "detail"]
+        .iter()
+        .any(|key| words(object.get(*key)));
+    let failing = ["/code", "/status", "/statusCode", "/status_code"]
+        .iter()
+        .any(|pointer| number(pointer).is_some_and(|code| code >= 400))
+        || number("/errcode").is_some_and(|code| code != 0)
+        || [("success", false), ("ok", false)]
+            .iter()
+            .any(|(key, flag)| object.get(*key).and_then(Value::as_bool) == Some(*flag))
+        || object
+            .get("status")
+            .and_then(Value::as_str)
+            .is_some_and(|status| {
+                matches!(
+                    status.trim().to_ascii_lowercase().as_str(),
+                    "error" | "fail" | "failed" | "failure"
+                )
+            });
+    let code = ["/error/code", "/code", "/errcode"]
+        .iter()
+        .find_map(|pointer| number(pointer));
+    let known = site.is_some_and(|site| {
+        REFUSAL_CODES
+            .iter()
+            .any(|(name, refusal)| *name == site.name && code == Some(*refusal))
+    });
+    if !(error || errors || (message && failing) || known) {
+        return None;
+    }
+    Some(
+        json_said(&value)
+            .or_else(|| code.map(|code| format!("code {code}")))
+            .unwrap_or_default(),
+    )
+}
+
 /// Text of a page shorter than this, in words, is "little else" beside a
 /// login request or a challenge title.
 const FEW_WORDS: usize = 60;
@@ -326,6 +455,11 @@ pub(super) struct Shown<'a> {
     widget: bool,
     /// The markup has an `<article>` with text of its own.
     article: bool,
+    /// The reading's text when all of it is one JSON object: the Markdown
+    /// raw or in its only fenced code block, the markup's only visible text
+    /// or the text of its preformatted block when nothing else shows (a
+    /// browser shows a JSON answer so).
+    json: Option<String>,
 }
 
 fn collapsed(text: &str) -> String {
@@ -340,6 +474,8 @@ impl<'a> Shown<'a> {
         // and the markup's own attributes are read.
         let tree = scraper::Html::parse_document(html);
         let mut text = String::new();
+        // Preformatted and code text, kept only while it can be a JSON refusal.
+        let mut code = String::new();
         let mut title = String::new();
         let mut widget = false;
         let mut article = false;
@@ -370,26 +506,40 @@ impl<'a> Shown<'a> {
                     }
                 }
             } else if let scraper::Node::Text(value) = node.value() {
-                let ignored =
-                    node.ancestors()
-                        .filter_map(scraper::ElementRef::wrap)
-                        .any(|element| {
-                            matches!(
-                                element.value().name(),
-                                "head" | "script" | "style" | "pre" | "code" | "template"
-                            )
-                        });
-                if !ignored {
-                    text.push_str(value);
-                    text.push(' ');
+                let (mut hidden, mut literal) = (false, false);
+                for element in node.ancestors().filter_map(scraper::ElementRef::wrap) {
+                    match element.value().name() {
+                        "head" | "script" | "style" | "template" => hidden = true,
+                        "pre" | "code" => literal = true,
+                        _ => {}
+                    }
+                }
+                match (hidden, literal) {
+                    (true, _) => {}
+                    (false, true) if code.len() <= JSON_BYTES => code.push_str(value),
+                    (false, true) => {}
+                    (false, false) => {
+                        text.push_str(value);
+                        text.push(' ');
+                    }
                 }
             }
         }
+        let shown = collapsed(&text);
+        // Chromium's JSON viewer adds a "Pretty-print" switch beside the block.
+        let json = if shown.is_empty() || shown.eq_ignore_ascii_case("pretty-print") {
+            raw_json(&code)
+        } else if code.trim().is_empty() {
+            raw_json(&text)
+        } else {
+            None
+        };
         Self {
             url,
             markup: Some(html),
             title: collapsed(&title),
-            text: collapsed(&text),
+            json: json.map(str::to_owned),
+            text: shown,
             widget,
             article,
         }
@@ -418,11 +568,33 @@ impl<'a> Shown<'a> {
             text: collapsed(&text),
             widget: false,
             article: false,
+            json: whole_json(markdown).map(str::to_owned),
         }
     }
 
     fn words(&self) -> usize {
         crate::formats::word_count(&self.text)
+    }
+
+    /// The failure of a remote service whose reading this is, when it is the
+    /// site's refusal rather than the page: a refusal page ([`Self::refusal`])
+    /// or a JSON error answer that is the whole reading, quoted as local
+    /// fetching quotes a refused answer's words.
+    pub(super) fn read_by(&self, service: &str) -> Option<String> {
+        if let Some(refusal) = self.refusal() {
+            return Some(refusal.read_by(service));
+        }
+        let site = self.url.host_str().and_then(site_of);
+        let said = json_error(self.json.as_deref()?, site)?;
+        let shown = match site {
+            Some(site) => format!("{}'s JSON refusal", site.name),
+            None => "a JSON error".into(),
+        };
+        let mut failure = format!("The {service} service was shown {shown} {INSTEAD}");
+        if !said.is_empty() {
+            failure.push_str(&format!(", which said: {said}"));
+        }
+        Some(failure)
     }
 
     /// The refusal this page is, if any: the site's own page first, then a
@@ -807,5 +979,143 @@ mod tests {
             Some(429)
         );
         assert_eq!(browser_status("Browser navigation failed"), None);
+    }
+
+    /// Zhihu's answer to Cloudflare's browser for a question in the
+    /// real-service check of 6f76411 (2026-10-02), which was written as the
+    /// page: one fenced code block.
+    const ZHIHU_JSON: &str = r#"{"error":{"message":"您当前请求存在异常，暂时限制本次访问。如有疑问，您可以通过手机摇一摇或登录后私信知乎小管家反馈。c887aece583d10ea97647fb0e4aeeb5d","code":40362}}"#;
+    const QUESTION: &str = "https://www.zhihu.com/question/19550225";
+
+    fn read(url: &str, markdown: &str) -> Option<String> {
+        let url = Url::parse(url).unwrap();
+        Shown::markdown(&url, None, markdown).read_by("cloudflare")
+    }
+
+    fn rendered(url: &str, html: &str) -> Option<String> {
+        let url = Url::parse(url).unwrap();
+        Shown::html(&url, html).read_by("cloudflare")
+    }
+
+    #[test]
+    fn a_reading_that_is_wholly_a_json_error_is_the_sites_refusal() {
+        let refusal = "The cloudflare service was shown Zhihu's JSON refusal instead of the content, which said: 您当前请求存在异常，暂时限制本次访问。如有疑问，您可以通过手机摇一摇或登录后私信知乎小管家反馈。c887aece583d10ea97647fb0e4aeeb5d (code 40362)";
+        let pretty =
+            serde_json::to_string_pretty(&serde_json::from_str::<Value>(ZHIHU_JSON).unwrap())
+                .unwrap();
+        // The reading as it was, raw, with an info string, a tilde fence and
+        // pretty-printed.
+        for markdown in [
+            format!("```\n{ZHIHU_JSON}\n```"),
+            format!("\n{ZHIHU_JSON}\n"),
+            format!("```json\n{ZHIHU_JSON}\n```\n"),
+            format!("~~~~\n{ZHIHU_JSON}\n~~~~"),
+            format!("```\n{pretty}\n```"),
+        ] {
+            assert_eq!(
+                read(QUESTION, &markdown).as_deref(),
+                Some(refusal),
+                "{markdown}"
+            );
+        }
+        // Markup: Chromium's JSON viewer, with its switch, and a bare body.
+        for html in [
+            format!(
+                r#"<html><head><meta name="color-scheme" content="light dark"></head><body><pre style="word-wrap: break-word; white-space: pre-wrap;">{ZHIHU_JSON}</pre><div class="json-formatter-container"></div></body></html>"#
+            ),
+            format!("<html><body><pre>{ZHIHU_JSON}</pre><label>Pretty-print</label></body></html>"),
+            format!("<html><body>{ZHIHU_JSON}</body></html>"),
+        ] {
+            assert_eq!(
+                rendered(QUESTION, &html).as_deref(),
+                Some(refusal),
+                "{html}"
+            );
+        }
+        assert!(refused_reading(refusal));
+        // Zhihu's refusal code says it alone; a bare code elsewhere does not.
+        assert_eq!(
+            read(QUESTION, r#"{"code":40362}"#).unwrap(),
+            "The cloudflare service was shown Zhihu's JSON refusal instead of the content, which said: code 40362"
+        );
+        assert!(read("https://example.com/a", r#"{"code":40362}"#).is_none());
+        // The error answers of other sites and services.
+        for (json, said) in [
+            (r#"{"error":"Forbidden"}"#, "Forbidden"),
+            (
+                r#"{"success":false,"errors":[{"code":10000,"message":"Authentication error"}]}"#,
+                "Authentication error (code 10000)",
+            ),
+            (
+                r#"{"status":403,"message":"Access denied"}"#,
+                "Access denied",
+            ),
+            (
+                r#"{"code":"429","msg":"Too many requests"}"#,
+                "Too many requests",
+            ),
+            (
+                r#"{"errcode":40001,"errmsg":"invalid credential"}"#,
+                "invalid credential (code 40001)",
+            ),
+            (r#"{"success":false,"message":"blocked"}"#, "blocked"),
+            (r#"{"status":"error","message":"blocked"}"#, "blocked"),
+        ] {
+            assert_eq!(
+                read("https://example.com/api", json).unwrap(),
+                format!(
+                    "The cloudflare service was shown a JSON error instead of the content, which said: {said}"
+                ),
+                "{json}"
+            );
+        }
+        assert_eq!(
+            read("https://example.com/api", r#"{"error":{"type":"denied"}}"#).unwrap(),
+            "The cloudflare service was shown a JSON error instead of the content"
+        );
+    }
+
+    #[test]
+    fn a_page_or_an_api_document_with_a_json_example_stays_a_page() {
+        // An article that shows the error, a heading over the block, two blocks.
+        for markdown in [
+            format!(
+                "# Handling refusals\n\nWhen a request is refused, the API answers:\n\n```json\n{ZHIHU_JSON}\n```\n\nWait and try again."
+            ),
+            format!("# Errors\n\n```json\n{ZHIHU_JSON}\n```"),
+            format!("```\n{ZHIHU_JSON}\n```\n\n```\n{ZHIHU_JSON}\n```"),
+            format!("{ZHIHU_JSON}\n\nThat is what a refusal looks like."),
+        ] {
+            assert!(read(QUESTION, &markdown).is_none(), "{markdown}");
+        }
+        // Markup: an API document's example and an article's.
+        for html in [
+            format!(
+                "<html><head><title>Errors</title></head><body><h1>Errors</h1><p>A refused request is answered with:</p><pre><code>{ZHIHU_JSON}</code></pre></body></html>"
+            ),
+            format!("<article><p>The answer:</p><pre>{ZHIHU_JSON}</pre></article>"),
+            format!("<html><body><pre>{ZHIHU_JSON}</pre><pre>{ZHIHU_JSON}</pre></body></html>"),
+        ] {
+            assert!(rendered(QUESTION, &html).is_none(), "{html}");
+        }
+        // JSON that is content rather than an error.
+        for json in [
+            r#"{"name":"markitai","version":"1.3.0"}"#,
+            r#"{"message":"Hello, world"}"#,
+            r#"{"code":0,"msg":"success","data":{"id":1}}"#,
+            r#"{"code":200,"message":"OK"}"#,
+            r#"{"errcode":0,"errmsg":"ok"}"#,
+            r#"{"error":null,"data":{"id":1}}"#,
+            r#"{"error":"","items":[]}"#,
+            r#"{"data":{"id":1},"errors":[{"message":"partial"}]}"#,
+            r#"{"error":{"message":"refused","code":403},"result":[1,2]}"#,
+            r#"[{"error":"Forbidden"}]"#,
+            "{not json}",
+        ] {
+            assert!(read("https://example.com/api", json).is_none(), "{json}");
+        }
+        // An answer longer than a refused answer's words is not one.
+        let long = format!(r#"{{"error":{{"message":"{}"}}}}"#, "x".repeat(9000));
+        assert!(read(QUESTION, &long).is_none());
     }
 }

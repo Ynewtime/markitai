@@ -66,6 +66,7 @@
 - 本地抓取失败后，`auto` 可以回退到 defuddle、Jina 和 Cloudflare，但只在你明确同意之后：亲手写出 `fetch.remote_consent: always`（只提示一次），或选择 `ask`（每次运行在终端询问一次）。默认仍只在本地抓取。回退遵循 `fetch.policy.strategy_priority`、`max_strategy_hops`、域名配置、`local_only_patterns`（含 `NO_PROXY`）以及你自己写出的 `fallback_patterns`；默认列表只显示、不生效，X 帖子仍静态优先。
 - Jina 和 Defuddle 使用各自的 `timeout`、`rpm`、`api_key`、`no_cache`、`target_selector` 和 `wait_for_selector` 设置；远程失败会引用服务给出的原因，但不包含令牌或账户 ID。
 - 远程抓取结果与本地抓取采用同一判断：defuddle、Jina Reader 或 Cloudflare Browser Rendering 读到的若是站点的验证页、登录页、人机挑战或拒绝状态（如知乎的“安全验证 - 知乎”），即视为该服务失败；继续尝试下一个服务、不写出文件；全部失败时只报告一次站点感知的拒绝说明，并列出尝试过的每个服务及其失败原因。本地抓取同样能识别微博访客页与 Cloudflare 的“verifying you are human”提示。
+- 远程服务的读取结果若整体就是站点的 JSON 错误应答（原文、单个围栏代码块，或浏览器以 `<pre>` 呈现的页面），视为该服务失败，并像本地被拒应答一样引用站点原话；Cloudflare Browser Rendering 渲染出的知乎 40362 拒绝不再被写成页面，仅含 JSON 示例的文章或 API 文档不受影响。Cloudflare 的 `meta.status`（源站 HTTP 状态）按 Jina `httpStatus` 的规则处理：401、403、418、429 为拒绝，其余 4xx/5xx 为页面失败。
 - Jina Reader：其 `Warning:`（如缓存快照）作为转换警告给出；`--no-cache` 及匹配的 `--no-cache-for` / `cache.no_cache_patterns` 同时发送 `X-No-Cache: true`；解析文本应答的 `Title:` / `URL Source:` / `Warning:` / `Markdown Content:` 头行；页面自身的错误状态视为失败。
 - `-b cloudflare` 去除 Workers AI 的外层包装（`# <文件名>`、`## Metadata`、`## Contents`）；标题、作者、创建日期写入 `title`、`author`、`date`，PDF 的 `### Page N` 标题改为与原生读取器一致的 `<!-- Page number: N -->` 分页标记（页数记于 `pages`）。`-s cloudflare` 的 `browser_ms_used` 以整数毫秒写出。
 - Windows：Ctrl-C 与 Ctrl-Break 为可控中断。结束外部运行时进程树并以 130 退出；带恢复状态的批处理第一次排空、第二次退出。关闭控制台窗口、注销或关机时清理后以 143 退出。

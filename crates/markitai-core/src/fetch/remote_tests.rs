@@ -1283,6 +1283,204 @@ fn a_selected_service_shown_a_refusal_says_so_and_what_works() {
     assert!(markdown(&essay).contains("An essay about waiting"));
 }
 
+/// Zhihu's JSON refusal as Cloudflare Browser Rendering returned it for the
+/// same question in the rerun on 6f76411 (2026-10-02, `remote_consent:
+/// always`): Chromium's page for a JSON answer, which was written as one
+/// fenced code block titled `19550225`.
+const ZHIHU_JSON: &str = r#"{"error":{"message":"您当前请求存在异常，暂时限制本次访问。如有疑问，您可以通过手机摇一摇或登录后私信知乎小管家反馈。c887aece583d10ea97647fb0e4aeeb5d","code":40362}}"#;
+
+fn zhihu_json_page() -> String {
+    format!(
+        r#"<html><head><meta name="color-scheme" content="light dark"><meta charset="utf-8"></head><body><pre style="word-wrap: break-word; white-space: pre-wrap;">{ZHIHU_JSON}</pre><div class="json-formatter-container"></div></body></html>"#
+    )
+}
+
+/// Browser Rendering's `/content` answer; `meta` is optional, as each field.
+fn cloudflare_rendered(html: &str, meta: Option<Value>) -> Answer {
+    let mut envelope = json!({"success": true, "errors": [], "messages": [], "result": html});
+    if let Some(meta) = meta {
+        envelope["meta"] = meta;
+    }
+    Answer::json(200, envelope)
+}
+
+fn cloudflare_auto(cfg: &mut Value) {
+    cfg["fetch"]["remote_consent"] = json!("always");
+    cfg["fetch"]["cloudflare"] = json!({"api_token": "env:TEST_CF_TOKEN", "account_id": "acc0123"});
+}
+
+const DEFUDDLE_FAILED: &str = "HTTP 502 from the defuddle service: the service had a server error";
+const JINA_LOGIN: &str = "The jina service was shown Zhihu's login page instead of the content";
+const CLOUDFLARE_JSON: &str = "The cloudflare service was shown Zhihu's JSON refusal instead of the content, which said: 您当前请求存在异常，暂时限制本次访问。如有疑问，您可以通过手机摇一摇或登录后私信知乎小管家反馈。c887aece583d10ea97647fb0e4aeeb5d (code 40362)";
+const CLOUDFLARE_403: &str =
+    "The cloudflare service received HTTP 403 from the site instead of the content";
+
+#[test]
+fn a_zhihu_json_refusal_cloudflare_rendered_fails_with_every_service_and_why() {
+    // The fixture is what was written: the extraction makes it one fenced
+    // block (the output later titled it by the address).
+    let written = formats::extract_html(&zhihu_json_page(), Some(ZHIHU_QUESTION)).unwrap();
+    assert_eq!(written.markdown.trim(), format!("```\n{ZHIHU_JSON}\n```"));
+
+    let (_directory, mut cfg) = auto_settings();
+    cloudflare_auto(&mut cfg);
+    let terminal = Arc::new(Terminal::default());
+    let fixture = Fixture::new(gate(&terminal, true, None, None));
+    let url = Url::parse(ZHIHU_QUESTION).unwrap();
+    // Without `meta`, the markup; with the origin's `meta.status`, the status.
+    for (meta, cloudflare) in [
+        (None, CLOUDFLARE_JSON),
+        (
+            Some(json!({"status": 403, "finalUrl": ZHIHU_QUESTION, "title": ""})),
+            CLOUDFLARE_403,
+        ),
+    ] {
+        let service = Mock::new(vec![
+            Answer::text(502, "bad gateway"),
+            zhihu_login_wall(None),
+            cloudflare_rendered(&zhihu_json_page(), meta),
+        ]);
+        let mut services = fixture.services(&service.origin);
+        services.vars = vars(&[("TEST_CF_TOKEN", "cf-test-token-0123")]);
+        // The default order, with the static request answered as Zhihu
+        // answered it (no request leaves the machine).
+        let steps = auto_order(&url, &cfg, false, &services);
+        let mut local = Some(zhihu_refusal(&url));
+        let result = chain::run(
+            &steps,
+            chain::Attempts {
+                static_fetch: &mut || Err(local.take().expect("one static request")),
+                browser_ready: &|| false,
+                render: &mut |_| unreachable!("the static refusal ends the local steps"),
+                remote_ready: &mut |_| chain::Readiness::Ready,
+                remote: &mut |service| {
+                    remote::fetch(service, ZHIHU_QUESTION, &url, &cfg, &services)
+                        .map(remote::outcome)
+                },
+                what_works: sites::what_works(&url),
+            },
+        );
+        let Err(Error::Fetch(message)) = result else {
+            panic!("Zhihu's JSON refusal is not the page");
+        };
+        assert_eq!(
+            message,
+            format!(
+                "{}; remote services failed as well ({DEFUDDLE_FAILED}; {JINA_LOGIN}; {cloudflare})",
+                zhihu_refusal(&url)
+            )
+        );
+        assert!(
+            message.starts_with("HTTP 403 for https://www.zhihu.com/question/19550225: Zhihu refuses automated clients; open the page in your browser and save it"),
+            "{message}"
+        );
+        assert_eq!(
+            message.matches("Webpage, HTML Only").count(),
+            1,
+            "{message}"
+        );
+        let requests = service.requests();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(
+            requests[2].target,
+            "/cloudflare/accounts/acc0123/browser-rendering/content"
+        );
+        assert!(!message.contains("acc0123") && !message.contains("cf-test-token"));
+    }
+}
+
+#[test]
+fn remote_services_alone_turned_away_by_zhihu_lead_with_the_site_and_write_nothing() {
+    let (directory, mut cfg) = auto_settings();
+    cloudflare_auto(&mut cfg);
+    cfg["fetch"]["policy"]["strategy_priority"] = json!(["defuddle", "jina", "cloudflare"]);
+    let service = Mock::new(vec![
+        Answer::text(502, "bad gateway"),
+        zhihu_login_wall(None),
+        cloudflare_rendered(&zhihu_json_page(), Some(json!({"title": ""}))),
+        Answer::text(502, "bad gateway"),
+        zhihu_login_wall(None),
+        cloudflare_rendered(&zhihu_json_page(), Some(json!({"status": 403}))),
+    ]);
+    let terminal = Arc::new(Terminal::default());
+    let fixture = Fixture::new(gate(&terminal, true, None, None));
+    let mut services = fixture.services(&service.origin);
+    services.vars = vars(&[("TEST_CF_TOKEN", "cf-test-token-0123")]);
+    let url = Url::parse(ZHIHU_QUESTION).unwrap();
+    for cloudflare in [CLOUDFLARE_JSON, CLOUDFLARE_403] {
+        let Err(Error::Fetch(message)) =
+            fetch_with_services(ZHIHU_QUESTION, &cfg, None, true, None, &services)
+        else {
+            panic!("no service read the page");
+        };
+        assert_eq!(
+            message,
+            format!(
+                "{}; the remote services tried failed ({DEFUDDLE_FAILED}; {JINA_LOGIN}; {cloudflare})",
+                sites::what_works(&url)
+            )
+        );
+    }
+    assert_eq!(service.requests().len(), 6);
+    assert!(!directory.path().join("fetch_cache.db").exists());
+}
+
+#[test]
+fn a_page_with_a_json_error_example_and_the_origins_other_statuses_read_as_before() {
+    let mut cfg = cloudflare_cfg();
+    cfg["fetch"]["cloudflare"] = json!({"api_token": "env:TEST_CF_TOKEN", "account_id": "acc0123"});
+    let article = format!(
+        "<html><head><title>Handling refusals</title></head><body><article><h1>Handling refusals</h1><p>When the API turns a client away it answers with a JSON error object such as this one, and the client should wait before it tries again:</p><pre><code>{ZHIHU_JSON}</code></pre><p>The code names the reason; the message is meant for a person.</p></article></body></html>"
+    );
+    let service = Mock::new(vec![
+        // An article that shows a JSON error, with and without the origin's status.
+        cloudflare_rendered(&article, None),
+        cloudflare_rendered(
+            &article,
+            Some(json!({"status": 200, "finalUrl": "https://example.com/errors"})),
+        ),
+        // The origin's other failures are the page's.
+        cloudflare_rendered(&article, Some(json!({"status": 404}))),
+        cloudflare_rendered(&article, Some(json!({"status": 503}))),
+        // The same article read through Jina.
+        jina_page(&format!(
+            "# Handling refusals\n\nWhen the API turns a client away it answers with:\n\n```json\n{ZHIHU_JSON}\n```\n\nWait before trying again."
+        )),
+    ]);
+    let terminal = Arc::new(Terminal::default());
+    let fixture = Fixture::new(gate(&terminal, false, None, None));
+    let mut services = fixture.services(&service.origin);
+    services.vars = vars(&[("TEST_CF_TOKEN", "cf-test-token-0123")]);
+    let source = "https://example.com/errors";
+    for _ in 0..2 {
+        let outcome =
+            fetch_with_services(source, &cfg, Some("cloudflare"), true, None, &services).unwrap();
+        assert!(
+            markdown(&outcome).contains("40362")
+                && markdown(&outcome).contains("Handling refusals"),
+            "{}",
+            markdown(&outcome)
+        );
+        assert_eq!(outcome.document().metadata["fetch_strategy"], "cloudflare");
+    }
+    for expected in [
+        "The cloudflare service received HTTP 404 from the site: the page may have been removed or is not public",
+        "The cloudflare service received HTTP 503 from the site: the site had a server error",
+    ] {
+        let Err(Error::Fetch(message)) =
+            fetch_with_services(source, &cfg, Some("cloudflare"), true, None, &services)
+        else {
+            panic!("the origin's failure is the page's");
+        };
+        assert_eq!(message, expected);
+    }
+    let mut jina = cfg.clone();
+    jina["fetch"]["strategy"] = json!("jina");
+    let outcome = fetch_with_services(source, &jina, Some("jina"), true, None, &services).unwrap();
+    assert!(markdown(&outcome).contains("```json\n{\"error\""));
+    assert_eq!(service.requests().len(), 5);
+}
+
 #[test]
 fn jina_warnings_are_kept_and_a_bypassed_cache_asks_jina_for_a_fresh_reading() {
     let (_directory, mut cfg) = settings();
