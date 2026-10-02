@@ -63,6 +63,19 @@ const en = {
   errConfigTooLarge: "The configuration would exceed the 8 MiB limit.",
   errNoModel: "No model is configured. Add one in Settings, or set MODEL and a provider API key.",
   errOcrUnavailable: "Local OCR is not available on this system.",
+  errOcrVisionSelection:
+    "This setting selects macOS Vision, which requires macOS 11 or later. Unset MARKITAI_OCR_BACKEND or choose paddle, then restart the service.",
+  errOcrBackendSetting: "Set MARKITAI_OCR_BACKEND to vision or paddle, or unset it, then restart the service.",
+  errOcrModelMissing:
+    "A local OCR model is missing. Run markitai doctor --fix on the service computer with network access, or follow the original error's verified manual-download instructions, then retry.",
+  errOcrModelCorrupt:
+    "A local OCR model is damaged. Run markitai doctor --fix on the service computer with network access to verify and replace it, then retry. Ordinary OCR leaves it unchanged.",
+  errOcrModelPath:
+    "The local OCR installation path is unsafe or changed during the operation. Run markitai doctor on the service computer and check the named path's ownership, permissions and links. Resolve the path issue before retrying; automatic repair does not fix unsafe paths.",
+  errOcrModelDownload:
+    "A local OCR model could not be downloaded. Check the service computer's network and proxy, then run markitai doctor --fix or follow the original error's verified manual-download instructions.",
+  errOcrModelPreparation:
+    "Local OCR model preparation failed. Run markitai doctor on the service computer and inspect the original error before retrying.",
   errUnsupported: "This conversion is not supported here.",
   errFetch: "Could not fetch this page.",
   errConversion: "The document could not be converted.",
@@ -177,6 +190,13 @@ const zh: Record<MessageKey, string> = {
   errConfigTooLarge: "配置将超过 8 MiB 的上限。",
   errNoModel: "尚未配置模型。请在系统设置中添加模型，或设置 MODEL 和服务商 API key。",
   errOcrUnavailable: "本机 OCR 在此系统上不可用。",
+  errOcrVisionSelection: "当前设置选择了 macOS Vision，它需要 macOS 11 或更高版本。请取消 MARKITAI_OCR_BACKEND，或改为 paddle，然后重启服务。",
+  errOcrBackendSetting: "请将 MARKITAI_OCR_BACKEND 设为 vision 或 paddle，或取消该变量，然后重启服务。",
+  errOcrModelMissing: "缺少本机 OCR 模型。请在运行服务的电脑上联网执行 markitai doctor --fix，或按原始错误中的校验与手动下载说明安装，再重试。",
+  errOcrModelCorrupt: "本机 OCR 模型已损坏。请在运行服务的电脑上联网执行 markitai doctor --fix，以校验并替换损坏模型后重试；普通 OCR 不会覆盖它。",
+  errOcrModelPath: "本机 OCR 安装路径不安全，或在操作期间发生了变化。请在运行服务的电脑上执行 markitai doctor，检查所指路径的所有权、权限和链接。解决路径问题后再重试；自动修复无法修复不安全路径。",
+  errOcrModelDownload: "无法下载本机 OCR 模型。请检查运行服务的电脑的网络和代理，然后执行 markitai doctor --fix，或按原始错误中的校验与手动下载说明安装。",
+  errOcrModelPreparation: "本机 OCR 模型准备失败。请在运行服务的电脑上执行 markitai doctor，查看原始错误后再重试。",
   errUnsupported: "这里不支持这项转换。",
   errFetch: "无法抓取此网页。",
   errConversion: "无法转换这个文档。",
@@ -377,10 +397,31 @@ const modelHttp = (match: RegExpExecArray): [MessageKey, Values] => [
   { status: match[1] ?? "" },
 ];
 
+// Model installation/network failures can be retried after the prerequisite is fixed.
+// Share the exact shapes with localization so retryability cannot drift from the message.
+const OCR_MODEL_MISSING = /^Local OCR needs the model [\s\S]+, which is not installed: /;
+const OCR_MODEL_DOWNLOAD = /^Local OCR download of [\s\S]+ failed \(/;
+
 /** First match wins: specific shapes precede general ones. */
 const ITEM_SHAPES: Shape[] = [
   [/^No model configured\b/, () => ["errNoModel"]],
-  [/^Local OCR (?:requires|backend is unavailable|of multi-page)|^PDF OCR is not implemented/, () => ["errOcrUnavailable"]],
+  [
+    /^MARKITAI_OCR_BACKEND=vision selects macOS Vision, which needs macOS 11 or later; unset it or choose paddle$/,
+    () => ["errOcrVisionSelection"],
+  ],
+  [/^MARKITAI_OCR_BACKEND must be vision or paddle$/, () => ["errOcrBackendSetting"]],
+  [OCR_MODEL_MISSING, () => ["errOcrModelMissing"]],
+  [OCR_MODEL_DOWNLOAD, () => ["errOcrModelDownload"]],
+  [
+    /^Local OCR models: [\s\S]*; run `markitai doctor --fix` to replace this damaged managed model; ordinary OCR will not overwrite it$/,
+    () => ["errOcrModelCorrupt"],
+  ],
+  [
+    /^Local OCR models: [\s\S]*(?:installation (?:directory (?:disappeared|changed or is unsafe|is a link, junction or special file|changed while opening)|file (?:disappeared|changed while it was held|is a link, junction or special file|must be private, owned by this user and have one hard link)|lock (?:disappeared|was replaced|changed while opening))|managed home must be owned by this user and not writable by others|managed installation directory must be owned by this user and private|installation paths must not contain parent components|installation path is outside its managed root|unsafe model path)$/,
+    () => ["errOcrModelPath"],
+  ],
+  [/^Local OCR models: /, () => ["errOcrModelPreparation"]],
+  [/^Local OCR (?:requires|of multi-page)|^PDF OCR is not implemented/, () => ["errOcrUnavailable"]],
   [/^LLM returned HTTP (\d{3})\b(?:: (.+))?/, modelHttp],
   [/^LLM request timed out/, () => ["errModelTimeout"]],
   [/^LLM request failed$/, () => ["probeUnreachable"]],
@@ -520,6 +561,9 @@ export function persistenceText(locale: Locale, text: string): Described {
   return key ? { text: message(locale, key), detail: text } : { text, detail: "" };
 }
 
-/** An unsupported file type cannot be fixed by converting it again. */
-export const isUnsupported = (item: { error?: string | null; error_code?: string | null }): boolean =>
-  item.error_code === "unsupported" || /^Unsupported file format:/.test(item.error ?? "");
+/** Keep unsupported formats/capabilities blocked; missing models and downloads are recoverable. */
+export const isUnsupported = (item: { error?: string | null; error_code?: string | null }): boolean => {
+  const error = item.error ?? "";
+  if (/^Unsupported file format:/.test(error)) return true;
+  return item.error_code === "unsupported" && !OCR_MODEL_MISSING.test(error) && !OCR_MODEL_DOWNLOAD.test(error);
+};

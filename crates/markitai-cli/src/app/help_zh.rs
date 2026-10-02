@@ -240,7 +240,7 @@ fn describe(command: &str) -> Option<Description> {
         "doctor" => describe_with(
             "诊断已配置的工作流和可选的原生后端",
             "诊断已配置的工作流和可选的原生后端。\n\n缺少可选后端只会报告，不算失败。只有当配置要求了本机无法提供的能力时，退出状态才是 1：已启用的模型缺少凭据、配置的浏览器工作流无法启动、订阅运行时不可用，或 --fix 修复失败。不会发送模型请求，也不会打开远程页面。",
-            "示例:\n  markitai doctor           人类可读的报告\n  markitai doctor --json    机器可读的检查结果\n  markitai doctor --fix     没有可用浏览器时安装浏览器",
+            "示例:\n  markitai doctor           人类可读的报告\n  markitai doctor --json    机器可读的检查结果\n  markitai doctor --fix     安装缺少的浏览器，以及安装或修复本地 OCR 模型",
         ),
         "cache" => describe_with("查看或清理 LLM 与 URL 抓取缓存", "", CACHE_AFTER),
         "auth" => describe_with("查看订阅认证状态，或委托官方运行时完成登录", "", AUTH_AFTER),
@@ -553,7 +553,7 @@ const ARGUMENTS: &[(&str, &str, &str)] = &[
     (
         "doctor",
         "fix",
-        "没有可用浏览器时，安装官方 Chrome headless shell",
+        "安装缺少的官方 Chrome headless shell，以及安装或修复本地 OCR 模型",
     ),
     (
         "doctor",

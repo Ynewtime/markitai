@@ -1,9 +1,8 @@
 //! Explicit per-user installation of the official Chrome headless shell.
-use crate::{Error, Result, browser, config};
+use crate::{Error, Result, browser, config, private_install};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, Write};
@@ -174,91 +173,21 @@ pub(crate) fn installed() -> Option<PathBuf> {
 }
 
 fn private_directory(path: &Path) -> Result<()> {
-    match fs::symlink_metadata(path) {
-        Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => return Ok(()),
-        Ok(_) => return Err(failure("installation directory is not a regular directory")),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
-        Err(_) => return Err(failure("cannot inspect installation directory")),
-    }
-    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty())
-        && !parent.is_dir()
-    {
-        private_directory(parent)?;
-    }
-    #[cfg_attr(not(unix), allow(unused_mut))] // Only Unix sets a mode.
-    let mut builder = fs::DirBuilder::new();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        builder.mode(0o700);
-    }
-    match builder.create(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => private_directory(path),
-        Err(_) => Err(failure("cannot create private installation directory")),
-    }
+    private_install::private_directory(path, failure)
 }
 
-struct InstallLock(File);
-impl Drop for InstallLock {
-    fn drop(&mut self) {
-        let _ = self.0.unlock();
-    }
-}
-
-fn lock(root: &Path) -> Result<InstallLock> {
-    let path = root.join("install.lock");
-    if fs::symlink_metadata(&path).is_ok_and(|m| !m.is_file() || m.file_type().is_symlink()) {
-        return Err(failure("installation lock is not a regular file"));
-    }
-    let mut options = OpenOptions::new();
-    options.read(true).write(true).create(true).truncate(false);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    let file = options
-        .open(path)
-        .map_err(|_| failure("cannot open installation lock"))?;
-    file.try_lock()
-        .map_err(|_| failure("another browser installation is active or locking is unavailable"))?;
-    Ok(InstallLock(file))
+fn lock(root: &Path) -> Result<private_install::InstallLock> {
+    private_install::lock(
+        root,
+        private_install::Contention::Refuse(
+            "another browser installation is active or locking is unavailable",
+        ),
+        failure,
+    )
 }
 
 fn download(client: &Client, url: &str, limit: u64, output: &mut impl Write) -> Result<String> {
-    let mut response = client
-        .get(url)
-        .send()
-        .map_err(|_| failure("official download could not be reached"))?;
-    if !response.status().is_success() {
-        return Err(failure("official download returned an unsuccessful status"));
-    }
-    if response.content_length().is_some_and(|n| n > limit) {
-        return Err(failure("download exceeds its byte limit"));
-    }
-    let mut count = 0u64;
-    let mut hash = Sha256::new();
-    let mut buffer = [0u8; 64 * 1024];
-    loop {
-        let len = response
-            .read(&mut buffer)
-            .map_err(|_| failure("official download was interrupted"))?;
-        if len == 0 {
-            break;
-        }
-        count += len as u64;
-        if count > limit {
-            return Err(failure("download exceeds its byte limit"));
-        }
-        hash.update(&buffer[..len]);
-        output
-            .write_all(&buffer[..len])
-            .map_err(|_| failure("cannot save browser download"))?;
-    }
-    Ok(crate::hex(hash.finalize()))
+    private_install::download(client, url, limit, output, failure)
 }
 
 fn extract(reader: impl Read + Seek, output: &Path, platform: &str, limit: u64) -> Result<()> {
@@ -344,20 +273,6 @@ fn extract(reader: impl Read + Seek, output: &Path, platform: &str, limit: u64) 
     Ok(())
 }
 
-fn hash_file(path: &Path) -> Result<String> {
-    let mut file = File::open(path)?;
-    let mut hash = Sha256::new();
-    let mut buffer = [0; 64 * 1024];
-    loop {
-        let len = file.read(&mut buffer)?;
-        if len == 0 {
-            break;
-        }
-        hash.update(&buffer[..len]);
-    }
-    Ok(crate::hex(hash.finalize()))
-}
-
 /// Network/install work happens only when this API is explicitly requested.
 pub(crate) fn install() -> Result<PathBuf> {
     if std::env::var_os("MARKITAI_BROWSER_EXECUTABLE").is_some() {
@@ -416,7 +331,7 @@ fn publish(
 ) -> Result<PathBuf> {
     let executable = stage.path().join(relative_executable(platform));
     verify(&executable)?;
-    let executable_sha256 = hash_file(&executable)?;
+    let executable_sha256 = private_install::hash_file(&executable)?;
     let suffix = stage
         .path()
         .file_name()

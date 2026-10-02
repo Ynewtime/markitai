@@ -3,10 +3,16 @@
 On macOS 11 or later, local OCR uses the operating system's Vision framework
 through Rust bindings. It runs in the current process without Python, Node,
 Tesseract, a browser, downloaded OCR weights, provider credentials or a remote
-recognition service. Other platforms currently return an explicit unsupported
-error for this local path. An x86-64 build running under Rosetta 2 on Apple
+recognition service. On Windows and Linux it uses the [portable
+engine](#the-portable-engine-windows-and-linux): PaddleOCR's models, downloaded
+once into the private Markitai home, run in process by a pure-Rust inference
+engine. An x86-64 build running under Rosetta 2 on Apple
 silicon fails recognition with an error that names Rosetta (Vision reports
 failure there without an error of its own); use the arm64 build ([details](validation/macos-x86_64-rosetta.md)).
+Most of this page describes Vision; the portable engine's languages, default
+language and measurements have [their own section](#the-portable-engine-windows-and-linux),
+and both share the [reading order](#bounds-and-reading-order) and [turned pages,
+code and zeros](#turned-pages-code-numbers-and-table-cells) steps.
 This page covers image inputs, including every page
 of a multi-page TIFF and HEIF/AVIF images; scanned PDF pages use the same
 recognizer as described in [PDF page OCR](pdf-ocr.md), and Office page images in
@@ -22,7 +28,8 @@ markitai scan.png --ocr -o out/                                 # keep the image
 
 `ocr.enabled=true` (`--ocr` in the CLI) selects local OCR when LLM enhancement is
 disabled. The image reference remains in the base document and recognized text
-is appended below it. Metadata records `ocr_used: true` and `ocr_path: vision`.
+is appended below it. Metadata records `ocr_used: true` and `ocr_path: vision`
+(`paddle` for the portable engine).
 A successfully processed image with no recognized text retains its image
 reference and emits a warning. An invalid image, unsupported language or engine
 failure fails the conversion instead of inserting error text into Markdown. (Under
@@ -577,6 +584,290 @@ per reading that has such a junction: Chinese paragraphs take the same time
 as before within 1 ms on average, full pages 19 ms more
 ([timing](#turned-pages-code-numbers-and-table-cells)).
 
+## The portable engine (Windows and Linux)
+
+Windows and Linux read images with PaddleOCR's PP-OCR models, run in the
+conversion process by the pure-Rust [`tract`](https://github.com/sonos/tract)
+inference engine (`tract-onnx` 0.23.8): no Python, ONNX Runtime, Tesseract or
+system service. A macOS build has it only with the `portable-media` feature
+(`cargo build -p markitai-cli --release --features portable-media`); Vision
+stays that build's default, the portable engine is chosen when Vision cannot
+run (macOS before 11, or an x86_64 build under Rosetta), and
+`MARKITAI_OCR_BACKEND=paddle` or `vision` chooses one explicitly (any other
+value is a configuration error; `vision` is an unsupported-capability error
+where Vision is absent). Metadata records `ocr_path: paddle`, and `markitai
+doctor` names the engine in its `rapidocr` check.
+
+### Models
+
+The model files are not part of the executable. A manifest compiled into it
+([`models.json`](../crates/markitai-core/src/ocr/paddle/models.json)) names
+each one with its official URL, size, SHA-256 and license (Apache-2.0;
+provenance in [`licenses/paddleocr`](../licenses/paddleocr/README.md)): the
+ONNX files RapidOCR 3.9.2 publishes on its ModelScope mirror, the same the
+reference downloads. A model lives at
+`MARKITAI_HOME/models/ocr/<name>-<first 8 digits of its SHA-256>/<file>`.
+
+| Role | Model | Bytes |
+| --- | --- | ---: |
+| Text detection | PP-OCRv6 small (`ppocrv6-det-small`) | 9,929,594 |
+| Line direction (0° or 180°) | PP-OCR mobile v2.0 classifier (`ppocr-cls-mobile-v2`) | 585,532 |
+| Recognition, default and Latin/Chinese/Japanese languages | PP-OCRv6 small multilingual (`ppocrv6-rec-small`) | 21,234,383 |
+| Recognition, Korean | PP-OCRv5 mobile (`korean-ppocrv5-rec-mobile`) | 13,488,748 |
+| Recognition, other scripts | PP-OCRv5 mobile: Arabic, Thai, Greek, East Slavic, Cyrillic, Latin, Devanagari, Tamil, Telugu | 7.8–8.1 MB each |
+
+`markitai doctor --fix` installs the files the selected portable engine and
+configured `ocr.lang` need: the default set above is 45.2 MB; an explicit
+language needs the detector, classifier and its recognizer. It names each file
+installed. A normal OCR downloads missing models as needed, with a notice once
+per process on standard error (`Local OCR: downloading …`). It does not
+necessarily download all four default files before reading its first image.
+The default macOS Vision engine does not inspect or install portable models.
+
+`markitai doctor` checks paths, size and SHA-256 with bounded, no-follow reads;
+it creates no model state, downloads nothing and does not parse or run ONNX.
+A verified file is not a recognition-accuracy test. The four model states are:
+
+| State | Ordinary OCR | `doctor --fix` |
+| --- | --- | --- |
+| Missing | Downloads the model when needed; an offline error gives its URL, size, digest and manual path. | Installs it without overwriting a file that appeared meanwhile. |
+| Ready | Verifies bytes when loading the model; graphs are reused within the process. | Keeps it. |
+| Corrupt | Does not overwrite it; required-model failures name `doctor --fix`. | Can replace a safe damaged managed file after verifying the new size and digest. |
+| Unsafe | Rejects an unsafe path in the selected model set before loading or downloading. | Refuses it and names the path reason before downloading. |
+
+Unsafe entries include symbolic links, Windows junctions/reparse points,
+special files, multiply linked files, foreign ownership and non-private managed
+model directories/files. The Markitai home container may have ordinary readable
+permissions such as 0755 on Unix, but must belong to the current user and not
+be writable by others; its managed model descendants must be private. These
+checks do not require every system ancestor to be private.
+
+Privacy follows the existing platform contract: Unix checks owner and permission
+bits; Windows checks the process user's SID (or its token's default owner) and
+inherits the parent ACL. It does not tighten or audit every Windows ACL entry.
+Use a private user directory for the managed home; model hashing and identity
+checks are separate from filesystem access permissions.
+
+Downloads use the page-fetching proxy settings and HTTPS-only redirects. Under
+a stable, validated installation lock, repair observes the whole selected set
+again before the first request. Each download is staged beside its destination,
+verified against its published size and SHA-256 both as received and from the
+staged file, and rechecks directory, lock and named/held file identities before
+publication. A missing file is published without clobbering; explicit repair
+atomically replaces only a safe private, current-user-owned, single-link
+managed model. The old damaged file stays open during replacement, including
+on Windows. File/directory synchronization and a final model verification follow
+publication. Failed download or verification keeps the existing damaged model;
+stage removal is best effort. If synchronization fails after publication, the
+replacement may already exist: run `doctor` again to inspect its actual state.
+The optional Korean default reading can fall back to the first reading if its
+model cannot load or infer; it still never repairs corruption implicitly.
+
+### How an image is read
+
+1. **Detection.** The image is scaled so that its long side is at most 1,600
+   pixels (the measured quality and memory tradeoff below), and a small image (short side under 400
+   pixels) is enlarged up to 1.5 times; a strip eight times wider than tall is
+   padded above and below with its border color. The detector returns a map of
+   text probability; its connected regions above 0.3 become rotated rectangles,
+   kept when their mean probability is at least 0.5 and grown back to the
+   text's extent (by area × 1.6 / perimeter, as the model was trained).
+2. **Cut-out.** Each region is cut out of the original pixels as an upright
+   rectangle (a perspective resampling); one at least 1.5 times taller than wide
+   is text running down and is turned a quarter. The classifier flags lines it
+   finds upside down; a flagged line is read both ways and the more confident
+   reading kept (it flags a few upright lines of ordinary prose).
+3. **Recognition.** Each line is scaled to 48 pixels high on a width in steps
+   of 32 pixels (at least 320) and read one line at a time, on up to eight
+   threads per image. Extra helper threads share a process-wide processor-count
+   budget; the calling conversion threads also participate, so this is not a
+   limit on the total number of runnable threads. The recognizer's
+   per-column probabilities collapse into text (repeats merged, blanks dropped)
+   with the model's own dictionary; a line's confidence is the mean of its
+   characters' probabilities, and lines below 0.5 are dropped, as the reference
+   does. Right-to-left recognizers' text is put in reading order.
+4. **Layout.** The lines then take the steps Vision's do: [turned
+   pages](#turned-pages-code-numbers-and-table-cells) (from each line's
+   direction), columns, rows and paragraphs, code fences and mended zeros.
+   Character positions and image gaps preserve spaces between Chinese and Latin
+   text. Vision's enlarged second readings, recovered characters and table-cell
+   readings are not applied; lone cells are kept.
+
+### Languages
+
+| `ocr.lang` | Recognizer |
+| --- | --- |
+| `en` (default) | multilingual, then Korean for the lines it cannot read ([below](#the-portable-default-language)) |
+| `en-US`, `zh`, `zh_cn`, `cn`, `ch`, `zh-Hans`, `zh_tw`, `cht`, `chinese_cht`, `zh-Hant`, `ja`, `jp`, `japan`, `ja-JP`, `fr`, `de`, `es`, `it`, `pt`, `vi`, `tr`, … (the reference's PP-OCRv6 list) | multilingual only |
+| `ko`, `korean`, `ko-KR` | Korean |
+| `ar`, `arabic`, `fa`, `ur`, `ar-SA` | Arabic |
+| `th`; `el`; `ta`; `te` | Thai; Greek; Tamil; Telugu |
+| `ru`, `uk`, `be`, `eslav`, `ru-RU` | East Slavic |
+| `cyrillic`, `bg`, `mk`, `kk`, `ky`, `mn`, `tg` | Cyrillic |
+| `latin` | Latin (PP-OCRv5) |
+| `hi`, `mr`, `ne`, `devanagari` | Devanagari |
+
+Case, surrounding whitespace and underscores are normalized as for Vision; a
+region or script after a known language is accepted (`pt-BR` reads as `pt`).
+Any other value fails with an error that lists these. Vision's spellings are
+accepted so that one configuration works on every system.
+
+### The portable default language
+
+The multilingual recognizer reads Latin script, Simplified and Traditional
+Chinese and Japanese, the scripts the reference's default reads. For a line of
+Hangul it returns nothing, a doubtful reading, or a confident fragment (the
+line's final period alone). Each line it is not sure of, below 0.9 confidence,
+empty, or with fewer than 0.4 characters per line height of its length, is
+read again from the same cut-out with the Korean recognizer, whose reading
+replaces it when at least a third of its letters are Hangul and it is more
+confident. If the optional Korean model cannot load or its inference fails,
+the first reading stands. When half the lines or more remain unread and at
+least one is shaped like text, the conversion keeps confident lines and warns
+that the default could not confidently read all text. Possible causes include
+an unsupported script, low image quality or an unavailable optional Korean
+model; the warning does not identify the cause with certainty. It lists
+`ocr.lang` choices and `markitai doctor --fix`. A blank image or noise with no
+recognized text receives the ordinary no-text warning; the partial-reading
+rule does not treat a table of short cells as unsupported prose.
+
+### Measured quality
+
+The frozen r4 release CLI reran 636 whole conversions on macOS 27.0.1,
+Apple M5 Max, with `portable-media`, `MARKITAI_OCR_BACKEND=paddle`, no explicit
+`ocr.lang`, isolated `HOME`/`MARKITAI_HOME` and verified models. Every conversion
+succeeded; normalized text, edit counts and number checks matched the
+previous 636-image check. These are synthetic rendered corpora from the
+sections above, including degraded variants, not a survey of real scans or
+photographs. Character error rate is edit distance over ground-truth length,
+whitespace removed for Chinese, Japanese and Korean and collapsed for English.
+The portable column below is confirmed by r4; Vision and reference columns are
+previously recorded comparisons, not new r4 runs. Parallel quality-run wall
+times were collected while other work was active and are not performance data.
+See the [validation record](validation/portable-ocr-w2.md) for binary identities,
+methods and platform coverage.
+
+| Corpus / variant | Portable engine (r4) | Vision (earlier) | Reference (earlier) |
+|---|---:|---:|---:|
+| English prose 300 / 150 DPI / scan-like | 0.01% / 0.03% / 0.08% | 0.04% / 0.11% / 0.07% | 5.82% / 3.73% / 4.36% |
+| Numbers 300 / 150 / scan-like | 0.00% / 0.03% / 0.58% | 0.00% / 0.00% / 0.00% | 0.00% / 0.03% / 0.87% |
+| Number tokens exact (of 298 each) | 298 / 296 / 270 | 298 / 298 / 298 | 298 / 296 / 259 |
+| Two columns 300 / 150 / scan-like | 0.03% / 0.05% / 0.11% | 0.16% / 0.40% / 0.35% | 0.03% / 0.11% / 0.05% |
+| R45 Chinese 300 / 150 / scan-like | 0.17% / 0.52% / 0.52% | 0.69% / 0.86% / 1.37% | 0.34% / 0.52% / 0.52% |
+| Held-out Chinese 300 / 150 / scan-like | 0.32% / 0.60% / 1.28% | 1.28% / 1.16% / 1.52% | 1.60% / 2.17% / 2.57% |
+| Held-out Chinese 96 / 72 DPI | 0.92% / 1.20% | 1.93% / 3.21% | 0.96% / 1.68% |
+| Full Chinese pages 150 / 96 | 0.22% / 1.34% | 1.16% / 2.06% | 1.92% / 2.89% |
+| Traditional Chinese 150 / 96 / 72 | 0.00% / 0.30% / 1.81% | 0.00% / 0.30% / 3.93% | not run |
+| Japanese 300 / 150 / scan-like | 0.28% / 0.38% / 0.33% | 0.14% / 0.00% / 0.05% | 0.42% / 0.38% / 0.38% |
+| Japanese 96 / 72 | 0.33% / 0.66% | 0.19% / 0.23% | 0.33% / 0.99% |
+| Japanese full pages 150 / 96 | 0.49% / 0.53% | 0.07% / 0.00% | 1.34% / 0.53% |
+| Korean 300 / 150 / scan-like | 0.97% / 0.92% / 2.21% | 0.81% / 0.81% / 0.76% | not run |
+| Korean 96 / 72 | 1.13% / 2.70% | 0.97% / 1.19% | not run |
+| Korean full pages 150 / 96 | 1.08% / 1.20% | 0.89% / 0.85% | not run |
+
+The 150 Korean paragraph images have 1.59% character error as a whole.
+Linux x86-64 in the Rosetta-translated Ubuntu guest and Windows 11 ARM64 in
+UTM each ran 16 real CLI conversions: eight selected images under the default
+and the same eight with explicit languages. All succeeded; default normalized
+text matched the frozen macOS portable readings, and inputs/models were
+unchanged. This is platform smoke/fixture coverage, not a rerun of all 636
+images or a Linux/Windows performance comparison.
+
+Earlier supplementary WIP checks, **not rerun on the final r4 binary**, reported:
+
+| Earlier check | Portable engine | Vision |
+| --- | ---: | ---: |
+| 60 DPI Chinese / Japanese / Korean | 2.33% / 0.80% / 2.86% | 9.83% / 0.85% / 1.78% |
+| Rendered tables (46) | 0.02% (651 of 652 numbers) | 0.91% |
+
+The following explicit-language corpus, spacing and language-inventory results
+also belong to those earlier WIP checks; they are not final-r4 acceptance:
+
+With `ocr.lang` written (`zh`,
+`zh_tw`, `ja`, `ko`) every image of these corpora reads with the same error
+as under the default. Kept spaces (runs of
+whitespace as one space): R45 Chinese 0.58% (Vision 1.22%), held-out 1.33%
+(2.62%), full pages 1.14% (2.40%); the spacing set's spaced lines 0.00% with
+144 of 144 spaces (Vision 1.53%), its unspaced lines 0.00% with no space
+added. Of the inventory's language probes, English, French, German, Spanish,
+code, a table, Chinese, Traditional Chinese, Japanese and Korean read
+correctly, and so do lines mixing English with Chinese, Japanese or Korean,
+which Vision's default reads as English; Arabic, Hebrew, Russian, Thai and
+Greek warn (Greek keeps one partly read line), as do a line of mathematical
+symbols (kept as read); a blank page and noise warn that no text was found.
+
+### Time and size
+
+The frozen r4 timing check used eight particular 150-DPI images on macOS
+27.0.1 arm64, Apple M5 Max, Rust 1.99.0, release CLI builds. Each engine had
+one warm-up conversion per image, followed by five paired conversions with
+alternating engine order: 96 separate CLI processes in total. Runs were serial,
+with other local/guest builds and benchmarks paused; models and filesystem
+bytes were warmed. Each new process still pays model verification, parsing and
+planning. The table is the median of the five measured whole CLI conversions;
+RSS is the largest process peak across those five (`time -l`), in MiB.
+
+| Selected image | Portable median ms | Vision median ms | Portable peak RSS MiB | Vision peak RSS MiB |
+| --- | ---: | ---: | ---: | ---: |
+| English prose | 729.53 | 154.76 | 400.00 | 61.48 |
+| Numbers | 643.69 | 150.02 | 463.81 | 60.91 |
+| Two columns | 904.77 | 175.96 | 507.25 | 65.20 |
+| Held-out Chinese | 686.61 | 273.73 | 253.94 | 106.05 |
+| Full Chinese page | 2551.38 | 844.69 | 1119.81 | 201.30 |
+| Japanese | 702.48 | 366.55 | 331.02 | 140.39 |
+| Korean | 1170.71 | 417.65 | 503.47 | 130.58 |
+| Traditional Chinese | 648.91 | 259.31 | 257.66 | 101.98 |
+
+These eight samples do not establish full-corpus latency, batch throughput or
+Windows/Linux performance. The first Vision warm-up took **23.53 seconds**;
+it is recorded separately and excluded from the warmed medians. First use of a
+new executable/system recognition cache can have a substantial cold cost
+([Vision cache details](#validation-fixtures)). The portable English warm-up
+was 0.75 seconds with models already installed: it does not include the initial
+45.2 MB model download. Korean's default can pay for a second recognizer.
+Detection admits at most two images at once within a process; the RSS values
+above are observations, not a memory limit or a guarantee for larger pages.
+
+Retained release executables have these actual sizes; their full SHA-256 and
+source/compiler evidence are in the [validation record](validation/portable-ocr-w2.md):
+
+| Build | Bytes | Comparison |
+| --- | ---: | --- |
+| macOS arm64 default baseline before W2 | 22,443,136 | Frozen pre-W2 release |
+| macOS arm64 default (Vision) r4 | 22,459,664 | +16,528 bytes against that baseline |
+| macOS arm64 `portable-media` r4 | 32,291,152 | Includes portable PDF rendering and OCR |
+| Linux x86-64 r4 | 41,495,120 | Built/run in the Rosetta-translated Ubuntu guest |
+| Windows 11 ARM64 r4 | 40,787,968 | Built/run in the UTM guest |
+
+The macOS portable/default difference includes the portable PDF renderer and
+OCR together; it is not an isolated OCR size delta. Model weights are external
+to all these executable sizes. Windows x86-64 has been cross-type-checked,
+including with Rust 1.92.0, but no native x86-64 executable size is reported here.
+The Rust 1.92.0 workspace/all-targets/locked checks passed for macOS default,
+macOS portable and Windows x86-64 using the existing cross-check driver;
+the last checks types, not native linking or execution. Native Linux and Windows
+ARM64 tests, strict Clippy, release builds and the 16-conversion OCR fixtures
+have separate successful evidence. These are W2 candidate checks, not release
+packaging or final product acceptance.
+
+### Limits
+
+- On the eight warmed macOS samples above, the portable engine took about
+  0.64–1.17 seconds for paragraphs/columns and 2.55 seconds for the selected full
+  Chinese page, versus 0.15–0.42 and 0.84 seconds with Vision. Peak RSS was higher.
+  Other images, cold caches and concurrent conversions can differ substantially.
+- Korean Hanja are not read by the Korean model, which has no Han characters.
+- On the synthetic scan-like number set, some spaces between numbers and words
+  are dropped (`+1(584)`, `2031target`): 270 of 298 number tokens are exact,
+  against all 298 at 300 DPI.
+- The default does not reliably read Cyrillic, Greek, Arabic, Thai or Devanagari:
+  set `ocr.lang`. (Vision's default reads Cyrillic.) A partial-read warning can
+  also result from low image quality or an unavailable optional Korean model.
+- The 636-image final quality rerun and paired timing were on Apple silicon.
+  Linux and Windows ARM64 have the native build/test and 16-conversion coverage
+  described above; there is no comparable full-corpus or fair performance run
+  on those guests or on physical x86-64 hardware.
+
 ## Validation fixtures
 
 The authored [English PNG](../crates/markitai-core/src/ocr/fixtures/english.png)
@@ -641,6 +932,31 @@ Renderer-entry tests compare the same fixture's normalized PNG bytes and Vision
 observations with the encoded-image path. Additional checks reject zero-sized,
 oversized and excess-storage RGB layouts without allocating a maximum-sized
 image, and verify that ordinary RGB rows and colors remain unchanged.
+
+The portable engine's pure tests (they run wherever it is built: Windows and
+Linux, and macOS with `portable-media`) cover the detection layout (long-side
+cap, small-image enlargement, padded strips, BGR input planes), the
+probability-map regions (thresholds, eight-connected runs, rotated
+rectangles and their growth, specks), the classifier's decision, the
+dictionary, CTC collapsing and character positions, the right-to-left order,
+the perspective cut-out and quarter turn, bucketed line inputs, the measured
+Chinese–Latin space, the default language's sure, Hangul and unread rules,
+the `ocr.lang` table (reference, Vision and region spellings, and the
+error), the manifest (official HTTPS downloads, digests, licenses, the
+default set) and installation against a loopback server (exact size and
+digest, owner-only modes, nothing installed from a wrong, oversized or
+unreachable download, the error naming `doctor --fix` and the manual path, a
+changed file refused on load). An ignored test reads the authored English
+fixture with the installed models, upright and upside down, and a blank
+image (`MARKITAI_HOME=… cargo test -p markitai-core --features
+portable-media --lib -- --ignored ocr::paddle`); earlier runs passed on macOS
+arm64 and in the x86-64 Linux guest. Final-r4 whole-CLI quality and native
+Linux/Windows ARM64 fixtures are recorded separately above. Installation
+regressions cover same-length corruption, explicit repair, failed-download
+preservation and stage cleanup, changed stage/lock identities and concurrent
+installation; Windows tests also reject managed-directory junctions before a
+request or external write. `doctor` tests distinguish ready, missing, corrupt,
+unsafe and invalid-language states, without loading an ONNX graph.
 
 The [frozen release check](validation/native-backends-round16.md) observed a
 25.897-second first image OCR call and much shorter subsequent calls. The cause

@@ -123,6 +123,27 @@ opt-level = 3
 [profile.release.package.fearless_simd]
 opt-level = 3
 
+# The portable OCR engine's kernels and tensor code (Windows, Linux, and macOS
+# with `portable-media`); its operators (tract-core) stay size-optimized.
+# Measured on the macOS portable build against all of tract at "z": these two
+# add 1.04 MB and convert OCR images 11-12% faster; tract-core at 3 as well
+# would add 5.8 MB in all for 30% (docs/ocr.md, portable engine).
+[profile.release.package.tract-linalg]
+opt-level = 3
+
+[profile.release.package.tract-data]
+opt-level = 3
+
+# Unoptimized, tract takes minutes for one image in the model-backed tests.
+[profile.dev.package.tract-linalg]
+opt-level = 3
+
+[profile.dev.package.tract-core]
+opt-level = 3
+
+[profile.dev.package.tract-data]
+opt-level = 3
+
 [profile.dist]
 inherits = "release"
 opt-level = "z"

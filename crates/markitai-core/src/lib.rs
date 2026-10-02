@@ -23,6 +23,7 @@ mod pdf_raster;
 pub mod platform;
 mod preparation;
 mod pricing;
+mod private_install;
 mod process_groups;
 mod proxy;
 #[doc(hidden)]
@@ -69,6 +70,28 @@ pub fn browser_available() -> bool {
 
 pub fn local_ocr_available() -> bool {
     ocr::available()
+}
+
+pub use ocr::{LocalOcrModel, LocalOcrModelState};
+
+/// The local OCR engine this process reads with: `vision` (macOS), `paddle`
+/// (the portable PaddleOCR engine) or `unavailable`.
+pub fn local_ocr_backend() -> &'static str {
+    ocr::backend()
+}
+
+/// The model files the portable OCR engine needs for the configuration's
+/// `ocr.lang`, each with whether it is installed; `None` when this process
+/// reads with another engine. Probing never downloads or creates files.
+pub fn local_ocr_models(config: &Value) -> Result<Option<Vec<LocalOcrModel>>> {
+    ocr::portable_models(config)
+}
+
+/// Explicitly download the missing files [`local_ocr_models`] lists from the
+/// official PaddleOCR mirror, each verified by size and SHA-256, into the
+/// private Markitai home; returns the files installed.
+pub fn install_local_ocr_models(config: &Value) -> Result<Vec<PathBuf>> {
+    ocr::install_portable_models(config)
 }
 
 /// Whether this process is an x86_64 build translated by Rosetta on Apple

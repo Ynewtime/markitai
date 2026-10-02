@@ -408,7 +408,8 @@ Usage: markitai doctor [OPTIONS]
 
 Options:
       --json            Print the checks as one JSON object
-      --fix             Install the official Chrome headless shell when no working browser is found
+      --fix             Install the official Chrome headless shell when missing, and install or
+                        repair local OCR models
       --suggest-extras  Python package extras; not applicable to this native build and rejected
   -h, --help            Print help (see more with '--help')
 
@@ -421,7 +422,7 @@ Configuration:
 Examples:
   markitai doctor           Human-readable report
   markitai doctor --json    Machine-readable checks
-  markitai doctor --fix     Install a browser when no working one is found
+  markitai doctor --fix     Install a missing browser and required local OCR models
 === markitai doctor --help (exit 0, stderr 0 bytes) ===
 Diagnose configured workflows and optional native backends.
 
@@ -438,7 +439,8 @@ Options:
           Print the checks as one JSON object
 
       --fix
-          Install the official Chrome headless shell when no working browser is found
+          Install the official Chrome headless shell when missing, and install or repair local OCR
+          models
 
       --suggest-extras
           Python package extras; not applicable to this native build and rejected
@@ -456,7 +458,7 @@ Configuration:
 Examples:
   markitai doctor           Human-readable report
   markitai doctor --json    Machine-readable checks
-  markitai doctor --fix     Install a browser when no working one is found
+  markitai doctor --fix     Install a missing browser and required local OCR models
 === markitai cache -h (exit 0, stderr 0 bytes) ===
 Inspect or clear the LLM and URL fetch caches
 

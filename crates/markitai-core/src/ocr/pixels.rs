@@ -1,3 +1,7 @@
+// Off macOS the portable engine decodes images here; the PNG hand-over and
+// enlarged copies serve Vision.
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+
 use super::{Result, failure};
 use crate::images::ImageBytes;
 use image::{DynamicImage, ImageDecoder, ImageEncoder, ImageFormat, ImageReader, Rgb, RgbImage};
@@ -31,7 +35,15 @@ impl Write for Bounded {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub(super) fn prepare(bytes: &[u8]) -> Result<Prepared> {
+    prepare_rgb(upright(bytes)?)
+}
+
+/// The pixels of an encoded image, within the input, pixel and decoder
+/// allocation limits, with its EXIF orientation applied and alpha
+/// composited over white.
+pub(super) fn upright(bytes: &[u8]) -> Result<RgbImage> {
     if bytes.is_empty() || bytes.len() > MAX_INPUT {
         return Err(failure("image input is empty or exceeds 64 MiB"));
     }
@@ -77,7 +89,14 @@ pub(super) fn prepare(bytes: &[u8]) -> Result<Prepared> {
     } else {
         image.into_rgb8()
     };
-    prepare_rgb(rgb)
+    Ok(rgb)
+}
+
+/// Check pixels a renderer passes as `prepare_rgb` does.
+#[cfg_attr(target_os = "macos", allow(dead_code))] // Only the portable engine checks alone.
+pub(super) fn check_rgb(rgb: &RgbImage) -> Result<()> {
+    let (width, height) = rgb.dimensions();
+    validate_rgb_layout(width, height, rgb.as_raw().len())
 }
 
 fn validate_rgb_layout(width: u32, height: u32, bytes: usize) -> Result<()> {

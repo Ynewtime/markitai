@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "subject": "PaddleOCR models downloaded at run time by the portable OCR engine; not redistributed",
+  "manifest": "crates/markitai-core/src/ocr/paddle/models.json",
+  "mirror": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.2/onnx/",
+  "mirror_release": "RapidOCR v3.9.2 (default_models.yaml)",
+  "licenses": [
+    {
+      "project": "PaddleOCR",
+      "holder": "PaddlePaddle Authors",
+      "license": "Apache-2.0",
+      "file": "PaddleOCR-LICENSE",
+      "source_url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/main/LICENSE",
+      "retrieved": "2026-10-02",
+      "bytes": 11376,
+      "sha256": "3840c5c0c61c294264d2dd77b8777be6ddd90121ef4e0e64abcd22edea581d6e"
+    },
+    {
+      "project": "RapidOCR",
+      "holder": "RapidAI",
+      "license": "Apache-2.0",
+      "file": "RapidOCR-LICENSE",
+      "source_url": "https://raw.githubusercontent.com/RapidAI/RapidOCR/main/LICENSE",
+      "retrieved": "2026-10-02",
+      "bytes": 11422,
+      "sha256": "3e0af25fdd06aa9586ae97adb00ea927ebe5a3805ac77d2d3a81ce5f55693333"
+    }
+  ],
+  "legal_review": "not_performed"
+}

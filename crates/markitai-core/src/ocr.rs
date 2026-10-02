@@ -1,15 +1,20 @@
 //! Local, bounded OCR. Platform engines receive pixels, never source paths.
+//!
+//! macOS reads with the system's Vision framework (`vision`). Windows and
+//! Linux read with the portable engine (`paddle`): PaddleOCR models run in
+//! process by a pure-Rust inference engine. A macOS build with the
+//! `portable-media` feature has both; Vision stays the default there, and
+//! `MARKITAI_OCR_BACKEND` (`vision` or `paddle`) chooses one.
 
 use crate::{Error, Result};
 use serde_json::Value;
 
 #[cfg(any(target_os = "macos", test))]
 mod auto;
-#[cfg(any(target_os = "macos", test))]
 mod cjk;
-#[cfg(any(target_os = "macos", test))]
 mod layout;
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
+pub(crate) mod paddle;
 mod pixels;
 #[cfg(target_os = "macos")]
 mod vision;
@@ -18,18 +23,17 @@ mod vision;
 pub(crate) struct OcrResult {
     pub text: String,
     /// Mean confidence of nonempty recognized lines.
-    #[cfg(any(target_os = "macos", test))]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub confidence: f32,
     /// Pixel rectangles [left, top, right, bottom], after orientation correction.
-    #[cfg(any(target_os = "macos", test))]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub boxes: Vec<[f32; 4]>,
     /// How many times the image was enlarged for the reading used; 1 when it
     /// was read at its own size. Only macOS tests read it.
-    #[cfg(any(target_os = "macos", test))]
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub scale: f32,
-    /// The Vision language of the reading used. Only macOS tests read it.
-    #[cfg(any(target_os = "macos", test))]
+    /// The Vision language, or the portable engine's recognizer, of the
+    /// reading used. Only tests read it.
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub language: String,
     /// Set only under the default language: its readings found text lines
@@ -39,15 +43,39 @@ pub(crate) struct OcrResult {
 
 /// The warning for an image or page that the default language policy could
 /// not read; `subject` names it ("Local OCR could not read ...").
+#[cfg(all(target_os = "macos", not(feature = "portable-media")))]
 pub(crate) fn unread_warning(subject: &str) -> String {
-    #[cfg(target_os = "macos")]
     let languages = vision::languages();
-    #[cfg(not(target_os = "macos"))]
-    let languages: Vec<String> = Vec::new();
     unread_message(subject, &languages)
 }
 
+/// The warning for an image or page that the default language policy could
+/// not read; `subject` names it ("Local OCR could not read ...").
+#[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
+pub(crate) fn unread_warning(subject: &str) -> String {
+    #[cfg(target_os = "macos")]
+    if selected().is_ok_and(|backend| backend == Backend::Vision) {
+        return unread_message(subject, &vision::languages());
+    }
+    paddle_unread_message(subject)
+}
+
+/// [`unread_warning`] for the portable engine.
+#[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
+fn paddle_unread_message(subject: &str) -> String {
+    format!(
+        "Local OCR could not read {subject}: the default reading (Latin script, Chinese and \
+         Japanese) could not confidently read all the text. Possible causes include an \
+         unsupported script, low image quality, or an unavailable optional Korean model, so \
+         only the lines read with confidence are kept. Set ocr.lang to the language of the \
+         text, one that the portable OCR models read: ar (Arabic, Persian, Urdu), th, el, ru \
+         (also uk and be), cyrillic, hi (Devanagari), ta, te, ko or latin. Run `markitai doctor \
+         --fix` to check and repair the required models."
+    )
+}
+
 /// [`unread_warning`] for a recognizer that reads `languages`.
+#[cfg(any(target_os = "macos", test))]
 fn unread_message(subject: &str, languages: &[String]) -> String {
     let mut message = format!(
         "Local OCR could not read {subject}: it looks like text in a script that the default \
@@ -66,17 +94,17 @@ fn unread_message(subject: &str, languages: &[String]) -> String {
     message
 }
 
+#[cfg(all(target_os = "macos", not(feature = "portable-media")))]
 pub(crate) fn available() -> bool {
-    #[cfg(target_os = "macos")]
-    return objc2::available!(macos = 11.0);
-    #[cfg(not(target_os = "macos"))]
-    false
+    objc2::available!(macos = 11.0)
 }
 
+#[cfg(all(target_os = "macos", not(feature = "portable-media")))]
 pub(crate) fn backend() -> &'static str {
     if available() { "vision" } else { "unavailable" }
 }
 
+#[cfg(all(target_os = "macos", not(feature = "portable-media")))]
 pub(crate) fn recognize(bytes: &[u8], cfg: &Value) -> Result<OcrResult> {
     if !available() {
         return Err(Error::Unsupported(
@@ -84,21 +112,12 @@ pub(crate) fn recognize(bytes: &[u8], cfg: &Value) -> Result<OcrResult> {
                 .into(),
         ));
     }
-    #[cfg(target_os = "macos")]
-    {
-        let spelling = configured(cfg)?;
-        read(&pixels::prepare(bytes)?, &spelling)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (bytes, cfg);
-        Err(Error::Unsupported(
-            "Local OCR backend is unavailable".into(),
-        ))
-    }
+    let spelling = configured(cfg)?;
+    read(&pixels::prepare(bytes)?, &spelling)
 }
 
 /// Recognize upright RGB pixels already composited over white by a renderer.
+#[cfg(all(target_os = "macos", not(feature = "portable-media")))]
 pub(crate) fn recognize_rgb(image: image::RgbImage, cfg: &Value) -> Result<OcrResult> {
     if !available() {
         return Err(Error::Unsupported(
@@ -106,17 +125,178 @@ pub(crate) fn recognize_rgb(image: image::RgbImage, cfg: &Value) -> Result<OcrRe
                 .into(),
         ));
     }
-    #[cfg(target_os = "macos")]
-    {
-        let spelling = configured(cfg)?;
-        read(&pixels::prepare_rgb(image)?, &spelling)
+    let spelling = configured(cfg)?;
+    read(&pixels::prepare_rgb(image)?, &spelling)
+}
+
+/// Integrity and path safety observed without loading an ONNX graph.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LocalOcrModelState {
+    Missing,
+    Ready,
+    Corrupt,
+    Unsafe,
+}
+
+/// A model file the portable OCR engine reads.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalOcrModel {
+    pub name: String,
+    pub path: std::path::PathBuf,
+    pub bytes: u64,
+    /// Compatibility projection: true only when state is Ready.
+    pub installed: bool,
+    pub state: LocalOcrModelState,
+    /// The concrete damaged file or unsafe path reason, when applicable.
+    pub detail: Option<String>,
+}
+
+impl LocalOcrModel {
+    pub fn new(
+        name: String,
+        path: std::path::PathBuf,
+        bytes: u64,
+        state: LocalOcrModelState,
+        detail: Option<String>,
+    ) -> Self {
+        Self {
+            name,
+            path,
+            bytes,
+            installed: state == LocalOcrModelState::Ready,
+            state,
+            detail,
+        }
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (image, cfg);
-        Err(Error::Unsupported(
-            "Local OCR backend is unavailable".into(),
-        ))
+}
+
+/// The model files the portable engine needs for `cfg`'s `ocr.lang`, or
+/// `None` when this process reads with another engine or has none. Never
+/// downloads or creates anything.
+pub(crate) fn portable_models(cfg: &Value) -> Result<Option<Vec<LocalOcrModel>>> {
+    #[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
+    if selected().is_ok_and(|backend| backend == Backend::Paddle) {
+        let models = paddle::needed(&configured(cfg)?)?;
+        return Ok(Some(
+            models
+                .into_iter()
+                .map(|model| {
+                    let (state, detail) = paddle::models::observation(model);
+                    LocalOcrModel::new(
+                        model.name.clone(),
+                        paddle::models::path(model),
+                        model.bytes,
+                        state,
+                        detail,
+                    )
+                })
+                .collect(),
+        ));
+    }
+    let _ = cfg;
+    Ok(None)
+}
+
+/// Explicitly repair missing or safely damaged [`portable_models`] from their official
+/// mirror, each verified by size and SHA-256; returns the files installed.
+pub(crate) fn install_portable_models(cfg: &Value) -> Result<Vec<std::path::PathBuf>> {
+    #[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
+    if selected().is_ok_and(|backend| backend == Backend::Paddle) {
+        let models = paddle::needed(&configured(cfg)?)?;
+        return paddle::models::install(&models, false);
+    }
+    let _ = cfg;
+    Err(Error::Unsupported(
+        "This process does not read with the portable OCR engine; it needs no model files".into(),
+    ))
+}
+
+/// The engines a build can read with.
+#[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Backend {
+    #[cfg(target_os = "macos")]
+    Vision,
+    Paddle,
+}
+
+/// The environment variable that chooses an engine.
+#[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
+const BACKEND_VARIABLE: &str = "MARKITAI_OCR_BACKEND";
+
+/// The engine this process reads with: `MARKITAI_OCR_BACKEND` when set, else
+/// Vision on macOS 11 or later (unless this x86_64 build runs under Rosetta,
+/// where Vision fails), else the portable engine.
+#[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
+fn selected() -> Result<Backend> {
+    let requested = std::env::var(BACKEND_VARIABLE).unwrap_or_default();
+    #[cfg(target_os = "macos")]
+    let vision = objc2::available!(macos = 11.0);
+    match requested.trim().to_ascii_lowercase().as_str() {
+        "" => {
+            #[cfg(target_os = "macos")]
+            if vision && !crate::system_frameworks::translated() {
+                return Ok(Backend::Vision);
+            }
+            Ok(Backend::Paddle)
+        }
+        "paddle" => Ok(Backend::Paddle),
+        "vision" => {
+            #[cfg(target_os = "macos")]
+            if vision {
+                return Ok(Backend::Vision);
+            }
+            Err(Error::Unsupported(format!(
+                "{BACKEND_VARIABLE}=vision selects macOS Vision, which needs macOS 11 or later; \
+                 unset it or choose paddle"
+            )))
+        }
+        _ => Err(Error::Config(format!(
+            "{BACKEND_VARIABLE} must be vision or paddle"
+        ))),
+    }
+}
+
+/// Whether a local OCR engine is built and chosen. The portable engine's
+/// models may still need a download (`paddle::models`).
+#[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
+pub(crate) fn available() -> bool {
+    selected().is_ok()
+}
+
+#[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
+pub(crate) fn backend() -> &'static str {
+    match selected() {
+        #[cfg(target_os = "macos")]
+        Ok(Backend::Vision) => "vision",
+        Ok(Backend::Paddle) => "paddle",
+        Err(_) => "unavailable",
+    }
+}
+
+#[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
+pub(crate) fn recognize(bytes: &[u8], cfg: &Value) -> Result<OcrResult> {
+    let backend = selected()?;
+    let spelling = configured(cfg)?;
+    match backend {
+        #[cfg(target_os = "macos")]
+        Backend::Vision => read(&pixels::prepare(bytes)?, &spelling),
+        Backend::Paddle => paddle::read(&pixels::upright(bytes)?, &spelling),
+    }
+}
+
+/// Recognize upright RGB pixels already composited over white by a renderer.
+#[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
+pub(crate) fn recognize_rgb(image: image::RgbImage, cfg: &Value) -> Result<OcrResult> {
+    let backend = selected()?;
+    let spelling = configured(cfg)?;
+    match backend {
+        #[cfg(target_os = "macos")]
+        Backend::Vision => read(&pixels::prepare_rgb(image)?, &spelling),
+        Backend::Paddle => {
+            pixels::check_rgb(&image)?;
+            paddle::read(&image, &spelling)
+        }
     }
 }
 
@@ -259,12 +439,9 @@ fn read_default(image: &pixels::Prepared) -> Result<OcrResult> {
     }
 }
 
-#[cfg(any(target_os = "macos", test))]
 const MAX_LINES: usize = 10_000;
-#[cfg(any(target_os = "macos", test))]
 const MAX_TEXT: usize = 8 * 1024 * 1024;
 
-#[cfg(any(target_os = "macos", test))]
 #[derive(Debug)]
 struct Line {
     text: String,
@@ -275,7 +452,6 @@ struct Line {
     direction: [f32; 2],
 }
 
-#[cfg(any(target_os = "macos", test))]
 fn failure(message: &str) -> Error {
     Error::Conversion(format!("Local OCR: {message}"))
 }
@@ -284,7 +460,6 @@ fn failure(message: &str) -> Error {
 /// underscores are normalized; an absent value is the default `en`. The
 /// configuration materializes its default, so a default `en` and one written
 /// out cannot be told apart here: both are the default language policy.
-#[cfg(any(target_os = "macos", test))]
 fn configured(cfg: &Value) -> Result<String> {
     let configured = cfg
         .pointer("/ocr/lang")
@@ -395,7 +570,6 @@ fn pixel_bounds(rectangle: [f64; 4], width: u32, height: u32) -> Result<[f32; 4]
     ])
 }
 
-#[cfg(any(target_os = "macos", test))]
 fn assemble(mut lines: Vec<Line>, width: u32, height: u32) -> Result<OcrResult> {
     if lines.len() > MAX_LINES {
         return Err(failure("recognized line count exceeds the safety limit"));
@@ -464,7 +638,6 @@ fn assemble(mut lines: Vec<Line>, width: u32, height: u32) -> Result<OcrResult> 
 
 /// Top edge, then left edge: the order `columns` and `rows` start from. One
 /// named comparator, so the two sorts share one compiled sort.
-#[cfg(any(target_os = "macos", test))]
 fn top_then_left(a: &Line, b: &Line) -> std::cmp::Ordering {
     a.bounds[1]
         .total_cmp(&b.bounds[1])
@@ -479,7 +652,6 @@ fn top_then_left(a: &Line, b: &Line) -> std::cmp::Ordering {
 /// receipt's items and prices, stay rows. Lines crossing the gutter (a title)
 /// separate sections, each read left column first. Nested columns are found
 /// in each side, a few levels deep.
-#[cfg(any(target_os = "macos", test))]
 fn columns(mut lines: Vec<Line>, depth: usize) -> Vec<Vec<Line>> {
     const MAX_DEPTH: usize = 4;
     const MIN_COLUMN_LINES: usize = 3;
@@ -580,7 +752,6 @@ fn columns(mut lines: Vec<Line>, depth: usize) -> Vec<Vec<Line>> {
 /// Lines meet without a space where Chinese or Japanese text touches the
 /// next line. Rows of code in a fixed-pitch font ([`layout::code`]) are
 /// fenced, each indented as far as its left edge.
-#[cfg(any(target_os = "macos", test))]
 fn rows(mut lines: Vec<Line>, text: &mut String, boxes: &mut Vec<[f32; 4]>, confidence: &mut f32) {
     crate::sort::by(&mut lines, top_then_left);
     // Each row's lines, and the rectangle of its topmost line.
@@ -718,6 +889,24 @@ pub(crate) mod tests {
         }
         assert_eq!(tag(&spelling(json!("en_US"))), "en-us");
         assert_eq!(tag("en"), "en-US");
+    }
+
+    #[test]
+    #[cfg(any(not(target_os = "macos"), feature = "portable-media"))]
+    fn portable_unread_warning_explains_uncertainty_and_model_repair() {
+        let warning = paddle_unread_message("PDF page 3");
+        assert!(warning.starts_with("Local OCR could not read PDF page 3:"));
+        for cause in [
+            "unsupported script",
+            "low image quality",
+            "optional Korean model",
+        ] {
+            assert!(warning.contains(cause), "{warning}");
+        }
+        assert!(warning.contains("only the lines read with confidence are kept"));
+        assert!(warning.contains("Set ocr.lang"));
+        assert!(warning.contains("markitai doctor --fix"));
+        assert!(!warning.contains("Korean reading found nothing better"));
     }
 
     #[test]

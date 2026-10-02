@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
 import { en } from "./en.ts";
-import { apiErrorText, itemErrorText, MESSAGES, persistenceText, producibleKeys, serviceNote } from "./errors.ts";
+import { apiErrorText, isUnsupported, itemErrorText, MESSAGES, persistenceText, producibleKeys, serviceNote } from "./errors.ts";
 import { detectLocale } from "./locale.ts";
 import { zh } from "./zh.ts";
 
@@ -103,7 +103,23 @@ test("the English phrases recognized here are still the ones the core and the se
     "Unsupported file format: ",
     " Supported extensions: ",
     "Local OCR requires macOS",
-    "Local OCR backend is unavailable",
+    "{BACKEND_VARIABLE}=vision selects macOS Vision",
+    "unset it or choose paddle",
+    "{BACKEND_VARIABLE} must be vision or paddle",
+    "Local OCR needs the model {}",
+    "which is not installed: {}",
+    "Local OCR download of {} failed ({cause})",
+    "Local OCR models: {message}",
+    "to replace this damaged managed model; ordinary OCR will not overwrite it",
+    "managed home must be owned by this user and not writable by others",
+    "managed installation directory must be owned by this user and private",
+    "installation file is a link, junction or special file",
+    "installation file must be private, owned by this user and have one hard link",
+    "installation directory changed or is unsafe",
+    "installation directory is a link, junction or special file",
+    "installation file changed while it was held",
+    "installation lock was replaced",
+    "the download of {} does not match its published size and SHA-256; nothing was installed",
     "LLM returned HTTP {status}",
     "the model is not available in this region",
     "the account's quota or billing does not allow this request",
@@ -161,6 +177,80 @@ test("item errors are localized by code or shape, keeping the original wording",
   assert.equal(unsupported.formats, ".csv .docx");
   assert.equal(itemErrorText("zh", { error: "HTTP 404", kind: "url" }).text, "网页不存在（HTTP 404）。");
   assert.equal(itemErrorText("zh", { error: "x", error_code: "conversion_error" }).text, "无法转换这个文档。");
+});
+
+test("current portable OCR errors explain the right recovery and keep the original detail", () => {
+  const model = "ppocrv6-det-small";
+  const path = "C:\\Markitai state\\models\\ocr\\ppocrv6-det-small-12345678\\model.onnx";
+  const remedy = `run \`markitai doctor --fix\` where the network is reachable, or download https://example.test/model.onnx (SHA-256 ${"a".repeat(64)}, 9929594 bytes) to ${path}`;
+  const repair = "; run `markitai doctor --fix` to replace this damaged managed model; ordinary OCR will not overwrite it";
+  const cases: [string, string, keyof typeof MESSAGES.en][] = [
+    ["MARKITAI_OCR_BACKEND=vision selects macOS Vision, which needs macOS 11 or later; unset it or choose paddle", "unsupported", "errOcrVisionSelection"],
+    ["MARKITAI_OCR_BACKEND must be vision or paddle", "config_error", "errOcrBackendSetting"],
+    [`Local OCR needs the model ${model}, which is not installed: ${remedy}`, "unsupported", "errOcrModelMissing"],
+    [`Local OCR download of ${model} failed (official download could not be reached); any existing damaged file was kept: ${remedy}`, "unsupported", "errOcrModelDownload"],
+    [`Local OCR download of ${model} failed (official download was interrupted: timed out); any existing damaged file was kept: ${remedy}`, "unsupported", "errOcrModelDownload"],
+    [`Local OCR models: ${path} has 10 bytes instead of its published 9929594 bytes${repair}`, "conversion_error", "errOcrModelCorrupt"],
+    [`Local OCR models: ${path} does not match its published SHA-256${repair}`, "conversion_error", "errOcrModelCorrupt"],
+    [`Local OCR models: the download of ${model} does not match its published size and SHA-256; nothing was installed`, "conversion_error", "errOcrModelPreparation"],
+  ];
+  for (const [error, error_code, key] of cases) {
+    for (const locale of ["en", "zh"] as const) {
+      const result = itemErrorText(locale, { error, error_code, kind: "file" });
+      assert.equal(result.text, MESSAGES[locale][key], error);
+      assert.equal(result.detail, error, error);
+      assert.equal(result.hint, false);
+      assert.notEqual(result.text, MESSAGES[locale].errOcrUnavailable, error);
+    }
+  }
+});
+
+test("only missing-model and download OCR errors can retry an unsupported item", () => {
+  for (const error of [
+    "Local OCR needs the model ppocrv6-det-small, which is not installed: run `markitai doctor --fix` where the network is reachable",
+    "Local OCR download of ppocrv6-det-small failed (official download could not be reached); any existing damaged file was kept: run `markitai doctor --fix`",
+  ]) {
+    assert.equal(isUnsupported({ error, error_code: "unsupported" }), false, error);
+  }
+  for (const error of [
+    "Unsupported file format: '.xyz'.",
+    "MARKITAI_OCR_BACKEND=vision selects macOS Vision, which needs macOS 11 or later; unset it or choose paddle",
+    "Local OCR requires macOS 11 or later; no local OCR backend is available on this platform",
+    "Unknown unsupported capability",
+    "Local OCR needs something else",
+    "Local OCR download was not requested",
+    "",
+  ]) {
+    assert.equal(isUnsupported({ error, error_code: "unsupported" }), true, error);
+  }
+  assert.equal(isUnsupported({ error: "Unsupported file format: '.xyz'." }), true);
+  assert.equal(isUnsupported({ error: "ordinary conversion error", error_code: "conversion_error" }), false);
+});
+
+test("unsafe portable OCR paths require inspection, never blind automatic repair", () => {
+  const reasons = [
+    "installation file is a link, junction or special file",
+    "installation file must be private, owned by this user and have one hard link",
+    "managed home must be owned by this user and not writable by others",
+    "managed installation directory must be owned by this user and private",
+    "installation directory is a link, junction or special file",
+    "installation directory changed or is unsafe",
+    "installation file changed while it was held",
+    "installation lock was replaced",
+  ];
+  for (const reason of reasons) {
+    // Preflight reports once; an unsafe state returned by install can retain a nested prefix.
+    for (const prefix of ["Local OCR models: ", "Local OCR models: Local OCR models: "]) {
+      const error = `${prefix}C:\\Markitai state\\models\\ocr\\install.lock: ${reason}`;
+      for (const locale of ["en", "zh"] as const) {
+        const result = itemErrorText(locale, { error, error_code: "conversion_error" });
+        assert.equal(result.text, MESSAGES[locale].errOcrModelPath, error);
+        assert.equal(result.detail, error);
+        assert.ok(result.text.includes("markitai doctor"), locale);
+        assert.ok(!result.text.includes("doctor --fix"), locale);
+      }
+    }
+  }
 });
 
 test("API refusals are read by reason, then structured code, then status code", () => {

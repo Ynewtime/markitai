@@ -13,6 +13,9 @@ path = "src/main.rs"
 name = "mkai"
 path = "src/mkai.rs"
 
+[features]
+portable-media = ["markitai-core/portable-media"]
+
 [dependencies]
 markitai-core.workspace = true
 serde.workspace = true

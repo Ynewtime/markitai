@@ -85,6 +85,9 @@ pub(super) fn run(cfg: &Value, path: Option<&Path>, json: bool, fix: bool) -> Cl
             }
         }
     }
+    if fix {
+        repair_failed |= !repair_ocr_models(cfg);
+    }
     let env = config::environment();
     let checks = checks(
         cfg,
@@ -250,6 +253,164 @@ fn local_ocr_check(available: bool, translated: bool) -> Check {
     check
 }
 
+/// The optional local OCR check of the portable engine: whether the model
+/// files the configured `ocr.lang` needs are installed. It never loads them.
+fn portable_ocr_check(models: markitai_core::Result<Vec<markitai_core::LocalOcrModel>>) -> Check {
+    let (status, message, hint, path) = match models {
+        Err(error) => (
+            "warning",
+            format!("Portable PaddleOCR engine (tract): {error}"),
+            "Set ocr.lang to a language the portable OCR models read".to_owned(),
+            None,
+        ),
+        Ok(models) => {
+            use markitai_core::LocalOcrModelState as State;
+            let folder = models
+                .first()
+                .and_then(|model| model.path.parent()?.parent())
+                .map(Path::to_path_buf);
+            let unsafe_paths: Vec<_> = models
+                .iter()
+                .filter(|model| model.state == State::Unsafe)
+                .collect();
+            let corrupt: Vec<_> = models
+                .iter()
+                .filter(|model| model.state == State::Corrupt)
+                .collect();
+            let missing: Vec<_> = models
+                .iter()
+                .filter(|model| model.state == State::Missing)
+                .collect();
+            if !unsafe_paths.is_empty() {
+                let detail = unsafe_paths
+                    .iter()
+                    .map(|model| model.detail.as_deref().unwrap_or("unsafe model path"))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                ("warning", format!("Portable PaddleOCR engine (tract): unsafe model path: {detail}"),
+                    "Restore an ordinary owned private models directory/file; doctor --fix refuses unsafe paths before downloading".to_owned(), folder)
+            } else if !corrupt.is_empty() {
+                let detail = corrupt
+                    .iter()
+                    .map(|model| model.detail.as_deref().unwrap_or("damaged model file"))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                ("warning", format!("Portable PaddleOCR engine (tract): {} damaged model file(s); {detail}; ordinary OCR will not overwrite them", corrupt.len()),
+                    "Run markitai doctor --fix to replace only damaged managed model files, after verifying each new size and SHA-256".to_owned(), folder)
+            } else if !missing.is_empty() {
+                let bytes: u64 = missing.iter().map(|model| model.bytes).sum();
+                ("warning", format!("Portable PaddleOCR engine (tract): {} of the {} model files the configured ocr.lang needs ({:.1} MB) are not installed; the first OCR downloads them", missing.len(), models.len(), bytes as f64 / 1e6),
+                    "Run markitai doctor --fix to download them now from the official PaddleOCR mirror (each verified by SHA-256)".to_owned(), folder)
+            } else {
+                (
+                    "ok",
+                    format!(
+                        "Portable PaddleOCR engine (tract): the {} model files the configured ocr.lang needs have verified size and SHA-256; this check does not load ONNX graphs or establish recognition accuracy",
+                        models.len()
+                    ),
+                    String::new(),
+                    folder,
+                )
+            }
+        }
+    };
+    let mut check = Check::new(
+        "Local OCR",
+        "Local image and rendered-page text recognition",
+        status,
+        message,
+        hint,
+    );
+    check.optional = Some(true);
+    check.path = path;
+    check
+}
+
+/// The local OCR check of the engine this process reads with.
+fn local_ocr(cfg: &Value) -> Check {
+    match markitai_core::local_ocr_models(cfg) {
+        Ok(None) => local_ocr_check(
+            markitai_core::local_ocr_available(),
+            markitai_core::rosetta_translated(),
+        ),
+        Ok(Some(models)) => portable_ocr_check(Ok(models)),
+        Err(error) => portable_ocr_check(Err(error)),
+    }
+}
+
+/// `doctor --fix` for the portable OCR engine: download the model files the
+/// configured `ocr.lang` needs that are missing or safely damaged. Returns
+/// false for unsafe paths or failed repair; an engine that needs nothing returns true.
+fn repair_ocr_models(cfg: &Value) -> bool {
+    let models = match markitai_core::local_ocr_models(cfg) {
+        Ok(None) => return true,
+        Ok(Some(models)) => models,
+        Err(error) => {
+            eprintln!(
+                "{}",
+                text!(
+                    "Local OCR model check failed: {error}",
+                    "本地 OCR 模型检查失败：{error}"
+                )
+            );
+            return false;
+        }
+    };
+    use markitai_core::LocalOcrModelState as State;
+    let missing: Vec<_> = models
+        .iter()
+        .filter(|model| model.state != State::Ready)
+        .collect();
+    if missing.is_empty() {
+        return true;
+    }
+    if let Some(unsafe_path) = models.iter().find(|model| model.state == State::Unsafe) {
+        let detail = unsafe_path.detail.as_deref().unwrap_or("unsafe model path");
+        eprintln!(
+            "{}",
+            text!(
+                "Local OCR model repair refused: {detail}",
+                "已拒绝修复本地 OCR 模型：{detail}"
+            )
+        );
+        return false;
+    }
+    let count = missing.len();
+    let megabytes = format!(
+        "{:.1}",
+        missing.iter().map(|model| model.bytes).sum::<u64>() as f64 / 1e6
+    );
+    eprintln!(
+        "{}",
+        text!(
+            "Downloading {count} local OCR model file(s) ({megabytes} MB) from the official PaddleOCR mirror into the private Markitai home...",
+            "正在从 PaddleOCR 官方镜像下载 {count} 个本地 OCR 模型文件（{megabytes} MB）到 Markitai 私有目录……"
+        )
+    );
+    match markitai_core::install_local_ocr_models(cfg) {
+        Ok(paths) => {
+            for path in paths {
+                let shown = path.display();
+                eprintln!(
+                    "{}",
+                    text!("Installed and verified {shown}", "已安装并验证 {shown}")
+                );
+            }
+            true
+        }
+        Err(error) => {
+            eprintln!(
+                "{}",
+                text!(
+                    "Local OCR model download failed: {error}",
+                    "本地 OCR 模型下载失败：{error}"
+                )
+            );
+            false
+        }
+    }
+}
+
 fn checks(
     cfg: &Value,
     path: Option<&Path>,
@@ -313,13 +474,7 @@ fn checks(
             .push_str("; native PDF rendering is unavailable on this platform");
     }
     result.insert("libreoffice", office);
-    result.insert(
-        "rapidocr",
-        local_ocr_check(
-            markitai_core::local_ocr_available(),
-            markitai_core::rosetta_translated(),
-        ),
-    );
+    result.insert("rapidocr", local_ocr(cfg));
     let mut legacy = Check::new(
         "Native Office readers",
         "Legacy Office text extraction (.doc/.ppt)",
@@ -709,6 +864,72 @@ mod tests {
             assert_eq!(check.optional, Some(true));
             assert!(!check.failed());
         }
+    }
+
+    #[test]
+    fn portable_ocr_reports_missing_models_with_the_fix_and_stays_optional() {
+        let model = |installed| {
+            markitai_core::LocalOcrModel::new(
+                "model".into(),
+                PathBuf::from("/home/models/ocr/model-0123abcd/model.onnx"),
+                2_000_000,
+                if installed {
+                    markitai_core::LocalOcrModelState::Ready
+                } else {
+                    markitai_core::LocalOcrModelState::Missing
+                },
+                None,
+            )
+        };
+        let ready = portable_ocr_check(Ok(vec![model(true), model(true)]));
+        assert_eq!(ready.status, "ok");
+        assert!(ready.message.contains("PaddleOCR") && ready.install_hint.is_empty());
+        assert_eq!(ready.path, Some(PathBuf::from("/home/models/ocr")));
+        let missing = portable_ocr_check(Ok(vec![model(true), model(false)]));
+        assert_eq!(missing.status, "warning");
+        assert!(
+            missing.message.contains("1 of the 2 model files")
+                && missing.message.contains("(2.0 MB)"),
+            "{}",
+            missing.message
+        );
+        assert!(missing.install_hint.contains("markitai doctor --fix"));
+        let wrong = portable_ocr_check(Err(markitai_core::Error::Unsupported(
+            "ocr.lang is not a language the portable OCR models read (xx)".into(),
+        )));
+        assert_eq!(wrong.status, "warning");
+        assert!(wrong.message.contains("(xx)"));
+        for check in [ready, missing, wrong] {
+            assert_eq!(check.optional, Some(true));
+            assert!(!check.failed());
+        }
+    }
+
+    #[test]
+    fn portable_ocr_names_damaged_and_unsafe_files_without_a_false_language_hint() {
+        use markitai_core::{LocalOcrModel, LocalOcrModelState as State};
+        let model = |state| {
+            LocalOcrModel::new(
+                "fixture".into(),
+                PathBuf::from("/home/models/ocr/fixture/model.onnx"),
+                10,
+                state,
+                Some("/home/models/ocr/fixture/model.onnx: exact path reason".into()),
+            )
+        };
+        let corrupt = portable_ocr_check(Ok(vec![model(State::Corrupt)]));
+        assert_eq!(corrupt.status, "warning");
+        assert!(
+            corrupt.message.contains("damaged") && corrupt.message.contains("exact path reason")
+        );
+        assert!(corrupt.install_hint.contains("doctor --fix"));
+        let unsafe_path = portable_ocr_check(Ok(vec![model(State::Unsafe)]));
+        assert!(
+            unsafe_path.message.contains("unsafe model path")
+                && unsafe_path.message.contains("exact path reason")
+        );
+        assert!(!unsafe_path.install_hint.contains("ocr.lang"));
+        assert!(unsafe_path.install_hint.contains("refuses unsafe paths"));
     }
 
     fn checks_of(states: &[(&'static str, &'static str, bool)]) -> IndexMap<&'static str, Check> {

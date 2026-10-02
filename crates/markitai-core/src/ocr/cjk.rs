@@ -1,6 +1,9 @@
 //! Chinese, Japanese and Korean recognition aids: a second, enlarged reading
 //! of small text or of text the recognizer missed entirely, and recovery of
 //! characters it drops inside a line.
+// Off macOS only the portable engine's reading order uses this module (its
+// letter classes); the aids themselves serve Vision.
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 use super::Line;
 

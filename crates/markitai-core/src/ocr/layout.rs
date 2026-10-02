@@ -2,6 +2,9 @@
 //! text runs sideways or upside down upright, finding table cells that a
 //! reading missed or garbled so that `vision` can read them again, mending
 //! zeros read as look-alike letters, and keeping the indentation of code.
+// Off macOS the portable engine uses the turned pages, zeros, code and
+// joining steps; the readings again of table cells serve Vision.
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 use super::{Line, cjk};
 

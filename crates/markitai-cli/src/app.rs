@@ -338,14 +338,14 @@ enum Command {
             an active model whose credentials are missing, a configured browser workflow\n\
             that cannot launch, an unavailable subscription runtime, or a failed --fix\n\
             repair. No model request is sent and no remote page is opened.",
-        after_help = "Examples:\n  markitai doctor           Human-readable report\n  markitai doctor --json    Machine-readable checks\n  markitai doctor --fix     Install a browser when no working one is found"
+        after_help = "Examples:\n  markitai doctor           Human-readable report\n  markitai doctor --json    Machine-readable checks\n  markitai doctor --fix     Install a missing browser and required local OCR models"
     )]
     Doctor {
         #[arg(long)]
         /// Print the checks as one JSON object.
         json: bool,
         #[arg(long)]
-        /// Install the official Chrome headless shell when no working browser is found.
+        /// Install the official Chrome headless shell when missing, and install or repair local OCR models.
         fix: bool,
         #[arg(long)]
         /// Python package extras; not applicable to this native build and rejected.

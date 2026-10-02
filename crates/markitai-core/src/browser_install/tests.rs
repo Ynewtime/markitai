@@ -1,4 +1,5 @@
 use super::*;
+use sha2::{Digest, Sha256};
 use std::io::Cursor;
 
 fn manifest(url: &str) -> Vec<u8> {
