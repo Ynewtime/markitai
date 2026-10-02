@@ -86,6 +86,7 @@
 
 ### 修复
 
+- 模型请求被拒绝时，错误信息除状态码外还给出已识别的原因：`LLM returned HTTP 403: the model is not available in this region`（地区限制；只看 403 会被误认为凭据问题）、`…: the account's quota or billing does not allow this request` 与 `…: the model is unavailable`。因地区限制被跳过的部署如实说明原因，不再报告认证失败；`serve` 的连接测试给出相同的原因，网页工作台显示对应的翻译。提供方的原始措辞仍不会出现在错误中。在 OpenRouter 对测试者所在地区拒绝全部模型时发现。
 - 路径含非 ASCII 字符的网址输出文件名可读：`https://…/人是什么单位` 写成 `人是什么单位.md`，不再是 `%E4%BA%BA….md`（路径段能解码为 UTF-8 时做百分号解码，编码的斜杠与控制字符仍会被替换）。只要求 OCR、未要求截图时，没有 LibreOffice 的机器上 Office 文档改用文档自身文字转换并给出警告，不再失败，因此对整个目录使用 `--ocr` 时 Office 文件也能转换。
 - 模型组中某个部署认证失败（不含计费标记的 HTTP 401/403、未登录的订阅运行时）时，整组仍可继续工作：该部署在本次运行的剩余时间内被跳过并给出一次警告，请求立即改由同组其它部署处理，不占用重试次数；只有全部部署都被拒时才报错并照常转入配置的回退组。计费类失败仍会停止操作，只有一个部署的组行为不变。此问题由真实提供方验证发现：四个部署中一个订阅未登录，就让文档得不到增强。
 - 非 UTF-8 的 HTML、文本与 CSV 能正确解码，不再被当成 Windows-1252 变成乱码：HTML 遵循 BOM 与标准的 `<meta charset>`/`http-equiv` 预扫描（没有 charset 响应头的抓取页面也一样，响应头中的 charset 仍然优先）；没有 BOM 的 TXT、Markdown、CSV 与 TSV 会保守地检测 GB18030/GBK、Big5、Shift_JIS、EUC-JP 与 EUC-KR，并与西文读法比较，无法确定时给出警告。西文单字节文件与所有 UTF-8 语料不变。

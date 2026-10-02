@@ -1,5 +1,5 @@
 //! A probe uses the conversion protocol but not its retry or fallback router.
-use super::{Deployment, Prompts, Protocol, deployments, payload};
+use super::{Deployment, Prompts, Protocol, deployments, payload, refusal_reason};
 use crate::{Error, Result, provider_management};
 use reqwest::{blocking::Client, redirect::Policy};
 use serde_json::{Value, json};
@@ -150,12 +150,16 @@ fn perform(entry: &Deployment) -> Result<()> {
             "Model connection request failed"
         })
     })?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(failure(&format!(
-            "Model connection returned HTTP {}",
-            status.as_u16()
-        )));
+    let status = response.status().as_u16();
+    if !(200..300).contains(&status) {
+        // The body only selects a fixed explanation; it is never shown.
+        let mut bytes = Vec::new();
+        let _ = response.take(64 * 1024).read_to_end(&mut bytes);
+        let body = String::from_utf8_lossy(&bytes).to_ascii_lowercase();
+        return Err(failure(&match refusal_reason(status, &body) {
+            Some(reason) => format!("Model connection returned HTTP {status}: {reason}"),
+            None => format!("Model connection returned HTTP {status}"),
+        }));
     }
     if response
         .content_length()

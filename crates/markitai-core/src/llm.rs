@@ -1396,8 +1396,14 @@ fn run_mode(
                 if let Err(failure) = &response {
                     if shared && failure.kind == FailureKind::Authentication {
                         if runtime.routing().exclude(routing_keys[selected]) {
+                            let refusal = if failure.error.to_string().ends_with(REGION_UNAVAILABLE)
+                            {
+                                "is not available in this region"
+                            } else {
+                                "failed authentication"
+                            };
                             note_document_warning(format!(
-                                "LLM deployment {} failed authentication and is skipped for this run",
+                                "LLM deployment {} {refusal} and is skipped for this run",
                                 entries[selected].id
                             ));
                         }
@@ -1625,15 +1631,7 @@ fn request_with_mode(
             record_usage(usage, entry, &data);
         }
         let body = String::from_utf8_lossy(&bytes).to_ascii_lowercase();
-        let fatal = status == 402
-            || [
-                "insufficient_quota",
-                "exceeded your current quota",
-                "billing",
-                "payment",
-            ]
-            .iter()
-            .any(|pattern| body.contains(pattern));
+        let fatal = quota_refused(status, &body);
         let model_unavailable = [
             "model not found",
             "model_not_found",
@@ -1660,7 +1658,10 @@ fn request_with_mode(
             } else {
                 FailureKind::Transport
             },
-            error: Error::Conversion(format!("LLM returned HTTP {status}")),
+            error: Error::Conversion(match refusal_reason(status, &body) {
+                Some(reason) => format!("LLM returned HTTP {status}: {reason}"),
+                None => format!("LLM returned HTTP {status}"),
+            }),
             retryable: !fatal
                 && (matches!(status, 408 | 409 | 429 | 500..=599) || model_unavailable),
             fatal,
@@ -1734,6 +1735,49 @@ fn request_with_mode(
             document_fatal: false,
             retry_after: None,
         })
+}
+
+const REGION_UNAVAILABLE: &str = "the model is not available in this region";
+
+/// A billing, payment or exhausted-quota refusal, which stops the operation.
+fn quota_refused(status: u16, body: &str) -> bool {
+    status == 402
+        || [
+            "insufficient_quota",
+            "exceeded your current quota",
+            "billing",
+            "payment",
+        ]
+        .iter()
+        .any(|pattern| body.contains(pattern))
+}
+
+/// A fixed phrase for a refusal whose lowercased provider body names a
+/// recognized cause, such as a regional block that a 403 status alone would
+/// present as a credential problem. The provider's own wording never reaches
+/// public errors, because it can echo document text or credentials.
+fn refusal_reason(status: u16, body: &str) -> Option<&'static str> {
+    let names = |patterns: &[&str]| patterns.iter().any(|pattern| body.contains(pattern));
+    if names(&[
+        "not available in your region",
+        "not available in your country",
+        "user location is not supported",
+        "unsupported_country_region_territory",
+        "country, region, or territory not supported",
+    ]) {
+        Some(REGION_UNAVAILABLE)
+    } else if quota_refused(status, body) {
+        Some("the account's quota or billing does not allow this request")
+    } else if names(&[
+        "model not found",
+        "model_not_found",
+        "model is not available",
+        "model_not_available",
+    ]) {
+        Some("the model is unavailable")
+    } else {
+        None
+    }
 }
 
 fn metric_read_timeout(error: &std::io::Error) -> bool {

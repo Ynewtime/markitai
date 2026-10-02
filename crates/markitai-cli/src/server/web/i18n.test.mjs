@@ -98,8 +98,9 @@ test('the English phrases the page recognizes are still the ones the core and se
   const rust = tree('../../../../markitai-core/src/') + tree('../');
   for (const phrase of [
     'No model configured', 'Unsupported file format: ', ' Supported extensions: ', 'Local OCR requires macOS', 'Local OCR backend is unavailable',
-    'LLM returned HTTP {status}', 'LLM request timed out', 'LLM request failed', 'HTTP {}', 'Remote fetching is disabled by policy', 'URL returned no extractable content',
-    'Model connection test timed out', 'Model connection request failed', 'Model connection returned HTTP {}', 'An API endpoint is required', '{} responded',
+    'LLM returned HTTP {status}', 'the model is not available in this region', "the account's quota or billing does not allow this request", 'the model is unavailable',
+    'LLM request timed out', 'LLM request failed', 'HTTP {}', 'Remote fetching is disabled by policy', 'URL returned no extractable content',
+    'Model connection test timed out', 'Model connection request failed', 'Model connection returned HTTP {status}', 'An API endpoint is required', '{} responded',
     'Model credentials or endpoint configuration are invalid or unavailable', 'This model provider is not supported by the native runtime', 'Model connection test failed',
     'Model discovery failed; check endpoint', 'Refresh failed; showing previously discovered models', 'Model discovery wait timed out', 'Too many model discovery requests are active',
     'Models reported by the authenticated official Copilot runtime', 'Official Copilot runtime or authentication is unavailable',
@@ -123,6 +124,10 @@ test('item errors are localized by recognizable shape or code, with the original
     [{error: 'operation timed out', kind: 'url'}, 'Fetching this page took too long.'],
     [{error: 'Office export timed out', kind: 'file'}, 'The conversion took too long and was stopped.'],
     [{error: 'LLM returned HTTP 401', error_code: 'conversion_error'}, 'The provider rejected the credentials (HTTP 401). Check the API key.'],
+    [{error: 'LLM returned HTTP 403: the model is not available in this region'}, 'The provider does not offer this model in your region (HTTP 403). Choose another provider or model.'],
+    [{error: "LLM returned HTTP 429: the account's quota or billing does not allow this request"}, 'The provider account has no remaining quota or needs billing set up (HTTP 429).'],
+    [{error: 'LLM returned HTTP 404: the model is unavailable'}, 'The provider does not offer this model (HTTP 404). Check the model identifier.'],
+    [{error: 'LLM returned HTTP 403: something new'}, 'The provider rejected the credentials (HTTP 403). Check the API key.'],
     [{error: 'LLM request timed out'}, 'The model did not respond in time.'],
     [{error: 'LLM returned no text'}, 'The model could not complete this document.'],
     [{error: 'Input exceeds the 500 MiB limit', error_code: 'invalid_input'}, 'The input is larger than a supported limit (500 MiB).'],
@@ -144,6 +149,7 @@ test('item errors are localized by recognizable shape or code, with the original
   assert.deepEqual(unsupported, {text: "This file type is not supported: '.xyz'.", detail: '', formats: '.csv .docx .pdf'});
   inZh(() => {
     assert.equal(itemErrorMessage({error: 'HTTP 404', kind: 'url'}).text, '网页不存在（HTTP 404）。');
+    assert.equal(itemErrorMessage({error: 'LLM returned HTTP 403: the model is not available in this region'}).text, '服务商在你所在的地区不提供这个模型（HTTP 403）。请换用其它服务商或模型。');
     assert.equal(itemErrorMessage({error: 'cancelled (stopped by request)', error_code: 'cancelled'}).text, '在开始转换前已停止。可以重试。');
     assert.equal(itemErrorMessage({error: "Unsupported file format: '.xyz'. Supported extensions: .csv.", error_code: 'unsupported'}).text, "不支持这种文件类型：'.xyz'。");
     assert.equal(itemErrorMessage({error: 'Native PDF conversion failed: broken xref', error_code: 'conversion_error'}).text, '无法转换这个文档。');
@@ -153,6 +159,7 @@ test('item errors are localized by recognizable shape or code, with the original
 test('provider probe and discovery phrases are translated; proper nouns and unknown text are kept', () => {
   assert.deepEqual(serviceNote('openai/gpt-x responded'), {text: 'openai/gpt-x responded.', detail: 'openai/gpt-x responded'});
   assert.equal(serviceNote('Model connection returned HTTP 404').text, 'The model or its endpoint was not found (HTTP 404). Check the model identifier and base URL.');
+  assert.deepEqual(serviceNote('Model connection returned HTTP 403: the model is not available in this region'), {text: 'The provider does not offer this model in your region (HTTP 403). Choose another provider or model.', detail: 'Model connection returned HTTP 403: the model is not available in this region'});
   assert.equal(serviceNote('Model connection test timed out').text, 'The model did not respond in time.');
   assert.equal(serviceNote('Model connection response is not valid JSON').text, 'The model endpoint returned a response that could not be read.');
   assert.equal(serviceNote('Model discovery failed; check endpoint, credentials and provider availability').text, 'Model discovery failed. Check the endpoint, credentials and provider availability.');

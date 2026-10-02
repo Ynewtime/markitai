@@ -33,12 +33,13 @@ impl Permit {
                     "Copilot process admission deadline exceeded",
                 ));
             }
-            if ACTIVE_PROCESSES
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            // Rust 1.99 renames this `try_update`; the minimum supported Rust predates the new name.
+            #[allow(deprecated)]
+            let admitted =
+                ACTIVE_PROCESSES.fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                     (count < 8).then_some(count + 1)
-                })
-                .is_ok()
-            {
+                });
+            if admitted.is_ok() {
                 return Ok(Self);
             }
             std::thread::sleep(TICK);

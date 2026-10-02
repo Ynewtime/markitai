@@ -63,6 +63,14 @@ Markdown is still written because `llm.on_failure` defaults to `fallback`; set
 it to `fail` to make this an error. Put the key in the environment, in `.env`
 in the current directory, or in `MARKITAI_HOME/.env` (`~/.markitai/.env`).
 
+**`LLM returned HTTP 403: the model is not available in this region`.** The
+provider refuses this model for the network's region; the key itself may be
+valid. OpenRouter does this for some models. Use another provider or model, or
+pin one with `MODEL`. When ambient keys form the model pool, the blocked
+deployment is skipped for the run with one warning and the others serve the
+documents. A bare `LLM returned HTTP 401` or `403` usually means a rejected key
+or a missing permission.
+
 **`Warning: Some observed LLM requests could not be priced`.** The model or
 endpoint is not in the bundled [price catalog](pricing.md), so `cost_usd` only
 counts the requests whose price is known. It does not mean the call was free.

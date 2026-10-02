@@ -262,6 +262,9 @@ const en = {
   errModelRate: 'The provider is limiting requests (HTTP {status}). Try again later.',
   errModelServer: 'The provider had a server error (HTTP {status}).',
   errModelHttp: 'The provider answered HTTP {status}.',
+  errModelRegion: 'The provider does not offer this model in your region (HTTP {status}). Choose another provider or model.',
+  errModelQuota: 'The provider account has no remaining quota or needs billing set up (HTTP {status}).',
+  errModelUnavailable: 'The provider does not offer this model (HTTP {status}). Check the model identifier.',
   errHistoryNotSaved: 'This job could not be saved to history. Its finished files stay available until the service stops.',
   errRollback: 'Restoring the previous result failed. Restart the service to recover it.',
   probeOk: '{model} responded.',
@@ -538,6 +541,9 @@ const zh = {
   errModelRate: '服务商限制了请求频率（HTTP {status}），请稍后再试。',
   errModelServer: '服务商服务器出错（HTTP {status}）。',
   errModelHttp: '服务商返回 HTTP {status}。',
+  errModelRegion: '服务商在你所在的地区不提供这个模型（HTTP {status}）。请换用其它服务商或模型。',
+  errModelQuota: '服务商账户的额度已用完或需要开通付费（HTTP {status}）。',
+  errModelUnavailable: '服务商不提供这个模型（HTTP {status}）。请检查模型标识。',
   errHistoryNotSaved: '这个任务无法保存到历史。已完成的文件在服务停止前仍可下载。',
   errRollback: '恢复先前结果失败。请重启服务进行恢复。',
   probeOk: '{model} 已响应。',
@@ -620,11 +626,18 @@ function httpKey(prefix, status) {
   const code = Number(status);
   return prefix + (code === 404 || code === 410 ? 'NotFound' : code === 401 || code === 403 ? 'Denied' : code === 429 ? 'Rate' : code >= 500 ? 'Server' : 'Http');
 }
+// The fixed causes the core appends to a model's HTTP refusal.
+const MODEL_REASONS = {
+  'the model is not available in this region': 'errModelRegion',
+  "the account's quota or billing does not allow this request": 'errModelQuota',
+  'the model is unavailable': 'errModelUnavailable',
+};
+const modelHttp = match => [MODEL_REASONS[match[2]] || httpKey('errModel', match[1]), {status: match[1]}];
 // First match wins, so specific shapes come before general ones.
 const ITEM_SHAPES = [
   [/^No model configured\b/, () => ['errNoModel']],
   [/^Local OCR (?:requires|backend is unavailable|of multi-page)|^PDF OCR is not implemented/, () => ['errOcrUnavailable']],
-  [/^LLM returned HTTP (\d{3})\b/, match => [httpKey('errModel', match[1]), {status: match[1]}]],
+  [/^LLM returned HTTP (\d{3})\b(?:: (.+))?/, modelHttp],
   [/^LLM request timed out/, () => ['errModelTimeout']],
   [/^LLM request failed$/, () => ['probeUnreachable']],
   [/^LLM enhancement did not produce/, () => ['errEnhanceNoResult']],
@@ -640,7 +653,7 @@ const ITEM_SHAPES = [
 const NOTE_SHAPES = [
   [/^Model connection test timed out$/, () => ['errModelTimeout']],
   [/^Model connection request failed$/, () => ['probeUnreachable']],
-  [/^Model connection returned HTTP (\d{3})$/, match => [httpKey('errModel', match[1]), {status: match[1]}]],
+  [/^Model connection returned HTTP (\d{3})(?:: (.+))?$/, modelHttp],
   [/^Model credentials or endpoint configuration are invalid or unavailable$/, () => ['probeConfig']],
   [/^This model provider is not supported by the native runtime$/, () => ['probeUnsupported']],
   [/^(?:Model connection test failed|Cannot create model connection client)$/, () => ['probeFailed']],
@@ -672,7 +685,7 @@ function shaped(text, shapes, kind) {
 }
 // Every dictionary key the tables above can produce, for the dictionary tests.
 export function messageKeys() {
-  const keys = new Set([...Object.values(API_REASONS), ...Object.values(API_CODES), ...Object.values(ITEM_CODES), ...Object.values(PERSISTENCE)]);
+  const keys = new Set([...Object.values(API_REASONS), ...Object.values(API_CODES), ...Object.values(ITEM_CODES), ...Object.values(PERSISTENCE), ...Object.values(MODEL_REASONS)]);
   for (const prefix of ['errPage', 'errModel']) for (const kind of HTTP_KINDS) keys.add(prefix + kind);
   for (const shapes of [ITEM_SHAPES, NOTE_SHAPES]) for (const [, pick] of shapes) for (const kind of ['file', 'url']) keys.add(pick(['', '200'], kind)[0]);
   return [...keys];

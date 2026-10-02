@@ -25,12 +25,12 @@ impl Permit {
     fn acquire(deadline: Instant, cancel: Option<&AtomicBool>) -> Result<Self, Failure> {
         loop {
             check(deadline, cancel)?;
-            if ACTIVE
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
-                    (n < 8).then_some(n + 1)
-                })
-                .is_ok()
-            {
+            // Rust 1.99 renames this `try_update`; the minimum supported Rust predates the new name.
+            #[allow(deprecated)]
+            let admitted = ACTIVE.fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+                (n < 8).then_some(n + 1)
+            });
+            if admitted.is_ok() {
                 return Ok(Self);
             }
             std::thread::sleep(TICK);

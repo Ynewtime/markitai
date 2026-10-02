@@ -207,6 +207,75 @@ fn billing_failures_stay_terminal_and_exclude_nothing() {
 }
 
 #[test]
+fn recognized_refusals_name_a_fixed_cause_but_never_the_provider_wording() {
+    // OpenRouter answers a regional block with 403, which is not a credential problem.
+    let region = json!({"error":{"message":"This model is not available in your region. private-token","code":403}});
+    let blocked = Repeat::new(403, region.clone());
+    let good = Repeat::new(200, success("# cleaned"));
+    let mut cfg = pool(&[
+        ("openai/blocked", &blocked.base, FIRST),
+        ("openai/good", &good.base, 1),
+    ]);
+    cfg["llm"]["router_settings"]["num_retries"] = json!(0);
+    let (result, warnings) = document(&cfg, &LlmRuntime::new(1).unwrap());
+    assert_eq!(result.unwrap().0, "# cleaned");
+    assert_eq!(
+        warnings,
+        [
+            "LLM deployment openai/blocked is not available in this region and is skipped for this run"
+        ]
+    );
+
+    let quota = "the account's quota or billing does not allow this request";
+    for (status, body, reason) in [
+        (403, region, REGION_UNAVAILABLE),
+        (
+            403,
+            json!({"error":{"code":"unsupported_country_region_territory","message":"Country, region, or territory not supported"}}),
+            REGION_UNAVAILABLE,
+        ),
+        (
+            400,
+            json!({"error":{"status":"FAILED_PRECONDITION","message":"User location is not supported for the API use."}}),
+            REGION_UNAVAILABLE,
+        ),
+        (
+            429,
+            json!({"error":{"code":"insufficient_quota","message":"You exceeded your current quota. private-token"}}),
+            quota,
+        ),
+        (
+            404,
+            json!({"error":{"code":"model_not_found","message":"The model private-token does not exist"}}),
+            "the model is unavailable",
+        ),
+    ] {
+        let only = Repeat::new(status, body);
+        let mut cfg = pool(&[("openai/only", &only.base, 1)]);
+        cfg["llm"]["router_settings"]["num_retries"] = json!(0);
+        let (result, _) = document(&cfg, &LlmRuntime::new(1).unwrap());
+        let error = result.unwrap_err().to_string();
+        assert!(
+            error.contains(&format!("LLM returned HTTP {status}: {reason}")),
+            "{error}"
+        );
+        assert!(!error.contains("private-token"), "{error}");
+    }
+    // Unrecognized bodies keep the bare status.
+    let only = Repeat::new(401, refused());
+    let (result, _) = document(
+        &pool(&[("openai/only", &only.base, 1)]),
+        &LlmRuntime::new(1).unwrap(),
+    );
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .ends_with("LLM returned HTTP 401")
+    );
+}
+
+#[test]
 fn a_group_of_one_deployment_keeps_its_previous_policy() {
     let only = Repeat::new(401, refused());
     let cfg = pool(&[("openai/only", &only.base, 1)]);

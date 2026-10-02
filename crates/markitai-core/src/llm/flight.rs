@@ -97,15 +97,16 @@ impl Owner {
         if serde_json::to_writer(&mut count, &value).is_err() {
             return;
         }
-        if self
-            .table
-            .retained
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
-                used.checked_add(count.0)
-                    .filter(|total| *total <= MAX_RETAINED)
-            })
-            .is_err()
-        {
+        // Rust 1.99 renames this `try_update`; the minimum supported Rust predates the new name.
+        #[allow(deprecated)]
+        let reserved =
+            self.table
+                .retained
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+                    used.checked_add(count.0)
+                        .filter(|total| *total <= MAX_RETAINED)
+                });
+        if reserved.is_err() {
             return;
         }
         let stored = Arc::new(Stored {

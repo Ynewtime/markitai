@@ -206,7 +206,12 @@ The client applies configured request timeouts and a connect timeout capped at
 15 seconds. Redirects are rejected so credentials cannot be forwarded to an
 unexpected endpoint. Provider error bodies are inspected for retry classification
 and structured token usage; they are never included in public errors. Public request errors
-omit URLs, authorization headers, document text and response payloads.
+omit URLs, authorization headers, document text and response payloads. A refusal
+whose body names a recognized cause gets a fixed phrase after its status instead:
+`LLM returned HTTP 403: the model is not available in this region`,
+`…: the account's quota or billing does not allow this request` or
+`…: the model is unavailable`. The model connection test in `serve` words its
+refusals the same way.
 
 ## Retries, budgets and usage
 
@@ -228,7 +233,8 @@ each attempt still counts toward `llm.max_requests_per_document` and paid usage
 on the refused response is recorded as usual. Each excluded deployment produces
 one warning per run that names its configured model, never a credential or
 endpoint, for example `LLM deployment openai/gpt-5.6-luna failed authentication
-and is skipped for this run`. Only when every deployment of the group is excluded
+and is skipped for this run`; a deployment refused for a regional block is
+`… is not available in this region and is skipped for this run`. Only when every deployment of the group is excluded
 does the authentication error stand; configured fallback groups then run as
 usual, and later requests fail that group without a network call. A group with a
 single deployment identity keeps the earlier rule: its authentication failure is

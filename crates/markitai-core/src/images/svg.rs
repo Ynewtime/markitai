@@ -245,6 +245,8 @@ fn render_document(
                     }
                     let (image, _) = super::decode(&bytes)?;
                     let pixels = u64::from(image.width()) * u64::from(image.height());
+                    // Rust 1.99 renames this `try_update`; the minimum supported Rust predates the new name.
+                    #[allow(deprecated)]
                     embedded_pixels
                         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
                             used.checked_add(pixels).filter(|sum| *sum <= MAX_PIXELS)
