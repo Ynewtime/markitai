@@ -49,15 +49,17 @@ class StateAuditTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             cases = fixtures(Path(temporary) / 'cases')
             self.assertEqual(len(cases), 13)
-            states = {case['name']: json.loads(Path(case['fixture']).read_text()) for case in cases}
+            states = {case['name']: json.loads(Path(case['fixture']).read_text(encoding='utf-8')) for case in cases}
             self.assertTrue(next(iter(states['named_urls']['urls'])).endswith('/z first'))
             presence = list(states['source_presence']['urls'].values())
             self.assertNotIn('source_file', presence[0])
             self.assertIsNone(presence[1]['source_file'])
             self.assertNotIn('options', states['missing_options'])
+            alias_output = Path(states['alias_paths']['options']['output_dir'])
+            self.assertTrue(alias_output.samefile(alias_output.parent / 'out'))
             self.assertTrue(any(case['mode'] == 'url_list' and case['input'].endswith('links.urls') for case in cases))
             self.assertFalse(Path(states['relative_paths']['documents']['pending.txt']['target']).is_absolute())
-            replay = {case['name']: Path(case['journal']).read_text() for case in cases if case['journal']}
+            replay = {case['name']: Path(case['journal']).read_text(encoding='utf-8') for case in cases if case['journal']}
             self.assertEqual(len(replay), 4)
             self.assertIn('{broken-json', replay['replay_syntax_unknown'])
             self.assertIn('"data": 7', replay['replay_syntax_unknown'])

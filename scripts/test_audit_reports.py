@@ -1,4 +1,5 @@
 import copy
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,7 +25,7 @@ class ReportEvidenceTests(unittest.TestCase):
             result = normalize(source, root, 'http://127.0.0.1:1')
             self.assertEqual(source, original)
             self.assertEqual(result['generated_at'], '<TIME>')
-            self.assertEqual(result['documents']['item']['output'], '<ROOT>/out.md')
+            self.assertEqual(result['documents']['item']['output'], '<ROOT>' + os.sep + 'out.md')
             self.assertEqual(result['documents']['item']['llm_usage'], {'duration': 42})
             self.assertEqual(result['extra'], source['extra'])
             self.assertEqual(result['options']['extra'], str(root/'keep'))

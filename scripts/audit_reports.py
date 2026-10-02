@@ -23,7 +23,7 @@ def sha(path):
 
 
 def write(path, value):
-    Path(path).write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n')
+    Path(path).write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 
 
 def guards(port):
@@ -75,7 +75,7 @@ def guards(port):
 
 
 def reference_worker(request_path):
-    request = json.loads(request_path.read_text())
+    request = json.loads(request_path.read_text(encoding='utf-8'))
     state = guards(request['port'])
     hard_exit = os._exit
     def audited_exit(code):
@@ -267,13 +267,13 @@ def main():
                 identity_data = {'input': str(Path(identity).resolve()), 'output': str(out.resolve()), 'options': options}
                 expected_hash = hashlib.md5(json.dumps(identity_data, sort_keys=True).encode(), usedforsecurity=False).hexdigest()[:6]
                 if reports[0].name != f'markitai.{expected_hash}.report.json': raise RuntimeError(f'{name}/{engine}: task hash differs')
-                raw = json.loads(reports[0].read_text())
+                raw = json.loads(reports[0].read_text(encoding='utf-8'))
                 normalized = normalize(raw, sandbox, origin)
                 write(sandbox/'normalized.json', normalized)
                 saved[engine] = {'report': str(reports[0]), 'sha256': sha(reports[0]), 'normalized': normalized,
                                  'top_level_order': list(raw), 'stdout_sha256': sha(sandbox/'stdout'),
                                  'input_hashes': input_hashes, 'config_sha256': sha(cfg_path), 'argv': argv}
-                if engine == 'reference': saved[engine]['guard'] = json.loads((sandbox/'guard.json').read_text())
+                if engine == 'reference': saved[engine]['guard'] = json.loads((sandbox/'guard.json').read_text(encoding='utf-8'))
             paths = differing(saved['reference']['normalized'], saved['native']['normalized'])
             ordering = order_differences(saved['reference']['normalized'], saved['native']['normalized'])
             report['cases'].append({'name': name, 'equal': not paths and not ordering, 'different_paths': paths, 'different_order_paths': ordering,

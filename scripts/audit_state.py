@@ -70,7 +70,15 @@ def fixtures(root):
             }
         if name == 'alias_paths':
             alias = work / 'out-alias'
-            alias.symlink_to(output, target_is_directory=True)
+            try:
+                alias.symlink_to(output, target_is_directory=True)
+            except OSError as error:
+                # Directory junctions exercise the same aliased parent without
+                # requiring Windows Developer Mode or the symlink privilege.
+                if os.name != 'nt' or error.winerror != 1314:
+                    raise
+                subprocess.run(['cmd.exe', '/d', '/c', 'mklink', '/J', str(alias), str(output)],
+                               check=True, stdout=subprocess.DEVNULL)
             for entry in state['documents'].values():
                 for field in ('output', 'target'):
                     if field in entry: entry[field] = str(alias / Path(entry[field]).relative_to(output))
@@ -119,7 +127,7 @@ def fixtures(root):
 
 
 def reference_worker(path):
-    request = json.loads(path.read_text())
+    request = json.loads(path.read_text(encoding='utf-8'))
     state = guards(0)
     sys.path.insert(0, str(Path(request['reference']) / 'packages/markitai/src'))
     try:
@@ -135,7 +143,7 @@ def reference_worker(path):
             state_value = identity.load_state()
             if state_value is None: raise RuntimeError('Reference could not load authored legacy state')
         else:
-            value = json.loads(Path(request['fixture']).read_text())
+            value = json.loads(Path(request['fixture']).read_text(encoding='utf-8'))
             state_value = BatchState.from_dict(value)
         snapshot = order_state(state_value.to_minimal_dict())
         write(request['result'], {'hash': identity._compute_task_hash(), 'snapshot': snapshot})
@@ -199,10 +207,10 @@ def main():
                 (private / 'stdout').write_bytes(process.stdout); (private / 'stderr').write_bytes(process.stderr)
                 if process.returncode: raise RuntimeError(f'{case["name"]}/{engine} exited {process.returncode}; inspect saved stderr')
                 saved = Path(request['result'])
-                engines[engine] = {'result': json.loads(saved.read_text()), 'result_path': str(saved),
+                engines[engine] = {'result': json.loads(saved.read_text(encoding='utf-8')), 'result_path': str(saved),
                                    'sha256': sha(saved), 'request_sha256': sha(request_path), 'command': command,
                                    'stdout_sha256': sha(private / 'stdout'), 'stderr_sha256': sha(private / 'stderr')}
-                if engine == 'reference': engines[engine]['guard'] = json.loads((private / 'guard.json').read_text())
+                if engine == 'reference': engines[engine]['guard'] = json.loads((private / 'guard.json').read_text(encoding='utf-8'))
             if sha(case['fixture']) != before: raise RuntimeError('Authored state fixture changed')
             if case['journal'] and sha(case['journal']) != journal_before: raise RuntimeError('Authored journal fixture changed')
             verdict = compare(engines['reference']['result'], engines['native']['result'])
