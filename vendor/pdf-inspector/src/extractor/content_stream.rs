@@ -2905,6 +2905,12 @@ pub(crate) fn read_page_runs(
                                 height: h_dev,
                                 page: page_num,
                             });
+                        } else if let Some(side) = thin_vertical_fill(&segs, &ctm, page_num) {
+                            // markitai: a bevelled or sub-point cell side
+                            // (`border="1"` in Chrome) is no rect, but it
+                            // still tells the underline pass a border rises
+                            // there. Table detection does not see it.
+                            underline_lines.push(side);
                         }
                     }
                 }
@@ -3266,6 +3272,35 @@ fn correct_rotated_page(
     }
 
     (items, rects, lines, rotation)
+}
+
+/// A filled four-sided path at most 2pt wide and taller than 2pt in device
+/// space, as the vertical stroke it paints for the underline pass.
+fn thin_vertical_fill(
+    segments: &[(f32, f32, f32, f32)],
+    ctm: &[f32; 6],
+    page: u32,
+) -> Option<UnderlineLine> {
+    let (mut x_lo, mut x_hi, mut y_lo, mut y_hi) =
+        (f32::INFINITY, f32::NEG_INFINITY, f32::INFINITY, f32::NEG_INFINITY);
+    for &(x1, y1, x2, y2) in segments {
+        for (x, y) in [(x1, y1), (x2, y2)] {
+            let (x, y) = transform_path_point(x, y, ctm);
+            x_lo = x_lo.min(x);
+            x_hi = x_hi.max(x);
+            y_lo = y_lo.min(y);
+            y_hi = y_hi.max(y);
+        }
+    }
+    let width = x_hi - x_lo;
+    (width.is_finite() && width <= 2.0 && y_hi - y_lo > 2.0).then(|| UnderlineLine {
+        x1: (x_lo + x_hi) / 2.0,
+        y1: y_lo,
+        x2: (x_lo + x_hi) / 2.0,
+        y2: y_hi,
+        stroke_width: width,
+        page,
+    })
 }
 
 fn rotate_underline_graphics(
@@ -3979,6 +4014,25 @@ mod tests {
         let mut single = vec![rect(1.0, 2.0, 3.0, 4.0, 1)];
         dedup_rects(&mut single);
         assert_eq!(single.len(), 1);
+    }
+
+    #[test]
+    fn bevelled_cell_sides_keep_the_bottom_border_from_underlining() {
+        // Chrome's `border="1"` cell: a thin `re` bottom edge and two filled
+        // trapezoid sides 0.7pt wide.
+        let content = b"BT /F1 12 Tf 1 0 0 1 100 500 Tm (Cell) Tj ET
+98 494 30 0.7 re f
+98 494 m 98 512 l 98.7 511.3 l 98.7 494.7 l h f
+127.3 494.7 m 127.3 511.3 l 128 512 l 128 494 l h f
+BT /F1 12 Tf 1 0 0 1 100 460 Tm (Link) Tj ET
+100 458 22 0.7 re f";
+
+        let items = extract_simple_items(content);
+        let cell = items.iter().find(|item| item.text == "Cell").unwrap();
+        let link = items.iter().find(|item| item.text == "Link").unwrap();
+
+        assert!(!cell.is_underline);
+        assert!(link.is_underline);
     }
 
     #[test]

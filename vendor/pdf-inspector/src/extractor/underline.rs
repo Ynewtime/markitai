@@ -235,24 +235,34 @@ fn has_flanking_verticals(
             (ny_lo - y_hi).abs() <= 3.0 || (y_lo - ny_hi).abs() <= 3.0
         })
     });
-    if rect_flank {
-        return true;
-    }
-    lines.iter().any(|l| {
-        if l.page != page || (l.x1 - l.x2).abs() > 2.0 {
-            return false;
-        }
-        let x = (l.x1 + l.x2) / 2.0;
+    rect_flank || has_vertical_strokes_at_ends(rule, rects, lines, page)
+}
+
+/// A vertical stroke rises from either end of the rule: a near-vertical
+/// stroked line or a thin filled rect (Chrome and Quartz draw table borders
+/// as rects), taller than 2pt so a dot or a short dash does not count, whose
+/// x sits at an end and whose y-range covers the rule's row. Underlines have
+/// no such strokes; cell and box borders do.
+fn has_vertical_strokes_at_ends(
+    rule: &Rule,
+    rects: &[PdfRect],
+    lines: &[UnderlineLine],
+    page: u32,
+) -> bool {
+    let flanks = |x: f32, y1: f32, y2: f32| {
         let near_end = (x - rule.x1).abs() <= 6.0 || (x - rule.x2).abs() <= 6.0;
-        if !near_end {
-            return false;
-        }
-        let (y_lo, y_hi) = if l.y1 <= l.y2 {
-            (l.y1, l.y2)
-        } else {
-            (l.y2, l.y1)
-        };
-        y_lo <= rule.y + 2.0 && y_hi >= rule.y - 2.0
+        near_end && y1.min(y2) <= rule.y + 2.0 && y1.max(y2) >= rule.y - 2.0
+    };
+    lines.iter().any(|l| {
+        l.page == page
+            && (l.x1 - l.x2).abs() <= 2.0
+            && (l.y1 - l.y2).abs() > 2.0
+            && flanks((l.x1 + l.x2) / 2.0, l.y1, l.y2)
+    }) || rects.iter().any(|r| {
+        r.page == page
+            && r.width.abs() <= MAX_RULE_THICKNESS
+            && r.height.abs() > 2.0
+            && flanks(r.x + r.width / 2.0, r.y, r.y + r.height)
     })
 }
 
@@ -739,6 +749,13 @@ pub(crate) fn mark_underlined_items(
         }
     }
 
+    // A rule with vertical strokes at its ends is a cell or box border.
+    let border_rules: HashSet<usize> = rules
+        .iter()
+        .enumerate()
+        .filter(|(_, rule)| has_vertical_strokes_at_ends(rule, rects, lines, page))
+        .map(|(i, _)| i)
+        .collect();
     let underlined_items: HashSet<usize> = items
         .iter()
         .enumerate()
@@ -747,6 +764,7 @@ pub(crate) fn mark_underlined_items(
                 && rules.iter().enumerate().any(|(rule_idx, rule)| {
                     !tabular_rules.contains(&rule_idx)
                         && !fraction_rules.contains(&rule_idx)
+                        && !border_rules.contains(&rule_idx)
                         && rule_matches_item(rule, item)
                 })
         })
@@ -831,6 +849,27 @@ mod tests {
             height: 0.8,
             page: 1,
         }
+    }
+
+    #[test]
+    fn cell_borders_drawn_as_thin_rects_are_not_underlines() {
+        // Chrome's printed table: each cell edge is a 0.7pt filled rect,
+        // the bottom border 7.85pt under the last row's baseline.
+        let mut items = vec![item("Gamma", 42.0, 474.0, 42.7, 12.0)];
+        let vertical = |x: f32| PdfRect {
+            x,
+            y: 465.8,
+            width: 0.7,
+            height: 23.2,
+            page: 1,
+        };
+        let mut rects = vec![thin_rect(33.8, 465.8, 59.2), vertical(33.8), vertical(92.2)];
+        mark_underlined_items(&mut items, &rects, &[], 1);
+        assert!(!items[0].is_underline);
+        // The same rule without the cell's sides is an underline.
+        rects.truncate(1);
+        mark_underlined_items(&mut items, &rects, &[], 1);
+        assert!(items[0].is_underline);
     }
 
     #[test]
