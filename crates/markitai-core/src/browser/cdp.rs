@@ -35,22 +35,17 @@ struct Process {
 }
 impl Drop for Process {
     fn drop(&mut self) {
-        #[cfg(unix)]
-        {
-            // The child owns a new process group; Chromium renderers belong to it.
-            // Polling does not reap the leader, so its group id stays valid for
-            // the final SIGKILL and for a concurrent fatal-signal cleanup.
-            unsafe {
-                libc::kill(-(self.child.id() as i32), libc::SIGTERM);
-            }
-            let deadline = Instant::now() + Duration::from_millis(500);
-            while Instant::now() < deadline && !self.group.exited(&self.child) {
-                std::thread::sleep(Duration::from_millis(20));
-            }
-            unsafe {
-                libc::kill(-(self.child.id() as i32), libc::SIGKILL);
-            }
+        // The child leads its own tree; Chromium renderers belong to it. Ask
+        // it to stop (SIGTERM on Unix; on Windows the protocol's Browser.close
+        // was just sent), then kill what is left. Polling does not reap the
+        // leader, so its group id stays valid for the final kill and for a
+        // concurrent fatal-signal cleanup.
+        self.group.request_stop(&self.child);
+        let deadline = Instant::now() + Duration::from_millis(500);
+        while Instant::now() < deadline && !self.group.exited(&self.child) {
+            std::thread::sleep(Duration::from_millis(20));
         }
+        self.group.kill_tree(&self.child);
         self.group.retire();
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -111,15 +106,9 @@ impl Process {
             command.arg("--no-proxy-server");
         }
         command.arg("about:blank");
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            command.process_group(0);
-        }
         let group = crate::process_groups::Slot::reserve()
             .ok_or_else(|| failure("Too many external runtime process groups are active"))?;
-        let child = command.spawn().map_err(|_| failure("Cannot launch Chromium; check MARKITAI_BROWSER_EXECUTABLE or install Chrome/Chromium"))?;
-        group.publish(&child);
+        let child = group.spawn(&mut command).map_err(|_| failure("Cannot launch Chromium; check MARKITAI_BROWSER_EXECUTABLE or install Chrome/Chromium"))?;
         let mut process = Self {
             child,
             group,

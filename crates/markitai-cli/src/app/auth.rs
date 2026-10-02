@@ -147,9 +147,13 @@ pub(super) fn run(command: Option<&Command>) -> CliResult<i32> {
     }
 }
 
-#[cfg(unix)]
-fn login(env: &HashMap<String, String>, provider: &str) -> CliResult<i32> {
-    use std::os::unix::process::CommandExt;
+/// The official runtime's interactive login command: its own arguments, the
+/// variables a terminal program needs, and the runtime's own configuration.
+/// Nothing else from this environment is passed on.
+fn login_command(
+    env: &HashMap<String, String>,
+    provider: &str,
+) -> CliResult<std::process::Command> {
     let executable = if provider == "claude-agent" {
         subscription::claude::Config::from_env(env)
             .map_err(runtime)?
@@ -173,7 +177,7 @@ fn login(env: &HashMap<String, String>, provider: &str) -> CliResult<i32> {
     } else {
         command.arg("login");
     }
-    for key in [
+    let terminal: &[&str] = &[
         "HOME",
         "PATH",
         "TMPDIR",
@@ -181,13 +185,43 @@ fn login(env: &HashMap<String, String>, provider: &str) -> CliResult<i32> {
         "LC_ALL",
         "TERM",
         "COLORTERM",
-    ] {
-        if let Some(value) = env.get(key).cloned().or_else(|| std::env::var(key).ok()) {
-            command.env(key, value);
-        }
-    }
+    ];
+    // Windows programs also find their profile, temporary and system folders
+    // and the command processor through the environment.
+    let windows: &[&str] = if cfg!(windows) {
+        &[
+            "USERPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "SystemRoot",
+            "WINDIR",
+            "TEMP",
+            "TMP",
+            "PATHEXT",
+            "ComSpec",
+            "SystemDrive",
+            "ProgramData",
+            "ProgramFiles",
+            "ProgramFiles(x86)",
+            "ProgramW6432",
+            "CommonProgramFiles",
+            "HOMEDRIVE",
+            "HOMEPATH",
+            "USERNAME",
+            "COMPUTERNAME",
+            "NUMBER_OF_PROCESSORS",
+            "PROCESSOR_ARCHITECTURE",
+            "OS",
+        ]
+    } else {
+        &[]
+    };
     let provider_keys: &[&str] = if provider == "claude-agent" {
-        &["CLAUDE_CONFIG_DIR"]
+        if cfg!(windows) {
+            &["CLAUDE_CONFIG_DIR", "CLAUDE_CODE_GIT_BASH_PATH"]
+        } else {
+            &["CLAUDE_CONFIG_DIR"]
+        }
     } else if provider == "chatgpt" {
         &["CODEX_HOME"]
     } else {
@@ -199,11 +233,34 @@ fn login(env: &HashMap<String, String>, provider: &str) -> CliResult<i32> {
             "GITHUB_TOKEN",
         ]
     };
-    for &key in provider_keys {
-        if let Some(value) = env.get(key).cloned().or_else(|| std::env::var(key).ok()) {
+    for &key in terminal.iter().chain(windows).chain(provider_keys) {
+        if let Some(value) = variable(env, key)
+            .cloned()
+            .or_else(|| std::env::var(key).ok())
+        {
             command.env(key, value);
         }
     }
+    Ok(command)
+}
+
+/// The value of `name` in `env`; Windows variable names ignore case.
+fn variable<'a>(env: &'a HashMap<String, String>, name: &str) -> Option<&'a String> {
+    env.get(name).or_else(|| {
+        cfg!(windows)
+            .then(|| {
+                env.iter()
+                    .find(|(key, _)| key.eq_ignore_ascii_case(name))
+                    .map(|(_, value)| value)
+            })
+            .flatten()
+    })
+}
+
+#[cfg(unix)]
+fn login(env: &HashMap<String, String>, provider: &str) -> CliResult<i32> {
+    use std::os::unix::process::CommandExt;
+    let mut command = login_command(env, provider)?;
     // Replacing this process preserves terminal ownership, signals, and the exact
     // official login exit status without adding an unbounded intermediary waiter.
     let _error = command.exec();
@@ -211,7 +268,20 @@ fn login(env: &HashMap<String, String>, provider: &str) -> CliResult<i32> {
         "The official subscription login process could not be started",
     ))
 }
-#[cfg(not(unix))]
+/// Windows cannot replace a process, so the login runs as a child sharing
+/// this console. It receives Ctrl-C and Ctrl-Break itself while this process
+/// ignores them, waits for it and exits with its exit status.
+#[cfg(windows)]
+fn login(env: &HashMap<String, String>, provider: &str) -> CliResult<i32> {
+    let mut command = login_command(env, provider)?;
+    let _delegated = crate::signals::Delegated::install().map_err(runtime)?;
+    let mut child = command
+        .spawn()
+        .map_err(|_| runtime("The official subscription login process could not be started"))?;
+    let status = child.wait().map_err(runtime)?;
+    Ok(status.code().unwrap_or(1))
+}
+#[cfg(not(any(unix, windows)))]
 fn login(_env: &HashMap<String, String>, _provider: &str) -> CliResult<i32> {
     Err(runtime(
         "Subscription interactive login delegation is not supported on this platform",

@@ -54,22 +54,9 @@ pub(crate) struct BrowserPage {
     pub warnings: Vec<String>,
 }
 
+/// Executable by someone on Unix; a program or command script on Windows.
 fn executable(path: &Path) -> bool {
-    let Ok(metadata) = path.metadata() else {
-        return false;
-    };
-    if !metadata.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        metadata.permissions().mode() & 0o111 != 0
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
+    crate::process_groups::launchable(path)
 }
 
 /// Why no browser can be used: the configured executable that is not one,
@@ -85,27 +72,35 @@ fn missing_browser(configured: Option<&Path>) -> String {
 }
 
 pub(crate) fn discover() -> Option<PathBuf> {
+    let pathext = std::env::var_os("PATHEXT");
     if let Some(path) = std::env::var_os("MARKITAI_BROWSER_EXECUTABLE") {
-        let path = PathBuf::from(path);
+        let path = crate::process_groups::configured_program(Path::new(&path), pathext.as_deref());
         return executable(&path).then_some(path);
     }
     if let Some(path) = crate::browser_install::installed() {
         return Some(path);
     }
-    let mut paths = Vec::new();
-    let env_path = std::env::var_os("PATH").unwrap_or_default();
-    for directory in std::env::split_paths(&env_path) {
-        for name in [
+    // PATH as a shell searches it (PATHEXT on Windows), skipping empty and
+    // relative entries.
+    if let Some(path) = crate::process_groups::find_program(
+        &[
             "chromium",
             "chromium-browser",
             "google-chrome",
             "google-chrome-stable",
             "chrome",
-            "chrome.exe",
-        ] {
-            paths.push(directory.join(name));
-        }
+        ],
+        std::env::var_os("PATH").as_deref(),
+        pathext.as_deref(),
+    ) {
+        return Some(path);
     }
+    // Only macOS and Windows have well-known installation paths.
+    #[cfg_attr(
+        not(any(target_os = "macos", target_os = "windows")),
+        allow(unused_mut)
+    )]
+    let mut paths: Vec<PathBuf> = Vec::new();
     #[cfg(target_os = "macos")]
     for path in [
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",

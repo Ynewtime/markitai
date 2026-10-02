@@ -1,6 +1,5 @@
-#![cfg(unix)]
 use super::*;
-use std::os::unix::fs::PermissionsExt;
+use crate::subscription::fake_runtime;
 
 struct Fixture {
     root: tempfile::TempDir,
@@ -8,19 +7,21 @@ struct Fixture {
 }
 impl Fixture {
     fn new(name: &str) -> Self {
+        Self::with_program(name, &fake_runtime::program())
+    }
+    /// A runtime started through `program`: the stand-in itself, or a script
+    /// that runs it.
+    fn with_program(name: &str, program: &Path) -> Self {
         let root = tempfile::tempdir().unwrap();
-        let executable = root.path().join("codex");
-        std::fs::write(&executable, include_bytes!("fake_exec.py")).unwrap();
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
-        std::fs::write(
-            root.path().join("scenario.json"),
-            json!({"name":name}).to_string(),
-        )
-        .unwrap();
+        fake_runtime::install(root.path(), &json!({"name":name}));
         let config = Config::from_env(&HashMap::from([
             (
                 "CODEX_CLI_PATH".into(),
-                executable.to_string_lossy().into_owned(),
+                program.to_string_lossy().into_owned(),
+            ),
+            (
+                "CODEX_HOME".into(),
+                root.path().to_string_lossy().into_owned(),
             ),
             ("PATH".into(), std::env::var("PATH").unwrap()),
             ("OPENAI_API_KEY".into(), "must-not-forward".into()),
@@ -108,15 +109,72 @@ fn text_and_ordered_images_use_private_files_custom_system_and_terminal_totals()
             crate::hex(Sha256::digest(&b))
         ])
     );
-    assert_eq!(request["workspace_mode"], 0o700);
-    assert!(
-        request["file_modes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|mode| mode == 0o600)
-    );
+    #[cfg(unix)]
+    {
+        assert_eq!(request["workspace_mode"], 0o700);
+        let modes = request["file_modes"].as_array().unwrap();
+        assert_eq!(modes.len(), 4);
+        assert!(modes.iter().all(|mode| mode == 0o600));
+    }
     assert!(!Path::new(request["workspace"].as_str().unwrap()).exists());
+}
+/// npm installs `codex.cmd`. The command processor must hand the runtime
+/// the same arguments, including the JSON configuration values with quotes.
+#[cfg(windows)]
+#[test]
+fn a_command_script_shim_runs_the_runtime_with_its_arguments_intact() {
+    let shims = tempfile::Builder::new()
+        .prefix("npm shim space ")
+        .tempdir()
+        .unwrap();
+    std::fs::write(
+        shims.path().join("codex.cmd"),
+        format!("@\"{}\" %*\r\n", fake_runtime::program().display()),
+    )
+    .unwrap();
+    let f = Fixture::with_program("ok", &shims.path().join("codex"));
+    assert!(
+        status(&f.config, Duration::from_secs(10))
+            .unwrap()
+            .authenticated
+    );
+    let out = complete(
+        &f.config,
+        f.request("chatgpt/gpt-5.5", &[("image/png", &png([1, 2, 3]))]),
+    )
+    .unwrap();
+    assert_eq!(out.text, "Complete authored document.");
+    let request: Value =
+        serde_json::from_slice(&std::fs::read(f.root.path().join("request.json")).unwrap())
+            .unwrap();
+    assert_eq!(request["user"], "Document body\nwith Unicode 中文.");
+    assert_eq!(request["image_hashes"].as_array().unwrap().len(), 1);
+}
+/// Whether `pid` names a process that has not ended (a Unix zombie has).
+fn running(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        let output = std::process::Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "stat="])
+            .output()
+            .unwrap();
+        let state = String::from_utf8_lossy(&output.stdout);
+        !state.trim().is_empty() && !state.trim().starts_with('Z')
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{CloseHandle, FALSE, WAIT_TIMEOUT};
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+        };
+        let process = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, FALSE, pid) };
+        if process.is_null() {
+            return false;
+        }
+        let alive = unsafe { WaitForSingleObject(process, 0) } == WAIT_TIMEOUT;
+        unsafe { CloseHandle(process) };
+        alive
+    }
 }
 #[test]
 fn unknown_version_model_and_mime_fail_without_document_execution() {
@@ -182,20 +240,12 @@ fn cancellation_and_deadline_stop_private_process_tree_without_stale_files() {
         let e = complete(&f.config, request).unwrap_err();
         assert_eq!(e.kind, FailureKind::Cancelled);
     });
-    let pid: i32 = std::fs::read_to_string(f.root.path().join("grandchild.pid"))
+    let pid: u32 = std::fs::read_to_string(f.root.path().join("grandchild.pid"))
         .unwrap()
         .parse()
         .unwrap();
     // A killed descendant may briefly remain a zombie until the OS parent reaps it.
-    let status = std::process::Command::new("ps")
-        .args(["-p", &pid.to_string(), "-o", "stat="])
-        .output()
-        .unwrap();
-    let state = String::from_utf8_lossy(&status.stdout);
-    assert!(
-        state.trim().is_empty() || state.trim().starts_with('Z'),
-        "{state}"
-    );
+    assert!(!running(pid), "descendant {pid} survived");
     let request: Value =
         serde_json::from_slice(&std::fs::read(f.root.path().join("request.json")).unwrap())
             .unwrap();

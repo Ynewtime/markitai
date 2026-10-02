@@ -1,5 +1,7 @@
 //! Optional subscription providers communicate with an installed official runtime.
 mod copilot;
+#[cfg(test)]
+pub(crate) mod fake_runtime;
 mod process;
 #[cfg(test)]
 mod tests;
@@ -7,7 +9,7 @@ mod tests;
 pub use copilot::{complete, models, status};
 use serde::Serialize;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
@@ -24,37 +26,17 @@ pub struct CopilotConfig {
 }
 impl CopilotConfig {
     pub fn from_env(env: &HashMap<String, String>) -> crate::Result<Self> {
-        let executable = if let Some(path) = env.get("COPILOT_CLI_PATH") {
-            PathBuf::from(path)
-        } else {
-            let name = if cfg!(windows) {
-                "copilot.exe"
-            } else {
-                "copilot"
-            };
-            env.get("PATH")
-                .and_then(|paths| {
-                    std::env::split_paths(paths)
-                        .map(|dir| dir.join(name))
-                        .find(|path| path.is_file())
-                })
-                .ok_or_else(|| {
-                    crate::Error::Unsupported(
-                        "Copilot CLI is unavailable; install the supported official runtime".into(),
-                    )
-                })?
-        };
-        let executable = executable
-            .canonicalize()
-            .map_err(|_| crate::Error::InvalidInput("Copilot executable is unavailable".into()))?;
-        if !executable.is_file() {
-            return Err(crate::Error::InvalidInput(
-                "Copilot executable must be a regular file".into(),
-            ));
-        }
+        let executable = locate(
+            env,
+            "COPILOT_CLI_PATH",
+            "copilot",
+            "Copilot",
+            "Copilot CLI is unavailable; install the supported official runtime",
+        )?;
         let token = ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]
             .iter()
-            .find_map(|key| env.get(*key).filter(|value| !value.is_empty()).cloned());
+            .find_map(|key| variable(env, key).filter(|value| !value.is_empty()))
+            .map(str::to_owned);
         if token
             .as_ref()
             .is_some_and(|value| value.len() > 16 * 1024 || value.contains(['\r', '\n', '\0']))
@@ -65,30 +47,7 @@ impl CopilotConfig {
         }
         // Retain OS process prerequisites and the explicitly selected official auth
         // home. Other model-provider variables must not silently turn this into BYOK.
-        let mut environment = HashMap::new();
-        for key in [
-            "HOME",
-            "PATH",
-            "USERPROFILE",
-            "APPDATA",
-            "LOCALAPPDATA",
-            "SystemRoot",
-            "SYSTEMROOT",
-            "WINDIR",
-            "TMPDIR",
-            "TEMP",
-            "TMP",
-            "LANG",
-            "LC_ALL",
-            "COPILOT_HOME",
-            "COPILOT_CACHE_HOME",
-        ] {
-            if let Some(value) = env.get(key) {
-                environment.insert(key.into(), value.clone());
-            } else if let Ok(value) = std::env::var(key) {
-                environment.insert(key.into(), value);
-            }
-        }
+        let environment = retain(env, &["COPILOT_HOME", "COPILOT_CACHE_HOME"]);
         Ok(Self {
             executable,
             environment,
@@ -98,6 +57,119 @@ impl CopilotConfig {
     pub fn executable(&self) -> &std::path::Path {
         &self.executable
     }
+}
+
+/// The value of `name` in `env`, matched as the platform matches variable
+/// names: Windows ignores case, so `Path` answers for `PATH`.
+pub(crate) fn variable<'a>(env: &'a HashMap<String, String>, name: &str) -> Option<&'a str> {
+    env.get(name)
+        .or_else(|| {
+            cfg!(windows)
+                .then(|| {
+                    env.iter()
+                        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+                        .map(|(_, value)| value)
+                })
+                .flatten()
+        })
+        .map(String::as_str)
+}
+
+/// Variables every official runtime needs to start and to find its own
+/// configuration: the search path, home and temporary directories, locale.
+const PROCESS_PREREQUISITES: &[&str] = &[
+    "HOME",
+    "PATH",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "SystemRoot",
+    "SYSTEMROOT",
+    "WINDIR",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "LANG",
+    "LC_ALL",
+];
+
+/// What Windows command shims and Node.js runtimes also read: the command
+/// processor, the extensions it searches, and the standard system folders.
+/// None of these holds a credential.
+const WINDOWS_PREREQUISITES: &[&str] = &[
+    "PATHEXT",
+    "ComSpec",
+    "SystemDrive",
+    "ProgramData",
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "ProgramW6432",
+    "CommonProgramFiles",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "USERNAME",
+    "COMPUTERNAME",
+    "NUMBER_OF_PROCESSORS",
+    "PROCESSOR_ARCHITECTURE",
+    "OS",
+];
+
+/// The runtime environment: the process prerequisites and the runtime's own
+/// `names`, each taken from `env` or else from this process.
+pub(crate) fn retain(env: &HashMap<String, String>, names: &[&str]) -> HashMap<String, String> {
+    let windows: &[&str] = if cfg!(windows) {
+        WINDOWS_PREREQUISITES
+    } else {
+        &[]
+    };
+    let mut environment = HashMap::new();
+    for &name in PROCESS_PREREQUISITES.iter().chain(windows).chain(names) {
+        if let Some(value) = variable(env, name)
+            .map(str::to_owned)
+            .or_else(|| std::env::var(name).ok())
+        {
+            environment.insert(name.into(), value);
+        }
+    }
+    environment
+}
+
+/// An official runtime: the path in `explicit`, else `program` on PATH. On
+/// Windows both honour PATHEXT, so an npm `.cmd` shim is found and started
+/// through the command processor. `label` names the runtime in errors and
+/// `missing` says how to install it.
+pub(crate) fn locate(
+    env: &HashMap<String, String>,
+    explicit: &str,
+    program: &str,
+    label: &str,
+    missing: &'static str,
+) -> crate::Result<PathBuf> {
+    use std::ffi::OsStr;
+    let pathext = variable(env, "PATHEXT").map(OsStr::new);
+    let path = match variable(env, explicit) {
+        Some(path) => crate::process_groups::configured_program(Path::new(path), pathext),
+        None => crate::process_groups::find_program(
+            &[program],
+            variable(env, "PATH").map(OsStr::new),
+            pathext,
+        )
+        .ok_or_else(|| crate::Error::Unsupported(missing.into()))?,
+    };
+    let executable = path
+        .canonicalize()
+        .map_err(|_| crate::Error::InvalidInput(format!("{label} executable is unavailable")))?;
+    if !executable.is_file() {
+        return Err(crate::Error::InvalidInput(format!(
+            "{label} executable must be a regular file"
+        )));
+    }
+    if cfg!(windows) && !crate::process_groups::launchable(&executable) {
+        return Err(crate::Error::InvalidInput(format!(
+            "{label} executable must be a .exe, .com, .bat or .cmd file"
+        )));
+    }
+    Ok(crate::process_groups::plain(executable))
 }
 
 #[derive(Clone, Debug, Serialize)]

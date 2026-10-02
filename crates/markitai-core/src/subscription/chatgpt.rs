@@ -27,52 +27,16 @@ pub struct Config {
 }
 impl Config {
     pub fn from_env(env: &HashMap<String, String>) -> crate::Result<Self> {
-        let executable = env
-            .get("CODEX_CLI_PATH")
-            .map(PathBuf::from)
-            .or_else(|| {
-                env.get("PATH").and_then(|value| {
-                    std::env::split_paths(value)
-                        .map(|dir| dir.join(if cfg!(windows) { "codex.exe" } else { "codex" }))
-                        .find(|path| path.is_file())
-                })
-            })
-            .ok_or_else(|| {
-                crate::Error::Unsupported(
-                    "The supported official Codex CLI is not installed".into(),
-                )
-            })?;
-        let executable = executable
-            .canonicalize()
-            .map_err(|_| crate::Error::InvalidInput("Codex executable is unavailable".into()))?;
-        if !executable.is_file() {
-            return Err(crate::Error::InvalidInput(
-                "Codex executable must be a regular file".into(),
-            ));
-        }
-        let mut environment = HashMap::new();
+        let executable = super::locate(
+            env,
+            "CODEX_CLI_PATH",
+            "codex",
+            "Codex",
+            "The supported official Codex CLI is not installed",
+        )?;
         // Preserve official login locations without reading, copying or replacing
         // credentials. API keys, endpoints, proxies and remote overrides are excluded.
-        for name in [
-            "HOME",
-            "PATH",
-            "USERPROFILE",
-            "APPDATA",
-            "LOCALAPPDATA",
-            "SystemRoot",
-            "SYSTEMROOT",
-            "WINDIR",
-            "TMPDIR",
-            "TMP",
-            "TEMP",
-            "LANG",
-            "LC_ALL",
-            "CODEX_HOME",
-        ] {
-            if let Some(value) = env.get(name).cloned().or_else(|| std::env::var(name).ok()) {
-                environment.insert(name.into(), value);
-            }
-        }
+        let environment = super::retain(env, &["CODEX_HOME"]);
         Ok(Self {
             executable,
             environment,

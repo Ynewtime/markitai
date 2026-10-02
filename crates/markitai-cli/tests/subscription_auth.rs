@@ -1,11 +1,31 @@
-#![cfg(unix)]
+//! `markitai auth` delegates status and login to the official runtimes,
+//! played here by this test binary (see `fake_runtime`).
 use serde_json::{Value, json};
-use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+#[path = "../../markitai-core/src/subscription/fake_runtime.rs"]
+mod fake_runtime;
+
+/// Variables the CLI itself needs on each platform; everything else is cleared.
+const SYSTEM: &[&str] = &[
+    "HOME",
+    "PATH",
+    "TMPDIR",
+    "LANG",
+    "SystemRoot",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "PATHEXT",
+    "ComSpec",
+];
 
 struct Fixture {
     root: tempfile::TempDir,
-    executable: std::path::PathBuf,
+    executable: PathBuf,
 }
 impl Fixture {
     fn new(mode: &str) -> Self {
@@ -13,41 +33,28 @@ impl Fixture {
             .prefix("auth fixture ")
             .tempdir()
             .unwrap();
-        let executable = root.path().join("official fixture");
-        let text = include_str!("../../markitai-core/src/subscription/fake_cli.py");
-        let text = text.replace(
-            "root = pathlib.Path(os.environ['COPILOT_HOME'])",
-            r#"root = pathlib.Path(os.environ['COPILOT_HOME'])
-if sys.argv[1:] == ['login']:
-    assert 'OPENAI_API_KEY' not in os.environ
-    assert 'COPILOT_PROVIDER_API_KEY' not in os.environ
-    state = json.loads((root / 'fixture.json').read_text())
-    assert os.environ.get('HOME') == state['home']
-    assert os.environ.get('COPILOT_CACHE_HOME') == state['cache_home']
-    (root / 'login.json').write_text(json.dumps({'pid':os.getpid(),'args':sys.argv[1:],'cache_home':os.environ.get('COPILOT_CACHE_HOME')}))
-    sys.exit(state.get('login_exit', 0))"#,
-        );
-        std::fs::write(&executable, text).unwrap();
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let fixture = Self { root, executable };
+        let fixture = Self {
+            root,
+            executable: fake_runtime::program(),
+        };
         fixture.state(mode, 0);
         std::fs::write(fixture.root.path().join("config.json"), b"{}\n").unwrap();
         fixture
     }
+    /// One scenario for both runtimes; each finds it through its own home.
     fn state(&self, mode: &str, exit: i32) {
-        std::fs::write(
-            self.root.path().join("fixture.json"),
-            serde_json::to_vec(&json!({
-                "mode":mode,"home":std::env::var("HOME").ok(),"login_exit":exit,"cache_home":self.root.path().join("private cache")
-            }))
-            .unwrap(),
-        )
-        .unwrap();
+        fake_runtime::install(
+            self.root.path(),
+            &json!({
+                "mode":mode,"home":std::env::var("HOME").ok(),"login_exit":exit,
+                "cache_home":self.root.path().join("private cache")
+            }),
+        );
     }
     fn command(&self) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
         command.env_clear().current_dir(self.root.path());
-        for key in ["HOME", "PATH", "TMPDIR", "LANG"] {
+        for key in SYSTEM {
             if let Some(value) = std::env::var_os(key) {
                 command.env(key, value);
             }
@@ -72,6 +79,31 @@ if sys.argv[1:] == ['login']:
             command.arg("--json");
         }
         command.output().unwrap()
+    }
+}
+
+/// The spelling of a resolved runtime path that status reports: canonical,
+/// without the Windows `\\?\` prefix.
+fn reported(path: &Path) -> String {
+    let canonical = path.canonicalize().unwrap();
+    let text = canonical.to_str().unwrap();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if cfg!(windows) && rest.as_bytes().get(1) == Some(&b':') => rest.into(),
+        _ => text.into(),
+    }
+}
+
+/// The login runs in the CLI's own process on Unix, which replaces itself
+/// with the runtime, and in a child that it waits for on Windows.
+fn assert_login_process(recorded: &Value, cli: u32) {
+    if cfg!(unix) {
+        assert_eq!(recorded["pid"], cli);
+    } else {
+        assert!(
+            recorded["pid"]
+                .as_u64()
+                .is_some_and(|pid| pid != u64::from(cli))
+        );
     }
 }
 
@@ -139,7 +171,7 @@ fn unavailable_runtime_and_other_adapters_remain_explicit() {
 }
 
 #[test]
-fn explicit_login_replaces_process_and_preserves_exit_home_and_configuration() {
+fn explicit_login_hands_over_and_preserves_exit_home_and_configuration() {
     let fixture = Fixture::new("normal");
     for code in [0, 7] {
         fixture.state("normal", code);
@@ -153,11 +185,16 @@ fn explicit_login_replaces_process_and_preserves_exit_home_and_configuration() {
             .unwrap();
         let pid = child.id();
         let result = child.wait_with_output().unwrap();
-        assert_eq!(result.status.code(), Some(code));
+        assert_eq!(
+            result.status.code(),
+            Some(code),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
         let login: Value =
             serde_json::from_slice(&std::fs::read(fixture.root.path().join("login.json")).unwrap())
                 .unwrap();
-        assert_eq!(login["pid"], pid);
+        assert_login_process(&login, pid);
         assert_eq!(login["args"], json!(["login"]));
         assert_eq!(
             login["cache_home"],
@@ -174,9 +211,7 @@ fn explicit_login_replaces_process_and_preserves_exit_home_and_configuration() {
 #[test]
 fn claude_status_and_login_delegate_to_official_runtime_with_private_auth_home() {
     let fixture = Fixture::new("normal");
-    let executable = fixture.root.path().join("claude fixture");
-    std::fs::write(&executable, include_str!("claude_auth_fixture.py")).unwrap();
-    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let executable = fake_runtime::program();
     let command = || {
         let mut command = fixture.command();
         command
@@ -202,10 +237,7 @@ fn claude_status_and_login_delegate_to_official_runtime_with_private_auth_home()
         assert_eq!(value["provider"], "claude-agent");
         assert_eq!(value["sdk_installed"], false);
         assert_eq!(value["details"]["native_adapter"], true);
-        assert_eq!(
-            value["cli_path"],
-            executable.canonicalize().unwrap().to_str().unwrap()
-        );
+        assert_eq!(value["cli_path"], reported(&executable));
         assert!(!String::from_utf8_lossy(&output.stdout).contains("fixture-secret"));
         assert_eq!(
             command()
@@ -251,13 +283,13 @@ fn claude_status_and_login_delegate_to_official_runtime_with_private_auth_home()
             &std::fs::read(fixture.root.path().join("claude-login.json")).unwrap(),
         )
         .unwrap();
-        assert_eq!(record["pid"], pid);
-        assert_eq!(record["home"], std::env::var("HOME").unwrap());
+        assert_login_process(&record, pid);
+        assert_eq!(record["home"], json!(std::env::var("HOME").ok()));
         assert_eq!(
             std::fs::read(fixture.root.path().join("config.json")).unwrap(),
             before
         );
     }
-    let calls = std::fs::read_to_string(fixture.root.path().join("claude-calls.jsonl")).unwrap();
+    let calls = std::fs::read_to_string(fixture.root.path().join("calls.jsonl")).unwrap();
     assert!(!calls.contains("--print"));
 }

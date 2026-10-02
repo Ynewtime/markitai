@@ -53,36 +53,24 @@ fn failure(message: &str) -> Error {
 }
 
 fn executable(path: &Path) -> bool {
-    let Ok(metadata) = fs::metadata(path) else {
-        return false;
-    };
-    if !metadata.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if metadata.permissions().mode() & 0o111 == 0 {
-            return false;
-        }
-    }
-    true
+    crate::process_groups::launchable(path)
 }
 
 fn discover() -> Option<PathBuf> {
-    if let Some(paths) = std::env::var_os("PATH") {
-        for directory in std::env::split_paths(&paths) {
-            // An empty PATH component must not select a document-local executable.
-            if directory.as_os_str().is_empty() || !directory.is_absolute() {
-                continue;
-            }
-            for name in ["soffice", "libreoffice", "soffice.exe"] {
-                let candidate = directory.join(name);
-                if executable(&candidate) {
-                    return Some(candidate);
-                }
-            }
-        }
+    // On Windows the GUI launcher is preferred to the `soffice.com` console
+    // wrapper beside it; both wait for the export.
+    let names: &[&str] = if cfg!(windows) {
+        &["soffice.exe", "soffice", "libreoffice"]
+    } else {
+        &["soffice", "libreoffice"]
+    };
+    // Empty and relative PATH entries never select a document-local program.
+    if let Some(path) = crate::process_groups::find_program(
+        names,
+        std::env::var_os("PATH").as_deref(),
+        std::env::var_os("PATHEXT").as_deref(),
+    ) {
+        return Some(path);
     }
     #[cfg(target_os = "macos")]
     for path in [

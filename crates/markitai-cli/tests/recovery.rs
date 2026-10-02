@@ -1,3 +1,6 @@
+//! Durable batch state, ownership and `--resume`. The interrupt is portable
+//! (`support/interrupt.rs`); the suite runs where batches keep durable state,
+//! which Windows does not have yet.
 #![cfg(unix)]
 
 use serde_json::{Value, json};
@@ -13,8 +16,10 @@ use std::sync::{
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+#[path = "support/interrupt.rs"]
+mod interrupt;
+
 const WAIT: Duration = Duration::from_secs(20);
-#[cfg(unix)]
 const INTERRUPTED: &str = "Interrupted: stopping new work and waiting for active conversions.";
 
 // Processes receive only an isolated configuration/home. Gates are ordinary HTTP
@@ -50,7 +55,6 @@ fn write(root: &Path, relative: &str, text: &str) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, text).unwrap();
 }
-#[cfg(unix)]
 fn wait_until(description: &str, mut ready: impl FnMut() -> bool) {
     let deadline = Instant::now() + WAIT;
     while !ready() {
@@ -81,6 +85,7 @@ impl Running {
                 command.env(name, value);
             }
         }
+        interrupt::interruptible(&mut command);
         let mut child = command
             .current_dir(cwd)
             .env("MARKITAI_HOME", root.join("home"))
@@ -116,13 +121,8 @@ impl Running {
             captured,
         }
     }
-    #[cfg(unix)]
     fn interrupt(&self) {
-        let status = Command::new("/bin/kill")
-            .args(["-INT", &self.child.as_ref().unwrap().id().to_string()])
-            .status()
-            .unwrap();
-        assert!(status.success());
+        interrupt::interrupt(self.child.as_ref().unwrap());
         let deadline = Instant::now() + WAIT;
         let mut captured = self.captured.0.lock().unwrap();
         while !String::from_utf8_lossy(&captured.stderr)
@@ -686,7 +686,6 @@ fn merged_checkpoint_and_active_claim_precede_http_and_survive_process_kill() {
     no_versions(&out);
 }
 
-#[cfg(unix)]
 #[test]
 fn ctrl_c_flushes_completed_work_then_drains_active_work_without_success_report() {
     let root = tempfile::tempdir().unwrap();
@@ -748,7 +747,6 @@ fn ctrl_c_flushes_completed_work_then_drains_active_work_without_success_report(
     no_versions(&out);
 }
 
-#[cfg(unix)]
 #[test]
 fn ctrl_c_stops_dispatch_before_releasing_an_active_request_and_resume_runs_the_queue() {
     let root = tempfile::tempdir().unwrap();

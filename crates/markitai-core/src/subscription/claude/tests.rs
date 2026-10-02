@@ -1,6 +1,5 @@
-#![cfg(unix)]
 use super::*;
-use std::os::unix::fs::PermissionsExt;
+use crate::subscription::fake_runtime;
 use std::sync::atomic::Ordering;
 
 struct Fixture {
@@ -11,24 +10,17 @@ struct Fixture {
 impl Fixture {
     fn new(mode: &str) -> Self {
         let root = tempfile::tempdir().unwrap();
-        let script = root.path().join("fixture.py");
-        std::fs::write(&script, include_bytes!("fake_cli.py")).unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        fake_runtime::install(root.path(), &json!({"mode":mode}));
         let record = root.path().join("calls.jsonl");
-        let mut environment = HashMap::new();
-        for key in ["HOME", "PATH", "TMPDIR", "LANG"] {
-            if let Ok(v) = std::env::var(key) {
-                environment.insert(key.into(), v);
-            }
-        }
-        environment.insert("MARKITAI_CLAUDE_FIXTURE".into(), mode.into());
+        // The process prerequisites of this process, and the runtime's home.
+        let mut environment = crate::subscription::retain(&HashMap::new(), &[]);
         environment.insert(
-            "MARKITAI_CLAUDE_RECORD".into(),
-            record.to_string_lossy().into_owned(),
+            "CLAUDE_CONFIG_DIR".into(),
+            root.path().to_string_lossy().into_owned(),
         );
         Self {
             config: Config {
-                executable: script,
+                executable: fake_runtime::program(),
                 environment,
             },
             record,
@@ -59,6 +51,7 @@ impl Fixture {
                     !Path::new(path).exists(),
                     "private runtime workspace must be removed"
                 );
+                #[cfg(unix)]
                 assert_eq!(row["mode"], 0o700);
             }
         }

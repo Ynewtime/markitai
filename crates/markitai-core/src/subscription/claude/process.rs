@@ -89,7 +89,7 @@ impl Process {
         deadline: Instant,
         cancel: Option<&AtomicBool>,
     ) -> Result<Self, Failure> {
-        if !cfg!(unix) {
+        if !cfg!(any(unix, windows)) {
             return Err(Failure::new(
                 FailureKind::Unsupported,
                 "Bounded Claude process-tree cleanup is unavailable on this platform",
@@ -111,13 +111,7 @@ impl Process {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            command.process_group(0);
-        }
-        let child = command.spawn().map_err(|_| transport())?;
-        group.publish(&child);
+        let child = group.spawn(&mut command).map_err(|_| transport())?;
         let overflow = Arc::new(AtomicBool::new(false));
         let stderr_done = Arc::new(AtomicBool::new(false));
         let mut process = Self {
@@ -276,17 +270,8 @@ impl Process {
 }
 impl Drop for Process {
     fn drop(&mut self) {
-        #[cfg(unix)]
-        {
-            if let Ok(pid) = i32::try_from(self.child.id()) {
-                // The child starts a private process group; never address group zero.
-                if pid > 0 {
-                    unsafe {
-                        libc::kill(-pid, libc::SIGKILL);
-                    }
-                }
-            }
-        }
+        // The child leads a private tree; descendants end with it.
+        self.group.kill_tree(&self.child);
         self.group.retire();
         let _ = self.child.kill();
         let _ = self.child.wait();

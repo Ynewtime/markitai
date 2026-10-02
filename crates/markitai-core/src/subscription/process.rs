@@ -70,10 +70,10 @@ impl Process {
         timeout: Duration,
         cancel: Option<&AtomicBool>,
     ) -> Result<Self, Failure> {
-        if !cfg!(unix) {
+        if !cfg!(any(unix, windows)) {
             return Err(Failure::new(
                 FailureKind::Unsupported,
-                "Bounded Copilot process-tree cleanup is not yet available on this platform",
+                "Bounded Copilot process-tree cleanup is not available on this platform",
             ));
         }
         if timeout.is_zero() || timeout > Duration::from_secs(3600) {
@@ -123,18 +123,12 @@ impl Process {
                 ])
                 .env("MARKITAI_COPILOT_TOKEN", token);
         }
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            command.process_group(0);
-        }
-        let child = command.spawn().map_err(|_| {
+        let child = group.spawn(&mut command).map_err(|_| {
             Failure::new(
                 FailureKind::Transport,
                 "Cannot start the official Copilot runtime",
             )
         })?;
-        group.publish(&child);
         let mut process = Self {
             child,
             _permit: permit,
@@ -310,16 +304,9 @@ impl Process {
 }
 impl Drop for Process {
     fn drop(&mut self) {
-        #[cfg(unix)]
-        {
-            // The child was placed in its own group before exec. Its descendant
-            // pipes cannot keep our reader threads alive after cancellation.
-            if let Ok(pid) = i32::try_from(self.child.id()) {
-                unsafe {
-                    libc::kill(-pid, libc::SIGKILL);
-                }
-            }
-        }
+        // The child leads its own tree, so descendants holding its pipes
+        // cannot keep our reader threads alive after cancellation.
+        self.group.kill_tree(&self.child);
         self.group.retire();
         let _ = self.child.kill();
         let _ = self.child.wait();

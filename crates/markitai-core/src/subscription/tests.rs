@@ -1,5 +1,4 @@
 use super::*;
-#[cfg_attr(not(unix), allow(unused_imports))]
 use serde_json::{Value, json};
 use std::io::Cursor;
 
@@ -27,10 +26,83 @@ fn framing_rejects_ambiguity_truncation_and_budgets() {
     );
 }
 
-#[cfg(unix)]
-mod unix {
+#[test]
+fn runtime_lookup_honours_platform_names_and_reports_each_failure_plainly() {
+    let root = tempfile::tempdir().unwrap();
+    let missing = locate(
+        &HashMap::from([("PATH".into(), root.path().to_string_lossy().into_owned())]),
+        "COPILOT_CLI_PATH",
+        "copilot",
+        "Copilot",
+        "not installed",
+    )
+    .unwrap_err();
+    assert!(matches!(&missing, crate::Error::Unsupported(text) if text == "not installed"));
+    let unavailable = locate(
+        &HashMap::from([(
+            "COPILOT_CLI_PATH".into(),
+            root.path().join("absent").to_string_lossy().into_owned(),
+        )]),
+        "COPILOT_CLI_PATH",
+        "copilot",
+        "Copilot",
+        "not installed",
+    )
+    .unwrap_err();
+    assert_eq!(
+        unavailable.to_string(),
+        crate::Error::InvalidInput("Copilot executable is unavailable".into()).to_string()
+    );
+    let directory = locate(
+        &HashMap::from([(
+            "COPILOT_CLI_PATH".into(),
+            root.path().to_string_lossy().into_owned(),
+        )]),
+        "COPILOT_CLI_PATH",
+        "copilot",
+        "Copilot",
+        "not installed",
+    )
+    .unwrap_err();
+    assert!(directory.to_string().contains("must be a regular file"));
+    // A PATH search finds the runtime even when Windows spells the variable `Path`.
+    let found = locate(
+        &HashMap::from([(
+            if cfg!(windows) { "Path" } else { "PATH" }.into(),
+            fake_runtime::program()
+                .parent()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+        )]),
+        "COPILOT_CLI_PATH",
+        fake_runtime::program()
+            .file_stem()
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "Copilot",
+        "not installed",
+    )
+    .unwrap();
+    assert_eq!(found, process_groups_plain(fake_runtime::program()));
+    let kept = retain(
+        &HashMap::from([
+            ("LANG".into(), "C.UTF-8".into()),
+            ("OPENAI_API_KEY".into(), "must-not-leak".into()),
+        ]),
+        &["COPILOT_HOME"],
+    );
+    assert_eq!(kept.get("LANG").map(String::as_str), Some("C.UTF-8"));
+    assert!(!kept.contains_key("OPENAI_API_KEY"));
+}
+
+fn process_groups_plain(path: std::path::PathBuf) -> std::path::PathBuf {
+    crate::process_groups::plain(path.canonicalize().unwrap())
+}
+
+mod runtime {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -42,23 +114,23 @@ mod unix {
     }
     impl Fixture {
         fn new(mode: &str) -> Self {
+            Self::with_program(mode, fake_runtime::program())
+        }
+        /// A runtime started through `program`: the stand-in itself, or a
+        /// script that runs it.
+        fn with_program(mode: &str, program: std::path::PathBuf) -> Self {
             let root = tempfile::Builder::new()
                 .prefix("copilot fake space ")
                 .tempdir()
                 .unwrap();
-            let executable = root.path().join("copilot fixture");
-            std::fs::write(&executable, include_str!("fake_cli.py")).unwrap();
-            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
-            std::fs::write(
-                root.path().join("fixture.json"),
-                serde_json::to_vec(&json!({"mode":mode,"home":std::env::var("HOME").ok(),"cache_home":root.path().join("private cache")}))
-                    .unwrap(),
-            )
-            .unwrap();
+            fake_runtime::install(
+                root.path(),
+                &json!({"mode":mode,"home":std::env::var("HOME").ok(),"cache_home":root.path().join("private cache")}),
+            );
             let env = HashMap::from([
                 (
                     "COPILOT_CLI_PATH".into(),
-                    executable.to_string_lossy().into_owned(),
+                    program.to_string_lossy().into_owned(),
                 ),
                 (
                     "COPILOT_HOME".into(),
@@ -102,11 +174,41 @@ mod unix {
         fn assert_private_cwd_removed(&self) {
             let cwd = std::fs::read_to_string(self.root.path().join("cwd")).unwrap();
             assert!(!std::path::Path::new(&cwd).exists());
+            #[cfg(unix)]
             assert_eq!(
                 std::fs::read_to_string(self.root.path().join("cwd-mode")).unwrap(),
                 "0o700"
             );
         }
+    }
+    /// npm installs `copilot.cmd`; it is started through the command
+    /// processor, whose argument quoting must hold through a path with spaces.
+    #[cfg(windows)]
+    #[test]
+    fn a_command_script_shim_runs_the_runtime_with_its_arguments_intact() {
+        let shims = tempfile::Builder::new()
+            .prefix("npm shim space ")
+            .tempdir()
+            .unwrap();
+        let shim = shims.path().join("copilot.cmd");
+        std::fs::write(
+            &shim,
+            format!("@\"{}\" %*\r\n", fake_runtime::program().display()),
+        )
+        .unwrap();
+        let fixture = Fixture::with_program("normal", shims.path().join("copilot"));
+        assert_eq!(
+            fixture.cfg.executable().extension().unwrap(),
+            std::ffi::OsStr::new("cmd")
+        );
+        assert!(
+            status(&fixture.cfg, Duration::from_secs(10))
+                .unwrap()
+                .authenticated
+        );
+        let result = complete(&fixture.cfg, fixture.request("through a shim", None)).unwrap();
+        assert_eq!(result.text, "through a shim");
+        fixture.assert_private_cwd_removed();
     }
     #[test]
     fn official_status_and_models_are_not_estimated_from_path_presence() {
@@ -336,6 +438,42 @@ mod unix {
                 sender.join().unwrap();
             }
             fixture.assert_private_cwd_removed();
+            // The descendant holding the runtime's pipes, when the turn got
+            // far enough to start it, was ended with the runtime.
+            if let Ok(text) = std::fs::read_to_string(fixture.root.path().join("descendant")) {
+                let pid: u32 = text.parse().unwrap();
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while running(pid) {
+                    assert!(Instant::now() < deadline, "descendant {pid} survived");
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+        }
+    }
+    /// Whether `pid` names a process that has not ended (a Unix zombie has).
+    fn running(pid: u32) -> bool {
+        #[cfg(unix)]
+        {
+            let output = std::process::Command::new("ps")
+                .args(["-p", &pid.to_string(), "-o", "stat="])
+                .output()
+                .unwrap();
+            let state = String::from_utf8_lossy(&output.stdout);
+            !state.trim().is_empty() && !state.trim().starts_with('Z')
+        }
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::Foundation::{CloseHandle, FALSE, WAIT_TIMEOUT};
+            use windows_sys::Win32::System::Threading::{
+                OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+            };
+            let process = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, FALSE, pid) };
+            if process.is_null() {
+                return false;
+            }
+            let alive = unsafe { WaitForSingleObject(process, 0) } == WAIT_TIMEOUT;
+            unsafe { CloseHandle(process) };
+            alive
         }
     }
     #[test]

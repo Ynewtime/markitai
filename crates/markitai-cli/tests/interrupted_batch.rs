@@ -1,5 +1,9 @@
 //! An interrupted batch says how many items it never started and how to
 //! continue, in the terminal language.
+//!
+//! The interrupt itself is portable (`support/interrupt.rs`); the suite runs
+//! where batches keep durable state for `--resume`, which Windows does not
+//! have yet.
 #![cfg(unix)]
 
 use std::io::{BufRead, BufReader};
@@ -8,12 +12,15 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+#[path = "support/interrupt.rs"]
+mod interrupt;
+
 const WAIT: Duration = Duration::from_secs(20);
 
 fn command(root: &Path, language: &str) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
     command.env_clear();
-    for name in ["PATH", "SYSTEMROOT", "USERPROFILE", "TMPDIR"] {
+    for name in ["PATH", "SYSTEMROOT", "USERPROFILE", "TMPDIR", "TEMP", "TMP"] {
         if let Some(value) = std::env::var_os(name) {
             command.env(name, value);
         }
@@ -39,7 +46,8 @@ fn interrupt_a_url_batch(root: &Path, language: &str, count: usize) -> (Option<i
         .collect();
     std::fs::write(root.join("list.urls"), list).unwrap();
     let config = r#"{"cache":{"enabled":false},"history":{"record":false}}"#;
-    let mut child = command(root, language)
+    let mut command = command(root, language);
+    let mut child = interrupt::interruptible(&mut command)
         .args([
             "list.urls",
             "-o",
@@ -72,10 +80,7 @@ fn interrupt_a_url_batch(root: &Path, language: &str, count: usize) -> (Option<i
             .map(Result::unwrap)
             .collect::<Vec<_>>()
     });
-    assert_eq!(
-        unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGINT) },
-        0
-    );
+    interrupt::interrupt(&child);
     // The acknowledgement comes first; the held request is then released.
     std::thread::sleep(Duration::from_millis(500));
     drop(held);

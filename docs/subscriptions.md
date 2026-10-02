@@ -33,6 +33,9 @@ session. Its public fields are provider/authenticated/user/expires_at/error/deta
 JSON status exits zero even when unauthenticated, matching the reference command;
 human status returns nonzero. Login replaces the Unix CLI process with the official
 `copilot login`, retaining terminal ownership, signals and the exact exit status.
+Windows cannot replace a process: the CLI starts the official login on its own
+console, ignores Ctrl-C and Ctrl-Break while the login runs (the runtime receives
+them itself), waits, and exits with the runtime's exit status.
 The official runtime owns login, refresh and storage. Markitai reads no token file,
 prints no credential and does not rewrite the configured model list.
 
@@ -70,9 +73,35 @@ cache behavior.
 
 Headless process execution has bounded concurrency, frame/event/input sizes and
 an overall deadline. Stderr is drained without forwarding; it has no cumulative
-byte-limit claim. On Unix, process-group cleanup ends children before temporary
-workspaces are removed. Windows execution and login remain unsupported until its
-process-tree boundary is implemented and tested.
+byte-limit claim. Process-tree cleanup ends children before temporary workspaces
+are removed (see [Runtime processes](#runtime-processes)).
+
+## Runtime processes
+
+`COPILOT_CLI_PATH`, `CLAUDE_CLI_PATH` and `CODEX_CLI_PATH` name a runtime
+directly; otherwise the first `copilot`, `claude` or `codex` on PATH is used.
+Only absolute PATH entries are searched, and on Unix only files with execute
+permission count. On Windows the search tries the PATHEXT extensions in order,
+limited to `.com`, `.exe`, `.bat` and `.cmd`, so npm's `copilot.cmd`,
+`claude.cmd` and `codex.cmd` shims are found and its extension-less shell
+scripts are not; a configured path without an extension is completed the same
+way. Variable names are matched without regard to case there (`Path` serves as
+PATH). A `.cmd` or `.bat` shim runs through the command processor
+(`cmd.exe /d /c`) with the standard library's argument quoting for batch files,
+which refuses arguments it cannot pass safely; the native `copilot.exe`,
+`claude.exe` and `codex.exe` avoid that extra process. Status reports a resolved
+path without the `\\?\` prefix.
+
+Each runtime starts as the root of its own process tree: a new process group on
+Unix; on Windows a new process group and a hidden console, suspended until it
+has been placed in a Job Object that kills the tree when closed. A timeout,
+cancellation or failure kills the whole tree, and on Windows waits until it is
+empty before the private workspace is removed. Besides HOME, PATH, temporary
+directories, locale and each runtime's home, Windows runtimes receive the
+standard system variables that command shims and Node.js need (PATHEXT,
+ComSpec, SystemRoot, the profile and program folders, and similar); none holds
+a credential. On Windows Claude Code also receives `CLAUDE_CODE_GIT_BASH_PATH`
+when it is set.
 
 ## Claude
 
@@ -94,7 +123,7 @@ markitai auth claude login
 
 Status accepts only the official subscription account method. Login replaces the
 Unix process with official `claude auth login`, preserving terminal, PID and exit
-status. API key/base and OAuth-token environment overrides are removed from the
+status; on Windows it runs as a waited-for child, as for Copilot. API key/base and OAuth-token environment overrides are removed from the
 child; API settings and strict max_tokens are not accepted on this subscription
 route. JSON status remains zero-exit when signed out, matching the public command.
 The retained `sdk_installed` status field is false because a Python SDK is not
@@ -115,20 +144,31 @@ model changes fail. Managed administrative policy can still run hooks; Markitai
 cannot override it. These controls are not an OS sandbox for a replacement binary.
 
 Success requires a valid terminal result and successful process exit, not partial
-assistant text. One deadline covers startup and response; process groups are killed
-and reaped on Unix. Input, events, stdout and stderr are bounded. Interrupted pipe
-reads retry within that original deadline. Stdout EOF waits for the bounded stderr
-drain, so a late flood cannot become a successful response. Other platforms remain
-unsupported until equivalent process cleanup is implemented.
+assistant text. One deadline covers startup and response; the runtime's process
+tree is killed and its root reaped. Input, events, stdout and stderr are bounded.
+Interrupted pipe reads retry within that original deadline. Stdout EOF waits for
+the bounded stderr drain, so a late flood cannot become a successful response.
+Platforms other than Unix and Windows refuse to start a runtime.
 
-Because each runtime has its own process group, a terminal interrupt does not
+Because each runtime has its own process tree, a terminal interrupt does not
 reach it. The Unix CLI therefore kills every runtime, Chromium and LibreOffice
 group it started before terminating on SIGINT, SIGTERM or SIGHUP; conversion
 keeps its default signal exit, and a batch's second interrupt does the same before
 exit 130. `markitai serve` keeps its SIGINT/SIGTERM drain and MCP its SIGINT
 drain; their remaining terminating signals clean up. SIGKILL and host processes
-embedding the bindings cannot run this cleanup. The core exposes the
-async-signal-safe `terminate_child_process_groups` for Rust hosts.
+embedding the bindings cannot run this cleanup. The core exposes
+`terminate_child_process_groups` (async-signal-safe on Unix) for Rust hosts.
+
+On Windows, Ctrl-C and Ctrl-Break are the interrupt: they kill the runtime trees
+and exit with 130. A batch with recovery state drains on the first one and does
+the same on a second; the Windows batch keeps no recovery state yet, so it exits
+at the first. Closing the console window, logging off or shutting down kills the
+trees and exits with 143 at once, because Windows allows only a few seconds; the
+batch state already written stays valid. `markitai serve` and MCP keep their
+Ctrl-C drain; Ctrl-Break and the closing events clean up. A Ctrl-C that the
+parent disabled (as a new process group starts) stays disabled, as an inherited
+ignored SIGINT does on Unix. A runtime's job also ends its tree when Markitai is
+terminated without any cleanup.
 
 Actual assistant message IDs count observed requests. Terminal usage and per-model
 usage overlap with those calls; they are reconciled, never added twice. Per-model
@@ -162,7 +202,11 @@ were checked; the native debug CLI also successfully reports both as signed out.
 That official check exposed and corrected Copilot's connect field names and
 separate cache-home routing. It does not establish a real login or authenticated
 inference. Authored fixtures cover actual native conversion and failure accounting
-without sending provider requests. Round 32 optimized CLI and installed dynamic/static bindings pass at `dc0343b`;
+without sending provider requests. The adapter and CLI tests run Rust stand-ins
+for all three runtimes (`subscription/fake_runtime.rs`): the test binary plays
+the runtime whose home holds a scenario file, so they need no interpreter and
+run on Windows; the Windows tests also start them through `.cmd` shims. The
+Windows paths are type-checked on macOS and have not yet run on a Windows host. Round 32 optimized CLI and installed dynamic/static bindings pass at `dc0343b`;
 see [delivery evidence](validation/integration-round32.md). Completed-item resume
 preserves terminal diagnostics independently of the old minimal success aggregate.
 

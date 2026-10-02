@@ -90,7 +90,9 @@ See [PDF rendering](pdf-rendering.md) for page pixel and encoding limits.
 ## Execution and limits
 
 Discovery searches absolute PATH entries and standard LibreOffice locations;
-relative/empty PATH entries do not select a document-local executable. The
+relative/empty PATH entries do not select a document-local executable. On
+Windows the search tries the PATHEXT extensions and prefers `soffice.exe` to the
+`soffice.com` console wrapper in the same directory. The
 executable receives argument-array parameters, never a shell command. Each export
 owns a private temporary directory containing an input copy, fresh LibreOffice
 profile, and output directory. Macros and automatic link updates are disabled in
@@ -100,9 +102,11 @@ are private, and HOME is never reassigned.
 
 At most two exports run concurrently per process. A shared 120-second deadline
 covers admission and both legacy normalization/PDF export subprocesses. A timeout
-kills and waits for the child; Unix uses a dedicated process group to include
-launcher descendants. Windows process-tree termination is implemented but has not
-been validated on a Windows host. Output growth is polled every 25 ms. Inputs are
+kills and waits for the child. Launcher descendants are included: Unix uses a
+dedicated process group; Windows starts LibreOffice suspended in a Job Object
+that ends its whole tree, also when Markitai itself ends, and is emptied before
+the private directory is removed. The Windows path is type-checked but has not
+yet run on a Windows host. Output growth is polled every 25 ms. Inputs are
 limited to 100 MiB; normalized PPTX/ODS plus exported PDF share a 100 MiB budget.
 Presentations, workbooks and resulting PDFs have a 1,000-slide/sheet/page limit.
 Workbook ZIP packages allow at most 16,384 entries and the sheet-index XML at

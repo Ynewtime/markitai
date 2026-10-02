@@ -28,58 +28,23 @@ pub struct Config {
 }
 impl Config {
     pub fn from_env(env: &HashMap<String, String>) -> crate::Result<Self> {
-        let path = env
-            .get("CLAUDE_CLI_PATH")
-            .map(PathBuf::from)
-            .or_else(|| {
-                env.get("PATH").and_then(|value| {
-                    std::env::split_paths(value)
-                        .map(|dir| {
-                            dir.join(if cfg!(windows) {
-                                "claude.exe"
-                            } else {
-                                "claude"
-                            })
-                        })
-                        .find(|p| p.is_file())
-                })
-            })
-            .ok_or_else(|| {
-                crate::Error::Unsupported(
-                    "The supported official Claude CLI is not installed".into(),
-                )
-            })?;
-        let executable = path
-            .canonicalize()
-            .map_err(|_| crate::Error::InvalidInput("Claude executable is unavailable".into()))?;
-        if !executable.is_file() {
-            return Err(crate::Error::InvalidInput(
-                "Claude executable must be a regular file".into(),
-            ));
-        }
-        let mut environment = HashMap::new();
+        let executable = super::locate(
+            env,
+            "CLAUDE_CLI_PATH",
+            "claude",
+            "Claude",
+            "The supported official Claude CLI is not installed",
+        )?;
         // Preserve the user's official login location. Provider overrides and OAuth
         // values are neither inspected nor passed through this subscription adapter.
-        for name in [
-            "HOME",
-            "PATH",
-            "USERPROFILE",
-            "APPDATA",
-            "LOCALAPPDATA",
-            "SystemRoot",
-            "SYSTEMROOT",
-            "WINDIR",
-            "TMPDIR",
-            "TMP",
-            "TEMP",
-            "LANG",
-            "LC_ALL",
-            "CLAUDE_CONFIG_DIR",
-        ] {
-            if let Some(value) = env.get(name).cloned().or_else(|| std::env::var(name).ok()) {
-                environment.insert(name.into(), value);
-            }
-        }
+        // On Windows the runtime runs its tools through Git Bash, which may be
+        // configured by path.
+        let names: &[&str] = if cfg!(windows) {
+            &["CLAUDE_CONFIG_DIR", "CLAUDE_CODE_GIT_BASH_PATH"]
+        } else {
+            &["CLAUDE_CONFIG_DIR"]
+        };
+        let environment = super::retain(env, names);
         Ok(Self {
             executable,
             environment,

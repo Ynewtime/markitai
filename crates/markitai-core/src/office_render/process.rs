@@ -47,19 +47,8 @@ impl Drop for Running {
         if self.reaped {
             return;
         }
-        // A dedicated process group also terminates the real soffice behind a wrapper.
-        #[cfg(unix)]
-        unsafe {
-            libc::kill(-(self.child.id() as libc::pid_t), libc::SIGKILL);
-        }
-        #[cfg(windows)]
-        {
-            let _ = Command::new("taskkill")
-                .args(["/F", "/T", "/PID", &self.child.id().to_string()])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-        }
+        // A dedicated tree also ends the real soffice behind a launcher or wrapper.
+        self.group.kill_tree(&self.child);
         self.group.retire();
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -147,11 +136,6 @@ fn private_command(program: &Path, profile: &Path) -> Result<Command> {
         .env("TMP", profile)
         .env("TEMP", profile)
         .env("XDG_CACHE_HOME", profile.join("cache"));
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
     Ok(command)
 }
 
@@ -161,10 +145,9 @@ fn wait(mut command: Command, output: Option<(&Path, u64)>, deadline: Instant) -
     }
     let group = crate::process_groups::Slot::reserve()
         .ok_or_else(|| failure("too many external runtime process groups are active"))?;
-    let child = command
-        .spawn()
+    let child = group
+        .spawn(&mut command)
         .map_err(|_| failure("LibreOffice could not be started"))?;
-    group.publish(&child);
     let mut running = Running {
         child,
         group,
