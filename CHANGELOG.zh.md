@@ -4,6 +4,7 @@
 
 ### 新增
 
+- 通过 `security.pdf_sanitize` 过滤 PDF 提取正文：`off` 关闭隐藏文字安全提示，`warn` 保留原正文并报告信号，`remove` 过滤支持识别的可疑文字，保留可见正文、已接受的 OCR 层及原始资产。本地与下载 PDF 使用相同策略；检查不完整或不支持的情况会明确提示，不宣称完成全面清洗。
 - Windows 和 Linux 本地 PaddleOCR 识别，macOS 可通过 `portable-media` 构建选用：有边界的进程内 ONNX 推理、显式语言选择，以及默认英语、中文、日语、韩语路由。模型在首次使用时下载并核验固定大小与 SHA-256；`doctor` 只检查、不下载，`doctor --fix` 原子修复缺失或损坏模型，并拒绝不安全的模型路径。macOS 默认继续使用 Vision。 工作台以中英文区分缺失、损坏与不安全的模型，保留原始错误详情，并允许解决缺模型或下载问题后重试。
 - 原生 Rust 转换核心、CLI 与进程内 Node.js、Python、Go 绑定；CLI 是一个可执行文件，不需要 Python、Node.js 或 Go 运行时。
 - 完整的 Unix CLI 归档 `markitai-<version>-<target>-single-binary.tar.gz`，含一份可执行文件、相对的 `mkai` 与 `markitai-mcp` 命令别名，以及项目、依赖、定价和模型目录通知；`scripts/package_cli_target.py` 为非本机目标（在 Apple silicon 上构建 x86-64 macOS）生成同样的归档，按本机归档的同样规则校验，并在主机可运行时于 Rosetta 2 下执行。

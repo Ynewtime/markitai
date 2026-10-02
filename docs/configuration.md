@@ -76,6 +76,7 @@ markitai config edit                 # 终端中的交互编辑器
 | `image.stdout_persist_dir` | `~/.markitai/assets` | stdout 图片库目录（文件在其下 `blobs/`）；默认值跟随 `MARKITAI_HOME`，自定义路径保持原义 |
 | `image.stdout_fetch_external` | `false` | 参考版用于终端内联显示远程图片；本构建无终端图片输出，可设置但无作用 |
 | `ocr.enabled` / `ocr.lang` | `false` / `en` | OCR 开关与语言。默认 `en` 先按英文识别，英文读不出时再试中文、韩文和日文；写成 `en-US` 只读英文，其余值只读所写的那一种语言。见[本地 OCR](ocr.md#the-default-language) |
+| `security.pdf_sanitize` | `warn` | PDF 提取正文的隐藏文字策略：`off` 关闭安全提示，`warn` 保留原正文并提示，`remove` 有边界地过滤可疑文字；不修改原文件或资产，限制见[PDF](pdf.md#hidden-text-policy) |
 | `screenshot.enabled` | `false` | 页面截图，同 `--screenshot` |
 | `batch.concurrency` / `batch.url_concurrency` | `10` / `5` | 文件与 URL 并发，同 `-j`/`--url-concurrency` |
 | `batch.scan_max_depth` / `batch.scan_max_files` | `5` / `10000` | 目录扫描深度与文件数上限 |

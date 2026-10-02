@@ -23,6 +23,11 @@ mod page_tests;
 mod policy_tests;
 #[path = "pdf/running.rs"]
 mod running;
+#[path = "pdf/sanitize.rs"]
+mod sanitize;
+#[cfg(test)]
+#[path = "pdf/sanitize_tests.rs"]
+mod sanitize_tests;
 
 const MAX_STREAM_BYTES: usize = 64 * 1024 * 1024;
 const MAX_ASSET_BYTES: usize = 128 * 1024 * 1024;
@@ -367,7 +372,11 @@ struct GraphicsState {
     text_scale: f32,
     white_fill: bool,
     white_stroke: bool,
-    invisible_alpha: bool,
+    fill_alpha: f32,
+    stroke_alpha: f32,
+    fill_space: sanitize::ColorSpace,
+    stroke_space: sanitize::ColorSpace,
+    unknown_compositing: bool,
 }
 
 impl Default for GraphicsState {
@@ -379,7 +388,11 @@ impl Default for GraphicsState {
             text_scale: 1.0,
             white_fill: false,
             white_stroke: false,
-            invisible_alpha: false,
+            fill_alpha: 1.0,
+            stroke_alpha: 1.0,
+            fill_space: sanitize::ColorSpace::Gray,
+            stroke_space: sanitize::ColorSpace::Gray,
+            unknown_compositing: false,
         }
     }
 }
@@ -388,7 +401,12 @@ impl GraphicsState {
     fn suspicious(self) -> Option<&'static str> {
         if matches!(self.render_mode, 3 | 7) {
             Some(INVISIBLE_RENDERING)
-        } else if self.invisible_alpha {
+        } else if (matches!(self.render_mode, 0 | 4) && self.fill_alpha <= 0.01)
+            || (matches!(self.render_mode, 1 | 5) && self.stroke_alpha <= 0.01)
+            || (matches!(self.render_mode, 2 | 6)
+                && self.fill_alpha <= 0.01
+                && self.stroke_alpha <= 0.01)
+        {
             Some("transparent text graphics state")
         } else if (self.font_size * self.ctm_scale * self.text_scale).abs() <= 1.0 {
             Some("text at one point or smaller")
@@ -407,6 +425,7 @@ impl GraphicsState {
 struct PageInspection {
     images: Vec<ObjectId>,
     signals: BTreeSet<&'static str>,
+    visibility_unknown: BTreeSet<&'static str>,
     warnings: Vec<String>,
     /// Some of the page's content went unread or could not be parsed: its
     /// signals may be incomplete.
@@ -492,90 +511,19 @@ fn inspect_operations(
                     state = saved;
                 }
             }
-            "Tr" => {
-                if let Some(mode) = last.and_then(|obj| obj.as_i64().ok()) {
-                    state.render_mode = mode;
-                }
-            }
-            "Tf" => {
-                if let Some(size) = last.and_then(|obj| obj.as_float().ok()) {
-                    state.font_size = size;
-                }
-            }
-            "cm" => {
-                if let Some(scale) = matrix_scale(&operation.operands) {
-                    state.ctm_scale *= scale;
-                }
-            }
-            "BT" => state.text_scale = 1.0,
-            "Tm" => {
-                if let Some(scale) = matrix_scale(&operation.operands) {
-                    state.text_scale = scale;
-                }
-            }
-            "g" => {
-                state.white_fill = last
-                    .and_then(|obj| obj.as_float().ok())
-                    .is_some_and(|v| v >= 0.98)
-            }
-            "G" => {
-                state.white_stroke = last
-                    .and_then(|obj| obj.as_float().ok())
-                    .is_some_and(|v| v >= 0.98)
-            }
-            "rg" => {
-                state.white_fill = operation.operands.len() == 3
-                    && operation
-                        .operands
-                        .iter()
-                        .all(|obj| obj.as_float().is_ok_and(|v| v >= 0.98))
-            }
-            "RG" => {
-                state.white_stroke = operation.operands.len() == 3
-                    && operation
-                        .operands
-                        .iter()
-                        .all(|obj| obj.as_float().is_ok_and(|v| v >= 0.98))
-            }
-            "k" => {
-                state.white_fill = operation.operands.len() == 4
-                    && operation
-                        .operands
-                        .iter()
-                        .all(|obj| obj.as_float().is_ok_and(|v| v <= 0.02))
-            }
-            "K" => {
-                state.white_stroke = operation.operands.len() == 4
-                    && operation
-                        .operands
-                        .iter()
-                        .all(|obj| obj.as_float().is_ok_and(|v| v <= 0.02))
-            }
             "scn" | "SCN" if name.is_some() => {
+                state.apply_paint(pdf, resources, operation);
                 out.warnings.push(
                     "Pattern paint may contain raster content; pattern streams are not inspected."
                         .into(),
                 );
             }
-            "gs" => {
-                if let Some(obj) =
-                    name.and_then(|name| named_resource(pdf, resources, b"ExtGState", name))
-                {
-                    let resolved = match obj {
-                        Object::Reference(id) => pdf.get_object(*id).ok(),
-                        other => Some(other),
-                    };
-                    if let Some(dict) = resolved.and_then(|obj| obj.as_dict().ok()) {
-                        state.invisible_alpha = dict
-                            .get(b"ca")
-                            .and_then(Object::as_float)
-                            .is_ok_and(|v| v <= 0.01);
-                    }
-                }
-            }
             "Tj" | "TJ" | "'" | "\"" => {
                 if let Some(reason) = state.suspicious() {
                     out.signals.insert(reason);
+                }
+                if let Some(reason) = state.unknown() {
+                    out.visibility_unknown.insert(reason);
                 }
             }
             "BI" | "ID" => {
@@ -586,14 +534,21 @@ fn inspect_operations(
                 let Some(obj) =
                     name.and_then(|name| named_resource(pdf, resources, b"XObject", name))
                 else {
+                    out.incomplete = true;
+                    out.warnings
+                        .push("An invoked XObject resource could not be resolved.".into());
                     continue;
                 };
                 let Ok(id) = obj.as_reference() else {
+                    out.incomplete = true;
                     out.warnings
                         .push("A direct XObject cannot be extracted.".into());
                     continue;
                 };
                 let Ok(stream) = pdf.get_object(id).and_then(Object::as_stream) else {
+                    out.incomplete = true;
+                    out.warnings
+                        .push("An invoked XObject stream could not be resolved.".into());
                     continue;
                 };
                 match stream.dict.get(b"Subtype").and_then(Object::as_name).ok() {
@@ -603,11 +558,19 @@ fn inspect_operations(
                         }
                     }
                     Some(b"Form") if seen_forms.insert(id) => {
-                        let nested = pdf.get_dict_in_dict(&stream.dict, b"Resources").ok();
-                        let form_resources: Vec<_> = nested
-                            .into_iter()
-                            .chain(resources.iter().copied())
-                            .collect();
+                        let form_resources = if stream.dict.has(b"Resources") {
+                            match pdf.get_dict_in_dict(&stream.dict, b"Resources") {
+                                Ok(local) => vec![local],
+                                Err(_) => {
+                                    out.incomplete = true;
+                                    out.warnings.push("Form resource inspection failed: Resources is not a dictionary.".into());
+                                    seen_forms.remove(&id);
+                                    continue;
+                                }
+                            }
+                        } else {
+                            resources.to_vec()
+                        };
                         let mut form_state = state;
                         if let Some(scale) = stream
                             .dict
@@ -638,10 +601,17 @@ fn inspect_operations(
                         }
                         seen_forms.remove(&id);
                     }
+                    Some(b"Form") => {
+                        out.incomplete = true;
+                        out.warnings
+                            .push("Recursive Form invocation exceeds complete inspection.".into());
+                    }
                     _ => {}
                 }
             }
-            _ => {}
+            _ => {
+                state.apply_paint(pdf, resources, operation);
+            }
         }
     }
 }
@@ -666,7 +636,7 @@ struct PageContent {
 
 fn inspect_page(pdf: &lopdf::Document, id: ObjectId) -> (PageInspection, Option<PageContent>) {
     let mut out = PageInspection::default();
-    let (direct, ids) = match pdf.get_page_resources(id) {
+    let resource = match sanitize::page_resources(pdf, id) {
         Ok(resources) => resources,
         Err(error) => {
             out.warnings
@@ -675,10 +645,7 @@ fn inspect_page(pdf: &lopdf::Document, id: ObjectId) -> (PageInspection, Option<
             return (out, None);
         }
     };
-    let resources = direct
-        .into_iter()
-        .chain(ids.iter().filter_map(|id| pdf.get_dictionary(*id).ok()))
-        .collect::<Vec<_>>();
+    let resources = resource.into_iter().collect::<Vec<_>>();
     // Read as `get_page_content_with_limit` reads it, keeping where each
     // stream lies for the page reader's OCR signals.
     let content = match pdf_inspector::PageContent::read(pdf, id, MAX_STREAM_BYTES) {
@@ -742,6 +709,8 @@ pub(crate) struct PdfPages {
     /// The document's producer, as the warning for pages read from their
     /// OCR layer names it.
     ocr_layer_producer: Option<String>,
+    /// Pages whose visibility inspection went unread or encountered unknown paint.
+    unverified_visibility: BTreeSet<u32>,
 }
 
 impl PdfPages {
@@ -761,6 +730,7 @@ impl PdfPages {
             mut document,
             mut comments,
             ocr_layer_producer,
+            ..
         } = self;
         let readable: Vec<bool> = pages
             .iter()
@@ -1109,12 +1079,35 @@ pub(super) fn extract(bytes: &[u8]) -> Result<Document> {
 }
 
 pub(crate) fn extract_pages(bytes: &[u8]) -> Result<PdfPages> {
-    extract_pages_inner(bytes, None)
+    extract_pages_policy(bytes, None, sanitize::Mode::Warn)
+}
+
+pub(crate) fn extract_with_config(bytes: &[u8], cfg: &serde_json::Value) -> Result<Document> {
+    extract_pages_policy(bytes, None, sanitize::Mode::from_config(cfg)?)?.finish()
+}
+
+pub(crate) fn extract_pages_bounded_with_config(
+    bytes: &[u8],
+    max_pages: usize,
+    cfg: &serde_json::Value,
+) -> Result<PdfPages> {
+    extract_pages_policy(bytes, Some(max_pages), sanitize::Mode::from_config(cfg)?)
+}
+
+fn extract_pages_policy(
+    bytes: &[u8],
+    max_pages: Option<usize>,
+    mode: sanitize::Mode,
+) -> Result<PdfPages> {
+    let mut pages = extract_pages_inner(bytes, max_pages)?;
+    sanitize::apply(bytes, max_pages, mode, &mut pages)?;
+    Ok(pages)
 }
 
 /// Bound page processing before invoking the native text/layout reader.
+#[cfg(test)]
 pub(crate) fn extract_pages_bounded(bytes: &[u8], max_pages: usize) -> Result<PdfPages> {
-    extract_pages_inner(bytes, Some(max_pages))
+    extract_pages_policy(bytes, Some(max_pages), sanitize::Mode::Warn)
 }
 
 fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPages> {
@@ -1122,7 +1115,29 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
     // when the reader's document is what lopdf alone makes of the bytes,
     // this module's own inspection; otherwise that inspection loads the
     // bytes itself, unrepaired, as it always has.
-    let loaded = pdf_inspector::LoadedPdf::load_mem(bytes);
+    let mut loaded = pdf_inspector::LoadedPdf::load_mem(bytes);
+    // lopdf's resource helper misses direct Resources dictionaries on Pages.
+    // Normalize only that valid inherited case, into the page's nearest entry.
+    // Ordinary documents reuse their first parse and every original asset byte.
+    let mut normalization_warning = None;
+    if let Ok(original) = &loaded {
+        match sanitize::normalize_inherited_resources(original.document(), bytes.len()) {
+            Ok(Some(normalized)) => match pdf_inspector::LoadedPdf::load_mem(&normalized) {
+                Ok(normalized) => loaded = Ok(normalized),
+                Err(_) => {
+                    normalization_warning = Some(
+                        "Inherited direct PDF resources could not be normalized for the native reader; the original reading is retained.",
+                    )
+                }
+            },
+            Ok(None) => {}
+            Err(_) => {
+                normalization_warning = Some(
+                    "Inherited direct PDF resources exceeded their in-memory normalization bound; the original reading is retained.",
+                )
+            }
+        }
+    }
     let unrepaired;
     // The reader whose document this module inspects: it is then given each
     // page's content as inspection decoded it, and does not decode it again.
@@ -1154,6 +1169,9 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
         )));
     }
     let mut document = Document::default();
+    if let Some(warning) = normalization_warning {
+        document.warnings.push(warning.into());
+    }
     // Each page's content is inspected first: the shapes of a page whose
     // inspection is clean (its rule grids and bullet-sized marks) serve the
     // layout reader, and its painted list bullets the page reader too.
@@ -1336,6 +1354,12 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
     }
     // Read only when a page shows a table drawn without rules.
     let tagged_tables = std::cell::OnceCell::new();
+    let unverified_visibility = inspections
+        .iter()
+        .filter_map(|(&number, inspection)| {
+            (inspection.incomplete || !inspection.visibility_unknown.is_empty()).then_some(number)
+        })
+        .collect();
     let mut image_names = BTreeMap::<ObjectId, Option<String>>::new();
     let mut total_asset_bytes = 0;
     let mut extracted_pages = Vec::with_capacity(page_ids.len());
@@ -1375,6 +1399,12 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
         }
         if !inspection.signals.is_empty() {
             document.warnings.push(format!("PDF page {number}: contains {}; the native reader applies its own visibility heuristics, and complete hidden-text filtering is not established.", inspection.signals.into_iter().collect::<Vec<_>>().join(", ")));
+        }
+        if !inspection.visibility_unknown.is_empty() {
+            document.warnings.push(sanitize::unknown_warning(
+                number,
+                &inspection.visibility_unknown,
+            ));
         }
         for image_id in inspection.images {
             let name = image_names.entry(image_id).or_insert_with(|| {
@@ -1512,6 +1542,7 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
         document,
         comments,
         ocr_layer_producer,
+        unverified_visibility,
     })
 }
 
@@ -2317,6 +2348,7 @@ mod tests {
         let mut output = PageInspection {
             images: Vec::new(),
             signals: BTreeSet::new(),
+            visibility_unknown: BTreeSet::new(),
             warnings: Vec::new(),
             incomplete: false,
             inspected_bytes: 0,

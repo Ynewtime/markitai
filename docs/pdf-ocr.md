@@ -57,6 +57,21 @@ persistent screenshot paths. The media object supplies `has_reliable_text` so
 fallback decisions use recovered content rather than page markers or comments.
 The caller owns the LLM request and public result shaping.
 
+## Hidden text and media
+
+The [hidden text policy](pdf.md#hidden-text-policy) is applied before native page
+routing and before that body is supplied to an LLM. It applies equally when
+OCR or screenshots are enabled. Successful bounded removal can leave a native
+page reliable; incomplete or uncertain filtering retains its visibility
+verdict, allowing the existing OCR routing to replace its body. Local OCR and
+VLM OCR read the original rendered page pixels. Embedded image assets and
+screenshots are not generated from the temporary filtered text document.
+
+An accepted embedded OCR layer is retained as described above. To recognize it
+again from pixels, use `ocr.per_page_routing=false`. `off` only suppresses
+hidden-text security notices: the native reader still omits nonpainting text
+unless its established searchable-scan checks accept it as an OCR layer.
+
 ## Pixels, encoding and publication
 
 Pages render at 150 DPI as upright RGB composited over white. Each selected page

@@ -283,6 +283,7 @@ mod tests {
             document: Document::default(),
             comments: Default::default(),
             ocr_layer_producer: None,
+            unverified_visibility: Default::default(),
         }
         .finish()
         .unwrap()

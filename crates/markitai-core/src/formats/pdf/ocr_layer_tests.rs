@@ -490,3 +490,31 @@ fn a_layer_on_a_page_this_inspection_cannot_finish_is_not_used() {
         Some("invisible_text_layer")
     );
 }
+
+#[test]
+fn accepted_searchable_scans_keep_their_layer_in_every_sanitize_policy() {
+    let lines = lines();
+    let bytes = pdf(vec![searchable(&lines)], Some("Tesseract 5.5.3"));
+    let original = bytes.clone();
+    for mode in [
+        sanitize::Mode::Off,
+        sanitize::Mode::Warn,
+        sanitize::Mode::Remove,
+    ] {
+        let pages = extract_pages_policy(&bytes, None, mode).unwrap();
+        assert_eq!(
+            pages.pages[0].ocr_layer,
+            Some(ocr_layer::LayerCheck::Aligned)
+        );
+        let document = pages.finish().unwrap();
+        assert_eq!(document.metadata["ocr_layer_pages"], serde_json::json!([1]));
+        assert!(document.markdown.contains("The harbour handled more ships"));
+        assert!(
+            !document
+                .warnings
+                .iter()
+                .any(|w| w.contains("pdf_sanitize=remove filtered"))
+        );
+    }
+    assert_eq!(bytes, original);
+}

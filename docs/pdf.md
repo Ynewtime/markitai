@@ -4,6 +4,43 @@ The PDF reader uses `pdf-inspector` for decoding and page-level reliability
 decisions, with `lopdf` for bounded content inspection and embedded images.
 There is no Python runtime, external converter or implicit OCR fallback.
 
+## Hidden text policy
+
+`security.pdf_sanitize` applies to local and downloaded PDFs, including the
+native text supplied to page OCR, screenshots and LLM enhancement:
+
+- `off` suppresses hidden-text security notices and keeps the native reader's
+  existing visibility rules. It does not make invisible `Tr 3`/`Tr 7` text
+  visible, and does not disable decoding or reliability warnings.
+- `warn` (the default) keeps that same extracted body and reports suspicious
+  white, transparent, very small or invisible text and inspection limits.
+- `remove` filters suspicious text show operators before page layout, keeping
+  their advances and clipping state so later visible text stays in place.
+  It changes the extracted body in memory; the input PDF, embedded pictures
+  and screenshot pixels keep their original bytes. A matching visible copy
+  of the same words is retained. A shared Form is filtered per invocation,
+  with the nearest complete resources dictionary taking precedence.
+
+Removal uses effective text size (at most one point), separate fill/stroke
+opacity (at most 0.01 on every active paint channel) and white device-color
+text. White text is only filtered when no path, image, shading or other
+background paint was found on that page; white text on a black panel stays
+visible. Unsupported color spaces, soft masks, blending, malformed resources
+and inspection or rewrite budgets are reported honestly. A page whose initial
+inspection was incomplete keeps its original body. Other uncertain paint may
+be retained with a notice that removal was incomplete.
+
+A searchable scan's already accepted OCR layer is retained in all three modes
+under the rules below. Filtering never promotes newly masked text into an
+accepted OCR layer. Normal documents need no filtering or second layout pass;
+a valid direct resources dictionary inherited from a Pages ancestor is
+materialized only in memory to make it readable by the pinned native reader.
+
+This is bounded filtering of the extracted text, not a general PDF security
+sanitizer. It does not certify content, cleanse attachments, annotations,
+metadata, links or image pixels, or prevent prompt injection in visible text.
+Use OCR over page pixels when those pixels must be the source of the text.
+
 ## Downloaded PDFs
 
 Static and automatic fetches can hand one bounded HTTP response directly to the

@@ -1169,7 +1169,12 @@ fn notice_failure(refusal: sites::Refusal) -> Option<&'static str> {
 }
 
 fn defer_pdf(cfg: &Value) -> bool {
-    config::enabled(cfg, "/ocr/enabled")
+    // These policies must reach the configured PDF reader even without media.
+    matches!(
+        cfg.pointer("/security/pdf_sanitize")
+            .and_then(Value::as_str),
+        Some("off" | "remove")
+    ) || config::enabled(cfg, "/ocr/enabled")
         || config::enabled(cfg, "/screenshot/enabled")
         || config::enabled(cfg, "/screenshot/screenshot_only")
 }

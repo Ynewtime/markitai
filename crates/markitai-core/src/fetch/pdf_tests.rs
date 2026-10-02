@@ -346,3 +346,68 @@ mod bounded_fixture_io {
         "/../../tests/support/bounded_read.rs"
     ));
 }
+
+#[test]
+fn hidden_text_policy_defers_off_and_remove_without_media_or_a_second_download() {
+    for mode in ["off", "remove"] {
+        let (_directory, mut cfg) = settings();
+        cfg["security"]["pdf_sanitize"] = json!(mode);
+        cfg["ocr"]["enabled"] = json!(false);
+        cfg["screenshot"]["enabled"] = json!(false);
+        cfg["screenshot"]["screenshot_only"] = json!(false);
+        let server = Server::new(vec![Reply::bytes("application/pdf", PDF)]);
+        let source = server.url("/opaque");
+        let pdf = received(fetch_with_context(&source, &cfg, Some("static"), true).unwrap());
+        assert_eq!(pdf.bytes, PDF);
+        assert_eq!(pdf.final_url, source);
+        assert_eq!(server.requests().len(), 1);
+        assert!(
+            fetch_cache::Cache::from_config(&cfg)
+                .unwrap()
+                .get(&source, Some("static"))
+                .unwrap()
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn policy_deferred_pdf_invalidates_html_cache_during_conditional_revalidation() {
+    let (_directory, mut cfg) = settings();
+    cfg["ocr"]["enabled"] = json!(false);
+    cfg["screenshot"]["enabled"] = json!(false);
+    cfg["screenshot"]["screenshot_only"] = json!(false);
+    let server = Server::new(vec![
+        Reply::html("<article><p>Old cached HTML report.</p></article>").header("ETag", "old-html"),
+        Reply::bytes("application/pdf", PDF),
+        Reply::bytes("application/pdf", PDF),
+    ]);
+    let source = server.url("/document");
+    assert!(
+        fetch_with_context(&source, &cfg, Some("static"), true)
+            .unwrap()
+            .document()
+            .markdown
+            .contains("Old cached")
+    );
+    for mode in ["off", "remove"] {
+        cfg["security"]["pdf_sanitize"] = json!(mode);
+        let pdf = received(fetch_with_context(&source, &cfg, Some("static"), true).unwrap());
+        assert_eq!(pdf.bytes, PDF);
+        assert!(
+            fetch_cache::Cache::from_config(&cfg)
+                .unwrap()
+                .get(&source, Some("static"))
+                .unwrap()
+                .is_none()
+        );
+    }
+    let requests = server.requests();
+    assert_eq!(requests.len(), 3);
+    assert!(
+        requests[1]
+            .to_ascii_lowercase()
+            .contains("if-none-match: old-html")
+    );
+    assert!(!requests[2].to_ascii_lowercase().contains("if-none-match:"));
+}

@@ -16,7 +16,7 @@ pub(crate) use native::extract_presentation_count;
 #[cfg(test)]
 pub(crate) use native::pdf::extract_pages as extract_pdf_pages;
 pub(crate) use native::pdf::{
-    PdfPages, extract_pages_bounded as extract_pdf_pages_bounded,
+    PdfPages, extract_pages_bounded_with_config as extract_pdf_pages_bounded_with_config,
     screenshot_reference as pdf_screenshot_reference,
 };
 pub(crate) use sniff::{
@@ -26,8 +26,8 @@ pub(crate) use sniff::{
 use crate::{Document, Error, Result};
 use std::path::Path;
 
-pub(crate) fn extract_pdf(bytes: &[u8]) -> Result<Document> {
-    native::extract(bytes, "pdf")
+pub(crate) fn extract_pdf_with_config(bytes: &[u8], cfg: &serde_json::Value) -> Result<Document> {
+    native::pdf::extract_with_config(bytes, cfg)
 }
 
 /// Extensions with an implemented local reader (leading dots are accepted).

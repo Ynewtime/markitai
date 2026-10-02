@@ -1,6 +1,6 @@
 //! In-memory PDF page media planning; publication stays with the output layer.
 
-use crate::formats::{PdfPages, extract_pdf_pages_bounded};
+use crate::formats::{PdfPages, extract_pdf_pages_bounded_with_config};
 use crate::{Asset, Document, Error, Result, config, ocr, pdf_raster::PdfRasterSession};
 use image::{ImageEncoder, ImageReader, RgbImage};
 use serde_json::{Value, json};
@@ -581,7 +581,7 @@ pub(crate) fn prepare(
     vlm_optout: bool,
 ) -> Result<PreparedPdf> {
     validate_name(prefix)?;
-    let mut pages = extract_pdf_pages_bounded(bytes, MAX_PAGES)?;
+    let mut pages = extract_pdf_pages_bounded_with_config(bytes, MAX_PAGES, cfg)?;
     let plan = Plan::new(&pages, cfg, vlm_optout)?;
     let render_indices = plan
         .recognize

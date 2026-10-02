@@ -435,7 +435,7 @@ fn convert_inner(
                     document
                 } else {
                     // Config-only screenshot_only does not turn on PDF capture.
-                    formats::extract_pdf(&downloaded.bytes)?
+                    formats::extract_pdf_with_config(&downloaded.bytes, &cfg)?
                 };
                 document.warnings.extend(downloaded.warnings);
                 document.metadata.insert("format".into(), "PDF".into());
@@ -462,6 +462,15 @@ fn convert_inner(
         .map_err(formats::explain_damage)?;
         pdf_has_reliable_text = reliable;
         screenshots = captured;
+        document.metadata.insert(
+            "source".into(),
+            input_path.to_string_lossy().as_ref().into(),
+        );
+        document.metadata.insert("format".into(), "PDF".into());
+        document
+    } else if document_extension == "pdf" {
+        let mut document = formats::extract_pdf_with_config(&std::fs::read(&input_path)?, &cfg)
+            .map_err(formats::explain_damage)?;
         document.metadata.insert(
             "source".into(),
             input_path.to_string_lossy().as_ref().into(),
@@ -516,11 +525,6 @@ fn convert_inner(
         .unwrap_or("");
     if format == "PDF" {
         pdf_input = true;
-        if cfg["security"]["pdf_sanitize"] == "remove" {
-            return Err(Error::Unsupported(
-                "PDF hidden-text removal is not implemented in this development build".into(),
-            ));
-        }
         if config::enabled(&cfg, "/ocr/enabled") && !pdf_media_requested {
             return Err(Error::Unsupported(
                 "PDF OCR is not implemented in this development build".into(),
@@ -913,11 +917,6 @@ fn prepare_pdf_media(
     cfg: &Value,
     vlm_disabled: bool,
 ) -> Result<(Document, Vec<Asset>, bool)> {
-    if cfg["security"]["pdf_sanitize"] == "remove" {
-        return Err(Error::Unsupported(
-            "PDF hidden-text removal is not implemented in this development build".into(),
-        ));
-    }
     let prefix = screenshot_prefix(name, cfg);
     let mut prepared = pdf_media::prepare(bytes, prefix, cfg, vlm_disabled)?;
     let reliable = prepared.has_reliable_text;

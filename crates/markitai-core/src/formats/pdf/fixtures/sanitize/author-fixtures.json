@@ -1,0 +1,34 @@
+{
+  "fixtures": [
+    {
+      "file": "policy-text.pdf",
+      "bytes": 993,
+      "sha256": "d46fc0f19e66fceb67cb61e79df21196ef51c7d284df4e4eadeb529a57a7d2fa",
+      "provenance": "Authored minimal PDF operators; no external or personal input."
+    },
+    {
+      "file": "policy-assets.pdf",
+      "bytes": 1308,
+      "sha256": "174b9b853b477b7a16ee45e8385961a56eb224fa16ca1b63e15772334fa6a72d",
+      "provenance": "Authored minimal PDF operators; no external or personal input."
+    },
+    {
+      "file": "policy-form.pdf",
+      "bytes": 1139,
+      "sha256": "62f2ad52cf32b642c2be47b53b219ae7969865af47ce658966b87ab50270bfef",
+      "provenance": "Authored minimal PDF operators; no external or personal input."
+    },
+    {
+      "file": "policy-white-on-black.pdf",
+      "bytes": 942,
+      "sha256": "350d56a9463d3fee56e31b1f1696a5e6aac36b227202eb94dafc030a4050bc78",
+      "provenance": "Authored minimal PDF operators; no external or personal input."
+    },
+    {
+      "file": "policy-searchable-scan.pdf",
+      "bytes": 1972,
+      "sha256": "14967e90d17c1bc75ab99d2276d507fd859507786ba5fa2f94bfd871d2839dde",
+      "provenance": "Authored minimal PDF operators; no external or personal input."
+    }
+  ]
+}
