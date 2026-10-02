@@ -260,7 +260,12 @@ def main():
     work = Path(tempfile.mkdtemp(prefix="ci-packages-", dir=local))
     state = work / "state"
     state.mkdir()
-    environment = dict(os.environ, MARKITAI_HOME=str(state), PYO3_PYTHON=sys.executable)
+    isolated_home = work / "home"
+    isolated_home.mkdir()
+    environment = dict(os.environ, MARKITAI_HOME=str(state), PYO3_PYTHON=sys.executable,
+                       HOME=str(isolated_home))
+    environment.setdefault("CARGO_HOME", str(Path.home() / ".cargo"))
+    environment.setdefault("RUSTUP_HOME", str(Path.home() / ".rustup"))
     for key in ["PYTHONPATH", "PYTHONHOME", "NODE_PATH", "NODE_OPTIONS"]:
         environment.pop(key, None)
     environment["MARKITAI_TEST_NUMBERS_FIXTURES"] = str(root / "crates/markitai-core/src/formats/numbers/fixtures")

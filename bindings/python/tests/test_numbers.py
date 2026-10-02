@@ -2,7 +2,6 @@
 import asyncio
 import hashlib
 import os
-import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -100,8 +99,8 @@ class NumbersTests(unittest.TestCase):
                         invoke()
                     self.assertIsNone(caught.exception.usage)
                     if source != ordinary:
-                        if (overrides.get("ocr") or overrides.get("screenshot")) and sys.platform != "darwin":
-                            self.assertEqual(str(caught.exception), "Office page capture requires an available native PDF page renderer on this platform")
+                        if overrides.get("ocr") or overrides.get("screenshot"):
+                            self.assertEqual(str(caught.exception), "Numbers complete-sheet screenshots are not supported by this LibreOffice adapter; native Numbers table reading remains available without screenshot or OCR options")
                         else:
                             self.assertIn("Numbers", str(caught.exception))
                         self.assertEqual(caught.exception.code, "unsupported")

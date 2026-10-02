@@ -307,8 +307,8 @@ test('Numbers package support leaves ordinary directories, XML and visual modes 
         assert.ok(error instanceof markitai.ConversionError);
         assert.ok(codes.includes(error.code), `${error.code}: ${error.message}`);
         assert.equal(error.usage, undefined);
-        if ((override.ocr || override.screenshot) && process.platform !== 'darwin') {
-          assert.equal(error.message, 'Office page capture requires an available native PDF page renderer on this platform');
+        if (override.ocr || override.screenshot) {
+          assert.equal(error.message, 'Numbers complete-sheet screenshots are not supported by this LibreOffice adapter; native Numbers table reading remains available without screenshot or OCR options');
         } else if (source !== ordinary) assert.match(error.message, /Numbers/i);
         return true;
       };

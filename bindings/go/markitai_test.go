@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -460,9 +459,9 @@ func TestNumbersPackagesKeepOtherDirectoriesXMLAndVisualModesExplicit(t *testing
 			if typed.Code != "is_directory" {
 				t.Fatalf("ordinary directory category changed: %s", typed.Code)
 			}
-		} else if (mode == "ocr" || mode == "screenshot") && runtime.GOOS != "darwin" {
-			if typed.Code != "unsupported" || typed.Message != "Office page capture requires an available native PDF page renderer on this platform" {
-				t.Fatalf("%s: native renderer availability rejection changed: %+v", mode, typed)
+		} else if mode == "ocr" || mode == "screenshot" {
+			if typed.Code != "unsupported" || typed.Message != "Numbers complete-sheet screenshots are not supported by this LibreOffice adapter; native Numbers table reading remains available without screenshot or OCR options" {
+				t.Fatalf("%s: Numbers visual-mode rejection changed: %+v", mode, typed)
 			}
 		} else if !strings.Contains(typed.Message, "Numbers") || typed.Code != "unsupported" {
 			t.Fatalf("%s: not an explicit Numbers rejection: %+v", mode, typed)

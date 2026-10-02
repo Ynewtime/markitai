@@ -384,10 +384,13 @@ fn single_inputs_name_the_written_file_skips_and_missing_models_in_chinese() {
     assert!(verbose.status.success(), "{}", stderr(&verbose));
     let message = stderr(&verbose);
     assert!(
-        message.starts_with("报告：") && message.contains(".markitai/reports/"),
+        message.starts_with("报告：") && message.contains(&native(".markitai/reports/")),
         "{message}"
     );
-    assert!(message.ends_with("已写入 rep/note.txt.md\n"), "{message}");
+    assert!(
+        message.ends_with(&format!("已写入 {}\n", native("rep/note.txt.md"))),
+        "{message}"
+    );
     // Without the file the output location is as before.
     assert!(
         run(root.path(), ZH, &["missing.txt", "-o", "x"])
