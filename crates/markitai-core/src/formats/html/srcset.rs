@@ -201,6 +201,8 @@ pub(super) fn image(element: &scraper::node::Element) -> Option<&str> {
     };
     let plain = attribute("data-src")
         .or_else(|| attribute("data-original"))
+        .or_else(|| attribute("data-original-src"))
+        .or_else(|| attribute("data-actualsrc"))
         .or_else(|| attribute("src"));
     for name in ["data-srcset", "srcset"] {
         let Some(set) = attribute(name) else {

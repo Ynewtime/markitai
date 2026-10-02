@@ -8,6 +8,8 @@ use std::net::{IpAddr, ToSocketAddrs};
 use std::time::Duration;
 use url::Url;
 
+mod sites;
+
 const MAX_RESPONSE: u64 = 100 * 1024 * 1024;
 
 pub(crate) fn client(timeout: u64) -> Result<Client> {
@@ -156,31 +158,100 @@ fn shown_url(url: &Url) -> String {
     }
 }
 
+/// What a failed response showed besides its status.
+#[derive(Default)]
+struct Evidence {
+    /// The answer says it is a Cloudflare bot check (`cf-mitigated: challenge`).
+    cloudflare_challenge: bool,
+    /// The words of a JSON refusal body.
+    said: Option<String>,
+}
+
+/// Bytes of a failed answer read to find what it says.
+const EVIDENCE_BYTES: u64 = 8 * 1024;
+
 /// `HTTP <status>`, then what was asked and a short hint. The status stays
-/// first: the web interface recognizes the message by it.
-fn http_failure(status: reqwest::StatusCode, service: Option<&str>, url: &Url) -> Error {
+/// first: the web interface recognizes the message by it. A site that is
+/// known to turn automated clients away is named, with what works instead
+/// (see [`sites`]).
+fn http_failure(
+    status: reqwest::StatusCode,
+    service: Option<&str>,
+    url: &Url,
+    evidence: &Evidence,
+) -> Error {
     let mut message = format!("HTTP {}", status.as_u16());
     match service {
         Some(service) => message.push_str(&format!(" from the {service} service")),
         None => {
             message.push_str(" for ");
             message.push_str(&shown_url(url));
+            let refused = matches!(status.as_u16(), 401 | 403 | 418 | 429);
+            let site = refused
+                .then(|| sites::refusal_hint(url, evidence.cloudflare_challenge))
+                .flatten();
             let hint = match status.as_u16() {
-                404 | 410 => Some("the page may have been removed or is not public"),
-                401 | 403 => {
-                    Some("the site refused access; it may block automated clients or need a login")
-                }
-                429 => Some("rate limited; try again later"),
-                500..=599 => Some("the site had a server error"),
+                _ if site.is_some() => site,
+                404 | 410 => Some("the page may have been removed or is not public".into()),
+                401 | 403 => Some(
+                    "the site refused access; it may block automated clients or need a login"
+                        .into(),
+                ),
+                429 => Some("rate limited; try again later".into()),
+                500..=599 => Some("the site had a server error".into()),
                 _ => None,
             };
-            if let Some(hint) = hint {
+            let said = evidence
+                .said
+                .as_ref()
+                .map(|said| format!("the site said: {said}"));
+            let parts: Vec<String> = hint.into_iter().chain(said).collect();
+            if !parts.is_empty() {
                 message.push_str(": ");
-                message.push_str(hint);
+                message.push_str(&parts.join("; "));
             }
         }
     }
     Error::Fetch(message)
+}
+
+/// The evidence a refused answer gives: its Cloudflare header and, for a
+/// client error other than "not found", the words of a JSON body.
+fn failure_evidence(response: Response) -> Evidence {
+    let cloudflare_challenge = response
+        .headers()
+        .get("cf-mitigated")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("challenge"));
+    let status = response.status().as_u16();
+    let said = if matches!(status, 400..=499) && !matches!(status, 404 | 410) {
+        let mut bytes = Vec::new();
+        response
+            .take(EVIDENCE_BYTES)
+            .read_to_end(&mut bytes)
+            .ok()
+            .and_then(|_| sites::json_refusal(&bytes))
+    } else {
+        None
+    };
+    Evidence {
+        cloudflare_challenge,
+        said,
+    }
+}
+
+/// A browser's `Browser navigation returned HTTP <status>` as the failure a
+/// static request reports, so a refused page reads alike on either route and
+/// names the site (the browser does not give the answer's words).
+fn browser_failure(url: &str, error: Error) -> Error {
+    if let Error::Fetch(message) = &error
+        && let Some(status) = sites::browser_status(message)
+        && let Ok(status) = reqwest::StatusCode::from_u16(status)
+        && let Ok(url) = Url::parse(url)
+    {
+        return http_failure(status, None, &url, &Evidence::default());
+    }
+    error
 }
 
 pub(crate) fn body(response: Response) -> Result<Vec<u8>> {
@@ -191,7 +262,14 @@ pub(crate) fn body(response: Response) -> Result<Vec<u8>> {
 /// a remote extraction service whose own status is not about the page.
 fn read_body(response: Response, service: Option<&str>) -> Result<Vec<u8>> {
     if !response.status().is_success() {
-        return Err(http_failure(response.status(), service, response.url()));
+        let status = response.status();
+        let url = response.url().clone();
+        let evidence = if service.is_none() {
+            failure_evidence(response)
+        } else {
+            Evidence::default()
+        };
+        return Err(http_failure(status, service, &url, &evidence));
     }
     if response.content_length().is_some_and(|n| n > MAX_RESPONSE) {
         return Err(Error::Fetch("Response exceeds 100 MiB".into()));
@@ -550,7 +628,22 @@ fn auto_result(
     match result {
         Err(error) if browser_quality_failure(&error) => {
             if browser_ready() {
-                render(matches!(&error, Error::Fetch(reason) if reason == JS_REQUIRED))
+                let rendered =
+                    render(matches!(&error, Error::Fetch(reason) if reason == JS_REQUIRED));
+                // A site's verification page is what the reader needs to hear
+                // about, not only that the browser then failed in its own way.
+                match (&error, rendered) {
+                    (Error::Fetch(before), Err(Error::Fetch(after)))
+                        if before.contains(sites::VERIFICATION_PAGE)
+                            && !after.contains(sites::VERIFICATION_PAGE)
+                            && !after.starts_with("HTTP ") =>
+                    {
+                        Err(Error::Fetch(format!(
+                            "{before}; the local browser failed as well ({after})"
+                        )))
+                    }
+                    (_, rendered) => rendered,
+                }
             } else if needs_javascript(&error) {
                 Err(Error::Fetch(NO_BROWSER_FOR_JAVASCRIPT.into()))
             } else {
@@ -595,7 +688,8 @@ fn fetch_browser_and_learn(
     learn: bool,
     runtime: Option<&crate::BrowserRuntime>,
 ) -> Result<FetchOutcome> {
-    let response = browser::fetch_with_runtime(source, cfg, capture, runtime)?;
+    let response = browser::fetch_with_runtime(source, cfg, capture, runtime)
+        .map_err(|error| browser_failure(source, error))?;
     // A challenge or still-unrendered shell is not evidence that this domain
     // has a usable browser representation. PDFs never teach HTML routing.
     let admissible = learn
@@ -631,6 +725,7 @@ fn browser_quality_failure(error: &Error) -> bool {
             message == JS_REQUIRED
                 || message == JS_EMPTY
                 || message.contains("HTML challenge page cannot be extracted")
+                || message.contains(sites::VERIFICATION_PAGE)
                 || message == "URL returned no extractable content"
         }
         Error::Conversion(message) => message == "HTML contains no extractable content",
@@ -672,7 +767,8 @@ fn fetch_browser(
     runtime: Option<&crate::BrowserRuntime>,
 ) -> Result<FetchOutcome> {
     browser_response_outcome(
-        browser::fetch_with_runtime(source, cfg, capture, runtime)?,
+        browser::fetch_with_runtime(source, cfg, capture, runtime)
+            .map_err(|error| browser_failure(source, error))?,
         cfg,
         output_available,
     )
@@ -702,6 +798,11 @@ fn browser_response_outcome(
 }
 
 fn browser_outcome(page: browser::BrowserPage, cfg: &Value) -> Result<FetchOutcome> {
+    if let Ok(url) = Url::parse(&page.final_url)
+        && let Some(message) = sites::verification_page(&url, &page.html)
+    {
+        return Err(Error::Fetch(message));
+    }
     let visual_only = visual_only(cfg);
     let mut document = match formats::extract_html(&page.html, Some(&page.final_url)) {
         Err(Error::Conversion(message))
@@ -1222,6 +1323,9 @@ fn decode_static(response: Response, defer_pdf: bool) -> Result<StaticPage> {
     let mut doc = match kind {
         StaticKind::Html => {
             let (html, decode_warning) = decode_text(&response.bytes, &response.content_type, true);
+            if let Some(message) = sites::verification_page(&response.effective_url, &html) {
+                return Err(Error::Fetch(message));
+            }
             if let Some(reason) = html_rejection(&html) {
                 return Err(Error::Fetch(reason.into()));
             }

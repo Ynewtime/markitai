@@ -7,6 +7,7 @@ mod furniture;
 mod hacker_news;
 mod mail;
 mod raw_math;
+mod sites;
 mod social;
 mod srcset;
 mod stream;
@@ -631,7 +632,29 @@ impl Out {
     }
 }
 
+/// A link's destination: the address as the page gives it, resolved against
+/// the page's own, and, for the redirect page a site wraps its outward links
+/// in (`link.zhihu.com/?target=...`), the address that page leads to.
 fn safe_url(value: &str, base: Option<&Url>) -> Option<String> {
+    let destination = resolved_url(value, base)?;
+    // Only an address whose query names a target can be such a wrapper.
+    if ["target=", "to=", "url="]
+        .iter()
+        .any(|parameter| destination.contains(parameter))
+        && let Ok(url) = Url::parse(&destination)
+        && let Some(target) = sites::redirect_target(&url)
+    {
+        return Some(
+            target
+                .replace('<', "%3C")
+                .replace('>', "%3E")
+                .replace('"', "%22"),
+        );
+    }
+    Some(destination)
+}
+
+fn resolved_url(value: &str, base: Option<&Url>) -> Option<String> {
     fn destination(value: &str) -> String {
         value
             .replace('<', "%3C")
@@ -4378,6 +4401,21 @@ pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
     let mut document = Html::parse_document(&source);
     stream::restore(&mut document)?;
     let base = base_url.and_then(|value| Url::parse(value).ok());
+    // A reading site's article, read from what the page serves (see `sites`).
+    let mut site_metadata = Map::new();
+    if let Some(reading) = sites::read(&document, base.as_ref()) {
+        match reading.page {
+            Some(page) => {
+                if let Ok(mut converted) = extract_html(&page, base_url)
+                    && !converted.markdown.trim().is_empty()
+                {
+                    converted.metadata.extend(reading.metadata);
+                    return Ok(converted);
+                }
+            }
+            None => site_metadata = reading.metadata,
+        }
+    }
     let facts = Facts::new(document.root_element());
     let root = article::select(&document, &facts);
     let landmarks = Landmarks::read(&document);
@@ -4470,6 +4508,7 @@ pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
         metadata.insert("word_count".into(), count_words(&markdown).into());
     }
     metadata.insert("converter".into(), "native-html".into());
+    metadata.extend(site_metadata);
     let mut warnings = Vec::new();
     if FLATTENED.with(|flattened| flattened.replace(false)) {
         warnings.push(format!("HTML is nested deeper than {MAX_DEPTH} elements; the content below that depth was kept as plain text without its formatting."));

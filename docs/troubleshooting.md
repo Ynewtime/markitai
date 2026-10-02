@@ -124,6 +124,29 @@ because the peer cut it off (such as `tls handshake eof`) is retried, twice; a
 status is reported at once. See
 [URL fetching](fetch.md#failures-retries-and-redirects).
 
+**`Error: HTTP 403 for https://www.zhihu.com/…: Zhihu refuses automated clients; open the page in your browser and save it …`.**
+The site is known to turn away programs (Zhihu, WeChat, Douban, Weibo, Toutiao,
+Reddit, Quora, Stack Overflow, Medium and Hashnode are named; any site behind a
+Cloudflare bot check says so). Markitai does not pretend to be a browser, solve
+the check or sign requests, so the page stays refused. What works: open the
+page in your own browser, save it (File > Save Page As…, "Webpage, HTML Only"
+or "Webpage, Complete"; MHTML is not read) and convert the saved file, which
+Markitai reads with the site's own reader when it has one (Zhihu, WeChat,
+cnblogs, Jianshu, OSCHINA, Bilibili; see [reading sites](html.md#reading-sites));
+or, for a site that wants your account, give the local browser your own
+signed-in cookies with `fetch.playwright.cookies` and use `-s playwright` (see
+[your own cookies](fetch.md#your-own-cookies-for-the-local-browser)). A JSON body
+the site sent with the refusal is quoted in the message as `the site said: …`.
+
+**`Error: <Site> served a verification page instead of the content`.**
+The site answered with status 200 but its page is a security or human check
+(WeChat's `环境异常`, Douban's `sec.douban.com`, Reddit's "Prove your humanity",
+Toutiao's script challenge, Zhihu's login check), not the article. `auto` tries
+the local browser first (WeChat articles are read that way); when that is shown
+the same check, or fails as well (the message then ends with the browser's own
+reason), the page can only be read from a copy you saved in your browser, as
+above.
+
 **`Error: The page needs JavaScript; use -s playwright or the default auto strategy`.**
 `-s static` read a page that is empty or asks for JavaScript. Use `-s playwright`
 or the default `-s auto`, which renders it with a local Chrome or Chromium. With

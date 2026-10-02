@@ -309,6 +309,69 @@ table-row differences at 17 and the seven contracts holding; replies of a
 thread, a list the body introduces and a short conclusion now stay after the
 body (same driver and build profile).
 
+## Reading sites
+
+Some reading sites keep the article among site chrome, hide it until a script
+runs, or hold it as JSON that the page renders itself. A small reader per site
+(`formats/html/sites.rs` and its modules) takes the article from what the page
+serves and builds a clean article page, which the generic reader then converts,
+so tables, code, images, links and formulas come out as on every other page. A
+reader never replaces text the generic reader would keep: it copies the
+article's own markup and leaves out only the chrome around it.
+
+A reader runs only for a page that is the site's. A fetched page is known by its
+address. A page saved from a browser has none, so it is known by the address it
+names for itself, in this order of appearance: the `<!-- saved from url=… -->`
+comment browsers write, the canonical link, `og:url` and `<base href>`; a saved
+page that names no address at all is known by the site's own markers
+(`#js-initialData`, `#js_content`), and another site's canonical link overrides
+those markers. When a reader finds none of its markers, or what it builds
+converts to nothing, the generic reader reads the original page. A built page
+carries a marker and is never read a second time.
+
+| Site | Pages | Read from | Output |
+|---|---|---|---|
+| Zhihu (`zhihu.com`, `zhuanlan.zhihu.com`) | answer, column article, question | the JSON in `<script id="js-initialData">` (`initialState.entities.answers`, `.articles`, `.questions`: the HTML `content`, author, `voteupCount`, `createdTime`), else the rendered markup (`.RichContent-inner`, `.Post-RichText`) | the question or article title, a line `author · headline · 赞同 N · 发布于 date`, the body with its lazy images (`data-original`, never the `<noscript>` twin), TeX formulas as `$…$`, code with its language; the answer the address names, not the other answers of the page (a question address gives the question and the answers the page carries, the most upvoted first) |
+| WeChat (`mp.weixin.qq.com`) | article | `#js_content`, which the page serves with inline `visibility:hidden`, with `#activity-name`, `#js_name`, `<meta name="author">` and the time (`#publish_time`, else the script's `ct`) | title, a line `author · account · time`, the body with its images (`data-src`), code blocks joined line by line; `account` is added to the frontmatter |
+| cnblogs (`cnblogs.com`) | post | `#cnblogs_post_body`, `#cb_post_title_url`, `.postDesc`, `#post-date` | title, author, time and the body, without the blog's header, navigation and footer; the time is read from the page, not from the JSON-LD that writes `+` as `&#x2B;` |
+| Jianshu (`jianshu.com`) | note | the page's `article`; author and first publication time from `__NEXT_DATA__` | the body with its images (`data-original-src`), without the editor's default `image` caption |
+| OSCHINA (`oschina.net`) | blog post | `.blog-content .editor` with `h1.blog-content-title` and `.blog-content-info` (the page is rendered by scripts, so this is the local browser's result or a saved page) | title, a line `author · date` and the body, without the AI summary box, the advertisement, tags, comments and recommended posts |
+| Bilibili (`bilibili.com`) | opus and column pages | `.opus-module-content` with `.opus-module-title__text` and `.opus-module-author__*` of the rendered page | title, `author · time` and the body; images as uploaded (the size directive after `@` is removed); without the table of contents, the sidebar, tags, comments and the site menu |
+| 36Kr (`36kr.com`) | article | the `publishTime` the page's own script keeps next to the article | the page's `article:published_time` is the moment the server wrote the page; the frontmatter `published` is the article's own time |
+
+Two changes apply to every page. The redirect page a site wraps its outward
+links in (`link.zhihu.com/?target=…`, `link.juejin.cn?target=…`,
+`links.jianshu.com/go?to=…`, `www.douban.com/link2/?url=…`, `link.csdn.net`,
+`sspai.com/link`, `gitee.com/link`, `www.oschina.net/action/GoToLink` and
+InfoQ's `/link`) is replaced by the address it leads to, when that is an http(s)
+page; any other query, a target that is not an address and a redirect page that
+points at another one stay as they are. An image's address is also read from
+`data-original-src` and `data-actualsrc`, the lazy-loading attributes Jianshu and
+Zhihu use, after `data-src` and `data-original`.
+
+A built page also turns the non-breaking spaces these sites pad lines with into
+spaces (code keeps its own).
+
+Verification and limits. The cnblogs, Jianshu and 36Kr readers were run on
+pages fetched while the readers were written, and the WeChat, Bilibili and
+OSCHINA readers on the pages the local browser rendered (the survey in
+[fetch.md](fetch.md#sites-that-refuse-automated-clients), one or two public
+pages per site); the readers' fixtures are small pages written for the tests,
+mirroring each site's markup, not copies of pages. The WeChat reader was also
+checked against the markup a regular browser receives from the site (the hidden
+`#js_content`, the empty `#publish_time`, `ct`, the NBSP in the author), but
+that original markup was not fed to the reader; an article made of
+image-and-text cards, video or audio has no `#js_content` text and is read by
+the generic reader. WeChat marks its own article images with the class
+`js_img_placeholder`, so the reader keeps them (a fixture and a live page cover
+it).
+Zhihu refused every automated client during development, including a browser
+that was not logged in (it redirects to a security check that asks for a login),
+so the Zhihu reader is tested only on fixtures that follow the JSON structure
+documented by projects that read saved Zhihu pages; no live Zhihu page has been
+read. MHTML (`.mht`, `.mhtml`) files are not a supported input; save the page as
+"Webpage, HTML Only" or "Webpage, Complete".
+
 ## Mathematical content
 
 Mathematics is recovered as TeX data before ordinary script removal. Only an

@@ -122,6 +122,107 @@ fn failure_messages_leave_out_credentials_and_secret_looking_queries() {
 }
 
 #[test]
+fn a_refusing_site_is_named_with_what_works_and_keeps_the_status_first() {
+    let zhihu = Url::parse("https://www.zhihu.com/question/48728378/answer/2176548792").unwrap();
+    let Error::Fetch(message) = http_failure(
+        reqwest::StatusCode::FORBIDDEN,
+        None,
+        &zhihu,
+        &Evidence::default(),
+    ) else {
+        panic!("not a fetch failure");
+    };
+    assert!(
+        message.starts_with(
+            "HTTP 403 for https://www.zhihu.com/question/48728378/answer/2176548792: Zhihu refuses automated clients;"
+        ),
+        "{message}"
+    );
+    assert!(message.contains("Webpage, HTML Only"), "{message}");
+    assert!(message.contains("fetch.playwright.cookies"), "{message}");
+    // The same page refused to the local browser reads the same way.
+    let Error::Fetch(browser) = browser_failure(
+        zhihu.as_str(),
+        Error::Fetch("Browser navigation returned HTTP 403".into()),
+    ) else {
+        panic!("not a fetch failure");
+    };
+    assert_eq!(browser, message);
+    // Other browser failures, other statuses and other sites are not rewritten.
+    let other = Error::Fetch("Chromium page crashed".into());
+    assert!(
+        matches!(browser_failure(zhihu.as_str(), other), Error::Fetch(m) if m == "Chromium page crashed")
+    );
+    let Error::Fetch(missing) = http_failure(
+        reqwest::StatusCode::NOT_FOUND,
+        None,
+        &zhihu,
+        &Evidence::default(),
+    ) else {
+        panic!("not a fetch failure");
+    };
+    assert!(
+        missing.ends_with(": the page may have been removed or is not public"),
+        "{missing}"
+    );
+    // A site that sent the answer's own words has them quoted.
+    let evidence = Evidence {
+        cloudflare_challenge: false,
+        said: Some("temporarily limited (code 40362)".into()),
+    };
+    let Error::Fetch(said) = http_failure(reqwest::StatusCode::FORBIDDEN, None, &zhihu, &evidence)
+    else {
+        panic!("not a fetch failure");
+    };
+    assert!(
+        said.ends_with("; the site said: temporarily limited (code 40362)"),
+        "{said}"
+    );
+}
+
+#[test]
+fn a_json_refusal_body_and_a_cloudflare_challenge_are_reported_from_the_answer() {
+    let (_directory, cfg) = settings();
+    let refusal = r#"{"error":{"message":"Access is temporarily limited.","code":40362}}"#;
+    let server = Server::new(vec![
+        Reply::bytes("application/json", refusal.as_bytes()).status(403),
+    ]);
+    let message = failure(run(&server, "/api/page", &cfg));
+    assert!(
+        message.starts_with(&format!("HTTP 403 for {}", server.url("/api/page"))),
+        "{message}"
+    );
+    assert!(
+        message.ends_with(
+            "the site refused access; it may block automated clients or need a login; the site said: Access is temporarily limited. (code 40362)"
+        ),
+        "{message}"
+    );
+    // An ordinary refusal body is no JSON: nothing is quoted.
+    let server = Server::new(vec![Reply::text("Forbidden").status(403)]);
+    let message = failure(run(&server, "/plain", &cfg));
+    assert!(!message.contains("the site said"), "{message}");
+    // A Cloudflare bot check says so, whatever the site.
+    let server = Server::new(vec![
+        Reply::html("<title>Just a moment...</title>")
+            .status(403)
+            .header("cf-mitigated", "challenge"),
+    ]);
+    let message = failure(run(&server, "/q", &cfg));
+    assert!(
+        message.contains("Cloudflare bot check refused this client"),
+        "{message}"
+    );
+    assert!(message.contains("Webpage, HTML Only"), "{message}");
+    // A missing page is not examined for words.
+    let server = Server::new(vec![
+        Reply::bytes("application/json", refusal.as_bytes()).status(404),
+    ]);
+    let message = failure(run(&server, "/gone", &cfg));
+    assert!(!message.contains("the site said"), "{message}");
+}
+
+#[test]
 fn the_error_kind_stays_a_fetch_error() {
     let (_directory, cfg) = settings();
     let server = Server::new(vec![Reply::text("no").status(404)]);
@@ -449,6 +550,106 @@ fn auto_sends_a_page_that_needs_javascript_to_the_browser_and_keeps_static_text_
         |_| panic!("not needed"),
     );
     assert_eq!(ordinary.unwrap().document().markdown, "fine");
+}
+
+#[test]
+fn a_verification_page_the_browser_rendered_is_a_failure_not_a_page() {
+    let cfg = config::defaults();
+    let challenge = browser::BrowserPage {
+        html: "<html><head><title>Reddit - Prove your humanity</title></head><body><h1>Prove your humanity</h1><p>We are committed to safety and security. Complete the challenge below.</p></body></html>".into(),
+        final_url: "https://www.reddit.com/r/IAmA/comments/z1c9z/x/?js_challenge=1&jsc_token=abc".into(),
+        title: "Reddit - Prove your humanity".into(),
+        screenshots: Vec::new(),
+        warnings: Vec::new(),
+    };
+    let Error::Fetch(message) = browser_outcome(challenge, &cfg).err().unwrap() else {
+        panic!("not a fetch failure");
+    };
+    assert!(
+        message.starts_with("Reddit served a verification page instead of the content"),
+        "{message}"
+    );
+    // The same words on another site are an ordinary page.
+    let page = browser::BrowserPage {
+        html: "<article><h1>Prove your humanity</h1><p>An essay with enough words to be a page of its own on a site that is no Reddit.</p></article>".into(),
+        final_url: "https://example.test/essay".into(),
+        title: "Essay".into(),
+        screenshots: Vec::new(),
+        warnings: Vec::new(),
+    };
+    assert!(
+        browser_outcome(page, &cfg)
+            .unwrap()
+            .document()
+            .markdown
+            .contains("Prove your humanity")
+    );
+}
+
+#[test]
+fn a_verification_page_goes_to_the_browser_and_is_named_when_nothing_better_comes() {
+    let url = Url::parse("https://mp.weixin.qq.com/mp/wappoc_appmsgcaptcha?x=1").unwrap();
+    let message =
+        sites::verification_page(&url, "<h2>环境异常</h2><p>完成验证后即可继续访问。</p>").unwrap();
+    let verification = || Error::Fetch(message.clone());
+    // The browser is asked, as for any page a static client cannot read.
+    let rendered = auto_result(Err(verification()), || true, |_| Ok(stub("the article"))).unwrap();
+    assert_eq!(rendered.document().markdown, "the article");
+    // Without a browser the failure names the site and what works.
+    let Error::Fetch(failed) = auto_result(Err(verification()), || false, |_| panic!("no browser"))
+        .err()
+        .unwrap()
+    else {
+        panic!("not a fetch failure");
+    };
+    assert!(
+        failed.starts_with("WeChat served a verification page instead of the content"),
+        "{failed}"
+    );
+    // A site that refuses the browser as well keeps its own message.
+    let Error::Fetch(refused) = auto_result(Err(verification()), || true, |_| Err(verification()))
+        .err()
+        .unwrap()
+    else {
+        panic!("not a fetch failure");
+    };
+    assert_eq!(refused, failed);
+    // A browser that fails in its own way is reported after the site's message,
+    // not instead of it.
+    let Error::Fetch(both) = auto_result(
+        Err(verification()),
+        || true,
+        |_| {
+            Err(Error::Fetch(
+                "Chromium protocol rejected Runtime.evaluate".into(),
+            ))
+        },
+    )
+    .err()
+    .unwrap() else {
+        panic!("not a fetch failure");
+    };
+    assert_eq!(
+        both,
+        format!(
+            "{failed}; the local browser failed as well (Chromium protocol rejected Runtime.evaluate)"
+        )
+    );
+    // A browser refusal that names the site and its status stands on its own.
+    let Error::Fetch(status) = auto_result(
+        Err(verification()),
+        || true,
+        |_| {
+            Err(Error::Fetch(
+                "HTTP 403 for https://mp.weixin.qq.com/s/x: WeChat asks".into(),
+            ))
+        },
+    )
+    .err()
+    .unwrap() else {
+        panic!("not a fetch failure");
+    };
+    assert!(status.starts_with("HTTP 403 for "), "{status}");
 }
 
 #[test]

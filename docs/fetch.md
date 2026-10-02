@@ -85,6 +85,34 @@ and the `fetch_error` code, so the [web interface](web-ui.md) still recognizes
 it. A remote service's own failure reads `HTTP <status> from the <service> service`
 without a hint, because its status says nothing about the page.
 
+A site that is known to turn automated clients away is named in the hint
+instead of the generic text, with what does work: for a 401, 403, 418 or 429
+from Zhihu, WeChat, Douban, Weibo, Toutiao, Reddit, Quora, Stack Overflow,
+Medium or Hashnode the message reads, for instance, `HTTP 403 for
+https://www.zhihu.com/…: Zhihu refuses automated clients; open the page in
+your browser and save it (File > Save Page As…, 'Webpage, HTML Only'), then
+convert the saved file; or give the local browser your own logged-in cookies
+for zhihu.com (fetch.playwright.cookies, see docs/fetch.md)`. The same text
+is given when the local browser is refused (`-s playwright`, or a browser
+fallback of `auto`), whose own message `Browser navigation returned HTTP 403` is
+rewritten to this form. An answer with `cf-mitigated: challenge` from any other
+site says that its Cloudflare bot check refused the client. A client error
+other than 404 and 410 whose body (read up to 8 KiB) is a JSON refusal, such as
+Zhihu's `{"error":{"message":"…","code":40362}}`, adds the site's own words,
+cleaned and cut to 120 characters, as `; the site said: … (code 40362)`. The
+status stays first in all of them.
+
+A page that is a site's verification or security check but is served with
+status 200 is a failure as well, never a short Markdown "page": WeChat's
+`环境异常 / 去验证` page (the answer to a static client), Douban's `sec.douban.com`
+script check, Reddit's `Prove your humanity`, Toutiao's script challenge page
+and Zhihu's `zse-ck` interstitial and `account/unhuman` check. The message reads
+`<Site> served a verification page instead of the content: it … ; open the page
+in your browser and save it …`. `auto` renders such a page with the local
+browser first, which is how WeChat articles are read; when the browser fails
+or is shown the same check, the site's message is the failure (a browser failure
+of another kind is added in parentheses).
+
 A GET whose connection cannot be established because the peer reset it or cut
 it off, such as a TLS handshake that ends early (`tls handshake eof`) or
 `Connection reset by peer` while connecting, is repeated up to twice, after
@@ -139,6 +167,63 @@ holding no text of its own), or a `<noscript>` text about JavaScript.
 The thresholds are conservative but heuristic: a short page with a large inline
 script, such as a parked domain, is also sent to the browser by `auto`, which
 returns the same text slower. `-s static` still converts it.
+
+## Sites that refuse automated clients
+
+Markitai reads what a site serves to an ordinary client and what its own
+browser rendering shows. It does not make a client look like a person's
+browser, solve a challenge or verification, sign requests, rotate identities or
+get past a login or paywall, so a site that refuses automated access stays
+refused, with a message that says so. A page survey of 2026-10-02 (public
+pages, one or two per site, no login and no cookies, 2 s apart; about 90
+requests) found:
+
+| Site | Default `auto` reads | Why not, and what works |
+|---|---|---|
+| Juejin, CSDN, Jianshu, cnblogs, SegmentFault, sspai, 36Kr, Huxiu, InfoQ China, V2EX, dev.to, GitHub Discussions, Hacker News, Weibo (`weibo.com/2/detail/comos:…` article pages) | yes, from the static page | [site readers](html.md#reading-sites) clean up cnblogs, Jianshu, 36Kr and (with the browser) WeChat |
+| WeChat articles (`mp.weixin.qq.com`) | yes, with the local browser | a static client is sent to a verification page; `auto` renders the page in the local browser and reads it with the WeChat reader; `-s static` fails naming the verification |
+| Bilibili columns and `opus`, OSCHINA, Yuque, public Notion pages | yes, with the local browser | rendered by scripts; the text is read but may carry page chrome (menus, comments, recommendations) |
+| Zhihu (answers, `zhuanlan.zhihu.com/p/…`, questions) | no | a static client gets a 403 script interstitial (`zse-ck`); the local browser gets a JSON refusal (code 40362) or a redirect to a security check that asks for a login. Save the page from your own browser and convert the file ([Zhihu reader](html.md#reading-sites)), or give the local browser your own cookies (below) |
+| Douban notes | no | a script check (`sec.douban.com`) that the local browser fails in this version |
+| Toutiao | no | a bytecode script challenge; the local browser fails in this version |
+| Reddit | no | the local browser is sent to `Prove your humanity` after a script redirect (later requests from the survey machine did not connect at all) |
+| Quora, Stack Overflow, Hashnode, Medium | no | Cloudflare's bot check answers 403, also to the local browser (`-s playwright` waited and was refused again) |
+
+The table records one day's answers; sites change theirs without notice, and an
+answer may depend on the network and the load. Weibo posts other than the
+article pages above, X and Facebook-style pages that need a login are read only
+as far as the site serves them to an anonymous client. MHTML files are not read;
+save a page as "Webpage, HTML Only" or "Webpage, Complete".
+
+### Your own cookies, for the local browser
+
+Markitai sends no cookies unless you configure them. The only place to
+configure them is `fetch.playwright.cookies` (a JSON list in the configuration
+file, or `--config-json` for one run), which the local browser uses for
+`-s playwright` and for `auto`, which then selects the browser and neither
+reads nor writes the page cache (see [Browser HTTP credentials](#browser-http-credentials)).
+Static fetching (`-s static`, and the static request of `auto` when no cookies
+are configured) stays anonymous: it does not read these cookies, which is the
+policy for every browser credential. Copy the cookies of your own signed-in
+session from your browser's developer tools; they are credentials, so keep the
+file private and never paste them into a shared place:
+
+```json
+{"fetch": {"playwright": {"cookies": [
+  {"name": "session", "value": "<value from your browser>", "domain": ".example.com", "path": "/", "secure": true}
+]}}}
+```
+
+Give every cookie a `domain` (a leading dot covers the site and its
+subdomains) or a `url`. Chromium then sends it only to hosts that domain
+covers, including after a redirect, never to the other sites you convert. A
+cookie with neither is set for the page being fetched, whatever its host. The
+configuration display hides cookie values (`config list` and `get`), error
+messages never include them, and a page read with cookies is neither served
+from nor stored in the page cache nor learned as a browser route. Whether a
+site accepts the session is up to the site: Zhihu, for one, may still answer
+the local browser with its security check, in which case saving the page from
+your own browser is the way.
 
 ## Learned browser routing
 
@@ -240,7 +325,7 @@ or rejected refreshes retain the old row instead, except that an accepted deferr
 PDF has already changed the representation even if its later reader fails.
 
 The key hashes the extraction namespace `native-fetch-<package version>-r<revision>`
-(now `native-fetch-1.3.0-r2`), a NUL separator and the exact original URL. Rows
+(now `native-fetch-1.3.0-dev-r3`; r3 since the site readers), a NUL separator and the exact original URL. Rows
 hold extracted Markdown, so a new release, or a revision bumped when extraction
 changes between releases, does not replay an older extraction; older rows stay
 readable in statistics and expire by TTL or capacity.
@@ -365,6 +450,8 @@ authenticated path intentionally selects its configured identity first. Initial
 PDF document responses, including redirects and extensionless attachments, stream
 from that session without a second GET and retain `playwright` strategy metadata.
 Proxy authentication and persistent sessions remain separate capabilities. See [browser contracts](browser.md).
+To read a site that wants your own signed-in session, see
+[your own cookies](#your-own-cookies-for-the-local-browser).
 
 ## Proxies
 
