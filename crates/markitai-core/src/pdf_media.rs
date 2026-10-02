@@ -552,7 +552,13 @@ pub(crate) fn capture_external_pdf(
             });
         }
         if local_ocr {
-            let text = ocr::recognize_rgb(pixels, cfg)?.text;
+            let recognized = ocr::recognize_rgb(pixels, cfg)?;
+            if recognized.unread {
+                captured
+                    .warnings
+                    .push(ocr::unread_warning(&format!("Office page {page}")));
+            }
+            let text = recognized.text;
             if text.trim().is_empty() {
                 captured.warnings.push(format!(
                     "Office page {page}: local OCR completed with no recognized text."
@@ -643,6 +649,12 @@ pub(crate) fn prepare(
             let result = ocr::recognize_rgb(pixels, cfg).map_err(|error| {
                 failure(format!("local OCR failed on page {}: {error}", page.number))
             })?;
+            if result.unread {
+                pages
+                    .document
+                    .warnings
+                    .push(ocr::unread_warning(&format!("PDF page {}", page.number)));
+            }
             page.markdown = result.text;
             page.needs_ocr = false;
             page.ocr_reason = None;

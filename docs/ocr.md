@@ -13,8 +13,8 @@ recognizer as described in [PDF page OCR](pdf-ocr.md), and Office page images in
 [Office rendering](office-rendering.md).
 
 ```sh
-markitai scan.png --ocr                                        # English (default)
-markitai scan.png --ocr --config-json '{"ocr":{"lang":"zh"}}'  # Simplified Chinese
+markitai scan.png --ocr                                        # English, Chinese, Japanese or Korean
+markitai scan.png --ocr --config-json '{"ocr":{"lang":"zh"}}'  # Chinese (reads Latin too), nothing else
 markitai scan.png --ocr -o out/                                 # keep the image asset
 ```
 
@@ -25,7 +25,10 @@ disabled. The image reference remains in the base document and recognized text
 is appended below it. Metadata records `ocr_used: true` and `ocr_path: vision`.
 A successfully processed image with no recognized text retains its image
 reference and emits a warning. An invalid image, unsupported language or engine
-failure fails the conversion instead of inserting error text into Markdown.
+failure fails the conversion instead of inserting error text into Markdown. (Under
+the [default language](#the-default-language) only the English reading can fail
+it: a Chinese, Japanese or Korean reading that this system lacks or that fails is
+skipped.)
 
 With LLM enabled, the existing image-to-model route remains the default.
 Setting `MARKITAI_NO_VLM_OCR` to a nonempty value other than `0`, `false` or `no`
@@ -46,14 +49,19 @@ without text adds a warning instead of ending the conversion.
 
 ## Language selection
 
-`ocr.lang` defaults to `en`. Each call asks the configured accurate Vision
-recognizer which languages its current OS and request revision support, then
-requires a match. It never substitutes English for an unsupported language.
-System revisions can change supported languages and recognition results.
+`ocr.lang` defaults to `en`, which is a policy of its own: [the default
+language](#the-default-language) reads English and, when that fails, Chinese,
+Japanese or Korean. Every other value names one Vision language, and each call
+asks the configured accurate Vision recognizer which languages its current OS
+and request revision support, then requires a match. It never substitutes
+English for an unsupported language, and never reads another language than the
+one written. System revisions can change supported languages and recognition
+results.
 
 | Configuration spelling | Requested Vision language |
 | --- | --- |
-| `en` | `en-US` |
+| `en` | `en-US`, then `zh-Hans`, `ko-KR` and `ja-JP` when the reading failed ([default language](#the-default-language)) |
+| `en-US`, `en_US` | `en-US` only |
 | `zh`, `zh_cn`, `zh-cn`, `cn`, `ch` | `zh-Hans` |
 | `zh_tw`, `zh-tw`, `cht`, `chinese_cht` | `zh-Hant` |
 | `ja`, `jp`, `japan` | `ja-JP` |
@@ -68,6 +76,131 @@ region or script must match exactly, ignoring case. The reference's RapidOCR
 model-family names such as `latin` and `cyrillic` are not Vision languages and
 are rejected. Structural configuration acceptance does not imply runtime
 language availability. `ocr.per_page_routing` has no effect on this image path.
+
+## The default language
+
+Vision's English recognizer reads Latin and Cyrillic text. For Chinese,
+Japanese and Korean text it returns nothing, or a few symbols and Latin
+look-alikes (`#Æ[× •` for a line of Chinese), without an error. Under `en`, the
+default, an image is therefore read as `en-US` first, as it always was, and the
+reading is judged by what Vision reports: confidence is 1.0 for nearly every
+line of English it reads, and 0.3 or 0.5 for what it makes of other scripts.
+
+| English reading | Next |
+|---|---|
+| three or more lines, fewer than a quarter of them below 0.9 | nothing: the English reading stands |
+| one or two lines, all at 0.9 or more (*short*) | Chinese |
+| at least a quarter of the lines below 0.9 | Chinese |
+| no text, or at least half of the lines below 0.9 | Chinese, then Korean |
+
+Short readings are read as Chinese because the English recognizer returns
+confident Latin fragments for a line of Chinese with Latin words (`* PDF. Word,
+Excel SEAT.` for `支持 PDF、Word、Excel 与图片转换。`), which only another reading
+tells from English; it costs one more reading of an image of at most two lines.
+The Chinese reading (`zh-Hans`) also reads Latin, Japanese and Traditional
+Chinese: Vision returns the same text for `zh-Hans` and `zh-Hant`, so Traditional
+is not read a second time. Each reading takes the
+[aids](#chinese-japanese-and-korean-recognition-aids) of its language, exactly
+as if `ocr.lang` named it.
+
+A later reading replaces the English one only when it holds text of its script:
+at least four letters of it (Han and kana for Chinese, Hangul for Korean), at
+least a quarter of the reading's letters and digits, and line confidences that
+add up to at least 3 over those letters (so ten letters at 0.3 are text and
+three are not). A Chinese reading with at least 32 letters in lines of
+confidence 0.5 or more settles the language; with fewer, Korean is read too and
+the reading with more confidence-weighted letters of its own script is kept,
+because Vision's Chinese recognizer makes confident Han and kana of Hangul
+(never more than 30 such letters in 184 Korean images, while 27 of 416 Chinese
+and Japanese images have fewer). A Chinese reading with at least eight kana,
+a fifth or more of its letters, is read once more as `ja-JP`, which has its own
+aids, and that reading replaces it unless it holds less text. A Vision language
+this system lacks, and a reading that fails, are skipped: the English reading
+stands, as it always did.
+
+When no reading is better, the English reading is the output, unchanged. If
+text was seen and not read (the English reading had lines, at least half of them
+below 0.9, or found none and another reading found some), the conversion warns
+`Local OCR could not read this image: ...` and names `ocr.lang`; the warning
+names the image, TIFF page, PDF page or Office page. A blank page or a
+photograph without text has only the usual "no readable text" warning, and a
+picture inside a PDF never warns.
+
+A written language is never replaced: `zh`, `ja`, `ko`, `fr`, `ar`, `en-US`,
+`en_US` and every other value except `en` read that language alone, with output
+identical to before (1,210 conversions of the corpora below with `zh`, `ja`,
+`ko` and `en-US`, compared before and after). The configuration fills in its
+default before the recognizer sees it, so a default `en` and a written `en`
+cannot be told apart: write `en-US` to read English only. (The reference's `en`
+model also reads Chinese.)
+
+Measured on macOS 27.0.1 (26A434), Apple silicon (Apple M5 Max), with `cargo build
+-p markitai-cli --release --locked`, before (`1a86650`, 21,483,920 bytes) and
+after (21,483,920 bytes), by whole conversions (`--ocr --no-llm`, an isolated
+`MARKITAI_HOME`, `-o`, no `ocr.lang`). Character error rate is edit distance over
+ground-truth length, with whitespace removed for Chinese, Japanese and Korean and
+collapsed for English; the corpora are those above (synthetic renders, not scans
+or photographs).
+
+| Corpus (images) | Before | After | Written language |
+|---|---:|---:|---:|
+| English prose, numbers, two columns (126) | 0.07%, 0.00%, 0.30% | identical text on every image | `en-US`: identical |
+| R45 Chinese (24) | 94.73% | 0.97% | `zh` 0.97% |
+| Held-out Chinese (150), dense pages (4) | 91.87%, 84.04% | 1.82%, 1.61% | `zh` 1.82%, 1.61% |
+| Traditional Chinese (24) | 100.00% | 1.41% | `zh` 1.41% |
+| Japanese (150), full pages (4) | 99.63%, 98.64% | 0.11%, 0.09% | `ja` 0.12%, 0.04%; `zh` 0.20%, 0.09% |
+| Korean (150), full pages (4) | 99.67%, 99.71% | 0.91%, 0.87% | `ko` 0.91%, 0.87% |
+| 60 DPI Chinese, Japanese, Korean (30 each) | 94.50%, 99.25%, 99.84% | 9.83%, 1.17%, 4.54% | `zh` 9.83%, `ja` 0.85%, `ko` 1.78% |
+
+Before, 420 of the 600 Chinese, Japanese and Korean images came out empty and
+the rest as symbols, none with a Chinese, Japanese or Korean character; after,
+every one has text. The 202 Chinese images (Simplified and Traditional), the 154
+Korean images and the thirty 60-DPI Chinese images read exactly as the written
+`zh` or `ko` reads them, and 149 of 154 Japanese images as `ja` reads them. The
+one Korean image that reads worse than with `ko` is a 60-DPI one that the
+Chinese recognizer turns into confident Han. Of 75 other images (English,
+French, German and Spanish; Russian; code, a table and symbols; Arabic, Hebrew,
+Greek, Thai and Hindi; Chinese, Japanese and Korean at 14 and 24 pixels, alone
+and mixed with English; macOS's desktop and account pictures; a blank page and
+noise) nine changed, all with Chinese, Japanese or Korean text in them
+(`i-cjk-300.png` among them) and now read in that language; the other 66 are
+unchanged, including every English, Latin and Cyrillic image, and four of them
+(Greek, Hebrew, Thai and a chalkboard picture) have the warning.
+
+Whole conversions, one at a time, before and after alternating, median of four
+rounds (two for the others) per image, mean per corpus, in milliseconds:
+
+| Images | Before | After | Written language, after |
+|---|---:|---:|---:|
+| English prose (72), numbers (36), two columns (18) | 169.5, 172.9, 193.1 | 169.8, 173.5, 192.4 | |
+| Held-out Chinese (150) | 273.8 (`zh`) | 364.7 | 274.5 |
+| Traditional Chinese (24) | 277.8 (`zh`) | 357.8 | 278.2 |
+| Japanese (150) | 246.7 (`ja`) | 423.3 | 247.1 |
+| Korean (150) | 218.6 (`ko`) | 468.2 | 219.8 |
+
+The 126 English images differ from before by 0.25 ms on average (5th to 95th
+percentile −5.1 to +6.0 ms) and none is more than 10% slower: an English image
+that reads as sound costs only the check of its confidences. A Chinese,
+Japanese or Korean image takes the English reading, one to three more readings
+and the models they load: 90 ms (Chinese), 177 ms (Japanese, with its second
+reading) and 248 ms (Korean, after the Chinese reading) more than the written
+language, in a process that converts one image. A document or batch converts in
+one process, which loads each model once. A picture without text costs two more
+readings: a blank 1600×1200 page 94 to 288 ms, small photographs about 85 to
+255–300 ms, 3000×3000 photographs 380–430 to 730–850 ms, and `sample.jpg`,
+whose 11-pixel text Vision does not read in any language, 90 to 645 ms. An
+English image of one or two lines costs one more reading: `Hello World` 102 to
+193 ms, two lines of German 124 to 254 ms. The same corpora with a written
+language took the same time before and after.
+
+Limits. English among three or more lines that reads as confident Latin is not
+read again, so Chinese, Japanese or Korean words among English lines stay unread
+(`Markitai converts documents to Markdown.` above a Chinese line that reads as
+`I PDF, Word 5EA, W Markdown X4.`): set `ocr.lang` to `zh`, which reads Latin
+too, for such pages. Scripts that no reading covers (Arabic, Hebrew, Thai,
+Greek, Devanagari) still need `ocr.lang`; the warning says so when Vision found
+text there. Korean text at 60 DPI that the Chinese reading turns into confident
+Han can be kept as Chinese (1 of 184 Korean images).
 
 ## Bounds and reading order
 
@@ -113,7 +246,8 @@ text or every supported language.
 ## Chinese, Japanese and Korean recognition aids
 
 These steps run only when the requested language is `zh-Hans`, `zh-Hant`,
-`ja-JP` or `ko-KR`. English and every other language take exactly the path
+`ja-JP` or `ko-KR`, or when the [default language](#the-default-language) reads
+the image in one of them. English and every other language take exactly the path
 described above. Each step measures the script's full-width letters: Han
 characters for Chinese; Han characters and kana for Japanese (small kana such
 as ゃ and the prolonged sound mark ー are drawn narrower, but Vision boxes them
@@ -299,6 +433,20 @@ threshold, factor and pixel limit (with Korean never enlarged for small text),
 the Lanczos copy's size and rounding, the wide-box suspects and their regions,
 and the anchored insertion, including ambiguous, other-script and mismatched
 readings.
+
+Three macOS tests cover the [default language](#the-default-language) with the
+same drawn sentences and no `ocr.lang`: the Chinese sentences (13 and 25 pixels),
+the Japanese ones (16 and 24 pixels) and the Korean ones (16 and 24 pixels) must
+be read exactly, by Chinese, Japanese and Korean, and as the written `zh`, `ja` and
+`ko` read them; a line of Chinese with three Latin words, for which `en-US`
+alone returns confident Latin fragments, must be read whole; and English in
+three, one and a short line must stay as `en-US` and `en_us` read it, Chinese
+written with `en-US` must not be read, and a blank image must stay blank
+without a warning. Pure tests cover the judgement of an English reading (sound,
+short, doubtful, failed), the letters, share and strength that make a reading
+text of a script, the kana that mean Japanese, the warning condition, and that
+only a bare `en` is the default. They depend on the installed recognizer, like
+the English fixture.
 
 Renderer-entry tests compare the same fixture's normalized PNG bytes and Vision
 observations with the encoded-image path. Additional checks reject zero-sized,

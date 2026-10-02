@@ -4,6 +4,8 @@ use crate::{Error, Result};
 use serde_json::Value;
 
 #[cfg(any(target_os = "macos", test))]
+mod auto;
+#[cfg(any(target_os = "macos", test))]
 mod cjk;
 #[cfg(any(target_os = "macos", test))]
 mod pixels;
@@ -24,6 +26,23 @@ pub(crate) struct OcrResult {
     #[cfg(any(target_os = "macos", test))]
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub scale: f32,
+    /// The Vision language of the reading used. Only macOS tests read it.
+    #[cfg(any(target_os = "macos", test))]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub language: String,
+    /// Set only under the default language: its readings found text lines
+    /// and none could read them. [`unread_warning`] says so.
+    pub unread: bool,
+}
+
+/// The warning for an image or page that the default language policy could
+/// not read; `subject` names it ("Local OCR could not read ...").
+pub(crate) fn unread_warning(subject: &str) -> String {
+    format!(
+        "Local OCR could not read {subject}: it looks like text in a script that the default \
+         English reading does not cover, and Chinese, Japanese and Korean readings found nothing \
+         better. Set ocr.lang to the language of the text."
+    )
 }
 
 pub(crate) fn available() -> bool {
@@ -46,8 +65,8 @@ pub(crate) fn recognize(bytes: &[u8], cfg: &Value) -> Result<OcrResult> {
     }
     #[cfg(target_os = "macos")]
     {
-        let language = language(cfg)?;
-        read(pixels::prepare(bytes)?, &language)
+        let spelling = configured(cfg)?;
+        read(&pixels::prepare(bytes)?, &spelling)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -68,8 +87,8 @@ pub(crate) fn recognize_rgb(image: image::RgbImage, cfg: &Value) -> Result<OcrRe
     }
     #[cfg(target_os = "macos")]
     {
-        let language = language(cfg)?;
-        read(pixels::prepare_rgb(image)?, &language)
+        let spelling = configured(cfg)?;
+        read(&pixels::prepare_rgb(image)?, &spelling)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -80,27 +99,134 @@ pub(crate) fn recognize_rgb(image: image::RgbImage, cfg: &Value) -> Result<OcrRe
     }
 }
 
-/// Recognize prepared pixels. Small Chinese or Japanese text, and Chinese,
-/// Japanese or Korean text that the first reading missed, are read a second
-/// time from an enlarged copy, and that reading replaces the first.
+/// One reading of an image in one language, after the enlarged second reading
+/// of small text and the recovery of dropped characters.
 #[cfg(target_os = "macos")]
-fn read(image: pixels::Prepared, language: &str) -> Result<OcrResult> {
+struct Pass {
+    lines: Vec<Line>,
+    /// How many times the image was enlarged for these lines; 1 when read as is.
+    scale: f32,
+}
+
+/// Read prepared pixels in one Vision language. Small Chinese or Japanese
+/// text, and Chinese, Japanese or Korean text that the first reading missed,
+/// are read a second time from an enlarged copy, and that reading replaces
+/// the first.
+#[cfg(target_os = "macos")]
+fn pass(image: &pixels::Prepared, language: &str) -> Result<Pass> {
     let space = (image.width, image.height);
-    let first = vision::recognize(&image, language, space, true)?;
-    let (lines, scale) = match first.enlarge {
+    let first = vision::recognize(image, language, space, true)?;
+    Ok(match first.enlarge {
         Some(factor) => {
-            let larger = pixels::enlarge(&image, factor)?;
-            drop(image);
-            (
-                vision::recognize(&larger, language, space, false)?.lines,
-                factor,
-            )
+            let larger = pixels::enlarge(image, factor)?;
+            Pass {
+                lines: vision::recognize(&larger, language, space, false)?.lines,
+                scale: factor,
+            }
         }
-        None => (first.lines, 1.0),
-    };
-    let mut result = assemble(lines, space.0, space.1)?;
-    result.scale = scale;
+        None => Pass {
+            lines: first.lines,
+            scale: 1.0,
+        },
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn finish(pass: Pass, language: &str, unread: bool, space: (u32, u32)) -> Result<OcrResult> {
+    let mut result = assemble(pass.lines, space.0, space.1)?;
+    result.scale = pass.scale;
+    result.language = language.to_owned();
+    result.unread = unread;
     Ok(result)
+}
+
+/// Recognize prepared pixels in the language `ocr.lang` names (`spelling`, as
+/// [`configured`] normalized it). Only the default `en` is a policy: see
+/// [`read_default`]. Every other language, English with a region included,
+/// is read as that one language.
+#[cfg(target_os = "macos")]
+fn read(image: &pixels::Prepared, spelling: &str) -> Result<OcrResult> {
+    if spelling == "en" {
+        return read_default(image);
+    }
+    let language = tag(spelling);
+    let space = (image.width, image.height);
+    finish(pass(image, &language)?, &language, false, space)
+}
+
+#[cfg(target_os = "macos")]
+const ENGLISH: &str = "en-US";
+#[cfg(target_os = "macos")]
+const CHINESE: &str = "zh-Hans";
+#[cfg(target_os = "macos")]
+const KOREAN: &str = "ko-KR";
+#[cfg(target_os = "macos")]
+const JAPANESE: &str = "ja-JP";
+
+/// The default language policy ([`auto`]): English first, as for `en-US`. When
+/// that reading found no text, or doubts a quarter of its lines, or is of one
+/// or two confident lines (English returns confident Latin fragments for lines
+/// that mix Latin with Chinese), the image is read as Chinese, which also reads
+/// Latin, Japanese and Traditional Chinese. When English found no text or
+/// doubts half of its lines it is read as Korean too, unless the Chinese
+/// reading has enough credible letters to settle it (Vision's Chinese
+/// recognizer makes confident Han of Hangul); the reading with the most text
+/// of its script is kept. Text holding kana is read as Japanese once more,
+/// which has its own aids. A reading that fails is not an error: the English
+/// reading stands, as it always did, and the result is marked unread when text
+/// was seen and not read.
+#[cfg(target_os = "macos")]
+fn read_default(image: &pixels::Prepared) -> Result<OcrResult> {
+    use auto::Verdict;
+    use cjk::Script;
+    let space = (image.width, image.height);
+    let english = pass(image, ENGLISH)?;
+    let verdict = auto::judge(&english.lines);
+    if verdict == Verdict::Sound {
+        return finish(english, ENGLISH, false, space);
+    }
+    let blank = |lines: &[Line]| lines.iter().all(|line| line.text.trim().is_empty());
+    // The strongest reading so far: its language, lines and strength.
+    let mut best: Option<(&str, Pass, f32)> = None;
+    let mut elsewhere = false;
+    let mut settled = false;
+    // A Vision language this system lacks, or a failed reading, is not a
+    // failure of the conversion: English has read the image.
+    if let Ok(chinese) = pass(image, CHINESE) {
+        elsewhere = !blank(&chinese.lines);
+        if auto::reads(&chinese.lines, Script::Japanese) {
+            settled = auto::credible(&chinese.lines, Script::Japanese) >= auto::CONVINCING;
+            let strength = auto::strength(&chinese.lines, Script::Japanese);
+            best = Some((CHINESE, chinese, strength));
+        }
+    }
+    if verdict == Verdict::Failed
+        && !settled
+        && let Ok(korean) = pass(image, KOREAN)
+    {
+        elsewhere |= !blank(&korean.lines);
+        let strength = auto::strength(&korean.lines, Script::Korean);
+        if auto::reads(&korean.lines, Script::Korean)
+            && best.as_ref().is_none_or(|(_, _, other)| strength > *other)
+        {
+            best = Some((KOREAN, korean, strength));
+        }
+    }
+    let kana = matches!(&best, Some((CHINESE, pass, _)) if auto::japanese(&pass.lines));
+    if kana && let Ok(japanese) = pass(image, JAPANESE) {
+        let strength = auto::strength(&japanese.lines, Script::Japanese);
+        let floor = best.as_ref().map_or(0.0, |(_, _, other)| *other);
+        if auto::reads(&japanese.lines, Script::Japanese) && strength >= floor {
+            best = Some((JAPANESE, japanese, strength));
+        }
+    }
+    match best {
+        Some((language, pass, _)) => finish(pass, language, false, space),
+        None => {
+            let unread = auto::unread(verdict, &english.lines, elsewhere);
+            finish(english, ENGLISH, unread, space)
+        }
+    }
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -121,8 +247,12 @@ fn failure(message: &str) -> Error {
     Error::Conversion(format!("Local OCR: {message}"))
 }
 
+/// The spelling of `ocr.lang` after case, surrounding whitespace and
+/// underscores are normalized; an absent value is the default `en`. The
+/// configuration materializes its default, so a default `en` and one written
+/// out cannot be told apart here: both are the default language policy.
 #[cfg(any(target_os = "macos", test))]
-fn language(cfg: &Value) -> Result<String> {
+fn configured(cfg: &Value) -> Result<String> {
     let configured = cfg
         .pointer("/ocr/lang")
         .and_then(Value::as_str)
@@ -142,7 +272,13 @@ fn language(cfg: &Value) -> Result<String> {
             "ocr.lang is not a supported language identifier".into(),
         ));
     }
-    Ok(match normalized.as_str() {
+    Ok(normalized)
+}
+
+/// The Vision language a normalized `ocr.lang` spelling asks for.
+#[cfg(any(target_os = "macos", test))]
+fn tag(spelling: &str) -> String {
+    match spelling {
         "zh" | "zh-cn" | "cn" | "ch" | "zh-hans" => "zh-Hans",
         "zh-tw" | "cht" | "chinese-cht" | "zh-hant" => "zh-Hant",
         "ja" | "jp" | "japan" => "ja-JP",
@@ -154,9 +290,14 @@ fn language(cfg: &Value) -> Result<String> {
         "es" => "es-ES",
         "it" => "it-IT",
         "pt" => "pt-BR",
-        _ => &normalized,
+        other => other,
     }
-    .to_owned())
+    .to_owned()
+}
+
+#[cfg(test)]
+fn language(cfg: &Value) -> Result<String> {
+    Ok(tag(&configured(cfg)?))
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -266,6 +407,8 @@ fn assemble(mut lines: Vec<Line>, width: u32, height: u32) -> Result<OcrResult> 
         confidence,
         boxes,
         scale: 1.0,
+        language: String::new(),
+        unread: false,
     };
     // Keep diagnostics private to the native API, while validating the engine's
     // blank-image distinction before exposing text to the conversion pipeline.
@@ -479,6 +622,31 @@ pub(crate) mod tests {
         assert!(language(&json!({"ocr":{"lang":""}})).is_err());
     }
 
+    /// Only `en` itself, absent or written in any case, is the default language
+    /// policy; a region, or any other language, is read as that language alone.
+    #[test]
+    fn only_a_bare_en_is_the_default_language() {
+        let spelling = |lang: Value| configured(&json!({"ocr":{"lang":lang}})).unwrap();
+        assert_eq!(configured(&json!({})).unwrap(), "en");
+        assert_eq!(configured(&json!({"ocr":{}})).unwrap(), "en");
+        for default in ["en", "EN", " En "] {
+            assert_eq!(spelling(json!(default)), "en");
+        }
+        for explicit in ["en-US", "en_us", "en-GB", "zh", "ja", "ko", "fr", "english"] {
+            assert_ne!(spelling(json!(explicit)), "en", "{explicit}");
+        }
+        assert_eq!(tag(&spelling(json!("en_US"))), "en-us");
+        assert_eq!(tag("en"), "en-US");
+    }
+
+    #[test]
+    fn the_unread_warning_names_its_subject_and_the_setting_to_change() {
+        let warning = unread_warning("PDF page 3");
+        assert!(warning.starts_with("Local OCR could not read PDF page 3: "));
+        assert!(warning.ends_with("Set ocr.lang to the language of the text."));
+        assert!(!unread_warning("this image").contains("PDF page"));
+    }
+
     #[test]
     fn normalized_boxes_use_top_left_pixels_and_reject_invalid_geometry() {
         assert_eq!(
@@ -678,6 +846,121 @@ pub(crate) mod tests {
         let blank = recognize_rgb(blank, &config).unwrap();
         assert!(blank.text.is_empty() && blank.boxes.is_empty());
         assert_eq!(blank.scale, 1.0);
+    }
+
+    #[cfg(target_os = "macos")]
+    fn squeezed(text: &str) -> String {
+        text.split_whitespace().collect()
+    }
+
+    /// Reads the lines drawn in `font` at `size` under the default language
+    /// (no `ocr.lang` set) and requires the Vision `language` to have read them
+    /// exactly, as `explicit`, written out as `ocr.lang`, reads them.
+    #[cfg(target_os = "macos")]
+    fn default_reads(font: &str, lines: &[&str], size: u32, language: &str, explicit: &str) {
+        let image = system_font_lines(font, lines, size);
+        let result = recognize_rgb(image.clone(), &json!({"ocr":{"enabled":true}}));
+        if vision_unavailable_under_rosetta(&result) {
+            return;
+        }
+        let result = result.unwrap();
+        assert_eq!(result.language, language, "{font} {size}");
+        assert_eq!(
+            squeezed(&result.text),
+            squeezed(&lines.concat()),
+            "{font} {size}"
+        );
+        assert!(!result.unread);
+        // The default adds no step of its own to a language's reading.
+        let written = recognize_rgb(image, &json!({"ocr":{"lang":explicit}})).unwrap();
+        assert_eq!(written.text, result.text, "{font} {size}");
+        assert_eq!(written.scale, result.scale, "{font} {size}");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_default_language_reads_chinese_japanese_and_korean_without_configuration() {
+        let chinese = [
+            "含链接注释、图片、曲线标记或圆角裁剪的页面也能重建；",
+            "宽度相同的边框块不再并入表格网格。",
+        ];
+        // Small and ordinary text, with the enlarged second reading.
+        default_reads("Hiragino Sans GB", &chinese, 13, "zh-Hans", "zh");
+        default_reads("Hiragino Sans GB", &chinese, 25, "zh-Hans", "zh");
+        let japanese = [
+            "キャッシュの保存先は環境変数で変更できます。テストの際",
+            "には一時ディレクトリを指定してください。",
+        ];
+        // Kana: Japanese is read once more, with its own aids.
+        default_reads("Hiragino Sans", &japanese, 16, "ja-JP", "ja");
+        default_reads("Hiragino Sans", &japanese, 24, "ja-JP", "ja");
+        let korean = [
+            "오늘 아침은 조금 쌀쌀해서 역 앞 카페에서 따뜻한 라테를",
+            "주문했습니다. 직원이 새로운 메뉴도 있다고 알려 주어서",
+            "다음에는 유자차를 마셔 볼 생각입니다.",
+        ];
+        // Vision's Chinese recognizer makes Han of Hangul; Korean is read too.
+        default_reads("Arial Unicode MS", &korean, 24, "ko-KR", "ko");
+        default_reads("Arial Unicode MS", &korean, 16, "ko-KR", "ko");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_default_language_reads_a_line_of_chinese_that_english_returns_latin_words_for() {
+        // English alone returns `* PDF. Word, Excel SEAT.`, with full
+        // confidence, for this line of Chinese with three Latin words.
+        let line = ["支持 PDF、Word、Excel 与图片转换。"];
+        let image = system_font_lines("Hiragino Sans GB", &line, 24);
+        let english = recognize_rgb(image.clone(), &json!({"ocr":{"lang":"en-US"}}));
+        if vision_unavailable_under_rosetta(&english) {
+            return;
+        }
+        let english = english.unwrap();
+        assert!(!english.text.contains('持') && english.language.eq_ignore_ascii_case("en-US"));
+        let result = recognize_rgb(image, &json!({"ocr":{"enabled":true,"lang":"en"}})).unwrap();
+        assert_eq!(result.language, "zh-Hans");
+        assert_eq!(squeezed(&result.text), squeezed(&line.concat()));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_default_language_keeps_english_as_english_reads_it_and_a_written_language_stands() {
+        let default = json!({"ocr":{"enabled":true}});
+        let written = ["en-US", "en_us"].map(|spelling| json!({"ocr":{"lang":spelling}}));
+        let three = [
+            "The quick brown fox jumps over the lazy dog.",
+            "Pack my box with five dozen liquor jugs 1234567890.",
+            "Local OCR runs on this machine without any network.",
+        ];
+        // Three lines, one line, and a short line: English stands.
+        for lines in [&three[..], &three[..1], &["Hello World"][..]] {
+            let image = system_font_lines("Helvetica", lines, 24);
+            let result = recognize_rgb(image.clone(), &default);
+            if vision_unavailable_under_rosetta(&result) {
+                return;
+            }
+            let result = result.unwrap();
+            assert_eq!(result.language, "en-US");
+            assert_eq!((result.scale, result.unread), (1.0, false));
+            assert_eq!(squeezed(&result.text), squeezed(&lines.concat()));
+            for config in &written {
+                let same = recognize_rgb(image.clone(), config).unwrap();
+                assert_eq!(same.text, result.text);
+            }
+        }
+        // `en-US` names English alone: Chinese is not read, and nothing replaces it.
+        let chinese = ["宽度相同的边框块不再并入表格网格。"];
+        let chinese = system_font_lines("Hiragino Sans GB", &chinese, 25);
+        for config in &written {
+            let result = recognize_rgb(chinese.clone(), config).unwrap();
+            assert!(result.language.eq_ignore_ascii_case("en-US"));
+            assert!(!result.text.chars().any(cjk::han), "{}", result.text);
+            assert!(!result.unread);
+        }
+        // A blank image stays blank, and is not reported as unread.
+        let blank = image::RgbImage::from_pixel(400, 200, image::Rgb([255; 3]));
+        let blank = recognize_rgb(blank, &default).unwrap();
+        assert!(blank.text.is_empty() && blank.boxes.is_empty() && !blank.unread);
     }
 
     #[test]
@@ -950,6 +1233,9 @@ pub(crate) mod tests {
             return;
         }
         let result = result.unwrap();
+        // `en` is the default policy; this sound English reading is its first.
+        assert_eq!(result.language, "en-US");
+        assert!(!result.unread);
         let expected = include_str!("ocr/fixtures/english.txt");
         assert_eq!(
             result.text.split_whitespace().collect::<Vec<_>>(),

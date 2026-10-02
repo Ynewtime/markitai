@@ -74,7 +74,7 @@ pub(super) fn han(character: char) -> bool {
 /// Full-width hiragana and katakana, small kana, the prolonged sound mark,
 /// the kana iteration marks and the ideographic iteration mark 々; not the
 /// katakana middle dot (punctuation) or half-width katakana.
-fn kana(character: char) -> bool {
+pub(super) fn kana(character: char) -> bool {
     matches!(
         character,
         '\u{3041}'..='\u{3096}'

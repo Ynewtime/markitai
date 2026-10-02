@@ -435,6 +435,9 @@ pub(crate) fn extract(
                 doc.markdown.push('\n');
             }
         }
+        if recognized.unread {
+            doc.warnings.push(crate::ocr::unread_warning("this image"));
+        }
         ocr_metadata(&mut doc, cfg);
         Ok((doc, Vec::new()))
     } else {
@@ -562,6 +565,9 @@ fn extract_heif(
                 doc.markdown.push('\n');
             }
         }
+        if recognized.unread {
+            doc.warnings.push(crate::ocr::unread_warning("this image"));
+        }
         ocr_metadata(&mut doc, cfg);
         Ok((doc, Vec::new()))
     } else {
@@ -640,6 +646,12 @@ fn extract_tiff(
         ));
         if local_ocr {
             let recognized = crate::ocr::recognize_rgb(rgb_on_white(&image), cfg)?;
+            if recognized.unread {
+                doc.warnings.push(crate::ocr::unread_warning(&format!(
+                    "TIFF page {}",
+                    index + 1
+                )));
+            }
             if recognized.text.trim().is_empty() {
                 doc.warnings.push(format!("Local OCR found no readable text on TIFF page {}; the output retains its image reference.", index + 1));
             } else {

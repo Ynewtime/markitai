@@ -85,6 +85,34 @@ policy. Before publishing Markdown, the output layer verifies that previously
 published screenshots still match their bytes; a concurrent modification fails
 instead of silently renaming an already-referenced image.
 
+## Recognition language
+
+Page, embedded-picture, TIFF-page and Office-page recognition share the image
+recognizer's language policy. Under the default `ocr.lang` (`en`) each page or
+picture is read as English first and, only when that reading failed, as Chinese,
+Korean and Japanese ([details](ocr.md#the-default-language)), so a scanned
+Chinese, Japanese or Korean page comes out as text without configuration, and a
+page that reads as sound English costs nothing more. Each page is judged on its
+own: a document that mixes languages reads every page in its own. A page
+without text costs two more readings, which are cheap when no text is found.
+A page that no reading can read adds a warning, `Local OCR could not read PDF
+page N: ...` (`Office page N`, `TIFF page N` or `this image` for the other
+inputs), and keeps its English reading; an embedded picture never warns, as a
+picture without text is ordinary. A written language, `en-US` included, reads
+that language alone, exactly as before.
+
+Measured with the binaries of [local OCR](ocr.md#the-default-language) (macOS
+27.0.1, whole `--ocr --no-llm` conversions, before and after alternating, median
+of three; scanned pages are the R45, held-out Chinese, Japanese and Korean
+images at 150 DPI, one per page): six English pages 483 ms before and 486 ms
+after, with identical Markdown; six Chinese pages 388 and 914 ms, from symbols
+to the text of every page; twelve pages, three each of English,
+Chinese, Japanese and Korean, 619 and 1,852 ms, with the nine pages of the other
+languages read (four had no text before); six blank 1600×1200 pages 457 and
+1,173 ms, about 120 ms for each page without text; and the six-page scan of the
+formats comparison 430 and 612 ms, its sixth page, Chinese, read instead of
+"completed with no recognized text".
+
 ## Bounds and remaining gaps
 
 - At most 1,000 pages, checked before native text extraction, and 32 million

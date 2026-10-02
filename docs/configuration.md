@@ -74,7 +74,7 @@ markitai config edit                 # 终端中的交互编辑器
 | `image.stdout_persist` | `true` | 未给 `-o` 输出到 stdout 时保存引用的图片并以 `file://` 链接；`false` 保留相对引用并警告，见[stdout 中的图片](images.md#images-on-stdout) |
 | `image.stdout_persist_dir` | `~/.markitai/assets` | stdout 图片库目录（文件在其下 `blobs/`）；默认值跟随 `MARKITAI_HOME`，自定义路径保持原义 |
 | `image.stdout_fetch_external` | `false` | 参考版用于终端内联显示远程图片；本构建无终端图片输出，可设置但无作用 |
-| `ocr.enabled` / `ocr.lang` | `false` / `en` | OCR 开关与语言，见[本地 OCR](ocr.md) |
+| `ocr.enabled` / `ocr.lang` | `false` / `en` | OCR 开关与语言。默认 `en` 先按英文识别，英文读不出时再试中文、韩文和日文；写成 `en-US` 只读英文，其余值只读所写的那一种语言。见[本地 OCR](ocr.md#the-default-language) |
 | `screenshot.enabled` | `false` | 页面截图，同 `--screenshot` |
 | `batch.concurrency` / `batch.url_concurrency` | `10` / `5` | 文件与 URL 并发，同 `-j`/`--url-concurrency` |
 | `batch.scan_max_depth` / `batch.scan_max_files` | `5` / `10000` | 目录扫描深度与文件数上限 |
