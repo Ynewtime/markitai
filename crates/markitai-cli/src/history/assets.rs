@@ -767,12 +767,12 @@ mod tests {
         assert_eq!(find_root(&output, 0, &boundary, false).unwrap(), None);
         assert_eq!(
             find_root(&output, 1, &boundary, false).unwrap(),
-            Some(boundary.canonicalize().unwrap())
+            Some(platform::canonicalize(&boundary).unwrap())
         );
         fs::create_dir_all(boundary.join("nested/.markitai/states")).unwrap();
         assert_eq!(
             find_root(&output, 99, &boundary, false).unwrap(),
-            Some(boundary.join("nested").canonicalize().unwrap())
+            Some(platform::canonicalize(&boundary.join("nested")).unwrap())
         );
         assert_eq!(
             find_root(&outer.join("missing/doc.md"), 99, &boundary, false).unwrap(),
@@ -853,7 +853,7 @@ mod tests {
             assert_eq!(mapping["assets/p.png"], format!("assets/p-{number}.png"));
         }
         assert_eq!(fs::read(out.join("assets/p-2.png")).unwrap(), b"reserved");
-        let directory = out.canonicalize().unwrap().join("assets");
+        let directory = platform::canonicalize(&out).unwrap().join("assets");
         assert_eq!(budget.directories[&directory].next_suffix["p.png"], 20);
     }
 
@@ -1006,7 +1006,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             find_root(&alias.join("document.md"), 0, &alias, true).unwrap(),
-            Some(actual.canonicalize().unwrap())
+            Some(platform::canonicalize(&actual).unwrap())
         );
         let root = temp.path().join("root");
         fs::create_dir(&root).unwrap();

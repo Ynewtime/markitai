@@ -21,6 +21,16 @@ pub fn rewrite_asset_references(
     crate::output_profiles::rewrite_asset_references(markdown, replacements)
 }
 
+/// `base` joined with a `/`-separated relative location (as Markdown links,
+/// reports and indexes spell it) one component at a time, so the path uses the
+/// platform's separator throughout (`\` on Windows) instead of a mix.
+pub fn join_relative(base: &Path, relative: &str) -> std::path::PathBuf {
+    relative
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .fold(base.to_path_buf(), |path, part| path.join(part))
+}
+
 pub fn check_path(path: &Path, allow_symlinks: bool) -> Result<()> {
     check_paths(&[path], allow_symlinks)
 }
@@ -783,7 +793,7 @@ pub(crate) fn write_document_mode(
             .collect();
         let digest = crate::hex(Sha256::digest(&asset.bytes));
         let filename = format!("{}.{}", &digest[..24], safe_extension);
-        let path = dir.join(asset_prefix).join(&filename);
+        let path = join_relative(dir, asset_prefix).join(&filename);
         check_path(&path, allow_symlinks)?;
         std::fs::create_dir_all(path.parent().unwrap())?;
         crate::asset_store::insert_or_verify(&path, &asset.bytes)?;
@@ -808,7 +818,7 @@ pub(crate) fn write_document_mode(
         let published = replacements.get(asset).ok_or_else(|| {
             Error::Conversion("Image analysis refers to an asset that was not published".into())
         })?;
-        image["asset"] = std::path::absolute(dir.join(published))?
+        image["asset"] = std::path::absolute(join_relative(dir, published))?
             .to_string_lossy()
             .as_ref()
             .into();
@@ -819,7 +829,7 @@ pub(crate) fn write_document_mode(
     };
     for screenshot in screenshots {
         let path = if published {
-            let path = dir.join(".markitai/screenshots").join(&screenshot.name);
+            let path = join_relative(dir, ".markitai/screenshots").join(&screenshot.name);
             check_path(&path, allow_symlinks)?;
             if screenshot_matches(&path, &screenshot.bytes)? != Some(true) {
                 return Err(Error::Conversion("A published page screenshot changed during conversion; document publication stopped to preserve its references".into()));
@@ -936,7 +946,7 @@ fn publish_screenshot(
             "Screenshot name must be a filename".into(),
         ));
     }
-    let directory = dir.join(".markitai/screenshots");
+    let directory = join_relative(dir, ".markitai/screenshots");
     check_path(&directory, allow_symlinks)?;
     std::fs::create_dir_all(&directory)?;
     let stem = name.file_stem().unwrap_or_default().to_string_lossy();

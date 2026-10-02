@@ -72,6 +72,20 @@ fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
+/// A `/`-separated relative path as the CLI prints it: output locations are
+/// built with `Path::join`, so Windows shows its own separator (`\`) there.
+fn native(path: &str) -> String {
+    path.replace('/', std::path::MAIN_SEPARATOR_STR)
+}
+
+/// `base` joined with a `/`-separated relative path one component at a time,
+/// spelled as the CLI spells the locations it names.
+fn under(base: &Path, relative: &str) -> PathBuf {
+    relative
+        .split('/')
+        .fold(base.to_path_buf(), |path, part| path.join(part))
+}
+
 /// A PDF with one page per entry; an empty string is a blank page.
 fn pdf(pages: &[&str]) -> Vec<u8> {
     let count = pages.len();
@@ -146,7 +160,7 @@ fn a_leading_tilde_in_the_output_location_means_the_home_directory_everywhere() 
     assert!(home.join("single/note.txt.md").is_file());
     // The line names the real location, not the spelling that was typed.
     assert!(
-        stderr(&single).contains(home.join("single/note.txt.md").to_str().unwrap()),
+        stderr(&single).contains(under(&home, "single/note.txt.md").to_str().unwrap()),
         "{}",
         stderr(&single)
     );
@@ -190,7 +204,7 @@ fn a_leading_tilde_in_the_output_location_means_the_home_directory_everywhere() 
     let preview = setup.run(&["in", "-o", "~/preview", "--dry-run"]);
     assert!(preview.status.success(), "{}", stderr(&preview));
     assert!(
-        stdout(&preview).contains(home.join("preview/a.txt.md").to_str().unwrap()),
+        stdout(&preview).contains(under(&home, "preview/a.txt.md").to_str().unwrap()),
         "{}",
         stdout(&preview)
     );
@@ -255,19 +269,22 @@ mod terminal {
     fn on_a_terminal(setup: &Setup, args: &[&str], extra: &[(&str, &str)]) -> (String, i32) {
         let (mut master, slave) = unsafe {
             let (mut master, mut slave) = (0, 0);
-            let mut size = libc::winsize {
+            let mut window = libc::winsize {
                 ws_row: 24,
                 ws_col: 100,
                 ws_xpixel: 0,
                 ws_ypixel: 0,
             };
+            // Linux declares this parameter `*const winsize` and macOS
+            // `*mut winsize`; a mutable raw pointer coerces to either.
+            let window: *mut libc::winsize = &mut window;
             assert_eq!(
                 libc::openpty(
                     &mut master,
                     &mut slave,
                     std::ptr::null_mut(),
                     std::ptr::null_mut(),
-                    &mut size,
+                    window,
                 ),
                 0
             );
@@ -654,9 +671,13 @@ fn a_preview_names_each_final_file_and_what_would_be_skipped() {
     assert!(preview.status.success(), "{}", stderr(&preview));
     assert_eq!(
         stdout(&preview),
-        "new.txt -> out/new.txt.md\n\
-         pic.png -> skip (an image needs --ocr or --llm)\n\
-         report.txt -> out/report.txt.v2.md (report.txt.md already exists)\n"
+        format!(
+            "new.txt -> {}\n\
+             pic.png -> skip (an image needs --ocr or --llm)\n\
+             report.txt -> {} (report.txt.md already exists)\n",
+            native("out/new.txt.md"),
+            native("out/report.txt.v2.md")
+        )
     );
     assert_eq!(
         stderr(&preview),
@@ -671,9 +692,13 @@ fn a_preview_names_each_final_file_and_what_would_be_skipped() {
         "--config-json",
         r#"{"output":{"on_conflict":"skip"}}"#,
     ]);
+    // The input keeps the spelling it was given; the target is a joined path.
     assert_eq!(
         stdout(&skip),
-        "in/report.txt -> skip (out/report.txt.md already exists and output.on_conflict is skip)\n"
+        format!(
+            "in/report.txt -> skip ({} already exists and output.on_conflict is skip)\n",
+            native("out/report.txt.md")
+        )
     );
     assert_eq!(
         stderr(&skip),
@@ -689,11 +714,18 @@ fn a_preview_names_each_final_file_and_what_would_be_skipped() {
     ]);
     assert_eq!(
         stdout(&overwrite),
-        "in/report.txt -> out/report.txt.md (replaces the existing file)\n"
+        format!(
+            "in/report.txt -> {} (replaces the existing file)\n",
+            native("out/report.txt.md")
+        )
     );
     // A single input gets the summary line too, and an explicit name is honored.
     let single = setup.run(&["in/new.txt", "-o", "out/chosen.md", "--dry-run"]);
-    assert_eq!(stdout(&single), "in/new.txt -> out/chosen.md\n");
+    // The chosen name is joined to the directory of the given location.
+    assert_eq!(
+        stdout(&single),
+        format!("in/new.txt -> {}\n", native("out/chosen.md"))
+    );
     assert_eq!(
         stderr(&single),
         "Dry run: 1 file would be converted; nothing was written.\n"
@@ -782,7 +814,7 @@ fn a_rename_names_the_file_in_the_way_and_a_mistyped_command_is_suggested() {
         stderr(&second).trim(),
         format!(
             "Wrote {} (note.txt.md already exists)",
-            Path::new("out/note.txt.v2.md").display()
+            native("out/note.txt.v2.md")
         )
     );
     // A batch rerun lists what was renamed.
@@ -825,7 +857,10 @@ fn config_set_and_config_path_say_which_file_and_where_files_are_looked_for() {
     assert_eq!(stdout(&set), "output.on_conflict = \"skip\"\n");
     assert_eq!(
         stderr(&set).trim(),
-        format!("Saved to {}", setup.path("mh/config.json").display())
+        format!(
+            "Saved to {}",
+            under(&setup.path("mh"), "config.json").display()
+        )
     );
     let zh = setup.run_env(
         &["config", "set", "output.on_conflict", "rename"],
@@ -849,7 +884,7 @@ fn config_set_and_config_path_say_which_file_and_where_files_are_looked_for() {
     let found = setup.run(&["config", "path"]);
     assert_eq!(
         stdout(&found).trim(),
-        setup.path("mh/config.json").to_str().unwrap()
+        under(&setup.path("mh"), "config.json").to_str().unwrap()
     );
 }
 

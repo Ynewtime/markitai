@@ -262,9 +262,15 @@ fn a_tls_handshake_that_ends_early_is_retried() {
     stop.store(true, std::sync::atomic::Ordering::SeqCst);
     thread.join().unwrap();
     // An end of stream or, depending on the platform and timing, a reset.
+    // Windows words these by code: the listener's close during the handshake
+    // is an abort (WSAECONNABORTED, os error 10053) or a reset (WSAECONNRESET,
+    // os error 10054), and both are retried like a Unix reset.
     let lower = message.to_lowercase();
     assert!(
-        lower.contains("eof") || lower.contains("reset"),
+        lower.contains("eof")
+            || lower.contains("reset")
+            || (cfg!(windows)
+                && (lower.contains("os error 10053") || lower.contains("os error 10054"))),
         "{message}"
     );
     assert_eq!(

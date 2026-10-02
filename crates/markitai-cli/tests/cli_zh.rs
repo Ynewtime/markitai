@@ -41,6 +41,12 @@ fn stderr(output: &Output) -> String {
     String::from_utf8(output.stderr.clone()).unwrap()
 }
 
+/// A `/`-separated relative path as the CLI prints it: output locations are
+/// built with `Path::join`, so Windows shows its own separator (`\`) there.
+fn native(path: &str) -> String {
+    path.replace('/', std::path::MAIN_SEPARATOR_STR)
+}
+
 fn has_chinese(text: &str) -> bool {
     text.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c))
 }
@@ -210,7 +216,12 @@ fn previews_empty_directories_and_url_lists_report_in_chinese() {
     assert!(preview.status.success());
     assert_eq!(
         stdout(&preview),
-        "broken.docx -> out/broken.docx.md\ngood.txt -> out/good.txt.md\npic.png -> skip (an image needs --ocr or --llm)\nsecond.txt -> out/second.txt.md\n"
+        format!(
+            "broken.docx -> {}\ngood.txt -> {}\npic.png -> skip (an image needs --ocr or --llm)\nsecond.txt -> {}\n",
+            native("out/broken.docx.md"),
+            native("out/good.txt.md"),
+            native("out/second.txt.md")
+        )
     );
     assert_eq!(
         stderr(&preview),
@@ -289,16 +300,22 @@ fn single_inputs_name_the_written_file_skips_and_missing_models_in_chinese() {
     std::fs::write(root.path().join("note.txt"), "Text\n").unwrap();
     std::fs::write(root.path().join("pic.png"), TINY_PNG).unwrap();
     let first = run(root.path(), ZH, &["note.txt", "-o", "out"]);
-    assert_eq!(stderr(&first), "已写入 out/note.txt.md\n");
+    assert_eq!(
+        stderr(&first),
+        format!("已写入 {}\n", native("out/note.txt.md"))
+    );
     assert_eq!(
         stderr(&run(root.path(), EN, &["note.txt", "-o", "out2"])),
-        "Wrote out2/note.txt.md\n"
+        format!("Wrote {}\n", native("out2/note.txt.md"))
     );
     // The renamed file is the one named.
     let again = run(root.path(), ZH, &["note.txt", "-o", "out"]);
     assert_eq!(
         stderr(&again),
-        "已写入 out/note.txt.v2.md（note.txt.md 已存在）\n"
+        format!(
+            "已写入 {}（note.txt.md 已存在）\n",
+            native("out/note.txt.v2.md")
+        )
     );
 
     let image = run(root.path(), ZH, &["pic.png", "-o", "out"]);

@@ -19,7 +19,9 @@ pub(crate) type Result<T> = std::result::Result<T, Error>;
 pub(crate) enum Error {
     Invalid(&'static str),
     NotFound,
-    Io,
+    /// A storage operation failed; the operating system's error is kept so a
+    /// report (and `Debug`) says which operation failed and why.
+    Io(io::Error),
     Busy,
     Overlap,
     Conflict,
@@ -31,7 +33,9 @@ impl std::fmt::Display for Error {
         f.write_str(match self {
             Self::Invalid(message) => message,
             Self::NotFound => "Provider batch job was not found",
-            Self::Io => "Provider batch storage operation failed",
+            Self::Io(error) => {
+                return write!(f, "Provider batch storage operation failed: {error}");
+            }
             Self::Busy => "Another process is using this provider batch store",
             Self::Overlap => "An unfinished provider batch already owns part of this output family; collect or resolve it before submitting again",
             Self::Conflict => "Provider batch evidence conflicts with previously recorded data",
@@ -40,11 +44,27 @@ impl std::fmt::Display for Error {
         })
     }
 }
-impl std::error::Error for Error {}
-impl From<io::Error> for Error {
-    fn from(_: io::Error) -> Self {
-        Self::Io
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(error) => Some(error),
+            _ => None,
+        }
     }
+}
+impl From<io::Error> for Error {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+/// The parent directory of a store path; every store path has one.
+fn parent(path: &Path) -> Result<&Path> {
+    path.parent().ok_or_else(|| {
+        Error::Io(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{} has no parent directory", path.display()),
+        ))
+    })
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -863,11 +883,13 @@ impl Store {
         #[cfg(test)]
         if self.fault == Some(Fault::BeforeStateReplace) {
             self.fault = None;
-            return Err(Error::Io);
+            return Err(Error::Io(io::Error::other(
+                "injected fault before the state replacement",
+            )));
         }
         self.validate()?;
-        let installed =
-            platform::persist(temporary, &self.path.join("state.json")).map_err(|_| Error::Io)?;
+        let installed = platform::persist(temporary, &self.path.join("state.json"))
+            .map_err(|error| Error::Io(error.error))?;
         self.state = state;
         #[cfg(test)]
         if self.fault == Some(Fault::AfterStateReplace) {
@@ -1022,7 +1044,7 @@ impl HeldLock {
         let identity = opened.id();
         file.try_lock().map_err(|error| match error {
             TryLockError::WouldBlock => Error::Busy,
-            TryLockError::Error(_) => Error::Io,
+            TryLockError::Error(error) => Error::Io(error),
         })?;
         let held = Self {
             path: path.into(),
@@ -1031,7 +1053,7 @@ impl HeldLock {
         };
         held.validate()?;
         held.file.sync_all()?;
-        sync(path.parent().ok_or(Error::Io)?)?;
+        sync(parent(path)?)?;
         Ok(held)
     }
     fn validate(&self) -> Result<()> {
@@ -1054,7 +1076,7 @@ impl HeldLock {
 fn observe(status: io::Result<Status>) -> Result<Status> {
     status.map_err(|error| match error.kind() {
         io::ErrorKind::Unsupported => Error::Unsupported,
-        _ => Error::Io,
+        _ => Error::Io(error),
     })
 }
 fn check_permissions(status: &Status, private: bool) -> Result<()> {
@@ -1087,7 +1109,7 @@ fn physical_output(output: &Path, allow_symlinks: bool) -> Result<PathBuf> {
 }
 fn new_directory(path: &Path) -> Result<()> {
     platform::private_directory().create(path)?;
-    sync(path.parent().ok_or(Error::Io)?)?;
+    sync(parent(path)?)?;
     Ok(())
 }
 fn ensure_directory(path: &Path, private: bool) -> Result<()> {
@@ -1097,7 +1119,7 @@ fn ensure_directory(path: &Path, private: bool) -> Result<()> {
             Ok(())
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => new_directory(path),
-        Err(_) => Err(Error::Io),
+        Err(error) => Err(Error::Io(error)),
     }
 }
 fn sync(path: &Path) -> Result<()> {
@@ -1170,6 +1192,18 @@ fn hash_file(path: &Path, limit: usize) -> Result<(u64, String)> {
     }
     Ok((bytes, markitai_core::hex(hash.finalize())))
 }
+/// A store lock must be a private, empty regular file. It is checked through
+/// its metadata and never read: on Windows a held lock (an exclusive byte-range
+/// lock of the whole file, including this process's own index or submission
+/// lock on another handle) makes every read fail with a lock violation, while
+/// opening the file and observing it remain allowed.
+fn check_lock(path: &Path) -> Result<()> {
+    let file = open_private(path)?;
+    if file.metadata()?.len() != 0 {
+        return Err(Error::Invalid("Provider batch lock is not empty"));
+    }
+    Ok(())
+}
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path, limit: usize) -> Result<T> {
     serde_json::from_slice(&read_private(path, limit)?)
         .map_err(|_| Error::Invalid("Provider batch state is invalid JSON"))
@@ -1217,7 +1251,7 @@ fn encode(value: &impl Serialize, limit: usize) -> Result<Vec<u8>> {
 }
 fn write_new_json(path: &Path, value: &impl Serialize, limit: usize) -> Result<()> {
     let bytes = encode(value, limit)?;
-    let parent = path.parent().ok_or(Error::Io)?;
+    let parent = parent(path)?;
     let mut temporary = private_temp(parent)?;
     temporary.write_all(&bytes)?;
     temporary.as_file().sync_all()?;
@@ -1237,7 +1271,7 @@ fn write_blob(
 ) -> Result<Blob> {
     relative_path(relative)?;
     let destination = directory.join(relative);
-    let parent = destination.parent().ok_or(Error::Io)?;
+    let parent = parent(&destination)?;
     let temporary = private_temp(parent)?;
     let mut output = Bounded {
         writer: temporary,
@@ -1322,7 +1356,7 @@ fn scan(root: &Root, limits: Limits) -> Result<Vec<Job>> {
             continue;
         }
         if matches!(name, "index.lock" | "submission.lock") {
-            read_private(&entry.path(), 0)?;
+            check_lock(&entry.path())?;
             continue;
         }
         let id = name

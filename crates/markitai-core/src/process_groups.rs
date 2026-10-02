@@ -398,19 +398,23 @@ mod windows {
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
     use windows_sys::Win32::Foundation::{
-        CloseHandle, FALSE, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
+        CloseHandle, ERROR_MORE_DATA, FALSE, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+        WAIT_OBJECT_0,
     };
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
     };
     use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
-        QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
+        AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+        JOBOBJECT_BASIC_PROCESS_ID_LIST, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JobObjectBasicAccountingInformation, JobObjectBasicProcessIdList,
+        JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
+        TerminateJobObject,
     };
     use windows_sys::Win32::System::Threading::{
-        CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, CREATE_SUSPENDED, OpenThread, ResumeThread,
+        CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, CREATE_SUSPENDED, OpenProcess, OpenThread,
+        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, ResumeThread,
         THREAD_SUSPEND_RESUME, WaitForSingleObject,
     };
 
@@ -538,14 +542,91 @@ mod windows {
         }
     }
 
-    /// Terminate the job and wait, at most a few seconds, until none of its
-    /// processes is still running.
+    /// Terminate the job and wait, at most a few seconds, until each of its
+    /// processes has ended. A process leaves the job's count during its
+    /// rundown, before its handles are closed and its process object is
+    /// signaled, so an empty count alone does not mean that its files are
+    /// closed: each member is opened before the termination and waited on.
     pub(super) fn kill(job: isize) {
+        let mut waited = members(job);
         terminate(job);
+        // Any process started between the listing and the termination.
+        waited.extend(members(job));
         let deadline = Instant::now() + Duration::from_secs(5);
+        for process in &waited {
+            let left = deadline.saturating_duration_since(Instant::now());
+            let milliseconds = u32::try_from(left.as_millis()).unwrap_or(u32::MAX - 1);
+            unsafe {
+                WaitForSingleObject(process.0, milliseconds);
+            }
+        }
         while active(job) > 0 && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    /// The processes the job holds now, each opened so it can be waited on.
+    /// An id is kept only while the opened process is still in the job, so an
+    /// id that an exited member left for reuse never names a stranger. The
+    /// list is empty when the job cannot be queried.
+    fn members(job: isize) -> Vec<Owned> {
+        // The two counters that precede the identifiers, in machine words.
+        let header = (size_of::<JOBOBJECT_BASIC_PROCESS_ID_LIST>() - size_of::<usize>())
+            .div_ceil(size_of::<usize>());
+        let mut capacity = 64usize;
+        let ids = loop {
+            let mut buffer = vec![0usize; header + capacity];
+            let list = buffer
+                .as_mut_ptr()
+                .cast::<JOBOBJECT_BASIC_PROCESS_ID_LIST>();
+            let queried = unsafe {
+                QueryInformationJobObject(
+                    job as HANDLE,
+                    JobObjectBasicProcessIdList,
+                    list.cast(),
+                    (buffer.len() * size_of::<usize>()) as u32,
+                    std::ptr::null_mut(),
+                )
+            };
+            // SAFETY: the buffer is word-aligned and holds the header and
+            // `capacity` identifiers; the system wrote at most that many.
+            let (assigned, listed) = unsafe {
+                (
+                    (*list).NumberOfAssignedProcesses as usize,
+                    ((*list).NumberOfProcessIdsInList as usize).min(capacity),
+                )
+            };
+            if queried == 0 {
+                if unsafe { GetLastError() } == ERROR_MORE_DATA && capacity < 65_536 {
+                    capacity = assigned.max(capacity * 2);
+                    continue;
+                }
+                return Vec::new();
+            }
+            let first = unsafe { (&raw const (*list).ProcessIdList).cast::<usize>() };
+            break (0..listed)
+                .map(|index| unsafe { first.add(index).read() })
+                .collect::<Vec<_>>();
+        };
+        ids.into_iter()
+            .filter_map(|id| {
+                let id = u32::try_from(id).ok()?;
+                let process = unsafe {
+                    OpenProcess(
+                        PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                        FALSE,
+                        id,
+                    )
+                };
+                if process.is_null() {
+                    return None;
+                }
+                let process = Owned(process);
+                let mut member = FALSE;
+                let checked = unsafe { IsProcessInJob(process.0, job as HANDLE, &mut member) };
+                (checked != 0 && member != FALSE).then_some(process)
+            })
+            .collect()
     }
 
     fn active(job: isize) -> u32 {
@@ -760,9 +841,16 @@ mod tests {
         // The leader alone exits; its sleeper stays in the job.
         let _ = child.kill();
         let _ = child.wait();
-        assert!(alive(grandchild));
+        assert!(
+            alive(grandchild),
+            "grandchild {grandchild} ended with its leader"
+        );
+        // Dropping the entry returns only once the rest of the tree has ended.
         drop(slot);
-        assert!(!alive(grandchild));
+        assert!(
+            !alive(grandchild),
+            "grandchild {grandchild} still runs after its entry was dropped"
+        );
     }
 
     #[test]

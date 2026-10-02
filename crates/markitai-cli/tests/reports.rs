@@ -200,6 +200,11 @@ fn zero_usage(value: &Value) {
         &json!({"models":{},"requests":0,"input_tokens":0,"output_tokens":0,"cost_usd":0.0})
     );
 }
+/// A `/`-separated relative path with the platform's separator (`\` on
+/// Windows), as a path the CLI built with `Path::join` is spelled.
+fn native(path: &str) -> String {
+    path.replace('/', std::path::MAIN_SEPARATOR_STR)
+}
 fn recorded_output(root: &Path, entry: &Value) -> PathBuf {
     let path = PathBuf::from(
         entry["output"]
@@ -533,11 +538,11 @@ fn directory_partial_failure_preserves_relative_paths_timestamps_and_pending_cou
     assert_eq!(options["scan_max_depth"], 8);
     assert_eq!(
         Path::new(options["input_dir"].as_str().unwrap()),
-        root.path().join("input").canonicalize().unwrap()
+        markitai_core::platform::canonicalize(&root.path().join("input")).unwrap()
     );
     assert_eq!(
         Path::new(options["output_dir"].as_str().unwrap()),
-        root.path().join("out").canonicalize().unwrap()
+        markitai_core::platform::canonicalize(&root.path().join("out")).unwrap()
     );
     for flag in ["llm", "ocr", "screenshot", "alt", "desc"] {
         assert_eq!(options[flag], false);
@@ -611,8 +616,11 @@ fn mixed_directory_groups_urls_by_source_without_flattening_local_documents() {
     assert_eq!(stdout["totals"]["completed"], 3);
     let (raw, saved) = report(&root.path().join("out"));
     keys(&saved["documents"], &["local.txt"]);
-    keys(&saved["url_sources"], &["input/sub/a.urls", "input/z.urls"]);
-    ordered(&raw, &["input/sub/a.urls", "input/z.urls"]);
+    // A list is named by its path as discovered, in the platform's spelling
+    // (`input\sub\a.urls` on Windows, as the reference's `str(path)` gives).
+    let (nested, top) = (native("input/sub/a.urls"), native("input/z.urls"));
+    keys(&saved["url_sources"], &[nested.as_str(), top.as_str()]);
+    ordered(&raw, &[nested.as_str(), top.as_str()]);
     assert_eq!(saved["summary"]["total_documents"], 1);
     assert_eq!(saved["summary"]["total_urls"], 2);
     assert_eq!(saved["summary"]["completed_urls"], 2);
@@ -626,7 +634,7 @@ fn mixed_directory_groups_urls_by_source_without_flattening_local_documents() {
             "out/sub/second.md",
         ),
     ] {
-        let group = &saved["url_sources"][source];
+        let group = &saved["url_sources"][native(source)];
         assert_eq!(group["total"], 1);
         assert_eq!(group["completed"], 1);
         assert_eq!(group["failed"], 0);

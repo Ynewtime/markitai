@@ -145,11 +145,21 @@ fn inline_data_images_become_assets_only_with_an_output_directory() {
     // Duplicate bytes share one asset; both kept images are real files.
     assert_eq!(disk.assets.len(), 2, "{:?}", disk.assets);
     for asset in &disk.assets {
+        // The file path uses the platform's separator throughout; the link to
+        // it in Markdown is `/`-separated everywhere.
+        #[cfg(windows)]
+        assert!(
+            !asset.to_string_lossy().contains('/'),
+            "{}",
+            asset.display()
+        );
         let relative = asset
             .strip_prefix(&out)
             .unwrap()
-            .to_string_lossy()
-            .into_owned();
+            .iter()
+            .map(|part| part.to_str().unwrap())
+            .collect::<Vec<_>>()
+            .join("/");
         assert!(relative.starts_with(".markitai/assets/"), "{relative}");
         assert!(disk.markdown.contains(&relative), "{}", disk.markdown);
         image::open(asset).unwrap();

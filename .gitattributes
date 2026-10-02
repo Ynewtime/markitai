@@ -1,0 +1,92 @@
+# Every text file is stored and checked out with LF on every platform. Tests
+# compare embedded copies, fixtures and help text byte for byte, so a Windows
+# checkout must not rewrite them to CRLF.
+* text=auto eol=lf
+
+# Captured evidence keeps the exact bytes it was recorded with.
+docs/validation/linux-desktop-proxy-round38/packages.txt -text
+
+# Images
+*.avif binary
+*.bmp binary
+*.gif binary
+*.heic binary
+*.heif binary
+*.ico binary
+*.jpeg binary
+*.jpg binary
+*.png binary
+*.tif binary
+*.tiff binary
+*.webp binary
+
+# Fonts and character maps
+*.bcmap binary
+*.eot binary
+*.otf binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
+
+# Documents
+*.pdf binary
+*.doc binary
+*.docm binary
+*.docx binary
+*.dot binary
+*.dotx binary
+*.epub binary
+*.key binary
+*.msg binary
+*.numbers binary
+*.odp binary
+*.ods binary
+*.odt binary
+*.pages binary
+*.pot binary
+*.potx binary
+*.pps binary
+*.ppsm binary
+*.ppsx binary
+*.ppt binary
+*.pptm binary
+*.pptx binary
+*.xls binary
+*.xlsb binary
+*.xlsm binary
+*.xlsx binary
+
+# Archives and compressed files
+*.7z binary
+*.br binary
+*.bz2 binary
+*.crate binary
+*.gz binary
+*.jar binary
+*.tar binary
+*.tgz binary
+*.whl binary
+*.xz binary
+*.zip binary
+*.zst binary
+
+# Media
+*.mp3 binary
+*.mp4 binary
+*.wav binary
+*.webm binary
+
+# Models, databases and native objects
+*.bin binary
+*.db binary
+*.dll binary
+*.dylib binary
+*.exe binary
+*.gguf binary
+*.mlmodel binary
+*.onnx binary
+*.pt binary
+*.safetensors binary
+*.so binary
+*.sqlite binary
+*.wasm binary

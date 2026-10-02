@@ -15,6 +15,12 @@ fn invoke(root: &Path, args: &[&str]) -> Output {
     invoke_env(root, args, &[])
 }
 
+/// A `/`-separated relative path as the CLI prints it: output locations are
+/// built with `Path::join`, so Windows shows its own separator (`\`) there.
+fn native(path: &str) -> String {
+    path.replace('/', std::path::MAIN_SEPARATOR_STR)
+}
+
 fn invoke_env(root: &Path, args: &[&str], extra: &[(&str, &str)]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_markitai"));
     command.env_clear();
@@ -154,12 +160,18 @@ fn single_inputs_name_the_written_file_and_explain_skips() {
     std::fs::write(root.path().join("note.txt"), "Text\n").unwrap();
     let first = invoke(root.path(), &["note.txt", "-o", "out"]);
     assert!(first.status.success(), "{}", stderr(&first));
-    assert_eq!(stderr(&first).trim(), "Wrote out/note.txt.md");
+    assert_eq!(
+        stderr(&first).trim(),
+        format!("Wrote {}", native("out/note.txt.md"))
+    );
     // The renamed result is the one the user has to know about.
     let second = invoke(root.path(), &["note.txt", "-o", "out"]);
     assert_eq!(
         stderr(&second).trim(),
-        "Wrote out/note.txt.v2.md (note.txt.md already exists)"
+        format!(
+            "Wrote {} (note.txt.md already exists)",
+            native("out/note.txt.v2.md")
+        )
     );
     let quiet = invoke(root.path(), &["note.txt", "-o", "out", "-q"]);
     assert!(quiet.status.success());
@@ -395,7 +407,11 @@ fn empty_batches_and_previews_say_what_would_happen() {
     assert!(preview.status.success());
     assert_eq!(
         stdout(&preview),
-        "a.txt -> out/a.txt.md\nb.md -> out/b.md.md\n"
+        format!(
+            "a.txt -> {}\nb.md -> {}\n",
+            native("out/a.txt.md"),
+            native("out/b.md.md")
+        )
     );
     assert!(
         stderr(&preview).contains("Dry run: 2 files would be converted; nothing was written."),

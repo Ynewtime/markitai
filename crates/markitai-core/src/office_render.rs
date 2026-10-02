@@ -52,6 +52,9 @@ fn failure(message: &str) -> Error {
     Error::Conversion(format!("Office page rendering: {message}"))
 }
 
+// Only the fixed install locations below need a direct check; PATH lookups go
+// through the shared program search.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn executable(path: &Path) -> bool {
     crate::process_groups::launchable(path)
 }

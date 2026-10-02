@@ -78,15 +78,15 @@ impl Indexes {
             for entry in images {
                 let relative = entry["path"].as_str().unwrap();
                 // Mapping values are actual files copied into this private stage.
-                let staged = stage_out.join(relative);
+                let staged = markitai_core::output::join_relative(stage_out, relative);
                 let metadata = std::fs::symlink_metadata(&staged)?;
                 if !metadata.is_file() {
                     return Err(invalid(
                         "History indexed asset is not a regular copied file",
                     ));
                 }
-                entry["path"] = final_out
-                    .join(relative)
+                // One separator throughout: `\` on Windows.
+                entry["path"] = markitai_core::output::join_relative(&final_out, relative)
                     .to_string_lossy()
                     .into_owned()
                     .into();

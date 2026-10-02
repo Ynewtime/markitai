@@ -1010,7 +1010,7 @@ mod tests {
         assert_eq!(value["header_custom"]["kept"], "a");
         let images = value["images"].as_array().unwrap();
         assert_eq!(images.len(), 4);
-        let physical_out = job.join("out").canonicalize().unwrap();
+        let physical_out = platform::canonicalize(&job.join("out")).unwrap();
         for item in images {
             let path = Path::new(item["path"].as_str().unwrap());
             assert!(path.is_absolute());
@@ -1020,8 +1020,12 @@ mod tests {
                 item["expected"].as_str().unwrap().as_bytes()
             );
         }
-        assert!(images[0]["path"].as_str().unwrap().ends_with("/p.png"));
-        assert!(images[2]["path"].as_str().unwrap().ends_with("/p-2.png"));
+        let named = |index: usize| PathBuf::from(images[index]["path"].as_str().unwrap());
+        assert!(named(0).ends_with(".markitai/assets/p.png"));
+        assert!(named(2).ends_with(".markitai/assets/p-2.png"));
+        // The index uses the platform's separator throughout.
+        #[cfg(windows)]
+        assert!(!images[0]["path"].as_str().unwrap().contains('/'));
         assert_eq!(images[1]["path"], images[3]["path"]);
         assert_eq!(images[0]["custom"], serde_json::json!({"nested":[1,true]}));
         assert_eq!(images[2]["source"], "source-b");

@@ -175,7 +175,14 @@ fn json_and_exit_codes_do_not_depend_on_the_language() {
     std::fs::write(dir.path().join("note.txt"), "hello\n").unwrap();
     let output = run(dir.path(), ZH, &["note.txt", "-o", "out"]);
     assert!(output.status.success(), "{}", stderr(&output));
-    assert_eq!(stderr(&output), "已写入 out/note.txt.md\n");
+    // The location is joined with the platform's separator (`\` on Windows).
+    assert_eq!(
+        stderr(&output),
+        format!(
+            "已写入 {}\n",
+            std::path::Path::new("out").join("note.txt.md").display()
+        )
+    );
     let output = run(dir.path(), EN, &["note.txt", "-o", "out"]);
     assert!(stderr(&output).starts_with("Wrote "), "{}", stderr(&output));
 }

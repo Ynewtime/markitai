@@ -24,7 +24,18 @@ fn isolated(name: &str) -> bool {
         .current_dir(root.path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    for key in ["HOME", "PATH", "LANG", "TMPDIR"] {
+    // Windows sockets cannot start without SYSTEMROOT (os error 10106), and
+    // its temporary directory comes from TEMP/TMP; none of these is a proxy.
+    for key in [
+        "HOME",
+        "PATH",
+        "LANG",
+        "TMPDIR",
+        "SYSTEMROOT",
+        "TEMP",
+        "TMP",
+        "USERPROFILE",
+    ] {
         if let Some(value) = std::env::var_os(key) {
             command.env(key, value);
         }
