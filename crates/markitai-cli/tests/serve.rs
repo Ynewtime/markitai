@@ -189,6 +189,16 @@ impl Reply {
     }
 }
 fn request(port: u16, method: &str, path: &str, headers: &[(&str, &str)], body: &[u8]) -> Reply {
+    request_with_ready(port, method, path, headers, body, None)
+}
+fn request_with_ready(
+    port: u16,
+    method: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+    ready: Option<std::sync::mpsc::Sender<()>>,
+) -> Reply {
     let mut socket = TcpStream::connect(("127.0.0.1", port)).unwrap();
     socket.set_read_timeout(Some(WAIT)).unwrap();
     socket.set_write_timeout(Some(WAIT)).unwrap();
@@ -212,6 +222,24 @@ fn request(port: u16, method: &str, path: &str, headers: &[(&str, &str)], body: 
     socket.write_all(b"\r\n").unwrap();
     socket.write_all(body).unwrap();
     let mut raw = Vec::new();
+    if let Some(ready) = ready {
+        // Shutdown may close the listener before a newly spawned subscriber
+        // connects. Wait for the service's response, not thread scheduling.
+        while !raw.ends_with(b"\r\n\r\n") {
+            assert!(raw.len() < 64 * 1024, "response headers too large");
+            let mut byte = [0];
+            socket.read_exact(&mut byte).unwrap();
+            raw.extend_from_slice(&byte);
+        }
+        let status = String::from_utf8_lossy(&raw)
+            .split_whitespace()
+            .nth(1)
+            .unwrap()
+            .parse::<u16>()
+            .unwrap();
+        assert_eq!(status, 200, "event subscription rejected");
+        ready.send(()).unwrap();
+    }
     socket.read_to_end(&mut raw).unwrap();
     let split = raw.windows(4).position(|v| v == b"\r\n\r\n").unwrap();
     let head = String::from_utf8_lossy(&raw[..split]);

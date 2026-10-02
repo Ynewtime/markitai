@@ -424,12 +424,21 @@ fn queued_duplicate_retry_is_rejected_and_shutdown_restores_queued_prior_result(
     assert_eq!(retry(&server, &id, "i2", Some(enhance())).status, 409);
     let events_port = server.port;
     let event_path = format!("/api/jobs/{id}/events");
-    let events = std::thread::spawn(move || request(events_port, "GET", &event_path, &[], &[]));
+    let (ready, subscribed) = std::sync::mpsc::channel();
+    let events = std::thread::spawn(move || {
+        request_with_ready(events_port, "GET", &event_path, &[], &[], Some(ready))
+    });
+    subscribed.recv_timeout(WAIT).unwrap();
     server.signal();
     model.release();
     server.finish(true);
     assert_eq!(model.entered.load(Ordering::SeqCst), 1);
-    let _ = events.join().unwrap();
+    let events = events.join().unwrap();
+    assert_eq!(events.status, 200);
+    assert_eq!(
+        events.headers.get("content-type").unwrap(),
+        "text/event-stream"
+    );
     let server = Server::start(temp.path());
     let saved = server.json(&format!("/api/jobs/{id}"));
     assert_eq!(saved["items"][0]["llm_enhanced"], true);
