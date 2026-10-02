@@ -7,6 +7,10 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
+import sys
+import warnings
+from unittest.mock import patch
 import subprocess
 import tarfile
 import tempfile
@@ -14,7 +18,7 @@ import unittest
 import zipfile
 
 from ci_packages import (npm_command, source_snapshot, stage_node_licenses, supplement_wheel_licenses,
-                         verify_node_licenses, write_cli_zip)
+                         verify_node_licenses, write_cli_zip, extract_cli_zip, doctor_probe, mcp_probe, identity, package_attribution)
 
 
 class PackageValidationTests(unittest.TestCase):
@@ -22,6 +26,124 @@ class PackageValidationTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
+
+
+    def zip_inputs(self):
+        binary = self.root / "markitai.exe"
+        alternate = self.root / "mkai.exe"
+        binary.write_bytes(b"synthetic primary executable fixture")
+        alternate.write_bytes(b"synthetic alternate fixture")
+        return binary, alternate, {"LICENSE": b"license", "licenses/hayro/CMAP_LICENSE.txt": b"original cmap notice"}
+
+    def test_zip_installs_exact_payloads_in_a_unicode_directory(self):
+        binary, alternate, licenses = self.zip_inputs()
+        archive = self.root / "archive.zip"
+        write_cli_zip(binary, alternate, archive, licenses, True)
+        installed = self.root / "安装 with spaces"
+        record = extract_cli_zip(archive, installed, binary, alternate, licenses, True)
+        self.assertEqual(record["mcp_alias"]["kind"], "executable_copy")
+        self.assertEqual(identity(installed / "markitai-mcp.exe"), identity(binary))
+        self.assertEqual(identity(installed / "mkai.exe"), identity(alternate))
+        self.assertEqual(set(record["attribution"]), set(licenses))
+        with self.assertRaises(FileExistsError):
+            extract_cli_zip(archive, installed, binary, alternate, licenses, True)
+
+    def test_zip_missing_duplicate_changed_link_and_extra_payloads_are_rejected_before_extraction(self):
+        binary, alternate, licenses = self.zip_inputs()
+        valid = self.root / "valid.zip"
+        write_cli_zip(binary, alternate, valid, licenses, True)
+        for defect in ["missing", "duplicate", "mcp-bytes", "notice-bytes", "link", "extra"]:
+            broken = self.root / (defect + ".zip")
+            with zipfile.ZipFile(valid) as source, zipfile.ZipFile(broken, "x") as target:
+                for info in source.infolist():
+                    if defect == "missing" and info.filename == "markitai-mcp.exe":
+                        continue
+                    content = source.read(info)
+                    if defect == "mcp-bytes" and info.filename == "markitai-mcp.exe":
+                        content = bytes([content[0] ^ 1]) + content[1:]
+                    if defect == "notice-bytes" and info.filename == "licenses/hayro/CMAP_LICENSE.txt":
+                        content = content[::-1]
+                    if defect == "link" and info.filename == "mkai.exe":
+                        info.create_system = 3
+                        info.external_attr = (stat.S_IFLNK | 0o777) << 16
+                    target.writestr(info, content)
+                if defect == "extra":
+                    target.writestr("../outside", b"extra")
+                elif defect == "duplicate":
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", UserWarning)
+                        target.writestr("LICENSE", licenses["LICENSE"])
+            destination = self.root / (defect + "-installed")
+            with self.subTest(defect=defect), self.assertRaises(RuntimeError):
+                extract_cli_zip(broken, destination, binary, alternate, licenses, True)
+            self.assertFalse(destination.exists())
+        self.assertFalse((self.root / "outside").exists())
+
+    def test_zip_attribution_cannot_collide_with_executable_or_escape(self):
+        binary, alternate, _ = self.zip_inputs()
+        for name in ["markitai.exe", "MARKITAI-MCP.EXE", "mkai.exe/a", "../outside", "/absolute", ".", "",
+                     "C:outside", "licenses\\outside", "licenses/trailing.", "licenses/trailing ", "licenses/nul\0tail"]:
+            with self.subTest(name=name), self.assertRaisesRegex(RuntimeError, "Unsafe"):
+                write_cli_zip(binary, alternate, self.root / "unsafe.zip", {name: b"x"}, True)
+            self.assertFalse((self.root / "unsafe.zip").exists())
+
+    def test_common_packages_include_all_portable_notices(self):
+        source = Path(__file__).resolve().parents[1]
+        files = package_attribution(source)
+        expected = {"licenses/hayro/" + name for name in ["LICENSE_FOXIT", "CGATS_LICENSE.txt", "CMAP_LICENSE.txt",
+                    "hayro-interpret-assets-README.md", "README.md"]} | {
+                    "licenses/paddleocr/" + name for name in ["PaddleOCR-LICENSE", "RapidOCR-LICENSE", "README.md", "provenance.json"]}
+        self.assertTrue(expected <= set(files))
+        for name in expected:
+            self.assertEqual(files[name], (source / name).read_bytes())
+
+    def test_doctor_readiness_is_reported_without_automatic_repair(self):
+        for returncode in [0, 1]:
+            report = {"ocr": {"status": "warning", "message": "Local models are not installed", "optional": True}}
+            result = subprocess.CompletedProcess([], returncode, json.dumps(report).encode(), b"")
+            with patch("ci_packages.subprocess.run", return_value=result) as run:
+                observed = doctor_probe(self.root / "markitai", self.root, {}, self.root / "doctor.log")
+            self.assertEqual(observed["configuration_ready"], returncode == 0)
+            self.assertEqual(observed["checks"], report)
+            self.assertEqual(run.call_args.args[0], [str(self.root / "markitai"), "doctor", "--json"])
+            self.assertEqual(bool(observed["limitations"]), returncode != 0)
+        for returncode, payload in [(2, b'{"ocr":{"status":"error"}}'), (0, b'{}'), (0, b'{"ocr":{"status":"unknown"}}'), (1, b'[]')]:
+            with patch("ci_packages.subprocess.run", return_value=subprocess.CompletedProcess([], returncode, payload, b"")):
+                with self.assertRaises(RuntimeError):
+                    doctor_probe(self.root / "markitai", self.root, {}, self.root / "invalid-doctor.log")
+
+    def test_mcp_probe_uses_real_pipes_and_rejects_partial_protocol(self):
+        # An independent Python peer tests transport/error handling, not Markitai support.
+        program = self.root / "peer.py"
+        program.write_text("""import json,sys,time
+mode=sys.argv[1]
+for line in sys.stdin:
+    request=json.loads(line)
+    method=request['method']
+    if method=='initialize':
+        if mode=='timeout':
+            time.sleep(5)
+        result={'protocolVersion':'2025-11-25'}
+    elif method=='tools/list':
+        names=['convert_document','convert_url','batch_convert','job_status']
+        result={'tools':[{'name':n} for n in names[:3 if mode=='partial' else 4]]}
+    else:
+        continue
+    response={'jsonrpc':'2.0','id':request['id']+(1 if mode=='wrong-id' else 0),'result':result}
+    print(json.dumps(response),flush=True)
+""", encoding="utf-8")
+        real_popen = subprocess.Popen
+        for mode in ["valid", "partial", "wrong-id", "timeout"]:
+            def start(command, **kwargs):
+                return real_popen([sys.executable, str(program), mode], **kwargs)
+            with patch("ci_packages.subprocess.Popen", side_effect=start):
+                if mode == "valid":
+                    observed = mcp_probe(program, self.root, os.environ.copy(), self.root / "peer-valid.log", timeout=2)
+                    self.assertEqual(observed["exit_code"], 0)
+                    self.assertEqual(len(observed["tools"]), 4)
+                else:
+                    with self.assertRaises(Exception):
+                        mcp_probe(program, self.root, os.environ.copy(), self.root / (mode + ".log"), timeout=0.2)
 
     def test_windows_cmd_uses_node_and_a_real_cli_without_a_shell(self):
         directory = self.root / "Node & tools"
@@ -36,7 +158,7 @@ class PackageValidationTests(unittest.TestCase):
             npm_command(npm, node, "win32")
         self.assertEqual(npm_command("/bin/npm", None, "linux"), ["/bin/npm"])
 
-    def test_windows_zip_contains_a_real_mcp_executable_with_matching_bytes(self):
+    def test_windows_zip_contains_regular_mcp_bytes_with_matching_identity(self):
         binary = self.root / "markitai.exe"
         alternate = self.root / "mkai.exe"
         binary.write_bytes(b"MZ" + bytes(range(256)) * 7)
@@ -52,6 +174,7 @@ class PackageValidationTests(unittest.TestCase):
             for name, content in licenses.items():
                 self.assertEqual(bundle.read(name), content)
 
+    @unittest.skipIf(os.name == "nt", "Unix ZIP aliases are extracted on a native Unix host")
     def test_unix_zip_keeps_the_relative_mcp_symlink(self):
         binary = self.root / "markitai"
         binary.write_bytes(b"native CLI")
@@ -61,6 +184,12 @@ class PackageValidationTests(unittest.TestCase):
             alias = bundle.getinfo("markitai-mcp")
             self.assertEqual(alias.external_attr >> 16, 0o120777)
             self.assertEqual(bundle.read(alias), b"markitai")
+        installed = self.root / "Unix 安装 with spaces"
+        record = extract_cli_zip(archive, installed, binary, binary, {}, False)
+        self.assertTrue((installed / "markitai-mcp").is_symlink())
+        self.assertEqual(os.readlink(installed / "markitai-mcp"), "markitai")
+        self.assertEqual(record["mcp_alias"]["kind"], "symlink")
+        self.assertEqual(identity(installed / "markitai-mcp"), identity(binary))
 
     def test_same_size_and_mtime_source_change_is_detected(self):
         source = self.root / "source.rs"

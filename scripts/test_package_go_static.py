@@ -15,6 +15,8 @@ from package_go_static import (EM_X86_64, TARGETS, bundle_licenses, dependency_c
                               parse_native_flags, symbol_versions, unpack_verified,
                               validate_linkage, verify_build)
 
+from portable_attribution import portable_files, stage_portable_files
+
 ROOT = Path(__file__).resolve().parents[1]
 # Compiler notes as rustc 1.98.1 printed them for each packaged target.
 NOTES = {
@@ -232,6 +234,24 @@ class StaticGoPackageTests(unittest.TestCase):
         metadata["packages"][1]["license_file"] = "../../outside.txt"
         with self.assertRaisesRegex(RuntimeError, "escapes"):
             bundle_licenses(metadata, self.root / "licenses", repository, self.root / "rust")
+
+
+    def test_go_archive_preserves_all_real_portable_engine_notices(self):
+        module = self.root / "portable-module"
+        module.mkdir()
+        (module / "go.mod").write_text("module markitai.local/go\n", encoding="utf-8")
+        record = stage_portable_files(ROOT, module)
+        (module / "licenses.json").write_text(json.dumps({"portable_attribution": record}), encoding="utf-8")
+        expected = inventory(module)
+        archive = self.root / "portable-go.tgz"
+        package_archive(module, archive)
+        installed = self.root / "安装 static Go"
+        unpack_verified(archive, installed, expected)
+        self.assertEqual(json.loads((installed / "licenses.json").read_bytes())["portable_attribution"], record)
+        for name, original in portable_files(ROOT).items():
+            self.assertEqual((installed / name).read_bytes(), original)
+            self.assertEqual(expected[name], record[name])
+        self.assertEqual(len(record), 9)
 
     def test_archive_is_relocatable_exact_and_rejects_missing_or_changed_members(self):
         module = self.root / "module"

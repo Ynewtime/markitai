@@ -19,6 +19,11 @@ the [official runner-images repository](https://github.com/actions/runner-images
 describes the images and installed software. A moving runner label does not pin
 the installed SDK or codec version.
 
+The procedures below define package acceptance; they do not report a completed
+R49 release round. Development packages remain `1.3.0-dev` until Windows support
+and final release acceptance are complete. Use each host's retained evidence for
+its actual build, installation and test coverage.
+
 ## Running package acceptance
 
 From a clean committed checkout, with Rust, Node/npm, Python with venv/pip,
@@ -29,8 +34,10 @@ python scripts/ci_packages.py --expected-host <rustc-host-triple> --output .loca
 ```
 
 The output directory must not already exist. The script creates private state
-under `.local`, sets `MARKITAI_HOME`, and leaves HOME unchanged. It removes
-Python/Node module-path overrides so imports resolve to the installed packages.
+under `.local`, isolates `HOME`, `MARKITAI_HOME` and temporary directories, and
+preserves explicit `CARGO_HOME`/`RUSTUP_HOME` for toolchain discovery. It uses an
+empty npm user configuration and removes Python/Node module-path overrides so
+imports resolve to the installed packages.
 `CARGO_BUILD_TARGET` is rejected: a foreign artifact cannot validate the current
 Python/Node process. The target directory must be the repository's `target`,
 because the Go source binding currently names `target/release` in its linker
@@ -41,7 +48,16 @@ packs and installs Node into a private consumer directory, and builds and
 installs Python into a fresh venv. It then runs the actual binding tests.
 Windows invokes npm's JavaScript CLI through `node.exe`, avoiding batch-file
 execution and shell quoting. Unix hosts also run Go's source-package race tests;
-Windows Go/cgo import-library distribution remains an explicitly recorded gap.
+Windows Go/cgo import-library distribution remains an explicitly recorded gap;
+a Windows CLI, Node or Python result does not establish Windows Go/cgo release
+installation support.
+
+Installed CLI probes check version/alias behavior, a Unicode Markdown round
+trip, real MCP initialization and tool listing, and `doctor --json`. The doctor
+probe records a valid exit 0 or 1 and its configuration readiness separately
+from archive correctness; it does not run `--fix` or install optional components.
+These probes do not establish full OCR/Office quality or complete feature
+coverage.
 
 The evidence records the source revision and hashes every tracked and nonignored
 source file before work, after the workspace build, after the wheel build, and
@@ -53,28 +69,60 @@ not a filesystem monitor that can detect an edit reverted between snapshots.
 
 ## Archives for another target
 
-`scripts/package_cli_target.py --target <triple> --output <new directory>`
-cross-builds only the release CLI for one non-host target (for example
+On a Unix host, `scripts/package_cli_target.py --target <triple> --output <new directory>`
+cross-builds only the release CLI for one non-host Unix target (for example
 `x86_64-apple-darwin` on Apple silicon) and writes the same
 `-single-binary.tar.gz` as the native run, checked by the same member
-inventory, hashes and attribution bytes. It records the executable's
-instruction set read from its Mach-O or ELF header. An Apple target builds for
-macOS 11.0, the minimum the arm64 build records, unless `MACOSX_DEPLOYMENT_TARGET`
-is set (Rust's x86-64 default, 10.12, would name systems nothing was tested on);
-the minimum the executable records and whether it carries a code signature are
-read back into the record. When the host can execute
-the target (x86-64 macOS under Rosetta 2), the archived `markitai`, `mkai` and
-`markitai-mcp` run (version, MCP alias selection, a Markdown round trip and
-`doctor --json`); otherwise the record says it did not run. Bindings are not
-built, a host target or a Windows target is refused, and the same clean-checkout
-and source-snapshot rules apply. Running under Rosetta is not evidence from
+inventory, hashes and attribution bytes. A Unix host target is still handled by
+`ci_packages.py`; this standalone script does not build bindings.
+
+An Apple target builds for macOS 11.0, the minimum the arm64 build records,
+unless `MACOSX_DEPLOYMENT_TARGET` is set (Rust's x86-64 default, 10.12, would name
+systems nothing was tested on). The minimum the executable records and whether
+it carries a code signature are read back into the record. When the host can
+execute the target (x86-64 macOS under Rosetta 2), the extracted CLI/aliases run
+version/help, Unicode Markdown, MCP protocol and doctor probes; otherwise the
+record says `executed.ran=false`. Running under Rosetta is not evidence from
 Intel hardware.
+
+### Native Windows CLI
+
+For a native Windows CLI-only ZIP, use the same script on the matching Windows
+Rust host:
+
+```text
+python scripts/package_cli_target.py --target <native-windows-msvc-triple> --output .local/windows-cli
+```
+
+The only Windows targets are `x86_64-pc-windows-msvc` and
+`aarch64-pc-windows-msvc`, and the requested target must equal `rustc -vV`'s host.
+An ARM64 host running an x64 executable does not count as an ARM64 package.
+Cross-host Windows packaging, other Windows targets and Unix targets on a
+Windows host are refused. The Windows output is
+`markitai-<version>-<target>.zip`; a native Windows run must execute the installed
+probes to pass. Both paths require a new output directory, a clean committed
+checkout and unchanged source snapshots, and use isolated home/state/tmp.
+
+The packagers record format and instruction set separately from executed
+probes. Windows PE32+ console EXEs must have the expected COFF Machine
+(`0x8664` for x64 or `0xaa64` for ARM64); DLLs, PE32, unknown machines or the wrong
+OS format are rejected. Reading a valid executable header establishes identity,
+not runtime compatibility. The native job's `evidence.json` or the standalone
+`record.json` retains the actual commands, probe results and limitations; no
+other host, full binding suite or release completion is implied.
 
 ## Package license files and provenance
 
 CLI archives and C-ABI artifacts carry the repository's LICENSE and NOTICE.
 CLI archives also carry the embedded Markdown renderer/sanitizer licenses and
 provenance under `vendor/web/`.
+Package attribution includes the five original notice/provenance files under
+`licenses/hayro/` and the four under `licenses/paddleocr/`, with source bytes
+verified in the archive and extracted installation. The PaddleOCR/RapidOCR
+license texts are checked against their recorded provenance. These notices do
+not include ONNX model files; model installation and offline use are described
+in [local OCR](ocr.md).
+
 The legacy ZIP retains both `markitai` and `mkai` executable files; report its
 size separately from one runnable executable. On Unix it also carries a relative
 `markitai-mcp` symlink. A separate `-single-binary.tar.gz` contains exactly one
@@ -83,19 +131,27 @@ It includes the same project, web, pricing, upstream and Codex catalog attributi
 as the ZIP. Its complete member inventory, executable hash, symlink targets and
 license bytes are checked during private extraction; the extracted `mkai --version`
 and `markitai-mcp --help` are executed. The MCP alias must select the subcommand,
-not the main CLI help. Windows ZIPs contain `markitai-mcp.exe`, a byte-for-byte
-copy of the CLI whose executable name selects the MCP command directly.
-The extracted entry's bytes, own-name version and help are verified and
-executed without a shell forwarder. A bare binary or a measurement-only tar without these notices is not the
-complete distribution archive described here.
+not the main CLI help. Windows ZIPs contain three regular, directly executable
+files: `markitai.exe`, `mkai.exe` and `markitai-mcp.exe`. `mkai.exe` is checked
+against its separately built executable; its bytes need not equal `markitai.exe`.
+`markitai-mcp.exe` is a byte-for-byte copy of the main CLI whose executable name
+selects MCP directly, without a `.cmd` forwarder. Exact inventory, executable
+and notice bytes are checked before extraction, including rejection of missing,
+extra, duplicate or redirected entries; the installed aliases must also run.
+Report the Windows ZIP's complete size, including all three executable entries,
+separately from the Unix single-binary tar. A bare binary or a measurement-only
+tar without these notices is not the complete distribution archive described
+here.
 
-Node staging explicitly includes LICENSE and NOTICE in the package's `files` list, then checks
-their bytes inside the actual `.tgz` and after installation. Installed native
+Node staging explicitly includes the package attribution, including LICENSE,
+NOTICE and the hayro/PaddleOCR notices, in its `files` list, then checks their
+bytes inside the actual `.tgz` and after installation. Installed native
 Node bytes must match the staged library.
 
 The Python project does not yet declare all license files in its native package
 metadata. The script therefore keeps maturin's original wheel, creates a separate
-wheel with LICENSE and NOTICE in `.dist-info/licenses`, and rebuilds its RECORD
+wheel with the same package attribution in `.dist-info/licenses`, including
+LICENSE, NOTICE and the hayro/PaddleOCR notices, and rebuilds its RECORD
 hashes and sizes. Existing Python/native bytes and METADATA are preserved. The
 evidence labels this supplement and records both wheel hashes; the original is
 never overwritten. The installed wheel's license files and native extension are
@@ -124,3 +180,8 @@ ZIP/tar, C-ABI delivery, the wheel supplement, Node package and Go static archiv
 The Go packager records its separate `codex_attribution` inventory alongside the
 existing pricing and dependency notices. These helpers do not download runtime
 executables, establish subscription entitlement or complete a legal review.
+
+Static Go archives also retain the same nine hayro/PaddleOCR notice files and
+record their identities in `licenses.json`. The static delivery script remains
+limited to its native macOS ARM64 and Linux x86-64 glibc targets; this attribution
+step does not add a Windows Go/cgo release or installed-package result.

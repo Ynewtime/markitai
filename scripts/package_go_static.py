@@ -28,6 +28,7 @@ from typing import NamedTuple
 from license_overlay import stage_overlay
 from pricing_attribution import stage_pricing_files
 from codex_attribution import stage_codex_files
+from portable_attribution import stage_portable_files
 
 MAX_NOTICE = 16 * 1024 * 1024
 SOURCE_NAMES = ["go.mod", "markitai.go", "markitai_test.go", "linkage_test.go", "link_dynamic.go",
@@ -499,11 +500,14 @@ def main(argv=None):
     work = output / "work"
     work.mkdir(mode=0o700)
     (output / "logs").mkdir()
-    environment = {key: os.environ[key] for key in ["HOME", "PATH", "LANG", "LC_ALL", "TZ", "DEVELOPER_DIR", "SDKROOT",
-                                                    "RUSTUP_TOOLCHAIN"] if key in os.environ}
-    for name in ["state", "tmp", "gocache", "gomodcache"]:
+    environment = {key: os.environ[key] for key in ["PATH", "LANG", "LC_ALL", "TZ", "DEVELOPER_DIR", "SDKROOT",
+                                                    "RUSTUP_TOOLCHAIN", "CARGO_HOME", "RUSTUP_HOME"] if key in os.environ}
+    environment.setdefault("CARGO_HOME", str(Path.home() / ".cargo"))
+    environment.setdefault("RUSTUP_HOME", str(Path.home() / ".rustup"))
+    for name in ["home", "state", "tmp", "gocache", "gomodcache"]:
         (work / name).mkdir(mode=0o700)
-    environment.update(MARKITAI_HOME=str(work / "state"), TMPDIR=str(work / "tmp"),
+    environment.update(HOME=str(work / "home"), MARKITAI_HOME=str(work / "state"), MARKITAI_LANG="en",
+                       TMPDIR=str(work / "tmp"), TMP=str(work / "tmp"), TEMP=str(work / "tmp"),
                        GOCACHE=str(work / "gocache"), GOMODCACHE=str(work / "gomodcache"),
                        GOENV="off", GOWORK="off", GOTOOLCHAIN="local", GOPROXY="off", GOSUMDB="off", CGO_ENABLED="1")
     record = {"schema": 1, "status": "running", "source_revision": args.source_revision,
@@ -582,9 +586,12 @@ def main(argv=None):
         record["pricing_attribution"] = pricing_record
         codex_record = stage_codex_files(root, module)
         record["codex_attribution"] = codex_record
+        portable_record = stage_portable_files(root, module)
+        record["portable_attribution"] = portable_record
         license_record = bundle_licenses(json.loads(inputs["metadata"].read_text()), module / "licenses", root, sysroot)
         license_record["pricing_attribution"] = pricing_record
         license_record["codex_attribution"] = codex_record
+        license_record["portable_attribution"] = portable_record
         json_file(module / "licenses.json", license_record)
         record["unresolved_licenses"] = license_record["unresolved"]
         record["license_overlay"] = license_record["upstream_overlay"]

@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import unittest
 
-from package_cli_target import executable_arch, macho_minimum, main, workspace_version
+from package_cli_target import executable_arch, macho_minimum, main, workspace_version, validate_target
 
 
 class TargetPackagingTests(unittest.TestCase):
@@ -48,6 +48,21 @@ class TargetPackagingTests(unittest.TestCase):
         self.assertIsNone(macho_minimum(self.file("e", macho(struct.pack("<II", 0x1B, 0)))))
         self.assertIsNone(macho_minimum(self.file("f", b"\x7fELF" + bytes(60))))
 
+
+    def test_windows_support_requires_the_exact_native_msvc64_host(self):
+        for target in ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"]:
+            self.assertTrue(validate_target(target, target, "win32"))
+            for host, platform in [(target, "darwin"), ("x86_64-unknown-linux-gnu", "linux"),
+                                   ("aarch64-pc-windows-msvc" if target.startswith("x86_64") else "x86_64-pc-windows-msvc", "win32")]:
+                with self.assertRaisesRegex(SystemExit, "matching native"):
+                    validate_target(target, host, platform)
+        for target in ["i686-pc-windows-msvc", "x86_64-pc-windows-gnu"]:
+            with self.assertRaisesRegex(SystemExit, "only"):
+                validate_target(target, target, "win32")
+        with self.assertRaisesRegex(SystemExit, "Unix host"):
+            validate_target("aarch64-apple-darwin", "x86_64-pc-windows-msvc", "win32")
+        self.assertFalse(validate_target("x86_64-apple-darwin", "aarch64-apple-darwin", "darwin"))
+
     def test_the_version_comes_from_the_workspace_package_section(self):
         manifest = '[package]\nversion = "0.1.0"\n\n[workspace.package]\nedition = "2024"\nversion = "1.3.0-dev"\n'
         self.assertEqual(workspace_version(manifest), "1.3.0-dev")
@@ -57,9 +72,12 @@ class TargetPackagingTests(unittest.TestCase):
     def test_the_host_target_and_malformed_triples_are_refused_before_any_build(self):
         host = next(line.split(": ", 1)[1] for line in
                     subprocess.check_output(["rustc", "-vV"], text=True).splitlines() if line.startswith("host: "))
-        for target, message in [(host, "ci_packages.py"), ("x86_64", "triple"), ("x86_64-apple-darwin;rm", "triple"),
+        cases = [("x86_64", "triple"), ("x86_64-apple-darwin;rm", "triple"),
                                 ("riscv64gc-unknown-linux-gnu", "Unsupported"),
-                                ("x86_64-pc-windows-msvc", "Windows")]:
+                                ("x86_64-pc-windows-gnu", "Windows")]
+        if "windows" not in host:
+            cases.extend([(host, "ci_packages.py"), ("x86_64-pc-windows-msvc", "Windows")])
+        for target, message in cases:
             if target == "x86_64-pc-windows-msvc" and host == target:
                 continue
             with self.assertRaises(SystemExit) as raised:

@@ -1,22 +1,13 @@
-"""Build and package the single-binary CLI for one non-host Cargo target.
+"""Package a cross-target Unix CLI or either native Windows MSVC64 CLI.
 
-`ci_packages.py` validates native builds only. This script cross-builds
-`markitai-cli` in release mode for another target (such as x86-64 macOS on
-Apple silicon), writes the same single-binary archive as the native run (one
-executable, `mkai` and `markitai-mcp` relative symlinks, the CLI's
-attribution), re-reads it through the same inventory check, and records the
-executable's identity and instruction set. When this host can execute the
-target (x86-64 macOS under Rosetta 2), the archived executable and its aliases
-also run: version, MCP alias selection, a Markdown round trip and
-`doctor --json`. Otherwise the record says it was not run.
+Unix targets retain the single-binary tar and relative aliases. Windows targets
+require their own native host, produce a ZIP with three real EXE entries, and
+verify PE architecture before exercising the installed CLI and MCP protocol.
+Every package carries complete portable-engine attribution. Executed probes
+use isolated HOME/state and report dependency readiness without installing it.
 
-An Apple target builds for macOS 11.0, the oldest system the arm64 build
-names, unless `MACOSX_DEPLOYMENT_TARGET` is set; Rust's x86-64 default
-(10.12) would claim systems nothing was tested on. The minimum the
-executable records is read back from its load commands.
-
-The record is not a signature, a notarization or evidence from the target's
-own hardware.
+Apple builds default to macOS 11.0 and read the minimum back from load commands.
+The record is not signing, publishing or evidence from another target's hardware.
 """
 from pathlib import Path
 import argparse
@@ -30,25 +21,26 @@ import subprocess
 import sys
 import tempfile
 
-from ci_packages import (cli_attribution, extract_single_binary_tar, identity, package_attribution,
-                         source_snapshot, write_single_binary_tar)
+from ci_packages import (cli_attribution, doctor_probe, extract_cli_zip, extract_single_binary_tar,
+                         identity, mcp_probe, package_attribution, source_snapshot, write_cli_zip,
+                         write_single_binary_tar)
+from executable_identity import (MACHO, ELF, WINDOWS_TARGETS, executable_arch,
+                                 verify_target_executable)
 
-# Mach-O CPU types and ELF machines by the architecture a target triple names.
-MACHO = {0x01000007: "x86_64", 0x0100000C: "aarch64"}
-ELF = {62: "x86_64", 183: "aarch64"}
 
-
-def executable_arch(path):
-    """The instruction set of a thin 64-bit Mach-O or ELF executable, else None."""
-    with path.open("rb") as stream:
-        header = stream.read(20)
-    if len(header) < 20:
-        return None
-    if header[:4] == b"\xcf\xfa\xed\xfe":
-        return MACHO.get(struct.unpack_from("<I", header, 4)[0])
-    if header[:4] == b"\x7fELF" and header[4] == 2 and header[5] == 1:
-        return ELF.get(struct.unpack_from("<H", header, 18)[0])
-    return None
+def validate_target(target, host, host_platform):
+    """Keep native Windows support explicit; do not imply cross-link acceptance."""
+    windows = "windows" in target
+    if windows:
+        if target not in WINDOWS_TARGETS:
+            raise SystemExit("Windows CLI packaging supports only x86_64/aarch64-pc-windows-msvc")
+        if host_platform != "win32" or target != host:
+            raise SystemExit("Windows CLI packaging requires a matching native Windows host")
+    elif host_platform == "win32":
+        raise SystemExit("Unix CLI packaging requires a Unix host")
+    elif target == host:
+        raise SystemExit("The host target is packaged and tested by ci_packages.py")
+    return windows
 
 
 def macho_minimum(path):
@@ -94,7 +86,7 @@ def workspace_version(manifest):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", required=True, help="Cargo target triple other than the host's")
+    parser.add_argument("--target", required=True, help="Cross-target Unix triple, or this Windows host's MSVC64 triple")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[1]
@@ -105,10 +97,7 @@ def main(argv=None):
         raise SystemExit(f"Unsupported architecture: {expected_arch}")
     host = next(line.split(": ", 1)[1] for line in
                 subprocess.check_output(["rustc", "-vV"], text=True).splitlines() if line.startswith("host: "))
-    if args.target == host:
-        raise SystemExit("The host target is packaged and tested by ci_packages.py")
-    if os.name == "nt" or "windows" in args.target:
-        raise SystemExit("Windows archives are packaged by ci_packages.py on Windows")
+    windows = validate_target(args.target, host, sys.platform)
 
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -116,7 +105,12 @@ def main(argv=None):
     local = root / ".local"
     local.mkdir(exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="cli-target-", dir=local))
-    environment = dict(os.environ, MARKITAI_HOME=str(work / "state"))
+    for name in ["state", "home", "tmp"]:
+        (work / name).mkdir()
+    environment = dict(os.environ, MARKITAI_HOME=str(work / "state"), HOME=str(work / "home"),
+                       MARKITAI_LANG="en", TMPDIR=str(work / "tmp"), TMP=str(work / "tmp"), TEMP=str(work / "tmp"))
+    environment.setdefault("CARGO_HOME", str(Path.home() / ".cargo"))
+    environment.setdefault("RUSTUP_HOME", str(Path.home() / ".rustup"))
     environment.pop("CARGO_BUILD_TARGET", None)
     if args.target.endswith("-apple-darwin"):
         environment.setdefault("MACOSX_DEPLOYMENT_TARGET", "11.0")
@@ -163,17 +157,16 @@ def main(argv=None):
             raise RuntimeError("Target packaging requires a clean source checkout")
         record["source_before"] = snapshot()
         record["compiler"] = run("compiler", ["rustc", "-vV"])
-        run("build", ["cargo", "build", "--release", "--locked", "-p", "markitai-cli", "--target", args.target])
+        run("build", ["cargo", "build", "--release", "--locked", "-p", "markitai-cli", "--bins", "--target", args.target])
         record["source_after_build"] = snapshot()
         if record["source_before"] != record["source_after_build"]:
             raise RuntimeError("Source bytes changed during the build")
 
-        binary = target_dir / args.target / "release" / "markitai"
-        arch = executable_arch(binary)
-        if arch != expected_arch:
-            raise RuntimeError(f"Built executable is {arch}, not {expected_arch}")
+        extension = ".exe" if windows else ""
+        binary = target_dir / args.target / "release" / ("markitai" + extension)
+        executable = verify_target_executable(binary, args.target)
         version = workspace_version((root / "Cargo.toml").read_text(encoding="utf-8"))
-        record["executable"] = {**identity(binary), "arch": arch, "version": version}
+        record["executable"] = {**identity(binary), **executable, "version": version}
         if args.target.endswith("-apple-darwin"):
             record["executable"]["minimum_macos"] = macho_minimum(binary)
             if record["executable"]["minimum_macos"] != record["deployment_target"]:
@@ -183,34 +176,55 @@ def main(argv=None):
             record["executable"]["code_signature"] = (
                 "none" if "not signed" in signature.stderr else signature.stderr.strip().splitlines()[-1:])
         cli_licenses = cli_attribution(root, package_attribution(root))
-        archive = output / f"markitai-{version}-{args.target}-single-binary.tar.gz"
-        write_single_binary_tar(binary, archive, cli_licenses)
-        unpacked = work / "single-binary-cli"
-        record["single_binary_cli"] = extract_single_binary_tar(archive, unpacked, binary, cli_licenses)
+        unpacked = work / "CLI 安装 with spaces"
+        if windows:
+            alternate = target_dir / args.target / "release" / "mkai.exe"
+            verify_target_executable(alternate, args.target)
+            archive = output / f"markitai-{version}-{args.target}.zip"
+            write_cli_zip(binary, alternate, archive, cli_licenses, True)
+            record["cli_zip"] = extract_cli_zip(archive, unpacked, binary, alternate, cli_licenses, True)
+            for name in ["markitai.exe", "mkai.exe", "markitai-mcp.exe"]:
+                verify_target_executable(unpacked / name, args.target)
+        else:
+            archive = output / f"markitai-{version}-{args.target}-single-binary.tar.gz"
+            write_single_binary_tar(binary, archive, cli_licenses)
+            record["single_binary_cli"] = extract_single_binary_tar(archive, unpacked, binary, cli_licenses)
         record["artifacts"] = {archive.name: identity(archive)}
 
         try:
-            reported = subprocess.run([str(unpacked / "markitai"), "--version"], cwd=work, env=environment,
-                                      capture_output=True, text=True, timeout=60)
+            reported = subprocess.run([str(unpacked / ("markitai" + extension)), "--version"], cwd=work, env=environment,
+                                      capture_output=True, text=True, encoding="utf-8", timeout=60)
         except OSError as error:
+            if windows:
+                raise RuntimeError("Native Windows installed CLI could not execute") from error
             record["executed"] = {"ran": False, "reason": f"{type(error).__name__}: {error}"}
         else:
             if reported.returncode or reported.stdout.split()[-1:] != [version]:
                 raise RuntimeError(f"Archived executable reported {reported.stdout!r}")
-            alias = run("alias-version", [unpacked / "mkai", "--version"], cwd=unpacked).strip()
+            alias = run("alias-version", [unpacked / ("mkai" + extension), "--version"], cwd=unpacked).strip()
             if alias.split()[-1] != version:
                 raise RuntimeError("Archived mkai alias reported a different version")
-            help_text = run("mcp-alias-help", [unpacked / "markitai-mcp", "--help"], cwd=unpacked)
+            help_text = run("mcp-alias-help", [unpacked / ("markitai-mcp" + extension), "--help"], cwd=unpacked)
             if "mcp" not in help_text.lower() or "Commands:" in help_text:
                 raise RuntimeError("Archived MCP alias did not select the MCP subcommand")
             source = work / "source.md"
             source.write_text("# Target package\n\nHello 世界.\n", encoding="utf-8")
-            text = run("round-trip", [unpacked / "markitai", source, "--pure"], cwd=work)
+            text = run("round-trip", [unpacked / ("markitai" + extension), source, "--pure"], cwd=work)
             if text != source.read_text(encoding="utf-8"):
                 raise RuntimeError("Archived executable changed plain Unicode content")
-            doctor = json.loads(run("doctor", [unpacked / "markitai", "doctor", "--json"], cwd=work))
+            launcher = unpacked / ("markitai-mcp" + extension)
+            if windows:
+                own_version = run("mcp-alias-version", [launcher, "--version"], cwd=unpacked).strip()
+                if own_version != f"markitai-mcp {version}":
+                    raise RuntimeError("Windows MCP executable did not report its own name and version")
+            protocol_log = output / "logs" / "installed-mcp-protocol.log"
+            protocol = mcp_probe(launcher, unpacked, environment, protocol_log)
+            protocol["log_identity"] = identity(protocol_log)
+            doctor_log = output / "logs" / "installed-doctor.log"
+            doctor = doctor_probe(unpacked / ("markitai" + extension), work, environment, doctor_log)
+            doctor["log_identity"] = identity(doctor_log)
             record["executed"] = {"ran": True, "version": reported.stdout.strip(), "alias_version": alias,
-                                  "doctor_keys": sorted(doctor) if isinstance(doctor, dict) else None}
+                                  "mcp_protocol": protocol, "doctor": doctor}
         record["source_after"] = snapshot()
         if record["source_before"] != record["source_after"]:
             raise RuntimeError("Source bytes changed during packaging")

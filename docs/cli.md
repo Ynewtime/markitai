@@ -22,6 +22,27 @@ markitai -I
 markitai -c isolated.json doctor --json
 ```
 
+## 发行候选与 Windows 入口
+
+开发版保持 `1.3.0-dev`，按平台与架构分别打包。Windows x64 和 ARM64 的
+CLI 包分别命名为 `markitai-<版本>-x86_64-pc-windows-msvc.zip` 和
+`markitai-<版本>-aarch64-pc-windows-msvc.zip`，请按机器架构选择。
+解压后可直接运行 `markitai.exe`、`mkai.exe` 和 `markitai-mcp.exe`，无需
+`.cmd` 包装器；后者直接启动 MCP，也可先加 `--help` 查看用法。
+在 PowerShell 中从解压目录执行：
+
+```powershell
+.\markitai.exe --version
+.\markitai.exe .\note.txt --no-llm -o .\output\
+.\markitai-mcp.exe --help
+```
+
+Unix 的 single-binary tar 保留一个主程序和相对符号链接入口。归档携带
+`licenses/hayro/` 与 `licenses/paddleocr/` 的原始许可及来源说明，便携 OCR
+的 ONNX 模型不随 CLI 打包；启用便携 OCR 前按[本地 OCR](ocr.md)说明安装或
+离线准备模型。各平台的实际构建、安装与绑定验收范围见[打包验收](ci.md)，
+包的文件清单或一条版本输出不能代替这些测试。
+
 ## 参数帮助与移除提示
 
 `-h/--help` 说明输出、JSON、配置优先级、三类并发、缓存绕过、OCR/截图、
@@ -113,9 +134,9 @@ MARKITAI_LANG=zh markitai --help
 
 ## 明确的迁移缺口
 
-仍有迁移缺口：非 Unix 断点恢复、Anthropic Batch API 与旧版 Python Batch 状态导入、终端内联图片显示（因此 `image.stdout_fetch_external` 可设置但无作用）。`-s jina`/`-s defuddle` 远程抽取、`-s cloudflare`（Cloudflare Browser Rendering）抓取与 `-b cloudflare`（Workers AI）文件后端（均使用你自己的 Cloudflare 凭据，见[抓取](fetch.md#remote-services)）、经 `fetch.remote_consent` 明确同意后的 `auto` 远程回退、OpenAI Batch API、经官方运行时的订阅登录（`auth <provider> login`）和 serve 的浏览器工作区均已实现。pure 按参考行为绕过 LLM 缓存；文本、独立图片与分页视觉请求的缓存范围分别见 [LLM 处理](llm.md)，不能将一次命中理解成所有输入已支持缓存。其余未实现的开关/命令请求会失败并说明原因。Office 演示与文字文档可通过可选的独立 LibreOffice 安装获得全页截图和 OCR 补充，详见 [Office 渲染](office-rendering.md)；XLS/XLSX/ODS 支持每张完整工作表一页，包含隐藏和空表；Numbers 完整画布和其他平台本地 OCR/PDF 渲染仍未完成；未实现的选项只在遇到相关格式或图片时拒绝，不应阻断纯文本转换。独立栅格图片、完整多页 TIFF 和 SVG 可经 LLM 视觉模型读取。alt/desc 已接入真实图片引用、结构化分析及 images.json 合并，详见[图片分析](image-enrichment.md)；需要启用 LLM。rich/standard preset 仍不是对所有格式可用的完整模式。
+仍有迁移缺口：非 Unix 断点恢复、Anthropic Batch API 与旧版 Python Batch 状态导入、终端内联图片显示（因此 `image.stdout_fetch_external` 可设置但无作用）。`-s jina`/`-s defuddle` 远程抽取、`-s cloudflare`（Cloudflare Browser Rendering）抓取与 `-b cloudflare`（Workers AI）文件后端（均使用你自己的 Cloudflare 凭据，见[抓取](fetch.md#remote-services)）、经 `fetch.remote_consent` 明确同意后的 `auto` 远程回退、OpenAI Batch API、经官方运行时的订阅登录（`auth <provider> login`）和 serve 的浏览器工作区均已实现。pure 按参考行为绕过 LLM 缓存；文本、独立图片与分页视觉请求的缓存范围分别见 [LLM 处理](llm.md)，不能将一次命中理解成所有输入已支持缓存。其余未实现的开关/命令请求会失败并说明原因。Office 演示与文字文档可通过可选的独立 LibreOffice 安装获得全页截图和 OCR 补充，详见 [Office 渲染](office-rendering.md)；XLS/XLSX/ODS 支持每张完整工作表一页，包含隐藏和空表；Numbers 完整画布仍未完成；本地 OCR 与 PDF 渲染的平台及构建范围见[本地 OCR](ocr.md#the-portable-engine-windows-and-linux)；未实现的选项只在遇到相关格式或图片时拒绝，不应阻断纯文本转换。独立栅格图片、完整多页 TIFF 和 SVG 可经 LLM 视觉模型读取。alt/desc 已接入真实图片引用、结构化分析及 images.json 合并，详见[图片分析](image-enrichment.md)；需要启用 LLM。rich/standard preset 仍不是对所有格式可用的完整模式。
 
-持久报告、可选历史导出和 Unix 批量恢复已实现；单项和非 Unix 恢复仍明确拒绝。普通非 Unix 转换保留既有行为，但尚未完成实机验证。混合目录分别应用文件与 URL 并发上限。URL 列表的自定义文件名只允许一个安全 basename；旧实现的名称清理细节尚待配对验收。帮助使用原生 Clap 布局，不复刻 Rich 框线；非 Unix 进程中断清理及全部非 ASCII 终端行为仍需专门测试。
+持久报告、可选历史导出和 Unix 批量恢复已实现；单项和非 Unix 恢复仍明确拒绝。普通非 Unix 转换保留既有行为，但尚未完成全量实机验收。混合目录分别应用文件与 URL 并发上限。URL 列表的自定义文件名只允许一个安全 basename；旧实现的名称清理细节尚待配对验收。帮助使用原生 Clap 布局，不复刻 Rich 框线；非 Unix 进程中断清理及全部非 ASCII 终端行为仍需专门测试。
 
 具体文件格式支持取决于核心当前实现，注册参考扩展名不意味着全部可用。性能与质量对比未完成前，不承诺生产替代、完整旧版兼容或具体加速比。
 

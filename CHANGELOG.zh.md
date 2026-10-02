@@ -4,6 +4,7 @@
 
 ### 新增
 
+- Windows x64/ARM64 原生 CLI ZIP 打包，核验可执行架构、完整归档清单，并实际执行安装后的 MCP、Unicode 与诊断探针。CLI、原生绑定及已支持的静态 Go 包携带 hayro/PaddleOCR 原始许可材料；ONNX 模型仍单独安装。Windows Go/cgo 发行安装尚未验证。
 - 原生 Windows 控制台 VT 与宽度处理及可读降级、系统显示语言回退、共用的便携输出文件名和可操作的 Office 诊断。Windows MCP 归档提供直接可执行的 `markitai-mcp.exe`；注册表测试使用隔离验证键，不支持的 PAC 设置仅产生固定提示、不回显 URL。
 - 通过 `security.pdf_sanitize` 过滤 PDF 提取正文：`off` 关闭隐藏文字安全提示，`warn` 保留原正文并报告信号，`remove` 过滤支持识别的可疑文字，保留可见正文、已接受的 OCR 层及原始资产。本地与下载 PDF 使用相同策略；检查不完整或不支持的情况会明确提示，不宣称完成全面清洗。
 - Windows 和 Linux 本地 PaddleOCR 识别，macOS 可通过 `portable-media` 构建选用：有边界的进程内 ONNX 推理、显式语言选择，以及默认英语、中文、日语、韩语路由。模型在首次使用时下载并核验固定大小与 SHA-256；`doctor` 只检查、不下载，`doctor --fix` 原子修复缺失或损坏模型，并拒绝不安全的模型路径。macOS 默认继续使用 Vision。 工作台以中英文区分缺失、损坏与不安全的模型，保留原始错误详情，并允许解决缺模型或下载问题后重试。

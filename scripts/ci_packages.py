@@ -14,7 +14,10 @@ import json
 import os
 import platform
 import shutil
+import queue
+import stat
 import subprocess
+import threading
 import sys
 import tarfile
 import tempfile
@@ -23,6 +26,8 @@ import zipfile
 from pricing_attribution import pricing_files
 from codex_attribution import codex_files
 from license_overlay import upstream_files
+from portable_attribution import portable_files
+from executable_identity import verify_target_executable
 
 
 def identity(path):
@@ -35,6 +40,11 @@ def identity(path):
 
 def write_cli_zip(binary, alternate, archive, licenses, windows):
     """The MCP entry is a directly executable name on every supported host."""
+    _cli_license_paths(licenses)
+    for path in [binary, alternate]:
+        if not stat.S_ISREG(path.lstat().st_mode):
+            raise RuntimeError("CLI ZIP inputs must be regular non-symlink files")
+    before = [identity(path) for path in [binary, alternate]]
     extension = ".exe" if windows else ""
     with zipfile.ZipFile(archive, "x", zipfile.ZIP_DEFLATED) as bundle:
         bundle.write(binary, "markitai" + extension)
@@ -50,6 +60,160 @@ def write_cli_zip(binary, alternate, archive, licenses, windows):
             alias.create_system = 3
             alias.external_attr = (0o120777 << 16)
             bundle.writestr(alias, b"markitai")
+    if before != [identity(path) for path in [binary, alternate]]:
+        raise RuntimeError("CLI executable bytes changed during ZIP packaging")
+
+
+def extract_cli_zip(archive_path, destination, binary, alternate, licenses, windows):
+    """Validate every member before creating a fresh extraction directory."""
+    _cli_license_paths(licenses)
+    extension = ".exe" if windows else ""
+    executable_names = {"markitai" + extension: binary, "mkai" + extension: alternate}
+    alias_name = "markitai-mcp" + extension
+    expected = {*executable_names, alias_name, *licenses}
+    with zipfile.ZipFile(archive_path) as bundle:
+        members = bundle.infolist()
+        if len(members) != len(expected) or {item.filename for item in members} != expected:
+            raise RuntimeError("CLI ZIP inventory differs from the declared files")
+        for item in members:
+            kind = stat.S_IFMT(item.external_attr >> 16)
+            if item.filename == alias_name and not windows:
+                if kind != stat.S_IFLNK or bundle.read(item) != b"markitai":
+                    raise RuntimeError("CLI ZIP MCP alias is not the declared relative symlink")
+                continue
+            if item.is_dir() or kind not in {0, stat.S_IFREG}:
+                raise RuntimeError("CLI ZIP member is not a regular file")
+            source = executable_names.get(item.filename)
+            if item.filename == alias_name:
+                source = binary
+            if source is None:
+                content = licenses[item.filename]
+                if item.file_size != len(content) or bundle.read(item) != content:
+                    raise RuntimeError("CLI ZIP attribution differs from source")
+            else:
+                expected_identity = identity(source)
+                if item.file_size != expected_identity["bytes"]:
+                    raise RuntimeError("CLI ZIP executable size differs from the frozen binary")
+                digest = hashlib.sha256()
+                with bundle.open(item) as stream:
+                    for block in iter(lambda: stream.read(1024 * 1024), b""):
+                        digest.update(block)
+                if {"bytes": item.file_size, "sha256": digest.hexdigest()} != expected_identity:
+                    raise RuntimeError("CLI ZIP executable differs from the frozen binary")
+        destination.mkdir(parents=True, exist_ok=False)
+        for item in members:
+            target = destination / item.filename
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if item.filename == alias_name and not windows:
+                target.symlink_to("markitai")
+            else:
+                with bundle.open(item) as incoming, target.open("xb") as outgoing:
+                    shutil.copyfileobj(incoming, outgoing)
+                if item.filename in executable_names or item.filename == alias_name:
+                    target.chmod(0o755)
+        for name, source in executable_names.items():
+            if identity(destination / name) != identity(source):
+                raise RuntimeError("Extracted CLI executable differs from source")
+        if identity(destination / alias_name) != identity(binary):
+            raise RuntimeError("Extracted MCP alias differs from source")
+        for name, content in licenses.items():
+            if (destination / name).read_bytes() != content:
+                raise RuntimeError("Extracted CLI attribution differs from source")
+    return {"archive": identity(archive_path),
+            "executables": {name: identity(destination / name) for name in executable_names},
+            "mcp_alias": {"kind": "executable_copy" if windows else "symlink", "target": "markitai" + extension,
+                          "identity": identity(destination / alias_name)},
+            "attribution": {name: identity(destination / name) for name in licenses}}
+
+
+def mcp_probe(launcher, cwd, environment, log, timeout=30):
+    """Exercise the installed executable over real JSON-RPC stdin/stdout."""
+    messages = queue.Queue()
+    stderr = bytearray()
+    process = subprocess.Popen([str(launcher)], cwd=cwd, env=environment,
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    def read_stdout():
+        try:
+            total = 0
+            while line := process.stdout.readline(65537):
+                total += len(line)
+                if len(line) > 65536 or total > 1024 * 1024:
+                    raise RuntimeError("MCP probe output exceeded its bound")
+                messages.put(json.loads(line))
+        except Exception as error:
+            messages.put(error)
+        finally:
+            messages.put(None)
+
+    def read_stderr():
+        while block := process.stderr.read(8192):
+            if len(stderr) < 1024 * 1024:
+                stderr.extend(block[:1024 * 1024 - len(stderr)])
+
+    tasks = [threading.Thread(target=read_stdout, daemon=True), threading.Thread(target=read_stderr, daemon=True)]
+    for task in tasks:
+        task.start()
+    received = []
+
+    def send(value):
+        process.stdin.write(json.dumps(value).encode("utf-8") + b"\n")
+        process.stdin.flush()
+
+    def response(identifier):
+        value = messages.get(timeout=timeout)
+        if isinstance(value, Exception):
+            raise value
+        if not isinstance(value, dict) or value.get("jsonrpc") != "2.0" or value.get("id") != identifier or "error" in value:
+            raise RuntimeError("MCP probe did not receive its successful JSON-RPC response")
+        received.append(value)
+        return value.get("result")
+
+    try:
+        send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-11-25", "capabilities": {},
+            "clientInfo": {"name": "markitai-package-probe", "version": "1"}}})
+        result = response(1)
+        if not isinstance(result, dict) or result.get("protocolVersion") != "2025-11-25":
+            raise RuntimeError("MCP initialize negotiated an unexpected protocol")
+        send({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
+        send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+        result = response(2)
+        tools = result.get("tools") if isinstance(result, dict) else None
+        names = [item.get("name") for item in tools] if isinstance(tools, list) and all(isinstance(t, dict) for t in tools) else None
+        if names != ["convert_document", "convert_url", "batch_convert", "job_status"]:
+            raise RuntimeError("MCP installed tool inventory is incomplete or unexpected")
+        process.stdin.close()
+        if process.wait(timeout=timeout):
+            raise RuntimeError("MCP installed executable failed after EOF")
+        return {"ran": True, "command": [str(launcher)], "cwd": str(cwd),
+                "protocol_version": "2025-11-25", "tools": names, "exit_code": process.returncode}
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+        for task in tasks:
+            task.join(timeout=5)
+        for stream in [process.stdin, process.stdout, process.stderr]:
+            stream.close()
+        log.write_bytes(json.dumps({"responses": received, "exit_code": process.returncode},
+                                   indent=2, ensure_ascii=False).encode("utf-8") + b"\n" + bytes(stderr))
+
+
+def doctor_probe(binary, cwd, environment, log):
+    """Record readiness separately from packaging; never install dependencies."""
+    result = subprocess.run([str(binary), "doctor", "--json"], cwd=cwd, env=environment,
+                            capture_output=True, timeout=120)
+    log.write_bytes(result.stdout + b"\n" + result.stderr)
+    checks = json.loads(result.stdout)
+    statuses = {"ok", "warning", "missing", "error"}
+    if (result.returncode not in {0, 1} or not isinstance(checks, dict) or not checks
+            or any(not isinstance(check, dict) or check.get("status") not in statuses for check in checks.values())):
+        raise RuntimeError("Installed doctor did not return a valid diagnostic report")
+    return {"ran": True, "command": [str(binary), "doctor", "--json"], "cwd": str(cwd),
+            "exit_code": result.returncode, "configuration_ready": result.returncode == 0,
+            "checks": checks,
+            "limitations": [] if result.returncode == 0 else ["The isolated configuration has unmet requirements; no repair/download was attempted."]}
 
 
 def source_snapshot(root, paths):
@@ -160,11 +324,12 @@ def supplement_wheel_licenses(source, destination, licenses):
 
 def package_attribution(root):
     """Attribution every package carries: the project's license and notice,
-    pricing data, Codex and vendored upstream licenses."""
+    pricing data, Codex, portable engines and vendored upstream licenses."""
     licenses = {name: (root / name).read_bytes() for name in ["LICENSE", "NOTICE"]}
     licenses.update(pricing_files(root))
     licenses.update(codex_files(root))
     licenses.update(upstream_files(root))
+    licenses.update(portable_files(root))
     return licenses
 
 
@@ -189,9 +354,10 @@ def _cli_license_paths(licenses):
     from pathlib import PurePosixPath
     for name in licenses:
         path = PurePosixPath(name)
-        if (not name or path.is_absolute() or path.as_posix() != name
+        if (not name or not path.parts or path.is_absolute() or path.as_posix() != name
                 or any(part in {"", ".", ".."} for part in path.parts)
-                or "\\" in name or path.parts[0] in {"markitai", "mkai", "markitai-mcp"}):
+                or "\\" in name or "\0" in name or ":" in name or any(part.endswith((".", " ")) for part in path.parts)
+                or path.parts[0].lower() in {"markitai", "mkai", "markitai-mcp", "markitai.exe", "mkai.exe", "markitai-mcp.exe"}):
             raise RuntimeError("Unsafe CLI attribution path")
 
 
@@ -281,9 +447,14 @@ def main():
     state.mkdir()
     isolated_home = work / "home"
     isolated_home.mkdir()
+    (work / "tmp").mkdir()
+    npm_config = work / "npmrc"
+    npm_config.write_text("", encoding="utf-8")
     # Help assertions use English independently of a Windows runner's UI language.
     environment = dict(os.environ, MARKITAI_HOME=str(state), PYO3_PYTHON=sys.executable,
-                       HOME=str(isolated_home), MARKITAI_LANG="en")
+                       HOME=str(isolated_home), MARKITAI_LANG="en", TMPDIR=str(work / "tmp"),
+                       TMP=str(work / "tmp"), TEMP=str(work / "tmp"),
+                       npm_config_userconfig=str(npm_config))
     environment.setdefault("CARGO_HOME", str(Path.home() / ".cargo"))
     environment.setdefault("RUSTUP_HOME", str(Path.home() / ".rustup"))
     for key in ["PYTHONPATH", "PYTHONHOME", "NODE_PATH", "NODE_OPTIONS"]:
@@ -358,47 +529,35 @@ def main():
             raise RuntimeError("Source bytes changed during the workspace build")
         extension = ".exe" if sys.platform == "win32" else ""
         binary = release / ("markitai" + extension)
+        record["cli_executable"] = {**identity(binary), **verify_target_executable(binary, host)}
+        alternate = release / ("mkai" + extension)
+        verify_target_executable(alternate, host)
         version = run("version", [binary, "--version"]).strip().split()[-1]
 
         cli_licenses = cli_attribution(root, licenses)
         archive = output / f"markitai-{version}-{host}.zip"
         write_cli_zip(binary, release / ("mkai" + extension), archive, cli_licenses, os.name == "nt")
         artifact(archive)
-        extracted = work / "cli"
-        with zipfile.ZipFile(archive) as bundle:
-            if os.name == "nt":
-                bundle.extractall(extracted)
-                launcher = extracted / "markitai-mcp.exe"
-                if identity(launcher) != identity(binary):
-                    raise RuntimeError("Windows MCP executable differs from the retained CLI")
-                record["cli_mcp_alias"] = {"kind": "executable_copy", "target": "markitai.exe", "identity": identity(launcher)}
-                alias_version = run("zip-mcp-alias-version", [launcher, "--version"], cwd=extracted).strip()
-                if alias_version != f"markitai-mcp {version}":
-                    raise RuntimeError("Windows MCP executable did not report its own name and version")
-                help_text = run("zip-mcp-alias-help", [launcher, "--help"], cwd=extracted)
-                if "Usage: markitai-mcp [OPTIONS]" not in help_text or "Commands:" in help_text:
-                    raise RuntimeError("Windows MCP executable did not select its own command")
-                record["cli_mcp_alias"].update({"version": alias_version, "executed": True})
-            else:
-                alias = bundle.getinfo("markitai-mcp")
-                if alias.external_attr >> 16 != 0o120777 or bundle.read(alias) != b"markitai":
-                    raise RuntimeError("ZIP MCP alias is not the declared relative symlink")
-                for member in bundle.infolist():
-                    if member.filename != "markitai-mcp":
-                        bundle.extract(member, extracted)
-                for name in ["markitai", "mkai"]:
-                    (extracted / name).chmod(0o755)
-                (extracted / "markitai-mcp").symlink_to("markitai")
-                if identity(extracted / "markitai-mcp") != identity(binary):
-                    raise RuntimeError("ZIP MCP alias differs from the retained executable")
-                record["cli_mcp_alias"] = {"kind": "symlink", "target": "markitai", "identity": identity(extracted / "markitai-mcp")}
-                help_text = run("zip-mcp-alias-help", [extracted / "markitai-mcp", "--help"], cwd=extracted)
-                if "mcp" not in help_text.lower() or "Commands:" in help_text:
-                    raise RuntimeError("ZIP MCP alias did not select the MCP subcommand")
-                record["cli_mcp_alias"]["executed"] = True
-        for name, content in licenses.items():
-            if (extracted / name).read_bytes() != content:
-                raise RuntimeError(f"Archived CLI {name} differs from pricing/project attribution")
+        extracted = work / "CLI 安装 with spaces"
+        record["cli_zip"] = extract_cli_zip(archive, extracted, binary, alternate, cli_licenses, os.name == "nt")
+        if os.name == "nt":
+            for name in ["markitai.exe", "mkai.exe", "markitai-mcp.exe"]:
+                verify_target_executable(extracted / name, host)
+        alias_version = run("zip-alias-version", [extracted / ("mkai" + extension), "--version"], cwd=extracted).strip()
+        if alias_version.split()[-1:] != [version]:
+            raise RuntimeError("Archived mkai reported a different version")
+        launcher = extracted / ("markitai-mcp" + extension)
+        help_text = run("zip-mcp-alias-help", [launcher, "--help"], cwd=extracted)
+        if "mcp" not in help_text.lower() or "Commands:" in help_text:
+            raise RuntimeError("Archived MCP executable did not select its own command")
+        if os.name == "nt":
+            alias_version = run("zip-mcp-alias-version", [launcher, "--version"], cwd=extracted).strip()
+            if alias_version != f"markitai-mcp {version}":
+                raise RuntimeError("Windows MCP executable did not report its own name and version")
+        record["cli_mcp_alias"] = {**record["cli_zip"]["mcp_alias"], "executed": True}
+        protocol_log = output / "logs" / "installed-mcp-protocol.log"
+        record["cli_mcp_protocol"] = mcp_probe(launcher, extracted, environment, protocol_log)
+        record["cli_mcp_protocol"]["log_identity"] = identity(protocol_log)
         if os.name != "nt":
             single = output / f"markitai-{version}-{host}-single-binary.tar.gz"
             write_single_binary_tar(binary, single, cli_licenses)
@@ -418,7 +577,9 @@ def main():
         text = run("archived-cli", [extracted / ("markitai" + extension), source, "--pure"], cwd=work)
         if text != source.read_text(encoding="utf-8"):
             raise RuntimeError("Archived CLI changed plain Unicode content")
-        record["doctor"] = json.loads(run("doctor", [binary, "doctor", "--json"], cwd=work))
+        doctor_log = output / "logs" / "installed-doctor.log"
+        record["doctor"] = doctor_probe(extracted / ("markitai" + extension), work, environment, doctor_log)
+        record["doctor"]["log_identity"] = identity(doctor_log)
 
         native = output / "native"
         native.mkdir()
