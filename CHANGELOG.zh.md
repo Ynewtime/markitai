@@ -74,7 +74,7 @@
 - Windows：支持订阅运行时。运行时、浏览器与 LibreOffice 的查找遵循 PATHEXT，npm 的 `.cmd` 垫片经命令处理器启动。`markitai auth … login` 以子进程运行官方登录，等待并透传其退出码。
 - Windows：输出归属、发布收据、恢复状态（`--resume`）、Provider Batch 存储与历史归档改用原生文件身份（卷序列号与文件 ID）、硬链接数与所有者 SID 私有性判定，不再拒绝该平台；符号链接与目录联结同样拒绝；Windows 不支持目录刷新，改为在重命名后刷新被命名的文件。
 - Windows：被其他进程（杀毒、索引）短暂阻塞的重命名最多重试五次，与参考实现一致；同一路径的 8.3 短名、大小写不同与 `\\?\` 写法指向同一输出范围；`serve` 创建任务、重试与删除时不再因同步目录报 "Access is denied"。
-- Windows：Provider Batch 存储改为通过元数据检查索引锁与提交锁，不再读取它们（Windows 上被持有的锁禁止读取），存储失败附带操作系统错误；结束运行时进程树时等到其中每个进程都已结束，而不只是等作业不再计数；资源、截图与历史图片索引路径统一使用 `\`；测试运行时保留 `SYSTEMROOT`，使 Winsock 可以启动。
+- Windows：Provider Batch 存储改为通过元数据检查索引锁与提交锁，不再读取它们（Windows 上被持有的锁禁止读取），存储失败附带操作系统错误；结束运行时进程树时等到其中每个进程都已结束，而不只是等作业不再计数；资源、截图与历史图片索引路径统一使用 `\`；测试运行时保留 `SYSTEMROOT`，使 Winsock 可以启动；TLS 握手期间被服务器重置或中止的连接（Winsock 10054/10053）与 Unix 一样重试。
 - Windows 与 Linux 以纯 Rust 的 hayro 渲染器（固定 0.7.1）在进程内绘制 PDF 页面，截图、扫描页 OCR 与 Office 页面捕获（LibreOffice → PDF）不再依赖 CoreGraphics；仅设所有者密码的 PDF 与文本提取共用 lopdf 解密，未内嵌的中日韩字体使用宿主字体，标准 14 字体替身与预定义 CMap 内嵌（许可声明见 `licenses/hayro/`）。macOS 仍用 CoreGraphics，其二进制不变；`portable-media` 构建同时编译两者（`MARKITAI_PDF_RENDERER=portable`）。在 1,663 个语料页面上两种渲染器的页数与尺寸完全一致，扫描 PDF 的 OCR 差异为 0.024% CER。
 - LLM：新增 16 个兼容 OpenAI 的模型前缀（groq、mistral、xai、together_ai、perplexity、cerebras、fireworks_ai、deepinfra、nebius、moonshot、sambanova、zai、nvidia_nim、novita、hosted_vllm、lm_studio），每个都有文档核实过的默认端点，并沿用参考版本的密钥变量名。Bedrock 和 Vertex AI 给出明确错误，并说明可改用 `openai/<model>` 加 `api_base`。
 - serve 工作台在浅色与深色主题下均满足 WCAG AA 对比度（差异视图行号与浅色次要文字加深，`scripts/check-contrast.mjs` 守护实测的 43 组颜色对）。远程会话中访问令牌不再出现在任何 URL：事件流用带请求头的 fetch 读取，预览图片以 Blob 加载，压缩包下载改用 `POST /api/download-tickets` 签发的一次性 60 秒票据（脚本仍可使用 `?token=`）。`GET /api/openapi.json` 提供 REST API 的 OpenAPI 3.1 描述，并与路由表互相测试。

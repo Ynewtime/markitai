@@ -99,10 +99,15 @@ fn connection_dropped(error: &reqwest::Error) -> bool {
         }) {
             return true;
         }
+        // Windows words a reset or an abort by its Winsock code
+        // (WSAECONNRESET 10054, WSAECONNABORTED 10053) when the I/O error is
+        // not reachable through the source chain.
         let text = current.to_string().to_ascii_lowercase();
         if text.contains("connection reset")
             || text.contains("connection aborted")
             || text.contains("broken pipe")
+            || text.contains("os error 10053")
+            || text.contains("os error 10054")
             || text
                 .split(|c: char| !c.is_ascii_alphanumeric())
                 .any(|word| word == "eof")

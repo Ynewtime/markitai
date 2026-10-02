@@ -362,7 +362,10 @@ fn single_inputs_name_the_written_file_skips_and_missing_models_in_chinese() {
     );
     assert_eq!(
         stderr(&alt),
-        "Warning: 未启用 --llm（或 standard/rich 预设）时，--alt 和 --desc 不起作用\n已写入 alt/note.txt.md\n"
+        format!(
+            "Warning: 未启用 --llm（或 standard/rich 预设）时，--alt 和 --desc 不起作用\n已写入 {}\n",
+            native("alt/note.txt.md")
+        )
     );
 
     // A report path appears with -v; the report itself is unchanged.
