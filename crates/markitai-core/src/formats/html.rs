@@ -1676,9 +1676,9 @@ fn note_has_content(
     mut text_marker: Option<&str>,
     depth: usize,
 ) -> bool {
-    if depth > 256 {
+    if depth > MAX_DEPTH {
         return true;
-    } // The serializer reports the nesting error.
+    } // The serializer keeps that subtree as plain text.
     if markers.contains(&element)
         || (depth > 0 && is_hidden(element))
         || element.value().attribute("role") == Some("doc-backlink")
@@ -2536,7 +2536,7 @@ impl<'a> Footnotes<'a> {
     }
 
     fn definition_shell(&self, element: ElementRef<'_>, depth: usize) -> bool {
-        if depth > 256 {
+        if depth > MAX_DEPTH {
             return false;
         }
         if self.removed.contains(&element_key(element)) {
@@ -2560,6 +2560,34 @@ impl<'a> Footnotes<'a> {
         }
         has_definition
     }
+}
+
+const MAX_DEPTH: usize = 256;
+
+thread_local! {
+    /// Set when a rendering on this thread kept a subtree below [`MAX_DEPTH`]
+    /// as plain text. A rendering is one synchronous recursion on one thread.
+    static FLATTENED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The text below an element without recursion, a space at block edges so
+/// the words of neighbouring blocks stay apart.
+fn flat_text(element: ElementRef<'_>) -> String {
+    let block = |element: Option<ElementRef<'_>>| {
+        element.is_some_and(|element| block_tag(element.value().name()))
+    };
+    let mut text = String::new();
+    for node in element.descendants() {
+        if (block(ElementRef::wrap(node)) || block(node.prev_sibling().and_then(ElementRef::wrap)))
+            && !text.ends_with(' ')
+        {
+            text.push(' ');
+        }
+        if let scraper::Node::Text(value) = node.value() {
+            text.push_str(value);
+        }
+    }
+    text
 }
 
 fn serialize_clean(
@@ -2628,10 +2656,11 @@ fn serialize_clean(
     {
         return Ok(());
     }
-    if depth > 256 {
-        return Err(Error::Conversion(
-            "HTML nesting exceeds 256 elements".into(),
-        ));
+    if depth > MAX_DEPTH {
+        // Unclosed legacy tags nest this deep; the rest keeps its words.
+        escaped_text(&flat_text(element), output);
+        FLATTENED.with(|flattened| flattened.set(true));
+        return Ok(());
     }
     if let Some(callout) = callout {
         output.start("blockquote");
@@ -4091,6 +4120,7 @@ pub(super) fn extract_html_bytes(bytes: &[u8]) -> Result<Document> {
 
 /// Extract an article candidate, metadata and Markdown without fetching links.
 pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
+    FLATTENED.with(|flattened| flattened.set(false));
     let source = flatten_shadow_roots(source);
     let mut document = Html::parse_document(&source);
     stream::restore(&mut document)?;
@@ -4190,9 +4220,14 @@ pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
         metadata.insert("word_count".into(), count_words(&markdown).into());
     }
     metadata.insert("converter".into(), "native-html".into());
+    let mut warnings = Vec::new();
+    if FLATTENED.with(|flattened| flattened.replace(false)) {
+        warnings.push(format!("HTML is nested deeper than {MAX_DEPTH} elements; the content below that depth was kept as plain text without its formatting."));
+    }
     Ok(Document {
         markdown,
         metadata,
+        warnings,
         ..Document::default()
     })
 }
@@ -4221,6 +4256,36 @@ mod tests {
         };
         same && a.children().count() == b.children().count()
             && a.children().zip(b.children()).all(|(x, y)| same_tree(x, y))
+    }
+
+    #[test]
+    fn nesting_deeper_than_the_limit_keeps_its_words_with_a_warning() {
+        let deep = format!(
+            "<h1>Title</h1><p>Before</p>{}<p>Deep <b>bold</b></p><p>text</p>{}<p>After</p>",
+            "<div>".repeat(300),
+            "</div>".repeat(300)
+        );
+        let document = extract_html(&deep, None).unwrap();
+        assert!(document.markdown.starts_with("# Title\n\nBefore"));
+        assert!(
+            document.markdown.contains("Deep bold text"),
+            "{}",
+            document.markdown
+        );
+        assert!(document.markdown.ends_with("After"));
+        assert_eq!(document.warnings.len(), 1);
+        assert!(document.warnings[0].starts_with("HTML is nested deeper than 256 elements"));
+        // Unclosed legacy inline tags nest the same way.
+        let fonts: String = (0..400).map(|i| format!("<font size=2>w{i} ")).collect();
+        let document = extract_html(&format!("<p>Start</p>{fonts}"), None).unwrap();
+        assert!(document.markdown.contains("w0 w1") && document.markdown.ends_with("w399"));
+        // The flag does not leak into the next conversion on this thread.
+        assert!(
+            extract_html("<p>plain</p>", None)
+                .unwrap()
+                .warnings
+                .is_empty()
+        );
     }
 
     #[test]

@@ -89,7 +89,9 @@ documented article heuristic; ordinary hidden descendants remain hidden.
 - URL attributes with control characters or unsafe schemes are removed. Event
   handlers and arbitrary styles are not emitted. Script, form, frame, template,
   hidden and navigation content is excluded. A hidden ancestor also disqualifies
-  an article candidate. DOM serialization stops with an error beyond 256 levels.
+  an article candidate. Content nested deeper than 256 levels (unclosed legacy
+  tags such as `<font>` reach that depth) is kept as plain text without its
+  formatting, with a warning.
 
 Inline visibility uses parsed CSS declarations rather than substring matching.
 Only the actual `display` and `visibility` property names affect this check;
