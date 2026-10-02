@@ -12,7 +12,8 @@ def main():
     environment = dict(os.environ, MARKITAI_HOME=str(state))
     commands = [
         ["cargo", "fmt", "--all", "--check"],
-        ["cargo", "test", "--workspace", "--locked"],
+        # Every test binary runs even after a failure, so one run reports them all.
+        ["cargo", "test", "--workspace", "--locked", "--no-fail-fast"],
         ["cargo", "clippy", "--workspace", "--all-targets", "--locked", "--", "-D", "warnings"],
         [sys.executable, "-m", "unittest", "discover", "-s", "scripts", "-p", "test_*.py"],
     ]
