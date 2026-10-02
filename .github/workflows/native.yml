@@ -24,6 +24,11 @@ concurrency:
 env:
   CARGO_TERM_COLOR: never
   RUSTUP_TOOLCHAIN: 1.99.0
+  # Test evidence lives in job logs; avoid retaining multi-GB debug metadata
+  # alongside the release and extension-module builds on hosted runners.
+  CARGO_INCREMENTAL: '0'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
 
 jobs:
   native:
