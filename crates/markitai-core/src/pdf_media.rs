@@ -47,7 +47,8 @@ impl PreparedPdf {
             self.pages.finish()?
         };
         // This replaces the image placement statement, never a routing signal. All page-specific extraction and inspection diagnostics remain.
-        if self.media_requested {
+        // It names the screenshots only when some were written.
+        if self.media_requested && !self.screenshots.is_empty() {
             for warning in &mut document.warnings {
                 if warning == IMAGE_PLACEMENT {
                     *warning = "PDF images are placed after their page's text and vector graphics are not reconstructed; the page screenshots keep each page's appearance.".into();
@@ -386,11 +387,9 @@ fn picture_result(
 ) -> Result<Option<String>> {
     counts.attempted += 1;
     match result {
+        // A photo or figure without text is ordinary; only the count records it.
         Ok(text) if text.trim().is_empty() => {
             counts.blank += 1;
-            warnings.push(format!(
-                "PDF embedded image {name}: local OCR completed with no recognized text."
-            ));
             Ok(None)
         }
         Ok(text) => {
@@ -897,6 +896,34 @@ mod tests {
     }
 
     #[test]
+    fn placement_names_screenshots_only_when_some_were_written() {
+        // Local OCR alone renders pages but publishes no screenshot.
+        let prepared = PreparedPdf {
+            pages: pages(),
+            screenshots: Vec::new(),
+            screenshot_pages: Vec::new(),
+            has_reliable_text: true,
+            completed_media: false,
+            media_requested: true,
+        };
+        let (document, _) = prepared.finish().unwrap();
+        assert!(
+            document
+                .warnings
+                .iter()
+                .any(|warning| warning == IMAGE_PLACEMENT),
+            "{:?}",
+            document.warnings
+        );
+        assert!(
+            !document
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("screenshots"))
+        );
+    }
+
+    #[test]
     fn empty_native_without_completed_media_keeps_the_original_failure_guard() {
         let mut pages = pages();
         for page in &mut pages.pages {
@@ -1002,8 +1029,8 @@ mod tests {
             ),
             (2, 1, 1, 2)
         );
-        assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].contains("no recognized text"));
+        // A picture without text is ordinary and only counted.
+        assert!(warnings.is_empty());
     }
 
     #[cfg(target_os = "macos")]

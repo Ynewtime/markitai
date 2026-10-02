@@ -837,12 +837,14 @@ fn recover_plain_text(
     }
     page.markdown = super::escape(text.trim());
     page.needs_ocr = false;
+    // A scan verdict here comes from image resources the page declares but
+    // never draws; the other verdicts are unnamed layout/GID heuristics.
     let reason = if page.ocr_reason.as_deref() == Some("scanned") {
-        "a scan verdict from declared image resources, with no executed raster content"
+        "it looked like a scan but draws no image"
     } else {
-        "an unnamed layout/GID verdict"
+        "its layout could not be reconstructed"
     };
-    warnings.push(format!("PDF page {number}: recovered bounded font-decoded text after {reason}. Reading order, paragraph boundaries and text styling may differ."));
+    warnings.push(format!("PDF page {number}: read as plain text because {reason}. Reading order, paragraph breaks and text styling may differ."));
 }
 
 /// A page's bullet-sized marks as the page reader is given them, in the
@@ -1368,6 +1370,12 @@ mod tests {
         );
         assert!(!page.needs_ocr);
         assert!(page.markdown.contains("Readable native words"));
+        assert_eq!(
+            warnings,
+            [
+                "PDF page 1: read as plain text because it looked like a scan but draws no image. Reading order, paragraph breaks and text styling may differ."
+            ]
+        );
     }
 
     #[test]
@@ -1478,7 +1486,7 @@ mod tests {
         assert!(result.markdown.contains("readable native text"));
         assert!(result.assets.is_empty());
         assert!(result.warnings.iter().any(|warning| {
-            warning.contains("declared image resources, with no executed raster content")
+            warning.contains("read as plain text because it looked like a scan but draws no image")
         }));
         assert!(result.markdown.contains("<!-- Page number: 2 -->"));
         assert!(
