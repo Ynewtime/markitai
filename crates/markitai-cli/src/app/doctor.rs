@@ -411,6 +411,20 @@ fn repair_ocr_models(cfg: &Value) -> bool {
     }
 }
 
+fn office_install_hint(platform: &str) -> &'static str {
+    match platform {
+        "windows" => {
+            "Install LibreOffice: winget install --id TheDocumentFoundation.LibreOffice --exact; Office screenshots also require the native PDF page renderer"
+        }
+        "macos" => {
+            "Install LibreOffice: brew install --cask libreoffice; Office screenshots also require the native PDF page renderer"
+        }
+        _ => {
+            "Install LibreOffice using your distribution package manager and put soffice on PATH; Office screenshots also require the native PDF page renderer"
+        }
+    }
+}
+
 fn checks(
     cfg: &Value,
     path: Option<&Path>,
@@ -465,7 +479,7 @@ fn checks(
         "Office page and slide rendering",
         office,
         "Installed executable responds to --version in an isolated profile; document export fidelity is not tested",
-        "Install LibreOffice (macOS: brew install --cask libreoffice); Office screenshots also require the native macOS PDF renderer",
+        office_install_hint(std::env::consts::OS),
     );
     if office.status == "ok" && !markitai_core::pdf_raster_available() {
         office.status = "warning";
@@ -966,6 +980,17 @@ mod tests {
             summary(&blocked, Lang::Zh),
             "总结：2 项配置要求的检查未就绪：A、B。请按上方提示处理后重新运行 `markitai doctor`。"
         );
+    }
+
+    #[test]
+    fn office_install_hints_name_the_platform_install_method() {
+        assert!(
+            office_install_hint("windows")
+                .contains("winget install --id TheDocumentFoundation.LibreOffice --exact")
+        );
+        assert!(!office_install_hint("windows").contains("macOS"));
+        assert!(office_install_hint("macos").contains("brew install --cask libreoffice"));
+        assert!(office_install_hint("linux").contains("package manager"));
     }
 
     #[test]

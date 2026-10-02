@@ -405,3 +405,63 @@ fn installed_libreoffice_whole_sheets_keep_wide_hidden_empty_and_last_content() 
         assert_eq!(fs::read(source).unwrap(), bytes);
     }
 }
+
+#[test]
+fn windows_discovery_includes_machine_user_and_scoop_installs_without_relative_roots() {
+    let root = tempfile::tempdir().unwrap();
+    let env: std::collections::HashMap<&str, std::ffi::OsString> = [
+        (
+            "ProgramFiles",
+            root.path().join("Program Files").into_os_string(),
+        ),
+        ("ProgramFiles(x86)", "relative-programs".into()),
+        (
+            "LOCALAPPDATA",
+            root.path().join("用户 AppData").into_os_string(),
+        ),
+        ("USERPROFILE", root.path().join("用户").into_os_string()),
+        (
+            "SCOOP_GLOBAL",
+            root.path().join("global scoop").into_os_string(),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    let candidates = windows_locations(|key| env.get(key).cloned());
+    assert_eq!(candidates.len(), 6);
+    assert!(
+        candidates.contains(
+            &root
+                .path()
+                .join("Program Files/LibreOffice/program/soffice.exe")
+        )
+    );
+    assert!(
+        candidates.contains(
+            &root
+                .path()
+                .join("用户 AppData/Programs/LibreOffice/program/soffice.exe")
+        )
+    );
+    assert!(
+        candidates.contains(
+            &root
+                .path()
+                .join("用户/scoop/apps/libreoffice/current/program/soffice.exe")
+        )
+    );
+    assert!(
+        candidates.contains(
+            &root
+                .path()
+                .join("global scoop/apps/libreoffice/current/program/soffice.exe")
+        )
+    );
+    assert!(candidates.iter().all(|path| path.is_absolute()));
+    let explicit = windows_locations(|key| match key {
+        "SCOOP" => Some(root.path().join("custom").into_os_string()),
+        _ => None,
+    });
+    assert_eq!(explicit.len(), 2);
+    assert!(explicit[0].starts_with(root.path().join("custom")));
+}

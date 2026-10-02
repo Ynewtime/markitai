@@ -1,7 +1,7 @@
 //! The `markitai-mcp` launcher name is a command of its own: it answers
 //! `--version` and shows its own name in help and usage errors, while no
 //! argument at all still starts the MCP service.
-#![cfg(unix)]
+#![cfg(any(unix, windows))]
 
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
@@ -13,9 +13,16 @@ struct Launcher {
 impl Launcher {
     fn new() -> Self {
         let root = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
         std::os::unix::fs::symlink(
             env!("CARGO_BIN_EXE_markitai"),
             root.path().join("markitai-mcp"),
+        )
+        .unwrap();
+        #[cfg(windows)]
+        std::fs::copy(
+            env!("CARGO_BIN_EXE_markitai"),
+            root.path().join("markitai-mcp.exe"),
         )
         .unwrap();
         Self { root }
@@ -29,17 +36,31 @@ impl Launcher {
         let path = if name == "markitai" {
             Path::new(env!("CARGO_BIN_EXE_markitai")).to_owned()
         } else {
-            self.root.path().join(name)
+            self.root.path().join(if cfg!(windows) {
+                format!("{name}.exe")
+            } else {
+                name.to_owned()
+            })
         };
         let mut command = Command::new(path);
         command.env_clear();
-        for name in ["HOME", "PATH", "TMPDIR"] {
+        for name in [
+            "PATH",
+            "TMPDIR",
+            "TEMP",
+            "TMP",
+            "SYSTEMROOT",
+            "WINDIR",
+            "PATHEXT",
+        ] {
             if let Some(value) = std::env::var_os(name) {
                 command.env(name, value);
             }
         }
         command
             .current_dir(self.root.path())
+            .env("HOME", self.root.path().join("home"))
+            .env("USERPROFILE", self.root.path().join("home"))
             .env("MARKITAI_HOME", self.root.path().join("home"))
             .env("MARKITAI_LANG", language)
             .args(args)
@@ -163,4 +184,16 @@ fn the_main_command_and_its_mcp_subcommand_keep_their_names() {
     let help = text(&output.stdout);
     assert!(help.contains("Usage: markitai mcp [OPTIONS]"), "{help}");
     assert!(!help.contains("--version"), "{help}");
+}
+
+#[cfg(windows)]
+#[test]
+fn the_launcher_accepts_windows_case_insensitive_executable_names() {
+    let launcher = Launcher::new();
+    let output = launcher.run_as("MARKITAI-MCP", "en", &["--version"]);
+    assert_eq!(output.status.code(), Some(0), "{}", text(&output.stderr));
+    assert!(text(&output.stdout).starts_with("markitai-mcp "));
+    let output = launcher.run_as("MARKITAI-MCP", "en", &["--help"]);
+    assert_eq!(output.status.code(), Some(0), "{}", text(&output.stderr));
+    assert!(text(&output.stdout).contains("Usage: markitai-mcp [OPTIONS]"));
 }

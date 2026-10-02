@@ -345,24 +345,7 @@ fn resolve_content_ids(
 }
 
 fn safe_name(name: &str, index: usize) -> String {
-    let name = name.rsplit(['/', '\\']).next().unwrap_or("");
-    let name = name
-        .chars()
-        .take(160)
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-    let name = if name.is_empty() || matches!(name.as_str(), "." | "..") {
-        "attachment.bin"
-    } else {
-        &name
-    };
-    format!("msg-{}-{name}", index + 1)
+    format!("msg-{}-{}", index + 1, crate::output_name::attachment(name))
 }
 
 fn attachments(

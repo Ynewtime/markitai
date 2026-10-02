@@ -326,6 +326,22 @@ pub(super) fn windows(values: WindowsValues) -> Option<SystemProxy> {
 
 #[cfg(windows)]
 fn read_registry() -> Option<WindowsValues> {
+    read_registry_at(r"Software\Microsoft\Windows\CurrentVersion\Internet Settings")
+}
+
+/// Internal path injection for native registry tests. Production reads only
+/// the fixed Internet Settings key; no environment override exposes others.
+#[cfg(windows)]
+pub(super) fn read_registry_at(path: &str) -> Option<WindowsValues> {
+    read_registry_at_with(path, || {
+        tracing::warn!(
+            "Windows automatic proxy (PAC) settings are not supported; set HTTPS_PROXY or HTTP_PROXY for network access"
+        );
+    })
+}
+
+#[cfg(windows)]
+fn read_registry_at_with(path: &str, automatic: impl FnOnce()) -> Option<WindowsValues> {
     use windows_sys::Win32::Foundation::ERROR_SUCCESS;
     use windows_sys::Win32::System::Registry::{
         HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE, REG_DWORD, REG_SZ, RegCloseKey, RegOpenKeyExW,
@@ -390,7 +406,7 @@ fn read_registry() -> Option<WindowsValues> {
         }
         String::from_utf16(&words).ok()
     }
-    let path = wide("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings");
+    let path = wide(path);
     let mut handle: HKEY = std::ptr::null_mut();
     if unsafe {
         RegOpenKeyExW(
@@ -405,6 +421,14 @@ fn read_registry() -> Option<WindowsValues> {
         return None;
     }
     let key = Key(handle);
+    // Diagnose a configured automatic proxy without executing PAC or exposing
+    // its URL, which can carry identity information. Manual settings stay intact.
+    if value(&key, "AutoConfigURL", REG_SZ)
+        .and_then(text)
+        .is_some_and(|url| !url.trim().is_empty())
+    {
+        automatic();
+    }
     let enabled = value(&key, "ProxyEnable", REG_DWORD)?;
     let enabled = u32::from_le_bytes(enabled.try_into().ok()?) != 0;
     if !enabled {
@@ -574,5 +598,124 @@ impl Reader for ProcessReader<'_> {
             return None;
         }
         String::from_utf8(out).ok()
+    }
+}
+
+#[cfg(all(test, windows))]
+mod registry_tests {
+    use super::*;
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::{
+        HKEY, HKEY_CURRENT_USER, KEY_ALL_ACCESS, REG_CREATED_NEW_KEY, REG_DWORD,
+        REG_OPTION_NON_VOLATILE, REG_SZ, RegCloseKey, RegCreateKeyExW, RegDeleteTreeW,
+        RegSetValueExW,
+    };
+
+    fn wide(value: &str) -> Vec<u16> {
+        value.encode_utf16().chain(Some(0)).collect()
+    }
+    struct Fixture {
+        key: HKEY,
+        path: String,
+    }
+    impl Fixture {
+        fn new() -> Self {
+            // Each test gets a newly created child; an existing key is never
+            // written or removed. No real Internet Settings are inspected.
+            let unique = tempfile::tempdir().unwrap();
+            let suffix = unique.path().file_name().unwrap().to_string_lossy();
+            let path = format!(
+                r"Software\MarkitaiValidation\proxy-{}-{suffix}",
+                std::process::id()
+            );
+            let mut key = std::ptr::null_mut();
+            let mut disposition = 0;
+            assert_eq!(
+                unsafe {
+                    RegCreateKeyExW(
+                        HKEY_CURRENT_USER,
+                        wide(&path).as_ptr(),
+                        0,
+                        std::ptr::null(),
+                        REG_OPTION_NON_VOLATILE,
+                        KEY_ALL_ACCESS,
+                        std::ptr::null(),
+                        &mut key,
+                        &mut disposition,
+                    )
+                },
+                ERROR_SUCCESS
+            );
+            if disposition != REG_CREATED_NEW_KEY {
+                unsafe {
+                    RegCloseKey(key);
+                }
+                panic!("refuse an existing test registry key");
+            }
+            Self { key, path }
+        }
+        fn value(&self, name: &str, kind: u32, bytes: &[u8]) {
+            assert_eq!(
+                unsafe {
+                    RegSetValueExW(
+                        self.key,
+                        wide(name).as_ptr(),
+                        0,
+                        kind,
+                        bytes.as_ptr(),
+                        bytes.len() as u32,
+                    )
+                },
+                ERROR_SUCCESS
+            );
+        }
+        fn text(&self, name: &str, text: &str) {
+            let bytes: Vec<u8> = wide(text).iter().flat_map(|c| c.to_le_bytes()).collect();
+            self.value(name, REG_SZ, &bytes);
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            unsafe {
+                RegCloseKey(self.key);
+                RegDeleteTreeW(HKEY_CURRENT_USER, wide(&self.path).as_ptr());
+            }
+        }
+    }
+
+    #[test]
+    fn injected_registry_reads_manual_settings_and_refuses_disabled_or_malformed_values() {
+        let fixture = Fixture::new();
+        fixture.value("ProxyEnable", REG_DWORD, &1u32.to_le_bytes());
+        fixture.text(
+            "ProxyServer",
+            "http=proxy.example.test:8080;https=secure.example.test:8443",
+        );
+        fixture.text("ProxyOverride", "<local>;*.example.test");
+        let found = windows(read_registry_at(&fixture.path).unwrap()).unwrap();
+        assert_eq!(found.endpoint.as_str(), "http://proxy.example.test:8080/");
+        assert_eq!(found.bypass, "<local>,*.example.test");
+        fixture.value("ProxyEnable", REG_DWORD, &0u32.to_le_bytes());
+        fixture.text("AutoConfigURL", "https://pac.example.test/proxy.pac");
+        let mut warned = false;
+        assert!(read_registry_at_with(&fixture.path, || warned = true).is_none());
+        assert!(warned);
+        for value in ["", " "] {
+            fixture.text("AutoConfigURL", value);
+            warned = false;
+            assert!(read_registry_at_with(&fixture.path, || warned = true).is_none());
+            assert!(!warned);
+        }
+        fixture.value("AutoConfigURL", REG_SZ, &[b'x', 0, b'y']);
+        warned = false;
+        assert!(read_registry_at_with(&fixture.path, || warned = true).is_none());
+        assert!(!warned);
+        fixture.value("ProxyEnable", REG_DWORD, &1u32.to_le_bytes());
+        fixture.value("ProxyServer", REG_SZ, &[b'x', 0, b'y']);
+        assert!(read_registry_at(&fixture.path).is_none());
+        fixture.value("ProxyServer", REG_SZ, &vec![0; MAX_SETTING + 2]);
+        assert!(read_registry_at(&fixture.path).is_none());
+        fixture.text("ProxyServer", "not-a-proxy/with-path");
+        assert!(windows(read_registry_at(&fixture.path).unwrap()).is_none());
     }
 }

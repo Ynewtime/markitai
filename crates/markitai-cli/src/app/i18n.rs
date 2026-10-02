@@ -7,7 +7,9 @@
 //! `C`/`POSIX` locale decides, in the order POSIX gives them (the reference
 //! reads `LANG` before `LC_ALL`, so a user who exports `LC_ALL` got English).
 //! A value that starts with `zh` in any case selects Chinese; every other
-//! value, and no value, selects English. Variables come from the process first
+//! value selects English. With no language environment setting, Windows uses
+//! its display language, then its user locale; other systems use English.
+//! Variables come from the process first
 //! and then from the same `.env` files that configuration selection reads.
 //!
 //! Only sentences meant for a person change. JSON, values shared with JSON
@@ -25,10 +27,43 @@ pub(crate) enum Lang {
 /// The language for this process, resolved once on first use.
 pub(crate) fn lang() -> Lang {
     static LANG: OnceLock<Lang> = OnceLock::new();
-    *LANG.get_or_init(|| detect(&markitai_core::config::environment()))
+    *LANG.get_or_init(|| {
+        let fallback = system_locale();
+        detect_with_locale(&markitai_core::config::environment(), fallback.as_deref())
+    })
 }
 
-fn detect(vars: &HashMap<String, String>) -> Lang {
+#[cfg(windows)]
+fn system_locale() -> Option<String> {
+    use windows_sys::Win32::Globalization::{GetUserDefaultLocaleName, GetUserDefaultUILanguage};
+    // UI language wins over the region format. LANGID's low 10 bits name the
+    // language; all Chinese regions/scripts share LANG_CHINESE (0x04).
+    if let Some(language) = ui_language(unsafe { GetUserDefaultUILanguage() }) {
+        return Some(language.to_owned());
+    }
+    // LOCALE_NAME_MAX_LENGTH in the Windows SDK is 85 UTF-16 code units.
+    let mut locale = [0u16; 85];
+    let written = unsafe { GetUserDefaultLocaleName(locale.as_mut_ptr(), locale.len() as i32) };
+    (written > 1)
+        .then(|| String::from_utf16(&locale[..written as usize - 1]).ok())
+        .flatten()
+}
+
+#[cfg(not(windows))]
+fn system_locale() -> Option<String> {
+    None
+}
+
+#[cfg(any(windows, test))]
+fn ui_language(language: u16) -> Option<&'static str> {
+    (language != 0).then_some(if language & 0x03ff == 0x04 {
+        "zh"
+    } else {
+        "en"
+    })
+}
+
+fn detect_with_locale(vars: &HashMap<String, String>, fallback: Option<&str>) -> Lang {
     let chosen = ["MARKITAI_LANG", "LC_ALL", "LC_MESSAGES", "LANG"]
         .into_iter()
         .find_map(|name| {
@@ -37,7 +72,11 @@ fn detect(vars: &HashMap<String, String>) -> Lang {
                 !value.is_empty() && (name == "MARKITAI_LANG" || !is_c_locale(value))
             })
         });
-    match chosen.and_then(|value| value.get(..2)) {
+    match chosen
+        .map(String::as_str)
+        .or(fallback)
+        .and_then(|value| value.get(..2))
+    {
         Some(prefix) if prefix.eq_ignore_ascii_case("zh") => Lang::Zh,
         _ => Lang::En,
     }
@@ -71,12 +110,46 @@ mod tests {
     use super::*;
 
     fn detected(pairs: &[(&str, &str)]) -> Lang {
-        detect(
+        detect_with_locale(
             &pairs
                 .iter()
                 .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
                 .collect(),
+            None,
         )
+    }
+
+    #[test]
+    fn windows_display_language_is_a_fallback_after_environment_choices() {
+        let vars = |pairs: &[(&str, &str)]| {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        assert_eq!(detect_with_locale(&vars(&[]), Some("zh-Hans-CN")), Lang::Zh);
+        assert_eq!(
+            detect_with_locale(&vars(&[("LANG", "C.UTF-8")]), Some("zh-TW")),
+            Lang::Zh
+        );
+        assert_eq!(
+            detect_with_locale(&vars(&[("MARKITAI_LANG", "en")]), Some("zh-CN")),
+            Lang::En
+        );
+        assert_eq!(
+            detect_with_locale(&vars(&[("LC_ALL", "en_US.UTF-8")]), Some("zh-CN")),
+            Lang::En
+        );
+        assert_eq!(
+            detect_with_locale(&vars(&[("LANG", "zh_CN.UTF-8")]), Some("en-US")),
+            Lang::Zh
+        );
+        assert_eq!(detect_with_locale(&vars(&[]), None), Lang::En);
+        for language in [0x0404, 0x0804, 0x0c04, 0x1004, 0x1404] {
+            assert_eq!(ui_language(language), Some("zh"));
+        }
+        assert_eq!(ui_language(0x0409), Some("en"));
+        assert_eq!(ui_language(0), None);
     }
 
     #[test]

@@ -4,6 +4,7 @@
 
 ### 新增
 
+- 原生 Windows 控制台 VT 与宽度处理及可读降级、系统显示语言回退、共用的便携输出文件名和可操作的 Office 诊断。Windows MCP 归档提供直接可执行的 `markitai-mcp.exe`；注册表测试使用隔离验证键，不支持的 PAC 设置仅产生固定提示、不回显 URL。
 - 通过 `security.pdf_sanitize` 过滤 PDF 提取正文：`off` 关闭隐藏文字安全提示，`warn` 保留原正文并报告信号，`remove` 过滤支持识别的可疑文字，保留可见正文、已接受的 OCR 层及原始资产。本地与下载 PDF 使用相同策略；检查不完整或不支持的情况会明确提示，不宣称完成全面清洗。
 - Windows 和 Linux 本地 PaddleOCR 识别，macOS 可通过 `portable-media` 构建选用：有边界的进程内 ONNX 推理、显式语言选择，以及默认英语、中文、日语、韩语路由。模型在首次使用时下载并核验固定大小与 SHA-256；`doctor` 只检查、不下载，`doctor --fix` 原子修复缺失或损坏模型，并拒绝不安全的模型路径。macOS 默认继续使用 Vision。 工作台以中英文区分缺失、损坏与不安全的模型，保留原始错误详情，并允许解决缺模型或下载问题后重试。
 - 原生 Rust 转换核心、CLI 与进程内 Node.js、Python、Go 绑定；CLI 是一个可执行文件，不需要 Python、Node.js 或 Go 运行时。
@@ -15,7 +16,7 @@
 - 带版本校验的提供商/部署设置、私有原子配置保存和每个任务固定的配置快照。
 - 有界原生模型发现、按凭据隔离的缓存，以及不经过文档转换的单模型连接测试。
 - 原生 stdio MCP，包含四个兼容转换工具、结构化结果及有界内存批处理任务，也可通过兼容的 `markitai-mcp` 程序别名启动（含客户端无参数启动与全局配置选项）。2026-07-28 协议的工具列表带有必需的 `ttlMs`/`cacheScope` 缓存字段（否则官方 Python SDK 客户端会拒绝）；`batch_convert` 的并发数接受 `2.0` 这类整数值数字；客户端一关闭输入，服务端就停止启动排队中的批量项，而不是等 MCP 会话拆除完毕，避免客户端离开后还多发起一次（可能付费的）转换。
-- CLI 提示按中英文显示：`doctor`、`cache` 以及 `config path`/`config validate` 与参考一致；`init`、转换与批量运行在 stderr 的人读行（摘要、跳过、失败、已写入路径、预览、恢复与中断）以及 `--help` 超出参考的范围。非空的 `MARKITAI_LANG` 决定语言，否则依次看 `LANG`、`LC_ALL`，以 `zh` 开头即为中文；JSON 输出、错误信息、文件日志与退出码不变，英文帮助与此前逐字节相同。
+- CLI 提示按中英文显示：`doctor`、`cache` 以及 `config path`/`config validate` 与参考一致；`init`、转换与批量运行在 stderr 的人读行（摘要、跳过、失败、已写入路径、预览、恢复与中断）以及 `--help` 超出参考的范围。非空的 `MARKITAI_LANG` 决定语言，否则依次看 `LC_ALL`、`LC_MESSAGES`、`LANG` 并跳过 `C`/`POSIX`，Windows 再回退到显示语言和用户区域，以 `zh` 开头即为中文；JSON 输出、错误信息、文件日志与退出码不变，英文帮助与此前逐字节相同。
 - 输出到 stdout 的文档所引用的图片按内容哈希保存到 `MARKITAI_HOME/assets/blobs/`，并以 `file://` URI 链接（`image.stdout_persist`，与参考一样默认开启，但参考默认写到真实用户目录）；关闭时保留相对引用并给出警告。
 - 原生 RST、Org、TeX 阅读器，以及带资源边界的 Office 元数据与 PDF 图像提取。
 - 原生 Outlook MSG 提取、栅格图片资产处理和独立图片的模型视觉识别。

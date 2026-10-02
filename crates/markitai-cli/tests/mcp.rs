@@ -46,9 +46,15 @@ impl Client {
                 std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_markitai"), &path).unwrap();
                 path
             }
-            #[cfg(not(unix))]
+            #[cfg(windows)]
             {
-                panic!("this fixture requires Unix symlinks");
+                let path = directory.path().join("markitai-mcp.exe");
+                std::fs::copy(env!("CARGO_BIN_EXE_markitai"), &path).unwrap();
+                path
+            }
+            #[cfg(not(any(unix, windows)))]
+            {
+                panic!("this fixture requires a supported launcher platform");
             }
         } else {
             PathBuf::from(env!("CARGO_BIN_EXE_markitai"))
@@ -56,6 +62,8 @@ impl Client {
         let mut command = Command::new(executable);
         command
             .env_clear()
+            .env("HOME", directory.path().join("home"))
+            .env("USERPROFILE", directory.path().join("home"))
             .env("MARKITAI_HOME", directory.path().join("home"))
             .env("TMPDIR", directory.path().join("tmp"))
             .env("TMP", directory.path().join("tmp"))
@@ -71,7 +79,7 @@ impl Client {
         if !alias {
             command.arg("mcp");
         }
-        for name in ["HOME", "USERPROFILE", "SYSTEMROOT", "WINDIR", "PATH"] {
+        for name in ["SYSTEMROOT", "WINDIR", "PATH", "PATHEXT"] {
             if let Some(value) = std::env::var_os(name) {
                 command.env(name, value);
             }
@@ -220,7 +228,7 @@ impl Client {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[test]
 fn mcp_alias_accepts_bare_launch_and_global_configuration_without_stdout_help() {
     for (modern, explicit_config) in [(false, false), (true, true)] {

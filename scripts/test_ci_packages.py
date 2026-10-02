@@ -14,7 +14,7 @@ import unittest
 import zipfile
 
 from ci_packages import (npm_command, source_snapshot, stage_node_licenses, supplement_wheel_licenses,
-                         verify_node_licenses)
+                         verify_node_licenses, write_cli_zip)
 
 
 class PackageValidationTests(unittest.TestCase):
@@ -35,6 +35,32 @@ class PackageValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "npm-cli.js"):
             npm_command(npm, node, "win32")
         self.assertEqual(npm_command("/bin/npm", None, "linux"), ["/bin/npm"])
+
+    def test_windows_zip_contains_a_real_mcp_executable_with_matching_bytes(self):
+        binary = self.root / "markitai.exe"
+        alternate = self.root / "mkai.exe"
+        binary.write_bytes(b"MZ" + bytes(range(256)) * 7)
+        alternate.write_bytes(b"MZ alternate CLI")
+        archive = self.root / "windows.zip"
+        licenses = {"LICENSE": b"license", "licenses/example/LICENSE": b"upstream"}
+        write_cli_zip(binary, alternate, archive, licenses, True)
+        with zipfile.ZipFile(archive) as bundle:
+            self.assertEqual(set(bundle.namelist()), {"markitai.exe", "mkai.exe", "markitai-mcp.exe", *licenses})
+            self.assertEqual(bundle.read("markitai-mcp.exe"), binary.read_bytes())
+            self.assertEqual(bundle.read("mkai.exe"), alternate.read_bytes())
+            self.assertFalse(any(name.endswith(".cmd") for name in bundle.namelist()))
+            for name, content in licenses.items():
+                self.assertEqual(bundle.read(name), content)
+
+    def test_unix_zip_keeps_the_relative_mcp_symlink(self):
+        binary = self.root / "markitai"
+        binary.write_bytes(b"native CLI")
+        archive = self.root / "unix.zip"
+        write_cli_zip(binary, binary, archive, {}, False)
+        with zipfile.ZipFile(archive) as bundle:
+            alias = bundle.getinfo("markitai-mcp")
+            self.assertEqual(alias.external_attr >> 16, 0o120777)
+            self.assertEqual(bundle.read(alias), b"markitai")
 
     def test_same_size_and_mtime_source_change_is_detected(self):
         source = self.root / "source.rs"

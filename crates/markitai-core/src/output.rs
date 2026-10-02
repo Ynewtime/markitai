@@ -437,22 +437,7 @@ pub fn url_name(source: &str, _meta: &Map<String, Value>) -> String {
         (None, None) => host,
     };
     let raw = parsed.as_ref().and_then(social_status_name).unwrap_or(raw);
-    let safe: String = raw
-        .chars()
-        .map(|c| {
-            if "<>:\"/\\|?*".contains(c) || c.is_control() {
-                '_'
-            } else {
-                c
-            }
-        })
-        .collect();
-    let safe: String = safe.trim_matches([' ', '.']).chars().take(200).collect();
-    if safe.is_empty() {
-        "unnamed".into()
-    } else {
-        safe
-    }
+    crate::output_name::sanitize(&raw, "unnamed")
 }
 
 /// Whether a query parameter names the page itself, as `id`, `v` (a video) or
@@ -1388,6 +1373,23 @@ mod tests {
             std::fs::read_to_string(pure.output_path.unwrap()).unwrap(),
             input
         );
+    }
+
+    #[test]
+    fn url_names_are_portable_components_with_unicode_and_encoded_separators_kept() {
+        let meta = Map::new();
+        assert_eq!(url_name("https://example.test/CON.txt", &meta), "_CON.txt");
+        assert_eq!(url_name("https://example.test/报告.pdf", &meta), "报告.pdf");
+        assert_eq!(
+            url_name("https://example.test/two%2Fnames", &meta),
+            "two_names"
+        );
+        assert_eq!(url_name("https://example.test/end%20.%20", &meta), "end");
+        let name = url_name(
+            &format!("https://example.test/{}.pdf", "报告".repeat(100)),
+            &meta,
+        );
+        assert!(name.len() <= 180 && name.ends_with(".pdf"), "{name}");
     }
 
     #[test]

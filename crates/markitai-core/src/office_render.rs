@@ -85,15 +85,53 @@ fn discover() -> Option<PathBuf> {
         }
     }
     #[cfg(target_os = "windows")]
-    for variable in ["ProgramFiles", "ProgramFiles(x86)"] {
-        if let Some(directory) = std::env::var_os(variable) {
-            let candidate = PathBuf::from(directory).join("LibreOffice/program/soffice.exe");
-            if executable(&candidate) {
-                return Some(candidate);
+    {
+        windows_locations(|name| std::env::var_os(name))
+            .into_iter()
+            .find(|candidate| executable(candidate))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
+    }
+}
+
+/// Fixed machine and per-user install locations. Passing the environment
+/// reader keeps these paths testable without consulting a user's real home.
+#[cfg(any(windows, test))]
+fn windows_locations(get: impl Fn(&str) -> Option<std::ffi::OsString>) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    let mut add = |root: std::ffi::OsString, suffix: &str| {
+        let root = PathBuf::from(root);
+        if root.is_absolute() {
+            let candidate = root.join(suffix);
+            if !candidates.contains(&candidate) {
+                candidates.push(candidate);
             }
         }
+    };
+    for variable in ["ProgramFiles", "ProgramFiles(x86)"] {
+        if let Some(root) = get(variable) {
+            add(root, "LibreOffice/program/soffice.exe");
+        }
     }
-    None
+    if let Some(root) = get("LOCALAPPDATA") {
+        add(root, "Programs/LibreOffice/program/soffice.exe");
+    }
+    let user_scoop = get("SCOOP").or_else(|| {
+        get("USERPROFILE").map(|root| PathBuf::from(root).join("scoop").into_os_string())
+    });
+    let global_scoop = get("SCOOP_GLOBAL").or_else(|| {
+        get("ProgramData").map(|root| PathBuf::from(root).join("scoop").into_os_string())
+    });
+    for root in [user_scoop, global_scoop].into_iter().flatten() {
+        add(root.clone(), "apps/libreoffice/current/program/soffice.exe");
+        add(
+            root,
+            "apps/libreoffice/current/LibreOffice/program/soffice.exe",
+        );
+    }
+    candidates
 }
 
 pub(crate) fn available() -> bool {

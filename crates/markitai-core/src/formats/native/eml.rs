@@ -27,24 +27,9 @@ fn safe_header(value: &str) -> String {
 
 fn attachment_name(part: &MessagePart<'_>, index: usize) -> String {
     let original = part.attachment_name().unwrap_or("attachment.bin");
-    // Keep previous short-name spelling, including its deterministic ordinal.
-    // A filename is only a label; it is never opened as a source path.
-    let name: String = original
-        .chars()
-        .take(160)
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    let name = if name.is_empty() {
-        "attachment.bin"
-    } else {
-        &name
-    };
+    // Filename headers are labels, never source paths. Both mail readers use
+    // the same portable leaf policy and preserve readable Unicode.
+    let name = crate::output_name::attachment(original);
     format!("email-{index}-{name}")
 }
 

@@ -8,7 +8,9 @@
 
 use super::i18n::{self, Lang};
 use std::io::{self, IsTerminal, Write};
-use std::sync::atomic::Ordering;
+#[cfg(windows)]
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -24,31 +26,97 @@ const REDRAW: Duration = Duration::from_millis(100);
 /// A single conversion shows its spinner only after it has taken this long.
 const SPINNER_AFTER: Duration = Duration::from_secs(2);
 
-/// Erase the status line, if there is one, and leave the cursor at its start.
-pub(super) fn clear() {
-    if SHOWN.swap(false, Ordering::SeqCst) {
-        let mut stderr = io::stderr().lock();
-        let _ = stderr.write_all(b"\r\x1b[K");
-        let _ = stderr.flush();
+/// Columns occupied by the previous line; consoles without VT erase them
+/// with spaces instead of printing escape sequences as ordinary text.
+static LAST_WIDTH: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(windows)]
+fn enable_vt(which: u32) -> bool {
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::System::Console::{
+        ENABLE_VIRTUAL_TERMINAL_PROCESSING, GetConsoleMode, GetStdHandle, SetConsoleMode,
+    };
+    // SAFETY: these APIs inspect process-owned console handles; pointers refer
+    // to initialized local storage and no handle ownership is transferred.
+    unsafe {
+        let handle = GetStdHandle(which);
+        if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+            return false;
+        }
+        let mut mode = 0;
+        GetConsoleMode(handle, &mut mode) != 0
+            && (mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING != 0
+                || SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0)
     }
 }
 
-/// Whether the status line is wanted: an interactive stderr that understands
-/// cursor control (Unix terminals; Windows consoles are not asked to interpret
-/// escape sequences), and a run that has not asked for silence or JSON.
+fn ansi() -> bool {
+    #[cfg(windows)]
+    {
+        static ANSI: OnceLock<bool> = OnceLock::new();
+        *ANSI.get_or_init(|| enable_vt(windows_sys::Win32::System::Console::STD_ERROR_HANDLE))
+    }
+    #[cfg(not(windows))]
+    {
+        true
+    }
+}
+
+/// Prepare both console streams before clap writes its first colored help or
+/// error. If an attached console cannot enable VT, request plain clap text.
+pub(super) fn initialize() -> bool {
+    #[cfg(windows)]
+    {
+        static STDOUT_ANSI: OnceLock<bool> = OnceLock::new();
+        let stdout_ansi = *STDOUT_ANSI
+            .get_or_init(|| enable_vt(windows_sys::Win32::System::Console::STD_OUTPUT_HANDLE));
+        let stderr_ansi = ansi();
+        (!io::stdout().is_terminal() || stdout_ansi) && (!io::stderr().is_terminal() || stderr_ansi)
+    }
+    #[cfg(not(windows))]
+    {
+        true
+    }
+}
+
+/// Erase the line without touching the shown flag. The Windows termination
+/// handler shares this operation after it takes the flag itself.
+pub(super) fn erase() {
+    let previous = LAST_WIDTH.swap(0, Ordering::SeqCst);
+    let text = erase_text(ansi(), previous.min(columns().saturating_sub(1)));
+    let mut stderr = io::stderr().lock();
+    let _ = stderr.write_all(text.as_bytes());
+    let _ = stderr.flush();
+}
+
+fn erase_text(ansi: bool, previous: usize) -> String {
+    if ansi {
+        "\r\x1b[K".into()
+    } else {
+        format!("\r{}\r", " ".repeat(previous))
+    }
+}
+
+/// Erase the status line, if there is one, and leave the cursor at its start.
+pub(super) fn clear() {
+    if SHOWN.swap(false, Ordering::SeqCst) {
+        erase();
+    }
+}
+
+/// An interactive stderr, unless silence, JSON or a dumb terminal was asked
+/// for. Windows consoles without VT still get a space-cleared status line.
 pub(super) fn wanted(quiet: bool, json: bool) -> bool {
-    cfg!(unix)
-        && !quiet
+    !quiet
         && !json
         && io::stderr().is_terminal()
         && std::env::var_os("TERM").is_none_or(|term| term != "dumb")
 }
 
-/// Terminal width in columns, 80 when it cannot be read.
+/// Terminal's visible width in columns, 80 when it cannot be read.
 fn columns() -> usize {
     #[cfg(unix)]
     {
-        // SAFETY: TIOCGWINSZ fills the `winsize` the pointer refers to.
         let mut size: libc::winsize = unsafe { std::mem::zeroed() };
         if unsafe { libc::ioctl(libc::STDERR_FILENO, libc::TIOCGWINSZ, &mut size) } == 0
             && size.ws_col > 0
@@ -56,7 +124,27 @@ fn columns() -> usize {
             return usize::from(size.ws_col);
         }
     }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Console::{
+            CONSOLE_SCREEN_BUFFER_INFO, GetConsoleScreenBufferInfo, GetStdHandle, STD_ERROR_HANDLE,
+        };
+        let mut size: CONSOLE_SCREEN_BUFFER_INFO = unsafe { std::mem::zeroed() };
+        // The viewport, not the scrollback buffer, is the width users see.
+        if unsafe { GetConsoleScreenBufferInfo(GetStdHandle(STD_ERROR_HANDLE), &mut size) } != 0
+            && let Some(width) = viewport_width(size.srWindow.Left, size.srWindow.Right)
+        {
+            return width;
+        }
+    }
     80
+}
+
+#[cfg(any(windows, test))]
+fn viewport_width(left: i16, right: i16) -> Option<usize> {
+    usize::try_from(i32::from(right) - i32::from(left) + 1)
+        .ok()
+        .filter(|n| *n > 0)
 }
 
 /// Columns a character occupies: wide East Asian characters take two.
@@ -105,9 +193,28 @@ fn clock(seconds: u64) -> String {
     }
 }
 
+fn redraw_text(line: &str, ansi: bool, previous: usize) -> String {
+    if ansi {
+        format!("\r{line}\x1b[K")
+    } else {
+        let current: usize = line.chars().map(width).sum();
+        let padding = " ".repeat(previous.saturating_sub(current));
+        if padding.is_empty() {
+            format!("\r{line}")
+        } else {
+            format!("\r{line}{padding}\r{line}")
+        }
+    }
+}
+
 fn draw(line: &str) {
+    let current: usize = line.chars().map(width).sum();
+    let previous = LAST_WIDTH
+        .swap(current, Ordering::SeqCst)
+        .min(columns().saturating_sub(1));
+    let text = redraw_text(line, ansi(), previous);
     let mut stderr = io::stderr().lock();
-    let _ = write!(stderr, "\r{line}\x1b[K");
+    let _ = stderr.write_all(text.as_bytes());
     let _ = stderr.flush();
     SHOWN.store(true, Ordering::SeqCst);
 }
@@ -286,6 +393,17 @@ impl Drop for Spinner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn consoles_without_vt_clear_previous_columns_without_escape_sequences() {
+        assert_eq!(redraw_text("报告", true, 9), "\r报告\x1b[K");
+        assert_eq!(redraw_text("报告", false, 9), "\r报告     \r报告");
+        assert_eq!(redraw_text("longer", false, 3), "\rlonger");
+        assert_eq!(erase_text(false, 4), "\r    \r");
+        assert_eq!(viewport_width(30, 109), Some(80));
+        assert_eq!(viewport_width(10, 9), None);
+        assert_eq!(viewport_width(10, 8), None);
+    }
 
     #[test]
     fn the_line_names_progress_and_an_estimate_once_there_is_history() {

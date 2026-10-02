@@ -16,6 +16,8 @@ mod ocr;
 mod office_media;
 mod office_render;
 pub mod output;
+#[doc(hidden)]
+pub mod output_name;
 mod output_profiles;
 mod pdf_media;
 mod pdf_raster;

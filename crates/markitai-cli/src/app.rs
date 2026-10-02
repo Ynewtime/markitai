@@ -284,9 +284,14 @@ struct Cli {
 /// stay readable that way, while the short command list keeps its one-line
 /// layout.
 fn cli_command() -> clap::Command {
-    match i18n::lang() {
+    let command = match i18n::lang() {
         i18n::Lang::En => english_command(),
         i18n::Lang::Zh => help_zh::localize(english_command),
+    };
+    if progress::initialize() {
+        command
+    } else {
+        command.color(clap::ColorChoice::Never)
     }
 }
 
@@ -501,10 +506,18 @@ enum ConfigCommand {
 /// Whether the executable was started under the MCP launcher name.
 fn is_mcp_launcher(arguments: &[std::ffi::OsString]) -> bool {
     arguments.first().is_some_and(|name| {
-        matches!(
-            Path::new(name).file_name().and_then(|name| name.to_str()),
-            Some("markitai-mcp" | "markitai-mcp.exe")
-        )
+        let Some(name) = Path::new(name).file_name().and_then(|name| name.to_str()) else {
+            return false;
+        };
+        #[cfg(windows)]
+        {
+            name.eq_ignore_ascii_case("markitai-mcp")
+                || name.eq_ignore_ascii_case("markitai-mcp.exe")
+        }
+        #[cfg(not(windows))]
+        {
+            matches!(name, "markitai-mcp" | "markitai-mcp.exe")
+        }
     })
 }
 
@@ -524,7 +537,13 @@ fn as_mcp_launcher(command: clap::Command) -> clap::Command {
     })
 }
 
+#[cfg(windows)]
+pub(crate) fn erase_status_line() {
+    progress::erase();
+}
+
 pub fn run() -> i32 {
+    let _ = progress::initialize();
     let mut arguments: Vec<_> = std::env::args_os().collect();
     // A distribution may expose this executable through the existing MCP name.
     // Select the subcommand before the no-argument help path, so stdout remains
@@ -2196,8 +2215,14 @@ fn writable(directory: &Path) -> bool {
 }
 
 #[cfg(not(unix))]
-fn writable(_: &Path) -> bool {
-    true
+fn writable(directory: &Path) -> bool {
+    // ACLs, read-only shares and controlled-folder access cannot be inferred
+    // from a Windows readonly attribute. A private empty probe answers the
+    // same question as publication and is removed on drop.
+    tempfile::Builder::new()
+        .prefix(".markitai-write-probe-")
+        .tempfile_in(directory)
+        .is_ok()
 }
 
 fn discover(input: &Path, output: &Path, cli: &Cli, cfg: &Value) -> CliResult<Vec<Task>> {
@@ -3152,6 +3177,19 @@ mod tests {
         assert_eq!(renamed("out/notes.v2.md", "notes.v2"), None);
         assert_eq!(renamed("out/a.docx.vx.md", "a.docx"), None);
         assert_eq!(renamed("out/b.docx.v2.md", "a.docx"), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn writable_probe_checks_publication_and_leaves_no_probe_file() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(writable(root.path()));
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+        let file = root.path().join("not-a-directory");
+        std::fs::write(&file, b"keep").unwrap();
+        assert!(!writable(&file));
+        assert!(!writable(&root.path().join("missing")));
+        assert_eq!(std::fs::read(&file).unwrap(), b"keep");
     }
 
     #[test]

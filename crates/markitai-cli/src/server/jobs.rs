@@ -175,43 +175,8 @@ impl Job {
 }
 
 pub(super) fn sanitize_name(name: &str) -> String {
-    let name = name.rsplit(['/', '\\']).next().unwrap_or("upload");
-    let mut clean: String = name
-        .chars()
-        .map(|c| {
-            if c.is_control() || "<>:\"/\\|?*".contains(c) {
-                '_'
-            } else {
-                c
-            }
-        })
-        .collect();
-    clean = clean.trim_matches([' ', '.']).to_owned();
-    if clean.is_empty() {
-        clean = "upload".into();
-    }
-    let reserved = clean.split('.').next().unwrap_or("").to_ascii_uppercase();
-    if ["CON", "PRN", "AUX", "NUL"].contains(&reserved.as_str())
-        || (reserved.len() == 4
-            && (reserved.starts_with("COM") || reserved.starts_with("LPT"))
-            && matches!(reserved.as_bytes()[3], b'1'..=b'9'))
-    {
-        clean.insert(0, '_');
-    }
-    if clean.len() > 180 {
-        let extension = std::path::Path::new(&clean)
-            .extension()
-            .and_then(|v| v.to_str())
-            .map(|s| format!(".{s}"))
-            .filter(|s| s.len() < 90)
-            .unwrap_or_default();
-        let mut end = 180 - extension.len();
-        while !clean.is_char_boundary(end) {
-            end -= 1;
-        }
-        clean = format!("{}{extension}", &clean[..end]);
-    }
-    clean
+    let leaf = name.rsplit(['/', '\\']).next().unwrap_or("");
+    markitai_core::output_name::sanitize(leaf, "upload")
 }
 pub(super) fn unique_name(name: &str, taken: &mut HashSet<String>) -> String {
     let stem = std::path::Path::new(name)

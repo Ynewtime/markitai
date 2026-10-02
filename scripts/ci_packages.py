@@ -33,6 +33,25 @@ def identity(path):
     return {"bytes": path.stat().st_size, "sha256": digest.hexdigest()}
 
 
+def write_cli_zip(binary, alternate, archive, licenses, windows):
+    """The MCP entry is a directly executable name on every supported host."""
+    extension = ".exe" if windows else ""
+    with zipfile.ZipFile(archive, "x", zipfile.ZIP_DEFLATED) as bundle:
+        bundle.write(binary, "markitai" + extension)
+        bundle.write(alternate, "mkai" + extension)
+        for name, content in licenses.items():
+            bundle.writestr(name, content)
+        if windows:
+            # arg0 selects the MCP command in the shared executable. A copy
+            # needs no cmd.exe, shell quoting, extra process or new crate.
+            bundle.write(binary, "markitai-mcp.exe")
+        else:
+            alias = zipfile.ZipInfo("markitai-mcp")
+            alias.create_system = 3
+            alias.external_attr = (0o120777 << 16)
+            bundle.writestr(alias, b"markitai")
+
+
 def source_snapshot(root, paths):
     """Hash source bytes and symlink text, including already-dirty files."""
     files = {}
@@ -262,8 +281,9 @@ def main():
     state.mkdir()
     isolated_home = work / "home"
     isolated_home.mkdir()
+    # Help assertions use English independently of a Windows runner's UI language.
     environment = dict(os.environ, MARKITAI_HOME=str(state), PYO3_PYTHON=sys.executable,
-                       HOME=str(isolated_home))
+                       HOME=str(isolated_home), MARKITAI_LANG="en")
     environment.setdefault("CARGO_HOME", str(Path.home() / ".cargo"))
     environment.setdefault("RUSTUP_HOME", str(Path.home() / ".rustup"))
     for key in ["PYTHONPATH", "PYTHONHOME", "NODE_PATH", "NODE_OPTIONS"]:
@@ -342,27 +362,23 @@ def main():
 
         cli_licenses = cli_attribution(root, licenses)
         archive = output / f"markitai-{version}-{host}.zip"
-        with zipfile.ZipFile(archive, "x", zipfile.ZIP_DEFLATED) as bundle:
-            for name in ["markitai", "mkai"]:
-                bundle.write(release / (name + extension), name + extension)
-            for name, content in cli_licenses.items():
-                bundle.writestr(name, content)
-            if os.name == "nt":
-                bundle.writestr("markitai-mcp.cmd", b'@echo off\r\n"%~dp0markitai.exe" mcp %*\r\n')
-            else:
-                alias = zipfile.ZipInfo("markitai-mcp")
-                alias.create_system = 3
-                alias.external_attr = (0o120777 << 16)
-                bundle.writestr(alias, b"markitai")
+        write_cli_zip(binary, release / ("mkai" + extension), archive, cli_licenses, os.name == "nt")
         artifact(archive)
         extracted = work / "cli"
         with zipfile.ZipFile(archive) as bundle:
             if os.name == "nt":
                 bundle.extractall(extracted)
-                launcher = extracted / "markitai-mcp.cmd"
-                if launcher.read_bytes() != b'@echo off\r\n"%~dp0markitai.exe" mcp %*\r\n':
-                    raise RuntimeError("Windows MCP launcher differs from its declared forwarding command")
-                record["cli_mcp_alias"] = {"kind": "cmd_forwarder", "identity": identity(launcher), "executed": False}
+                launcher = extracted / "markitai-mcp.exe"
+                if identity(launcher) != identity(binary):
+                    raise RuntimeError("Windows MCP executable differs from the retained CLI")
+                record["cli_mcp_alias"] = {"kind": "executable_copy", "target": "markitai.exe", "identity": identity(launcher)}
+                alias_version = run("zip-mcp-alias-version", [launcher, "--version"], cwd=extracted).strip()
+                if alias_version != f"markitai-mcp {version}":
+                    raise RuntimeError("Windows MCP executable did not report its own name and version")
+                help_text = run("zip-mcp-alias-help", [launcher, "--help"], cwd=extracted)
+                if "Usage: markitai-mcp [OPTIONS]" not in help_text or "Commands:" in help_text:
+                    raise RuntimeError("Windows MCP executable did not select its own command")
+                record["cli_mcp_alias"].update({"version": alias_version, "executed": True})
             else:
                 alias = bundle.getinfo("markitai-mcp")
                 if alias.external_attr >> 16 != 0o120777 or bundle.read(alias) != b"markitai":

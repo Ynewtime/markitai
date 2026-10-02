@@ -83,9 +83,10 @@ It includes the same project, web, pricing, upstream and Codex catalog attributi
 as the ZIP. Its complete member inventory, executable hash, symlink targets and
 license bytes are checked during private extraction; the extracted `mkai --version`
 and `markitai-mcp --help` are executed. The MCP alias must select the subcommand,
-not the main CLI help. Windows ZIPs instead contain a small `markitai-mcp.cmd`
-forwarder to the existing executable; byte validation is not Windows execution
-proof. A bare binary or a measurement-only tar without these notices is not the
+not the main CLI help. Windows ZIPs contain `markitai-mcp.exe`, a byte-for-byte
+copy of the CLI whose executable name selects the MCP command directly.
+The extracted entry's bytes, own-name version and help are verified and
+executed without a shell forwarder. A bare binary or a measurement-only tar without these notices is not the
 complete distribution archive described here.
 
 Node staging explicitly includes LICENSE and NOTICE in the package's `files` list, then checks

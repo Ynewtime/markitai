@@ -2114,6 +2114,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tiff",
+ "tracing",
  "tract-onnx",
  "tungstenite",
  "url",

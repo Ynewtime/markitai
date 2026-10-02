@@ -18,6 +18,7 @@ pub(crate) static STATUS_LINE: AtomicBool = AtomicBool::new(false);
 
 fn erase_status_line() {
     if STATUS_LINE.swap(false, Ordering::Relaxed) {
+        #[cfg(not(windows))]
         const ERASE: &[u8] = b"\r\x1b[K";
         #[cfg(unix)]
         // SAFETY: write(2) is async-signal-safe and reads only this constant.
@@ -25,7 +26,9 @@ fn erase_status_line() {
             libc::write(libc::STDERR_FILENO, ERASE.as_ptr().cast(), ERASE.len());
         }
         // A console control handler is an ordinary thread.
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        crate::app::erase_status_line();
+        #[cfg(not(any(unix, windows)))]
         {
             use std::io::Write;
             let _ = std::io::stderr().write_all(ERASE);
