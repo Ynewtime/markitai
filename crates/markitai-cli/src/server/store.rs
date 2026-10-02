@@ -21,6 +21,44 @@ pub(super) fn private_dir(path: &Path) -> std::io::Result<()> {
     }
     Ok(())
 }
+/// Make a freshly staged job's uploads durable before the job is published.
+///
+/// The uploads are kept so an item can be retried, so they must outlive a power
+/// loss once the job has been reported created. Asking the drive to persist every
+/// file separately is what made a 1,000-file job take seconds to create: on macOS
+/// `File::sync_all` is a full cache flush (`F_FULLFSYNC`), several milliseconds
+/// each. The guarantee needs only one ordering: every byte has been handed to
+/// the drive, and one full flush then covers all of it. So each file gets an
+/// ordinary `fsync`, and a single full flush of the directory follows; the
+/// metadata and parent-directory syncs that publish the job come after that, as
+/// before. Where `fsync` itself already includes the drive flush (Linux,
+/// Windows), each file is synced once, here, instead of as it arrives.
+pub(super) fn sync_uploads(uploads: &Path, names: &[&str]) -> std::io::Result<()> {
+    for name in names {
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .open(uploads.join(name))?;
+        hand_to_drive(&file)?;
+    }
+    File::open(uploads)?.sync_all()
+}
+
+#[cfg(target_vendor = "apple")]
+fn hand_to_drive(file: &File) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+    // SAFETY: the descriptor stays open for the duration of the call.
+    if unsafe { libc::fsync(file.as_raw_fd()) } == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(target_vendor = "apple"))]
+fn hand_to_drive(file: &File) -> std::io::Result<()> {
+    file.sync_all()
+}
+
 pub(super) fn safe_file(root: &Path, name: &str) -> ApiResult<PathBuf> {
     let relative = Path::new(name);
     if name.is_empty()
@@ -303,4 +341,29 @@ pub(super) fn finish(job: &Job) -> std::io::Result<()> {
     }
     let _ = job.events.send(("job", progress));
     result
+}
+
+#[cfg(test)]
+mod upload_sync_tests {
+    use super::*;
+
+    #[test]
+    fn staged_uploads_are_synced_as_one_batch_and_a_missing_one_is_reported() {
+        let temporary = tempfile::tempdir().unwrap();
+        let uploads = temporary.path().join("uploads");
+        fs::create_dir(&uploads).unwrap();
+        for name in ["a.txt", "b with space.md", "ü.html"] {
+            fs::write(uploads.join(name), name).unwrap();
+        }
+        sync_uploads(&uploads, &["a.txt", "b with space.md", "ü.html"]).unwrap();
+        // The bytes are untouched and the batch can run again on the same files.
+        sync_uploads(&uploads, &["a.txt"]).unwrap();
+        assert_eq!(
+            fs::read(uploads.join("ü.html")).unwrap(),
+            "ü.html".as_bytes()
+        );
+        sync_uploads(&uploads, &[]).unwrap();
+        let error = sync_uploads(&uploads, &["gone.txt"]).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+    }
 }

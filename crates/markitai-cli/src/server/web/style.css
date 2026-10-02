@@ -67,7 +67,22 @@ html:lang(zh) .eyebrow{letter-spacing:1px}
 .upload-symbol{background:var(--mint);display:grid;place-items:center;width:35px;height:35px;border-radius:10px;color:var(--accent);font-size:25px;margin-bottom:4px}
 .file-picker{position:absolute;width:1px;height:1px;opacity:0}
 .drop-zone:focus-within{outline:3px solid var(--focus);outline-offset:2px}
-.file-list{list-style:none;padding:0}
+.file-list{list-style:none;padding:0;max-height:260px;overflow:auto}
+.pick-row{position:relative;display:flex;justify-content:center;margin:-8px 24px 16px}
+.llm-status{margin:-4px 24px 16px;font-size:12px;line-height:1.6;color:var(--muted)}
+.llm-status.missing{color:var(--warn)}
+.llm-status a{font-weight:600;margin-left:6px;white-space:nowrap}
+/* Explanations show as tooltips; screens without hover, and disabled controls, show them as text. */
+.option-help{display:none;font-weight:400;color:var(--muted);font-size:11px;line-height:1.5}
+@media (hover:none){.option-help{display:block}}
+.field.unavailable .option-help{display:block}
+.field select:disabled{background:var(--paper);color:var(--muted);opacity:.7;cursor:not-allowed}
+.field option:disabled{color:var(--muted)}
+.options-foot{justify-content:flex-end;margin-top:-6px}
+.job-tools{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:10px}
+.ledger-filter{flex-wrap:wrap}
+.ledger-filter button:disabled{opacity:.4}
+.job-items>.empty{padding:26px 25px}
 .file-list li{display:flex;align-items:center;gap:8px;font-size:12px;border-bottom:1px solid var(--line);padding:5px 0}
 .file-list li .filename{min-width:0}
 .file-list small{margin-left:auto;text-align:right}
@@ -83,7 +98,7 @@ html:lang(zh) .eyebrow{letter-spacing:1px}
 .field input:disabled{background:var(--paper);color:var(--muted)}
 textarea{resize:vertical;line-height:1.6}
 .row{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
-.fields{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.fields{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
 .options{border-top:1px solid var(--line);padding-top:14px}
 .options summary{cursor:pointer;color:var(--ink);font-size:13px;font-weight:600}
 .options .summary-hint{float:right;font-weight:400;color:var(--muted);font-size:12px}
@@ -245,7 +260,7 @@ h1{font-size:40px;letter-spacing:-2px}
 .connection-row>.row{margin-left:auto}
 .panel-heading .primary{font-size:12px}
 .composer>.field,.composer>.fields,.composer>.options,.composer>.file-list{margin-left:20px;margin-right:20px}
-.drop-zone,.file-tools{margin-left:20px;margin-right:20px}
+.drop-zone,.file-tools,.pick-row,.llm-status{margin-left:20px;margin-right:20px}
 .drop-zone{min-height:120px}
 .submit,.cancel-upload{width:calc(100% - 40px);margin-left:20px;margin-right:20px}
 .upload-progress{margin-left:20px;margin-right:20px}

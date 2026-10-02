@@ -91,13 +91,28 @@ pub(super) async fn create(
             }
         }
     } else {
+        // A request with no content type and no body is an empty job, not a
+        // malformed upload.
+        let headers = request.headers();
+        if !headers.contains_key("content-type")
+            && !headers.contains_key("transfer-encoding")
+            && headers
+                .get("content-length")
+                .is_none_or(|length| length.as_bytes() == b"0")
+        {
+            return Err(ApiError::new(
+                422,
+                "empty_job",
+                "provide at least one file or URL",
+            ));
+        }
         let mut multipart = Multipart::from_request(request, &state)
             .await
-            .map_err(|e| ApiError::multipart(e.status(), e.body_text()))?;
+            .map_err(|e| ApiError::multipart(e.status()))?;
         while let Some(mut field) = multipart
             .next_field()
             .await
-            .map_err(|e| ApiError::multipart(e.status(), "invalid multipart body"))?
+            .map_err(|e| ApiError::multipart(e.status()))?
         {
             let name = field.name().unwrap_or("").to_owned();
             if name == "files"
@@ -117,7 +132,7 @@ pub(super) async fn create(
                 while let Some(bytes) = field
                     .chunk()
                     .await
-                    .map_err(|e| ApiError::multipart(e.status(), "invalid multipart body"))?
+                    .map_err(|e| ApiError::multipart(e.status()))?
                 {
                     size = size.checked_add(bytes.len()).ok_or_else(|| {
                         ApiError::new(413, "file_too_large", "file exceeds upload limit")
@@ -131,14 +146,15 @@ pub(super) async fn create(
                     }
                     file.write_all(&bytes).await.map_err(ApiError::internal)?;
                 }
-                file.sync_all().await.map_err(ApiError::internal)?;
+                // Flushing waits until the whole job is staged; see `store::sync_uploads`.
+                file.flush().await.map_err(ApiError::internal)?;
                 items.push(Item::new(items.len() + 1, filename, "file", None));
             } else {
                 let mut bytes = Vec::new();
                 while let Some(chunk) = field
                     .chunk()
                     .await
-                    .map_err(|e| ApiError::multipart(e.status(), "invalid multipart body"))?
+                    .map_err(|e| ApiError::multipart(e.status()))?
                 {
                     if bytes.len() + chunk.len() > 1024 * 1024 {
                         return Err(ApiError::new(
@@ -205,10 +221,13 @@ pub(super) async fn create(
     }
     let options: JobOptions = match options.filter(|bytes| !bytes.is_empty()) {
         None => JobOptions::default(),
-        Some(bytes) => serde_json::from_slice(&bytes)
-            .map_err(|e| ApiError::new(422, "invalid_options", format!("invalid options: {e}")))?,
+        Some(bytes) => JobOptions::parse(&bytes)?,
     };
-    let cfg = options.config(&state.settings.snapshot())?;
+    let configuration = state.settings.snapshot();
+    let cfg = options.config(&configuration)?;
+    // Without a routable model every item would fail with the same error, so a
+    // request for model processing is refused before anything is stored.
+    options.require_model(&configuration, &cfg)?;
     let bases = jobs::reserve_outputs(&items);
     for item in &mut items {
         if item.kind == "url" {
@@ -238,6 +257,14 @@ pub(super) async fn create(
     };
     let publication_state = state.clone();
     let job = crate::task::blocking(move || {
+        let uploaded: Vec<&str> = data
+            .items
+            .iter()
+            .filter(|item| item.kind == "file")
+            .map(|item| item.name.as_str())
+            .collect();
+        store::sync_uploads(&stage.path().join("uploads"), &uploaded)
+            .map_err(ApiError::internal)?;
         store::persist(stage.path(), &data).map_err(ApiError::internal)?;
         // The stable OS lock is shared with CLI history writers. Waiting for it
         // must not occupy a runtime worker or hold the in-memory registry lock.
@@ -616,6 +643,35 @@ mod error_code_tests {
             serde_json::from_slice(&bytes).unwrap_or(Value::Null),
         )
     }
+    // Any body and content type, for requests the service must refuse in its own words.
+    async fn send(
+        router: &Router,
+        method: &str,
+        path: &str,
+        content_type: Option<&str>,
+        body: String,
+    ) -> (u16, Value) {
+        let mut request = HttpRequest::builder().method(method).uri(path);
+        if let Some(content_type) = content_type {
+            request = request.header("content-type", content_type);
+        }
+        let response = router
+            .clone()
+            .oneshot(request.body(Body::from(body)).unwrap())
+            .await
+            .unwrap();
+        let status = response.status().as_u16();
+        let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+    fn job_form(file: &str, options: &str) -> String {
+        format!(
+            "--edge\r\nContent-Disposition: form-data; name=\"files\"; filename=\"{file}\"\r\n\r\nsample\r\n--edge\r\nContent-Disposition: form-data; name=\"options\"\r\n\r\n{options}\r\n--edge--\r\n"
+        )
+    }
     async fn settled(router: &Router, id: &str) -> Value {
         for _ in 0..2000 {
             let (status, value) = call(router, "GET", &format!("/api/jobs/{id}"), &[]).await;
@@ -697,6 +753,156 @@ mod error_code_tests {
             (status, reply["reason"].as_str()),
             (503, Some("shutting_down"))
         );
+    }
+
+    #[tokio::test]
+    async fn malformed_requests_are_refused_in_the_services_own_words() {
+        let temp = tempfile::tempdir().unwrap();
+        let (_state, router) = service(temp.path());
+        const FORM: &str = "multipart/form-data; boundary=edge";
+        let leaks = |value: &Value| {
+            let text = value["detail"].as_str().unwrap_or_default().to_owned();
+            for framework in ["boundary", "`", "line 1", "column", "expected", "serde"] {
+                assert!(!text.contains(framework), "{framework} in {text}");
+            }
+            text
+        };
+        // Not a multipart body at all, and a multipart header without a boundary.
+        for (content_type, body) in [
+            (Some("application/json"), r#"{"urls":[]}"#),
+            (Some("multipart/form-data"), "x"),
+            (Some("text/plain"), "files"),
+        ] {
+            let (status, value) =
+                send(&router, "POST", "/api/jobs", content_type, body.into()).await;
+            assert_eq!(
+                (status, value["reason"].as_str()),
+                (400, Some("invalid_multipart")),
+                "{value}"
+            );
+            assert!(leaks(&value).contains("multipart/form-data"));
+            assert_eq!(value["code"], "bad_request");
+        }
+        // No body and no content type is an empty job, as for an empty form.
+        let (status, value) = send(&router, "POST", "/api/jobs", None, String::new()).await;
+        assert_eq!(
+            (status, value["reason"].as_str()),
+            (422, Some("empty_job")),
+            "{value}"
+        );
+        // Options are named, never quoted from the parser.
+        for (options, expected) in [
+            (
+                r#"{"bogus":true}"#,
+                "unknown option 'bogus'; supported options: ",
+            ),
+            (r#"{"llm":"yes"}"#, "option 'llm' must be true or false"),
+            ("{broken", "options must be a JSON object"),
+            (
+                r#"{"profile":"zz"}"#,
+                "option 'profile' must be one of: rag, obsidian, okf",
+            ),
+        ] {
+            let (status, value) = send(
+                &router,
+                "POST",
+                "/api/jobs",
+                Some(FORM),
+                job_form("a.txt", options),
+            )
+            .await;
+            assert_eq!(
+                (status, value["reason"].as_str()),
+                (422, Some("invalid_options")),
+                "{options}: {value}"
+            );
+            assert!(leaks(&value).starts_with(expected), "{value}");
+        }
+        // The rejected uploads left nothing behind.
+        let (_, jobs) = send(
+            &router,
+            "GET",
+            "/api/jobs/000000000000",
+            None,
+            String::new(),
+        )
+        .await;
+        assert_eq!(jobs["reason"], "job_not_found");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn retry_bodies_are_validated_by_field_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let (_state, router) = service(temp.path());
+        let (status, created) = call(&router, "POST", "/api/jobs", &["notes.xyz"]).await;
+        assert_eq!(status, 201, "{created}");
+        let id = created["job_id"].as_str().unwrap().to_owned();
+        settled(&router, &id).await;
+        let retry = format!("/api/jobs/{id}/items/i1/retry");
+        for (body, reason, expected) in [
+            (
+                r#"{"bogus":1}"#,
+                "invalid_retry_body",
+                "unknown field 'bogus' in the retry body; supported fields: operation, options",
+            ),
+            (
+                r#"{"operation":"fly"}"#,
+                "invalid_retry_body",
+                "operation must be 'retry' or 'enhance'",
+            ),
+            (
+                "[1]",
+                "invalid_retry_body",
+                "retry body must be a JSON object",
+            ),
+            (
+                "{oops",
+                "invalid_retry_body",
+                "retry body must be a JSON object",
+            ),
+            (
+                r#"{"options":{"llm":1}}"#,
+                "invalid_options",
+                "option 'llm' must be true or false",
+            ),
+            (
+                r#"{"options":{"nope":1}}"#,
+                "invalid_options",
+                "unknown option 'nope'; supported options: ",
+            ),
+        ] {
+            let (status, value) = send(
+                &router,
+                "POST",
+                &retry,
+                Some("application/json"),
+                body.into(),
+            )
+            .await;
+            assert_eq!(
+                (status, value["reason"].as_str()),
+                (422, Some(reason)),
+                "{body}: {value}"
+            );
+            assert!(
+                value["detail"].as_str().unwrap().starts_with(expected),
+                "{value}"
+            );
+            assert!(!value["detail"].as_str().unwrap().contains("line 1"));
+        }
+        // A well-formed body and the JSON null body are still accepted.
+        for body in [r#"{"operation":"retry","options":{"llm":false}}"#, "null"] {
+            let (status, value) = send(
+                &router,
+                "POST",
+                &retry,
+                Some("application/json"),
+                body.into(),
+            )
+            .await;
+            assert_eq!(status, 202, "{body}: {value}");
+            settled(&router, &id).await;
+        }
     }
 
     #[tokio::test]

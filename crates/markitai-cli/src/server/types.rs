@@ -33,17 +33,147 @@ pub(super) struct JobOptions {
     pub backend: Option<String>,
 }
 
+/// Option names the service accepts, by value type. Anything else is rejected
+/// by name, so a caller never reads a JSON parser's position-in-text message.
+const BOOLEAN_OPTIONS: [&str; 9] = [
+    "llm",
+    "ocr",
+    "alt",
+    "desc",
+    "screenshot",
+    "screenshot_only",
+    "pure",
+    "no_cache",
+    "no_compress",
+];
+const TEXT_OPTIONS: [&str; 4] = ["preset", "profile", "strategy", "backend"];
+const PROFILES: [&str; 3] = ["rag", "obsidian", "okf"];
+const STRATEGIES: [&str; 6] = [
+    "auto",
+    "static",
+    "playwright",
+    "defuddle",
+    "jina",
+    "cloudflare",
+];
+
+fn invalid_options(detail: impl Into<String>) -> ApiError {
+    ApiError::new(422, "invalid_options", detail)
+}
+
+/// A caller-supplied name, shortened so an oversized key cannot bloat a response.
+fn quoted(name: &str) -> String {
+    let mut shown: String = name.chars().take(48).collect();
+    if shown.len() < name.len() {
+        shown.push('…');
+    }
+    format!("'{shown}'")
+}
+
+/// A preset from the configuration, or one of the three built-in definitions.
+fn preset_definition(base: &Value, name: &str) -> Option<Value> {
+    let name = name.to_ascii_lowercase();
+    base["presets"]
+        .get(&name)
+        .cloned()
+        .or_else(|| match name.as_str() {
+            "minimal" => {
+                Some(json!({"llm":false,"ocr":false,"alt":false,"desc":false,"screenshot":false}))
+            }
+            "standard" => {
+                Some(json!({"llm":true,"ocr":false,"alt":true,"desc":true,"screenshot":false}))
+            }
+            "rich" => {
+                Some(json!({"llm":true,"ocr":false,"alt":true,"desc":true,"screenshot":true}))
+            }
+            _ => None,
+        })
+}
+
 impl JobOptions {
+    /// Read the `options` form field. Every failure names the offending option
+    /// instead of passing a JSON parser's message through to the caller.
+    pub fn parse(bytes: &[u8]) -> ApiResult<Self> {
+        let value = serde_json::from_slice(bytes)
+            .map_err(|_| invalid_options("options must be a JSON object"))?;
+        Self::from_value(value)
+    }
+
+    pub fn from_value(value: Value) -> ApiResult<Self> {
+        let map = match &value {
+            Value::Null => return Ok(Self::default()),
+            Value::Object(map) => map,
+            _ => return Err(invalid_options("options must be a JSON object")),
+        };
+        for (key, entry) in map {
+            if BOOLEAN_OPTIONS.contains(&key.as_str()) {
+                if !entry.is_null() && !entry.is_boolean() {
+                    return Err(invalid_options(format!(
+                        "option {} must be true or false",
+                        quoted(key)
+                    )));
+                }
+            } else if TEXT_OPTIONS.contains(&key.as_str()) {
+                if !entry.is_null() && !entry.is_string() {
+                    return Err(invalid_options(format!(
+                        "option {} must be text",
+                        quoted(key)
+                    )));
+                }
+            } else {
+                return Err(invalid_options(format!(
+                    "unknown option {}; supported options: {}, {}",
+                    quoted(key),
+                    TEXT_OPTIONS.join(", "),
+                    BOOLEAN_OPTIONS.join(", ")
+                )));
+            }
+        }
+        for (key, allowed) in [("profile", &PROFILES[..]), ("strategy", &STRATEGIES[..])] {
+            if let Some(chosen) = map.get(key).and_then(Value::as_str)
+                && !allowed.contains(&chosen)
+            {
+                return Err(invalid_options(format!(
+                    "option '{key}' must be one of: {}",
+                    allowed.join(", ")
+                )));
+            }
+        }
+        serde_json::from_value(value).map_err(|_| invalid_options("options could not be read"))
+    }
+
+    /// Whether the request itself asks for model processing, as opposed to a
+    /// server configuration that happens to enable it.
+    pub fn requests_llm(&self, base: &Value) -> bool {
+        match (self.llm, &self.preset) {
+            (Some(explicit), _) => explicit,
+            (None, Some(name)) => {
+                preset_definition(base, name).is_some_and(|preset| preset["llm"] == true)
+            }
+            (None, None) => false,
+        }
+    }
+
+    /// Refuse a request for model processing when no model can serve it, before
+    /// any job exists: the alternative is one identical failure per item.
+    pub fn require_model(&self, base: &Value, cfg: &Value) -> ApiResult<()> {
+        if self.requests_llm(base) && !markitai_core::llm_capabilities(cfg).routable {
+            return Err(ApiError::new(
+                422,
+                "llm_unavailable",
+                "this request needs a model, but none is available; add a connection, or set MODEL and a provider API key",
+            ));
+        }
+        Ok(())
+    }
+
     pub fn config(&self, base: &Value) -> ApiResult<Value> {
         let mut cfg = base.clone();
         if let Some(name) = &self.preset {
             let name = name.to_ascii_lowercase();
-            let preset = cfg["presets"].get(&name).cloned().or_else(|| match name.as_str() {
-                "minimal" => Some(json!({"llm":false,"ocr":false,"alt":false,"desc":false,"screenshot":false})),
-                "standard" => Some(json!({"llm":true,"ocr":false,"alt":true,"desc":true,"screenshot":false})),
-                "rich" => Some(json!({"llm":true,"ocr":false,"alt":true,"desc":true,"screenshot":true})),
-                _ => None,
-            }).ok_or_else(|| ApiError::new(422, "unknown_preset", format!("unknown preset '{name}'")))?;
+            let preset = preset_definition(base, &name).ok_or_else(|| {
+                ApiError::new(422, "unknown_preset", format!("unknown preset '{name}'"))
+            })?;
             for (key, path) in [
                 ("llm", "/llm/enabled"),
                 ("ocr", "/ocr/enabled"),
@@ -209,14 +339,23 @@ impl ApiError {
         eprintln!("Serve: {error}");
         Self::new(500, "internal_error", "internal server error")
     }
-    /// A request body the multipart reader rejected; an exceeded body limit stays distinct.
-    pub fn multipart(status: StatusCode, detail: impl Into<String>) -> Self {
-        let reason = if status == StatusCode::PAYLOAD_TOO_LARGE {
-            "request_too_large"
+    /// A request body the multipart reader rejected; an exceeded body limit stays
+    /// distinct. The reader's own wording (boundary and parser internals) is never
+    /// passed on: `detail` is one fixed sentence per reason.
+    pub fn multipart(status: StatusCode) -> Self {
+        if status == StatusCode::PAYLOAD_TOO_LARGE {
+            Self::new(
+                status.as_u16(),
+                "request_too_large",
+                "request exceeds the size limit",
+            )
         } else {
-            "invalid_multipart"
-        };
-        Self::new(status.as_u16(), reason, detail)
+            Self::new(
+                status.as_u16(),
+                "invalid_multipart",
+                "send the files, urls and options as multipart/form-data, or urls and options as application/x-www-form-urlencoded",
+            )
+        }
     }
 }
 impl IntoResponse for ApiError {
@@ -295,12 +434,85 @@ mod error_tests {
     #[test]
     fn a_multipart_body_over_the_limit_is_distinct_from_a_malformed_one() {
         assert_eq!(
-            ApiError::multipart(StatusCode::PAYLOAD_TOO_LARGE, "length limit").reason,
+            ApiError::multipart(StatusCode::PAYLOAD_TOO_LARGE).reason,
             "request_too_large"
         );
-        let malformed = ApiError::multipart(StatusCode::BAD_REQUEST, "invalid multipart body");
+        let malformed = ApiError::multipart(StatusCode::BAD_REQUEST);
         assert_eq!(malformed.reason, "invalid_multipart");
         assert_eq!(malformed.status, StatusCode::BAD_REQUEST);
+        // The reader's boundary and parser wording never reaches the caller.
+        assert!(!malformed.detail.contains("boundary"));
+    }
+
+    #[test]
+    fn option_errors_name_the_option_and_never_quote_a_parser() {
+        let detail = |text: &str| JobOptions::parse(text.as_bytes()).unwrap_err().detail;
+        assert_eq!(
+            detail(r#"{"bogus":true}"#),
+            "unknown option 'bogus'; supported options: preset, profile, strategy, backend, llm, ocr, alt, desc, screenshot, screenshot_only, pure, no_cache, no_compress"
+        );
+        assert_eq!(
+            detail(r#"{"llm":"yes"}"#),
+            "option 'llm' must be true or false"
+        );
+        assert_eq!(detail(r#"{"preset":3}"#), "option 'preset' must be text");
+        assert_eq!(
+            detail(r#"{"profile":"markdown"}"#),
+            "option 'profile' must be one of: rag, obsidian, okf"
+        );
+        assert_eq!(
+            detail(r#"{"strategy":"fast"}"#),
+            "option 'strategy' must be one of: auto, static, playwright, defuddle, jina, cloudflare"
+        );
+        for broken in ["{not json", "[1]", "\"text\"", ""] {
+            assert_eq!(detail(broken), "options must be a JSON object", "{broken}");
+        }
+        for text in [r#"{"bogus":1}"#, r#"{"llm":1}"#, "{not json"] {
+            let error = JobOptions::parse(text.as_bytes()).unwrap_err();
+            assert_eq!(
+                (error.status.as_u16(), error.reason),
+                (422, "invalid_options")
+            );
+            assert!(
+                !error.detail.contains("line 1 column") && !error.detail.contains("expected"),
+                "{}",
+                error.detail
+            );
+        }
+        let long = format!(r#"{{"{}":1}}"#, "k".repeat(500));
+        assert!(detail(&long).len() < 300);
+        let parsed = JobOptions::parse(br#"{"llm":true,"profile":"rag","ocr":null}"#).unwrap();
+        assert_eq!(
+            (parsed.llm, parsed.profile.as_deref(), parsed.ocr),
+            (Some(true), Some("rag"), None)
+        );
+        assert!(JobOptions::parse(b"null").unwrap().preset.is_none());
+    }
+
+    #[test]
+    fn only_a_request_for_a_model_needs_a_routable_one() {
+        let base = markitai_core::config::normalize(
+            &json!({"llm":{"enabled":false},"presets":{"offline":{"llm":false,"ocr":true,"alt":false,"desc":false,"screenshot":false}}}),
+        )
+        .unwrap();
+        let options = |text: &str| JobOptions::parse(text.as_bytes()).unwrap();
+        for (text, wanted) in [
+            ("{}", false),
+            (r#"{"llm":true}"#, true),
+            (r#"{"llm":false}"#, false),
+            (r#"{"preset":"standard"}"#, true),
+            (r#"{"preset":"RICH"}"#, true),
+            (r#"{"preset":"minimal"}"#, false),
+            (r#"{"preset":"offline"}"#, false),
+            (r#"{"preset":"standard","llm":false}"#, false),
+            (r#"{"preset":"minimal","llm":true}"#, true),
+            (r#"{"alt":true,"desc":true}"#, false),
+        ] {
+            assert_eq!(options(text).requests_llm(&base), wanted, "{text}");
+        }
+        // A model-free request is accepted whatever the model state is.
+        let cfg = options("{}").config(&base).unwrap();
+        assert!(options("{}").require_model(&base, &cfg).is_ok());
     }
 
     #[test]

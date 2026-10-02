@@ -54,9 +54,22 @@ image description/alt text, screenshot, pure, cache, compression, strategy, and
 backend fields. Unsupported conversion features remain explicit core errors.
 Requested LLM processing uses core environment/model resolution, including
 `MODEL`; the server does not silently disable LLM because `model_list` is empty.
-Unlike the reference service's no-model fallback, an unavailable requested model
-follows the core's configured failure policy. Remote consent cannot request
-interactive terminal input. When LLM is enabled, base output is retained.
+Unlike the reference service's no-model fallback, which converts without the
+model and reports success, a request that itself asks for model processing is
+refused when no model is routable. That means `llm: true`, or a preset whose
+definition turns the LLM on (`standard`, `rich`, or a configured one) unless
+`llm: false` overrides it. `POST /api/jobs` answers 422 with
+`reason: "llm_unavailable"` before anything is stored, instead of creating one
+identical failing item per input; a retry whose supplied `options` ask for model
+processing is refused the same way and leaves the item unchanged, while
+`enhance` keeps its 409 `llm_unavailable`. `alt` and `desc` alone are not a
+request (they only act while the LLM is on). Model processing enabled only by
+the server configuration is not a request either: it keeps following the core's
+configured failure policy, item by item.
+`GET /api/capabilities` reports `llm.routable`, which the
+[browser workspace](web-ui.md#selecting-input-and-following-a-job) uses to switch
+those choices off. Remote consent cannot request interactive terminal input.
+When LLM is enabled, base output is retained.
 
 ## Error responses
 
@@ -80,6 +93,17 @@ machine code for the specific cause, for example `job_not_found`,
 Clients should present text by `reason`, then `code`, and keep `detail` for
 diagnosis; the [browser workspace](web-ui.md#language-and-appearance) does so in
 English and Chinese.
+
+`detail` for malformed input is always the service's own sentence. A body that is
+not multipart form data (and not a form-encoded URL list) is 400
+`invalid_multipart` and names the accepted forms; the multipart reader's wording
+about boundaries is never passed on. A POST with neither a content type nor a body
+is an empty job (422 `empty_job`). A bad `options` field is 422 `invalid_options`
+and names the option: `unknown option 'x'; supported options: …`,
+`option 'llm' must be true or false`, `option 'profile' must be one of: rag,
+obsidian, okf`, or `options must be a JSON object`. A retry body is checked the
+same way (`invalid_retry_body` for its own fields). JSON parser positions such as
+"at line 1 column 8" never appear.
 
 A failed item adds `error_code` beside its `error` string. It is the core's
 conversion error code, the same vocabulary as the bindings' error envelope
@@ -284,7 +308,32 @@ use attachment responses with `nosniff`. HTML and SVG artifacts remain untrusted
 content; downloading them does not execute them on the server.
 
 Uploads are bounded at 100 MiB per file, 1,000 items, and 5 GiB plus 64 MiB per
-request. Text form fields are limited to 1 MiB. JSON Markdown results are limited
+request. Text form fields are limited to 1 MiB. Upload names are flattened to
+their final path segment (a folder's structure is not kept; same-named files from
+different folders become `name (2).ext`), so a client that uploads a folder sends
+its files individually.
+
+Uploads are made durable once per job, not once per file. A job is published only
+after every retained upload has been handed to the drive and one full flush has
+covered them all, followed by the metadata and parent-directory syncs as before. On
+macOS, where a full flush per file (`F_FULLFSYNC`) costs milliseconds, each file gets
+an ordinary `fsync` and a single full flush follows; on other platforms each file is
+synced once, in one batch, instead of as it arrives. Measured with the build and
+commands below, creating a job of 1,000 small HTML files fell from about 4.5 s to
+under a second:
+
+| Run (alternating) | Before | After |
+|---|---|---|
+| 1 | 4.40 s | 0.58 s |
+| 2 | 4.49 s | 1.97 s (the previous job's 1,000 conversions were still running) |
+| 3 | 4.58 s | 0.76 s |
+
+Command: `curl -F files=@f0.html … -F files=@f999.html http://127.0.0.1:PORT/api/jobs`
+(`time_total`, HTTP 201) against `target/debug/markitai serve` instances started with
+`env -i` and an isolated `MARKITAI_HOME`. The files are authored fixtures
+(`<h1>Doc N</h1><p>small file N</p>`), the build is the unoptimized `dev` profile,
+and the platform is macOS on APFS. Only macOS was measured; no Linux or Windows
+figure is claimed, and the numbers are one machine's single-digit samples. JSON Markdown results are limited
 to 64 MiB; larger output remains available through file downloads. Files and ZIPs
 stream in bounded chunks. Every archive request builds its own private temporary
 ZIP, retained until the response completes or disconnects. It never rewrites a
@@ -295,8 +344,24 @@ and merges sibling entries while holding the same stable lock as the core writer
 
 The root URL serves the embedded [browser workspace](web-ui.md). Without
 `--no-open` the service asks the system to open it, passing the startup token in
-the URL fragment; with `--no-open` it only prints the listening address and the
-token. The workspace reports an unreachable service as offline, checks again
+the URL fragment; with `--no-open` it does not open anything.
+
+At startup the service prints, on stderr: `Markitai server listening on http://ADDRESS`
+and, unless `--no-auth`, `Remote access token: …` (these two lines are scripted
+against and stay English in every language); the address to open in a browser
+(without the token for a loopback listener, since loopback peers are trusted; with
+the token in the fragment for a specific network address, and for the address of
+this computer on the network when listening on a wildcard address); the directory
+that holds jobs and history (`MARKITAI_HOME/serve/jobs`, shown absolute); and a
+Ctrl-C hint. The other sentences follow the terminal language (`MARKITAI_LANG`,
+then `LANG`, then `LC_ALL`, Chinese for a `zh` prefix). When the listener is not
+loopback-only (`--host 0.0.0.0`, a network address) it first warns that the service
+is reachable from the network and that the token is the credential; with
+`--no-auth` the warning says anyone who can reach the address can convert files and
+read, download or delete the whole history, and what to do instead. A port that is
+already taken stops the service with a message naming the address and suggesting
+`--port` (`--port 0` picks a free one) instead of the bare operating-system error.
+The workspace reports an unreachable service as offline, checks again
 every five seconds and says when it is connected again. It shows the percentage
 and bytes of an upload while it is sent, can abort it, and offers Stop remaining
 (the cancel route above) while original items wait for a slot.
@@ -322,5 +387,12 @@ remote token and trust decisions without relying on a host network interface.
 contains private loopback cases for paid authentication errors, zero-token recorded
 responses, SSE/GET/restart agreement, a post-core publication obstruction retaining
 old bytes, subsequent unknown usage clearing, and invalid history diagnostics.
+[`tests/serve/gates.rs`](../crates/markitai-cli/tests/serve/gates.rs) covers the
+up-front model refusal for creation and retry, the service's wording for malformed
+bodies, options and retry bodies, and a 250-file job that keeps every upload for
+retry; [`tests/serve_startup.rs`](../crates/markitai-cli/tests/serve_startup.rs)
+runs the binary for the startup lines (English and Chinese), the network-listener
+warning and the taken-port message. Module tests check the no-authentication
+warning text and the option parser.
 These scoped checks do not establish complete REST/UI compatibility, production
 load limits, remote-provider behavior, or cross-platform acceptance.

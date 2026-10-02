@@ -173,9 +173,10 @@ export function artifactPath(target, documentPath, allowed) {
 export function formatSize(bytes) {
   return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MiB` : `${Math.ceil(bytes / 1024)} KiB`;
 }
-// The same file chosen twice (name, size and modification time) is listed once.
+// The same file chosen twice (folder path, name, size and modification time) is
+// listed once; equal files in different folders of one selection stay separate.
 export function mergeFiles(current, incoming) {
-  const key = file => `${file.name}\u0000${file.size}\u0000${file.lastModified}`;
+  const key = file => `${file.markitaiPath || file.webkitRelativePath || ''}\u0000${file.name}\u0000${file.size}\u0000${file.lastModified}`;
   const seen = new Set(current.map(key)), files = [...current];
   let duplicates = 0;
   for (const file of incoming) { if (seen.has(key(file))) { duplicates++; continue; } seen.add(key(file)); files.push(file); }

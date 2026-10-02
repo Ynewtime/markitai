@@ -8,6 +8,7 @@ mod rerun;
 mod security;
 mod settings;
 mod sidecar;
+mod startup;
 mod store;
 mod transaction;
 mod types;
@@ -141,13 +142,27 @@ async fn serve(cfg: Value, source: SettingsSource, options: ServeOptions) -> Res
             security::guard,
         ))
         .with_state(state.clone());
+    let lang = crate::app::i18n::lang();
     let listener = tokio::net::TcpListener::bind((options.host.as_str(), options.port))
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| startup::bind_error(lang, &options.host, options.port, &e))?;
     let address = listener.local_addr().map_err(|e| e.to_string())?;
-    eprintln!("Markitai server listening on http://{address}");
-    if let Some(token) = &state.token {
-        eprintln!("Remote access token: {token}");
+    // Shown absolute: a relative MARKITAI_HOME would otherwise name nothing useful.
+    let data = std::path::absolute(&state.root).unwrap_or_else(|_| state.root.clone());
+    for line in startup::lines(
+        lang,
+        &startup::Startup {
+            address,
+            token: state.token.as_deref(),
+            data: &data,
+            network: address
+                .ip()
+                .is_unspecified()
+                .then(startup::network_address)
+                .flatten(),
+        },
+    ) {
+        eprintln!("{line}");
     }
     if !options.no_open {
         let url = launch::browser_url(address, state.token.as_deref());

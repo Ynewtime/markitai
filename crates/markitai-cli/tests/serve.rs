@@ -909,3 +909,6 @@ mod rerun;
 
 #[path = "serve/legacy_history.rs"]
 mod legacy_history;
+
+#[path = "serve/gates.rs"]
+mod gates;

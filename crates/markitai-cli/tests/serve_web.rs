@@ -167,6 +167,10 @@ fn embedded_interface_and_fixed_offline_assets_are_actual_http_resources() {
             include_bytes!("../src/server/web/settings.js").as_slice(),
         ),
         (
+            "/ui/workspace.js",
+            include_bytes!("../src/server/web/workspace.js").as_slice(),
+        ),
+        (
             "/ui/result-tools.js",
             include_bytes!("../src/server/web/result-tools.js").as_slice(),
         ),

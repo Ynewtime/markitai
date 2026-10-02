@@ -20,7 +20,7 @@ test('every key the page and scripts use exists in the dictionaries', () => {
   const read = name => readFileSync(new URL(name, import.meta.url), 'utf8');
   const html = read('./index.html');
   const used = new Set([...html.matchAll(/data-i18n(?:-[a-z-]+)?="([^"]+)"/g)].map(match => match[1]));
-  for (const name of ['app.js', 'settings.js', 'result-tools.js', 'preview.js', 'api.js']) {
+  for (const name of ['app.js', 'settings.js', 'result-tools.js', 'preview.js', 'api.js', 'workspace.js']) {
     for (const match of read(`./${name}`).matchAll(/\b(?:t|label)\((?:[^,()]+,\s*)?'([a-zA-Z]+)'/g)) used.add(match[1]);
   }
   assert.ok(used.size > 100, `only ${used.size} keys found`);
@@ -116,6 +116,11 @@ test('item errors are localized by recognizable shape or code, with the original
     [{error: 'No model configured; set MODEL and a provider API key, or llm.model_list', error_code: 'no_model_configured'}, 'No model is configured. Add one under Connections, or set MODEL and a provider API key.'],
     [{error: 'Local OCR requires macOS 11 or later; no local OCR backend is available on this platform'}, 'Local OCR is not available on this system.'],
     [{error: 'HTTP 404', kind: 'url', error_code: 'fetch_error'}, 'The page was not found (HTTP 404).'],
+    // The core words a failed fetch as `HTTP <status> for <URL>: <hint>`; the status leads.
+    [{error: 'HTTP 404 for https://example.com/a?id=5: the page may have been removed or is not public', kind: 'url', error_code: 'fetch_error'}, 'The page was not found (HTTP 404).'],
+    [{error: 'HTTP 403 for https://example.com/: the site refused access; it may block automated clients or need a login', kind: 'url'}, 'The website refused access (HTTP 403).'],
+    [{error: 'HTTP 429 for https://example.com/: rate limited; try again later', kind: 'url'}, 'The website is limiting requests (HTTP 429). Try again later.'],
+    [{error: 'HTTP 503 for https://example.com/: the site had a server error', kind: 'url'}, 'The website had a server error (HTTP 503).'],
     [{error: 'HTTP 403', kind: 'url'}, 'The website refused access (HTTP 403).'],
     [{error: 'HTTP 503', kind: 'url'}, 'The website had a server error (HTTP 503).'],
     [{error: 'HTTP 429', kind: 'url'}, 'The website is limiting requests (HTTP 429). Try again later.'],

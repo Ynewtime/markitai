@@ -6,8 +6,8 @@ binary. No Node runtime, frontend build, CDN or external font is needed to run i
 `--no-open` leaves browser opening to the operator. The REST API remains available;
 unknown API paths keep JSON errors instead of returning the application shell.
 
-The workspace accepts multiple files and one URL per line in the same job.
-Presets come from service capabilities; individual tri-state overrides preserve
+The workspace accepts multiple files, whole folders and one URL per line in the same
+job. Presets come from service capabilities; individual tri-state overrides preserve
 server defaults until explicitly selected. It distinguishes uploading/creating a
 job from conversion progress, subscribes to the service's snapshots/item/job SSE
 events, and reconnects by refreshing the authoritative snapshot. A selected job
@@ -24,9 +24,41 @@ saved job summaries, not claims of a new server pagination API.
 
 ## Selecting input and following a job
 
+A status line under Preset says whether model features can work: "LLM ready" with
+the number of models, or "LLM not configured" with a link to Connections. While the
+service reports no routable model, the presets whose definition turns the LLM on
+(Standard and Rich) stay listed but disabled and marked "needs a model", and the
+LLM, image alt text and image description options are disabled with the reason
+shown beneath them, in English and Chinese. The status refreshes when a connection
+is saved. The service enforces the same rule: a job or retry that asks for model
+processing without a model is refused with 422 `llm_unavailable`
+([error responses](serve.md#job-workflow)); if the page's view was stale it reads
+the capabilities again and shows that refusal. An item that failed with
+`no_model_configured` additionally offers Retry without LLM, which resubmits the
+job's options with the LLM off.
+
+Every conversion option has a one-sentence explanation: a tooltip on the field, and
+visible text beneath it on screens without hover (and wherever the option is
+disabled). The options panel's hint counts the choices that differ from the server
+defaults. The last chosen options (preset, profile, strategy, backend and the
+tri-state overrides) are remembered in `localStorage` (`markitai.options`) and
+applied on the next visit; a remembered choice that needs a model is not applied
+while none is available. Reset options clears them. This is a per-viewer
+convenience: a blocked or unreadable store simply means the page starts from the
+server defaults, and the stored value is validated on every read.
+
 Files dropped anywhere on the Convert view are added to the selection; a drop
 elsewhere is ignored rather than letting the browser open the file in place of
-the workspace. The same file chosen twice (same name, size and modification time)
+the workspace. Choose a folder (a `webkitdirectory` input) adds a folder's files,
+and a folder dropped on the page is walked through the browser's directory entry
+API (the entries are read during the drop event); the list then shows each file's
+folder-relative path. Hidden and system files inside the folder (names starting with
+a dot, `Thumbs.db`, `desktop.ini`, and everything under a dot-folder such as `.git`)
+are skipped and counted in the message; the folder you chose, and files you pick one
+by one, are never filtered. A selection is capped at the service's item limit (1,000
+files and URLs per job): the first files that fit are kept and the message says the
+rest need another job. The service flattens upload names, so folder structure is not
+kept in the results (same-named files become `name (2).ext`). The same file chosen twice (same name, size and modification time)
 is listed once, with a short notice. A file over the 100 MiB upload limit is
 marked in its row as soon as it is chosen, and submitting names it instead of
 uploading anything. The selection shows its file count and total size and can be
@@ -49,8 +81,16 @@ already converting finish. On narrow screens the results panel is scrolled into
 view after a job starts or a saved job is opened.
 
 Each row states its kind and status in words (queued, converting, done, failed,
-skipped). An image skipped because no text was extracted says to convert it again
-with Local OCR or LLM enhancement. The unsupported-format message keeps its list
+skipped). An image skipped because no text was extracted offers Retry with OCR, which
+resubmits the job's options with Local OCR on (and says it can also be enhanced with
+a model). An unsupported file type offers only Delete: converting it again cannot
+help. A job with two or more items has a filter (All, Done, Failed, Skipped, with
+counts; a skipped item is counted apart from done) and Retry all failed (N), which
+queues each retryable failed item again with its own options, one request each, and
+shows progress on the button; items that cannot be fixed by converting again are not
+counted. Download ZIP is hidden while a job has no item with output, since its
+archive would be empty; History hides the row's ZIP for the same reason, and counts
+items as "1 item", "3 items", "2 done", "1 skipped", "1 failed". The unsupported-format message keeps its list
 of accepted extensions folded under Supported formats. Other failures are stated
 by cause, such as a page that answered HTTP 404, a website that refused the
 connection, a timeout, a missing model or unavailable local OCR, an input over a
@@ -83,8 +123,10 @@ switches immediately, including job rows, history, connections and comparison
 summaries. The theme control cycles through automatic (following the operating
 system), light and dark. Printed and PDF output always uses the light palette.
 
-These two preferences are the only values this application writes to
-`localStorage` (`markitai.lang`, `markitai.theme`). A small classic script,
+These two preferences and the last chosen conversion options (`markitai.options`,
+described under [Selecting input](#selecting-input-and-following-a-job)) are the only
+values this application writes to `localStorage` (`markitai.lang`, `markitai.theme`).
+Nothing else, in particular no token or credential, is stored there. A small classic script,
 `/ui/boot.js`, applies them in the document head before first paint; it runs
 under the same `script-src 'self'` policy as the module scripts. The page's static
 text is English, so when the resolved language is Chinese boot.js also sets the
@@ -113,6 +155,15 @@ example from an older history without `error_code`, is shown as written. The
 access-token control is shown only when this tab uses a token or the service has
 answered 401.
 
+## Views and the address bar
+
+Convert, History and Connections have their own addresses: `/`, `/?view=history` and
+`/?view=settings`, next to `?job=<id>` for the open job. Switching views adds a
+browser history entry, so Back returns to the previous view and a reload stays where
+you were (on History or Connections the open job still loads in the background; Open
+in History leaves a Back entry to the list). An unknown `view` value shows Convert.
+The service serves the same page at `/` for all of them; only the query changes.
+
 ## Connections and concurrent editing
 
 The Connections view lists configured and available providers, saved deployments
@@ -124,7 +175,11 @@ Unsupported discovery still leaves manual entry available.
 Collection views contain only the server's redacted fields. The raw credentials
 endpoint is called only when a connection is explicitly opened for editing.
 API key and base URL each have Keep, Replace and Clear choices, preserving the
-server's omitted/null semantics. Password controls hold values in memory; provider
+server's omitted/null semantics. Add connection (and Reset draft) starts a new draft
+with the API key in Replace, so the field can be typed in at once; submitting it empty
+sends no key, and the provider's environment variable is used, as with Keep. Editing a
+saved connection, and setting up a provider whose credentials already exist, keep the
+key locked in Keep until you choose Replace or Clear. Password controls hold values in memory; provider
 credentials are never written to sessionStorage/localStorage by this application.
 Credentials are cleared when a draft is reset or successfully saved.
 
@@ -187,12 +242,18 @@ use exists, that every `reason` in the Rust service sources and every core error
 code has localized text, item-error and provider-phrase translations, language
 detection, plural forms, the theme cycle and boot.js's first-paint mark (run in a
 `node:vm` context); `web/result-tools.test.mjs` also checks Chinese comparison
-and print messages. Run them with
+and print messages. `web/workspace.test.mjs` covers the remembered options (including a
+blocked or damaged store), the model-dependent preset rule, folder selection (hidden
+file rules, batched directory entries, the item limit, same-named files in different
+folders), the ledger filter and retry rules, history counts and plurals, view
+addresses, and that every option has help text in both languages; `web/settings.test.mjs`
+runs the connection editor against a recording document to check that Add connection
+leaves the key input enabled in Replace. Run them with
 `node --test crates/markitai-cli/src/server/web/*.test.mjs`; Node is only a
 development test tool. Syntax checks use `node --input-type=module --check` with
 each authored JS file on stdin. The embedded resources are `index.html`,
 `style.css`, `icon.svg` (the tab icon), `boot.js`, `app.js`, `api.js`, `i18n.js`,
-`preview.js`, `result-tools.js`, `settings.js` and the two vendored libraries.
+`preview.js`, `result-tools.js`, `settings.js`, `workspace.js` and the two vendored libraries.
 
 These tests and actual release-browser acceptance passed in
 [round twenty-one](validation/service-ui-round21.md), including mixed file/URL

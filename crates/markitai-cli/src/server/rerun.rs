@@ -11,7 +11,6 @@ use axum::{
     extract::{Path, Request, State as ExtractState},
     http::StatusCode,
 };
-use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
     collections::HashSet,
@@ -22,18 +21,55 @@ use std::{
     time::Instant,
 };
 
-#[derive(Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Default)]
 struct RetryBody {
     options: Option<JobOptions>,
     operation: Operation,
 }
-#[derive(Clone, Copy, Default, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Copy, Default, PartialEq)]
 enum Operation {
     #[default]
     Retry,
     Enhance,
+}
+fn invalid_body(detail: impl Into<String>) -> ApiError {
+    ApiError::new(422, "invalid_retry_body", detail)
+}
+impl RetryBody {
+    /// Read the optional JSON body. Problems are named in the service's own words;
+    /// a parser's position-in-text message is never passed on.
+    fn parse(bytes: &[u8]) -> ApiResult<Self> {
+        if bytes.is_empty() {
+            return Ok(Self::default());
+        }
+        let value: Value = serde_json::from_slice(bytes)
+            .map_err(|_| invalid_body("retry body must be a JSON object"))?;
+        let map = match value {
+            Value::Null => return Ok(Self::default()),
+            Value::Object(map) => map,
+            _ => return Err(invalid_body("retry body must be a JSON object")),
+        };
+        if let Some(unknown) = map
+            .keys()
+            .find(|key| !["operation", "options"].contains(&key.as_str()))
+        {
+            let shown: String = unknown.chars().take(48).collect();
+            return Err(invalid_body(format!(
+                "unknown field '{shown}' in the retry body; supported fields: operation, options"
+            )));
+        }
+        let operation = match map.get("operation") {
+            None | Some(Value::Null) => Operation::Retry,
+            Some(Value::String(name)) if name == "retry" => Operation::Retry,
+            Some(Value::String(name)) if name == "enhance" => Operation::Enhance,
+            Some(_) => return Err(invalid_body("operation must be 'retry' or 'enhance'")),
+        };
+        let options = match map.get("options") {
+            None | Some(Value::Null) => None,
+            Some(options) => Some(JobOptions::from_value(options.clone())?),
+        };
+        Ok(Self { options, operation })
+    }
 }
 impl Operation {
     fn name(self) -> &'static str {
@@ -75,19 +111,7 @@ pub(super) async fn retry(
     let bytes = axum::body::to_bytes(request.into_body(), 1024 * 1024)
         .await
         .map_err(|_| ApiError::new(413, "request_too_large", "retry body exceeds limit"))?;
-    let body = if bytes.is_empty() {
-        RetryBody::default()
-    } else {
-        serde_json::from_slice::<Option<RetryBody>>(&bytes)
-            .map_err(|e| {
-                ApiError::new(
-                    422,
-                    "invalid_retry_body",
-                    format!("invalid retry body: {e}"),
-                )
-            })?
-            .unwrap_or_default()
-    };
+    let body = RetryBody::parse(&bytes)?;
     http::refresh(&state).await?;
     let job = jobs::get(&state, &id)?;
     let admission_state = state.clone();
@@ -110,13 +134,18 @@ pub(super) async fn retry(
             let parsed=url::Url::parse(&prior.name).map_err(|_|ApiError::new(422,"invalid_url","invalid URL"))?;
             if !["http","https"].contains(&parsed.scheme())||parsed.host_str().is_none(){return Err(ApiError::new(422,"unsupported_url_scheme","URLs must use http or https"));}
         } else {return Err(ApiError::new(409,"no_source","item has no supported original source"));}
+        let explicit_options=body.options.is_some();
         let opts=match body.options {Some(opts)=>opts,None=>{
             let saved=data.item_options.get(&item_id).unwrap_or(&data.options);
             let mut known=serde_json::to_value(JobOptions::default()).unwrap();
             if let Some(fields)=saved.as_object(){for (key,value) in fields{if let Some(target)=known.get_mut(key){*target=value.clone();}}}
             serde_json::from_value(known).map_err(|_|ApiError::new(422,"invalid_options","saved item options are invalid"))?
         }};
-        let mut cfg=opts.config(&state.settings.snapshot())?;
+        let configuration=state.settings.snapshot();
+        let mut cfg=opts.config(&configuration)?;
+        // Options inherited from the item are the caller's earlier choice and keep the
+        // core's failure policy; a request that names model processing now needs a model now.
+        if explicit_options&&body.operation==Operation::Retry{opts.require_model(&configuration,&cfg)?;}
         if body.operation==Operation::Enhance&& (cfg["llm"]["enabled"]!=true||!markitai_core::llm_capabilities(&cfg).routable){return Err(ApiError::new(409,"llm_unavailable","LLM enhancement is unavailable; enable a routable LLM first"));}
         let base=files::exclusive_item_base(&data,&prior)?;
         let runtime=job.runtime.get_or_init(||Arc::new(markitai_core::LlmRuntime::new(cfg["llm"]["concurrency"].as_u64().unwrap_or(10).max(1) as usize).expect("validated LLM concurrency"))).clone();

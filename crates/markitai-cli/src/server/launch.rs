@@ -56,6 +56,11 @@ pub(super) fn browser_url(mut address: SocketAddr, token: Option<&str>) -> Strin
             IpAddr::V6(_) => Ipv6Addr::LOCALHOST.into(),
         });
     }
+    address_url(address, token)
+}
+
+/// The address exactly as given, with the token (when there is one) in the fragment.
+pub(super) fn address_url(address: SocketAddr, token: Option<&str>) -> String {
     let mut url = format!("http://{address}/");
     if let Some(token) = token {
         url.push('#');

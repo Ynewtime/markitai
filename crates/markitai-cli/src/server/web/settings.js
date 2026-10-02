@@ -19,14 +19,33 @@ async function conflict(error){
   $('conflict-message').append(button(t('conflictAccept'),()=>{draftRevision=settings.revision;$('conflict-message').hidden=true;status(t('conflictKept'));}));
   status(errorText(error),true,errorDetail(error));
 }
-function credentials(){const fields={};for(const [prefix,key]of[['key','api_key'],['base','api_base']]){const mode=$(prefix+'-mode').value;if(mode==='clear')fields[key]=null;if(mode==='replace'){const value=$('provider-'+prefix).value.trim();if(!value)throw new Error(t(key==='api_key'?'enterKey':'enterBase'));fields[key]=value;}}return fields;}
+// Credential fields of a request: Keep omits one, Clear sends null, Replace sends the typed value.
+// A new connection opens in Replace so the key can be typed at once; left empty there, no key
+// is sent and the provider's environment variable is used, as with Keep.
+export function credentialFields(inputs,editing){
+  const fields={};
+  for(const [prefix,key]of[['key','api_key'],['base','api_base']]){
+    const {mode,value}=inputs[prefix];
+    if(mode==='clear')fields[key]=null;
+    if(mode==='replace'){
+      const text=value.trim();
+      if(text)fields[key]=text;
+      else if(editing||key!=='api_key')throw new Error(t(key==='api_key'?'enterKey':'enterBase'));
+    }
+  }
+  return fields;
+}
+function credentials(){return credentialFields({key:{mode:$('key-mode').value,value:$('provider-key').value},base:{mode:$('base-mode').value,value:$('provider-base').value}},!!selected);}
 function currentModels(){const entries=[...$('discovered-models').querySelectorAll('input:checked')].map(node=>node.value);entries.push(...$('manual-models').value.split(/\r?\n/).map(line=>line.trim()).filter(Boolean));return [...new Set(entries)];}
 function modelPayload(model){const value={model_name:$('routing-group').value.trim(),model,weight:Number($('model-weight').value),...credentials()};if(!value.model_name||!Number.isInteger(value.weight)||value.weight<0)throw new Error(t('routingRequired'));if(selected){if(selected.provider_id.startsWith('legacy:'))value.credential_deployment_id=selected.deployment_id||selected.provider_id.slice(7);else value.credential_provider_id=selected.provider_id;}else value.provider=$('provider-type').value;return value;}
 function clearSecrets(){for(const key of ['key','base']){$('provider-'+key).value='';$(key+'-mode').value='keep';$('provider-'+key).disabled=true;}}
-function reset(){selected=null;draftRevision=settings?.revision||null;discovered=[];clearSecrets();$('provider-type').disabled=false;$('provider-type').value='openai';label($('connection-title'),'addConnectionTitle');label($('connection-hint'),'connectionHint');$('manual-models').value='';$('discovered-models').replaceChildren();$('discovery-status').textContent='';$('routing-group').value='default';$('model-weight').value='1';$('save-connection').hidden=true;$('conflict-message').hidden=true;status('');}
+// A new connection has no saved key to keep, so its key field starts enabled, in Replace.
+function openKeyField(){$('key-mode').value='replace';$('provider-key').disabled=false;}
+function reset(){selected=null;draftRevision=settings?.revision||null;discovered=[];clearSecrets();openKeyField();$('provider-type').disabled=false;$('provider-type').value='openai';label($('connection-title'),'addConnectionTitle');label($('connection-hint'),'connectionHint');$('manual-models').value='';$('discovered-models').replaceChildren();$('discovery-status').textContent='';$('routing-group').value='default';$('model-weight').value='1';$('save-connection').hidden=true;$('conflict-message').hidden=true;status('');}
 // The editor sits below the lists on narrow screens; bring it into view after choosing what to edit.
 function revealEditor(focus){const box=$('connection-form').getBoundingClientRect();if(box.top<0||box.top>innerHeight*0.5)$('connection-form').scrollIntoView({behavior:'smooth',block:'start'});focus?.focus({preventScroll:true});}
-function setUp(provider,state){reset();$('provider-type').value=provider;if(state!=='needs_credentials'){revealEditor($('discover-models'));return;}$('key-mode').value='replace';$('provider-key').disabled=false;revealEditor($('provider-key'));}
+// A provider whose credentials are already available (an environment variable) keeps them by default.
+function setUp(provider,state){reset();$('provider-type').value=provider;if(state!=='needs_credentials'){clearSecrets();revealEditor($('discover-models'));return;}revealEditor($('provider-key'));}
 async function editConnection(provider){
   await guarded(async()=>{
     const values=await api(`${base}/providers/${encodeURIComponent(provider.provider_id)}/credentials`);
