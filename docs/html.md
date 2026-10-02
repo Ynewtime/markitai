@@ -31,11 +31,28 @@ or first heading matches the preceding text. Ordinary hyphenated subtitles stay
 intact. Pathological titles are capped at 300 Unicode characters, preferably at
 a word boundary, followed by an ellipsis.
 
-Author meta tags precede JSON-LD author strings or author objects. Publication
-metadata precedes JSON-LD `datePublished`, then a date-shaped `<time datetime>`.
-Description and site values come from meta tags. Page canonical URLs are retained;
-a homepage canonical on a deeper source URL is discarded. The local-format
-dispatcher must preserve the reader's title so normal output can use it.
+A JSON-LD `headline` is not a title when it names nothing the first heading,
+the document title and the Open Graph title say while the heading and one of the
+titles agree with each other (Wikipedia writes the article's short description,
+`memory-safe programming language without garbage collection`, there); the next
+layer is used. A page with no heading to confirm the titles keeps its headline.
+
+The author is the `author` meta tag, else the JSON-LD author, else the
+`article:author` meta tag, the first of them that is a name: a web address (an
+`article:author` profile link, a JSON-LD name that is a URL) is never written as
+the author. The JSON-LD author is a string, an object with a `name`, an
+object that points (`@id`) at another object of the page's graph, or an array of
+them; an array that has `Person` objects keeps only those, and several names are
+joined with `, `. Publication metadata precedes JSON-LD `datePublished`, then a
+date-shaped `<time datetime>`. Description and site values come from meta tags,
+read from either the `property` or the `name` attribute (a page that writes both,
+or an Open Graph value under `name`, is read either way). A page whose meta tags
+name no site has the JSON-LD `publisher` name (a string or an object's `name`) as
+its `site`, as defuddle reads it, which is not used to clean the title; a Substack
+page with neither is `Substack`, as the reference's Substack reader has it.
+Page canonical URLs are retained; a homepage canonical on a deeper source URL is
+discarded. The local-format dispatcher must preserve the reader's title so
+normal output can use it.
 
 ## Rendering and URL handling
 
@@ -82,6 +99,34 @@ documented article heuristic; ordinary hidden descendants remain hidden.
   address, and in fragments, relative destinations stay as written. A
   scheme-relative address (`//host/path`) takes `https:` when no page URL is
   given, since Markdown would read it as a local path.
+- An image is its largest `srcset` candidate (`data-srcset` first): the widest
+  `w` descriptor, else the densest `x` one (no descriptor counts as `1x`), the
+  first of equals, where `src` is often a thumbnail. Candidates are read as the
+  HTML standard reads them, so a comma inside an address (a CDN's
+  `w_728,c_limit`) does not split it; only a comma that ends an address or
+  follows a descriptor does, and a candidate with an unknown descriptor is
+  dropped. An image is never downgraded: the largest candidate replaces the
+  plain address (the lazy `data-src` or `data-original`, else `src`) only when
+  that address is missing or an inline `data:` placeholder, or is itself a
+  candidate of the set (a thumbnail kept as `src`, compared as written), or, when
+  the set lists widths, the candidate is at least the `width` attribute (in
+  pixels; a percentage or no attribute keeps the address), or, when the set lists
+  densities only, the candidate is denser than the address's implicit `1x`.
+  Otherwise the address stays (BBC's `src` is 2560 pixels wide and its set ends at
+  1920). An inline `data:` candidate is never chosen. `<picture><source>`
+  elements are not read, since their types and media queries choose between
+  formats and crops, not sizes. The lines of an alt text or title are joined with
+  a space, so a figure's description is not cut at its first line, and an empty
+  title is left out (`![](a.webp "")` becomes `![](a.webp)`).
+- Emphasis the page nests with itself (`<b><strong>x</strong></b>`,
+  `<em><i>x</i></em>`) is written once (`**x**`, not `****x****`); differently
+  nested emphasis keeps both (`***x***`).
+- Text drawn for screen readers only (`visually-hidden`, `sr-only`,
+  `screen-reader-text`, a CSS module's `…VisuallyHidden`) is kept as the label of
+  what follows it, set apart by a space when the markup puts none between
+  (`Published 1 hour ago`, `By Katya Adler`, not `Published1 hour ago`). Other
+  adjacent inline elements stay joined, since a style sheet's gap between them
+  cannot be told from a word's inner markup.
 - An image whose source is inline `data:` content keeps its alt text and
   position as the reference's `![alt](data:<type>...)` placeholder; the payload
   is never retained. `data:text/html`, `data:image/svg+xml` and
@@ -295,12 +340,33 @@ when it contains a TeX command (a backslash and two letters). It is display math
 when it contains `\begin{` or the image is its paragraph's only child. Images
 without such LaTeX (for example an alt of `A, B`) stay images.
 
-This is not a complete MathML or TeX renderer. Raw dollar/backslash-delimited
-math in ordinary text, visual-only MathJax CHTML/SVG reconstruction,
-arbitrary MathML layout/variants, multiscripts and exact tagged-equation
-layout remain outside this round. Unknown presentation elements retain their
-child text/structure where possible; specialized layout can differ. Existing
-source code blocks are kept separate from math interpretation.
+TeX source a page leaves in its text for MathJax or KaTeX auto-render to read
+(`$x$`, `$$x$$`, `\(x\)`, `\[x\]`) is math too, and keeps its backslashes,
+brackets and underscores as written (the Markdown escaping would turn
+`$\mathbf{x}_1$` into `$\\mathbf{x}\_1$`). The rule is conservative, since a
+dollar sign is usually a price, and reads one text node at a time (a delimiter
+and its partner in different elements are not a pair; code is never read):
+
+- `$ … $` and `\( … \)` are inline math on one line (at most 400 bytes). `$`
+  follows Pandoc's rule: no space right after the opening dollar or right before
+  the closing one, and no digit right after the closing one, so `$5 and $10`,
+  `US$5-$10` and `$HOME/$USER` are text. A dollar sign that cannot close ends the
+  search, and `\$` is a dollar sign.
+- `$$ … $$` and `\[ … \]` are display math and may span lines. A display
+  expression that is all its element holds (`<p>$$…$$</p>`) is a block of its
+  own, written `$$…$$`; inside a sentence, or in a table cell, it is inline
+  `$…$` (in a cell on one line), as the reference spells it. `\(…\)` is written
+  `$…$`.
+- Between single delimiters and `\[ … \]` the text has to look like math: at
+  most three characters (`$x$`, `\(n\)`) or one with a TeX or operator character
+  (`\ ^ _ { } = + < > | ( ) [ ] , '`), so `\[options\]` and `\(some words\)` stay
+  text.
+
+This is not a complete MathML or TeX renderer. Visual-only MathJax CHTML/SVG
+reconstruction, arbitrary MathML layout/variants, multiscripts and exact
+tagged-equation layout remain outside this round. Unknown presentation elements
+retain their child text/structure where possible; specialized layout can differ.
+Existing source code blocks are kept separate from math interpretation.
 
 ## Footnote recovery
 

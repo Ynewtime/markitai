@@ -81,6 +81,43 @@ are now values of `-s/--strategy`. `--kreuzberg` is gone because RTF is read
 natively. Like other usage errors, it is printed in the argument parser's own
 form: `error: …` (lower case, not `Error: …`), then the usage line, exit status 2.
 
+**`Error: HTTP 404 for https://…: the page may have been removed or is not public`.**
+The site answered with that status. The message names the page (without
+credentials, and with secret-looking query values replaced) and, for the common
+statuses, says what it usually means: 404/410, removed or not public; 401/403,
+the site refused access, may block automated clients or need a login (Markitai
+sends no cookies or login unless you configure a browser identity, see
+[browser contracts](browser.md)); 429, rate limited, try again later; 5xx, a
+server error on the site. Only a connection that could not be established
+because the peer cut it off (such as `tls handshake eof`) is retried, twice; a
+status is reported at once. See
+[URL fetching](fetch.md#failures-retries-and-redirects).
+
+**`Error: The page needs JavaScript; use -s playwright or the default auto strategy`.**
+`-s static` read a page that is empty or asks for JavaScript. Use `-s playwright`
+or the default `-s auto`, which renders it with a local Chrome or Chromium. With
+`auto` and no browser installed the message says that none was found: install
+one, set `MARKITAI_BROWSER_EXECUTABLE` or run `markitai doctor --fix`. A short
+page whose text is little next to a large script (the `quotes.toscrape.com/js/`
+example) is converted with a warning under `-s static` and rendered by `auto`;
+see [pages that need JavaScript](fetch.md#pages-that-need-javascript).
+
+**A page's text is garbled, or a warning says its encoding could not be determined.**
+The server's `Content-Type` and the page's `<meta>` agree with the bytes in nearly
+every case. When neither fits, as with a GBK page labelled `utf-8` or one with no
+label, Markitai reads the bytes like a local text file and warns when it had to
+choose Windows-1252 over a plausible East Asian reading. Fetch the page with
+`-s playwright` (the browser applies its own detection), or save it and convert
+the file. See [character encodings](fetch.md#character-encodings).
+
+**An output file for a URL has an unexpected name, or two URLs share one.**
+A URL is named by its last path segment, with the value of an identifying query
+parameter (`?id=…`, `?v=…`, `?p=…`) appended, so `…/item?id=8863` becomes
+`news_ycombinator_com_item_8863.md`, and an X/Twitter post becomes
+`<user>-status-<id>.md`. See [names from URLs](output.md#names-from-urls). For a
+single URL, `-o chosen.md` sets the exact file name; an existing name is renamed
+`….v2.md` unless `output.on_conflict` says otherwise.
+
 **`Fetch strategy 'cloudflare' is not implemented` / `Cloudflare file conversion is not implemented`.**
 The Cloudflare strategy and `-b cloudflare` backend are not available in this
 build. Use `-s auto`, `static`, `playwright`, `jina` or `defuddle`, and the

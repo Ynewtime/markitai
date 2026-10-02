@@ -26,6 +26,78 @@ pub(crate) fn legacy_encoding(bytes: &[u8]) -> Option<&'static Encoding> {
     (bytes.is_ascii() || std::str::from_utf8(bytes).is_err()).then_some(encoding)
 }
 
+/// The text of a fetched HTML response and, when the encoding was uncertain
+/// or the bytes did not fit it, a warning.
+///
+/// A BOM decides first. Otherwise the first declaration the bytes actually
+/// fit wins: the HTTP `charset`, then a `<meta>` declaration, then UTF-8.
+/// Many servers send `utf-8` for bytes that are really GBK, and many old
+/// pages declare nothing. When no declaration fits, a declared legacy
+/// encoding is kept (a few corrupt sequences cost characters, not the page),
+/// UTF-8 with only a sprinkling of bad bytes stays UTF-8, and the rest is
+/// read like a local text file, by the East Asian detection of plain-text
+/// input, which says so when it cannot tell Windows-1252 from a multibyte
+/// reading.
+pub(crate) fn decode_fetched<'a>(
+    bytes: &'a [u8],
+    header_charset: Option<&str>,
+) -> (std::borrow::Cow<'a, str>, Option<String>) {
+    if Encoding::for_bom(bytes).is_some() {
+        return (UTF_8.decode(bytes).0, None);
+    }
+    let header = header_charset.and_then(|value| label(value.trim_matches(['"', '\'']).as_bytes()));
+    let mut declared: Vec<&'static Encoding> = Vec::new();
+    for encoding in [header, legacy_encoding(bytes), Some(UTF_8)]
+        .into_iter()
+        .flatten()
+    {
+        if !declared.contains(&encoding) {
+            declared.push(encoding);
+        }
+    }
+    for encoding in &declared {
+        if let Some(text) = encoding.decode_without_bom_handling_and_without_replacement(bytes) {
+            return (text, None);
+        }
+    }
+    if let Some(encoding) = declared.iter().find(|encoding| **encoding != UTF_8) {
+        let (text, _) = encoding.decode_without_bom_handling(bytes);
+        return (
+            text,
+            Some(format!(
+                "HTML declared as {} contains invalid byte sequences; they were replaced with U+FFFD.",
+                encoding.name()
+            )),
+        );
+    }
+    // Only UTF-8 is left, and the bytes are not valid UTF-8.
+    let (lossy, _) = UTF_8.decode_without_bom_handling(bytes);
+    let non_ascii = bytes.iter().filter(|byte| !byte.is_ascii()).count();
+    let invalid = bytes
+        .utf8_chunks()
+        .filter(|chunk| !chunk.invalid().is_empty())
+        .count();
+    if invalid * 100 < non_ascii {
+        return (
+            lossy,
+            Some(format!(
+                "HTML is UTF-8 with {invalid} invalid byte sequence{}; they were replaced with U+FFFD.",
+                if invalid == 1 { "" } else { "s" }
+            )),
+        );
+    }
+    match super::super::text::decode_legacy(bytes) {
+        Ok((text, warning)) => (text.into(), warning),
+        Err(_) => (
+            lossy,
+            Some(
+                "HTML is not valid UTF-8 and its encoding could not be determined; invalid bytes were replaced with U+FFFD."
+                    .into(),
+            ),
+        ),
+    }
+}
+
 fn is_space(byte: u8) -> bool {
     matches!(byte, 0x09 | 0x0A | 0x0C | 0x0D | 0x20)
 }
@@ -315,6 +387,93 @@ mod tests {
             None
         );
         assert_eq!(legacy_encoding(b"<p>\xd6\xd0</p>"), None);
+    }
+
+    const CHINESE: &str = "这是一段用于测试字符编码的中文文本，包含常用汉字和标点符号。第二段：风急天高猿啸哀，渚清沙白鸟飞回。无边落木萧萧下，不尽长江滚滚来。";
+
+    const TRADITIONAL: &str = "這是一段用於測試字元編碼的中文文字，包含常用漢字和標點符號。第二段：風急天高猿嘯哀，渚清沙白鳥飛回。無邊落木蕭蕭下，不盡長江滾滾來。";
+
+    fn page_of(text: &str, meta: &str, encoding: &'static Encoding) -> Vec<u8> {
+        let source =
+            format!("<html><head>{meta}<title>t</title></head><body><p>{text}</p></body></html>");
+        let (bytes, _, unmappable) = encoding.encode(&source);
+        assert!(!unmappable);
+        bytes.into_owned()
+    }
+
+    fn page(meta: &str, encoding: &'static Encoding) -> Vec<u8> {
+        page_of(CHINESE, meta, encoding)
+    }
+
+    #[test]
+    fn a_fetched_page_keeps_the_first_declaration_its_bytes_fit() {
+        // A correct header wins, even over a contradicting `<meta>`.
+        let big5 = page_of(TRADITIONAL, "<meta charset=gbk>", BIG5);
+        let (text, warning) = decode_fetched(&big5, Some("big5"));
+        assert!(text.contains(TRADITIONAL) && warning.is_none());
+        let utf8 = format!("<meta charset=gbk><p>{CHINESE}</p>");
+        let (text, warning) = decode_fetched(utf8.as_bytes(), Some("UTF-8"));
+        assert!(text.contains(CHINESE) && warning.is_none());
+        // Quoted, padded and unknown labels.
+        let gbk = page("", GBK);
+        for header in ["\"gbk\"", " 'GB2312' "] {
+            let (text, warning) = decode_fetched(&gbk, Some(header));
+            assert!(text.contains(CHINESE) && warning.is_none(), "{header}");
+        }
+        // A single-byte header is trusted: it never fails to decode.
+        let (text, warning) = decode_fetched(&gbk, Some("windows-1252"));
+        assert!(!text.contains(CHINESE) && warning.is_none());
+        // A BOM overrides the label.
+        let mut bom = b"\xef\xbb\xbf".to_vec();
+        bom.extend_from_slice(utf8.as_bytes());
+        let (text, warning) = decode_fetched(&bom, Some("gbk"));
+        assert!(text.contains(CHINESE) && warning.is_none());
+    }
+
+    #[test]
+    fn a_utf8_label_that_the_bytes_contradict_yields_to_a_matching_declaration_or_detection() {
+        // Header utf-8, `<meta>` gbk: the declaration that fits wins quietly.
+        let with_meta = page("<meta charset=gbk>", GBK);
+        let (text, warning) = decode_fetched(&with_meta, Some("utf-8"));
+        assert!(text.contains(CHINESE) && warning.is_none());
+        // Header utf-8 or nothing at all, no `<meta>`: detected.
+        let bare = page("", GBK);
+        for header in [Some("utf-8"), None] {
+            let (text, warning) = decode_fetched(&bare, header);
+            assert!(text.contains(CHINESE), "{header:?}: {text}");
+            assert!(warning.is_none(), "{header:?}: {warning:?}");
+        }
+        // Traditional Chinese without any declaration is never garbled
+        // silently: either Big5 is recognized or the page says it is unsure.
+        let bare = page_of(TRADITIONAL, "", BIG5);
+        let (text, warning) = decode_fetched(&bare, None);
+        assert!(text.contains(TRADITIONAL) || warning.is_some(), "{text}");
+        let (japanese, _, _) =
+            SHIFT_JIS.encode("<p>日本語のテキストです。これは文字コードの検出を試すための、少し長めの文章になっています。</p>");
+        let (text, warning) = decode_fetched(&japanese, Some("utf-8"));
+        assert!(text.contains("日本語のテキストです"), "{text}");
+        assert!(warning.is_none());
+    }
+
+    #[test]
+    fn uncertain_or_partly_corrupt_bytes_keep_a_reading_and_a_warning() {
+        // A little Western text without a declaration is Windows-1252.
+        let (text, warning) = decode_fetched(b"<p>caf\xe9 au lait</p>", None);
+        assert_eq!(text, "<p>café au lait</p>");
+        assert!(warning.is_none());
+        // A stray bad byte in a long UTF-8 page stays UTF-8.
+        let mut mostly = format!("<p>{}</p>", CHINESE.repeat(4)).into_bytes();
+        mostly.insert(3, 0xff);
+        let (text, warning) = decode_fetched(&mostly, Some("utf-8"));
+        assert!(text.contains(CHINESE) && text.contains('\u{fffd}'));
+        assert!(warning.unwrap().contains("1 invalid byte sequence;"));
+        // A declared legacy encoding with a corrupt tail is kept, with a warning.
+        let (text, warning) = decode_fetched(b"<meta charset=shift_jis><p>\x82\xa0\x82</p>", None);
+        assert!(text.contains("あ\u{fffd}"));
+        assert!(warning.unwrap().starts_with("HTML declared as Shift_JIS"));
+        // The `replacement` encodings are not labels.
+        let (text, warning) = decode_fetched(CHINESE.as_bytes(), Some("hz-gb-2312"));
+        assert!(text.contains(CHINESE) && warning.is_none());
     }
 
     #[test]

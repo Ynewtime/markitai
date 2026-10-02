@@ -425,13 +425,21 @@ pub fn url_name(source: &str, _meta: &Map<String, Value>) -> String {
         .as_ref()
         .and_then(|u| u.path_segments()?.rfind(|s| !s.is_empty()))
         .map(|segment| percent_decoded(segment).unwrap_or_else(|| segment.to_owned()));
-    let raw = match segment {
-        Some(path) if parsed.as_ref().is_some_and(|u| u.query().is_some()) => {
-            format!("{host}_{path}")
+    // A page named by a query (`item?id=8863`, `watch?v=abc`) carries its
+    // identity there; without it two pages of one site share a name.
+    let identity = parsed.as_ref().and_then(identifying_query);
+    let raw = match (segment, identity) {
+        (Some(path), identity) if parsed.as_ref().is_some_and(|u| u.query().is_some()) => {
+            match identity {
+                Some(identity) if !path.contains(&identity) => format!("{host}_{path}_{identity}"),
+                _ => format!("{host}_{path}"),
+            }
         }
-        Some(path) => path.to_owned(),
-        None => host,
+        (Some(path), _) => path,
+        (None, Some(identity)) => format!("{host}_{identity}"),
+        (None, None) => host,
     };
+    let raw = parsed.as_ref().and_then(social_status_name).unwrap_or(raw);
     let safe: String = raw
         .chars()
         .map(|c| {
@@ -448,6 +456,85 @@ pub fn url_name(source: &str, _meta: &Map<String, Value>) -> String {
     } else {
         safe
     }
+}
+
+/// Whether a query parameter names the page itself, as `id`, `v` (a video) or
+/// `p` (a WordPress post) do, rather than a view of it, a search or tracking.
+fn identifies(key: &str) -> bool {
+    if matches!(
+        key,
+        "id" | "v" | "p" | "pid" | "tid" | "nid" | "aid" | "vid"
+    ) {
+        return true;
+    }
+    // `item`, `itemid` and `item_id`; a bare `page` is a page number.
+    [
+        "story", "article", "post", "topic", "thread", "item", "video", "doc", "page",
+    ]
+    .iter()
+    .any(|noun| {
+        key.strip_prefix(noun).is_some_and(|rest| {
+            matches!(rest, "id" | "_id") || (rest.is_empty() && *noun != "page")
+        })
+    })
+}
+
+/// The value of the first identifying query parameter, reduced to letters,
+/// digits, `-`, `_` and `.` and at most 64 characters.
+fn identifying_query(url: &url::Url) -> Option<String> {
+    url.query_pairs().find_map(|(key, value)| {
+        if !identifies(&key.to_ascii_lowercase()) {
+            return None;
+        }
+        let mut cleaned = String::new();
+        for c in value.chars() {
+            if c.is_alphanumeric() || c == '_' || c == '.' {
+                cleaned.push(c);
+            } else if !cleaned.ends_with('-') {
+                cleaned.push('-');
+            }
+        }
+        let cleaned: String = cleaned.trim_matches(['-', '.']).chars().take(64).collect();
+        (!cleaned.is_empty()).then_some(cleaned)
+    })
+}
+
+/// `<user>-status-<id>` for a post on X or Twitter or one of their mirrors,
+/// whatever follows the id (`/photo/1`, `/video/1`, `/analytics`) and whatever
+/// the query says.
+fn social_status_name(url: &url::Url) -> Option<String> {
+    let host = url.host_str()?.to_ascii_lowercase();
+    let host = host
+        .strip_prefix("www.")
+        .or_else(|| host.strip_prefix("mobile."))
+        .unwrap_or(&host);
+    if ![
+        "x.com",
+        "twitter.com",
+        "fxtwitter.com",
+        "vxtwitter.com",
+        "fixupx.com",
+        "fixvx.com",
+        "twittpr.com",
+    ]
+    .contains(&host)
+    {
+        return None;
+    }
+    let segments: Vec<&str> = url.path_segments()?.filter(|s| !s.is_empty()).collect();
+    let at = segments
+        .iter()
+        .position(|s| s.eq_ignore_ascii_case("status") || s.eq_ignore_ascii_case("statuses"))?;
+    let id = segments
+        .get(at + 1)
+        .filter(|id| id.len() <= 25 && !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))?;
+    // `/i/web/status/<id>` has no user.
+    let user = match segments.get(at.checked_sub(1)?)? {
+        s if s.eq_ignore_ascii_case("web") && at >= 2 => segments[at - 2],
+        s => s,
+    };
+    (user.len() <= 30 && user.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
+        .then(|| format!("{user}-status-{id}"))
 }
 
 /// `%XX` sequences of a URL path segment as bytes, when the result is UTF-8.

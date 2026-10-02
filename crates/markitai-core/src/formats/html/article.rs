@@ -269,12 +269,65 @@ pub(super) fn excluded(facts: &Facts, element: ElementRef<'_>) -> bool {
     facts.remember(element, Fact::Excluded, || chrome(facts, element))
 }
 
+/// The interface text GitHub's issue viewer (Primer) writes among the
+/// discussion: tooltips, the signed-out banner ("Sign up for free to join this
+/// conversation on GitHub. Already have an account? Sign in to comment"), the
+/// links that send a signed-out reader to sign in (`New issue`) and the labels
+/// of buttons that are not drawn (`Copy link`, `Issue body actions`,
+/// `Reactions are currently unavailable`). The state, labels, opener and date
+/// around them are content and stay.
+fn github_chrome(element: ElementRef<'_>) -> bool {
+    const LABELS: [&str; 3] = [
+        "Copy link",
+        "Issue body actions",
+        "Reactions are currently unavailable",
+    ];
+    // CSS-module class names end in a hash that changes with the build.
+    if element.value().attribute("class").is_some_and(|classes| {
+        classes.split_ascii_whitespace().any(|class| {
+            class.starts_with("SignedOutBanner-module__signedOutBanner")
+                || class.starts_with("prc-TooltipV2-Tooltip")
+        })
+    }) {
+        return true;
+    }
+    let in_viewer = || {
+        element
+            .ancestors()
+            .filter_map(ElementRef::wrap)
+            .any(|ancestor| {
+                ancestor.value().attribute("data-testid") == Some("issue-viewer-container")
+            })
+    };
+    // A link that asks a signed-out reader to sign in (`New issue`, `Sign in
+    // to comment`).
+    if element.value().name() == "a"
+        && element.value().attribute("href").is_some_and(|href| {
+            ["/login?return_to=", "/signup?return_to="]
+                .iter()
+                .any(|path| href.contains(path))
+        })
+    {
+        return in_viewer();
+    }
+    let mut children = element.children();
+    let (Some(only), None) = (children.next(), children.next()) else {
+        return false;
+    };
+    matches!(only.value(), Node::Text(text) if LABELS.contains(&text.trim())) && in_viewer()
+}
+
 fn chrome(facts: &Facts, element: ElementRef<'_>) -> bool {
     if hidden_class(element) && !contains_math(element) {
         return true;
     }
     // A tooltip labels a control (a download button's "Save"); it is not text.
     if token(element, "role", "tooltip") {
+        return true;
+    }
+    // A popover is hidden until a script opens it (the browser's own style
+    // sheet hides it), and a page's tooltips are written so.
+    if element.value().attribute("popover").is_some() || github_chrome(element) {
         return true;
     }
     // MediaWiki's section edit links, "From Wikipedia" tagline, redirect

@@ -289,6 +289,9 @@ fn language_attribute(element: ElementRef<'_>) -> Option<String> {
             return Some(value);
         }
     }
+    if let Some(value) = brush_language(element) {
+        return Some(value);
+    }
     if (matches!(element.value().name(), "pre" | "code")
         || any_class(element, &["highlighter-rouge", "highlight"]))
         && let Some(value) = element.value().attribute("lang").and_then(safe_language)
@@ -297,6 +300,23 @@ fn language_attribute(element: ElementRef<'_>) -> Option<String> {
     }
     if any_class(element, &["highlight", "hl"]) {
         return element.value().classes().find_map(language_label);
+    }
+    None
+}
+/// The language SyntaxHighlighter-style classes name: `class="brush: js"`, also
+/// `brush:js` and `brush: js; gutter: false` (MDN writes its blocks so).
+fn brush_language(element: ElementRef<'_>) -> Option<String> {
+    let mut words = element.value().attribute("class")?.split_ascii_whitespace();
+    while let Some(word) = words.next() {
+        let Some(rest) = word
+            .get(.."brush:".len())
+            .filter(|prefix| prefix.eq_ignore_ascii_case("brush:"))
+            .map(|_| &word["brush:".len()..])
+        else {
+            continue;
+        };
+        let name = if rest.is_empty() { words.next()? } else { rest };
+        return safe_language(name.trim_end_matches(';'));
     }
     None
 }
@@ -358,6 +378,88 @@ fn inferred_wrapper(element: ElementRef<'_>) -> bool {
             .descendants()
             .filter_map(ElementRef::wrap)
             .any(target)
+}
+
+/// A language's name with the spellings a label and a class give it reduced to
+/// one (`JS`, `javascript`, `Node.js`).
+fn canonical_language(name: &str) -> String {
+    let lower = name.trim().to_ascii_lowercase();
+    let name = language_label(&lower).unwrap_or(lower);
+    match name.as_str() {
+        "js" => "javascript",
+        "ts" => "typescript",
+        "py" => "python",
+        "rs" => "rust",
+        "yml" => "yaml",
+        other => other,
+    }
+    .to_owned()
+}
+
+/// Whether an element is a label above a code block that only repeats the
+/// block's language, such as MDN's `<div class="example-header"><span
+/// class="language-name">js</span></div>` before `<pre class="brush: js">`: the
+/// fence names the language, and the label would be a stray line before it. Only
+/// a `div` or `span` whose own or inner class hints at a label (`language-name`,
+/// `example-header`) is read, and its short text must be the language the
+/// block that follows it has; a heading or paragraph that names a language is
+/// the page's own text.
+pub(super) fn repeats_language(element: ElementRef<'_>) -> bool {
+    if !matches!(element.value().name(), "div" | "span") {
+        return false;
+    }
+    // The next thing is a code block: only blank text between.
+    let mut next = None;
+    for node in element.next_siblings() {
+        match node.value() {
+            Node::Comment(_) => {}
+            Node::Text(text) if text.trim().is_empty() => {}
+            Node::Element(_) => {
+                next = ElementRef::wrap(node);
+                break;
+            }
+            _ => return false,
+        }
+    }
+    let Some(next) = next.filter(|next| target(*next) || explicit_wrapper(*next)) else {
+        return false;
+    };
+    let mut label = String::new();
+    for text in element.text() {
+        label.push_str(text);
+        if label.trim().len() > 2 * MAX_LABEL {
+            return false;
+        }
+    }
+    let label = label.trim();
+    if label.is_empty() || label.split_whitespace().count() > 2 {
+        return false;
+    }
+    let hinted = std::iter::once(element)
+        .chain(element.descendants().filter_map(ElementRef::wrap))
+        .any(|node| {
+            node.value().classes().any(|class| {
+                let class = class.to_ascii_lowercase();
+                ["language", "lang", "header", "label"]
+                    .iter()
+                    .any(|hint| class.contains(hint))
+            })
+        });
+    if !hinted {
+        return false;
+    }
+    let scope = LanguageScope::new(next);
+    let language = if target(next) {
+        code_language(next, &scope)
+    } else {
+        match confirmed_targets(next, 0) {
+            Ok(Some(targets)) => targets
+                .first()
+                .and_then(|(block, _)| code_language(*block, &scope)),
+            _ => None,
+        }
+    };
+    language.is_some_and(|language| canonical_language(&language) == canonical_language(label))
 }
 
 fn collect_targets<'a>(

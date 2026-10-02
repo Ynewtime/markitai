@@ -6,17 +6,13 @@ the local format readers. Requests negotiate
 `Accept: text/markdown, text/html;q=0.9, */*;q=0.5`, follow at most ten redirects
 and bound response bodies to 100 MiB. HTML links resolve against the final
 response URL. Both initial and conditional responses use the same charset and
-format decoder. Text decoding follows a BOM, then an HTTP charset, then for
-HTML a `<meta>` declaration found by the HTML standard's prescan (see
-[text encodings](formats.md#text-encodings)), otherwise UTF-8; malformed
-sequences use replacement characters. Plain-text responses without a charset
-are not run through the local encoding detection. Explicit plain-text and
-Markdown MIME types keep literal HTML examples as text rather than triggering
-HTML challenge detection.
+format decoder. Explicit plain-text and Markdown MIME types keep literal HTML
+examples as text rather than triggering HTML challenge detection.
 
 For an unknown anonymous authority, `auto` starts with the static path when screenshots are not requested, with
 local browser fallback for recognized JavaScript/challenge or empty-HTML quality
-failures. Capture requests first perform one bounded, unconditional static GET
+failures and for script-rendered shells (see
+[pages that need JavaScript](#pages-that-need-javascript)). Capture requests first perform one bounded, unconditional static GET
 to distinguish PDF downloads from browser pages. A PDF is handed directly to
 the native document pipeline, including for extensionless and redirected URLs;
 other successful responses continue through browser capture. Ordinary HTML
@@ -49,6 +45,100 @@ hosts are only recognized in order to avoid contacting them: no X address is
 sent to FxTwitter, oEmbed, defuddle or Jina by any strategy but an explicit
 `defuddle`/`jina` request. The post reader is described in
 [HTML conversion](html.md).
+
+## Character encodings
+
+HTML bytes become text by a BOM, then the first declaration they fit: the HTTP
+`charset`, then a `<meta>` declaration found by the HTML standard's prescan (see
+[text encodings](formats.md#text-encodings)), then UTF-8. A declaration that
+fits always wins, so correct pages are read as before; a single-byte HTTP
+charset such as `windows-1252` is trusted because every byte sequence fits it.
+When no declaration fits, which is typically a server that sends `charset=utf-8`
+for a GBK page or a page that declares nothing and is not UTF-8:
+
+- a declared legacy encoding (an invalid sequence in GBK, say) is kept, the bad
+  sequences become U+FFFD, and a warning says so;
+- UTF-8 with only a sprinkling of bad bytes (fewer than 1 % of its non-ASCII
+  bytes, as in the reference) stays UTF-8, with a warning;
+- anything else is read like a local text file: GB18030 (GBK, GB2312), Big5,
+  Shift_JIS, EUC-JP and EUC-KR by the scoring described under text encodings,
+  with a Latin-1 page read as Windows-1252. The result is silent when the
+  reading is decisive and carries a warning when Windows-1252 was kept although
+  an East Asian reading was plausible.
+
+A page read with a warning is not cached (see below). Very short pages are often
+undecidable, and there is no option to name the encoding. Plain-text responses
+(`text/*` other than HTML) follow a BOM, then the HTTP charset, then UTF-8, with
+replacement characters and no detection.
+
+## Failures, retries and redirects
+
+A failed status reads `HTTP <status> for <URL>` and, for the common ones, a hint:
+404 and 410 "the page may have been removed or is not public", 401 and 403 "the
+site refused access; it may block automated clients or need a login", 429 "rate
+limited; try again later" and 5xx "the site had a server error". The URL has no
+credentials or fragment, and query values are replaced by `REDACTED` for the
+usual secret names (`token`, `key`, `secret`, `password`, `signature`,
+`credential`, `auth`, `sig`, `sid`, `session`, `code` and similar) and for long
+opaque values. It is cut at 200 characters. The message keeps the status first
+and the `fetch_error` code, so the [web interface](web-ui.md) still recognizes
+it. A remote service's own failure reads `HTTP <status> from the <service> service`
+without a hint, because its status says nothing about the page.
+
+A GET whose connection cannot be established because the peer reset it or cut
+it off, such as a TLS handshake that ends early (`tls handshake eof`) or
+`Connection reset by peer` while connecting, is repeated up to twice, after
+250 ms and 750 ms. Nothing had been sent, so a repeat cannot duplicate work.
+Nothing else is retried: not a timeout, a refused connection, a name that does
+not resolve, a certificate failure, a connection that fails after the request
+went out (a reset or a clean close without an answer) or any HTTP status, so a
+4xx or 5xx answer is reported at once. The retry covers the page request, the capture probe and the
+remote strategies; the conditional revalidation request falls back to its
+unconditional request, which has the retry.
+
+A `<meta http-equiv="refresh">` page is followed like an HTTP redirect when it
+refreshes within two seconds to another http(s) URL and its own content is
+nearly empty (an empty body or fewer than 30 words, such as "Redirecting…"). The
+target resolves against the response URL and must be `http` or `https`; a
+slower refresh, a refresh to the page itself, a `<noscript>` refresh and other
+schemes are not followed, and a page with real content keeps it. Up to five
+refreshes are followed; more fail with `Too many <meta> refresh redirects`.
+Unlike an HTTP redirect within one origin, a refresh carries none of the
+credentials in the original URL, even to the same origin, and credentials
+written in the target are dropped, because a page's markup is not the reader's
+to speak for. Nothing is kept of the first response's validators, because they do
+not describe the page finally read; the entry expires by TTL. JavaScript
+redirects are not followed.
+
+## Pages that need JavaScript
+
+Static extraction recognizes three kinds of page that scripts fill in. Their
+text may say so (`Please enable JavaScript`) or be empty, or the page may keep
+a little text (a title and a `Login` link) next to a payload of script. A page
+is a *script-rendered shell* when its Markdown has fewer than 30 words (link
+destinations do not count) and, beside at least one script, its markup has
+one of: inline script text of 3,000 bytes or more (structured `ld+json` and
+templates excluded), an empty mount point (`#root`, `#app`, `#__next`,
+`#__nuxt`, `#___gatsby`, `#svelte`, `#react-root`, `#q-app` or `<app-root>`
+holding no text of its own), or a `<noscript>` text about JavaScript.
+
+- `auto` renders such a page with the local browser, as it does an empty page
+  or one that asks for JavaScript. Only a page that says so in its own text
+  teaches [learned routing](#learned-browser-routing); a page recognized by the
+  size of its scripts never does. Without a browser, or when rendering fails
+  with a fetch error, the static text is returned with a warning (and the
+  reason); a page that asks for JavaScript, or is empty beside its scripts,
+  fails without a browser with `The page needs JavaScript, and no local browser
+  (Chrome or Chromium) was found; …`.
+- An explicit `-s static` fails such a page with `The page needs JavaScript; use
+  -s playwright or the default auto strategy`, and keeps the text of a shell
+  that has some, with a warning saying the same. An empty page without any
+  script evidence keeps its plain `HTML contains no extractable content`.
+- A shell result carries a warning, so it is not stored in the page cache.
+
+The thresholds are conservative but heuristic: a short page with a large inline
+script, such as a parked domain, is also sent to the browser by `auto`, which
+returns the same text slower. `-s static` still converts it.
 
 ## Learned browser routing
 
@@ -180,8 +270,10 @@ must not be persisted; `--no-cache` still saves admissible fresh results.
 Empty content, failed extraction and recognized HTML challenges cannot replace
 a good row. Challenge checks examine HTML structure and visible non-code text;
 literal vendor names in plain text, HTML code examples or an ordinary CAPTCHA
-widget are insufficient. Obvious short JavaScript shells fail static extraction;
-`auto` may then select the local browser.
+widget are insufficient. Pages that ask for JavaScript or are empty fail static
+extraction, and `auto` may then select the local browser; a short page whose
+scripts outweigh its text is converted with a warning and so is never stored
+(see [pages that need JavaScript](#pages-that-need-javascript)).
 These checks do not implement complete quality classification. If a conditional
 request and its unconditional retry both fail, the operation fails while the
 old row remains intact. The reference's narrower stale-page fallback after a
@@ -226,7 +318,16 @@ The loopback tests in `fetch.rs` check actual request counts and headers, TTL an
 zero TTL, 304 and replacement behavior, redirects and character encoding,
 bypass refresh, strategy provenance, disabled and broken storage, malformed
 status/empty content, challenge preservation, legitimate CAPTCHA mentions and
-asset-bearing downloaded documents. They use temporary configured state paths;
+asset-bearing downloaded documents. `fetch/robustness_tests.rs` adds, against
+loopback servers, the failure messages and their redaction, the retry of a TLS
+handshake that ends early (a listener that accepts and closes) and the failures
+that are never retried (statuses, resets and clean closes after the request,
+refusals, timeouts), wrong and missing character
+encodings (GBK under a `utf-8` header, none at all, nearly valid UTF-8, Latin-1),
+script-rendered shells and JavaScript-only pages under `static` and, through the
+decision function with a stand-in browser, under `auto`, and `<meta>` refresh
+following, its limits and credential handling. They use temporary configured
+state paths;
 the older direct-fetch test explicitly disables caching. Storage and CLI/API
 integration tests exercise their respective boundaries separately. No tests
 need provider credentials or the user's real state directory.

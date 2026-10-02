@@ -6,7 +6,9 @@ mod facts;
 mod furniture;
 mod hacker_news;
 mod mail;
+mod raw_math;
 mod social;
+mod srcset;
 mod stream;
 
 pub(crate) use social::canonical_status_url;
@@ -227,14 +229,19 @@ impl<'a> Landmarks<'a> {
     }
 }
 
+/// The first non-empty `content` of a `meta` element whose `property` or `name`
+/// is one of `keys`, tried in order (a page that writes both attributes, or
+/// an Open Graph value under `name`, is read either way).
 fn meta(metas: &[ElementRef<'_>], keys: &[&str]) -> Option<String> {
     for key in keys {
         for element in metas {
-            let name = element
-                .value()
-                .attribute("property")
-                .or_else(|| element.value().attribute("name"));
-            if name.is_some_and(|name| name.eq_ignore_ascii_case(key))
+            let names = |attribute: &str| {
+                element
+                    .value()
+                    .attribute(attribute)
+                    .is_some_and(|name| name.trim().eq_ignore_ascii_case(key))
+            };
+            if (names("property") || names("name"))
                 && let Some(value) = element
                     .value()
                     .attribute("content")
@@ -294,6 +301,104 @@ fn jsonld_text(documents: &[Value], key: &str) -> Option<String> {
     })
 }
 
+/// Whether a metadata value is a web address, which names a page, not a
+/// person (`article:author` often links the author's profile).
+fn web_address(value: &str) -> bool {
+    let value = value.trim();
+    value.starts_with("//") || (value.contains("://") && !value.contains(char::is_whitespace))
+}
+
+/// The names in a JSON-LD `author` value: a string, a `Person` or other
+/// object with a `name`, an object that points (`@id`) at another object of
+/// the page, or an array of them. An array that has persons keeps them only
+/// (an organization beside them is the publisher). Web addresses are no names.
+fn jsonld_author_names(
+    value: &Value,
+    documents: &[Value],
+    follow: bool,
+    depth: usize,
+) -> Vec<String> {
+    if depth > 4 {
+        return Vec::new();
+    }
+    let usable = |name: &str| {
+        let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
+        (!name.is_empty() && !web_address(&name)).then_some(name)
+    };
+    let person = |value: &Value| {
+        let kind = value.get("@type");
+        kind.and_then(Value::as_str) == Some("Person")
+            || kind
+                .and_then(Value::as_array)
+                .is_some_and(|kinds| kinds.iter().any(|kind| kind.as_str() == Some("Person")))
+    };
+    match value {
+        Value::String(name) => usable(name).into_iter().collect(),
+        Value::Object(object) => {
+            if let Some(name) = object.get("name").and_then(Value::as_str) {
+                return usable(name).into_iter().collect();
+            }
+            // A reference to an object elsewhere in the page's graph.
+            let target = object
+                .get("@id")
+                .and_then(Value::as_str)
+                .filter(|_| follow)
+                .and_then(|id| {
+                    documents
+                        .iter()
+                        .find(|document| document.get("@id").and_then(Value::as_str) == Some(id))
+                });
+            target.map_or_else(Vec::new, |target| {
+                jsonld_author_names(target, documents, false, depth + 1)
+            })
+        }
+        Value::Array(values) => {
+            let persons = values.iter().any(person);
+            let mut names = Vec::new();
+            for value in values.iter().filter(|value| !persons || person(value)) {
+                for name in jsonld_author_names(value, documents, follow, depth + 1) {
+                    if !names.contains(&name) {
+                        names.push(name);
+                    }
+                }
+            }
+            names
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// The JSON-LD `publisher`'s name (a string or an object's `name`): a site's
+/// own name, when its meta tags name none.
+fn jsonld_publisher(documents: &[Value]) -> Option<String> {
+    documents.iter().find_map(|document| {
+        let publisher = document.get("publisher")?;
+        let name = publisher
+            .as_str()
+            .or_else(|| publisher.get("name")?.as_str())?
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        (!name.is_empty() && !web_address(&name)).then_some(name)
+    })
+}
+
+/// The page's author: a `author` meta tag, else a JSON-LD author, else an
+/// `article:author` meta tag, whichever is a name: a web address (a profile
+/// link) is never written as the author.
+fn page_author(metas: &[ElementRef<'_>], jsonld: &[Value]) -> Option<String> {
+    let name = |value: String| (!web_address(&value)).then_some(value);
+    meta(metas, &["author"])
+        .and_then(name)
+        .or_else(|| {
+            jsonld.iter().find_map(|document| {
+                let names = jsonld_author_names(document.get("author")?, jsonld, true, 0);
+                (!names.is_empty()).then(|| names.join(", "))
+            })
+        })
+        .or_else(|| meta(metas, &["article:author"]).and_then(name))
+}
+
 fn clean_title(value: &str, site: Option<&str>) -> Option<String> {
     let mut title = value.split_whitespace().collect::<Vec<_>>().join(" ");
     if let Some(site) = site {
@@ -327,10 +432,53 @@ fn clean_title(value: &str, site: Option<&str>) -> Option<String> {
     (!title.is_empty()).then_some(title)
 }
 
+/// A title's letters and digits in lower case: what two spellings of one title
+/// share (`Rust (programming language) - Wikipedia`, `Rust (programming
+/// language)`).
+fn comparable(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Whether a JSON-LD `headline` is no title of this page: it names nothing the
+/// first heading, the document title and the Open Graph title say, while the
+/// heading and one of the titles agree with each other. Wikipedia's `headline`
+/// is the article's short description (`memory-safe programming language
+/// without garbage collection`).
+fn headline_describes_instead(
+    headline: &str,
+    heading: Option<&str>,
+    titles: [Option<&str>; 2],
+) -> bool {
+    let headline = comparable(headline);
+    let heading = heading.map(comparable).unwrap_or_default();
+    let titles: Vec<String> = titles
+        .into_iter()
+        .flatten()
+        .map(comparable)
+        .filter(|title| !title.is_empty())
+        .collect();
+    let related = |a: &str, b: &str| a.contains(b) || b.contains(a);
+    !headline.is_empty()
+        && !heading.is_empty()
+        && titles.iter().any(|title| related(&heading, title))
+        && !related(&headline, &heading)
+        && titles.iter().all(|title| !related(&headline, title))
+}
+
 fn page_title(page: &Landmarks<'_>, jsonld: &[Value], site: Option<&str>) -> Option<String> {
-    let headline = jsonld_text(jsonld, "headline");
     let document_title = page.title.map(plain);
     let social = meta(&page.metas, &["og:title", "twitter:title"]);
+    let headline = jsonld_text(jsonld, "headline").filter(|headline| {
+        !headline_describes_instead(
+            headline,
+            page.heading.map(plain).as_deref(),
+            [document_title.as_deref(), social.as_deref()],
+        )
+    });
     let mut title = [
         headline.clone(),
         jsonld_text(jsonld, "name"),
@@ -2701,6 +2849,10 @@ fn serialize_clean(
     }
     let value = element.value();
     let name = value.name();
+    // A label that only repeats the language of the code block after it.
+    if matches!(name, "div" | "span") && code::repeats_language(element) {
+        return Ok(());
+    }
     if duplicate_math_preview(element) {
         return Ok(());
     }
@@ -2761,11 +2913,14 @@ fn serialize_clean(
     if name == "table" && serialize_table(element, base, output, depth, notes, definition)? {
         return Ok(());
     }
-    // Canonicalize lazy images without retaining arbitrary event or style attributes.
-    let src = value
-        .attribute("data-src")
-        .or_else(|| value.attribute("data-original"))
-        .or_else(|| value.attribute("src"));
+    // Canonicalize lazy images without retaining arbitrary event or style
+    // attributes; the largest `srcset` candidate stands for the image where
+    // `src` names a thumbnail.
+    let src = if name == "img" {
+        srcset::image(value)
+    } else {
+        None
+    };
     let preformatted = in_code || matches!(name, "pre" | "code");
     let styled_code = name == "code"
         && value.attribute("style").is_some_and(|style| {
@@ -2860,7 +3015,55 @@ fn serialize_clean(
     ) {
         output.end(serialized_name);
     }
+    if !in_code && !block_tag(name) && screen_reader_label(element) {
+        label_gap(element, output);
+    }
     Ok(())
+}
+
+/// Whether an element is text drawn for screen readers only (`visually-hidden`,
+/// `sr-only`, `screen-reader-text`, a CSS module's `…-VisuallyHidden`): the
+/// label of what follows (`Published`, `By`), kept as the page's text.
+fn screen_reader_label(element: ElementRef<'_>) -> bool {
+    let Some(classes) = element.value().attribute("class") else {
+        return false;
+    };
+    classes.split_ascii_whitespace().any(|class| {
+        [
+            "visually-hidden",
+            "visuallyhidden",
+            "sr-only",
+            "screen-reader-text",
+            "screen-reader-only",
+        ]
+        .iter()
+        .any(|label| class.eq_ignore_ascii_case(label))
+            || (class.len() >= "visuallyhidden".len()
+                && class
+                    .as_bytes()
+                    .windows("visuallyhidden".len())
+                    .any(|window| window.eq_ignore_ascii_case(b"visuallyhidden")))
+    })
+}
+
+/// The space between a screen reader label and the text after it. Markup
+/// writes the two without one (`<span class="visually-hidden">Published</span>
+/// <span>1 hour ago</span>` with no text between), since a style sheet sets
+/// them apart; written as is they would read `Published1 hour ago`.
+fn label_gap(label: ElementRef<'_>, output: &mut Out) {
+    let next = label
+        .next_siblings()
+        .find(|node| !matches!(node.value(), scraper::Node::Comment(_)));
+    let joined = match next.map(|node| node.value()) {
+        Some(scraper::Node::Text(text)) => {
+            !text.is_empty() && !text.starts_with(char::is_whitespace)
+        }
+        Some(scraper::Node::Element(next)) => !block_tag(next.name()),
+        _ => false,
+    };
+    if joined && label.text().any(|text| !text.trim().is_empty()) {
+        output.text(" ");
+    }
 }
 
 /// A link inside a heading to a fragment of the same page.
@@ -3211,11 +3414,60 @@ fn serialize_children(
                 });
                 let text = if trim_start { text.trim_start() } else { text };
                 let text = if trim_end { text.trim_end() } else { text };
-                escaped_text(text, output);
+                prose(text, element, output);
             }
         }
     }
     Ok(())
+}
+
+/// Text of a page's prose: raw TeX delimiters (`$x$`, `\(x\)`, `$$x$$`,
+/// `\[x\]`, see [`raw_math`]) are math, written as a recognized wrapper is so
+/// that the Markdown escaping leaves their backslashes, brackets and
+/// underscores alone; the rest is escaped text. `parent` is the element that
+/// holds the text. A display expression (`$$x$$`, `\[x\]`) is a block of its
+/// own when it is all its element holds; inside a sentence it is inline math,
+/// as the reference spells it. A table cell cannot hold a paragraph break or a
+/// line break, so math in one stays inline and on one line.
+fn prose(text: &str, parent: ElementRef<'_>, output: &mut Out) {
+    let Some(pieces) = raw_math::split(text) else {
+        escaped_text(text, output);
+        return;
+    };
+    let in_cell = std::iter::once(parent)
+        .chain(parent.ancestors().filter_map(ElementRef::wrap))
+        .any(|element| matches!(element.value().name(), "td" | "th"));
+    // One expression and nothing else in the text, in an element with no
+    // other content.
+    let (mut expressions, mut other_text) = (0, false);
+    for piece in &pieces {
+        match piece {
+            raw_math::Piece::Math { .. } => expressions += 1,
+            raw_math::Piece::Text(text) => other_text |= !text.trim().is_empty(),
+        }
+    }
+    let alone = expressions == 1
+        && !other_text
+        && parent
+            .children()
+            .filter(|node| match node.value() {
+                scraper::Node::Text(text) => !text.trim().is_empty(),
+                scraper::Node::Comment(_) => false,
+                _ => true,
+            })
+            .count()
+            == 1;
+    for piece in pieces {
+        match piece {
+            // The blanks around an expression that is a block of its own.
+            raw_math::Piece::Text(_) if alone => {}
+            raw_math::Piece::Text(text) => escaped_text(text, output),
+            raw_math::Piece::Math { latex, .. } if in_cell => {
+                emit_math(&latex.replace(['\n', '\r'], " "), false, output);
+            }
+            raw_math::Piece::Math { latex, display } => emit_math(latex, display && alone, output),
+        }
+    }
 }
 
 fn render_clean(root: ElementRef<'_>, base: Option<&Url>) -> Result<String> {
@@ -3898,21 +4150,13 @@ fn structured_announcement(
     Ok(None)
 }
 
-/// A Substack note: the main note's text and its attached image. The feed,
-/// recommendations and app promotion around a note are not its content.
-/// A page is a Substack page by its host, its permalink container or its
-/// CDN assets; an article with its own rendered body is left to the
-/// ordinary reader.
-fn substack_note(
-    document: &Html,
-    page: &Landmarks<'_>,
-    base: Option<&Url>,
-) -> Result<Option<Announcement>> {
+/// Whether a page is a Substack page: by its host, its permalink container or
+/// its CDN assets.
+fn substack_page(page: &Landmarks<'_>, base: Option<&Url>) -> bool {
     let substack_host = |host: &str| host == "substack.com" || host.ends_with(".substack.com");
     let cdn_host = |host: &str| host == "substackcdn.com" || host.ends_with(".substackcdn.com");
-    let permalink = page.permalink;
-    let substack = base.and_then(Url::host_str).is_some_and(substack_host)
-        || permalink.is_some()
+    base.and_then(Url::host_str).is_some_and(substack_host)
+        || page.permalink.is_some()
         || page.assets.iter().any(|asset| {
             asset
                 .value()
@@ -3920,8 +4164,19 @@ fn substack_note(
                 .or_else(|| asset.value().attribute("src"))
                 .and_then(|source| Url::parse(source).ok())
                 .is_some_and(|url| url.host_str().is_some_and(cdn_host))
-        });
-    if !substack || page.rendered_body {
+        })
+}
+
+/// A Substack note: the main note's text and its attached image. The feed,
+/// recommendations and app promotion around a note are not its content.
+/// An article with its own rendered body is left to the ordinary reader.
+fn substack_note(
+    document: &Html,
+    page: &Landmarks<'_>,
+    base: Option<&Url>,
+) -> Result<Option<Announcement>> {
+    let permalink = page.permalink;
+    if !substack_page(page, base) || page.rendered_body {
         return Ok(None);
     }
     let note_selector = selector("div.ProseMirror.FeedProseMirror");
@@ -3982,19 +4237,10 @@ fn substack_note_image<'a>(note: ElementRef<'a>) -> Option<String> {
     .flatten()
     .find(|element| classes(*element).contains("imageGrid"))?;
     let image = grid.select(&selector("img")).next()?;
-    let largest = image.value().attribute("srcset").and_then(|srcset| {
-        srcset
-            .split(',')
-            .filter_map(|candidate| {
-                let mut parts = candidate.split_whitespace();
-                let url = parts.next()?;
-                let width = parts.next()?.strip_suffix('w')?.parse::<f64>().ok()?;
-                Some((url, width))
-            })
-            .max_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(url, _)| url.to_owned())
-    });
-    largest.or_else(|| image.value().attribute("src").map(str::to_owned))
+    let largest = image.value().attribute("srcset").and_then(srcset::best);
+    largest
+        .or_else(|| image.value().attribute("src"))
+        .map(str::to_owned)
 }
 
 pub(super) fn fragment(source: &str) -> Result<String> {
@@ -4072,7 +4318,7 @@ fn flatten_shadow_roots(source: &str) -> std::borrow::Cow<'_, str> {
 
 /// Words as the reference counts them: each CJK character is a word; other
 /// text counts whitespace-separated runs after punctuation becomes space.
-fn count_words(text: &str) -> usize {
+pub(crate) fn count_words(text: &str) -> usize {
     let cjk = |ch: char| matches!(ch as u32, 0x3040..=0x30ff | 0x3400..=0x4dbf | 0x4e00..=0x9fff | 0xac00..=0xd7af | 0xf900..=0xfaff | 0x20000..=0x2a6df);
     let bytes = text.as_bytes();
     let mut words = 0;
@@ -4101,7 +4347,7 @@ fn count_words(text: &str) -> usize {
     words
 }
 
-pub(crate) use charset::legacy_encoding;
+pub(crate) use charset::{decode_fetched, legacy_encoding};
 
 /// Extract a local HTML file's bytes. A `<meta>` declaration decides unless a
 /// BOM or valid UTF-8 is present (see [`charset`]); byte sequences invalid in
@@ -4142,17 +4388,14 @@ pub fn extract_html(source: &str, base_url: Option<&str>) -> Result<Document> {
     if let Some(title) = title.filter(|value| !value.is_empty()) {
         metadata.insert("title".into(), title.into());
     }
-    let author = meta(&landmarks.metas, &["author", "article:author"]).or_else(|| {
-        jsonld.iter().find_map(|doc| {
-            let value = doc.get("author")?;
-            value
-                .as_str()
-                .or_else(|| value.get("name")?.as_str())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_owned)
-        })
-    });
+    let author = page_author(&landmarks.metas, &jsonld);
+    // The title was cleaned with the site the page's meta tags name. Without
+    // one, the JSON-LD publisher names the site, as defuddle reads it, and a
+    // Substack page that has neither is `Substack`, as the reference's
+    // Substack reader has it.
+    let site = site
+        .or_else(|| jsonld_publisher(&jsonld))
+        .or_else(|| substack_page(&landmarks, base.as_ref()).then(|| "Substack".into()));
     let published = meta(&landmarks.metas, &["article:published_time"])
         .or_else(|| jsonld_text(&jsonld, "datePublished"))
         .or_else(|| {
@@ -4600,6 +4843,337 @@ mod tests {
         )
         .unwrap();
         assert_eq!(doc.metadata["published"], "2026-03-04");
+    }
+
+    /// The Markdown of `body` as the article of a full page.
+    fn article_markdown(body: &str) -> String {
+        extract_html(
+            &format!("<html><body><article>{body}</article></body></html>"),
+            None,
+        )
+        .unwrap()
+        .markdown
+    }
+
+    #[test]
+    fn an_author_is_a_name_never_a_web_address() {
+        // `article:author` is often a profile link; the JSON-LD person is the name.
+        let bbc = r#"<meta property="article:author" content="https://www.facebook.com/bbcnews"><script type="application/ld+json">{"@type":"NewsArticle","author":[{"@type":"Person","name":"Katya Adler"},{"@type":"Organization","name":"BBC News"}]}</script><main><p>Body.</p></main>"#;
+        let doc = extract_html(bbc, None).unwrap();
+        assert_eq!(doc.metadata["author"], "Katya Adler");
+        // A web address alone is no author, in a meta tag or in JSON-LD.
+        let doc = extract_html(
+            r#"<meta name="author" content="https://example.test/people/ada"><meta property="article:author" content="https://example.test/people/ada"><script type="application/ld+json">{"author":{"@type":"Person","name":"https://example.test/people/ada"}}</script><main><p>Body.</p></main>"#,
+            None,
+        )
+        .unwrap();
+        assert!(!doc.metadata.contains_key("author"), "{:?}", doc.metadata);
+        // A name beats a profile link in either meta tag, and `author` leads.
+        let doc = extract_html(
+            r#"<meta property="article:author" content="Grace"><meta name="author" content="Ada"><main><p>Body.</p></main>"#,
+            None,
+        )
+        .unwrap();
+        assert_eq!(doc.metadata["author"], "Ada");
+        let doc = extract_html(
+            r#"<meta property="article:author" content="Grace"><main><p>Body.</p></main>"#,
+            None,
+        )
+        .unwrap();
+        assert_eq!(doc.metadata["author"], "Grace");
+        // A graph's person, found through its `@id`; several persons are joined.
+        let doc = extract_html(
+            r##"<script type="application/ld+json">{"@graph":[{"@type":"Article","author":{"@id":"https://x.test/#/p/1"}},{"@type":"Person","@id":"https://x.test/#/p/1","name":"Edsger  Dijkstra"}]}</script><main><p>Body.</p></main>"##,
+            None,
+        )
+        .unwrap();
+        assert_eq!(doc.metadata["author"], "Edsger Dijkstra");
+        let doc = extract_html(
+            r#"<script type="application/ld+json">{"author":[{"@type":"Person","name":"A"},{"@type":"Person","name":"B"},{"@type":"Person","name":"A"}]}</script><main><p>Body.</p></main>"#,
+            None,
+        )
+        .unwrap();
+        assert_eq!(doc.metadata["author"], "A, B");
+    }
+
+    #[test]
+    fn a_headline_that_is_a_description_does_not_replace_the_page_title() {
+        // Wikipedia's JSON-LD `headline` is the article's short description.
+        let wikipedia = |headline: &str| {
+            format!(
+                r#"<title>Rust (programming language) - Wikipedia</title><meta property="og:title" content="Rust (programming language) - Wikipedia"><script type="application/ld+json">{{"@type":"Article","name":"Rust (programming language)","headline":"{headline}"}}</script><main><h1><span>Rust (programming language)</span></h1><p>Body.</p></main>"#
+            )
+        };
+        let doc = extract_html(
+            &wikipedia("memory-safe programming language without garbage collection"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(doc.metadata["title"], "Rust (programming language)");
+        // A headline that names the page's heading, or part of it, still leads.
+        let doc = extract_html(
+            &wikipedia("The Rust (programming language) - a short history"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            doc.metadata["title"],
+            "The Rust (programming language) - a short history"
+        );
+        // With no heading to confirm the other titles, the headline is used.
+        let doc = extract_html(
+            r#"<title>Site</title><script type="application/ld+json">{"headline":"Real headline"}</script><p>Body.</p>"#,
+            None,
+        )
+        .unwrap();
+        assert_eq!(doc.metadata["title"], "Real headline");
+    }
+
+    #[test]
+    fn the_site_comes_from_either_meta_attribute_and_from_substack_pages() {
+        let doc = extract_html(
+            r#"<meta name="application-name" property="al:web:url" content="The Site"><main><p>Body.</p></main>"#,
+            None,
+        )
+        .unwrap();
+        assert_eq!(doc.metadata["site"], "The Site");
+        let doc = extract_html(
+            r#"<meta property="og:site_name" content="Journal"><main><p>Body.</p></main>"#,
+            None,
+        )
+        .unwrap();
+        assert_eq!(doc.metadata["site"], "Journal");
+        // Meta tags lead; the JSON-LD publisher names a site they leave unnamed.
+        let publisher = r#"<script type="application/ld+json">{"@type":"NewsArticle","publisher":{"@type":"Organization","name":"12 Grams  of Carbon"}}</script>"#;
+        let doc = extract_html(&format!("{publisher}<main><p>Body.</p></main>"), None).unwrap();
+        assert_eq!(doc.metadata["site"], "12 Grams of Carbon");
+        let doc = extract_html(
+            &format!(r#"<meta property="og:site_name" content="Journal">{publisher}<main><p>Body.</p></main>"#),
+            None,
+        )
+        .unwrap();
+        assert_eq!(doc.metadata["site"], "Journal");
+        // A Substack article that names no site in its markup is `Substack`.
+        let article = r#"<html><head><title>Post</title></head><body><div class="body markup"><p>Rendered article body.</p></div></body></html>"#;
+        let doc = extract_html(article, Some("https://on.substack.com/p/post")).unwrap();
+        assert_eq!(doc.metadata["site"], "Substack");
+        let doc = extract_html(article, Some("https://example.org/p/post")).unwrap();
+        assert!(!doc.metadata.contains_key("site"));
+    }
+
+    #[test]
+    fn raw_tex_delimiters_keep_their_backslashes_brackets_and_underscores() {
+        let markdown = article_markdown(
+            r#"<h1>Attention</h1><p>Say we have a source sequence $\mathbf{x}$ of length $n$ and \(a_i = [b_1, b_2]\) here.</p>
+            <p>$$\begin{aligned} \mathbf{x} &amp;= [x_1, x_2, \dots, x_n] \\ y &amp;= z \end{aligned}$$</p>
+            <p>Display with brackets: \[ s_t = f(s_{t-1}) \] and more.</p>
+            <p>\[F = m_a\]</p>"#,
+        );
+        assert!(
+            markdown.contains(
+                r"Say we have a source sequence $\mathbf{x}$ of length $n$ and $a_i = [b_1, b_2]$ here."
+            ),
+            "{markdown}"
+        );
+        assert!(
+            markdown.contains(
+                r"$$\begin{aligned} \mathbf{x} &= [x_1, x_2, \dots, x_n] \\ y &= z \end{aligned}$$"
+            ),
+            "{markdown}"
+        );
+        // A display expression inside a sentence is inline math; alone in its
+        // element it is a block.
+        assert!(
+            markdown.contains("Display with brackets: $s_t = f(s_{t-1})$ and more."),
+            "{markdown}"
+        );
+        assert!(
+            markdown.contains("\n\n$$F = m_a$$\n\n") || markdown.ends_with("\n\n$$F = m_a$$"),
+            "{markdown}"
+        );
+        assert!(
+            !markdown.contains(r"\\mathbf") && !markdown.contains(r"x\_1"),
+            "{markdown}"
+        );
+        // Multi-line display math is kept line by line.
+        let markdown =
+            article_markdown("<p>$$\n\\begin{aligned}\na &amp;= [x_1]\n\\end{aligned}\n$$</p>");
+        assert!(
+            markdown.contains("$$\\begin{aligned}\na &= [x_1]\n\\end{aligned}$$"),
+            "{markdown}"
+        );
+        // In a table cell the math stays inline on one line.
+        let markdown =
+            article_markdown("<table><tr><th>A</th></tr><tr><td>$$\nx_1\n$$</td></tr></table>");
+        assert!(markdown.contains("| $x_1$ |"), "{markdown}");
+    }
+
+    #[test]
+    fn prices_code_and_loose_dollars_are_not_math() {
+        let markdown = article_markdown(
+            "<p>It costs $5 and $10, or US$5-$10; use $HOME/$USER and a_b_c, [x] too.</p>\
+             <p>In code: <code>$a_b$ and \\(x\\)</code></p><pre><code>$$x_1$$\n\\[y\\]</code></pre>",
+        );
+        assert!(
+            markdown.contains(
+                r"It costs $5 and $10, or US$5-$10; use $HOME/$USER and a\_b\_c, \[x\] too."
+            ),
+            "{markdown}"
+        );
+        assert!(markdown.contains("`$a_b$ and \\(x\\)`"), "{markdown}");
+        assert!(
+            markdown.contains("```\n$$x_1$$\n\\[y\\]\n```"),
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn an_image_is_its_largest_srcset_candidate_and_lazy_sources_still_work() {
+        let markdown = article_markdown(
+            r#"<p><a href="https://m.test/orig/a.webp"><img src="https://m.test/t150/a.webp" srcset="https://m.test/t150/a.webp 150w, https://m.test/t1200/a.webp 1200w, https://m.test/t600/a.webp 600w" width="1920" alt="Unit"></a></p>
+            <p><img src="data:image/gif;base64,R0lGODlh" data-src="https://m.test/lazy.jpg" alt="Lazy"></p>
+            <p><img src="data:image/gif;base64,R0lGODlh" srcset="data:image/gif;base64,R0lGODlh 1x" data-src="https://m.test/lazy2.jpg" alt="Lazy2"></p>
+            <p><img srcset="https://cdn.test/fetch/w_424,c_limit/a.png 424w, https://cdn.test/fetch/w_1456,c_limit/a.png 1456w" alt="Cdn"></p>
+            <p><img src="https://m.test/1x.png" srcset="https://m.test/1x.png 1x, https://m.test/2x.png 2x" alt="Dense"></p>
+            <p><img src="https://m.test/2560/b.jpg" srcset="https://m.test/400/b.jpg 400w, https://m.test/1920/b.jpg 1920w" width="2560" height="2560" alt="Bbc"></p>
+            <p><img src="https://m.test/p640.png" srcset="https://m.test/p160.png 160w" width="640" alt="Portrait"></p>"#,
+        );
+        for expected in [
+            // A `src` wider than the whole set is not downgraded.
+            "![Bbc](https://m.test/2560/b.jpg)",
+            "![Portrait](https://m.test/p640.png)",
+            "[![Unit](https://m.test/t1200/a.webp)](https://m.test/orig/a.webp)",
+            "![Lazy](https://m.test/lazy.jpg)",
+            "![Lazy2](https://m.test/lazy2.jpg)",
+            "![Cdn](https://cdn.test/fetch/w_1456,c_limit/a.png)",
+            "![Dense](https://m.test/2x.png)",
+        ] {
+            assert!(markdown.contains(expected), "{expected}\n{markdown}");
+        }
+    }
+
+    #[test]
+    fn image_text_survives_line_breaks_and_an_empty_title_is_left_out() {
+        let doc = extract_html(
+            "<html><body><article><p><img src=\"https://m.test/a.svg\" alt=\"Two tables: the first table holds s1 on the\nstack, with its length (5), and a\n  pointer.\" title=\"\"></p><p><img src=\"https://m.test/b.webp\" alt=\"\" title=\"\"></p></article></body></html>",
+            None,
+        )
+        .unwrap();
+        let normal = crate::markdown::normalize(&doc.markdown);
+        assert!(
+            normal.contains("![Two tables: the first table holds s1 on the stack, with its length (5), and a pointer.](https://m.test/a.svg)"),
+            "{normal}"
+        );
+        assert!(normal.contains("![](https://m.test/b.webp)"), "{normal}");
+        assert!(!normal.contains("\"\""), "{normal}");
+    }
+
+    #[test]
+    fn nested_identical_emphasis_is_written_once_on_a_page() {
+        let markdown = article_markdown(
+            "<p>He said <b><strong>no</strong></b>, <i><em>yes</em></i> and <strong>a <b>b</b></strong>.</p>",
+        );
+        assert!(
+            markdown.contains("He said **no**, *yes* and **a b**."),
+            "{markdown}"
+        );
+        assert!(!markdown.contains("****"), "{markdown}");
+    }
+
+    #[test]
+    fn a_screen_reader_label_is_set_apart_from_the_text_it_labels() {
+        let markdown = article_markdown(
+            r#"<ul><li><span class="visually-hidden ssrcss-i2z2ig-VisuallyHidden e1">Published</span><span class="m"><span><time datetime="2026-10-01">1 hour ago</time></span></span></li></ul>
+            <div><span class="sr-only">By</span><span>Katya Adler</span> <span class="sr-only">Role</span> Editor</div>
+            <p>Read <span class="sr-only">about us</span> now <span class="sr-only">last</span></p>"#,
+        );
+        assert!(markdown.contains("Published 1 hour ago"), "{markdown}");
+        assert!(
+            markdown.contains("By Katya Adler Role Editor"),
+            "{markdown}"
+        );
+        // A label followed by a space, or by nothing, gains no space of its own.
+        assert!(markdown.ends_with("Read about us now last"), "{markdown}");
+        assert!(!markdown.contains("  "), "{markdown}");
+    }
+
+    #[test]
+    fn a_label_repeating_the_code_languages_name_is_left_out_and_brush_names_it() {
+        let mdn = |label: &str, brush: &str| {
+            format!(
+                r#"<h2>Syntax</h2><div class="code-example"><div class="example-header"><span class="language-name">{label}</span></div><pre class="{brush} notranslate"><code>map(callbackFn)
+map(callbackFn, thisArg)
+</code></pre></div>"#
+            )
+        };
+        let markdown = article_markdown(&mdn("js", "brush: js"));
+        assert!(
+            markdown.contains("## Syntax\n\n```js\nmap(callbackFn)\nmap(callbackFn, thisArg)\n```"),
+            "{markdown}"
+        );
+        // Spellings of one language are the same label; other spellings of the
+        // brush syntax name it too.
+        for (label, brush) in [
+            ("JavaScript", "brush:js"),
+            ("JS", "brush: js; gutter: false"),
+        ] {
+            let markdown = article_markdown(&mdn(label, brush));
+            assert!(markdown.contains("```js\nmap(callbackFn)"), "{markdown}");
+            assert!(!markdown.contains(&format!("\n\n{label}\n")), "{markdown}");
+        }
+        // A label naming another language, or a heading, is the page's text.
+        let markdown = article_markdown(&mdn("css", "brush: js"));
+        assert!(markdown.contains("css\n\n```js"), "{markdown}");
+        let markdown = article_markdown(
+            "<h4>js</h4><pre class=\"brush: js\"><code>f()</code></pre><p>js</p><pre class=\"brush: js\"><code>g()</code></pre>",
+        );
+        assert!(markdown.contains("#### js\n\n```js\nf()"), "{markdown}");
+        assert!(markdown.contains("js\n\n```js\ng()"), "{markdown}");
+    }
+
+    #[test]
+    fn github_issue_interface_text_is_left_out_and_the_discussion_stays() {
+        let page = r##"<html><body><div data-testid="issue-viewer-container"><h1>add support for other text encodings <span>#1</span></h1>
+            <a href="https://github.com/login?return_to=https://github.com/o/r/issues/1">New issue</a>
+            <div><span class="prc-TooltipV2-Tooltip-cYMVY CopyToClipboardButton-module__tooltip--Dq1IB" aria-label="Copy link" aria-hidden="true" popover="auto">Copy link</span><button>x</button></div>
+            <span>Closed</span>
+            <div class="header"><a href="https://github.com/BurntSushi">BurntSushi</a> opened <a href="#issue">on Sep 9, 2016</a>
+            <span class="prc-TooltipV2-Tooltip-cYMVY" aria-hidden="true" popover="auto">Issue body actions</span></div>
+            <div data-testid="issue-body-viewer"><p>Right now, ripgrep only supports reading UTF-8 encoded text.</p></div>
+            <span>Reactions are currently unavailable</span>
+            <div class="prc-Flash-Flash-3q4Aj SignedOutBanner-module__signedOutBanner--ycf6Y"><a href="/signup?return_to=https://github.com/o/r/issues/1">Sign up for free</a><span><strong> to join this conversation on GitHub.</strong> Already have an account? </span><a href="/login?return_to=https://github.com/o/r/issues/1">Sign in to comment</a></div>
+            <p>Reactions are currently unavailable in a reply too.</p></div></body></html>"##;
+        let markdown = extract_html(page, Some("https://github.com/o/r/issues/1"))
+            .unwrap()
+            .markdown;
+        for kept in [
+            "add support for other text encodings",
+            "Closed",
+            "BurntSushi",
+            "opened",
+            "on Sep 9, 2016",
+            "Right now, ripgrep only supports reading UTF-8 encoded text.",
+            // The labels are chrome only where they stand alone.
+            "Reactions are currently unavailable in a reply too.",
+        ] {
+            assert!(markdown.contains(kept), "{kept}\n{markdown}");
+        }
+        for left_out in [
+            "Copy link",
+            "New issue",
+            "Issue body actions",
+            "Sign up for free",
+            "join this conversation",
+            "Sign in to comment",
+        ] {
+            assert!(!markdown.contains(left_out), "{left_out}\n{markdown}");
+        }
+        assert!(
+            !markdown
+                .lines()
+                .any(|line| line == "Reactions are currently unavailable"),
+            "{markdown}"
+        );
     }
 
     #[test]

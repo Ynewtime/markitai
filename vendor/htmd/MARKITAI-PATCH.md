@@ -72,6 +72,16 @@ Each change is marked `markitai` in a comment.
 - `src/element_handler/element_util.rs`: faithful-mode HTML serializes a
   subtree as markup5ever_rcdom's `SerializableHandle` did, with the children
   and text the conversion sees.
+- `src/element_handler/img.rs`: the lines of an alt text or title join with a
+  space instead of a line feed, and a title with nothing in it is left out
+  (see the differences below). `tests/html/turndown_test_index.html`: the
+  three cases that expected the line feed ("img with a new line in alt", "img
+  with more than one new line in alt", "img with new lines in title") expect
+  the joined text.
+- `src/element_handler/emphasis.rs`: an emphasis element inside one that
+  writes the same emphasis (`b` or `strong` in either, `i` or `em` in either,
+  in the same block) adds no markers (see the differences below).
+  `tests/markitai_tests.rs`: two tests for these changes.
 - `tests/code_tests.rs`, `tests/basic_tests.rs`: the three tests that used the
   rcdom tree or `Attribute` directly use the scraper equivalents;
   `faithful_mode_inline` expects attributes in name order (below).
@@ -119,6 +129,15 @@ Each change is marked `markitai` in a comment.
   formatting element closed implicitly just before foreign content wraps it.
 - `TreeWriter` is an addition; nothing upstream calls it. A tree it builds has
   no parse errors recorded in `Html::errors`, which this crate does not read.
+- An image's alt text and title are one line: `<img alt="a\nb">` is `![a b](…)`
+  (upstream: `![a\nb](…)`, whose text a line-break repair of the Markdown
+  later cut at the first line) and `title=""` writes no title (upstream:
+  `![](a.png "")`).
+- `<b><strong>x</strong></b>` is `**x**` and `<i><em>x</em></i>` is `*x*`
+  (upstream: `****x****` and `**x**`, which read as an empty span between
+  literal asterisks and as bold). A block element between the two ends the
+  search, so the inner element keeps its markers there; `<b><i>x</i></b>` is
+  `***x***` as before.
 
 ## Verification
 
@@ -148,6 +167,13 @@ tree it built was compared with the parsed markup in a test build and was
 equal; it left 54 conversions to the parser (52 with inline SVG, 2 with a
 block inside a paragraph). `cargo clippy --all-targets` and `cargo clippy --lib
 --no-default-features` report nothing.
+
+The comparison with htmd 0.5.5 above predates the image-text and nested
+emphasis changes: since them the two differ on an alt text or title that spans
+lines, an empty title, and an emphasis element nested in one of its own kind.
+In the isolated copy (it sits under another workspace, so a `[workspace]` table
+is appended to its manifest) the suite passes with 114 tests, 112 before the two
+added ones, and the three turndown expectations above updated.
 
 `rustfmt` 1.9 with default settings leaves the modified files unchanged and
 would join one call onto a line in three unmodified upstream files

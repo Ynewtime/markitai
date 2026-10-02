@@ -28,18 +28,25 @@ pub(super) fn img_handler(handlers: &dyn Handlers, element: Element) -> Option<H
 
     link.as_ref()?;
 
+    // markitai: the lines of an alt text or title are one sentence wrapped in
+    // the source, so they join with a space (upstream kept the line breaks,
+    // which end an image's text at its first line once the output is
+    // repaired as prose), and an empty title is no title: `![](a.png "")`
+    // carries nothing.
     let process_alt_title = |text: String| {
         text.lines()
             .map(|line| line.trim_document_whitespace().replace('"', "\\\""))
             .filter(|line| !line.is_empty())
-            .join("\n")
+            .join(" ")
     };
 
     // Handle new lines in alt
     let alt = alt.map(process_alt_title);
 
     // Handle new lines in title
-    let title = title.map(process_alt_title);
+    let title = title
+        .map(process_alt_title)
+        .filter(|title| !title.is_empty());
 
     let link = link.map(|text| text.replace('(', "\\(").replace(')', "\\)"));
 

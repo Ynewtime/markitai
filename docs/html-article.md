@@ -107,8 +107,21 @@ entries may have moved to the end as footnotes. A heading whose text is a link
 to a fragment of the same page, or an anchor glyph beside the text, is written
 as plain text; a list item with nothing left to show (an icon, a share button)
 is not written as an empty bullet; an element with `role=tooltip` is a control's
-label, not text. A note's definition beside the body is still written at the end,
-and a reference inside a block that is left out creates no footnote.
+label, not text, and so is one with a `popover` attribute (the browser's style
+sheet hides it until a script opens it; GitHub's tooltips are such spans). A
+note's definition beside the body is still written at the end, and a reference
+inside a block that is left out creates no footnote.
+
+In a GitHub issue (`data-testid=issue-viewer-container`) the interface text the
+viewer writes among the discussion is left out: Primer tooltips (`Copy link`,
+`Issue body actions`, by their `popover` attribute or `prc-TooltipV2-Tooltip`
+class), the signed-out banner (`SignedOutBanner-module__signedOutBanner`: "Sign
+up for free to join this conversation on GitHub. Already have an account? Sign
+in to comment"), links that send a signed-out reader to `/login?return_to=` or
+`/signup?return_to=` (`New issue`), and an element whose whole text is one of
+the labels `Copy link`, `Issue body actions` or `Reactions are currently
+unavailable`. The state, labels, opener, date and comments around them stay; the
+same words inside a sentence of a comment are text.
 
 Known limits: replies after a dominant first post stay only when they repeat its
 markup and carry dates, so undated or differently classed short replies are

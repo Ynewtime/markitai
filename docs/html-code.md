@@ -14,6 +14,21 @@ attributes, nearby dedicated highlighter containers, or a recognized language
 label in an editor header. The reader does not infer a programming language
 from code tokens.
 
+The attributes include `data-language`, `data-lang`, `language`, `lang`,
+`language-…` and `lang-…` classes, and SyntaxHighlighter's `brush:` class
+(`brush: js notranslate`, also `brush:js` and `brush: js; gutter: false`), which
+MDN writes its blocks with.
+
+A label above a block that only repeats its language is not written: MDN's
+`div.example-header > span.language-name` ("js") before `pre.brush: js`
+would otherwise be a stray line before the fence, which already names the
+language. Only a `div` or `span` is read, whose own or inner class names a
+label (`language`, `lang`, `header`, `label`), whose text is at most two short
+words, that is followed (blank text aside) by the code block, and whose text
+names the same language as that block (`js`, `JS` and `JavaScript` are one
+language; `ts`, `py`, `rs` and `yml` likewise). A heading, a paragraph, or a
+label naming another language is the page's text.
+
 Line containers insert a separator only when their structure requires one and
 neither their payload nor the intervening source already supplied it. Explicit
 newlines, indentation, tabs and blank rows are retained. CodeMirror's empty-line

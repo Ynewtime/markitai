@@ -41,9 +41,157 @@ pub(crate) fn request_error(error: reqwest::Error) -> Error {
     Error::Fetch(message)
 }
 
+/// Pauses before the second and third attempt of a GET whose connection failed
+/// before the server replied (see [`send`]).
+const RETRY_PAUSES: [Duration; 2] = [Duration::from_millis(250), Duration::from_millis(750)];
+
+/// Send a body-less GET, repeating it when the connection could not be
+/// established because the peer reset it or cut it off, such as a TLS handshake
+/// that ends early. Nothing was sent then, so the repeat cannot duplicate
+/// work. Nothing else is retried: not a timeout, a refused connection, a name
+/// that does not resolve, a certificate failure, a connection that fails after
+/// the request went out or any HTTP status, so a 4xx or 5xx answer is reported
+/// at once.
+fn send(request: reqwest::blocking::RequestBuilder) -> Result<Response> {
+    let mut request = request;
+    let mut pauses = RETRY_PAUSES.iter();
+    loop {
+        let spare = request.try_clone();
+        match request.send() {
+            Ok(response) => return Ok(response),
+            Err(error) => match (connection_dropped(&error), pauses.next(), spare) {
+                (true, Some(pause), Some(spare)) => {
+                    std::thread::sleep(*pause);
+                    request = spare;
+                }
+                _ => return Err(request_error(error)),
+            },
+        }
+    }
+}
+
+/// Whether a request failed while connecting (TCP or TLS) because the peer
+/// reset the connection or cut it off early, which the next attempt usually
+/// does not repeat.
+fn connection_dropped(error: &reqwest::Error) -> bool {
+    if !error.is_connect() || error.is_timeout() {
+        return false;
+    }
+    let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    while let Some(current) = cause {
+        if current.downcast_ref::<std::io::Error>().is_some_and(|io| {
+            use std::io::ErrorKind::{
+                BrokenPipe, ConnectionAborted, ConnectionReset, UnexpectedEof,
+            };
+            matches!(
+                io.kind(),
+                BrokenPipe | ConnectionAborted | ConnectionReset | UnexpectedEof
+            )
+        }) {
+            return true;
+        }
+        let text = current.to_string().to_ascii_lowercase();
+        if text.contains("connection reset")
+            || text.contains("connection aborted")
+            || text.contains("broken pipe")
+            || text
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .any(|word| word == "eof")
+        {
+            return true;
+        }
+        cause = current.source();
+    }
+    false
+}
+
+/// A URL for an error message: no userinfo or fragment, and no query value
+/// that is a known or probable secret.
+fn shown_url(url: &Url) -> String {
+    const SECRET_NAMES: [&str; 10] = [
+        "auth", "sig", "sid", "code", "pass", "pwd", "jwt", "otp", "sess", "ssid",
+    ];
+    const SECRET_PARTS: [&str; 7] = [
+        "session", "bearer", "cookie", "ticket", "nonce", "access", "oauth",
+    ];
+    let mut url = url.clone();
+    url.set_fragment(None);
+    // The project's own redaction covers token, key, secret, password,
+    // signature and credential names; the rest of the query is screened here.
+    let Ok(mut url) = Url::parse(&output::redact_url(url.as_str())) else {
+        return String::new();
+    };
+    let pairs: Vec<(String, String)> = url
+        .query_pairs()
+        .map(|(key, value)| {
+            let name = key.to_ascii_lowercase();
+            let opaque = value.len() >= 24
+                && value.bytes().any(|byte| byte.is_ascii_digit())
+                && value.bytes().any(|byte| byte.is_ascii_alphabetic())
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"-_+/=.%".contains(&byte));
+            let secret = opaque
+                || SECRET_NAMES.contains(&name.as_str())
+                || SECRET_PARTS.iter().any(|part| name.contains(part));
+            (
+                key.into_owned(),
+                if secret {
+                    "REDACTED".into()
+                } else {
+                    value.into_owned()
+                },
+            )
+        })
+        .collect();
+    if !pairs.is_empty() {
+        url.query_pairs_mut().clear().extend_pairs(pairs);
+    }
+    let shown = url.to_string();
+    if shown.chars().count() > 200 {
+        let cut: String = shown.chars().take(199).collect();
+        format!("{cut}…")
+    } else {
+        shown
+    }
+}
+
+/// `HTTP <status>`, then what was asked and a short hint. The status stays
+/// first: the web interface recognizes the message by it.
+fn http_failure(status: reqwest::StatusCode, service: Option<&str>, url: &Url) -> Error {
+    let mut message = format!("HTTP {}", status.as_u16());
+    match service {
+        Some(service) => message.push_str(&format!(" from the {service} service")),
+        None => {
+            message.push_str(" for ");
+            message.push_str(&shown_url(url));
+            let hint = match status.as_u16() {
+                404 | 410 => Some("the page may have been removed or is not public"),
+                401 | 403 => {
+                    Some("the site refused access; it may block automated clients or need a login")
+                }
+                429 => Some("rate limited; try again later"),
+                500..=599 => Some("the site had a server error"),
+                _ => None,
+            };
+            if let Some(hint) = hint {
+                message.push_str(": ");
+                message.push_str(hint);
+            }
+        }
+    }
+    Error::Fetch(message)
+}
+
 pub(crate) fn body(response: Response) -> Result<Vec<u8>> {
+    read_body(response, None)
+}
+
+/// The body of a response, or the failure its status reports. `service` names
+/// a remote extraction service whose own status is not about the page.
+fn read_body(response: Response, service: Option<&str>) -> Result<Vec<u8>> {
     if !response.status().is_success() {
-        return Err(Error::Fetch(format!("HTTP {}", response.status().as_u16())));
+        return Err(http_failure(response.status(), service, response.url()));
     }
     if response.content_length().is_some_and(|n| n > MAX_RESPONSE) {
         return Err(Error::Fetch("Response exceeds 100 MiB".into()));
@@ -268,7 +416,7 @@ pub(crate) fn fetch_with_runtime(
                     require_capture_output(cfg, output_available)?;
                     return fetch_browser(source, cfg, true, output_available, runtime);
                 }
-                result => result?,
+                result => result.map_err(static_javascript_error)?,
             };
             if matches!(&outcome.content, FetchContent::Document(_)) {
                 require_capture_output(cfg, output_available)?;
@@ -276,10 +424,10 @@ pub(crate) fn fetch_with_runtime(
             }
             Ok(outcome)
         }
-        "auto" => match fetch_static(source, &url, cfg, explicit_strategy) {
-            Err(error) if browser_quality_failure(&error) && browser::available() => {
-                let needs_javascript =
-                    matches!(&error, Error::Fetch(reason) if reason == JS_REQUIRED);
+        "auto" => auto_result(
+            fetch_static(source, &url, cfg, explicit_strategy),
+            browser::available,
+            |needs_javascript| {
                 fetch_browser_and_learn(
                     source,
                     &url,
@@ -289,10 +437,11 @@ pub(crate) fn fetch_with_runtime(
                     learn && needs_javascript,
                     runtime,
                 )
-            }
-            result => result,
-        },
-        "static" => fetch_static(source, &url, cfg, explicit_strategy),
+            },
+        ),
+        "static" => {
+            fetch_static(source, &url, cfg, explicit_strategy).map_err(static_javascript_error)
+        }
         "defuddle" | "jina" => {
             require_capture_output(cfg, output_available)?;
             remote_allowed(&url, cfg)?;
@@ -312,7 +461,7 @@ pub(crate) fn fetch_with_runtime(
                     request = request.bearer_auth(key);
                 }
             }
-            let bytes = body(request.send().map_err(request_error)?)?;
+            let bytes = read_body(send(request)?, Some(strategy))?;
             let mut doc = if strategy == "jina" {
                 let value: Value = serde_json::from_slice(&bytes)?;
                 let markdown = value
@@ -365,8 +514,70 @@ pub(crate) fn fetch_with_runtime(
 
 const LEARNING_WARNING: &str =
     "Learned browser-domain store is unavailable; routing knowledge could not be used or saved.";
-const JS_REQUIRED: &str =
-    "HTML page requires JavaScript; browser rendering fallback is not implemented";
+/// The page asks for JavaScript in its visible text.
+const JS_REQUIRED: &str = "The page needs JavaScript to show its content";
+/// The page has no text of its own and builds its content with scripts.
+const JS_EMPTY: &str = "The page has no text without JavaScript";
+/// Static extraction kept the little text there was, and the page's markup
+/// says it is rendered by scripts.
+const JS_SHELL: &str = "The page needs JavaScript to show most of its content, so this text may be incomplete; use -s playwright, or the default auto strategy with Chrome or Chromium installed, to render it.";
+const STATIC_NEEDS_JAVASCRIPT: &str =
+    "The page needs JavaScript; use -s playwright or the default auto strategy";
+const NO_BROWSER_FOR_JAVASCRIPT: &str = "The page needs JavaScript, and no local browser (Chrome or Chromium) was found; install one or set MARKITAI_BROWSER_EXECUTABLE (see 'markitai doctor')";
+
+fn needs_javascript(error: &Error) -> bool {
+    matches!(error, Error::Fetch(reason) if reason == JS_REQUIRED || reason == JS_EMPTY)
+}
+
+/// An explicit `static` fetch cannot render the page; say what to use.
+fn static_javascript_error(error: Error) -> Error {
+    if needs_javascript(&error) {
+        Error::Fetch(STATIC_NEEDS_JAVASCRIPT.into())
+    } else {
+        error
+    }
+}
+
+/// What `auto` makes of its static result. A page that needs JavaScript goes
+/// to the local browser, learning the authority when the page said so in its
+/// own text; one that merely looks like a script-rendered shell keeps its
+/// static text, with a warning, whenever the browser is missing or fails.
+fn auto_result(
+    result: Result<FetchOutcome>,
+    browser_ready: impl FnOnce() -> bool,
+    render: impl FnOnce(bool) -> Result<FetchOutcome>,
+) -> Result<FetchOutcome> {
+    match result {
+        Err(error) if browser_quality_failure(&error) => {
+            if browser_ready() {
+                render(matches!(&error, Error::Fetch(reason) if reason == JS_REQUIRED))
+            } else if needs_javascript(&error) {
+                Err(Error::Fetch(NO_BROWSER_FOR_JAVASCRIPT.into()))
+            } else {
+                Err(error)
+            }
+        }
+        Ok(mut outcome)
+            if matches!(&outcome.content, FetchContent::Document(document)
+                if document.warnings.iter().any(|warning| warning == JS_SHELL)) =>
+        {
+            if !browser_ready() {
+                return Ok(outcome);
+            }
+            match render(false) {
+                Ok(rendered) => Ok(rendered),
+                Err(Error::Fetch(reason)) => {
+                    outcome.content.warnings_mut().push(format!(
+                        "Browser rendering failed ({reason}); the static text was kept."
+                    ));
+                    Ok(outcome)
+                }
+                Err(error) => Err(error),
+            }
+        }
+        result => result,
+    }
+}
 
 fn add_learning_warning(outcome: &mut FetchOutcome) {
     let warnings = outcome.content.warnings_mut();
@@ -417,7 +628,8 @@ fn visual_only(cfg: &Value) -> bool {
 fn browser_quality_failure(error: &Error) -> bool {
     match error {
         Error::Fetch(message) => {
-            message.contains("HTML page requires JavaScript")
+            message == JS_REQUIRED
+                || message == JS_EMPTY
                 || message.contains("HTML challenge page cannot be extracted")
                 || message == "URL returned no extractable content"
         }
@@ -540,6 +752,40 @@ struct StaticPage {
     final_url: String,
     etag: Option<String>,
     last_modified: Option<String>,
+    /// Where a nearly empty page sent the reader with a `<meta>` refresh
+    /// within two seconds; `content` is then only a placeholder.
+    refresh: Option<Url>,
+}
+
+/// Meta refreshes followed after one request.
+const MAX_REFRESHES: usize = 5;
+
+/// Follow `<meta http-equiv="refresh">` pages, which a browser would have left
+/// at once, the way HTTP redirects are followed: only to http(s) URLs, with no
+/// credentials (the request carries none, even to the same origin), and a
+/// bounded number of times. The cache validators of the first response do
+/// not describe the page that was finally read, so none are kept.
+fn follow_meta_refresh(client: &Client, page: &mut StaticPage, defer_pdf: bool) -> Result<()> {
+    let mut hops = 0;
+    while let Some(target) = page.refresh.take() {
+        hops += 1;
+        if hops > MAX_REFRESHES {
+            return Err(Error::Fetch(format!(
+                "Too many <meta> refresh redirects (more than {MAX_REFRESHES})"
+            )));
+        }
+        *page = decode_static(
+            send(
+                client
+                    .get(target)
+                    .header(reqwest::header::ACCEPT, STATIC_ACCEPT),
+            )?,
+            defer_pdf,
+        )?;
+        page.etag = None;
+        page.last_modified = None;
+    }
+    Ok(())
 }
 
 fn cache_warning(content: &mut FetchContent, unavailable: bool) {
@@ -630,14 +876,15 @@ fn fetch_static(
     let mut page = match fresh {
         Some(page) => page,
         None => decode_static(
-            client
-                .get(url.clone())
-                .header(reqwest::header::ACCEPT, STATIC_ACCEPT)
-                .send()
-                .map_err(request_error)?,
+            send(
+                client
+                    .get(url.clone())
+                    .header(reqwest::header::ACCEPT, STATIC_ACCEPT),
+            )?,
             defer_pdf(cfg),
         )?,
     };
+    follow_meta_refresh(&client, &mut page, defer_pdf(cfg))?;
     if let Some(cache) = cache {
         if page.cache_eligible
             && let FetchContent::Document(document) = &page.content
@@ -682,22 +929,32 @@ fn header_text(response: &Response, name: reqwest::header::HeaderName) -> Option
         .map(str::to_owned)
 }
 
-/// A BOM, then the HTTP charset, then for HTML a `<meta>` declaration, then
-/// UTF-8; malformed sequences become replacement characters.
-fn decode_text<'a>(bytes: &'a [u8], content_type: &str, html: bool) -> std::borrow::Cow<'a, str> {
+/// The text of a response body and an optional warning about its encoding.
+///
+/// HTML follows a BOM, then the declarations its bytes fit and, failing them,
+/// detection (see `formats::decode_fetched_html`). Plain text follows a BOM,
+/// then the HTTP charset, then UTF-8, and malformed sequences become
+/// replacement characters.
+fn decode_text<'a>(
+    bytes: &'a [u8],
+    content_type: &str,
+    html: bool,
+) -> (std::borrow::Cow<'a, str>, Option<String>) {
     let charset = content_type.split(';').find_map(|parameter| {
         let (key, value) = parameter.trim().split_once('=')?;
         key.trim()
             .eq_ignore_ascii_case("charset")
             .then_some(value.trim())
     });
+    if html {
+        return formats::decode_fetched_html(bytes, charset);
+    }
     let encoding = charset
         .and_then(|label| {
             encoding_rs::Encoding::for_label(label.trim_matches(['\"', '\'']).as_bytes())
         })
-        .or_else(|| html.then(|| formats::html_legacy_encoding(bytes)).flatten())
         .unwrap_or(encoding_rs::UTF_8);
-    encoding.decode(bytes).0
+    (encoding.decode(bytes).0, None)
 }
 
 // Restrict checks to HTML and visible non-code text. Vendor names in an article,
@@ -918,17 +1175,15 @@ fn probe_pdf(
     explicit_strategy: Option<&str>,
     inspect_learning: bool,
 ) -> Result<(Option<FetchOutcome>, bool)> {
-    let response = StaticResponse::read(
+    let response = StaticResponse::read(send(
         client(30)?
             .get(url.clone())
-            .header(reqwest::header::ACCEPT, STATIC_ACCEPT)
-            .send()
-            .map_err(request_error)?,
-    )?;
+            .header(reqwest::header::ACCEPT, STATIC_ACCEPT),
+    )?)?;
     if !response.is_pdf() {
         let needs_javascript = inspect_learning
             && response.kind() == StaticKind::Html
-            && html_rejection(&decode_text(&response.bytes, &response.content_type, true))
+            && html_rejection(&decode_text(&response.bytes, &response.content_type, true).0)
                 == Some(JS_REQUIRED);
         return Ok((None, needs_javascript));
     }
@@ -959,20 +1214,53 @@ fn decode_static(response: Response, defer_pdf: bool) -> Result<StaticPage> {
             final_url,
             etag: None,
             last_modified: None,
+            refresh: None,
         });
     }
     let kind = response.kind();
     let cache_eligible = kind != StaticKind::Other;
     let mut doc = match kind {
         StaticKind::Html => {
-            let html = decode_text(&response.bytes, &response.content_type, true);
+            let (html, decode_warning) = decode_text(&response.bytes, &response.content_type, true);
             if let Some(reason) = html_rejection(&html) {
                 return Err(Error::Fetch(reason.into()));
             }
-            formats::extract_html(&html, Some(response.effective_url.as_str()))?
+            let extracted = formats::extract_html(&html, Some(response.effective_url.as_str()));
+            let words = extracted
+                .as_ref()
+                .ok()
+                .map(|document| text_words(&document.markdown));
+            let empty =
+                matches!(&extracted, Err(Error::Conversion(message)) if message == NO_CONTENT);
+            let short = words.is_some_and(|words| words < SHORT_PAGE_WORDS);
+            if (empty || short)
+                && let Some(target) = meta_refresh(&html, &response.effective_url)
+            {
+                return Ok(StaticPage {
+                    content: FetchContent::Document(Document::default()),
+                    cache_eligible: false,
+                    final_url: response.effective_url.into(),
+                    etag: None,
+                    last_modified: None,
+                    refresh: Some(target),
+                });
+            }
+            let mut document = match extracted {
+                Err(_) if empty && script_rendered(&html) => {
+                    return Err(Error::Fetch(JS_EMPTY.into()));
+                }
+                extracted => extracted?,
+            };
+            if short && script_rendered(&html) {
+                document.warnings.push(JS_SHELL.into());
+            }
+            document.warnings.extend(decode_warning);
+            document
         }
         StaticKind::Text => Document {
-            markdown: decode_text(&response.bytes, &response.content_type, false).into_owned(),
+            markdown: decode_text(&response.bytes, &response.content_type, false)
+                .0
+                .into_owned(),
             ..Default::default()
         },
         StaticKind::Other => {
@@ -1009,7 +1297,156 @@ fn decode_static(response: Response, defer_pdf: bool) -> Result<StaticPage> {
         final_url: response.effective_url.into(),
         etag: response.etag,
         last_modified: response.last_modified,
+        refresh: None,
     })
+}
+
+const NO_CONTENT: &str = "HTML contains no extractable content";
+/// Fewer words than this, in the Markdown a page yields, make it a candidate
+/// for a stub that only redirects or a shell that scripts fill in.
+const SHORT_PAGE_WORDS: usize = 30;
+/// Inline script text, in bytes, that outweighs a page this short: the data
+/// or code that builds the page rather than an analytics snippet.
+const SHELL_SCRIPT_BYTES: usize = 3000;
+/// The longest delay, in seconds, of a `<meta>` refresh that is followed.
+const MAX_REFRESH_SECONDS: f64 = 2.0;
+
+/// Words of extracted Markdown; the destinations of links are not words.
+fn text_words(markdown: &str) -> usize {
+    use std::sync::LazyLock;
+    static DESTINATION: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"\]\([^)]*\)").unwrap());
+    formats::word_count(&DESTINATION.replace_all(markdown, "]"))
+}
+
+/// Whether the markup says the page is built by scripts: a large inline
+/// script, or beside any script an empty mount point for a front-end
+/// framework or a `<noscript>` text about JavaScript.
+fn script_rendered(html: &str) -> bool {
+    const MOUNTS: [&str; 9] = [
+        "root",
+        "app",
+        "__next",
+        "__nuxt",
+        "___gatsby",
+        "svelte",
+        "react-root",
+        "q-app",
+        "app-root",
+    ];
+    let tree = scraper::Html::parse_document(html);
+    let (mut scripts, mut inline, mut mount, mut noscript) = (0, 0, false, false);
+    for node in tree.tree.nodes() {
+        let Some(element) = scraper::ElementRef::wrap(node) else {
+            continue;
+        };
+        let name = element.value().name();
+        match name {
+            "script" => {
+                scripts += 1;
+                let kind = element
+                    .value()
+                    .attr("type")
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                // Structured data and templates describe visible content.
+                if element.value().attr("src").is_none()
+                    && !kind.contains("ld+json")
+                    && !kind.contains("template")
+                {
+                    inline += element.text().map(str::len).sum::<usize>();
+                }
+            }
+            "noscript" => {
+                noscript |= element
+                    .text()
+                    .any(|text| text.to_ascii_lowercase().contains("javascript"));
+            }
+            _ => {}
+        }
+        let mount_point = name == "app-root"
+            || element
+                .value()
+                .id()
+                .is_some_and(|id| MOUNTS.contains(&id.to_ascii_lowercase().as_str()));
+        if mount_point && !has_page_text(element) {
+            mount = true;
+        }
+    }
+    scripts > 0 && (inline >= SHELL_SCRIPT_BYTES || mount || noscript)
+}
+
+/// Text of an element that a reader would see, not script or style source.
+fn has_page_text(element: scraper::ElementRef<'_>) -> bool {
+    element.descendants().any(|node| {
+        matches!(node.value(), scraper::Node::Text(text) if !text.trim().is_empty())
+            && !node
+                .ancestors()
+                .filter_map(scraper::ElementRef::wrap)
+                .any(|ancestor| {
+                    matches!(
+                        ancestor.value().name(),
+                        "script" | "style" | "noscript" | "template"
+                    )
+                })
+    })
+}
+
+/// The target of a `<meta http-equiv="refresh">` that a browser would follow
+/// within [`MAX_REFRESH_SECONDS`], when it is another http(s) URL.
+fn meta_refresh(html: &str, base: &Url) -> Option<Url> {
+    use std::sync::LazyLock;
+    static META: LazyLock<scraper::Selector> =
+        LazyLock::new(|| scraper::Selector::parse("meta[http-equiv][content]").unwrap());
+    let tree = scraper::Html::parse_document(html);
+    tree.select(&META).find_map(|meta| {
+        let element = meta.value();
+        element
+            .attr("http-equiv")?
+            .trim()
+            .eq_ignore_ascii_case("refresh")
+            .then(|| refresh_target(element.attr("content")?, base))
+            .flatten()
+    })
+}
+
+/// `seconds`, `seconds; url=target` or `seconds, target`, as the HTML standard
+/// reads a refresh's `content`: a delay of at most [`MAX_REFRESH_SECONDS`],
+/// then a target other than the page itself.
+fn refresh_target(content: &str, base: &Url) -> Option<Url> {
+    let content = content.trim_start();
+    let end = content
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(content.len());
+    let seconds: f64 = content[..end].parse().ok()?;
+    if seconds > MAX_REFRESH_SECONDS {
+        return None;
+    }
+    let rest =
+        content[end..].trim_start_matches(|c: char| c == ';' || c == ',' || c.is_whitespace());
+    let rest = if rest.len() >= 3
+        && rest.is_char_boundary(3)
+        && rest[..3].eq_ignore_ascii_case("url")
+        && let Some(after) = rest[3..].trim_start().strip_prefix('=')
+    {
+        after.trim_start()
+    } else {
+        rest
+    };
+    let rest = match rest.chars().next() {
+        Some(quote @ ('"' | '\'')) => rest[1..].split(quote).next().unwrap_or_default(),
+        _ => rest,
+    }
+    .trim();
+    if rest.is_empty() {
+        return None;
+    }
+    let mut target = base.join(rest).ok()?;
+    // Credentials in a page's own markup are not ours to send either.
+    let _ = target.set_username("");
+    let _ = target.set_password(None);
+    (matches!(target.scheme(), "http" | "https") && target.host_str().is_some() && target != *base)
+        .then_some(target)
 }
 
 #[cfg(test)]
@@ -1136,6 +1573,23 @@ mod cache_tests {
     }
 
     impl Reply {
+        /// Read the request, then close the connection without answering.
+        pub(super) fn dropped() -> Self {
+            Self {
+                status: 0,
+                headers: Vec::new(),
+                body: Vec::new(),
+            }
+        }
+        /// Read the request, then reset the connection (an RST, where the
+        /// platform allows it) without answering. Only the Unix tests use it.
+        #[cfg(unix)]
+        pub(super) fn reset() -> Self {
+            Self {
+                status: 1,
+                ..Self::dropped()
+            }
+        }
         pub(super) fn bytes(mime: &str, bytes: &[u8]) -> Self {
             Self {
                 status: 200,
@@ -1163,6 +1617,31 @@ mod cache_tests {
             self.status = status;
             self
         }
+    }
+
+    /// Make closing the stream send a reset instead of an orderly shutdown.
+    pub(super) fn reset_on_close(stream: &std::net::TcpStream) {
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            let linger = libc::linger {
+                l_onoff: 1,
+                l_linger: 0,
+            };
+            // SAFETY: a valid socket descriptor, and a `linger` of the size given.
+            let result = unsafe {
+                libc::setsockopt(
+                    stream.as_raw_fd(),
+                    libc::SOL_SOCKET,
+                    libc::SO_LINGER,
+                    (&raw const linger).cast(),
+                    std::mem::size_of::<libc::linger>() as libc::socklen_t,
+                )
+            };
+            assert_eq!(result, 0);
+        }
+        #[cfg(not(unix))]
+        let _ = stream;
     }
 
     pub(super) struct Server {
@@ -1219,6 +1698,14 @@ mod cache_tests {
                         .get(index)
                         .cloned()
                         .unwrap_or_else(|| Reply::text("unexpected request").status(500));
+                    if reply.status < 100 {
+                        // No reply is written: the connection is closed cleanly
+                        // (0) or reset (1).
+                        if reply.status == 1 {
+                            reset_on_close(&stream);
+                        }
+                        continue;
+                    }
                     write!(
                         stream,
                         "HTTP/1.1 {} Test\r\nContent-Length: {}\r\nConnection: close\r\n",
@@ -1672,6 +2159,9 @@ mod cache_tests {
 
 #[cfg(test)]
 mod pdf_tests;
+
+#[cfg(test)]
+mod robustness_tests;
 
 #[cfg(test)]
 mod bounded_fixture_io {

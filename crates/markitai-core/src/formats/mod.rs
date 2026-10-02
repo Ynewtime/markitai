@@ -8,8 +8,9 @@ mod numbers;
 mod text;
 
 pub(crate) use html::canonical_status_url;
+pub(crate) use html::count_words as word_count;
+pub(crate) use html::decode_fetched as decode_fetched_html;
 pub use html::extract_html;
-pub(crate) use html::legacy_encoding as html_legacy_encoding;
 pub(crate) use native::extract_presentation_count;
 #[cfg(test)]
 pub(crate) use native::pdf::extract_pages as extract_pdf_pages;

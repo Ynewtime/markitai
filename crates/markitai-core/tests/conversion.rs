@@ -602,11 +602,63 @@ fn url_names_and_explicit_pure_output_follow_existing_contracts() {
         ("https://example.com/page.html", "page.html"),
         ("https://example.com/path/to/doc", "doc"),
         ("https://example.com/", "example_com"),
-        ("https://youtube.com/watch?v=abc", "youtube_com_watch"),
+        // A generic page name with an identifying query keeps the identity,
+        // so two items of one site do not share a file.
+        ("https://youtube.com/watch?v=abc", "youtube_com_watch_abc"),
+        (
+            "https://news.ycombinator.com/item?id=8863",
+            "news_ycombinator_com_item_8863",
+        ),
+        (
+            "https://news.ycombinator.com/item?id=1",
+            "news_ycombinator_com_item_1",
+        ),
+        (
+            "https://example.com/index.php?utm_source=x&id=7&sort=asc",
+            "example_com_index.php_7",
+        ),
+        ("https://example.com/?p=123", "example_com_123"),
+        ("https://example.com/8863?id=8863", "example_com_8863"),
+        (
+            "https://example.com/watch?v=a/b%20c",
+            "example_com_watch_a-b-c",
+        ),
+        (
+            "https://example.com/doc?token=zzz&id=5",
+            "example_com_doc_5",
+        ),
+        ("https://example.com/p?id=../../etc", "example_com_p_etc"),
+        // Searches, views, tracking and secrets are not identities.
         (
             "https://example.com:8080/search?q=x",
             "example_com_8080_search",
         ),
+        (
+            "https://example.com/page?session=abc&utm_source=a",
+            "example_com_page",
+        ),
+        ("https://example.com/doc?id=", "example_com_doc"),
+        ("https://example.com/doc?token=zzz", "example_com_doc"),
+        // X and Twitter posts: user and post id, not the photo or video number.
+        (
+            "https://x.com/elonmusk/status/1234567890123456789/photo/1",
+            "elonmusk-status-1234567890123456789",
+        ),
+        (
+            "https://twitter.com/NASA/status/20?s=20&t=abc",
+            "NASA-status-20",
+        ),
+        (
+            "https://mobile.twitter.com/a_b/status/9/video/2",
+            "a_b-status-9",
+        ),
+        ("https://www.x.com/user/status/5/analytics", "user-status-5"),
+        ("https://fxtwitter.com/user/status/5", "user-status-5"),
+        ("https://x.com/i/web/status/77", "i-status-77"),
+        ("https://x.com/user", "user"),
+        ("https://x.com/user/status/abc", "abc"),
+        ("https://x.com/user/status/", "status"),
+        ("https://example.com/user/status/12", "12"),
         // Non-ASCII paths, written plainly or percent-encoded, name their
         // output readably; an encoded slash or control character stays safe,
         // and bytes that are not UTF-8 keep their encoding.
@@ -643,6 +695,40 @@ fn url_names_and_explicit_pure_output_follow_existing_contracts() {
     assert_eq!(
         std::fs::read_to_string(output.join("chosen.md")).unwrap(),
         "Pure body"
+    );
+}
+
+#[test]
+fn url_names_from_queries_and_posts_stay_bounded_and_filesystem_safe() {
+    let long = "a".repeat(500);
+    for url in [
+        format!("https://example.com/p?id={long}"),
+        format!("https://example.com/{long}?id={long}"),
+        format!("https://x.com/{long}/status/1"),
+        "https://example.com/watch?v=%00%2F%5C:*%3F%22%3C%3E%7C".to_string(),
+        "https://example.com/p?id=%E4%BA%BA%2F%E5%8D%95".to_string(),
+    ] {
+        let name = markitai_core::output::url_name(&url, &Default::default());
+        assert!(!name.is_empty() && name.chars().count() <= 200, "{name}");
+        assert!(
+            !name.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|', '\0']),
+            "{name}"
+        );
+        assert!(!name.starts_with('.') && !name.ends_with('.'), "{name}");
+    }
+    assert_eq!(
+        markitai_core::output::url_name(
+            &format!("https://example.com/p?id={long}"),
+            &Default::default()
+        ),
+        format!("example_com_p_{}", "a".repeat(64))
+    );
+    assert_eq!(
+        markitai_core::output::url_name(
+            "https://example.com/p?id=%E4%BA%BA%2F%E5%8D%95",
+            &Default::default()
+        ),
+        "example_com_p_人-单"
     );
 }
 

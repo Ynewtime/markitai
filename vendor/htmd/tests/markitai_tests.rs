@@ -908,3 +908,44 @@ fn tree_writer_matches_the_parser_on_generated_markup() {
     }
     assert!(built > total / 5, "{built} of {total} sequences built");
 }
+
+#[test]
+fn nested_identical_emphasis_is_written_once() {
+    for (html, markdown) in [
+        ("<p><b><strong>text</strong></b></p>", "**text**"),
+        ("<p><strong>a <b>b</b> c</strong></p>", "**a b c**"),
+        ("<p><em><i>text</i></em></p>", "*text*"),
+        (
+            r#"<p><b><a href="/x"><strong>t</strong></a></b></p>"#,
+            "**[t](/x)**",
+        ),
+        // Different emphasis nests as CommonMark spells it.
+        ("<p><b><i>text</i></b></p>", "***text***"),
+        // Siblings stay separate.
+        ("<p><b>a</b> <strong>b</strong></p>", "**a** **b**"),
+    ] {
+        assert_eq!(markdown, htmd::convert(html).unwrap(), "{html}");
+    }
+}
+
+#[test]
+fn image_text_joins_its_lines_and_an_empty_title_is_left_out() {
+    for (html, markdown) in [
+        (
+            "<img src=\"a.png\" alt=\"Two tables: the first\nstack, with its length\n  and a pointer.\">",
+            "![Two tables: the first stack, with its length and a pointer.](a.png)",
+        ),
+        (
+            "<img src=\"a.png\" alt=\"x\" title=\"first\nsecond\">",
+            "![x](a.png \"first second\")",
+        ),
+        ("<img src=\"a.png\" alt=\"x\" title=\"\">", "![x](a.png)"),
+        (
+            "<img src=\"a.png\" alt=\"x\" title=\" \n \">",
+            "![x](a.png)",
+        ),
+        ("<img src=\"a.png\" alt=\"\n\">", "![](a.png)"),
+    ] {
+        assert_eq!(markdown, htmd::convert(html).unwrap(), "{html}");
+    }
+}

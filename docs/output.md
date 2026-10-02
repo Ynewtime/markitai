@@ -38,6 +38,35 @@ separate request contracts. See [document processing](llm.md).
 Profiles run after enhancement on both outputs so restored page markers and
 image references receive the same transformations as reader-produced content.
 
+## Names from URLs
+
+A URL names its output after the last path segment, percent-decoded when that
+yields UTF-8 (`https://example.com/path/to/doc` gives `doc.md`, and
+`/posts/人是什么单位` gives `人是什么单位.md`), or after the host when there is
+none (`example_com.md`). When the URL has a query, the host comes first
+(`example_com_8080_search.md` for `https://example.com:8080/search?q=x`). Names
+are bounded to 200 characters and replace characters that file systems reject.
+
+Two refinements keep different pages apart, and differ from the reference, which
+named `news.ycombinator.com/item?id=1` and `?id=2` both `news_ycombinator_com_item`:
+
+- A query parameter that names the page itself adds its value: `id`, `v`, `p`,
+  `pid`, `tid`, `nid`, `aid`, `vid`, `story`, `article`, `post`, `topic`,
+  `thread`, `item`, `video`, `doc`, and the `…id` and `…_id` spellings of those
+  and of `page` (a bare `page` is a page number and is not used).
+  `youtube.com/watch?v=abc`
+  becomes `youtube_com_watch_abc`, `news.ycombinator.com/item?id=8863` becomes
+  `news_ycombinator_com_item_8863`, and WordPress's `example.com/?p=123` becomes
+  `example_com_123`. The first such parameter wins; its value keeps letters,
+  digits, `-`, `_` and `.` (other runs become one `-`), is at most 64
+  characters, and is left out when the last segment already contains it.
+  Searches (`q`), views, tracking parameters and anything that could be a secret
+  never enter a name.
+- A post on X or Twitter (`x.com`, `twitter.com` and their `www.`, `mobile.`,
+  `fxtwitter.com`, `vxtwitter.com`, `fixupx.com`, `fixvx.com` and `twittpr.com`
+  forms) is named `<user>-status-<id>`, so `https://x.com/NASA/status/20/photo/1`
+  gives `NASA-status-20.md` rather than `1.md`; `/i/web/status/<id>` uses `i`.
+
 ## Files and assets
 
 Documents, assets, image sidecars and reports are created with the process

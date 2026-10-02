@@ -1,6 +1,7 @@
 //! Deterministic cleanup applied to normal output; pure output bypasses it.
 
 use regex::Regex;
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -8,8 +9,11 @@ fn pattern(source: &str) -> Regex {
     Regex::new(source).expect("static Markdown pattern")
 }
 
+/// A link whose text a line break splits, with the `!` of an image when there
+/// is one (the first group): image syntax is never repaired, since the repair
+/// keeps only the first line of the text.
 static BROKEN_LINK: LazyLock<Regex> =
-    LazyLock::new(|| pattern(r"\[([^\]]*?)\n+([^\]]*?)\]\(([^)]+)\)"));
+    LazyLock::new(|| pattern(r"(!?)\[([^\]]*?)\n+([^\]]*?)\]\(([^)]+)\)"));
 static PLACEHOLDER_LINE: LazyLock<Regex> =
     LazyLock::new(|| pattern(r"(?m)^__MARKITAI_[A-Z_]+_?\d*__\s*$"));
 static PLACEHOLDER_IMAGE: LazyLock<Regex> =
@@ -280,12 +284,21 @@ pub(crate) fn normalize(source: &str) -> String {
     let (literals, masked) = Literals::protect(source);
     let mut text = literals.prose(&masked, |part| {
         let mut text = part.to_owned();
-        while BROKEN_LINK.is_match(&text) {
-            text = BROKEN_LINK
+        loop {
+            let repaired = Cell::new(false);
+            let next = BROKEN_LINK
                 .replace_all(&text, |captures: &regex::Captures<'_>| {
-                    format!("[{}]({})", captures[1].trim(), &captures[3])
+                    if !captures[1].is_empty() {
+                        return captures[0].to_owned();
+                    }
+                    repaired.set(true);
+                    format!("[{}]({})", captures[2].trim(), &captures[4])
                 })
                 .into_owned();
+            if !repaired.get() {
+                break;
+            }
+            text = next;
         }
         text
     });
@@ -354,6 +367,20 @@ mod tests {
         let output = normalize(&input);
         assert!(!output.contains("Footer"));
         assert!(output.contains("Long content for page 2 that must remain."));
+    }
+
+    #[test]
+    fn image_syntax_is_not_repaired_as_a_link_split_by_a_line_break() {
+        // The repair keeps a link's first line only; an image's text must
+        // survive whole, and a link beside it is still repaired.
+        assert_eq!(
+            normalize("![first line\nsecond line](pic.png)\n\n[Title\n\nDescription](/url)\n"),
+            "![first line\nsecond line](pic.png)\n\n[Title](/url)\n"
+        );
+        assert_eq!(
+            normalize("Wow! [A\nB](/a) ![C\n\nD](/c) [E\nF](/e)"),
+            "Wow! [A](/a) ![C\n\nD](/c) [E](/e)\n"
+        );
     }
 
     #[test]
