@@ -129,14 +129,7 @@ pub(super) fn enlarge(image: &Prepared, factor: f32) -> Result<Prepared> {
     if width * height > MAX_PIXELS as f64 {
         return Err(failure("enlarged OCR image exceeds 32 million pixels"));
     }
-    let mut reader = ImageReader::with_format(ImageBytes::new(&image.png), ImageFormat::Png);
-    let mut limits = image::Limits::default();
-    limits.max_alloc = Some(MAX_DECODED);
-    reader.limits(limits);
-    let rgb = reader
-        .decode()
-        .map_err(|_| failure("cannot decode prepared OCR image"))?
-        .into_rgb8();
+    let rgb = decode(image)?;
     let larger = image::imageops::resize(
         &rgb,
         width as u32,
@@ -145,6 +138,96 @@ pub(super) fn enlarge(image: &Prepared, factor: f32) -> Result<Prepared> {
     );
     drop(rgb);
     prepare_rgb(larger)
+}
+
+/// The pixels of a prepared image.
+pub(super) fn decode(image: &Prepared) -> Result<RgbImage> {
+    let mut reader = ImageReader::with_format(ImageBytes::new(&image.png), ImageFormat::Png);
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(MAX_DECODED);
+    reader.limits(limits);
+    Ok(reader
+        .decode()
+        .map_err(|_| failure("cannot decode prepared OCR image"))?
+        .into_rgb8())
+}
+
+/// A copy of the pixel `region` `[left, top, right, bottom]` of `rgb`,
+/// enlarged `factor` times with Lanczos filtering, inside a white `margin`
+/// of that many enlarged pixels, for a second reading of a table cell or a
+/// number. The copy's region starts at the region's floored top-left pixel.
+pub(super) fn crop(rgb: &RgbImage, region: [f32; 4], factor: f32, margin: u32) -> Result<Prepared> {
+    let (width, height) = rgb.dimensions();
+    let [left, top, right, bottom] = region;
+    let x0 = (left.max(0.0).floor() as u32).min(width);
+    let y0 = (top.max(0.0).floor() as u32).min(height);
+    let x1 = (right.max(0.0).ceil() as u32).min(width);
+    let y1 = (bottom.max(0.0).ceil() as u32).min(height);
+    if x1 <= x0 || y1 <= y0 || !factor.is_finite() || factor < 1.0 {
+        return Err(failure("invalid OCR region"));
+    }
+    let scale = |side: u32| (f64::from(side) * f64::from(factor)).round() as u32;
+    let (w, h) = (scale(x1 - x0), scale(y1 - y0));
+    let (outer_w, outer_h) = (
+        u64::from(w) + 2 * u64::from(margin),
+        u64::from(h) + 2 * u64::from(margin),
+    );
+    if outer_w * outer_h > MAX_PIXELS || w == 0 || h == 0 {
+        return Err(failure("enlarged OCR region exceeds 32 million pixels"));
+    }
+    // Rows of `width` pixels from `source` (rows `stride` bytes apart, from
+    // byte `start`), placed at `offset` bytes in `target` rows `pitch` apart.
+    let copy = |source: &[u8],
+                start: usize,
+                stride: usize,
+                rows: u32,
+                width: u32,
+                target: &mut [u8],
+                offset: usize,
+                pitch: usize| {
+        let length = width as usize * 3;
+        for row in 0..rows as usize {
+            let from = start + row * stride;
+            let to = offset + row * pitch;
+            target[to..to + length].copy_from_slice(&source[from..from + length]);
+        }
+    };
+    let (part_w, part_h) = (x1 - x0, y1 - y0);
+    let mut part = vec![0; part_w as usize * part_h as usize * 3];
+    let stride = width as usize * 3;
+    let start = y0 as usize * stride + x0 as usize * 3;
+    copy(
+        rgb.as_raw(),
+        start,
+        stride,
+        part_h,
+        part_w,
+        &mut part,
+        0,
+        part_w as usize * 3,
+    );
+    let part =
+        RgbImage::from_raw(part_w, part_h, part).ok_or_else(|| failure("invalid OCR region"))?;
+    let larger = image::imageops::resize(&part, w, h, image::imageops::FilterType::Lanczos3);
+    if margin == 0 {
+        return prepare_rgb(larger);
+    }
+    let pitch = outer_w as usize * 3;
+    let mut canvas = vec![255; pitch * outer_h as usize];
+    let offset = margin as usize * pitch + margin as usize * 3;
+    copy(
+        larger.as_raw(),
+        0,
+        w as usize * 3,
+        h,
+        w,
+        &mut canvas,
+        offset,
+        pitch,
+    );
+    let canvas = RgbImage::from_raw(outer_w as u32, outer_h as u32, canvas)
+        .ok_or_else(|| failure("invalid OCR region"))?;
+    prepare_rgb(canvas)
 }
 
 #[cfg(test)]
@@ -252,6 +335,32 @@ mod tests {
         // Rejected before decoding or allocating the enlarged copy.
         let error = enlarge(&wide, 1.01).err().unwrap().to_string();
         assert!(error.contains("enlarged OCR image exceeds"), "{error}");
+    }
+
+    #[test]
+    fn a_region_is_copied_enlarged_inside_a_white_margin() {
+        // A black square at (10, 10)..(20, 20) of a white 40 by 30 image.
+        let rgb = RgbImage::from_fn(40, 30, |x, y| {
+            Rgb([if (10..20).contains(&x) && (10..20).contains(&y) {
+                0
+            } else {
+                255
+            }; 3])
+        });
+        let copy = crop(&rgb, [9.5, 9.0, 21.0, 21.0], 2.0, 0).unwrap();
+        // The region starts at its floored corner: (9, 9)..(21, 21).
+        assert_eq!((copy.width, copy.height), (24, 24));
+        let decoded = decode(&copy).unwrap();
+        assert_eq!(decoded.get_pixel(12, 12).0, [0; 3]);
+        assert!(decoded.get_pixel(0, 0).0[0] > 240);
+        let framed = decode(&crop(&rgb, [9.0, 9.0, 21.0, 21.0], 2.0, 5).unwrap()).unwrap();
+        assert_eq!(framed.dimensions(), (34, 34));
+        assert_eq!(framed.get_pixel(4, 17).0, [255; 3]);
+        assert_eq!(framed.get_pixel(17, 17).0, [0; 3]);
+        for region in [[5.0, 5.0, 5.0, 9.0], [50.0, 0.0, 60.0, 9.0]] {
+            assert!(crop(&rgb, region, 2.0, 0).is_err(), "{region:?}");
+        }
+        assert!(crop(&rgb, [0.0, 0.0, 9.0, 9.0], f32::NAN, 0).is_err());
     }
 
     #[test]

@@ -37,6 +37,12 @@ pub(super) enum Verdict {
     Failed,
 }
 
+/// Whether the recognizer is sure of a line.
+#[cfg(target_os = "macos")]
+pub(super) fn sure(line: &Line) -> bool {
+    line.confidence >= SURE
+}
+
 fn present(lines: &[Line]) -> impl Iterator<Item = &Line> {
     lines.iter().filter(|line| !line.text.trim().is_empty())
 }
@@ -126,12 +132,33 @@ pub(super) fn japanese(lines: &[Line]) -> bool {
     kana >= MIN_KANA && kana * KANA_IN >= credible(lines, Script::Japanese)
 }
 
+/// A line of at least this many characters is text that a reading saw.
+/// Vision reports the short cells of an English table (`7`, `12`, `Q1`) at
+/// 0.5 too, so they say nothing about the script.
+const SEEN: usize = 5;
+
+fn long(line: &Line) -> bool {
+    line.text.chars().filter(|c| !c.is_whitespace()).count() >= SEEN
+}
+
+/// Whether another reading saw text where English found none: a line of at
+/// least [`SEEN`] characters that no English line overlaps. (Other readings
+/// of an English table of numbers read the same cells, and some more.)
+pub(super) fn saw(other: &[Line], english: &[Line]) -> bool {
+    let apart =
+        |a: [f32; 4], b: [f32; 4]| a[2] <= b[0] || b[2] <= a[0] || a[3] <= b[1] || b[3] <= a[1];
+    present(other)
+        .filter(|line| long(line))
+        .any(|line| present(english).all(|seen| apart(line.bounds, seen.bounds)))
+}
+
 /// Whether to warn about an image that no reading could read: the English
-/// reading failed, and it found text lines (at least half of them doubtful) or
-/// another reading found text (`elsewhere`). A blank page, or a photograph
-/// without text, found none.
+/// reading failed, and it holds a doubtful line of at least [`SEEN`]
+/// characters, or another reading saw text (`elsewhere`). A blank page, a
+/// photograph without text, or a table of short numbers found none.
 pub(super) fn unread(verdict: Verdict, english: &[Line], elsewhere: bool) -> bool {
-    verdict == Verdict::Failed && (elsewhere || present(english).next().is_some())
+    verdict == Verdict::Failed
+        && (elsewhere || present(english).any(|line| line.confidence < SURE && long(line)))
 }
 
 #[cfg(test)]
@@ -143,6 +170,7 @@ mod tests {
             text: text.into(),
             confidence,
             bounds: [0.0, 0.0, 100.0, 10.0],
+            direction: [1.0, 0.0],
         }
     }
 
@@ -293,5 +321,20 @@ mod tests {
         ] {
             assert!(!unread(judge(&lines), &lines, true));
         }
+        // A table of short numbers, which Vision reports at 0.5, was read:
+        // it failed, but saw no text of another script, and another reading
+        // of it reads the same cells.
+        let table: Vec<Line> = ["Region", "Q1", "Q2", "7", "12", "5", "67%"]
+            .iter()
+            .map(|cell| line(cell, if cell.len() > 3 { 1.0 } else { 0.5 }))
+            .collect();
+        assert_eq!(judge(&table), Verdict::Failed);
+        assert!(!saw(&table, &table));
+        assert!(!unread(judge(&table), &table, saw(&table, &table)));
+        // Another reading sees text where English found none, not where it
+        // read something, and not in a line of four characters.
+        let hebrew = [line("nya 2026-0042", 0.3)];
+        assert!(saw(&hebrew, &[]) && !saw(&[line("2026", 0.3)], &[]));
+        assert!(!saw(&hebrew, &[line("abc 2026-0042", 0.3)]));
     }
 }

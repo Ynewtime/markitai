@@ -425,9 +425,13 @@ pub(crate) fn extract(
             crate::ocr::recognize(if svg { &image.bytes } else { &bytes }, cfg)?
         };
         if recognized.text.trim().is_empty() {
-            doc.warnings.push(
-                "Local OCR found no readable text; the output retains the image reference.".into(),
-            );
+            // An image with text that could not be read has its own warning.
+            if !recognized.unread {
+                doc.warnings.push(
+                    "Local OCR found no readable text; the output retains the image reference."
+                        .into(),
+                );
+            }
         } else {
             doc.markdown.push('\n');
             doc.markdown.push_str(&recognized.text);
@@ -555,9 +559,13 @@ fn extract_heif(
     if local_ocr {
         let recognized = crate::ocr::recognize_rgb(rgb_on_white(&decoded.image), cfg)?;
         if recognized.text.trim().is_empty() {
-            doc.warnings.push(
-                "Local OCR found no readable text; the output retains the image reference.".into(),
-            );
+            // An image with text that could not be read has its own warning.
+            if !recognized.unread {
+                doc.warnings.push(
+                    "Local OCR found no readable text; the output retains the image reference."
+                        .into(),
+                );
+            }
         } else {
             doc.markdown.push('\n');
             doc.markdown.push_str(&recognized.text);
@@ -653,7 +661,9 @@ fn extract_tiff(
                 )));
             }
             if recognized.text.trim().is_empty() {
-                doc.warnings.push(format!("Local OCR found no readable text on TIFF page {}; the output retains its image reference.", index + 1));
+                if !recognized.unread {
+                    doc.warnings.push(format!("Local OCR found no readable text on TIFF page {}; the output retains its image reference.", index + 1));
+                }
             } else {
                 if doc.markdown.len().saturating_add(recognized.text.len()) > 64 * 1024 * 1024 {
                     return Err(error("TIFF OCR text exceeds 64 MiB"));

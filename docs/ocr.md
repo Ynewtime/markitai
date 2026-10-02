@@ -77,6 +77,20 @@ model-family names such as `latin` and `cyrillic` are not Vision languages and
 are rejected. Structural configuration acceptance does not imply runtime
 language availability. `ocr.per_page_routing` has no effect on this image path.
 
+A language the system lacks fails with an error that names it and lists the
+languages the system reads. On macOS 27.0.1 (26A434) the accurate recognizer
+(request revision 3) reads `en-US`, `fr-FR`, `it-IT`, `de-DE`, `es-ES`,
+`pt-BR`, `zh-Hans`, `zh-Hant`, `yue-Hans`, `yue-Hant`, `ko-KR`, `ja-JP`,
+`ru-RU`, `uk-UA`, `th-TH`, `vi-VT`, `ar-SA`, `ars-SA`, `tr-TR`, `id-ID`,
+`cs-CZ`, `da-DK`, `nl-NL`, `no-NO`, `nn-NO`, `nb-NO`, `ms-MY`, `pl-PL`, `ro-RO`,
+`sv-SE`, `fi-FI`, `hi-IN` and `mr-IN`. Greek and Hebrew are not among them:
+`ocr.lang` `el` and `he` are rejected because this system's Vision cannot read
+those scripts, not because of their spelling, and no setting reads them
+locally. Thai (`th`), Arabic (`ar`), Hindi (`hi`), Vietnamese (`vi`) and the
+others are read when written. (Vision returns Arabic lines with their letters
+in reverse order, `لوسكلا بلكلا` for `الكلب الكسول`; they are passed on as
+returned.)
+
 ## The default language
 
 Vision's English recognizer reads Latin and Cyrillic text. For Chinese,
@@ -118,18 +132,32 @@ aids, and that reading replaces it unless it holds less text. A Vision language
 this system lacks, and a reading that fails, are skipped: the English reading
 stands, as it always did.
 
-When no reading is better, the English reading is the output, unchanged. If
-text was seen and not read (the English reading had lines, at least half of them
-below 0.9, or found none and another reading found some), the conversion warns
-`Local OCR could not read this image: ...` and names `ocr.lang`; the warning
-names the image, TIFF page, PDF page or Office page. A blank page or a
-photograph without text has only the usual "no readable text" warning, and a
-picture inside a PDF never warns.
+When no reading is better, the English reading is the output. If text was seen
+and not read, the conversion warns `Local OCR could not read this image: ...`,
+and of the English reading keeps only the lines it is sure of (0.9 or more):
+what English makes of Greek, Hebrew, Thai or Arabic (`ApıOpoç троло 2026-0042`,
+`üp Julügö 2026-0042`, `026-42`) is not text. Text was seen when the English
+reading failed and holds a doubtful line of at least five characters, or when
+another reading found such a line where English found none (Hebrew, which
+English does not see at all). The warning names the image, TIFF page, PDF page
+or Office page, says how to set `ocr.lang`, and lists the languages this
+system's recognizer reads ([above](#language-selection)); an image warned this
+way has no "no readable text" warning besides. A blank page or a photograph
+without text has only the usual "no readable text" warning, and a picture
+inside a PDF never warns. Vision reports the short cells of an English table
+(`7`, `12`, `Q1`) at 0.5 as well, so such a table fails the English judgement
+too, but is not taken for another script: two of the 46 rendered tables below
+warned and lost no text before, and they now neither warn nor lose text. The
+chalkboard account picture, which warned before, now does not (its one
+doubtful line has four characters) and reads as before.
 
 A written language is never replaced: `zh`, `ja`, `ko`, `fr`, `ar`, `en-US`,
 `en_US` and every other value except `en` read that language alone, with output
-identical to before (1,210 conversions of the corpora below with `zh`, `ja`,
-`ko` and `en-US`, compared before and after). The configuration fills in its
+identical to the policy's introduction (1,210 conversions of the corpora below
+with `zh`, `ja`, `ko` and `en-US`, compared before and after); later aids
+([spaces](#chinese-japanese-and-korean-recognition-aids), [tables and
+numbers](#turned-pages-code-numbers-and-table-cells)) apply to every language.
+The configuration fills in its
 default before the recognizer sees it, so a default `en` and a written `en`
 cannot be told apart: write `en-US` to read English only. (The reference's `en`
 model also reads Chinese.)
@@ -197,9 +225,12 @@ Limits. English among three or more lines that reads as confident Latin is not
 read again, so Chinese, Japanese or Korean words among English lines stay unread
 (`Markitai converts documents to Markdown.` above a Chinese line that reads as
 `I PDF, Word 5EA, W Markdown X4.`): set `ocr.lang` to `zh`, which reads Latin
-too, for such pages. Scripts that no reading covers (Arabic, Hebrew, Thai,
-Greek, Devanagari) still need `ocr.lang`; the warning says so when Vision found
-text there. Korean text at 60 DPI that the Chinese reading turns into confident
+too, for such pages. Scripts that no reading covers (Arabic, Thai,
+Devanagari) still need `ocr.lang`, and Greek and Hebrew cannot be read on this
+system at all; the warning says so when Vision found text there. A single
+confident line of another script (Hindi read as `fộ-4 415 2026`) is short, not
+failed, and is kept without a warning. Korean text at 60 DPI that the Chinese
+reading turns into confident
 Han can be kept as Chinese (1 of 184 Korean images).
 
 ## Bounds and reading order
@@ -233,7 +264,9 @@ than three fifths of the text splits the page when both sides hold at least
 three lines of prose (a median of 12 characters) side by side. Lines crossing
 the gutter, such as a title, separate sections read left column first, and
 nested columns are found in each side. Short cells side by side, such as a
-receipt's items and prices, stay rows. The reference's table, vertical-writing
+receipt's items and prices, stay rows. Two lines of a row are joined without a
+space where a Chinese or Japanese letter or full-width mark meets the other
+line less than 0.15 line heights away. The reference's table, vertical-writing
 and marginal-note reconstruction is not reproduced. On a rendered corpus
 ([R45](validation/ocr-quality-round45.md)) English and number text is read more
 accurately than by the reference's RapidOCR, two-column pages in order, and
@@ -242,6 +275,117 @@ its character error rate; Japanese is read more accurately than by RapidOCR on
 a corpus written for that check. Vision inference itself has no wall-clock cancellation deadline
 in this slice, and recognition quality is not guaranteed for handwriting, small
 text or every supported language.
+
+## Turned pages, code, numbers and table cells
+
+These steps apply to every language, after the reading is chosen.
+
+- **Turned pages are read upright.** Vision reads text turned a quarter or a
+  half and gives each line's corners. When three quarters of the letters (in
+  lines of three or more) run the same other way, down, up or right to left,
+  the lines' rectangles are turned upright and ordered and joined as on an
+  upright page; the text is not read again, and rectangles are reported in
+  the upright page's pixels. A sideways label on an upright page stays as it
+  is. An image turned a quarter clockwise (`img_rot90.png`) came out as one
+  paragraph in reverse line order and an upside-down one in reverse line
+  order; both now read as four lines in order.
+- **Code keeps its indentation.** At least three consecutive rows of one line
+  each in a fixed pitch (every line of three or more characters within 15% of
+  the median width per character), one indented by one and a half characters
+  or more, and a third holding brackets, `=`, `;` or a closing `:` are code:
+  they are fenced (with a fence longer than any backtick run inside) and each
+  is indented by its left edge in characters. Text in proportional fonts,
+  receipts and tables in fixed-pitch fonts (their rows all start at one edge)
+  and unindented code stay text. `img_code.png`, `def fib(n):` and its body,
+  read as five flush lines and now as the code with its four- and
+  eight-space indents.
+- **Zeros read as letters are mended.** In a token of digits and number marks
+  only (`.,:;/-+%$€£¥#()[]'"`), with at least two digits, a run of `O`, `o`,
+  `ø` or `Ø` between two digits is read as zeros: `2ø26` is 2026, the
+  scanned fixture's slashed zero below. Words and formulas (`Fe2O3`, `CO2`),
+  the ends of numbers (`10O`) and tokens of one digit stay as read. Other
+  look-alikes (`ł`, `ą`) are not mapped to digits; the regions holding them
+  are read again (next item).
+- **Table cells and garbled numbers are read again.** Vision often drops a
+  lone short cell, most often a single digit, from a table's row, and reads
+  some numbers as letters of other alphabets (`1,200,00łł`, `Q2 202łąłą`,
+  `З` for 3, `183•33`). Three or more rows of cells at least a row height
+  apart are a table; its columns are those of the rows with the most cells
+  (two or more such rows), and a row with fewer cells, each in one column,
+  misses the cells of its other columns whose cells hold at most 12
+  characters (by median). The missing cell's region is read again: with the
+  row's previous cell, enlarged two and then three times, and alone inside a
+  white margin of one row height, enlarged twice, until a reading places
+  upright text inside the cell's column and row. Vision reads a lone digit
+  upside down at times (6 as 9), and the previous cell shows which way up the
+  row stands. A reading that is only a rule (`|`, `l`), longer than twice the
+  column's longest cell or, in a Latin reading, holds letters of other
+  alphabets, adds nothing. In a reading of Latin script a line whose token
+  holds a digit and a letter of another alphabet, a bullet or a noncharacter
+  is read again, enlarged two and three times and with the margin, and its
+  text is replaced only when that reading repeats every other token and puts
+  digits and number marks, no longer than before, where the garbage was
+  (Latin letters touching the garbage, as in `72.7zął`, count with it). A
+  cell of a column of numbers (at least half of its cells are) that holds
+  only a Cyrillic letter drawn like a digit (`З`, `О`, `б`), which the English
+  recognizer reads, is that digit; elsewhere such letters are words
+  (Ukrainian `з`) and stay. At most 12 regions and 24 readings per image; a
+  turned page and a page warned as unread are not read again, and an image
+  without a table or garbled number costs nothing more.
+
+Measured on macOS 27.0.1 (26A434), Apple silicon, release builds of
+`09d8713` (before, 21,946,800 bytes) and after (21,996,400 bytes; 41,280
+bytes more machine code for this section's steps, the spaces aid and the
+warning together), by whole conversions (`--ocr --no-llm`, an isolated
+`MARKITAI_HOME`, `-o`, no `ocr.lang`). The tables are 46 rendered screenshots
+written for this check (Helvetica, Arial, Times New Roman, Georgia, Verdana
+and Menlo at 20 to 36 pixels, with and without rules, four columns of items,
+quantities of one or two digits and prices, twelve with an empty cell; six
+grids of single digits and percentages; four with Chinese headers), with the
+four table probes of the quality inventory (`img_t2.png`, `img_t3.png`,
+`img_t4.png`, `img_table.png`).
+
+| Corpus (images) | Before | After |
+|---|---:|---:|
+| Rendered tables (46) | 2.80% (139 edits) | 0.91% (45 edits) |
+| Inventory table probes (4) | 4.96% | 0.71% |
+| Inventory turned, code, receipt and other probes (13) | 16.43% | 1.76% |
+| English prose, numbers, two columns (126) | 0.07%, 0.00%, 0.30% | identical text on every image |
+| Chinese: R45, held-out, full pages, Traditional (202) | 0.97%, 1.82%, 1.61%, 1.41% | the same (whitespace removed) |
+
+Of the 62 nonempty cells missing from the first readings of these 50 tables,
+the three readings above recover 48 in a Swift probe of the same requests
+(one wrongly, `QI` for `Q1`); the cell alone, enlarged two and three times,
+recovers 27, and other enlargements (1.5 and 2.5 times, cubic filtering) no
+more. In the conversions no cell was filled wrongly, and no image of the
+corpora above lost or changed a line except as described here. The 45
+edits left are 17 cells still missing (lone `3`, `0` and `6` mostly), three
+numbers whose second readings repeat the garbage (`183•33`, `72.7zął`, a
+noncharacter for a point) and two prices that Vision reads confidently as
+others (`50.30` for `56.36`). No image of the 328 corpus images is fenced as
+code; of the 98 other images, `img_code.png` is. Two of the 46 tables warned
+as unread before and none does now; the seven images that warn are the
+Greek, Hebrew, Thai and Arabic ones, which now carry no garbage.
+
+Whole conversions were timed one at a time after a warm-up, before and after
+alternating, median of three rounds (two for Chinese and the other images)
+per image, mean per corpus, in milliseconds:
+
+| Images | Before | After | Per image, 5th to 95th percentile |
+|---|---:|---:|---:|
+| English prose (72), numbers (36), two columns (18) | 160.6, 161.1, 184.2 | 160.7, 160.5, 184.3 | −8.1 to +6.3 |
+| R45 Chinese (24), held-out Chinese (150), Traditional (24) | 287.6, 326.6, 299.4 | 288.1, 326.8, 299.0 | −17.7 to +17.1 |
+| Full Chinese pages (4) | 1,120.6 | 1,139.7 | −55.5 to +64.5 |
+| Rendered tables (46) | 188.5 | 252.1 | −4.8 to +154.5 |
+| Inventory probes (21) | 217.7 | 229.0 | −4.6 to +67.1 |
+| Other images: languages, symbols, code (29); text-free pictures (34) | 282.9, 376.5 | 287.4, 377.5 | −22.6 to +55.0 |
+
+A table costs the readings of its missing cells, about 15 to 25 ms each and
+three for a genuinely empty cell, within the budget of 24; an image without a
+table or garbled number costs only the geometry. Four of about 5,000 timed
+conversions, two of each build, waited more than 120 seconds in Vision with
+almost no processor time and were run again; repeated five times, those
+images converted in 0.17 to 0.32 seconds.
 
 ## Chinese, Japanese and Korean recognition aids
 
@@ -285,6 +429,18 @@ characters, which no step corrects.
   after the suspect and repeats up to two neighbours on each side exactly; any
   other reading, including a failed one, leaves the line unchanged. At most 32
   regions are read again per image.
+- **Spaces the image shows are kept** (Chinese and Japanese). Between a Han
+  character or kana and a Latin letter or digit, Vision's Chinese recognizer
+  dropped 385 of the 982 spaces of the held-out, R45, Traditional and full-page
+  texts, and never put one where the text has none (12 such places, and 3,101
+  between two Latin letters). Its letter boxes cover the line without gaps, so
+  the space is measured in the pixels of the image read: where a reading has
+  no space at such a junction, the widest run of ink-free columns between the
+  two letters' centres is measured in the line's band, and a run of 0.22 line
+  heights or more is a space. Where the text has none the runs were 0.02 to
+  0.12 line heights; where it has one, 0.09 to 0.51, a twentieth below 0.2.
+  Spaces the reading has are kept. Between two Latin letters runs overlap
+  (0.30 without a space, 0.15 with one), so `CLIJSON` for `CLI JSON` stays.
 
 Measured on macOS 27.0.1 (26A434), Apple silicon, `cargo build -p markitai-cli
 --release --locked`, before (r18, 21,731,920 bytes) and after (21,748,496
@@ -330,8 +486,8 @@ of their line (6 and 5 fewer edits on R45 and held-out text, 4 more on the full
 pages, and up to 0.8 seconds more per page); normalizing full-width symbols
 such as ＃ to ASCII (the held-out text itself uses the full-width ／); and
 lexical replacements such as 己 to 已 outside 自己 (two cases in R45, none held
-out). Vision never put a space between two Han characters, so no spacing
-cleanup is applied. Remaining Chinese errors are mostly lookalike characters
+out). Vision never put a space between two Han characters; the spaces it drops
+between Han and Latin letters are the aid above. Remaining Chinese errors are mostly lookalike characters
 (界/果, 器/嚣, 已/己), 的 read as another character, and Latin letters inside
 Chinese lines (`l`/`I`, the case of `o`, `s` and `c`, `--` read as `-`).
 
@@ -402,6 +558,25 @@ Latin letter or punctuation box be a suspect (no change in errors on any
 corpus), and wider regions (padding of 0.3 or 0.6 median widths, or six
 neighbours: on the held-out text 2 to 3 fewer and 4 to 8 more errors).
 
+The spaces were measured with the builds of [table cells](#turned-pages-code-numbers-and-table-cells)
+on the same system, by whole conversions without `ocr.lang` (and with `zh`,
+which reads the same). The error rates above remove whitespace and do not
+change; with spaces kept (runs of whitespace as one space), they fall from
+4.06% to 2.62% on the held-out Chinese text (150 images; 961 instead of 765 of
+its 1,091 spaces), from 3.91% to 2.40% on the full pages, and from 2.39% to
+1.22% on R45 Chinese; the Traditional check has no such junctions. On a set
+written for this check (three lines of Chinese with Latin words and digits, in
+Arial Unicode, Hiragino Sans GB, Songti and STHeiti at 20, 28 and 40 pixels,
+with and without spaces), the 12 unspaced images read as before, without a
+space added, and the nine spaced ones that the default reads as Chinese read
+99 instead of 59 of their 108 spaces (6.64% to 1.53% with spaces kept; the
+other three read as English, a limit of the default language above).
+`i-cjk-300.png` (R45's `cjk-04`, whose text is `在 CLI JSON、报告`) keeps its
+spaces and still reads `CLIJSON`. The measurement decodes the image read once
+per reading that has such a junction: Chinese paragraphs take the same time
+as before within 1 ms on average, full pages 19 ms more
+([timing](#turned-pages-code-numbers-and-table-cells)).
+
 ## Validation fixtures
 
 The authored [English PNG](../crates/markitai-core/src/ocr/fixtures/english.png)
@@ -447,6 +622,20 @@ short, doubtful, failed), the letters, share and strength that make a reading
 text of a script, the kana that mean Japanese, the warning condition, and that
 only a bare `en` is the default. They depend on the installed recognizer, like
 the English fixture.
+
+Pure tests cover the turned-page vote and the upright rectangles of each turn,
+the zeros mended and the words, formulas and number ends kept, the table
+holes found (and none in prose, two columns of prose, complete, two-row and
+spanning tables), the order and context of their readings, which readings
+fill a cell (not rules, long text or other alphabets, but a look-alike digit
+in a column of numbers), which garbled numbers are read again and mended,
+the fixed-pitch code run with its indentation (and receipts, prose and
+proportional fonts left as text), the ink-free gap measured as a space on
+light and dark grounds, the junctions measured, lines joined without a
+space, the unread judgement of a table of numbers, the warning's language
+list, and the enlarged copy of a region inside its margin. The scanned PDF
+fixture's exact transcript (`2ø26` mended to `2026`) runs in the ordinary
+conversion tests.
 
 Renderer-entry tests compare the same fixture's normalized PNG bytes and Vision
 observations with the encoded-image path. Additional checks reject zero-sized,

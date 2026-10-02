@@ -97,8 +97,8 @@ own: a document that mixes languages reads every page in its own. A page
 without text costs two more readings, which are cheap when no text is found.
 A page that no reading can read adds a warning, `Local OCR could not read PDF
 page N: ...` (`Office page N`, `TIFF page N` or `this image` for the other
-inputs), and keeps its English reading; an embedded picture never warns, as a
-picture without text is ordinary. A written language, `en-US` included, reads
+inputs), and keeps only the lines its English reading is sure of; an embedded
+picture never warns, as a picture without text is ordinary. A written language, `en-US` included, reads
 that language alone, exactly as before.
 
 Measured with the binaries of [local OCR](ocr.md#the-default-language) (macOS
@@ -141,15 +141,13 @@ editable vector reconstruction are not implemented. Screenshots preserve visual
 composition but do not turn vector drawings into structured Markdown. Recognition
 shares the language, reading-order and cancellation limitations in [local OCR](ocr.md).
 No handwriting, complex-table or multi-column accuracy guarantee is claimed.
-The authored scan currently exposes a concrete accuracy gap: the six-word
-transcript ends in `2026`, while the 150-DPI page recognition returns `2ø26`.
-Its expected transcript and exact-match test remain unchanged; that test is
-explicitly ignored in the ordinary routing gate and exercised by the separate
-quality acceptance driver, which reports a partial result. This is an unresolved
-recognizer error, not successful transcription. No character substitution is
-applied to hide it. The fixture's bitmap font draws its zero with a stroke
-across the whole glyph, like `ø`; Menlo's slashed zeros in the rendered number
-set are all read correctly ([R45](validation/ocr-quality-round45.md)).
+The authored scan's six-word transcript ends in `2026`, which the 150-DPI page
+recognition returns as `2ø26`: the fixture's bitmap font draws its zero with a
+stroke across the whole glyph, like `ø`. A run of letters drawn like a zero
+between two digits of a number is now read as zeros ([local OCR](ocr.md#turned-pages-code-numbers-and-table-cells)),
+so the page reads exactly and its exact-match test runs in the ordinary gate.
+Menlo's slashed zeros in the rendered number set were read correctly before
+([R45](validation/ocr-quality-round45.md)).
 Static/automatic URL fetches and initial browser PDF responses hand requested
 PDF media directly to this pipeline,
 including redirects and extensionless downloads. The original URL remains the

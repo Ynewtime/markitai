@@ -73,7 +73,6 @@ fn pdf_local_ocr_preserves_native_page_and_records_blank_outcome() {
 }
 
 #[test]
-#[ignore = "Known Vision PDF accuracy gap: slash zero in 2026 becomes ø; tracked separately from routing acceptance"]
 fn pdf_scan_exact_transcript() {
     let dir = tempfile::tempdir().unwrap();
     let path = source(dir.path());

@@ -8,6 +8,8 @@ mod auto;
 #[cfg(any(target_os = "macos", test))]
 mod cjk;
 #[cfg(any(target_os = "macos", test))]
+mod layout;
+#[cfg(any(target_os = "macos", test))]
 mod pixels;
 #[cfg(target_os = "macos")]
 mod vision;
@@ -38,11 +40,30 @@ pub(crate) struct OcrResult {
 /// The warning for an image or page that the default language policy could
 /// not read; `subject` names it ("Local OCR could not read ...").
 pub(crate) fn unread_warning(subject: &str) -> String {
-    format!(
+    #[cfg(target_os = "macos")]
+    let languages = vision::languages();
+    #[cfg(not(target_os = "macos"))]
+    let languages: Vec<String> = Vec::new();
+    unread_message(subject, &languages)
+}
+
+/// [`unread_warning`] for a recognizer that reads `languages`.
+fn unread_message(subject: &str, languages: &[String]) -> String {
+    let mut message = format!(
         "Local OCR could not read {subject}: it looks like text in a script that the default \
          English reading does not cover, and Chinese, Japanese and Korean readings found nothing \
-         better. Set ocr.lang to the language of the text."
-    )
+         better, so only the lines read with confidence are kept. Set ocr.lang to the language \
+         of the text"
+    );
+    if languages.is_empty() {
+        message.push('.');
+    } else {
+        message.push_str(&format!(
+            ", one that this system's Vision recognizer reads: {}.",
+            languages.join(", ")
+        ));
+    }
+    message
 }
 
 pub(crate) fn available() -> bool {
@@ -131,9 +152,15 @@ fn pass(image: &pixels::Prepared, language: &str) -> Result<Pass> {
     })
 }
 
+/// The result of the reading used. Table cells it missed and numbers it
+/// garbled are read again first, unless the page is turned.
 #[cfg(target_os = "macos")]
-fn finish(pass: Pass, language: &str, unread: bool, space: (u32, u32)) -> Result<OcrResult> {
-    let mut result = assemble(pass.lines, space.0, space.1)?;
+fn finish(image: &pixels::Prepared, pass: Pass, language: &str, unread: bool) -> Result<OcrResult> {
+    let mut lines = pass.lines;
+    if !unread && layout::orientation(&lines) == layout::Turn::Upright {
+        vision::reread(image, language, &mut lines);
+    }
+    let mut result = assemble(lines, image.width, image.height)?;
     result.scale = pass.scale;
     result.language = language.to_owned();
     result.unread = unread;
@@ -150,8 +177,7 @@ fn read(image: &pixels::Prepared, spelling: &str) -> Result<OcrResult> {
         return read_default(image);
     }
     let language = tag(spelling);
-    let space = (image.width, image.height);
-    finish(pass(image, &language)?, &language, false, space)
+    finish(image, pass(image, &language)?, &language, false)
 }
 
 #[cfg(target_os = "macos")]
@@ -179,13 +205,11 @@ const JAPANESE: &str = "ja-JP";
 fn read_default(image: &pixels::Prepared) -> Result<OcrResult> {
     use auto::Verdict;
     use cjk::Script;
-    let space = (image.width, image.height);
     let english = pass(image, ENGLISH)?;
     let verdict = auto::judge(&english.lines);
     if verdict == Verdict::Sound {
-        return finish(english, ENGLISH, false, space);
+        return finish(image, english, ENGLISH, false);
     }
-    let blank = |lines: &[Line]| lines.iter().all(|line| line.text.trim().is_empty());
     // The strongest reading so far: its language, lines and strength.
     let mut best: Option<(&str, Pass, f32)> = None;
     let mut elsewhere = false;
@@ -193,7 +217,7 @@ fn read_default(image: &pixels::Prepared) -> Result<OcrResult> {
     // A Vision language this system lacks, or a failed reading, is not a
     // failure of the conversion: English has read the image.
     if let Ok(chinese) = pass(image, CHINESE) {
-        elsewhere = !blank(&chinese.lines);
+        elsewhere = auto::saw(&chinese.lines, &english.lines);
         if auto::reads(&chinese.lines, Script::Japanese) {
             settled = auto::credible(&chinese.lines, Script::Japanese) >= auto::CONVINCING;
             let strength = auto::strength(&chinese.lines, Script::Japanese);
@@ -204,7 +228,7 @@ fn read_default(image: &pixels::Prepared) -> Result<OcrResult> {
         && !settled
         && let Ok(korean) = pass(image, KOREAN)
     {
-        elsewhere |= !blank(&korean.lines);
+        elsewhere |= auto::saw(&korean.lines, &english.lines);
         let strength = auto::strength(&korean.lines, Script::Korean);
         if auto::reads(&korean.lines, Script::Korean)
             && best.as_ref().is_none_or(|(_, _, other)| strength > *other)
@@ -221,10 +245,16 @@ fn read_default(image: &pixels::Prepared) -> Result<OcrResult> {
         }
     }
     match best {
-        Some((language, pass, _)) => finish(pass, language, false, space),
+        Some((language, pass, _)) => finish(image, pass, language, false),
         None => {
             let unread = auto::unread(verdict, &english.lines, elsewhere);
-            finish(english, ENGLISH, unread, space)
+            let mut english = english;
+            if unread {
+                // What English makes of another script is not text: keep
+                // only the lines it is sure of.
+                english.lines.retain(auto::sure);
+            }
+            finish(image, english, ENGLISH, unread)
         }
     }
 }
@@ -240,6 +270,9 @@ struct Line {
     text: String,
     confidence: f32,
     bounds: [f32; 4],
+    /// The direction the text runs, from the line's top-left to its top-right
+    /// corner, in top-left pixel coordinates: `[1, 0]` for upright text.
+    direction: [f32; 2],
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -319,9 +352,11 @@ fn supported_language(requested: &str, supported: &[String]) -> Result<String> {
             return Ok(regional.clone());
         }
     }
-    Err(Error::Unsupported(
-        "ocr.lang is not supported by the installed macOS Vision text recognizer".into(),
-    ))
+    Err(Error::Unsupported(format!(
+        "ocr.lang is not supported by the installed macOS Vision text recognizer ({requested}); \
+         it reads {}",
+        supported.join(", ")
+    )))
 }
 
 /// Names the cause when Vision fails in a process translated by Rosetta.
@@ -381,13 +416,20 @@ fn assemble(mut lines: Vec<Line>, width: u32, height: u32) -> Result<OcrResult> 
         {
             return Err(failure("recognizer returned invalid text observations"));
         }
-        // Text is ordinary document content; do not synthesize Markdown markup.
+        // Text is ordinary document content: Markdown markup is synthesized
+        // only to fence code (see `rows`).
         line.text = line.text.trim().to_owned();
+        if let Some(mended) = layout::digits(&line.text) {
+            line.text = mended;
+        }
         bytes = bytes
             .checked_add(line.text.len() + 2)
             .filter(|total| *total <= MAX_TEXT)
             .ok_or_else(|| failure("recognized text exceeds the safety limit"))?;
     }
+    // A page whose text runs sideways or upside down is read upright.
+    let turn = layout::orientation(&lines);
+    layout::upright(&mut lines, turn, width, height);
     let mut text = String::with_capacity(bytes);
     let mut boxes = Vec::with_capacity(lines.len());
     let mut confidence = 0.0;
@@ -535,11 +577,16 @@ fn columns(mut lines: Vec<Line>, depth: usize) -> Vec<Vec<Line>> {
 
 /// Appends one block's lines as text rows: lines sharing most of a vertical
 /// band form a left-to-right row, and a wide vertical gap starts a paragraph.
+/// Lines meet without a space where Chinese or Japanese text touches the
+/// next line. Rows of code in a fixed-pitch font ([`layout::code`]) are
+/// fenced, each indented as far as its left edge.
 #[cfg(any(target_os = "macos", test))]
 fn rows(mut lines: Vec<Line>, text: &mut String, boxes: &mut Vec<[f32; 4]>, confidence: &mut f32) {
     crate::sort::by(&mut lines, top_then_left);
+    // Each row's lines, and the rectangle of its topmost line.
+    let mut groups = Vec::new();
+    let mut tops = Vec::new();
     let mut index = 0;
-    let mut previous: Option<[f32; 4]> = None;
     while index < lines.len() {
         let first = lines[index].bounds;
         let mut end = index + 1;
@@ -557,15 +604,44 @@ fn rows(mut lines: Vec<Line>, text: &mut String, boxes: &mut Vec<[f32; 4]>, conf
         crate::sort::by(&mut lines[index..end], |a, b| {
             a.bounds[0].total_cmp(&b.bounds[0])
         });
-        let mut row = first;
+        groups.push(index..end);
+        tops.push(first);
+        index = end;
+    }
+    let code = layout::code(&lines, &groups);
+    // A fence longer than any run of backticks in the code.
+    let fence = code.as_ref().map(|code| {
+        let longest = lines[groups[code.rows.start].start..groups[code.rows.end - 1].end]
+            .iter()
+            .flat_map(|line| line.text.split(|c| c != '`').map(str::len))
+            .max()
+            .unwrap_or(0);
+        "`".repeat(longest.max(2) + 1)
+    });
+    let mut previous: Option<[f32; 4]> = None;
+    for (number, (group, first)) in groups.into_iter().zip(tops).enumerate() {
+        let coded = code.as_ref().filter(|code| code.rows.contains(&number));
+        let edge = code
+            .as_ref()
+            .is_some_and(|code| code.rows.start == number || code.rows.end == number);
         if let Some(last) = previous {
             text.push('\n');
-            if first[1] - last[3] > 0.8 * (first[3] - first[1]).max(last[3] - last[1]) {
+            if edge || first[1] - last[3] > 0.8 * (first[3] - first[1]).max(last[3] - last[1]) {
                 text.push('\n');
             }
         }
-        for (offset, line) in lines[index..end].iter().enumerate() {
-            if offset > 0 {
+        if let (Some(code), Some(fence)) = (coded, &fence) {
+            if code.rows.start == number {
+                text.push_str(fence);
+                text.push('\n');
+            }
+            let indent = layout::indent(code, lines[group.start].bounds[0]);
+            text.extend(std::iter::repeat_n(' ', indent));
+        }
+        let mut row = first;
+        for offset in group.clone() {
+            let line = &lines[offset];
+            if offset > group.start && !layout::touching(&lines[offset - 1], line) {
                 text.push(' ');
             }
             text.push_str(&line.text);
@@ -574,8 +650,13 @@ fn rows(mut lines: Vec<Line>, text: &mut String, boxes: &mut Vec<[f32; 4]>, conf
             row[1] = row[1].min(line.bounds[1]);
             row[3] = row[3].max(line.bounds[3]);
         }
+        if let (Some(code), Some(fence)) = (coded, &fence)
+            && code.rows.end == number + 1
+        {
+            text.push('\n');
+            text.push_str(fence);
+        }
         previous = Some(row);
-        index = end;
     }
 }
 
@@ -643,8 +724,16 @@ pub(crate) mod tests {
     fn the_unread_warning_names_its_subject_and_the_setting_to_change() {
         let warning = unread_warning("PDF page 3");
         assert!(warning.starts_with("Local OCR could not read PDF page 3: "));
-        assert!(warning.ends_with("Set ocr.lang to the language of the text."));
+        assert!(warning.contains("only the lines read with confidence are kept"));
+        assert!(warning.contains("Set ocr.lang to the language of the text"));
         assert!(!unread_warning("this image").contains("PDF page"));
+        // The languages this system reads are listed when they are known.
+        let languages = ["en-US".to_owned(), "th-TH".to_owned()];
+        assert!(unread_message("this image", &languages).ends_with(
+            "the language of the text, one that this system's Vision recognizer reads: \
+                 en-US, th-TH."
+        ));
+        assert!(unread_message("this image", &[]).ends_with("the language of the text."));
     }
 
     #[test]
@@ -969,6 +1058,7 @@ pub(crate) mod tests {
             text: text.into(),
             bounds,
             confidence,
+            direction: [1.0, 0.0],
         };
         let result = assemble(
             vec![
@@ -997,6 +1087,7 @@ pub(crate) mod tests {
             text: text.into(),
             bounds: [left, top, right, top + 10.],
             confidence: 1.0,
+            direction: [1.0, 0.0],
         };
         let prose = |column: &str, row: usize| format!("{column} column prose line {row}");
         let mut page = vec![line(
@@ -1100,6 +1191,7 @@ pub(crate) mod tests {
             text,
             bounds: [left, top, right, top + 10.],
             confidence: 1.0,
+            direction: [1.0, 0.0],
         };
         let mut page = Vec::new();
         for row in 0..4 {
@@ -1137,6 +1229,7 @@ pub(crate) mod tests {
             text,
             bounds: [left, top, right, top + 10.],
             confidence: 1.0,
+            direction: [1.0, 0.0],
         };
         let mut page = vec![line(
             "A title across both columns of the page".into(),

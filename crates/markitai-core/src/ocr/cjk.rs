@@ -283,6 +283,7 @@ mod tests {
             text: text.into(),
             confidence: 1.0,
             bounds: [0.0, top, 100.0, bottom],
+            direction: [1.0, 0.0],
         }
     }
 
