@@ -22,6 +22,17 @@ rectangular grid/simple tables. Code directive options are consumed before
 the literal body; generated fences are longer than any backtick run inside
 the body. Lists, emphasis, and field lists retain their readable source form.
 
+The blocks the readers build (quotes, admonitions, tables, footnote definitions,
+fences, displayed formulas, image directives, captions and, in TeX, lists) are
+separated from the text around them by blank lines in all three readers, since a
+table row after a quote line is a lazy quote continuation in CommonMark and a
+line after a table is one more row. Source lines of one paragraph, and the lines
+of an RST or Org list, keep their line breaks, and runs of blank lines collapse
+to one. A definition list (a term at the margin with its definition indented on the
+next line) becomes the term in bold followed by its definition read as RST;
+lines opening list items, fields, options, line blocks or quotations are never
+taken for a term.
+
 Heading styles receive levels in order of appearance, capped at six. An
 overline style and an underline-only style are distinct, following RST's
 section structure. Link destinations escape characters that would otherwise
@@ -47,6 +58,11 @@ are not interpreted as formatting. Source blocks retain their literal
 contents, including percent signs and heading markers. Unclosed blocks are
 closed in the Markdown output and reported through a warning.
 
+`#+AUTHOR` and `#+DATE` are kept in the metadata (`author`, `published`) and
+also written as `**Author:**` and `**Date:**` lines where the source has them,
+because the frontmatter of a local file holds only the title. Consecutive `: `
+example lines are one fenced block.
+
 Tables with a header separator become Markdown tables with headers. Tables
 without headers receive an empty Markdown header so their first data row
 remains data. Unknown block types and keywords remain visible with a warning.
@@ -66,7 +82,9 @@ formatting arguments, section commands, common text styles, escaped symbols,
 comments, inline verbatim, verbatim/listing/minted blocks, nested lists,
 description labels, links, image references, captions, quotes, and ordinary
 rectangular tabular environments. Dollar and bracket math keep their TeX
-contents; equation/alignment environments become display mathematics.
+contents; equation/alignment environments become display mathematics. A list,
+formula, fence, table or other environment is a block with a blank line on each
+side, except that a list inside a list item follows its item closely.
 
 The scanner distinguishes prose from math and literal contexts: a percent
 sign inside verbatim text remains content, braces inside a comment do not

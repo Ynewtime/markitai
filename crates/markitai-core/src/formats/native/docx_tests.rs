@@ -744,6 +744,16 @@ fn a_list_typed_by_hand_in_a_word_97_file_is_a_list() {
     );
 }
 
+#[test]
+fn the_mark_a_word_97_file_keeps_for_a_picture_it_did_not_store_is_not_text() {
+    // The macOS exporter writes U+FFFC where `<img>` was and keeps no picture
+    // data (no Data stream): the paragraph is empty, not a stray character.
+    let bytes = include_bytes!("fixtures/textedit-word97-picture.doc");
+    let doc = extract(bytes, "doc").unwrap();
+    assert_eq!(doc.markdown, "Before the picture.\n\nAfter the picture.\n");
+    assert!(doc.assets.is_empty());
+}
+
 fn listed_paragraph(numbered: Option<(u32, u8)>, ppr: &str, text: &str) -> String {
     let num = numbered.map_or(String::new(), |(id, level)| {
         format!(r#"<w:numPr><w:ilvl w:val="{level}"/><w:numId w:val="{id}"/></w:numPr>"#)

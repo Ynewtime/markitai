@@ -877,7 +877,13 @@ impl Assembler {
                 }
                 // Inline picture special character: extract the payload
                 // pointed at by sprmCPicLocation.
-                '\u{1}' => {
+                //
+                // markitai: the object replacement character U+FFFC is the
+                // same mark where macOS's exporter (TextEdit, `textutil`)
+                // writes a picture; its file holds no picture data, so it
+                // reads as nothing instead of a visible stray character, and
+                // a file that does hold the data gives the picture.
+                '\u{1}' | '\u{fffc}' => {
                     if let Some(image) = self.picture_at(fc)? {
                         para.push_inline(image);
                     }

@@ -433,6 +433,16 @@ upstream files:
   bytes (the one shared sort). The CLI's output for 601 DOCX, ODT, RTF, DOC,
   PPTX, XLSX, EPUB and other office inputs is byte-identical.
 
+- `src/formats/doc/mod.rs`: the object replacement character U+FFFC is read as
+  an inline picture mark, as the special character `\u{1}` is. macOS's Word 97
+  exporter (TextEdit, `textutil -convert doc`) writes it where a picture was
+  and stores no picture data (the file has no Data stream), so upstream wrote
+  a stray `￼` paragraph where the picture was; it is now nothing, and a file
+  whose character does carry a `sprmCPicLocation` gives its picture. The test
+  is `the_mark_a_word_97_file_keeps_for_a_picture_it_did_not_store_is_not_text`
+  in `crates/markitai-core/src/formats/native/docx_tests.rs`, on the added
+  fixture `textedit-word97-picture.doc`.
+
 `Cargo.toml` asks `zip` for `deflate-flate2-zlib-rs` instead of `deflate`, as
 the workspace crates do: the same deflate backend without the zopfli encoder,
 which zip uses only above level 9 and Markitai never requests.

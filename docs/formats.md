@@ -12,7 +12,7 @@ network policy and optional model enhancement belong to the orchestration layer.
 | TXT, MD, MARKDOWN | Rust text decoder | Preserves text and existing frontmatter; accepts UTF-8, BOM-marked UTF-16, Windows-1252 and detected GBK/GB18030, Big5, Shift_JIS, EUC-JP and EUC-KR (see [text encodings](#text-encodings)) |
 | HTML, HTM, XHTML | scraper + htmd | Honors a `<meta>` charset declaration; selects an article/main candidate, extracts metadata, removes navigation/scripts/hidden content, resolves relative HTTP links and images |
 | CSV, TSV | csv | Decoded like TXT; both keep every field (the table is as wide as the widest row) and escape `|`, backslashes and line breaks in cells; the reference cut CSV rows to the header's width and left those characters raw |
-| IPYNB | serde_json | Markdown cells, fenced code and raw cells; metadata title and code language; code fences sized to protect embedded backticks |
+| IPYNB | serde_json | Markdown cells, fenced code and raw cells; metadata title and code language; code fences sized to protect embedded backticks; each code cell's printed text, results, errors and images follow it, and markdown-cell image attachments are assets (see [notebook outputs](#notebook-outputs)) |
 | JSON | serde_json | Validated, pretty-printed fenced JSON; an additive Rust format |
 | XML | quick-xml | Structured headings, attributes and mixed text, plus a source fence for small inputs; document types are rejected |
 | EML | mail-parser | Decoded subject, body and MIME attachments; attachment bytes returned separately |
@@ -21,7 +21,7 @@ network policy and optional model enhancement belong to the orchestration layer.
 | JPEG, PNG, GIF, BMP, TIFF, WebP | image + native LLM transport + macOS Vision | Standalone vision inputs, shared raster assets and complete TIFF page OCR/vision with bounded decoding |
 | DOC, DOCX, DOCM | anydoc document model | Headings, styled text, lists, tables, links, formulas, notes and embedded assets |
 | PPT, PPS, POT | anydoc document model | Legacy presentation content through the shared Markdown renderer, behind a numbered slide marker per slide; embedded charts and worksheets read as their data tables |
-| PPTX, PPTM, PPSX, PPSM | bounded ZIP + PresentationML reader | Ordered slide markers, title placeholders, plain text frames, grouped shapes, tables, referenced images, cached chart data and speaker notes |
+| PPTX, PPTM, PPSX, PPSM | bounded ZIP + PresentationML reader | Ordered slide markers, title placeholders, text frames with bullets as nested lists and web/mail hyperlinks as links, grouped shapes, tables, referenced images, cached chart data and speaker notes |
 | XLS, XLSX, XLSM, XLSB | anydoc document model | Native sheet content; XLS/XLSX/XLSM single-sheet names are recovered from package metadata; exact cell-format compatibility has not been established |
 | ODT, ODS, ODP, RTF | anydoc document model | Native structured documents through the same Markdown renderer; ODP slides carry numbered slide markers |
 | NUMBERS | bounded ZIP/directory IWA preflight + iwork | Ordered sheets/tables, rectangular saved values and explicit formatting/unsupported-content warnings; see [Numbers](numbers.md) |
@@ -399,9 +399,22 @@ coordinates, with layout/master placeholder coordinates used when missing.
 Group children are ordered within their group. As in the reference reader, the
 first top-level placeholder with index zero supplies the first-level title;
 its type need not literally be `title`. Grouped or later placeholders do not
-turn the remainder of the slide into headings. Body text retains paragraph boundaries and does not
-acquire extra list markers from master styles, matching the reference's plain
-text-frame contract. Shared normal-mode cleanup remains responsible for repeated
+turn the remainder of the slide into headings. Body text keeps its paragraph boundaries. A paragraph is a list item when its
+bullet is set: the paragraph's own properties, then the shape's list style, the
+layout's matching placeholder, the master's placeholder and the master's text
+styles (`titleStyle`, `bodyStyle`, `otherStyle`) decide, the closest layer that
+says anything winning, and nothing set is no bullet (a text box, a subtitle the
+layout un-bullets, a `buNone` paragraph). Items are `*` for a bullet and `N.` for
+automatic numbering (`startAt` honoured, counted per level; the numbering scheme
+itself, such as letters, is not kept), nested by `lvl` the way an outline nests,
+and a list is set apart from the text and the shapes around it by blank lines,
+which would otherwise continue an item. This differs from the reference, whose
+plain text-frame contract writes bullets as bare lines. A run's
+`a:hlinkClick` naming an external `http`, `https` or `mailto` relationship is a
+`[text](url)` link, runs of one target joined, in text frames, titles and table
+cells; other targets (scripts, files, slide jumps) stay text. Speaker notes are
+plain text without bullets or links, and the presentation's default text style is
+not consulted. Shared normal-mode cleanup remains responsible for repeated
 footers; pure output keeps the extracted text.
 
 Presentation tables use their first row as the Markdown header. Images remain
@@ -536,6 +549,31 @@ The browser runtime is outside this module. No Python interpreter,
 Node runtime, Office installation, LibreOffice or hosted extraction service is
 used by the readers above.
 
+### Notebook outputs
+
+A code cell is followed by what it produced, one block per output, in order:
+
+- `stream` text (stdout and stderr; consecutive writes to one stream are one
+  block) and `text/plain` results as a fenced block tagged `text`;
+- `text/markdown` results as Markdown;
+- `image/png`, `image/jpeg`, `image/gif`, `image/webp` and `image/bmp` outputs as
+  image assets (`![output](.markitai/assets/notebook-image-N.png)`), which then
+  pass through the shared image filtering and compression; an image replaces the
+  result's `text/plain` form, which is only the object's name (`<Figure size ...>`);
+- `error` outputs as the traceback in a `text` block, or `ename: evalue` when
+  there is none.
+
+Terminal escape sequences are removed from printed text and a carriage return
+keeps the last state of its line (a progress bar). Output is bounded: a block
+keeps its first 40 and last 40 lines (a traceback its first 6 and last 24) with a
+`… [N lines omitted]` note, a line keeps 500 characters, the notebook keeps 4 MiB
+of output text and 64 MiB of decoded images, and what is beyond is replaced by a
+note with a warning. Outputs with only other types (`text/html`,
+`application/json`, widgets) are not converted and a warning names their types;
+a malformed output is skipped. In markdown cells, `![](attachment:name.png)` and
+`<img src="attachment:name.png">` point at the attachment's image asset when the
+cell uses it. Nothing in a notebook is executed or fetched.
+
 ## Explicit remaining compatibility work
 
 Numbers table decoding accepts modern single-file ZIP and directory packages with scoped limits in [Numbers](numbers.md). A `.numbers` directory is one document, including when its contents are invalid; ordinary directories keep their existing batch/API behavior.
@@ -594,6 +632,12 @@ unused mini stream; a file whose mini stream holds a stream is never changed,
 the original error stands if the copy fails too, and a warning reports the
 repair ([record](validation/office-quality-round42.md)).
 
+That exporter also writes a picture as the object replacement character U+FFFC
+and stores no picture data (the file has no Data stream). The reader drops the
+character, so no stray `\ufffc` paragraph remains where the picture was, and
+extracts the picture of a file whose character does carry picture data
+(`sprmCPicLocation`, as for the Word special character `\u{1}`).
+
 Adjacent text runs of one style render as one run, so a word the source split
 into runs (RTF writes each `\u` character as its own; Word splits at revision
 marks) keeps one emphasis span. A source list label that is only digits becomes
@@ -606,12 +650,17 @@ of single paragraphs keep their structure even with empty columns.
 
 The renderer retains referenced anchors and omits unused ones. EPUB links within
 the assembled book keep working through these anchors; they intentionally differ
-from the reference's links to source XHTML files that are not exported. DOCX
+from the reference's links to source XHTML files that are not exported. A kept
+anchor is written as `<a id="..."></a>` on a line of its own before the heading
+or paragraph it marks, never inside a heading's text (a Word bookmark around a
+heading, a table-of-contents target, an EPUB chapter's start), so headings
+and their slugs stay clean; a heading in a table cell, which has no lines of its
+own, keeps the anchor inline. DOCX
 tables keep their first row as data with a blank Markdown header. ODS uses its
-first row as the header and removes wholly empty trailing columns beyond both
-content and merged spans. A five-column merged title remains five columns even
-when its body data occupies only three; this differs from the reference's
-three-column rendering of the ODS fixture. RTF heading bold markers are omitted while other emphasis is
+first row as the header and removes trailing columns that are empty in every row,
+whatever the sheet declares or a merged title spans (a title merged over five
+columns above three columns of data gives three, as the reference renders the
+ODS fixture); empty columns between filled ones stay. RTF heading bold markers are omitted while other emphasis is
 retained. Hidden XLS/XLSX worksheets are currently omitted by the upstream parser
 and reported explicitly. XLSB sheet metadata, older XLS code pages other than
 Windows-1252, exact presentation image encoding, PDF table

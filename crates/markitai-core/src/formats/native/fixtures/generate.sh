@@ -11,6 +11,8 @@
 # textedit-word97-lists.doc: lists, which the exporter writes as typed
 #   markers between tabs under a hanging indent ("<Tab>2<Tab>" for an item of
 #   an `ol` starting at 2, "<Tab>◦<Tab>" one level down).
+# textedit-word97-picture.doc: an `img`, which the exporter writes as the
+#   object replacement character U+FFFC with no picture data (no Data stream).
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d)
@@ -39,8 +41,15 @@ cat > "$work/lists.html" <<'HTML'
 <ul><li>Frame<ul><li>Front wheel</li></ul></li><li>Saddle</li></ul>
 <p>The closing paragraph ends the document.</p></body></html>
 HTML
+printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEklEQVR4nGP4z8Dwn4GBgYEBAA7AAvsq7tHAAAAAAElFTkSuQmCC' |
+  base64 -D > "$work/pic.png"
+cat > "$work/picture.html" <<'HTML'
+<!doctype html><html><head><meta charset="utf-8"><title>Picture</title></head>
+<body><p>Before the picture.</p><p><img src="pic.png" alt="Red square"></p>
+<p>After the picture.</p></body></html>
+HTML
 for pair in "short.html textedit-word97.doc" "long.html textedit-word97-long.doc" \
-  "lists.html textedit-word97-lists.doc"; do
+  "lists.html textedit-word97-lists.doc" "picture.html textedit-word97-picture.doc"; do
   set -- $pair
   /usr/bin/sandbox-exec -p '(version 1)(allow default)(deny network*)' \
     /usr/bin/textutil -convert doc "$work/$1" -output "$here/$2"

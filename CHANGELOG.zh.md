@@ -86,6 +86,10 @@
 
 ### 修复
 
+- `serve`：请求模型处理但没有可用模型时，任务会被提前拒绝（422 `llm_unavailable`），不再生成全部失败的条目；网页关闭这些预设和选项并说明原因，首页显示模型状态。被跳过的图片可以“用 OCR 重试”，任务列表可筛选并一键重试全部失败项，可选择或拖入整个文件夹（跳过点文件），每个选项都有说明并记住上次的选择，历史和连接页面在地址栏中有独立的位置；没有结果的任务不再显示“下载 ZIP”。启动时打印访问地址、数据目录与 Ctrl-C 提示，监听非本机地址时给出警告（`--no-auth` 时更严厉），端口被占用时说明具体地址；由大量小文件创建任务快了数倍；API 错误不再显示解析器的原始措辞。
+- 抓取：页面失败时报 `HTTP 404 for <URL>: the page may have been removed or is not public`（401/403、429、5xx 有类似提示，URL 去掉凭据与疑似密钥的查询值）；建立连接时被切断（`tls handshake eof`）会重试两次；编码声明错误或缺失的 HTML（以 `charset=utf-8` 发送的 GBK、无声明）在本地检测编码，不确定时给出警告；`auto` 用本机浏览器渲染脚本生成的外壳页，`-s static` 提示改用 `-s playwright` 或 `auto`；两秒内、几乎为空的 `<meta http-equiv="refresh">` 页面像重定向一样被跟随。URL 输出文件名保留标识性的查询值（`news_ycombinator_com_item_8863.md`），X 帖子命名为 `<user>-status-<id>.md`。
+- 网页：页面文本中遗留的 TeX（`$x$`、`$$x$$`、`\(x\)`、`\[x\]`）保留为公式，反斜杠、方括号与下划线不再被转义（`$5 and $10` 这类价格仍是文本）；图片在不会变小时取 `srcset` 中最大的候选；多行 alt 文本完整保留，链接修复不再改动图片；空的图片标题与重复的 `****` 强调不再出现；MDN 风格的 `brush: js` 代码块保留语言且不再多出一行标签；GitHub issue 页面去掉提示框与登录文字；作者不再是 URL（优先 JSON-LD 中的人名），`site` 可取自两种 meta 属性、JSON-LD publisher 或 Substack，像简介的 JSON-LD headline 不再顶替标题（维基百科），仅供屏幕阅读器的标签与其后文字之间补空格。
+- 文档：Notebook 保留单元输出（打印文本、结果、去除 ANSI 的错误回溯、图片作为资源，有大小上限）；PowerPoint 项目符号写成嵌套 Markdown 列表，网页与邮件超链接写成 `[文本](url)`；Org、RST、TeX 的块之间以空行分隔，转换 RST 定义列表并保留 Org 的 `#+AUTHOR`/`#+DATE`；ODS 表格去掉所有行都为空的列；DOCX/EPUB 中被链接引用的锚点单独成行写在标题前，不再嵌在标题里；macOS 保存的旧版 Word 文件不再在图片位置留下游离的 U+FFFC；EML 中以 `cid:` 内联显示的图片不再在附件中重复列出。
 - X 帖子在 X 当前的页面上重新只转换帖子本身：正文只出现一次，保留图片、视频封面，引用帖写成引用块，作者自己的后续跟帖以 `---` 分隔（不含他人回复），元数据为 `Post by @handle on X`、`author: @handle`、日期形式的 `published` 与 `content_profile: social_post`。无头浏览器访问 X 时使用常规 Chrome 用户代理和英文语言环境（其它网站保持浏览器自己的语言），导航失败时给出 Chromium 的 `net::ERR_*` 原因；镜像地址（`fxtwitter.com`、`vxtwitter.com`、`fixupx.com`、`fixvx.com`、`twittpr.com`、`mobile.twitter.com`、`twitter.com`）按规范的 x.com 帖子地址抓取。不向任何第三方服务发送内容。
 - PDF 表格边框不再被读成下划线：两端有竖向笔画的横线（单元格或框线，无论是描边线、细填充矩形还是 Chrome 的立体 `border="1"` 斜边）不再给上方文字加下划线，因此 `Gamma`、`Name Qty` 这类单元格不再带多余的 `<u>`；真正的下划线（包括链接）保留。紧挨横线的点或短线不再被当作边框。在 217 个文件的 PDF 语料上其余输出完全不变。
 - 嵌套超过 256 层的 HTML 可以转换，不再报 `HTML nesting exceeds 256 elements`：超过该深度的内容以纯文本保留文字，并给出警告。含有数百个未闭合 `<font>` 标签的旧网页会达到这个深度，参考实现可以转换它们。

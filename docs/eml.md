@@ -43,6 +43,15 @@ The label is the decoded filename, or `attachment_N` counted from zero when ther
 is none. Brackets and parentheses in labels become `_`, as the reference does for
 image alt text.
 
+An image that the body already shows through a bound Content-ID reference is
+listed there and not a second time under `## Attachments` (mail clients mark
+inline pictures `Content-Disposition: attachment` as often as `inline`, so the
+disposition cannot tell them apart). Its asset is the one the body links, and the
+numbering of the remaining labels still counts it. The reference, which leaves
+`cid:` references unresolved, lists such an image only as an attachment. A
+message whose only attachments are shown in the body has no `## Attachments`
+section.
+
 Two enhancements over the reference remain. Every attachment, including attached
 messages, stays downloadable through its own asset link, where the reference shows
 only a name and size. Content-ID images are bound inside the body (below), where the

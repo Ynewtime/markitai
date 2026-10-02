@@ -15,7 +15,11 @@
     "textedit-word97-lists.doc": {
       "bytes": 19456,
       "sha256": "0211e218c7581e1ff3d91a43d6b8451e40cf599d12860071bc3f186778c6c890"
+    },
+    "textedit-word97-picture.doc": {
+      "bytes": 19456,
+      "sha256": "163d8d79273ee4bb22521cb8e608b31139ee7a1a2858e5c945d45ba71108fe57"
     }
   },
-  "purpose": "Word 97 files as the macOS exporter writes them: an unused mini stream with a malformed MiniFAT, a FAT one sector short of the file, and lists typed as markers between tabs"
+  "purpose": "Word 97 files as the macOS exporter writes them: an unused mini stream with a malformed MiniFAT, a FAT one sector short of the file, lists typed as markers between tabs, and a picture written as U+FFFC with no picture data"
 }

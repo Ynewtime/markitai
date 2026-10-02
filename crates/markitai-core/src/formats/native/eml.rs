@@ -278,8 +278,10 @@ fn html_body(
     names: &mut HashMap<usize, String>,
     assets: &mut Vec<Asset>,
     warnings: &mut Vec<String>,
-) -> Result<String> {
+) -> Result<(String, HashSet<usize>)> {
     let ids = ContentIds::new(message, parents, body);
+    // The image parts the body shows, which the attachment listing omits.
+    let mut bound = HashSet::new();
     let mut mapped = HashMap::new();
     let mut unresolved = HashMap::new();
     let references = output_profiles::html_image_references(html);
@@ -300,6 +302,7 @@ fn html_body(
         }
         let linked = uri_id(&target).and_then(|cid| ids.lookup(&cid));
         if let Some(id) = linked.filter(|id| image_part(&message.parts[*id])) {
+            bound.insert(id);
             let name = names.entry(id).or_insert_with(|| {
                 let name = attachment_name(&message.parts[id], assets.len() + 1);
                 assets.push(Asset {
@@ -318,9 +321,9 @@ fn html_body(
     }
     let html = output_profiles::rewrite_html_image_targets(html, &mapped);
     let markdown = crate::formats::html::fragment(&html)?;
-    Ok(output_profiles::rewrite_image_uri_targets(
-        &markdown,
-        &unresolved,
+    Ok((
+        output_profiles::rewrite_image_uri_targets(&markdown, &unresolved),
+        bound,
     ))
 }
 
@@ -456,6 +459,8 @@ pub(super) fn extract(bytes: &[u8]) -> Result<Document> {
     let mut assets = Vec::new();
     let mut names = HashMap::new();
     let mut listed = Vec::new();
+    // Image parts the body shows through their Content-ID.
+    let mut bound = HashSet::new();
     for &id in &message.attachments {
         let id = id as usize;
         if Some(id) == selected {
@@ -491,15 +496,19 @@ pub(super) fn extract(bytes: &[u8]) -> Result<Document> {
                 warnings.push("EML body declares an unknown charset; the MIME parser's UTF-8 fallback was used.".into());
             }
             match &part.body {
-                PartType::Html(html) => html_body(
-                    html,
-                    &message,
-                    id,
-                    &parents,
-                    &mut names,
-                    &mut assets,
-                    &mut warnings,
-                )?,
+                PartType::Html(html) => {
+                    let (markdown, shown) = html_body(
+                        html,
+                        &message,
+                        id,
+                        &parents,
+                        &mut names,
+                        &mut assets,
+                        &mut warnings,
+                    )?;
+                    bound = shown;
+                    markdown
+                }
                 PartType::Text(text) => text.to_string(),
                 _ => String::new(),
             }
@@ -510,6 +519,11 @@ pub(super) fn extract(bytes: &[u8]) -> Result<Document> {
     let mut listing = Vec::new();
     let mut sections = Vec::new();
     for (position, (id, name)) in listed.iter().enumerate() {
+        // An image the body shows is not listed a second time; its asset is
+        // the body's.
+        if bound.contains(id) {
+            continue;
+        }
         let part = &message.parts[*id];
         let label = attachment_label(part, position);
         let target = format!(".markitai/assets/{name}");
@@ -769,6 +783,85 @@ mod tests {
     }
 
     #[test]
+    fn an_image_the_body_shows_by_content_id_is_not_listed_again_as_an_attachment() {
+        // Mail clients mark inline pictures `attachment` as often as `inline`.
+        let pixels = image([20, 90, 170]);
+        let orphan = image([200, 30, 30]);
+        let bytes = message(multipart(
+            "mixed",
+            "outer",
+            &[
+                multipart(
+                    "related",
+                    "inner",
+                    &[
+                        part(
+                            "Content-Type: text/html",
+                            b"<p>Body.</p><img src='cid:img1' alt='Logo'><img src='cid:img1' alt='Again'>",
+                        ),
+                        part(
+                            "Content-Type: image/png\r\nContent-ID: <img1>\r\nContent-Disposition: attachment; filename=inline.png",
+                            &pixels,
+                        ),
+                    ],
+                ),
+                part(
+                    "Content-Type: image/png\r\nContent-Disposition: attachment; filename=unreferenced.png",
+                    &orphan,
+                ),
+                part(
+                    "Content-Type: text/csv\r\nContent-Disposition: attachment; filename=data.csv",
+                    b"a,b\n1,2\n",
+                ),
+            ],
+        ));
+        let doc = extract(&bytes).unwrap();
+        let (content, attachments) = doc.markdown.split_once("\n\n## Attachments\n\n").unwrap();
+        assert_eq!(content.matches("![Logo](.markitai/assets/").count(), 1);
+        assert_eq!(content.matches("![Again](.markitai/assets/").count(), 1);
+        // Only what the body does not show: the unreferenced image keeps its
+        // reference-style entry, positions counting the shown one.
+        assert!(!attachments.contains("inline.png"), "{attachments}");
+        assert!(
+            attachments.starts_with("![unreferenced.png]("),
+            "{attachments}"
+        );
+        assert!(attachments.contains("- [data.csv]("), "{attachments}");
+        // The shown image's asset is the body's and holds its bytes.
+        let shown = refs(&doc)
+            .into_iter()
+            .find(|target| target.contains("inline.png"))
+            .unwrap();
+        let name = shown.strip_prefix(".markitai/assets/").unwrap();
+        assert_eq!(
+            doc.assets
+                .iter()
+                .find(|asset| asset.name == name)
+                .unwrap()
+                .bytes,
+            pixels
+        );
+        // A message whose only attachment is shown has no listing at all.
+        let only = message(multipart(
+            "related",
+            "inner",
+            &[
+                part(
+                    "Content-Type: text/html",
+                    b"<p>Body.</p><img src='cid:img1'>",
+                ),
+                part(
+                    "Content-Type: image/png\r\nContent-ID: <img1>\r\nContent-Disposition: inline; filename=inline.png",
+                    &pixels,
+                ),
+            ],
+        ));
+        let doc = extract(&only).unwrap();
+        assert!(!doc.markdown.contains("## Attachments"), "{}", doc.markdown);
+        assert_eq!(refs(&doc).len(), 1);
+    }
+
+    #[test]
     fn sibling_related_sets_cannot_supply_or_override_each_others_cids() {
         let red = image([220, 10, 10]);
         let green = image([10, 220, 10]);
@@ -886,12 +979,15 @@ mod tests {
             doc.markdown
                 .contains("![Visible](.markitai/assets/email-1-chart.png)")
         );
+        // Only the real `img` is bound; the image the body shows is not listed
+        // again under the attachments.
         assert_eq!(
             doc.markdown
                 .matches(".markitai/assets/email-1-chart.png")
                 .count(),
-            2
+            1
         );
+        assert!(!doc.markdown.contains("## Attachments"));
         assert!(!doc.markdown.contains("const sample"));
     }
 

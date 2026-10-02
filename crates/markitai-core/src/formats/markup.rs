@@ -45,6 +45,28 @@ fn finish(value: String) -> String {
     }
 }
 
+/// Joins a reader's lines and blocks; blank lines never run on (a block ends
+/// with one, and so may the source line before the next).
+fn join_blocks(mut out: Vec<String>) -> String {
+    out.dedup_by(|current, previous| current.is_empty() && previous.is_empty());
+    out.join("\n")
+}
+
+/// A block of its own: a blank line before it and after, so the line above
+/// cannot make it a lazy continuation (a quote and a table row), the line
+/// below cannot become one of its rows or its text (a table, a footnote
+/// definition), and a fence or a displayed formula never shares a paragraph.
+fn push_block(out: &mut Vec<String>, block: String) {
+    if block.trim().is_empty() {
+        return;
+    }
+    if out.last().is_some_and(|last| !last.is_empty()) {
+        out.push(String::new());
+    }
+    out.push(block);
+    out.push(String::new());
+}
+
 fn tick_run(text: &str) -> usize {
     text.split(|c| c != '`').map(str::len).max().unwrap_or(0)
 }
@@ -331,11 +353,14 @@ fn rst(source: &str, warnings: &mut Vec<String>, depth: usize) -> String {
         {
             let next = levels.len() + 1;
             let level = *levels.entry((ch, true)).or_insert(next);
-            out.push(format!(
-                "{} {}",
-                "#".repeat(level.min(6)),
-                rst_inline(lines[i + 1].trim(), &refs)
-            ));
+            push_block(
+                &mut out,
+                format!(
+                    "{} {}",
+                    "#".repeat(level.min(6)),
+                    rst_inline(lines[i + 1].trim(), &refs)
+                ),
+            );
             i += 3;
             continue;
         }
@@ -346,11 +371,14 @@ fn rst(source: &str, warnings: &mut Vec<String>, depth: usize) -> String {
         {
             let next = levels.len() + 1;
             let level = *levels.entry((ch, false)).or_insert(next);
-            out.push(format!(
-                "{} {}",
-                "#".repeat(level.min(6)),
-                rst_inline(line.trim(), &refs)
-            ));
+            push_block(
+                &mut out,
+                format!(
+                    "{} {}",
+                    "#".repeat(level.min(6)),
+                    rst_inline(line.trim(), &refs)
+                ),
+            );
             i += 2;
             continue;
         }
@@ -360,13 +388,13 @@ fn rst(source: &str, warnings: &mut Vec<String>, depth: usize) -> String {
                 i += 1;
             }
             match rst_grid(&lines[start..i], &refs) {
-                Some(value) => out.push(value),
+                Some(value) => push_block(&mut out, value),
                 None => {
                     warn(
                         warnings,
                         "RST table with spans or irregular boundaries preserved as source.",
                     );
-                    out.push(fence(&lines[start..i].join("\n"), "rst"));
+                    push_block(&mut out, fence(&lines[start..i].join("\n"), "rst"));
                 }
             }
             continue;
@@ -417,10 +445,10 @@ fn rst(source: &str, warnings: &mut Vec<String>, depth: usize) -> String {
                 i += 1;
             }
             if closed {
-                out.push(table(&rows, header));
+                push_block(&mut out, table(&rows, header));
             } else {
                 warn(warnings, "Unclosed RST simple table preserved as source.");
-                out.push(fence(&lines[start..i].join("\n"), "rst"));
+                push_block(&mut out, fence(&lines[start..i].join("\n"), "rst"));
             }
             continue;
         }
@@ -437,10 +465,13 @@ fn rst(source: &str, warnings: &mut Vec<String>, depth: usize) -> String {
                 && let Some((name, body)) = note.split_once(']')
             {
                 let body = format!("{}\n{}", body.trim(), dedent(&lines[i + 1..end]));
-                out.push(format!(
-                    "[^{name}]: {}",
-                    rst_inline(body.trim(), &refs).replace('\n', "\n    ")
-                ));
+                push_block(
+                    &mut out,
+                    format!(
+                        "[^{name}]: {}",
+                        rst_inline(body.trim(), &refs).replace('\n', "\n    ")
+                    ),
+                );
                 i = end;
                 continue;
             }
@@ -466,21 +497,27 @@ fn rst(source: &str, warnings: &mut Vec<String>, depth: usize) -> String {
                 }
                 let body = dedent(&lines[body_start..end]);
                 match name.trim() {
-                    "code" | "code-block" | "sourcecode" => out.push(fence(&body, argument.trim())),
-                    "math" => out.push(format!(
-                        "$$\n{}\n$$",
-                        format!("{}\n{body}", argument.trim()).trim()
-                    )),
+                    "code" | "code-block" | "sourcecode" => {
+                        push_block(&mut out, fence(&body, argument.trim()))
+                    }
+                    "math" => push_block(
+                        &mut out,
+                        format!("$$\n{}\n$$", format!("{}\n{body}", argument.trim()).trim()),
+                    ),
                     "image" | "figure" => {
                         let rendered =
                             image(options.get("alt").copied().unwrap_or(""), argument.trim());
-                        out.push(if let Some(target) = options.get("target") {
-                            format!("[{rendered}]({})", destination(target))
-                        } else {
-                            rendered
-                        });
+                        push_block(
+                            &mut out,
+                            if let Some(target) = options.get("target") {
+                                format!("[{rendered}]({})", destination(target))
+                            } else {
+                                rendered
+                            },
+                        );
                         if !body.is_empty() {
-                            out.push(rst(&body, warnings, depth + 1).trim_end().to_owned());
+                            let caption = rst(&body, warnings, depth + 1);
+                            push_block(&mut out, caption.trim_end().to_owned());
                         }
                     }
                     "note" | "warning" | "tip" | "important" | "caution" | "admonition" => {
@@ -494,15 +531,18 @@ fn rst(source: &str, warnings: &mut Vec<String>, depth: usize) -> String {
                         } else {
                             format!("{}\n{body}", argument.trim()).trim().to_owned()
                         };
-                        out.push(format!(
-                            "> **{}**\n>\n{}",
-                            label(title),
-                            rst(&content, warnings, depth + 1)
-                                .lines()
-                                .map(|s| format!("> {s}"))
-                                .collect::<Vec<_>>()
-                                .join("\n")
-                        ));
+                        push_block(
+                            &mut out,
+                            format!(
+                                "> **{}**\n>\n{}",
+                                label(title),
+                                rst(&content, warnings, depth + 1)
+                                    .lines()
+                                    .map(|s| format!("> {s}"))
+                                    .collect::<Vec<_>>()
+                                    .join("\n")
+                            ),
+                        );
                     }
                     _ => {
                         warn(
@@ -512,7 +552,7 @@ fn rst(source: &str, warnings: &mut Vec<String>, depth: usize) -> String {
                                 name.trim()
                             ),
                         );
-                        out.push(fence(&lines[i..end].join("\n"), "rst"));
+                        push_block(&mut out, fence(&lines[i..end].join("\n"), "rst"));
                     }
                 }
             }
@@ -526,17 +566,69 @@ fn rst(source: &str, warnings: &mut Vec<String>, depth: usize) -> String {
                 let intro = line.trim_end().strip_suffix("::").unwrap();
                 if !intro.trim().is_empty() {
                     out.push(rst_inline(&format!("{intro}:"), &refs));
-                    out.push(String::new());
                 }
-                out.push(fence(&body, ""));
+                push_block(&mut out, fence(&body, ""));
                 i = end;
                 continue;
             }
         }
+        // A term with its definition indented under it, no blank line
+        // between: Markdown has no definition list, so the term is a bold
+        // line and the definition (itself RST) the block after it.
+        if let Some(end) = definition_end(&lines, i) {
+            push_block(&mut out, format!("**{}**", rst_inline(line.trim(), &refs)));
+            let definition = rst(&dedent(&lines[i + 1..end]), warnings, depth + 1);
+            push_block(&mut out, definition.trim_end().to_owned());
+            i = end;
+            continue;
+        }
         out.push(rst_inline(line, &refs));
         i += 1;
     }
-    finish(out.join("\n"))
+    finish(join_blocks(out))
+}
+
+/// Whether `text` opens a list item, a field, an option, a line block or a
+/// quotation: an indented line below it continues it and is not a definition.
+fn opens_other_construct(text: &str) -> bool {
+    let mut chars = text.chars();
+    let first = chars.next().unwrap_or(' ');
+    let second = chars.next();
+    if matches!(first, '*' | '-' | '+' | '•' | '‣' | '⁃') && second.is_none_or(char::is_whitespace)
+    {
+        return true;
+    }
+    // `-a`, `--long` and `-a FILE  description` open an option list.
+    if first == '-' && second.is_some_and(|c| c == '-' || c.is_alphanumeric()) {
+        return true;
+    }
+    if matches!(first, ':' | '|' | '>' | '.') {
+        return true;
+    }
+    // `1.`, `a)`, `(iv)` and `#.` open an enumerated list.
+    let rest = text.strip_prefix('(').unwrap_or(text);
+    let token: String = rest
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '#')
+        .collect();
+    !token.is_empty()
+        && token.chars().count() <= 9
+        && rest[token.len()..].starts_with(['.', ')'])
+        && rest[token.len() + 1..].starts_with(char::is_whitespace)
+}
+
+/// Where the definition of a term at line `i` ends: a line at the margin that
+/// starts a block and is followed at once by a more indented line.
+fn definition_end(lines: &[&str], i: usize) -> Option<usize> {
+    let line = lines[i];
+    let next = lines.get(i + 1)?;
+    (!line.trim().is_empty()
+        && indent(line) == 0
+        && (i == 0 || lines[i - 1].trim().is_empty())
+        && !next.trim().is_empty()
+        && indent(next) > 0
+        && !opens_other_construct(line.trim_end()))
+    .then(|| indented_end(lines, i + 1, 0))
 }
 
 fn grid_border(line: &str) -> bool {
@@ -794,22 +886,27 @@ fn org(
                 );
             }
             match name {
-                "SRC" => out.push(fence_lines(
-                    &lines[body_start..if closed { i - 1 } else { i }],
-                    args.split_whitespace().next().unwrap_or(""),
-                )),
-                "EXAMPLE" => out.push(fence_lines(
-                    &lines[body_start..if closed { i - 1 } else { i }],
-                    "",
-                )),
-                "QUOTE" => out.push(
+                "SRC" => push_block(
+                    &mut out,
+                    fence_lines(
+                        &lines[body_start..if closed { i - 1 } else { i }],
+                        args.split_whitespace().next().unwrap_or(""),
+                    ),
+                ),
+                "EXAMPLE" => push_block(
+                    &mut out,
+                    fence_lines(&lines[body_start..if closed { i - 1 } else { i }], ""),
+                ),
+                "QUOTE" => push_block(
+                    &mut out,
                     org(&body, metadata, warnings, depth + 1)
                         .lines()
                         .map(|line| format!("> {line}"))
                         .collect::<Vec<_>>()
                         .join("\n"),
                 ),
-                "VERSE" => out.push(
+                "VERSE" => push_block(
+                    &mut out,
                     body.lines()
                         .map(|line| format!("{}  ", org_inline(line, 0)))
                         .collect::<Vec<_>>()
@@ -821,14 +918,14 @@ fn org(
                         || args.eq_ignore_ascii_case("md")
                         || args.eq_ignore_ascii_case("html") =>
                 {
-                    out.push(body)
+                    push_block(&mut out, body)
                 }
                 _ => {
                     warn(
                         warnings,
                         format!("Org {name} block preserved as source without execution."),
                     );
-                    out.push(fence(&lines[start..i].join("\n"), "org"));
+                    push_block(&mut out, fence(&lines[start..i].join("\n"), "org"));
                 }
             }
             continue;
@@ -840,20 +937,34 @@ fn org(
                 "TITLE" => {
                     metadata.insert("title".into(), org_inline(value.trim(), 0).into());
                 }
+                // A local file's frontmatter holds only the title, so the
+                // author and the date are also kept where the source has them.
                 "AUTHOR" => {
                     metadata.insert("author".into(), value.trim().into());
+                    if !value.trim().is_empty() {
+                        push_block(
+                            &mut out,
+                            format!("**Author:** {}", org_inline(value.trim(), 0)),
+                        );
+                    }
                 }
                 "DATE" => {
                     metadata.insert("published".into(), value.trim().into());
+                    if !value.trim().is_empty() {
+                        push_block(
+                            &mut out,
+                            format!("**Date:** {}", org_inline(value.trim(), 0)),
+                        );
+                    }
                 }
-                "CAPTION" => out.push(format!("*{}*", org_inline(value.trim(), 0))),
-                "NAME" => out.push(format!("<a id=\"{}\"></a>", slug(value.trim()))),
+                "CAPTION" => push_block(&mut out, format!("*{}*", org_inline(value.trim(), 0))),
+                "NAME" => push_block(&mut out, format!("<a id=\"{}\"></a>", slug(value.trim()))),
                 _ => {
                     warn(
                         warnings,
                         format!("Org keyword '{}' preserved without evaluation.", key),
                     );
-                    out.push(code(line));
+                    push_block(&mut out, code(line));
                 }
             }
             i += 1;
@@ -909,28 +1020,43 @@ fn org(
                     warnings,
                     "Org table with irregular boundaries preserved as source.",
                 );
-                out.push(fence(&lines[start..i].join("\n"), "org"));
+                push_block(&mut out, fence(&lines[start..i].join("\n"), "org"));
             } else {
-                out.push(table(&rows, header));
+                push_block(&mut out, table(&rows, header));
             }
             continue;
         }
         if let Some(note) = trimmed.strip_prefix("[fn:")
             && let Some((name, body)) = note.split_once(']')
         {
-            out.push(format!("[^{name}]: {}", org_inline(body.trim_start(), 0)));
+            push_block(
+                &mut out,
+                format!("[^{name}]: {}", org_inline(body.trim_start(), 0)),
+            );
             i += 1;
             continue;
         }
-        if let Some(body) = trimmed.strip_prefix(": ") {
-            out.push(fence(body, ""));
-            i += 1;
+        if trimmed.starts_with(": ") || trimmed == ":" {
+            // Consecutive example lines are one block.
+            let mut example = Vec::new();
+            while i < lines.len() {
+                let line = lines[i].trim_start();
+                match line
+                    .strip_prefix(": ")
+                    .or_else(|| (line == ":").then_some(""))
+                {
+                    Some(body) => example.push(body),
+                    None => break,
+                }
+                i += 1;
+            }
+            push_block(&mut out, fence_lines(&example, ""));
             continue;
         }
         out.push(org_inline(line, 0));
         i += 1;
     }
-    finish(out.join("\n"))
+    finish(join_blocks(out))
 }
 
 fn skip_space(text: &str, mut pos: usize) -> usize {
@@ -1342,11 +1468,28 @@ fn tex_render(
                 }
             };
             if !rendered.is_empty() {
-                if !out.is_empty() && !out.ends_with('\n') {
+                // A list inside an item follows it closely; everything else
+                // is a block with a blank line on each side, so the text
+                // before it cannot swallow it (a list, a displayed formula,
+                // a fence, a table) and the text after it cannot join it.
+                let nested_list = list.is_some()
+                    && matches!(environment, "itemize" | "enumerate" | "description");
+                if nested_list {
+                    if !out.is_empty() && !out.ends_with('\n') {
+                        out.push('\n');
+                    }
+                    out.push_str(&rendered);
                     out.push('\n');
+                } else {
+                    if !out.is_empty() && !out.ends_with("\n\n") {
+                        out.push_str(if out.ends_with('\n') { "\n" } else { "\n\n" });
+                    }
+                    out.push_str(&rendered);
+                    out.push_str("\n\n");
+                    // The blank line is written; the source's own line break
+                    // after the block adds nothing.
+                    pos += source[pos..].len() - source[pos..].trim_start().len();
                 }
-                out.push_str(&rendered);
-                out.push('\n');
             }
             continue;
         }
@@ -1613,6 +1756,89 @@ mod tests {
     }
 
     #[test]
+    fn org_blocks_never_share_a_line_run_with_their_neighbors() {
+        // A table row after a quote line is a lazy continuation of the quote,
+        // and a line after a table is one more row: blocks get blank lines.
+        let doc = read(
+            "#+TITLE: Probe\n#+AUTHOR: Me\n#+DATE: 2026\n* Heading\nParagraph.\n#+BEGIN_SRC python\nx = 1\n#+END_SRC\n#+BEGIN_QUOTE\nA quote.\n#+END_QUOTE\n| Name | Qty |\n|------+-----|\n| Apple | 3 |\nFootnote[fn:1].\n[fn:1] The footnote text.\n: first\n:\n: third\n#+CAPTION: Fruit\n| a | b |\nlast\n",
+            "org",
+        );
+        assert_eq!(
+            doc.markdown,
+            "**Author:** Me\n\n**Date:** 2026\n\n# Heading\nParagraph.\n\n```python\nx = 1\n```\n\n\
+             > A quote.\n\n| Name | Qty |\n| --- | --- |\n| Apple | 3 |\n\nFootnote[^1].\n\n\
+             [^1]: The footnote text.\n\n```\nfirst\n\nthird\n```\n\n*Fruit*\n\n\
+             |  |  |\n| --- | --- |\n| a | b |\n\nlast\n"
+        );
+        assert_eq!(doc.metadata["author"], "Me");
+        assert_eq!(doc.metadata["published"], "2026");
+        // Several blank lines in the source stay one.
+        assert_eq!(
+            read("a\n\n\n\n#+BEGIN_EXAMPLE\nx\n#+END_EXAMPLE\n\n\nb\n", "org").markdown,
+            "a\n\n```\nx\n```\n\nb\n"
+        );
+    }
+
+    #[test]
+    fn rst_blocks_never_share_a_line_run_with_their_neighbors() {
+        let doc = read(
+            "Text before.\n.. note::\n   A note.\n.. code-block:: python\n\n   x = 1\n.. image:: pic.png\n   :alt: A picture\n.. [1] The footnote text.\n:math:`E=mc^2` and\n\n.. math::\n\n   y\n",
+            "rst",
+        );
+        assert_eq!(
+            doc.markdown,
+            "Text before.\n\n> **note**\n>\n> A note.\n\n```python\nx = 1\n```\n\n![A picture](pic.png)\n\n\
+             [^1]: The footnote text.\n\n$E=mc^2$ and\n\n$$\ny\n$$\n"
+        );
+    }
+
+    #[test]
+    fn rst_definition_lists_become_a_bold_term_and_its_definition() {
+        let doc = read(
+            "Term\n   Definition of term.\n\nSecond *term*\n   First paragraph.\n\n   * a bullet\n   * another\n\nAfter.\n",
+            "rst",
+        );
+        assert_eq!(
+            doc.markdown,
+            "**Term**\n\nDefinition of term.\n\n**Second *term***\n\nFirst paragraph.\n\n* a bullet\n* another\n\nAfter.\n"
+        );
+        // What is not a definition list stays: items and fields continued on
+        // an indented line, a paragraph, a quotation after a blank line.
+        for source in [
+            "* item\n  continued\n",
+            "1. item\n   continued\n",
+            "(a) item\n    continued\n",
+            ":field: value\n   continued\n",
+            "-v  option text\n    continued\n",
+            "Paragraph line\nTerm\n   not at a block start\n",
+            "Intro.\n\n   A quotation.\n",
+        ] {
+            assert!(!read(source, "rst").markdown.contains("**"), "{source:?}");
+        }
+    }
+
+    #[test]
+    fn tex_blocks_never_share_a_paragraph_with_the_text_around_them() {
+        let doc = read(
+            r"\begin{document}
+Text before.
+\begin{itemize}\item First \item Second\begin{itemize}\item Nested\end{itemize}\end{itemize}
+Text between.
+\begin{equation}x=1\end{equation}
+\begin{verbatim}
+raw
+\end{verbatim}
+Text after.
+\end{document}",
+            "tex",
+        );
+        assert_eq!(
+            doc.markdown,
+            "Text before.\n\n- First \n- Second\n  - Nested\n\nText between.\n\n$$\nx=1\n$$\n\n```\nraw\n```\n\nText after.\n"
+        );
+    }
+
+    #[test]
     fn rst_heading_levels_literals_and_fields() {
         let doc = read(
             "Top\n===\n\nMiddle\n------\n\nDeep\n~~~~\n\nAlso top\n========\n\n- ``文档.html``\n:author: Ada\n",
@@ -1708,7 +1934,14 @@ mod tests {
         );
         assert_eq!(doc.metadata["title"], "My Notes");
         assert_eq!(doc.metadata["author"], "Ada");
-        assert!(doc.markdown.starts_with("# One\n## Two\n"));
+        // The frontmatter of a local file holds only the title: the author
+        // stays readable in the text.
+        assert!(
+            doc.markdown
+                .starts_with("**Author:** Ada\n\n# One\n## Two\n"),
+            "{}",
+            doc.markdown
+        );
         assert!(
             doc.markdown
                 .contains("[the site](https://example.invalid) and <https://plain.invalid>")

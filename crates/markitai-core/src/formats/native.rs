@@ -463,6 +463,43 @@ impl Renderer<'_> {
         output
     }
 
+    /// The anchors a heading carries that some link targets, as inlines to
+    /// write before the heading, and the heading's content without them.
+    fn lifted_anchors(&self, own: Option<&str>, content: &[Inline]) -> (Vec<Inline>, Vec<Inline>) {
+        fn strip(
+            renderer: &Renderer<'_>,
+            values: &[Inline],
+            targets: &mut Vec<Inline>,
+        ) -> Vec<Inline> {
+            values
+                .iter()
+                .filter_map(|value| match value {
+                    Inline::Anchor(anchor) => {
+                        if renderer.anchors.contains(anchor)
+                            && !targets
+                                .iter()
+                                .any(|seen| matches!(seen, Inline::Anchor(a) if a == anchor))
+                        {
+                            targets.push(Inline::Anchor(anchor.clone()));
+                        }
+                        None
+                    }
+                    Inline::Link { content, target } => Some(Inline::Link {
+                        content: strip(renderer, content, targets),
+                        target: target.clone(),
+                    }),
+                    other => Some(other.clone()),
+                })
+                .collect()
+        }
+        let mut targets = Vec::new();
+        if let Some(anchor) = own.filter(|anchor| self.anchors.contains(*anchor)) {
+            targets.push(Inline::Anchor(anchor.to_owned()));
+        }
+        let content = strip(self, content, &mut targets);
+        (targets, content)
+    }
+
     /// Whether a document table only lays out content: no row holds two
     /// non-empty cells, and a cell holds a table or several blocks with
     /// content (a web page saved as a document, spacing its comments with
@@ -561,21 +598,19 @@ impl Renderer<'_> {
                     } else {
                         content
                     };
+                    // A target a link names is written on a line of its own
+                    // before the heading: inside it, `## <a id="x"></a>Title`
+                    // puts markup into the words a reader or a search sees.
+                    let (targets, content) = self.lifted_anchors(anchor.as_deref(), content);
                     let heading = format!(
                         "{} {}",
                         "#".repeat(usize::from((*level).clamp(1, 6))),
-                        self.inlines(&heading_on_one_line(content)).trim_end()
+                        self.inlines(&heading_on_one_line(&content)).trim_end()
                     );
-                    if let Some(anchor) = anchor
-                        .as_ref()
-                        .filter(|anchor| self.anchors.contains(*anchor))
-                    {
-                        format!(
-                            "{}\n{heading}",
-                            self.inlines(&[Inline::Anchor(anchor.clone())])
-                        )
-                    } else {
+                    if targets.is_empty() {
                         heading
+                    } else {
+                        format!("{}\n{heading}", self.inlines(&targets))
                     }
                 }
                 Block::Paragraph(values) => literal_heading_marks(&self.inlines(values))
@@ -684,27 +719,15 @@ impl Renderer<'_> {
                         })
                         .collect::<Vec<_>>();
                     if self.extension == "ods" {
-                        let content_width = rows
+                        // Columns after the last one that holds text in any
+                        // row are the sheet's declared width or the span of a
+                        // merged title, not data; interior empty columns stay.
+                        let width = rows
                             .iter()
                             .filter_map(|row| row.iter().rposition(|cell| !cell.is_empty()))
                             .max()
                             .map(|last| last + 1)
                             .unwrap_or(0);
-                        let span_width = table
-                            .grid
-                            .iter()
-                            .flat_map(|row| row.iter().enumerate())
-                            .filter_map(|(column, slot)| match slot {
-                                CellSlot::Origin(cell)
-                                    if cell.col_span > 1 || cell.row_span > 1 =>
-                                {
-                                    Some(column.saturating_add(cell.col_span as usize))
-                                }
-                                _ => None,
-                            })
-                            .max()
-                            .unwrap_or(0);
-                        let width = content_width.max(span_width);
                         for row in &mut rows {
                             row.truncate(width);
                         }
@@ -1068,6 +1091,51 @@ mod tests {
     }
 
     #[test]
+    fn a_bookmark_inside_a_heading_is_written_on_a_line_before_it_and_only_when_linked() {
+        // Word bookmarks a heading's text: the anchor sits among its inlines.
+        let heading = |anchor: &str, title: &str| Block::Heading {
+            level: 2,
+            anchor: None,
+            content: vec![Inline::Anchor(anchor.into()), Inline::plain(title)],
+        };
+        let blocks = vec![
+            Block::Paragraph(vec![Inline::Link {
+                content: vec![Inline::plain("Section Two")],
+                target: LinkTarget::Anchor("section_two".into()),
+            }]),
+            heading("section_two", "Section Two"),
+            heading("_Toc99", "Never linked"),
+        ];
+        let mut anchors = BTreeSet::new();
+        references(&blocks, &mut anchors, &mut BTreeSet::new());
+        let mut renderer = Renderer {
+            asset_names: &[],
+            merged_cells: false,
+            anchors,
+            extension: "docx",
+        };
+        assert_eq!(
+            renderer.blocks(&blocks),
+            "[Section Two](#section_two)\n\n<a id=\"section_two\"></a>\n## Section Two\n\n## Never linked"
+        );
+        // Several bookmarks of one heading share its line, once each.
+        let both = Block::Heading {
+            level: 1,
+            anchor: Some("a".into()),
+            content: vec![
+                Inline::Anchor("a".into()),
+                Inline::plain("Title"),
+                Inline::Anchor("b".into()),
+            ],
+        };
+        renderer.anchors = ["a".to_owned(), "b".to_owned()].into();
+        assert_eq!(
+            renderer.blocks(&[both]),
+            "<a id=\"a\"></a><a id=\"b\"></a>\n# Title"
+        );
+    }
+
+    #[test]
     fn document_and_sheet_table_headers_match_their_format_contracts() {
         let table = Block::Table(Table::from_rows(
             vec![
@@ -1279,7 +1347,67 @@ mod tests {
     }
 
     #[test]
-    fn sheet_trimming_preserves_merged_extent_without_affecting_later_tables() {
+    fn sheet_trimming_drops_trailing_empty_columns_but_keeps_interior_ones() {
+        // A title merged over five columns above three columns of data (the
+        // shape of the reference's ODS fixture) is three columns wide: the
+        // span and the sheet's declared width are not data.
+        let wide = Block::Table(Table {
+            grid: vec![
+                vec![
+                    CellSlot::Origin(Cell::spanning(
+                        vec![Block::Paragraph(vec![Inline::plain("Cups")])],
+                        5,
+                        1,
+                    )),
+                    CellSlot::Covered {
+                        origin_row: 0,
+                        origin_col: 0,
+                    },
+                    CellSlot::Covered {
+                        origin_row: 0,
+                        origin_col: 0,
+                    },
+                    CellSlot::Covered {
+                        origin_row: 0,
+                        origin_col: 0,
+                    },
+                    CellSlot::Covered {
+                        origin_row: 0,
+                        origin_col: 0,
+                    },
+                ],
+                vec![
+                    CellSlot::Origin(Cell::from_inlines(vec![Inline::plain("Team")])),
+                    CellSlot::Origin(Cell::new(vec![])),
+                    CellSlot::Origin(Cell::from_inlines(vec![Inline::plain("Count")])),
+                    CellSlot::Origin(Cell::new(vec![])),
+                    CellSlot::Origin(Cell::new(vec![])),
+                ],
+            ],
+            header_rows: 1,
+            kind: TableKind::Data,
+        });
+        let mut renderer = Renderer {
+            asset_names: &[],
+            merged_cells: false,
+            anchors: BTreeSet::new(),
+            extension: "ods",
+        };
+        assert_eq!(
+            renderer.blocks(std::slice::from_ref(&wide)),
+            "| Cups |  |  |\n| --- | --- | --- |\n| Team |  | Count |"
+        );
+        // Another format keeps the declared columns.
+        renderer.extension = "docx";
+        assert!(
+            renderer
+                .blocks(&[wide])
+                .starts_with("| Cups |  |  |  |  |\n| --- | --- | --- | --- | --- |\n")
+        );
+    }
+
+    #[test]
+    fn sheet_trimming_does_not_affect_later_tables() {
         let merged = Block::Table(Table {
             grid: vec![vec![
                 CellSlot::Origin(Cell::spanning(
@@ -1312,7 +1440,7 @@ mod tests {
         };
         assert_eq!(
             renderer.blocks(&[merged, plain]),
-            "| Title |  |\n| --- | --- |\n\n| One |\n| --- |"
+            "| Title |\n| --- |\n\n| One |\n| --- |"
         );
         assert!(renderer.merged_cells);
     }

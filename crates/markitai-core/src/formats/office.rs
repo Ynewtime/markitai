@@ -460,6 +460,285 @@ fn text_body(node: &Node) -> String {
         .join("\n")
 }
 
+/// A hyperlink target the output may carry: web and mail links only. Script,
+/// file and application-action targets stay plain text.
+fn safe_link(target: &str) -> Option<&str> {
+    let url = url::Url::parse(target).ok()?;
+    matches!(url.scheme(), "http" | "https" | "mailto").then_some(target)
+}
+
+/// A run's hyperlink (`a:rPr/a:hlinkClick` naming an external relationship).
+fn run_link<'a>(run: &Node, rels: &'a BTreeMap<String, Relationship>) -> Option<&'a str> {
+    let id = run
+        .child(Ns::Drawing, "rPr")?
+        .child(Ns::Drawing, "hlinkClick")?
+        .relation("id")?;
+    let relationship = rels.get(id).filter(|relationship| relationship.external)?;
+    safe_link(&relationship.target)
+}
+
+/// A paragraph's text: runs, with a break as a newline, and runs of one
+/// hyperlink as one `[text](url)`.
+fn paragraph_text(paragraph: &Node, rels: &BTreeMap<String, Relationship>) -> String {
+    enum Piece<'a> {
+        Text(String, Option<&'a str>),
+        Break,
+    }
+    fn collect<'a>(
+        node: &Node,
+        rels: &'a BTreeMap<String, Relationship>,
+        pieces: &mut Vec<Piece<'a>>,
+    ) {
+        if node.is(Ns::Drawing, "r") || node.is(Ns::Drawing, "fld") {
+            let mut text = String::new();
+            for child in node.children.iter().filter(|c| c.is(Ns::Drawing, "t")) {
+                text.push_str(&child.text);
+            }
+            pieces.push(Piece::Text(text, run_link(node, rels)));
+        } else if node.is(Ns::Drawing, "t") {
+            pieces.push(Piece::Text(node.text.clone(), None));
+        } else if node.is(Ns::Drawing, "br") {
+            pieces.push(Piece::Break);
+        } else {
+            for child in &node.children {
+                collect(child, rels, pieces);
+            }
+        }
+    }
+    let mut pieces = Vec::new();
+    collect(paragraph, rels, &mut pieces);
+    let mut output = String::new();
+    let mut at = 0;
+    while at < pieces.len() {
+        match &pieces[at] {
+            Piece::Break => {
+                output.push('\n');
+                at += 1;
+            }
+            Piece::Text(text, None) => {
+                output.push_str(text);
+                at += 1;
+            }
+            Piece::Text(_, Some(target)) => {
+                let mut label = String::new();
+                while let Some(Piece::Text(text, Some(next))) = pieces.get(at)
+                    && next == target
+                {
+                    label.push_str(text);
+                    at += 1;
+                }
+                let words = label.trim();
+                if words.is_empty() {
+                    output.push_str(&label);
+                    continue;
+                }
+                let start = label.len() - label.trim_start().len();
+                output.push_str(&label[..start]);
+                output.push_str(&format!(
+                    "[{}]({})",
+                    words.replace('[', "\\[").replace(']', "\\]"),
+                    super::destination(target)
+                ));
+                output.push_str(&label[start + words.len()..]);
+            }
+        }
+    }
+    output
+}
+
+/// A text body's paragraphs, one to a line, with hyperlinks.
+fn linked_text_body(node: &Node, rels: &BTreeMap<String, Relationship>) -> String {
+    node.children
+        .iter()
+        .filter(|node| node.is(Ns::Drawing, "p"))
+        .map(|node| paragraph_text(node, rels))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// What a paragraph's bullet says at one layer of its text style.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Bullet {
+    /// Nothing here: the next layer decides.
+    Inherit,
+    None,
+    Mark,
+    /// Auto-numbered, from this number.
+    Number(u32),
+}
+
+fn bullet_of(properties: &Node) -> Bullet {
+    for child in properties.children.iter().filter(|c| c.ns == Ns::Drawing) {
+        match child.name.as_str() {
+            "buNone" => return Bullet::None,
+            "buAutoNum" => {
+                let start = child.attr("startAt").and_then(|v| v.parse().ok());
+                return Bullet::Number(start.unwrap_or(1).clamp(1, 32767));
+            }
+            "buChar" | "buBlip" => return Bullet::Mark,
+            _ => {}
+        }
+    }
+    Bullet::Inherit
+}
+
+/// The bullet a list style (`a:lstStyle`, `p:bodyStyle`, ...) gives a level.
+fn level_bullet(styles: Option<&Node>, level: usize) -> Bullet {
+    styles
+        .and_then(|styles| styles.child(Ns::Drawing, &format!("lvl{}pPr", level + 1)))
+        .map_or(Bullet::Inherit, bullet_of)
+}
+
+fn shape_list_style(shape: &Node) -> Option<&Node> {
+    shape
+        .child(Ns::Presentation, "txBody")?
+        .child(Ns::Drawing, "lstStyle")
+}
+
+/// The master's text style for a shape: titles, other placeholders (body
+/// text, subtitles, objects) and everything that is not a placeholder.
+fn master_text_style<'a>(master: Option<&'a Node>, shape: &Node) -> Option<&'a Node> {
+    let name = match placeholder(shape).map(|ph| ph.attr("type").unwrap_or("obj")) {
+        Some("title" | "ctrTitle") => "titleStyle",
+        Some("dt" | "ftr" | "sldNum" | "hdr") | None => "otherStyle",
+        Some(_) => "bodyStyle",
+    };
+    master?
+        .descendant(Ns::Presentation, "txStyles")?
+        .child(Ns::Presentation, name)
+}
+
+/// The list styles a shape's paragraphs inherit bullets from, found once for
+/// the shape: its own, the layout's placeholder, the master's placeholder and
+/// the master's text styles.
+struct BulletLayers<'a> {
+    shape: Option<&'a Node>,
+    layout: Option<&'a Node>,
+    master_placeholder: Option<&'a Node>,
+    master_text: Option<&'a Node>,
+}
+
+impl<'a> BulletLayers<'a> {
+    fn new(shape: &'a Node, context: &SlideContext<'a>) -> Self {
+        let layout = base_placeholder(shape, context.layout, true);
+        let master = base_placeholder(layout.unwrap_or(shape), context.master, false);
+        Self {
+            shape: shape_list_style(shape),
+            layout: layout.and_then(shape_list_style),
+            master_placeholder: master.and_then(shape_list_style),
+            master_text: master_text_style(context.master, shape),
+        }
+    }
+
+    /// A paragraph's bullet: its own properties, then each layer's style for
+    /// its level, the closest one that says anything deciding; none says
+    /// nothing is no bullet.
+    fn bullet(&self, paragraph: &Node, level: usize) -> Bullet {
+        let own = paragraph
+            .child(Ns::Drawing, "pPr")
+            .map_or(Bullet::Inherit, bullet_of);
+        [
+            own,
+            level_bullet(self.shape, level),
+            level_bullet(self.layout, level),
+            level_bullet(self.master_placeholder, level),
+            level_bullet(self.master_text, level),
+        ]
+        .into_iter()
+        .find(|bullet| *bullet != Bullet::Inherit)
+        .unwrap_or(Bullet::None)
+    }
+}
+
+/// A shape's text with its bulleted paragraphs as a Markdown list, a level
+/// deeper for each level of the text, and its hyperlinks. A list stands apart
+/// from the text before and after it, which would otherwise continue an item.
+fn listed_text_body<'a>(
+    body: &Node,
+    shape: &'a Node,
+    context: &SlideContext<'a>,
+) -> (String, bool) {
+    #[derive(PartialEq)]
+    enum Last {
+        Blank,
+        Text,
+        Item,
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut last = Last::Blank;
+    // The enclosing items: their PowerPoint level and the column their text
+    // starts at, which a deeper item is indented to.
+    let mut open: Vec<(usize, usize)> = Vec::new();
+    let mut counters = [None::<u32>; 9];
+    let mut listed = false;
+    let layers = BulletLayers::new(shape, context);
+    for paragraph in body
+        .children
+        .iter()
+        .filter(|node| node.is(Ns::Drawing, "p"))
+    {
+        let text = paragraph_text(paragraph, context.relationships);
+        if text.trim().is_empty() {
+            lines.push(String::new());
+            last = Last::Blank;
+            open.clear();
+            counters = [None; 9];
+            continue;
+        }
+        let level = paragraph
+            .child(Ns::Drawing, "pPr")
+            .and_then(|properties| properties.attr("lvl"))
+            .and_then(|value| value.parse::<usize>().ok())
+            .map_or(0, |level| level.min(8));
+        let marker = match layers.bullet(paragraph, level) {
+            Bullet::Mark => {
+                counters[level..].fill(None);
+                "*".to_owned()
+            }
+            Bullet::Number(start) => {
+                let number = counters[level].map_or(start, |previous| previous.saturating_add(1));
+                counters[level] = Some(number);
+                counters[level + 1..].fill(None);
+                format!("{number}.")
+            }
+            Bullet::None | Bullet::Inherit => {
+                if last == Last::Item {
+                    lines.push(String::new());
+                }
+                lines.push(text);
+                last = Last::Text;
+                open.clear();
+                counters = [None; 9];
+                continue;
+            }
+        };
+        if last == Last::Text {
+            lines.push(String::new());
+        }
+        while open
+            .last()
+            .is_some_and(|&(open_level, _)| open_level >= level)
+        {
+            open.pop();
+        }
+        let indent = open.last().map_or(0, |&(_, column)| column);
+        let column = indent + marker.chars().count() + 1;
+        open.push((level, column));
+        let mut text_lines = text.split('\n');
+        lines.push(format!(
+            "{}{marker} {}",
+            " ".repeat(indent),
+            text_lines.next().unwrap_or("")
+        ));
+        for line in text_lines {
+            lines.push(format!("{}{line}", " ".repeat(column)));
+        }
+        last = Last::Item;
+        listed = true;
+    }
+    (lines.join("\n"), listed)
+}
+
 struct Reader<'a> {
     package: Package<'a>,
     document: Document,
@@ -603,13 +882,18 @@ impl Reader<'_> {
         Ok((!blocks.is_empty()).then(|| super::object_markdown(&blocks)))
     }
 
-    fn table(&mut self, table: &Node, slide: usize) -> String {
+    fn table(
+        &mut self,
+        table: &Node,
+        rels: &BTreeMap<String, Relationship>,
+        slide: usize,
+    ) -> String {
         let rows = table.children.iter().filter(|node| node.is(Ns::Drawing, "tr")).map(|row| {
             row.children.iter().filter(|node| node.is(Ns::Drawing, "tc")).map(|cell| {
                 if cell.attr("gridSpan").is_some_and(|v| v != "1") || cell.attr("rowSpan").is_some_and(|v| v != "1") {
                     self.warn(slide, "merged table cells retain their origin text and covered cells; Markdown has no merged-cell geometry");
                 }
-                super::super::text::cell(&cell.child(Ns::Drawing, "txBody").map(text_body).unwrap_or_default())
+                super::super::text::cell(&cell.child(Ns::Drawing, "txBody").map(|body| linked_text_body(body, rels)).unwrap_or_default())
             }).collect::<Vec<_>>()
         }).collect::<Vec<_>>();
         format!("\n{}\n", super::super::text::table(&rows, true).trim_end())
@@ -755,16 +1039,24 @@ impl Reader<'_> {
             match shape.name.as_str() {
                 "sp" | "cxnSp" => {
                     if let Some(body) = shape.child(Ns::Presentation, "txBody") {
-                        let text = text_body(body);
-                        if title.is_some_and(|title| std::ptr::eq(title, shape))
-                            && !text.trim().is_empty()
-                        {
+                        let is_title = title.is_some_and(|title| std::ptr::eq(title, shape));
+                        let (text, listed) = if is_title {
+                            (linked_text_body(body, rels), false)
+                        } else {
+                            listed_text_body(body, shape, context)
+                        };
+                        // A list stands apart from the shapes around it, whose
+                        // lines would continue an item or be taken into it.
+                        if listed && !output.is_empty() && !output.ends_with("\n\n") {
+                            output.push('\n');
+                        }
+                        if is_title && !text.trim().is_empty() {
                             output.push_str("# ");
                             output.push_str(text.trim_start());
                         } else {
                             output.push_str(&text);
                         }
-                        output.push('\n');
+                        output.push_str(if listed { "\n\n" } else { "\n" });
                     }
                 }
                 "grpSp" => output.push_str(&self.shapes(
@@ -790,7 +1082,7 @@ impl Reader<'_> {
                 },
                 "graphicFrame" => {
                     if let Some(table) = shape.descendant(Ns::Drawing, "tbl") {
-                        output.push_str(&self.table(table, slide));
+                        output.push_str(&self.table(table, rels, slide));
                     } else if shape.descendant(Ns::Chart, "chart").is_some() {
                         match self.chart(shape, part, rels, slide) {
                             Ok(chart) => output.push_str(&chart),
@@ -1090,7 +1382,7 @@ mod tests {
             format!(r#"<p:ph type="{kind}"/>"#)
         };
         format!(
-            r#"<p:sp><p:nvSpPr><p:cNvPr id="1" name="shape"/><p:nvPr>{ph}</p:nvPr></p:nvSpPr><p:spPr><a:xfrm><a:off x="1" y="{y}"/></a:xfrm></p:spPr><p:txBody><a:lstStyle><a:lvl1pPr><a:buChar char="•"/></a:lvl1pPr></a:lstStyle><a:p><a:r><a:t>{text}</a:t></a:r></a:p></p:txBody></p:sp>"#
+            r#"<p:sp><p:nvSpPr><p:cNvPr id="1" name="shape"/><p:nvPr>{ph}</p:nvPr></p:nvSpPr><p:spPr><a:xfrm><a:off x="1" y="{y}"/></a:xfrm></p:spPr><p:txBody><a:lstStyle/><a:p><a:r><a:t>{text}</a:t></a:r></a:p></p:txBody></p:sp>"#
         )
     }
 
@@ -1592,6 +1884,259 @@ mod tests {
         // The 1904 date system counts from 1904-01-01, 1,462 days later.
         let markdown = convert(chart(r#"<c:date1904/>"#, series("Users", dates, users)));
         assert!(markdown.contains("| 2029-01-02 | 100 |"), "{markdown}");
+    }
+
+    /// A text shape whose paragraphs are `(level, pPr children, runs)`.
+    fn paragraphs(
+        placeholder: &str,
+        list_style: &str,
+        paragraphs: &[(u8, &str, &str)],
+        y: i64,
+    ) -> String {
+        let paragraphs: String = paragraphs
+            .iter()
+            .map(|(level, properties, runs)| {
+                format!(r#"<a:p><a:pPr lvl="{level}">{properties}</a:pPr>{runs}</a:p>"#)
+            })
+            .collect();
+        format!(
+            r#"<p:sp><p:nvSpPr><p:cNvPr id="2" name="text"/><p:nvPr>{placeholder}</p:nvPr></p:nvSpPr><p:spPr><a:xfrm><a:off x="1" y="{y}"/></a:xfrm></p:spPr><p:txBody><a:lstStyle>{list_style}</a:lstStyle>{paragraphs}</p:txBody></p:sp>"#
+        )
+    }
+
+    fn run(text: &str) -> String {
+        format!("<a:r><a:t>{text}</a:t></a:r>")
+    }
+
+    fn link_run(text: &str, id: &str) -> String {
+        format!(r#"<a:r><a:rPr><a:hlinkClick r:id="{id}"/></a:rPr><a:t>{text}</a:t></a:r>"#)
+    }
+
+    /// One slide on a layout and a master carrying the given text styles.
+    fn deck(
+        slide_shapes: &str,
+        layout_shapes: &str,
+        master_styles: &str,
+        slide_rels: &str,
+    ) -> Vec<u8> {
+        let layout = format!(
+            r#"<p:sldLayout xmlns:p="{P}" xmlns:a="{A}"><p:cSld><p:spTree>{layout_shapes}</p:spTree></p:cSld></p:sldLayout>"#
+        );
+        let master = format!(
+            r#"<p:sldMaster xmlns:p="{P}" xmlns:a="{A}"><p:cSld><p:spTree/></p:cSld><p:txStyles>{master_styles}</p:txStyles></p:sldMaster>"#
+        );
+        let rels = relationships(&[("rL", "slideLayout", "../slideLayouts/one.xml")])
+            .replace("</Relationships>", &format!("{slide_rels}</Relationships>"));
+        package(
+            &[("rS", "slides/one.xml")],
+            vec![
+                ("ppt/slides/one.xml", slide(slide_shapes).into_bytes()),
+                ("ppt/slides/_rels/one.xml.rels", rels.into_bytes()),
+                ("ppt/slideLayouts/one.xml", layout.into_bytes()),
+                (
+                    "ppt/slideLayouts/_rels/one.xml.rels",
+                    relationships(&[("rM", "slideMaster", "../slideMasters/one.xml")]).into_bytes(),
+                ),
+                ("ppt/slideMasters/one.xml", master.into_bytes()),
+            ],
+        )
+    }
+
+    fn external(id: &str, target: &str) -> String {
+        format!(
+            r#"<Relationship Id="{id}" Type="{R}/hyperlink" Target="{target}" TargetMode="External"/>"#
+        )
+    }
+
+    const BULLETS: &str = r#"<p:bodyStyle><a:lvl1pPr><a:buChar char="•"/></a:lvl1pPr><a:lvl2pPr><a:buChar char="–"/></a:lvl2pPr><a:lvl3pPr><a:buChar char="»"/></a:lvl3pPr></p:bodyStyle><p:otherStyle><a:lvl1pPr/></p:otherStyle>"#;
+    const BODY: &str = r#"<p:ph type="body" idx="1"/>"#;
+
+    #[test]
+    fn bullets_become_a_nested_markdown_list_with_the_text_around_it_set_apart() {
+        let bytes = deck(
+            &paragraphs(
+                BODY,
+                "",
+                &[
+                    (0, "<a:buNone/>", &run("Intro")),
+                    (0, "", &run("First")),
+                    (1, "", &run("Nested")),
+                    (2, "", &run("Deep")),
+                    (1, "", &run("Back one")),
+                    (0, "", &run("Again")),
+                    (0, "<a:buNone/>", &run("Plain closing")),
+                    (2, "", &run("Deep with no parent")),
+                    (
+                        0,
+                        "",
+                        &format!("<a:r><a:t>Two</a:t></a:r><a:br/>{}", run("lines")),
+                    ),
+                    (0, "", ""),
+                    (0, "", &run("After a blank")),
+                ],
+                10,
+            ),
+            "",
+            BULLETS,
+            "",
+        );
+        let document = extract_presentation(&bytes).unwrap();
+        assert_eq!(
+            document.markdown,
+            "<!-- Slide number: 1 -->\nIntro\n\n* First\n  * Nested\n    * Deep\n  * Back one\n* Again\n\n\
+             Plain closing\n\n* Deep with no parent\n* Two\n  lines\n\n* After a blank"
+        );
+        assert!(document.warnings.is_empty(), "{:?}", document.warnings);
+    }
+
+    #[test]
+    fn auto_numbered_paragraphs_count_per_level_and_honor_their_start() {
+        let styles = r#"<p:bodyStyle><a:lvl1pPr><a:buAutoNum type="arabicPeriod"/></a:lvl1pPr><a:lvl2pPr><a:buAutoNum type="arabicPeriod" startAt="3"/></a:lvl2pPr></p:bodyStyle>"#;
+        let bytes = deck(
+            &paragraphs(
+                BODY,
+                "",
+                &[
+                    (0, "", &run("One")),
+                    (1, "", &run("Sub a")),
+                    (1, "", &run("Sub b")),
+                    (0, "", &run("Two")),
+                    (1, "", &run("Sub again")),
+                    (0, r#"<a:buChar char="-"/>"#, &run("A bullet")),
+                    (
+                        0,
+                        r#"<a:buAutoNum type="alphaLcPeriod" startAt="9"/>"#,
+                        &run("Ninth"),
+                    ),
+                ],
+                10,
+            ),
+            "",
+            styles,
+            "",
+        );
+        assert_eq!(
+            extract_presentation(&bytes).unwrap().markdown,
+            "<!-- Slide number: 1 -->\n1. One\n   3. Sub a\n   4. Sub b\n2. Two\n   3. Sub again\n* A bullet\n9. Ninth"
+        );
+    }
+
+    #[test]
+    fn a_bullet_is_decided_by_the_closest_layer_that_says_something() {
+        let layout = r#"<p:sp><p:nvSpPr><p:nvPr><p:ph type="subTitle" idx="1"/></p:nvPr></p:nvSpPr><p:txBody><a:lstStyle><a:lvl1pPr><a:buNone/></a:lvl1pPr></a:lstStyle><a:p><a:r><a:t>Layout text is not slide content</a:t></a:r></a:p></p:txBody></p:sp><p:sp><p:nvSpPr><p:nvPr><p:ph type="body" idx="2"/></p:nvPr></p:nvSpPr><p:txBody><a:lstStyle><a:lvl1pPr><a:buAutoNum type="arabicPeriod"/></a:lvl1pPr></a:lstStyle></p:txBody></p:sp>"#;
+        let shapes = [
+            // The layout turns bullets off for this subtitle.
+            paragraphs(
+                r#"<p:ph type="subTitle" idx="1"/>"#,
+                "",
+                &[(0, "", &run("Subtitle"))],
+                10,
+            ),
+            // The layout numbers this body.
+            paragraphs(
+                r#"<p:ph type="body" idx="2"/>"#,
+                "",
+                &[(0, "", &run("Numbered by layout"))],
+                20,
+            ),
+            // The master's body style bullets everything else; the shape's own
+            // list style, the closest layer, switches it off.
+            paragraphs(
+                r#"<p:ph type="body" idx="3"/>"#,
+                "<a:lvl1pPr><a:buNone/></a:lvl1pPr>",
+                &[(0, "", &run("Shape opts out"))],
+                30,
+            ),
+            paragraphs(
+                r#"<p:ph type="obj" idx="4"/>"#,
+                "",
+                &[(0, "", &run("Master bullet"))],
+                40,
+            ),
+            // A text box has no placeholder style: none, unless it sets one.
+            paragraphs("", "", &[(0, "", &run("Text box"))], 50),
+            paragraphs(
+                "",
+                r#"<a:lvl1pPr><a:buChar char="-"/></a:lvl1pPr>"#,
+                &[(0, "", &run("Text box with its own bullet"))],
+                60,
+            ),
+        ]
+        .concat();
+        let bytes = deck(&shapes, layout, BULLETS, "");
+        assert_eq!(
+            extract_presentation(&bytes).unwrap().markdown,
+            "<!-- Slide number: 1 -->\nSubtitle\n\n1. Numbered by layout\n\nShape opts out\n\n* Master bullet\n\n\
+             Text box\n\n* Text box with its own bullet"
+        );
+    }
+
+    #[test]
+    fn hyperlinks_with_web_and_mail_targets_stay_links() {
+        let rels = [
+            external("rA", "https://example.com/a(b)"),
+            external("rM", "mailto:team@example.com"),
+            external("rJ", "javascript:alert(1)"),
+            external("rF", "file:///etc/passwd"),
+        ]
+        .concat()
+            + r#"<Relationship Id="rI" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slide2.xml"/>"#;
+        let split = format!(
+            "{}{}{}",
+            link_run("Deep ", "rA"),
+            link_run("link", "rA"),
+            run(" and more")
+        );
+        let table = format!(
+            r#"<p:graphicFrame><p:xfrm><a:off x="1" y="40"/></p:xfrm><a:graphic><a:graphicData><a:tbl><a:tr><a:tc><a:txBody><a:p>{}</a:p></a:txBody></a:tc></a:tr><a:tr><a:tc><a:txBody><a:p><a:r><a:t>Data</a:t></a:r></a:p></a:txBody></a:tc></a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame>"#,
+            link_run("in a cell", "rA")
+        );
+        let shapes = [
+            paragraphs(
+                r#"<p:ph type="title"/>"#,
+                "",
+                &[(0, "", &link_run("Site", "rA"))],
+                1,
+            ),
+            paragraphs(
+                "",
+                "",
+                &[
+                    (0, "", &split),
+                    (0, "", &link_run("write us", "rM")),
+                    (
+                        0,
+                        "",
+                        &format!("{}{}", run("plain "), link_run(" padded [x] ", "rA")),
+                    ),
+                    (0, "", &link_run("script", "rJ")),
+                    (0, "", &link_run("local file", "rF")),
+                    (0, "", &link_run("slide jump", "rI")),
+                    (0, "", &link_run("unknown", "rMissing")),
+                    (0, "", &link_run("   ", "rA")),
+                    (
+                        0,
+                        "",
+                        &format!("{}<a:br/>{}", link_run("one", "rA"), link_run("two", "rA")),
+                    ),
+                ],
+                20,
+            ),
+            table,
+        ]
+        .concat();
+        let bytes = deck(&shapes, "", BULLETS, &rels);
+        let document = extract_presentation(&bytes).unwrap();
+        assert_eq!(
+            document.markdown,
+            "<!-- Slide number: 1 -->\n# [Site](https://example.com/a%28b%29)\n\
+             [Deep link](https://example.com/a%28b%29) and more\n\
+             [write us](mailto:team@example.com)\n\
+             plain  [padded \\[x\\]](https://example.com/a%28b%29)\n\
+             script\nlocal file\nslide jump\nunknown\n\n\
+             [one](https://example.com/a%28b%29)\n[two](https://example.com/a%28b%29)\n\n\
+             | [in a cell](https://example.com/a%28b%29) |\n| --- |\n| Data |"
+        );
     }
 
     #[test]

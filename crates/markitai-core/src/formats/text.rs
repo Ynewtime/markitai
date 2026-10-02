@@ -369,41 +369,13 @@ pub(super) fn fence(source: &str, language: &str) -> String {
     )
 }
 
+#[path = "native/notebook.rs"]
+mod notebook_reader;
+
+/// A notebook's cells, with what the code cells printed and drew (see
+/// `native/notebook.rs`).
 pub(super) fn notebook(source: &str) -> Result<Document> {
-    let value: Value = serde_json::from_str(source)?;
-    let cells = value
-        .get("cells")
-        .and_then(Value::as_array)
-        .ok_or_else(|| Error::Conversion("Notebook cells must be an array".into()))?;
-    let language = value
-        .pointer("/metadata/language_info/name")
-        .and_then(Value::as_str)
-        .unwrap_or("python");
-    let language: String = language
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '+' | '-'))
-        .collect();
-    let mut blocks = Vec::new();
-    for item in cells {
-        let content = source_text(
-            item.get("source")
-                .ok_or_else(|| Error::Conversion("Notebook cell has no source".into()))?,
-        )?;
-        match item.get("cell_type").and_then(Value::as_str) {
-            Some("code") => blocks.push(fence(&content, &language)),
-            Some("markdown") => blocks.push(content.trim_end().to_owned()),
-            Some("raw") => blocks.push(fence(&content, "")),
-            _ => return Err(Error::Conversion("Unknown notebook cell_type".into())),
-        }
-    }
-    let mut result = Document {
-        markdown: blocks.join("\n\n"),
-        ..Document::default()
-    };
-    if let Some(title) = value.pointer("/metadata/title").and_then(Value::as_str) {
-        result.metadata.insert("title".into(), title.into());
-    }
-    Ok(result)
+    notebook_reader::read(source)
 }
 
 pub(super) fn json(source: &str) -> Result<Document> {

@@ -746,11 +746,11 @@ fn real_eml_cid_references_reach_alt_description_and_published_metadata_in_both_
         )
         .unwrap();
         assert_eq!(output.images.len(), 1, "{output:#?}");
-        // Both cid references and the reference-style attachment listing
-        // name the same analyzed asset.
+        // Both cid references name the same analyzed asset; the image the
+        // body shows is not listed again among the attachments.
         assert_eq!(
             body(&output).matches("![A \\[safe\\] chart]").count(),
-            3,
+            2,
             "{}",
             body(&output)
         );
