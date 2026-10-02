@@ -177,12 +177,48 @@ text around. Rows at the top of the next page that keep to the columns and line
 pitch of a table ending the previous page continue it (see below); the first row
 of any other table is its header, as for ruled tables. Tables of single-line
 rows and of cells a few pixels apart remain with the page reader's
-alignment-based detection, and a page with any other side-by-side text keeps
-the page reader's output. Single-line rows were not given a geometric detector
+alignment-based detection, and a page with any other side-by-side text that
+region segmentation (below) does not divide keeps the page reader's output.
+Single-line rows were not given a geometric detector
 of their own: column alignment is all the evidence they offer, and on the
 adversarial pages of R48 the page reader's alignment-based detection, which
 already reads such tables, also makes tables of a footer link grid, a row of
-statistic cards and newspaper columns.
+statistic cards and newspaper columns. The page reader no longer makes a
+table of the words of justified columns: a hypothesis of five columns or
+more, seven in ten of its filled cells one word, whose runs stand closer in
+a row than one and a half body ems (spaced words, not a table's columns),
+is text.
+
+Columns set side by side read one after the other. Before lines are
+assembled, the page is cut recursively, as an XY-cut does (three levels at
+most): into bands at whitespace across its width at least half again the
+running text's line pitch, and each band down its gutters. A gutter is
+whitespace at least an em (and 8pt) wide between the runs that do not span
+the band (60% of its width), half again as wide as the gaps between the runs
+of its lines mostly are (their 95th percentile: a justified column spreads
+its words), with two lines and three runs or more on each side (a ruled
+table counts with its rows) standing beside each other for two line
+pitches or more. Lines spanning a candidate gutter (a title over the
+columns, a paragraph across the page between them) cut the band above and
+below them when nothing stands beside them, and otherwise rule the gutter
+out. Where half the lines of the shorter side or more share a baseline with
+the other's (a borderless table's rows, a form's labels and values), the
+gutter holds only when both sides read as running text (three lines or
+more, half of them filling seven tenths of the side's width, three and a
+half words a line, less than half of them code) and their blocks do not
+start at the same heights, as table rows and a grid's cards do; a borderless
+table found across the whole page is an obstacle no gutter crosses. Bands
+read top to bottom and a band's columns left to right (right-to-left pages
+never get here); a band whose gutters match those of the band above
+continues its columns, unless its columns start at one height, as the next
+row of a card grid does. Each region is then read as a page is, with the
+document's heading sizes: its lines, borderless tables, code and lists.
+Only the first region may continue the previous page's table, and only the
+last one's closing table continues on the next page. A page without a
+gutter is one region and reads exactly as before. A résumé's contact column,
+a bulleted sidebar beside an article and a newspaper's justified columns
+read column by column; short lines on an article's baselines (a list of
+links beside it) still leave the page to the page reader.
 
 A table that a page break cuts is read page by page, and each part would be a
 table of its own. A table ending in the lowest fifth of its page continues when
@@ -240,11 +276,12 @@ other text on that baseline ending within three em before it, makes the line a
 list item (`pdf_inspector::painted_bullets::targets`). The page reader is given
 the same marks of each page, outside ruled tables and in the page's own
 coordinates, and reads such a mark as a bullet character, so a page left to it
-keeps its painted lists. A list item beside other text on its line, or lines of
-two columns whose baselines interleave (less than three quarters of an em apart
-without overlapping horizontally; markers, runs of fewer than four characters
-and code aside), leave the page to the page reader: a bulleted sidebar beside an
-article no longer runs its items into the article's lines. Bullet characters
+keeps its painted lists. Within a region, a list item beside other text on its
+line, or lines of two columns whose baselines interleave (less than three
+quarters of an em apart without overlapping horizontally; markers, runs of fewer
+than four characters and code aside), leave the page to the page reader: a
+bulleted sidebar beside an article that region segmentation leaves whole does not
+run its items into the article's lines. Bullet characters
 remain list markers. A number (`3.`/`3)`, up to three digits) opens an item
 where a new line could start: first in the flow, inside a list, after a gap or
 heading, or offset from the line above. A number on a line of its own marks the
@@ -362,8 +399,26 @@ least 1.1 times the body size wholly in an upright face other than the body
 text's is a strong signal for the reader's standalone-heading rule (a
 browser's `<h3>`, 1.17 em, in a Type 3 face whose name says nothing of its
 weight), and a line larger than the one above it is no wrapped line of a list
-item. Heading tiers remain per page in the page reader, so a reader page and
-a layout page of one document can rank the same size differently.
+item. The page reader ranks headings on one ladder for the document: the
+sizes 1.2 times the body size or more that start lines of text on any of its
+pages (largest first, sizes within 0.5pt as one, four at most; bold lines 1.05
+times the body size when no size qualifies). A page whose own heading sizes
+are on that ladder, read at the document's body size, ranks by it, so a
+section heading the size of the second tier stays a second-level heading on
+a page without the title above it; a page whose body size the reader corrects
+from its own text, or with a heading size the ladder lacks, keeps its own
+tiers. The layout pass ranks by its own document-wide sizes (above), so a
+reader page and a layout page of one document can still rank a size
+differently.
+
+A sparse page, 12 to 19 runs, that the page reader's column detection
+(20 runs or more) keeps whole is read in two columns when its runs show one
+clear gutter: the widest gap between their extents, 24pt or more and clear
+of the outer tenths, three runs on three baselines or more each side, the
+sides beside each other over two fifths of the text's height, and, where
+half the shorter side's lines share the other's baselines (a form's labels
+and values), both sides running text. Its columns then read one after the
+other.
 
 A running page header is removed like the page numbers the reader removes:
 the first block of the page Markdown, the same text (emphasis, white space

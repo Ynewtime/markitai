@@ -699,16 +699,27 @@ pub(crate) fn correct_base_size(lines: &[TextLine], base_size: f32) -> f32 {
 }
 
 pub(crate) fn compute_heading_tiers(lines: &[TextLine], base_size: f32) -> Vec<f32> {
+    heading_tiers_of(lines, |line| line.items.first(), TextLine::text, base_size)
+}
+
+/// markitai: [`compute_heading_tiers`] over any kind of line, given each
+/// line's first run and its text.
+fn heading_tiers_of<L>(
+    lines: &[L],
+    first_run: impl Fn(&L) -> Option<&TextItem>,
+    line_text: impl Fn(&L) -> String,
+    base_size: f32,
+) -> Vec<f32> {
     let mut heading_sizes: Vec<f32> = Vec::new();
 
     for line in lines {
-        if let Some(first) = line.items.first() {
+        if let Some(first) = first_run(line) {
             if first.font_size / base_size >= 1.2 {
                 // Digit-only lines (page numbers, issue numbers) must not
                 // define heading tiers: a large bold folio claims tier 0 and
                 // blocks the bold-size fallback for the document's real
                 // same-size headings.
-                let text = line.text();
+                let text = line_text(line);
                 let t = text.trim();
                 if !t.is_empty() && t.chars().all(|c| !c.is_alphabetic()) {
                     continue;
@@ -738,11 +749,11 @@ pub(crate) fn compute_heading_tiers(lines: &[TextLine], base_size: f32) -> Vec<f
         let mut bold_sizes: Vec<f32> = lines
             .iter()
             .filter(|line| {
-                let text = line.text();
+                let text = line_text(line);
                 let t = text.trim();
                 !t.is_empty() && t.chars().any(|c| c.is_alphabetic())
             })
-            .filter_map(|line| line.items.first())
+            .filter_map(&first_run)
             .filter(|it| it.is_bold && it.font_size / base_size >= 1.05)
             .map(|it| it.font_size)
             .collect();
@@ -757,6 +768,62 @@ pub(crate) fn compute_heading_tiers(lines: &[TextLine], base_size: f32) -> Vec<f
     // Cap at 4 tiers
     tiers.truncate(4);
     tiers
+}
+
+/// markitai: the heading tiers of a whole document by
+/// [`compute_heading_tiers`]'s rules, over every page's lines: each page's
+/// text runs grouped by baseline, a line parted where its runs stand three
+/// ems apart (columns beside each other each start lines). Runs of a single
+/// character (a drop capital) start no heading. Per page, the reader groups
+/// lines more carefully; these lines only need to show which sizes start
+/// lines of text.
+pub(crate) fn document_heading_tiers(items: &[TextItem], base_size: f32) -> Vec<f32> {
+    let mut runs: Vec<&TextItem> = items
+        .iter()
+        .filter(|item| {
+            matches!(item.item_type, crate::types::ItemType::Text)
+                && item.text.trim().chars().count() > 1
+                && item.font_size.is_finite()
+                && item.y.is_finite()
+                && item.x.is_finite()
+        })
+        .collect();
+    crate::sort::stable(&mut runs, &mut |a, b| {
+        a.page
+            .cmp(&b.page)
+            .then(b.y.total_cmp(&a.y))
+            .then(a.x.total_cmp(&b.x))
+    });
+    let mut lines: Vec<Vec<&TextItem>> = Vec::new();
+    let mut start = 0;
+    while start < runs.len() {
+        let first = runs[start];
+        let mut end = start + 1;
+        while end < runs.len()
+            && runs[end].page == first.page
+            && (runs[end].y - first.y).abs() <= first.font_size.min(runs[end].font_size) * 0.3
+        {
+            end += 1;
+        }
+        let mut row: Vec<&TextItem> = runs[start..end].to_vec();
+        crate::sort::stable(&mut row, &mut |a, b| a.x.total_cmp(&b.x));
+        let mut right = f32::NEG_INFINITY;
+        for item in row {
+            let apart = right == f32::NEG_INFINITY || item.x - right > item.font_size * 3.0;
+            match lines.last_mut() {
+                Some(line) if !apart => line.push(item),
+                _ => lines.push(vec![item]),
+            }
+            right = right.max(item.x + item.width);
+        }
+        start = end;
+    }
+    heading_tiers_of(
+        &lines,
+        |line| line.first().copied(),
+        |line| line.iter().map(|item| item.text.as_str()).collect(),
+        base_size,
+    )
 }
 
 /// Boldness of a line judged by character mass, so a heading with an
@@ -1060,5 +1127,80 @@ mod tests {
         assert_eq!(trailing_leader_dots("Total assets . . . . "), 4);
         assert_eq!(trailing_leader_dots("Capital.... 0,00"), 0);
         assert_eq!(trailing_leader_dots("And then..."), 3);
+    }
+
+    /// markitai: a Letter-size PDF of `pages`, each line `(size, baseline,
+    /// text)` in Helvetica at x 72.
+    fn pdf_of(pages: &[&[(i64, i64, &str)]]) -> Vec<u8> {
+        use lopdf::{dictionary, Document, Object};
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+        let font = doc.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+            "Encoding" => "WinAnsiEncoding",
+        });
+        let mut kids = Vec::new();
+        for lines in pages {
+            let mut content = String::new();
+            for (size, y, text) in lines.iter() {
+                content.push_str(&format!("BT /F1 {size} Tf 72 {y} Td ({text}) Tj ET\n"));
+            }
+            let content = doc.add_object(lopdf::Stream::new(dictionary! {}, content.into_bytes()));
+            let page = doc.add_object(dictionary! {
+                "Type" => "Page", "Parent" => pages_id, "Contents" => content,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+                "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } },
+            });
+            kids.push(Object::Reference(page));
+        }
+        let count = kids.len() as i64;
+        doc.objects.insert(
+            pages_id,
+            dictionary! { "Type" => "Pages", "Kids" => kids, "Count" => count }.into(),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        bytes
+    }
+
+    #[test]
+    fn a_heading_size_ranks_alike_on_every_page() {
+        // The title on the first page only: the 14pt section headings rank
+        // below it on both pages, not first on the second.
+        const BODY: &str = "Running text of the study follows here in an ordinary size.";
+        let first: Vec<(i64, i64, &str)> = [
+            (20, 720, "A Study of Reading Order"),
+            (14, 680, "1 Introduction"),
+        ]
+        .into_iter()
+        .chain((0..8).map(|line| (10, 660 - 14 * line, BODY)))
+        .collect();
+        let second: Vec<(i64, i64, &str)> = [(14, 720, "2 Method")]
+            .into_iter()
+            .chain((0..8).map(|line| (10, 700 - 14 * line, BODY)))
+            .collect();
+        let bytes = pdf_of(&[&first, &second]);
+        let pages = crate::extract_pages_markdown_mem(&bytes, None)
+            .unwrap()
+            .pages;
+        assert!(
+            pages[0].markdown.contains("# A Study of Reading Order"),
+            "{}",
+            pages[0].markdown
+        );
+        assert!(
+            pages[0].markdown.contains("## 1 Introduction"),
+            "{}",
+            pages[0].markdown
+        );
+        assert!(
+            pages[1].markdown.contains("## 2 Method"),
+            "{}",
+            pages[1].markdown
+        );
+        let items = crate::extract_text_with_positions_mem(&bytes).unwrap();
+        assert_eq!(document_heading_tiers(&items, 10.0), vec![20.0, 14.0]);
     }
 }

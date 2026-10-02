@@ -593,6 +593,33 @@ The local changes, each marked `markitai` (or, for sorts, made through
 
   Run in the isolated copy, the crate's unit tests give 1,702 passed (19
   added) and the same 21 failed.
+- `src/tables/detect_heuristic.rs` (`is_word_grid_table`, applied to every
+  hypothesis `detect_tables_with_page_width` returns): five columns or more,
+  seven in ten filled cells one word, and the runs of a row closer than 1.5
+  body ems (median gap) are the words of justified columns, not a table
+  (`f-newspaper.pdf` page 2 was read as 10 rows of 12 one-word cells).
+- `src/markdown/{mod,analysis,convert}.rs`, `src/lib.rs` (the document
+  font statistics and the per-page options, two short hunks): the new
+  `MarkdownOptions::heading_tiers` (default `None`) carries the document's
+  heading ladder, `analysis::document_heading_tiers`:
+  `compute_heading_tiers`'s rules (now `heading_tiers_of`, unchanged for
+  page lines) over each page's runs grouped by baseline and parted at
+  three-em gaps, single-character runs aside, when the text spans two
+  pages or more. A page whose corrected base size is the document's and
+  whose own tiers are all on the ladder ranks by it (`heading_tiers` in
+  `convert.rs`, both entry points); otherwise it keeps its own tiers.
+  `paper.pdf` read `3 Method` as `#` on page 2 under `## 2 Related Work`.
+- `src/extractor/layout.rs` (`sparse_columns`, called where the page
+  grouping would read one column): a page of 12 to 19 runs splits at its
+  widest gap between run extents (24pt or more, clear of the outer tenths,
+  crossed by none), three runs on three baselines each side, the sides
+  overlapping over two fifths of the text height, and, where half the
+  shorter side's lines share the other's baselines, both sides prose; the
+  columns read through `order_columns_with_policy` as a validated band.
+  `detect_columns` itself, and so table detection, is unchanged.
+
+  Run in the isolated copy, the crate's unit tests give 1,687 passed (4
+  added) and the same 21 failed. Each added test fails without its change.
 
 The page-level OCR, font decoding, repair, limits and reliability routing remain
 the upstream paths, except as listed above. Markitai's own visibility warnings and layout agreement
@@ -604,6 +631,8 @@ checks remain enabled. The only new public APIs are `TextLine::text_with_markup`
 `glyph_names::glyph_to_unicode`, `PageOmittedText` and the
 `PagesExtractionResult::omitted_text_by_page` field; no optional runtime
 dependency is added.
+`glyph_names::glyph_to_unicode` and the `MarkdownOptions::heading_tiers`
+field; no optional runtime dependency is added.
 Opacity, masks, occlusion, full text clipping and mixed-visibility marked content
 are not claimed to be solved by this patch.
 

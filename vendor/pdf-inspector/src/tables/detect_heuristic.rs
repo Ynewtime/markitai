@@ -559,6 +559,7 @@ pub(crate) fn detect_tables_with_page_width(
     if items.len() < 6 {
         return vec![];
     }
+    let source_items = items;
     // Compute these before consolidation: adjacent old/new text can merge and
     // inherit only the first fragment's decoration flags.
     let redline_regions = redline_edit_regions(items, page_width);
@@ -759,8 +760,71 @@ pub(crate) fn detect_tables_with_page_width(
             table.item_indices.len()
         );
     }
+    // markitai: the words of justified columns are no table.
+    tables.retain(|table| {
+        let grid = is_word_grid_table(table, source_items, base_font_size);
+        if grid {
+            log::debug!(
+                "  rejected {}x{} word-grid table hypothesis",
+                table.rows.len(),
+                table.columns.len()
+            );
+        }
+        !grid
+    });
 
     tables
+}
+
+/// markitai: whether a table hypothesis is the words of justified text
+/// lines: five columns or more, seven in ten of its filled cells one word,
+/// and the runs of a row standing closer together than one and a half body
+/// ems, as spaced words do and a table's columns do not. Narrow justified
+/// columns (a newspaper's) set each word as a run of its own, aligned with
+/// the words of the lines above and below.
+fn is_word_grid_table(table: &Table, items: &[TextItem], base_font_size: f32) -> bool {
+    let columns = table.cells.iter().map(Vec::len).max().unwrap_or(0);
+    if columns < 5 {
+        return false;
+    }
+    let filled: Vec<&str> = table
+        .cells
+        .iter()
+        .flatten()
+        .map(|cell| cell.trim())
+        .filter(|cell| !cell.is_empty())
+        .collect();
+    let words = filled
+        .iter()
+        .filter(|cell| {
+            !cell.contains(char::is_whitespace)
+                && cell.chars().filter(|c| c.is_alphabetic()).count() >= 2
+        })
+        .count();
+    if filled.is_empty() || words * 10 < filled.len() * 7 {
+        return false;
+    }
+    let mut members: Vec<&TextItem> = table
+        .item_indices
+        .iter()
+        .filter_map(|&index| items.get(index))
+        .filter(|item| !item.text.trim().is_empty())
+        .collect();
+    crate::sort::stable(&mut members, &mut |a, b| {
+        b.y.total_cmp(&a.y).then(a.x.total_cmp(&b.x))
+    });
+    let mut gaps = Vec::new();
+    for pair in members.windows(2) {
+        let (left, right) = (pair[0], pair[1]);
+        if (left.y - right.y).abs() <= left.font_size.min(right.font_size) * 0.5 {
+            gaps.push(right.x - (left.x + left.width));
+        }
+    }
+    if gaps.len() < columns {
+        return false;
+    }
+    crate::sort::f32_ascending(&mut gaps);
+    gaps[gaps.len() / 2] < base_font_size * 1.5
 }
 
 /// Find Y-regions that likely contain tables
@@ -4045,5 +4109,75 @@ mod tests {
             vec!["Section D".into(), "TBD".into()],
         ];
         assert!(!is_page_number_toc(&cells));
+    }
+
+    /// markitai: rows of `words` runs at `xs`, 15pt apart from y 750.
+    fn word_rows(rows: usize, xs: &[f32], words: &[&str], width: f32) -> Vec<TextItem> {
+        let mut items = Vec::new();
+        for row in 0..rows {
+            for (column, &x) in xs.iter().enumerate() {
+                let word = words[(row + column) % words.len()];
+                items.push(make_item(word, x, 750.0 - 15.0 * row as f32, 10.5, width));
+            }
+        }
+        items
+    }
+
+    /// markitai: the runs (x, width, text) of each line (by baseline) of a
+    /// browser-printed newspaper page's end (`f-newspaper.pdf` page 2):
+    /// three justified 160pt columns at 10.5pt, each word a run, the middle
+    /// column's lines 4.6pt off the others' after its paragraph break.
+    #[rustfmt::skip]
+    const NEWSPAPER_END: [(f32, &[(f32, f32, &str)]); 18] = [
+        (753.0, &[(45.8, 29.2, "cedar "), (82.2, 42.6, "meadow "), (132.0, 32.7, "ember "), (172.0, 33.3, "canvas"), (226.3, 29.2, "cedar "), (262.7, 42.6, "meadow "), (312.5, 32.7, "ember "), (352.5, 33.3, "canvas"), (406.7, 36.7, "summit "), (452.3, 30.9, "willow "), (492.0, 35.0, "lantern "), (535.9, 30.3, "harbor")]),
+        (738.0, &[(45.8, 35.0, "marble "), (88.4, 29.2, "cedar "), (125.2, 42.6, "meadow "), (175.5, 29.8, "ember"), (226.3, 63.6, "marble cedar."), (406.7, 32.7, "thread "), (448.4, 36.7, "summit "), (494.2, 30.9, "willow "), (534.1, 32.1, "lantern")]),
+        (722.2, &[(45.8, 36.2, "canvas "), (88.4, 35.0, "marble "), (129.9, 29.2, "cedar "), (165.5, 39.7, "meadow"), (406.7, 33.3, "harbor "), (449.6, 32.7, "thread "), (491.9, 36.7, "summit "), (538.2, 28.0, "willow")]),
+        (711.8, &[(226.3, 35.0, "Harbor "), (270.3, 32.7, "thread "), (312.0, 36.7, "summit "), (357.7, 28.0, "willow")]),
+        (707.2, &[(45.8, 32.7, "ember "), (88.2, 36.2, "canvas "), (134.2, 35.0, "marble "), (179.0, 26.3, "cedar"), (406.7, 35.0, "lantern "), (450.0, 33.3, "harbor "), (491.5, 32.7, "thread "), (532.4, 33.8, "summit")]),
+        (696.8, &[(226.3, 35.0, "lantern "), (269.5, 33.3, "harbor "), (311.0, 32.7, "thread "), (351.9, 33.8, "summit")]),
+        (692.2, &[(45.8, 42.6, "meadow "), (93.7, 32.7, "ember "), (131.7, 36.2, "canvas "), (173.1, 32.1, "marble"), (406.7, 30.9, "willow "), (447.8, 35.0, "lantern "), (493.0, 33.3, "harbor "), (536.5, 29.8, "thread")]),
+        (681.8, &[(226.3, 30.9, "willow "), (267.3, 35.0, "lantern "), (312.5, 33.3, "harbor "), (356.0, 29.8, "thread")]),
+        (677.2, &[(45.8, 29.2, "cedar "), (82.2, 42.6, "meadow "), (132.0, 32.7, "ember "), (172.0, 33.3, "canvas"), (406.7, 36.7, "summit "), (452.3, 30.9, "willow "), (492.0, 35.0, "lantern "), (535.9, 30.3, "harbor")]),
+        (666.8, &[(226.3, 36.7, "summit "), (271.8, 30.9, "willow "), (311.5, 35.0, "lantern "), (355.4, 30.3, "harbor")]),
+        (661.5, &[(45.8, 35.0, "marble "), (88.4, 29.2, "cedar "), (125.2, 42.6, "meadow "), (175.5, 29.8, "ember"), (406.7, 32.7, "thread "), (448.4, 36.7, "summit "), (494.2, 30.9, "willow "), (534.1, 32.1, "lantern")]),
+        (651.0, &[(226.3, 32.7, "thread "), (268.0, 36.7, "summit "), (313.7, 30.9, "willow "), (353.6, 32.1, "lantern")]),
+        (646.5, &[(45.8, 36.2, "canvas "), (88.4, 35.0, "marble "), (129.9, 29.2, "cedar "), (165.5, 39.7, "meadow"), (406.7, 33.3, "harbor "), (449.6, 32.7, "thread "), (491.9, 36.7, "summit "), (538.2, 28.0, "willow")]),
+        (636.0, &[(226.3, 33.3, "harbor "), (269.1, 32.7, "thread "), (311.4, 36.7, "summit "), (357.7, 28.0, "willow")]),
+        (631.5, &[(45.8, 32.7, "ember "), (88.2, 36.2, "canvas "), (134.2, 35.0, "marble "), (179.0, 26.3, "cedar"), (406.7, 35.0, "lantern "), (450.0, 33.3, "harbor "), (491.5, 32.7, "thread "), (532.4, 33.8, "summit")]),
+        (621.0, &[(226.3, 35.0, "lantern "), (269.5, 33.3, "harbor "), (311.0, 32.7, "thread "), (351.9, 33.8, "summit")]),
+        (615.8, &[(45.8, 42.6, "meadow "), (93.7, 32.7, "ember "), (131.7, 36.2, "canvas "), (173.1, 32.1, "marble"), (406.7, 30.3, "willow.")]),
+        (605.2, &[(226.3, 30.9, "willow "), (267.3, 35.0, "lantern "), (312.5, 33.3, "harbor "), (356.0, 29.8, "thread")]),
+    ];
+
+    #[test]
+    fn justified_columns_split_into_words_are_no_table() {
+        // The words of a newspaper page's justified columns line up down the
+        // page where the lines happen to break alike: no table.
+        let items: Vec<TextItem> = NEWSPAPER_END
+            .iter()
+            .flat_map(|&(y, runs)| {
+                runs.iter()
+                    .map(move |&(x, width, text)| make_item(text, x, y, 10.5, width))
+            })
+            .collect();
+        assert!(detect_tables(&items, 10.5, false).is_empty());
+        // Single words a table's width apart are a table's cells.
+        let xs = [50.0, 150.0, 250.0, 350.0, 450.0];
+        let words = ["Open", "Closed", "Late", "Early"];
+        let items = word_rows(8, &xs, &words, 33.0);
+        let cells = (0..8)
+            .map(|row| {
+                (0..5)
+                    .map(|column| words[(row + column) % 4].to_string())
+                    .collect()
+            })
+            .collect();
+        let table = Table::new(
+            xs.to_vec(),
+            (0..8).map(|row| 750.0 - 15.0 * row as f32).collect(),
+            cells,
+            (0..items.len()).collect(),
+        );
+        assert!(!is_word_grid_table(&table, &items, 10.5));
     }
 }

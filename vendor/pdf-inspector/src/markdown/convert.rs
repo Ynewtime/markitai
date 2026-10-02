@@ -856,6 +856,27 @@ fn flush_page_tables_and_images(
     }
 }
 
+/// markitai: the heading tiers a page's `lines` rank on: the document's
+/// ([`MarkdownOptions::heading_tiers`]) when the page reads at the
+/// document's base size (`base_size` is the page's, after
+/// `correct_base_size`) and its own heading sizes are among the document's;
+/// otherwise its own. A section heading the size of the second tier stays a
+/// second-level heading on a page without the title above it.
+fn heading_tiers(lines: &[TextLine], base_size: f32, options: &MarkdownOptions) -> Vec<f32> {
+    let page = compute_heading_tiers(lines, base_size);
+    match &options.heading_tiers {
+        Some(document)
+            if options.base_font_size == Some(base_size)
+                && page
+                    .iter()
+                    .all(|size| document.iter().any(|tier| (tier - size).abs() < 0.5)) =>
+        {
+            document.clone()
+        }
+        _ => page,
+    }
+}
+
 /// Convert text lines to markdown, inserting tables and images at appropriate Y positions
 pub(super) fn to_markdown_from_lines_with_tables_and_images(
     lines: Vec<TextLine>,
@@ -882,8 +903,8 @@ pub(super) fn to_markdown_from_lines_with_tables_and_images(
     // Merge drop caps with following text
     let lines = merge_drop_caps(lines, base_size);
 
-    // Discover heading tiers for this document
-    let heading_tiers = compute_heading_tiers(&lines, base_size);
+    // Discover heading tiers for this page (markitai: or the document's).
+    let heading_tiers = heading_tiers(&lines, base_size, &options);
 
     // Merge consecutive heading lines at the same level (e.g., wrapped titles)
     let lines = merge_heading_lines(lines, base_size, &heading_tiers, struct_roles);
@@ -1728,8 +1749,8 @@ pub fn to_markdown_from_lines(lines: Vec<TextLine>, options: MarkdownOptions) ->
     // Merge drop caps with following text
     let lines = merge_drop_caps(lines, base_size);
 
-    // Discover heading tiers for this document
-    let heading_tiers = compute_heading_tiers(&lines, base_size);
+    // Discover heading tiers for this page (markitai: or the document's).
+    let heading_tiers = heading_tiers(&lines, base_size, &options);
 
     // Merge consecutive heading lines at the same level (e.g., wrapped titles)
     let lines = merge_heading_lines(lines, base_size, &heading_tiers, None);

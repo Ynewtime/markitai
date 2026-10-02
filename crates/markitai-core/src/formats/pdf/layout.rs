@@ -1592,13 +1592,100 @@ fn render(
         return None;
     }
     let all_lines = lines(items);
-    if let Some(own) = unruled::prose_pitch(&all_lines) {
+    let own_pitch = unruled::prose_pitch(&all_lines);
+    let parts = page_regions(&all_lines, &tables, own_pitch.or(*context.pitch), headings);
+    if parts.len() <= 1 {
+        if let Some(own) = own_pitch {
+            *context.pitch = Some(own);
+        }
+        let page = body(&all_lines, tables, faces, &bullets, context, true)?;
+        let markdown = page.blocks.join("\n\n");
+        return (!markdown.is_empty()).then_some(Rendered {
+            markdown,
+            continues: page.continues,
+            ending: page.ending,
+        });
+    }
+    // Each region is read on its own, in reading order. The running text's
+    // pitch is the one measured in the region with most lines that shows
+    // one: lines merged across columns measure no pitch of the text.
+    let items: Vec<&TextItem> = all_lines.iter().flat_map(|line| &line.items).collect();
+    let mut tables: Vec<Option<Table>> = tables.into_iter().map(Some).collect();
+    let mut regions = Vec::with_capacity(parts.len());
+    for part in &parts {
+        let region_items = part
+            .iter()
+            .filter(|&&index| index < items.len())
+            .map(|&index| items[index].clone())
+            .collect();
+        // Element indices past the runs are the ruled tables, top first.
+        let region_tables: Vec<Table> = part
+            .iter()
+            .filter_map(|&index| index.checked_sub(items.len()))
+            .filter_map(|table| tables.get_mut(table).and_then(Option::take))
+            .collect();
+        regions.push((lines(region_items), region_tables));
+    }
+    if let Some(own) = regions
+        .iter()
+        .filter_map(|(lines, _)| unruled::prose_pitch(lines).map(|pitch| (lines.len(), pitch)))
+        .max_by_key(|(count, _)| *count)
+        .map(|(_, pitch)| pitch)
+    {
         *context.pitch = Some(own);
     }
+    let mut blocks = Vec::new();
+    let mut continues = false;
+    let mut ending = None;
+    for (index, (region_lines, region_tables)) in regions.into_iter().enumerate() {
+        let part = body(
+            &region_lines,
+            region_tables,
+            faces,
+            &bullets,
+            context,
+            index == 0,
+        )?;
+        continues |= part.continues;
+        // A table continues on the next page from the last region only.
+        ending = part.ending;
+        blocks.extend(part.blocks.into_iter().filter(|block| !block.is_empty()));
+    }
+    let markdown = blocks.join("\n\n");
+    (!markdown.is_empty()).then_some(Rendered {
+        markdown,
+        continues,
+        ending,
+    })
+}
+
+/// What [`body`] makes of a region's lines.
+struct Body {
+    blocks: Vec<String>,
+    /// Whether its first block is a table continuing the previous page's.
+    continues: bool,
+    /// The bottom of a table that is its last block, with what a
+    /// continuation of that table keeps to.
+    ending: Option<(f32, Ending)>,
+}
+
+/// The blocks of a region's lines and the ruled tables among them (`tables`,
+/// top first): borderless tables and the paragraph flow between ruled ones.
+/// Only the region that opens the page (`first`) may start with a table
+/// continuing the previous page's.
+fn body(
+    all_lines: &[Line],
+    tables: Vec<Table>,
+    faces: &Faces,
+    bullets: &Bullets,
+    context: &Tables,
+    first: bool,
+) -> Option<Body> {
+    let headings = &faces.headings[..];
     // A borderless table ending the previous page continues only in the
     // page's first lines.
     let unruled_continued = |start: usize, blocks: &[String]| match context.continued {
-        Some(Ending::Unruled(shape)) if start == 0 && blocks.is_empty() => Some(shape),
+        Some(Ending::Unruled(shape)) if first && start == 0 && blocks.is_empty() => Some(shape),
         _ => None,
     };
     let mut start = 0;
@@ -1613,7 +1700,7 @@ fn render(
                 &all_lines[start..end],
                 headings,
                 faces,
-                &bullets,
+                bullets,
                 context,
                 continued,
             )?;
@@ -1628,7 +1715,8 @@ fn render(
             return None;
         }
         // A ruled table opening the page may continue the previous page's.
-        continues |= blocks.iter().all(|b| b.trim().is_empty())
+        continues |= first
+            && blocks.iter().all(|b| b.trim().is_empty())
             && context.continued.is_some_and(|e| table.continues(e));
         blocks.push(table.markdown);
         start = end;
@@ -1646,7 +1734,7 @@ fn render(
             &all_lines[start..],
             headings,
             faces,
-            &bullets,
+            bullets,
             context,
             continued,
         )?;
@@ -1656,12 +1744,653 @@ fn render(
             .ending
             .map(|(bottom, shape)| (bottom, Ending::Unruled(shape)));
     }
-    let markdown = blocks.join("\n\n");
-    (!markdown.is_empty()).then_some(Rendered {
-        markdown,
+    Some(Body {
+        blocks,
         continues,
         ending,
     })
+}
+
+// Region segmentation.
+//
+// Where a page sets text in columns side by side (a sidebar beside an
+// article, a newspaper's columns, a résumé's contact column), the columns'
+// lines share baselines or interleave, and read across they mix the
+// columns. The page is cut recursively, as an XY-cut does: into bands at
+// whitespace across its width, and each band down the gutters between its
+// columns. A gutter is taken only on strong evidence (`gutter_holds`); a
+// page without one is a single region and reads exactly as before. Bands
+// read top to bottom and a band's columns left to right (pages with
+// right-to-left text never get here).
+
+/// Region segmentation recurses into a column at most this deep.
+const MAX_DEPTH: usize = 3;
+/// An element wider than this fraction of its band spans columns.
+const SPANNING: f32 = 0.6;
+
+/// What region segmentation places: a text run, a ruled table, or the box
+/// of a borderless table, which no gutter may cross.
+struct Element<'a> {
+    left: f32,
+    right: f32,
+    bottom: f32,
+    top: f32,
+    /// The run; `None` for a table.
+    item: Option<&'a TextItem>,
+    /// A table's rows; none for a run.
+    rows: usize,
+}
+
+impl Element<'_> {
+    fn crosses(&self, gutter: Gutter) -> bool {
+        self.left < gutter.right && self.right > gutter.left
+    }
+
+    fn centre(&self) -> f32 {
+        (self.left + self.right) / 2.
+    }
+}
+
+/// Whitespace down a band, between two of its columns.
+#[derive(Clone, Copy)]
+struct Gutter {
+    left: f32,
+    right: f32,
+}
+
+/// How a band divides.
+enum Cut {
+    /// Into columns at these gutters, left to right.
+    Columns(Vec<Gutter>),
+    /// Into bands above and below the lines that span its columns (a title
+    /// over them, a paragraph across the page), top to bottom.
+    Bands(Vec<Vec<usize>>),
+    /// Not at all.
+    Whole,
+}
+
+/// The regions of a page's lines (`lines`) and ruled tables (`tables`, top
+/// first) in reading order, each as indices into the page's runs (in line
+/// order) followed by its tables; one region (or none) when the page does
+/// not divide. `pitch` is the running text's line pitch in em, when known.
+fn page_regions(
+    lines: &[Line],
+    tables: &[Table],
+    pitch: Option<f32>,
+    headings: &[f32],
+) -> Vec<Vec<usize>> {
+    let mut elements: Vec<Element> = lines
+        .iter()
+        .flat_map(|line| &line.items)
+        .map(|item| Element {
+            left: item.x,
+            right: item.x + item.width,
+            bottom: item.y - item.font_size * 0.2,
+            top: item.y + item.font_size * 0.8,
+            item: Some(item),
+            rows: 0,
+        })
+        .collect();
+    elements.extend(tables.iter().map(|table| Element {
+        left: table.xs[0],
+        right: table.xs[table.xs.len() - 1],
+        bottom: table.bottom,
+        top: table.top,
+        item: None,
+        rows: table.markdown.lines().count().saturating_sub(1),
+    }));
+    let all: Vec<usize> = (0..elements.len()).collect();
+    let parts = split(&elements, &all, pitch, 0);
+    if parts.len() <= 1 {
+        return parts;
+    }
+    // A borderless table keeps its columns together: its box is an obstacle
+    // no gutter crosses. Looked for only on a page that divides.
+    let found = unruled::find(lines, pitch, headings, None);
+    if found.is_empty() {
+        return sorted(parts);
+    }
+    for table in found {
+        let items = lines[table.lines.clone()]
+            .iter()
+            .flat_map(|line| &line.items);
+        let (mut left, mut right, mut bottom, mut top) = (
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        );
+        for item in items {
+            left = left.min(item.x);
+            right = right.max(item.x + item.width);
+            bottom = bottom.min(item.y - item.font_size * 0.2);
+            top = top.max(item.y + item.font_size * 0.8);
+        }
+        elements.push(Element {
+            left,
+            right,
+            bottom,
+            top,
+            item: None,
+            rows: table.lines.len(),
+        });
+    }
+    let all: Vec<usize> = (0..elements.len()).collect();
+    sorted(split(&elements, &all, pitch, 0))
+}
+
+fn sorted(mut parts: Vec<Vec<usize>>) -> Vec<Vec<usize>> {
+    for part in &mut parts {
+        part.sort_unstable();
+    }
+    parts
+}
+
+/// The regions of `set`, in reading order: its bands top to bottom, a
+/// band's columns left to right, and each column's own regions. Bands that
+/// do not divide read together, as one region.
+fn split(elements: &[Element], set: &[usize], pitch: Option<f32>, depth: usize) -> Vec<Vec<usize>> {
+    let em = em_of(elements, set);
+    // A band of whitespace across the page at least half again the text's
+    // line pitch separates bands; a paragraph gap is narrower.
+    let points = pitch.unwrap_or(1.2) * em;
+    let mut layout = Vec::new();
+    for band in bands(elements, set, points * 1.5) {
+        lay_out(elements, band, points, &mut layout);
+    }
+    if layout.iter().all(|(_, gutters)| gutters.is_empty()) {
+        return vec![set.to_vec()];
+    }
+    // Columns run on across whitespace their neighbours happen to share (a
+    // paragraph gap in each at one height): a band whose gutters match the
+    // band's above continues its columns, unless its columns start at one
+    // height, as the cards of a grid's next row do.
+    let mut sections: Vec<(Vec<usize>, Vec<Gutter>)> = Vec::new();
+    for (band, gutters) in layout {
+        if let Some((members, above)) = sections.last_mut()
+            && let Some(shared) = matching(above, &gutters)
+            && !starts_level(elements, &band, &gutters, em)
+        {
+            members.extend(band);
+            *above = shared;
+            continue;
+        }
+        sections.push((band, gutters));
+    }
+    let mut parts: Vec<Vec<usize>> = Vec::new();
+    let mut whole = false;
+    for (band, gutters) in sections {
+        if gutters.is_empty() {
+            match parts.last_mut() {
+                Some(part) if whole => part.extend(band),
+                _ => parts.push(band),
+            }
+            whole = true;
+            continue;
+        }
+        whole = false;
+        for column in columns_of(elements, &band, &gutters) {
+            if depth + 1 < MAX_DEPTH {
+                parts.extend(split(elements, &column, pitch, depth + 1));
+            } else {
+                parts.push(column);
+            }
+        }
+    }
+    parts
+}
+
+/// Each band of `band` that divides into columns, with its gutters, or that
+/// does not, with none.
+fn lay_out(
+    elements: &[Element],
+    band: Vec<usize>,
+    pitch: f32,
+    layout: &mut Vec<(Vec<usize>, Vec<Gutter>)>,
+) {
+    match cut(elements, &band, pitch) {
+        Cut::Bands(bands) => {
+            for band in bands {
+                lay_out(elements, band, pitch, layout);
+            }
+        }
+        Cut::Columns(gutters) => layout.push((band, gutters)),
+        Cut::Whole => layout.push((band, Vec::new())),
+    }
+}
+
+/// The gutters two bands' columns share, when both divide into as many
+/// columns at overlapping gutters.
+fn matching(above: &[Gutter], below: &[Gutter]) -> Option<Vec<Gutter>> {
+    if above.is_empty() || above.len() != below.len() {
+        return None;
+    }
+    above
+        .iter()
+        .zip(below)
+        .map(|(a, b)| {
+            let (left, right) = (a.left.max(b.left), a.right.min(b.right));
+            (right > left).then_some(Gutter { left, right })
+        })
+        .collect()
+}
+
+/// Whether the columns of `band` between `gutters` start at one height:
+/// their first baselines (or tables' tops) within a quarter em, and two
+/// points, of each other.
+fn starts_level(elements: &[Element], band: &[usize], gutters: &[Gutter], em: f32) -> bool {
+    let starts: Vec<f32> = columns_of(elements, band, gutters)
+        .iter()
+        .map(|column| {
+            column
+                .iter()
+                .map(|&index| {
+                    let element = &elements[index];
+                    element.item.map_or(element.top, line_y)
+                })
+                .fold(f32::NEG_INFINITY, f32::max)
+        })
+        .collect();
+    let (low, high) = starts
+        .iter()
+        .fold((f32::INFINITY, f32::NEG_INFINITY), |(l, h), &y| {
+            (l.min(y), h.max(y))
+        });
+    high - low <= (em * 0.25).max(2.)
+}
+
+/// The size most characters of `set` are set in.
+fn em_of(elements: &[Element], set: &[usize]) -> f32 {
+    let mut sizes: Vec<(f32, usize)> = set
+        .iter()
+        .filter_map(|&index| elements[index].item)
+        .map(|item| {
+            let count = item.text.chars().filter(|c| !c.is_whitespace()).count();
+            (item.font_size, count.max(1))
+        })
+        .collect();
+    sizes.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let total: usize = sizes.iter().map(|(_, count)| count).sum();
+    let mut seen = 0;
+    for (size, count) in sizes {
+        seen += count;
+        if seen * 2 >= total {
+            return size;
+        }
+    }
+    12.
+}
+
+/// `set` cut at each band of whitespace across it at least `gap` high, top
+/// to bottom.
+fn bands(elements: &[Element], set: &[usize], gap: f32) -> Vec<Vec<usize>> {
+    let mut order = set.to_vec();
+    order.sort_by(|&a, &b| elements[b].top.total_cmp(&elements[a].top));
+    let mut bands: Vec<(f32, Vec<usize>)> = Vec::new();
+    for index in order {
+        let element = &elements[index];
+        match bands.last_mut() {
+            Some((bottom, band)) if element.top > *bottom - gap => {
+                *bottom = bottom.min(element.bottom);
+                band.push(index);
+            }
+            _ => bands.push((element.bottom, vec![index])),
+        }
+    }
+    bands.into_iter().map(|(_, band)| band).collect()
+}
+
+/// The members of `set` in each column between `gutters`, left to right.
+fn columns_of(elements: &[Element], set: &[usize], gutters: &[Gutter]) -> Vec<Vec<usize>> {
+    let mut columns = vec![Vec::new(); gutters.len() + 1];
+    for &index in set {
+        let centre = elements[index].centre();
+        let column = gutters.iter().filter(|g| g.left < centre).count();
+        columns[column].push(index);
+    }
+    columns
+}
+
+/// How `band` divides: the whitespace runs down it between the runs that do
+/// not span it are candidate gutters, at least an em (and eight points)
+/// wide. Lines spanning a candidate cut the band into the bands above and
+/// below them when nothing stands beside them; otherwise they rule it out.
+/// The candidates that hold (see [`gutter_holds`]) divide it into columns.
+fn cut(elements: &[Element], band: &[usize], pitch: f32) -> Cut {
+    if band.len() < 6 {
+        return Cut::Whole;
+    }
+    let em = em_of(elements, band);
+    let (left, right) = band
+        .iter()
+        .map(|&index| &elements[index])
+        .fold((f32::INFINITY, f32::NEG_INFINITY), |(l, r), e| {
+            (l.min(e.left), r.max(e.right))
+        });
+    let width = right - left;
+    let mut spans: Vec<(f32, f32)> = band
+        .iter()
+        .map(|&index| &elements[index])
+        .filter(|e| e.right - e.left <= width * SPANNING)
+        .map(|e| (e.left, e.right))
+        .collect();
+    spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let narrowest = em.max(8.);
+    let mut candidates = Vec::new();
+    let mut reach: Option<f32> = None;
+    for (start, end) in spans {
+        if let Some(reach) = reach
+            && start - reach >= narrowest
+        {
+            candidates.push(Gutter {
+                left: reach,
+                right: start,
+            });
+        }
+        reach = Some(reach.map_or(end, |reach| reach.max(end)));
+    }
+    let mut gutters = Vec::new();
+    for gutter in candidates {
+        let crossing: Vec<usize> = band
+            .iter()
+            .copied()
+            .filter(|&index| elements[index].crosses(gutter))
+            .collect();
+        if crossing.is_empty() {
+            gutters.push(gutter);
+        } else if let Some(bands) = around(elements, band, &crossing, em) {
+            return Cut::Bands(bands);
+        }
+    }
+    loop {
+        if gutters.is_empty() {
+            return Cut::Whole;
+        }
+        let columns = columns_of(elements, band, &gutters);
+        let lines: Vec<Vec<SideLine>> = columns
+            .iter()
+            .map(|column| side_lines(elements, column))
+            .collect();
+        let spacing = word_spacing(&lines);
+        // The narrowest failing candidate goes first: a river of word spaces
+        // inside a justified column must not cost the real gutter beside it
+        // its evidence.
+        let failing = (0..gutters.len())
+            .filter(|&index| {
+                !gutter_holds(
+                    elements,
+                    [&columns[index], &columns[index + 1]],
+                    [&lines[index], &lines[index + 1]],
+                    gutters[index],
+                    spacing,
+                    em,
+                    pitch,
+                )
+            })
+            .min_by(|&a, &b| {
+                let width = |g: Gutter| g.right - g.left;
+                width(gutters[a]).total_cmp(&width(gutters[b]))
+            });
+        match failing {
+            Some(index) => {
+                gutters.remove(index);
+            }
+            None => return Cut::Columns(gutters),
+        }
+    }
+}
+
+/// The bands of `band` above, between and below the lines of its `crossing`
+/// elements, when the rest of the band stands clear of those lines: a title
+/// over columns, a paragraph across the page between them.
+fn around(
+    elements: &[Element],
+    band: &[usize],
+    crossing: &[usize],
+    em: f32,
+) -> Option<Vec<Vec<usize>>> {
+    let tolerance = em * 0.25;
+    // The lines the crossing elements stand on: they and whatever shares
+    // their height.
+    let mut rows: Vec<(f32, f32)> = crossing
+        .iter()
+        .map(|&index| (elements[index].bottom, elements[index].top))
+        .collect();
+    rows.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let mut merged: Vec<(f32, f32)> = Vec::new();
+    for (bottom, top) in rows {
+        match merged.last_mut() {
+            Some(last) if top > last.0 + tolerance => last.0 = last.0.min(bottom),
+            _ => merged.push((bottom, top)),
+        }
+    }
+    let on_row = |element: &Element| {
+        merged.iter().position(|&(bottom, top)| {
+            element.top - tolerance > bottom && element.bottom + tolerance < top
+        })
+    };
+    // Bands alternate: the stretch above each row, then the row.
+    let mut parts = vec![Vec::new(); merged.len() * 2 + 1];
+    for &index in band {
+        let element = &elements[index];
+        let part = match on_row(element) {
+            Some(row) => row * 2 + 1,
+            None => {
+                let centre = (element.bottom + element.top) / 2.;
+                merged.iter().filter(|(bottom, _)| *bottom > centre).count() * 2
+            }
+        };
+        parts[part].push(index);
+    }
+    // A run beside a spanning line, not on it, is a column beside it.
+    for (row, &(bottom, top)) in merged.iter().enumerate() {
+        if parts[row * 2 + 1].iter().any(|&index| {
+            let element = &elements[index];
+            element.bottom < bottom - tolerance || element.top > top + tolerance
+        }) {
+            return None;
+        }
+    }
+    parts.retain(|part| !part.is_empty());
+    (parts.len() >= 2).then_some(parts)
+}
+
+/// A line of a column, as gutter evidence needs it.
+struct SideLine {
+    y: f32,
+    left: f32,
+    right: f32,
+    /// Words: spaced words, and a word for two CJK characters.
+    words: f32,
+    /// Whether it is set in a fixed-pitch face.
+    code: bool,
+    /// Gaps between its runs.
+    gaps: Vec<f32>,
+}
+
+/// The lines of the runs of `set`, top to bottom, on the baselines
+/// [`lines`] groups them by.
+fn side_lines(elements: &[Element], set: &[usize]) -> Vec<SideLine> {
+    let mut items: Vec<&TextItem> = set
+        .iter()
+        .filter_map(|&index| elements[index].item)
+        .collect();
+    items.sort_by(|a, b| line_y(b).total_cmp(&line_y(a)).then(a.x.total_cmp(&b.x)));
+    let mut grouped: Vec<(f32, f32, Vec<&TextItem>)> = Vec::new();
+    for item in items {
+        let y = line_y(item);
+        match grouped.last_mut() {
+            Some((line, size, members))
+                if (*line - y).abs() <= (size.min(item.font_size) * 0.2).min(2.) =>
+            {
+                *size = size.max(item.font_size);
+                members.push(item);
+            }
+            _ => grouped.push((y, item.font_size, vec![item])),
+        }
+    }
+    grouped
+        .into_iter()
+        .map(|(y, _, mut members)| {
+            members.sort_by(|a, b| a.x.total_cmp(&b.x));
+            let (mut words, mut mono, mut all) = (0., 0, 0);
+            for item in &members {
+                let cjk = item.text.chars().filter(|&c| is_cjk(c)).count();
+                words += item.text.split_whitespace().count() as f32 + cjk as f32 / 2.;
+                let count = item.text.trim().chars().count();
+                all += count;
+                if item.fixed_pitch == Some(true) {
+                    mono += count;
+                }
+            }
+            let gaps = members
+                .windows(2)
+                .map(|pair| pair[1].x - (pair[0].x + pair[0].width))
+                .filter(|gap| *gap > 0.)
+                .collect();
+            SideLine {
+                y,
+                left: members[0].x,
+                right: members
+                    .iter()
+                    .map(|item| item.x + item.width)
+                    .fold(f32::NEG_INFINITY, f32::max),
+                words,
+                code: all > 0 && mono * 10 >= all * 9,
+                gaps,
+            }
+        })
+        .collect()
+}
+
+/// A Han, kana or Hangul character, which a line of CJK text sets without
+/// spaces.
+fn is_cjk(c: char) -> bool {
+    matches!(c as u32, 0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF)
+}
+
+/// The widest gap between the runs of a line that most lines' gaps stay
+/// within (the 95th percentile): a justified column spreads its words, and
+/// a gutter must be clearly wider.
+fn word_spacing(columns: &[Vec<SideLine>]) -> f32 {
+    let mut gaps: Vec<f32> = columns
+        .iter()
+        .flatten()
+        .flat_map(|line| line.gaps.iter().copied())
+        .collect();
+    if gaps.is_empty() {
+        return 0.;
+    }
+    gaps.sort_by(f32::total_cmp);
+    gaps[(gaps.len() - 1) * 95 / 100]
+}
+
+/// Whether a candidate gutter between two columns holds: it is half again
+/// as wide as the band's word spacing; each column has two lines and three
+/// runs or more (a table counts as one with its rows), and the columns
+/// stand beside each other for two line pitches or more. Where half the
+/// lines of the shorter column or more share a baseline with the other's,
+/// the lines could be the rows of a borderless table or a key-value list,
+/// and the gutter holds only when both columns read as running text and
+/// their blocks do not break at the same heights, as table rows do.
+fn gutter_holds(
+    elements: &[Element],
+    columns: [&[usize]; 2],
+    lines: [&[SideLine]; 2],
+    gutter: Gutter,
+    spacing: f32,
+    em: f32,
+    pitch: f32,
+) -> bool {
+    if gutter.right - gutter.left < spacing * 1.5 {
+        return false;
+    }
+    for (column, lines) in columns.iter().zip(lines) {
+        let rows = lines.len() + column.iter().map(|&i| elements[i].rows).sum::<usize>();
+        let runs: usize = column
+            .iter()
+            .map(|&i| if elements[i].item.is_some() { 1 } else { 3 })
+            .sum();
+        if rows < 2 || runs < 3 {
+            return false;
+        }
+    }
+    let extent = |column: &[usize]| {
+        column
+            .iter()
+            .map(|&i| &elements[i])
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(b, t), e| {
+                (b.min(e.bottom), t.max(e.top))
+            })
+    };
+    let ((bottom_a, top_a), (bottom_b, top_b)) = (extent(columns[0]), extent(columns[1]));
+    if top_a.min(top_b) - bottom_a.max(bottom_b) < pitch * 2. {
+        return false;
+    }
+    let [a, b] = lines;
+    let (fewer, more) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+    let shared = fewer
+        .iter()
+        .filter(|line| more.iter().any(|other| (other.y - line.y).abs() <= 2.))
+        .count();
+    shared * 2 < fewer.len() || (prose(a) && prose(b) && !blocks_aligned(a, b, em))
+}
+
+/// Whether lines read as running text: three or more, half of them or more
+/// filling seven tenths of the column's width, three and a half words a
+/// line on average, and less than half of them code.
+fn prose(lines: &[SideLine]) -> bool {
+    if lines.len() < 3 {
+        return false;
+    }
+    let left = lines.iter().map(|l| l.left).fold(f32::INFINITY, f32::min);
+    let right = lines
+        .iter()
+        .map(|l| l.right)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let full = lines
+        .iter()
+        .filter(|l| l.right - l.left >= (right - left) * 0.7)
+        .count();
+    let words = lines.iter().map(|l| l.words).sum::<f32>() / lines.len() as f32;
+    let code = lines.iter().filter(|l| l.code).count();
+    full * 2 >= lines.len() && words >= 3.5 && code * 2 < lines.len()
+}
+
+/// The heights at which a column's blocks start: below a baseline gap of
+/// more than 1.4 times the column's usual one, and a third of an em more.
+fn block_starts(lines: &[SideLine], em: f32) -> Vec<f32> {
+    if lines.len() < 3 {
+        return Vec::new();
+    }
+    let mut steps: Vec<f32> = lines.windows(2).map(|w| w[0].y - w[1].y).collect();
+    steps.sort_by(f32::total_cmp);
+    let usual = steps[steps.len() / 2];
+    lines
+        .windows(2)
+        .filter(|w| {
+            let step = w[0].y - w[1].y;
+            step > usual * 1.4 && step > usual + em / 3.
+        })
+        .map(|w| w[1].y)
+        .collect()
+}
+
+/// Whether two columns' blocks start at the same heights, two in three of
+/// them or more: the rows of a table, or a grid of cards, not columns of
+/// text whose paragraphs fall where they may.
+fn blocks_aligned(a: &[SideLine], b: &[SideLine], em: f32) -> bool {
+    let (a, b) = (block_starts(a, em), block_starts(b, em));
+    let (fewer, more) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+    if fewer.is_empty() {
+        return false;
+    }
+    let tolerance = (em * 0.25).max(2.);
+    let matched = fewer
+        .iter()
+        .filter(|y| more.iter().any(|other| (other - *y).abs() <= tolerance))
+        .count();
+    matched * 3 >= fewer.len() * 2
 }
 
 #[cfg(test)]
@@ -1866,18 +2595,27 @@ mod tests {
     }
 
     #[test]
-    fn list_items_beside_other_text_leave_the_page_to_the_reader() {
+    fn list_items_beside_other_text_read_as_a_column_of_their_own() {
         let words = "Main column words run on across the page.";
         assert!(layout_page(sidebar()).is_some_and(|m| m.starts_with("- River lantern\n- ")));
         // The article's lines interleave with the sidebar's, three points
-        // lower (two would put them on its lines), or share their baselines.
-        for offset in [3, 0] {
-            let mut page = sidebar();
-            for index in 0..12 {
-                page.extend(text("F1", 12, 220, 720 - offset - 15 * index, words));
-            }
-            assert_eq!(layout_page(page), None, "offset {offset}");
+        // lower (two would put them on its lines): the sidebar reads first.
+        let mut page = sidebar();
+        for index in 0..12 {
+            page.extend(text("F1", 12, 220, 717 - 15 * index, words));
         }
+        let items = SIDEBAR.map(|item| format!("- {item}")).join("\n");
+        assert_eq!(
+            layout_page(page),
+            Some(format!("{items}\n\n{}", [words; 12].join(" ")))
+        );
+        // Short lines sharing the article's baselines could be a table's
+        // labels: the page stays with the reader.
+        let mut page = sidebar();
+        for index in 0..12 {
+            page.extend(text("F1", 12, 220, 720 - 15 * index, words));
+        }
+        assert_eq!(layout_page(page), None);
     }
 
     #[test]
@@ -3299,5 +4037,307 @@ mod tests {
             (400, 618, "Phone"),
         ]));
         assert_eq!(borderless(page), Vec::<String>::new());
+    }
+
+    /// A résumé after a two-column template: a contact sidebar at x 30 and
+    /// the main column at x 220, the main column `shift` points lower (none
+    /// puts the name and the first section's title on one baseline).
+    fn resume(shift: i64) -> Vec<Operation> {
+        let mut page = text("F2", 20, 30, 740, "JANE DOE");
+        page.extend(text("F1", 11, 30, 720, "Software Engineer"));
+        page.extend(text("F2", 10, 30, 680, "CONTACT"));
+        for (index, line) in ["jane@example.com", "+1 555 0100", "San Francisco, CA"]
+            .into_iter()
+            .enumerate()
+        {
+            page.extend(text("F1", 9, 30, 662 - 14 * index as i64, line));
+        }
+        page.extend(text("F2", 10, 30, 600, "SKILLS"));
+        for (index, line) in [
+            "Rust, Go, Python",
+            "Distributed systems",
+            "Kubernetes",
+            "SQL",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            page.extend(text("F1", 9, 30, 582 - 14 * index as i64, line));
+        }
+        let y = 740 - shift;
+        page.extend(text("F2", 13, 220, y, "EXPERIENCE"));
+        page.extend(text("F2", 11, 220, y - 24, "Senior Engineer, Acme Corp"));
+        page.extend(text("F1", 9, 220, y - 38, "2021 - Present"));
+        page.extend(text(
+            "F1",
+            10,
+            220,
+            y - 55,
+            "Led the migration of a monolith to services, reducing deploy times by sixty",
+        ));
+        page.extend(text(
+            "F1",
+            10,
+            220,
+            y - 70,
+            "percent and improving reliability across the platform.",
+        ));
+        page.extend(text("F2", 13, 220, y - 130, "EDUCATION"));
+        page.extend(text(
+            "F2",
+            11,
+            220,
+            y - 154,
+            "B.S. Computer Science, State University",
+        ));
+        page.extend(text("F1", 9, 220, y - 168, "2013 - 2017"));
+        page
+    }
+
+    #[test]
+    fn a_sidebar_beside_the_main_column_reads_before_it() {
+        for shift in [0, 7] {
+            let markdown = layout_page(resume(shift)).unwrap_or_else(|| panic!("shift {shift}"));
+            let at = |text: &str| {
+                markdown
+                    .find(text)
+                    .unwrap_or_else(|| panic!("{text:?} missing (shift {shift}):\n{markdown}"))
+            };
+            assert!(markdown.starts_with("# **JANE DOE**\n\n"), "{markdown}");
+            assert!(!markdown.contains("JANE DOE EXPERIENCE"), "{markdown}");
+            assert!(markdown.contains("sixty percent"), "{markdown}");
+            // The sidebar, top to bottom, then the main column.
+            let order = [
+                "JANE DOE",
+                "Software Engineer",
+                "CONTACT",
+                "jane@example.com",
+                "SKILLS",
+                "Kubernetes",
+                "SQL",
+                "EXPERIENCE",
+                "Senior Engineer",
+                "sixty percent",
+                "EDUCATION",
+                "2013 - 2017",
+            ];
+            for pair in order.windows(2) {
+                assert!(
+                    at(pair[0]) < at(pair[1]),
+                    "{pair:?} (shift {shift}):\n{markdown}"
+                );
+            }
+        }
+    }
+
+    /// Running text set `lines` lines from `top` at `x`, 13pt apart in a
+    /// 10pt face, each line six words of `words` taken in turn.
+    fn column(x: i64, top: i64, lines: usize, words: &[&str]) -> Vec<Operation> {
+        (0..lines)
+            .flat_map(|line| {
+                let start = line * 6 % words.len();
+                let value = (0..6)
+                    .map(|n| words[(start + n) % words.len()])
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                text("F1", 10, x, top - 13 * line as i64, &value)
+            })
+            .collect()
+    }
+
+    const LEFT: [&str; 7] = [
+        "harbour", "lanterns", "glow", "late", "over", "quiet", "roofs",
+    ];
+    const RIGHT: [&str; 7] = ["morning", "tides", "turn", "along", "the", "stone", "wall"];
+
+    #[test]
+    fn two_columns_of_text_under_a_title_read_one_column_after_the_other() {
+        // The columns share their baselines, a gutter of 40pt between them,
+        // under a title across both.
+        let mut page = text(
+            "F2",
+            18,
+            60,
+            760,
+            "Reading order across two columns of running text",
+        );
+        page.extend(column(40, 730, 8, &LEFT));
+        page.extend(column(320, 730, 8, &RIGHT));
+        let markdown = layout_page(page).expect("the page divides");
+        let blocks: Vec<&str> = markdown.split("\n\n").collect();
+        assert_eq!(blocks.len(), 3, "{markdown}");
+        assert!(blocks[0].starts_with("# **Reading order"), "{markdown}");
+        assert!(
+            blocks[1].starts_with("harbour lanterns") && !blocks[1].contains("morning"),
+            "{markdown}"
+        );
+        assert!(
+            blocks[2].starts_with("morning tides") && !blocks[2].contains("harbour"),
+            "{markdown}"
+        );
+    }
+
+    /// Justified text in a 160pt column at `x`: `lines` lines from `top`,
+    /// 13pt apart in a 10pt face, four words of `words` a line spread over
+    /// the column, each word a run of its own, as a narrow justified column
+    /// is printed.
+    fn justified(x: i64, top: i64, lines: usize, words: &[&str]) -> Vec<Operation> {
+        // Helvetica's advances of the lower-case letters, in thousandths of
+        // an em.
+        const ADVANCES: [f32; 26] = [
+            556., 556., 500., 556., 556., 278., 556., 556., 222., 222., 500., 222., 833., 556.,
+            556., 556., 556., 333., 500., 278., 556., 500., 722., 500., 500., 500.,
+        ];
+        let width = |word: &str| {
+            word.bytes()
+                .map(|b| ADVANCES[(b - b'a') as usize] / 100.)
+                .sum::<f32>()
+        };
+        let mut page = Vec::new();
+        for line in 0..lines {
+            let row: Vec<&str> = (0..4)
+                .map(|n| words[(line * 4 + n) % words.len()])
+                .collect();
+            let gap = (160. - row.iter().map(|word| width(word)).sum::<f32>()) / 3.;
+            let mut at = x as f32;
+            for word in row {
+                page.extend(text(
+                    "F1",
+                    10,
+                    at.round() as i64,
+                    top - 13 * line as i64,
+                    word,
+                ));
+                at += width(word) + gap;
+            }
+        }
+        page
+    }
+
+    #[test]
+    fn justified_newspaper_columns_read_column_by_column() {
+        // Three columns 24pt apart whose word runs share baselines: read
+        // across, each line would run on into the next column's.
+        let mut page = justified(
+            40,
+            740,
+            10,
+            &["cedar", "meadow", "ember", "canvas", "marble"],
+        );
+        page.extend(justified(
+            224,
+            740,
+            10,
+            &["harbor", "thread", "summit", "willow", "lantern"],
+        ));
+        page.extend(justified(
+            408,
+            740,
+            10,
+            &["copper", "maple", "window", "falcon", "pocket"],
+        ));
+        let markdown = layout_page(page).expect("the page divides");
+        let blocks: Vec<&str> = markdown.split("\n\n").collect();
+        assert_eq!(blocks.len(), 3, "{markdown}");
+        assert!(
+            blocks[0].starts_with("cedar meadow ember canvas marble cedar"),
+            "{markdown}"
+        );
+        assert!(
+            blocks[1].starts_with("harbor thread summit willow lantern harbor"),
+            "{markdown}"
+        );
+        assert!(
+            blocks[2].starts_with("copper maple window falcon pocket copper"),
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn a_grid_of_cards_reads_row_by_row() {
+        // Two rows of two cards, each a title and three lines of text,
+        // a card's lines starting at its row's height: a row's cards read
+        // before the next row's.
+        let mut page = Vec::new();
+        for (row, top) in [(0, 740), (1, 640)] {
+            for (card, x) in [(0, 40), (1, 320)] {
+                page.extend(text(
+                    "F2",
+                    12,
+                    x,
+                    top,
+                    &format!("Card {}", row * 2 + card + 1),
+                ));
+                page.extend(column(
+                    x,
+                    top - 18,
+                    3,
+                    if card == 0 { &LEFT } else { &RIGHT },
+                ));
+            }
+        }
+        let markdown = layout_page(page).expect("the page divides");
+        let at = |text: &str| {
+            markdown
+                .find(text)
+                .unwrap_or_else(|| panic!("{text}: {markdown}"))
+        };
+        assert!(at("Card 1") < at("Card 2"), "{markdown}");
+        assert!(at("Card 2") < at("Card 3"), "{markdown}");
+        assert!(at("Card 3") < at("Card 4"), "{markdown}");
+    }
+
+    #[test]
+    fn a_borderless_table_whose_cells_wrap_is_not_cut_into_columns() {
+        // Three columns of top-aligned cells sharing baselines, a cell
+        // wrapping in each row: rows, not columns of text.
+        let mut page = prose_from(760);
+        for (row, label) in ["Starter plan", "Growth plan", "Enterprise plan"]
+            .into_iter()
+            .enumerate()
+        {
+            let y = 680 - 36 * row as i64;
+            page.extend(runs_at(&[
+                (40, y, label),
+                (200, y, "Billed every"),
+                (200, y - 15, "month"),
+                (360, y, "Email and chat"),
+                (360, y - 15, "support"),
+            ]));
+        }
+        let markdown = super::super::extract(&pdf(vec![page], None))
+            .unwrap()
+            .markdown;
+        assert!(
+            markdown.contains("|Starter plan|Billed every month|Email and chat support|"),
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn a_key_value_list_or_a_caption_beside_text_does_not_divide_the_page() {
+        // Labels and values on shared baselines: a list, not two columns.
+        let mut page = Vec::new();
+        for (row, (label, value)) in [
+            ("Name", "Jane Doe"),
+            ("Address", "1 Main Street, Springfield"),
+            ("Phone", "555 0100"),
+            ("Email", "jane@example.com"),
+            ("Born", "1990"),
+            ("City", "Springfield"),
+            ("Team", "Platform"),
+            ("Role", "Engineer"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let y = 720 - 16 * row as i64;
+            page.extend(runs_at(&[(40, y, label), (200, y, value)]));
+        }
+        assert_eq!(layout_page(page), None);
+        // A one-line caption beside running text stands beside no column.
+        let mut page = column(40, 730, 8, &LEFT);
+        page.extend(text("F1", 9, 400, 704, "Figure 1: a lantern"));
+        assert_eq!(layout_page(page), None);
     }
 }

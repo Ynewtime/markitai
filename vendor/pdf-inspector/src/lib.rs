@@ -1511,6 +1511,13 @@ fn extract_pages_markdown_from_doc(
 
     // Compute font stats from full document (cross-page consistency).
     let font_stats = markdown::analysis::calculate_font_stats_from_items(&filtered_items);
+    // markitai: and the heading ladder, when the text spans several pages.
+    let heading_tiers = filtered_items
+        .iter()
+        .any(|item| item.page != filtered_items[0].page)
+        .then(|| {
+            markdown::analysis::document_heading_tiers(&filtered_items, font_stats.most_common_size)
+        });
     let repeated_header_footer_items = if strip_repeated_headers_footers {
         repeated_header_footer_item_keys(&all_items, &page_thresholds, &chart_regions, page_count)
     } else {
@@ -1655,6 +1662,7 @@ fn extract_pages_markdown_from_doc(
             base_font_size: Some(font_stats.most_common_size),
             include_page_numbers: false,
             strip_headers_footers: false,
+            heading_tiers: heading_tiers.clone(),
             ..markdown_options.clone()
         };
 

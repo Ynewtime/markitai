@@ -108,6 +108,8 @@
 
 ### Fixed
 
+- PDF: text set in columns side by side (a résumé's contact sidebar, a bulleted sidebar beside an article, a newspaper's justified columns) reads one column after another instead of line by line across them; borderless tables, key-value lists and card grids stay as they were. The page reader no longer turns justified newspaper columns into a many-column table, and reads a sparse page's sidebar before its main column.
+- PDF: page-reader headings rank on one size ladder for the whole document, so a section heading keeps its level on pages without the title (`## 3 Method`, not `# 3 Method`).
 - PDF: Japanese, Chinese and Korean text in fonts that are not embedded and use a predefined CMap (Shift-JIS, GBK, GB2312, Big5, UHC, UCS-2 and UTF-16 CMaps) is now read, together with the Latin text on the same page; previously such pages were rejected as garbled. The binary CMap reader now follows the packed format, so all 169 bundled CMaps load.
 - PDF: a text run that cannot be decoded is left out of its page with a warning instead of discarding the whole page; `--ocr` recognizes such pages from their image.
 - Word, OpenDocument, RTF and EPUB: a manual line break is a hard break (`\`) that survives normal output, and two in a row end the paragraph; in a heading or a link's text it is a space, in a table cell `<br>`. Labels Markdown does not read (`a)`, `I.`, `一、`) keep one line per item.

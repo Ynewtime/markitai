@@ -1291,6 +1291,12 @@ pub struct MarkdownOptions {
     pub include_page_numbers: bool,
     /// Strip repeated headers/footers that appear on many pages
     pub strip_headers_footers: bool,
+    /// markitai: the document's heading sizes, largest first, measured
+    /// against `base_font_size` over all its pages
+    /// (`analysis::document_heading_tiers`). A page whose own heading sizes
+    /// are among them, read at that base size, ranks its headings on this
+    /// ladder rather than on its own, so one size is one level throughout.
+    pub heading_tiers: Option<Vec<f32>>,
 }
 
 impl Default for MarkdownOptions {
@@ -1320,6 +1326,7 @@ impl Default for MarkdownOptions {
             include_links: true,
             include_page_numbers: false,
             strip_headers_footers: true,
+            heading_tiers: None,
         }
     }
 }

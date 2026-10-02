@@ -475,6 +475,128 @@ fn try_xy_cut_split(
     ])
 }
 
+/// markitai: the two columns of a sparse page, one of 12 to 19 runs, which
+/// [`detect_columns`] keeps whole (its projection needs 20): a résumé's
+/// contact column beside its main column. The split is the widest gap
+/// between the runs' horizontal extents, at least 24pt and clear of the
+/// page's outer tenths, crossed by no run. Each side has three runs on three
+/// baselines or more, and the sides stand beside each other over two fifths
+/// of the text's height or more. Where half the lines of the shorter side
+/// or more share a baseline with the other's, as a form's labels and values
+/// do, both sides must read as running text.
+fn sparse_columns(items: &[TextItem], page: u32) -> Option<Vec<ColumnRegion>> {
+    const MIN_GAP: f32 = 24.0;
+    let runs: Vec<&TextItem> = items
+        .iter()
+        .filter(|i| {
+            i.page == page
+                && crate::extractor::is_text_layout_item(i)
+                && !i.text.trim().is_empty()
+                && i.x.is_finite()
+                && i.y.is_finite()
+        })
+        .collect();
+    if !(12..20).contains(&runs.len()) {
+        return None;
+    }
+    let mut spans: Vec<(f32, f32)> = runs
+        .iter()
+        .map(|i| (i.x, i.x + effective_width(i)))
+        .collect();
+    crate::sort::stable(&mut spans, &mut |a, b| a.0.total_cmp(&b.0));
+    let (x_min, x_max) = spans
+        .iter()
+        .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), &(l, r)| {
+            (lo.min(l), hi.max(r))
+        });
+    let (mut gap, mut split) = (0.0f32, 0.0f32);
+    let mut reach = spans[0].1;
+    for &(left, right) in &spans[1..] {
+        if left - reach > gap {
+            gap = left - reach;
+            split = (reach + left) / 2.0;
+        }
+        reach = reach.max(right);
+    }
+    let margin = (x_max - x_min) * 0.10;
+    if gap < MIN_GAP || split - x_min < margin || x_max - split < margin {
+        return None;
+    }
+    let (left, right): (Vec<&TextItem>, Vec<&TextItem>) = runs
+        .iter()
+        .copied()
+        .partition(|i| i.x + effective_width(i) / 2.0 <= split);
+    // Baselines of a side, top first, with each line's extent and words.
+    let lines = |side: &[&TextItem]| {
+        let mut side = side.to_vec();
+        crate::sort::stable(&mut side, &mut |a, b| b.y.total_cmp(&a.y));
+        let mut lines: Vec<(f32, f32, f32, usize)> = Vec::new();
+        for item in side {
+            let (start, end) = (item.x, item.x + effective_width(item));
+            let words = item.text.split_whitespace().count();
+            match lines.last_mut() {
+                Some(line) if (line.0 - item.y).abs() <= 2.0 => {
+                    line.1 = line.1.min(start);
+                    line.2 = line.2.max(end);
+                    line.3 += words;
+                }
+                _ => lines.push((item.y, start, end, words)),
+            }
+        }
+        lines
+    };
+    let (a, b) = (lines(&left), lines(&right));
+    if left.len() < 3 || right.len() < 3 || a.len() < 3 || b.len() < 3 {
+        return None;
+    }
+    let height = |side: &[&TextItem]| {
+        side.iter()
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), i| {
+                (lo.min(i.y), hi.max(i.y + i.font_size))
+            })
+    };
+    let ((a_low, a_high), (b_low, b_high)) = (height(&left), height(&right));
+    let overlap = a_high.min(b_high) - a_low.max(b_low);
+    if overlap < (a_high.max(b_high) - a_low.min(b_low)) * 0.4 {
+        return None;
+    }
+    let (fewer, more) = if a.len() <= b.len() {
+        (&a, &b)
+    } else {
+        (&b, &a)
+    };
+    let shared = fewer
+        .iter()
+        .filter(|line| more.iter().any(|other| (other.0 - line.0).abs() <= 2.0))
+        .count();
+    let prose = |lines: &[(f32, f32, f32, usize)]| {
+        let (start, end) = lines
+            .iter()
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), l| {
+                (lo.min(l.1), hi.max(l.2))
+            });
+        let full = lines
+            .iter()
+            .filter(|l| l.2 - l.1 >= (end - start) * 0.7)
+            .count();
+        let words = lines.iter().map(|l| l.3).sum::<usize>() as f32 / lines.len() as f32;
+        full * 2 >= lines.len() && words >= 3.5
+    };
+    if shared * 2 >= fewer.len() && !(prose(&a) && prose(&b)) {
+        return None;
+    }
+    Some(vec![
+        ColumnRegion {
+            x_min,
+            x_max: split,
+        },
+        ColumnRegion {
+            x_min: split,
+            x_max,
+        },
+    ])
+}
+
 /// A prose line must span at least this fraction of its column's width to
 /// count as "full" — shared by the gate's ratio and run measurements.
 const LINE_FILL_THRESHOLD: f32 = 0.45;
@@ -2428,8 +2550,29 @@ fn group_into_lines_with_thresholds_and_regions_impl(
                 adaptive_threshold,
             )
         };
+        // markitai: a sparse page's columns, which the projection above
+        // does not look for, read one after the other.
+        let sparse = (banded.is_none()
+            && columns.len() <= 1
+            && !chart_regions.contains_key(&page)
+            && !table_pages.contains(&page))
+        .then(|| sparse_columns(column_detection_items, page))
+        .flatten();
         if let Some(lines) = banded {
             all_lines.extend(lines);
+        } else if let Some(columns) = sparse {
+            debug!(
+                "page {}: sparse columns split at x={:.1}",
+                page, columns[0].x_max
+            );
+            all_lines.extend(order_columns_with_policy(
+                page_items,
+                &columns,
+                adaptive_threshold,
+                page,
+                true,
+                page_rtl,
+            ));
         } else if columns.len() <= 1 {
             all_lines.extend(group_single_column(
                 page_items,
@@ -4352,5 +4495,89 @@ mod tests {
         let mask = identify_spanning_lines(&items, &cols);
         let spanning_count = mask.iter().filter(|&&m| m).count();
         assert_eq!(spanning_count, 0, "Narrow header should NOT be pre-masked");
+    }
+
+    /// markitai: a résumé of 19 runs, its contact column at x 30 and its
+    /// main column at x 220 starting `shift` points lower, in the content
+    /// stream top to bottom across both columns.
+    fn sparse_resume(shift: f32) -> Vec<TextItem> {
+        let side = [
+            (732.0, "JANE DOE"),
+            (712.0, "Software Engineer"),
+            (672.0, "CONTACT"),
+            (654.0, "jane@example.com"),
+            (640.0, "+1 555 0100"),
+            (626.0, "San Francisco"),
+            (592.0, "SKILLS"),
+            (574.0, "Rust, Go, Python"),
+            (560.0, "Distributed systems"),
+            (546.0, "Kubernetes"),
+            (532.0, "SQL"),
+        ];
+        let main = [
+            (732.0, "EXPERIENCE"),
+            (708.0, "Senior Engineer"),
+            (694.0, "2021 - Present"),
+            (677.0, "Led the migration of a monolith"),
+            (662.0, "to services across the platform."),
+            (602.0, "EDUCATION"),
+            (578.0, "B.S. Computer Science"),
+            (564.0, "2013 - 2017"),
+        ];
+        let mut items: Vec<TextItem> = side
+            .iter()
+            .map(|&(y, text)| make_item(1, 30.0, y, text))
+            .collect();
+        items.extend(
+            main.iter()
+                .map(|&(y, text)| make_item(1, 220.0, y - shift, text)),
+        );
+        crate::sort::stable(&mut items, &mut |a, b| {
+            b.y.total_cmp(&a.y).then(a.x.total_cmp(&b.x))
+        });
+        items
+    }
+
+    #[test]
+    fn a_sparse_pages_sidebar_reads_before_its_main_column() {
+        for shift in [0.0, 7.0] {
+            let items = sparse_resume(shift);
+            assert_eq!(detect_columns(&items, 1, false).len(), 1);
+            let columns = sparse_columns(&items, 1).expect("two columns");
+            assert_eq!(columns.len(), 2);
+            let lines: Vec<String> = group_into_lines(items).iter().map(|l| l.text()).collect();
+            let at = |text: &str| lines.iter().position(|l| l == text).unwrap();
+            assert!(at("SQL") < at("EXPERIENCE"), "shift {shift}: {lines:?}");
+            assert!(at("JANE DOE") < at("SQL"), "shift {shift}: {lines:?}");
+            assert!(
+                at("EXPERIENCE") < at("2013 - 2017"),
+                "shift {shift}: {lines:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_sparse_forms_labels_and_values_stay_on_their_rows() {
+        // Seven labels and values on shared baselines: rows, not columns.
+        let mut items = Vec::new();
+        for (row, (label, value)) in [
+            ("Name", "Jane Doe"),
+            ("Address", "1 Main Street"),
+            ("Phone", "555 0100"),
+            ("Email", "jane@example.com"),
+            ("City", "Springfield"),
+            ("Team", "Platform"),
+            ("Role", "Engineer"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let y = 700.0 - 16.0 * row as f32;
+            items.push(make_item(1, 40.0, y, label));
+            items.push(make_item(1, 240.0, y, value));
+        }
+        assert_eq!(sparse_columns(&items, 1).map(|c| c.len()), None);
+        let lines: Vec<String> = group_into_lines(items).iter().map(|l| l.text()).collect();
+        assert_eq!(lines[0], "Name Jane Doe");
     }
 }
