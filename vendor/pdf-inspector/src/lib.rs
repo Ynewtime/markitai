@@ -78,8 +78,9 @@ use lopdf::Document;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use text_quality::{
-    analyze_text_quality, detect_encoding_issues, is_cid_garbage, is_garbage_text,
-    region_items_have_decoding_issue,
+    analyze_text_quality, detect_encoding_issues, detect_encoding_issues_beyond_replacement,
+    drop_undecodable_runs, is_cid_garbage, is_garbage_text, region_items_have_decoding_issue,
+    MIN_READABLE_CHARS,
 };
 use tounicode::FontCMaps;
 
@@ -143,6 +144,25 @@ pub const OCR_REASON_INVISIBLE_TEXT_LAYER: &str = "invisible_text_layer";
 // =========================================================================
 // Result type
 // =========================================================================
+
+/// Text a page's native reading left out or could only partly decode,
+/// for a 1-indexed page whose reading stands (markitai): the rest of the
+/// page is read as usual, and OCR can recover what is missing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PageOmittedText {
+    /// 1-indexed page number.
+    pub page: u32,
+    /// Text runs left out because no reading of their font decodes them.
+    pub runs: u32,
+    /// Their non-whitespace characters.
+    pub chars: u32,
+    /// Characters of the runs kept that could not be decoded and show as
+    /// U+FFFD.
+    pub replacement_chars: u32,
+    /// The page lists a font that names its glyphs by index only: any text
+    /// shown in it reads as nothing.
+    pub unidentified_glyphs: bool,
+}
 
 /// OCR reasons for a single 1-indexed page.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -548,6 +568,9 @@ pub struct PagesExtractionResult {
     pub pages_needing_ocr: Vec<u32>,
     /// Machine-readable OCR reasons by 1-indexed page.
     pub ocr_reasons_by_page: Vec<PageOcrReasons>,
+    /// markitai: the text each returned page that does not need OCR left
+    /// out or could only partly decode, for the pages with any.
+    pub omitted_text_by_page: Vec<PageOmittedText>,
     /// True if any page has tables or columns.
     pub is_complex: bool,
 }
@@ -701,13 +724,16 @@ impl LoadedPdf {
     }
 
     /// [`extract_text_with_positions_and_rotations_mem_with_options`] of
-    /// the loaded bytes.
+    /// the loaded bytes, without the runs no reading of their font decodes:
+    /// the page Markdown of a loaded document leaves them out, and the
+    /// readers of its positioned text (markitai's layout, running-header
+    /// and comment readers) see the page as that Markdown does.
     pub fn text_with_positions_and_rotations(
         &self,
         page_filter: Option<&HashSet<u32>>,
         options: PositionOptions,
     ) -> Result<(Vec<TextItem>, HashMap<u32, PageRotation>), PdfError> {
-        let ((mut items, _rects, _lines), _thresholds, _gid_pages, page_rotations, _coverage) =
+        let ((items, _rects, _lines), _thresholds, _gid_pages, page_rotations, _coverage) =
             extractor::extract_positioned_text_in_page_box_with_runs(
                 &self.doc,
                 self.font_cmaps(),
@@ -715,6 +741,7 @@ impl LoadedPdf {
                 options,
                 &self.runs,
             )?;
+        let (mut items, _tallies) = drop_undecodable_runs(items);
         if options.frame == PositionFrame::Display {
             extractor::display_frame::document_items_to_display_frame(
                 &self.doc,
@@ -1459,6 +1486,10 @@ fn extract_pages_markdown_from_doc(
                 extractor::extract_positioned_text_from_doc(doc, font_cmaps, None)
             }
         })?;
+    // markitai: a run no reading of its font decodes is left out of its
+    // page, not the page's whole text; the page then needs OCR only when
+    // what is left is itself unreliable or what was lost outweighs it.
+    let (all_items, text_tallies) = drop_undecodable_runs(all_items);
     let text_quality = analyze_text_quality(&all_items);
 
     // Resolve page numbers with full-document context before partitioning.
@@ -1499,6 +1530,7 @@ fn extract_pages_markdown_from_doc(
     let mut results = Vec::with_capacity(pages_slice.len());
     let mut pages_needing_ocr = Vec::new();
     let mut ocr_reasons_by_page = BTreeMap::new();
+    let mut omitted_text_by_page = Vec::new();
     #[cfg(all(feature = "ocr", not(target_arch = "wasm32")))]
     let mut supplemental_ocr_regions = BTreeMap::new();
     let lopdf_pages = doc.get_pages();
@@ -1578,8 +1610,15 @@ fn extract_pages_markdown_from_doc(
             }
         }
 
+        let tally = text_tallies.get(&page_1idx).copied().unwrap_or_default();
+        // markitai: a font that names its glyphs by index only reads as
+        // nothing; the page still stands on the text of its other fonts
+        // when enough of it is readable (a logo set in such a font no
+        // longer costs the page its body).
         let has_gid = gid_pages.contains(&page_1idx);
-        let has_text_quality_issue = text_quality.pages_needing_ocr.contains(&page_1idx);
+        let gid_dominates = has_gid && tally.readable < MIN_READABLE_CHARS;
+        let has_text_quality_issue =
+            text_quality.pages_needing_ocr.contains(&page_1idx) || tally.loss_dominates();
 
         // A page can extract cleanly (no decoding issues, non-empty text)
         // while still being fundamentally a scan: a full-page raster with
@@ -1639,8 +1678,11 @@ fn extract_pages_markdown_from_doc(
             )
         };
 
+        // markitai: the replacement characters of the runs kept were
+        // weighed run by run above; the Markdown's own checks keep the rest.
         let has_decoding_issue = has_text_quality_issue
-            || (!md.is_empty() && (is_cid_garbage(&md) || detect_encoding_issues(&md)));
+            || (!md.is_empty()
+                && (is_cid_garbage(&md) || detect_encoding_issues_beyond_replacement(&md)));
         // First among a page's reasons, as classification's
         // `page_ocr_reasons` lists it too, so a page whose whole text layer
         // is hidden under a scan — a scan whatever its fonts are — gets the
@@ -1670,7 +1712,7 @@ fn extract_pages_markdown_from_doc(
 
         let needs_ocr = ocr_reason.is_some()
             || md.trim().is_empty()
-            || has_gid
+            || gid_dominates
             || is_garbage_text(&md)
             || has_template_image
             || has_vector_text
@@ -1678,6 +1720,14 @@ fn extract_pages_markdown_from_doc(
 
         if needs_ocr {
             pages_needing_ocr.push(page_1idx);
+        } else if tally.dropped_runs > 0 || tally.replacement_chars > 0 || has_gid {
+            omitted_text_by_page.push(PageOmittedText {
+                page: page_1idx,
+                runs: tally.dropped_runs,
+                chars: tally.dropped_chars,
+                replacement_chars: tally.replacement_chars,
+                unidentified_glyphs: has_gid,
+            });
         }
 
         results.push(PageMarkdown {
@@ -1703,6 +1753,7 @@ fn extract_pages_markdown_from_doc(
             pages_with_columns: complexity.pages_with_columns,
             pages_needing_ocr,
             ocr_reasons_by_page: page_ocr_reasons_vec(ocr_reasons_by_page),
+            omitted_text_by_page,
             is_complex: complexity.is_complex,
         },
         #[cfg(all(feature = "ocr", not(target_arch = "wasm32")))]

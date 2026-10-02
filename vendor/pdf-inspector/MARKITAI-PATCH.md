@@ -544,14 +544,66 @@ The local changes, each marked `markitai` (or, for sorts, made through
   Run in the isolated copy, the crate's unit tests give 1,676 passed (4
   added) and the same 21 failed.
 
+- `src/tounicode.rs`: the binary CMap reader follows the pdf.js format
+  (each record's first entry written in full, later entries as deltas from
+  the previous end, CIDs as signed deltas, codespace records read); the
+  upstream reader read every entry as a first one, so no built-in encoding
+  or UCS2 CMap parsed. A Type0 font without ToUnicode whose encoding is a
+  CMap other than Identity-H/V (built-in, or a stream with its `usecmap`)
+  gets a reading of its own (`PredefinedReading`: code → CID through the
+  encoding, CID → Unicode through `Adobe-<Ordering>-UCS2`), stored under a
+  key derived from the encoding and the collection with the high bit set
+  (`predefined_cmap_key`), built in fast mode too. `EncodingCMap` keeps
+  every codespace range (byte-wise ranges, codes of one to four bytes) and
+  32-bit codes; a CMap with a predefined reading splits strings by that
+  codespace and is never abandoned for another reading. The collections are
+  held by CID (`CollectionCMap`) and the parsed CMaps cached for the
+  process. A font with a ToUnicode CMap whose encoding is such a CMap takes
+  that reading as its fallback (`font_cmap_entry`), and as its reading when
+  the ToUnicode CMap is sparse. Identity-encoded fonts keep their readings: the UCS2 CMaps are
+  not applied to them (`build_cmap_from_cid_system_info` keeps Korea1 only,
+  `build_fallback_tounicode_from_encoding` returns none for Identity), and
+  `adobe_korea1.rs` is not replaced (the bcmap differs in 38 CIDs and has
+  537 multi-character readings). A document's CMap names are restricted to
+  letters, digits and hyphens before a file is looked up.
+- `src/extractor/fonts.rs`, `content_stream.rs`, `xobjects.rs`: such a
+  font's strings decode through its reading (`font_cmap_key`, which falls
+  back to `get_font_file2_obj_num`; the decode path skips the byte and
+  two-byte guesses). `src/types.rs` (`FontWidthInfo::cid_codes`),
+  `fonts.rs` (`compute_string_width_ts`), `content_stream.rs`
+  (`shown_glyph_count`, `estimated_string_advance_ts`, `glyph_extent`) and
+  `word_gaps.rs` split such a font's strings by its codespace and measure
+  each code by the CID it selects.
+- `src/text_quality.rs`, `src/lib.rs`: per-page Markdown leaves out the runs
+  no reading decodes (`drop_undecodable_runs`: a strong span signal, U+FFFD
+  at least half of the run, or a U+FFFD pair without letters) and needs OCR
+  for a page only when the runs kept are unreliable, the loss is more than
+  half of its characters or fewer than 20 letters and digits remain; a font
+  naming glyphs by index (`has_gid`) condemns a page only under that same
+  floor; the Markdown check no longer counts U+FFFD, which the runs' own
+  analysis weighs. `PagesExtractionResult::omitted_text_by_page`
+  (`PageOmittedText`) reports what a page that stands left out, and
+  `LoadedPdf::text_with_positions_and_rotations` leaves out the same runs.
+  `src/predefined_cmap_tests.rs` and the tests in `tounicode.rs` and
+  `text_quality.rs` cover thirteen encodings, the codespace, the UTF-16
+  surrogate codes, widths against the Identity-H equivalent, an embedded
+  CMap with `usecmap`, a sparse ToUnicode CMap over a predefined encoding,
+  and runs and pages dropped or kept; seven of the eight page tests fail on
+  the unmodified files (the eighth guards a page that still needs OCR).
+
+  Run in the isolated copy, the crate's unit tests give 1,702 passed (19
+  added) and the same 21 failed.
+
 The page-level OCR, font decoding, repair, limits and reliability routing remain
-the upstream paths. Markitai's own visibility warnings and layout agreement
+the upstream paths, except as listed above. Markitai's own visibility warnings and layout agreement
 checks remain enabled. The only new public APIs are `TextLine::text_with_markup`,
 `PageContent` (`read`, `bytes`),
 `LoadedPdf` (`load_mem`, `document`, `as_loaded_by_lopdf`, `keep_page_runs`, `pages_markdown`,
 `pages_markdown_with_marks`, `text_with_positions_and_rotations`,
-`forget_page_runs`), `painted_bullets` (`PaintedMark`, `targets`) and
-`glyph_names::glyph_to_unicode`; no optional runtime dependency is added.
+`forget_page_runs`), `painted_bullets` (`PaintedMark`, `targets`),
+`glyph_names::glyph_to_unicode`, `PageOmittedText` and the
+`PagesExtractionResult::omitted_text_by_page` field; no optional runtime
+dependency is added.
 Opacity, masks, occlusion, full text clipping and mixed-visibility marked content
 are not claimed to be solved by this patch.
 

@@ -16,7 +16,7 @@ use lopdf::{Document, Object, ObjectId};
 use super::fonts::{
     CMapDecisionCache, FontStyle, FontStyleCache, LopdfEncodings, build_font_encodings,
     build_font_kinds, build_font_widths, build_type3_scales, build_type3_y_flips,
-    compute_string_width_ts, extract_text_from_operand, font_style, get_font_file2_obj_num,
+    compute_string_width_ts, extract_text_from_operand, font_cmap_key, font_style,
     get_operand_bytes, page_fonts,
 };
 use super::geometry::{
@@ -168,6 +168,11 @@ fn transformed_stroke_width(
 /// width metrics — the replacement string's length says nothing about what
 /// was painted.
 pub(crate) fn shown_glyph_count(raw: Option<&[u8]>, font: Option<&FontWidthInfo>) -> usize {
+    // markitai: a font with an encoding CMap shows one glyph a code of its
+    // codespace.
+    if let (Some(bytes), Some(encoding)) = (raw, font.and_then(|f| f.cid_codes.as_deref())) {
+        return encoding.codes(bytes).count();
+    }
     let code_size = if font.is_some_and(|f| f.is_cid) { 2 } else { 1 };
     raw.map_or(0, |bytes| bytes.len().div_ceil(code_size))
 }
@@ -188,7 +193,12 @@ pub(crate) fn estimated_string_advance_ts(
         return 0.0;
     };
     let glyphs = shown_glyph_count(raw, font);
-    let spaces = if font.is_some_and(|f| f.is_cid) {
+    let spaces = if let Some(encoding) = font.and_then(|f| f.cid_codes.as_deref()) {
+        encoding
+            .codes(bytes)
+            .filter(|code| code.bytes == [0x20])
+            .count()
+    } else if font.is_some_and(|f| f.is_cid) {
         0
     } else {
         bytes.iter().filter(|&&b| b == b' ').count()
@@ -250,11 +260,17 @@ fn glyph_extent(
 ) -> Option<(f32, f32)> {
     let step = if font.is_cid { 2 } else { 1 };
     let (mut pen, mut left, mut right) = (0.0f32, f32::INFINITY, f32::NEG_INFINITY);
-    for code in raw.chunks_exact(step) {
+    let mut glyph = |code: &[u8]| {
         let ink = compute_string_width_ts(code, font, font_size, 0.0, 0.0);
         left = left.min(pen.min(pen + ink));
         right = right.max(pen.max(pen + ink));
         pen += compute_string_width_ts(code, font, font_size, char_spacing, word_spacing);
+    };
+    // markitai: a font with an encoding CMap steps code by code of its
+    // codespace.
+    match font.cid_codes.as_deref() {
+        Some(encoding) => encoding.codes(raw).for_each(|code| glyph(code.bytes)),
+        None => raw.chunks_exact(step).for_each(glyph),
     }
     (left <= right).then_some((left, right))
 }
@@ -803,8 +819,8 @@ pub(crate) fn read_page_runs(
                 }
             }
             Err(_) => {
-                if let Some(ff2_obj_num) = get_font_file2_obj_num(doc, font_dict) {
-                    font_tounicode_refs.insert(resource_name, ff2_obj_num);
+                if let Some(key) = font_cmap_key(doc, font_dict, font_cmaps) {
+                    font_tounicode_refs.insert(resource_name, key);
                 }
             }
         }

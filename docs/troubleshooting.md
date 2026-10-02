@@ -60,6 +60,18 @@ have no extractable text (scans, or pages made only of pictures). Run again with
 `--ocr` to read them (macOS). The terminal shows one line per document; the
 report and `--json` keep one warning per page.
 
+**`Warning: PDF page 4: 2 text runs (37 characters) could not be decoded and were omitted; …`.**
+Some text on the page is in a font whose characters cannot be identified (no
+character map the reader knows, or one that maps its codes to nothing usable).
+That text is left out and the rest of the page is kept. A variant says that
+characters `show as U+FFFD`: they stay in place as the replacement character;
+another that a font on the page names its glyphs by index only. Run again with
+`--ocr` (macOS) to read such a page from its image instead. When most of a page
+cannot be decoded, it is reported as `native text was not recovered
+(suspected_garbled_text)` instead, as above. Japanese, Chinese and Korean PDFs
+whose fonts are not embedded (Shift-JIS, GBK, Big5, UHC and Unicode CMaps) are
+read directly and need neither.
+
 **The first OCR takes half a minute.** Vision compiles its recognition models
 for this executable the first time it runs and caches them, so the first OCR
 after installing or updating Markitai takes about 25–45 seconds and later ones

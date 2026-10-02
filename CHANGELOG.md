@@ -106,6 +106,8 @@
 
 ### Fixed
 
+- PDF: Japanese, Chinese and Korean text in fonts that are not embedded and use a predefined CMap (Shift-JIS, GBK, GB2312, Big5, UHC, UCS-2 and UTF-16 CMaps) is now read, together with the Latin text on the same page; previously such pages were rejected as garbled. The binary CMap reader now follows the packed format, so all 169 bundled CMaps load.
+- PDF: a text run that cannot be decoded is left out of its page with a warning instead of discarding the whole page; `--ocr` recognizes such pages from their image.
 - Word, OpenDocument, RTF and EPUB: a manual line break is a hard break (`\`) that survives normal output, and two in a row end the paragraph; in a heading or a link's text it is a space, in a table cell `<br>`. Labels Markdown does not read (`a)`, `I.`, `一、`) keep one line per item.
 - Word, OpenDocument, RTF and EPUB: text is escaped only where Markdown would read it as syntax, so `snake_case`, `[!tip]`, `C:\Users` and `________` stay as written (18,000 generated DOCX paragraphs parse back to their text and styles under CommonMark/GFM); link text after a line break and italic citations around unlinked references are no longer lost or misparsed.
 - HTML: prose inside forms is kept (pages wrapped in an ASP.NET form, old Reddit post bodies); only controls and search, sign-in, newsletter and comment boxes are left out. Footers of articles, sections, figures and quotations are kept, a quotation's as `— Name`; task-list checkboxes become `[x]`/`[ ]`.

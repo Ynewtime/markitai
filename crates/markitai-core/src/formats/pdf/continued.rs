@@ -270,6 +270,7 @@ mod tests {
             screenshot_name: None,
             visibility_suspect: false,
             ocr_completed: false,
+            omitted_text: None,
             warning_index: 0,
             continues_table,
         }

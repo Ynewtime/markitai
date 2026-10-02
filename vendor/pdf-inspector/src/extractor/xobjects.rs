@@ -14,7 +14,7 @@ use super::fonts::{
     CMapDecisionCache, FontObjectIds, FontResources, FontStyleCache, LopdfEncodings,
     build_font_encodings, build_font_kinds, build_font_widths, build_type3_scales,
     build_type3_y_flips, compute_string_width_ts, extract_text_from_operand,
-    get_font_file2_obj_num, get_operand_bytes,
+    font_cmap_key, get_operand_bytes,
 };
 use super::geometry::{
     advanced_tm, baseline_rotation, estimated_advance_ts, reading_direction, rise_adjusted,
@@ -496,8 +496,8 @@ fn extract_form_xobject_text_inner(
                 }
             }
             Err(_) => {
-                if let Some(ff2_obj_num) = get_font_file2_obj_num(doc, font_dict) {
-                    font_tounicode_refs.insert(resource_name, ff2_obj_num);
+                if let Some(key) = font_cmap_key(doc, font_dict, font_cmaps) {
+                    font_tounicode_refs.insert(resource_name, key);
                 }
             }
         }

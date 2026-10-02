@@ -518,3 +518,199 @@ pub(crate) fn is_cid_garbage(text: &str) -> bool {
     let ascii_letters = text.chars().filter(|c| c.is_ascii_alphabetic()).count();
     total >= 20 && high_latin * 5 >= total * 2 && ascii_letters * 3 < total
 }
+
+/// Fewest readable characters — letters and digits of any script, CJK
+/// included — a page must keep for its text to stand on its own once runs
+/// that could not be decoded were left out of it (markitai).
+pub(crate) const MIN_READABLE_CHARS: u32 = 20;
+
+/// A page's text before and after [`drop_undecodable_runs`] (markitai).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PageTextTally {
+    /// Non-whitespace characters of the page's text runs as extracted.
+    pub(crate) chars: u32,
+    /// Runs left out because they could not be decoded.
+    pub(crate) dropped_runs: u32,
+    /// Their non-whitespace characters.
+    pub(crate) dropped_chars: u32,
+    /// Letters and digits of the runs kept.
+    pub(crate) readable: u32,
+    /// U+FFFD characters of the runs kept: codes those runs show that no
+    /// reading of the font decodes.
+    pub(crate) replacement_chars: u32,
+}
+
+impl PageTextTally {
+    /// Whether what was left out outweighs what was kept: more than half of
+    /// the page's characters, or so much that fewer than
+    /// [`MIN_READABLE_CHARS`] readable ones remain. The page then needs OCR
+    /// as a whole.
+    pub(crate) fn loss_dominates(&self) -> bool {
+        self.dropped_runs > 0
+            && (self.dropped_chars.saturating_mul(2) > self.chars
+                || self.readable < MIN_READABLE_CHARS)
+    }
+}
+
+/// Whether a text run could not be decoded at all and is left out of its
+/// page (markitai): its text shows a strong sign of a failed decoding (see
+/// [`text_span_decoding_issue_kind`]), or replacement characters make up
+/// at least half of it, or it shows a run of them and no letter of any
+/// script.
+pub(crate) fn run_is_undecodable(text: &str) -> bool {
+    let text = text.trim();
+    if text.is_empty() {
+        return false;
+    }
+    if text_span_decoding_issue_kind(text) == Some(TextSpanIssueKind::Strong) {
+        return true;
+    }
+    let (replacement, longest_run) = replacement_text_stats(text);
+    if replacement == 0 {
+        return false;
+    }
+    let visible = text.chars().filter(|ch| !ch.is_whitespace()).count();
+    replacement * 2 >= visible || (longest_run >= 2 && !text.chars().any(char::is_alphabetic))
+}
+
+/// Leave out of `items` the text runs that could not be decoded (see
+/// [`run_is_undecodable`]), so that a run in a font no reading decodes
+/// costs its page that run rather than all of its text (markitai). Returns
+/// what is kept, and each page's tally of what was extracted, left out and
+/// kept (pages with text runs only).
+pub(crate) fn drop_undecodable_runs(
+    items: Vec<TextItem>,
+) -> (Vec<TextItem>, BTreeMap<u32, PageTextTally>) {
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    let mut tallies = BTreeMap::<u32, PageTextTally>::new();
+    let mut kept = Vec::with_capacity(items.len());
+    for item in items {
+        if !matches!(item.item_type, crate::types::ItemType::Text) {
+            kept.push(item);
+            continue;
+        }
+        let tally = tallies.entry(item.page).or_default();
+        let visible = count(item.text.chars().filter(|ch| !ch.is_whitespace()).count());
+        tally.chars = tally.chars.saturating_add(visible);
+        if run_is_undecodable(&item.text) {
+            tally.dropped_runs = tally.dropped_runs.saturating_add(1);
+            tally.dropped_chars = tally.dropped_chars.saturating_add(visible);
+            continue;
+        }
+        let readable = count(item.text.chars().filter(|ch| ch.is_alphanumeric()).count());
+        let replaced = count(item.text.chars().filter(|&ch| ch == '\u{FFFD}').count());
+        tally.readable = tally.readable.saturating_add(readable);
+        tally.replacement_chars = tally.replacement_chars.saturating_add(replaced);
+        kept.push(item);
+    }
+    (kept, tallies)
+}
+
+/// [`detect_encoding_issues`] without its first heuristic (markitai): for
+/// Markdown built from runs whose replacement characters
+/// [`analyze_text_quality`] has weighed already, page by page.
+pub(crate) fn detect_encoding_issues_beyond_replacement(markdown: &str) -> bool {
+    if has_dollar_as_space_pattern(markdown) {
+        return true;
+    }
+    let mut stats = CipherGarbleStats::default();
+    stats.add_text(markdown);
+    stats.looks_garbled()
+}
+
+#[cfg(test)]
+mod run_tests {
+    use super::*;
+
+    fn item(page: u32, text: &str) -> TextItem {
+        TextItem {
+            text: text.to_string(),
+            x: 10.0,
+            y: 700.0,
+            width: 120.0,
+            height: 10.0,
+            font: "Test".to_string(),
+            font_tag: String::new(),
+            legacy_symbol_rewrite: false,
+            font_size: 10.0,
+            page,
+            is_bold: false,
+            is_italic: false,
+            font_weight: None,
+            bold_source: None,
+            fixed_pitch: None,
+            fill_color: None,
+            stroke_color: None,
+            render_mode: None,
+            is_underline: false,
+            is_strikeout: false,
+            rotation: 0.0,
+            advance_known: true,
+            item_type: crate::types::ItemType::Text,
+            mcid: None,
+            baseline_shift: 0.0,
+        }
+    }
+
+    #[test]
+    fn runs_that_did_not_decode_are_told_apart_from_runs_with_a_gap() {
+        // Replacement characters make up half or more of the run.
+        assert!(run_is_undecodable("\u{FFFD}\u{FFFD}\u{FFFD}"));
+        assert!(run_is_undecodable("a\u{FFFD}"));
+        // A run of them and no letter at all.
+        assert!(run_is_undecodable("12 \u{FFFD}\u{FFFD} 34 56 78"));
+        // Private-use code points: a strong sign of a failed decoding.
+        assert!(run_is_undecodable("\u{E001}\u{E002}\u{E003}"));
+        // A gap in text that reads.
+        assert!(!run_is_undecodable("吾\u{FFFD}輩は猫である"));
+        assert!(!run_is_undecodable("Plain text"));
+        assert!(!run_is_undecodable("   "));
+    }
+
+    #[test]
+    fn dropping_runs_tallies_each_page() {
+        let (kept, tallies) = drop_undecodable_runs(vec![
+            item(1, "Readable heading"),
+            item(1, "\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}"),
+            item(1, "吾\u{FFFD}輩"),
+            item(2, "Another page"),
+        ]);
+        let texts: Vec<&str> = kept.iter().map(|item| item.text.as_str()).collect();
+        assert_eq!(texts, ["Readable heading", "吾\u{FFFD}輩", "Another page"]);
+        assert_eq!(
+            tallies[&1],
+            PageTextTally {
+                chars: 22,
+                dropped_runs: 1,
+                dropped_chars: 4,
+                readable: 17,
+                replacement_chars: 1,
+            }
+        );
+        // Little text left: the loss outweighs what was kept.
+        assert!(tallies[&1].loss_dominates());
+        assert_eq!(tallies[&2].dropped_runs, 0);
+        assert!(!tallies[&2].loss_dominates());
+        let ample = PageTextTally {
+            chars: 100,
+            dropped_runs: 1,
+            dropped_chars: 20,
+            readable: 80,
+            replacement_chars: 0,
+        };
+        assert!(!ample.loss_dominates());
+        assert!(PageTextTally {
+            dropped_chars: 60,
+            ..ample
+        }
+        .loss_dominates());
+    }
+
+    #[test]
+    fn markdown_checks_beyond_replacement_still_catch_other_garbling() {
+        assert!(!detect_encoding_issues_beyond_replacement("吾\u{FFFD}輩"));
+        assert!(detect_encoding_issues("吾\u{FFFD}輩"));
+        let dollars = "Word$Word$Word$Word$Word$Word$Word$Word$Word$Word$Word$Word";
+        assert!(detect_encoding_issues_beyond_replacement(dollars));
+    }
+}

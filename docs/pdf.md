@@ -503,6 +503,71 @@ short pages (the page reader's own threshold), kashida inserted by
 justification, which is kept as text, the number ambiguity above, and zero
 width non-joiners, which the PDFs do not carry.
 
+## CJK fonts and text that cannot be decoded
+
+A Type0 font without a ToUnicode CMap whose `/Encoding` is a CMap other than
+Identity-H/V is read as PDF 32000-1:2008, 9.10.2 prescribes: each code selects a
+CID through that CMap, and the CID reads as the `Adobe-<Ordering>-UCS2` CMap of
+the descendant's character collection has it. This covers the predefined CMaps
+of non-embedded Japanese, Chinese and Korean fonts written by Distiller,
+Ghostscript, iText, PyMuPDF and older Office exports (`90ms-RKSJ-H`,
+`GBK-EUC-H`, `GB-EUC-H`, `B5pc-H`, `ETen-B5-H`, `KSCms-UHC-H`, `Uni*-UCS2-H`,
+`Uni*-UTF16-H` and their `-V` forms; the 169 pdf.js binary CMaps are compiled
+in) and CMaps embedded as streams, with their `usecmap` base. Strings split by
+the CMap's codespace, so the one-byte ASCII of Shift-JIS, GBK, Big5 and UHC
+between two-byte ideographs and the four-byte surrogate pairs of UTF-16 each
+stay one code; widths are read by the CID each code selects, and word spacing
+applies to the one-byte code 32. A code the CMap or the collection does not
+map shows as U+FFFD, a one-byte control code as nothing. Before this, no
+built-in CMap parsed (the binary reader did not follow the format past each
+record's first entry), and such a page lost all of its text, its Latin lines
+included, to `suspected_garbled_text`.
+
+The parsed CMaps are kept for the life of the process: the first document
+that needs one pays about a millisecond to read it (measured in a release build
+of the reader on Apple silicon: 0.8 ms for `90ms-RKSJ-H` with Adobe-Japan1,
+1.2 ms for `UniCNS-UTF16-H` with Adobe-CNS1), later ones nothing. Identity-H/V
+fonts, with or without a ToUnicode CMap, are read as before: the collections'
+UCS2 CMaps are not applied to an Identity-encoded font's CIDs, which may be its
+program's glyph indices (only Korea1 keeps its table reading). A font with a
+ToUnicode CMap whose encoding is a predefined CMap takes the encoding's reading
+as its fallback, and as its reading when the ToUnicode CMap has fewer than ten
+entries; otherwise its codes are still split by the ToUnicode CMap's width.
+Vertical CMaps read like their horizontal forms; text laid out vertically is
+not reconstructed, and comes out in the order of its lines across the columns.
+
+A text run that still cannot be decoded is left out of its page rather than
+costing the page all of its text. A run is left out when it shows a strong sign
+of failed decoding (private-use or C1-control code points, `$` between letters,
+symbol soup), when U+FFFD makes up at least half of it, or when it shows two
+U+FFFD in a row and no letter of any script. The page then needs OCR only if
+the runs kept are themselves unreliable (the page-level replacement-character
+and cipher checks), if what was left out is more than half of the page's
+characters, or if fewer than 20 letters and digits remain. A page listing a
+font that names its glyphs by index only (`gidNNNN` without a CMap) no longer
+needs OCR for that alone when 20 readable characters remain. U+FFFD in a run
+that is kept stays in place; the Markdown no longer sends a page to OCR for a
+single replacement character.
+
+Such a page carries a warning, deferred like the missing-text warnings so that
+OCR removes it:
+
+```text
+PDF page 1: 1 text run (20 characters) could not be decoded and was omitted; run again with --ocr to recover it.
+```
+
+or that characters `show as U+FFFD`, or that a font on the page names its
+glyphs by index only. With `--ocr` such a page is recognized from its image as
+a whole, as a page that needs OCR is. The reader reports these pages in
+`PagesExtractionResult::omitted_text_by_page` (`PageOmittedText`: page, runs,
+characters, replacement characters, glyphs without identity), and
+`LoadedPdf::text_with_positions_and_rotations` leaves out the same runs, so the
+layout, running-header and comment readers see the page as its Markdown does.
+Probes of the CMaps listed above and of PyMuPDF's built-in CJK fonts convert to
+the text PyMuPDF reads, and a page with a run of undecodable Identity-H text
+keeps its Latin lines; the other 228 PDFs of the local corpora convert
+byte-identically.
+
 ## Images and remaining work
 
 Executed embedded raster images retain their existing extraction path and are

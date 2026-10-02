@@ -155,10 +155,15 @@ pub(crate) fn word_gap_candidate(
     } else {
         1
     };
-    if font_size <= 0.0 || !raw.len().is_multiple_of(code_len) {
+    // markitai: a font with an encoding CMap splits by its codespace.
+    let encoding = font_info.and_then(|font_info| font_info.cid_codes.as_deref());
+    if font_size <= 0.0 || (encoding.is_none() && !raw.len().is_multiple_of(code_len)) {
         return None;
     }
-    let codes: Vec<&[u8]> = raw.chunks_exact(code_len).collect();
+    let codes: Vec<&[u8]> = match encoding {
+        Some(encoding) => encoding.codes(raw).map(|code| code.bytes).collect(),
+        None => raw.chunks_exact(code_len).collect(),
+    };
     if !(2..=MAX_BOUNDARY_GLYPHS).contains(&codes.len()) {
         return None;
     }
@@ -395,6 +400,9 @@ fn is_tracked_display_glyph(c: char) -> bool {
 /// Whether `raw` shows exactly one glyph: one code, two bytes per code for
 /// CID fonts.
 fn is_single_glyph(raw: &[u8], font_info: Option<&FontWidthInfo>) -> bool {
+    if let Some(encoding) = font_info.and_then(|font_info| font_info.cid_codes.as_deref()) {
+        return encoding.codes(raw).count() == 1;
+    }
     let code_len = if font_info.is_some_and(|font_info| font_info.is_cid) {
         2
     } else {
@@ -418,6 +426,17 @@ pub(crate) fn is_dependent_sign(raw: &[u8], font_info: Option<&FontWidthInfo>) -
     let Some(font_info) = font_info else {
         return false;
     };
+    // markitai: a font with an encoding CMap: each code by the CID it
+    // selects.
+    if let Some(encoding) = font_info.cid_codes.as_deref() {
+        let codes: Vec<_> = encoding.codes(raw).collect();
+        return (1..=MAX_SIGN_GLYPHS).contains(&codes.len())
+            && codes.iter().all(|code| {
+                encoding
+                    .cid(code)
+                    .is_some_and(|cid| font_info.widths.get(&cid) == Some(&0))
+            });
+    }
     let code_len = if font_info.is_cid { 2 } else { 1 };
     if !(1..=MAX_SIGN_GLYPHS).contains(&(raw.len() / code_len))
         || !raw.len().is_multiple_of(code_len)
@@ -759,6 +778,7 @@ mod tests {
             is_cid: false,
             units_scale: 0.001,
             wmode: 0,
+            cid_codes: None,
         }
     }
 

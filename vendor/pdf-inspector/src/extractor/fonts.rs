@@ -544,6 +544,7 @@ fn base14_fallback_widths(
         is_cid: false,
         units_scale: 0.001,
         wmode: 0,
+        cid_codes: None,
     })
 }
 
@@ -651,6 +652,7 @@ pub(crate) fn parse_simple_font_widths(
         is_cid: false,
         units_scale,
         wmode: 0,
+        cid_codes: None,
     })
 }
 
@@ -717,6 +719,7 @@ pub(crate) fn parse_type0_widths(
         is_cid: true,
         units_scale: 0.001, // CID fonts use standard 1000-unit system
         wmode,
+        cid_codes: crate::tounicode::font_encoding_cmap(font_dict, doc),
     })
 }
 
@@ -882,7 +885,28 @@ pub(crate) fn compute_string_width_ts(
 ) -> f32 {
     let mut total: f32 = 0.0;
     let mut num_spaces: usize = 0;
-    let num_chars = if font_info.is_cid {
+    let num_chars = if let Some(encoding) = font_info.cid_codes.as_deref() {
+        // markitai: codes as the font's encoding CMap splits the string,
+        // each measured by the CID it selects (CID 0, `.notdef`, for a
+        // code that selects none); word spacing applies to the one-byte
+        // code 32 (PDF 32000-1:2008, 9.3.3).
+        let mut count = 0usize;
+        for code in encoding.codes(bytes) {
+            let cid = encoding.cid(&code).unwrap_or(0);
+            total += f32::from(
+                font_info
+                    .widths
+                    .get(&cid)
+                    .copied()
+                    .unwrap_or(font_info.default_width),
+            );
+            if code.bytes == [0x20] {
+                num_spaces += 1;
+            }
+            count += 1;
+        }
+        count
+    } else if font_info.is_cid {
         // 2-byte (big-endian) character codes
         let mut j = 0;
         let mut count = 0usize;
@@ -2248,6 +2272,22 @@ fn is_ligature_char(ch: char) -> bool {
     )
 }
 
+/// The key `font_cmaps` holds the reading of a font without a ToUnicode
+/// CMap under (markitai): a Type0 font whose encoding is a CMap other than
+/// Identity-H/V is read through that CMap and its CID collection, under a
+/// key of its own (see [`crate::tounicode::predefined_cmap_key`]), when
+/// that reading could be built; any other font as
+/// [`get_font_file2_obj_num`] says.
+pub(crate) fn font_cmap_key(
+    doc: &Document,
+    font_dict: &lopdf::Dictionary,
+    font_cmaps: &FontCMaps,
+) -> Option<u32> {
+    crate::tounicode::predefined_cmap_key(font_dict, doc)
+        .filter(|&key| font_cmaps.get_by_obj(key).is_some())
+        .or_else(|| get_font_file2_obj_num(doc, font_dict))
+}
+
 /// Get the CMap lookup key for an Identity-H/V CID font without ToUnicode.
 /// Returns the object number used by `collect_cmaps_from_fonts` to store the CMap:
 /// - FontFile2 or FontFile3 obj_num (for embedded font cmap)
@@ -2832,6 +2872,17 @@ pub(crate) fn extract_text_from_operand(
     let result = (|| -> Option<String> {
         if let Object::String(bytes, _) = obj {
             let mut decode_with_entry = |entry: &crate::tounicode::CMapEntry| -> Option<String> {
+                // markitai: a font read through its encoding CMap and CID
+                // collection splits its strings by the encoding's
+                // codespace, and that reading is the string's: no byte or
+                // two-byte guess below applies to it.
+                if entry.primary.predefined.is_some() {
+                    let decoded = CidDecode::new(&entry.primary, bytes);
+                    if is_type0_cid_font {
+                        cmap_decisions.record_coverage(font_label, decoded.stats);
+                    }
+                    return Some(decoded.joined(bytes));
+                }
                 // For single-byte CMaps, and for any CMap of a simple font,
                 // merge CMap + Differences at the byte level: try CMap first,
                 // then Differences, then Latin-1 fallback per byte. This
@@ -3849,6 +3900,7 @@ mod tests {
                 is_cid: true,
                 units_scale: 0.001,
                 wmode: 0,
+                cid_codes: None,
             },
         );
         widths
@@ -4974,6 +5026,7 @@ mod tests {
             is_cid,
             units_scale: 0.001,
             wmode: 0,
+            cid_codes: None,
         }
     }
 

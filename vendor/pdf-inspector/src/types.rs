@@ -184,6 +184,11 @@ pub(crate) struct FontWidthInfo {
     pub(crate) units_scale: f32,
     /// Writing mode: 0 = horizontal (default), 1 = vertical
     pub(crate) wmode: u8,
+    /// markitai: for a composite font whose encoding is a CMap other than
+    /// Identity-H/V, how its strings split into codes and the CID each
+    /// code selects, which `widths` is keyed by. `None` for every other
+    /// font: two bytes a code, the code its CID, for a composite font.
+    pub(crate) cid_codes: Option<std::sync::Arc<crate::tounicode::EncodingCMap>>,
 }
 
 /// Glyphs a width table has to carry, all sharing one advance, before it

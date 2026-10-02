@@ -400,6 +400,7 @@ fn font_readings_stop_at_their_bound() {
         is_cid: false,
         units_scale: 0.001,
         wmode: 0,
+        cid_codes: None,
     };
     // A font and its one width are two entries: past the bound.
     readings.keep_widths((1, 0), &Some(widths));

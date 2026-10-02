@@ -113,6 +113,7 @@ impl Plan {
                     && (!routing
                         || page.needs_ocr
                         || page.visibility_suspect
+                        || page.omitted_text.is_some()
                         || page.markdown.trim().is_empty())
             })
             .collect();
@@ -767,6 +768,24 @@ mod tests {
         pages.pages[0].visibility_suspect = false;
         let cfg = json!({"ocr":{"enabled":true,"per_page_routing":false}});
         assert_eq!(Plan::new(&pages, &cfg, false).unwrap().recognize, [true; 3]);
+    }
+
+    #[test]
+    fn native_pages_with_omitted_text_are_recognized_when_ocr_is_on() {
+        let mut pages = pages();
+        pages.pages[0].omitted_text = Some(pdf_inspector::PageOmittedText {
+            page: 1,
+            runs: 1,
+            chars: 20,
+            replacement_chars: 0,
+            unidentified_glyphs: false,
+        });
+        let cfg = json!({"ocr":{"enabled":true}});
+        assert_eq!(Plan::new(&pages, &cfg, false).unwrap().recognize, [true; 3]);
+        assert_eq!(
+            Plan::new(&pages, &json!({}), false).unwrap().recognize,
+            [false; 3]
+        );
     }
 
     #[test]

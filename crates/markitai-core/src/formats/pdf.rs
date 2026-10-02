@@ -699,6 +699,10 @@ pub(crate) struct PdfPage {
     pub screenshot_name: Option<String>,
     pub visibility_suspect: bool,
     pub ocr_completed: bool,
+    /// Text the page reader left out of a page whose reading stands, or
+    /// could only partly decode: runs in a font no reading decodes, the
+    /// characters shown as U+FFFD, a font whose glyphs have no identity.
+    pub omitted_text: Option<pdf_inspector::PageOmittedText>,
     // Deferred missing-text diagnostics retain their original position among
     // inspection/image warnings. Callers may append warnings before finishing.
     warning_index: usize,
@@ -747,11 +751,12 @@ impl PdfPages {
             // A page whose text all continued the previous page's table
             // keeps only its marker.
             let mut section = if readable && page.markdown.trim().is_empty() {
+                warning.extend(omitted_text_warning(&page));
                 format!("<!-- Page number: {} -->", page.number)
             } else {
                 page_markdown(&page, &mut warning)
             };
-            if let Some(warning) = warning.pop() {
+            for warning in warning {
                 deferred.push((page.warning_index, warning));
             }
             for name in page.asset_names {
@@ -884,8 +889,57 @@ fn page_markdown(page: &PdfPage, warnings: &mut Vec<String>) -> String {
         warnings.push(format!("PDF page {number}: native text was not recovered ({reason}); OCR is required for this page."));
         marker
     } else {
+        warnings.extend(omitted_text_warning(page));
         format!("{marker}\n\n{}", join_bold_runs(page.markdown.trim()))
     }
+}
+
+/// The warning for the text the page reader left out of a native page, or
+/// could only partly decode; none once OCR read the page.
+fn omitted_text_warning(page: &PdfPage) -> Option<String> {
+    let omitted = page.omitted_text.filter(|_| !page.ocr_completed)?;
+    let plural = |count: u32, one: &str, many: &str| {
+        format!("{count} {}", if count == 1 { one } else { many })
+    };
+    let mut parts = Vec::new();
+    if omitted.runs > 0 {
+        parts.push(format!(
+            "{} ({}) could not be decoded and {} omitted",
+            plural(omitted.runs, "text run", "text runs"),
+            plural(omitted.chars, "character", "characters"),
+            if omitted.runs == 1 { "was" } else { "were" }
+        ));
+    }
+    if omitted.replacement_chars > 0 {
+        parts.push(format!(
+            "{} could not be decoded and {} as U+FFFD",
+            plural(omitted.replacement_chars, "character", "characters"),
+            if omitted.replacement_chars == 1 {
+                "shows"
+            } else {
+                "show"
+            }
+        ));
+    }
+    if omitted.unidentified_glyphs {
+        parts.push(
+            "a font on the page names its glyphs by index only, and any text in it could not be read"
+                .to_string(),
+        );
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    let object = if omitted.runs + omitted.replacement_chars > 1 {
+        "them"
+    } else {
+        "it"
+    };
+    Some(format!(
+        "PDF page {}: {}; run again with --ocr to recover {object}.",
+        page.number,
+        parts.join("; ")
+    ))
 }
 
 fn readable_fallback(text: &str) -> bool {
@@ -1082,8 +1136,18 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
             .map_err(|error| error.to_string()),
         Err(error) => Err(error.to_string()),
     };
+    // What each page's reading left out, by page number.
+    let mut omitted = BTreeMap::new();
     let extracted = match whole {
-        Ok(result) => result.pages,
+        Ok(result) => {
+            omitted.extend(
+                result
+                    .omitted_text_by_page
+                    .into_iter()
+                    .map(|text| (text.page, text)),
+            );
+            result.pages
+        }
         Err(error) => {
             document.warnings.push(format!(
                 "Whole-document extraction failed ({error}); pages were retried independently."
@@ -1099,7 +1163,15 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
                                 .pages_markdown_with_marks(Some(&[page - 1]), &painted)
                                 .ok()
                         })
-                        .and_then(|mut result| result.pages.pop())
+                        .and_then(|mut result| {
+                            omitted.extend(
+                                result
+                                    .omitted_text_by_page
+                                    .into_iter()
+                                    .map(|text| (text.page, text)),
+                            );
+                            result.pages.pop()
+                        })
                         .unwrap_or(pdf_inspector::PageMarkdown {
                             page: page - 1,
                             markdown: String::new(),
@@ -1235,6 +1307,7 @@ fn extract_pages_inner(bytes: &[u8], max_pages: Option<usize>) -> Result<PdfPage
             screenshot_name: None,
             visibility_suspect,
             ocr_completed: false,
+            omitted_text: omitted.remove(&number).filter(|_| !page.needs_ocr),
             warning_index,
             continues_table,
         });
@@ -1670,6 +1743,7 @@ mod tests {
                 screenshot_name: None,
                 visibility_suspect: false,
                 ocr_completed: false,
+                omitted_text: None,
                 warning_index: 0,
                 continues_table: false,
             },
@@ -1686,6 +1760,7 @@ mod tests {
                 screenshot_name: None,
                 visibility_suspect: false,
                 ocr_completed: false,
+                omitted_text: None,
                 warning_index: 0,
                 continues_table: false,
             },
@@ -2281,5 +2356,181 @@ mod tests {
         let message = extract(&bytes).unwrap_err().to_string();
         assert!(message.contains("document contains no pages"), "{message}");
         assert!(!message.contains("encrypted"), "{message}");
+    }
+
+    /// A page of Helvetica lines and of strings in a Type0 font without a
+    /// program or a ToUnicode CMap: `encoding` over Adobe `ordering` CIDs.
+    fn cjk_pdf(encoding: &str, ordering: &str, runs: &[(bool, Vec<u8>)]) -> Vec<u8> {
+        let mut pdf = lopdf::Document::with_version("1.4");
+        let descendant = pdf.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "CIDFontType2", "BaseFont" => "SimSun",
+            "CIDSystemInfo" => dictionary! {
+                "Registry" => Object::string_literal("Adobe"),
+                "Ordering" => Object::string_literal(ordering),
+                "Supplement" => 2,
+            },
+            "DW" => 1000,
+        });
+        let cjk = pdf.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type0", "BaseFont" => "SimSun",
+            "Encoding" => encoding,
+            "DescendantFonts" => vec![Object::Reference(descendant)],
+        });
+        let latin = pdf.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+            "Encoding" => "WinAnsiEncoding",
+        });
+        let mut content = String::new();
+        for (index, (in_cjk, bytes)) in runs.iter().enumerate() {
+            let hex: String = bytes.iter().map(|byte| format!("{byte:02X}")).collect();
+            let font = if *in_cjk { "F1" } else { "F2" };
+            let y = 740 - 24 * index;
+            content.push_str(&format!("BT /{font} 14 Tf 72 {y} Td <{hex}> Tj ET\n"));
+        }
+        let contents = pdf.add_object(lopdf::Stream::new(dictionary! {}, content.into_bytes()));
+        let tree = pdf.new_object_id();
+        let page = pdf.add_object(dictionary! {
+            "Type" => "Page", "Parent" => tree, "Contents" => contents,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Resources" => dictionary! { "Font" => dictionary! { "F1" => cjk, "F2" => latin } },
+        });
+        pdf.objects.insert(
+            tree,
+            dictionary! { "Type" => "Pages", "Count" => 1, "Kids" => vec![page.into()] }.into(),
+        );
+        let catalog = pdf.add_object(dictionary! { "Type" => "Catalog", "Pages" => tree });
+        pdf.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        pdf.save_to(&mut bytes).unwrap();
+        bytes
+    }
+
+    fn utf16(text: &str) -> Vec<u8> {
+        text.encode_utf16().flat_map(u16::to_be_bytes).collect()
+    }
+
+    const CHINESE: &str = "这是一个简体中文测试。文档转换质量检查。";
+
+    #[test]
+    fn a_predefined_cmap_page_reads_its_cjk_and_latin_lines() {
+        let bytes = cjk_pdf(
+            "UniGB-UCS2-H",
+            "GB1",
+            &[
+                (false, b"English line before".to_vec()),
+                (true, utf16(CHINESE)),
+                (false, b"English line after".to_vec()),
+            ],
+        );
+        let document = extract(&bytes).unwrap();
+        for line in ["English line before", CHINESE, "English line after"] {
+            assert!(document.markdown.contains(line), "{}", document.markdown);
+        }
+        assert!(
+            !document
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("could not be decoded")),
+            "{:?}",
+            document.warnings
+        );
+    }
+
+    #[test]
+    fn an_undecodable_run_is_left_out_with_a_warning() {
+        // Identity-H over GB1 CIDs that are in fact UTF-16 code units: no
+        // reading of the font decodes them.
+        let bytes = cjk_pdf(
+            "Identity-H",
+            "GB1",
+            &[
+                (false, b"English line before".to_vec()),
+                (true, utf16(CHINESE)),
+                (false, b"English line after".to_vec()),
+            ],
+        );
+        let pages = extract_pages(&bytes).unwrap();
+        assert!(!pages.pages[0].needs_ocr);
+        assert_eq!(
+            pages.pages[0].omitted_text,
+            Some(pdf_inspector::PageOmittedText {
+                page: 1,
+                runs: 1,
+                chars: 20,
+                replacement_chars: 0,
+                unidentified_glyphs: false,
+            })
+        );
+        let document = pages.finish().unwrap();
+        // The layout reader sees the page without the run too, and reads
+        // the two lines as the paragraphs they are.
+        assert_eq!(
+            document.markdown,
+            "<!-- Page number: 1 -->\n\nEnglish line before\n\nEnglish line after"
+        );
+        assert!(
+            document.warnings.iter().any(|warning| warning
+                == "PDF page 1: 1 text run (20 characters) could not be decoded and was omitted; run again with --ocr to recover it."),
+            "{:?}",
+            document.warnings
+        );
+    }
+
+    #[test]
+    fn a_page_mostly_undecodable_still_needs_ocr() {
+        let mut runs = vec![(false, b"A single readable line of English text".to_vec())];
+        runs.extend((0..4).map(|_| (true, utf16(CHINESE))));
+        let message = extract(&cjk_pdf("Identity-H", "GB1", &runs))
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("suspected_garbled_text"), "{message}");
+    }
+
+    #[test]
+    fn omitted_text_warnings_name_what_was_lost_until_ocr_reads_the_page() {
+        let page = |omitted: pdf_inspector::PageOmittedText, ocr_completed: bool| PdfPage {
+            number: 2,
+            markdown: "Readable text".into(),
+            needs_ocr: false,
+            ocr_reason: None,
+            asset_names: Vec::new(),
+            asset_ocr: BTreeMap::new(),
+            screenshot_name: None,
+            visibility_suspect: false,
+            ocr_completed,
+            omitted_text: Some(omitted),
+            warning_index: 0,
+            continues_table: false,
+        };
+        let omitted = pdf_inspector::PageOmittedText {
+            page: 2,
+            runs: 3,
+            chars: 41,
+            replacement_chars: 0,
+            unidentified_glyphs: false,
+        };
+        assert_eq!(
+            omitted_text_warning(&page(omitted, false)).as_deref(),
+            Some(
+                "PDF page 2: 3 text runs (41 characters) could not be decoded and were omitted; run again with --ocr to recover them."
+            )
+        );
+        let partial = pdf_inspector::PageOmittedText {
+            runs: 0,
+            chars: 0,
+            replacement_chars: 1,
+            unidentified_glyphs: true,
+            ..omitted
+        };
+        assert_eq!(
+            omitted_text_warning(&page(partial, false)).as_deref(),
+            Some(
+                "PDF page 2: 1 character could not be decoded and shows as U+FFFD; a font on the page names its glyphs by index only, and any text in it could not be read; run again with --ocr to recover it."
+            )
+        );
+        assert_eq!(omitted_text_warning(&page(omitted, true)), None);
+        let mut warnings = Vec::new();
+        page_markdown(&page(omitted, false), &mut warnings);
+        assert_eq!(warnings.len(), 1);
     }
 }
