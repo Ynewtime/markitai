@@ -297,7 +297,7 @@ fn convert_inner(
     let office_media_requested = office_media_wanted && !office_ocr_without_renderer;
     if !is_url {
         let path = &input_path;
-        output::check_path(path, config::enabled(&cfg, "/output/allow_symlinks"))?;
+        output::check_user_path(path, config::enabled(&cfg, "/output/allow_symlinks"))?;
         let meta = std::fs::metadata(path).map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
                 Error::NotFound(source.into())

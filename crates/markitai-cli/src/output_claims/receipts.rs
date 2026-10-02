@@ -920,7 +920,7 @@ mod tests {
         fs::rename(root.join("tree"), root.join("moved")).unwrap();
         symlink(root.join("moved"), root.join("tree")).unwrap();
         let error = pending.finish().unwrap_err().to_string();
-        assert!(error.contains("symlink policy"), "{error}");
+        assert!(error.contains("claimed output parent changed"), "{error}");
         assert!(!root.join("moved/out/note.md").exists());
         assert!(!fs::read_dir(root.join("moved/out")).unwrap().any(|entry| {
             entry
@@ -936,7 +936,12 @@ mod tests {
         let (_dir, leases, _owner) = setup();
         let path = leases.parent().join("note.md");
         publish(&leases, None, Policy::NoClobber, &path, b"first").unwrap();
-        assert!(!leases.parent().join(".markitai/ownership/records").exists());
+        assert_eq!(
+            fs::read_dir(leases.parent().join(".markitai/ownership/records"))
+                .unwrap()
+                .count(),
+            0
+        );
         assert!(publish(&leases, None, Policy::NoClobber, &path, b"second").is_err());
         assert_eq!(fs::read(path).unwrap(), b"first");
     }
@@ -1334,7 +1339,12 @@ mod tests {
         let path = leases.parent().join("note.md");
         assert!(publish(&leases, Some(&owner), Policy::NoClobber, &path, b"no").is_err());
         assert!(!path.exists());
-        assert!(!leases.parent().join(".markitai/ownership/records").exists());
+        assert_eq!(
+            fs::read_dir(leases.parent().join(".markitai/ownership/records"))
+                .unwrap()
+                .count(),
+            0
+        );
     }
 
     #[cfg(unix)]

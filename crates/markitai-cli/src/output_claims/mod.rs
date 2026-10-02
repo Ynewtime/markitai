@@ -3,10 +3,11 @@ mod leases;
 mod namespace;
 mod receipts;
 pub(crate) mod sync_group;
+pub(crate) mod v2;
 pub(crate) use receipts::group::{PreparedDocument, PublicationGroup, RenderedMember};
 
 pub(crate) use leases::{
-    MemberLeases, prepare_namespace_parent, prepare_output_ancestors, reserve_keys,
+    MemberLeases, existing_keys, prepare_namespace_parent, prepare_output_ancestors, reserve_keys,
 };
 pub(crate) use namespace::{MAX_NAMESPACE_PARENTS, NamespaceBatch, PreparedNamespaces};
 pub(crate) use receipts::{adopt_owner, reservation_members};
@@ -68,6 +69,17 @@ pub(crate) struct Claim {
 }
 
 impl Claim {
+    /// Observing an existing result is not a write claim. No locks, receipt,
+    /// ownership directories or provider work are needed for this decision.
+    pub(crate) fn skipped(parent: &Path, allow_symlinks: bool) -> Result<Self> {
+        Ok(Self {
+            leases: MemberLeases::skipped(parent, allow_symlinks)?,
+            owner: None,
+            policy: Policy::NoClobber,
+            skip: true,
+        })
+    }
+
     pub(crate) fn new(
         leases: MemberLeases,
         owner: Option<Owner>,
@@ -94,6 +106,12 @@ impl Claim {
     }
     pub(crate) fn is_skip(&self) -> bool {
         self.skip
+    }
+    pub(crate) fn members(&self) -> &[String] {
+        self.leases.members()
+    }
+    pub(crate) fn epoch(&self) -> Option<std::sync::Arc<v2::Epoch>> {
+        self.leases.epoch()
     }
     pub(crate) fn keys(&self) -> Vec<markitai_core::platform::FileId> {
         self.leases.keys()

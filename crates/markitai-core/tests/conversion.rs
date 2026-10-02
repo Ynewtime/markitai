@@ -555,25 +555,65 @@ fn profiles_run_after_llm_and_each_retained_file_keeps_its_own_metadata() {
 
 #[cfg(unix)]
 #[test]
-fn output_parent_symlinks_do_not_modify_external_files() {
+fn current_user_output_parent_aliases_publish_and_preserve_unrelated_files() {
     let dir = tempfile::tempdir().unwrap();
     let input = dir.path().join("input.md");
-    std::fs::write(&input, "content").unwrap();
-    let outside = dir.path().join("outside");
-    std::fs::create_dir(&outside).unwrap();
+    let body = "Authored document.\n\nComplete second paragraph.\n";
+    std::fs::write(&input, body).unwrap();
+    let target = dir.path().join("target");
+    std::fs::create_dir(&target).unwrap();
+    let unrelated = target.join("unrelated.bin");
+    let sentinel = b"unaltered neighboring bytes\0\xff";
+    std::fs::write(&unrelated, sentinel).unwrap();
     let link = dir.path().join("link");
-    std::os::unix::fs::symlink(&outside, &link).unwrap();
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    let result = convert(
+        input.to_str().unwrap(),
+        ConvertOptions {
+            output_dir: Some(link),
+            ..options()
+        },
+    )
+    .unwrap();
+    let expected = std::fs::canonicalize(&target).unwrap().join("input.md.md");
+    assert_eq!(result.output_path.as_ref(), Some(&expected));
+    assert_eq!(result.markdown, body);
+    let written = std::fs::read_to_string(expected).unwrap();
+    assert!(written.ends_with(body));
+    assert_eq!(std::fs::read(unrelated).unwrap(), sentinel);
+}
+
+#[cfg(unix)]
+#[test]
+fn default_output_leaf_symlinks_preserve_their_external_target() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("input.md");
+    std::fs::write(&input, "Authored document.\n").unwrap();
+    let target = dir.path().join("target");
+    std::fs::create_dir(&target).unwrap();
+    let guard = dir.path().join("external.bin");
+    let sentinel = b"unaltered external bytes\0\xff";
+    std::fs::write(&guard, sentinel).unwrap();
+    let leaf = target.join("input.md.md");
+    std::os::unix::fs::symlink(&guard, &leaf).unwrap();
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    let error = convert(
+        input.to_str().unwrap(),
+        ConvertOptions {
+            output_dir: Some(link),
+            ..options()
+        },
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("input.md.md"));
+    assert_eq!(std::fs::read(guard).unwrap(), sentinel);
     assert!(
-        convert(
-            input.to_str().unwrap(),
-            ConvertOptions {
-                output_dir: Some(link),
-                ..options()
-            }
-        )
-        .is_err()
+        std::fs::symlink_metadata(leaf)
+            .unwrap()
+            .file_type()
+            .is_symlink()
     );
-    assert_eq!(std::fs::read_dir(outside).unwrap().count(), 0);
 }
 
 #[test]

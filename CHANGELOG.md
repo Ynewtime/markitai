@@ -92,6 +92,7 @@
 
 ### Changed
 
+- CLI output ownership uses a stable v2 lock namespace with verified idle-probe cleanup, bounded parent-descriptor reuse and read-only skip planning. Existing v1 namespaces are retained. Trusted current-user directory aliases are accepted while document-file and private-metadata links remain guarded; checkpoint receipts and publication fences continue to protect recovery.
 - `config validate` explains explicitly configured keys that have no runtime effect; initialization identifies installed subscription runtimes without launching them or guessing model names. Conversion JSON uses a stable public field order, and oversized XLSX errors suggest CSV export or splitting the workbook.
 - Repository text files keep LF line endings on every platform (`.gitattributes`; binary formats are marked binary), so fixtures, help text and embedded workbench scripts are byte-identical on a Windows checkout.
 - The minimum Rust version is 1.92 (was 1.89), required by the portable renderer; LibreOffice exports set `XDG_CACHE_HOME` only on Unix, the private profile being `-env:UserInstallation` on every platform.

@@ -2,7 +2,7 @@
 use super::{Error, Result, leases, sync_group::SyncGroup};
 use markitai_core::platform::{self, FileId, Status};
 use std::collections::BTreeMap;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -14,6 +14,7 @@ struct Directory {
     file: File,
     identity: FileId,
     private: bool,
+    regular_file: bool,
 }
 
 impl Directory {
@@ -30,13 +31,31 @@ impl Directory {
             file,
             identity,
             private,
+            regular_file: false,
         };
         directory.validate()?;
         Ok(directory)
     }
 
+    fn stable(path: PathBuf, volume: u64) -> Result<Self> {
+        let (file, identity) = super::v2::open_checked(&path, volume, true)?;
+        let entry = Self {
+            path,
+            file,
+            identity,
+            private: true,
+            regular_file: true,
+        };
+        entry.validate()?;
+        Ok(entry)
+    }
+
     fn validate(&self) -> Result<()> {
-        let observed = checked_metadata(&self.path, self.private, Some(self.identity.volume))?;
+        let observed = if self.regular_file {
+            super::v2::checked_file(&self.path, self.identity.volume)?
+        } else {
+            checked_metadata(&self.path, self.private, Some(self.identity.volume))?
+        };
         if observed.id() != self.identity
             || platform::file_status(&self.file)?.id() != self.identity
         {
@@ -57,12 +76,44 @@ impl Namespace {
         let device = parent.identity.volume;
         let mut path = parent.path.clone();
         let mut directories = vec![parent];
-        for (name, private) in [(".markitai", false), ("ownership", true), ("members", true)] {
+        for (name, private) in [(".markitai", false), ("ownership", true)] {
             path.push(name);
             create_metadata_directory(&path)?;
             directories.push(Directory::open(path.clone(), private, Some(device))?);
         }
-        path.pop();
+        let members = path.join("members");
+        let legacy = match platform::status(&members) {
+            Ok(status) if status.metadata().is_dir() => true,
+            Ok(_) => false,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let mut options = OpenOptions::new();
+                options.read(true).write(true).create_new(true);
+                platform::private_file(&mut options);
+                match platform::open_no_follow(&options, &members) {
+                    Ok(_) => false,
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                        platform::status(&members)?.metadata().is_dir()
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if legacy {
+            directories.push(Directory::open(members, true, Some(device))?);
+        } else {
+            directories.push(Directory::stable(members, device)?);
+            directories.push(Directory::stable(path.join("epoch-v2"), device)?);
+            if platform::status(&path.join("writers-v2")).is_ok() {
+                return Err(invalid("unsupported unreleased v2 sidecar namespace"));
+            }
+            {
+                let name = "names-v2";
+                let child = path.join(name);
+                create_metadata_directory(&child)?;
+                directories.push(Directory::open(child, true, Some(device))?);
+            }
+        }
         path.push("records");
         create_metadata_directory(&path)?;
         directories.push(Directory::open(path, true, Some(device))?);
@@ -94,7 +145,7 @@ impl NamespaceBatch {
     }
 
     pub(crate) fn prepare(&mut self, parent: &Path, allow_symlinks: bool) -> Result<()> {
-        let planned = leases::PathStep::default().resolve(parent, allow_symlinks, check_policy)?;
+        let planned = leases::planned_namespace_parent(parent, allow_symlinks)?;
         if !self.parents.contains_key(&planned) && self.parents.len() == MAX_NAMESPACE_PARENTS {
             return Err(invalid("namespace preparation window is full"));
         }
@@ -123,6 +174,8 @@ impl NamespaceBatch {
             let mut sync = SyncGroup::new();
             for directory in directories {
                 sync.stage(&directory.file)?;
+                #[cfg(test)]
+                super::v2::observe_fd_peak();
             }
             sync.commit_ordered()?;
             Ok(())
@@ -162,7 +215,7 @@ pub(crate) struct PreparedNamespaces {
 
 impl PreparedNamespaces {
     pub(crate) fn validate(&self, parent: &Path, allow_symlinks: bool) -> Result<()> {
-        let parent = leases::PathStep::default().resolve(parent, allow_symlinks, check_policy)?;
+        let parent = leases::planned_namespace_parent(parent, allow_symlinks)?;
         self.parents
             .get(&parent)
             .ok_or_else(|| invalid("output parent was not prepared in this namespace window"))?
@@ -183,17 +236,14 @@ fn checked_metadata(path: &Path, private: bool, volume: Option<u64>) -> Result<S
     if !status.metadata().is_dir() || status.metadata().file_type().is_symlink() {
         return Err(invalid("namespace must contain regular directories"));
     }
-    if (private && !status.private()) || volume.is_some_and(|volume| status.id().volume != volume) {
+    if (private && (!status.private() || !status.owned_by_current_user()))
+        || volume.is_some_and(|volume| status.id().volume != volume)
+    {
         return Err(invalid(
             "namespace metadata must be private on the output filesystem",
         ));
     }
     Ok(status)
-}
-
-fn check_policy(path: &Path, allow_symlinks: bool) -> Result<()> {
-    markitai_core::output::check_path(path, allow_symlinks)
-        .map_err(|_| invalid("namespace path violates the symlink policy"))
 }
 
 fn invalid(message: &str) -> Error {

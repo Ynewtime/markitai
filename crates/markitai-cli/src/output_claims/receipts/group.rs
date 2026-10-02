@@ -631,7 +631,7 @@ mod tests {
             panic!("a swapped ancestor must fail the group");
         };
         let error = error.to_string();
-        assert!(error.contains("symlink policy"), "{error}");
+        assert!(error.contains("claimed output parent changed"), "{error}");
         let moved = root.join("moved/out");
         assert!(!moved.join("a.md").exists());
         assert!(!moved.join("a.llm.md").exists());

@@ -35,6 +35,117 @@ pub fn check_path(path: &Path, allow_symlinks: bool) -> Result<()> {
     check_paths(&[path], allow_symlinks)
 }
 
+/// A user document may have trusted directory links above it, but its final
+/// file entry still requires explicit permission to follow a link. Private
+/// storage callers keep [`check_path`] and its stricter ancestor policy.
+pub fn check_user_path(path: &Path, allow_symlinks: bool) -> Result<()> {
+    check_user_paths(&[path], allow_symlinks, false)
+}
+
+/// An output directory's last component has the same trusted-directory policy
+/// as its ancestors. This does not permit a document leaf or private metadata
+/// directory to become a link merely because its target is a directory.
+pub fn check_user_directory(path: &Path, allow_symlinks: bool) -> Result<()> {
+    check_user_paths(&[path], allow_symlinks, true)
+}
+
+fn check_user_paths(paths: &[&Path], allow_symlinks: bool, directory: bool) -> Result<()> {
+    if allow_symlinks {
+        return Ok(());
+    }
+    let mut checked = Vec::new();
+    for path in paths {
+        check_user_links(path, directory, &mut checked, &mut Vec::new())?;
+    }
+    Ok(())
+}
+
+fn link_policy_error(path: &Path, reason: &str) -> Error {
+    Error::InvalidInput(format!(
+        "Symlink access is disabled: {} ({reason}; set output.allow_symlinks to true to follow it)",
+        path.display()
+    ))
+}
+
+fn check_user_links(
+    path: &Path,
+    directory: bool,
+    checked: &mut Vec<std::path::PathBuf>,
+    resolving: &mut Vec<crate::platform::FileId>,
+) -> Result<()> {
+    let absolute = std::path::absolute(path)?;
+    for ancestor in absolute.ancestors() {
+        // Check a document leaf even when an earlier member walked through it
+        // as a directory. Only trusted directory observations are reusable.
+        let leaf = ancestor == absolute && !directory;
+        if !leaf && checked.iter().any(|seen| seen == ancestor) {
+            continue;
+        }
+        let metadata = match std::fs::symlink_metadata(ancestor) {
+            Ok(metadata) => metadata,
+            // Missing components are valid for a new output; the input reader
+            // or directory creator reports ordinary inaccessible paths.
+            Err(_) => continue,
+        };
+        if !metadata.file_type().is_symlink() {
+            if !leaf {
+                checked.push(ancestor.to_owned());
+            }
+            continue;
+        }
+        if leaf {
+            return Err(link_policy_error(ancestor, "document leaf is a link"));
+        }
+        let status = crate::platform::status(ancestor)
+            .map_err(|_| link_policy_error(ancestor, "link ownership could not be verified"))?;
+        if resolving.len() >= 40 || resolving.contains(&status.id()) {
+            return Err(link_policy_error(
+                ancestor,
+                "link chain is cyclic or too deep",
+            ));
+        }
+        let root_owned = crate::platform::root_owned(&metadata);
+        if !root_owned && !status.owned_by_current_user() {
+            return Err(link_policy_error(
+                ancestor,
+                "directory link is not owned by this user",
+            ));
+        }
+        let target = crate::platform::followed_status(ancestor).map_err(|_| {
+            link_policy_error(
+                ancestor,
+                "directory target is missing, inaccessible or cyclic",
+            )
+        })?;
+        if !target.metadata().is_dir() {
+            return Err(link_policy_error(
+                ancestor,
+                "link target is not a directory",
+            ));
+        }
+        if !root_owned && !target.owned_by_current_user() {
+            return Err(link_policy_error(
+                ancestor,
+                "directory target is not owned by this user",
+            ));
+        }
+        let target = std::fs::read_link(ancestor).map_err(|_| {
+            link_policy_error(ancestor, "directory link target could not be inspected")
+        })?;
+        let target = if target.is_absolute() {
+            target
+        } else {
+            ancestor.parent().unwrap_or(Path::new("")).join(target)
+        };
+        resolving.push(status.id());
+        let result = check_user_links(&target, true, checked, resolving);
+        resolving.pop();
+        result?;
+        checked.push(ancestor.to_owned());
+    }
+    Ok(())
+}
+
 /// `check_path` for each path in order, under one observation: an ancestor
 /// that several of them share (the common parent of a document family) is
 /// examined once, never the leaf of another path. Every call observes the
@@ -556,9 +667,10 @@ pub fn should_skip(dir: &Path, name: &str, cfg: &Value) -> Result<bool> {
     }
     let base = dir.join(format!("{name}.md"));
     let llm = dir.join(format!("{name}.llm.md"));
-    check_paths(
+    check_user_paths(
         &[&base, &llm],
         config::enabled(cfg, "/output/allow_symlinks"),
+        false,
     )?;
     Ok(base.exists() || llm.exists())
 }
@@ -720,7 +832,7 @@ pub(crate) fn write_document_mode(
         .lock()
         .map_err(|_| Error::Conversion("Output lock poisoned".into()))?;
     let allow_symlinks = config::enabled(cfg, "/output/allow_symlinks");
-    check_path(dir, allow_symlinks)?;
+    check_user_directory(dir, allow_symlinks)?;
     let explicit_name = cfg.pointer("/output/filename").and_then(Value::as_str);
     let name = explicit_name
         .map(|name| name.strip_suffix(".md").unwrap_or(name))
@@ -735,6 +847,13 @@ pub(crate) fn write_document_mode(
         return Err(Error::InvalidInput("Output name must be a filename".into()));
     }
     std::fs::create_dir_all(dir)?;
+    // User aliases end at this boundary. Asset and image-index metadata below
+    // the physical parent retains its strict no-follow path policy.
+    let physical_dir = check_path(dir, allow_symlinks)
+        .is_err()
+        .then(|| crate::platform::canonicalize(dir))
+        .transpose()?;
+    let dir = physical_dir.as_deref().unwrap_or(dir);
     let mode = cfg
         .pointer("/output/on_conflict")
         .and_then(Value::as_str)
@@ -744,7 +863,7 @@ pub(crate) fn write_document_mode(
     loop {
         let base = dir.join(format!("{stem}.md"));
         let enhanced = dir.join(format!("{stem}.llm.md"));
-        check_paths(&[&base, &enhanced], allow_symlinks)?;
+        check_user_paths(&[&base, &enhanced], allow_symlinks, false)?;
         if publication.is_some() || !base.exists() && !enhanced.exists() || mode == "overwrite" {
             break;
         }
@@ -906,7 +1025,16 @@ pub(crate) fn publish_page_screenshots(
         .lock()
         .map_err(|_| Error::Conversion("Output publication lock poisoned".into()))?;
     let allow_symlinks = config::enabled(cfg, "/output/allow_symlinks");
-    check_path(dir, allow_symlinks)?;
+    check_user_directory(dir, allow_symlinks)?;
+    if screenshots.is_empty() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(dir)?;
+    let physical_dir = check_path(dir, allow_symlinks)
+        .is_err()
+        .then(|| crate::platform::canonicalize(dir))
+        .transpose()?;
+    let dir = physical_dir.as_deref().unwrap_or(dir);
     for screenshot in screenshots {
         let path = publish_screenshot(dir, screenshot, allow_symlinks)?;
         screenshot.name = path
@@ -1517,6 +1645,97 @@ mod tests {
 }
 
 #[cfg(all(test, unix))]
+mod user_path_check_tests {
+    use super::*;
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn user_directory_links_and_relative_middle_links_are_allowed_without_allowing_leaves() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = crate::platform::canonicalize(temp.path()).unwrap();
+        fs::create_dir_all(root.join("real/sub")).unwrap();
+        fs::write(root.join("real/sub/doc.md"), b"document").unwrap();
+        symlink("real/sub", root.join("alias")).unwrap();
+        symlink("alias", root.join("middle")).unwrap();
+        check_user_directory(&root.join("middle"), false).unwrap();
+        check_user_path(&root.join("middle/doc.md"), false).unwrap();
+        check_user_path(&root.join("middle/../future.md"), false).unwrap();
+        assert!(check_user_path(&root.join("middle"), false).is_err());
+        // A private directory check still refuses the same terminal link.
+        assert!(check_path(&root.join("middle"), false).is_err());
+        symlink("doc.md", root.join("real/sub/leaf.md")).unwrap();
+        let error = check_user_path(&root.join("middle/leaf.md"), false)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("leaf.md") && error.contains("document leaf"),
+            "{error}"
+        );
+        check_user_path(&root.join("middle/leaf.md"), true).unwrap();
+    }
+
+    #[test]
+    fn missing_cyclic_and_file_directory_targets_are_rejected_with_the_link_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = crate::platform::canonicalize(temp.path()).unwrap();
+        fs::write(root.join("file"), b"file").unwrap();
+        for (name, target) in [
+            ("broken", "missing"),
+            ("cycle", "cycle"),
+            ("not-dir", "file"),
+        ] {
+            symlink(target, root.join(name)).unwrap();
+            let error = check_user_directory(&root.join(name), false)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains(name) && error.contains("output.allow_symlinks"),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_current_user_link_cannot_reach_another_users_directory() {
+        let target = Path::new("/usr");
+        if crate::platform::followed_status(target)
+            .unwrap()
+            .owned_by_current_user()
+        {
+            return; // A root-run test needs a separate-owner fixture.
+        }
+        let temp = tempfile::tempdir().unwrap();
+        symlink(target, temp.path().join("other-owner")).unwrap();
+        let error = check_user_directory(&temp.path().join("other-owner"), false)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("directory target is not owned by this user"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn root_system_links_are_directories_but_remain_rejected_document_leaves() {
+        let Some(link) = ["/tmp", "/var", "/etc"]
+            .into_iter()
+            .map(Path::new)
+            .find(|path| {
+                fs::symlink_metadata(path).is_ok_and(|meta| {
+                    meta.file_type().is_symlink() && crate::platform::root_owned(&meta)
+                })
+            })
+        else {
+            return;
+        };
+        check_user_directory(link, false).unwrap();
+        check_user_path(&link.join("markitai-missing-fixture.md"), false).unwrap();
+        assert!(check_user_path(link, false).is_err());
+    }
+}
+
+#[cfg(all(test, unix))]
 mod path_check_tests {
     use super::*;
     use std::os::unix::fs::symlink;
@@ -1550,6 +1769,13 @@ mod path_check_tests {
                         outcome(check_paths(&[first, second], allow)),
                         outcome(separate),
                         "{first:?} {second:?} {allow}"
+                    );
+                    let separate_user =
+                        check_user_path(first, allow).and_then(|()| check_user_path(second, allow));
+                    assert_eq!(
+                        outcome(check_user_paths(&[first, second], allow, false)),
+                        outcome(separate_user),
+                        "user paths {first:?} {second:?} {allow}"
                     );
                 }
             }

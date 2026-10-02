@@ -50,13 +50,47 @@ pub(crate) struct MemberLeases {
 }
 
 impl MemberLeases {
+    /// A read-only skip decision holds no member locks and cannot validate a
+    /// publication member. Its parent is retained solely for result reporting.
+    pub(super) fn skipped(parent: &Path, allow_symlinks: bool) -> Result<Self> {
+        let original_parent = std::path::absolute(parent)?;
+        let parent = PathStep::default().resolve(&original_parent, allow_symlinks, check_policy)?;
+        let parent_identity = directory_metadata(&parent, false)?.id();
+        Ok(Self {
+            prepared: PreparedMembers {
+                original_parent,
+                parent,
+                parent_identity,
+                members: Vec::new(),
+                directories: Vec::new(),
+                files: Vec::new(),
+                allow_symlinks,
+                v2: None,
+            },
+        })
+    }
+
     pub(crate) fn acquire(parent: &Path, members: &[String], allow_symlinks: bool) -> Result<Self> {
-        let mut prepared = PreparedMembers::open(parent, members, allow_symlinks)?;
+        Self::acquire_with_epoch(parent, members, allow_symlinks, None)
+    }
+
+    pub(crate) fn acquire_with_epoch(
+        parent: &Path,
+        members: &[String],
+        allow_symlinks: bool,
+        epoch: Option<std::sync::Arc<super::v2::Epoch>>,
+    ) -> Result<Self> {
+        let mut prepared =
+            PreparedMembers::open_with_epoch(parent, members, allow_symlinks, epoch, true)?;
         for member in &mut prepared.files {
             member.acquire()?;
         }
         prepared.check_paths()?;
         Ok(Self { prepared })
+    }
+
+    pub(crate) fn epoch(&self) -> Option<std::sync::Arc<super::v2::Epoch>> {
+        self.prepared.v2.as_ref().map(super::v2::Lease::epoch)
     }
 
     pub(crate) fn parent(&self) -> &Path {
@@ -101,6 +135,43 @@ pub(crate) fn reserve_keys(
     Ok(prepared.keys())
 }
 
+/// Observe already established reservation identities without creating any
+/// metadata. Missing entries grant no reservation or publication authority.
+pub(crate) fn existing_keys(parent: &Path, members: &[String]) -> Result<Vec<FileId>> {
+    let volume = directory_metadata(parent, false)?.id().volume;
+    let mut path = parent.to_owned();
+    for (name, private) in [(".markitai", false), ("ownership", true), ("members", true)] {
+        path.push(name);
+        match directory_metadata(&path, private) {
+            Ok(status) if status.id().volume == volume => (),
+            Ok(_) => {
+                return Err(Error::Invalid(
+                    "output claim metadata must share the output filesystem".into(),
+                ));
+            }
+            Err(Error::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(Vec::new());
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    let mut keys = Vec::new();
+    for name in members {
+        validate_name(name)?;
+        match platform::status(&path.join(name)) {
+            Ok(status) => {
+                validate_lock_metadata(&status, volume)?;
+                if !keys.contains(&status.id()) {
+                    keys.push(status.id());
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(keys)
+}
+
 struct PreparedMembers {
     original_parent: PathBuf,
     parent: PathBuf,
@@ -109,10 +180,21 @@ struct PreparedMembers {
     directories: Vec<Directory>,
     files: Vec<MemberFile>,
     allow_symlinks: bool,
+    v2: Option<super::v2::Lease>,
 }
 
 impl PreparedMembers {
     fn open(parent: &Path, members: &[String], allow_symlinks: bool) -> Result<Self> {
+        Self::open_with_epoch(parent, members, allow_symlinks, None, false)
+    }
+
+    fn open_with_epoch(
+        parent: &Path,
+        members: &[String],
+        allow_symlinks: bool,
+        epoch: Option<std::sync::Arc<super::v2::Epoch>>,
+        acquire: bool,
+    ) -> Result<Self> {
         if members.is_empty() || members.len() > MAX_MEMBERS {
             return Err(Error::Invalid(
                 "one or two output members are required".into(),
@@ -125,12 +207,14 @@ impl PreparedMembers {
         // platform without it fails here, before any model work starts with a
         // weaker, pathname-only ownership guarantee.
         let original_parent = std::path::absolute(parent)?;
-        prepare_claim_directories(&original_parent, allow_symlinks)?;
+        if epoch.is_none() {
+            prepare_claim_directories(&original_parent, allow_symlinks)?;
+        }
         let parent = prepare_namespace_parent(&original_parent, allow_symlinks)?;
         let parent_identity = directory_metadata(&parent, false)?.id();
         let mut directories = Vec::with_capacity(3);
         let mut metadata_path = parent.clone();
-        for (name, private) in [(".markitai", false), ("ownership", true), ("members", true)] {
+        for (name, private) in [(".markitai", false), ("ownership", true)] {
             metadata_path.push(name);
             create_metadata_directory(&metadata_path)?;
             let directory_identity = directory_metadata(&metadata_path, private)?.id();
@@ -156,7 +240,36 @@ impl PreparedMembers {
             directories,
             files: Vec::with_capacity(MAX_MEMBERS),
             allow_symlinks,
+            v2: None,
         };
+        metadata_path.push("members");
+        if platform::status(&metadata_path)?.metadata().is_file() {
+            if !acquire {
+                return Err(Error::Invalid(
+                    "v2 reservations require a retained epoch".into(),
+                ));
+            }
+            let epoch = match epoch {
+                Some(epoch) => {
+                    if epoch.parent().identity() != parent_identity {
+                        return Err(Error::Invalid(
+                            "reservation epoch belongs to another parent".into(),
+                        ));
+                    }
+                    epoch
+                }
+                None => super::v2::Epoch::new(super::v2::Parent::open(&prepared.parent)?)?,
+            };
+            prepared.v2 = Some(super::v2::Lease::acquire(epoch, &prepared.members)?);
+            prepared.check_paths()?;
+            return Ok(prepared);
+        }
+        let member_directory = directory_metadata(&metadata_path, true)?;
+        prepared.directories.push(Directory {
+            path: metadata_path.clone(),
+            identity: member_directory.id(),
+            private: true,
+        });
         for member in &prepared.members {
             let path = metadata_path.join(member);
             // Check before opening so special files cannot block the acquisition.
@@ -209,7 +322,10 @@ impl PreparedMembers {
     }
 
     fn keys(&self) -> Vec<FileId> {
-        self.files.iter().map(|member| member.identity).collect()
+        self.v2.as_ref().map_or_else(
+            || self.files.iter().map(|member| member.identity).collect(),
+            super::v2::Lease::keys,
+        )
     }
 
     /// Resolve the parent only: a permitted leaf symlink remains the entry a
@@ -230,7 +346,10 @@ impl PreparedMembers {
             ));
         }
         self.check_paths_in(step)?;
-        if step.member_parent(path, self.allow_symlinks, check_policy)? != self.parent {
+        if !same_parent(
+            &step.member_parent(path, self.allow_symlinks, check_member_policy)?,
+            &self.parent,
+        )? {
             return Err(Error::Invalid(
                 "output path is outside the claimed parent".into(),
             ));
@@ -243,8 +362,10 @@ impl PreparedMembers {
     }
 
     fn check_paths_in(&self, step: &mut PathStep) -> Result<()> {
-        if step.resolve(&self.original_parent, self.allow_symlinks, check_policy)? != self.parent
-            || directory_metadata(&self.parent, false)?.id() != self.parent_identity
+        if !same_parent(
+            &step.resolve(&self.original_parent, self.allow_symlinks, check_policy)?,
+            &self.parent,
+        )? || directory_metadata(&self.parent, false)?.id() != self.parent_identity
         {
             return Err(Error::Invalid("claimed output parent changed".into()));
         }
@@ -252,6 +373,9 @@ impl PreparedMembers {
             if directory_metadata(&directory.path, directory.private)?.id() != directory.identity {
                 return Err(Error::Invalid("output claim directory changed".into()));
             }
+        }
+        if let Some(lease) = &self.v2 {
+            lease.validate()?;
         }
         for held in &self.files {
             let named = platform::status(&held.path)?;
@@ -266,7 +390,7 @@ impl PreparedMembers {
     }
 }
 
-fn validate_name(name: &str) -> Result<()> {
+pub(super) fn validate_name(name: &str) -> Result<()> {
     let mut components = Path::new(name).components();
     if name.len() > MAX_MEMBER_BYTES
         || name.contains('\0')
@@ -281,8 +405,13 @@ fn validate_name(name: &str) -> Result<()> {
 }
 
 fn check_policy(path: &Path, allow_symlinks: bool) -> Result<()> {
-    markitai_core::output::check_path(path, allow_symlinks)
-        .map_err(|_| Error::Invalid("output path violates the symlink policy".into()))
+    markitai_core::output::check_user_directory(path, allow_symlinks)
+        .map_err(|error| Error::Invalid(error.to_string()))
+}
+
+fn check_member_policy(path: &Path, allow_symlinks: bool) -> Result<()> {
+    markitai_core::output::check_user_path(path, allow_symlinks)
+        .map_err(|error| Error::Invalid(error.to_string()))
 }
 
 /// A caller's symlink-policy check, with its own error wording.
@@ -399,7 +528,9 @@ fn is_symlink(path: &Path) -> bool {
 /// The directory entry itself (a link is no directory), private when required.
 fn directory_metadata(path: &Path, private: bool) -> Result<Status> {
     let status = platform::status(path)?;
-    if !status.metadata().is_dir() || (private && !status.private()) {
+    if !status.metadata().is_dir()
+        || (private && (!status.private() || !status.owned_by_current_user()))
+    {
         return Err(Error::Invalid(
             "output claim directory is not a permitted regular directory".into(),
         ));
@@ -408,7 +539,11 @@ fn directory_metadata(path: &Path, private: bool) -> Result<Status> {
 }
 
 fn validate_lock_metadata(status: &Status, volume: u64) -> Result<()> {
-    if !status.metadata().is_file() || !status.private() || status.id().volume != volume {
+    if !status.metadata().is_file()
+        || !status.private()
+        || !status.owned_by_current_user()
+        || status.id().volume != volume
+    {
         return Err(Error::Invalid(
             "output lock must be a private regular file on the output filesystem".into(),
         ));
@@ -421,12 +556,29 @@ fn validate_lock_metadata(status: &Status, volume: u64) -> Result<()> {
     Ok(())
 }
 
+fn same_parent(a: &Path, b: &Path) -> Result<bool> {
+    Ok(a == b
+        || (directory_metadata(a, false)?.id() == directory_metadata(b, false)?.id()
+            && platform::canonicalize(a)? == b))
+}
+
+/// Preserve the native spelling of an existing parent even on Unix filesystems
+/// whose canonical path differs only in case or Unicode normalization.
+pub(crate) fn planned_namespace_parent(parent: &Path, allow: bool) -> Result<PathBuf> {
+    let planned = PathStep::default().resolve(parent, allow, check_policy)?;
+    match platform::status(&planned) {
+        Ok(status) if status.metadata().is_dir() => Ok(platform::canonicalize(&planned)?),
+        Ok(_) => Ok(planned),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(planned),
+        Err(error) => Err(error.into()),
+    }
+}
+
 // Shared only with namespace preparation. Ancestor creation keeps the original
 // immediate synchronization path; the grouped path begins below this parent.
 pub(crate) fn prepare_namespace_parent(parent: &Path, allow_symlinks: bool) -> Result<PathBuf> {
     let original_parent = std::path::absolute(parent)?;
-    let planned_parent =
-        PathStep::default().resolve(&original_parent, allow_symlinks, check_policy)?;
+    let planned_parent = planned_namespace_parent(&original_parent, allow_symlinks)?;
     create_output_directory(&planned_parent, &mut sync_new_directory)?;
     check_policy(&original_parent, allow_symlinks)?;
     let parent = platform::canonicalize(&original_parent)?;
@@ -449,16 +601,22 @@ pub(crate) fn prepare_namespace_parent(parent: &Path, allow_symlinks: bool) -> R
 /// immediate path below still covers directories that another process removes
 /// and recreates in between.
 fn prepare_claim_directories(parent: &Path, allow_symlinks: bool) -> Result<()> {
-    let mut group = super::sync_group::SyncGroup::new();
-    let mut staged = false;
-    let result = stage_claim_directories(parent, allow_symlinks, &mut |path| {
-        staged = true;
-        Ok(group.stage_directory_entry(path)?)
-    });
-    if staged {
-        group.commit_ordered()?;
+    let members = crate::report_store::resolve_path(parent)?.join(".markitai/ownership/members");
+    if platform::status(&members).is_ok_and(|status| status.metadata().is_dir()) {
+        let mut group = super::sync_group::SyncGroup::new();
+        let mut staged = false;
+        stage_claim_directories(parent, allow_symlinks, &mut |path| {
+            staged = true;
+            Ok(group.stage_directory_entry(path)?)
+        })?;
+        if staged {
+            group.commit_ordered()?;
+        }
+        return Ok(());
     }
-    result
+    let mut namespace = super::namespace::NamespaceBatch::new();
+    namespace.prepare(parent, allow_symlinks)?;
+    namespace.commit()?.validate(parent, allow_symlinks)
 }
 
 /// Create the claim directories, then stage every created directory and its
@@ -767,7 +925,7 @@ mod tests {
     }
 
     fn original_member(path: &Path, allow: bool) -> std::result::Result<PathBuf, String> {
-        check_policy(path, allow).map_err(|error| error.to_string())?;
+        check_member_policy(path, allow).map_err(|error| error.to_string())?;
         crate::report_store::resolve_path(path.parent().unwrap_or_else(|| Path::new("")))
             .map_err(|error| Error::from(error).to_string())
     }
@@ -846,7 +1004,7 @@ mod tests {
                 let expected = original_member(case, allow);
                 for _ in 0..2 {
                     let fused = step
-                        .member_parent(case, allow, check_policy)
+                        .member_parent(case, allow, check_member_policy)
                         .map_err(|error| error.to_string());
                     assert_eq!(fused, expected, "member {case:?} allow={allow}");
                 }
@@ -864,7 +1022,7 @@ mod tests {
                     original_resolve(&case, allow)
                 );
                 assert_eq!(
-                    step.member_parent(&case, allow, check_policy)
+                    step.member_parent(&case, allow, check_member_policy)
                         .map_err(|error| error.to_string()),
                     original_member(&case, allow)
                 );
@@ -881,7 +1039,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn a_new_step_observes_a_link_substituted_after_an_earlier_walk() {
+    fn a_new_step_observes_a_trusted_link_substituted_after_an_earlier_walk() {
         let temp = tempfile::tempdir().unwrap();
         let root = platform::canonicalize(temp.path()).unwrap();
         let path = root.join("tree/out");
@@ -889,17 +1047,16 @@ mod tests {
         PathStep::default()
             .resolve(&path, false, check_policy)
             .unwrap();
-        prepare_namespace_parent(&path, false).unwrap();
         fs::rename(root.join("tree"), root.join("moved")).unwrap();
         symlink(root.join("moved"), root.join("tree")).unwrap();
-        let error = PathStep::default()
-            .resolve(&path, false, check_policy)
-            .unwrap_err();
-        assert!(error.to_string().contains("symlink policy"), "{error}");
-        assert!(prepare_namespace_parent(&path, false).is_err());
-        assert!(stage_output_ancestors([path.as_path()], false, |_| Ok(())).is_err());
-        assert!(MemberLeases::acquire(&path, &names(&["a.md"]), false).is_err());
-        assert!(!root.join("moved/out/.markitai").exists());
+        assert_eq!(
+            PathStep::default()
+                .resolve(&path, false, check_policy)
+                .unwrap(),
+            root.join("moved/out")
+        );
+        let lease = acquire_legacy(&path, &names(&["a.md"]), false).unwrap();
+        assert_eq!(lease.parent(), root.join("moved/out"));
     }
 
     #[cfg(unix)]
@@ -909,7 +1066,7 @@ mod tests {
         let root = platform::canonicalize(temp.path()).unwrap();
         let parent = root.join("tree/out");
         let members = names(&["x.md", "x.llm.md"]);
-        let lease = MemberLeases::acquire(&parent, &members, false).unwrap();
+        let lease = acquire_legacy(&parent, &members, false).unwrap();
         let paths = [parent.join("x.md"), parent.join("x.llm.md")];
         lease.validate_member(&paths[0]).unwrap();
         lease
@@ -925,7 +1082,11 @@ mod tests {
                 .validate_members(paths.iter().map(PathBuf::as_path))
                 .unwrap_err(),
         ] {
-            assert!(error.to_string().contains("symlink policy"), "{error}");
+            assert!(
+                error.to_string().contains("claimed output parent changed")
+                    || error.to_string().contains("document leaf is a link"),
+                "{error}"
+            );
         }
         // Restoring the real directory restores validation: nothing was cached.
         fs::remove_file(root.join("tree")).unwrap();
@@ -943,7 +1104,7 @@ mod tests {
         }
         symlink(root.join("first"), root.join("link")).unwrap();
         let parent = root.join("link/out");
-        let lease = MemberLeases::acquire(&parent, &names(&["x.md"]), true).unwrap();
+        let lease = acquire_legacy(&parent, &names(&["x.md"]), true).unwrap();
         assert_eq!(lease.parent(), root.join("first/out"));
         lease.validate_member(&parent.join("x.md")).unwrap();
         fs::remove_file(root.join("link")).unwrap();
@@ -967,14 +1128,18 @@ mod tests {
         fs::write(&outside, b"private").unwrap();
         let parent = root.join("out");
         let target = parent.join("x.md");
-        let lease = MemberLeases::acquire(&parent, &names(&["x.md"]), false).unwrap();
+        let lease = acquire_legacy(&parent, &names(&["x.md"]), false).unwrap();
         lease.validate_member(&target).unwrap();
         symlink(&outside, &target).unwrap();
         let error = lease.validate_member(&target).unwrap_err();
-        assert!(error.to_string().contains("symlink policy"), "{error}");
+        assert!(
+            error.to_string().contains("claimed output parent changed")
+                || error.to_string().contains("document leaf is a link"),
+            "{error}"
+        );
         assert!(lease.validate_members([target.as_path()]).is_err());
         drop(lease);
-        let permitted = MemberLeases::acquire(&parent, &names(&["x.md"]), true).unwrap();
+        let permitted = acquire_legacy(&parent, &names(&["x.md"]), true).unwrap();
         assert_eq!(permitted.validate_member(&target).unwrap(), target);
         assert_eq!(fs::read(outside).unwrap(), b"private");
     }
@@ -985,11 +1150,11 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let root = platform::canonicalize(temp.path()).unwrap();
         take_commits();
-        let lease = MemberLeases::acquire(&root.join("new/out"), &names(&["a.md"]), false);
+        let lease = acquire_legacy(&root.join("new/out"), &names(&["a.md"]), false);
         assert_eq!(take_commits(), ["ordered"]);
         drop(lease);
         // Nothing created, nothing fenced.
-        let lease = MemberLeases::acquire(&root.join("new/out"), &names(&["a.md"]), false);
+        let lease = acquire_legacy(&root.join("new/out"), &names(&["a.md"]), false);
         assert!(take_commits().is_empty());
         drop(lease);
         prepare_output_ancestors([root.join("x/y").as_path()], false).unwrap();
@@ -1002,14 +1167,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = platform::canonicalize(dir.path()).unwrap();
         fs::create_dir(root.join("real")).unwrap();
-        symlink(root.join("real"), root.join("link")).unwrap();
+        symlink(root.join("missing"), root.join("link")).unwrap();
         fs::write(root.join("file"), b"x").unwrap();
         let linked = root.join("link/child");
         assert!(stage_output_ancestors([linked.as_path()], false, |_| Ok(())).is_err());
         assert!(!root.join("real/child").exists());
         assert!(prepare_output_ancestors([linked.as_path()], false).is_err());
-        // Allowed symlinks resolve first, so staging never opens a link itself.
-        prepare_output_ancestors([linked.as_path()], true).unwrap();
+        fs::remove_file(root.join("link")).unwrap();
+        symlink(root.join("real"), root.join("link")).unwrap();
+        // Trusted links resolve first, so staging never opens a link itself.
+        prepare_output_ancestors([linked.as_path()], false).unwrap();
         assert!(root.join("real/child").is_dir());
         let under_file = root.join("file/child");
         assert!(stage_output_ancestors([under_file.as_path()], false, |_| Ok(())).is_err());
@@ -1019,6 +1186,33 @@ mod tests {
         })
         .unwrap_err();
         assert!(error.to_string().contains("injected host sync failure"));
+    }
+
+    fn prepare_legacy(parent: &Path, allow: bool) -> Result<()> {
+        let mut sync = super::super::sync_group::SyncGroup::new();
+        let mut staged = false;
+        stage_claim_directories(parent, allow, &mut |path| {
+            staged = true;
+            Ok(sync.stage_directory_entry(path)?)
+        })?;
+        if staged {
+            sync.commit_ordered()?;
+        }
+        Ok(())
+    }
+    fn acquire_legacy(parent: &Path, members: &[String], allow: bool) -> Result<MemberLeases> {
+        if members.is_empty()
+            || members.len() > MAX_MEMBERS
+            || members.iter().any(|name| validate_name(name).is_err())
+        {
+            return MemberLeases::acquire(parent, members, allow);
+        }
+        prepare_legacy(parent, allow)?;
+        MemberLeases::acquire(parent, members, allow)
+    }
+    fn reserve_legacy(parent: &Path, members: &[String], allow: bool) -> Result<Vec<FileId>> {
+        prepare_legacy(parent, allow)?;
+        super::reserve_keys(parent, members, allow)
     }
 
     fn names(values: &[&str]) -> Vec<String> {
@@ -1041,34 +1235,30 @@ mod tests {
     #[test]
     fn independent_members_share_a_parent_but_overlapping_families_are_busy() {
         let temp = tempfile::tempdir().unwrap();
-        let first =
-            MemberLeases::acquire(temp.path(), &names(&["x.md", "x.llm.md"]), false).unwrap();
+        let first = acquire_legacy(temp.path(), &names(&["x.md", "x.llm.md"]), false).unwrap();
         let independent =
-            MemberLeases::acquire(temp.path(), &names(&["y.md", "y.llm.md"]), false).unwrap();
+            acquire_legacy(temp.path(), &names(&["y.md", "y.llm.md"]), false).unwrap();
         assert!(matches!(
-            MemberLeases::acquire(temp.path(), &names(&["x.llm.md", "x.llm.llm.md"]), false),
+            acquire_legacy(temp.path(), &names(&["x.llm.md", "x.llm.llm.md"]), false),
             Err(Error::Busy)
         ));
         drop(first);
-        assert!(
-            MemberLeases::acquire(temp.path(), &names(&["x.llm.md", "x.llm.llm.md"]), false)
-                .is_ok()
-        );
+        assert!(acquire_legacy(temp.path(), &names(&["x.llm.md", "x.llm.llm.md"]), false).is_ok());
         drop(independent);
     }
 
     #[test]
     fn partial_acquisition_releases_prior_locks_without_removing_entries() {
         let temp = tempfile::tempdir().unwrap();
-        let _busy = MemberLeases::acquire(temp.path(), &names(&["z.md"]), false).unwrap();
+        let _busy = acquire_legacy(temp.path(), &names(&["z.md"]), false).unwrap();
         assert!(matches!(
-            MemberLeases::acquire(temp.path(), &names(&["a.md", "z.md"]), false),
+            acquire_legacy(temp.path(), &names(&["a.md", "z.md"]), false),
             Err(Error::Busy)
         ));
         let before = platform::status(&lock_path(temp.path(), "a.md"))
             .unwrap()
             .id();
-        let available = MemberLeases::acquire(temp.path(), &names(&["a.md"]), false).unwrap();
+        let available = acquire_legacy(temp.path(), &names(&["a.md"]), false).unwrap();
         drop(available);
         assert_eq!(
             platform::status(&lock_path(temp.path(), "a.md"))
@@ -1092,14 +1282,12 @@ mod tests {
             "name/",
             "bad\0name",
         ] {
-            assert!(MemberLeases::acquire(&output, &names(&[invalid]), false).is_err());
+            assert!(acquire_legacy(&output, &names(&[invalid]), false).is_err());
             assert!(!output.exists());
         }
-        assert!(MemberLeases::acquire(&output, &[], false).is_err());
-        assert!(MemberLeases::acquire(&output, &names(&["a", "b", "c"]), false).is_err());
-        assert!(
-            MemberLeases::acquire(&output, &["a".repeat(MAX_MEMBER_BYTES + 1)], false).is_err()
-        );
+        assert!(acquire_legacy(&output, &[], false).is_err());
+        assert!(acquire_legacy(&output, &names(&["a", "b", "c"]), false).is_err());
+        assert!(acquire_legacy(&output, &["a".repeat(MAX_MEMBER_BYTES + 1)], false).is_err());
         assert!(!output.exists());
     }
 
@@ -1111,18 +1299,40 @@ mod tests {
         let alias = temp.path().join("alias");
         fs::create_dir(&physical).unwrap();
         symlink(&physical, &alias).unwrap();
-        assert!(MemberLeases::acquire(&alias, &names(&["a.md"]), false).is_err());
-        assert!(!physical.join(".markitai").exists());
-        let lease = MemberLeases::acquire(&alias, &names(&["a.md"]), true).unwrap();
+        let lease = acquire_legacy(&alias, &names(&["a.md"]), false).unwrap();
         assert_eq!(lease.parent(), platform::canonicalize(&physical).unwrap());
         assert!(matches!(
-            MemberLeases::acquire(&physical, &names(&["a.md"]), false),
+            acquire_legacy(&physical, &names(&["a.md"]), false),
             Err(Error::Busy)
         ));
         assert_eq!(
             lease.validate_member(&alias.join("a.md")).unwrap(),
             lease.parent().join("a.md")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_trusted_link_can_be_rebuilt_for_the_same_parent_but_not_retargeted() {
+        let temp = tempfile::tempdir().unwrap();
+        let first = temp.path().join("first");
+        let second = temp.path().join("second");
+        let alias = temp.path().join("alias");
+        fs::create_dir(&first).unwrap();
+        fs::create_dir(&second).unwrap();
+        symlink(&first, &alias).unwrap();
+        let lease = acquire_legacy(&alias, &names(&["a.md"]), false).unwrap();
+        fs::remove_file(&alias).unwrap();
+        symlink(&first, &alias).unwrap();
+        lease.validate_member(&alias.join("a.md")).unwrap();
+        fs::remove_file(&alias).unwrap();
+        symlink(&second, &alias).unwrap();
+        let error = lease
+            .validate_member(&alias.join("a.md"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("claimed output parent changed"), "{error}");
+        assert!(!second.join(".markitai").exists());
     }
 
     fn staged_set(parent: &Path) -> (Result<()>, Vec<PathBuf>) {
@@ -1187,7 +1397,7 @@ mod tests {
     fn a_fresh_nested_parent_gets_its_chain_and_private_metadata_in_one_step() {
         let temp = tempfile::tempdir().unwrap();
         let parent = temp.path().join("new/deeper/out");
-        let lease = MemberLeases::acquire(&parent, &names(&["a.md"]), false).unwrap();
+        let lease = acquire_legacy(&parent, &names(&["a.md"]), false).unwrap();
         assert!(lease.parent().ends_with("new/deeper/out"));
         for suffix in [".markitai/ownership", ".markitai/ownership/members"] {
             assert!(platform::status(&parent.join(suffix)).unwrap().private());
@@ -1204,7 +1414,7 @@ mod tests {
         assert!(lock_path(&parent, "a.md").is_file());
         drop(lease);
         // A second acquisition finds everything in place.
-        MemberLeases::acquire(&parent, &names(&["a.md"]), false).unwrap();
+        acquire_legacy(&parent, &names(&["a.md"]), false).unwrap();
     }
 
     #[cfg(unix)]
@@ -1214,7 +1424,7 @@ mod tests {
         let outside = tempfile::tempdir().unwrap();
         fs::create_dir(temp.path().join(".markitai")).unwrap();
         symlink(outside.path(), temp.path().join(".markitai/ownership")).unwrap();
-        assert!(MemberLeases::acquire(temp.path(), &names(&["a.md"]), true).is_err());
+        assert!(acquire_legacy(temp.path(), &names(&["a.md"]), true).is_err());
         assert!(!outside.path().join("members").exists());
         assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
     }
@@ -1225,10 +1435,10 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
         symlink(outside.path(), temp.path().join(".markitai")).unwrap();
-        assert!(MemberLeases::acquire(temp.path(), &names(&["a.md"]), true).is_err());
+        assert!(acquire_legacy(temp.path(), &names(&["a.md"]), true).is_err());
         assert!(!outside.path().join("ownership").exists());
         fs::remove_file(temp.path().join(".markitai")).unwrap();
-        let lease = MemberLeases::acquire(temp.path(), &names(&["a.md"]), false).unwrap();
+        let lease = acquire_legacy(temp.path(), &names(&["a.md"]), false).unwrap();
         let path = lock_path(temp.path(), "a.md");
         assert_eq!(
             fs::metadata(&path).unwrap().permissions().mode() & 0o777,
@@ -1246,7 +1456,7 @@ mod tests {
         }
         drop(lease);
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
-        assert!(MemberLeases::acquire(temp.path(), &names(&["a.md"]), false).is_err());
+        assert!(acquire_legacy(temp.path(), &names(&["a.md"]), false).is_err());
         assert_eq!(
             fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o644
@@ -1255,14 +1465,14 @@ mod tests {
         let outside_file = outside.path().join("untouched");
         fs::write(&outside_file, b"private data").unwrap();
         symlink(&outside_file, &path).unwrap();
-        assert!(MemberLeases::acquire(temp.path(), &names(&["a.md"]), true).is_err());
+        assert!(acquire_legacy(temp.path(), &names(&["a.md"]), true).is_err());
         assert_eq!(fs::read(outside_file).unwrap(), b"private data");
     }
 
     #[test]
     fn a_replaced_lock_or_unclaimed_path_is_rejected_before_publication() {
         let temp = tempfile::tempdir().unwrap();
-        let lease = MemberLeases::acquire(temp.path(), &names(&["a.md"]), false).unwrap();
+        let lease = acquire_legacy(temp.path(), &names(&["a.md"]), false).unwrap();
         assert!(lease.validate_member(&temp.path().join("b.md")).is_err());
         assert!(
             lease
@@ -1283,13 +1493,13 @@ mod tests {
         let outside = tempfile::NamedTempFile::new().unwrap();
         let target = temp.path().join("a.md");
         symlink(outside.path(), &target).unwrap();
-        let lease = MemberLeases::acquire(temp.path(), &names(&["a.md"]), true).unwrap();
+        let lease = acquire_legacy(temp.path(), &names(&["a.md"]), true).unwrap();
         assert_eq!(
             lease.validate_member(&target).unwrap(),
             lease.parent().join("a.md")
         );
         drop(lease);
-        let lease = MemberLeases::acquire(temp.path(), &names(&["a.md"]), false).unwrap();
+        let lease = acquire_legacy(temp.path(), &names(&["a.md"]), false).unwrap();
         assert!(lease.validate_member(&target).is_err());
     }
 
@@ -1297,7 +1507,7 @@ mod tests {
     fn actual_filesystem_aliases_do_not_self_conflict() {
         let temp = tempfile::tempdir().unwrap();
         for pair in [["Alias.md", "alias.md"], ["caf\u{e9}.md", "cafe\u{301}.md"]] {
-            let first = MemberLeases::acquire(temp.path(), &names(&[pair[0]]), false).unwrap();
+            let first = acquire_legacy(temp.path(), &names(&[pair[0]]), false).unwrap();
             let first_identity = platform::status(&lock_path(temp.path(), pair[0]))
                 .unwrap()
                 .id();
@@ -1306,15 +1516,15 @@ mod tests {
                 .map(|status| status.id());
             if alias_identity == Some(first_identity) {
                 assert_eq!(
-                    reserve_keys(temp.path(), &names(&[pair[0]]), false).unwrap(),
-                    reserve_keys(temp.path(), &names(&[pair[1]]), false).unwrap()
+                    reserve_legacy(temp.path(), &names(&[pair[0]]), false).unwrap(),
+                    reserve_legacy(temp.path(), &names(&[pair[1]]), false).unwrap()
                 );
                 assert!(matches!(
-                    MemberLeases::acquire(temp.path(), &names(&[pair[1]]), false),
+                    acquire_legacy(temp.path(), &names(&[pair[1]]), false),
                     Err(Error::Busy)
                 ));
                 drop(first);
-                let both = MemberLeases::acquire(temp.path(), &names(&pair), false).unwrap();
+                let both = acquire_legacy(temp.path(), &names(&pair), false).unwrap();
                 assert_eq!(both.keys().len(), 1);
                 for name in pair {
                     assert_eq!(
@@ -1323,11 +1533,11 @@ mod tests {
                     );
                 }
             } else {
-                let second = MemberLeases::acquire(temp.path(), &names(&[pair[1]]), false).unwrap();
+                let second = acquire_legacy(temp.path(), &names(&[pair[1]]), false).unwrap();
                 assert_ne!(first.keys(), second.keys());
                 assert_ne!(
-                    reserve_keys(temp.path(), &names(&[pair[0]]), false).unwrap(),
-                    reserve_keys(temp.path(), &names(&[pair[1]]), false).unwrap()
+                    reserve_legacy(temp.path(), &names(&[pair[0]]), false).unwrap(),
+                    reserve_legacy(temp.path(), &names(&[pair[1]]), false).unwrap()
                 );
             }
         }
@@ -1337,25 +1547,23 @@ mod tests {
     fn reservation_keys_exist_without_output_or_an_exclusive_lease() {
         let temp = tempfile::tempdir().unwrap();
         let members = names(&["planned.md", "planned.llm.md"]);
-        let keys = reserve_keys(temp.path(), &members, false).unwrap();
+        let keys = reserve_legacy(temp.path(), &members, false).unwrap();
         assert_eq!(keys.len(), 2);
         assert!(
             members
                 .iter()
                 .all(|member| !temp.path().join(member).exists())
         );
-        let held = MemberLeases::acquire(temp.path(), &members, false).unwrap();
+        let held = acquire_legacy(temp.path(), &members, false).unwrap();
         assert_eq!(keys, held.keys());
-        assert_eq!(reserve_keys(temp.path(), &members, false).unwrap(), keys);
+        assert_eq!(reserve_legacy(temp.path(), &members, false).unwrap(), keys);
         assert!(matches!(
-            MemberLeases::acquire(temp.path(), &members, false),
+            acquire_legacy(temp.path(), &members, false),
             Err(Error::Busy)
         ));
         drop(held);
         assert_eq!(
-            MemberLeases::acquire(temp.path(), &members, false)
-                .unwrap()
-                .keys(),
+            acquire_legacy(temp.path(), &members, false).unwrap().keys(),
             keys
         );
     }
@@ -1364,7 +1572,7 @@ mod tests {
     fn killed_process_releases_the_same_stable_member_inode() {
         let temp = tempfile::tempdir().unwrap();
         let ready = temp.path().join("ready");
-        let reservation = reserve_keys(temp.path(), &names(&["held.md"]), false).unwrap();
+        let reservation = reserve_legacy(temp.path(), &names(&["held.md"]), false).unwrap();
         let mut child = ChildGuard(
             Command::new(std::env::current_exe().unwrap())
                 .args([
@@ -1395,11 +1603,11 @@ mod tests {
             .unwrap()
             .id();
         assert_eq!(
-            reserve_keys(temp.path(), &names(&["held.md"]), false).unwrap(),
+            reserve_legacy(temp.path(), &names(&["held.md"]), false).unwrap(),
             reservation
         );
-        let busy = MemberLeases::acquire(temp.path(), &names(&["held.md"]), false);
-        let independent = MemberLeases::acquire(temp.path(), &names(&["other.md"]), false);
+        let busy = acquire_legacy(temp.path(), &names(&["held.md"]), false);
+        let independent = acquire_legacy(temp.path(), &names(&["other.md"]), false);
         child.0.kill().unwrap();
         child.0.wait().unwrap();
         assert!(matches!(busy, Err(Error::Busy)));
@@ -1408,7 +1616,7 @@ mod tests {
         // so shortly afterwards (LockFileEx), so the retry is bounded.
         let deadline = Instant::now() + Duration::from_secs(10);
         let reacquired = loop {
-            match MemberLeases::acquire(temp.path(), &names(&["held.md"]), false) {
+            match acquire_legacy(temp.path(), &names(&["held.md"]), false) {
                 Err(Error::Busy) if Instant::now() < deadline => {
                     std::thread::sleep(Duration::from_millis(20));
                 }
@@ -1441,15 +1649,15 @@ mod tests {
     #[test]
     fn windows_case_verbatim_and_short_spellings_name_one_claim() {
         let temp = tempfile::tempdir().unwrap();
-        let held = MemberLeases::acquire(temp.path(), &names(&["Note.md"]), false).unwrap();
+        let held = acquire_legacy(temp.path(), &names(&["Note.md"]), false).unwrap();
         assert_eq!(held.parent(), platform::canonicalize(temp.path()).unwrap());
         for alias in ["NOTE.MD", "note.md"] {
             assert!(matches!(
-                MemberLeases::acquire(temp.path(), &names(&[alias]), false),
+                acquire_legacy(temp.path(), &names(&[alias]), false),
                 Err(Error::Busy)
             ));
             assert_eq!(
-                reserve_keys(temp.path(), &names(&[alias]), false).unwrap(),
+                reserve_legacy(temp.path(), &names(&[alias]), false).unwrap(),
                 held.keys()
             );
         }
@@ -1459,12 +1667,12 @@ mod tests {
         let upper = PathBuf::from(temp.path().to_str().unwrap().to_uppercase());
         for parent in [&verbatim, &upper] {
             assert!(matches!(
-                MemberLeases::acquire(parent, &names(&["Note.md"]), false),
+                acquire_legacy(parent, &names(&["Note.md"]), false),
                 Err(Error::Busy)
             ));
         }
         drop(held);
-        let lease = MemberLeases::acquire(&verbatim, &names(&["Note.md"]), false).unwrap();
+        let lease = acquire_legacy(&verbatim, &names(&["Note.md"]), false).unwrap();
         assert_eq!(lease.parent(), platform::canonicalize(temp.path()).unwrap());
         // Another spelling of the parent validates the claimed member name.
         assert_eq!(
@@ -1481,14 +1689,12 @@ mod tests {
         fs::create_dir(&target).unwrap();
         let link = temp.path().join("link");
         junction(&link, &target);
-        assert!(MemberLeases::acquire(&link, &names(&["a.md"]), false).is_err());
-        assert!(!target.join(".markitai").exists());
-        assert!(prepare_output_ancestors([link.join("child").as_path()], false).is_err());
-        assert!(!target.join("child").exists());
-        let lease = MemberLeases::acquire(&link, &names(&["a.md"]), true).unwrap();
+        prepare_output_ancestors([link.join("child").as_path()], false).unwrap();
+        assert!(target.join("child").is_dir());
+        let lease = acquire_legacy(&link, &names(&["a.md"]), false).unwrap();
         assert_eq!(lease.parent(), platform::canonicalize(&target).unwrap());
         assert!(matches!(
-            MemberLeases::acquire(&target, &names(&["a.md"]), false),
+            acquire_legacy(&target, &names(&["a.md"]), false),
             Err(Error::Busy)
         ));
         // A junction as the claim metadata directory is never admitted.
@@ -1497,7 +1703,7 @@ mod tests {
         fs::create_dir(&other).unwrap();
         let elsewhere = tempfile::tempdir().unwrap();
         junction(&other.join(".markitai"), elsewhere.path());
-        assert!(MemberLeases::acquire(&other, &names(&["a.md"]), true).is_err());
+        assert!(acquire_legacy(&other, &names(&["a.md"]), true).is_err());
         assert_eq!(fs::read_dir(elsewhere.path()).unwrap().count(), 0);
     }
 
@@ -1508,65 +1714,64 @@ mod tests {
             return;
         };
         let ready = std::env::var_os("MARKITAI_TEST_MEMBER_READY").unwrap();
-        let _lease =
-            MemberLeases::acquire(Path::new(&parent), &names(&["held.md"]), false).unwrap();
+        let _lease = acquire_legacy(Path::new(&parent), &names(&["held.md"]), false).unwrap();
         fs::write(ready, b"ready").unwrap();
         loop {
             std::thread::sleep(Duration::from_secs(1));
         }
     }
-}
 
-#[cfg(all(test, target_os = "linux"))]
-use crate::file_lock_test as fork_lock_test;
+    #[cfg(target_os = "linux")]
+    use crate::file_lock_test as fork_lock_test;
 
-#[cfg(all(test, target_os = "linux"))]
-mod inherited_lock_tests {
-    use super::*;
-    #[test]
-    fn member_family_releases_before_inherited_child_exits() {
-        let root = tempfile::tempdir().unwrap();
-        let members = vec!["a.md".to_owned(), "a.llm.md".to_owned()];
-        let owner = MemberLeases::acquire(root.path(), &members, false).unwrap();
-        assert!(matches!(
-            MemberLeases::acquire(root.path(), &members, false),
-            Err(Error::Busy)
-        ));
-        // A reservation lookup must not release another active claim.
-        reserve_keys(root.path(), &members, false).unwrap();
-        assert!(matches!(
-            MemberLeases::acquire(root.path(), &members, false),
-            Err(Error::Busy)
-        ));
-        let mut child = fork_lock_test::InheritedChild::start();
-        drop(owner);
-        let reopened = MemberLeases::acquire(root.path(), &members, false);
-        child.finish();
-        assert!(reopened.is_ok(), "member locks outlived their owner");
-    }
-    #[test]
-    fn partial_family_acquisition_releases_only_acquired_members() {
-        let root = tempfile::tempdir().unwrap();
-        let second = vec!["b.md".to_owned()];
-        let blocker = MemberLeases::acquire(root.path(), &second, false).unwrap();
-        let mut prepared =
-            PreparedMembers::open(root.path(), &["a.md".into(), "b.md".into()], false).unwrap();
-        prepared.files[0].acquire().unwrap();
-        let mut child = fork_lock_test::InheritedChild::start();
-        assert!(matches!(prepared.files[1].acquire(), Err(Error::Busy)));
-        drop(prepared);
-        let first = MemberLeases::acquire(root.path(), &["a.md".into()], false);
-        let second_still_busy = matches!(
-            MemberLeases::acquire(root.path(), &second, false),
-            Err(Error::Busy)
-        );
-        child.finish();
-        assert!(first.is_ok(), "failed acquisition pinned the first member");
-        assert!(
-            second_still_busy,
-            "failed acquisition released someone else's member"
-        );
-        drop(blocker);
-        MemberLeases::acquire(root.path(), &second, false).unwrap();
+    #[cfg(target_os = "linux")]
+    mod inherited_lock_tests {
+        use super::*;
+        #[test]
+        fn member_family_releases_before_inherited_child_exits() {
+            let root = tempfile::tempdir().unwrap();
+            let members = vec!["a.md".to_owned(), "a.llm.md".to_owned()];
+            let owner = acquire_legacy(root.path(), &members, false).unwrap();
+            assert!(matches!(
+                acquire_legacy(root.path(), &members, false),
+                Err(Error::Busy)
+            ));
+            // A reservation lookup must not release another active claim.
+            reserve_legacy(root.path(), &members, false).unwrap();
+            assert!(matches!(
+                acquire_legacy(root.path(), &members, false),
+                Err(Error::Busy)
+            ));
+            let mut child = fork_lock_test::InheritedChild::start();
+            drop(owner);
+            let reopened = acquire_legacy(root.path(), &members, false);
+            child.finish();
+            assert!(reopened.is_ok(), "member locks outlived their owner");
+        }
+        #[test]
+        fn partial_family_acquisition_releases_only_acquired_members() {
+            let root = tempfile::tempdir().unwrap();
+            let second = vec!["b.md".to_owned()];
+            let blocker = acquire_legacy(root.path(), &second, false).unwrap();
+            let mut prepared =
+                PreparedMembers::open(root.path(), &["a.md".into(), "b.md".into()], false).unwrap();
+            prepared.files[0].acquire().unwrap();
+            let mut child = fork_lock_test::InheritedChild::start();
+            assert!(matches!(prepared.files[1].acquire(), Err(Error::Busy)));
+            drop(prepared);
+            let first = acquire_legacy(root.path(), &["a.md".into()], false);
+            let second_still_busy = matches!(
+                acquire_legacy(root.path(), &second, false),
+                Err(Error::Busy)
+            );
+            child.finish();
+            assert!(first.is_ok(), "failed acquisition pinned the first member");
+            assert!(
+                second_still_busy,
+                "failed acquisition released someone else's member"
+            );
+            drop(blocker);
+            acquire_legacy(root.path(), &second, false).unwrap();
+        }
     }
 }

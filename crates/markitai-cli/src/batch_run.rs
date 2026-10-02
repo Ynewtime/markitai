@@ -3,7 +3,7 @@ use super::*;
 use crate::output_claims::{
     Claim, Error as ClaimError, MAX_NAMESPACE_PARENTS, MemberLeases, NamespaceBatch, Owner, Policy,
     PreparedDocument, PreparedNamespaces, PublicationGroup, RenderedMember, adopt_owner,
-    reservation_members, reserve_keys,
+    reservation_members,
 };
 use crate::run_state::{
     self, Entry, ItemKey, Limits, LoadOutcome, Mode, Scope, Snapshot, StateStore, Status, codec,
@@ -12,7 +12,9 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
-pub(super) type Reservations = HashMap<markitai_core::platform::FileId, BTreeSet<ItemKey>>;
+#[path = "batch_run/reservations.rs"]
+mod reservations;
+pub(super) use reservations::Reservations;
 
 fn item_key(task: &Task) -> ItemKey {
     if is_url(&task.source) {
@@ -103,17 +105,41 @@ pub(super) fn claim(
             format!("{initial}.v{version}")
         };
         let names = members(&candidate);
-        let leases = match MemberLeases::acquire(directory, &names, allow) {
+        if retry.is_none() && matches!(mode, "rename" | "skip") {
+            markitai_core::output::check_user_directory(directory, allow)
+                .map_err(|error| ClaimError::Invalid(error.to_string()))?;
+            let parent = crate::report_store::resolve_path(directory)?;
+            let occupied = names
+                .iter()
+                .map(|name| present(&parent.join(name)))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .any(|yes| yes);
+            if occupied && mode == "rename" {
+                continue;
+            }
+            if occupied {
+                for name in &names {
+                    markitai_core::output::check_user_path(&directory.join(name), allow)
+                        .map_err(|error| ClaimError::Invalid(error.to_string()))?;
+                }
+                let identity = item_key(task);
+                let blocked = reserved.blocked(&parent, &names, &identity, allow)?;
+                if blocked {
+                    continue;
+                }
+                task.reserved_stem = Some(candidate);
+                return Claim::skipped(directory, allow).map(Some);
+            }
+        }
+        let epoch = reserved.epoch(directory, allow)?;
+        let leases = match MemberLeases::acquire_with_epoch(directory, &names, allow, epoch) {
             Ok(leases) => leases,
             Err(ClaimError::Busy) if retry.is_none() && mode == "rename" => continue,
             Err(error) => return Err(error),
         };
         let identity = item_key(task);
-        let blocked = leases.keys().iter().any(|key| {
-            reserved
-                .get(key)
-                .is_some_and(|owners| owners.iter().any(|owner| owner != &identity))
-        });
+        let blocked = reserved.blocks_keys(leases.parent(), &leases.keys(), &identity)?;
         if blocked {
             if retry.is_some() {
                 return Err(ClaimError::Ownership(
@@ -862,9 +888,24 @@ fn run_with_namespace(
     // Images that cannot be converted without OCR or a model end as a skip or
     // an error before writing anything, so they take no claim, create no
     // ownership files or output directory, and are recorded below.
-    let (early, pending): (Vec<usize>, Vec<usize>) = pending
-        .into_iter()
-        .partition(|&index| retries[index].is_none() && publishes_nothing(&tasks[index], cfg));
+    let mut early_failures = HashMap::new();
+    for &index in &pending {
+        if retries[index].is_none() && !is_url(&tasks[index].source) {
+            let failure = unreadable_input(&tasks[index].source).or_else(|| {
+                std::fs::symlink_metadata(config::expand_home(Path::new(&tasks[index].source)))
+                    .err()
+                    .filter(|error| error.kind() == io::ErrorKind::NotFound)
+                    .map(|_| markitai_core::Error::NotFound(tasks[index].source.clone()))
+            });
+            if let Some(failure) = failure {
+                early_failures.insert(index, failure);
+            }
+        }
+    }
+    let (early, pending): (Vec<usize>, Vec<usize>) = pending.into_iter().partition(|&index| {
+        early_failures.contains_key(&index)
+            || (retries[index].is_none() && publishes_nothing(&tasks[index], cfg))
+    });
     let mut ordinary: Vec<_> = pending
         .iter()
         .filter(|&&index| retries[index].is_none())
@@ -897,7 +938,7 @@ fn run_with_namespace(
         .unwrap()
         .generation
         .clone();
-    let mut reserved = Reservations::new();
+    let reserved = Reservations::new();
     let snapshot = store.snapshot().unwrap();
     for (kind, key, entry) in snapshot
         .documents
@@ -947,9 +988,9 @@ fn run_with_namespace(
             ItemKey::Url(key.clone())
         };
         for names in names.chunks(2) {
-            for key in reserve_keys(parent, names, allow).map_err(runtime)? {
-                reserved.entry(key).or_default().insert(item.clone());
-            }
+            reserved
+                .reserve(parent, names, item.clone(), allow)
+                .map_err(runtime)?;
         }
     }
     let file_limit = cfg["batch"]["concurrency"].as_u64().unwrap_or(10) as usize;
@@ -983,7 +1024,13 @@ fn run_with_namespace(
     let mut active_files = 0usize;
     let mut active_urls = 0usize;
     for &index in &early {
-        let record = convert_item(&tasks[index], index, cfg, context, None).0;
+        let record = match early_failures.remove(&index) {
+            Some(error) => {
+                let progress = begin_item(&tasks[index], cfg);
+                complete_item(&tasks[index], index, cfg, progress, Err(error.into())).0
+            }
+            None => convert_item(&tasks[index], index, cfg, context, None).0,
+        };
         if let Err(error) = terminal(&mut store, &tasks[index], &record) {
             fatal.get_or_insert_with(|| error.to_string());
         }
@@ -1172,11 +1219,9 @@ fn run_with_namespace(
                             }
                             continue;
                         }
-                        for key in claim.keys() {
-                            reserved
-                                .entry(key)
-                                .or_default()
-                                .insert(item_key(&tasks[index]));
+                        if let Err(error) = reserved.retain(&claim, item_key(&tasks[index])) {
+                            fatal = Some(error.to_string());
+                            break 'admission;
                         }
                         if is_url(&tasks[index].source) {
                             slots.urls += 1;

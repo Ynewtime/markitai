@@ -254,8 +254,18 @@ pub(crate) fn publish(
             "Unknown report conflict policy",
         ));
     }
-    let requested = output_dir.join(".markitai/reports");
-    check_path(output_dir, allow_symlinks)?;
+    markitai_core::output::check_user_directory(output_dir, allow_symlinks)
+        .map_err(io::Error::other)?;
+    // Resolve the user directory boundary before examining internal report
+    // paths; metadata links retain the original strict policy.
+    let physical_dir = check_path(output_dir, allow_symlinks)
+        .is_err()
+        .then(|| resolve_path(output_dir))
+        .transpose()?;
+    let requested = physical_dir
+        .as_deref()
+        .unwrap_or(output_dir)
+        .join(".markitai/reports");
     check_path(&requested, allow_symlinks)?;
     let reports = resolve_path(&requested)?;
     fs::create_dir_all(&reports)?;
@@ -719,9 +729,7 @@ mod tests {
         fs::create_dir(&target).unwrap();
         let alias = dir.path().join("alias");
         symlink(&target, &alias).unwrap();
-        assert!(publish(&alias, "abcdef", "rename", false, false, b"x").is_err());
-        assert!(!target.join(".markitai").exists());
-        let first = written(publish(&alias, "abcdef", "rename", true, false, b"first").unwrap());
+        let first = written(publish(&alias, "abcdef", "rename", false, false, b"first").unwrap());
         let external = dir.path().join("external");
         fs::write(&external, b"external").unwrap();
         fs::remove_file(&first).unwrap();

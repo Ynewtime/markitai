@@ -40,6 +40,16 @@ fn synchronized(directories: &[&Directory]) -> Result<()> {
 fn new_and_existing_chains_are_fenced_before_claims_without_touching_outputs() {
     let root = tempfile::tempdir().unwrap();
     let parent = root.path().join("out");
+    fs::create_dir(&parent).unwrap();
+    for name in [
+        ".markitai",
+        ".markitai/ownership",
+        ".markitai/ownership/members",
+    ] {
+        platform::private_directory()
+            .create(parent.join(name))
+            .unwrap();
+    }
     let mut first = NamespaceBatch::new();
     first.prepare(&parent, false).unwrap();
     first.prepare(&parent, false).unwrap();
@@ -139,9 +149,9 @@ fn the_namespace_fence_orders_without_a_durable_flush_and_symlinks_still_fail() 
         fs::rename(real.join("tree"), real.join("moved")).unwrap();
         symlink(real.join("moved"), real.join("tree")).unwrap();
         let error = ready.validate(&parent, false).unwrap_err().to_string();
-        assert!(error.contains("symlink policy"), "{error}");
+        assert!(error.contains("output parent was not prepared"), "{error}");
         let mut batch = NamespaceBatch::new();
-        assert!(batch.prepare(&parent, false).is_err());
+        batch.prepare(&parent, false).unwrap();
     }
 }
 
@@ -209,13 +219,13 @@ fn parent_aliases_share_proof_but_metadata_symlinks_are_never_admitted() {
     let alias = root.path().join("alias");
     symlink(&parent, &alias).unwrap();
     let mut batch = NamespaceBatch::new();
-    assert!(batch.prepare(&alias, false).is_err());
+    batch.prepare(&alias, false).unwrap();
     batch.prepare(&parent, false).unwrap();
     batch.prepare(&alias, true).unwrap();
     assert_eq!(batch.parents.len(), 1);
     let ready = batch.commit().unwrap();
     ready.validate(&alias, true).unwrap();
-    assert!(ready.validate(&alias, false).is_err());
+    ready.validate(&alias, false).unwrap();
 
     let root2 = tempfile::tempdir().unwrap();
     let other = root2.path().join("other");
@@ -305,7 +315,7 @@ fn another_initializer_can_die_before_fencing_without_lending_its_proof() {
             synchronized(directories)
         })
         .unwrap();
-    assert_eq!(objects_fenced, 5);
+    assert_eq!(objects_fenced, 7);
     drop(child);
     ready.validate(&parent, false).unwrap();
     let lease = MemberLeases::acquire(&parent, &names(), false).unwrap();
@@ -319,7 +329,11 @@ fn committed_namespace_keeps_cross_process_member_exclusion_and_kill_release() {
     let parent = root.path().join("out");
     let mut child = helper(root.path(), "held");
     ready(&mut child, root.path());
-    let lock = parent.join(".markitai/ownership/members/document.md");
+    let lock = parent.join(".markitai/ownership/names-v2/document.md");
+    let epoch = super::super::v2::Epoch::new(
+        super::super::v2::Parent::open(&platform::canonicalize(&parent).unwrap()).unwrap(),
+    )
+    .unwrap();
     let before = platform::status(&lock).unwrap().id();
     let mut batch = NamespaceBatch::new();
     batch.prepare(&parent, false).unwrap();
@@ -333,6 +347,7 @@ fn committed_namespace_keeps_cross_process_member_exclusion_and_kill_release() {
     let lease = acquire_after_release(&parent);
     assert_eq!(platform::status(&lock).unwrap().id(), before);
     assert_eq!(lease.keys().len(), 2);
+    drop(epoch);
 }
 
 #[test]

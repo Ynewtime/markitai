@@ -5,8 +5,10 @@ batch recovery additionally records evidence of the exact file object and bytes
 published by an item. A saved output path, the six-character state hash, matching
 frontmatter, or a content digest alone cannot authorize implicit replacement.
 
-This document describes the implementation contract. Source, process and release
-checks are separately scoped in [round-nine validation](validation/recovery-round9.md).
+This document describes the implementation contract. The current protocol and
+platform checks are scoped in [ownership validation](validation/ownership-validation.md);
+earlier receipt and release checks remain in
+[round-nine validation](validation/recovery-round9.md).
 
 ## Where the protocol applies
 
@@ -28,8 +30,10 @@ without them fails the claim before provider work; there is no weaker,
 pathname-only fallback. A directory or URL-list run also installs controlled
 interruption before its first request, and fails there with an explicit error
 where that is not available. Host conversion APIs retain their existing
-publication path. Windows builds are type-checked at each integration; release
-validation on Windows hosts is recorded separately and still in progress.
+publication path. Native Windows ARM64/NTFS and Linux execution have verified
+claims and recovery on the candidate snapshots identified in the validation
+record. Cross-target checks alone do not establish native behavior or release
+package acceptance.
 
 ### Platform primitives
 
@@ -47,57 +51,128 @@ above it has no platform conditions.
 | Directory identity | `O_DIRECTORY` descriptor | handle opened with `FILE_FLAG_BACKUP_SEMANTICS` |
 | Directory synchronization | `fsync` of the directory | none exists: only the directory's existence is checked |
 | Name of a renamed file | the parent directory's synchronization | `FlushFileBuffers` of the renamed file after the rename |
-| Locks | `flock` (advisory) | `LockFileEx` (mandatory): only sidecar lock files are ever locked, never a file another process reads |
+| Locks | `flock` (advisory) | `LockFileEx` (mandatory): coordination files and member probes are locked; documents are not. Probe observers query metadata and identity without reading contents |
 | Blocked rename | not retried | access denied, sharing or lock violations retried up to five times, 50 ms longer each, as the reference writer did |
 | Path spelling | `realpath` | final path name without `\\?\` when the plain spelling names the same file, so a short (8.3) name or a different case spells the same path; missing components keep their spelling |
 
 Case or Unicode aliases that the file system folds to one file share one
-identity, hence one lock and one reservation key, on either platform. A Windows
-junction counts as a symbolic link for `output.allow_symlinks`; Windows has no
-root-owned system links, so nothing on the path is exempt.
+identity, hence one lock and one reservation key, on either platform. This
+depends on the actual volume: different Unicode spellings are distinct on a
+volume that does not fold them. Lowercasing strings is not a substitute for
+filesystem identity.
+
+## Directory aliases and document links
+
+With the default `output.allow_symlinks=false`, user-selected input and output
+paths distinguish directory components from the document's final file entry:
+
+- A directory link owned by the current user is allowed when its resolved
+  target is also a directory owned by that user. This includes an output
+  directory selected through an alias, relative links and links in intermediate
+  components. Windows junctions receive the same directory-link policy.
+- Unix root-owned system directory links remain allowed. Their targets must
+  still be accessible directories; they do not need to belong to the current
+  user. Windows has no corresponding root-owned exception.
+- A document's final file entry remains subject to `output.allow_symlinks`.
+  A linked input file or output document is refused by default even when its
+  owner and target are trusted. Broken, cyclic, excessively deep and
+  non-directory directory links are refused, as are links whose ownership or
+  target cannot be verified. Diagnostics identify the path and reason.
+
+The CLI resolves an allowed output-directory alias to its physical parent.
+Claims bind that parent's identity and native canonical path, and recheck them
+at publication. Recreating an alias to the same physical parent can work;
+redirecting it to another parent cannot redirect an existing claim. Moving a
+bound ancestor and replacing its old path with a link also fails validation.
+These checks are performed afresh, rather than trusting a previous path walk.
+
+Private ownership metadata has a separate, stricter policy. Its directories and
+files must be ordinary objects on the output filesystem, with the required
+private permissions and owner. Metadata symlinks and junctions are refused even
+when `output.allow_symlinks=true`. Allowing a user directory alias does not
+permit an alias inside `.markitai/ownership` or supply overwrite authority.
 
 ## Locks follow actual filesystem names
-
-For each actual output parent, stable lock files live at:
-
-```text
-<parent>/.markitai/ownership/members/<document member filename>
-```
 
 A family normally reserves `name.md` and `name.llm.md`, even when a conversion
 ultimately writes only one of them. Thus `name` and `name.llm` overlap at
 `name.llm.md`. The claim validates the exact members core may publish. Explicit
 filenames and `llm.keep_base` still determine which member receives enhanced text.
+Allowed parent aliases and different `HOME` or `MARKITAI_HOME` settings reach
+the same physical coordination namespace.
 
-The original parent spelling is checked against `output.allow_symlinks` before
-physical resolution. Locks use the member filename itself. When case or Unicode
-spellings refer to the same lock file on the actual filesystem, its file
-identity also gives the same in-process reservation key. Lowercasing strings is
-not used as a substitute for filesystem identity. Permitted parent aliases reach
-the same physical metadata directory.
+### New output namespaces
 
-Each active item holds nonblocking OS locks for its family. Unrelated families
-can proceed concurrently; there is no long-lived lock for the whole output
-directory. Lock files remain after release and are never unlinked as a cleanup
-step. Their presence alone does not indicate an active process. Publication
-rechecks the held lock paths, directory identities and requested member.
+A newly established namespace uses this layout:
 
-Every check observes the path afresh. Within one check, the symlink policy and
-the resolution of the same parent share a single walk of its components, and a
-parent already walked by that check (for example, for the other member of a
-family) is not walked again. The shared walk is used only for an absolute path
-spelled canonically whose every component is an ordinary entry or absent; a
-symbolic link anywhere (permitted, root-owned or not), `..`, a redundant
-separator or an unexpected error repeats the separate policy and resolution
-steps unchanged. No observation outlives its check: the recheck after directory
-creation and every later protocol step walk again, so a link substituted in
-between is still rejected.
+```text
+<parent>/.markitai/ownership/
+    members                  stable gate file
+    epoch-v2                 stable epoch file
+    names-v2/<member name>   temporary member probe files
+    records/<sha256>.json    publication receipts, when used
+```
 
-Ordinary rename policy can try another version when a candidate is occupied or
-busy. An owned retry must use its verified family. A skipped existing output does
-not become owned by the skipped item and does not create a receipt. Completed
-entries retain name reservations even when their output files have disappeared.
-Those planning reservations do not themselves grant write authority.
+The two stable files and each probe are empty, private, current-owner,
+single-link regular files on the output volume. The stable files are never
+unlinked or replaced by cleanup. The member name itself is used to discover
+filesystem aliases; all spellings that identify one probe use the same writer
+lock. Observations of a probe's identity do not read its contents or release
+another writer's lock.
+
+Each active item holds nonblocking OS writer locks for its family. A short gate
+protects admission and cleanup, and an epoch protects probe identities while
+active claims or retained reservation indexes use them. The gate is released
+before conversion or provider work, so unrelated families can proceed
+concurrently. Publication rechecks the held and named probes, metadata directory
+identities, parent and requested member. A replaced probe fails publication.
+
+After the last relevant claim and reservation index release their epoch,
+cleanup can acquire exclusive gate and epoch locks and remove verified idle
+probes. It checks each probe without following links, verifies its identity and
+shape, and obtains its writer lock before removal. Cleanup works in bounded
+blocks and preserves busy, changed or unknown objects. A process kill can leave
+probes behind; a later invocation can safely reclaim them after confirming
+that no cooperating process still uses them. A probe's presence alone does not
+indicate active work or ownership of a document.
+
+The hidden namespace, stable files and empty `names-v2` directory remain.
+Probe cleanup never deletes receipts, documents, staged outputs or legacy
+markers. This is not a promise that every hidden file disappears on exit.
+
+### Existing output namespaces
+
+An existing `members/` directory selects the legacy v1 protocol:
+
+```text
+<parent>/.markitai/ownership/members/<document member filename>
+```
+
+Its member lock files remain after release. The new CLI continues using this
+protocol in that directory, including existing receipt and recovery evidence;
+it does not automatically migrate the directory, replace it with a gate file,
+or delete legacy markers, even when the directory is empty. An older CLI
+encountering a fresh v2 gate file refuses the unsupported namespace before
+dispatching conversion or provider work. Unknown or malformed metadata is
+preserved and reported instead of being guessed at or upgraded in place.
+
+### Read-only conflict decisions
+
+An already occupied ordinary `skip` result is decided without acquiring a
+member writer claim or creating its member markers or publication receipt.
+The item does not become an owner of the existing bytes. A `rename` scan rejects
+an already occupied candidate before acquiring that candidate's member locks.
+Clearly unreadable discovered inputs are rejected before member claims.
+Batch checkpoints, reports or coordination required by other admitted items
+may still exist; these shortcuts do not suppress normal batch state.
+
+If a destination appears after the read-only check, the locked claim and
+publication checks still apply. Ordinary rename policy can try another version
+when a candidate is occupied or busy. An owned retry must use its verified
+family. Completed entries retain logical name reservations even when their
+output files have disappeared. The in-memory file-identity index may be
+discarded and rebuilt for a cold parent, but all retained families participate
+in that rebuild. Planning reservations do not themselves grant write authority.
 
 ## Durable prepared receipts
 
@@ -156,7 +231,7 @@ by a durability fence; every other phase boundary uses an ordering fence:
 
 | Point | Fence | Windows |
 |---|---|---|
-| Created output, `.markitai`, `ownership` and `members` directories of a claim | ordering | existence checked; committed by the next file flush on the volume |
+| Created output and claim metadata directories; v2 stable gate/epoch files (or the v1 `members/` directory) | ordering | directories checked for existence and stable files flushed; committed by the next file flush on the volume |
 | Run-wide output ancestors and each namespace window (see [grouped publication](grouped-publication.md)) | ordering | as above |
 | Staged document and receipt bytes, before the receipt name | ordering | each file flushed when staged |
 | Installed receipt name, before the document rename | ordering | the receipt flushed after its rename |
@@ -282,9 +357,10 @@ content-addressed writer and are not covered by document receipts.
 Receipts are limited to 64 KiB and read with a bounded buffer. File proofs are
 computed with bounded streaming reads. Ownership directories and receipt files
 must be private (as each platform defines it above), ordinary filesystem objects
-on the output filesystem; metadata symlinks and junctions are rejected. Normal failures remove only the staged object still
-matching the recorded proof. Crash-orphan staging and receipt garbage collection
-are not automatic.
+on the output filesystem; metadata symlinks and junctions are rejected.
+Normal failures remove only the staged object still matching the recorded proof.
+Crash-orphan staging and receipt garbage collection are not automatic; the
+verified idle-probe cleanup described above does not extend to either of them.
 
 Receipt contents include plaintext paths and raw URL keys, which can contain
 query credentials. Private permissions are not encryption. Diagnostics do not
