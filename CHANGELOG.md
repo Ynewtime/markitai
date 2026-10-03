@@ -118,6 +118,9 @@
 
 ### Fixed
 
+- Chinese CLI help adapts to narrow terminal widths; conversion-wizard choices, validation hints and cancellation follow the selected language, including Unix Ctrl-C.
+- Concurrent first-use URL conversions initialize their persistent cache reliably across processes. Readers can miss an uncommitted empty store, WAL initialization retries bounded lock contention, and damaged or unrelated databases still produce a warning.
+- Windows CLI documentation packaging binds named and open-file identities with compatible time fields while retaining separate change detection, reparse-point rejection and managed-parent checks.
 - Workbench failures and warnings use the shared notification instead of expanding the conversion row; clicking the status icon reopens complete details. Failed retry/enhance operations remain visible when the previous successful output is retained, even without recorded model usage; old-result warnings and actual new-attempt costs keep separate meanings, and stale event-stream snapshots cannot replace a newer retry.
 - Spreadsheet and legacy presentation pictures retain their supported sheet/slide placement. XLSX drawings, XLS/XLT picture references and PPT/PPS/POT image storage use their actual ownership; ODS drawings respect the document's global hidden-layer settings. Unsupported or ambiguous stored pictures report a warning while keeping the existing body.
 - Legacy DOC embedded chart tables follow their supported live textbox anchor while retaining the existing body; private, instruction-only and ambiguous stored objects are rejected. ODP/OTP tables retain their cell associations and position within slide containers.

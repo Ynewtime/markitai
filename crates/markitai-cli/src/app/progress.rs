@@ -114,7 +114,7 @@ pub(super) fn wanted(quiet: bool, json: bool) -> bool {
 }
 
 /// Terminal's visible width in columns, 80 when it cannot be read.
-fn columns() -> usize {
+pub(super) fn columns() -> usize {
     #[cfg(unix)]
     {
         let mut size: libc::winsize = unsafe { std::mem::zeroed() };

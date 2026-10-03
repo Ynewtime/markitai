@@ -762,7 +762,7 @@ fn execute(cli: &Cli) -> CliResult<i32> {
     let cfg = conversion_config(cli, overrides)?;
     if cli.interactive {
         let Some(run) = guided::collect(cli, cfg)? else {
-            eprintln!("Cancelled.");
+            eprintln!("{}", text!("Cancelled.", "已取消。"));
             return Ok(0);
         };
         let mut effective = cli.clone();

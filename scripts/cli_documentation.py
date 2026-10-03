@@ -29,6 +29,14 @@ def _identity(status):
     return (status.st_dev, status.st_ino, status.st_size, status.st_mtime_ns, status.st_ctime_ns)
 
 
+def _file_binding(status):
+    """Compare named and held identities without Windows ctime ambiguity."""
+    if os.name == "nt":
+        return (status.st_dev, status.st_ino, status.st_mode, status.st_size,
+                status.st_mtime_ns, getattr(status, "st_birthtime_ns", status.st_ctime_ns))
+    return _identity(status)
+
+
 def validate_documentation(files):
     """Provided maps must contain the complete whitelist and bounded UTF-8 bytes."""
     if set(files) != set(DOCUMENTATION_PATHS):
@@ -71,13 +79,13 @@ def cli_documentation(root):
         fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
         with os.fdopen(fd, "rb") as stream:
             opened = os.fstat(stream.fileno())
-            if not _regular(opened) or _identity(opened) != _identity(before):
+            if not _regular(opened) or _file_binding(opened) != _file_binding(before):
                 raise RuntimeError(f"CLI documentation changed before reading: {name}")
             files[name] = stream.read(MAX_DOCUMENT_BYTES + 1)
             held = os.fstat(stream.fileno())
             named = path.lstat()
             if (not _regular(held) or not _regular(named)
-                    or _identity(held) != _identity(before) or _identity(named) != _identity(before)):
+                    or _identity(held) != _identity(opened) or _identity(named) != _identity(before)):
                 raise RuntimeError(f"CLI documentation changed while reading: {name}")
         for parent, expected in parents:
             if _identity(parent.lstat()) != expected:

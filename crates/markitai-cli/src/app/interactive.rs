@@ -368,10 +368,18 @@ fn edit_with(
 #[cfg(unix)]
 static GUIDED_CANCEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 #[cfg(unix)]
+static GUIDED_ZH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[cfg(unix)]
 extern "C" fn cancelled(_: libc::c_int) {
-    const MESSAGE: &[u8] = b"\nCancelled.\n";
+    // Locale resolution may allocate or lock; do it before installing SIGINT.
+    // The handler reads a lock-free flag and writes constant UTF-8 bytes.
+    let message: &[u8] = if GUIDED_ZH.load(std::sync::atomic::Ordering::Relaxed) {
+        "\n已取消。\n".as_bytes()
+    } else {
+        b"\nCancelled.\n"
+    };
     unsafe {
-        libc::write(libc::STDERR_FILENO, MESSAGE.as_ptr().cast(), MESSAGE.len());
+        libc::write(libc::STDERR_FILENO, message.as_ptr().cast(), message.len());
         libc::_exit(0);
     }
 }
@@ -382,6 +390,7 @@ impl CancelGuard {
     pub(super) fn new() -> io::Result<Self> {
         let mut previous = unsafe { std::mem::zeroed() };
         let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+        GUIDED_ZH.store(lang() == Lang::Zh, std::sync::atomic::Ordering::Relaxed);
         action.sa_sigaction = cancelled as *const () as libc::sighandler_t;
         unsafe {
             libc::sigemptyset(&mut action.sa_mask);
@@ -769,8 +778,8 @@ pub(super) fn init(yes: bool, output: Option<&Path>, local: bool) -> CliResult<(
     Ok(())
 }
 
-/// A choice among `choices` (Enter takes `default`); the retry hint is in
-/// English, as the other wizard text is.
+/// A choice among `choices` (Enter takes `default`); the retry hint follows
+/// the active terminal language.
 pub(super) fn choice(
     input: &mut impl BufRead,
     output: &mut impl Write,
@@ -778,7 +787,7 @@ pub(super) fn choice(
     choices: &[&str],
     default: &str,
 ) -> CliResult<Option<String>> {
-    choice_in(Lang::En, input, output, label, choices, default)
+    choice_in(lang(), input, output, label, choices, default)
 }
 
 /// [`choice`] with the retry hint in the given language.

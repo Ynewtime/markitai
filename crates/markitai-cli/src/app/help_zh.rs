@@ -15,8 +15,7 @@
 //! root command already does).
 use clap::{Arg, ArgAction, Command};
 
-/// Total columns a wrapped line may use. Lines are kept inside a plain 80
-/// column terminal whatever the real width is.
+/// Upper limit for Chinese help. A narrower console supplies its real width.
 const WIDTH: usize = 78;
 /// Clap indents the help of an option by two tabs' worth of columns.
 const ARGUMENT_INDENT: usize = 10;
@@ -27,16 +26,26 @@ const OPTIONS: &str = "选项";
 /// Rewrites the English command tree that `english` builds into its Chinese
 /// form.
 pub(super) fn localize(english: fn() -> Command) -> Command {
+    localize_at_width(english, super::progress::columns().min(WIDTH))
+}
+
+fn localize_at_width(english: fn() -> Command, width: usize) -> Command {
+    let width = width.max(ARGUMENT_INDENT + 2);
     // Before it is built, a command does not yet know which of its options
     // take values, their defaults and possible values, or whether it has a
     // long help. A second, built copy answers those questions the way clap
     // will.
     let mut reference = english();
     reference.build();
-    rewrite(english(), &reference)
+    rewrite(english(), &reference, width, SUMMARY_WIDTH.min(width))
 }
 
-fn rewrite(mut command: Command, reference: &Command) -> Command {
+fn rewrite(
+    mut command: Command,
+    reference: &Command,
+    width: usize,
+    summary_width: usize,
+) -> Command {
     let name = command.get_name().to_owned();
     let flag = |id: &str| reference.get_arguments().find(|arg| arg.get_id() == id);
     let long_help = flag("help").is_some_and(|arg| arg.get_long_help().is_some());
@@ -74,28 +83,43 @@ fn rewrite(mut command: Command, reference: &Command) -> Command {
         })
         .collect();
     for id in order {
-        command = command.mut_arg(id, |arg| argument(arg, &name, reference));
+        command = command.mut_arg(id, |arg| argument(arg, &name, reference, width));
     }
     if let Some(text) = describe(&name) {
-        command = command.about(wrap(text.about, SUMMARY_WIDTH));
+        command = command.about(wrap(text.about, summary_width));
         if command.get_long_about().is_some() && !text.long_about.is_empty() {
-            command = command.long_about(wrap(text.long_about, WIDTH));
+            command = command.long_about(wrap(text.long_about, width));
         }
         if command.get_after_help().is_some() && !text.after.is_empty() {
-            command = command.after_help(wrap(text.after, WIDTH));
+            command = command.after_help(wrap(text.after, width));
         }
     }
     let usage = *command.get_styles().get_usage();
+    let usage_line = if width < 60 {
+        "\n  {usage}"
+    } else {
+        " {usage}"
+    };
+    let summary_width = width
+        .saturating_sub(
+            4 + reference
+                .get_subcommands()
+                .map(|child| child.get_name().len())
+                .max()
+                .unwrap_or(0),
+        )
+        .clamp(1, SUMMARY_WIDTH);
     command = command
+        .term_width(width)
         .subcommand_help_heading("命令")
         .help_template(format!(
-            "{{before-help}}{{about-with-newline}}\n{usage}用法:{usage:#} {{usage}}\n\n{{all-args}}{{after-help}}"
+            "{{before-help}}{{about-with-newline}}\n{usage}用法:{usage:#}{usage_line}\n\n{{all-args}}{{after-help}}"
         ));
     for child in command.get_subcommands_mut() {
         let built = reference
             .find_subcommand(child.get_name())
             .expect("the built copy has every subcommand");
-        *child = rewrite(std::mem::take(child), built);
+        *child = rewrite(std::mem::take(child), built, width, summary_width);
     }
     command
 }
@@ -127,7 +151,7 @@ fn help_flag(long_help: bool) -> Arg {
 }
 
 /// Chinese heading, text and value hints for one option or argument.
-fn argument(arg: Arg, command: &str, reference: &Command) -> Arg {
+fn argument(arg: Arg, command: &str, reference: &Command, width: usize) -> Arg {
     let id = arg.get_id().as_str().to_owned();
     let heading = match arg.get_help_heading() {
         Some(heading) => heading_zh(heading),
@@ -183,7 +207,7 @@ fn argument(arg: Arg, command: &str, reference: &Command) -> Arg {
         help.push(' ');
         help.push_str(&note.join(" "));
     }
-    let arg = arg.help(wrap(&help, WIDTH - ARGUMENT_INDENT));
+    let arg = arg.help(wrap(&help, width - ARGUMENT_INDENT));
     if builtin {
         arg
     } else {
@@ -853,6 +877,26 @@ mod tests {
                     assert!(!help.contains(english), "{path}: {english}\n{help}");
                 }
                 assert!(help.contains("用法:"), "{path}");
+            }
+        }
+    }
+
+    #[test]
+    fn chinese_root_help_fits_narrow_display_columns() {
+        for width in [40, 80] {
+            let mut command = localize_at_width(super::super::english_command, width);
+            let help = command.render_long_help().to_string();
+            for line in help
+                .lines()
+                .filter(|line| line.chars().any(|c| columns(c) == 2))
+            {
+                assert!(
+                    line.chars().map(columns).sum::<usize>() <= width,
+                    "{width}: {line}"
+                );
+            }
+            for flag in ["--json", "--no-llm", "--resume", "--batch-concurrency"] {
+                assert!(help.contains(flag), "{width}: {flag}");
             }
         }
     }

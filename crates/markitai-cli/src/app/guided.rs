@@ -25,7 +25,11 @@ fn collect_with(
 ) -> CliResult<Option<GuidedRun>> {
     writeln!(
         out,
-        "Markitai conversion wizard\nChoices affect this run only. Enter q to cancel."
+        "{}",
+        text!(
+            "Markitai conversion wizard\nChoices affect this run only. Enter q to cancel.",
+            "Markitai 转换向导\n选择只对本次运行生效。输入 q 取消。"
+        )
     )
     .map_err(runtime)?;
     let default = match cli.input.as_deref() {
@@ -43,7 +47,10 @@ fn collect_with(
     let Some(kind) = interactive::choice(
         input,
         out,
-        &format!("Input: 1 file, 2 directory, 3 URL [{default}]: "),
+        &text!(
+            "Input: 1 file, 2 directory, 3 URL [{default}]: ",
+            "输入：1 文件，2 目录，3 URL [{default}]："
+        ),
         &["1", "2", "3"],
         default,
     )?
@@ -53,9 +60,13 @@ fn collect_with(
     let source = loop {
         let current = cli.input.as_deref().unwrap_or_default();
         let label = if current.is_empty() {
-            "Input path or URL: ".into()
+            text!("Input path or URL: ", "输入路径或 URL：")
         } else {
-            format!("Input path or URL [{}]: ", visible(current))
+            format!(
+                "{} [{}]: ",
+                text!("Input path or URL", "输入路径或 URL"),
+                visible(current)
+            )
         };
         let Some(answer) = interactive::prompt(input, out, &label)? else {
             return Ok(None);
@@ -75,7 +86,11 @@ fn collect_with(
             }
             writeln!(
                 out,
-                "Enter an absolute HTTP(S) URL without embedded credentials."
+                "{}",
+                text!(
+                    "Enter an absolute HTTP(S) URL without embedded credentials.",
+                    "请输入不含内嵌凭据的完整 HTTP(S) URL。"
+                )
             )
             .map_err(runtime)?;
         } else {
@@ -89,10 +104,18 @@ fn collect_with(
             {
                 break path.to_string_lossy().into_owned();
             }
+            let kind_label = if kind == "2" {
+                text!("directory", "目录")
+            } else {
+                text!("file", "文件")
+            };
             writeln!(
                 out,
-                "The selected {} does not exist.",
-                if kind == "2" { "directory" } else { "file" }
+                "{}",
+                text!(
+                    "The selected {kind_label} does not exist.",
+                    "所选{kind_label}不存在。"
+                )
             )
             .map_err(runtime)?;
         }
@@ -107,7 +130,8 @@ fn collect_with(
             input,
             out,
             &format!(
-                "Output directory [{}]: ",
+                "{} [{}]: ",
+                text!("Output directory", "输出目录"),
                 visible(&default_output.to_string_lossy())
             ),
         )?
@@ -128,8 +152,15 @@ fn collect_with(
                     .extension()
                     .is_some_and(|extension| extension.eq_ignore_ascii_case("md")))
         {
-            writeln!(out, "Choose an output directory, not a Markdown filename.")
-                .map_err(runtime)?;
+            writeln!(
+                out,
+                "{}",
+                text!(
+                    "Choose an output directory, not a Markdown filename.",
+                    "请选择输出目录，不要指定 Markdown 文件名。"
+                )
+            )
+            .map_err(runtime)?;
             continue;
         }
         break path;
@@ -137,7 +168,7 @@ fn collect_with(
     let Some(llm) = toggle(
         input,
         out,
-        "LLM enhancement",
+        &text!("LLM enhancement", "LLM 增强"),
         config::enabled(&cfg, "/llm/enabled"),
     )?
     else {
@@ -147,13 +178,17 @@ fn collect_with(
     while config::enabled(&cfg, "/llm/enabled") && !markitai_core::llm_capabilities(&cfg).routable {
         writeln!(
             out,
-            "No usable API model is configured. Subscription/CLI providers are not supported here."
+            "{}",
+            text!("No usable API model is configured. Subscription/CLI providers are not supported here.", "尚未配置可用的 API 模型；此处不支持订阅或 CLI 提供商。")
         )
         .map_err(runtime)?;
         let Some(action) = interactive::choice(
             input,
             out,
-            "1 configure a model for this run, 2 retry detection, 3 disable LLM, q cancel [3]: ",
+            &text!(
+                "1 configure a model for this run, 2 retry detection, 3 disable LLM, q cancel [3]: ",
+                "1 为本次运行配置模型，2 重新检测，3 关闭 LLM，q 取消 [3]："
+            ),
             &["1", "2", "3"],
             "3",
         )?
@@ -167,17 +202,33 @@ fn collect_with(
         }
     }
     for (label, section, field) in [
-        ("Image alt text", "image", "alt_enabled"),
-        ("Image descriptions", "image", "desc_enabled"),
-        ("Pure output", "llm", "pure"),
-        ("Local / vision OCR", "ocr", "enabled"),
-        ("Page screenshots", "screenshot", "enabled"),
+        (
+            text!("Image alt text", "图片 alt 文本"),
+            "image",
+            "alt_enabled",
+        ),
+        (
+            text!("Image descriptions", "图片描述"),
+            "image",
+            "desc_enabled",
+        ),
+        (text!("Pure output", "纯净输出"), "llm", "pure"),
+        (
+            text!("Local / vision OCR", "本地 / 视觉 OCR"),
+            "ocr",
+            "enabled",
+        ),
+        (
+            text!("Page screenshots", "页面截图"),
+            "screenshot",
+            "enabled",
+        ),
     ] {
         if section == "image" && !config::enabled(&cfg, "/llm/enabled") {
             continue;
         }
         let current = cfg[section][field].as_bool().unwrap_or(false);
-        let Some(value) = toggle(input, out, label, current)? else {
+        let Some(value) = toggle(input, out, &label, current)? else {
             return Ok(None);
         };
         cfg[section][field] = json!(value);
@@ -190,30 +241,40 @@ fn collect_with(
     config::validate(&cfg).map_err(runtime)?;
     writeln!(
         out,
-        "\nConfiguration summary\nInput: {}\nOutput: {}",
+        "{}\n{}: {}\n{}: {}",
+        text!("\nConfiguration summary", "\n配置摘要"),
+        text!("Input", "输入"),
         visible(&source),
+        text!("Output", "输出"),
         visible(&output.to_string_lossy())
     )
     .map_err(runtime)?;
     for (label, pointer) in [
-        ("LLM", "/llm/enabled"),
-        ("Alt text", "/image/alt_enabled"),
-        ("Descriptions", "/image/desc_enabled"),
-        ("Pure", "/llm/pure"),
-        ("OCR", "/ocr/enabled"),
-        ("Screenshots", "/screenshot/enabled"),
-        ("Screenshot only", "/screenshot/screenshot_only"),
+        (text!("LLM", "LLM"), "/llm/enabled"),
+        (text!("Alt text", "alt 文本"), "/image/alt_enabled"),
+        (text!("Descriptions", "图片描述"), "/image/desc_enabled"),
+        (text!("Pure", "纯净输出"), "/llm/pure"),
+        (text!("OCR", "OCR"), "/ocr/enabled"),
+        (text!("Screenshots", "页面截图"), "/screenshot/enabled"),
+        (
+            text!("Screenshot only", "仅截图"),
+            "/screenshot/screenshot_only",
+        ),
     ] {
         let enabled = config::enabled(&cfg, pointer);
         let inactive = pointer.starts_with("/image/") && !config::enabled(&cfg, "/llm/enabled");
         writeln!(
             out,
             "{label}: {}{}",
-            if enabled { "enabled" } else { "disabled" },
-            if inactive {
-                " (inactive without LLM)"
+            if enabled {
+                text!("enabled", "开启")
             } else {
-                ""
+                text!("disabled", "关闭")
+            },
+            if inactive {
+                text!(" (inactive without LLM)", "（LLM 未开启，不生效）")
+            } else {
+                String::new()
             }
         )
         .map_err(runtime)?;
@@ -222,7 +283,8 @@ fn collect_with(
         let models = markitai_core::llm_capabilities(&cfg).models;
         writeln!(
             out,
-            "Models: {}",
+            "{}: {}",
+            text!("Models", "模型"),
             models
                 .iter()
                 .map(|name| visible(name))
@@ -232,12 +294,18 @@ fn collect_with(
         .map_err(runtime)?;
     }
     if let Some(profile) = cfg["output"]["profile"].as_str() {
-        writeln!(out, "Output profile: {}", visible(profile)).map_err(runtime)?;
+        writeln!(
+            out,
+            "{}: {}",
+            text!("Output profile", "输出配置"),
+            visible(profile)
+        )
+        .map_err(runtime)?;
     }
     let Some(answer) = interactive::choice(
         input,
         out,
-        "Execute conversion? y/n [y]: ",
+        &text!("Execute conversion? y/n [y]: ", "开始转换？y/n [y]："),
         &["y", "n"],
         "y",
     )?
@@ -261,12 +329,17 @@ fn toggle(
     label: &str,
     current: bool,
 ) -> CliResult<Option<bool>> {
+    let state = if current {
+        text!("enabled", "开启")
+    } else {
+        text!("disabled", "关闭")
+    };
     let Some(answer) = interactive::choice(
         input,
         out,
-        &format!(
-            "{label}: y enable, n disable, Enter keep {}: ",
-            if current { "enabled" } else { "disabled" }
+        &text!(
+            "{label}: y enable, n disable, Enter keep {state}: ",
+            "{label}：y 开启，n 关闭，Enter 保持{state}："
         ),
         &["y", "n"],
         if current { "y" } else { "n" },
@@ -286,7 +359,10 @@ fn configure_model(
         let Some(model) = interactive::prompt(
             input,
             out,
-            "Model (for example openai/gpt-5.6-luna or ollama/model): ",
+            &text!(
+                "Model (for example openai/gpt-5.6-luna or ollama/model): ",
+                "模型（例如 openai/gpt-5.6-luna 或 ollama/model）："
+            ),
         )?
         else {
             return Ok(false);
@@ -304,10 +380,24 @@ fn configure_model(
         {
             break model.to_owned();
         }
-        writeln!(out, "Enter a model for a supported API provider.").map_err(runtime)?;
+        writeln!(
+            out,
+            "{}",
+            text!(
+                "Enter a model for a supported API provider.",
+                "请输入受支持 API 提供商的模型。"
+            )
+        )
+        .map_err(runtime)?;
     };
-    let Some(base) =
-        interactive::prompt(input, out, "API base URL (Enter uses provider default): ")?
+    let Some(base) = interactive::prompt(
+        input,
+        out,
+        &text!(
+            "API base URL (Enter uses provider default): ",
+            "API 地址（Enter 使用提供商默认值）："
+        ),
+    )?
     else {
         return Ok(false);
     };
@@ -317,7 +407,10 @@ fn configure_model(
     let Some(key_kind) = interactive::choice(
         input,
         out,
-        "Credential: 1 environment variable, 2 secret for this run, 3 provider default [3]: ",
+        &text!(
+            "Credential: 1 environment variable, 2 secret for this run, 3 provider default [3]: ",
+            "凭据：1 环境变量，2 本次运行的密钥，3 提供商默认值 [3]："
+        ),
         &["1", "2", "3"],
         "3",
     )?
@@ -331,7 +424,11 @@ fn configure_model(
     match key_kind.as_str() {
         "1" => {
             let name = loop {
-                let Some(name) = interactive::prompt(input, out, "Environment variable name: ")?
+                let Some(name) = interactive::prompt(
+                    input,
+                    out,
+                    &text!("Environment variable name: ", "环境变量名称："),
+                )?
                 else {
                     return Ok(false);
                 };
@@ -347,14 +444,25 @@ fn configure_model(
                 }
                 writeln!(
                     out,
-                    "Use a nonempty variable name containing letters, digits or underscores."
+                    "{}",
+                    text!(
+                        "Use a nonempty variable name containing letters, digits or underscores.",
+                        "变量名不能为空，只能包含字母、数字或下划线。"
+                    )
                 )
                 .map_err(runtime)?;
             };
             params["api_key"] = json!(format!("env:{name}"));
         }
         "2" => {
-            let Some(key) = interactive::secret(input, out, "API key (hidden; not saved): ")?
+            let Some(key) = interactive::secret(
+                input,
+                out,
+                &text!(
+                    "API key (hidden; not saved): ",
+                    "API 密钥（隐藏输入，不保存）："
+                ),
+            )?
             else {
                 return Ok(false);
             };

@@ -8,6 +8,7 @@ import stat
 import tempfile
 import unittest
 from unittest.mock import patch
+import cli_documentation as collector
 
 from cli_documentation import (DOCUMENTATION_PATHS, MAX_DOCUMENT_BYTES,
                                MAX_DOCUMENTATION_BYTES, cli_documentation,
@@ -110,6 +111,96 @@ class DocumentationCollectionTests(unittest.TestCase):
 
         with patch("cli_documentation.os.fdopen", side_effect=lambda fd, mode: ChangedReader(original_fdopen(fd, mode))):
             with self.assertRaisesRegex(RuntimeError, "changed while reading"):
+                cli_documentation(self.root)
+
+    def test_windows_named_and_held_ctime_semantics_keep_same_file_binding(self):
+        named = SimpleNamespace(st_dev=1, st_ino=2, st_mode=stat.S_IFREG | 0o600,
+                                st_size=12, st_mtime_ns=34, st_ctime_ns=50, st_birthtime_ns=50)
+        held = SimpleNamespace(**{**vars(named), "st_ctime_ns": 60})
+        with patch.object(collector, "os", SimpleNamespace(name="nt")):
+            self.assertEqual(collector._file_binding(named), collector._file_binding(held))
+            self.assertNotEqual(collector._identity(named), collector._identity(held))
+            held.st_ino += 1
+            self.assertNotEqual(collector._file_binding(named), collector._file_binding(held))
+
+    def test_windows_legacy_stat_without_birthtime_retains_creation_time_binding(self):
+        named = SimpleNamespace(st_dev=1, st_ino=2, st_mode=stat.S_IFREG | 0o600,
+                                st_size=12, st_mtime_ns=34, st_ctime_ns=50)
+        held = SimpleNamespace(**vars(named))
+        with patch.object(collector, "os", SimpleNamespace(name="nt")):
+            self.assertEqual(collector._file_binding(named), collector._file_binding(held))
+            held.st_ino += 1
+            self.assertNotEqual(collector._file_binding(named), collector._file_binding(held))
+            held.st_ino = named.st_ino
+            held.st_ctime_ns += 1
+            self.assertNotEqual(collector._file_binding(named), collector._file_binding(held))
+
+    def test_posix_named_and_held_binding_keeps_complete_ctime(self):
+        named = SimpleNamespace(st_dev=1, st_ino=2, st_mode=stat.S_IFREG | 0o600,
+                                st_size=12, st_mtime_ns=34, st_ctime_ns=50, st_birthtime_ns=50)
+        held = SimpleNamespace(**vars(named))
+        with patch.object(collector, "os", SimpleNamespace(name="posix")):
+            self.assertEqual(collector._file_binding(named), collector._file_binding(held))
+            held.st_ctime_ns += 1
+            self.assertNotEqual(collector._file_binding(named), collector._file_binding(held))
+            self.assertEqual(collector._file_binding(held), collector._identity(held))
+
+    def test_held_metadata_only_ctime_change_during_read_is_rejected(self):
+        original = os.fstat
+        selected = self.root / "README.md"
+        file_id = selected.stat().st_ino
+        calls = 0
+        def changed(fd):
+            nonlocal calls
+            status = original(fd)
+            if status.st_ino == file_id:
+                calls += 1
+                if calls == 2:
+                    fields = ("st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns")
+                    return SimpleNamespace(**{**{k: getattr(status, k) for k in fields},
+                        "st_file_attributes": getattr(status, "st_file_attributes", 0),
+                        "st_ctime_ns": status.st_ctime_ns + 1})
+            return status
+        with patch("cli_documentation.os.fstat", side_effect=changed):
+            with self.assertRaisesRegex(RuntimeError, "changed while reading"):
+                cli_documentation(self.root)
+
+    def test_named_metadata_only_ctime_change_during_read_is_rejected(self):
+        original = Path.lstat
+        selected = self.root / "README.md"
+        calls = 0
+        def changed(path):
+            nonlocal calls
+            status = original(path)
+            if path == selected:
+                calls += 1
+                if calls == 2:
+                    fields = ("st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns")
+                    return SimpleNamespace(**{**{k: getattr(status, k) for k in fields},
+                        "st_file_attributes": getattr(status, "st_file_attributes", 0),
+                        "st_ctime_ns": status.st_ctime_ns + 1})
+            return status
+        with patch("cli_documentation.Path.lstat", autospec=True, side_effect=changed):
+            with self.assertRaisesRegex(RuntimeError, "changed while reading"):
+                cli_documentation(self.root)
+
+    def test_real_parent_mtime_change_during_read_is_rejected(self):
+        original = os.fdopen
+        selected = (self.root / "docs/index.md").stat().st_ino
+        parent = self.root / "docs"
+        class ChangedReader:
+            def __init__(self, stream): self.stream = stream
+            def __enter__(self): return self
+            def __exit__(self, *args): self.stream.close()
+            def fileno(self): return self.stream.fileno()
+            def read(self, count):
+                content = self.stream.read(count)
+                if os.fstat(self.fileno()).st_ino == selected:
+                    before = parent.stat()
+                    os.utime(parent, ns=(before.st_atime_ns, before.st_mtime_ns + 10_000_000))
+                return content
+        with patch("cli_documentation.os.fdopen", side_effect=lambda fd, mode: ChangedReader(original(fd, mode))):
+            with self.assertRaisesRegex(RuntimeError, "parent changed while reading"):
                 cli_documentation(self.root)
 
 

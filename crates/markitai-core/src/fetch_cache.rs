@@ -8,13 +8,14 @@ use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const DEFAULT_CAPACITY: i64 = 512 * 1024 * 1024;
 const MAX_CONTENT: usize = 100 * 1024 * 1024;
 const MAX_METADATA: usize = 4 * 1024 * 1024;
 const MAX_LABEL: usize = 64 * 1024;
 const MAX_HEADER: usize = 16 * 1024;
+const BUSY_TIMEOUT: Duration = Duration::from_secs(30);
 const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS fetch_cache (
     key TEXT PRIMARY KEY, url TEXT NOT NULL, content TEXT NOT NULL,
     strategy_used TEXT NOT NULL, title TEXT, final_url TEXT, metadata TEXT,
@@ -232,6 +233,11 @@ impl Cache {
             return Ok(None);
         };
         let columns = columns(&connection)?;
+        // Opening the first writer makes the file visible before its schema
+        // transaction commits. Only an actually empty database is a cache miss.
+        if columns.is_empty() && empty_database(&connection)? {
+            return Ok(None);
+        }
         let optional = |name: &'static str| if columns.contains(name) { name } else { "NULL" };
         // Bounds run inside SQLite before strings are transferred to Rust.
         let query = format!(
@@ -304,6 +310,9 @@ impl Cache {
     /// Failed fetches must retain the last good entry instead.
     pub(crate) fn remove(&self, url: &str, scope: Option<&str>) -> Result<()> {
         if let Some(mut connection) = existing(&self.path, false)? {
+            if columns(&connection)?.is_empty() && empty_database(&connection)? {
+                return Ok(());
+            }
             let transaction = connection
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(|_| unavailable())?;
@@ -350,9 +359,7 @@ impl Cache {
             &self.path,
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
         )?;
-        connection
-            .pragma_update(None, "journal_mode", "WAL")
-            .map_err(|_| unavailable())?;
+        configure_wal(&connection)?;
         connection
             .pragma_update(None, "synchronous", "NORMAL")
             .map_err(|_| unavailable())?;
@@ -450,12 +457,57 @@ fn touch_connection(connection: &mut Connection, key: &str, timestamp: i64) -> R
 fn open(path: &Path, flags: OpenFlags) -> Result<Connection> {
     let connection = Connection::open_with_flags(path, flags).map_err(|_| unavailable())?;
     connection
-        .busy_timeout(Duration::from_secs(30))
+        .busy_timeout(BUSY_TIMEOUT)
         .map_err(|_| unavailable())?;
     connection
         .pragma_update(None, "trusted_schema", "OFF")
         .map_err(|_| unavailable())?;
     Ok(connection)
+}
+
+fn empty_database(connection: &Connection) -> Result<bool> {
+    connection
+        .query_row(
+            "SELECT NOT EXISTS(SELECT 1 FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|_| unavailable())
+}
+
+fn configure_wal(connection: &Connection) -> Result<()> {
+    let deadline = Instant::now() + BUSY_TIMEOUT;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(unavailable());
+        }
+        connection
+            .busy_timeout(remaining)
+            .map_err(|_| unavailable())?;
+        match connection.query_row("PRAGMA journal_mode=WAL", [], |row| row.get::<_, String>(0)) {
+            Ok(mode) if mode.eq_ignore_ascii_case("wal") => {
+                connection
+                    .busy_timeout(BUSY_TIMEOUT)
+                    .map_err(|_| unavailable())?;
+                return Ok(());
+            }
+            // SQLite may decline to invoke the busy handler while promoting
+            // locks for WAL. Retry the complete pragma after its statement ends.
+            Err(rusqlite::Error::SqliteFailure(error, _))
+                if matches!(
+                    error.code,
+                    rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                ) =>
+            {
+                std::thread::sleep(
+                    Duration::from_millis(10)
+                        .min(deadline.saturating_duration_since(Instant::now())),
+                );
+            }
+            _ => return Err(unavailable()),
+        }
+    }
 }
 
 fn existing(path: &Path, readonly: bool) -> Result<Option<Connection>> {
@@ -829,6 +881,77 @@ mod tests {
                 "Persistent URL fetch cache is unavailable"
             );
         }
+    }
+
+    #[test]
+    fn first_reader_can_observe_a_database_before_its_schema_is_committed() {
+        let root = tempfile::tempdir().unwrap();
+        let cfg = cfg(root.path(), 1024, 60);
+        let cache = Cache::from_config(&cfg).unwrap();
+        let mut writer = open(
+            &cache.path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
+        )
+        .unwrap();
+        writer.pragma_update(None, "journal_mode", "WAL").unwrap();
+        let transaction = writer
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        transaction.execute_batch(SCHEMA).unwrap();
+        assert!(cache.get("first", None).unwrap().is_none());
+        cache.remove("ineligible", None).unwrap();
+        transaction.commit().unwrap();
+        cache.set("first", None, &entry("page")).unwrap();
+        assert_eq!(cache.get("first", None).unwrap().unwrap().content, "page");
+    }
+
+    #[test]
+    fn concurrent_first_writes_create_one_complete_cache_without_errors() {
+        for round in 0..12 {
+            let root = tempfile::tempdir().unwrap();
+            let cfg = cfg(&root.path().join("new-state"), 1024, 60);
+            let barrier = Arc::new(Barrier::new(8));
+            let handles: Vec<_> = (0..8)
+                .map(|number| {
+                    let cfg = cfg.clone();
+                    let barrier = barrier.clone();
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        Cache::from_config(&cfg).unwrap().set(
+                            &number.to_string(),
+                            None,
+                            &entry("page"),
+                        )
+                    })
+                })
+                .collect();
+            let errors: Vec<_> = handles
+                .into_iter()
+                .filter_map(|handle| handle.join().unwrap().err())
+                .collect();
+            assert!(errors.is_empty(), "round {round}: {errors:?}");
+            assert_eq!(stats(&cfg).unwrap()["count"], 8);
+        }
+    }
+
+    #[test]
+    fn missing_cache_schema_in_an_unrelated_database_is_still_an_error() {
+        let root = tempfile::tempdir().unwrap();
+        let cfg = cfg(root.path(), 1024, 60);
+        let cache = Cache::from_config(&cfg).unwrap();
+        let connection = Connection::open(&cache.path).unwrap();
+        connection
+            .execute_batch("CREATE TABLE unrelated (value TEXT)")
+            .unwrap();
+        assert!(cache.get("page", None).is_err());
+        assert!(cache.remove("page", None).is_err());
+        connection
+            .execute_batch("DROP TABLE unrelated; CREATE TABLE sqliteXother (value TEXT)")
+            .unwrap();
+        assert!(cache.get("page", None).is_err());
+        assert!(cache.remove("page", None).is_err());
+        let memory = Connection::open_in_memory().unwrap();
+        assert!(configure_wal(&memory).is_err());
     }
 
     #[test]
