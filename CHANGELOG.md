@@ -94,6 +94,8 @@
 
 ### Changed
 
+- Refresh development-status and remaining-work documentation with the verified cross-platform CI checkpoint, package evidence and outstanding Windows runtime dependency. Historical measurements remain explicitly scoped to their original builds.
+
 - Refresh ten compatible Rust dependency versions, including NAPI, TLS/QUIC support, libc and uuid, while keeping the declared Rust 1.92 minimum and existing Node API level. New NAPI versions retain both original MIT notices with checksum-pinned source and version provenance.
 - CLI output ownership uses a stable v2 lock namespace with verified idle-probe cleanup, bounded parent-descriptor reuse and read-only skip planning. Existing v1 namespaces are retained. Trusted current-user directory aliases are accepted while document-file and private-metadata links remain guarded; checkpoint receipts and publication fences continue to protect recovery.
 - `config validate` explains explicitly configured keys that have no runtime effect; initialization identifies installed subscription runtimes without launching them or guessing model names. Conversion JSON uses a stable public field order, and oversized XLSX errors suggest CSV export or splitting the workbook.
