@@ -24,6 +24,7 @@ import tempfile
 from ci_packages import (cli_attribution, doctor_probe, extract_cli_zip, extract_single_binary_tar,
                          identity, mcp_probe, package_attribution, source_snapshot, write_cli_zip,
                          write_single_binary_tar)
+from cli_documentation import cli_documentation
 from executable_identity import (MACHO, ELF, WINDOWS_TARGETS, executable_arch,
                                  verify_target_executable)
 
@@ -176,19 +177,20 @@ def main(argv=None):
             record["executable"]["code_signature"] = (
                 "none" if "not signed" in signature.stderr else signature.stderr.strip().splitlines()[-1:])
         cli_licenses = cli_attribution(root, package_attribution(root))
+        cli_docs = cli_documentation(root)
         unpacked = work / "CLI 安装 with spaces"
         if windows:
             alternate = target_dir / args.target / "release" / "mkai.exe"
             verify_target_executable(alternate, args.target)
             archive = output / f"markitai-{version}-{args.target}.zip"
-            write_cli_zip(binary, alternate, archive, cli_licenses, True)
-            record["cli_zip"] = extract_cli_zip(archive, unpacked, binary, alternate, cli_licenses, True)
+            write_cli_zip(binary, alternate, archive, cli_licenses, True, cli_docs)
+            record["cli_zip"] = extract_cli_zip(archive, unpacked, binary, alternate, cli_licenses, True, cli_docs)
             for name in ["markitai.exe", "mkai.exe", "markitai-mcp.exe"]:
                 verify_target_executable(unpacked / name, args.target)
         else:
             archive = output / f"markitai-{version}-{args.target}-single-binary.tar.gz"
-            write_single_binary_tar(binary, archive, cli_licenses)
-            record["single_binary_cli"] = extract_single_binary_tar(archive, unpacked, binary, cli_licenses)
+            write_single_binary_tar(binary, archive, cli_licenses, cli_docs)
+            record["single_binary_cli"] = extract_single_binary_tar(archive, unpacked, binary, cli_licenses, cli_docs)
         record["artifacts"] = {archive.name: identity(archive)}
 
         try:

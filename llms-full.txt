@@ -1,0 +1,109 @@
+# Markitai: Agent guide
+
+> Development version 1.3.0-dev. Stable 1.3.0 is not yet published. This guide is plain Markdown and is included in CLI archives for offline use.
+
+Markitai reads local documents and images or HTTP(S) pages, then writes
+Markdown and extracted assets. The CLI needs no Python, Node.js or Go runtime;
+Node/Python/Go bindings require their respective runtimes. Native readers have
+format and fidelity limits. A recognized extension is not a promise of full
+layout preservation. [Quick start](docs/quickstart.md) lists the 61 extensions,
+installation steps and platform backends.
+
+## Use authorized inputs and explicit output paths
+
+Prefer an absolute executable path and a task-specific output directory. Set
+`MARKITAI_HOME` to a separate state directory before starting the process when
+a task should not share configuration, caches or history. The normal default
+is `~/.markitai`. Configuration search includes the current working directory
+and environment; isolation requires controlling those inputs as well. Do not
+supply private files, credential values or external destinations without the
+caller's authorization.
+
+For a plain local conversion:
+
+```sh
+markitai /absolute/path/report.docx -o /absolute/path/output --no-llm --json
+```
+
+On Windows use `markitai.exe` and Windows absolute paths. Archives also provide
+`mkai` / `mkai.exe` and `markitai-mcp` / `markitai-mcp.exe`. Shell PATH changes
+in an interactive profile might not apply to an Agent process, so configure
+the executable's full path.
+
+## CLI machine output
+
+Use `-o` with `--json`; the CLI then writes a JSON result envelope to stdout,
+with diagnostics on stderr. `--json` without `-o` is a usage error. Without
+`--json` or `-o`, stdout is document Markdown and asset references can be
+persistent absolute `file://` URIs under Markitai state. Do not infer
+successful conversion from empty stdout. Read top-level `ok` / `error`, each
+item's `status` / `skip_reason`, written paths and warnings in the envelope. A
+standalone image without OCR or LLM extraction is skipped as `image_only`.
+
+Exit codes: 0 for success (including supported skips), 1 for a single failure,
+2 for invalid arguments (also provider batch still pending), and 10 for batch
+item failures. Argument errors can occur before the JSON envelope is created; inspect stderr and the exit code.
+Batch reports under `output/.markitai/reports/` supplement stdout and do not
+replace it. Use explicit conflict policy when retries matter; the default is
+`rename`, not overwrite. `--pure` disables generated frontmatter and model
+processing. Read [CLI](docs/cli.md) for the exact envelope and overrides.
+
+## MCP
+
+Launch `markitai mcp` or `markitai-mcp` (`.exe` on Windows) over stdio. Normal
+protocol messages use stdout; diagnostics use stderr. No HTTP MCP endpoint is
+added. Give the MCP host the actual executable path and, when needed, a
+separate `MARKITAI_HOME` and configuration file; see [MCP](docs/mcp.md).
+
+The four tools are:
+
+- `convert_document`: absolute local `path` (`~` is expanded); an ordinary directory is not a document. Modern `.numbers` packages are supported as a single document.
+- `convert_url`: an HTTP(S) URL, which can require a network request or browser.
+- `batch_convert`: a nonempty list of local paths and/or URLs; returns a job ID.
+- `job_status`: poll that ID in the same MCP server process while `running`, then inspect each item and the `failed` count. Terminal status is `completed` or `cancelled`; completion can include failed items.
+
+Single-source tools accept `output_dir`, `llm`, `ocr`, `screenshot`, `alt`,
+`desc` and `profile`. Omitted/null feature flags follow configuration; use
+explicit false when the task must disable them. `output_dir` must be absolute;
+omitted/null/empty creates a retained temporary directory. The caller must
+clean it up after consuming the results, including after server shutdown.
+
+Successful results include `structuredContent` and a JSON text block. Read
+`markdown_file` for the complete output when `truncated` is true; the inline
+body is only a preview for long documents. Keep the output directory while
+using its assets/screenshots. Expected conversion errors carry `isError: true`.
+Do not parse human progress text as a tool result. Output schemas and the
+full field inventory are in [MCP](docs/mcp.md).
+
+## Offline and optional components
+
+Plain local text/document conversion does not require provider access. On
+macOS the default OCR backend is Vision; Windows/Linux use local Paddle and
+built-in hayro PDF rendering. Paddle ONNX models are not included in archives.
+`markitai doctor --json` only inspects readiness; `doctor --fix` can download
+missing models and repair safely managed corrupt models. Prepare them before
+an offline task. Normal OCR does not silently overwrite corrupt models, and
+unsafe model paths are rejected. Never respond to an unsafe-path error by
+blindly enabling repair.
+
+HEIF/AVIF decoding uses macOS ImageIO and is unsupported on Windows/Linux in
+this build. JavaScript pages/screenshots need Chrome/Chromium. Office page
+images and OCR supplements need LibreOffice; native text readers do not.
+Model enhancement (`--llm`, captions/descriptions) uses configured providers
+or subscription runtimes and can send content externally. `--no-llm` disables
+that model step. `--no-remote-fetch` prevents third-party fetch services; it
+is not an OS network sandbox and still permits direct HTTP(S) downloads and
+browser requests. An offline workflow must also avoid URL inputs, remote
+resources and unprepared components.
+
+Batch `--resume` is available on macOS, Linux and Windows for directory and
+`.urls` batches. A single file or URL cannot be resumed. Windows Go/cgo
+installed-package acceptance is unverified. Do not turn availability of a
+CLI command into a claim of complete format, quality, performance or binding
+parity. [CLI](docs/cli.md) lists remaining migration gaps.
+
+## More detail
+
+Read [README](README.md), [quick start](docs/quickstart.md), [CLI](docs/cli.md)
+and [MCP](docs/mcp.md) offline in the archive. The [index](docs/index.md) links
+the full source documentation; other topics require the repository checkout.

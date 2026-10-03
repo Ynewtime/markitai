@@ -1,24 +1,31 @@
 # Markitai documentation
 
-Markitai 1.3.0 converts documents, web pages and images to Markdown. A
+Markitai **1.3.0-dev** converts documents, web pages and images to Markdown. A
 single Rust core powers the `markitai` command (alias `mkai`), a local REST
 service with a browser workspace, an MCP server and in-process Node.js, Python
 and Go bindings. It is the Rust rewrite of reference release 1.2.0:
 [compatibility](compatibility.md) lists the reference contracts,
-[project status](STATUS.md) the delivered scope and tested platforms, and the
-[changelog](../CHANGELOG.md) what changed.
+the [quick start](quickstart.md#platform-support) describes current backends,
+[native CI](ci.md) defines platform acceptance, and the
+[changelog](../CHANGELOG.md) records changes. Stable 1.3.0 is not yet published.
 
 ## Start here
 
-- [Quick start](quickstart.md): installation from the release archives,
+- [Quick start](quickstart.md): installation from development archives,
   first conversion, folders, web pages, OCR, language models, workspace and MCP.
-  The 1.3.0 builds are not code-signed yet; see
+  The development builds are not code-signed yet; see
   [unsigned builds on macOS](quickstart.md#unsigned-builds-on-macos).
 - [Troubleshooting](troubleshooting.md): `doctor`, exit codes and common errors.
 - [CLI](cli.md): every option and subcommand.
 - [Configuration](configuration.md): file locations, `config`/`init`, environment
   variables and defaults.
 - [Bindings](bindings.md): Node.js, Python and Go installation and API.
+- [Agent index](../llms.txt) and [standalone Agent guide](../llms-full.txt): plain
+  Markdown for CLI JSON, MCP and offline use.
+
+CLI archives include selected guides: README, this index, quick start, CLI,
+MCP and the two Agent entry points. Other topic and maintenance links need the
+full repository checkout; internal work records are not copied into packages.
 
 ## Common tasks
 
@@ -30,7 +37,7 @@ and Go bindings. It is the Rust rewrite of reference release 1.2.0:
 | Resume an interrupted batch | `markitai ./docs -o out/ --resume` | [Recovery storage](state-storage.md) |
 | Convert a web page | `markitai https://example.com -o out/` | [URL fetching](fetch.md) |
 | Render a JavaScript page | `markitai URL -s playwright -o out/` | [Browser](browser.md), [installation](browser-installation.md) |
-| OCR a scan (macOS) | `markitai scan.pdf --ocr -o out/` | [Local OCR](ocr.md), [PDF OCR](pdf-ocr.md) |
+| OCR a scan (local backend) | `markitai scan.pdf --ocr -o out/` | [Local OCR](ocr.md), [PDF OCR](pdf-ocr.md) |
 | Page or slide images | `markitai deck.pdf --screenshot -o out/` | [PDF rendering](pdf-rendering.md), [Office rendering](office-rendering.md) |
 | Enhance with a model | `markitai report.pdf --llm -o out/` | [LLM](llm.md), [pricing](pricing.md) |
 | Image captions | `markitai report.docx --llm --alt --desc -o out/` | [Image enrichment](image-enrichment.md) |
@@ -54,7 +61,7 @@ and Go bindings. It is the Rust rewrite of reference release 1.2.0:
 - [EML](eml.md) and [MSG](msg.md) e-mail.
 - [Markup](markup.md): reStructuredText, Org and TeX.
 - [Images](images.md): raster, SVG, HEIF/AVIF and shared asset handling.
-- [Local OCR](ocr.md): macOS Vision recognition and languages.
+- [Local OCR](ocr.md): macOS Vision and portable Paddle, languages and model preparation.
 
 ## Web pages
 

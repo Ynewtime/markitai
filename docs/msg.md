@@ -37,12 +37,31 @@ artifact; passing authored tests alone does not establish corpus parity.
 
 ## Attachments
 
-By-value attachment data is preserved byte-for-byte and returned as assets.
+By-value attachment data is extracted byte-for-byte and returned as assets.
 Names are reduced to safe basenames with an ordinal prefix; embedded directory
 names never become output paths. HTML `cid:` references in quoted or unquoted
-`src`/`href` attributes resolve to matching attachment content IDs. Other
-attachments receive a Markdown link so every emitted asset has a reference.
+`src`/`href` attributes resolve to matching attachment content IDs. Original
+attachments receive a Markdown download link, even when the body also shows their
+image. Their downloaded bytes bypass preview compression, filtering and image
+deduplication. The body can use a separate prepared preview; removing that preview
+does not remove the original. Filename labels remain visible while normal
+content-addressed publication may use different physical names.
 Missing content IDs produce a warning.
+
+Only an unambiguous, correctly typed `PidTagAttachmentHidden=true` (0x7FFE,
+Boolean), a correctly typed `PidTagAttachFlags` (0x3714, Integer32) containing
+`0x00000004` without HTML-invisible `0x00000001`, and an actual HTML CID image use
+together qualify for a single inline image asset. That inline asset keeps the
+existing image processing behavior and need not preserve its original encoded
+bytes. A missing/false Hidden property, missing flags, wrong type/value, conflicting
+classification or a CID used only in a link cannot authorize omitting the original
+download. Plain-text image-looking Markdown is not HTML CID provenance. The reader
+does not infer this classification from filenames or RenderingPosition.
+
+Microsoft defines [Hidden](https://learn.microsoft.com/en-us/office/client-developer/outlook/mapi/pidtagattachmenthidden-canonical-property),
+the [AttachFlags body-format bits](https://learn.microsoft.com/en-us/openspecs/exchange_server_protocols/ms-oxcmsg/af8700bc-9d2a-47e4-b107-5ebf4467a418),
+and [inline HTML attachment checks](https://learn.microsoft.com/en-us/openspecs/exchange_server_protocols/ms-oxcmail/96ee0694-0902-43d2-97d3-40f1fad626e7).
+Requiring Hidden as well is the reader's conservative preservation policy.
 
 Attachment extraction is an additive fidelity improvement over the inspected
 reference MSG converter, which did not emit these assets. External-file/web
@@ -74,6 +93,10 @@ reading. These adapter bounds do not claim that all upstream CFB bookkeeping
 allocations are independently bounded. A foreign compound document lacking the
 message property table is rejected. Truncated property records and conflicting
 duplicate values are errors; zero padding after complete records is accepted.
+The narrow exception is conflicting attachment Hidden/AttachFlags classification:
+those fields are marked ambiguous, produce a warning, and retain readable
+by-value data as an original download. Other conflicting attachment properties
+and all message/recipient property conflicts keep the strict behavior.
 Malformed recipient or attachment subobjects produce explicit warnings while
 the main message is retained.
 
@@ -91,3 +114,8 @@ attachments, path normalization, CID prefix collisions, missing content IDs,
 malformed Unicode/property tables, non-message compound files, unsupported
 attachment methods, RTF-only notices and pre-copy stream limits. These tests
 require no source-project fixtures or private mail accounts.
+
+New authored disk-publication cases check explicit CID originals, valid inline
+properties, wrong types/values, absent or conflicting classification, preview
+filtering and shared reference definitions with URI suffixes. They bind source and
+published bytes/SHA independently; execution evidence is recorded after integration.

@@ -396,6 +396,7 @@ fn convert_inner(
     let local_ocr = image_input
         && config::enabled(&cfg, "/ocr/enabled")
         && (!config::enabled(&cfg, "/llm/enabled") || vlm_disabled);
+    let mut original_attachments = std::collections::HashSet::new();
     let mut doc = if cloudflare_backend {
         fetch::cloudflare::convert_file(&input_path, cloudflare_extension, &cfg)?
     } else if image_input {
@@ -480,7 +481,11 @@ fn convert_inner(
         document.metadata.insert("format".into(), "PDF".into());
         document
     } else {
-        formats::extract_as(&input_path, document_extension).map_err(formats::explain_damage)?
+        let (document, originals) =
+            formats::extract_as_with_attachments(&input_path, document_extension)
+                .map_err(formats::explain_damage)?;
+        original_attachments = originals;
+        document
     };
     if let Some(real) = real_extension {
         doc.warnings
@@ -552,7 +557,11 @@ fn convert_inner(
         )?;
     }
     if !image_input {
-        images::prepare_assets(&mut doc, &cfg);
+        if original_attachments.is_empty() {
+            images::prepare_assets(&mut doc, &cfg);
+        } else {
+            images::prepare_mail_assets(&mut doc, &cfg, &original_attachments);
+        }
     }
     let fetch_strategy = if is_url {
         doc.metadata

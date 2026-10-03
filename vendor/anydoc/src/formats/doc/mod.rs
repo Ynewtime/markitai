@@ -5,6 +5,9 @@
 //! units, matching the CP-indexed PLC structures.
 
 mod lists;
+mod objects;
+#[cfg(test)]
+mod objects_tests;
 mod sprm;
 mod stsh;
 
@@ -53,9 +56,11 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
     let ccp_text = get_u32(&word_doc, 0x4C).unwrap_or(0) as usize;
     let ccp_ftn = get_u32(&word_doc, 0x50).unwrap_or(0) as usize;
     let ccp_hdd = get_u32(&word_doc, 0x54).unwrap_or(0) as usize;
-    let ccp_mcr = get_u32(&word_doc, 0x58).unwrap_or(0) as usize;
+    // FibRgLw97.reserved3 at 0x58 is ignored, including a nonzero value.
+    // It is not a story length and must not shift note or textbox positions.
     let ccp_atn = get_u32(&word_doc, 0x5C).unwrap_or(0) as usize;
     let ccp_edn = get_u32(&word_doc, 0x60).unwrap_or(0) as usize;
+    let ccp_txbx = get_u32(&word_doc, 0x64).unwrap_or(0) as usize;
     let fc_clx = get_u32(&word_doc, 0x1A2).unwrap_or(0) as usize;
     let lcb_clx = get_u32(&word_doc, 0x1A6).unwrap_or(0) as usize;
 
@@ -64,7 +69,13 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
     } else {
         (legacy_single_piece(&word_doc), Vec::new())
     };
-    let total_cp = ccp_text + ccp_ftn + ccp_hdd + ccp_mcr + ccp_atn + ccp_edn;
+    let textbox_base = [ccp_text, ccp_ftn, ccp_hdd, ccp_atn, ccp_edn]
+        .into_iter()
+        .try_fold(0usize, usize::checked_add)
+        .ok_or_else(|| ConvertError::malformed("Word story positions overflow"))?;
+    let total_cp = textbox_base
+        .checked_add(ccp_txbx)
+        .ok_or_else(|| ConvertError::malformed("Word textbox positions overflow"))?;
     // Compressed (8-bit) piece text decodes in the document's ANSI code
     // page: FibBase.lid, or FibRgW97.lidFE when fFarEast is set.
     let lid = if flags & 0x4000 != 0 {
@@ -85,7 +96,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
     let mut note_refs: HashMap<usize, String> = HashMap::new();
     let mut note_ranges: Vec<(usize, usize, String, NoteKind)> = Vec::new();
     let ftn_base = ccp_text;
-    let edn_base = ccp_text + ccp_ftn + ccp_hdd + ccp_mcr + ccp_atn;
+    let edn_base = ccp_text + ccp_ftn + ccp_hdd + ccp_atn;
     for (ref_off, txt_off, base, prefix, kind) in [
         (0xAA, 0xB2, ftn_base, "fn", NoteKind::Footnote),
         (0x20A, 0x212, edn_base, "en", NoteKind::Endnote),
@@ -104,7 +115,23 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
     let main_end = text.index_of_cp(ccp_text);
 
     let piece_prcs: Vec<Option<usize>> = pieces.iter().map(|p| p.prm_prc).collect();
+    let fields = objects::fields(
+        &word_doc,
+        &table,
+        &text,
+        &[
+            (0x11A, 0, ccp_text),
+            (0x12A, ftn_base, ccp_ftn),
+            (0x21A, edn_base, ccp_edn),
+            (0x262, textbox_base, ccp_txbx),
+        ],
+    )?;
+    let textboxes =
+        objects::Textboxes::read(&word_doc, &table, &text, ccp_text, textbox_base, ccp_txbx)?;
     let assembler = Assembler {
+        textboxes,
+        fields,
+        objects: std::cell::RefCell::new(Some(objects::Objects::new(ole))),
         text,
         chpx: Runs::new(chpx_runs),
         papx: Runs::new(papx_runs),
@@ -134,7 +161,14 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
         notes.push(Note { id, kind, blocks: assembler.build_blocks(lo, hi, None, None)? });
     }
     let assets = std::mem::take(&mut assembler.assets.borrow_mut().assets);
-    Ok(Document { blocks, notes, assets, slide_starts: Vec::new(), warnings: Vec::new() })
+    let mut warnings = assembler
+        .objects
+        .borrow_mut()
+        .as_mut()
+        .map(|objects| std::mem::take(&mut objects.warnings))
+        .unwrap_or_default();
+    warnings.extend(assembler.textboxes.warnings.iter().cloned());
+    Ok(Document { blocks, notes, assets, slide_starts: Vec::new(), warnings })
 }
 
 /// Read a PLC's CP array; n is the number of data elements.
@@ -257,9 +291,12 @@ fn prm0_grpprl(prm: u16) -> Option<Vec<u8>> {
         0x0C => 0x260A, // sprmPIlvl
         0x18 => 0x2416, // sprmPFInTable
         0x19 => 0x2417, // sprmPFTtp
+        0x4B => 0x080A, // sprmCFOle2
         0x55 => 0x0835, // sprmCFBold
         0x56 => 0x0836, // sprmCFItalic
         0x57 => 0x0837, // sprmCFStrike
+        0x75 => 0x0855, // sprmCFSpec
+        0x76 => 0x0856, // sprmCFObj
         0x78 => 0x2640, // sprmPOutLvl
         _ => return None,
     };
@@ -612,7 +649,7 @@ fn composite_label(
 // ---------------------------------------------------------------------------
 // Assembly: text stream + formatting runs -> model
 
-struct Assembler {
+struct Assembler<'a> {
     text: TextStream,
     chpx: Runs,
     papx: Runs,
@@ -625,6 +662,9 @@ struct Assembler {
     /// The Data stream, for `sprmCPicLocation` picture payloads.
     data: Vec<u8>,
     assets: std::cell::RefCell<AssetSink>,
+    fields: objects::Fields,
+    textboxes: objects::Textboxes,
+    objects: std::cell::RefCell<Option<objects::Objects<'a>>>,
 }
 
 /// markitai: a run of list paragraphs being read, whether empty paragraphs
@@ -652,9 +692,15 @@ struct EffectivePap {
     effective: PapDelta,
 }
 
+struct DocField {
+    frame: FieldFrame,
+    objects: Vec<Block>,
+}
+
 struct ParaBuilder {
     inlines: Vec<Inline>,
-    fields: Vec<FieldFrame>,
+    fields: Vec<DocField>,
+    objects: Vec<Block>,
     text: String,
     style: Style,
     /// markitai: the run's superscript or subscript position.
@@ -666,6 +712,7 @@ impl ParaBuilder {
         ParaBuilder {
             inlines: Vec::new(),
             fields: Vec::new(),
+            objects: Vec::new(),
             text: String::new(),
             style: Style::PLAIN,
             script: None,
@@ -681,15 +728,15 @@ impl ParaBuilder {
         // and RTF readers write one (`H₂O`, `10⁻³`), or at the baseline when
         // some character has none; a field's instructions stay as written.
         if let Some(f) = self.fields.last_mut()
-            && !f.in_result
+            && !f.frame.in_result
         {
-            f.instr.push_str(&text);
+            f.frame.instr.push_str(&text);
             return;
         }
         let text = self.script.and_then(|script| script.convert(&text)).unwrap_or(text);
         let inline = Inline::Text { text, style: self.style };
         match self.fields.last_mut() {
-            Some(f) => f.inlines.push(inline),
+            Some(f) => f.frame.inlines.push(inline),
             None => self.inlines.push(inline),
         }
     }
@@ -706,21 +753,21 @@ impl ParaBuilder {
     fn push_inline(&mut self, inline: Inline) {
         self.flush_text();
         match self.fields.last_mut() {
-            Some(f) if !f.in_result => {}
-            Some(f) => f.inlines.push(inline),
+            Some(f) if !f.frame.in_result => {}
+            Some(f) => f.frame.inlines.push(inline),
             None => self.inlines.push(inline),
         }
     }
 
     fn field_begin(&mut self) {
         self.flush_text();
-        self.fields.push(FieldFrame::default());
+        self.fields.push(DocField { frame: FieldFrame::default(), objects: Vec::new() });
     }
 
     fn field_separate(&mut self) {
         self.flush_text();
         if let Some(f) = self.fields.last_mut() {
-            f.in_result = true;
+            f.frame.in_result = true;
         }
     }
 
@@ -729,37 +776,53 @@ impl ParaBuilder {
         let Some(frame) = self.fields.pop() else {
             return;
         };
-        for inline in field_result(&frame.instr, frame.inlines) {
+        for inline in field_result(&frame.frame.instr, frame.frame.inlines) {
             match self.fields.last_mut() {
-                Some(f) if !f.in_result => {}
-                Some(f) => f.inlines.push(inline),
+                Some(f) if !f.frame.in_result => {}
+                Some(f) => f.frame.inlines.push(inline),
                 None => self.inlines.push(inline),
             }
+        }
+        match self.fields.last_mut() {
+            Some(parent) if parent.frame.in_result => parent.objects.extend(frame.objects),
+            Some(_) => {}
+            None => self.objects.extend(frame.objects),
         }
     }
 
     /// markitai: whether text read now shows (a field's instructions do
     /// not).
     fn shows_text(&self) -> bool {
-        self.fields.last().is_none_or(|field| field.in_result)
+        self.fields.last().is_none_or(|field| field.frame.in_result)
     }
 
-    fn finish(mut self) -> Vec<Inline> {
+    fn finish(mut self) -> (Vec<Inline>, Vec<Block>) {
         self.flush_text();
         while !self.fields.is_empty() {
             self.field_end();
         }
-        self.inlines
+        (self.inlines, self.objects)
     }
 }
 
-impl Assembler {
+impl Assembler<'_> {
     fn build_blocks(
+        &self,
+        lo: usize,
+        hi: usize,
+        looks: Option<&mut Looks>,
+        lists: Option<&mut TypedLists>,
+    ) -> Result<Vec<Block>, ConvertError> {
+        self.build_blocks_impl(lo, hi, looks, lists, false)
+    }
+
+    fn build_blocks_impl(
         &self,
         lo: usize,
         hi: usize,
         mut looks: Option<&mut Looks>,
         mut lists: Option<&mut TypedLists>,
+        textbox: bool,
     ) -> Result<Vec<Block>, ConvertError> {
         let mut blocks: Vec<Block> = Vec::new();
         let mut list_run = ListRun::default();
@@ -777,6 +840,19 @@ impl Assembler {
         while i < hi.min(self.text.chars.len()) {
             let c = self.text.chars[i];
             let fc = self.text.fcs[i];
+            // New textbox output must not promote a known hidden result or
+            // a cross-paragraph instruction into plain text/images. Local
+            // instruction characters still populate their FieldFrame, while
+            // controls retain pairing and paragraph state. Main-story text
+            // keeps its preexisting renderer behavior.
+            if textbox
+                && !self.fields.exposes(i)
+                && para.shows_text()
+                && !matches!(c, '\u{13}' | '\u{14}' | '\u{15}' | '\r' | '\u{7}' | '\u{c}' | '\u{e}')
+            {
+                i += 1;
+                continue;
+            }
             if let Some(id) = self.note_refs.get(&i) {
                 para.push_inline(Inline::NoteRef(id.clone()));
                 i += 1;
@@ -785,7 +861,8 @@ impl Assembler {
             match c {
                 '\r' | '\u{7}' | '\u{c}' | '\u{e}' => {
                     let pap = self.effective_pap(fc, i);
-                    let inlines = std::mem::replace(&mut para, ParaBuilder::new()).finish();
+                    let (inlines, mut objects) =
+                        std::mem::replace(&mut para, ParaBuilder::new()).finish();
                     let size = std::mem::take(&mut para_size);
                     let is_cell_mark = c == '\u{7}';
                     if pap.effective.in_table.unwrap_or(false) || is_cell_mark {
@@ -806,8 +883,13 @@ impl Assembler {
                                 &mut cell_blocks,
                                 &mut cell_styled,
                             );
+                            if !objects.is_empty() {
+                                cell_styled.flush(&mut cell_blocks);
+                                cell_blocks.append(&mut objects);
+                            }
                         } else if is_cell_mark && pap.effective.ttp.unwrap_or(false) {
                             cell_styled.flush(&mut cell_blocks);
+                            cell_blocks.append(&mut objects);
                             // Row end: the TTP mark's PAPX carries the TAP
                             // (boundaries, merge flags, header row).
                             if !row.is_empty() {
@@ -824,6 +906,7 @@ impl Assembler {
                                 &mut cell_styled,
                             );
                             cell_styled.flush(&mut cell_blocks);
+                            cell_blocks.append(&mut objects);
                             row.push(std::mem::take(&mut cell_blocks));
                         } else {
                             self.emit_cell_paragraph(
@@ -832,6 +915,10 @@ impl Assembler {
                                 &mut cell_blocks,
                                 &mut cell_styled,
                             );
+                            if !objects.is_empty() {
+                                cell_styled.flush(&mut cell_blocks);
+                                cell_blocks.append(&mut objects);
+                            }
                         }
                     } else {
                         Self::flush_table(
@@ -848,6 +935,7 @@ impl Assembler {
                             &mut blocks,
                             &mut list_run,
                             &mut styled,
+                            !objects.is_empty(),
                         );
                         if plain && let Some(looks) = looks.as_deref_mut() {
                             looks.paragraph(blocks.len() - 1, size);
@@ -860,11 +948,46 @@ impl Assembler {
                             };
                             lists.paragraph(blocks.len() - 1, indent);
                         }
+                        // An embedded table belongs to its source paragraph,
+                        // including a paragraph inside a list item.
+                        if !objects.is_empty() {
+                            styled.flush(&mut blocks);
+                            if let Some(entry) = list_run.entries.last_mut() {
+                                entry.blocks.append(&mut objects);
+                            } else {
+                                blocks.append(&mut objects);
+                            }
+                        }
                     }
                 }
                 '\u{b}' => para.push_inline(Inline::LineBreak),
+                '\u{8}' => {
+                    if let Some(&(lo, hi)) = self.textboxes.ranges.get(&i) {
+                        if !self.fields.exposes(i) {
+                            self.object_warning(i, "textbox anchor is inside an instruction, private or inconsistent field; data not read");
+                        } else if !self.object_props(fc, i).is_special() {
+                            self.object_warning(i, "textbox anchor lacks CFSpec; data not read");
+                        } else {
+                            let blocks = self.build_blocks_impl(lo, hi, None, None, true)?;
+                            match para.fields.last_mut() {
+                                Some(field) if field.frame.in_result => {
+                                    field.objects.extend(blocks)
+                                }
+                                Some(_) => {}
+                                None => para.objects.extend(blocks),
+                            }
+                        }
+                    }
+                }
                 '\u{13}' => para.field_begin(),
-                '\u{14}' => para.field_separate(),
+                '\u{14}' => {
+                    para.field_separate();
+                    if para.fields.iter().rev().skip(1).all(|field| field.frame.in_result)
+                        && let Some(field) = para.fields.last_mut()
+                    {
+                        field.objects.extend(self.object_at(fc, i, &field.frame.instr)?);
+                    }
+                }
                 '\u{15}' => para.field_end(),
                 '\t' => {
                     let style = self.char_style(fc, i);
@@ -901,7 +1024,7 @@ impl Assembler {
                         para.push_inline(image);
                     }
                 }
-                '\u{2}' | '\u{5}' | '\u{8}' | '\u{1f}' => {}
+                '\u{2}' | '\u{5}' | '\u{1f}' => {}
                 c if c.is_control() => {}
                 c => {
                     let style = self.char_style(fc, i);
@@ -918,7 +1041,7 @@ impl Assembler {
             }
             i += 1;
         }
-        let inlines = para.finish();
+        let (inlines, objects) = para.finish();
         cell_styled.flush(&mut cell_blocks);
         Self::flush_table(&mut blocks, &mut table_rows, &mut row, &mut cell_blocks)?;
         if !inlines_are_empty(&inlines) {
@@ -928,7 +1051,52 @@ impl Assembler {
         }
         styled.flush(&mut blocks);
         list_run.flush(&mut blocks);
+        blocks.extend(objects);
         Ok(blocks)
+    }
+
+    /// Data of the OLE object named by this field separator, never by
+    /// ObjectPool enumeration. Piece properties override direct CHPX.
+    fn object_at(
+        &self,
+        fc: u32,
+        index: usize,
+        instruction: &str,
+    ) -> Result<Vec<Block>, ConvertError> {
+        let Some(id) = self.object_props(fc, index).storage() else {
+            return Ok(Vec::new());
+        };
+        if !self.fields.exposes(index) {
+            self.object_warning(index, "field or ancestor result is private, an instruction or inconsistent; stored data not read");
+            return Ok(Vec::new());
+        }
+        let Some(field) = self.fields.at_separator.get(&index) else {
+            return Ok(Vec::new());
+        };
+        let mut reader = self.objects.borrow_mut();
+        let Some(objects) = reader.as_mut() else {
+            return Ok(Vec::new());
+        };
+        objects.blocks(id, instruction, *field, self.text.cps[index])
+    }
+
+    fn object_props(&self, fc: u32, index: usize) -> sprm::ObjectProps {
+        let mut props = sprm::ObjectProps::default();
+        if let Some(run) = self.chpx.lookup(fc) {
+            props.apply(&run.chpx);
+        }
+        if let Some(&piece) = self.text.piece_of.get(index)
+            && let Some(prm) = self.piece_prm(piece as usize)
+        {
+            props.apply(prm);
+        }
+        props
+    }
+
+    fn object_warning(&self, index: usize, message: &str) {
+        if let Some(objects) = self.objects.borrow_mut().as_mut() {
+            objects.warn(self.text.cps[index], message);
+        }
     }
 
     /// Effective character style in specification order: paragraph/character
@@ -1032,6 +1200,7 @@ impl Assembler {
         blocks: &mut Vec<Block>,
         list_run: &mut ListRun,
         styled: &mut StyledRun,
+        has_objects: bool,
     ) -> bool {
         let style = self.stylesheet.get(pap.istd);
         // A styled container absorbs its blank paragraphs: they are the
@@ -1043,7 +1212,7 @@ impl Assembler {
         }
         // markitai: an empty paragraph after a list closes it, as before,
         // unless an item's continuation follows.
-        if inlines_are_empty(&inlines) {
+        if inlines_are_empty(&inlines) && !has_objects {
             styled.flush(blocks);
             if list_run.entries.is_empty() {
                 list_run.flush(blocks);
@@ -1431,6 +1600,9 @@ mod tests {
             note_refs: HashMap::new(),
             counters: std::cell::RefCell::new(Counters::default()),
             data: Vec::new(),
+            fields: objects::Fields::default(),
+            textboxes: objects::Textboxes::default(),
+            objects: std::cell::RefCell::new(None),
             assets: std::cell::RefCell::new(AssetSink::new()),
         };
         assembler.build_blocks(0, count as usize, None, None).unwrap()

@@ -3,56 +3,87 @@
 Markitai converts documents, web pages and images to Markdown. One Rust core
 powers the `markitai` command (also installed as `mkai`), a local REST service
 with a browser workspace, an MCP server, and in-process Node.js, Python and Go
-bindings. This guide covers version 1.3.0, the Rust rewrite of reference
-release 1.2.0.
+bindings. This guide covers development version **1.3.0-dev**, the Rust rewrite of
+reference release 1.2.0. Stable 1.3.0 has not been published.
 
 ## 1. Install
 
-Markitai 1.3.0 is distributed as one archive per platform. Each holds the
-`markitai` executable, relative `mkai` and `markitai-mcp` links and all license
-notices; the executable needs no Python, Node.js or Go runtime.
+Choose the archive supplied for your machine. `1.3.0-dev` is a development
+version; stable 1.3.0 has not been published. The names below describe packages
+produced by the project, not links to an available stable release.
 
-| Platform | Archive | Executable |
-|---|---|---|
-| macOS on Apple silicon | `markitai-1.3.0-aarch64-apple-darwin-single-binary.tar.gz` | about 22 MB |
-| macOS on Intel (tested under Rosetta 2 only) | `markitai-1.3.0-x86_64-apple-darwin-single-binary.tar.gz` | about 25 MB |
-| Linux x86-64 with glibc 2.39 or later | `markitai-1.3.0-x86_64-unknown-linux-gnu-single-binary.tar.gz` | about 26 MB |
+| Platform | Development archive |
+|---|---|
+| macOS on Apple silicon | `markitai-1.3.0-dev-aarch64-apple-darwin-single-binary.tar.gz` |
+| macOS on Intel | `markitai-1.3.0-dev-x86_64-apple-darwin-single-binary.tar.gz` |
+| Linux x86-64 | `markitai-1.3.0-dev-x86_64-unknown-linux-gnu-single-binary.tar.gz` |
+| Windows x64 | `markitai-1.3.0-dev-x86_64-pc-windows-msvc.zip` |
+| Windows ARM64 | `markitai-1.3.0-dev-aarch64-pc-windows-msvc.zip` |
 
-The archives are about 12 MB each. The macOS builds declare macOS 11.0 as their
-minimum but have been run only on macOS 27; the Linux build is linked against
-glibc 2.39 (Ubuntu 24.04, also Debian 13 and later) and has been tested on
-Ubuntu 24.04. The files sit at the top of the archive, so extract it into a
-directory of its own and put the commands on your `PATH`:
+On macOS or Linux, replace `Archive` with the path to your downloaded archive.
+Use a new installation directory; if `mkdir` reports that it exists, choose a
+new directory before continuing. Keeping the files together preserves both
+aliases and the offline documentation:
 
 ```sh
-mkdir -p ~/.local/share/markitai ~/.local/bin
-tar -xzf markitai-1.3.0-aarch64-apple-darwin-single-binary.tar.gz -C ~/.local/share/markitai
-ln -sf ~/.local/share/markitai/markitai ~/.local/bin/markitai
-ln -sf ~/.local/share/markitai/mkai ~/.local/bin/mkai                  # optional short name
-ln -sf ~/.local/share/markitai/markitai-mcp ~/.local/bin/markitai-mcp  # optional MCP launcher name
-markitai --version   # markitai 1.3.0
+Archive="/path/to/markitai-1.3.0-dev-aarch64-apple-darwin-single-binary.tar.gz"
+Install="$HOME/.local/share/markitai/1.3.0-dev"
+mkdir -p "$HOME/.local/share/markitai"
+mkdir "$Install" && tar -xzf "$Archive" -C "$Install"
+export PATH="$Install:$PATH"
+markitai --version                  # markitai 1.3.0-dev
+mkai --help
+markitai-mcp --help
 ```
 
-If `markitai` is not found, add `~/.local/bin` to `PATH` in your shell profile.
-On Apple silicon use the arm64 archive: the x86-64 build also runs there under
-Rosetta 2, but cannot use local OCR. The Node.js package, the Python wheel and
-the Go packages are covered in [bindings](bindings.md#installation).
+The `export` makes the commands available in this terminal immediately; it
+does not rely on `~/.local/bin` already being on `PATH`. To keep them available
+in new terminals, add `export PATH="$HOME/.local/share/markitai/1.3.0-dev:$PATH"`
+once to `~/.zshrc` for zsh or `~/.bashrc` for non-login bash terminals
+(`~/.bash_profile` for login bash terminals). Use the actual installation
+directory if you changed it. An MCP client can always use the
+absolute executable path, independent of shell profiles.
+
+On Windows, select x64 or ARM64 and use PowerShell. Replace `Archive` with your
+ZIP path; choose a new `Install` directory if it already exists:
+
+```powershell
+$Archive = "C:\Downloads\markitai-1.3.0-dev-aarch64-pc-windows-msvc.zip"
+$Install = Join-Path $env:LOCALAPPDATA "Programs\Markitai-1.3.0-dev"
+if (Test-Path -LiteralPath $Install) { throw "Choose a new installation directory" }
+Expand-Archive -LiteralPath $Archive -DestinationPath $Install
+& "$Install\markitai.exe" --version
+$env:Path = "$Install;$env:Path"
+mkai.exe --help
+markitai-mcp.exe --help
+```
+
+These are three direct EXE entries, with no `.cmd` wrapper or administrator
+installation. The PATH assignment applies to this terminal. For future
+terminals, add the installation directory to your **user** Path in Windows
+Environment Variables, then open a new terminal.
+
+The CLI needs no Python, Node.js or Go runtime. Unix archives contain one
+executable and relative `mkai` / `markitai-mcp` links; Windows ZIPs contain
+three EXE entries. License notices and selected offline Markdown guides are
+included; OCR models are not. Node.js, Python and Go bindings are separate
+packages with their own runtime requirements; see [bindings](bindings.md#installation).
 
 ### Unsigned builds on macOS
 
-The 1.3.0 executables and packages are not code-signed with an Apple
+The development executables and packages are not code-signed with an Apple
 Developer ID or notarized yet. macOS Gatekeeper therefore blocks a copy that a
 web browser downloaded (it carries the download "quarantine" mark) and reports
 that Apple cannot verify it; an archive fetched with `curl` or `wget` has no
-such mark. Once you are sure the archive is the one published for the
-release, remove the mark from that file before extracting it:
+such mark. Once you are sure the archive came from the project and its checksum matches
+the supplied package record, remove the mark from that file before extracting it:
 
 ```sh
-xattr -d com.apple.quarantine markitai-1.3.0-aarch64-apple-darwin-single-binary.tar.gz
+xattr -d com.apple.quarantine markitai-1.3.0-dev-aarch64-apple-darwin-single-binary.tar.gz
 ```
 
 If you have already extracted it, run the same command on
-`~/.local/share/markitai/markitai` instead. This exempts only that file; it does
+`$Install/markitai` instead. This exempts only that file; it does
 not change Gatekeeper for any other program, and there is no need to turn
 Gatekeeper off. The same applies to a downloaded `.tgz` or wheel before you
 install it.
@@ -69,30 +100,54 @@ This produces `target/release/markitai` and the identical `target/release/mkai`;
 the first release build takes several minutes. On Apple silicon, build for an
 Intel Mac with `rustup target add x86_64-apple-darwin` and
 `cargo build --release --target x86_64-apple-darwin -p markitai-cli`; the
-executable lands in `target/x86_64-apple-darwin/release/`. Link the executable
-into `~/.local/bin` as above. Maintainers produce the release archives with the
-package drivers described in [native CI](ci.md).
+executable lands in `target/x86_64-apple-darwin/release/`. Add the native build
+directory to the current shell with
+`export PATH="$PWD/target/release:$PATH"` (use the target-specific directory
+when cross-building). `markitai mcp` starts MCP directly; a source build does
+not create the archive's `markitai-mcp` alias. Maintainers produce archives
+with the package drivers described in [native CI](ci.md).
 
 ### Platform support
 
-| Capability | macOS arm64 | macOS x86-64 (Intel) | Linux x86-64 | Windows |
-|---|---|---|---|---|
-| Document, web-page, e-mail and data conversion; `serve`; `mcp`; bindings | Tested | CLI archive and Rust tests checked under Rosetta 2 only; no binding packages | Tested (Ubuntu 24.04 under OrbStack emulation), including the static Go package | No release build; type-checks only, never linked or run |
-| Local OCR, PDF page images, HEIF/AVIF images | Built in (system frameworks) | Built in, not tested on Intel hardware; under Rosetta 2 OCR fails with an explicit error | Explicit "unsupported" error | Unsupported |
-| JavaScript pages and web screenshots (`-s playwright`, `--screenshot`) | Needs Chrome/Chromium | Not tested | Needs Chrome/Chromium (not exercised in the Linux rounds) | Not tested |
-| Office page screenshots | Needs LibreOffice | Not tested | Not available | Not available |
-| Batch `--resume`, subscription models | Supported | Supported (tests under Rosetta 2) | Supported | Not available |
+The table describes available backends, rather than promising every format
+has equal fidelity on every platform. Windows x64 CI and Windows ARM64/Linux
+VMs have run native Rust tests and installed-package checks; physical Intel
+Macs remain untested. Consult [native CI](ci.md) for each recorded scope and
+[formats](formats.md) for reader gaps.
 
-Physical Intel Macs and physical Intel/AMD Linux machines have not been tested.
-On Apple silicon, an x86-64 build running under Rosetta 2 cannot use local OCR,
-and `markitai doctor` says so ([details](validation/macos-x86_64-rosetta.md)).
-Run `markitai doctor` to see which optional pieces are present on your machine.
+| Capability | macOS | Linux x86-64 | Windows x64 / ARM64 |
+|---|---|---|---|
+| Native text readers, `serve`, CLI and MCP | Available; x86-64 checked under Rosetta 2 | Available | Available |
+| Local OCR | Vision by default; optional portable Paddle build | Paddle; models must be prepared | Paddle; models must be prepared |
+| PDF page rendering | System CoreGraphics; optional portable hayro build | Built-in hayro | Built-in hayro |
+| HEIF / AVIF decoding | System ImageIO | Explicit unsupported error | Explicit unsupported error |
+| JavaScript pages / web screenshots | Needs Chrome/Chromium | Needs Chrome/Chromium | Needs Chrome/Chromium |
+| Office page images / OCR | Needs LibreOffice | Needs LibreOffice | Needs LibreOffice |
+| Batch `--resume` | Available | Available | Available |
 
-## 2. Try it without touching your real settings (optional)
+macOS binaries declare a minimum of macOS 11.0; testing used newer macOS.
+The Ubuntu 24.04 Linux archives require glibc 2.39 or later; another Linux
+build can have a different requirement. The Windows archives target MSVC64
+and carry their required executable entries. Neither a CLI archive nor a
+passing version probe proves all Node/Python/Go bindings work; Windows Go/cgo
+package acceptance remains separate and unverified.
+
+On Apple silicon, use the arm64 archive. The default x86-64 build under Rosetta
+cannot use Vision OCR; portable builds can use Paddle. Run `markitai doctor`
+to inspect the backends selected by your build and configuration. It does not
+download models. `markitai doctor --fix` explicitly prepares missing Paddle
+models and can repair safely managed corrupt models; unsafe model paths are
+rejected. Once models are ready, local OCR needs no provider request. See
+[local OCR](ocr.md#the-portable-engine-windows-and-linux) for languages and
+model preparation, including offline installations.
+
+## 2. Use separate trial state (optional)
 
 Markitai keeps its configuration, caches, browser installation and history in
-`~/.markitai`. Point `MARKITAI_HOME` at another directory to keep a trial
-completely separate:
+`~/.markitai`. Point `MARKITAI_HOME` at another directory for separate trial
+configuration, caches, browser installation and history. Current-directory
+`.env` files and process environment variables can still affect configuration;
+changing this directory does not block network access:
 
 ```sh
 export MARKITAI_HOME="$PWD/.local/try-home"
@@ -137,12 +192,19 @@ default `output.on_conflict` is `rename`, giving `report.docx.v2.md`. Use
 `markitai config set output.on_conflict overwrite`, or for one run with
 `--config-json '{"output":{"on_conflict":"overwrite"}}'`.
 
-Recognized extensions are `.avif .bmp .csv .doc .docm .docx .eml .epub .gif
-.heic .heif .htm .html .ipynb .jpeg .jpg .json .latex .markdown .md .msg
-.numbers .odp .ods .odt .org .pdf .png .pot .pps .ppsm .ppsx .ppt .pptm .pptx
-.rst .rtf .svg .tex .tif .tiff .tsv .txt .webp .xhtml .xls .xlsb .xlsm .xlsx
-.xml`. An unsupported file prints this list. Reader quality and known gaps are
-described in [formats](formats.md).
+Recognized extensions (61, including document and spreadsheet templates):
+
+```text
+.avif .bmp .csv .doc .docm .docx .dot .dotm .dotx .eml .epub .gif .heic .heif
+.htm .html .ipynb .jpeg .jpg .json .latex .markdown .md .msg .numbers .odp
+.ods .odt .org .ots .ott .otp .pdf .png .pot .potm .potx .pps .ppsm .ppsx
+.ppt .pptm .pptx .rst .rtf .svg .tex .tif .tiff .tsv .txt .webp .xhtml .xls
+.xlsb .xlsm .xlsx .xlt .xltm .xltx .xml
+```
+
+Recognition does not guarantee every reader/backend can process every file.
+An unsupported extension prints the supported list; platform and fidelity
+limits are described in [formats](formats.md).
 
 ## 4. Convert a folder or a list of URLs
 
@@ -152,7 +214,7 @@ markitai ./documents -o out/ --dry-run        # list inputs and targets only
 markitai ./documents -o out/ -g '**/*.pdf' -j 4
 markitai ./documents -o out/ -g '!drafts/**'  # "!" excludes
 markitai links.urls -o out/                   # one URL per line
-markitai ./documents -o out/ --resume         # continue an interrupted run (Unix)
+markitai ./documents -o out/ --resume         # continue an interrupted batch
 ```
 
 A `.urls` file holds one `URL [output-name]` per line; blank lines and `#`
@@ -181,7 +243,7 @@ into `MARKITAI_HOME/browsers/native` (or `~/.markitai/browsers/native`).
 ## 6. Images, scans and page images
 
 ```sh
-markitai scan.png --ocr                  # macOS: on-device text recognition
+markitai scan.png --ocr                  # local recognition; prepare Paddle models first when needed
 markitai scanned.pdf --ocr -o out/       # recognizes pages without usable text
 markitai slides.pdf --screenshot -o out/ # one image per page
 ```
@@ -235,7 +297,7 @@ See [REST service](serve.md) and [workspace](web-ui.md).
 
 ## 9. Use it from an AI assistant (MCP)
 
-`markitai mcp` (or the `markitai-mcp` link) serves the tools
+`markitai mcp` (or Unix `markitai-mcp` / Windows `markitai-mcp.exe`) serves the tools
 `convert_document`, `convert_url`, `batch_convert` and `job_status` over
 stdin/stdout. A typical MCP client entry:
 
@@ -245,13 +307,17 @@ stdin/stdout. A typical MCP client entry:
     "markitai": {
       "command": "/absolute/path/to/markitai",
       "args": ["mcp"],
-      "env": {"OPENAI_API_KEY": "..."}
+      "env": {"MARKITAI_HOME": "/absolute/path/to/separate-state"}
     }
   }
 }
 ```
 
-Paths passed to the tools must be absolute. See [MCP](mcp.md).
+Use the actual executable path (`markitai.exe` on Windows) and native absolute
+paths in the configuration. Plain conversion does not need a provider key.
+Paths passed to document tools must be absolute; `~` is expanded. For structured
+CLI output use `markitai report.docx -o out/ --json`. See [MCP](mcp.md) and the
+[standalone Agent guide](../llms-full.txt).
 
 ## 10. Next steps
 
@@ -259,3 +325,8 @@ Paths passed to the tools must be absolute. See [MCP](mcp.md).
 - [Troubleshooting](troubleshooting.md): common errors and exit codes.
 - [CLI](cli.md): every option and subcommand.
 - [Documentation index](index.md): all topics.
+
+The CLI archive includes this guide, [CLI](cli.md), [MCP](mcp.md), an
+[index](index.md) and the root `llms.txt` / `llms-full.txt` for offline reading.
+Other topic links refer to the full repository documentation; they are not
+all copied into the archive.

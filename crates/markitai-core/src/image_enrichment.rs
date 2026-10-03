@@ -2,6 +2,10 @@
 
 mod resources;
 
+pub(crate) fn asset_name(target: &str) -> Option<String> {
+    resources::asset_name(target)
+}
+
 use crate::{
     ConversionOutput, Document, Error, LlmRuntime, Result, config, images, llm, output_profiles,
 };

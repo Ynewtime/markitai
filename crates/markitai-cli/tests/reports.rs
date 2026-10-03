@@ -1154,10 +1154,8 @@ fn nonzero_png_attachment_report_matches_persisted_asset_and_markdown_reference(
     let root = tempfile::tempdir().unwrap();
     let mut cfg = configure(root.path());
     cfg["output"]["report"] = json!(true);
-    cfg["image"]["compress"] = json!(false);
-    // Keep the deliberate one-pixel fixture: production defaults remove images
-    // below 50 pixels per side or 5,000 pixels in area before asset publication.
-    cfg["image"]["filter"] = json!({"min_width":1,"min_height":1,"min_area":1});
+    // A downloadable original must survive the default image-preview filter
+    // even when its dimensions are only one pixel.
     save(root.path(), &cfg);
     // A complete 1x1 RGBA PNG with valid chunk CRCs, embedded as a MIME
     // attachment. This reaches the native asset writer without OCR or a model.
@@ -1209,7 +1207,11 @@ fn nonzero_png_attachment_report_matches_persisted_asset_and_markdown_reference(
         ".markitai/assets/{}",
         assets[0].file_name().unwrap().to_str().unwrap()
     );
-    assert!(markdown.contains(&format!("## Attachments\n\n![pixel.png]({target})")));
+    assert!(markdown.contains(&format!(
+        "## Attachments\n\n- [pixel.png]({target}) ({} B)",
+        png.len()
+    )));
+    assert!(!markdown.contains("![pixel.png]"));
     assert!(!markdown.contains(".markitai/assets/email-1-pixel.png"));
     zero_usage(&saved["llm_usage"]);
 }

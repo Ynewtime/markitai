@@ -10,7 +10,9 @@ and publication happen afterward.
 
 HTML takes precedence over plain text among eligible message-body parts.
 `Content-Disposition: attachment` parts and attached `message/rfc822` messages
-cannot become the outer message's body. Within `multipart/related`, its `start`
+cannot become the outer message's body. Unknown declared disposition types are
+treated as attachments, as required by RFC 2183 section 2.8, and cannot become
+the body either. Within `multipart/related`, its `start`
 parameter selects the root by Content-ID; without a usable unique root, the first
 member is selected and an invalid explicit `start` produces a warning. Other
 related members are resources, not competing body candidates. Multipart ordering
@@ -32,9 +34,13 @@ escaped and controls are collapsed.
 
 The attachment section lists, in MIME order and joined by blank lines:
 
-- image attachments as images, `![label](.markitai/assets/...)`;
-- every other attachment as `- [label](.markitai/assets/...) (size)`, with the
-  reference's size spelling (`N B`, `N.N KB`, `N.N MB`);
+- original attachments, including images, as `- [label](.markitai/assets/...) (size)`,
+  with the reference's size spelling (`N B`, `N.N KB`, `N.N MB`);
+  a valid `image/*` part not shown through a body CID also has an indented image
+  preview under that download, so normal image captions, descriptions and model
+  analysis remain available. Preparation gives it a separate preview asset;
+  compression, size filtering and image deduplication do not alter the download.
+  Tiny previews may disappear while the original remains downloadable;
 - then each attached `message/rfc822` as `### Attached message: label` followed
   by that message rendered one level deep as a quotation (`> ` lines, `>` for blank
   lines). Inside it, attachments are listed by name only and nothing nests further.
@@ -43,22 +49,28 @@ The label is the decoded filename, or `attachment_N` counted from zero when ther
 is none. Brackets and parentheses in labels become `_`, as the reference does for
 image alt text.
 
-An image that the body already shows through a bound Content-ID reference is
-listed there and not a second time under `## Attachments` (mail clients mark
-inline pictures `Content-Disposition: attachment` as often as `inline`, so the
-disposition cannot tell them apart). Its asset is the one the body links, and the
-numbering of the remaining labels still counts it. The reference, which leaves
-`cid:` references unresolved, lists such an image only as an attachment. A
-message whose only attachments are shown in the body has no `## Attachments`
-section.
+An explicit `Content-Disposition: attachment`, or an unknown declared disposition,
+keeps its original download even
+when the body shows that part through a Content-ID. The body uses a separate
+image preview. This conservative choice preserves the independent attachment
+semantics in [RFC 2183](https://www.rfc-editor.org/rfc/rfc2183.html), including
+its treatment of unknown disposition types in section 2.8.
+An `inline` or unspecified disposition with an actual bound CID image keeps
+the existing single body-image asset instead. Unused CIDs and ordinary CID
+download links do not qualify; those parts still receive an original download.
+Ordinal numbering still counts body-only resources. A message containing only
+genuinely inline body images has no `## Attachments` section.
 
-Two enhancements over the reference remain. Every attachment, including attached
-messages, stays downloadable through its own asset link, where the reference shows
-only a name and size. Content-ID images are bound inside the body (below), where the
-reference leaves `cid:` references in place. An image attachment counts as an image
-only when it declares an `image/*` type and decoded without a transfer-encoding
-error; a filename alone never makes a part an image, and damaged bytes stay a
-download. The nested quotation does not bind Content-IDs and owns no assets.
+Original attachments, including attached messages, have their own download links;
+the reference only shows a name and size for non-image payloads. Content-ID
+images bind inside the body (below), where the reference leaves `cid:` references
+in place. Only a declared `image/*` part decoded without a transfer-encoding error
+can bind as a CID image. A filename alone never grants image binding, and damaged
+bytes remain downloads without gaining an attachment preview. An octet-stream
+part with a `.png` filename or sniffable PNG bytes is still only a download.
+Two valid unbound images with identical bytes keep both attachment labels and
+preview references; normal image deduplication analyzes the prepared image once.
+The nested quotation does not bind Content-IDs and owns no assets.
 
 ## Content-ID binding
 
@@ -97,16 +109,28 @@ cannot become path traversal. They are not filesystem inputs. Transfer-decoded
 bytes remain associated with the part identity, so filename collisions or misleading
 extensions cannot redirect CID lookup.
 
+Binary attachments retain the MIME parser's transfer-decoded bytes. For a text-type
+attachment, the parser also decodes its declared charset, and the downloaded buffer
+is that UTF-8 text; it is not a byte-exact copy of every charset's original payload.
+These are decoded attachment downloads, not preservation of the full raw EML file.
+Recovered malformed transfer data retains the existing warning behavior.
+
 ## Publication and model analysis
 
-CID images use the existing embedded-image pipeline. Filtering and compression
-apply to owned images, and final content-addressed paths replace their references.
+Body-image previews use the existing embedded-image pipeline. Filtering and
+compression apply to previews and genuinely inline images. Downloadable original
+bytes bypass those image settings, even for a tiny or duplicate image. An explicit
+attachment used in the body has separate preview and download references; filtering
+its preview cannot remove its download. Final content-addressed paths replace
+references, so display filename labels remain readable while physical asset names
+may differ. Preview rewrites retain URI query/fragment data and leave ordinary
+downloads intact, including a shared Markdown reference definition.
 Repeated references to one image share one analysis and asset. With LLM image
 caption/description options enabled, successful analysis changes enhanced captions
 and contributes `ConversionOutput.images` and the published `images.json` entry.
-Image attachments listed under `## Attachments` are ordinary image references, so
-they are analyzed like any other document image, as the reference's data-URI images
-are. Base author captions and attachment download links remain available. Profile
+Download-only attachments are not submitted for image analysis merely because
+they have an image filename. Actual body-image references may be analyzed. Base
+author captions and attachment download links remain available. Profile
 changes, such as the visible `assets/` directory in RAG, apply to both references
 and metadata paths.
 
@@ -128,15 +152,21 @@ The reference Python reader also prefers HTML bodies and uses the email library'
 related-root selection. It renders image attachments as data-URI images, which its
 image pipeline then saves as `<document>.<NNNN>` assets; native assets use
 content-addressed names (an accepted difference, see
-[compatibility](compatibility.md)). On the frozen corpus message the remaining
-differences are exactly the bound Content-ID image and the asset names.
+[compatibility](compatibility.md)). The historically frozen round31 corpus uses
+an explicitly inline CID image; its measured differences were the bound Content-ID
+image and asset names. That record does not establish byte preservation for
+explicitly attached CID images.
 
 Focused tests cover the reference listing (labels, sizes, nesting limit), body
 versus attachment selection,
 related roots and scope isolation, exact/case-folded IDs, percent and entity
 boundaries, duplicate/missing/non-image IDs, malformed encodings, safe filenames,
-charsets, literal HTML boundaries and depth rejection. Public conversion tests use
-real multipart EML, generated PNG, isolated state and a loopback model to verify
+charsets, literal HTML boundaries and depth rejection. New authored regressions
+distinguish explicit attachment+CID from genuine inline resources, check original
+downloads independently of preview filtering, and exercise shared image/download
+definitions with URI suffixes. These new cases require execution after integration.
+Public conversion tests use real multipart EML, generated PNG, isolated state and
+an authored loopback model to verify
 captions, unchanged base text, published bytes, absolute metadata paths and normal/
 RAG profiles. Execution results are recorded by the coordinator after integration;
 no live-provider or cross-platform claim follows from fixture authoring.

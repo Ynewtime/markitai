@@ -149,6 +149,10 @@ fn walk_shapes(
             }
             continue;
         }
+        if child.is(ns::TABLE, "table") {
+            body.extend(slide_table(child, ctx)?);
+            continue;
+        }
         if child.ns.as_deref().is_none_or(|n| n != ns::DRAW) {
             continue;
         }
@@ -163,18 +167,7 @@ fn walk_shapes(
                     if content.is(ns::DRAW, "text-box") {
                         inner.extend(parse_container(content, ctx)?);
                     } else if content.is(ns::TABLE, "table") {
-                        let mut tables = table::parse_table(content, ctx)?;
-                        // markitai: a slide table styled with a header row
-                        // (Impress's default) has its first row as the
-                        // header, as PPTX and PPT tables do.
-                        if content.attr(ns::TABLE, "use-first-row-styles") == Some("true") {
-                            for block in &mut tables {
-                                if let Block::Table(table) = block {
-                                    table.header_rows = table.header_rows.max(1);
-                                }
-                            }
-                        }
-                        inner.extend(tables);
+                        inner.extend(slide_table(content, ctx)?);
                     } else if content.is(ns::DRAW, "object")
                         && let Some(tex) = text::formula_tex(ctx, content)?
                     {
@@ -217,6 +210,20 @@ fn walk_shapes(
         }
     }
     Ok(())
+}
+
+/// A table keeps the same header policy whether it stands directly on
+/// the page, in a group, or inside a frame.
+fn slide_table(element: &Element, ctx: &Ctx) -> Result<Vec<Block>, ConvertError> {
+    let mut blocks = table::parse_table(element, ctx)?;
+    if element.attr(ns::TABLE, "use-first-row-styles") == Some("true") {
+        for block in &mut blocks {
+            if let Block::Table(table) = block {
+                table.header_rows = table.header_rows.max(1);
+            }
+        }
+    }
+    Ok(blocks)
 }
 
 /// Collapse a title frame's paragraphs into one slide heading.
@@ -1044,5 +1051,68 @@ mod tests {
             markdown(&drawing_doc("", body)),
             "Shown visible end.\n\nConditional section.\n\nUser entry, 2\n\nTable 1, 3\n\nObject 1, 4\n"
         );
+    }
+    #[test]
+    fn direct_and_grouped_slide_tables_preserve_namespace_and_source_order() {
+        let table = |name: &str| {
+            format!(
+                r#"<table:table><table:table-row>
+            <table:table-cell><text:p>{name}</text:p></table:table-cell>
+            <table:table-cell office:value-type="float" office:value="1250.50"/>
+            </table:table-row></table:table>"#
+            )
+        };
+        let content = format!(
+            r#"<office:document-content
+            xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+            xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+            xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
+            xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
+            xmlns:other="urn:wrong:table">
+            <office:body><office:presentation><draw:page/>
+            <draw:page><draw:frame><draw:text-box><text:p>Before</text:p></draw:text-box></draw:frame>
+            {}<draw:g>{}</draw:g><draw:frame>{}</draw:frame>
+            <other:table><text:p>Wrong namespace</text:p></other:table>
+            <draw:frame><draw:text-box><text:p>After</text:p></draw:text-box></draw:frame>
+            </draw:page><draw:page/></office:presentation></office:body></office:document-content>"#,
+            table("Direct"),
+            table("Grouped"),
+            table("Framed")
+        );
+        let doc = parse(&odt_with_content(&content)).unwrap();
+        assert_eq!(doc.slide_starts, [0, 0, 5]);
+        let text = crate::render::markdown::document_to_markdown(&doc);
+        let order: Vec<_> = ["Before", "Direct", "Grouped", "Framed", "After"]
+            .iter()
+            .map(|part| {
+                assert_eq!(text.matches(part).count(), 1);
+                text.find(part).unwrap()
+            })
+            .collect();
+        assert!(order.windows(2).all(|pair| pair[0] < pair[1]));
+        // A typed-only float is formatted by the existing shortest-round-trip
+        // fallback; the source attribute has no authored display text.
+        for name in ["Direct", "Grouped", "Framed"] {
+            assert_eq!(text.matches(&format!("| {name} | 1250.5 |")).count(), 1);
+        }
+        assert!(!text.contains("Wrong namespace"));
+    }
+
+    #[test]
+    fn a_direct_slide_table_keeps_the_existing_repeat_resource_limit() {
+        let content = r#"<office:document-content
+            xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+            xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+            xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
+            xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0">
+            <office:body><office:presentation><draw:page>
+            <table:table><table:table-row table:number-rows-repeated="4000001">
+              <table:table-cell><text:p>x</text:p></table:table-cell>
+            </table:table-row></table:table></draw:page>
+            </office:presentation></office:body></office:document-content>"#;
+        assert!(matches!(
+            parse(&odt_with_content(content)),
+            Err(ConvertError::ResourceLimit { .. })
+        ));
     }
 }

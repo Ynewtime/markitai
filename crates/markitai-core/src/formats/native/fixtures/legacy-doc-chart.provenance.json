@@ -1,0 +1,19 @@
+{
+  "file": "legacy-doc-chart.doc",
+  "bytes": 100352,
+  "sha256": "45e07cf623e634b96b3e82aeaf7ecc74efd03a05808bf1eb69ceef8a9df7d135",
+  "source": "/Users/example-user/work/markitai/packages/markitai/tests/fixtures/legacy/sample.doc",
+  "copy_from": "/Users/example-user/work/markitai-rust/.local/continuation-r1/format-user-qa-execution-r4/fixtures/doc-daily.doc",
+  "relationship": "byte-identical authorized existing repository fixture",
+  "changes": "none",
+  "test": "DOC embedded LibreOffice ODF chart semantic table and existing body preservation",
+  "oracle": "independent CFB package_stream ZIP/content.xml rows, office-content-loss-fix-r1/evidence/doc-source-field-binding.json",
+  "licensing": {
+    "license": "MIT",
+    "copyright": "Copyright (c) 2026 Ynewtime",
+    "source_license": "/Users/example-user/work/markitai/LICENSE",
+    "source_license_sha256": "1a8fd59b9eebcbc2f08945300c0cbbf301b1e16d683a524a0c001b67d98f3f94",
+    "retained_identical_notice": "LICENSE at this repository root",
+    "source_fixture_specific_notice": "No separate LICENSE/NOTICE was found in the authorized legacy fixture directory; existing repository MIT notice is retained byte-for-byte."
+  }
+}

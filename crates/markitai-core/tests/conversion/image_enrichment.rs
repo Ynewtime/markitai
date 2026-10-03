@@ -889,6 +889,119 @@ fn cached_main_document_with_new_image_analysis_is_not_a_full_cache_hit() {
     assert_eq!(vision_bytes(&calls[2]), vec![bytes]);
 }
 
+#[test]
+fn unbound_eml_previews_reach_model_analysis_without_changing_download_bytes() {
+    if isolated("unbound_eml_previews_reach_model_analysis_without_changing_download_bytes") {
+        return;
+    }
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
+    for disposition in ["attachment", "x-project-download", "inline", ""] {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("unbound.eml");
+        let original = png();
+        let declaration = |name: &str| {
+            if disposition.is_empty() {
+                String::new()
+            } else {
+                format!("\r\nContent-Disposition: {disposition}; filename={name}")
+            }
+        };
+        let email = multipart_email("related", &[
+            mime_part("Content-Type: text/html; charset=utf-8", b"<p>Image attachments, with no body image.</p><a href='cid:unused'>CID download only</a>"),
+            mime_part(&format!("Content-Type: image/png; name=first.png\r\nContent-ID: <unused>{}", declaration("first.png")), &original),
+            mime_part(&format!("Content-Type: image/png; name=second.png\r\nContent-ID: <unused>{}", declaration("second.png")), &original),
+        ]);
+        std::fs::write(&source, &email).unwrap();
+        let server = Server::new(vec![Reply::echo(), analysis()]);
+        let mut config = cfg(&server);
+        config["image"]["compress"] = json!(true);
+        config["image"]["format"] = json!("jpeg");
+        let out = dir.path().join("out");
+        let output = run(source.to_str().unwrap(), config, Some(out.clone())).unwrap();
+        assert_eq!(std::fs::read(&source).unwrap(), email);
+        assert_eq!(
+            Sha256::digest(std::fs::read(&source).unwrap()),
+            Sha256::digest(&email)
+        );
+        let (content, attachments) = body(&output).split_once("## Attachments").unwrap();
+        assert!(content.contains("Image attachments, with no body image."));
+        assert!(content.contains("CID download only"));
+        assert!(!content.contains("!["), "{disposition:?}: {content}");
+        assert_eq!(output.images.len(), 1, "{disposition:?}: {output:#?}");
+        assert_eq!(attachments.matches("![A \\[safe\\] chart](").count(), 2);
+        let preview = Path::new(output.images[0]["asset"].as_str().unwrap());
+        assert!(preview.is_absolute());
+        let preview_bytes = std::fs::read(preview).unwrap();
+        assert_eq!(
+            image::guess_format(&preview_bytes).unwrap(),
+            image::ImageFormat::Jpeg
+        );
+        let decoded = image::load_from_memory(&preview_bytes).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (100, 100));
+        for name in ["first.png", "second.png"] {
+            let download = attachments
+                .split_once(&format!("- [{name}]("))
+                .unwrap()
+                .1
+                .split(')')
+                .next()
+                .unwrap();
+            let download = out.join(download);
+            assert!(output.assets.contains(&download), "{download:?}");
+            assert_ne!(download, preview);
+            let bytes = std::fs::read(download).unwrap();
+            assert_eq!(bytes, original);
+            assert_eq!(Sha256::digest(&bytes), Sha256::digest(&original));
+        }
+        let calls = requests(&server);
+        assert_eq!(calls.len(), 2, "two identical previews are analyzed once");
+        assert_eq!(output.usage.requests, 2);
+        let images: Vec<_> = calls[1]["messages"][1]["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|block| block.pointer("/image_url/url").and_then(Value::as_str))
+            .collect();
+        assert_eq!(images.len(), 1);
+        assert!(images[0].starts_with("data:image/jpeg;base64,"));
+        let sent = base64::engine::general_purpose::STANDARD
+            .decode(images[0].split_once(',').unwrap().1)
+            .unwrap();
+        // Vision preparation may re-encode the already prepared JPEG. Check
+        // its pixels against that published preview instead of requiring two
+        // lossy encodings to have identical compressed bytes.
+        assert_eq!(
+            image::guess_format(&sent).unwrap(),
+            image::ImageFormat::Jpeg
+        );
+        let sent = image::load_from_memory(&sent).unwrap().to_rgb8();
+        let preview_pixels = decoded.to_rgb8();
+        assert_eq!(sent.dimensions(), preview_pixels.dimensions());
+        let differences: Vec<_> = sent
+            .as_raw()
+            .iter()
+            .zip(preview_pixels.as_raw())
+            .map(|(a, b)| a.abs_diff(*b))
+            .collect();
+        assert!(differences.iter().all(|difference| *difference <= 20));
+        assert!(
+            differences
+                .iter()
+                .map(|&value| u64::from(value))
+                .sum::<u64>()
+                <= 4 * differences.len() as u64
+        );
+        let index: Value = serde_json::from_slice(
+            &std::fs::read(preview.parent().unwrap().join("images.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(index["images"].as_array().unwrap().len(), 1);
+        assert_eq!(index["images"][0]["path"], output.images[0]["asset"]);
+        assert_eq!(index["images"][0]["source"], source.to_str().unwrap());
+    }
+}
+
 #[cfg(test)]
 mod bounded_fixture_io {
     include!(concat!(

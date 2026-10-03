@@ -678,6 +678,12 @@ pub(super) fn email(bytes: &[u8]) -> Result<Document> {
     eml::extract(bytes)
 }
 
+pub(super) fn email_with_attachments(
+    bytes: &[u8],
+) -> Result<(Document, std::collections::HashSet<String>)> {
+    eml::extract_with_attachments(bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

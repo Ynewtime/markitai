@@ -69,6 +69,36 @@ pub fn chpx_pic_location(grpprl: &[u8]) -> Option<u32> {
     location
 }
 
+/// An OLE separator's character properties. Unlike picture offsets,
+/// PicLocation here is a signed decimal ObjectPool storage name.
+#[derive(Default)]
+pub(super) struct ObjectProps {
+    special: bool,
+    ole: bool,
+    object: bool,
+    location: Option<i32>,
+}
+
+impl ObjectProps {
+    pub(super) fn apply(&mut self, grpprl: &[u8]) {
+        walk_sprms(grpprl, |sprm, operand| match sprm {
+            0x0855 => self.special = toggle(operand, false).unwrap_or(false),
+            0x080A => self.ole = operand.first() == Some(&1),
+            0x0856 => self.object = operand.first() == Some(&1),
+            0x6A03 => self.location = get_u32(operand, 0).map(|value| value as i32),
+            _ => {}
+        });
+    }
+
+    pub(super) fn is_special(&self) -> bool {
+        self.special
+    }
+
+    pub(super) fn storage(&self) -> Option<i32> {
+        (self.special && self.ole && self.object).then_some(self.location).flatten()
+    }
+}
+
 /// markitai: the text size a CHPX grpprl sets (`sprmCHps`), in
 /// half-points; see [`crate::shared::visual`].
 pub fn chpx_size(grpprl: &[u8]) -> Option<crate::shared::visual::Size> {

@@ -10,6 +10,9 @@ mod compound;
 #[path = "native/line.rs"]
 mod line;
 use line::{Line, Literal, Place};
+#[cfg(test)]
+#[path = "native/office_content_tests.rs"]
+mod office_content_tests;
 #[path = "office_meta.rs"]
 mod office_meta;
 #[path = "pdf.rs"]

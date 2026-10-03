@@ -1,7 +1,7 @@
 //! Local Outlook compound-message reader. Attachment paths are data, never files to open.
 
 use crate::{Asset, Document, Error, Result};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 
@@ -18,40 +18,97 @@ fn error(message: impl std::fmt::Display) -> Error {
 }
 
 #[derive(Default)]
-struct Properties(BTreeMap<u32, [u8; 8]>);
+struct Properties {
+    values: BTreeMap<u32, [u8; 8]>,
+    ambiguous: HashSet<u16>,
+}
 
 impl Properties {
     fn parse(bytes: &[u8], header: usize) -> Result<Self> {
+        Self::parse_inner(bytes, header, false)
+    }
+
+    fn parse_attachment(bytes: &[u8], header: usize) -> Result<Self> {
+        Self::parse_inner(bytes, header, true)
+    }
+
+    fn parse_inner(bytes: &[u8], header: usize, attachment: bool) -> Result<Self> {
         if bytes.len() < header {
             return Err(error("property stream is shorter than its header"));
         }
         let (entries, remainder) = bytes[header..].as_chunks::<16>();
         let mut values = BTreeMap::new();
+        let mut ambiguous = HashSet::new();
         for entry in entries {
             let tag = u32::from_le_bytes(entry[..4].try_into().unwrap());
             let value: [u8; 8] = entry[8..16].try_into().unwrap();
             if let Some(previous) = values.insert(tag, value)
                 && previous != value
             {
-                return Err(error(format!("conflicting property {tag:08X}")));
+                let id = (tag >> 16) as u16;
+                if attachment && matches!(id, 0x7ffe | 0x3714) {
+                    // A damaged classification cannot authorize dropping an
+                    // original, but must not discard readable by-value data.
+                    ambiguous.insert(id);
+                } else {
+                    return Err(error(format!("conflicting property {tag:08X}")));
+                }
             }
         }
         // Some producers pad the stream past its final complete entry.
         if remainder.iter().any(|byte| *byte != 0) {
             return Err(error("truncated property entry"));
         }
-        Ok(Self(values))
+        Ok(Self { values, ambiguous })
     }
 
     fn integer(&self, id: u16) -> Option<u32> {
-        let value = self.0.get(&((u32::from(id) << 16) | 0x0003))?;
+        let value = self.values.get(&((u32::from(id) << 16) | 0x0003))?;
         Some(u32::from_le_bytes(value[..4].try_into().unwrap()))
     }
 
     fn time(&self, id: u16) -> Option<u64> {
-        self.0
+        self.values
             .get(&((u32::from(id) << 16) | 0x0040))
             .map(|bytes| u64::from_le_bytes(*bytes))
+    }
+
+    fn typed(&self, id: u16, kind: u16) -> Option<&[u8; 8]> {
+        let first = u32::from(id) << 16;
+        if self.ambiguous.contains(&id) || self.values.range(first..=(first | 0xffff)).count() != 1
+        {
+            return None;
+        }
+        self.values.get(&(first | u32::from(kind)))
+    }
+
+    fn boolean(&self, id: u16) -> Option<bool> {
+        let value = self.typed(id, 0x000b)?;
+        match u16::from_le_bytes(value[..2].try_into().unwrap()) {
+            0 => Some(false),
+            1 => Some(true),
+            _ => None,
+        }
+    }
+
+    fn has_id(&self, id: u16) -> bool {
+        let first = u32::from(id) << 16;
+        self.values.range(first..=(first | 0xffff)).next().is_some()
+    }
+
+    fn inline_candidate(&self) -> (bool, bool) {
+        let hidden = self.boolean(0x7ffe);
+        let flags = self
+            .typed(0x3714, 0x0003)
+            .map(|value| u32::from_le_bytes(value[..4].try_into().unwrap()));
+        let invalid = (self.has_id(0x7ffe) && hidden.is_none())
+            || (self.has_id(0x3714) && flags.is_none())
+            || flags.is_some_and(|flags| flags & 0x5 == 0x5);
+        // Hidden and rendered-in-HTML are independent properties. Neither a
+        // missing property nor HTML-invisible data can imply a body-only image.
+        let inline =
+            hidden == Some(true) && flags.is_some_and(|flags| flags & 0x4 != 0 && flags & 0x1 == 0);
+        (inline, invalid)
     }
 }
 
@@ -116,6 +173,13 @@ impl<'a> Reader<'a> {
             .read(&storage.join(PROPERTIES), MAX_PROPERTIES)?
             .ok_or_else(|| error(format!("{} has no properties stream", storage.display())))?;
         Properties::parse(&bytes, header)
+    }
+
+    fn attachment_properties(&mut self, storage: &Path) -> Result<Properties> {
+        let bytes = self
+            .read(&storage.join(PROPERTIES), MAX_PROPERTIES)?
+            .ok_or_else(|| error(format!("{} has no properties stream", storage.display())))?;
+        Properties::parse_attachment(&bytes, 8)
     }
 
     fn binary(&mut self, storage: &Path, id: u16, limit: u64) -> Result<Option<Vec<u8>>> {
@@ -301,6 +365,7 @@ struct Attachment {
     asset: Asset,
     label: String,
     cid: String,
+    inline_candidate: bool,
 }
 
 fn resolve_content_ids(
@@ -360,7 +425,7 @@ fn attachments(
         .enumerate()
     {
         let result = (|| {
-            let properties = reader.properties(&path, 8)?;
+            let properties = reader.attachment_properties(&path)?;
             let method = properties.integer(0x3705).unwrap_or(1);
             if method != 1 {
                 return Err(error(format!(
@@ -382,10 +447,18 @@ fn attachments(
                 .binary(&path, 0x3701, MAX_ATTACHMENT)?
                 .ok_or_else(|| error("attachment has no by-value data stream"))?;
             let name = safe_name(&label, index);
+            let (inline_candidate, invalid) = properties.inline_candidate();
+            if invalid {
+                warnings.push(format!(
+                    "MSG attachment {} has invalid or conflicting inline classification; its original data was retained as a download.",
+                    index + 1
+                ));
+            }
             Ok::<_, Error>(Attachment {
                 asset: Asset { name, bytes },
                 label,
                 cid,
+                inline_candidate,
             })
         })();
         match result {
@@ -429,6 +502,10 @@ fn filetime(value: u64) -> Option<String> {
 
 /// Extract a compound Outlook message without Outlook, Python or external files.
 pub(super) fn extract(bytes: &[u8]) -> Result<Document> {
+    extract_with_attachments(bytes).map(|(document, _)| document)
+}
+
+pub(super) fn extract_with_attachments(bytes: &[u8]) -> Result<(Document, HashSet<String>)> {
     let mut reader = Reader::new(bytes)?;
     let root = Path::new("/");
     let properties = reader.properties(root, 32)?;
@@ -483,11 +560,34 @@ pub(super) fn extract(bytes: &[u8]) -> Result<Document> {
         String::new()
     };
     let attachments = attachments(&mut reader, codepage, &mut document.warnings)?;
+    let mut shown = HashSet::new();
     let body = if !plain.is_empty() {
         plain
     } else if !html.is_empty() {
+        let requested: HashSet<_> = crate::output_profiles::html_image_references(&html)
+            .into_iter()
+            .filter_map(|target| {
+                target
+                    .get(..4)
+                    .filter(|scheme| scheme.eq_ignore_ascii_case("cid:"))
+                    .map(|_| target[4..].to_owned())
+            })
+            .collect();
         let html = resolve_content_ids(&html, &attachments, &mut document.warnings);
-        super::html::fragment(&html)?
+        let body = super::html::fragment(&html)?;
+        let images: HashSet<_> = crate::output_profiles::image_references(&body)
+            .iter()
+            .filter_map(|target| crate::image_enrichment::asset_name(target))
+            .collect();
+        for attachment in &attachments {
+            if !attachment.cid.is_empty()
+                && requested.contains(&attachment.cid)
+                && images.contains(&attachment.asset.name)
+            {
+                shown.insert(attachment.asset.name.clone());
+            }
+        }
+        body
     } else {
         let reason = if reader.compound.is_stream(root.join("__substg1.0_10090102")) {
             "its body is only stored as RTF, which this MSG reader does not yet decode"
@@ -511,9 +611,11 @@ pub(super) fn extract(bytes: &[u8]) -> Result<Document> {
     document
         .markdown
         .push_str(&format!("\n\n## Content\n\n{}", body.trim()));
+    let mut originals = HashSet::new();
     for attachment in attachments {
         let destination = format!(".markitai/assets/{}", attachment.asset.name);
-        if !document.markdown.contains(&destination) {
+        if !attachment.inline_candidate || !shown.contains(&attachment.asset.name) {
+            originals.insert(attachment.asset.name.clone());
             document.markdown.push_str(&format!(
                 "\n\n[{}]({destination})",
                 attachment_label(&attachment.label)
@@ -524,7 +626,7 @@ pub(super) fn extract(bytes: &[u8]) -> Result<Document> {
     document
         .metadata
         .insert("converter".into(), "native-msg".into());
-    Ok(document)
+    Ok((document, originals))
 }
 
 #[cfg(test)]
@@ -673,6 +775,51 @@ mod tests {
     }
 
     #[test]
+    fn only_attachment_classification_conflicts_can_retain_readable_payloads() {
+        let hidden = property_stream(8, &[(0x7ffe000b, 0), (0x7ffe000b, 1)]);
+        assert!(Properties::parse(&hidden, 8).is_err());
+        let properties = Properties::parse_attachment(&hidden, 8).unwrap();
+        assert_eq!(properties.ambiguous, HashSet::from([0x7ffe]));
+        assert_eq!(properties.inline_candidate(), (false, true));
+        let flags = property_stream(8, &[(0x7ffe000b, 1), (0x37140003, 0), (0x37140003, 4)]);
+        assert!(Properties::parse(&flags, 8).is_err());
+        let properties = Properties::parse_attachment(&flags, 8).unwrap();
+        assert_eq!(properties.ambiguous, HashSet::from([0x3714]));
+        assert_eq!(properties.inline_candidate(), (false, true));
+        // Method, other fixed properties and truncated records stay strict.
+        assert!(
+            Properties::parse_attachment(
+                &property_stream(8, &[(0x37050003, 1), (0x37050003, 2)]),
+                8,
+            )
+            .is_err()
+        );
+        assert!(Properties::parse_attachment(&[vec![0; 8], vec![1]].concat(), 8).is_err());
+    }
+
+    #[test]
+    fn inline_classification_requires_unambiguous_typed_hidden_and_html_flags() {
+        for (values, expected) in [
+            (vec![(0x7ffe000b, 1), (0x37140003, 4)], (true, false)),
+            (vec![(0x7ffe000b, 1), (0x37140003, 6)], (true, false)),
+            (vec![(0x7ffe000b, 0), (0x37140003, 4)], (false, false)),
+            (vec![(0x7ffe000b, 1)], (false, false)),
+            (vec![(0x37140003, 4)], (false, false)),
+            (vec![(0x7ffe000b, 2), (0x37140003, 4)], (false, true)),
+            (vec![(0x7ffe0003, 1), (0x37140003, 4)], (false, true)),
+            (
+                vec![(0x7ffe000b, 1), (0x7ffe0003, 1), (0x37140003, 4)],
+                (false, true),
+            ),
+            (vec![(0x7ffe000b, 1), (0x3714000b, 4)], (false, true)),
+            (vec![(0x7ffe000b, 1), (0x37140003, 5)], (false, true)),
+        ] {
+            let properties = Properties::parse_attachment(&property_stream(8, &values), 8).unwrap();
+            assert_eq!(properties.inline_candidate(), expected, "{values:x?}");
+        }
+    }
+
+    #[test]
     fn rtf_only_and_external_attachments_are_explicit() {
         let bytes = message(vec![
             ("/__properties_version1.0", property_stream(32, &[])),
@@ -722,6 +869,7 @@ mod tests {
                 },
                 label: "First".into(),
                 cid: "logo".into(),
+                inline_candidate: false,
             },
             Attachment {
                 asset: Asset {
@@ -730,6 +878,7 @@ mod tests {
                 },
                 label: "Second".into(),
                 cid: "logo2".into(),
+                inline_candidate: false,
             },
         ];
         let mut warnings = Vec::new();

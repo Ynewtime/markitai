@@ -27,6 +27,8 @@ markitai -c isolated.json doctor --json
 开发版保持 `1.3.0-dev`，按平台与架构分别打包。Windows x64 和 ARM64 的
 CLI 包分别命名为 `markitai-<版本>-x86_64-pc-windows-msvc.zip` 和
 `markitai-<版本>-aarch64-pc-windows-msvc.zip`，请按机器架构选择。
+稳定版 1.3.0 尚未发布；这些名称是开发包的产物规则。安装步骤见
+[快速开始](quickstart.md#1-install)，其中先为当前终端设置 PATH，再验证命令。
 解压后可直接运行 `markitai.exe`、`mkai.exe` 和 `markitai-mcp.exe`，无需
 `.cmd` 包装器；后者直接启动 MCP，也可先加 `--help` 查看用法。
 在 PowerShell 中从解压目录执行：
@@ -37,11 +39,15 @@ CLI 包分别命名为 `markitai-<版本>-x86_64-pc-windows-msvc.zip` 和
 .\markitai-mcp.exe --help
 ```
 
+CLI 主程序无需 Python、Node.js 或 Go 运行时；语言绑定另需对应运行时。
 Unix 的 single-binary tar 保留一个主程序和相对符号链接入口。归档携带
 `licenses/hayro/` 与 `licenses/paddleocr/` 的原始许可及来源说明，便携 OCR
 的 ONNX 模型不随 CLI 打包；启用便携 OCR 前按[本地 OCR](ocr.md)说明安装或
 离线准备模型。各平台的实际构建、安装与绑定验收范围见[打包验收](ci.md)，
-包的文件清单或一条版本输出不能代替这些测试。
+包的文件清单或一条版本输出不能代替这些测试。包中还包含精选 `docs/`
+Markdown 指南与根目录 `llms.txt` / `llms-full.txt`；可离线查看安装、CLI 和
+MCP 合同。完整专题链接仍需源码仓库，Agent 可从[纯文本入口](../llms.txt)
+开始，并用[独立速查](../llms-full.txt)处理 JSON、临时输出和离线前提。
 
 ## 参数帮助与移除提示
 
@@ -104,7 +110,7 @@ MARKITAI_LANG=zh markitai --help
 - 目录/URL 列表普通转换项失败退出 10；单项失败退出 1，成功退出 0；状态存储致命错误退出 1，中断退出 130/143。`--quiet` 仍显示错误。批量结束时 stderr 摘要依次给出完成数（有项目跳过、失败或未启动，或这是续跑时写作 `Done: 19/22 files`，总数包含全部项目；全部完成的普通运行仍是 `Done: 22 files`；文件与 URL 混合时分别计数，如 `Done: 39/42 files, 3 URLs`；续跑或有未启动项时无法区分类别，写作 `Done: 34/34 items`）、耗时与费用、按原因分组的跳过项（原因用文字，如 `images with no text`、`output already exists`，`--json` 与报告里的键 `image_only`/`exists` 不变；每组写前两个名称再写 `and N more`，`-v` 列全）、改名的结果（`Renamed 3 items (output already exists): …`）、失败/未完成项示例（错误在上方逐项列出）、被中断时还有多少项根本没有开始（`Not processed N items: …. Run the same command with --resume to continue.`，中文为 `未处理 N 项：…。使用相同命令并加上 --resume 可继续。`，项名取前两个）、全部因缺少模型而失败时的一行配置提示，以及输出目录。`--quiet` 不输出摘要，`--json` 的条目只含已结束的项。
 - 四种输入模式支持持久 JSON 报告。`output.report` 为 null 或省略时，目录/URL 列表默认启用，单文件/URL 默认关闭；true/false 显式覆盖。报告写入输出目录的 `.markitai/reports/`，各模式的字段和计数差异见 [reports.md](reports.md)。
 - 报告发布失败保留已完成文件及 stdout JSON 条目，并退出非零；报告不替代 stdout envelope。stdout 转换、dry run、无可恢复状态的空目录和失败/跳过的单项不生成报告；批量部分失败仍可生成报告。报告的 skip 冲突策略保留已有报告。
-- Unix 目录/URL 列表每次保存恢复状态；`--resume` 载入保存的状态后先在 stderr 写 `Resuming: N already done, M remaining`（中文 `继续：已完成 N 项，剩余 M 项`；`-q` 与 `--json` 不写），结束摘要把此前已完成的项计入总数（`Done: 34/34 files`）；`--resume` 合并新发现任务、保留完成项并重试未完成项。输出归属凭证保护隐式重试，旧状态按普通冲突策略升级，升级前私有保存原始 base/journal 及存在性；备份仅是状态回退材料，不撤销输出或模型请求。首次 Ctrl-C 停止派发、同步状态并等待在途转换，退出 130；再次中断先终止本进程启动的订阅运行时、Chromium 和 LibreOffice 进程组后立即退出。单输入转换收到 SIGINT/SIGTERM/SIGHUP 时同样先终止这些进程组，再按原信号默认方式退出；它们位于独立进程组，终端中断本身不会到达。详见 [恢复状态](state-storage.md) 与 [输出归属](output-ownership.md)。
+- macOS、Linux 和 Windows 的目录/URL 列表批处理每次保存恢复状态；`--resume` 载入保存的状态后先在 stderr 写 `Resuming: N already done, M remaining`（中文 `继续：已完成 N 项，剩余 M 项`；`-q` 与 `--json` 不写），结束摘要把此前已完成的项计入总数（`Done: 34/34 files`）；`--resume` 合并新发现任务、保留完成项并重试未完成项。输出归属凭证保护隐式重试，旧状态按普通冲突策略升级，升级前私有保存原始 base/journal 及存在性；备份仅是状态回退材料，不撤销输出或模型请求。在 Unix 上，首次 Ctrl-C 停止派发、同步状态并等待在途转换，退出 130；再次中断先终止本进程启动的订阅运行时、Chromium 和 LibreOffice 进程组后立即退出。单输入转换收到 SIGINT/SIGTERM/SIGHUP 时同样先终止这些进程组，再按原信号默认方式退出；它们位于独立进程组，终端中断本身不会到达。详见 [恢复状态](state-storage.md) 与 [输出归属](output-ownership.md)。
 - `--record-history` 将本次实际处理项保存到隔离 home 下的 `serve/jobs/`，包含独立的最终文档、资产和兼容元数据；归档失败只警告，stdout/dry-run/中断不归档。开关覆盖环境和配置，详见 [历史归档](history.md)。
 - 配置优先级由核心解析；根级 `-c` 和 `--config-json` 对子命令同样生效。布尔参数支持显式否定；重复正反开关以最后一个为准，preset 名称按小写查找，应用后显式参数覆盖。没有 INPUT/子命令且未指定 `-I` 时显示帮助并退出 0，包括只给转换选项的情况；参数本身非法仍退出 2。
 - `config list/get/path/validate/set/edit` 可用；`config set` 的 stdout 仍只有 `键 = 值`，保存到哪个文件写在 stderr（`Saved to <路径>`，中文 `已保存到 <路径>`）；`config path` 没有找到文件时除内建默认值的说明外，再列出查找顺序（`-c`、`MARKITAI_CONFIG`、`./markitai.json`、`MARKITAI_HOME/config.json`）和 `config set` 会创建的文件；`auth <claude|chatgpt|copilot>` 未登录时在状态后给出 `Next: markitai auth <名称> login`；list 支持 JSON/YAML/table；默认隐藏凭据。set/edit 原子更新配置，保留未知字段，不写入临时 `--config-json` 内容。
@@ -128,15 +134,15 @@ MARKITAI_LANG=zh markitai --help
 - 静态 HTML/文本抓取支持独立页面缓存：无验证头时按 TTL 复用，有 ETag/Last-Modified 时发送条件请求。`fetch_cache_hit` 记录直接复用或 304 命中；`cache_hit/llm_cache_hit` 仍只表示 LLM 缓存。显式 `-s static` 与配置文件中的默认策略使用独立缓存作用域。
 - `cache stats [--json] [-v] [--limit N]` 查看 LLM 与抓取缓存；不存在的数据库不会因查看而创建。LLM 详细列表最多返回 1,000 条。`cache clear [-y]` 清理两个缓存，未给 `-y` 时需要在终端确认：回答“否”以 0 退出，读不到任何回答（例如脚本中未给 `-y`）以 1 退出，与参考一致。清理前检查两个数据库，后续部分失败会明确报告并退出非零。`cache spa-domains [--json] [--clear]` 查看或清空学到的浏览器渲染域名，`cache clear --include-spa-domains` 同时清空它们。文本统计按单复数显示条目数，大小以 B/KiB/MiB 显示；`--json` 保留精确字节数。
 
-- `--ocr` 在 macOS 使用原生 Vision 识别独立图片，读取原始像素；`MARKITAI_NO_VLM_OCR` 可选择本地识别后仅发送文字增强。语言和平台限制见 [本地 OCR](ocr.md)。
-- 本地 PDF 和静态/自动下载的 PDF 支持 macOS 逐页 OCR 与截图。下载字节直接复用，支持重定向和无后缀 URL；PDF 仅截图模式仍保留 Markdown，URL `pure` 优先级不变。详见 [PDF 媒体](pdf-ocr.md) 与 [抓取](fetch.md)。
+- `--ocr` 在 macOS 默认用原生 Vision，Linux/Windows 默认用本地 Paddle；后者需要提前准备模型，模型不随 CLI 包提供。`doctor` 只读检查，`doctor --fix` 显式安装/安全修复；损坏模型不在普通 OCR 中默默覆盖，非法路径拒绝操作。识别读取原始像素；`MARKITAI_NO_VLM_OCR` 可选择本地识别后仅发送文字增强。语言和平台限制见 [本地 OCR](ocr.md)。
+- 本地 PDF 和静态/自动下载的 PDF 支持逐页 OCR 与截图：macOS 默认用系统渲染与 Vision，Linux/Windows 用内置 hayro 与 Paddle（需模型）。下载字节直接复用，支持重定向和无后缀 URL；PDF 仅截图模式仍保留 Markdown，URL `pure` 优先级不变。详见 [PDF 媒体](pdf-ocr.md) 与 [抓取](fetch.md)。
 - `-s playwright` 直接控制本机 Chromium；`auto` 可在静态质量失败时回退浏览器。URL 截图支持完整长页分块，`--screenshot-only` 不隐含 LLM，历史归档保留所有分块。未给 `-o` 的无 LLM 仅截图模式使用配置输出目录或当前目录。依赖和边界见 [浏览器](browser.md)。
 
 ## 明确的迁移缺口
 
-仍有迁移缺口：非 Unix 断点恢复、Anthropic Batch API 与旧版 Python Batch 状态导入、终端内联图片显示（因此 `image.stdout_fetch_external` 可设置但无作用）。`-s jina`/`-s defuddle` 远程抽取、`-s cloudflare`（Cloudflare Browser Rendering）抓取与 `-b cloudflare`（Workers AI）文件后端（均使用你自己的 Cloudflare 凭据，见[抓取](fetch.md#remote-services)）、经 `fetch.remote_consent` 明确同意后的 `auto` 远程回退、OpenAI Batch API、经官方运行时的订阅登录（`auth <provider> login`）和 serve 的浏览器工作区均已实现。pure 按参考行为绕过 LLM 缓存；文本、独立图片与分页视觉请求的缓存范围分别见 [LLM 处理](llm.md)，不能将一次命中理解成所有输入已支持缓存。其余未实现的开关/命令请求会失败并说明原因。Office 演示与文字文档可通过可选的独立 LibreOffice 安装获得全页截图和 OCR 补充，详见 [Office 渲染](office-rendering.md)；XLS/XLSX/ODS 支持每张完整工作表一页，包含隐藏和空表；Numbers 完整画布仍未完成；本地 OCR 与 PDF 渲染的平台及构建范围见[本地 OCR](ocr.md#the-portable-engine-windows-and-linux)；未实现的选项只在遇到相关格式或图片时拒绝，不应阻断纯文本转换。独立栅格图片、完整多页 TIFF 和 SVG 可经 LLM 视觉模型读取。alt/desc 已接入真实图片引用、结构化分析及 images.json 合并，详见[图片分析](image-enrichment.md)；需要启用 LLM。rich/standard preset 仍不是对所有格式可用的完整模式。
+仍有迁移缺口：Anthropic Batch API 与旧版 Python Batch 状态导入、终端内联图片显示（因此 `image.stdout_fetch_external` 可设置但无作用）。`-s jina`/`-s defuddle` 远程抽取、`-s cloudflare`（Cloudflare Browser Rendering）抓取与 `-b cloudflare`（Workers AI）文件后端（均使用你自己的 Cloudflare 凭据，见[抓取](fetch.md#remote-services)）、经 `fetch.remote_consent` 明确同意后的 `auto` 远程回退、OpenAI Batch API、经官方运行时的订阅登录（`auth <provider> login`）和 serve 的浏览器工作区均已实现。pure 按参考行为绕过 LLM 缓存；文本、独立图片与分页视觉请求的缓存范围分别见 [LLM 处理](llm.md)，不能将一次命中理解成所有输入已支持缓存。其余未实现的开关/命令请求会失败并说明原因。Office 演示与文字文档可通过可选的独立 LibreOffice 安装获得全页截图和 OCR 补充，详见 [Office 渲染](office-rendering.md)；XLS/XLSX/ODS 支持每张完整工作表一页，包含隐藏和空表；Numbers 完整画布仍未完成；本地 OCR 与 PDF 渲染的平台及构建范围见[本地 OCR](ocr.md#the-portable-engine-windows-and-linux)；未实现的选项只在遇到相关格式或图片时拒绝，不应阻断纯文本转换。独立栅格图片、完整多页 TIFF 和 SVG 可经 LLM 视觉模型读取。alt/desc 已接入真实图片引用、结构化分析及 images.json 合并，详见[图片分析](image-enrichment.md)；需要启用 LLM。rich/standard preset 仍不是对所有格式可用的完整模式。
 
-持久报告、可选历史导出和 Unix 批量恢复已实现；单项和非 Unix 恢复仍明确拒绝。普通非 Unix 转换保留既有行为，但尚未完成全量实机验收。混合目录分别应用文件与 URL 并发上限。URL 列表的自定义文件名只允许一个安全 basename；旧实现的名称清理细节尚待配对验收。帮助使用原生 Clap 布局，不复刻 Rich 框线；非 Unix 进程中断清理及全部非 ASCII 终端行为仍需专门测试。
+持久报告、可选历史导出和 macOS/Linux/Windows 批量恢复已实现；单文件或单 URL 的 `--resume` 仍明确拒绝。Windows 原生测试和已安装包检查的实际范围见 [CI](ci.md)，全量功能实机验收仍未完成。混合目录分别应用文件与 URL 并发上限。URL 列表的自定义文件名只允许一个安全 basename；旧实现的名称清理细节尚待配对验收。帮助使用原生 Clap 布局，不复刻 Rich 框线；非 Unix 进程中断清理及全部非 ASCII 终端行为仍需专门测试。
 
 具体文件格式支持取决于核心当前实现，注册参考扩展名不意味着全部可用。性能与质量对比未完成前，不承诺生产替代、完整旧版兼容或具体加速比。
 

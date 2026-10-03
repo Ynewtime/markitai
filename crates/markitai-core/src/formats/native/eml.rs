@@ -76,8 +76,10 @@ fn uri_id(value: &str) -> Option<String> {
 }
 
 fn attached(part: &MessagePart<'_>) -> bool {
+    // RFC 2183 section 2.8 treats an unknown declared disposition as an
+    // attachment. Only an absent declaration or literal inline is a body resource.
     part.content_disposition()
-        .is_some_and(|value| value.c_type.eq_ignore_ascii_case("attachment"))
+        .is_some_and(|value| !value.c_type.eq_ignore_ascii_case("inline"))
 }
 
 fn validate(message: &Message<'_>) -> Result<Vec<Option<usize>>> {
@@ -432,6 +434,12 @@ fn nested_message(message: &Message<'_>) -> Result<String> {
 }
 
 pub(super) fn extract(bytes: &[u8]) -> Result<Document> {
+    extract_with_attachments(bytes).map(|(document, _)| document)
+}
+
+/// Original downloads are identified by MIME/body provenance, before Markdown
+/// can contain literal or author-supplied references to an attachment path.
+pub(super) fn extract_with_attachments(bytes: &[u8]) -> Result<(Document, HashSet<String>)> {
     if bytes.len() > MAX_INPUT {
         return Err(error("input exceeds 100 MiB"));
     }
@@ -446,8 +454,17 @@ pub(super) fn extract(bytes: &[u8]) -> Result<Document> {
     let mut listed = Vec::new();
     // Image parts the body shows through their Content-ID.
     let mut bound = HashSet::new();
-    for &id in &message.attachments {
-        let id = id as usize;
+    let mut attachment_ids: Vec<_> = message.attachments.iter().map(|&id| id as usize).collect();
+    // The parser's body lists only classify literal `attachment`. Include
+    // declared non-inline text that it could otherwise omit from attachments.
+    // Part indices keep MIME order; multipart containers have no leaf payload.
+    attachment_ids.extend(message.parts.iter().enumerate().filter_map(|(id, part)| {
+        (attached(part) && matches!(&part.body, PartType::Html(_) | PartType::Text(_)))
+            .then_some(id)
+    }));
+    attachment_ids.sort_unstable();
+    attachment_ids.dedup();
+    for id in attachment_ids {
         if Some(id) == selected {
             continue;
         }
@@ -503,13 +520,15 @@ pub(super) fn extract(bytes: &[u8]) -> Result<Document> {
     let mut markdown = message_head(&message, &body);
     let mut listing = Vec::new();
     let mut sections = Vec::new();
+    let mut originals = HashSet::new();
     for (position, (id, name)) in listed.iter().enumerate() {
-        // An image the body shows is not listed a second time; its asset is
-        // the body's.
-        if bound.contains(id) {
+        let part = &message.parts[*id];
+        // A displayed CID is only a body resource when it is not explicitly
+        // an attachment. Explicit attachments still need their original download.
+        if bound.contains(id) && !attached(part) {
             continue;
         }
-        let part = &message.parts[*id];
+        originals.insert(name.clone());
         let label = attachment_label(part, position);
         let target = format!(".markitai/assets/{name}");
         if let PartType::Message(nested) = &part.body {
@@ -521,17 +540,20 @@ pub(super) fn extract(bytes: &[u8]) -> Result<Document> {
                 quote(&nested_message(nested)?)
             ));
         }
-        // Malformed transfer encoding keeps the recovered bytes as a download
-        // instead of presenting them as an image.
-        listing.push(if image_part(part) {
-            format!("![{}]({target})", link_text(&label))
-        } else {
-            format!(
-                "- [{}]({target}) ({})",
-                link_text(&label),
-                size(part.contents().len())
-            )
-        });
+        // Download originals, including explicitly attached CID images and
+        // parser-recovered malformed transfer payloads, independently of previews.
+        let mut item = format!(
+            "- [{}]({target}) ({})",
+            link_text(&label),
+            size(part.contents().len())
+        );
+        // Valid image MIME attachments remain visible to normal image analysis,
+        // even without a body CID binding. The original download stays separate;
+        // the mail preparation route copies only this image use to a preview.
+        if !bound.contains(id) && image_part(part) {
+            item.push_str(&format!("\n  ![{}]({target})", link_text(&label)));
+        }
+        listing.push(item);
     }
     if !listing.is_empty() {
         sections.insert(0, listing.join("\n\n"));
@@ -548,12 +570,15 @@ pub(super) fn extract(bytes: &[u8]) -> Result<Document> {
     if let Some(date) = message.date() {
         metadata.insert("date".into(), date.to_rfc3339().into());
     }
-    Ok(Document {
-        markdown,
-        metadata,
-        assets,
-        warnings,
-    })
+    Ok((
+        Document {
+            markdown,
+            metadata,
+            assets,
+            warnings,
+        },
+        originals,
+    ))
 }
 
 #[cfg(test)]
@@ -655,10 +680,9 @@ mod tests {
         let (head, attachments) = doc.markdown.split_once("\n\n## Attachments\n\n").unwrap();
         assert!(head.ends_with("\n\n## Content"), "{head}");
         let listing: Vec<_> = attachments.split("\n\n").take(4).collect();
-        assert_eq!(
-            listing[0],
-            "![chart _v2_ _final_.png](.markitai/assets/email-1-chart__v2___final_.png)"
-        );
+        assert!(listing[0].starts_with(
+            "- [chart _v2_ _final_.png](.markitai/assets/email-1-chart__v2___final_.png) ("
+        ));
         assert_eq!(
             listing[1],
             "- [attachment_1](.markitai/assets/email-2-attachment.bin) (1.5 KB)"
@@ -768,8 +792,55 @@ mod tests {
     }
 
     #[test]
-    fn an_image_the_body_shows_by_content_id_is_not_listed_again_as_an_attachment() {
-        // Mail clients mark inline pictures `attachment` as often as `inline`.
+    fn unknown_dispositions_cannot_select_a_text_or_html_attachment_as_the_body() {
+        let bytes = message(multipart(
+            "mixed",
+            "unknown-disposition",
+            &[
+                part(
+                    "Content-Type: text/html\r\nContent-Disposition: x-project-download; filename=example.html",
+                    b"<p>Attached HTML only.</p>",
+                ),
+                part(
+                    "Content-Type: text/plain\r\nContent-Disposition: X-PROJECT-DOWNLOAD; filename=notes.txt",
+                    b"Attached plain text only.",
+                ),
+                part("Content-Type: text/plain", b"The actual message body."),
+            ],
+        ));
+        let (doc, originals) = extract_with_attachments(&bytes).unwrap();
+        let (body, listing) = doc.markdown.split_once("\n\n## Attachments\n\n").unwrap();
+        assert!(body.contains("The actual message body."));
+        assert!(!body.contains("Attached HTML only."));
+        assert!(!body.contains("Attached plain text only."));
+        assert!(listing.contains("[example.html]"));
+        assert!(listing.contains("[notes.txt]"));
+        assert_eq!(originals.len(), 2);
+        assert_eq!(doc.assets.len(), 2);
+        assert_eq!(doc.assets[0].bytes, b"<p>Attached HTML only.</p>");
+        assert_eq!(doc.assets[1].bytes, b"Attached plain text only.");
+        // Text assets use the parser's charset-decoded UTF-8 buffer, unlike
+        // binary attachments' byte-exact transfer-decoded data.
+        let latin1 = message(multipart(
+            "mixed",
+            "text-encoding",
+            &[
+                part(
+                    "Content-Type: text/plain; charset=iso-8859-1\r\nContent-Disposition: x-project-download; filename=latin1.txt",
+                    b"caf\xe9",
+                ),
+                part("Content-Type: text/plain", b"The actual message body."),
+            ],
+        ));
+        let (doc, originals) = extract_with_attachments(&latin1).unwrap();
+        assert!(doc.markdown.contains("The actual message body."));
+        assert_eq!(originals.len(), 1);
+        assert_eq!(doc.assets.len(), 1);
+        assert_eq!(doc.assets[0].bytes, "café".as_bytes());
+    }
+
+    #[test]
+    fn an_explicit_attachment_keeps_a_download_when_the_body_shows_its_content_id() {
         let pixels = image([20, 90, 170]);
         let orphan = image([200, 30, 30]);
         let bytes = message(multipart(
@@ -800,18 +871,18 @@ mod tests {
                 ),
             ],
         ));
-        let doc = extract(&bytes).unwrap();
+        let (doc, originals) = extract_with_attachments(&bytes).unwrap();
         let (content, attachments) = doc.markdown.split_once("\n\n## Attachments\n\n").unwrap();
         assert_eq!(content.matches("![Logo](.markitai/assets/").count(), 1);
         assert_eq!(content.matches("![Again](.markitai/assets/").count(), 1);
-        // Only what the body does not show: the unreferenced image keeps its
-        // reference-style entry, positions counting the shown one.
-        assert!(!attachments.contains("inline.png"), "{attachments}");
+        // Explicit disposition retains the download even when the body uses it.
+        assert!(attachments.starts_with("- [inline.png]("), "{attachments}");
         assert!(
-            attachments.starts_with("![unreferenced.png]("),
+            attachments.contains("- [unreferenced.png]("),
             "{attachments}"
         );
         assert!(attachments.contains("- [data.csv]("), "{attachments}");
+        assert!(originals.contains("email-1-inline.png"));
         // The shown image's asset is the body's and holds its bytes.
         let shown = refs(&doc)
             .into_iter()
@@ -826,7 +897,7 @@ mod tests {
                 .bytes,
             pixels
         );
-        // A message whose only attachment is shown has no listing at all.
+        // A genuinely inline resource used by the body keeps the single asset.
         let only = message(multipart(
             "related",
             "inner",
@@ -841,9 +912,25 @@ mod tests {
                 ),
             ],
         ));
-        let doc = extract(&only).unwrap();
+        let (doc, originals) = extract_with_attachments(&only).unwrap();
         assert!(!doc.markdown.contains("## Attachments"), "{}", doc.markdown);
         assert_eq!(refs(&doc).len(), 1);
+        assert!(originals.is_empty());
+        let unspecified = message(multipart(
+            "related",
+            "no-disposition",
+            &[
+                part("Content-Type: text/html", b"<img src='cid:img1'>"),
+                part(
+                    "Content-Type: image/png; name=inline.png\r\nContent-ID: <img1>",
+                    &pixels,
+                ),
+            ],
+        ));
+        let (doc, originals) = extract_with_attachments(&unspecified).unwrap();
+        assert!(!doc.markdown.contains("## Attachments"), "{}", doc.markdown);
+        assert_eq!(refs(&doc).len(), 1);
+        assert!(originals.is_empty());
     }
 
     #[test]

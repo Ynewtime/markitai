@@ -18,7 +18,9 @@ import unittest
 import zipfile
 
 from ci_packages import (npm_command, source_snapshot, stage_node_licenses, supplement_wheel_licenses,
-                         verify_node_licenses, write_cli_zip, extract_cli_zip, doctor_probe, mcp_probe, identity, package_attribution)
+                         verify_node_licenses, write_cli_zip, extract_cli_zip, doctor_probe, mcp_probe, identity, package_attribution,
+                         write_single_binary_tar, extract_single_binary_tar)
+from cli_documentation import DOCUMENTATION_PATHS
 
 
 class PackageValidationTests(unittest.TestCase):
@@ -86,6 +88,124 @@ class PackageValidationTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaisesRegex(RuntimeError, "Unsafe"):
                 write_cli_zip(binary, alternate, self.root / "unsafe.zip", {name: b"x"}, True)
             self.assertFalse((self.root / "unsafe.zip").exists())
+
+    def documentation_inputs(self):
+        return {name: ("# " + name + "\n\nOffline guide 世界.\n").encode("utf-8")
+                for name in DOCUMENTATION_PATHS}
+
+    def test_zip_offline_guides_are_separate_from_all_attribution(self):
+        binary, alternate, licenses = self.zip_inputs()
+        docs = self.documentation_inputs()
+        archive = self.root / "documented.zip"
+        write_cli_zip(binary, alternate, archive, licenses, True, docs)
+        installed = self.root / "离线 安装"
+        record = extract_cli_zip(archive, installed, binary, alternate, licenses, True, docs)
+        self.assertEqual(set(record["attribution"]), set(licenses))
+        self.assertEqual(set(record["documentation"]), set(DOCUMENTATION_PATHS))
+        for name, content in {**licenses, **docs}.items():
+            self.assertEqual((installed / name).read_bytes(), content)
+            field = "documentation" if name in docs else "attribution"
+            self.assertEqual(record[field][name], {"bytes": len(content), "sha256": hashlib.sha256(content).hexdigest()})
+
+    def test_zip_document_defects_fail_before_any_extraction(self):
+        binary, alternate, licenses = self.zip_inputs()
+        docs = self.documentation_inputs()
+        valid = self.root / "documented.zip"
+        write_cli_zip(binary, alternate, valid, licenses, True, docs)
+        selected = "docs/quickstart.md"
+        for defect in ["missing", "duplicate", "changed", "symlink", "extra"]:
+            broken = self.root / ("document-" + defect + ".zip")
+            with zipfile.ZipFile(valid) as source, zipfile.ZipFile(broken, "x") as target:
+                for info in source.infolist():
+                    if defect == "missing" and info.filename == selected:
+                        continue
+                    content = source.read(info)
+                    if defect == "changed" and info.filename == selected:
+                        content = bytes([content[0] ^ 1]) + content[1:]
+                    if defect == "symlink" and info.filename == selected:
+                        info.create_system = 3
+                        info.external_attr = (stat.S_IFLNK | 0o777) << 16
+                    target.writestr(info, content)
+                if defect == "extra":
+                    target.writestr("docs/CONTROL.md", b"private work record")
+                if defect == "duplicate":
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", UserWarning)
+                        target.writestr(selected, docs[selected])
+            destination = self.root / ("document-" + defect + "-installed")
+            with self.subTest(defect=defect), self.assertRaises(RuntimeError):
+                extract_cli_zip(broken, destination, binary, alternate, licenses, True, docs)
+            self.assertFalse(destination.exists())
+
+    def test_document_maps_and_collisions_are_rejected_before_archive_creation(self):
+        binary, alternate, licenses = self.zip_inputs()
+        docs = self.documentation_inputs()
+        invalid_maps = [{}, {**docs, "docs/CONTROL.md": b"private"},
+                        {**docs, "../outside": b"escape"}, {**docs, "README.md": b"\xff"}]
+        for index, supplied in enumerate(invalid_maps):
+            archive = self.root / f"invalid-map-{index}.zip"
+            with self.subTest(index=index), self.assertRaises(RuntimeError):
+                write_cli_zip(binary, alternate, archive, licenses, True, supplied)
+            self.assertFalse(archive.exists())
+        for index, collision in enumerate(["README.md", "readme.MD", "docs", "DOCS/cli.md", "docs/cli.md/child"]):
+            supplied = {**licenses, collision: b"notice"}
+            for suffix in ["zip", "tar.gz"]:
+                archive = self.root / f"collision-{index}.{suffix}"
+                with self.subTest(name=collision, kind=suffix), self.assertRaises(RuntimeError):
+                    if suffix == "zip":
+                        write_cli_zip(binary, alternate, archive, supplied, True, docs)
+                    else:
+                        write_single_binary_tar(binary, archive, supplied, docs)
+                self.assertFalse(archive.exists())
+
+    def test_tar_document_defects_fail_before_any_extraction(self):
+        binary, _, licenses = self.zip_inputs()
+        docs = self.documentation_inputs()
+        valid = self.root / "documented.tar.gz"
+        write_single_binary_tar(binary, valid, licenses, docs)
+        selected = "docs/cli.md"
+        for defect in ["missing", "duplicate", "changed", "symlink", "extra"]:
+            broken = self.root / ("document-" + defect + ".tar.gz")
+            with tarfile.open(valid, "r:gz") as source, tarfile.open(broken, "x:gz") as target:
+                for member in source.getmembers():
+                    if defect == "missing" and member.name == selected:
+                        continue
+                    content = source.extractfile(member).read() if member.isfile() else None
+                    if defect == "changed" and member.name == selected:
+                        content = bytes([content[0] ^ 1]) + content[1:]
+                    if defect == "symlink" and member.name == selected:
+                        member.type = tarfile.SYMTYPE
+                        member.linkname = "../outside"
+                        member.size = 0
+                        content = None
+                    target.addfile(member, io.BytesIO(content) if content is not None else None)
+                if defect in {"extra", "duplicate"}:
+                    member = tarfile.TarInfo("docs/CONTROL.md" if defect == "extra" else selected)
+                    member.mode = 0o644
+                    content = b"private" if defect == "extra" else docs[selected]
+                    member.size = len(content)
+                    target.addfile(member, io.BytesIO(content))
+            destination = self.root / ("tar-" + defect + "-installed")
+            with self.subTest(defect=defect), self.assertRaises(RuntimeError):
+                extract_single_binary_tar(broken, destination, binary, licenses, docs)
+            self.assertFalse(destination.exists())
+        self.assertFalse((self.root / "outside").exists())
+
+    @unittest.skipIf(os.name == "nt", "Unix tar installation creates relative symlinks")
+    def test_tar_offline_guides_preserve_relative_aliases_and_all_notices(self):
+        binary, _, licenses = self.zip_inputs()
+        docs = self.documentation_inputs()
+        archive = self.root / "documented.tar.gz"
+        write_single_binary_tar(binary, archive, licenses, docs)
+        installed = self.root / "离线 tar 安装"
+        record = extract_single_binary_tar(archive, installed, binary, licenses, docs)
+        self.assertEqual(set(record["attribution"]), set(licenses))
+        self.assertEqual(set(record["documentation"]), set(DOCUMENTATION_PATHS))
+        for name, content in {**licenses, **docs}.items():
+            self.assertEqual((installed / name).read_bytes(), content)
+        for name in ["mkai", "markitai-mcp"]:
+            self.assertEqual(os.readlink(installed / name), "markitai")
+            self.assertEqual(identity(installed / name), identity(binary))
 
     def test_common_packages_include_all_portable_notices(self):
         source = Path(__file__).resolve().parents[1]

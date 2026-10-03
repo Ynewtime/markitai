@@ -24,6 +24,7 @@ pub(crate) use sniff::{
 };
 
 use crate::{Document, Error, Result};
+use std::collections::HashSet;
 use std::path::Path;
 
 pub(crate) fn extract_pdf_with_config(bytes: &[u8], cfg: &serde_json::Value) -> Result<Document> {
@@ -163,6 +164,25 @@ pub fn extract(path: &Path) -> Result<Document> {
 /// `extract`, reading the file as the format `extension` names (lowercase,
 /// without the dot) rather than the one its own name gives.
 pub(crate) fn extract_as(path: &Path, extension: &str) -> Result<Document> {
+    extract_as_inner(path, extension, None)
+}
+
+/// The full conversion keeps mail download provenance outside the public
+/// Document/Asset schema; extracting text alone does not prepare its assets.
+pub(crate) fn extract_as_with_attachments(
+    path: &Path,
+    extension: &str,
+) -> Result<(Document, HashSet<String>)> {
+    let mut originals = HashSet::new();
+    let document = extract_as_inner(path, extension, Some(&mut originals))?;
+    Ok((document, originals))
+}
+
+fn extract_as_inner(
+    path: &Path,
+    extension: &str,
+    mut originals: Option<&mut HashSet<String>>,
+) -> Result<Document> {
     let extension = extension.to_owned();
     if !supports_extension(&extension) {
         return Err(Error::Unsupported(unsupported_format_message(&extension)));
@@ -199,8 +219,22 @@ pub(crate) fn extract_as(path: &Path, extension: &str) -> Result<Document> {
             "ipynb" => text::notebook(&text::decode(&bytes)?)?,
             "json" => text::json(&text::decode(&bytes)?)?,
             "xml" => text::xml(&text::decode(&bytes)?)?,
-            "eml" => text::email(&bytes)?,
-            "msg" => msg::extract(&bytes)?,
+            "eml" => match originals.as_mut() {
+                Some(originals) => {
+                    let (document, names) = text::email_with_attachments(&bytes)?;
+                    **originals = names;
+                    document
+                }
+                None => text::email(&bytes)?,
+            },
+            "msg" => match originals.as_mut() {
+                Some(originals) => {
+                    let (document, names) = msg::extract_with_attachments(&bytes)?;
+                    **originals = names;
+                    document
+                }
+                None => msg::extract(&bytes)?,
+            },
             "numbers" => numbers::extract(&bytes)?,
             "rst" | "org" | "tex" | "latex" => markup::extract(&text::decode(&bytes)?, &extension)?,
             _ => native::extract(&bytes, &extension)?,

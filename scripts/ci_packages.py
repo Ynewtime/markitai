@@ -28,6 +28,7 @@ from codex_attribution import codex_files
 from license_overlay import upstream_files
 from portable_attribution import portable_files
 from executable_identity import verify_target_executable
+from cli_documentation import cli_documentation, validate_documentation
 
 
 def identity(path):
@@ -38,9 +39,9 @@ def identity(path):
     return {"bytes": path.stat().st_size, "sha256": digest.hexdigest()}
 
 
-def write_cli_zip(binary, alternate, archive, licenses, windows):
+def write_cli_zip(binary, alternate, archive, licenses, windows, documentation=None):
     """The MCP entry is a directly executable name on every supported host."""
-    _cli_license_paths(licenses)
+    payloads = _cli_payloads(licenses, documentation)
     for path in [binary, alternate]:
         if not stat.S_ISREG(path.lstat().st_mode):
             raise RuntimeError("CLI ZIP inputs must be regular non-symlink files")
@@ -49,7 +50,7 @@ def write_cli_zip(binary, alternate, archive, licenses, windows):
     with zipfile.ZipFile(archive, "x", zipfile.ZIP_DEFLATED) as bundle:
         bundle.write(binary, "markitai" + extension)
         bundle.write(alternate, "mkai" + extension)
-        for name, content in licenses.items():
+        for name, content in payloads.items():
             bundle.writestr(name, content)
         if windows:
             # arg0 selects the MCP command in the shared executable. A copy
@@ -64,13 +65,13 @@ def write_cli_zip(binary, alternate, archive, licenses, windows):
         raise RuntimeError("CLI executable bytes changed during ZIP packaging")
 
 
-def extract_cli_zip(archive_path, destination, binary, alternate, licenses, windows):
+def extract_cli_zip(archive_path, destination, binary, alternate, licenses, windows, documentation=None):
     """Validate every member before creating a fresh extraction directory."""
-    _cli_license_paths(licenses)
+    payloads = _cli_payloads(licenses, documentation)
     extension = ".exe" if windows else ""
     executable_names = {"markitai" + extension: binary, "mkai" + extension: alternate}
     alias_name = "markitai-mcp" + extension
-    expected = {*executable_names, alias_name, *licenses}
+    expected = {*executable_names, alias_name, *payloads}
     with zipfile.ZipFile(archive_path) as bundle:
         members = bundle.infolist()
         if len(members) != len(expected) or {item.filename for item in members} != expected:
@@ -87,9 +88,9 @@ def extract_cli_zip(archive_path, destination, binary, alternate, licenses, wind
             if item.filename == alias_name:
                 source = binary
             if source is None:
-                content = licenses[item.filename]
+                content = payloads[item.filename]
                 if item.file_size != len(content) or bundle.read(item) != content:
-                    raise RuntimeError("CLI ZIP attribution differs from source")
+                    raise RuntimeError("CLI ZIP payload differs from source")
             else:
                 expected_identity = identity(source)
                 if item.file_size != expected_identity["bytes"]:
@@ -116,14 +117,15 @@ def extract_cli_zip(archive_path, destination, binary, alternate, licenses, wind
                 raise RuntimeError("Extracted CLI executable differs from source")
         if identity(destination / alias_name) != identity(binary):
             raise RuntimeError("Extracted MCP alias differs from source")
-        for name, content in licenses.items():
+        for name, content in payloads.items():
             if (destination / name).read_bytes() != content:
-                raise RuntimeError("Extracted CLI attribution differs from source")
+                raise RuntimeError("Extracted CLI payload differs from source")
     return {"archive": identity(archive_path),
             "executables": {name: identity(destination / name) for name in executable_names},
             "mcp_alias": {"kind": "executable_copy" if windows else "symlink", "target": "markitai" + extension,
                           "identity": identity(destination / alias_name)},
-            "attribution": {name: identity(destination / name) for name in licenses}}
+            "attribution": {name: identity(destination / name) for name in licenses},
+            "documentation": {name: identity(destination / name) for name in (documentation or {})}}
 
 
 def mcp_probe(launcher, cwd, environment, log, timeout=30):
@@ -361,9 +363,33 @@ def _cli_license_paths(licenses):
             raise RuntimeError("Unsafe CLI attribution path")
 
 
-def write_single_binary_tar(binary, destination, licenses):
-    """Unix delivery: one regular executable, relative aliases, exact attribution."""
+def _cli_payloads(licenses, documentation):
     _cli_license_paths(licenses)
+    if documentation is not None:
+        validate_documentation(documentation)
+    payloads = dict(licenses)
+    for name, content in (documentation or {}).items():
+        if name in payloads:
+            raise RuntimeError("CLI documentation collides with attribution")
+        payloads[name] = content
+    folded = set()
+    for name, content in payloads.items():
+        if not isinstance(content, bytes):
+            raise RuntimeError("CLI payload must contain bytes")
+        key = name.casefold()
+        if key in folded:
+            raise RuntimeError("CLI payload paths collide on a case-insensitive filesystem")
+        folded.add(key)
+    for key in folded:
+        parts = key.split("/")
+        if any("/".join(parts[:end]) in folded for end in range(1, len(parts))):
+            raise RuntimeError("CLI payload file collides with another payload's parent directory")
+    return payloads
+
+
+def write_single_binary_tar(binary, destination, licenses, documentation=None):
+    """Unix delivery: one regular executable, relative aliases, exact attribution."""
+    payloads = _cli_payloads(licenses, documentation)
     if binary.is_symlink() or not binary.is_file():
         raise RuntimeError("CLI delivery requires a regular executable")
     with tarfile.open(destination, "x:gz") as archive:
@@ -378,19 +404,19 @@ def write_single_binary_tar(binary, destination, licenses):
             alias.linkname = "markitai"
             alias.mode = 0o777
             archive.addfile(alias)
-        for name, content in licenses.items():
+        for name, content in payloads.items():
             member = tarfile.TarInfo(name)
             member.mode = 0o644
             member.size = len(content)
             archive.addfile(member, io.BytesIO(content))
 
 
-def extract_single_binary_tar(archive_path, destination, binary, licenses):
+def extract_single_binary_tar(archive_path, destination, binary, licenses, documentation=None):
     """Validate the complete inventory before extracting our narrowly shaped tar."""
-    _cli_license_paths(licenses)
+    payloads = _cli_payloads(licenses, documentation)
     with tarfile.open(archive_path, "r:gz") as archive:
         members = archive.getmembers()
-        expected = {"markitai", "mkai", "markitai-mcp", *licenses}
+        expected = {"markitai", "mkai", "markitai-mcp", *payloads}
         if len(members) != len(expected) or {m.name for m in members} != expected:
             raise RuntimeError("Single-binary CLI archive has an unexpected member inventory")
         by_name = {member.name: member for member in members}
@@ -402,11 +428,11 @@ def extract_single_binary_tar(archive_path, destination, binary, licenses):
             alias = by_name[name]
             if not alias.issym() or alias.linkname != "markitai":
                 raise RuntimeError("CLI aliases must be relative symlinks to markitai")
-        for name, content in licenses.items():
+        for name, content in payloads.items():
             member = by_name[name]
             if (not member.isfile() or member.mode != 0o644 or member.size != len(content)
                     or archive.extractfile(member).read() != content):
-                raise RuntimeError("CLI attribution is missing or differs from source")
+                raise RuntimeError("CLI payload is missing or differs from source")
         destination.mkdir(parents=True, exist_ok=False)
         target = destination / "markitai"
         with target.open("xb") as stream:
@@ -414,13 +440,13 @@ def extract_single_binary_tar(archive_path, destination, binary, licenses):
         target.chmod(0o755)
         if identity(target) != identity(binary):
             raise RuntimeError("Archived CLI executable differs from the frozen binary")
-        for name, content in licenses.items():
+        for name, content in payloads.items():
             target = destination / name
             target.parent.mkdir(parents=True, exist_ok=True)
             with target.open("xb") as stream:
                 stream.write(content)
             if target.read_bytes() != content:
-                raise RuntimeError("Extracted CLI attribution differs from source")
+                raise RuntimeError("Extracted CLI payload differs from source")
         for name in ["mkai", "markitai-mcp"]:
             (destination / name).symlink_to("markitai")
             if os.readlink(destination / name) != "markitai" or identity(destination / name) != identity(binary):
@@ -428,7 +454,8 @@ def extract_single_binary_tar(archive_path, destination, binary, licenses):
     return {"archive": identity(archive_path), "executable": identity(destination / "markitai"),
             "aliases": [{"path": name, "target": "markitai", "kind": "symlink"}
                         for name in ["mkai", "markitai-mcp"]],
-            "attribution": {name: identity(destination / name) for name in licenses}}
+            "attribution": {name: identity(destination / name) for name in licenses},
+            "documentation": {name: identity(destination / name) for name in (documentation or {})}}
 
 
 def main():
@@ -535,11 +562,12 @@ def main():
         version = run("version", [binary, "--version"]).strip().split()[-1]
 
         cli_licenses = cli_attribution(root, licenses)
+        cli_docs = cli_documentation(root)
         archive = output / f"markitai-{version}-{host}.zip"
-        write_cli_zip(binary, release / ("mkai" + extension), archive, cli_licenses, os.name == "nt")
+        write_cli_zip(binary, release / ("mkai" + extension), archive, cli_licenses, os.name == "nt", cli_docs)
         artifact(archive)
         extracted = work / "CLI 安装 with spaces"
-        record["cli_zip"] = extract_cli_zip(archive, extracted, binary, alternate, cli_licenses, os.name == "nt")
+        record["cli_zip"] = extract_cli_zip(archive, extracted, binary, alternate, cli_licenses, os.name == "nt", cli_docs)
         if os.name == "nt":
             for name in ["markitai.exe", "mkai.exe", "markitai-mcp.exe"]:
                 verify_target_executable(extracted / name, host)
@@ -560,10 +588,10 @@ def main():
         record["cli_mcp_protocol"]["log_identity"] = identity(protocol_log)
         if os.name != "nt":
             single = output / f"markitai-{version}-{host}-single-binary.tar.gz"
-            write_single_binary_tar(binary, single, cli_licenses)
+            write_single_binary_tar(binary, single, cli_licenses, cli_docs)
             artifact(single)
             unpacked = work / "single-binary-cli"
-            record["single_binary_cli"] = extract_single_binary_tar(single, unpacked, binary, cli_licenses)
+            record["single_binary_cli"] = extract_single_binary_tar(single, unpacked, binary, cli_licenses, cli_docs)
             alias_version = run("single-binary-alias-version", [unpacked / "mkai", "--version"], cwd=unpacked).strip()
             if alias_version.split()[-1] != version:
                 raise RuntimeError("Archived mkai alias reported a different version")

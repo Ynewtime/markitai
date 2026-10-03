@@ -8,7 +8,7 @@ use crate::{Asset, Document, Error, Result, config, output_profiles};
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Rgb, RgbImage};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Cursor, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
@@ -270,6 +270,108 @@ fn notice(doc: &mut Document, message: &str) {
     if !doc.warnings.iter().any(|existing| existing == message) {
         doc.warnings.push(message.into());
     }
+}
+
+/// Mail downloads retain their payload/name regardless of image settings.
+/// Only an actual image use needs a separate preview of an original download;
+/// ordinary CID pictures still have one prepared asset. This provenance comes
+/// from the mail parser, never from a Markdown string or a filename suffix.
+pub(crate) fn prepare_mail_assets(doc: &mut Document, cfg: &Value, originals: &HashSet<String>) {
+    let references = output_profiles::image_references(&doc.markdown);
+    let image_names: HashSet<_> = references
+        .iter()
+        .filter_map(|target| crate::image_enrichment::asset_name(target))
+        .collect();
+    if doc
+        .assets
+        .iter()
+        .all(|asset| originals.contains(&asset.name) && !image_names.contains(&asset.name))
+    {
+        return;
+    }
+    // A prepared name always appends a dot/suffix to its input. Reserve the
+    // entire fresh basename family, including names that already have more
+    // than one suffix, so neither compression nor extension correction can
+    // collide with an original download or another preview. Fresh basenames
+    // are ASCII: reserve ASCII case aliases for portable filename allocation
+    // without folding the identity used to match any original attachment.
+    let mut families: HashSet<_> = doc
+        .assets
+        .iter()
+        .map(|asset| {
+            asset
+                .name
+                .split('.')
+                .next()
+                .unwrap_or("")
+                .to_ascii_lowercase()
+        })
+        .collect();
+    let mut next = 0usize;
+    let mut preview_name = |source: &str| loop {
+        next += 1;
+        let base = format!("mail-preview-{next}");
+        if families.insert(base.clone()) {
+            let extension = Path::new(source)
+                .extension()
+                .and_then(|value| value.to_str())
+                .filter(|extension| is_image_extension(extension));
+            break match extension {
+                Some(extension) => format!("{base}.{}", extension.to_ascii_lowercase()),
+                None => base,
+            };
+        }
+    };
+    let mut downloads = Vec::new();
+    let mut previews = Vec::new();
+    let mut moves = HashMap::new();
+    let mut copies = HashMap::new();
+    for mut asset in std::mem::take(&mut doc.assets) {
+        if originals.contains(&asset.name) {
+            if image_names.contains(&asset.name) {
+                let name = preview_name(&asset.name);
+                copies.insert(asset.name.clone(), format!(".markitai/assets/{name}"));
+                previews.push(Asset {
+                    name,
+                    bytes: asset.bytes.clone(),
+                });
+            }
+            downloads.push(asset);
+        } else {
+            let name = preview_name(&asset.name);
+            moves.insert(
+                format!(".markitai/assets/{}", asset.name),
+                format!(".markitai/assets/{name}"),
+            );
+            asset.name = name;
+            previews.push(asset);
+        }
+    }
+    let mut prepared = Document {
+        markdown: output_profiles::rewrite_asset_references(&doc.markdown, &moves),
+        assets: previews,
+        warnings: std::mem::take(&mut doc.warnings),
+        ..Default::default()
+    };
+    let image_copies: HashMap<_, _> = references
+        .into_iter()
+        .filter_map(|target| {
+            let name = crate::image_enrichment::asset_name(&target)?;
+            let next = copies.get(&name)?;
+            // This is a complete URI, not a raw filename. Keep its suffix
+            // before percent decoding; an escaped '?' or '#' belongs to the path.
+            let suffix = target.find(['?', '#']).map_or("", |index| &target[index..]);
+            let next = format!("{next}{suffix}");
+            Some((target, next))
+        })
+        .collect();
+    prepared.markdown =
+        output_profiles::rewrite_image_uri_targets(&prepared.markdown, &image_copies);
+    prepare_assets(&mut prepared, cfg);
+    downloads.extend(prepared.assets);
+    doc.assets = downloads;
+    doc.markdown = prepared.markdown;
+    doc.warnings = prepared.warnings;
 }
 
 /// Prepare embedded raster assets without touching the input or fetching URLs.
@@ -785,6 +887,220 @@ mod tests {
             doc.markdown.matches(".markitai/assets/a.png.png").count(),
             2
         );
+    }
+
+    #[test]
+    fn mail_originals_bypass_image_filters_and_deduplication() {
+        let bytes = png(2, 2);
+        let mut doc = Document {
+            markdown: "[first](.markitai/assets/first.png)\n[second](.markitai/assets/second.png)\n`![literal](.markitai/assets/first.png)`\n".into(),
+            assets: vec![
+                Asset { name: "first.png".into(), bytes: bytes.clone() },
+                Asset { name: "second.png".into(), bytes: bytes.clone() },
+            ],
+            ..Default::default()
+        };
+        let before = doc.markdown.clone();
+        let originals = HashSet::from(["first.png".into(), "second.png".into()]);
+        prepare_mail_assets(&mut doc, &config::defaults(), &originals);
+        assert_eq!(doc.markdown, before);
+        assert_eq!(doc.assets.len(), 2);
+        assert_eq!(doc.assets[0].name, "first.png");
+        assert_eq!(doc.assets[1].name, "second.png");
+        assert!(doc.assets.iter().all(|asset| asset.bytes == bytes));
+        assert!(doc.warnings.is_empty());
+    }
+
+    #[test]
+    fn mail_preview_targets_decode_once_keep_case_and_cannot_collide_with_originals() {
+        for compress in [false, true] {
+            let lower = png(100, 100);
+            let upper = png(120, 100);
+            let reserved = b"original name reserves the whole preview suffix family".to_vec();
+            let mut doc = Document {
+                markdown: "[download](.markitai/assets/plot.png)\n[upper](.markitai/assets/Plot.png)\n[reserved](.markitai/assets/MAIL-PREVIEW-1.png.jpg)\n![lower](.markitai/assets/%70lot.png)\n![upper](.markitai/assets/Plot.png)\n![wrong-case](.markitai/assets/PLOT.png)\n![double-escaped](.markitai/assets/%2570lot.png)\n![inline](.markitai/assets/inline.png)\n".into(),
+                assets: vec![
+                    Asset { name: "plot.png".into(), bytes: lower.clone() },
+                    Asset { name: "Plot.png".into(), bytes: upper.clone() },
+                    Asset { name: "MAIL-PREVIEW-1.png.jpg".into(), bytes: reserved.clone() },
+                    Asset { name: "inline.png".into(), bytes: lower.clone() },
+                ],
+                ..Default::default()
+            };
+            let originals = HashSet::from([
+                "plot.png".into(),
+                "Plot.png".into(),
+                "MAIL-PREVIEW-1.png.jpg".into(),
+            ]);
+            let cfg =
+                config::normalize(&serde_json::json!({"image":{"compress":compress}})).unwrap();
+            prepare_mail_assets(&mut doc, &cfg, &originals);
+            for (name, bytes) in [
+                ("plot.png", &lower),
+                ("Plot.png", &upper),
+                ("MAIL-PREVIEW-1.png.jpg", &reserved),
+            ] {
+                assert_eq!(
+                    doc.assets
+                        .iter()
+                        .find(|asset| asset.name == name)
+                        .unwrap()
+                        .bytes,
+                    *bytes
+                );
+            }
+            assert!(
+                doc.markdown
+                    .contains("[download](.markitai/assets/plot.png)")
+            );
+            assert!(doc.markdown.contains("[upper](.markitai/assets/Plot.png)"));
+            assert!(
+                doc.markdown
+                    .contains("![wrong-case](.markitai/assets/PLOT.png)")
+            );
+            assert!(
+                doc.markdown
+                    .contains("![double-escaped](.markitai/assets/%2570lot.png)")
+            );
+            let images = output_profiles::image_references(&doc.markdown);
+            let lower_target = &images[0];
+            let upper_target = &images[1];
+            assert_ne!(lower_target, upper_target);
+            assert!(doc.markdown.contains(&format!("![lower]({lower_target})")));
+            assert!(doc.markdown.contains(&format!("![inline]({lower_target})")));
+            assert_eq!(images.len(), 4);
+            assert!(lower_target.contains("mail-preview-2."), "{lower_target}");
+            assert!(upper_target.contains("mail-preview-3."), "{upper_target}");
+            let names: HashSet<_> = doc.assets.iter().map(|asset| &asset.name).collect();
+            assert_eq!(names.len(), doc.assets.len());
+            assert_eq!(doc.assets.len(), 5);
+            for target in [lower_target, upper_target] {
+                let name = crate::image_enrichment::asset_name(target).unwrap();
+                let bytes = &doc
+                    .assets
+                    .iter()
+                    .find(|asset| asset.name == name)
+                    .unwrap()
+                    .bytes;
+                assert_eq!(
+                    image::guess_format(bytes).unwrap(),
+                    if compress {
+                        ImageFormat::Jpeg
+                    } else {
+                        ImageFormat::Png
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn mail_image_copies_keep_uri_suffixes_and_shared_download_definitions() {
+        for compress in [false, true] {
+            let original = png(100, 100);
+            let inline = png(120, 100);
+            let source = "[Download][shared]\n![Preview][shared]\n\n[shared]: .markitai/assets/%65mail-1-diagram.svg?variant=%2F#detail \"Original title\"\n\n![Other](.markitai/assets/%65mail-1-diagram.svg?variant=%25#other)\n![Inline](.markitai/assets/%69nline.png?raw=%25#frame)\n[inline-use](.markitai/assets/%69nline.png?raw=%25#frame)\n![wrong-case](.markitai/assets/INLINE.png)\n![double-escaped](.markitai/assets/%2569nline.png)\n`![literal](.markitai/assets/%69nline.png?raw=%25#frame)`\nPlain .markitai/assets/%69nline.png?raw=%25#frame\n";
+            let mut doc = Document {
+                markdown: source.into(),
+                assets: vec![
+                    Asset {
+                        name: "email-1-diagram.svg".into(),
+                        bytes: original.clone(),
+                    },
+                    Asset {
+                        name: "inline.png".into(),
+                        bytes: inline,
+                    },
+                ],
+                ..Default::default()
+            };
+            let cfg =
+                config::normalize(&serde_json::json!({"image":{"compress":compress}})).unwrap();
+            prepare_mail_assets(
+                &mut doc,
+                &cfg,
+                &HashSet::from(["email-1-diagram.svg".into()]),
+            );
+            assert!(doc.markdown.contains("[Download][shared]"));
+            assert!(doc.markdown.contains("[shared]: .markitai/assets/%65mail-1-diagram.svg?variant=%2F#detail \"Original title\""));
+            assert!(
+                doc.markdown
+                    .contains("![Preview](.markitai/assets/mail-preview-1")
+            );
+            assert!(doc.markdown.contains("#detail \"Original title\")"));
+            assert!(
+                doc.markdown
+                    .contains("![wrong-case](.markitai/assets/INLINE.png)")
+            );
+            assert!(
+                doc.markdown
+                    .contains("![double-escaped](.markitai/assets/%2569nline.png)")
+            );
+            assert!(
+                doc.markdown
+                    .contains("`![literal](.markitai/assets/%69nline.png?raw=%25#frame)`")
+            );
+            assert!(
+                doc.markdown
+                    .contains("Plain .markitai/assets/%69nline.png?raw=%25#frame")
+            );
+            let targets = output_profiles::image_references(&doc.markdown);
+            assert!(
+                targets[0].ends_with("?variant=%2F#detail"),
+                "{}",
+                doc.markdown
+            );
+            assert!(
+                targets[1].ends_with("?variant=%25#other"),
+                "{}",
+                doc.markdown
+            );
+            assert!(targets[2].ends_with("?raw=%25#frame"), "{}", doc.markdown);
+            assert!(targets[2].contains("mail-preview-2."), "{}", doc.markdown);
+            assert!(
+                doc.markdown
+                    .contains(&format!("[inline-use]({})", targets[2]))
+            );
+            assert_eq!(doc.assets.len(), 3);
+            assert_eq!(doc.assets[0].name, "email-1-diagram.svg");
+            assert_eq!(doc.assets[0].bytes, original);
+            for target in &targets[..3] {
+                let name = crate::image_enrichment::asset_name(target).unwrap();
+                let preview = doc.assets.iter().find(|asset| asset.name == name).unwrap();
+                assert_eq!(
+                    image::guess_format(&preview.bytes).unwrap(),
+                    if compress {
+                        ImageFormat::Jpeg
+                    } else {
+                        ImageFormat::Png
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn filtering_a_mail_preview_never_removes_its_original_download() {
+        let bytes = png(2, 2);
+        let mut doc = Document {
+            markdown: "[tiny](.markitai/assets/tiny.png)\n![preview](.markitai/assets/tiny.png)\n"
+                .into(),
+            assets: vec![Asset {
+                name: "tiny.png".into(),
+                bytes: bytes.clone(),
+            }],
+            ..Default::default()
+        };
+        prepare_mail_assets(
+            &mut doc,
+            &config::defaults(),
+            &HashSet::from(["tiny.png".into()]),
+        );
+        assert!(doc.markdown.contains("[tiny](.markitai/assets/tiny.png)"));
+        assert!(!doc.markdown.contains("![preview]"));
+        assert_eq!(doc.assets.len(), 1);
+        assert_eq!(doc.assets[0].name, "tiny.png");
+        assert_eq!(doc.assets[0].bytes, bytes);
     }
 
     #[test]
