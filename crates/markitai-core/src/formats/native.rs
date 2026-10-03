@@ -2065,3 +2065,7 @@ mod tests {
         assert_eq!(doc.markdown.matches('#').count(), 1, "{}", doc.markdown);
     }
 }
+
+#[cfg(test)]
+#[path = "native/office_image_tests.rs"]
+mod office_image_tests;

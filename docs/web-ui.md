@@ -33,9 +33,13 @@ are Name, Duration (a running row counts live), Finished, LLM / Cost (Base, or
 LLM with its cost) and Status (✓, ×, a warning mark for skipped rows, a spinner,
 Queued). Row actions are Download .md, Enhance with LLM (disabled with the reason
 until LLM enhancement is available and switched on), Retry and Delete, which asks
-for confirmation in a card anchored to the row. A failed row shows its cause in
-one red line; clicking the row unfolds the service's original message. Rows with
-conversion warnings add an amber line. Above ten rows, a name filter and
+for confirmation in a card anchored to the row. Failed operations and conversion
+warnings use the shared notification card at the top right (docked at the bottom
+on phones). Clicking the status icon, or pressing Enter or Space on it, reopens
+the complete notice; clicking the row still opens the document preview. A failed
+enhancement that retains an earlier result keeps its download and retry available.
+Warnings from that result are labelled separately from the latest attempt's
+recorded cost. Above ten rows, a name filter and
 All/Done/Failed/Skipped chips appear. A Total row closes a ledger without saved
 jobs, and Download all (.zip) sits under the ledger.
 
@@ -109,10 +113,11 @@ failed archive download are reported the same way.
   language: an API error's `reason`, then a settings conflict's `detail.code`,
   then the status-derived `code`; a failed item's `error_code` or a recognizable
   message shape (HTTP statuses, refused connections, timeouts, model refusals,
-  missing OCR, size limits). The service's own wording stays available as the
-  line's tooltip or unfolded under the row. Provider probe and discovery phrases
-  are translated the same way. A job whose history could not be saved
-  (`persistence_error`) shows a red line.
+  missing OCR, size limits). The service's full wording stays available in the
+  notification's expandable details, and every warning remains readable in its
+  scrollable list. The status icon reopens a dismissed notice. Provider probe and
+  discovery phrases are translated the same way. A job whose history could not
+  be saved (`persistence_error`) reports the failure through the same notice.
 - **Offline**: a request that cannot reach the service shows an error line and a
   notification; the page asks again every five seconds and says when the
   service is back, then refreshes capabilities, history and the session. A broken

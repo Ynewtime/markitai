@@ -1,0 +1,82 @@
+{
+  "source_type": "Authorized repository-local authored/LO-export/derived QA fixtures; no private documents",
+  "sources": [
+    {
+      "fixture": "xlsx-complex.xlsx",
+      "id": "xlsx-complex",
+      "path": "fixtures/xlsx-complex.xlsx",
+      "extension": "xlsx",
+      "bytes": 10065,
+      "sha256": "09c82d56a3042028f946680ac39fc02789ff49fee6653cf57e0e8214c138e399",
+      "family": "Office 文档/表格/幻灯片",
+      "source": "Author: prepare_fixtures.py; synthetic content only",
+      "readiness": "READY",
+      "limitations": "Actual main content type matches suffix. Template/style editing is outside conversion task.",
+      "source_manifest": "format-user-qa-execution-r4/fixture-manifest.json",
+      "derived_or_export_limitations": "Actual main content type matches suffix. Template/style editing is outside conversion task."
+    },
+    {
+      "fixture": "xlt-complex.xlt",
+      "id": "xlt-complex",
+      "path": "fixtures/xlt-authored/xlt-complex.xlt",
+      "extension": "xlt",
+      "bytes": 11264,
+      "sha256": "3e06c7d56f33eb46ed151e56e0683f2c4fc33b4d0676ca3f52d89de6a7b3bbfb",
+      "family": "规范作者派生的遗留Excel模板",
+      "source": "fixtures/xls-complex.xls",
+      "readiness": "READY",
+      "limitations": "Author-controlled Template/ExtSST normalization; original LO producer remains type FAILED; no real Excel producer or full conformance certification; no product/visual/macro execution.",
+      "provenance_class": "normative-author-derived-independent-reader-accepted",
+      "source_evidence": [
+        {
+          "path": "xlt-authored-evidence/xlt-complex.json",
+          "sha256": "0355882c9b96d44ee959dec9f0fe7c9296094f1fb220d2b04c7ee8520d0d6658"
+        }
+      ],
+      "prior_fixture_sha256": "0383067e7c20a754ed0f6f4e6d223e9f68f313d6d124ca1e5423053e0125c8e4",
+      "source_manifest": "format-user-qa-execution-r4/fixture-manifest.json",
+      "derived_or_export_limitations": "Author-controlled Template/ExtSST normalization; original LO producer remains type FAILED; no real Excel producer or full conformance certification; no product/visual/macro execution."
+    },
+    {
+      "fixture": "pps-complex.pps",
+      "id": "pps-complex",
+      "path": "fixtures/lo-r005/pps-complex.pps",
+      "extension": "pps",
+      "bytes": 661504,
+      "sha256": "31e935711b0cc9a5bf84ac31a9bbea525a974f5503916d12cd270f337eacd714",
+      "family": "真实 LibreOffice 遗留文档/模板/放映",
+      "source": "Anonymous offline author seed pptx-complex exported by actual LO r005 filter MS PowerPoint 97 AutoPlay",
+      "readiness": "READY",
+      "limitations": "Binary template/slideshow flags are not independently decoded; actual export filter provenance and strict source-content roundtrip are verified. Visual review pending.",
+      "provenance_class": "genuine-lo-explicit-filter-with-independent-semantic-roundtrip",
+      "source_evidence": [
+        {
+          "path": "lo-r005-evidence/pps-complex.json",
+          "sha256": "b7e05dffb5e2aeb239cc7128a16fc0b8ec07fde20d68b949e498c97bc425df5a"
+        },
+        {
+          "path": "lo-r005-evidence/visual-review-correction-r2.json",
+          "sha256": "ddcd104993af7a27d943d2690aea795b398e4171214f3389a2fe936a2da69a15"
+        }
+      ],
+      "source_manifest": "format-user-qa-execution-r4/fixture-manifest.json",
+      "derived_or_export_limitations": "Binary template/slideshow flags are not independently decoded; actual export filter provenance and strict source-content roundtrip are verified. Visual review pending."
+    },
+    {
+      "fixture": "ods-complex.ods",
+      "id": "ods-complex",
+      "path": "fixtures/ods-complex.ods",
+      "extension": "ods",
+      "bytes": 3897,
+      "sha256": "fb5cc080473bafd7cbe66432da2b43c3ba72860ae5499589a3dcea14650a0ee9",
+      "family": "OpenDocument 正文/表格/幻灯片",
+      "source": "Author: prepare_fixtures.py; synthetic content only",
+      "readiness": "READY",
+      "limitations": "ODF MIME/manifest matches document or template suffix; no application layout renderer verification yet.",
+      "source_manifest": "format-user-qa-execution-r4/fixture-manifest.json",
+      "derived_or_export_limitations": "ODF MIME/manifest matches document or template suffix; no application layout renderer verification yet."
+    }
+  ],
+  "image_sha256": "71db997b6ae26802d679a008e3d5a331136506da9258f1fbe4b2346e6150e914",
+  "limitations": "Macro formats contain no VBA; legacy slideshow/template behavior proof is limited; ODS direct spreadsheet frame is a deliberate compatibility sample, standard table:shapes has separate authored regression."
+}

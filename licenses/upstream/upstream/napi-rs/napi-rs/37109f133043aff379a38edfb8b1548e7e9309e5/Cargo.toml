@@ -1,0 +1,47 @@
+[workspace]
+resolver = "2"
+members = [
+  "./crates/async-runtime",
+  "./crates/backend",
+  "./crates/build",
+  "./crates/macro",
+  "./crates/napi",
+  "./crates/sys",
+  "./examples/napi",
+  "./examples/napi-shared",
+  "./examples/napi-compat-mode",
+  "./examples/custom-async-runtime",
+  "./examples/shared-async-runtime",
+  "./examples/wasi-heap-sync",
+  "./examples/binary",
+  "./bench",
+  "./memory-testing",
+  "./examples/napi-cargo-test",
+]
+exclude = ["./testing"]
+
+[workspace.package]
+rust-version = "1.88"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+print_stdout = "warn"     # Must be opt-in
+print_stderr = "warn"     # Must be opt-in
+allow_attributes = "warn"
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tokio_unstable)'] }
+
+[profile.release]
+lto = true
+
+[profile.wasi]
+inherits = "release"
+opt-level = "z"
+debug = true
+
+[profile.napi-rs-custom]
+inherits = "dev"
+codegen-units = 1024

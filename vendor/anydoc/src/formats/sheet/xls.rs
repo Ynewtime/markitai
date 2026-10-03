@@ -7,7 +7,7 @@
 
 use super::controls::Checkbox;
 use super::xlsx::{
-    CellFormat, SheetContent, build_table, format_as_text, push_sheet, render_number,
+    CellFormat, SheetContent, build_table, format_as_text, push_sheet_images, render_number,
     resolve_format,
 };
 use super::{error_literal, rk_number};
@@ -44,6 +44,7 @@ const BOOLERR: u16 = 0x0205;
 const FORMULA: u16 = 0x0006;
 const STRING: u16 = 0x0207;
 const MSODRAWING: u16 = 0x00EC;
+const MSODRAWINGGROUP: u16 = 0x00EB;
 const OBJ: u16 = 0x005D;
 const TXO: u16 = 0x01B6;
 
@@ -84,17 +85,27 @@ pub(super) fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
     let mut failed = 0usize;
     // One budget for the workbook, so sheets cannot multiply the cap.
     let mut slots = 0u64;
+    let mut pictures = crate::formats::ppt::pictures::Bank::read(&globals.drawing_group, &[])?;
     for sheet in &visible {
         let Some(content) = read_sheet(&data, &globals, sheet.offset, &mut records)? else {
             log::warn!("skipping unreadable sheet {:?}", sheet.name);
             failed += 1;
             continue;
         };
-        push_sheet(&mut doc, &sheet.name, multi_sheet, build_table(content, &mut slots)?);
+        let figures = super::drawings::binary(&content.drawings, &content, &mut pictures)?;
+        push_sheet_images(
+            &mut doc,
+            &sheet.name,
+            multi_sheet,
+            build_table(content, &mut slots)?,
+            figures,
+        );
     }
     if !visible.is_empty() && failed == visible.len() {
         return Err(ConvertError::malformed("no sheet in the workbook could be read"));
     }
+    doc.assets = pictures.assets.assets;
+    doc.warnings.extend(pictures.warnings);
     Ok(doc)
 }
 
@@ -340,6 +351,7 @@ struct BoundSheet {
 }
 
 struct Globals {
+    drawing_group: Vec<u8>,
     biff8: bool,
     date1904: bool,
     encoding: &'static encoding_rs::Encoding,
@@ -382,6 +394,7 @@ fn read_globals(data: &[u8], records: &mut u64) -> Result<Globals, ConvertError>
         xfs: Vec::new(),
         sheets: Vec::new(),
         shown: None,
+        drawing_group: Vec::new(),
     };
     let mut formats: HashMap<u32, String> = HashMap::new();
     let mut xf_ifmts: Vec<u16> = Vec::new();
@@ -429,6 +442,13 @@ fn read_globals(data: &[u8], records: &mut u64) -> Result<Globals, ConvertError>
                     && let Some(ifmt) = get_u16(body, 2)
                 {
                     xf_ifmts.push(ifmt);
+                }
+            }
+            MSODRAWINGGROUP if globals.biff8 => {
+                let (segs, after) = continued(data, body, pos, records)?;
+                pos = after;
+                for seg in segs {
+                    append_drawing(&mut globals.drawing_group, seg)?;
                 }
             }
             SST if globals.biff8 => {
@@ -691,6 +711,9 @@ fn read_sheet(
             MSODRAWING if globals.biff8 => {
                 let (segs, after) = continued(data, body, pos, records)?;
                 pos = after;
+                for seg in &segs {
+                    append_drawing(&mut out.drawings, seg)?;
+                }
                 shape = if segs.len() == 1 { last_shape(body) } else { last_shape(&segs.concat()) };
                 last_checkbox = None;
             }
@@ -734,6 +757,17 @@ fn read_sheet(
         }
     }
     Ok(Some(out))
+}
+
+fn append_drawing(out: &mut Vec<u8>, data: &[u8]) -> Result<(), ConvertError> {
+    if out.len().saturating_add(data.len()) > limits::MAX_ENTRY_BYTES as usize {
+        return Err(ConvertError::ResourceLimit {
+            limit: "max_entry_bytes",
+            detail: "OfficeArt drawing stream exceeds the entry-byte cap".into(),
+        });
+    }
+    out.extend_from_slice(data);
+    Ok(())
 }
 
 /// What an OBJ needs from its shape: the cell the client anchor starts in,

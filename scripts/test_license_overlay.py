@@ -26,6 +26,7 @@ class LicenseOverlayTests(unittest.TestCase):
         shutil.copytree(VENDOR, self.vendor)
         self.manifest = json.loads((self.vendor / "manifest.json").read_text())
         self.packages = []
+        self.node_packages = []
         for item in self.manifest["packages"]:
             label = f"{item['name']}-{item['version']}"
             source = self.root / "registry" / label
@@ -40,7 +41,8 @@ class LicenseOverlayTests(unittest.TestCase):
                             target = source / name
                             target.parent.mkdir(parents=True, exist_ok=True)
                             target.write_bytes(archive.extractfile(member).read())
-            self.packages.append({"id": item["id"], "name": item["name"], "version": item["version"],
+            target_packages = self.node_packages if item["name"] in {"napi", "napi-build", "napi-derive", "napi-sys"} else self.packages
+            target_packages.append({"id": item["id"], "name": item["name"], "version": item["version"],
                                   "source": "registry+fixture", "license": item["declared_license"],
                                   "license_file": None, "repository": item["repository"],
                                   "manifest_path": str(source / "Cargo.toml")})
@@ -395,7 +397,7 @@ class LicenseOverlayTests(unittest.TestCase):
 
     def test_parent_terms_close_both_gaps_with_truthful_manifest_provenance(self):
         result = stage_overlay(self.vendor, self.destination, self.packages)
-        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 16)
+        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 20)
         self.assertEqual(result["record"]["reviewed_publication_version_stamps"], 1)
         expected = {"nom-language": ("raw_exact_match", ["LICENSE"], 7),
                     "tract-extra": ("reviewed_publication_version_stamp",
@@ -611,6 +613,147 @@ class LicenseOverlayTests(unittest.TestCase):
                 archive.addfile(member, io.BytesIO(raw))
         with self.assertRaises(RuntimeError):
             verify_node_licenses(npm, files)
+
+    def test_node_terms_are_extra_to_the_original_seventeen_package_closure(self):
+        result = stage_overlay(self.vendor, self.destination, self.packages)
+        self.assertEqual(len(self.packages), 17)
+        self.assertEqual(len(self.node_packages), 4)
+        self.assertEqual(result["record"]["matched_packages"], 17)
+        self.assertEqual(result["record"]["complete_text_packages"], 17)
+        self.assertTrue(all(not key.rsplit("#", 1)[-1].startswith("napi") for key in result["packages"]))
+        shutil.rmtree(self.destination)
+        result = stage_overlay(self.vendor, self.destination, self.packages + self.node_packages)
+        self.assertEqual(result["record"]["matched_packages"], 21)
+        self.assertEqual(result["record"]["complete_text_packages"], 21)
+        self.assertEqual(result["record"]["exact_commit_manifest_matches"], 20)
+        self.assertEqual(result["record"]["reviewed_publication_version_stamps"], 1)
+        self.assertEqual(len(result["record"]["source_archives"]), 7)
+        for entry in self.manifest["packages"]:
+            if not entry["name"].startswith("napi"):
+                continue
+            self.assertFalse(entry["license_inherited_from_workspace"])
+            self.assertFalse(entry["version_inherited_from_workspace"])
+            record = result["packages"][entry["id"]]
+            self.assertEqual(record["manifest_provenance"], "raw_exact_match")
+            self.assertFalse(record["historical_provenance"])
+            self.assertIsNone(record["full_text_gap"])
+            self.assertEqual(len(record["texts"]), 1)
+            raw = Path(record["texts"][0]["source"]).read_bytes()
+            self.assertEqual(raw.count(b"MIT License"), 2)
+            self.assertIn(b"Copyright (c) 2020-present LongYinan", raw)
+            self.assertIn(b"Copyright (c) 2018 GitHub", raw)
+            self.assertEqual(hashlib.sha256(raw).hexdigest(), "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215")
+        self.assertEqual(result["record"]["legal_review"], "not_performed")
+
+    def test_node_parent_child_and_vcs_cannot_be_resealed_into_other_identity(self):
+        entry = next(p for p in self.manifest["packages"] if p["name"] == "napi-build")
+        root = f"upstream/napi-rs/napi-rs/{entry['commit']}/"
+        original = "local-evidence/napi-build-2.6.0/"
+        names = [root + "Cargo.toml", root + "crates/build/Cargo.toml",
+                 original + ".cargo_vcs_info.json"]
+        for name in names:
+            with self.subTest(name=name):
+                previous = (self.vendor / name).read_bytes()
+                proof = next(p for p in entry["evidence"] if p["path"] == name)
+                old_proof = dict(proof)
+                raw = previous + b"\n"
+                (self.vendor / name).write_bytes(raw)
+                proof.update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+                self.seal(name)
+                self.save_manifest()
+                with self.assertRaises(RuntimeError):
+                    stage_overlay(self.vendor, self.destination, self.node_packages)
+                self.assertFalse(self.destination.exists())
+                (self.vendor / name).write_bytes(previous)
+                proof.clear()
+                proof.update(old_proof)
+                self.seal(name)
+                self.save_manifest()
+
+    def test_node_original_terms_cannot_drop_a_copyright_even_after_resealing(self):
+        entry = next(p for p in self.manifest["packages"] if p["name"] == "napi-build")
+        asset = entry["assets"][0]
+        previous = (self.vendor / asset["path"]).read_bytes()
+        raw = previous.split(b"\nMIT License\n", 1)[0] + b"\n"
+        self.assertNotEqual(raw, previous)
+        for name in [asset["path"], asset["source_path"]]:
+            (self.vendor / name).write_bytes(raw)
+            self.seal(name)
+        proof = next(p for p in entry["evidence"] if p["path"] == asset["source_path"])
+        proof.update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+        asset.update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest(),
+                     source_sha256=hashlib.sha256(raw).hexdigest())
+        self.save_manifest()
+        with self.assertRaisesRegex(RuntimeError, "parent original terms hash"):
+            stage_overlay(self.vendor, self.destination, self.node_packages)
+        self.assertFalse(self.destination.exists())
+
+    def test_node_scope_and_original_archives_remain_fixed(self):
+        original = json.loads(json.dumps(self.manifest))
+        for field, value in [("license_inherited_from_workspace", True),
+                             ("version_inherited_from_workspace", True),
+                             ("declared_license", "Apache-2.0"),
+                             ("repository", "https://github.com/example/napi-rs"),
+                             ("path_in_vcs", "other"), ("version", "3.14.1"),
+                             ("commit", "0" * 40)]:
+            with self.subTest(field=field):
+                self.manifest = json.loads(json.dumps(original))
+                entry = next(p for p in self.manifest["packages"] if p["name"] == "napi")
+                entry[field] = value
+                self.save_manifest()
+                with self.assertRaises(RuntimeError):
+                    stage_overlay(self.vendor, self.destination, self.node_packages)
+                self.assertFalse(self.destination.exists())
+        self.manifest = json.loads(json.dumps(original))
+        self.manifest["source_archives"] = [a for a in self.manifest["source_archives"] if a["package"] != "napi"]
+        self.save_manifest()
+        with self.assertRaisesRegex(RuntimeError, "archive inventory is incomplete"):
+            stage_overlay(self.vendor, self.destination, self.node_packages)
+        self.assertFalse(self.destination.exists())
+        self.manifest = json.loads(json.dumps(original))
+        archive = next(a for a in self.manifest["source_archives"] if a["package"] == "napi")
+        raw = (self.vendor / archive["path"]).read_bytes() + b"changed"
+        (self.vendor / archive["path"]).write_bytes(raw)
+        archive.update(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+        self.seal(archive["path"])
+        self.save_manifest()
+        with self.assertRaisesRegex(RuntimeError, "reviewed exact package"):
+            stage_overlay(self.vendor, self.destination, self.node_packages)
+        self.assertFalse(self.destination.exists())
+
+    def test_node_runtime_metadata_must_match_published_vcs_and_original(self):
+        package = self.node_packages[0]
+        source = Path(package["manifest_path"]).parent
+        for name in [".cargo_vcs_info.json", "Cargo.toml.orig"]:
+            previous = (source / name).read_bytes()
+            (source / name).write_bytes(previous + b"\n")
+            with self.assertRaisesRegex(RuntimeError, "Current package source differs"):
+                stage_overlay(self.vendor, self.destination, [package])
+            self.assertFalse(self.destination.exists())
+            (source / name).write_bytes(previous)
+
+    def test_node_payload_verifier_checks_both_original_copyrights_byte_for_byte(self):
+        files = upstream_files(self.repository)
+        names = ["licenses/upstream/overlay/licenses/" + name + "/LICENSE" for name in
+                 ["napi-3.14.0", "napi-build-2.6.0", "napi-derive-3.6.10", "napi-sys-3.4.0"]]
+        for name in names:
+            self.assertEqual(files[name], (self.repository / name).read_bytes())
+            self.assertEqual(files[name].count(b"MIT License"), 2)
+        npm = self.root / "node.tgz"
+        def archive_with(changed=None):
+            with tarfile.open(npm, "w:gz") as archive:
+                for name, raw in files.items():
+                    if name == changed:
+                        raw = raw.split(b"\nMIT License\n", 1)[0] + b"\n"
+                    member = tarfile.TarInfo("package/" + name)
+                    member.size = len(raw)
+                    archive.addfile(member, io.BytesIO(raw))
+        archive_with()
+        verify_node_licenses(npm, files)
+        for name in names:
+            archive_with(name)
+            with self.assertRaises(RuntimeError):
+                verify_node_licenses(npm, files)
 
 
 if __name__ == "__main__":

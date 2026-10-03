@@ -220,6 +220,17 @@ pub(super) fn rehydrate(
                 object.as_object_mut().unwrap().remove("diagnostics");
                 eprintln!("Serve: ignored invalid stored attempt diagnostics");
             }
+            if let Some(failure) = object.get("rerun_failure")
+                && !failure.is_null()
+                && (super::types::RerunFailure::from_value(failure).is_err()
+                    || object["status"] != "done"
+                    || object["skipped"] == true
+                    || !object["output"].is_string())
+            {
+                // A damaged optional outcome must not hide valid retained output.
+                object.as_object_mut().unwrap().remove("rerun_failure");
+                eprintln!("Serve: ignored invalid stored rerun failure");
+            }
             if let Ok(mut item) = serde_json::from_value::<Item>(object) {
                 // Older history writers saved the actual enhanced name in both
                 // fields. Adapt the public base name without renaming any file.

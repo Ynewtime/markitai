@@ -1056,6 +1056,32 @@ fn classify_href(href: &str) -> Option<LinkTarget> {
     }
 }
 
+/// Floating spreadsheet pictures only. Existing text-box/inline text
+/// walking is unchanged; sheet figures do not become duplicated cell text.
+pub(super) fn sheet_drawing(
+    elem: &Element,
+    ctx: &Ctx,
+    out: &mut Vec<Inline>,
+) -> Result<(), ConvertError> {
+    if !is_drawing(elem)
+        || ctx.styles.drawing_hidden(elem.attr(ns::DRAW, "layer").unwrap_or_default())
+    {
+        return Ok(());
+    }
+    match elem.local.as_str() {
+        "g" | "a" => {
+            for child in elem.child_elems() {
+                sheet_drawing(child, ctx, out)?;
+            }
+        }
+        "frame" if elem.find(ns::DRAW, "image").is_some() => {
+            walk_frame(elem, ctx, out, &mut Vec::new())?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

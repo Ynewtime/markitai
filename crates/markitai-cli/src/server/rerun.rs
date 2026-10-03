@@ -3,7 +3,9 @@ use super::{
     jobs::{self, Job},
     security::Trusted,
     store, transaction,
-    types::{ApiError, ApiResult, Item, JobOptions, now},
+    types::{
+        ApiError, ApiResult, Item, JobOptions, RerunFailure, RerunOperation as Operation, now,
+    },
 };
 use crate::diagnostics::AttemptDiagnostics;
 use axum::{
@@ -25,12 +27,6 @@ use std::{
 struct RetryBody {
     options: Option<JobOptions>,
     operation: Operation,
-}
-#[derive(Clone, Copy, Default, PartialEq)]
-enum Operation {
-    #[default]
-    Retry,
-    Enhance,
 }
 fn invalid_body(detail: impl Into<String>) -> ApiError {
     ApiError::new(422, "invalid_retry_body", detail)
@@ -158,7 +154,7 @@ pub(super) async fn retry(
         }
         data.bases.insert(item_id.clone(),base.clone());
         let job_id=data.id.clone();
-        let item=&mut data.items[index];item.status="queued".into();item.error=None;item.error_code=None;item.output=None;item.duration_ms=None;item.finished_at=None;item.cost_usd=None;item.pricing=None;item.diagnostics=None;item.llm_enhanced=false;item.operation=body.operation.name().into();item.skipped=false;item.skip_reason=None;item.warnings.clear();
+        let item=&mut data.items[index];item.status="queued".into();item.error=None;item.error_code=None;item.output=None;item.duration_ms=None;item.finished_at=None;item.cost_usd=None;item.pricing=None;item.diagnostics=None;item.rerun_failure=None;item.llm_enhanced=false;item.operation=body.operation.name().into();item.skipped=false;item.skip_reason=None;item.warnings.clear();
         let created=json!({"job_id":job_id,"items":[item.created()]});
         let payload=json!(item);
         data.status="running".into();data.finished_at=None;data.persistence_error=None;
@@ -228,8 +224,11 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
             &job,
             work.index,
             &work.prior,
-            "shutdown",
-            "cancelled (server shutdown)".into(),
+            RerunFailure::new(
+                work.operation,
+                "shutdown",
+                "cancelled (server shutdown)".into(),
+            ),
             0,
             None,
         );
@@ -241,7 +240,7 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
         let _ = job.events.send(("item", json!(data.items[work.index])));
     }
     let worker = job.clone();
-    let fallback = (work.index, work.prior.clone());
+    let fallback = (work.index, work.prior.clone(), work.operation);
     let result = crate::task::blocking(move || {
         let _permit = permit;
         let started = Instant::now();
@@ -425,6 +424,7 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
             item.skip_reason = converted.skip_reason;
             item.error = item.skip_reason.as_ref().map(|v| format!("skipped ({v})"));
             item.error_code = None;
+            item.rerun_failure = None;
             item.warnings = converted.warnings;
             worker
                 .retry_pending
@@ -445,8 +445,7 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
                 &worker,
                 work.index,
                 &work.prior,
-                error.reason,
-                error.detail,
+                RerunFailure::new(work.operation, error.reason, error.detail),
                 started.elapsed().as_millis().min(u64::MAX as u128) as u64,
                 diagnostics,
             );
@@ -458,8 +457,11 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
             &job,
             fallback.0,
             &fallback.1,
-            "internal_error",
-            "internal retry worker failure".into(),
+            RerunFailure::new(
+                fallback.2,
+                "internal_error",
+                "internal retry worker failure".into(),
+            ),
             0,
             None,
         );
@@ -469,8 +471,7 @@ fn failed(
     job: &Job,
     index: usize,
     prior: &Item,
-    code: &str,
-    error: String,
+    failure: RerunFailure,
     duration: u64,
     diagnostics: Option<AttemptDiagnostics>,
 ) {
@@ -479,10 +480,12 @@ fn failed(
     let item = &mut data.items[index];
     if recoverable && prior.status == "done" && prior.output.is_some() && !prior.skipped {
         *item = prior.clone();
+        item.rerun_failure = Some(failure);
     } else {
         item.status = "error".into();
-        item.error = Some(error);
-        item.error_code = Some(code.into());
+        item.error = Some(failure.error);
+        item.error_code = Some(failure.error_code);
+        item.rerun_failure = None;
         item.finished_at = Some(now());
         item.duration_ms = Some(duration);
     }

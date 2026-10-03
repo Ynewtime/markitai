@@ -1,11 +1,12 @@
 // A saved job in the same ledger language as live rows: names, duration,
 // finish time, Base/LLM, and a status mark (one item) or a dark count pill.
 import { memo } from "preact/compat";
-import { useRef, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { HistoryEntry } from "../api/types.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { displayName, fmtBytes, fmtCost, fmtDateTime, fmtDur } from "../lib/format.ts";
-import { PRICE_WORDS, priceText } from "../lib/pricing.ts";
+import { actionNotification, PRICE_WORDS, priceText, type ActionProblem } from "../lib/pricing.ts";
+import type { NotificationModel } from "./notification.tsx";
 import { ConfirmPopover } from "./confirm-popover.tsx";
 import { Icon } from "./icons.tsx";
 
@@ -16,14 +17,16 @@ export interface ArchiveRowProps {
   index: number;
   tabbable: boolean;
   busy: boolean;
-  rowError: string | null;
+  rowError: unknown;
   llmAvailable: boolean;
   llmDisabledReason: string;
   onOpen: (jobId: string, opener: HTMLElement) => void;
-  onRetry: (jobId: string) => Promise<string | null>;
-  onEnhance: (jobId: string) => Promise<string | null>;
+  onRetry: (jobId: string) => Promise<unknown>;
+  onEnhance: (jobId: string) => Promise<unknown>;
   onDelete: (entry: HistoryEntry) => Promise<boolean>;
   onRowFocus: (jobId: string) => void;
+  describe: (error: unknown) => { text: string; detail: string };
+  onNotice: (note: NotificationModel, opener?: HTMLElement) => void;
 }
 
 function counts(entry: HistoryEntry, t: Dict): string {
@@ -48,10 +51,15 @@ export const ArchiveRow = memo(function ArchiveRow({
   onEnhance,
   onDelete,
   onRowFocus,
+  describe,
+  onNotice,
 }: ArchiveRowProps) {
   const row = useRef<HTMLDivElement>(null);
   const [working, setWorking] = useState<"retry" | "enhance" | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<{ operation: "retry" | "enhance"; error: unknown } | null>(null);
+  const lastAction = useRef<ActionProblem["operation"]>("open");
+  const lastOpener = useRef<HTMLElement | undefined>(undefined);
+  const previousRowError = useRef(rowError);
   const more = entry.total - entry.names_preview.length;
   const names = entry.names_preview.map(displayName).join(", ") + (more > 0 ? ` ${t.histMore(more)}` : "");
   const first = displayName(entry.names_preview[0] ?? entry.job_id);
@@ -70,19 +78,37 @@ export const ArchiveRow = memo(function ArchiveRow({
   const retryable = entry.retryable && single && (entry.failed === 1 || entry.skipped === 1);
   const blocked = busy || working !== null;
   const pill = entry.failed > 0 ? "state-pill is-err" : entry.skipped === entry.total ? "state-pill is-skip" : "state-pill is-ok";
+  const problem = rowError != null ? { operation: lastAction.current, ...describe(rowError) } : actionError ? { operation: actionError.operation, ...describe(actionError.error) } : null;
+  const notice = problem ? actionNotification(first, t, problem) : null;
+  useEffect(() => {
+    if (rowError != null && rowError !== previousRowError.current) onNotice(actionNotification(first, t, { operation: lastAction.current, ...describe(rowError) }), lastOpener.current);
+    previousRowError.current = rowError;
+  }, [rowError, first, t, describe, onNotice]);
 
   const act = async (kind: "retry" | "enhance") => {
     if (blocked) return;
     setWorking(kind);
     setActionError(null);
-    const error = await (kind === "retry" ? onRetry(entry.job_id) : onEnhance(entry.job_id));
-    if (error !== null) {
-      setActionError(`${kind === "retry" ? t.retryFailed : t.llmEnhanceFailed}: ${error}`);
+    lastAction.current = kind;
+    lastOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+    try {
+      const error = await (kind === "retry" ? onRetry(entry.job_id) : onEnhance(entry.job_id));
+      if (error !== null && error !== undefined) {
+        setActionError({ operation: kind, error });
+        onNotice(actionNotification(first, t, { operation: kind, ...describe(error) }), lastOpener.current);
+      }
+    } catch (error) {
+      setActionError({ operation: kind, error });
+      onNotice(actionNotification(first, t, { operation: kind, ...describe(error) }), lastOpener.current);
+    } finally {
       setWorking(null);
     }
   };
 
   const remove = async () => {
+    setActionError(null);
+    lastAction.current = "delete";
+    lastOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
     const options = [...(row.current?.closest('[role="listbox"]')?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])];
     const at = row.current ? options.indexOf(row.current) : -1;
     const next = at < 0 ? null : (options[at + 1] ?? options[at - 1] ?? null);
@@ -92,9 +118,16 @@ export const ArchiveRow = memo(function ArchiveRow({
   };
 
   const open = (opener: HTMLElement) => {
-    if (!blocked) onOpen(entry.job_id, opener);
+    if (!blocked) {
+      lastAction.current = "open";
+      lastOpener.current = opener;
+      onOpen(entry.job_id, opener);
+    }
   };
-  const error = actionError ?? rowError;
+  const show = (opener: HTMLElement) => {
+    if (notice) onNotice(notice, opener);
+    else open(opener); // The summary has no per-item error. Fetch through the normal open path.
+  };
 
   return (
     <div
@@ -134,7 +167,14 @@ export const ArchiveRow = memo(function ArchiveRow({
         {hasLlm && entry.cost_usd !== null && <span class="tag-price">{fmtCost(entry.cost_usd)}</span>}
       </span>
       <span class="cell-state">
-        {result === null ? (
+        {notice || entry.failed > 0 ? (
+          <button type="button" class={result === null ? `${pill} is-trigger` : `mark is-${notice ? "err" : result} is-trigger`}
+            aria-label={`${notice?.title ?? counts(entry, t)} · ${t.showItemDetails(first)}`}
+            title={`${notice?.title ?? counts(entry, t)} · ${t.showItemDetails(first)}`}
+            onClick={(event) => { event.stopPropagation(); show(event.currentTarget); }}>
+            {result === null ? counts(entry, t) : <span aria-hidden="true">×</span>}
+          </button>
+        ) : result === null ? (
           <span class={pill} title={counts(entry, t)}>
             {counts(entry, t)}
           </span>
@@ -156,7 +196,7 @@ export const ArchiveRow = memo(function ArchiveRow({
               type="button"
               class={actionError ? "row-icon is-failed" : "row-icon"}
               aria-label={t.enhanceWithLlm(first)}
-              title={actionError ?? (llmAvailable ? t.enhanceWithLlm(first) : llmDisabledReason)}
+              title={actionError ? describe(actionError.error).text : (llmAvailable ? t.enhanceWithLlm(first) : llmDisabledReason)}
               disabled={!llmAvailable || blocked}
               onClick={(event) => {
                 event.stopPropagation();
@@ -202,11 +242,6 @@ export const ArchiveRow = memo(function ArchiveRow({
         </span>
         <span class="fact">{t.histStorageSize(fmtBytes(entry.size_bytes))}</span>
       </span>
-      {error && (
-        <span class="row-note is-err" role="alert">
-          {error}
-        </span>
-      )}
     </div>
   );
 });

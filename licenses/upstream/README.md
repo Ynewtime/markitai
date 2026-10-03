@@ -1,5 +1,32 @@
 # Exact-version upstream license evidence
 
+The current overlay covers twenty-one supplemental versions: the original
+seventeen plus four fixed NAPI versions for the Node binding. It records twenty
+raw exact package-manifest matches and the same single tract publication stamp.
+All original seventeen terms and three pinned archives remain unchanged; four
+additional unmodified NAPI source archives bring the current archive count to
+seven. The historical collection records below retain their original scope.
+
+The Node additions are napi 3.14.0, napi-build 2.6.0, napi-derive 3.6.10 and
+napi-sys 3.4.0. Their published VCS records, exact original child manifests,
+same-commit parent manifests and complete repository LICENSE are retained.
+Each child directly declares MIT and a literal version; neither is inherited
+from workspace.package. Both original MIT copyright notices in the root LICENSE
+are copied in full. No generic license template or SPDX label replaces them.
+The validator pins each package/version/commit/path/archive checksum and both
+manifest identities; resealing the inventory cannot extend this exception to
+other versions or replace either notice. See napi-license-provenance.json.
+
+These four tuples belong to the Node closure in the reviewed lock metadata.
+They do not add NAPI dependencies to the default CLI/core/FFI/Python closure.
+Matched package counts follow actual metadata; a distribution may carry the
+complete supplemental evidence directory without linking every covered tuple.
+Offline synthetic wheel/npm payload tests check these exact copied bytes;
+actual installed npm package verification is pending until the candidate is
+built. Legal review remains not_performed.
+
+## Original seventeen-version collection and retained history
+
 Packaging validates this directory offline before copying it. Package manifests,
 published VCS records, original source notices and exact byte identities remain
 part of the payload. This is mechanical evidence collection, not legal review.

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { HistoryEntry, ItemPayload } from "../api/types.ts";
+import type { HistoryEntry, ItemPayload, JobSnapshot } from "../api/types.ts";
 import { emptyOptions } from "./options.ts";
 import {
   canRetry,
+  settleCurrentJobSnapshot,
   failedToRetry,
   mergeItem,
   mergeLedger,
@@ -13,6 +14,7 @@ import {
   rowMatches,
   seedItem,
   sessionStats,
+  settledIdentity,
   waitingJobs,
   writeSeeds,
   type SessionItem,
@@ -52,6 +54,43 @@ const job = (jobId: string, status: SessionJob["status"], createdAt: string | nu
   persistenceError: null,
 });
 
+test("delayed final snapshots cannot overwrite a later retry or repopulate cleared jobs", async () => {
+  const snapshot = (status: JobSnapshot["status"]): JobSnapshot => ({
+    job_id: "j", status, created_at: "2026-10-02T08:00:00Z", finished_at: null,
+    options: {}, items: [payload("1")], done: 1, failed: 0, total: 1,
+  });
+  const generations = new Map<string, symbol>();
+  let received: JobSnapshot[] = [];
+  let notifications = 0;
+  const receive = (value: JobSnapshot) => { received.push(value); };
+  const complete = () => { notifications++; };
+  for (const invalidate of ["retry", "clear"] as const) {
+    const old = Symbol("old");
+    generations.set("j", old);
+    let resolve!: (value: JobSnapshot) => void;
+    const pending = new Promise<JobSnapshot>((done) => { resolve = done; });
+    const finishing = settleCurrentJobSnapshot(pending, () => generations.get("j") === old, receive, complete);
+    if (invalidate === "retry") generations.set("j", Symbol("next"));
+    else generations.clear();
+    resolve(snapshot("done"));
+    await finishing;
+    assert.deepEqual(received, []);
+    assert.equal(notifications, 0);
+  }
+  const latest = Symbol("latest");
+  generations.set("j", latest);
+  const current = () => generations.get("j") === latest;
+  await settleCurrentJobSnapshot(Promise.resolve(snapshot("running")), current, receive, complete);
+  assert.deepEqual(received.map((value) => value.status), ["running"]);
+  assert.equal(notifications, 0);
+  received = [];
+  await settleCurrentJobSnapshot(Promise.resolve(snapshot("done")), current, receive, complete);
+  assert.deepEqual(received.map((value) => value.status), ["done"]);
+  assert.equal(notifications, 1);
+  await settleCurrentJobSnapshot(Promise.resolve(null), current, receive, complete);
+  assert.equal(notifications, 1);
+});
+
 test("events merge into rows, keep the known upload size and time a running row", () => {
   const seeded = seedItem("j", { itemId: "i1", name: "a.pdf", kind: "file", sizeBytes: 42 });
   const running = mergeItem(seeded, payload("i1", { status: "running", output: null }), 5000);
@@ -73,6 +112,29 @@ test("a snapshot owns membership but keeps each job's place in the list", () => 
   );
   assert.equal(after[1]?.sizeBytes, 10);
   assert.equal(after[2]?.sizeBytes, null);
+});
+
+test("retained rerun failures survive snapshots without invented usage and clear on a new attempt", () => {
+  const original = row("j", "1", { cost_usd: 0.25, llm_enhanced: true, operation: "enhance" });
+  const outcome = { operation: "enhance" as const, error_code: "enhancement_failed", error: "No enhanced result", failed_at: "2026-10-03T00:00:00Z" };
+  const incoming = payload("1", { cost_usd: 0.25, llm_enhanced: true, operation: "enhance", rerun_failure: outcome });
+  const restored = reconcile([original], "j", [incoming], 2000)[0]!;
+  assert.deepEqual(restored.rerunFailure, outcome);
+  assert.equal(restored.output, original.output);
+  assert.equal(restored.finishedAt, original.finishedAt);
+  assert.equal(restored.diagnostics, null);
+  assert.equal(canRetry(restored), true);
+  assert.notEqual(settledIdentity(restored), settledIdentity(original));
+  const again = mergeItem(restored, { ...incoming, rerun_failure: { ...outcome, failed_at: "2026-10-03T00:01:00Z" } }, 3000);
+  assert.notEqual(settledIdentity(again), settledIdentity(restored));
+  assert.deepEqual(sessionStats([restored]), sessionStats([original]));
+  const queued = requeued(restored, "retry");
+  assert.equal(queued.rerunFailure, null);
+  assert.equal(settledIdentity(queued), null);
+  const success = mergeItem(queued, payload("1", { finished_at: "2026-10-03T00:02:00Z" }), 4000);
+  assert.equal(success.rerunFailure, null);
+  assert.equal(canRetry(success), false);
+  assert.notEqual(settledIdentity(success), settledIdentity(restored));
 });
 
 test("counters keep skipped and failed apart from converted", () => {

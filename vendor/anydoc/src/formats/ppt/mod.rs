@@ -9,6 +9,7 @@
 // markitai: embedded objects read as their data.
 mod ole;
 pub(crate) use ole::object_file as embedded_object;
+pub(crate) mod pictures;
 mod styletext;
 
 use crate::error::ConvertError;
@@ -40,8 +41,13 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
         return Err(ConvertError::Encrypted);
     }
 
+    let delay = match read_ole_stream(&mut ole, "Pictures") {
+        Ok(bytes) => bytes,
+        Err(e @ ConvertError::ResourceLimit { .. }) => return Err(e),
+        Err(_) => Vec::new(),
+    };
     let mut ex = Extractor::default();
-    if !ex.parse_slides(&data, &current_user)? {
+    if !ex.parse_slides(&data, &current_user, &delay)? {
         // Labelled recovery path: the persist directory is unusable, so text
         // is taken in raw stream order (may include superseded edits).
         log::warn!("ppt persist directory unusable; recovering text in raw stream order");
@@ -53,47 +59,10 @@ pub fn parse(bytes: &[u8]) -> Result<Document, ConvertError> {
     if ex.encrypted {
         return Err(ConvertError::Encrypted);
     }
-    let assets = collect_pictures(&mut ole)?;
+    let assets = std::mem::take(&mut ex.pictures.assets.assets);
+    let warnings = std::mem::take(&mut ex.pictures.warnings);
     let (blocks, slide_starts) = ex.into_blocks();
-    Ok(Document { blocks, notes: Vec::new(), assets, slide_starts, warnings: Vec::new() })
-}
-
-/// Retain the deck's embedded pictures from the `Pictures` stream (OfficeArt
-/// BStore file blocks). Pictures are document-level assets; per-slide
-/// placement is not resolved. Unsupported formats degrade with a log.
-fn collect_pictures<R: std::io::Read + std::io::Seek>(
-    ole: &mut cfb::CompoundFile<R>,
-) -> Result<Vec<crate::model::Asset>, ConvertError> {
-    use crate::shared::officeart;
-    let Ok(pictures) = read_ole_stream(ole, "Pictures") else {
-        return Ok(Vec::new());
-    };
-    let mut sink = crate::shared::assets::AssetSink::new();
-    let mut pos = 0usize;
-    let mut index = 0u32;
-    while let Some((ver_inst, rec_type, body)) = officeart::record_at(&pictures, pos) {
-        pos += 8 + body.len();
-        index += 1;
-        if index > 100_000 {
-            break;
-        }
-        let cap = limits::MAX_ENTRY_BYTES as usize;
-        let blip = match rec_type {
-            0xF007 => officeart::fbse_blip(body, cap),
-            _ => officeart::decode_blip(ver_inst, rec_type, body, cap),
-        };
-        match blip {
-            Some(blip) => {
-                sink.add(
-                    blip.media_type.to_string(),
-                    format!("pictures/{index}.{}", blip.extension),
-                    &blip.bytes,
-                )?;
-            }
-            None => log::debug!("skipping unsupported Pictures record 0x{rec_type:04X}"),
-        }
-    }
-    Ok(sink.assets)
+    Ok(Document { blocks, notes: Vec::new(), assets, slide_starts, warnings })
 }
 
 /// Iterate the records laid out back to back in `data`.
@@ -147,6 +116,7 @@ struct Extractor<'a> {
     in_table: bool,
     /// markitai: the embedded objects shapes may show.
     objects: ole::Objects<'a>,
+    pictures: pictures::Bank<'a>,
 }
 
 /// The persist-resolved layout of the presentation: slide/notes lists from
@@ -158,6 +128,8 @@ struct DocLayout<'a> {
     master_list: Option<&'a [u8]>,
     /// markitai: the ExObjList, when the document has one.
     objects: Option<&'a [u8]>,
+    drawings: Option<&'a [u8]>,
+    drawings_conflict: bool,
 }
 
 /// Resolve the UserEditAtom chain into the persist directory and find the
@@ -213,7 +185,19 @@ fn locate_document<'a>(data: &'a [u8], current_user: &[u8]) -> Option<DocLayout<
         .find(|&(ver_inst, rec_type, _)| rec_type == 0x0FF0 && ver_inst >> 4 == 1)
         .map(|(.., body)| body);
     let objects = children(doc).find(|&(_, rec_type, _)| rec_type == 0x0409).map(|(.., body)| body);
-    Some(DocLayout { persist, slide_list, notes_list, master_list, objects })
+    let mut drawing_groups = children(doc).filter(|&(_, t, _)| t == 0x040B);
+    let drawings = drawing_groups.next().map(|(.., body)| body);
+    let drawings_conflict = drawing_groups.next().is_some();
+    let drawings = if drawings_conflict { None } else { drawings };
+    Some(DocLayout {
+        persist,
+        slide_list,
+        notes_list,
+        master_list,
+        objects,
+        drawings,
+        drawings_conflict,
+    })
 }
 
 /// One master's TxMasterStyleAtoms, keyed by text-type instance.
@@ -269,10 +253,19 @@ impl<'a> Extractor<'a> {
     /// persist directory, the DocumentContainer's SlideListWithText yields
     /// slide order and outline text, each slide container its own textboxes.
     /// `Ok(false)` means the persist directory was unusable.
-    fn parse_slides(&mut self, data: &'a [u8], current_user: &[u8]) -> Result<bool, ConvertError> {
+    fn parse_slides(
+        &mut self,
+        data: &'a [u8],
+        current_user: &[u8],
+        delay: &'a [u8],
+    ) -> Result<bool, ConvertError> {
         let Some(layout) = locate_document(data, current_user) else {
             return Ok(false);
         };
+        self.pictures = pictures::Bank::read(layout.drawings.unwrap_or_default(), delay)?;
+        if layout.drawings_conflict {
+            self.pictures.warn("Conflicting drawing groups in the current presentation document prevent picture-bank resolution; its figures are omitted.".into());
+        }
         self.masters = collect_masters(layout.master_list, &layout.persist, data);
         self.objects = ole::Objects::new(layout.objects, &layout.persist, data);
         self.walk_slide_list(layout.slide_list, &layout.persist, data, false, 0x03EE)?;
@@ -428,14 +421,22 @@ impl<'a> Extractor<'a> {
     /// record-count bounds — nesting or record counts beyond any real
     /// presentation are attack shapes and hard-fail.
     fn walk(&mut self, data: &[u8]) -> Result<(), ConvertError> {
-        let mut stack: Vec<(&[u8], usize)> = vec![(data, 0)];
-        while let Some((buf, pos)) = stack.last_mut() {
+        self.walk_hidden(data, false)
+    }
+
+    fn walk_hidden(&mut self, data: &[u8], hidden: bool) -> Result<(), ConvertError> {
+        let mut stack: Vec<(&[u8], usize, bool)> = vec![(data, 0, hidden)];
+        while let Some((buf, pos, inherited_hidden)) = stack.last_mut() {
             let Some((ver_inst, rec_type, body)) = record_at(buf, *pos) else {
                 stack.pop();
                 continue;
             };
             *pos += 8 + body.len();
+            let inherited_hidden = *inherited_hidden;
             self.charge_record()?;
+            if rec_type == 0xF004 && !inherited_hidden && !self.recovering {
+                self.figure(body)?;
+            }
             // markitai: ExObjRefAtom, in a shape's client data: the shape
             // shows an embedded object, read as its data where the shape is.
             if rec_type == 0x0BC1 && ver_inst & 0xF != 0xF {
@@ -473,7 +474,9 @@ impl<'a> Extractor<'a> {
                 0x0FF0 if ver_inst >> 4 != 0 => {}
                 // markitai: a group shape marked as a table is read as one
                 // table; one nested in a cell is walked as plain shapes.
-                0xF003 if !self.in_table && is_table_group(body) => self.table(body)?,
+                0xF003 if !self.in_table && is_table_group(body) => {
+                    self.table(body, inherited_hidden || pictures::group_hidden(body))?;
+                }
                 _ => {
                     if stack.len() >= limits::MAX_RECORD_DEPTH {
                         return Err(ConvertError::ResourceLimit {
@@ -481,7 +484,10 @@ impl<'a> Extractor<'a> {
                             detail: format!("record nesting exceeds {}", limits::MAX_RECORD_DEPTH),
                         });
                     }
-                    stack.push((body, 0));
+                    let hidden = inherited_hidden
+                        || (rec_type == 0xF003 && pictures::group_hidden(body))
+                        || (rec_type == 0xF004 && pictures::shape(body).hidden);
+                    stack.push((body, 0, hidden));
                 }
             }
         }
@@ -574,7 +580,18 @@ impl<'a> Extractor<'a> {
     /// its own text box, read like any other text shape; the cells' anchors
     /// draw the grid. A group whose cells cannot be placed keeps their text
     /// as the blocks it had before tables were read.
-    fn table(&mut self, group: &[u8]) -> Result<(), ConvertError> {
+    fn figure(&mut self, body: &[u8]) -> Result<(), ConvertError> {
+        if let Some(pib) = pictures::shape(body).pib
+            && let Some(image) = self.pictures.image(pib)?
+        {
+            self.flush_shape();
+            flush_list(&mut self.current, &mut self.list_run);
+            self.current.push(Block::Paragraph(vec![image]));
+        }
+        Ok(())
+    }
+
+    fn table(&mut self, group: &[u8], hidden: bool) -> Result<(), ConvertError> {
         self.flush_shape();
         flush_list(&mut self.current, &mut self.list_run);
         let outer = std::mem::take(&mut self.current);
@@ -591,7 +608,10 @@ impl<'a> Extractor<'a> {
                 let edge = |at| get_u32(body, at).map(|v| v as i32);
                 Some([edge(0)?, edge(4)?, edge(8)?, edge(12)?])
             });
-            self.walk(shape)?;
+            if !hidden && !self.recovering {
+                self.figure(shape)?;
+            }
+            self.walk_hidden(shape, hidden || pictures::shape(shape).hidden)?;
             self.flush_shape();
             flush_list(&mut self.current, &mut self.list_run);
             let blocks = std::mem::take(&mut self.current);

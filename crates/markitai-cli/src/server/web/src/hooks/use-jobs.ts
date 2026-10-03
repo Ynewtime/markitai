@@ -17,6 +17,7 @@ import type { CreateJobResponse, ItemPayload, JobOptions, JobProgress, JobSnapsh
 import { askNotifyPermission, notifyDone } from "../lib/notify.ts";
 import { emptyOptions, publicOptions } from "../lib/options.ts";
 import {
+  settleCurrentJobSnapshot,
   itemFromPayload,
   mergeItem,
   readSeeds,
@@ -81,12 +82,13 @@ export interface JobsApi {
 /** Connectivity checks are owned by the app; a broken stream asks for one. */
 const requestCheck = () => window.dispatchEvent(new CustomEvent("markitai:check"));
 
-export function useJobs(notifyText: (done: number, failed: number) => string, connLost: () => string): JobsApi {
+export function useJobs(notifyText: (done: number, failed: number, retained: number) => string, connLost: () => string): JobsApi {
   const [items, setItems] = useState<SessionItem[]>([]);
   const [jobs, setJobs] = useState<Record<string, SessionJob>>({});
   const [submitError, setSubmitError] = useState<unknown>(null);
   const [restoreFailed, setRestoreFailed] = useState<Set<string>>(() => new Set());
   const sources = useRef(new Map<string, EventStream>());
+  const generations = useRef(new Map<string, symbol>());
   const notified = useRef(new Set<string>());
   const itemsRef = useRef(items);
   itemsRef.current = items;
@@ -107,10 +109,10 @@ export function useJobs(notifyText: (done: number, failed: number) => string, co
     sources.current.delete(jobId);
   }, []);
 
-  const finished = useCallback((jobId: string, done: number, failed: number) => {
+  const finished = useCallback((jobId: string, done: number, failed: number, retained: number) => {
     if (notified.current.has(jobId)) return;
     notified.current.add(jobId);
-    notifyDone(textRef.current.notifyText(done, failed));
+    notifyDone(textRef.current.notifyText(done, failed, retained));
   }, []);
 
   const applySnapshot = useCallback(
@@ -126,8 +128,12 @@ export function useJobs(notifyText: (done: number, failed: number) => string, co
   const listen = useCallback(
     (jobId: string) => {
       close(jobId);
+      const generation = Symbol(jobId);
+      generations.current.set(jobId, generation);
       const source = new EventStream(eventsPath(jobId));
       sources.current.set(jobId, source);
+      const current = () => generations.current.get(jobId) === generation;
+      const live = () => current() && sources.current.get(jobId) === source;
       const parse = <T,>(event: StreamEvent): T | null => {
         try {
           return JSON.parse(event.data) as T;
@@ -136,15 +142,17 @@ export function useJobs(notifyText: (done: number, failed: number) => string, co
         }
       };
       source.addEventListener("snapshot", (event) => {
+        if (!live()) return;
         const snapshot = parse<JobSnapshot>(event);
         if (snapshot === null) return;
         applySnapshot(snapshot);
         if (terminal(snapshot.status)) {
-          finished(jobId, snapshot.done, snapshot.failed);
+          finished(jobId, snapshot.done, snapshot.failed, snapshot.items.filter((item) => item.rerun_failure).length);
           close(jobId);
         }
       });
       source.addEventListener("item", (event) => {
+        if (!live()) return;
         const payload = parse<ItemPayload>(event);
         if (payload === null) return;
         const now = Date.now();
@@ -153,17 +161,24 @@ export function useJobs(notifyText: (done: number, failed: number) => string, co
         );
       });
       source.addEventListener("job", (event) => {
+        if (!live()) return;
         const progress = parse<JobProgress & { persistence_error?: string }>(event);
         if (progress === null) return;
         patchJob(jobId, { status: progress.status, persistenceError: progress.persistence_error ?? null });
         if (terminal(progress.status)) {
-          finished(jobId, progress.done, progress.failed);
           close(jobId);
           // The final snapshot carries finish times and durations of every row.
-          fetchSnapshot(jobId).then((snapshot) => snapshot && applySnapshot(snapshot), () => undefined);
+          void settleCurrentJobSnapshot(fetchSnapshot(jobId), current,
+            (snapshot) => {
+              applySnapshot(snapshot);
+              if (snapshot.status === "running") listen(jobId);
+            },
+            (snapshot) => finished(jobId, snapshot.done, snapshot.failed, snapshot.items.filter((item) => item.rerun_failure).length),
+          ).catch(() => undefined);
         }
       });
       source.addEventListener("error", () => {
+        if (!live()) return;
         requestCheck();
         // While CONNECTING the browser retries by itself and the service replays a
         // snapshot. CLOSED is final: reconcile by hand or rows would spin forever.
@@ -271,6 +286,8 @@ export function useJobs(notifyText: (done: number, failed: number) => string, co
   /** Bring a saved job into the ledger as live rows (all of its items). */
   const adoptSnapshot = useCallback(
     (snapshot: JobSnapshot, transform: (item: SessionItem) => SessionItem = (item) => item) => {
+      generations.current.delete(snapshot.job_id);
+      close(snapshot.job_id);
       const now = Date.now();
       const rows = snapshot.items.map((payload) => transform(itemFromPayload(snapshot.job_id, payload, now)));
       setJobs((previous) => ({ ...previous, [snapshot.job_id]: jobRecord(snapshot) }));
@@ -281,7 +298,7 @@ export function useJobs(notifyText: (done: number, failed: number) => string, co
       };
       writeSeeds([...readSeeds().filter((job) => job.jobId !== snapshot.job_id), stored]);
     },
-    [],
+    [close],
   );
 
   const retryArchived = useCallback(
@@ -311,6 +328,7 @@ export function useJobs(notifyText: (done: number, failed: number) => string, co
       const last = !itemsRef.current.some((candidate) => candidate.jobId === item.jobId && candidate.key !== item.key);
       setItems((previous) => previous.filter((candidate) => candidate.key !== item.key));
       if (last) {
+        generations.current.delete(item.jobId);
         close(item.jobId);
         setJobs((previous) => {
           const next = { ...previous };
@@ -347,6 +365,7 @@ export function useJobs(notifyText: (done: number, failed: number) => string, co
   const clear = useCallback(() => {
     for (const source of sources.current.values()) source.close();
     sources.current.clear();
+    generations.current.clear();
     setItems([]);
     setJobs({});
     setSubmitError(null);
@@ -362,18 +381,25 @@ export function useJobs(notifyText: (done: number, failed: number) => string, co
         .map((job) => job.jobId),
     );
     if (!finishedIds.size) return;
+    for (const jobId of finishedIds) {
+      generations.current.delete(jobId);
+      close(jobId);
+    }
     setItems((rows) => rows.filter((item) => !finishedIds.has(item.jobId)));
     setJobs((previous) => Object.fromEntries(Object.entries(previous).filter(([jobId]) => !finishedIds.has(jobId))));
     writeSeeds(readSeeds().filter((job) => !finishedIds.has(job.jobId)));
     setSubmitError(null);
-  }, []);
+  }, [close]);
 
   // ---- restore after a reload: seed rows from sessionStorage, then ask the
   // service. A 404 drops the job; an unreachable service keeps the rows with a retry.
   const reconcileJob = useCallback(
     async (jobId: string) => {
+      const generation = Symbol(jobId);
+      generations.current.set(jobId, generation);
       try {
         const snapshot = await fetchSnapshot(jobId);
+        if (generations.current.get(jobId) !== generation) return true;
         setRestoreFailed((previous) => {
           if (!previous.has(jobId)) return previous;
           const next = new Set(previous);
@@ -395,6 +421,7 @@ export function useJobs(notifyText: (done: number, failed: number) => string, co
         else notified.current.add(jobId);
         return true;
       } catch {
+        if (generations.current.get(jobId) !== generation) return true;
         setRestoreFailed((previous) => new Set(previous).add(jobId));
         return false;
       }
@@ -428,6 +455,7 @@ export function useJobs(notifyText: (done: number, failed: number) => string, co
     return () => {
       for (const source of all.values()) source.close();
       all.clear();
+      generations.current.clear();
     };
   }, []);
 

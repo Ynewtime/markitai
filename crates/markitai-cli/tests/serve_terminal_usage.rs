@@ -437,6 +437,20 @@ fn without_diagnostics(item: &Value) -> Value {
     item.as_object_mut().unwrap().remove("diagnostics");
     item
 }
+fn without_attempt_fields(item: &Value) -> Value {
+    let mut item = without_diagnostics(item);
+    item.as_object_mut().unwrap().remove("rerun_failure");
+    item
+}
+fn retained_failure(item: &Value, operation: &str, code: &str) -> Value {
+    let failure = item["rerun_failure"].clone();
+    assert_eq!(failure["operation"], operation);
+    assert_eq!(failure["error_code"], code);
+    assert!(!failure["error"].as_str().unwrap().is_empty());
+    chrono::DateTime::parse_from_rfc3339(failure["failed_at"].as_str().unwrap()).unwrap();
+    assert!(!failure.to_string().contains("PRIVATE_"));
+    failure
+}
 fn saved(folder: &Path) -> Value {
     serde_json::from_slice(&std::fs::read(folder.join("meta.json")).unwrap()).unwrap()
 }
@@ -508,7 +522,9 @@ fn post_core_publication_failure_retains_original_bytes_and_current_attempt_only
     let events = service.events(&id);
     model.release();
     let failed = service.done(&id)["items"][0].clone();
-    assert_eq!(without_diagnostics(&failed), initial);
+    assert_eq!(without_attempt_fields(&failed), initial);
+    let outcome = retained_failure(&failed, "retry", "internal_error");
+    assert_eq!(outcome["error"], "internal server error");
     let diagnostics = observation(&failed, "retry", "error", 7, 5);
     assert_eq!(
         diagnostics["last_attempt"]["error"],
@@ -519,7 +535,9 @@ fn post_core_publication_failure_retains_original_bytes_and_current_attempt_only
             .join()
             .unwrap()
             .iter()
-            .any(|event| event["item_id"] == "i1" && event["diagnostics"] == diagnostics)
+            .any(|event| event["item_id"] == "i1"
+                && event["diagnostics"] == diagnostics
+                && event["rerun_failure"] == outcome)
     );
     assert_eq!(std::fs::read(&original_path).unwrap(), bytes);
     assert!(blocked.is_dir());
@@ -538,6 +556,7 @@ fn post_core_publication_failure_retains_original_bytes_and_current_attempt_only
     assert!(service.get(&id)["items"][0].get("diagnostics").is_none());
     model.release();
     let enhanced = service.done(&id)["items"][0].clone();
+    assert!(enhanced.get("rerun_failure").is_none());
     observation(&enhanced, "enhance", "done", 19, 3);
     let enhanced_path = folder
         .join("out")
@@ -555,7 +574,11 @@ fn post_core_publication_failure_retains_original_bytes_and_current_attempt_only
     model.release();
     let unknown = service.done(&id)["items"][0].clone();
     assert!(unknown.get("diagnostics").is_none());
-    assert_eq!(unknown, without_diagnostics(&enhanced));
+    retained_failure(&unknown, "enhance", "conversion_error");
+    assert_eq!(
+        without_attempt_fields(&unknown),
+        without_diagnostics(&enhanced)
+    );
     assert_eq!(std::fs::read(&original_path).unwrap(), enhanced_base_bytes);
     assert_eq!(std::fs::read(&enhanced_path).unwrap(), enhanced_bytes);
     service.stop();
@@ -593,4 +616,51 @@ fn invalid_stored_diagnostics_do_not_erase_legacy_item_or_rewrite_history() {
     assert_eq!(model.count(), 0);
     service.stop();
     assert_eq!(std::fs::read(folder.join("meta.json")).unwrap(), raw);
+}
+
+#[test]
+fn invalid_stored_rerun_outcomes_do_not_hide_output_or_rewrite_legacy_history() {
+    let model = Model::start(Answer {
+        status: 401,
+        tokens: None,
+    });
+    let root = tempfile::tempdir().unwrap();
+    model.configure(root.path());
+    let service = Service::start(root.path());
+    let id = service.submit(false);
+    let initial = service.done(&id)["items"][0].clone();
+    let folder = service.folder(&id);
+    service.stop();
+    let original = saved(&folder);
+    let valid = json!({"operation":"enhance", "error_code":"enhancement_failed",
+        "error":"PRIVATE_OUTCOME", "failed_at":"2026-10-03T00:00:00Z"});
+    let mut cases = Vec::new();
+    for (field, value) in [
+        ("operation", json!("convert")),
+        ("error_code", json!("bad code")),
+        ("error", json!("")),
+        ("error", json!("x".repeat(4097))),
+        ("failed_at", json!("invalid date")),
+        ("unexpected", json!(true)),
+    ] {
+        let mut invalid = valid.clone();
+        invalid[field] = value;
+        cases.push(invalid);
+    }
+    cases.push(json!({"operation":"enhance"}));
+    for invalid in cases {
+        let mut metadata = original.clone();
+        metadata["items"][0]["rerun_failure"] = invalid;
+        let raw = serde_json::to_vec(&metadata).unwrap();
+        std::fs::write(folder.join("meta.json"), &raw).unwrap();
+        let service = Service::start(root.path());
+        assert_eq!(service.get(&id)["items"][0], initial);
+        assert_eq!(std::fs::read(folder.join("meta.json")).unwrap(), raw);
+        let log = service.logs.lock().unwrap().clone();
+        assert!(log.contains("ignored invalid stored rerun failure"));
+        assert!(!log.contains("PRIVATE_OUTCOME"));
+        service.stop();
+        assert_eq!(std::fs::read(folder.join("meta.json")).unwrap(), raw);
+    }
+    assert_eq!(model.count(), 0);
 }

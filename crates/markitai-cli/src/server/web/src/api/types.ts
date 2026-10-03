@@ -76,6 +76,13 @@ export interface AttemptDiagnostics {
 }
 
 /** One item, as in `event: item` and inside snapshots. */
+export interface RerunFailure {
+  operation: "retry" | "enhance";
+  error_code: string;
+  error: string;
+  failed_at: string;
+}
+
 export interface ItemPayload {
   item_id: string;
   name: string;
@@ -91,6 +98,8 @@ export interface ItemPayload {
   cost_usd: number | null;
   pricing?: Pricing;
   diagnostics?: AttemptDiagnostics;
+  /** Latest failed rerun; the successful output represented by this row was kept. */
+  rerun_failure?: RerunFailure;
   llm_enhanced: boolean;
   operation: "convert" | "retry" | "enhance";
   skipped: boolean;

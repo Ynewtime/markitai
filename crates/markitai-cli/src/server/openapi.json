@@ -577,12 +577,25 @@
           "cost_usd": { "type": ["number", "null"] },
           "pricing": { "$ref": "#/components/schemas/Pricing" },
           "diagnostics": { "$ref": "#/components/schemas/Diagnostics" },
+          "rerun_failure": { "$ref": "#/components/schemas/RerunFailure" },
           "llm_enhanced": { "type": "boolean" },
           "operation": { "type": "string", "enum": ["convert", "retry", "enhance"] },
           "skipped": { "type": "boolean" },
           "skip_reason": { "type": ["string", "null"] },
           "retryable": { "type": "boolean" },
           "warnings": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "RerunFailure": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Latest failed rerun while the previous successful non-skipped output was retained; independent of observed model usage",
+        "required": ["operation", "error_code", "error", "failed_at"],
+        "properties": {
+          "operation": { "type": "string", "enum": ["retry", "enhance"] },
+          "error_code": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z_]+$" },
+          "error": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "failed_at": { "type": "string", "maxLength": 64, "format": "date-time" }
         }
       },
       "JobProgress": {

@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import type { HistoryEntry } from "../api/types.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
 import { fmtCost, fmtDur } from "../lib/format.ts";
+import type { ItemRequestFailure } from "../lib/pricing.ts";
+import type { NotificationModel } from "./notification.tsx";
 import { mergeLedger, rowMatches, STATUS_FILTERS, type SessionItem, type SessionJob, type SessionStats, type StatusFilter } from "../lib/session.ts";
 import { ArchiveRow } from "./archive-row.tsx";
 import { domKey, LedgerRow } from "./ledger-row.tsx";
@@ -15,11 +17,11 @@ export interface ArchiveProps {
   entries: HistoryEntry[] | null;
   error: string | null;
   busy: Record<string, unknown>;
-  rowErrors: Record<string, string>;
+  rowErrors: Record<string, unknown>;
   onRefresh: () => void;
   onOpen: (jobId: string, opener: HTMLElement) => void;
-  onRetry: (jobId: string) => Promise<string | null>;
-  onEnhance: (jobId: string) => Promise<string | null>;
+  onRetry: (jobId: string) => Promise<unknown>;
+  onEnhance: (jobId: string) => Promise<unknown>;
   onDelete: (entry: HistoryEntry) => Promise<boolean>;
 }
 
@@ -43,6 +45,9 @@ export function Ledger({
   onDelete,
   describe,
   onDownloadError,
+  requestFailures,
+  onItemNotice,
+  onNotice,
 }: {
   t: Dict;
   locale: Locale;
@@ -63,6 +68,9 @@ export function Ledger({
   onDelete: (item: SessionItem) => Promise<unknown>;
   describe: (error: unknown) => { text: string; detail: string };
   onDownloadError: (error: unknown) => void;
+  requestFailures: Record<string, ItemRequestFailure>;
+  onItemNotice: (item: SessionItem, opener?: HTMLElement) => void;
+  onNotice: (note: NotificationModel, opener?: HTMLElement) => void;
 }) {
   const list = useRef<HTMLDivElement>(null);
   const saved = archive.entries ?? NO_ENTRIES;
@@ -214,6 +222,8 @@ export function Ledger({
                 onDelete={onDelete}
                 describe={describe}
                 onDownloadError={onDownloadError}
+                requestFailure={requestFailures[row.key] ?? null}
+                onItemNotice={onItemNotice}
               />
             );
           }
@@ -235,6 +245,8 @@ export function Ledger({
               onEnhance={archive.onEnhance}
               onDelete={archive.onDelete}
               onRowFocus={focusArchive}
+              describe={describe}
+              onNotice={onNotice}
             />
           );
         })}

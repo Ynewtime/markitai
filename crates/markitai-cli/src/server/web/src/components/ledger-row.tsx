@@ -4,11 +4,11 @@ import { memo } from "preact/compat";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { filePath } from "../api/client.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
-import { itemErrorText } from "../i18n/errors.ts";
 import { interceptDownload } from "../lib/download.ts";
 import { basename, displayName, durParts, fmtBytes, fmtCost, fmtDateTime, fmtDur, splitName } from "../lib/format.ts";
-import { attemptNotice, PRICE_WORDS, priceText } from "../lib/pricing.ts";
-import { canRetry, isPreviewable, type SessionItem } from "../lib/session.ts";
+import { itemNotification, PRICE_WORDS, priceText, type ItemRequestFailure } from "../lib/pricing.ts";
+import { canRetry, isPreviewable, settledIdentity, type SessionItem } from "../lib/session.ts";
+import type { NotificationModel } from "./notification.tsx";
 import { ConfirmPopover } from "./confirm-popover.tsx";
 import { Icon } from "./icons.tsx";
 
@@ -42,7 +42,16 @@ export function FileName({ name, title }: { name: string; title: string }) {
 
 export const domKey = (key: string): string => `row-${key.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 
-function StatusMark({ t, item }: { t: Dict; item: SessionItem }) {
+function StatusMark({ t, item, notice, onShow }: { t: Dict; item: SessionItem; notice: NotificationModel | null; onShow: (opener: HTMLElement) => void }) {
+  if (notice) {
+    const label = `${notice.title} · ${t.showItemDetails(displayName(item.name))}`;
+    return (
+      <button type="button" class={`mark is-trigger ${item.status === "error" || notice.tone === "error" && !item.rerunFailure ? "is-err" : "is-skip"}`}
+        title={label} aria-label={label} onClick={(event) => { event.stopPropagation(); onShow(event.currentTarget); }}>
+        <span aria-hidden="true">{item.status === "error" ? "×" : <Icon name="WarningFill" size={17} />}</span>
+      </button>
+    );
+  }
   if (item.status === "done") {
     if (!item.skipped) {
       return (
@@ -98,6 +107,8 @@ export interface RowProps {
   onDelete: (item: SessionItem) => Promise<unknown>;
   describe: (error: unknown) => { text: string; detail: string };
   onDownloadError: (error: unknown) => void;
+  requestFailure: ItemRequestFailure | null;
+  onItemNotice: (item: SessionItem, opener?: HTMLElement) => void;
 }
 
 export const LedgerRow = memo(function LedgerRow({
@@ -117,11 +128,11 @@ export const LedgerRow = memo(function LedgerRow({
   onDelete,
   describe,
   onDownloadError,
+  requestFailure,
+  onItemNotice,
 }: RowProps) {
   const row = useRef<HTMLDivElement>(null);
-  const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState<"retry" | "enhance" | "delete" | null>(null);
-  const [actionError, setActionError] = useState<{ text: string; detail: string } | null>(null);
   const [enhanceFailed, setEnhanceFailed] = useState(false);
 
   const running = item.status === "running";
@@ -136,10 +147,9 @@ export const LedgerRow = memo(function LedgerRow({
   const words = PRICE_WORDS[locale];
   const costTitle = priceText(item.costUsd, item.pricing, words) || undefined;
   const cost = item.costUsd !== null ? fmtCost(item.costUsd) : null;
-  const problem = failed && item.error !== null ? itemErrorText(locale, { error: item.error, error_code: item.errorCode, kind: item.kind }) : null;
-  const attempt = attemptNotice(item.diagnostics ? { cost_usd: item.costUsd, error: item.error, diagnostics: item.diagnostics } : {}, words, (error) =>
-    itemErrorText(locale, { error, kind: item.kind }),
-  );
+  const rerunFailure = item.rerunFailure;
+  const actionError = requestFailure && requestFailure.identity === settledIdentity(item) ? { operation: requestFailure.operation, ...describe(requestFailure.error) } : undefined;
+  const notice = itemNotification(item, t, locale, actionError);
   const warnings = item.status === "done" || item.status === "error" ? item.warnings : [];
   // An image skipped for lack of text says so in a notification instead.
   const skipText =
@@ -155,12 +165,9 @@ export const LedgerRow = memo(function LedgerRow({
   const run = async (kind: "retry" | "enhance") => {
     if (busy) return;
     setBusy(kind);
-    setActionError(null);
     setEnhanceFailed(false);
     const error = await (kind === "retry" ? onRetry(item) : onEnhance(item));
     if (error !== null && error !== undefined) {
-      const text = describe(error);
-      setActionError({ text: `${kind === "retry" ? t.retryFailed : t.llmEnhanceFailed}: ${text.text}`, detail: text.detail });
       if (kind === "enhance") setEnhanceFailed(true);
     }
     setBusy(null);
@@ -169,7 +176,6 @@ export const LedgerRow = memo(function LedgerRow({
   const remove = async () => {
     if (busy) return false;
     setBusy("delete");
-    setActionError(null);
     // Pick the next focus target before this row unmounts.
     const options = [...(row.current?.closest('[role="listbox"]')?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])];
     const at = row.current ? options.indexOf(row.current) : -1;
@@ -177,7 +183,6 @@ export const LedgerRow = memo(function LedgerRow({
     const error = await onDelete(item);
     setBusy(null);
     if (error !== null && error !== undefined) {
-      setActionError(describe(error));
       return false;
     }
     requestAnimationFrame(() => next?.isConnected && next.focus());
@@ -186,7 +191,7 @@ export const LedgerRow = memo(function LedgerRow({
 
   const activate = (opener: HTMLElement) => {
     if (previewable) onPreview(item.key, opener);
-    else if (failed) setExpanded((value) => !value);
+    else if (notice) onItemNotice(item, opener);
   };
 
   const facts: { text: string; time?: boolean }[] = [];
@@ -204,9 +209,9 @@ export const LedgerRow = memo(function LedgerRow({
     spoken.push(t.ariaDuration(minutes, seconds));
   }
   spoken.push(llmApplied ? t.llmTag : t.baseTag);
-  spoken.push(skipped ? t.statusSkipped : { queued: t.statusQueued, running: t.statusRunning, done: t.statusDone, error: t.statusFailed }[item.status]);
+  spoken.push(rerunFailure ? t.rerunRetained(rerunFailure.operation) : skipped ? t.statusSkipped : { queued: t.statusQueued, running: t.statusRunning, done: t.statusDone, error: t.statusFailed }[item.status]);
   if (warnings.length) spoken.push(t.itemWarnings(warnings.length));
-  const inert = !previewable && !failed && !retryable && !canDelete;
+  const inert = !previewable && notice === null && !failed && !retryable && !canDelete;
   const output = previewable ? item.output : null;
 
   return (
@@ -219,7 +224,7 @@ export const LedgerRow = memo(function LedgerRow({
       aria-selected={selected}
       aria-disabled={inert || undefined}
       aria-label={spoken.join(", ")}
-      aria-describedby={[problem || (skipped && skipText) ? `${rowId}-note` : null, warnings.length ? `${rowId}-warn` : null].filter(Boolean).join(" ") || undefined}
+      aria-describedby={skipped && skipText ? `${rowId}-note` : undefined}
       tabIndex={tabbable ? 0 : -1}
       class={`lg-row${selected ? " is-selected" : ""}${failed ? " is-actionable" : ""}`}
       onClick={(event) => {
@@ -251,7 +256,7 @@ export const LedgerRow = memo(function LedgerRow({
         {llmApplied && cost !== null && <span class="tag-price">{cost}</span>}
       </span>
       <span class="cell-state">
-        <StatusMark t={t} item={item} />
+        <StatusMark t={t} item={item} notice={notice} onShow={(opener) => onItemNotice(item, opener)} />
         {(previewable || enhanceable || retryable || canDelete) && (
           <span class="row-tools">
             {output !== null && (
@@ -270,7 +275,7 @@ export const LedgerRow = memo(function LedgerRow({
             {enhanceable && (
               <button
                 type="button"
-                class={enhanceFailed ? "row-icon is-failed" : "row-icon"}
+                class={enhanceFailed || rerunFailure?.operation === "enhance" ? "row-icon is-failed" : "row-icon"}
                 aria-label={t.enhanceWithLlm(name)}
                 title={enhanceFailed && actionError ? actionError.text : llmAvailable ? t.enhanceWithLlm(name) : llmDisabledReason}
                 disabled={!llmAvailable || busy !== null}
@@ -321,38 +326,9 @@ export const LedgerRow = memo(function LedgerRow({
           </span>
         ))}
       </span>
-      {problem && (
-        <span class={problem.hint ? "row-note is-quiet" : "row-note is-err"} id={`${rowId}-note`} title={problem.detail || undefined}>
-          <span class="row-note-text" title={problem.detail ? t.errExpandTitle : undefined}>
-            {problem.text}
-            {expanded && problem.detail && (
-              <span class="row-note-full">{problem.detail}</span>
-            )}
-          </span>
-        </span>
-      )}
       {skipped && skipText && (
         <span class="row-note is-quiet" id={`${rowId}-note`} title={item.skipReason === "pending_batch" ? (item.error ?? undefined) : undefined}>
           {skipText}
-        </span>
-      )}
-      {attempt && (attempt.label || attempt.error) && (
-        <span class="row-note is-warn" title={attempt.error?.detail || undefined}>
-          <Icon name="WarningFill" size={13} />
-          <span class="row-note-line">{[attempt.label, attempt.error?.text].filter(Boolean).join(" · ")}</span>
-        </span>
-      )}
-      {warnings.length > 0 && (
-        <span class="row-note is-warn" id={`${rowId}-warn`} title={warnings.join("\n")}>
-          <Icon name="WarningFill" size={13} />
-          <span class="row-note-line">
-            {t.itemWarnings(warnings.length)}: {warnings[0]}
-          </span>
-        </span>
-      )}
-      {actionError && (
-        <span class="row-note is-err" role="alert" title={actionError.detail || undefined}>
-          {actionError.text}
         </span>
       )}
     </div>

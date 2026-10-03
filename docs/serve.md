@@ -196,6 +196,22 @@ plain retry removes a stale enhanced variant. Old unreferenced extracted assets
 may remain in the job archive until item/job cleanup; they are not fabricated into
 the new result's artifact list.
 
+If a failed retry or enhancement keeps the previous successful result, the item
+also exposes optional `rerun_failure`: `operation` (`retry` or `enhance`),
+`error_code`, `error` and RFC3339 `failed_at`. Its status, output, original finish
+time and price still describe the retained result; this field describes the
+latest failed operation. It is available even when no model usage was recorded.
+The workbench shows the failure in its shared notification card and keeps preview,
+download and retry available. Clicking the item's status icon reopens the full
+details. Warnings belonging to the retained output are grouped as previous-result
+warnings; the latest attempt's cost is shown only when usage was actually recorded.
+New admission or successful completion clears the operation failure.
+SSE events, snapshots and saved metadata carry the same outcome; normal restart
+preserves it. Old history has no field. Invalid stored outcomes are ignored with
+a fixed warning while the retained row remains available, without rewriting the
+history. Failed metadata persistence or abrupt termination can still prevent an
+outcome from being saved. This field does not establish request counts or costs.
+
 ### Recorded attempt usage
 
 An item with recorded model work additionally exposes `diagnostics.last_attempt`:

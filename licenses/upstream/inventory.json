@@ -3,8 +3,8 @@
   "files": [
     {
       "path": "README.md",
-      "bytes": 4722,
-      "sha256": "378d5c38a474c7b30aef79c8b3646bba606f373acd845f8c5617264dc90b4ca4"
+      "bytes": 6448,
+      "sha256": "ad75ceb693906c4d3fd8f95d1b00af84ada0b8f766ef907d15f55e2df375cc4a"
     },
     {
       "path": "input-manifest.json",
@@ -90,6 +90,46 @@
       "path": "local-evidence/include_dir_macros-0.7.4/README.md",
       "bytes": 1822,
       "sha256": "f95dde5560e0b9fe496271e72959d1ba1c0b4695afc8867fa2cf5dbee225325e"
+    },
+    {
+      "path": "local-evidence/napi-3.14.0/.cargo_vcs_info.json",
+      "bytes": 105,
+      "sha256": "39e3cd2d05c1dc6eb219f18bbff425b6ab3ec8d4cb52edde206e8698279881b4"
+    },
+    {
+      "path": "local-evidence/napi-3.14.0/Cargo.toml.orig",
+      "bytes": 3980,
+      "sha256": "046046115eecec251c9eaed985e0f5cc36815f6660adccd9410dfc28d1bb4f35"
+    },
+    {
+      "path": "local-evidence/napi-build-2.6.0/.cargo_vcs_info.json",
+      "bytes": 106,
+      "sha256": "ab0db254baa56192392dfa8a058f15a6e6d306194faeb4858b7cbb6f71276685"
+    },
+    {
+      "path": "local-evidence/napi-build-2.6.0/Cargo.toml.orig",
+      "bytes": 608,
+      "sha256": "db03f6809e261fef67c4fad525bb43e7474c393845b7a129956dbac21cfed148"
+    },
+    {
+      "path": "local-evidence/napi-derive-3.6.10/.cargo_vcs_info.json",
+      "bytes": 106,
+      "sha256": "4dc7f324179df88dfeef2476de23487cc069d14b2cef9881e7e5dafb363be64e"
+    },
+    {
+      "path": "local-evidence/napi-derive-3.6.10/Cargo.toml.orig",
+      "bytes": 974,
+      "sha256": "b35f32f10608df47a94f28d391c0b5d0cd88c3b51823131e07efa2cc028f6ad3"
+    },
+    {
+      "path": "local-evidence/napi-sys-3.4.0/.cargo_vcs_info.json",
+      "bytes": 104,
+      "sha256": "e83464a4c378004e398379bcf42e57189e8840f671bc3ed57d12917a7d4dd9f1"
+    },
+    {
+      "path": "local-evidence/napi-sys-3.4.0/Cargo.toml.orig",
+      "bytes": 707,
+      "sha256": "fd25505b1dcd4c6886df2f42e5072af24da3a8b026bc0a202f680a07dbf18c02"
     },
     {
       "path": "local-evidence/nom-language-0.1.0/.cargo_vcs_info.json",
@@ -263,8 +303,13 @@
     },
     {
       "path": "manifest.json",
-      "bytes": 69775,
-      "sha256": "4484213920425f62bb37501d5c69318672035272bf8060ec51e03886f65962db"
+      "bytes": 83993,
+      "sha256": "f6c48fc6de813c1d176d20bf4e58ee3700e0c1437cf31df2a7c21c7723c8bf2d"
+    },
+    {
+      "path": "napi-license-provenance.json",
+      "bytes": 10284,
+      "sha256": "386e2b7dc38e112611af3b6f8801819592c00dfd44e885bf820be2e1d507bee3"
     },
     {
       "path": "overlay/licenses/alloc-stdlib-0.2.4/LICENSE",
@@ -300,6 +345,26 @@
       "path": "overlay/licenses/include_dir_macros-0.7.4/LICENSE",
       "bytes": 1070,
       "sha256": "9369f62987b3a116111f2edfdc4cc72633e44ddc94d5d0c68659cf537b76a31f"
+    },
+    {
+      "path": "overlay/licenses/napi-3.14.0/LICENSE",
+      "bytes": 2138,
+      "sha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215"
+    },
+    {
+      "path": "overlay/licenses/napi-build-2.6.0/LICENSE",
+      "bytes": 2138,
+      "sha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215"
+    },
+    {
+      "path": "overlay/licenses/napi-derive-3.6.10/LICENSE",
+      "bytes": 2138,
+      "sha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215"
+    },
+    {
+      "path": "overlay/licenses/napi-sys-3.4.0/LICENSE",
+      "bytes": 2138,
+      "sha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215"
     },
     {
       "path": "overlay/licenses/nom-language-0.1.0/LICENSE",
@@ -502,6 +567,26 @@
       "sha256": "d49f87c1969d9ce1f46b7b43b2c856c9a47d9263afbdf6142952fb8e3b93f45f"
     },
     {
+      "path": "source-archives/napi-3.14.0.crate",
+      "bytes": 246455,
+      "sha256": "15301c22171e8397a7b17beb3c75bf486bf67ca3bdad8ea347835b770df61969"
+    },
+    {
+      "path": "source-archives/napi-build-2.6.0.crate",
+      "bytes": 15514,
+      "sha256": "b899b545d3aa6dca985939059f258c5488d34e4ecf39c274e20009748f4b846d"
+    },
+    {
+      "path": "source-archives/napi-derive-3.6.10.crate",
+      "bytes": 23183,
+      "sha256": "d11174f7507d7f6cdd69874f541eff194e81c95652b775e69036bcf8d5b7a805"
+    },
+    {
+      "path": "source-archives/napi-sys-3.4.0.crate",
+      "bytes": 12554,
+      "sha256": "e22a4f25c16a5c5411d987cd6fbd48313522ae1789ade2d6dd3efdc6d40a0fc8"
+    },
+    {
       "path": "source-archives/nom-language-0.1.0.crate",
       "bytes": 7648,
       "sha256": "2de2bc5b451bfedaef92c90b8939a8fff5770bdcc1fafd6239d086aab8fa6b29"
@@ -625,6 +710,46 @@
       "path": "upstream/madsmtm/objc2/8d214f5477365ffcbcbb7de058c86ed9a518efb7/crates/objc2-encode/Cargo.toml",
       "bytes": 1137,
       "sha256": "12972b1faf213492f9e78226f23642c461284b739f7be5437d9401465a2869a6"
+    },
+    {
+      "path": "upstream/napi-rs/napi-rs/37109f133043aff379a38edfb8b1548e7e9309e5/Cargo.toml",
+      "bytes": 964,
+      "sha256": "f2110059925ada6800f0d3e8a7976f6967803686d6a87d68f2c67ce5974b6261"
+    },
+    {
+      "path": "upstream/napi-rs/napi-rs/37109f133043aff379a38edfb8b1548e7e9309e5/LICENSE",
+      "bytes": 2138,
+      "sha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215"
+    },
+    {
+      "path": "upstream/napi-rs/napi-rs/37109f133043aff379a38edfb8b1548e7e9309e5/crates/macro/Cargo.toml",
+      "bytes": 974,
+      "sha256": "b35f32f10608df47a94f28d391c0b5d0cd88c3b51823131e07efa2cc028f6ad3"
+    },
+    {
+      "path": "upstream/napi-rs/napi-rs/37109f133043aff379a38edfb8b1548e7e9309e5/crates/napi/Cargo.toml",
+      "bytes": 3980,
+      "sha256": "046046115eecec251c9eaed985e0f5cc36815f6660adccd9410dfc28d1bb4f35"
+    },
+    {
+      "path": "upstream/napi-rs/napi-rs/37109f133043aff379a38edfb8b1548e7e9309e5/crates/sys/Cargo.toml",
+      "bytes": 707,
+      "sha256": "fd25505b1dcd4c6886df2f42e5072af24da3a8b026bc0a202f680a07dbf18c02"
+    },
+    {
+      "path": "upstream/napi-rs/napi-rs/a94cef33f62e74682963dd085e283f52dcec2600/Cargo.toml",
+      "bytes": 964,
+      "sha256": "f2110059925ada6800f0d3e8a7976f6967803686d6a87d68f2c67ce5974b6261"
+    },
+    {
+      "path": "upstream/napi-rs/napi-rs/a94cef33f62e74682963dd085e283f52dcec2600/LICENSE",
+      "bytes": 2138,
+      "sha256": "3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215"
+    },
+    {
+      "path": "upstream/napi-rs/napi-rs/a94cef33f62e74682963dd085e283f52dcec2600/crates/build/Cargo.toml",
+      "bytes": 608,
+      "sha256": "db03f6809e261fef67c4fad525bb43e7474c393845b7a129956dbac21cfed148"
     },
     {
       "path": "upstream/r-efi/r-efi/7e1b0322d31d625f81a5656096330934f9cd835d/AUTHORS",

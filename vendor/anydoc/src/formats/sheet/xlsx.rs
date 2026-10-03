@@ -16,6 +16,7 @@ use crate::package::limits;
 use crate::package::relationships::{Relationships, read_rels, rel_type, rels_part_for};
 use crate::package::xml::{Element, ns};
 use crate::package::{Package, path};
+use crate::shared::assets::AssetSink;
 use crate::shared::header::resolve_header_rows;
 use crate::shared::text::{clean_cell_text, clean_text};
 use std::collections::{HashMap, HashSet};
@@ -82,6 +83,7 @@ pub(super) fn parse(pkg: &mut Package, wb_part: &str) -> Result<Document, Conver
     // markitai: formulas whose cell carries no cached value, workbook-wide.
     let mut uncached = 0usize;
     let mut people = None;
+    let mut assets = AssetSink::new();
     for (name, part) in &sheets {
         let worksheet = pkg.optional_xml_part(part)?;
         let Some(worksheet) = worksheet.as_ref().and_then(|r| r.find(ns::SML, "worksheet")) else {
@@ -100,7 +102,16 @@ pub(super) fn parse(pkg: &mut Package, wb_part: &str) -> Result<Document, Conver
         };
         content.notes = notes::cell_notes(pkg, part, &sheet_rels, people)?;
         uncached += content.uncached_formulas;
-        push_sheet(&mut doc, name, multi_sheet, build_table(content, &mut slots)?);
+        let pictures = super::drawings::xml(
+            pkg,
+            worksheet,
+            part,
+            &sheet_rels,
+            &content,
+            &mut assets,
+            &mut doc.warnings,
+        )?;
+        push_sheet_images(&mut doc, name, multi_sheet, build_table(content, &mut slots)?, pictures);
     }
     if !sheets.is_empty() && failed == sheets.len() {
         return Err(ConvertError::malformed("no sheet in the workbook could be read"));
@@ -112,6 +123,7 @@ pub(super) fn parse(pkg: &mut Package, wb_part: &str) -> Result<Document, Conver
             format!("{uncached} formulas in the workbook have no cached value, so their formula text is shown; open and save the workbook in Excel or LibreOffice to compute them.")
         });
     }
+    doc.assets = assets.assets;
     Ok(doc)
 }
 
@@ -132,6 +144,16 @@ pub(super) struct Built {
 /// that held content are omitted as hidden sheets are, with a warning naming
 /// how many.
 pub(super) fn push_sheet(doc: &mut Document, name: &str, multi_sheet: bool, built: Built) {
+    push_sheet_images(doc, name, multi_sheet, built, Vec::new());
+}
+
+pub(super) fn push_sheet_images(
+    doc: &mut Document,
+    name: &str,
+    multi_sheet: bool,
+    built: Built,
+    pictures: Vec<Inline>,
+) {
     let Built { table, notes, hidden_rows, hidden_cols } = built;
     if hidden_rows + hidden_cols > 0 {
         let count = |n: usize, what: &str| match n {
@@ -149,7 +171,7 @@ pub(super) fn push_sheet(doc: &mut Document, name: &str, multi_sheet: bool, buil
             parts.join(" and ")
         ));
     }
-    if table.is_none() && notes.is_empty() {
+    if table.is_none() && notes.is_empty() && pictures.is_empty() {
         return;
     }
     if multi_sheet {
@@ -157,6 +179,9 @@ pub(super) fn push_sheet(doc: &mut Document, name: &str, multi_sheet: bool, buil
     }
     if let Some(table) = table {
         doc.blocks.push(Block::Table(table));
+    }
+    for image in pictures {
+        doc.blocks.push(Block::Paragraph(vec![image]));
     }
     if !notes.is_empty() {
         doc.blocks.push(Block::heading(3, vec![Inline::plain("Notes")]));
@@ -323,6 +348,8 @@ pub(super) fn resolve_format(id: u32, custom: &HashMap<u32, &str>) -> CellFormat
 /// BIFF reader, which fills it from records instead of XML.
 #[derive(Default)]
 pub(super) struct SheetContent {
+    /// Raw OfficeArt records of this BIFF sheet, including split shapes.
+    pub(super) drawings: Vec<u8>,
     /// Rendered text by zero-based (row, col); empty results are absent. A
     /// line break in a cell's text is `\n` (markitai).
     pub(super) cells: HashMap<(u32, u32), String>,

@@ -236,6 +236,54 @@ impl JobOptions {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum RerunOperation {
+    #[default]
+    Retry,
+    Enhance,
+}
+
+/// The latest unsuccessful rerun whose previous successful result was retained.
+/// This records an operation outcome independently of observed model usage.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RerunFailure {
+    pub operation: RerunOperation,
+    pub error_code: String,
+    pub error: String,
+    pub failed_at: String,
+}
+impl RerunFailure {
+    pub fn new(operation: RerunOperation, code: &str, error: String) -> Self {
+        Self {
+            operation,
+            error_code: code.into(),
+            // Service details already follow the conversion error contract;
+            // keep the persisted, rendered notice bounded as well.
+            error: error.chars().take(1024).collect(),
+            failed_at: now(),
+        }
+    }
+    pub fn from_value(value: &Value) -> Result<Self, ()> {
+        let failure: Self = serde_json::from_value(value.clone()).map_err(|_| ())?;
+        if failure.error_code.is_empty()
+            || failure.error_code.len() > 64
+            || !failure
+                .error_code
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b == b'_')
+            || failure.error.is_empty()
+            || failure.error.len() > 4096
+            || failure.failed_at.len() > 64
+            || chrono::DateTime::parse_from_rfc3339(&failure.failed_at).is_err()
+        {
+            return Err(());
+        }
+        Ok(failure)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct Item {
     pub item_id: String,
@@ -260,6 +308,8 @@ pub(super) struct Item {
     pub pricing: Option<crate::pricing::Pricing>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diagnostics: Option<crate::diagnostics::AttemptDiagnostics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rerun_failure: Option<RerunFailure>,
     #[serde(default)]
     pub llm_enhanced: bool,
     #[serde(default = "convert_operation")]
@@ -295,6 +345,7 @@ impl Item {
             cost_usd: None,
             pricing: None,
             diagnostics: None,
+            rerun_failure: None,
             llm_enhanced: false,
             operation: "convert".into(),
             skipped: false,

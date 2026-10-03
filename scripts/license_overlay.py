@@ -137,6 +137,15 @@ _SOURCE_PACKAGES = {
         },
     },
 }
+# Exact new Node-binding tuples. These children declare MIT directly;
+# they do not inherit workspace.package.license. Archives retain published
+# VCS/original manifests while fixed parent bytes bind the complete notice.
+_SOURCE_PACKAGES.update({
+    ('napi', '3.14.0', '37109f133043aff379a38edfb8b1548e7e9309e5'): {'sha256': '15301c22171e8397a7b17beb3c75bf486bf67ca3bdad8ea347835b770df61969', 'path_in_vcs': 'crates/napi', 'members': 88, 'repository': 'napi-rs/napi-rs', 'declared_license': 'MIT', 'terms': {'LICENSE': '3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215'}, 'parent_manifest_sha256': 'f2110059925ada6800f0d3e8a7976f6967803686d6a87d68f2c67ce5974b6261', 'package_manifest_sha256': '046046115eecec251c9eaed985e0f5cc36815f6660adccd9410dfc28d1bb4f35', 'vcs_sha256': '39e3cd2d05c1dc6eb219f18bbff425b6ab3ec8d4cb52edde206e8698279881b4'},
+    ('napi-build', '2.6.0', 'a94cef33f62e74682963dd085e283f52dcec2600'): {'sha256': 'b899b545d3aa6dca985939059f258c5488d34e4ecf39c274e20009748f4b846d', 'path_in_vcs': 'crates/build', 'members': 11, 'repository': 'napi-rs/napi-rs', 'declared_license': 'MIT', 'terms': {'LICENSE': '3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215'}, 'parent_manifest_sha256': 'f2110059925ada6800f0d3e8a7976f6967803686d6a87d68f2c67ce5974b6261', 'package_manifest_sha256': 'db03f6809e261fef67c4fad525bb43e7474c393845b7a129956dbac21cfed148', 'vcs_sha256': 'ab0db254baa56192392dfa8a058f15a6e6d306194faeb4858b7cbb6f71276685'},
+    ('napi-derive', '3.6.10', '37109f133043aff379a38edfb8b1548e7e9309e5'): {'sha256': 'd11174f7507d7f6cdd69874f541eff194e81c95652b775e69036bcf8d5b7a805', 'path_in_vcs': 'crates/macro', 'members': 16, 'repository': 'napi-rs/napi-rs', 'declared_license': 'MIT', 'terms': {'LICENSE': '3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215'}, 'parent_manifest_sha256': 'f2110059925ada6800f0d3e8a7976f6967803686d6a87d68f2c67ce5974b6261', 'package_manifest_sha256': 'b35f32f10608df47a94f28d391c0b5d0cd88c3b51823131e07efa2cc028f6ad3', 'vcs_sha256': '4dc7f324179df88dfeef2476de23487cc069d14b2cef9881e7e5dafb363be64e'},
+    ('napi-sys', '3.4.0', '37109f133043aff379a38edfb8b1548e7e9309e5'): {'sha256': 'e22a4f25c16a5c5411d987cd6fbd48313522ae1789ade2d6dd3efdc6d40a0fc8', 'path_in_vcs': 'crates/sys', 'members': 11, 'repository': 'napi-rs/napi-rs', 'declared_license': 'MIT', 'terms': {'LICENSE': '3f1ce66533302df3a32edbfdfc0b78f0dd34659e4c1f5817162e5ea3c2297215'}, 'parent_manifest_sha256': 'f2110059925ada6800f0d3e8a7976f6967803686d6a87d68f2c67ce5974b6261', 'package_manifest_sha256': 'fd25505b1dcd4c6886df2f42e5072af24da3a8b026bc0a202f680a07dbf18c02', 'vcs_sha256': 'e83464a4c378004e398379bcf42e57189e8840f671bc3ed57d12917a7d4dd9f1'},
+})
 _TRACT_IDENTITY = ("tract-extra", "0.23.8", "248335349c0f59a5772d737480b8b39250097374")
 _TRACT_STAMP = {"kind": "reviewed_publication_version_stamp", "upstream_version": "0.23.8-pre",
                 "published_version": "0.23.8", "legal_review": "not_performed"}
@@ -348,6 +357,8 @@ def stage_overlay(source, destination, packages):
     recorded(manifest["input_manifest"])
     if "license_gap_collection" in manifest:
         recorded(manifest["license_gap_collection"])
+    if "napi_license_collection" in manifest:
+        recorded(manifest["napi_license_collection"])
     source_archives, published_sources = _source_archives(manifest, data, recorded)
     available = {package["id"]: package for package in packages}
     matched, all_ids, all_assets = {}, set(), set()
@@ -379,6 +390,14 @@ def stage_overlay(source, destination, packages):
         exact_matches += provenance == "raw_exact_match"
         publication_stamps += provenance == "reviewed_publication_version_stamp"
         reviewed = _SOURCE_PACKAGES.get((entry["name"], entry["version"], commit), {})
+        if "parent_manifest_sha256" in reviewed:
+            if (hashlib.sha256(data.get(root + "Cargo.toml", b"")).hexdigest()
+                    != reviewed["parent_manifest_sha256"]
+                    or hashlib.sha256(data[upstream_manifest]).hexdigest()
+                    != reviewed["package_manifest_sha256"]
+                    or hashlib.sha256(data[original + ".cargo_vcs_info.json"]).hexdigest()
+                    != reviewed["vcs_sha256"]):
+                raise RuntimeError("Reviewed Node parent/package/VCS byte identity differs")
         if "terms" in reviewed:
             if (repo != reviewed["repository"] or path != reviewed["path_in_vcs"]
                     or key != f"registry+https://github.com/rust-lang/crates.io-index#{entry['name']}@{entry['version']}"

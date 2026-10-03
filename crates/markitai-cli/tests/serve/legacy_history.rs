@@ -314,11 +314,27 @@ fn legacy_failed_retry_preserves_previous_result_bytes_and_item_fields() {
     let item_before = server.json(&format!("/api/jobs/{ID}"))["items"][0].clone();
     assert_eq!(retry(&server, "i1").status, 202);
     let done = server.done(ID);
-    assert_eq!(done["items"][0], item_before);
+    let retained = done["items"][0]["rerun_failure"].clone();
+    assert_eq!(retained["operation"], "retry");
+    assert_eq!(retained["error_code"], "invalid_json");
+    assert!(
+        retained["error"]
+            .as_str()
+            .unwrap()
+            .contains("key must be a string")
+    );
+    chrono::DateTime::parse_from_rfc3339(retained["failed_at"].as_str().unwrap()).unwrap();
+    let mut restored = done["items"][0].clone();
+    restored.as_object_mut().unwrap().remove("rerun_failure");
+    assert_eq!(restored, item_before);
     assert_eq!(result(&server, "i1"), previous);
     assert_eq!(inventory(&folder.join("out")), bytes);
     server.stop();
     let server = Server::start(temp.path());
+    assert_eq!(
+        server.json(&format!("/api/jobs/{ID}"))["items"][0],
+        done["items"][0]
+    );
     assert_eq!(result(&server, "i1"), previous);
     assert_eq!(inventory(&folder.join("out")), bytes);
     server.stop();

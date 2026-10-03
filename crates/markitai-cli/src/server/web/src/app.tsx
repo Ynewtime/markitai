@@ -22,11 +22,12 @@ import { useArchive } from "./hooks/use-archive.ts";
 import { useConnectivity } from "./hooks/use-connectivity.ts";
 import { useJobs } from "./hooks/use-jobs.ts";
 import { detectLocale, dicts, storeLocale, type Locale } from "./i18n/index.ts";
-import { apiErrorText, persistenceText, itemErrorText } from "./i18n/errors.ts";
+import { apiErrorText, persistenceText } from "./i18n/errors.ts";
 import { oversized, type Walked } from "./lib/files.ts";
 import { fmtBytes } from "./lib/format.ts";
 import { initialComposer, publicOptions, readRemembered, remember, resolveOptions, withOcrFor, type Composer } from "./lib/options.ts";
-import { canRetry, failedToRetry, isPreviewable, isSettled, waitingJobs, type SessionItem } from "./lib/session.ts";
+import { canRetry, failedToRetry, isPreviewable, isSettled, settledIdentity, itemFromPayload, waitingJobs, type SessionItem } from "./lib/session.ts";
+import { itemNotification, publishNotice, terminalNotices, type ItemRequestFailure, type NotificationState } from "./lib/pricing.ts";
 import { parseUrls } from "./lib/urls.ts";
 
 type View = "home" | "workspace";
@@ -54,6 +55,9 @@ export function App() {
   // ---- live region: settled items, copies, retries
   const [live, setLive] = useState("");
   const announce = useCallback((message: string) => setLive((previous) => (previous === message ? `${message} ` : message)), []);
+  // A past announcement belongs to the language in which it was emitted.
+  // Clear it on a language change instead of replaying an invented completion.
+  useEffect(() => setLive(""), [locale]);
 
   // ---- service capabilities
   const [caps, setCaps] = useState<Capabilities | null>(null);
@@ -105,7 +109,7 @@ export function App() {
   }, []);
 
   const jobs = useJobs(
-    (done, failed) => dicts[localeRef.current].notifyBody(done, failed),
+    (done, failed, retained) => retained > 0 ? dicts[localeRef.current].notifyRetained(retained) : dicts[localeRef.current].notifyBody(done, failed),
     () => dicts[localeRef.current].connLost,
   );
   const archive = useArchive(jobs.jobs);
@@ -113,90 +117,97 @@ export function App() {
   jobsRef.current = jobs;
 
   // ---- notifications (one at a time; the newest wins)
-  const [note, setNote] = useState<NotificationModel | null>(null);
-  const seen = useRef(new Set<string>());
+  const [notification, setNotification] = useState<NotificationState>({ sequence: 0, note: null });
+  const note = notification.note;
+  const noticeOpener = useRef<HTMLElement | null>(null);
+  const setNote = useCallback((next: NotificationModel | null, opener?: HTMLElement) => {
+    if (next === null) noticeOpener.current = null;
+    else {
+      const active = opener ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+      // An automatic replacement keeps the original trigger while the user reads the card.
+      if (active && active !== document.body && !active.closest(".notice-card")) noticeOpener.current = active;
+    }
+    setNotification((previous) => publishNotice(previous, next));
+  }, []);
+  const closeNote = useCallback(() => {
+    const restore = document.activeElement instanceof HTMLElement && document.activeElement.closest(".notice-card") ? noticeOpener.current : null;
+    setNote(null);
+    if (restore?.isConnected) restore.focus({ preventScroll: true });
+  }, [setNote]);
+  // Request refusal belongs to the UI action, not the successful retained artifact.
+  const [requestFailures, setRequestFailures] = useState<Record<string, ItemRequestFailure>>({});
+  const requestItem = useCallback(async (item: SessionItem, operation: ItemRequestFailure["operation"], request: () => Promise<unknown>) => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+    setRequestFailures((previous) => {
+      if (!(item.key in previous)) return previous;
+      const next = { ...previous };
+      delete next[item.key];
+      return next;
+    });
+    let error: unknown;
+    try { error = await request(); } catch (reason) { error = reason; }
+    if (error !== null && error !== undefined) {
+      const current = jobsRef.current.items.find((row) => row.key === item.key) ?? item;
+      setRequestFailures((previous) => ({ ...previous, [item.key]: { operation, error, identity: settledIdentity(current) } }));
+      const model = itemNotification(current, dicts[localeRef.current], localeRef.current, { operation, ...describe(error) });
+      if (model) setNote(model, opener);
+    }
+    return error;
+  }, [describe, setNote]);
 
   const retryItem = useCallback(
-    (item: SessionItem, override?: JobOptions) => {
+    (item: SessionItem, override?: JobOptions) => requestItem(item, "retry", () => {
       const jobOptions = jobsRef.current.jobs[item.jobId]?.options;
       if (override) return jobsRef.current.retry(item, override);
       // An image skipped for want of text is retried with OCR on.
       if (item.skipped && item.skipReason === "image_only") return jobsRef.current.retry(item, withOcrFor(publicOptions(jobOptions ?? optionsRef.current)));
       return jobsRef.current.retry(item);
-    },
-    [],
+    }),
+    [requestItem],
   );
 
-  // New outcomes worth an action: an image skipped for lack of text, or a
-  // request for LLM processing that found no model. Each is offered once per row.
-  useEffect(() => {
-    let found: NotificationModel | null = null;
-    for (const item of jobs.items) {
-      const imageSkip = item.skipped && item.skipReason === "image_only";
-      const noModel = item.status === "error" && item.errorCode === "no_model_configured" && canRetry(item);
-      const id = `${item.key}|${imageSkip ? "ocr" : noModel ? "plain" : ""}`;
-      if (!imageSkip && !noModel) {
-        seen.current.delete(`${item.key}|ocr`);
-        seen.current.delete(`${item.key}|plain`);
-        continue;
-      }
-      if (seen.current.has(id)) continue;
-      seen.current.add(id);
-      const words = dicts[localeRef.current];
-      found = imageSkip
-        ? {
-            tone: "warning",
-            title: words.imageSkippedTitle,
-            message: words.imageSkipped(item.name),
-            action: {
-              label: words.enableOcr,
-              run: () => {
-                setNote(null);
-                // The label promises a lasting change: OCR stays on for new jobs.
-                setComposer((state) => ({ ...state, ocr: true }));
-                void retryItem(item).then((error) => announce(error ? `${dicts[localeRef.current].retryFailed}: ${describe(error).text}` : dicts[localeRef.current].retryAria(item.name)));
-              },
-            },
-          }
-        : {
-            tone: "warning",
-            title: words.noModelTitle,
-            message: words.noModelMessage(item.name),
-            detail: itemErrorText(localeRef.current, { error: item.error, error_code: item.errorCode }).text,
-            action: {
-              label: words.retryPlain,
-              run: () => {
-                setNote(null);
-                const base = publicOptions(jobsRef.current.jobs[item.jobId]?.options ?? optionsRef.current);
-                void retryItem(item, { ...base, llm: false, alt: null, desc: null }).then((error) =>
-                  announce(error ? `${dicts[localeRef.current].retryFailed}: ${describe(error).text}` : dicts[localeRef.current].retryAria(item.name)),
-                );
-              },
-            },
-          };
+  const showItemNotice = useCallback((item: SessionItem, opener?: HTMLElement) => {
+    const failure = requestFailures[item.key];
+    const actionProblem = failure && failure.identity === settledIdentity(item) ? { operation: failure.operation, ...describe(failure.error) } : undefined;
+    const model = itemNotification(item, dicts[localeRef.current], localeRef.current, actionProblem);
+    if (!model) return;
+    const words = dicts[localeRef.current];
+    if (!actionProblem && item.skipped && item.skipReason === "image_only") {
+      model.action = {
+        label: words.enableOcr,
+        run: () => {
+          setNote(null);
+          setComposer((state) => ({ ...state, ocr: true }));
+          void retryItem(item).then((error) => announce(error ? `${dicts[localeRef.current].retryFailed}: ${describe(error).text}` : dicts[localeRef.current].retryAria(item.name)));
+        },
+      };
+    } else if (!actionProblem && item.status === "error" && item.errorCode === "no_model_configured" && canRetry(item)) {
+      model.action = {
+        label: words.retryPlain,
+        run: () => {
+          setNote(null);
+          const base = publicOptions(jobsRef.current.jobs[item.jobId]?.options ?? optionsRef.current);
+          void retryItem(item, { ...base, llm: false, alt: null, desc: null }).then((error) => announce(error ? `${dicts[localeRef.current].retryFailed}: ${describe(error).text}` : dicts[localeRef.current].retryAria(item.name)));
+        },
+      };
     }
-    if (found) setNote(found);
-  }, [jobs.items, announce, describe, retryItem]);
+    setNote(model, opener);
+  }, [requestFailures, describe, setNote, retryItem, announce]);
 
-  // Announce each row as it settles.
-  const settledBefore = useRef(new Map<string, boolean>());
+  // Announce/notify only a new terminal identity already observed by this tab.
+  // Locale changes, reconnect duplicates and first adopted history are quiet.
+  const settledBefore = useRef(new Map<string, string | null>());
   useEffect(() => {
-    const before = settledBefore.current;
-    const next = new Map<string, boolean>();
+    const { next, changed } = terminalNotices(settledBefore.current, jobs.items);
+    settledBefore.current = next;
     const total = jobs.items.length;
     const settled = jobs.items.filter(isSettled).length;
-    let message: string | null = null;
-    for (const item of jobs.items) {
-      const now = isSettled(item);
-      next.set(item.key, now);
-      if (now && before.get(item.key) === false) {
-        const word = item.status === "error" ? t.statusFailed : item.skipped ? t.statusSkipped : t.statusDone;
-        message = t.announceItem(item.name, word, settled, total);
-      }
+    for (const item of changed) {
+      const word = item.rerunFailure ? t.rerunRetained(item.rerunFailure.operation) : item.status === "error" ? t.statusFailed : item.skipped ? t.statusSkipped : t.statusDone;
+      announce(t.announceItem(item.name, word, settled, total));
+      showItemNotice(item);
     }
-    settledBefore.current = next;
-    if (message) announce(message);
-  }, [jobs.items, t, announce]);
+  }, [jobs.items, t, announce, showItemNotice]);
 
   // ---- connectivity
   const offline = useConnectivity(() => {
@@ -346,16 +357,16 @@ export function App() {
 
   // ---- ledger actions
   const enhanceItem = useCallback(
-    (item: SessionItem) => jobsRef.current.enhance(item, { ...(jobsRef.current.jobs[item.jobId]?.options ?? optionsRef.current), llm: true }),
-    [],
+    (item: SessionItem) => requestItem(item, "enhance", () => jobsRef.current.enhance(item, { ...(jobsRef.current.jobs[item.jobId]?.options ?? optionsRef.current), llm: true })),
+    [requestItem],
   );
   const removeItem = useCallback(
     async (item: SessionItem) => {
-      const error = await jobsRef.current.remove(item);
+      const error = await requestItem(item, "delete", () => jobsRef.current.remove(item));
       if (error === null) void archive.refresh();
       return error;
     },
-    [archive.refresh],
+    [archive.refresh, requestItem],
   );
   const [retryingAll, setRetryingAll] = useState(false);
   const failed = useMemo(() => failedToRetry(jobs.items), [jobs.items]);
@@ -423,10 +434,13 @@ export function App() {
       // A saved job of several items joins the session ledger, so each of its
       // rows can be previewed, retried or deleted (an extension of the reference,
       // which previews only the first result).
-      if (snapshot.items.length > 1) {
+      if (snapshot.items.length > 1 || snapshot.items.some((item) => item.status === "error" || item.rerun_failure != null || (item.warnings?.length ?? 0) > 0)) {
         jobsRef.current.adopt(snapshot);
-        const first = snapshot.items.find((candidate) => candidate.status === "done" && candidate.output !== null && !candidate.skipped) ?? snapshot.items[0];
-        if (first) setFocusKey(`${snapshot.job_id}/${first.item_id}`);
+        const first = snapshot.items.find((candidate) => candidate.status === "error" || candidate.rerun_failure != null || (candidate.warnings?.length ?? 0) > 0) ?? snapshot.items.find((candidate) => candidate.status === "done" && candidate.output !== null && !candidate.skipped) ?? snapshot.items[0];
+        if (first) {
+          setFocusKey(`${snapshot.job_id}/${first.item_id}`);
+          showItemNotice(itemFromPayload(snapshot.job_id, first, Date.now()), from);
+        }
         announce(t.adoptedJob(snapshot.items.length));
         return;
       }
@@ -454,7 +468,7 @@ export function App() {
         createdAt: snapshot.created_at,
       });
     },
-    [archive.open, announce, t],
+    [archive.open, announce, t, showItemNotice],
   );
   const retryArchived = useCallback(
     async (jobId: string) => {
@@ -464,7 +478,7 @@ export function App() {
       if (!target) return t.noFailedItem;
       const base = publicOptions(snapshot.options);
       const error = await jobsRef.current.retryArchived(snapshot, target.item_id, target.skip_reason === "image_only" ? withOcrFor(base) : undefined);
-      if (error !== null) return describe(error).text;
+      if (error !== null) return error;
       setFocusKey(`${snapshot.job_id}/${target.item_id}`);
       announce(t.retryAria(target.name));
       return null;
@@ -478,7 +492,7 @@ export function App() {
       const target = snapshot.items.find((item) => item.retryable && item.status === "done" && item.output !== null && !item.skipped && !item.llm_enhanced);
       if (!target) return t.noEnhanceableItem;
       const error = await jobsRef.current.retryArchived(snapshot, target.item_id, { ...publicOptions(snapshot.options), llm: true }, "enhance");
-      if (error !== null) return describe(error).text;
+      if (error !== null) return error;
       setFocusKey(`${snapshot.job_id}/${target.item_id}`);
       announce(t.enhanceWithLlm(target.name));
       return null;
@@ -492,10 +506,6 @@ export function App() {
       return removed;
     },
     [archive.remove, announce, t],
-  );
-  const archiveRowErrors = useMemo(
-    () => Object.fromEntries(Object.entries(archive.rowErrors).map(([jobId, error]) => [jobId, describe(error).text])),
-    [archive.rowErrors, describe, locale],
   );
 
   const clearAll = () => {
@@ -636,7 +646,7 @@ export function App() {
         onSettings={() => (settingsOpen ? closeSettings() : openSettings())}
         gearRef={gear}
       />
-      {note && <Notification note={note} closeLabel={t.close} onClose={() => setNote(null)} />}
+      {note && <Notification replay={notification.sequence} note={note} closeLabel={t.close} detailsLabel={t.notificationDetails} warningsLabel={t.itemWarningsTitle} onClose={closeNote} />}
       {settingsOpen && <SettingsModal t={t} locale={locale} onClose={closeSettings} onSaved={refreshCaps} announce={announce} describe={describe} />}
       {preview && (
         <PreviewModal
@@ -717,7 +727,7 @@ export function App() {
                 // While the service is unreachable the offline line already says so.
                 error: archive.error && !(archive.error instanceof NetworkError) ? describe(archive.error).text : null,
                 busy: archive.actions,
-                rowErrors: archiveRowErrors,
+                rowErrors: archive.rowErrors,
                 onRefresh: () => void archive.refresh(),
                 onOpen: (jobId, from) => void openArchived(jobId, from),
                 onRetry: retryArchived,
@@ -738,6 +748,9 @@ export function App() {
               onDelete={removeItem}
               describe={describe}
               onDownloadError={downloadError}
+              requestFailures={requestFailures}
+              onItemNotice={showItemNotice}
+              onNotice={setNote}
             />
             <div class="zip-row">
               <ZipButton t={t} available={completedJobs > 0 && jobs.activeCount === 0} activeCount={jobs.activeCount} onError={downloadError} />

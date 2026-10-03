@@ -75,6 +75,9 @@ impl ListLevel {
 #[derive(Default)]
 pub struct OdfStyles<'a> {
     raw: HashMap<String, (&'a Element, Option<String>)>,
+    /// Only layers suppressed for both screen and print are omitted by
+    /// the new floating-sheet reader; other display modes retain figures.
+    hidden_layers: HashSet<String>,
     memo: RefCell<HashMap<String, StyleDelta>>,
     list_styles: HashMap<String, [ListLevel; LIST_LEVELS]>,
     /// `text:outline-style`: heading numbering per outline level.
@@ -189,6 +192,21 @@ impl<'a> OdfStyles<'a> {
                                 symbol_face(first_family(family)).or_else(|| symbol_face(name))
                             {
                                 self.symbol_faces.insert(name.to_string(), symbol);
+                            }
+                        }
+                    }
+                    continue;
+                }
+                // A sheet's named global layers live in master-styles.
+                // Page/master-page scoped declarations are not collected
+                // globally and cannot hide an unrelated sheet figure.
+                if section.is(ns::OFFICE, "master-styles") {
+                    for set in section.child_elems().filter(|e| e.is(ns::DRAW, "layer-set")) {
+                        for layer in set.child_elems().filter(|e| e.is(ns::DRAW, "layer")) {
+                            if layer.attr(ns::DRAW, "display") == Some("none")
+                                && let Some(name) = layer.attr(ns::DRAW, "name")
+                            {
+                                self.hidden_layers.insert(name.to_string());
                             }
                         }
                     }
@@ -460,6 +478,19 @@ impl<'a> OdfStyles<'a> {
             "true" => Some(false),
             _ => None,
         })
+    }
+
+    /// ODF draw:display applies to a named draw:layer, not graphic
+    /// properties. The DOM parser already bounds these declarations.
+    pub(super) fn drawing_hidden(&self, layer: &str) -> bool {
+        self.hidden_layers.contains(layer)
+    }
+
+    pub(super) fn table_hidden(&self, name: &str) -> bool {
+        self.nearest_in("table", name, "table-properties", |props| {
+            props.attr(ns::TABLE, "display").map(|v| matches!(v, "false" | "0"))
+        })
+        .unwrap_or(false)
     }
 
     /// The block container a paragraph style names, walking

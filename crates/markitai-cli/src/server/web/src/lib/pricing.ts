@@ -1,6 +1,11 @@
 // Model cost labels. A subtotal is only as complete as its request coverage:
 // a zero or rounded cost establishes nothing without `cost_status: complete`.
 import type { AttemptUsage, Pricing } from "../api/types.ts";
+import type { NotificationModel } from "../components/notification.tsx";
+import type { Dict, Locale } from "../i18n/index.ts";
+import { itemErrorText } from "../i18n/errors.ts";
+import { displayName } from "./format.ts";
+import { settledIdentity, type SessionItem } from "./session.ts";
 
 export interface PriceWords {
   complete: string;
@@ -116,4 +121,80 @@ export function attemptNotice<T = { text: string; detail: string }>(
   const error = failed && typeof attempt.error === "string" && attempt.error !== item.error ? describe(attempt.error) : null;
   const label = failed ? (cost ? fill(words.lastFailedCost, { cost }) : words.lastFailed) : cost ? fill(words.last, { cost }) : "";
   return { label, error };
+}
+
+export interface ActionProblem {
+  operation: "retry" | "enhance" | "delete" | "open";
+  text: string;
+  detail: string;
+}
+
+export interface ItemRequestFailure {
+  operation: "retry" | "enhance" | "delete";
+  error: unknown;
+  identity: string | null;
+}
+
+export function actionNotification(name: string, t: Dict, action: ActionProblem): NotificationModel {
+  const heading = action.operation === "retry" ? t.retryFailed : action.operation === "enhance" ? t.llmEnhanceFailed : action.operation === "delete" ? t.deleteFailed : t.jobLoadFailed;
+  return { tone: "error", title: `${displayName(name)} · ${heading}`, message: action.text,
+    ...(action.detail && action.detail.trim() !== action.text.trim() ? { detail: action.detail } : {}) };
+}
+
+/** A row's complete notice, apart from the optional OCR/plain-retry action.
+ * A retained output is still successful; its later attempt owns its failure and cost. */
+export function itemNotification(item: SessionItem, t: Dict, locale: Locale, action?: ActionProblem): NotificationModel | null {
+  const terminal = item.status === "done" || item.status === "error";
+  const retained = item.rerunFailure;
+  const failure = retained ?? (item.status === "error" ? { error: item.error, error_code: item.errorCode } : null);
+  const problem = failure ? itemErrorText(locale, { ...failure, kind: item.kind }) : null;
+  const last = item.diagnostics?.last_attempt;
+  const attempt = attemptNotice({ cost_usd: item.costUsd, error: item.error, diagnostics: item.diagnostics ?? undefined }, PRICE_WORDS[locale]);
+  const warnings = terminal ? [...item.warnings] : [];
+  const imageSkip = item.status === "done" && item.skipped && item.skipReason === "image_only";
+  const noModel = item.status === "error" && item.errorCode === "no_model_configured";
+  if (!action && !problem && !attempt?.label && !warnings.length && !imageSkip) return null;
+
+  const name = displayName(item.name);
+  const failedAttempt = last?.status === "error";
+  const actionTitle = action?.operation === "retry" ? t.retryFailed : action?.operation === "enhance" ? t.llmEnhanceFailed : action?.operation === "delete" ? t.deleteFailed : t.jobLoadFailed;
+  const heading = action ? actionTitle : retained ? t.rerunRetained(retained.operation) : noModel ? t.noModelTitle : imageSkip ? t.imageSkippedTitle : problem ? (problem.hint ? t.statusSkipped : t.statusFailed) : failedAttempt ? PRICE_WORDS[locale].lastFailed : `${t.statusDone} · ${t.itemWarningsTitle}`;
+  const message = action?.text || (noModel ? t.noModelMessage(name) : imageSkip ? t.imageSkipped(name) : problem?.text || (failedAttempt ? itemErrorText(locale, { error: last.error, kind: item.kind }).text : "")) || (warnings.length ? t.itemWarnings(warnings.length) : attempt?.label ? t.attemptUsageNotice : "") || t.statusFailed;
+  // Raw wording lives in the disclosure, once. Unknown errors already appear in full.
+  const raw = [action?.detail, failure?.error, item.error, failedAttempt ? last.error : null]
+    .filter((value): value is string => typeof value === "string" && value.trim() !== "" && value.trim() !== message.trim());
+  const detail = [...new Set(raw)].join("\n\n");
+  const lastCost = attempt?.label ? priceText(last?.usage?.cost_usd, attemptPricing(last?.usage), PRICE_WORDS[locale]) : "";
+  const previousWarnings = !!retained || item.status === "done" && (failedAttempt || !!action);
+  const warningsContext = previousWarnings && item.pricing?.cost_status !== "complete" ? priceText(item.costUsd, item.pricing, PRICE_WORDS[locale]) : "";
+  return {
+    tone: action || retained || (problem && !problem.hint && !noModel) || failedAttempt ? "error" : "warning",
+    title: `${name} · ${heading}`,
+    message,
+    ...(detail ? { detail } : {}),
+    ...(warnings.length ? { warnings, warningsTitle: previousWarnings ? t.previousResultWarnings : t.itemWarningsTitle, ...(warningsContext ? { warningsContext } : {}) } : {}),
+    ...(lastCost ? { cost: fill(PRICE_WORDS[locale].last, { cost: lastCost }) } : {}),
+  };
+}
+
+/** Only an observed row's transition is a new outcome. First loaded history is quiet. */
+export function terminalNotices(previous: ReadonlyMap<string, string | null>, items: SessionItem[]): { next: Map<string, string | null>; changed: SessionItem[] } {
+  const next = new Map<string, string | null>();
+  const changed: SessionItem[] = [];
+  for (const item of items) {
+    const identity = settledIdentity(item);
+    next.set(item.key, identity);
+    if (identity !== null && previous.has(item.key) && previous.get(item.key) !== identity) changed.push(item);
+  }
+  return { next, changed };
+}
+
+export interface NotificationState {
+  sequence: number;
+  note: NotificationModel | null;
+}
+
+/** Closing does not consume the sequence; every explicit replay remounts its live region. */
+export function publishNotice(previous: NotificationState, note: NotificationModel | null): NotificationState {
+  return { sequence: previous.sequence + (note === null ? 0 : 1), note };
 }

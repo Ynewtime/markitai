@@ -370,18 +370,38 @@ fn enhance_failure_restores_the_previous_pair_and_plain_retry_prunes_stale_varia
             .is_some_and(|count| count > 0)
     );
     assert!(failed["items"][0].get("diagnostics").is_none());
+    let outcome = failed["items"][0]["rerun_failure"].clone();
+    assert_eq!(outcome["operation"], "enhance");
+    assert_eq!(outcome["error_code"], "enhancement_failed");
+    assert_eq!(
+        outcome["error"],
+        "LLM enhancement did not produce an enhanced result"
+    );
+    chrono::DateTime::parse_from_rfc3339(outcome["failed_at"].as_str().unwrap()).unwrap();
+    let mut old_result = failed["items"][0].clone();
+    old_result.as_object_mut().unwrap().remove("rerun_failure");
     let mut retained = enhanced["items"][0].clone();
     retained.as_object_mut().unwrap().remove("diagnostics");
-    assert_eq!(failed["items"][0], retained);
+    assert_eq!(old_result, retained);
     assert_eq!(result(&server, id, "i1"), previous);
     assert_eq!(std::fs::read(out.join("document.txt.md")).unwrap(), base);
     assert_eq!(std::fs::read(out.join("document.txt.llm.md")).unwrap(), llm);
     assert_eq!(model.entered.load(Ordering::SeqCst), 2);
+    // The no-usage failure is durable even though the old successful output
+    // still owns this row's status, timing and price.
+    server.stop();
+    let server = Server::start(temp.path());
+    assert_eq!(
+        server.json(&format!("/api/jobs/{id}"))["items"][0],
+        failed["items"][0]
+    );
+    assert_eq!(result(&server, id, "i1"), previous);
     assert_eq!(
         retry(&server, id, "i1", Some(json!({"options":{"llm":false}}))).status,
         202
     );
     let plain = server.done(id);
+    assert!(plain["items"][0].get("rerun_failure").is_none());
     assert_eq!(plain["items"][0]["llm_enhanced"], false);
     assert!(
         result(&server, id, "i1")["markdown"]
@@ -442,7 +462,16 @@ fn queued_duplicate_retry_is_rejected_and_shutdown_restores_queued_prior_result(
     let server = Server::start(temp.path());
     let saved = server.json(&format!("/api/jobs/{id}"));
     assert_eq!(saved["items"][0]["llm_enhanced"], true);
-    assert_eq!(saved["items"][1], original["items"][1]);
+    let mut queued_result = saved["items"][1].clone();
+    let failure = queued_result
+        .as_object_mut()
+        .unwrap()
+        .remove("rerun_failure")
+        .unwrap();
+    assert_eq!(failure["operation"], "enhance");
+    assert_eq!(failure["error_code"], "shutdown");
+    assert_eq!(failure["error"], "cancelled (server shutdown)");
+    assert_eq!(queued_result, original["items"][1]);
     server.stop();
 }
 

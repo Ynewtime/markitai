@@ -288,7 +288,7 @@ mod tests {
     fn the_workbench_types_match_the_service_payloads() {
         use super::super::{
             jobs::JobData,
-            types::{Item, now},
+            types::{Item, RerunFailure, RerunOperation, now},
         };
         use crate::diagnostics::{AttemptDiagnostics, Operation};
         use serde_json::json;
@@ -309,6 +309,13 @@ mod tests {
         full.cost_usd = Some(0.5);
         full.pricing = crate::pricing::Pricing::from_usage(&usage);
         full.diagnostics = AttemptDiagnostics::failed(Operation::Retry, "later failure", usage);
+        let failure = RerunFailure::new(
+            RerunOperation::Retry,
+            "conversion_error",
+            "later failure".into(),
+        );
+        agree("RerunFailure", &json!(failure), &json!(failure));
+        full.rerun_failure = Some(failure);
         assert!(full.pricing.is_some() && full.diagnostics.is_some());
         agree("ItemPayload", &json!(full), &json!(minimal));
         let job = |items: Vec<Item>, persistence: Option<String>| JobData {

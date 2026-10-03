@@ -7,11 +7,26 @@ import type {
   ItemPayload,
   ItemStatus,
   JobOptions,
+  JobSnapshot,
   JobStatus,
   Pricing,
+  RerunFailure,
 } from "../api/types.ts";
 import { isUnsupported } from "../i18n/errors.ts";
 import { displayName, timestampMs } from "./format.ts";
+
+/** A terminal fetch can outlive its stream or a user's next attempt. */
+export async function settleCurrentJobSnapshot(
+  pending: Promise<JobSnapshot | null>,
+  current: () => boolean,
+  receive: (snapshot: JobSnapshot) => void,
+  complete: (snapshot: JobSnapshot) => void,
+): Promise<void> {
+  const snapshot = await pending;
+  if (!current() || snapshot === null) return;
+  receive(snapshot);
+  if (snapshot.status !== "running") complete(snapshot);
+}
 
 export interface SessionItem {
   /** `${jobId}/${itemId}` */
@@ -29,6 +44,7 @@ export interface SessionItem {
   costUsd: number | null;
   pricing: Pricing | null;
   diagnostics: AttemptDiagnostics | null;
+  rerunFailure: RerunFailure | null;
   llmEnhanced: boolean;
   operation: "convert" | "retry" | "enhance";
   skipped: boolean;
@@ -72,6 +88,7 @@ export function seedItem(jobId: string, seed: Seed): SessionItem {
     costUsd: null,
     pricing: null,
     diagnostics: null,
+    rerunFailure: null,
     llmEnhanced: false,
     operation: "convert",
     skipped: false,
@@ -100,6 +117,7 @@ export function mergeItem(previous: SessionItem, payload: ItemPayload, now: numb
     costUsd: payload.cost_usd,
     pricing: payload.pricing ?? null,
     diagnostics: payload.diagnostics ?? null,
+    rerunFailure: payload.rerun_failure ?? null,
     llmEnhanced: payload.llm_enhanced,
     operation: payload.operation,
     skipped: payload.skipped,
@@ -127,6 +145,7 @@ export function requeued(item: SessionItem, operation: "retry" | "enhance"): Ses
     costUsd: null,
     pricing: null,
     diagnostics: null,
+    rerunFailure: null,
     llmEnhanced: false,
     operation,
     skipped: false,
@@ -180,13 +199,16 @@ export function sessionStats(items: SessionItem[]): SessionStats {
 }
 
 export const isSettled = (item: SessionItem): boolean => item.status === "done" || item.status === "error";
+/** A reconnect can deliver a failed rerun directly as done → done. */
+export const settledIdentity = (item: SessionItem): string | null =>
+  isSettled(item) ? `${item.status}/${item.rerunFailure?.failed_at ?? item.finishedAt ?? ""}` : null;
 export const isActive = (item: SessionItem): boolean => item.status === "queued" || item.status === "running";
 export const isPreviewable = (item: SessionItem): boolean => item.status === "done" && item.output !== null && !item.skipped;
 
 /** Retry helps a failed or skipped row, unless the source is gone, a batch is
  * pending, or the file type is simply not supported. */
 export function canRetry(item: SessionItem): boolean {
-  const eligible = item.status === "error" || (item.status === "done" && item.skipped);
+  const eligible = item.status === "error" || (item.status === "done" && (item.skipped || item.rerunFailure !== null));
   return (
     eligible &&
     item.retryable &&

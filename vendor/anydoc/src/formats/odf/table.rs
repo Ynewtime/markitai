@@ -9,7 +9,7 @@
 //! charged against the fixed expansion budget.
 
 use crate::error::ConvertError;
-use crate::formats::odf::text::{Ctx, parse_container};
+use crate::formats::odf::text::{Ctx, parse_container, sheet_drawing};
 use crate::model::{Block, Cell, GridBuilder, Inline, TableKind};
 use crate::package::limits;
 use crate::package::xml::{Element, ns};
@@ -29,11 +29,19 @@ pub fn parse_table(elem: &Element, ctx: &Ctx) -> Result<Vec<Block>, ConvertError
     };
     walk_rows(elem, ctx, &mut state, true)?;
     let mut table = state.builder.finish(TableKind::Data);
-    if table.grid.is_empty() {
-        return Ok(Vec::new());
+    let mut blocks = Vec::new();
+    if !table.grid.is_empty() {
+        table.header_rows = resolve_header_rows(&table, state.header_rows);
+        blocks.push(Block::Table(table));
     }
-    table.header_rows = resolve_header_rows(&table, state.header_rows);
-    Ok(vec![Block::Table(table)])
+    // Floating figures belong to the table, not to a repeated cell. Read
+    // the direct shapes container once, after the data grid.
+    if !ctx.styles.table_hidden(elem.attr(ns::TABLE, "style-name").unwrap_or_default()) {
+        for shapes in elem.find_all(ns::TABLE, "shapes") {
+            blocks.extend(drawing_blocks(shapes, ctx)?);
+        }
+    }
+    Ok(blocks)
 }
 
 struct TableState {
@@ -467,16 +475,39 @@ pub fn parse_spreadsheet(sheet: &Element, ctx: &Ctx) -> Result<Vec<Block>, Conve
     let tables: Vec<&Element> = sheet.child_elems().filter(|e| e.is(ns::TABLE, "table")).collect();
     let multi_sheet = tables.len() > 1;
     let mut blocks = Vec::new();
-    for table in tables {
-        let name = table.attr(ns::TABLE, "name").unwrap_or("");
-        let content = parse_table(table, ctx)?;
-        if content.is_empty() {
-            continue;
+    for child in sheet.child_elems() {
+        if child.is(ns::TABLE, "table") {
+            let name = child.attr(ns::TABLE, "name").unwrap_or("");
+            let content = parse_table(child, ctx)?;
+            if content.is_empty() {
+                continue;
+            }
+            if multi_sheet {
+                blocks.push(Block::heading(2, vec![Inline::plain(name)]));
+            }
+            blocks.extend(content);
+        } else if child.ns.as_deref() == Some(ns::DRAW) {
+            // Deliberate compatibility for producers putting a drawing
+            // directly in office:spreadsheet. Standard table:shapes above
+            // remains associated with its actual sheet.
+            let mut inlines = Vec::new();
+            sheet_drawing(child, ctx, &mut inlines)?;
+            if !inlines.is_empty() {
+                blocks.push(Block::Paragraph(inlines));
+            }
         }
-        if multi_sheet {
-            blocks.push(Block::heading(2, vec![Inline::plain(name)]));
+    }
+    Ok(blocks)
+}
+
+fn drawing_blocks(parent: &Element, ctx: &Ctx) -> Result<Vec<Block>, ConvertError> {
+    let mut blocks = Vec::new();
+    for child in parent.child_elems() {
+        let mut inlines = Vec::new();
+        sheet_drawing(child, ctx, &mut inlines)?;
+        if !inlines.is_empty() {
+            blocks.push(Block::Paragraph(inlines));
         }
-        blocks.extend(content);
     }
     Ok(blocks)
 }
