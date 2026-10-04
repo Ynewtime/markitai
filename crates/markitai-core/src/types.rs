@@ -203,7 +203,7 @@ pub struct ConversionOutput {
 }
 
 impl ConversionOutput {
-    /// Text for subsequent enhancement, before output-only slide-marker removal.
+    /// Text for subsequent enhancement, before output-only page/slide-marker removal.
     /// Serialized results and published files always use the selected output form.
     pub fn enhancement_source(&self) -> &str {
         self.enhancement_source.as_deref().unwrap_or(&self.markdown)

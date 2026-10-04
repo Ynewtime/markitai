@@ -228,9 +228,7 @@ impl Session {
                 .and_then(Value::as_str)
                 .map(str::to_owned),
             wikilinks: config::enabled(cfg, "/output/wikilinks"),
-            slide_markers: cfg
-                .pointer("/output/slide_markers")
-                .and_then(Value::as_bool),
+            page_markers: cfg.pointer("/output/page_markers").and_then(Value::as_bool),
             mode,
             request: wire.payload(&self.entry, &prompts),
             cache_key: key,
@@ -269,8 +267,8 @@ pub struct Plan {
     profile: Option<String>,
     wikilinks: bool,
     // Missing in older saved plans means the historical enabled default.
-    #[serde(default)]
-    slide_markers: Option<bool>,
+    #[serde(default, alias = "slide_markers")]
+    page_markers: Option<bool>,
     mode: structured::Mode,
     request: Value,
     cache_key: String,
@@ -459,8 +457,8 @@ impl Plan {
                 .restore(&answer.markdown)
                 .expect("validated protected markers"),
         );
-        if self.slide_markers == Some(false) {
-            markdown = crate::output_profiles::remove_slide_markers(&markdown);
+        if self.page_markers == Some(false) {
+            markdown = crate::output_profiles::remove_page_markers(&markdown);
         }
         let mut metadata = self.metadata.clone();
         metadata.insert("description".into(), json!(answer.metadata.description));
@@ -557,9 +555,9 @@ mod tests {
         );
     }
     #[test]
-    fn frozen_slide_marker_preference_applies_only_after_restoring_literals() {
+    fn frozen_page_marker_preference_applies_only_after_restoring_literals() {
         let mut cfg = config();
-        cfg["output"] = json!({"slide_markers":false});
+        cfg["output"] = json!({"page_markers":false});
         let text = "<!-- Slide number: 1 -->\n# Title\n\n```html\n<!-- Slide number: 2 -->\n```\n";
         let original = plan(&cfg, text);
         assert_eq!(original.markdown, text);
@@ -567,8 +565,10 @@ mod tests {
         let mut saved = serde_json::to_value(&original).unwrap();
         let restored: Plan = serde_json::from_value(saved.clone()).unwrap();
         // Collection-time settings must not change the frozen output preference.
+        let mut collect = config();
+        collect["output"] = json!({"page_markers":true});
         let decoded = restored
-            .decode(&response(&restored, &protected.text), &config())
+            .decode(&response(&restored, &protected.text), &collect)
             .unwrap();
         assert!(!decoded.markdown.contains("<!-- Slide number: 1 -->"));
         assert!(
@@ -576,7 +576,20 @@ mod tests {
                 .markdown
                 .contains("```html\n<!-- Slide number: 2 -->\n```")
         );
-        saved.as_object_mut().unwrap().remove("slide_markers");
+        // A plan saved under the earlier development name keeps its choice.
+        let mut renamed = saved.clone();
+        let choice = renamed
+            .as_object_mut()
+            .unwrap()
+            .remove("page_markers")
+            .unwrap();
+        renamed["slide_markers"] = choice;
+        let renamed: Plan = serde_json::from_value(renamed).unwrap();
+        let decoded = renamed
+            .decode(&response(&renamed, &protected.text), &collect)
+            .unwrap();
+        assert!(!decoded.markdown.contains("<!-- Slide number: 1 -->"));
+        saved.as_object_mut().unwrap().remove("page_markers");
         let legacy: Plan = serde_json::from_value(saved).unwrap();
         let decoded = legacy
             .decode(&response(&legacy, &protected.text), &cfg)

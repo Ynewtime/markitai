@@ -564,50 +564,59 @@ fn cache_statistics_use_readable_counts_and_sizes() {
 }
 
 #[test]
-fn slide_markers_follow_config_and_last_explicit_flag_on_presentations() {
+fn page_markers_follow_config_and_last_explicit_flag_on_pdfs_and_presentations() {
     let root = tempfile::tempdir().unwrap();
     std::fs::write(
         root.path().join("slides.ppt"),
         include_bytes!("../../markitai-core/tests/fixtures/legacy-ppt/embedded-objects.ppt"),
     )
     .unwrap();
+    std::fs::write(
+        root.path().join("pages.pdf"),
+        include_bytes!("../../markitai-core/src/formats/pdf/fixtures/sanitize/policy-text.pdf"),
+    )
+    .unwrap();
     let isolated = root.path().to_str().unwrap();
     for (configured, flags, expected) in [
-        (None, vec![], true),
-        (Some(false), vec![], false),
-        (Some(false), vec!["--slide-markers"], true),
-        (Some(true), vec!["--no-slide-markers"], false),
+        (None, vec![], false),
+        (Some(true), vec![], true),
+        (Some(false), vec!["--page-markers"], true),
+        (Some(true), vec!["--no-page-markers"], false),
         (
             Some(false),
-            vec!["--no-slide-markers", "--slide-markers"],
+            vec!["--no-page-markers", "--page-markers"],
             true,
         ),
         (
             Some(true),
-            vec!["--slide-markers", "--no-slide-markers"],
+            vec!["--page-markers", "--no-page-markers"],
             false,
         ),
     ] {
         let mut cfg = json!({"cache":{"enabled":false}});
         if let Some(enabled) = configured {
-            cfg["output"] = json!({"slide_markers":enabled});
+            cfg["output"] = json!({"page_markers":enabled});
         }
         std::fs::write(root.path().join("markitai.json"), cfg.to_string()).unwrap();
-        let mut args = vec!["slides.ppt", "--no-llm", "--no-screenshot"];
-        args.extend(flags);
-        let output = invoke_env(
-            root.path(),
-            &args,
-            &[("HOME", isolated), ("USERPROFILE", isolated)],
-        );
-        assert!(output.status.success(), "{}", stderr(&output));
-        let markdown = stdout(&output);
-        assert_eq!(
-            markdown.contains("<!-- Slide number:"),
-            expected,
-            "{args:?}"
-        );
-        assert!(markdown.contains("## Revenue"));
-        assert!(markdown.contains("| Q1 | 4.5 | 3.25 |"));
+        for (input, marker) in [
+            ("slides.ppt", "<!-- Slide number:"),
+            ("pages.pdf", "<!-- Page number:"),
+        ] {
+            let mut args = vec![input, "--no-llm", "--no-screenshot"];
+            args.extend(flags.iter().copied());
+            let output = invoke_env(
+                root.path(),
+                &args,
+                &[("HOME", isolated), ("USERPROFILE", isolated)],
+            );
+            assert!(output.status.success(), "{}", stderr(&output));
+            let markdown = stdout(&output);
+            assert_eq!(markdown.contains(marker), expected, "{args:?}");
+            assert!(!markdown.starts_with('\n'), "{args:?}: {markdown}");
+            if input == "slides.ppt" {
+                assert!(markdown.contains("## Revenue"));
+                assert!(markdown.contains("| Q1 | 4.5 | 3.25 |"));
+            }
+        }
     }
 }

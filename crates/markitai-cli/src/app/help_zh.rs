@@ -414,8 +414,8 @@ const ARGUMENTS: &[(&str, &str, &str)] = &[
     ),
     (
         ROOT,
-        "slide_markers",
-        "保留幻灯片编号注释（--no-slide-markers 关闭）",
+        "page_markers",
+        "在最终 Markdown 中保留 PDF 页码和幻灯片编号注释（默认关闭）",
     ),
     (
         ROOT,

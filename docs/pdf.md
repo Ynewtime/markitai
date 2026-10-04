@@ -3,6 +3,8 @@
 The PDF reader uses `pdf-inspector` for decoding and page-level reliability
 decisions, with `lopdf` for bounded content inspection and embedded images.
 There is no Python runtime, external converter or implicit OCR fallback.
+Pages are delimited internally by `<!-- Page number: N -->`; final Markdown omits
+these comments unless `--page-markers` (`output.page_markers=true`) keeps them.
 
 ## Hidden text policy
 
@@ -75,7 +77,7 @@ inspection does not enter refinement. Text size for the hidden-text check is the
 size after the text matrix, transformation and Form matrices: Quartz writes
 `1 Tf` and scales with the text matrix, which is ordinary 12pt text. The existing narrowly guarded font-decoded recovery
 for a false scan verdict remains in place. A missing or unreadable page keeps
-its page marker and an explicit warning.
+its place, with an explicit warning (and its page marker under `--page-markers`).
 
 The pinned dependency has a small, tracked policy patch under
 `vendor/pdf-inspector`. Its original license, bundled character-map license and

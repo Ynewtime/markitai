@@ -11,7 +11,8 @@ fn source(dir: &Path) -> PathBuf {
 }
 
 fn cfg() -> Value {
-    json!({"cache":{"enabled":false},"history":{"record":false},"llm":{"enabled":false},"image":{"alt_enabled":false,"desc_enabled":false}})
+    // Page-order assertions read the optional page comments.
+    json!({"output":{"page_markers":true},"cache":{"enabled":false},"history":{"record":false},"llm":{"enabled":false},"image":{"alt_enabled":false,"desc_enabled":false}})
 }
 
 fn run(
@@ -101,7 +102,7 @@ fn pdf_capture_publishes_final_names_and_reuses_identical_bytes() {
     let mut config = cfg();
     config["screenshot"] = json!({"enabled":true,"screenshot_only":true});
     config["image"]["format"] = json!("png");
-    config["output"] = json!({"on_conflict":"overwrite"});
+    config["output"]["on_conflict"] = json!("overwrite");
     let output = dir.path().join("output");
     let captures = output.join(".markitai/screenshots");
     std::fs::create_dir_all(&captures).unwrap();

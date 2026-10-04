@@ -223,7 +223,9 @@ impl Drop for Server {
 }
 
 fn cfg() -> Value {
+    // Page-order assertions read the optional page comments.
     json!({
+        "output":{"page_markers":true},
         "cache":{"enabled":false,"global_dir":std::env::current_dir().unwrap().join("cache")},
         "history":{"record":false},"fetch":{"strategy":"static","no_remote":true},
         "llm":{"enabled":false},"ocr":{"enabled":false},
@@ -347,7 +349,7 @@ fn url_pdf_auto_extensionless_capture_retains_body_and_published_names() {
     let mut config = cfg();
     config["fetch"]["strategy"] = json!("auto");
     config["screenshot"] = json!({"enabled":true,"screenshot_only":true});
-    config["output"] = json!({"filename":"Report.md"});
+    config["output"]["filename"] = json!("Report.md");
     let output = PathBuf::from("output");
     let directory = output.join(".markitai/screenshots");
     std::fs::create_dir_all(&directory).unwrap();
@@ -589,7 +591,7 @@ fn url_pdf_rag_profile_keeps_page_captures_and_relocates_embedded_assets() {
     let server = Server::new(vec![Reply::pdf()]);
     let mut config = cfg();
     config["screenshot"] = json!({"enabled":true,"screenshot_only":true});
-    config["output"] = json!({"profile":"rag"});
+    config["output"]["profile"] = json!("rag");
     let output = PathBuf::from("output");
     let result = run(&server.url("/report"), config, Some(output.clone())).unwrap();
     assert!(result.markdown.contains("NATIVE PAGE ONE"));

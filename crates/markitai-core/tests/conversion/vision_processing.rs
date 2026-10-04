@@ -161,7 +161,8 @@ pub(super) fn typed(body: &str, description: &str) -> Value {
     reply(&json!({"cleaned_markdown":body,"frontmatter":{"description":description,"tags":["'two words'","lang:rust"],"title":"Forbidden replacement","source":"wrong"}}).to_string())
 }
 pub(super) fn cfg(server: &Server, root: &Path) -> Value {
-    json!({"prompts":{"dir":root.join("prompts")},"ocr":{"enabled":false},"cache":{"enabled":false,"global_dir":root.join("cache")},"fetch":{"strategy":"static"},"image":{"compress":false,"filter":{"min_width":0,"min_height":0,"min_area":0},"alt_enabled":false,"desc_enabled":false},"llm":{"enabled":true,"on_failure":"fallback","keep_base":true,"concurrency":3,"router_settings":{"timeout":10,"num_retries":0},"model_list":[{"model_name":"default","litellm_params":{"model":"openai/fixture","api_key":"local-fixture","api_base":server.base}}]}})
+    // Page-order assertions read the optional page comments.
+    json!({"output":{"page_markers":true},"prompts":{"dir":root.join("prompts")},"ocr":{"enabled":false},"cache":{"enabled":false,"global_dir":root.join("cache")},"fetch":{"strategy":"static"},"image":{"compress":false,"filter":{"min_width":0,"min_height":0,"min_area":0},"alt_enabled":false,"desc_enabled":false},"llm":{"enabled":true,"on_failure":"fallback","keep_base":true,"concurrency":3,"router_settings":{"timeout":10,"num_retries":0},"model_list":[{"model_name":"default","litellm_params":{"model":"openai/fixture","api_key":"local-fixture","api_base":server.base}}]}})
 }
 fn options_cfg(config: Value) -> ConvertOptions {
     ConvertOptions {

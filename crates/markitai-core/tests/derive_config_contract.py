@@ -45,10 +45,10 @@ def main() -> None:
             return [facts(item) for item in value]
         return value
 
-    # Rust-only presentation output preference; the reference remains read-only.
-    schema["$defs"]["OutputConfig"]["properties"]["slide_markers"] = {"default": True, "type": "boolean"}
+    # Rust-only page/slide marker preference; the reference remains read-only.
+    schema["$defs"]["OutputConfig"]["properties"]["page_markers"] = {"default": False, "type": "boolean"}
     defaults = reference.MarkitaiConfig().model_dump(mode="json")
-    defaults["output"]["slide_markers"] = True
+    defaults["output"]["page_markers"] = False
 
     root = Path(__file__).resolve().parents[1]
     expected = {

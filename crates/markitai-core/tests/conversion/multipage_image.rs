@@ -92,7 +92,8 @@ fn colors() -> Vec<(RgbImage, u16)> {
     ]
 }
 fn cfg(directory: &Path) -> Value {
-    json!({"cache":{"enabled":false},"history":{"record":false},"prompts":{"dir":directory.join("prompts")},"log":{"dir":null},
+    // Page-order assertions read the optional page comments.
+    json!({"output":{"page_markers":true},"cache":{"enabled":false},"history":{"record":false},"prompts":{"dir":directory.join("prompts")},"log":{"dir":null},
         "ocr":{"enabled":false},"image":{"compress":false,"alt_enabled":false,"desc_enabled":false},"llm":{"enabled":false}})
 }
 fn model(config: &mut Value, base: &str) {

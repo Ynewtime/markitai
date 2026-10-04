@@ -37,10 +37,12 @@ markers are restored before final output; pure and visual requests retain their
 separate request contracts. See [document processing](llm.md).
 Profiles run after enhancement on both outputs so restored page markers and
 image references receive the same transformations as reader-produced content.
-After profiles, `output.slide_markers=false` (`--no-slide-markers`) removes
-standalone slide-number comments from base and enhanced output, including pure
-output. YAML and literal code examples are preserved; PDF page comments are
-unaffected. The `rag` profile independently removes comments as before.
+After profiles, standalone `<!-- Page number: N -->` (PDF, multi-page TIFF) and
+`<!-- Slide number: N -->` (PPTX, PPT, ODP) comments are removed from base and
+enhanced output, including pure output, together with the blank lines that only
+separated them. Set `output.page_markers=true` (`--page-markers`) to keep them.
+YAML and literal code examples are preserved. The `rag` profile turns page
+comments into its own `<!-- page: N -->` provenance first, so RAG output keeps it.
 
 ## Names from URLs
 

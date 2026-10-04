@@ -50,7 +50,8 @@ bounded in-process SVG rasterizer. JPEG, PNG, GIF, BMP, TIFF and WebP use the
 enabled Rust decoders; animation uses its first image. HEIF and AVIF are decoded
 by macOS ImageIO ([images](images.md#heif-and-avif)), and the primary image is
 recognized. A multi-page TIFF is recognized page by page: each page keeps its
-`<!-- Page number: N -->` marker and preview, followed by its text, and a page
+`<!-- Page number: N -->` marker (kept with `--page-markers`) and preview,
+followed by its text, and a page
 without text adds a warning instead of ending the conversion.
 
 ## Code and machine-readable text

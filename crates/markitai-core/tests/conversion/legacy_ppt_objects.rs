@@ -59,6 +59,7 @@ fn legacy_ppt_embedded_charts_and_worksheets_read_as_tables() {
         ConvertOptions {
             config: Some(json!({
                 "llm":{"enabled":false,"pure":true},"ocr":{"enabled":false},
+                "output":{"page_markers":true},
                 "cache":{"enabled":false},"history":{"record":false}
             })),
             ..Default::default()

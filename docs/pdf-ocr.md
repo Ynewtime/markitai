@@ -34,7 +34,8 @@ recognized; their text follows the corresponding image reference. Shared images
 are recognized once. Unreadable pictures or a missing backend keep the native
 page and reference with a warning; invalid configuration or an unsupported
 language on an available backend fails explicitly. Page OCR failure fails the document. Successful blank OCR keeps the
-page marker and emits a notice without fabricated body text.
+page in place (with its marker under `--page-markers`) and emits a notice
+without fabricated body text.
 
 OCR plus LLM normally renders every page, including reliable native pages,
 independently of `screenshot.enabled`. The local routing setting does not select
@@ -87,7 +88,7 @@ Names start as `<output-stem>.page0001.<extension>`, including CLI-reserved
 document rename suffixes. Direct core calls without a reserved stem may reuse
 identical earlier captures while renaming their Markdown output. The output
 layer chooses a safe final name before assembly
-adds a reference after that page's content:
+adds a reference after that page's content (shown with `--page-markers`):
 
 ```markdown
 <!-- Page number: 1 -->
@@ -119,7 +120,7 @@ These are different policies; neither guarantees that every script in a mixed
 page will be recognized. Select an explicit supported language when needed.
 
 A successful recognition that leaves unread text can warn while retaining its
-confident lines. A blank page retains its page marker without invented text;
+confident lines. A blank page keeps its place (its marker under `--page-markers`) without invented text;
 embedded pictures without text do not need a warning. Recognition errors and
 language availability follow the page and picture failure rules above.
 

@@ -22,7 +22,7 @@
 
 ### 变更
 
-- 支持通过 `output.slide_markers` 和 `--no-slide-markers` 关闭最终输出中的幻灯片编号注释，保留内部页面对齐和代码示例。
+- 最终 Markdown 默认不再包含 PDF 页码和幻灯片编号注释；可通过 `output.page_markers` 或 `--page-markers` 保留。内部页面对齐、RAG 页码溯源和代码示例不受影响。
 - 清除仓库文档和来源记录中的个人机器路径，并加入检查，防止提交私有路径及常见凭据格式。
 
 - 最低 Rust 版本提高至 1.92；更新兼容依赖，保留现有 Node API 级别。

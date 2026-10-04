@@ -36,11 +36,12 @@ response once, regardless of how many references use its caption.
 
 A standalone image uses structured analysis directly, avoiding a redundant
 ordinary document-model call. Its enhanced document has one title, the retained
-image preview, a description, and visible transcribed text. Extracted text uses a
-fence longer than any backtick run in the text. Multipage TIFF previews are sent
-in page order in one request; the original TIFF download link, every preview and
-page marker remain. The shared description/transcription covers that complete
-request; it is not a collection of independently verified page transcripts.
+image preview, a description, and visible transcribed text. Extracted text uses
+a fence longer than any backtick run in the text. Multipage TIFF previews are
+sent in page order in one request; the original TIFF download link and every
+preview remain, with page markers when `--page-markers` keeps them. The shared
+description/transcription covers that complete request; it is not a collection
+of independently verified page transcripts.
 
 ## Pure mode and failures
 

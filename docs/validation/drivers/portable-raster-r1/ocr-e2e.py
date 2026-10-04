@@ -59,7 +59,7 @@ def convert(binary, pdf, run, mode, lang, home, sandboxed=True):
               'screenshot': {'enabled': False, 'screenshot_only': False},
               'image': {'alt_enabled': False, 'desc_enabled': False},
               'cache': {'enabled': False, 'global_dir': str(run / 'state/cache')},
-              'history': {'record': False}, 'output': {'report': False, 'on_conflict': 'overwrite'}}
+              'history': {'record': False}, 'output': {'report': False, 'on_conflict': 'overwrite', 'page_markers': True}}
     (run / 'config.json').write_text(json.dumps(config))
     local = run / pdf.name
     shutil.copy2(pdf, local)

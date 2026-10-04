@@ -235,7 +235,9 @@ impl Drop for Server {
 }
 
 fn cfg(server: &Server) -> Value {
+    // Page-order assertions read the optional page comments.
     json!({
+        "output":{"page_markers":true},
         "cache":{"enabled":false,"global_dir":std::env::current_dir().unwrap().join("cache")},
         "history":{"record":false},"fetch":{"strategy":"static","no_remote":true},
         "ocr":{"enabled":false},"screenshot":{"enabled":false},
@@ -737,7 +739,7 @@ fn real_eml_cid_references_reach_alt_description_and_published_metadata_in_both_
         let server = Server::new(vec![Reply::echo(), analysis()]);
         let mut config = cfg(&server);
         if let Some(profile) = profile {
-            config["output"] = json!({"profile":profile});
+            config["output"]["profile"] = json!(profile);
         }
         let output = run(
             source.to_str().unwrap(),

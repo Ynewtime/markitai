@@ -25,19 +25,27 @@ pub(crate) fn apply(markdown: &mut String, metadata: &mut Map<String, Value>, cf
     }
 }
 
-/// Remove only standalone slide-number comments, preserving literal examples,
-/// unrelated comments and all document content. Run after LLM page alignment.
-pub(crate) fn remove_slide_markers(source: &str) -> String {
+/// Remove only standalone PDF page and slide-number comments, preserving
+/// literal examples, unrelated comments and all document content, along with
+/// the blank lines that only separated a removed marker. Run after LLM page
+/// alignment and profiles (RAG has already rewritten its page provenance).
+pub(crate) fn remove_page_markers(source: &str) -> String {
     let mut output = String::with_capacity(source.len());
     let mut context = LiteralContext::default();
     let (_, body) = crate::output::split_frontmatter(source);
     let mut cursor = source.len() - body.len();
     output.push_str(&source[..cursor]);
+    let start = output.len();
+    let at_break = |output: &str| {
+        output.len() == start || output.ends_with("\n\n") || output.ends_with("\n\r\n")
+    };
+    let (mut removed, mut skip_blank) = (false, false);
     while let Some((line, literal)) = next_content(source, &mut cursor, &mut context) {
         let marker = !literal
             && line
                 .trim()
                 .strip_prefix("<!-- Slide number:")
+                .or_else(|| line.trim().strip_prefix("<!-- Page number:"))
                 .and_then(|rest| rest.strip_suffix("-->"))
                 .map(str::trim)
                 .is_some_and(|number| {
@@ -45,8 +53,24 @@ pub(crate) fn remove_slide_markers(source: &str) -> String {
                         && number.bytes().all(|byte| byte.is_ascii_digit())
                         && number.bytes().any(|byte| byte != b'0')
                 });
-        if !marker {
+        if marker {
+            removed = true;
+            skip_blank = at_break(&output);
+        } else if !(skip_blank && !literal && line.trim().is_empty()) {
+            skip_blank = false;
             output.push_str(line);
+        }
+    }
+    if removed && output.len() > start {
+        let kept = output.trim_end().len().max(start);
+        let newline = if output[kept..].contains("\r\n") {
+            "\r\n"
+        } else {
+            "\n"
+        };
+        if output.len() > kept && kept > start {
+            output.truncate(kept);
+            output.push_str(newline);
         }
     }
     output
@@ -2199,21 +2223,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn slide_markers_are_optional_without_erasing_literal_examples_or_other_comments() {
-        let literals = "```html\n<!-- Slide number: 8 -->\n```\n\n    <!-- Slide number: 9 -->\n\n`example\n<!-- Slide number: 10 -->\nend`\n\n<pre>\n<!-- Slide number: 11 -->\n</pre>\n\n<!-- Page number: 1 -->\n<!-- Hidden slide -->\n<!-- Slide number: not-a-number -->\n<!-- Slide number: 0 -->\n<!-- Slide number: 12 --> trailing text\n";
+    fn page_markers_are_optional_without_erasing_literal_examples_or_other_comments() {
+        let literals = "```html\n<!-- Slide number: 8 -->\n<!-- Page number: 8 -->\n```\n\n    <!-- Slide number: 9 -->\n\n`example\n<!-- Page number: 10 -->\nend`\n\n<pre>\n<!-- Slide number: 11 -->\n</pre>\n\n<!-- Hidden slide -->\n<!-- Page number: not-a-number -->\n<!-- Slide number: 0 -->\n<!-- Slide number: 12 --> trailing text\n";
         let source = format!(
             "<!-- Slide number: 1 -->\n# Title\n\n<!-- Slide number: 2 -->\n\n{literals}<!-- Slide number: 3 -->"
         );
-        let expected = format!("# Title\n\n\n{literals}");
-        assert_eq!(remove_slide_markers(&source), expected);
-        assert_eq!(remove_slide_markers(&expected), expected);
+        let expected = format!("# Title\n\n{literals}");
+        assert_eq!(remove_page_markers(&source), expected);
+        assert_eq!(remove_page_markers(&expected), expected);
+        // PDF pages: no blank-line residue at the start, between pages or at the end.
         assert_eq!(
-            remove_slide_markers("<!-- Slide number: 1 -->\r\nBody\r\n"),
+            remove_page_markers(
+                "<!-- Page number: 1 -->\n\nFirst\n\n<!-- Page number: 2 -->\n\n<!-- Page number: 3 -->\n\nLast\n\n<!-- Page number: 4 -->\n"
+            ),
+            "First\n\nLast\n"
+        );
+        assert_eq!(
+            remove_page_markers("Text without markers\n\n\n"),
+            "Text without markers\n\n\n"
+        );
+        assert_eq!(
+            remove_page_markers(
+                "<!-- Slide number: 1 -->\r\n\r\nBody\r\n\r\n<!-- Page number: 2 -->\r\n"
+            ),
             "Body\r\n"
         );
         let yaml = "---\ntitle: |\n  <!-- Slide number: 1 -->\n---\n";
         assert_eq!(
-            remove_slide_markers(&format!("{yaml}<!-- Slide number: 2 -->\nBody")),
+            remove_page_markers(&format!("{yaml}<!-- Page number: 2 -->\n\nBody")),
             format!("{yaml}Body")
         );
     }

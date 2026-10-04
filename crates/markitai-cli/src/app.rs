@@ -148,12 +148,12 @@ struct Cli {
     #[arg(long, help_heading = OUTPUT_HELP)]
     /// Preview discovery without conversion or output publication.
     dry_run: bool,
-    #[arg(long, overrides_with = "no_slide_markers", help_heading = OUTPUT_HELP)]
-    /// Keep slide-number comments (--no-slide-markers disables).
-    slide_markers: bool,
-    #[arg(long, overrides_with = "slide_markers", hide = true)]
-    /// Omit slide-number comments from final Markdown.
-    no_slide_markers: bool,
+    #[arg(long, overrides_with = "no_page_markers", help_heading = OUTPUT_HELP)]
+    /// Keep PDF page and slide-number comments in final Markdown (off by default).
+    page_markers: bool,
+    #[arg(long, overrides_with = "page_markers", hide = true)]
+    /// Omit PDF page and slide-number comments from final Markdown.
+    no_page_markers: bool,
     #[arg(long, overrides_with = "no_record_history", help_heading = OUTPUT_HELP)]
     /// Archive this run for `markitai serve` history (--no-record-history disables); stdout-only conversions are not archived.
     record_history: bool,
@@ -888,8 +888,8 @@ fn conversion_config(cli: &Cli, overrides: Option<Value>) -> CliResult<Value> {
         ("llm", "pure", tri(cli.pure, cli.no_pure)),
         (
             "output",
-            "slide_markers",
-            tri(cli.slide_markers, cli.no_slide_markers),
+            "page_markers",
+            tri(cli.page_markers, cli.no_page_markers),
         ),
     ] {
         if let Some(value) = value {

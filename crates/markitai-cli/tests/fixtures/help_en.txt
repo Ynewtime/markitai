@@ -27,8 +27,8 @@ Output:
           Print one JSON result on stdout; requires -o. Usage errors remain on stderr
       --dry-run
           Preview discovery without conversion or output publication
-      --slide-markers
-          Keep slide-number comments (--no-slide-markers disables)
+      --page-markers
+          Keep PDF page and slide-number comments in final Markdown (off by default)
       --record-history
           Archive this run for `markitai serve` history (--no-record-history disables); stdout-only
           conversions are not archived
@@ -167,8 +167,8 @@ Output:
           Print one JSON result on stdout; requires -o. Usage errors remain on stderr
       --dry-run
           Preview discovery without conversion or output publication
-      --slide-markers
-          Keep slide-number comments (--no-slide-markers disables)
+      --page-markers
+          Keep PDF page and slide-number comments in final Markdown (off by default)
       --record-history
           Archive this run for `markitai serve` history (--no-record-history disables); stdout-only
           conversions are not archived
@@ -1320,8 +1320,8 @@ Output:
           Print one JSON result on stdout; requires -o. Usage errors remain on stderr
       --dry-run
           Preview discovery without conversion or output publication
-      --slide-markers
-          Keep slide-number comments (--no-slide-markers disables)
+      --page-markers
+          Keep PDF page and slide-number comments in final Markdown (off by default)
       --record-history
           Archive this run for `markitai serve` history (--no-record-history disables); stdout-only
           conversions are not archived
@@ -1462,8 +1462,8 @@ Output:
           Print one JSON result on stdout; requires -o. Usage errors remain on stderr
       --dry-run
           Preview discovery without conversion or output publication
-      --slide-markers
-          Keep slide-number comments (--no-slide-markers disables)
+      --page-markers
+          Keep PDF page and slide-number comments in final Markdown (off by default)
       --record-history
           Archive this run for `markitai serve` history (--no-record-history disables); stdout-only
           conversions are not archived

@@ -82,11 +82,12 @@ page's EXIF orientation. Grayscale, RGB, RGBA and CMYK use the existing native
 TIFF/image codecs; unsupported sample layouts or compression methods fail
 explicitly. Additional TIFF SubIFD thumbnails are not extra document pages.
 
-A multi-page document contains an original TIFF download link, then a page marker
-and preview for every page. The original bytes are retained even when compression
-is enabled. Page previews use the configured encoder, or lossless PNG at original
-upright dimensions when compression is disabled. MIME types describe the encoded
-bytes. Single-page TIFF retains its existing one-preview output.
+A multi-page document contains an original TIFF download link, then a preview
+for every page, each after a page marker when `--page-markers` keeps them. The
+original bytes are retained even when compression is enabled. Page previews use
+the configured encoder, or lossless PNG at original upright dimensions when
+compression is disabled. MIME types describe the encoded bytes. Single-page TIFF
+retains its existing one-preview output.
 
 Local OCR recognizes each upright page before advancing to the next page. It
 receives original-resolution RGB pixels composited over white, independently of

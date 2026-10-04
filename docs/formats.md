@@ -367,13 +367,14 @@ picture placement are not reconstructed.
 OOXML presentations have a separate reader because the generic document model
 flattens slide boundaries. The package's presentation relationships and
 `sldIdLst` determine slide order, including empty slides; filename sorting and
-heading counts do not determine boundaries. By default, every slide receives
-`<!-- Slide number: N -->`. Disable these comments with `--no-slide-markers` or
-`"output": {"slide_markers": false}` in the configuration file; `--slide-markers`
-overrides that setting for one run. The setting applies to PPTX, PPT and ODP,
-including base and enhanced output, files and stdout. It leaves literal code
-examples intact; internal boundaries remain available for LLM page alignment.
-For example: `markitai slides.ppt --no-slide-markers -o out/`.
+heading counts do not determine boundaries. Each slide internally starts with
+`<!-- Slide number: N -->`; final Markdown omits these comments by default.
+Keep them with `--page-markers` or `"output": {"page_markers": true}` in the
+configuration file; `--no-page-markers` overrides that setting for one run. The
+setting applies to PPTX, PPT and ODP slides and to PDF and multi-page TIFF page
+comments, including base and enhanced output, files and stdout. It leaves
+literal code examples intact; internal boundaries remain available for LLM page
+alignment. For example: `markitai slides.ppt --page-markers -o out/`.
 
 Shapes are stably ordered by their effective top/left
 coordinates, with layout/master placeholder coordinates used when missing.
@@ -412,7 +413,7 @@ close it under `### Comments:`, one item per comment or reply, `Author: text`
 on one line: legacy comments (`p:cmLst`, authors from `commentAuthors.xml`) and
 Microsoft 365 threads (`modernComment_*.xml`, authors from `authors.xml`). A
 slide hidden from the slide show (`show="0"`) keeps its content, with
-`<!-- Hidden slide -->` after its slide marker. A SmartArt diagram reads as the
+`<!-- Hidden slide -->` where its slide begins. A SmartArt diagram reads as the
 text points of its data part (`dgm:relIds/@r:dm`) as a bullet list in the order
 the part lists them, as the Word reader reads one; its hierarchy and layout are
 not kept, and a diagram whose data part is missing or holds no text keeps the
@@ -424,7 +425,7 @@ not imply complete drawing or chart-type support.
 
 The vendored anydoc records where each slide of an ODP or a legacy PPT begins
 (`slide_starts`, see its `MARKITAI-PATCH.md`), and the renderer writes the same
-optional `<!-- Slide number: N -->` line before each slide, blank slides included, with a
+optional `<!-- Slide number: N -->` line (`--page-markers`) before each slide, blank slides included, with a
 blank line between slides. This differs from the reference, whose legacy PPT
 output has no slide markers and which does not read ODP. In these formats a
 slide's speaker notes keep their place after it as a quote. An ODP table styled

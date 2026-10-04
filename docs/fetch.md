@@ -542,7 +542,8 @@ is removed and the content kept. Of the properties, `Title` becomes `title`
 (`2017-08-16T14:42:28+02:00`), the names the native readers use; the others
 describe the file and are dropped. `### Page N` headings, numbered from 1 in
 order, become the native PDF reader's page markers, `<!-- Page number: N -->`
-followed by a blank line and the page's text, and their count is `pages`: a page
+followed by a blank line and the page's text (final Markdown keeps the markers
+only with `--page-markers`), and their count is `pages`: a page
 is not a section of the document, so it is no heading (it would otherwise be
 taken for the title and misplace the document's own headings), and a PDF then
 splits by page alike with `-b native` and `-b cloudflare`. A heading that is not

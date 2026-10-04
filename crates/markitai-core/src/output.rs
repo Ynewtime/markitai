@@ -354,19 +354,16 @@ pub(crate) fn apply_profiles(result: &mut ConversionOutput, cfg: &Value) {
         }
     }
     // Keep boundaries throughout extraction and enhancement (including cached
-    // results and screenshot alignment). This is a final-output preference.
-    if cfg
-        .pointer("/output/slide_markers")
-        .and_then(Value::as_bool)
-        == Some(false)
-    {
-        let filtered = crate::output_profiles::remove_slide_markers(&result.markdown);
+    // results and screenshot alignment). This is a final-output preference,
+    // off unless `output.page_markers` asks for the comments.
+    if cfg.pointer("/output/page_markers").and_then(Value::as_bool) != Some(true) {
+        let filtered = crate::output_profiles::remove_page_markers(&result.markdown);
         if filtered != result.markdown {
             let original = std::mem::replace(&mut result.markdown, filtered);
             result.enhancement_source.get_or_insert(original);
         }
         if let Some(markdown) = &mut result.llm_markdown {
-            *markdown = crate::output_profiles::remove_slide_markers(markdown);
+            *markdown = crate::output_profiles::remove_page_markers(markdown);
         }
     }
 }
@@ -1146,12 +1143,12 @@ fn screenshot_matches(path: &Path, expected: &[u8]) -> Result<Option<bool>> {
 mod tests {
     use super::*;
     #[test]
-    fn slide_marker_output_preference_covers_base_enhanced_and_pure_results() {
-        let source = "<!-- Slide number: 1 -->\n# First\n\n<!-- Slide number: 2 -->\n\n<!-- Slide number: 3 -->\nLast\n";
+    fn page_marker_output_preference_covers_base_enhanced_and_pure_results() {
+        let source = "<!-- Slide number: 1 -->\n# First\n\n<!-- Page number: 2 -->\n\n<!-- Slide number: 3 -->\nLast\n";
         for enabled in [true, false] {
             for enhanced in [true, false] {
                 for pure in [true, false] {
-                    let cfg = config::normalize(&json!({"output":{"slide_markers":enabled},"llm":{"pure":pure,"keep_base":true}})).unwrap();
+                    let cfg = config::normalize(&json!({"output":{"page_markers":enabled},"llm":{"pure":pure,"keep_base":true}})).unwrap();
                     let mut result = ConversionOutput {
                         markdown: source.into(),
                         llm_markdown: enhanced.then(|| source.replace("Last", "Enhanced last")),
@@ -1159,6 +1156,7 @@ mod tests {
                     };
                     apply_profiles(&mut result, &cfg);
                     assert_eq!(result.markdown.contains("Slide number:"), enabled);
+                    assert_eq!(result.markdown.contains("Page number:"), enabled);
                     assert_eq!(result.enhancement_source(), source);
                     let serialized = serde_json::to_value(&result).unwrap();
                     assert!(serialized.get("enhancement_source").is_none());
@@ -1166,6 +1164,7 @@ mod tests {
                     assert!(result.markdown.contains("Last"));
                     if let Some(markdown) = &result.llm_markdown {
                         assert_eq!(markdown.contains("Slide number:"), enabled);
+                        assert_eq!(markdown.contains("Page number:"), enabled);
                         assert!(markdown.contains("Enhanced last"));
                     }
                 }
@@ -1175,8 +1174,10 @@ mod tests {
             markdown: source.into(),
             ..Default::default()
         };
+        // Markers are off by default; the enhancement source keeps them.
         apply_profiles(&mut result, &config::defaults());
-        assert_eq!(result.markdown, source);
+        assert_eq!(result.markdown, "# First\n\nLast\n");
+        assert_eq!(result.enhancement_source(), source);
     }
 
     #[test]
@@ -1184,7 +1185,7 @@ mod tests {
         for profile in [None, Some("obsidian"), Some("rag")] {
             let root = tempfile::tempdir().unwrap();
             let cfg =
-                config::normalize(&json!({"output":{"slide_markers":false,"profile":profile}}))
+                config::normalize(&json!({"output":{"page_markers":false,"profile":profile}}))
                     .unwrap();
             let asset = Asset {
                 name: "original.png".into(),

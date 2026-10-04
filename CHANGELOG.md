@@ -22,7 +22,7 @@
 
 ### Changed
 
-- Make slide-number comments optional through `output.slide_markers` and `--no-slide-markers`, preserving internal page alignment and literal code examples.
+- Omit PDF page and slide-number comments from final Markdown by default; `output.page_markers` and `--page-markers` keep them. Internal page alignment, RAG page provenance and literal code examples are preserved.
 - Remove personal machine paths from repository documentation and provenance; add checks to prevent committing private paths and common secret formats.
 
 - Minimum Rust version is now 1.92. Updated compatible dependencies while retaining the existing Node API level.
