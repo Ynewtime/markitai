@@ -1,5 +1,6 @@
 // One ledger row of the session. Memoized: an `item` event re-renders only the
 // row whose item object changed.
+import { hasCloudflareRequest } from "../lib/cloudflare.ts";
 import { memo } from "preact/compat";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { filePath } from "../api/client.ts";
@@ -200,6 +201,7 @@ export const LedgerRow = memo(function LedgerRow({
   else if (!skipped && item.durationMs !== null) facts.push({ text: fmtDur(item.durationMs) });
   if (item.finishedAt !== null) facts.push({ text: fmtDateTime(item.finishedAt), time: true });
   facts.push({ text: llmApplied ? `${t.llmTag}${cost === null ? "" : ` ${cost}`}` : t.baseTag });
+  if (hasCloudflareRequest(item.remoteProcessing)) facts.push({ text: t.cloudflareBilling });
   if (item.status === "queued") facts.push({ text: t.statusQueued });
 
   const spoken = [name];
@@ -244,6 +246,7 @@ export const LedgerRow = memo(function LedgerRow({
       <span class="cell-name">
         <Icon name={item.kind === "file" ? "FileText" : "Globe"} size={14} />
         <FileName name={name} title={size ? `${item.name} · ${size}` : item.name} />
+        {hasCloudflareRequest(item.remoteProcessing) && <span class="tag tag-cloudflare" title={t.cloudflareBillingDetail} aria-label={t.cloudflareBilling}>Cloudflare</span>}
       </span>
       <span class={running ? "cell-time is-live" : "cell-time"}>
         {running ? <Elapsed since={item.startedAt} /> : skipped ? "-" : item.durationMs !== null ? fmtDur(item.durationMs) : "-"}

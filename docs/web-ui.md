@@ -19,8 +19,9 @@ restored (with Retry restore), a refusal from the service, an unreachable
 service, a rejected input, a job that could not be saved, a folder notice, and
 "LLM not configured · Configure LLM to enable enhancement" while no model is
 routable. Files dropped anywhere on the page, or chosen with Upload or Folder,
-start a job at once; a hairline veil with "Drop to convert" shows while files are
-dragged over the page, and drops are ignored while a dialog is open.
+start a job at once, except when the selected Cloudflare service needs the
+confirmation described below; a hairline veil with "Drop to convert" shows while
+files are dragged over the page, and drops are ignored while a dialog is open.
 
 The **workspace view** (`/jobs`, kept across reloads and Back) shows
 "Conversions" with the session counters (`Current session · 6/8 Done · 1 Skipped
@@ -110,8 +111,8 @@ failed archive download are reported the same way.
 - **Stop remaining** calls `POST /api/jobs/{id}/cancel` for every running job
   with waiting original items; stopped items show "Stopped before conversion ·
   retry to convert it" and can be retried. A 409 means nothing waited any more.
-- **Retry** of an image skipped for lack of text resubmits the item's job options
-  with OCR on. An unsupported file type offers no Retry: converting it again
+- **Retry** of an image skipped for lack of text resubmits the item's saved
+  options with OCR on. An unsupported file type offers no Retry: converting it again
   cannot help, and Retry all failed leaves such rows out.
 - **Errors** are worded from the service's stable codes in the interface
   language: an API error's `reason`, then a settings conflict's `detail.code`,
@@ -224,15 +225,47 @@ the tab is hidden and permission was granted; permission is asked on the first
 submission, never on load. Provider API keys are not retained in browser storage;
 the service access token is held for the tab as described above.
 
+## Cloudflare processing
+
+The URL strategy and file backend selectors offer Cloudflare when the service
+reports its local configuration ready. That check makes no cloud request: it
+does not verify the token's permissions, account quota or Cloudflare availability.
+Configure credentials on the server as described under
+[remote services](fetch.md#remote-services); the workbench neither accepts nor
+receives Cloudflare tokens, account IDs or endpoint overrides.
+
+Once confirmed, the Cloudflare URL strategy sends selected URLs to Browser
+Rendering; its file backend allows supported uploaded files to use Workers AI
+`toMarkdown`. The choices are independent. File eligibility is decided from the
+content the core reads, not just its name; any filename-based estimate in the
+confirmation is only an estimate. OCR or screenshot requests keep the native
+file reader, and the page does not turn those choices off. Cloudflare's file
+backend cannot be combined with the Jina or Defuddle URL strategy: the page
+explains the conflict and waits for you to choose compatible options.
+
+Before submission, a dialog explains the selected sources and asks for consent
+for this request. Cloudflare may charge separately; its charges are not included
+in the displayed LLM subtotal. If the selected sources do not use the chosen
+Cloudflare route (for example only static URLs with the file backend selected),
+the dialog says so instead of implying they will be sent. Cancel leaves the
+sources and existing results in place. The service can still refuse a request
+because of its remote-processing policy or configuration.
+
+Retry, Enhance with LLM and Retry all failed each ask again when their effective
+options select Cloudflare. They use each item's saved options, falling back to
+the job's options only for older history; Enhance also reconverts the original
+input. Neither history nor browser storage remembers permission. The API's
+[request authorization](serve.md#cloudflare-request-authorization) is explicit
+and applies equally to new jobs and reruns.
+
+A Cloudflare notice on a row or history entry means an accepted attempt requested
+that service. It can remain after a failed rerun preserves an earlier result or
+a later native conversion succeeds. It does not establish that Cloudflare was
+called, how many requests ran or what they cost; LLM cost and pricing coverage
+continue to describe recorded model work only.
+
 ## Differences from the reference
 
-- Cloudflare URL rendering and Cloudflare file conversion are shown but disabled
-  in the current workbench selector. This is a workbench limitation: the Rust
-  core and CLI implement both services with configured Cloudflare credentials;
-  see [remote services](fetch.md#remote-services) and the
-  [file backend](fetch.md#the-cloudflare-file-backend). The workbench's Auto help
-  describes direct fetching followed by the local browser; a fresh visit does
-  not remember or silently enable a remote-service choice.
 - A request that asks for LLM processing while no model is routable is refused by
   the service (422 `llm_unavailable`) instead of silently converting without the
   model; the page then reloads the capabilities.

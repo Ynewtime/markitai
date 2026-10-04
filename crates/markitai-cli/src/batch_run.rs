@@ -196,6 +196,15 @@ fn options(cli: &Cli, cfg: &Value, scope: &Scope) -> Value {
     }
     options
 }
+/// The short state filename is only a lookup hint. Reusing completed entries
+/// requires the complete saved selection to match this run's normalized options.
+/// Missing/older fields are deliberately a fresh run, never an assumed match.
+fn resume_options_match(snapshot: &Snapshot, current: &Value) -> bool {
+    !snapshot.options.is_empty()
+        && current.is_object()
+        && serde_json::to_value(&snapshot.options).is_ok_and(|saved| saved == *current)
+}
+
 fn discovered(tasks: &[Task], options: Value) -> Snapshot {
     let mut state = Snapshot {
         options: serde_json::from_value(options).expect("ordered state options"),
@@ -689,11 +698,21 @@ fn run_with_namespace(
     let mut snapshot = if cli.resume {
         match store.load().map_err(runtime)? {
             LoadOutcome::Loaded { snapshot, warnings } => {
-                continued = true;
                 for warning in warnings {
                     eprintln!("Warning: {warning}");
                 }
-                *snapshot
+                if resume_options_match(&snapshot, &state_options) {
+                    continued = true;
+                    *snapshot
+                } else {
+                    if !cli.quiet {
+                        say!(
+                            "Recovery options differ or are incomplete; starting a fresh batch instead of skipping prior results.",
+                            "恢复状态的选项不同或不完整，将重新处理，避免错误跳过已有结果。"
+                        );
+                    }
+                    Snapshot::default()
+                }
             }
             LoadOutcome::Missing => {
                 if !cli.quiet {
@@ -2508,5 +2527,83 @@ mod namespace_coordination_tests {
             _ => panic!("unknown namespace coordinator case"),
         }
         fs::write(root.join("passed"), case).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod resume_options_tests {
+    use super::*;
+
+    fn current() -> Value {
+        json!({"llm":false,"ocr":false,"screenshot":false,"alt":false,"desc":false,
+            "input_dir":"/synthetic/input","output_dir":"/synthetic/output",
+            "scan_max_depth":5,"glob_patterns":["**/*.png"],"concurrency":2})
+    }
+    fn saved(value: Value) -> Snapshot {
+        Snapshot {
+            options: serde_json::from_value(value).unwrap(),
+            ..Snapshot::default()
+        }
+    }
+
+    #[test]
+    fn full_resume_options_match_independently_of_object_key_order() {
+        let value = current();
+        let reordered = Value::Object(
+            value
+                .as_object()
+                .unwrap()
+                .iter()
+                .rev()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+        );
+        assert!(resume_options_match(&saved(reordered), &value));
+        assert!(!resume_options_match(&saved(value), &Value::Null));
+    }
+
+    #[test]
+    fn changed_conversion_or_scan_options_cannot_reuse_completed_state() {
+        let original = current();
+        for (key, next) in [
+            ("ocr", json!(true)),
+            ("llm", json!(true)),
+            ("screenshot", json!(true)),
+            ("alt", json!(true)),
+            ("desc", json!(true)),
+            ("scan_max_depth", json!(6)),
+            ("glob_patterns", json!(["**/*.pdf"])),
+            ("input_dir", json!("/synthetic/other")),
+            ("output_dir", json!("/synthetic/other")),
+            ("concurrency", json!(3)),
+        ] {
+            let mut changed = original.clone();
+            changed[key] = next;
+            assert!(
+                !resume_options_match(&saved(original.clone()), &changed),
+                "{key}"
+            );
+        }
+    }
+
+    #[test]
+    fn incomplete_or_extra_legacy_options_are_not_assumed_equivalent() {
+        let current = current();
+        assert!(!resume_options_match(&Snapshot::default(), &current));
+        assert!(!resume_options_match(&Snapshot::default(), &json!({})));
+        for key in ["ocr", "scan_max_depth", "glob_patterns", "concurrency"] {
+            let mut absent = current.clone();
+            absent.as_object_mut().unwrap().remove(key);
+            assert!(
+                !resume_options_match(&saved(absent), &current),
+                "missing {key}"
+            );
+            let mut null = current.clone();
+            null[key] = Value::Null;
+            assert!(!resume_options_match(&saved(null), &current), "null {key}");
+        }
+        let mut extra = current.clone();
+        extra["legacy_only"] = json!(true);
+        assert!(!resume_options_match(&saved(extra), &current));
     }
 }

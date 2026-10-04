@@ -42,6 +42,7 @@ mod system_frameworks;
 mod types;
 
 pub use browser_runtime::BrowserRuntime;
+pub use fetch::cloudflare::cloudflare_capabilities;
 /// Remote-fallback consent a host installs once per process (the CLI does;
 /// without it `auto` never sends a URL to a remote service).
 pub use fetch::consent::{ConsentRequest, RemoteFallback, RemoteNotice, set_remote_fallback};

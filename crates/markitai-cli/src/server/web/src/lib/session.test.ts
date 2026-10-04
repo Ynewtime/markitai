@@ -219,3 +219,19 @@ test("session seeds survive a reload and a damaged store reads as empty", () => 
   writeSeeds([], store);
   assert.equal(values.has("markitai.session"), false);
 });
+
+test("snapshot and SSE item options keep per-item selections but never saved consent", () => {
+  const initial = seedItem("job", { itemId: "one", name: "one.pdf", kind: "file", sizeBytes: 10 });
+  const selected = { ...emptyOptions(), backend: "cloudflare" as const, strategy: "auto" as const, remote_processing: "cloudflare" as const };
+  const merged = mergeItem(initial, payload("one", { options: selected }), 1000);
+  assert.equal(merged.options?.backend, "cloudflare");
+  assert.equal(merged.options?.strategy, "auto");
+  assert.equal(merged.options?.remote_processing, undefined);
+  assert.equal(selected.remote_processing, "cloudflare");
+  const changed = mergeItem(merged, payload("one", { options: { ...emptyOptions(), backend: "native" } }), 1001);
+  assert.equal(changed.options?.backend, "native");
+  const oldServer = mergeItem(changed, payload("one"), 1002);
+  assert.equal(oldServer.options, undefined);
+  const rows = reconcile([], "job", [payload("one", { options: selected }), payload("two", { options: { ...emptyOptions(), backend: "native" } })], 1000);
+  assert.deepEqual(rows.map((item) => item.options?.backend), ["cloudflare", "native"]);
+});

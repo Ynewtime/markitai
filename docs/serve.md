@@ -34,7 +34,7 @@ workbench relies on; they are not a byte-for-byte contract of every payload.
 ## Job workflow
 
 1. `GET /api/capabilities` returns version, effective LLM configuration, presets,
-   SVG/browser availability, and the 1,000-item limit.
+   SVG/browser availability, Cloudflare local readiness, and the 1,000-item limit.
 2. `POST /api/jobs` accepts form fields `urls` (a JSON array) and `options` (a JSON
    object), plus repeated multipart `files`. URL-only requests also accept
    `application/x-www-form-urlencoded`. A successful submission returns
@@ -85,6 +85,45 @@ configured failure policy, item by item.
 [browser workbench](web-ui.md#layout-and-interaction) uses to switch
 those choices off. Remote consent cannot request interactive terminal input.
 When LLM is enabled, base output is retained.
+
+## Cloudflare request authorization
+
+`GET /api/capabilities` includes `remote_services.cloudflare` with `configured`,
+`available`, `reason`, `browser_rendering`, `file_conversion` and
+`file_extensions`. These describe local prerequisites only. The check makes no
+network request and returns no credentials, account ID or endpoint. It does not
+verify cloud permissions, quota or service availability. `reason` is null when
+ready, otherwise `not_configured`, `invalid_configuration`, `disabled_by_policy`
+or `client_not_trusted`. An untrusted caller gets a fixed unavailable response
+without resolving credentials.
+
+A trusted request must select `strategy: "cloudflare"` or
+`backend: "cloudflare"` and explicitly include `remote_processing: "cloudflare"`
+in its `options`. For example, the options form field for a URL job can be:
+
+```json
+{"strategy":"cloudflare","remote_processing":"cloudflare","llm":false}
+```
+
+The field authorizes this request only. Server Cloudflare defaults do not select
+the service implicitly, and saved selections never carry permission into a new
+request. The server uses its own Cloudflare configuration; options cannot supply
+Cloudflare credentials, environment references or endpoint overrides. The same
+checks apply to creation, retry and enhancement, including inherited Cloudflare
+selections. A client repeating an item must show its saved selections, obtain
+fresh confirmation, then send those options with `remote_processing` added for
+that request. A confirmation for Cloudflare cannot authorize Jina or Defuddle;
+combining either URL strategy with the Cloudflare file backend returns 422
+`invalid_options`.
+
+`fetch.remote_consent=never` and `MARKITAI_NO_REMOTE_FETCH` remain hard stops.
+Accepted requests use `ask` with the explicitly selected Cloudflare service;
+there is no terminal prompt and no implicit authorization of remote fallback in
+`auto`. The server returns 403 `remote_processing_forbidden` for an untrusted
+caller, 422 `remote_processing_confirmation_required` without current consent,
+422 `remote_processing_disabled` when policy forbids it, and 422
+`cloudflare_unavailable` when local prerequisites are missing. Unknown enum
+values, or consent without a Cloudflare selection, return 422 `invalid_options`.
 
 ## Error responses
 
@@ -148,13 +187,32 @@ is null until a conversion succeeds; a conversion without model requests reports
 `cost_status` is `complete` when every recorded request was priced, `partial`
 when some were not, and `unknown` when none was. A subscription turn that reports
 tokens without a request count adds `incomplete_request_observations` and keeps
-the status from `complete`. A zero `cost_usd` therefore establishes zero cost only
-together with `cost_status: "complete"`. The fields appear in job snapshots, item
+the status from `complete`. A zero `cost_usd` therefore establishes zero cost for
+recorded model requests only together with `cost_status: "complete"`; it does
+not cover external-service charges. The fields appear in job snapshots, item
 SSE events and saved metadata. History summaries add `cost_usd` over the retained
 outputs and an aggregated `pricing`, which is omitted when coverage cannot be
 established for every retained output (for example an older entry with a numeric
 cost but no request counters). A failed attempt's usage is reported separately
 under `diagnostics`, described below.
+
+Items whose accepted attempt requested Cloudflare also carry a separate optional
+`remote_processing` object in snapshots, SSE events and saved metadata:
+
+```json
+{"provider":"cloudflare","requested":true,"execution":"unknown",
+ "external_charges":"not_included",
+ "notice":"Cloudflare requested; external charges not included"}
+```
+
+This is request scope, not execution or billing telemetry. Actual cloud calls,
+request counts and charges remain unknown; clients must not infer them from the
+selection or the document's metadata. The marker persists across failed reruns
+that retain a previous output and later native attempts. History summaries
+include it when any item has it; older histories without the field make no claim.
+The LLM ledger above stays separate and excludes Cloudflare charges, even when
+its known subtotal is zero. Clients can localize the stable fields rather than
+displaying the English `notice` verbatim.
 
 ## Retry, enhancement and item deletion
 
@@ -170,6 +228,14 @@ omitted/null `options` inherits the item's last conversion options, falling back
 to the job's options for older histories. A supplied options object replaces those
 options; omitted fields then use the server configuration rather than the item's
 previous overrides. Unknown fields and invalid options return 422.
+
+Each full item in a job snapshot or item SSE event includes an `options` object
+containing that item's saved repeat selections, with a job-level fallback for
+older history. Only supported option keys are exposed; `remote_processing` is
+omitted. This object is not authorization. Clients supporting older servers may
+use `item.options ?? job.options`, remove any consent field and obtain fresh
+[Cloudflare confirmation](#cloudflare-request-authorization) before a rerun.
+The small queued-item response returned by creation or retry is unchanged.
 
 Both operations reconvert the original retained upload or refetch the original
 URL. Enhancement is an explicit one-off attempt: effective options must enable a

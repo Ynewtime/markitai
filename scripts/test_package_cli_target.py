@@ -108,7 +108,7 @@ class TargetPackagingTests(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0)
 
         with (patch("package_cli_target.sys.platform", "win32"),
-              patch.dict(os.environ, {"HOME": str(self.root), "CARGO_TARGET_DIR": "target with spaces",
+              patch.dict(os.environ, {"HOME": str(self.root), "USERPROFILE": str(self.root), "CARGO_TARGET_DIR": "target with spaces",
                                       "CARGO_ENCODED_RUSTFLAGS": "-Cdebuginfo=1"}, clear=True),
               patch("package_cli_target.subprocess.check_output", side_effect=check_output),
               patch("package_cli_target.subprocess.run", side_effect=run),

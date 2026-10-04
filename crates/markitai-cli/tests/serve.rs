@@ -46,6 +46,7 @@ impl Server {
         }
         let mut child = command
             .current_dir(root)
+            .env("HOME", root)
             .env("MARKITAI_HOME", root.join("home"))
             .env("NO_PROXY", "127.0.0.1,localhost")
             .args([

@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { HistoryEntry } from "../api/types.ts";
 import type { Dict, Locale } from "../i18n/index.ts";
+import { hasCloudflareRequest } from "../lib/cloudflare.ts";
 import { fmtCost, fmtDur } from "../lib/format.ts";
 import type { ItemRequestFailure } from "../lib/pricing.ts";
 import type { NotificationModel } from "./notification.tsx";
@@ -156,9 +157,11 @@ export function Ledger({
   const hasArchive = saved.length > 0 || archive.error !== null;
   const labels: Record<StatusFilter, string> = { all: t.filterAll, done: t.filterDone, failed: t.filterFailed, skipped: t.filterSkipped };
   const totalTime = fmtDur(stats.doneDurationMs);
+  const externalCharges = items.some((item) => hasCloudflareRequest(item.remoteProcessing)) || (archive.entries ?? []).some((entry) => hasCloudflareRequest(entry.remote_processing));
 
   return (
     <div class="ledger">
+      {externalCharges && <details class="cloudflare-note"><summary>{t.cloudflareBilling}</summary><p>{t.cloudflareBillingDetail}</p></details>}
       {filterable && (
         <div class="ledger-filter">
           <input
@@ -266,7 +269,7 @@ export function Ledger({
         <div class="lg-row lg-total">
           <span />
           <span class="total-label">
-            {t.total}
+            {externalCharges ? t.cloudflareLlmSubtotal : t.total}
             {filtering && <span class="total-shown"> · {t.filterShown(visible.length, rows.length)}</span>}
           </span>
           <span class="cell-time">{totalTime}</span>
@@ -276,7 +279,7 @@ export function Ledger({
             {stats.done}/{stats.total} {t.statusDone}
           </span>
           <span class="total-facts">
-            {totalTime} · {fmtCost(stats.costTotal)}
+            {totalTime} · {externalCharges && `${t.cloudflareLlmSubtotal} `}{fmtCost(stats.costTotal)}
           </span>
         </div>
       )}

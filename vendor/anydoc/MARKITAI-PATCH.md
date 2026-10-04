@@ -31,6 +31,17 @@ upstream files:
   and runs from its bracketed unit, which carries the whole span, to the
   smallest unit its format names: `[mm]:ss` → `1625:00`, `[s]` → `97500`,
   `[h]` → `27` (upstream wrote every span as hours, minutes and seconds).
+  Elapsed formats with fixed fractional-second digits (`[h]:mm:ss.00`,
+  `[m]:ss.000`, `[s].00`) retain those digits, using the existing bounded
+  decimal rounding before splitting units so carries cross minute/hour
+  boundaries correctly. Quoted/escaped dots do not enable fraction parsing;
+  ordinary date/time and nonfractional elapsed rendering stay unchanged.
+  Regression tests cover actual seconds-token classification, nonzero/fixed-zero
+  fractions, decimal half rounding, carries across units, negative/zero spans,
+  escaped/quoted dots, unchanged date rendering and actual XLSX style/cell
+  parsing (`elapsed_fractional_seconds_require_an_actual_seconds_decimal_token`,
+  `fractional_elapsed_formats_preserve_precision_and_carry_across_units`,
+  `fractional_duration_survives_the_actual_xlsx_styles_and_cell_reader`).
 - `src/model/mod.rs`, `src/formats/odf/mod.rs`, `src/formats/ppt/mod.rs`, and
   the other places that build a `Document` (`docx`, `doc`, `rtf`, `pptx`, the
   Markdown renderer's tests): `Document` gains `slide_starts`, the index in

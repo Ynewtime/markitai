@@ -2,8 +2,9 @@
 // which holds the URL line, the options drawer and the CLI command line.
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
-import type { ConversionBackend, FetchStrategy, OutputProfile, Preset } from "../api/types.ts";
+import type { CloudflareCapability, ConversionBackend, FetchStrategy, OutputProfile, Preset } from "../api/types.ts";
 import type { Dict } from "../i18n/index.ts";
+import { cloudflareReason } from "../lib/cloudflare.ts";
 import { cliCommand } from "../lib/cli.ts";
 import { copyText } from "../lib/clipboard.ts";
 import {
@@ -26,9 +27,6 @@ import { Icon } from "./icons.tsx";
 const STRATEGIES: FetchStrategy[] = ["auto", "static", "playwright", "defuddle", "jina", "cloudflare"];
 const BACKENDS: ConversionBackend[] = ["native", "cloudflare"];
 const PROFILES: (OutputProfile | null)[] = [null, "rag", "obsidian", "okf"];
-/** Accepted by the request schema but not implemented by this server. */
-const UNSUPPORTED_STRATEGIES = new Set<FetchStrategy>(["cloudflare"]);
-const UNSUPPORTED_BACKENDS = new Set<ConversionBackend>(["cloudflare"]);
 
 let panels = 0;
 
@@ -72,6 +70,7 @@ function Segments<T extends string | null>({
   label,
   hint,
   disabled,
+  focusableDisabled = false,
   onPick,
 }: {
   labelledBy: string;
@@ -80,6 +79,7 @@ function Segments<T extends string | null>({
   label: (choice: T) => string;
   hint: (choice: T) => string;
   disabled?: (choice: T) => boolean;
+  focusableDisabled?: boolean;
   onPick: (choice: T) => void;
 }) {
   return (
@@ -87,15 +87,16 @@ function Segments<T extends string | null>({
       {choices.map((choice) => {
         const off = disabled?.(choice) ?? false;
         return (
-          <HelpTooltip key={choice ?? "default"} text={hint(choice)} disabled={off}>
+          <HelpTooltip key={choice ?? "default"} text={hint(choice)} disabled={off && !focusableDisabled}>
             {(describedBy) => (
               <button
                 type="button"
                 class={choice === value ? "is-on" : undefined}
                 aria-pressed={choice === value}
                 aria-describedby={describedBy}
-                disabled={off}
-                onClick={() => onPick(choice)}
+                disabled={off && !focusableDisabled}
+                aria-disabled={off || undefined}
+                onClick={() => { if (!off) onPick(choice); }}
               >
                 {label(choice)}
               </button>
@@ -127,6 +128,7 @@ export function OptionsPanel({
   state,
   presets = BUILTIN_PRESETS,
   llmReady,
+  cloudflare,
   urls,
   announce,
   source,
@@ -141,6 +143,7 @@ export function OptionsPanel({
   state: Composer;
   presets?: PresetTable;
   llmReady: boolean;
+  cloudflare?: CloudflareCapability;
   urls: string[];
   announce: (message: string) => void;
   source: ComponentChildren;
@@ -163,8 +166,10 @@ export function OptionsPanel({
     return () => clearTimeout(timer);
   }, [copied]);
 
+  const reason = cloudflareReason(cloudflare);
   const a = state.advanced;
   const effective = resolveOptions(state, presets);
+  const selectionReason = cloudflareReason(cloudflare, effective);
   const matched = matchingPreset(state, presets);
   const shownPreset = matched ?? state.preset;
   const analysisOff = !state.llm || a.pure;
@@ -351,8 +356,9 @@ export function OptionsPanel({
                         value={a.strategy}
                         choices={STRATEGIES}
                         label={(value) => strategyLabel[value]}
-                        hint={(value) => strategyHint[value]}
-                        disabled={(value) => UNSUPPORTED_STRATEGIES.has(value)}
+                        hint={(value) => value === "cloudflare" && reason ? t.cloudflareReason(reason) : strategyHint[value]}
+                        disabled={(value) => value === "cloudflare" && (reason !== null || !cloudflare?.browser_rendering)}
+                        focusableDisabled
                         onPick={(value) => set("strategy", value)}
                       />
                       {remoteNotice && <p class="opt-note">{remoteNotice}</p>}
@@ -366,12 +372,17 @@ export function OptionsPanel({
                         value={a.backend}
                         choices={BACKENDS}
                         label={(value) => (value === "native" ? t.backendNative : t.backendCloudflare)}
-                        hint={(value) => (value === "native" ? t.helpNative : t.helpCloudflareFile)}
-                        disabled={(value) => UNSUPPORTED_BACKENDS.has(value)}
+                        hint={(value) => value === "native" ? t.helpNative : reason ? t.cloudflareReason(reason) : t.helpCloudflareFile}
+                        disabled={(value) => value === "cloudflare" && (reason !== null || !cloudflare?.file_conversion)}
+                        focusableDisabled
                         onPick={(value) => set("backend", value)}
                       />
                     </div>
                   </div>
+                  {reason && a.strategy !== "cloudflare" && a.backend !== "cloudflare" && <div class="opt-row">
+                    <span class="opt-label">Cloudflare</span>
+                    <div class="opt-controls"><p class="opt-note">{t.cloudflareReason(reason)}</p><details><summary>{t.helpLabel}</summary><p class="opt-note">{t.cloudflareSetup}</p></details></div>
+                  </div>}
                   <div class="opt-row" role="group" aria-labelledby={`${id}-other`}>
                     <RowLabel id={`${id}-other`} text={t.advOther} hint={t.helpOther} helpLabel={t.helpLabel} />
                     <div class="opt-controls">
@@ -388,6 +399,11 @@ export function OptionsPanel({
             </div>
           </div>
         )}
+        {(a.strategy === "cloudflare" || a.backend === "cloudflare") && <div class="cloudflare-note">
+          {selectionReason && <p role="alert">{t.cloudflareReason(selectionReason)}</p>}
+          <p>{t.cloudflareScope}</p><p>{t.cloudflareCharges}</p>
+          {selectionReason && selectionReason !== "incompatible_strategy" && <details><summary>{t.helpLabel}</summary><p>{t.cloudflareSetup}</p></details>}
+        </div>}
         {cliOpen && (
           <div class="cli-bar" id={`${id}-cli`}>
             <div class="cli-body">

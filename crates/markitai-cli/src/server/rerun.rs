@@ -84,6 +84,7 @@ impl Operation {
 pub(super) struct Work {
     index: usize,
     prior: Item,
+    prior_options: Value,
     cfg: Value,
     base: String,
     operation: Operation,
@@ -121,6 +122,9 @@ pub(super) async fn retry(
         if data.persistence_error.is_some(){return Err(ApiError::new(409,"persistence_failed","job persistence failed; restart to recover before retrying"));}
         let index=data.items.iter().position(|i|i.item_id==item_id).ok_or_else(||ApiError::new(404,"item_not_found","item not found"))?;
         let prior=data.items[index].clone();
+        // Restoring a prior successful result must restore its repeat selections too.
+        let mut prior_options=data.item_options.get(&item_id).unwrap_or(&data.options).clone();
+        if let Some(fields)=prior_options.as_object_mut(){fields.remove("remote_processing");}
         if prior.skip_reason.as_deref()==Some("pending_batch"){return Err(ApiError::new(409,"batch_pending","provider batch enhancement is pending; collect that batch before retrying or enhancing this item"));}
         if !["done","error"].contains(&prior.status.as_str())||job.retry_pending.lock().unwrap().contains(&item_id){return Err(ApiError::new(409,"item_busy","item has not reached a terminal state yet; retry when done"));}
         if !prior.retryable{return Err(ApiError::new(409,"not_retryable","file items recorded from a CLI run cannot be retried or enhanced here; run the markitai CLI on the file again"));}
@@ -131,14 +135,16 @@ pub(super) async fn retry(
             if !["http","https"].contains(&parsed.scheme())||parsed.host_str().is_none(){return Err(ApiError::new(422,"unsupported_url_scheme","URLs must use http or https"));}
         } else {return Err(ApiError::new(409,"no_source","item has no supported original source"));}
         let explicit_options=body.options.is_some();
-        let opts=match body.options {Some(opts)=>opts,None=>{
+        let mut opts=match body.options {Some(opts)=>opts,None=>{
             let saved=data.item_options.get(&item_id).unwrap_or(&data.options);
             let mut known=serde_json::to_value(JobOptions::default()).unwrap();
             if let Some(fields)=saved.as_object(){for (key,value) in fields{if let Some(target)=known.get_mut(key){*target=value.clone();}}}
             serde_json::from_value(known).map_err(|_|ApiError::new(422,"invalid_options","saved item options are invalid"))?
         }};
+        // Older histories may contain a previous confirmation; never reuse it.
+        if !explicit_options { opts.remote_processing=None; }
         let configuration=state.settings.snapshot();
-        let mut cfg=opts.config(&configuration)?;
+        let mut cfg=opts.config_for_request(&configuration,trusted)?;
         // Options inherited from the item are the caller's earlier choice and keep the
         // core's failure policy; a request that names model processing now needs a model now.
         if explicit_options&&body.operation==Operation::Retry{opts.require_model(&configuration,&cfg)?;}
@@ -150,18 +156,19 @@ pub(super) async fn retry(
         if body.operation==Operation::Retry{
             let inherited=data.options.clone();let ids=data.items.iter().map(|i|i.item_id.clone()).collect::<Vec<_>>();
             for id in ids{data.item_options.entry(id).or_insert_with(||inherited.clone());}
-            let options=serde_json::to_value(&opts).unwrap();data.options=options.clone();data.item_options.insert(item_id.clone(),options);
+            let options=opts.saved();data.options=options.clone();data.item_options.insert(item_id.clone(),options);
         }
         data.bases.insert(item_id.clone(),base.clone());
         let job_id=data.id.clone();
         let item=&mut data.items[index];item.status="queued".into();item.error=None;item.error_code=None;item.output=None;item.duration_ms=None;item.finished_at=None;item.cost_usd=None;item.pricing=None;item.diagnostics=None;item.rerun_failure=None;item.llm_enhanced=false;item.operation=body.operation.name().into();item.skipped=false;item.skip_reason=None;item.warnings.clear();
+        item.remote_processing=opts.remote_disclosure().or_else(||prior.remote_processing.clone());
         let created=json!({"job_id":job_id,"items":[item.created()]});
         let payload=json!(item);
         data.status="running".into();data.finished_at=None;data.persistence_error=None;
         job.active.fetch_add(1,Ordering::SeqCst);job.retry_pending.lock().unwrap().insert(item_id);
         let _=job.events.send(("item",payload));let _=job.events.send(("job",data.progress()));
         let mut queue=job.retry_queue.lock().unwrap();
-        queue.push_back(Work{index,prior,cfg,base,operation:body.operation,runtime,explicit:opts.strategy});
+        queue.push_back(Work{index,prior,prior_options,cfg,base,operation:body.operation,runtime,explicit:opts.strategy});
         let drain=!job.retry_draining.swap(true,Ordering::SeqCst);
         Ok((created,drain))
     }).await.map_err(ApiError::internal)??;
@@ -224,6 +231,7 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
             &job,
             work.index,
             &work.prior,
+            &work.prior_options,
             RerunFailure::new(
                 work.operation,
                 "shutdown",
@@ -240,7 +248,12 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
         let _ = job.events.send(("item", json!(data.items[work.index])));
     }
     let worker = job.clone();
-    let fallback = (work.index, work.prior.clone(), work.operation);
+    let fallback = (
+        work.index,
+        work.prior.clone(),
+        work.operation,
+        work.prior_options.clone(),
+    );
     let result = crate::task::blocking(move || {
         let _permit = permit;
         let started = Instant::now();
@@ -445,6 +458,7 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
                 &worker,
                 work.index,
                 &work.prior,
+                &work.prior_options,
                 RerunFailure::new(work.operation, error.reason, error.detail),
                 started.elapsed().as_millis().min(u64::MAX as u128) as u64,
                 diagnostics,
@@ -457,6 +471,7 @@ async fn run(state: Arc<State>, job: Arc<Job>, work: Work) {
             &job,
             fallback.0,
             &fallback.1,
+            &fallback.3,
             RerunFailure::new(
                 fallback.2,
                 "internal_error",
@@ -471,15 +486,30 @@ fn failed(
     job: &Job,
     index: usize,
     prior: &Item,
+    prior_options: &Value,
     failure: RerunFailure,
     duration: u64,
     diagnostics: Option<AttemptDiagnostics>,
 ) {
     let mut data = job.data.lock().unwrap();
-    let recoverable = data.persistence_error.is_none();
+    let restore = data.persistence_error.is_none()
+        && prior.status == "done"
+        && prior.output.is_some()
+        && !prior.skipped;
+    if restore {
+        // Do not revert job-wide options: another item's accepted retry may have
+        // changed them since this work was queued. Each item's saved copy wins.
+        data.item_options
+            .insert(prior.item_id.clone(), prior_options.clone());
+    }
     let item = &mut data.items[index];
-    if recoverable && prior.status == "done" && prior.output.is_some() && !prior.skipped {
+    if restore {
+        let remote_processing = item
+            .remote_processing
+            .clone()
+            .or_else(|| prior.remote_processing.clone());
         *item = prior.clone();
+        item.remote_processing = remote_processing;
         item.rerun_failure = Some(failure);
     } else {
         item.status = "error".into();

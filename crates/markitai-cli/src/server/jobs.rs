@@ -1,6 +1,6 @@
 use super::{
     State, store,
-    types::{ApiError, ApiResult, Item, now},
+    types::{ApiError, ApiResult, Item, JobOptions, now},
 };
 use crate::diagnostics::{AttemptDiagnostics, Operation};
 use futures_util::{StreamExt, stream::FuturesUnordered};
@@ -36,13 +36,39 @@ impl JobData {
         json!({"status":self.status,"done":self.items.iter().filter(|i|i.status=="done").count(),
             "failed":self.items.iter().filter(|i|i.status=="error").count(),"total":self.items.len()})
     }
+    /// The persisted repeat selections, never permission for a new request.
+    /// CLI/older histories may carry extra metadata; expose only option keys.
+    pub fn with_item_options(&self, mut item: Value) -> Value {
+        let saved = item["item_id"]
+            .as_str()
+            .and_then(|id| self.item_options.get(id))
+            .unwrap_or(&self.options);
+        let mut options =
+            serde_json::to_value(JobOptions::default()).expect("job options serialize");
+        let fields = options.as_object_mut().expect("job options are an object");
+        fields.remove("remote_processing");
+        if let Some(saved) = saved.as_object() {
+            for (key, value) in saved {
+                if let Some(target) = fields.get_mut(key) {
+                    *target = value.clone();
+                }
+            }
+        }
+        item["options"] = options;
+        item
+    }
+
     pub fn snapshot(&self) -> Value {
         let mut value = self.progress();
         value["job_id"] = json!(self.id);
         value["created_at"] = json!(self.created_at);
         value["finished_at"] = json!(self.finished_at);
         value["options"] = self.options.clone();
-        value["items"] = json!(self.items);
+        value["items"] = self
+            .items
+            .iter()
+            .map(|item| self.with_item_options(json!(item)))
+            .collect();
         if let Some(error) = &self.persistence_error {
             value["persistence_error"] = json!(error);
         }
@@ -115,6 +141,13 @@ impl JobData {
         value["skipped"] = json!(self.items.iter().filter(|i| i.skipped).count());
         value["llm_enhanced"] = json!(self.items.iter().filter(|i| i.llm_enhanced).count());
         value["cost_usd"] = json!(cost);
+        if let Some(disclosure) = self
+            .items
+            .iter()
+            .find_map(|item| item.remote_processing.as_ref())
+        {
+            value["remote_processing"] = disclosure.clone();
+        }
         if let Some(pricing) = self.output_pricing() {
             value["pricing"] = json!(pricing);
         }
@@ -493,6 +526,37 @@ mod pricing_tests {
             transactions: Vec::new(),
         }
     }
+    #[test]
+    fn item_options_preserve_independent_routes_without_replaying_stored_consent() {
+        let mut data = fixture(vec![
+            Item::new(1, "a.txt".into(), "file", None),
+            Item::new(2, "b.txt".into(), "file", None),
+        ]);
+        data.options = json!({"backend":"native","remote_processing":"cloudflare","origin":"cli","api_key":"not-public"});
+        data.item_options.insert(
+            "i1".into(),
+            json!({"backend":"cloudflare","profile":"rag","remote_processing":"cloudflare"}),
+        );
+        let snapshot = data.snapshot();
+        for (index, backend) in [(0, "cloudflare"), (1, "native")] {
+            let options = &snapshot["items"][index]["options"];
+            assert_eq!(options["backend"], backend);
+            for hidden in ["remote_processing", "origin", "api_key"] {
+                assert!(options.get(hidden).is_none());
+            }
+            // The SSE item adapter must match the snapshot's authoritative selections.
+            let event=data.with_item_options(json!({"item_id":format!("i{}",index+1),"status":"done","options":{"remote_processing":"cloudflare"}}));
+            assert_eq!(&event["options"], options);
+        }
+        assert_eq!(snapshot["items"][0]["options"]["profile"], "rag");
+        assert!(snapshot["items"][1]["options"]["profile"].is_null());
+        // Old histories with no per-item map still expose the job's saved selections.
+        data.item_options.clear();
+        assert_eq!(data.snapshot()["items"][0]["options"]["backend"], "native");
+        // Presentation never mutates the stored metadata or converts disclosure into permission.
+        assert_eq!(data.options["remote_processing"], "cloudflare");
+    }
+
     fn priced_item() -> Item {
         let mut item = Item::new(1, "priced.md".into(), "file", None);
         item.status = "done".into();

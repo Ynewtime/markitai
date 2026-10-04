@@ -285,7 +285,7 @@ struct Cli {
 /// layout.
 fn cli_command() -> clap::Command {
     let command = match i18n::lang() {
-        i18n::Lang::En => english_command(),
+        i18n::Lang::En => english_command_at_width(progress::columns()),
         i18n::Lang::Zh => help_zh::localize(english_command),
     };
     if progress::initialize() {
@@ -298,6 +298,29 @@ fn cli_command() -> clap::Command {
 /// The command tree as the derive declares it, with English help.
 fn english_command() -> clap::Command {
     Cli::command().mut_args(|arg| arg.next_line_help(true))
+}
+
+/// Keep clap's root usage tokens intact when its heading would overflow a
+/// narrow terminal. Only the heading separator changes; ordinary-width help,
+/// subcommand templates and parser usage errors retain clap's defaults.
+fn english_command_at_width(width: usize) -> clap::Command {
+    let command = english_command();
+    // The root usage is ASCII and shorter than 60 columns. Avoid building a
+    // reference command on the ordinary-width path used by most invocations.
+    if width < 60
+        && command
+            .clone()
+            .render_usage()
+            .to_string()
+            .lines()
+            .any(|line| line.len() > width)
+    {
+        command.help_template(
+            "{before-help}{about-with-newline}\n{usage-heading}\n  {usage}\n\n{all-args}{after-help}",
+        )
+    } else {
+        command
+    }
 }
 
 /// Clap's built-in range message prints the whole u32 range; say the rule instead.
@@ -2922,6 +2945,72 @@ fn write_config(path: &Path, value: &Value) -> CliResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn english_root_help_fits_40_columns_without_splitting_usage_tokens() {
+        for long in [false, true] {
+            let render = |mut command: clap::Command| {
+                command = command.term_width(40).color(clap::ColorChoice::Never);
+                if long {
+                    command.render_long_help().to_string()
+                } else {
+                    command.render_help().to_string()
+                }
+            };
+            let before = render(english_command());
+            let after = render(english_command_at_width(40));
+            assert!(before.contains("Usage: markitai [OPTIONS] [INPUT] [COMMAND]"));
+            assert_eq!(after, before.replacen("Usage: ", "Usage:\n  ", 1));
+            assert!(after.contains("Usage:\n  markitai [OPTIONS] [INPUT] [COMMAND]"));
+            for line in after.lines() {
+                assert!(line.chars().count() <= 40, "long={long}: {line}");
+            }
+        }
+    }
+
+    #[test]
+    fn english_help_that_already_fits_keeps_its_exact_rendered_bytes() {
+        for width in [43, 80, 120] {
+            for long in [false, true] {
+                let render = |mut command: clap::Command| {
+                    command = command.term_width(width).color(clap::ColorChoice::Never);
+                    if long {
+                        command.render_long_help().to_string()
+                    } else {
+                        command.render_help().to_string()
+                    }
+                };
+                assert_eq!(
+                    render(english_command_at_width(width)),
+                    render(english_command()),
+                    "width={width}, long={long}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn narrow_root_template_preserves_subcommand_help_and_usage_errors() {
+        let render = |command: clap::Command, arguments: &[&str]| {
+            command
+                .term_width(40)
+                .color(clap::ColorChoice::Never)
+                .try_get_matches_from(arguments)
+                .unwrap_err()
+                .to_string()
+        };
+        for arguments in [
+            vec!["markitai", "serve", "--help"],
+            vec!["markitai", "config", "set", "--help"],
+            vec!["markitai", "--unknown-option"],
+        ] {
+            assert_eq!(
+                render(english_command_at_width(40), &arguments),
+                render(english_command(), &arguments),
+                "{arguments:?}"
+            );
+        }
+    }
     #[test]
     fn a_warning_several_items_share_is_written_once_naming_them() {
         let item = |index: usize, warnings: &[&str], error: Option<&str>| RunItem {

@@ -2,6 +2,7 @@
 // the service's saved jobs into one chronological list. Pure functions only.
 import type {
   AttemptDiagnostics,
+  RemoteProcessing,
   HistoryEntry,
   ItemKind,
   ItemPayload,
@@ -12,6 +13,7 @@ import type {
   Pricing,
   RerunFailure,
 } from "../api/types.ts";
+import { publicOptions } from "./options.ts";
 import { isUnsupported } from "../i18n/errors.ts";
 import { displayName, timestampMs } from "./format.ts";
 
@@ -51,6 +53,8 @@ export interface SessionItem {
   skipReason: string | null;
   retryable: boolean;
   warnings: string[];
+  remoteProcessing?: RemoteProcessing | null;
+  options?: JobOptions;
   /** Upload size known to this tab (files only). */
   sizeBytes: number | null;
   /** When this tab first saw the item running, for the live timer. */
@@ -117,6 +121,8 @@ export function mergeItem(previous: SessionItem, payload: ItemPayload, now: numb
     costUsd: payload.cost_usd,
     pricing: payload.pricing ?? null,
     diagnostics: payload.diagnostics ?? null,
+    remoteProcessing: payload.remote_processing ?? null,
+    options: payload.options ? publicOptions(payload.options) : undefined,
     rerunFailure: payload.rerun_failure ?? null,
     llmEnhanced: payload.llm_enhanced,
     operation: payload.operation,

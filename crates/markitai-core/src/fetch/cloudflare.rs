@@ -95,6 +95,34 @@ pub(crate) fn configured(cfg: &Value, vars: &HashMap<String, String>) -> bool {
     matches!(credentials(cfg, vars, false), Ok(Some(_)))
 }
 
+/// Local prerequisites only: this never contacts Cloudflare, verifies account
+/// permissions, or exposes credentials. The caller controls the configuration.
+pub fn cloudflare_capabilities(cfg: &Value) -> Value {
+    capabilities_with_vars(cfg, &config::environment())
+}
+
+fn capabilities_with_vars(cfg: &Value, vars: &HashMap<String, String>) -> Value {
+    let (configured, configuration_reason) = match credentials(cfg, vars, true) {
+        Ok(Some(_)) => (true, None),
+        Ok(None) => (false, Some("not_configured")),
+        Err(_) => (false, Some("invalid_configuration")),
+    };
+    let reason = if consent::hard_off(vars) || consent::configured(cfg) == Consent::Never {
+        Some("disabled_by_policy")
+    } else {
+        configuration_reason
+    };
+    let available = reason.is_none();
+    json!({
+        "configured": configured,
+        "available": available,
+        "reason": reason,
+        "browser_rendering": available,
+        "file_conversion": available,
+        "file_extensions": FORMATS.iter().map(|(extension, _)| *extension).collect::<Vec<_>>()
+    })
+}
+
 pub(crate) fn missing_credentials() -> Error {
     Error::Config("Cloudflare needs an API token and an account ID: set fetch.cloudflare.api_token and fetch.cloudflare.account_id (a value or an env:NAME reference), or CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID. Create the token at dash.cloudflare.com/profile/api-tokens with Account / Browser Rendering / Edit (for -s cloudflare) and Account / Workers AI / Read (for -b cloudflare); the account ID is on the account's home page in the dashboard.".into())
 }
@@ -684,5 +712,66 @@ mod tests {
         assert!(file_title("Microsoft Word - Q3.doc", "q3.pdf"));
         assert!(!file_title("Version 2.0 notes", "q3.pdf"));
         assert!(!file_title("Node.js in practice", "book.pdf"));
+    }
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use super::*;
+    #[test]
+    fn local_readiness_never_returns_credentials_or_claims_permissions() {
+        let vars = HashMap::new();
+        let cfg = json!({"fetch":{"remote_consent":"ask","cloudflare":{
+            "api_token":"synthetic-token","account_id":"synthetic-account"}}});
+        let value = capabilities_with_vars(&cfg, &vars);
+        assert_eq!(value["available"], true);
+        assert_eq!(value["configured"], true);
+        assert_eq!(value["browser_rendering"], true);
+        assert_eq!(value["file_conversion"], true);
+        assert!(
+            value["file_extensions"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("pdf"))
+        );
+        let text = value.to_string();
+        for secret in [
+            "synthetic-token",
+            "synthetic-account",
+            "api_token",
+            "account_id",
+            "https:",
+        ] {
+            assert!(!text.contains(secret));
+        }
+        assert!(value.get("permissions_verified").is_none());
+    }
+    #[test]
+    fn missing_invalid_never_and_hard_off_are_distinct_without_network() {
+        let mut cfg = json!({"fetch":{"remote_consent":"ask","cloudflare":{}}});
+        let mut vars = HashMap::new();
+        assert_eq!(
+            capabilities_with_vars(&cfg, &vars)["reason"],
+            "not_configured"
+        );
+        cfg["fetch"]["cloudflare"] =
+            json!({"api_token":"synthetic token","account_id":"synthetic-account"});
+        assert_eq!(
+            capabilities_with_vars(&cfg, &vars)["reason"],
+            "invalid_configuration"
+        );
+        cfg["fetch"]["cloudflare"]["api_token"] = json!("synthetic-token");
+        cfg["fetch"]["remote_consent"] = json!("never");
+        assert_eq!(
+            capabilities_with_vars(&cfg, &vars)["reason"],
+            "disabled_by_policy"
+        );
+        cfg["fetch"]["remote_consent"] = json!("always");
+        vars.insert("MARKITAI_NO_REMOTE_FETCH".into(), "true".into());
+        assert_eq!(
+            capabilities_with_vars(&cfg, &vars)["reason"],
+            "disabled_by_policy"
+        );
+        assert_eq!(capabilities_with_vars(&cfg, &vars)["available"], false);
     }
 }

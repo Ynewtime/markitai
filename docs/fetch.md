@@ -442,10 +442,15 @@ print it and leaves it due). Refusals of a selected strategy start with
 honours local-only patterns; `-s` for the run overrides them for a public URL.
 Credential material and private hosts are refused whatever was chosen.
 
-`serve`, `mcp` and the language bindings install no consent host: `auto` there
-never falls back to a remote service (as before), and `ask` there counts as
-`never` (`serve` already rewrites it so). Explicitly selected strategies behave
-as in the table.
+`serve`, `mcp` and the language bindings install no interactive consent host:
+`auto` there never falls back to a remote service, and `ask` cannot ask a terminal
+question. Explicitly selected strategies in MCP and bindings behave as in the
+table. The workbench and REST service additionally require
+[current-request Cloudflare authorization](serve.md#cloudflare-request-authorization)
+for a selected Cloudflare strategy or file backend. Server defaults and history
+cannot supply that authorization; retries and enhancements must obtain it again.
+It cannot override `never` or `MARKITAI_NO_REMOTE_FETCH`, or authorize another
+remote provider.
 
 Differences from the reference, kept on purpose: the reference's default
 `always` sends URLs to the remote services whenever local strategies fail, and
@@ -509,6 +514,14 @@ of milliseconds and written as a number, like `duration_ms`) are recorded in the
 metadata. The cookies and HTTP credentials
 are sent to Cloudflare's browser; configure them only for sites you accept that
 for.
+
+In the [browser workbench](web-ui.md#cloudflare-processing), these credentials
+come only from the server configuration or environment. The browser cannot set
+Cloudflare keys, account IDs or endpoints. The capability check only establishes
+local readiness without making a cloud request; it does not verify account
+permissions or quota. The workbench asks before each selected Cloudflare request,
+including reruns, and explains that external charges are not included in its
+known LLM subtotal. A request-scope notice is not evidence of actual cloud usage or cost.
 
 ### The Cloudflare file backend
 

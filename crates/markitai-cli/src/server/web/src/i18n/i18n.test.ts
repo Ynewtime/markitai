@@ -276,3 +276,28 @@ test("probe and discovery phrases are translated; unknown text is kept", () => {
   );
   assert.deepEqual(persistenceText("en", "new failure"), { text: "new failure", detail: "" });
 });
+
+test("Cloudflare consent shows only nonzero scope and uses prospective fee wording", () => {
+  assert.equal(en.cloudflareScopeCounts(1, 0, 0, 0), "1 URL");
+  assert.equal(zh.cloudflareScopeCounts(1, 0, 0, 0), "1 个网址");
+  assert.equal(en.cloudflareScopeCounts(0, 0, 0, 2), "2 files keep the native reader");
+  assert.equal(zh.cloudflareScopeCounts(0, 0, 0, 2), "2 个文件保留原生读取");
+  assert.equal(en.cloudflareScopeCounts(0, 2, 0, 0), "Up to 2 selected files may be sent");
+  assert.equal(zh.cloudflareScopeCounts(0, 2, 0, 0), "最多发送 2 个选定文件");
+  assert.equal(en.cloudflareScopeCounts(1, 2, 1, 0), "1 URL · Up to 2 selected files may be sent (1 name matches supported formats)");
+  assert.equal(zh.cloudflareScopeCounts(1, 2, 1, 0), "1 个网址 · 最多发送 2 个选定文件（1 个名称符合支持格式）");
+  assert.match(en.cloudflareCharges, /may charge/);
+  assert.match(zh.cloudflareCharges, /可能收取费用/);
+  assert.ok(!en.cloudflareCharges.includes("records a request"));
+  assert.ok(!zh.cloudflareCharges.includes("记录请求"));
+  assert.match(en.cloudflareReason("incompatible_strategy"), /cannot be combined/);
+  assert.match(zh.cloudflareReason("incompatible_strategy"), /不能.*搭配/);
+});
+
+
+test("URL-only requests with a file backend do not claim Cloudflare transmission", () => {
+  assert.equal(en.cloudflareScopeCounts(0, 0, 0, 0), "These sources do not use Cloudflare with the current options.");
+  assert.equal(zh.cloudflareScopeCounts(0, 0, 0, 0), "当前选项下，这些来源不使用 Cloudflare。");
+  assert.equal(en.cloudflareLocalTitle, "Continue with these options?");
+  assert.equal(zh.cloudflareContinue, "继续转换");
+});

@@ -477,42 +477,57 @@ fn queued_duplicate_retry_is_rejected_and_shutdown_restores_queued_prior_result(
 
 #[test]
 fn retry_metadata_failure_leaves_recovery_material_and_restart_restores_previous_bytes() {
-    let model = Model::start();
-    let temp = tempfile::tempdir().unwrap();
-    model.configure(temp.path());
-    let server = Server::start(temp.path());
-    let created = server.submit(
-        &[("a.txt", b"Durable original result.")],
-        json!([]),
-        json!({}),
-    );
-    let id = created["job_id"].as_str().unwrap().to_owned();
-    server.done(&id);
-    let previous = result(&server, &id, "i1");
-    let folder = server.jobdir(&id);
-    let original = std::fs::read(folder.join("meta.json")).unwrap();
-    let body = std::fs::read(folder.join("out/a.txt.md")).unwrap();
-    model.hold();
-    assert_eq!(retry(&server, &id, "i1", Some(enhance())).status, 202);
-    until("held enhanced output", || {
-        model.entered.load(Ordering::SeqCst) == 1
-    });
-    std::fs::remove_file(folder.join("meta.json")).unwrap();
-    std::fs::create_dir(folder.join("meta.json")).unwrap();
-    model.release();
-    let failed = server.done(&id);
-    assert_eq!(failed["status"], "error");
-    assert!(failed["persistence_error"].is_string());
-    assert!(folder.join("out/a.txt.llm.md").exists());
-    server.signal();
-    server.finish(false);
-    std::fs::remove_dir(folder.join("meta.json")).unwrap();
-    std::fs::write(folder.join("meta.json"), original).unwrap();
-    let server = Server::start(temp.path());
-    assert_eq!(result(&server, &id, "i1"), previous);
-    assert_eq!(std::fs::read(folder.join("out/a.txt.md")).unwrap(), body);
-    assert!(!folder.join("out/a.txt.llm.md").exists());
-    server.stop();
+    for operation in ["enhance", "retry"] {
+        let model = Model::start();
+        let temp = tempfile::tempdir().unwrap();
+        model.configure(temp.path());
+        let server = Server::start(temp.path());
+        let created = server.submit(
+            &[("a.txt", b"Durable original result.")],
+            json!([]),
+            json!({"profile":"obsidian","llm":false,"ocr":false}),
+        );
+        let id = created["job_id"].as_str().unwrap().to_owned();
+        let initial = server.done(&id);
+        let previous = result(&server, &id, "i1");
+        let folder = server.jobdir(&id);
+        let original = std::fs::read(folder.join("meta.json")).unwrap();
+        let body = std::fs::read(folder.join("out/a.txt.md")).unwrap();
+        model.hold();
+        let mut attempt = enhance();
+        attempt["operation"] = json!(operation);
+        attempt["options"]["profile"] = json!("okf");
+        assert_eq!(retry(&server, &id, "i1", Some(attempt)).status, 202);
+        until("held enhanced output", || {
+            model.entered.load(Ordering::SeqCst) == 1
+        });
+        std::fs::remove_file(folder.join("meta.json")).unwrap();
+        std::fs::create_dir(folder.join("meta.json")).unwrap();
+        model.release();
+        let failed = server.done(&id);
+        assert_eq!(failed["status"], "error");
+        assert!(failed["persistence_error"].is_string());
+        if operation == "retry" {
+            assert_eq!(failed["items"][0]["options"]["profile"], "okf");
+            assert!(failed["items"][0]["options"]["ocr"].is_null());
+        }
+        assert!(folder.join("out/a.txt.llm.md").exists());
+        server.signal();
+        server.finish(false);
+        std::fs::remove_dir(folder.join("meta.json")).unwrap();
+        std::fs::write(folder.join("meta.json"), original).unwrap();
+        let server = Server::start(temp.path());
+        let restored = server.json(&format!("/api/jobs/{id}"));
+        assert_eq!(
+            restored["items"][0]["options"],
+            initial["items"][0]["options"]
+        );
+        assert_eq!(restored["items"][0]["options"]["ocr"], false);
+        assert_eq!(result(&server, &id, "i1"), previous);
+        assert_eq!(std::fs::read(folder.join("out/a.txt.md")).unwrap(), body);
+        assert!(!folder.join("out/a.txt.llm.md").exists());
+        server.stop();
+    }
 }
 
 // Document cleanup is structured; pure vision and connection probes remain text.
@@ -535,4 +550,83 @@ fn model_content(request: &Value, markdown: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n");
     json!({"cleaned_markdown":format!("{markdown}\n\n{source}"),"frontmatter":{"description":"Local test document","tags":["fixture"]}}).to_string()
+}
+
+#[test]
+fn failed_retry_restores_only_retained_outputs_options_and_preserves_siblings_after_restart() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = Server::start(temp.path());
+    let created = server.submit(
+        &[
+            ("saved.json", br#"{"body":"Retained source"}"#),
+            ("sibling.txt", b"Sibling source"),
+            ("failed.json", b"{invalid"),
+        ],
+        json!([]),
+        json!({"profile":"obsidian","llm":false,"ocr":false,"backend":"native"}),
+    );
+    let id = created["job_id"].as_str().unwrap();
+    let initial = server.done(id);
+    assert_eq!(initial["items"][0]["status"], "done");
+    assert_eq!(initial["items"][2]["status"], "error");
+    let retained = result(&server, id, "i1");
+    assert_eq!(
+        retry(
+            &server,
+            id,
+            "i2",
+            Some(json!({"options":{"profile":"rag","llm":false,"ocr":false}}))
+        )
+        .status,
+        202
+    );
+    let sibling = server.done(id)["items"][1].clone();
+    std::fs::write(server.jobdir(id).join("uploads/saved.json"), b"{invalid").unwrap();
+    assert_eq!(
+        retry(
+            &server,
+            id,
+            "i1",
+            Some(json!({"options":{"profile":"okf","llm":false}}))
+        )
+        .status,
+        202
+    );
+    let failed = server.done(id);
+    assert_eq!(failed["items"][0]["rerun_failure"]["operation"], "retry");
+    assert_eq!(
+        failed["items"][0]["options"],
+        initial["items"][0]["options"]
+    );
+    assert_eq!(failed["items"][0]["options"]["ocr"], false);
+    assert_eq!(failed["items"][1], sibling);
+    assert_eq!(result(&server, id, "i1"), retained);
+    // With no successful prior output, failure retains the new repeat selection.
+    assert_eq!(
+        retry(
+            &server,
+            id,
+            "i3",
+            Some(json!({"options":{"profile":"okf","llm":false}}))
+        )
+        .status,
+        202
+    );
+    let done = server.done(id);
+    assert_eq!(done["items"][2]["status"], "error");
+    assert_eq!(done["items"][2]["options"]["profile"], "okf");
+    assert!(done["items"][2]["options"]["ocr"].is_null());
+    assert_eq!(done["items"][0]["options"], initial["items"][0]["options"]);
+    assert_eq!(done["items"][1], sibling);
+    server.stop();
+    let server = Server::start(temp.path());
+    let restored = server.json(&format!("/api/jobs/{id}"));
+    for index in 0..3 {
+        assert_eq!(
+            restored["items"][index]["options"],
+            done["items"][index]["options"]
+        );
+    }
+    assert_eq!(result(&server, id, "i1"), retained);
+    server.stop();
 }

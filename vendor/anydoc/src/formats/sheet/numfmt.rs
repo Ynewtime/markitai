@@ -110,6 +110,9 @@ pub(super) struct DateParts {
     /// bracketed unit carries the whole span, so `[mm]:ss` is minutes and
     /// seconds and `[s]` seconds alone.
     pub(super) span: (Unit, Unit),
+    /// markitai: fixed fractional-second digits for an elapsed duration.
+    /// Only an unquoted decimal immediately after seconds enables them.
+    pub(super) second_fraction: usize,
 }
 
 /// A unit of an elapsed span, largest first.
@@ -567,6 +570,10 @@ fn parse_section(s: &str) -> Option<Section> {
     let mut has_date = false;
     // The unit of the first `[h]`, `[m]` or `[s]`.
     let mut elapsed: Option<char> = None;
+    // markitai: token boundaries distinguish ss.00 and [s].00 from literal
+    // or escaped dots. Normal dates/times retain their existing rendering.
+    let mut time_run_end = None;
+    let mut second_fraction = 0;
     // The date/time runs in order, one letter each, so `m` can be read as
     // months or minutes from what sits beside it.
     let mut runs: Vec<char> = Vec::new();
@@ -583,7 +590,11 @@ fn parse_section(s: &str) -> Option<Section> {
                 if let Some((_, tag)) = inner.strip_prefix('$').and_then(|r| r.split_once('-')) {
                     locale = Some(Locale::of(tag));
                 }
+                let previous_runs = runs.len();
                 bracket(&inner, &mut raw, &mut condition, &mut has_date, &mut elapsed, &mut runs)?;
+                if runs.len() > previous_runs {
+                    time_run_end = Some(i);
+                }
             }
             '"' => {
                 let end = chars[i + 1..].iter().position(|&c| c == '"')? + i + 1;
@@ -611,6 +622,9 @@ fn parse_section(s: &str) -> Option<Section> {
                 i += 1;
             }
             '.' => {
+                if time_run_end == Some(i) && runs.last() == Some(&'s') {
+                    second_fraction = chars[i + 1..].iter().take_while(|&&c| c == '0').count();
+                }
                 raw.push(Tok::Decimal);
                 i += 1;
             }
@@ -638,6 +652,7 @@ fn parse_section(s: &str) -> Option<Section> {
                     i += 1;
                 }
                 raw.push(Tok::Run(c.to_ascii_lowercase(), i - start));
+                time_run_end = Some(i);
             }
             'g' | 'G' => {
                 let word: String = chars[i..chars.len().min(i + 7)].iter().collect();
@@ -702,7 +717,17 @@ fn parse_section(s: &str) -> Option<Section> {
         }
         match spelled_date(&raw, elapsed.is_some(), locale) {
             Some(pieces) => Body::Spelled(pieces),
-            None => Body::DateTime(date_parts(&runs, elapsed)),
+            None => {
+                let mut parts = date_parts(&runs, elapsed);
+                if parts.elapsed && parts.span.1 == Unit::Second {
+                    // Match the number formatter's existing bounded precision.
+                    if second_fraction > 512 {
+                        return None;
+                    }
+                    parts.second_fraction = second_fraction;
+                }
+                Body::DateTime(parts)
+            }
         }
     } else if raw.iter().any(|t| matches!(t, Tok::At)) {
         if raw.iter().any(|t| {
@@ -932,7 +957,7 @@ fn render_number(spec: &NumSpec, v_abs: f64, minus: bool) -> Option<String> {
 /// 15-significant-digit decimal form, half away from zero, the way a
 /// spreadsheet displays - binary arithmetic would round 5.255 at two
 /// decimals to 5.25.
-fn split_digits(v: f64, dp: usize) -> Option<(String, String)> {
+pub(super) fn split_digits(v: f64, dp: usize) -> Option<(String, String)> {
     if !v.is_finite() || v < 0.0 || dp > 512 {
         return None;
     }
@@ -1418,7 +1443,8 @@ mod tests {
                 time: true,
                 elapsed: true,
                 seconds: true,
-                span: (Unit::Hour, Unit::Second)
+                span: (Unit::Hour, Unit::Second),
+                second_fraction: 0
             })
         );
         let f = NumberFormat::parse("h:mm AM/PM").unwrap();
@@ -1480,6 +1506,31 @@ mod tests {
         // show 7.5, not 7.4.
         assert_eq!(fmt("0.0%", 0.075), "7.5%");
         assert_eq!(fmt("0", 2.5), "3");
+    }
+
+    #[test]
+    fn elapsed_fractional_seconds_require_an_actual_seconds_decimal_token() {
+        let digits = |code: &str| match NumberFormat::parse(code).unwrap().format_number(1.5) {
+            Rendered::DateTime(parts) => parts.second_fraction,
+            other => panic!("expected date/time, got {other:?}"),
+        };
+        for (code, expected) in [
+            ("[h]:mm:ss.00", 2),
+            ("[m]:ss.000", 3),
+            ("[s].0", 1),
+            ("[ss].00", 2),
+            ("[h].00", 0),
+            ("[m].00", 0),
+            (r"[h]:mm:ss\.00", 0),
+            (r#"[h]:mm:ss".00""#, 0),
+            (r#"[h]:mm:ss"literal".00"#, 0),
+            ("[s][Red].00", 0),
+            ("h:mm:ss.00", 0),
+            ("yyyy-mm-dd hh:mm:ss.00", 0),
+        ] {
+            assert_eq!(digits(code), expected, "{code}");
+        }
+        assert!(NumberFormat::parse(&format!("[s].{}", "0".repeat(513))).is_none());
     }
 
     #[test]

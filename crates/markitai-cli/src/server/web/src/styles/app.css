@@ -684,6 +684,17 @@ textarea {
   line-height: 1.6;
   color: var(--text-3);
 }
+.cloudflare-note {
+  padding: 12px 16px;
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.cloudflare-note summary { cursor: pointer; }
+.cloudflare-session { display: block; font-size: var(--text-xs); }
+.tag-cloudflare { flex-shrink: 0; }
+.seg button[aria-disabled="true"] { color: var(--text-3); cursor: not-allowed; }
 .opt-custom {
   font-size: var(--text-xs);
   color: var(--text-2);
@@ -2944,6 +2955,7 @@ textarea {
 
 /* `screen`: print jobs are laid out about 700px wide and must not take these rules */
 @media screen and (max-width: 780px) {
+  .tag-cloudflare { display: none; }
   .page {
     padding-inline: clamp(24px, 5vw, 40px);
   }

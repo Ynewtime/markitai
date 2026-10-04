@@ -460,7 +460,7 @@
           "reason": {
             "type": "string",
             "description": "Stable machine code of the specific cause. The list is the set the service writes; new codes may be added.",
-            "examples": ["ambiguous_legacy_model_name", "archive_too_large", "batch_pending", "config_changed", "config_missing", "config_too_large", "discovery_timeout", "empty_job", "enhancement_failed", "file_not_found", "file_too_large", "form_field_too_large", "history_empty", "host_not_allowed", "internal_error", "invalid_allowed_host", "invalid_json", "invalid_multipart", "invalid_options", "invalid_provider_request", "invalid_retry_body", "invalid_settings_request", "invalid_ticket_path", "invalid_url", "invalid_urls", "item_busy", "item_not_found", "job_id_collision", "job_not_found", "job_not_running", "job_running", "json_required", "llm_unavailable", "method_not_allowed", "no_output", "no_source", "not_retryable", "nothing_to_stop", "origin_not_allowed", "output_conflict", "output_identity_conflict", "persistence_failed", "provider_busy", "provider_unavailable", "remote_url_forbidden", "request_too_large", "result_too_large", "result_unavailable", "route_not_found", "settings_durability_unknown", "settings_entry_missing", "settings_forbidden", "settings_io_failed", "settings_read_only", "shutting_down", "stale_revision", "ticket_invalid", "token_required", "too_many_items", "too_many_tickets", "unknown_preset", "unsupported_url_scheme", "upload_missing"]
+            "examples": ["ambiguous_legacy_model_name", "archive_too_large", "batch_pending", "config_changed", "config_missing", "config_too_large", "discovery_timeout", "empty_job", "enhancement_failed", "file_not_found", "file_too_large", "form_field_too_large", "history_empty", "host_not_allowed", "internal_error", "invalid_allowed_host", "invalid_json", "invalid_multipart", "invalid_options", "invalid_provider_request", "invalid_retry_body", "invalid_settings_request", "invalid_ticket_path", "invalid_url", "invalid_urls", "item_busy", "item_not_found", "job_id_collision", "job_not_found", "job_not_running", "job_running", "json_required", "llm_unavailable", "method_not_allowed", "no_output", "no_source", "not_retryable", "nothing_to_stop", "origin_not_allowed", "output_conflict", "output_identity_conflict", "persistence_failed", "provider_busy", "provider_unavailable", "remote_url_forbidden", "remote_processing_forbidden", "remote_processing_confirmation_required", "remote_processing_disabled", "cloudflare_unavailable", "request_too_large", "result_too_large", "result_unavailable", "route_not_found", "settings_durability_unknown", "settings_entry_missing", "settings_forbidden", "settings_io_failed", "settings_read_only", "shutting_down", "stale_revision", "ticket_invalid", "token_required", "too_many_items", "too_many_tickets", "unknown_preset", "unsupported_url_scheme", "upload_missing"]
           }
         }
       },
@@ -470,10 +470,36 @@
         "properties": {
           "version": { "type": "string" },
           "llm": { "type": "object", "required": ["routable"], "properties": { "configured": { "type": "boolean" }, "effective": { "type": "boolean" }, "routable": { "type": "boolean" }, "models": { "type": "array", "items": { "type": "string" } } } },
+          "remote_services": { "type": "object", "properties": { "cloudflare": { "$ref": "#/components/schemas/CloudflareCapabilities" } } },
           "presets": { "type": "array", "items": { "type": "string" } },
           "preset_options": { "type": "object", "additionalProperties": { "type": "object", "properties": { "llm": { "type": "boolean" }, "ocr": { "type": "boolean" }, "alt": { "type": "boolean" }, "desc": { "type": "boolean" }, "screenshot": { "type": "boolean" } } } },
           "extras": { "type": "object", "properties": { "browser": { "type": "boolean" }, "svg": { "type": "boolean" } } },
           "limits": { "type": "object", "properties": { "max_job_items": { "type": "integer" } } }
+        }
+      },
+      "CloudflareCapabilities": {
+        "type": "object",
+        "description": "Local prerequisites only: no network request and no cloud permissions verification. Untrusted clients receive a fixed unavailable response.",
+        "required": ["configured", "available", "reason", "browser_rendering", "file_conversion", "file_extensions"],
+        "properties": {
+          "configured": { "type": "boolean" },
+          "available": { "type": "boolean" },
+          "reason": { "type": ["string", "null"], "enum": [null, "not_configured", "invalid_configuration", "disabled_by_policy", "client_not_trusted"] },
+          "browser_rendering": { "type": "boolean" },
+          "file_conversion": { "type": "boolean" },
+          "file_extensions": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "RemoteProcessingDisclosure": {
+        "type": "object",
+        "description": "At least one accepted attempt requested Cloudflare. This is request scope, not evidence of execution, request count, or actual fees. It survives output rollback and later retries; history summarizes any marked item. Existing pricing and cost_usd cover LLM processing only.",
+        "required": ["provider", "requested", "execution", "external_charges", "notice"],
+        "properties": {
+          "provider": { "const": "cloudflare" },
+          "requested": { "const": true },
+          "execution": { "const": "unknown" },
+          "external_charges": { "const": "not_included" },
+          "notice": { "const": "Cloudflare requested; external charges not included", "description": "English fallback; clients should localize using the stable fields." }
         }
       },
       "TicketRequest": {
@@ -494,7 +520,7 @@
       "JobOptions": {
         "type": "object",
         "additionalProperties": false,
-        "description": "Omitted or null fields leave the server configuration in charge.",
+        "description": "Omitted or null fields use server configuration except Cloudflare defaults, which are disabled unless explicitly selected and confirmed in this request. Confirmation is never inherited from history.",
         "properties": {
           "preset": { "type": ["string", "null"], "examples": ["minimal", "standard", "rich"] },
           "llm": { "type": ["boolean", "null"] },
@@ -508,7 +534,8 @@
           "no_cache": { "type": ["boolean", "null"] },
           "no_compress": { "type": ["boolean", "null"] },
           "strategy": { "type": ["string", "null"] },
-          "backend": { "type": ["string", "null"] }
+          "backend": { "type": ["string", "null"], "enum": ["native", "cloudflare", null] },
+          "remote_processing": { "type": ["string", "null"], "enum": ["cloudflare", null], "description": "Consent for the explicitly selected Cloudflare strategy/backend in this request only. Requires a trusted client and locally ready server; never/hard-off policies win." }
         }
       },
       "CreatedItem": {
@@ -531,7 +558,7 @@
         "additionalProperties": false,
         "properties": {
           "operation": { "type": "string", "enum": ["retry", "enhance"], "default": "retry" },
-          "options": { "oneOf": [{ "$ref": "#/components/schemas/JobOptions" }, { "type": "null" }], "description": "Replaces the item's last options; omitted or null inherits them" }
+          "options": { "oneOf": [{ "$ref": "#/components/schemas/JobOptions" }, { "type": "null" }], "description": "Replaces the item's last options; omitted or null inherits selections but never remote_processing consent. Both retry and enhance reconvert the original source, so Cloudflare must be confirmed for each request." }
         }
       },
       "Pricing": {
@@ -562,12 +589,13 @@
       },
       "Item": {
         "type": "object",
-        "required": ["item_id", "name", "kind", "status", "error", "output", "output_name", "duration_ms", "finished_at", "cost_usd", "llm_enhanced", "operation", "skipped", "skip_reason", "retryable", "warnings"],
+        "required": ["item_id", "name", "kind", "status", "error", "output", "output_name", "duration_ms", "finished_at", "cost_usd", "llm_enhanced", "operation", "skipped", "skip_reason", "retryable", "warnings", "options"],
         "properties": {
           "item_id": { "type": "string" },
           "name": { "type": "string" },
           "kind": { "type": "string", "enum": ["file", "url"] },
           "status": { "type": "string", "enum": ["queued", "running", "done", "error"] },
+          "options": { "$ref": "#/components/schemas/JobOptions", "description": "This item's saved repeat selections, falling back to job options for older histories. Always an object; remote_processing and internal metadata are omitted. Snapshot and SSE item responses include it. Enhancement does not change saved repeat selections." },
           "error": { "type": ["string", "null"] },
           "error_code": { "type": "string", "description": "Core conversion code or service cause of a failed item" },
           "output": { "type": ["string", "null"] },
@@ -576,6 +604,7 @@
           "finished_at": { "type": ["string", "null"] },
           "cost_usd": { "type": ["number", "null"] },
           "pricing": { "$ref": "#/components/schemas/Pricing" },
+          "remote_processing": { "$ref": "#/components/schemas/RemoteProcessingDisclosure" },
           "diagnostics": { "$ref": "#/components/schemas/Diagnostics" },
           "rerun_failure": { "$ref": "#/components/schemas/RerunFailure" },
           "llm_enhanced": { "type": "boolean" },
@@ -655,6 +684,7 @@
           "llm_enhanced": { "type": "integer" },
           "cost_usd": { "type": ["number", "null"] },
           "pricing": { "$ref": "#/components/schemas/Pricing" },
+          "remote_processing": { "$ref": "#/components/schemas/RemoteProcessingDisclosure" },
           "names_preview": { "type": "array", "items": { "type": "string" } },
           "kinds_preview": { "type": "array", "items": { "type": "string", "enum": ["file", "url"] } },
           "duration_ms": { "type": ["integer", "null"] },

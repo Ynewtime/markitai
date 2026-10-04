@@ -30,9 +30,20 @@ pub(super) async fn missing() -> ApiError {
 pub(super) async fn method_not_allowed() -> ApiError {
     ApiError::new(405, "method_not_allowed", "method not allowed")
 }
-pub(super) async fn capabilities(ExtractState(state): ExtractState<Arc<State>>) -> Json<Value> {
+pub(super) async fn capabilities(
+    ExtractState(state): ExtractState<Arc<State>>,
+    request: Request,
+) -> Json<Value> {
+    let trusted = request.extensions().get::<Trusted>().is_some_and(|v| v.0);
     let cfg = state.settings.snapshot();
     let llm = markitai_core::llm_capabilities(&cfg);
+    // Do not even resolve credentials for an untrusted caller.
+    let cloudflare = if trusted {
+        markitai_core::cloudflare_capabilities(&cfg)
+    } else {
+        json!({"configured":false,"available":false,"reason":"client_not_trusted",
+            "browser_rendering":false,"file_conversion":false,"file_extensions":[]})
+    };
     let mut presets = json!({"minimal":{"llm":false,"ocr":false,"alt":false,"desc":false,"screenshot":false},"standard":{"llm":true,"ocr":false,"alt":true,"desc":true,"screenshot":false},"rich":{"llm":true,"ocr":false,"alt":true,"desc":true,"screenshot":true}});
     if let Some(overrides) = cfg["presets"].as_object() {
         for (name, value) in overrides {
@@ -42,7 +53,7 @@ pub(super) async fn capabilities(ExtractState(state): ExtractState<Arc<State>>) 
         }
     }
     Json(
-        json!({"version":markitai_core::VERSION,"llm":llm,"presets":["minimal","standard","rich"],"preset_options":presets,"extras":{"browser":markitai_core::browser_available(),"svg":true},"limits":{"max_job_items":MAX_ITEMS}}),
+        json!({"version":markitai_core::VERSION,"llm":llm,"remote_services":{"cloudflare":cloudflare},"presets":["minimal","standard","rich"],"preset_options":presets,"extras":{"browser":markitai_core::browser_available(),"svg":true},"limits":{"max_job_items":MAX_ITEMS}}),
     )
 }
 
@@ -225,17 +236,18 @@ pub(super) async fn create(
         Some(bytes) => JobOptions::parse(&bytes)?,
     };
     let configuration = state.settings.snapshot();
-    let cfg = options.config(&configuration)?;
+    let cfg = options.config_for_request(&configuration, trusted)?;
     // Without a routable model every item would fail with the same error, so a
     // request for model processing is refused before anything is stored.
     options.require_model(&configuration, &cfg)?;
     let bases = jobs::reserve_outputs(&items);
     for item in &mut items {
+        item.remote_processing = options.remote_disclosure();
         if item.kind == "url" {
             item.output_name = Some(format!("{}.md", bases[&item.item_id]));
         }
     }
-    let options = serde_json::to_value(options).unwrap();
+    let options = options.saved();
     let item_options = items
         .iter()
         .map(|item| (item.item_id.clone(), options.clone()))
@@ -431,7 +443,8 @@ pub(super) async fn events(
             tokio::select! {
                 _=shutdown.changed()=>None,
                 message=receiver.recv()=>{
-                    let (kind,payload)=match message {Ok(value)=>value,Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>("snapshot",job.data.lock().unwrap().snapshot()),Err(_)=>return None};
+                    let (kind,mut payload)=match message {Ok(value)=>value,Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>("snapshot",job.data.lock().unwrap().snapshot()),Err(_)=>return None};
+                    if kind=="item" { payload=job.data.lock().unwrap().with_item_options(payload); }
                     let ended=kind=="job"&&payload["status"]!="running";
                     let terminal=kind=="snapshot"&&payload["status"]!="running";
                     Some((Ok(Event::default().event(kind).json_data(payload).unwrap()),(job,receiver,shutdown,None,terminal,ended)))

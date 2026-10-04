@@ -132,9 +132,27 @@ fn format_time_of_day(days: f64, seconds: bool) -> String {
 /// format shows to the smallest (markitai): `[h]:mm:ss`, `[h]:mm`, `[mm]:ss`,
 /// `[s]`. The largest unit carries the whole span; units below the smallest
 /// are dropped as a spreadsheet displays them, not rounded into it.
-fn format_duration_days(days: f64, (largest, smallest): (Unit, Unit)) -> String {
+fn format_duration_days(
+    days: f64,
+    (largest, smallest): (Unit, Unit),
+    second_fraction: usize,
+) -> String {
     let sign = if days < 0.0 { "-" } else { "" };
-    let total_secs = (days.abs() * 86_400.0).round() as u64;
+    // markitai: round the whole span once at the requested precision before
+    // splitting units, so .999 can carry into the next second/minute/hour.
+    // Keep the historical integer-second path byte-for-byte for other formats.
+    let (total_secs, fraction) = if second_fraction > 0 && smallest == Unit::Second {
+        let Some((whole, fraction)) = numfmt::split_digits(days.abs() * 86_400.0, second_fraction)
+        else {
+            return format_float(days);
+        };
+        let Ok(seconds) = (if whole.is_empty() { Ok(0) } else { whole.parse::<u64>() }) else {
+            return format_float(days);
+        };
+        (seconds, fraction)
+    } else {
+        ((days.abs() * 86_400.0).round() as u64, String::new())
+    };
     let mut out = format!("{sign}{}", total_secs / largest.seconds());
     let mut rest = total_secs % largest.seconds();
     for unit in [Unit::Minute, Unit::Second] {
@@ -142,6 +160,10 @@ fn format_duration_days(days: f64, (largest, smallest): (Unit, Unit)) -> String 
             out.push_str(&format!(":{:02}", rest / unit.seconds()));
             rest %= unit.seconds();
         }
+    }
+    if !fraction.is_empty() {
+        out.push('.');
+        out.push_str(&fraction);
     }
     out
 }
@@ -209,20 +231,20 @@ mod tests {
         // 26h30m15s = 1.104340277... days
         let days = (26.0 * 3600.0 + 30.0 * 60.0 + 15.0) / 86_400.0;
         use Unit::*;
-        assert_eq!(format_duration_days(days, (Hour, Second)), "26:30:15");
-        assert_eq!(format_duration_days(-0.5, (Hour, Second)), "-12:00:00");
+        assert_eq!(format_duration_days(days, (Hour, Second), 0), "26:30:15");
+        assert_eq!(format_duration_days(-0.5, (Hour, Second), 0), "-12:00:00");
         // markitai: without seconds they are dropped, not rounded up.
-        assert_eq!(format_duration_days(days, (Hour, Minute)), "26:30");
-        assert_eq!(format_duration_days(days + 25.0 / 86_400.0, (Hour, Minute)), "26:30");
-        assert_eq!(format_duration_days(days + 45.0 / 86_400.0, (Hour, Minute)), "26:31");
-        assert_eq!(format_duration_days(-0.5, (Hour, Minute)), "-12:00");
+        assert_eq!(format_duration_days(days, (Hour, Minute), 0), "26:30");
+        assert_eq!(format_duration_days(days + 25.0 / 86_400.0, (Hour, Minute), 0), "26:30");
+        assert_eq!(format_duration_days(days + 45.0 / 86_400.0, (Hour, Minute), 0), "26:31");
+        assert_eq!(format_duration_days(-0.5, (Hour, Minute), 0), "-12:00");
         // markitai: the bracketed unit carries the whole span.
-        assert_eq!(format_duration_days(days, (Hour, Hour)), "26");
-        assert_eq!(format_duration_days(days, (Minute, Second)), "1590:15");
-        assert_eq!(format_duration_days(days, (Minute, Minute)), "1590");
-        assert_eq!(format_duration_days(days, (Second, Second)), "95415");
-        assert_eq!(format_duration_days(-days, (Minute, Second)), "-1590:15");
-        assert_eq!(format_duration_days(5.0 / 86_400.0, (Minute, Second)), "0:05");
+        assert_eq!(format_duration_days(days, (Hour, Hour), 0), "26");
+        assert_eq!(format_duration_days(days, (Minute, Second), 0), "1590:15");
+        assert_eq!(format_duration_days(days, (Minute, Minute), 0), "1590");
+        assert_eq!(format_duration_days(days, (Second, Second), 0), "95415");
+        assert_eq!(format_duration_days(-days, (Minute, Second), 0), "-1590:15");
+        assert_eq!(format_duration_days(5.0 / 86_400.0, (Minute, Second), 0), "0:05");
     }
 
     #[test]

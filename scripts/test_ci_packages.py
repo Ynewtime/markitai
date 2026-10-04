@@ -91,7 +91,7 @@ class PackageValidationTests(unittest.TestCase):
         # binding installer is actually run by this routing regression.
         with (patch("ci_packages.sys.argv", ["ci_packages.py", "--expected-host", host, "--output", str(output)]),
               patch("ci_packages.sys.platform", "win32"),
-              patch.dict(os.environ, {"HOME": str(self.root), "RUSTFLAGS": "-Cdebuginfo=1"}, clear=True),
+              patch.dict(os.environ, {"HOME": str(self.root), "USERPROFILE": str(self.root), "RUSTFLAGS": "-Cdebuginfo=1"}, clear=True),
               patch("ci_packages.subprocess.check_output", side_effect=check_output),
               patch("ci_packages.subprocess.run", side_effect=run),
               patch("ci_packages.package_attribution", return_value={}),

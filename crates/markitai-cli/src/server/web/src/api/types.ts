@@ -12,6 +12,8 @@ export type ConversionBackend = "native" | "cloudflare";
 
 /** The request options; null leaves the server configuration in charge. */
 export interface JobOptions {
+  /** Authorization is for this request only; never restore it from history. */
+  remote_processing?: "cloudflare" | null;
   preset: string | null;
   llm: boolean | null;
   ocr: boolean | null;
@@ -84,6 +86,9 @@ export interface RerunFailure {
 }
 
 export interface ItemPayload {
+  /** This item's saved selections, without permission for another request. Older servers omit it. */
+  options?: JobOptions;
+  remote_processing?: RemoteProcessing | null;
   item_id: string;
   name: string;
   kind: ItemKind;
@@ -146,7 +151,26 @@ export interface PresetFeatures {
   screenshot: boolean;
 }
 
+export interface CloudflareCapability {
+  configured: boolean;
+  available: boolean;
+  reason: null | "not_configured" | "invalid_configuration" | "disabled_by_policy" | "client_not_trusted";
+  browser_rendering: boolean;
+  file_conversion: boolean;
+  file_extensions: string[];
+}
+
+/** Any accepted attempt requested Cloudflare; this does not prove execution. */
+export interface RemoteProcessing {
+  provider: "cloudflare";
+  requested: true;
+  execution: "unknown";
+  external_charges: "not_included";
+  notice?: string;
+}
+
 export interface Capabilities {
+  remote_services?: { cloudflare: CloudflareCapability };
   version: string;
   llm: {
     configured?: boolean;
@@ -162,6 +186,7 @@ export interface Capabilities {
 
 /** One entry of `GET /api/history`, newest first. */
 export interface HistoryEntry {
+  remote_processing?: RemoteProcessing | null;
   job_id: string;
   created_at: string;
   finished_at: string | null;

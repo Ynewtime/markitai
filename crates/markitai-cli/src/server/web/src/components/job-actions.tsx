@@ -7,7 +7,7 @@ import { fmtCost } from "../lib/format.ts";
 import type { SessionStats } from "../lib/session.ts";
 import { Icon } from "./icons.tsx";
 
-export function JobStats({ t, running, stats }: { t: Dict; running: boolean; stats: SessionStats }) {
+export function JobStats({ t, running, stats, externalCharges = false }: { t: Dict; running: boolean; stats: SessionStats; externalCharges?: boolean }) {
   return (
     <div>
       <h2 class="work-title">{t.conversions}</h2>
@@ -19,7 +19,8 @@ export function JobStats({ t, running, stats }: { t: Dict; running: boolean; sta
           </strong>
           {stats.skipped > 0 && ` · ${stats.skipped} ${t.statusSkipped}`}
           {stats.failed > 0 && ` · ${stats.failed} ${t.statusFailed}`}
-          {stats.hasCost && ` · ${fmtCost(stats.costTotal)}`}
+          {stats.hasCost && ` · ${externalCharges ? `${t.cloudflareLlmSubtotal} ` : ""}${fmtCost(stats.costTotal)}`}
+          {externalCharges && <span class="cloudflare-session">{t.cloudflareBilling}</span>}
         </div>
       )}
     </div>

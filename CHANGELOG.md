@@ -4,6 +4,7 @@
 
 ### Added
 
+- Cloudflare URL rendering and file conversion in the browser workbench, using server-owned configuration and explicit consent for each submission, retry or enhancement. Local readiness checks disclose no credentials and do not verify cloud permissions; remote-processing policy still applies. Request-scope notices distinguish possible Cloudflare charges from the known LLM subtotal without claiming observed cloud usage.
 - Offline Markdown installation, CLI and MCP guides in CLI archives, with `llms.txt` and a self-contained `llms-full.txt` for Agents. Documentation payloads are bounded, whitelisted and checked against the extracted archive bytes.
 - Native Windows x64/ARM64 CLI ZIP packaging with verified executable architecture, exact archive inventories and real installed MCP/Unicode/diagnostic probes. CLI, native bindings and supported static Go packages include the original hayro/PaddleOCR notices; ONNX models remain separately installed. Windows Go/cgo distribution is still unvalidated.
 - Native Windows console VT and width handling with readable fallback, system display-language selection, shared portable output names and actionable Office diagnostics. Windows MCP archives use a directly executable `markitai-mcp.exe`; registry tests use isolated validation keys, and unsupported PAC settings produce a fixed diagnostic without exposing their URL.
@@ -120,6 +121,13 @@
 
 ### Fixed
 
+- Failed workbench retries that retain an earlier successful result also retain that result's conversion options, without undoing sibling items' later choices.
+
+- Workbench retries and enhancements use each item's saved options, including mixed-route batches, without reusing historical remote-processing consent. Incompatible Cloudflare file-backend and Jina/Defuddle URL selections are explained before submission; confirmation text describes only the selected source scope.
+
+- Preserve fractional elapsed seconds in spreadsheets, including rounding across seconds, minutes and hours.
+- Compare complete saved batch options before reusing recovery state; missing or differing options start a fresh batch instead of skipping work.
+- Wrap English usage within 40-column terminals and keep private Windows USERPROFILE values in isolated packaging test fixtures.
 - Windows CLI packaging uses a separate static-CRT build while native bindings retain their own build environment. Both packaging routes inspect ordinary and delay-load DLL imports in all three extracted CLI executables and reject redistributable CRT dependencies; native clean-install acceptance remains a separate release requirement.
 
 - Bind service-held LLM credentials to their configured provider and endpoint, reject client environment references, and preserve literal/cleared credential behavior across saves and restarts. The workbench uses connection IDs and explicit key clearing, preserves detected-model references, and focuses the credential editor. Model discovery honours configured environment endpoints consistently with conversion.

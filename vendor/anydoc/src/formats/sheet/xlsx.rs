@@ -791,7 +791,7 @@ fn render_serial(serial: f64, parts: DateParts, date1904: bool) -> String {
         return format_float(serial);
     }
     if parts.elapsed {
-        return format_duration_days(serial, parts.span);
+        return format_duration_days(serial, parts.span, parts.second_fraction);
     }
     if !parts.date {
         return format_time_of_day(serial.fract(), parts.seconds);
@@ -1520,6 +1520,7 @@ line two</t></is></c><c r="B2" t="inlineStr"><is><t>example.com</t></is></c><c r
         elapsed: false,
         seconds: false,
         span: (Unit::Hour, Unit::Hour),
+        second_fraction: 0,
     };
 
     #[test]
@@ -1548,6 +1549,59 @@ line two</t></is></c><c r="B2" t="inlineStr"><is><t>example.com</t></is></c><c r
     }
 
     #[test]
+    fn fractional_elapsed_formats_preserve_precision_and_carry_across_units() {
+        for (code, seconds, expected) in [
+            ("[h]:mm:ss.00", 95445.25, "26:30:45.25"),
+            ("[h]:mm:ss.00", 95445.0, "26:30:45.00"),
+            ("[h]:mm:ss.00", 95445.999, "26:30:46.00"),
+            ("[h]:mm:ss.00", 59.999, "0:01:00.00"),
+            ("[h]:mm:ss.00", 3599.999, "1:00:00.00"),
+            ("[h]:mm:ss.00", 86399.999, "24:00:00.00"),
+            ("[h]:mm:ss.00", 5.255, "0:00:05.26"),
+            ("[h]:mm:ss.00", -95445.25, "-26:30:45.25"),
+            ("[h]:mm:ss.00", 0.0, "0:00:00.00"),
+            ("[m]:ss.00", 3599.999, "60:00.00"),
+            ("[m]:ss.000", 95445.125, "1590:45.125"),
+            ("[s].00", 95445.25, "95445.25"),
+            ("[ss].00", -95445.25, "-95445.25"),
+            ("[s].0", 0.0, "0.0"),
+            // Existing formats stay on their previous whole-second path.
+            ("[h]", 95445.25, "26"),
+            ("[m]", 95445.25, "1590"),
+            ("[s]", 95445.25, "95445"),
+            ("[h]:mm", 95445.25, "26:30"),
+            (r"[h]:mm:ss\.00", 95445.25, "26:30:45"),
+            (r#"[h]:mm:ss".00""#, 95445.25, "26:30:45"),
+        ] {
+            let format = CellFormat::Fmt(Rc::new(NumberFormat::parse(code).unwrap()));
+            assert_eq!(
+                render_number(&format, seconds / 86400.0, false),
+                expected,
+                "{code}, {seconds}"
+            );
+        }
+        let date = CellFormat::Fmt(Rc::new(NumberFormat::parse("yyyy-mm-dd hh:mm:ss.00").unwrap()));
+        assert_eq!(render_number(&date, 46095.5, false), "2026-03-14 12:00:00");
+    }
+
+    #[test]
+    fn fractional_duration_survives_the_actual_xlsx_styles_and_cell_reader() {
+        let wb = Wb {
+            styles: Some(
+                r#"<numFmts><numFmt numFmtId="164" formatCode="[h]:mm:ss.00"/></numFmts><cellXfs><xf numFmtId="164"/></cellXfs>"#,
+            ),
+            ..one_sheet(
+                r#"<sheetData><row r="1"><c r="A1" s="0"><v>1.1046903935185185185</v></c><c r="B1" s="0"><v>-1.1046903935185185185</v></c><c r="C1" s="0"><v>0</v></c></row></sheetData>"#,
+            )
+        };
+        let doc = parse(&wb.build()).unwrap();
+        assert_eq!(
+            texts(first_table(&doc)),
+            vec![vec!["26:30:45.25", "-26:30:45.25", "0:00:00.00"]]
+        );
+    }
+
+    #[test]
     fn an_elapsed_span_shows_the_seconds_its_format_names() {
         // markitai: 27 hours 5 minutes, as `[h]:mm` and `[h]:mm:ss` show it.
         let serial = (27.0 * 60.0 + 5.0) / 1_440.0;
@@ -1557,6 +1611,7 @@ line two</t></is></c><c r="B2" t="inlineStr"><is><t>example.com</t></is></c><c r
             elapsed: true,
             seconds: true,
             span: (Unit::Hour, Unit::Second),
+            second_fraction: 0,
         };
         assert_eq!(render_serial(serial, span, false), "27:05:00");
         let minutes = DateParts { seconds: false, span: (Unit::Hour, Unit::Minute), ..span };

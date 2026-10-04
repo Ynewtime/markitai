@@ -6,6 +6,10 @@ import { ApiError, fetchCapabilities, NetworkError } from "./api/client.ts";
 import { setToken } from "./api/token.ts";
 import type { Capabilities, HistoryEntry, JobOptions } from "./api/types.ts";
 import { AppFooter, AppHeader } from "./components/app-header.tsx";
+import { CloudflareDialog } from "./components/cloudflare-dialog.tsx";
+import { useCloudflareConsent } from "./hooks/use-cloudflare-consent.ts";
+import { prepareRetryBatch, submitRetryBatch } from "./lib/retry-batch.ts";
+import { hasCloudflareRequest } from "./lib/cloudflare.ts";
 import { DropOverlay } from "./components/drop-overlay.tsx";
 import { CapabilityHint, ErrorLine, InlineAction, NoticeLine } from "./components/feedback.tsx";
 import { ClearButton, JobStats, ZipButton } from "./components/job-actions.tsx";
@@ -155,17 +159,20 @@ export function App() {
     return error;
   }, [describe, setNote]);
 
-  const retryItem = useCallback(
-    (item: SessionItem, override?: JobOptions) => requestItem(item, "retry", () => {
-      const jobOptions = jobsRef.current.jobs[item.jobId]?.options;
-      if (override) return jobsRef.current.retry(item, override);
-      // An image skipped for want of text is retried with OCR on.
-      if (item.skipped && item.skipReason === "image_only") return jobsRef.current.retry(item, withOcrFor(publicOptions(jobOptions ?? optionsRef.current)));
-      return jobsRef.current.retry(item);
-    }),
-    [requestItem],
-  );
+  const cloudflare = useCloudflareConsent(caps?.remote_services?.cloudflare);
+  const authorizeCloudflare = cloudflare.authorize;
 
+  const retryItem = useCallback(
+    async (item: SessionItem, override?: JobOptions) => {
+      const jobOptions = item.options ?? jobsRef.current.jobs[item.jobId]?.options ?? optionsRef.current;
+      const base = publicOptions(override ?? jobOptions);
+      const next = item.skipped && item.skipReason === "image_only" ? withOcrFor(base) : base;
+      const authorized = await authorizeCloudflare(next, [{ name: item.name, kind: item.kind }], true);
+      if (authorized === null) return undefined;
+      return requestItem(item, "retry", () => jobsRef.current.retry(item, authorized));
+    },
+    [requestItem, authorizeCloudflare],
+  );
   const showItemNotice = useCallback((item: SessionItem, opener?: HTMLElement) => {
     const failure = requestFailures[item.key];
     const actionProblem = failure && failure.identity === settledIdentity(item) ? { operation: failure.operation, ...describe(failure.error) } : undefined;
@@ -186,7 +193,7 @@ export function App() {
         label: words.retryPlain,
         run: () => {
           setNote(null);
-          const base = publicOptions(jobsRef.current.jobs[item.jobId]?.options ?? optionsRef.current);
+          const base = publicOptions(item.options ?? jobsRef.current.jobs[item.jobId]?.options ?? optionsRef.current);
           void retryItem(item, { ...base, llm: false, alt: null, desc: null }).then((error) => announce(error ? `${dicts[localeRef.current].retryFailed}: ${describe(error).text}` : dicts[localeRef.current].retryAria(item.name)));
         },
       };
@@ -275,30 +282,40 @@ export function App() {
   }, [announce, t.submitCancelled]);
   useEffect(() => () => controllers.current.forEach((controller) => controller.abort()), []);
 
+  const sending = useRef(false);
   const send = useCallback(
     async (files: File[], list: string[]) => {
-      const controller = new AbortController();
-      controllers.current.add(controller);
-      setSubmitting(true);
-      setUpload(files.length ? { loaded: 0, total: 0 } : null);
-      let last = 0;
-      const ok = await jobsRef.current.submit(files, list, optionsRef.current, {
-        signal: controller.signal,
-        onProgress: (loaded, total) => {
-          // Progress fires very often; redraw ten times a second, never dropping the end.
-          const now = Date.now();
-          if (now - last < 100 && !(total > 0 && loaded >= total)) return;
-          last = now;
-          setUpload({ loaded, total });
-        },
-      });
-      controllers.current.delete(controller);
-      setSubmitting(controllers.current.size > 0);
-      if (!controllers.current.size) setUpload(null);
-      if (ok) navigate("workspace");
-      return ok;
+      if (sending.current) return false;
+      sending.current = true;
+      try {
+        const authorized = await authorizeCloudflare(optionsRef.current, [
+          ...files.map((file) => ({ name: file.name, kind: "file" as const })),
+          ...list.map((name) => ({ name, kind: "url" as const })),
+        ]);
+        if (authorized === null) return false;
+        const controller = new AbortController();
+        controllers.current.add(controller);
+        setSubmitting(true);
+        setUpload(files.length ? { loaded: 0, total: 0 } : null);
+        let last = 0;
+        const ok = await jobsRef.current.submit(files, list, authorized, {
+          signal: controller.signal,
+          onProgress: (loaded, total) => {
+            // Progress fires very often; redraw ten times a second, never dropping the end.
+            const now = Date.now();
+            if (now - last < 100 && !(total > 0 && loaded >= total)) return;
+            last = now;
+            setUpload({ loaded, total });
+          },
+        });
+        controllers.current.delete(controller);
+        setSubmitting(controllers.current.size > 0);
+        if (!controllers.current.size) setUpload(null);
+        if (ok) navigate("workspace");
+        return ok;
+      } finally { sending.current = false; }
     },
-    [navigate],
+    [navigate, authorizeCloudflare],
   );
 
   // The model went away since the page last asked: show the real state.
@@ -357,8 +374,12 @@ export function App() {
 
   // ---- ledger actions
   const enhanceItem = useCallback(
-    (item: SessionItem) => requestItem(item, "enhance", () => jobsRef.current.enhance(item, { ...(jobsRef.current.jobs[item.jobId]?.options ?? optionsRef.current), llm: true })),
-    [requestItem],
+    async (item: SessionItem) => {
+      const authorized = await authorizeCloudflare({ ...publicOptions(item.options ?? jobsRef.current.jobs[item.jobId]?.options ?? optionsRef.current), llm: true }, [{ name: item.name, kind: item.kind }], true);
+      if (authorized === null) return undefined;
+      return requestItem(item, "enhance", () => jobsRef.current.enhance(item, authorized));
+    },
+    [requestItem, authorizeCloudflare],
   );
   const removeItem = useCallback(
     async (item: SessionItem) => {
@@ -370,13 +391,22 @@ export function App() {
   );
   const [retryingAll, setRetryingAll] = useState(false);
   const failed = useMemo(() => failedToRetry(jobs.items), [jobs.items]);
+  const retryingAllRef = useRef(false);
   const retryAll = async () => {
-    if (retryingAll || !failed.length) return;
+    if (retryingAllRef.current) return;
+    // Freeze identities and options before opening the shared confirmation.
+    const batch = prepareRetryBatch(jobsRef.current.items, jobsRef.current.jobs, optionsRef.current);
+    if (!batch.length) return;
+    retryingAllRef.current = true;
     setRetryingAll(true);
-    let again = 0;
-    for (const item of failed) if ((await retryItem(item)) !== null) again++;
-    setRetryingAll(false);
-    announce(again ? t.announceRetryAllFailed(failed.length, again) : t.announceRetryAll(failed.length));
+    try {
+      const authorized = await cloudflare.authorizeBatch(batch.map(({ item, options }) => ({ options, sources: [{ name: item.name, kind: item.kind }] })), true);
+      const result = await submitRetryBatch(batch, authorized, (item, options) => requestItem(item, "retry", () => jobsRef.current.retry(item, options)));
+      if (result) announce(result.failed ? t.announceRetryAllFailed(result.attempted, result.failed) : t.announceRetryAll(result.attempted));
+    } finally {
+      retryingAllRef.current = false;
+      setRetryingAll(false);
+    }
   };
   const waiting = useMemo(() => waitingJobs(jobs.items, jobs.jobs), [jobs.items, jobs.jobs]);
   const [stopping, setStopping] = useState(false);
@@ -476,14 +506,16 @@ export function App() {
       if (snapshot === null) return t.jobLoadFailed;
       const target = snapshot.items.find((item) => item.retryable && (item.status === "error" || (item.status === "done" && item.skipped)));
       if (!target) return t.noFailedItem;
-      const base = publicOptions(snapshot.options);
-      const error = await jobsRef.current.retryArchived(snapshot, target.item_id, target.skip_reason === "image_only" ? withOcrFor(base) : undefined);
+      const base = publicOptions(target.options ?? snapshot.options);
+      const authorized = await authorizeCloudflare(target.skip_reason === "image_only" ? withOcrFor(base) : base, [{ name: target.name, kind: target.kind }], true);
+      if (authorized === null) return undefined;
+      const error = await jobsRef.current.retryArchived(snapshot, target.item_id, authorized);
       if (error !== null) return error;
       setFocusKey(`${snapshot.job_id}/${target.item_id}`);
       announce(t.retryAria(target.name));
       return null;
     },
-    [archive.open, announce, describe, t],
+    [archive.open, announce, describe, t, authorizeCloudflare],
   );
   const enhanceArchived = useCallback(
     async (jobId: string) => {
@@ -491,13 +523,15 @@ export function App() {
       if (snapshot === null) return t.jobLoadFailed;
       const target = snapshot.items.find((item) => item.retryable && item.status === "done" && item.output !== null && !item.skipped && !item.llm_enhanced);
       if (!target) return t.noEnhanceableItem;
-      const error = await jobsRef.current.retryArchived(snapshot, target.item_id, { ...publicOptions(snapshot.options), llm: true }, "enhance");
+      const authorized = await authorizeCloudflare({ ...publicOptions(target.options ?? snapshot.options), llm: true }, [{ name: target.name, kind: target.kind }], true);
+      if (authorized === null) return undefined;
+      const error = await jobsRef.current.retryArchived(snapshot, target.item_id, authorized, "enhance");
       if (error !== null) return error;
       setFocusKey(`${snapshot.job_id}/${target.item_id}`);
       announce(t.enhanceWithLlm(target.name));
       return null;
     },
-    [archive.open, announce, describe, t],
+    [archive.open, announce, describe, t, authorizeCloudflare],
   );
   const deleteArchived = useCallback(
     async (entry: HistoryEntry) => {
@@ -609,15 +643,16 @@ export function App() {
       state={composer}
       presets={presets}
       llmReady={llmReady}
+      cloudflare={caps?.remote_services?.cloudflare}
       urls={urls}
       announce={announce}
-      busy={submitting}
+      busy={submitting || cloudflare.pending !== null}
       heading={heading}
       actions={actions}
       onChange={setComposer}
       onFiles={(files) => submitFiles(files)}
       onFolder={submitFolder}
-      source={<UrlInput t={t} text={urlText} onText={setUrlText} onConvert={submitUrls} busy={submitting} compact={compact} />}
+      source={<UrlInput t={t} text={urlText} onText={setUrlText} onConvert={submitUrls} busy={submitting || cloudflare.pending !== null} compact={compact} />}
     />
   );
 
@@ -646,6 +681,7 @@ export function App() {
         onSettings={() => (settingsOpen ? closeSettings() : openSettings())}
         gearRef={gear}
       />
+      {cloudflare.pending && cloudflare.scope && <CloudflareDialog t={t} scope={cloudflare.scope} reason={cloudflare.reason} retry={cloudflare.pending.retry} requestCount={cloudflare.pending.requests.length} onClose={() => cloudflare.finish(false)} onConfirm={() => cloudflare.finish(true)} />}
       {note && <Notification replay={notification.sequence} note={note} closeLabel={t.close} detailsLabel={t.notificationDetails} warningsLabel={t.itemWarningsTitle} onClose={closeNote} />}
       {settingsOpen && <SettingsModal t={t} locale={locale} onClose={closeSettings} onSaved={refreshCaps} announce={announce} describe={describe} />}
       {preview && (
@@ -698,7 +734,7 @@ export function App() {
             <div class="work-composer">
               {composerFor(
                 true,
-                <JobStats t={t} running={jobs.running} stats={jobs.stats} />,
+                <JobStats t={t} running={jobs.running} stats={jobs.stats} externalCharges={jobs.items.some((item) => hasCloudflareRequest(item.remoteProcessing))} />,
                 jobs.items.length > 0 && (
                   <>
                     {waiting.length > 0 && (
@@ -762,7 +798,7 @@ export function App() {
       <AppFooter t={t} />
       <DropOverlay
         label={t.dropToConvert}
-        suspended={settingsOpen || preview !== null || tokenOpen}
+        suspended={settingsOpen || preview !== null || tokenOpen || cloudflare.pending !== null}
         limit={maxItems}
         onFiles={(files) => submitFiles(files)}
         onFolder={submitWalked}

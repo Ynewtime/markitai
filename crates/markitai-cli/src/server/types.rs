@@ -31,6 +31,7 @@ pub(super) struct JobOptions {
     pub no_compress: Option<bool>,
     pub strategy: Option<String>,
     pub backend: Option<String>,
+    pub remote_processing: Option<String>,
 }
 
 /// Option names the service accepts, by value type. Anything else is rejected
@@ -46,7 +47,13 @@ const BOOLEAN_OPTIONS: [&str; 9] = [
     "no_cache",
     "no_compress",
 ];
-const TEXT_OPTIONS: [&str; 4] = ["preset", "profile", "strategy", "backend"];
+const TEXT_OPTIONS: [&str; 5] = [
+    "preset",
+    "profile",
+    "strategy",
+    "backend",
+    "remote_processing",
+];
 const PROFILES: [&str; 3] = ["rag", "obsidian", "okf"];
 const STRATEGIES: [&str; 6] = [
     "auto",
@@ -129,7 +136,12 @@ impl JobOptions {
                 )));
             }
         }
-        for (key, allowed) in [("profile", &PROFILES[..]), ("strategy", &STRATEGIES[..])] {
+        for (key, allowed) in [
+            ("profile", &PROFILES[..]),
+            ("strategy", &STRATEGIES[..]),
+            ("backend", &["native", "cloudflare"][..]),
+            ("remote_processing", &["cloudflare"][..]),
+        ] {
             if let Some(chosen) = map.get(key).and_then(Value::as_str)
                 && !allowed.contains(&chosen)
             {
@@ -167,8 +179,97 @@ impl JobOptions {
         Ok(())
     }
 
+    fn requests_cloudflare(&self) -> bool {
+        self.strategy.as_deref() == Some("cloudflare")
+            || self.backend.as_deref() == Some("cloudflare")
+    }
+
+    /// History remembers selections, never permission for a later request.
+    pub fn saved(&self) -> Value {
+        let mut saved = self.clone();
+        saved.remote_processing = None;
+        serde_json::to_value(saved).expect("job options serialize")
+    }
+
+    pub fn remote_disclosure(&self) -> Option<Value> {
+        (self.requests_cloudflare() && self.remote_processing.as_deref() == Some("cloudflare"))
+            .then(|| {
+                json!({"provider":"cloudflare","requested":true,"execution":"unknown",
+                "external_charges":"not_included",
+                "notice":"Cloudflare requested; external charges not included"})
+            })
+    }
+
+    pub fn config_for_request(&self, base: &Value, trusted: bool) -> ApiResult<Value> {
+        self.config_for_request_with(base, trusted, || {
+            markitai_core::cloudflare_capabilities(base)
+        })
+    }
+
+    fn config_for_request_with(
+        &self,
+        base: &Value,
+        trusted: bool,
+        capability: impl FnOnce() -> Value,
+    ) -> ApiResult<Value> {
+        let mut cfg = self.config(base)?;
+        let selected = self.requests_cloudflare();
+        if !selected {
+            if self.remote_processing.is_some() {
+                return Err(invalid_options(
+                    "remote_processing requires a Cloudflare strategy or backend in this request",
+                ));
+            }
+            return Ok(cfg);
+        }
+        if !trusted {
+            return Err(ApiError::new(
+                403,
+                "remote_processing_forbidden",
+                "Cloudflare processing requires a trusted authenticated request",
+            ));
+        }
+        if self.remote_processing.as_deref() != Some("cloudflare") {
+            return Err(ApiError::new(
+                422,
+                "remote_processing_confirmation_required",
+                "Confirm Cloudflare processing for this request",
+            ));
+        }
+        // This consent cannot authorize another provider, including a strategy
+        // inherited from the server's configuration.
+        if matches!(cfg["fetch"]["strategy"].as_str(), Some("defuddle" | "jina")) {
+            return Err(invalid_options(
+                "Cloudflare confirmation cannot authorize another remote strategy; choose auto, static, playwright or cloudflare",
+            ));
+        }
+        let capability = capability();
+        if capability["available"] != true {
+            let (reason, detail) = match capability["reason"].as_str() {
+                Some("disabled_by_policy") => (
+                    "remote_processing_disabled",
+                    "Cloudflare processing is disabled by server policy",
+                ),
+                _ => (
+                    "cloudflare_unavailable",
+                    "Cloudflare is not configured and locally ready on this server",
+                ),
+            };
+            return Err(ApiError::new(422, reason, detail));
+        }
+        // Never escalate to always: core's explicit strategy answers ask for
+        // Cloudflare only; auto still has no host consent and remains local.
+        cfg["fetch"]["remote_consent"] = json!("ask");
+        Ok(cfg)
+    }
+
     pub fn config(&self, base: &Value) -> ApiResult<Value> {
         let mut cfg = base.clone();
+        // Cloudflare defaults are not a user's confirmation for this request.
+        if cfg["fetch"]["strategy"] == "cloudflare" {
+            cfg["fetch"]["strategy"] = json!("auto");
+        }
+        cfg["fetch"]["cloudflare"]["convert_enabled"] = json!(false);
         if let Some(name) = &self.preset {
             let name = name.to_ascii_lowercase();
             let preset = preset_definition(base, &name).ok_or_else(|| {
@@ -300,6 +401,10 @@ pub(super) struct Item {
     pub duration_ms: Option<u64>,
     pub finished_at: Option<String>,
     pub cost_usd: Option<f64>,
+    /// At least one accepted attempt for this item requested Cloudflare. This
+    /// does not establish execution, request counts, or actual external fees.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_processing: Option<Value>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -343,6 +448,7 @@ impl Item {
             duration_ms: None,
             finished_at: None,
             cost_usd: None,
+            remote_processing: None,
             pricing: None,
             diagnostics: None,
             rerun_failure: None,
@@ -500,7 +606,7 @@ mod error_tests {
         let detail = |text: &str| JobOptions::parse(text.as_bytes()).unwrap_err().detail;
         assert_eq!(
             detail(r#"{"bogus":true}"#),
-            "unknown option 'bogus'; supported options: preset, profile, strategy, backend, llm, ocr, alt, desc, screenshot, screenshot_only, pure, no_cache, no_compress"
+            "unknown option 'bogus'; supported options: preset, profile, strategy, backend, remote_processing, llm, ocr, alt, desc, screenshot, screenshot_only, pure, no_cache, no_compress"
         );
         assert_eq!(
             detail(r#"{"llm":"yes"}"#),
@@ -609,5 +715,155 @@ mod pricing_tests {
         value["pricing"] = json!({"priced_requests":1,"unpriced_requests":2,"cost_status":"partial","pricing_snapshots":["catalog-v1"]});
         let restored: Item = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(serde_json::to_value(restored).unwrap(), value);
+    }
+}
+
+#[cfg(test)]
+mod cloudflare_request_tests {
+    use super::*;
+    fn base(policy: &str) -> Value {
+        markitai_core::config::normalize(&json!({"fetch":{"remote_consent":policy,
+            "strategy":"cloudflare","cloudflare":{"convert_enabled":true}}}))
+        .unwrap()
+    }
+    fn ready() -> Value {
+        json!({"available":true,"reason":null})
+    }
+    fn options(value: Value) -> JobOptions {
+        JobOptions::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn defaults_do_not_send_files_or_urls_to_cloudflare() {
+        for policy in ["ask", "always", "never"] {
+            let cfg = JobOptions::default()
+                .config_for_request_with(&base(policy), false, || {
+                    panic!("must not read credentials")
+                })
+                .unwrap();
+            assert_eq!(cfg["fetch"]["strategy"], "auto");
+            assert_eq!(cfg["fetch"]["cloudflare"]["convert_enabled"], false);
+        }
+    }
+    #[test]
+    fn cloudflare_requires_current_confirmation_and_trust_before_readiness() {
+        for selection in [
+            json!({"strategy":"cloudflare"}),
+            json!({"backend":"cloudflare"}),
+        ] {
+            let opt = options(selection.clone());
+            let denied = opt
+                .config_for_request_with(&base("ask"), false, || panic!("no credential lookup"))
+                .unwrap_err();
+            assert_eq!(
+                (denied.status.as_u16(), denied.reason),
+                (403, "remote_processing_forbidden")
+            );
+            assert_eq!(
+                opt.config_for_request_with(&base("ask"), true, || panic!("no credential lookup"))
+                    .unwrap_err()
+                    .reason,
+                "remote_processing_confirmation_required"
+            );
+            let mut confirmed = selection;
+            confirmed["remote_processing"] = json!("cloudflare");
+            let confirmed = options(confirmed);
+            assert_eq!(
+                confirmed
+                    .config_for_request_with(&base("always"), true, ready)
+                    .unwrap()["fetch"]["remote_consent"],
+                "ask"
+            );
+            assert!(confirmed.saved()["remote_processing"].is_null());
+            let inherited = options(confirmed.saved());
+            assert_eq!(
+                inherited
+                    .config_for_request_with(&base("ask"), true, ready)
+                    .unwrap_err()
+                    .reason,
+                "remote_processing_confirmation_required"
+            );
+        }
+    }
+    #[test]
+    fn policy_and_readiness_refusals_cannot_be_overridden() {
+        let opt = options(json!({"backend":"cloudflare","remote_processing":"cloudflare"}));
+        for reason in [
+            "disabled_by_policy",
+            "not_configured",
+            "invalid_configuration",
+        ] {
+            let result = opt
+                .config_for_request_with(
+                    &base("ask"),
+                    true,
+                    || json!({"available":false,"reason":reason}),
+                )
+                .unwrap_err();
+            assert_eq!(result.status.as_u16(), 422);
+            assert_eq!(
+                result.reason,
+                if reason == "disabled_by_policy" {
+                    "remote_processing_disabled"
+                } else {
+                    "cloudflare_unavailable"
+                }
+            );
+        }
+    }
+    #[test]
+    fn confirmation_is_strict_and_cannot_authorize_other_services() {
+        for value in [
+            json!("always"),
+            json!("Cloudflare"),
+            json!(true),
+            json!(1),
+            json!([]),
+        ] {
+            assert!(JobOptions::from_value(json!({"remote_processing":value})).is_err());
+        }
+        assert!(
+            options(json!({"remote_processing":"cloudflare"}))
+                .config_for_request_with(&base("ask"), true, ready)
+                .is_err()
+        );
+        for strategy in ["defuddle", "jina"] {
+            let opt = options(
+                json!({"backend":"cloudflare","strategy":strategy,"remote_processing":"cloudflare"}),
+            );
+            assert!(
+                opt.config_for_request_with(&base("ask"), true, ready)
+                    .is_err()
+            );
+        }
+        for forbidden in ["api_key", "api_token", "account_id", "endpoint", "api_base"] {
+            let mut value = json!({"backend":"cloudflare","remote_processing":"cloudflare"});
+            value[forbidden] = json!("synthetic");
+            assert!(JobOptions::from_value(value).is_err());
+        }
+    }
+    #[test]
+    fn request_disclosure_is_separate_from_the_llm_ledger_and_survives_history() {
+        let mut item = Item::new(1, "local.txt".into(), "file", None);
+        assert!(
+            serde_json::to_value(&item)
+                .unwrap()
+                .get("remote_processing")
+                .is_none()
+        );
+        item.remote_processing =
+            options(json!({"backend":"cloudflare","remote_processing":"cloudflare"}))
+                .remote_disclosure();
+        item.cost_usd = Some(0.125);
+        let encoded = serde_json::to_value(&item).unwrap();
+        assert_eq!(encoded["remote_processing"]["execution"], "unknown");
+        assert_eq!(
+            encoded["remote_processing"]["external_charges"],
+            "not_included"
+        );
+        assert_eq!(encoded["cost_usd"], 0.125);
+        let restored: Item = serde_json::from_value(encoded).unwrap();
+        assert_eq!(restored.remote_processing, item.remote_processing);
+        assert_eq!(restored.cost_usd, item.cost_usd);
     }
 }

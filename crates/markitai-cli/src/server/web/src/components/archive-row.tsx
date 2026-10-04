@@ -1,5 +1,6 @@
 // A saved job in the same ledger language as live rows: names, duration,
 // finish time, Base/LLM, and a status mark (one item) or a dark count pill.
+import { hasCloudflareRequest } from "../lib/cloudflare.ts";
 import { memo } from "preact/compat";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { HistoryEntry } from "../api/types.ts";
@@ -156,6 +157,7 @@ export const ArchiveRow = memo(function ArchiveRow({
       <span class="cell-name" title={names}>
         <Icon name={entry.kinds_preview[0] === "url" ? "Globe" : "FileText"} size={14} />
         <span class="fname">{names}</span>
+        {hasCloudflareRequest(entry.remote_processing) && <span class="tag tag-cloudflare" title={t.cloudflareBillingDetail} aria-label={t.cloudflareBilling}>Cloudflare</span>}
         {entry.origin === "cli" && <span class="tag tag-origin">{t.originCli}</span>}
       </span>
       <span class="cell-time">{duration}</span>
@@ -240,6 +242,7 @@ export const ArchiveRow = memo(function ArchiveRow({
           {llmLabel}
           {hasLlm && entry.cost_usd !== null && ` ${fmtCost(entry.cost_usd)}`}
         </span>
+        {hasCloudflareRequest(entry.remote_processing) && <span class="fact">{t.cloudflareBilling}</span>}
         <span class="fact">{t.histStorageSize(fmtBytes(entry.size_bytes))}</span>
       </span>
     </div>

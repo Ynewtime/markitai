@@ -238,10 +238,26 @@ mod tests {
             .unwrap_or_else(|| panic!("interface {name}"));
         let head_end = start + source[start..].find('{').unwrap();
         let body_end = head_end + source[head_end..].find("\n}").unwrap();
+        // Inline object members belong to that nested shape, not its parent.
+        let mut nested = 0usize;
         let mut fields: Vec<(String, bool)> = source[head_end + 1..body_end]
             .lines()
             .filter_map(|line| {
                 let line = line.trim();
+                if line.starts_with("//") {
+                    return None;
+                }
+                let top_level = nested == 0;
+                for character in line.chars() {
+                    match character {
+                        '{' => nested += 1,
+                        '}' => nested = nested.checked_sub(1).expect("balanced interface objects"),
+                        _ => {}
+                    }
+                }
+                if !top_level {
+                    return None;
+                }
                 let (field, _) = line.split_once(':')?;
                 let optional = field.ends_with('?');
                 let field = field.trim_end_matches('?');
@@ -288,7 +304,7 @@ mod tests {
     fn the_workbench_types_match_the_service_payloads() {
         use super::super::{
             jobs::JobData,
-            types::{Item, RerunFailure, RerunOperation, now},
+            types::{Item, JobOptions, RerunFailure, RerunOperation, now},
         };
         use crate::diagnostics::{AttemptDiagnostics, Operation};
         use serde_json::json;
@@ -317,7 +333,23 @@ mod tests {
         agree("RerunFailure", &json!(failure), &json!(failure));
         full.rerun_failure = Some(failure);
         assert!(full.pricing.is_some() && full.diagnostics.is_some());
-        agree("ItemPayload", &json!(full), &json!(minimal));
+        let selected = JobOptions::from_value(json!({
+            "preset":"minimal", "llm":false, "ocr":false, "profile":"rag",
+            "alt":false, "desc":false, "screenshot":false, "screenshot_only":false,
+            "pure":false, "no_cache":true, "no_compress":true,
+            "strategy":"static", "backend":"cloudflare", "remote_processing":"cloudflare"
+        }))
+        .unwrap();
+        agree(
+            "JobOptions",
+            &json!(selected),
+            &json!(JobOptions::default()),
+        );
+        let disclosure = selected
+            .remote_disclosure()
+            .expect("selected request has disclosure");
+        agree("RemoteProcessing", &disclosure, &disclosure);
+        full.remote_processing = Some(disclosure);
         let job = |items: Vec<Item>, persistence: Option<String>| JobData {
             id: "job".into(),
             created_at: now(),
@@ -332,11 +364,48 @@ mod tests {
             item_options: HashMap::new(),
             transactions: Vec::new(),
         };
-        let mut priced = full.clone();
-        priced.status = "done".into();
-        let complete = job(vec![priced], Some("history could not be persisted".into()));
-        let plain = job(vec![minimal], None);
+        full.status = "done".into();
+        let priced = full.clone();
+        let mut complete = job(vec![priced], Some("history could not be persisted".into()));
+        complete
+            .item_options
+            .insert(full.item_id.clone(), selected.saved());
+        let plain = job(vec![minimal.clone()], None);
+        // Item.options is serialized by the response adapter, not the bare Item.
+        let full_payload = complete.with_item_options(json!(full));
+        let minimal_payload = plain.with_item_options(json!(minimal));
+        agree("ItemPayload", &full_payload, &minimal_payload);
+        agree("ItemPayload", &full_payload, &json!(minimal)); // older server shape
+        assert_eq!(full_payload["options"]["backend"], "cloudflare");
+        assert!(full_payload["options"].get("remote_processing").is_none());
+        assert!(minimal_payload.get("remote_processing").is_none());
+        assert_eq!(complete.snapshot()["items"][0], full_payload);
+        assert_eq!(plain.snapshot()["items"][0], minimal_payload);
         agree("JobSnapshot", &complete.snapshot(), &plain.snapshot());
         agree("HistoryEntry", &complete.history(), &plain.history());
+    }
+
+    #[test]
+    fn the_workbench_capability_and_option_fields_match_the_documented_contract() {
+        let schema: serde_json::Value = serde_json::from_str(include_str!("openapi.json")).unwrap();
+        for (interface_name, schema_name) in [
+            ("Capabilities", "Capabilities"),
+            ("CloudflareCapability", "CloudflareCapabilities"),
+            ("RemoteProcessing", "RemoteProcessingDisclosure"),
+            ("JobOptions", "JobOptions"),
+        ] {
+            let declared: std::collections::BTreeSet<_> = interface(interface_name)
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect();
+            assert_eq!(
+                declared,
+                keys(&schema["components"]["schemas"][schema_name]["properties"]),
+                "{interface_name}: every documented field must be declared exactly once"
+            );
+        }
+        // Nested llm fields must not be mistaken for top-level capabilities.
+        assert_eq!(interface("Capabilities").len(), 7);
+        assert_eq!(interface("CloudflareCapability").len(), 6);
     }
 }
