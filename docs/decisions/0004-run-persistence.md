@@ -1,13 +1,9 @@
 # Run reports, resume state and history
 
-Status: **reports, recovery storage and Unix CLI scheduling implemented;
-history pending**. The CLI publishes all four report projections and connects
-native state to directory/URL-list `--resume`. Public binding requests remain
-unchanged. The original clean report and storage validation records are historical
-baselines; new scheduling and ownership gate status belongs in the
-[control center](../CONTROL.md). See [recovery](../state-storage.md) and
-[output ownership](../output-ownership.md) for the implemented guarantees and
-remaining crash/platform boundaries. Enabled history is still rejected.
+Historical design and validation record. Implementation-stage statements below
+describe their original checkpoints. Current behavior and crash/platform
+boundaries are documented in [recovery](../state-storage.md),
+[history](../history.md) and [output ownership](../output-ownership.md).
 
 This design follows a read-only audit of reference revision
 `ba374322f884b0e720b45466cc1196f4574a3da5`, against native baseline `658cf00`.
@@ -402,4 +398,3 @@ the corresponding unsupported guard is removed. Report source tests, four
 clean-release differential cases and installed host checks have passed. The
 [state storage](../state-storage.md) implementation is validated separately from
 CLI scheduling. Recovery dispatch and history have no runtime validation claim.
-The [control center](../CONTROL.md) tracks subsequent checkpoints.

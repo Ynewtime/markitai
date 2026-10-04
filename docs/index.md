@@ -100,8 +100,6 @@ full repository checkout; internal work records are not copied into packages.
 
 These pages are for contributors and reviewers rather than users.
 
-- [Control center](CONTROL.md), [status](STATUS.md) and
-  [remaining work](remaining-work.md): scope, checkpoints and the work queue.
 - [Architecture](architecture.md) and [development](development.md).
 - [Compatibility](compatibility.md): contracts of reference release 1.2.0.
 - [Native CI](ci.md): package builds and installed-package checks.
@@ -113,4 +111,4 @@ These pages are for contributors and reviewers rather than users.
 
 Topic pages describe current behavior and remaining gaps. Historical validation
 records apply to their named commit, binary and platform; they do not certify a
-newer package. Current delivery status is tracked separately in [status](STATUS.md).
+newer package. Consult the CI run and artifact metadata for a specific build.

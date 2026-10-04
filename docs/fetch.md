@@ -740,5 +740,4 @@ proxy URL; a SOCKS proxy there is an explicit unsupported error, because only
 the browser can use it. Model and Provider Batch clients keep their provider
 environment handling. The Windows registry reader is compiled in native Windows
 builds. That and parser tests do not establish every actual registry/proxy
-configuration; platform-specific live evidence remains separate in
-[STATUS](STATUS.md).
+configuration; verify proxy behavior in the deployment environment.

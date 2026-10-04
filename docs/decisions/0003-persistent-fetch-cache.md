@@ -1,8 +1,7 @@
 # Persistent fetch cache
 
-Status: first static HTML/text stage implemented and covered by the round-five
-Rust checks. Rebuilt artifacts and real-corpus validation are tracked in
-[CONTROL](../CONTROL.md); later cache categories remain open.
+Historical design and round-five validation record for the first static
+HTML/text cache stage. Current behavior is documented in [fetch](../fetch.md).
 The source audit used reference commit
 `ba374322f884b0e720b45466cc1196f4574a3da5` and clean native source
 `5280fd3c928066a31cffda260ef5b2270cef758a`, recorded in

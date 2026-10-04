@@ -24,9 +24,7 @@ The workflow pins Rust 1.99.0, Python 3.13, Node.js 24 and Go 1.27.1. Its
 optional Rust 1.92 lane runs `cargo check --locked` for core, CLI and FFI on
 Ubuntu; it does not execute the complete test or binding suites on that compiler.
 
-Use [current status](STATUS.md) for completed runs and remaining acceptance.
-Results apply to their recorded commit and target. This round keeps
-`1.3.0-dev` for local verification from `main`; no Release, tag or publishing
+Results apply to their recorded commit and target. No Release, tag or publishing
 step is part of these drivers.
 
 The workflow caches third-party Cargo dependencies separately by runner and

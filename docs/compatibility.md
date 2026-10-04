@@ -65,5 +65,5 @@ scans, formulas, legacy Office files and complex PDF layouts.
 Real provider login, subscription inference and billing require their own account
 and entitlement checks; fixture success does not establish them. Tests and recorded
 measurements apply only to their named source, package, platform and corpus.
-Current verification scope belongs in [STATUS](STATUS.md), rather than being
-inferred from an older reference audit or a guide's example command.
+An older reference audit or a guide's example command does not establish
+verification of a different version or platform.

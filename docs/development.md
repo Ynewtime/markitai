@@ -1,8 +1,7 @@
-# Development and recovery
+# Development
 
-Start at `docs/CONTROL.md`; inspect `git status --short --branch` before work.
-The current delivery target is `main` for local user verification. Keep
-`1.3.0-dev`; this round does not create a release, tag or publication.
+Read [AGENTS.md](../AGENTS.md) and inspect `git status --short --branch` before work.
+Development builds remain `1.3.0-dev`; publishing requires explicit authorization.
 Package manifests set the floors: Rust 1.92 (workspace `rust-version`, the
 floor of the portable PDF renderer hayro), Python 3.10 (`bindings/python/pyproject.toml`),
 Node.js 18 (`bindings/node/package.json`) and Go 1.23 (`bindings/go/go.mod`).

@@ -457,8 +457,7 @@ Implementation references: [PyO3 function and module interface](https://pyo3.rs/
 
 ## Verified evidence
 
-See [current status](STATUS.md) for commit-specific native and installed-package
-results. Windows Python/Node package checks have run; Windows Go/cgo delivery,
+Windows Python/Node package checks have run; Windows Go/cgo delivery,
 physical Intel hardware and every minimum language runtime are not established
 by those checks. A host test or a valid native-library header does not certify
 another target. Historical evidence remains scoped to its recorded source and

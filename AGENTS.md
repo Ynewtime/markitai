@@ -1,27 +1,60 @@
 # Markitai Rust engineering protocol
 
-Read `docs/CONTROL.md` before changing this repository. It is the single work
-queue and handoff record. The Python repository is a read-only behavioral
-reference; implementation, comments, and documentation here are authored anew.
+Work in this Rust repository. `/Users/example-user/work/markitai` is a read-only behavioral
+reference, not a build dependency. Contributor commands are in
+[development](docs/development.md); product guides start at [docs](docs/index.md).
 
-## Coordination and recovery
+## Coordination and Git
 
-- The coordinator owns Git mutations, workspace manifests, integration builds,
-  and `docs/CONTROL.md`. Workers edit only their assigned paths.
-- Never use destructive reset, clean, stash, force-push, or branch switching to
-  resolve concurrent edits. Inspect and preserve unexpected changes.
-- Commit explicit paths after verification. Record verified commit checkpoints
-  and remaining failures in the control document. Never claim feature parity
-  on the strength of compilation or a smoke test.
-- Never print, commit, or replace user credentials. Test state lives in ignored
-  `.local/`; `MARKITAI_HOME` must isolate configuration, caches, and history.
-- Core code stays runtime-independent of Python/Node/Go. Bindings call Rust in
-  process. Unsupported capabilities return explicit errors until implemented.
-- Document public interface differences and measured performance with commands,
-  fixture provenance, build profile, platform, and limitations.
+- The coordinator owns Git, manifests and integration builds. Workers edit only
+  assigned paths; freeze tracked files during gates, builds and packaging.
+- Preserve unexpected changes. Never reset, clean, stash, force-push or switch
+  branches to resolve concurrent work. Commit only explicit reviewed paths.
+- Keep **1.3.0-dev** until a new release is authorized. Deliver to `main` for user
+  verification; do not create releases/tags, publish packages or change visibility
+  without explicit authorization.
+- Record test commands, source/artifact identities, fixture provenance and scope
+  in ignored `.local/` evidence. Use Git history for completed work; do not keep
+  duplicate status, handoff or completed-task documents in the user guides.
+- Distinguish source checks, hosted CI, installed packages and real-user tests.
+  A passing build or smoke test does not establish feature parity.
 
-## Versioning
+## Test isolation and privacy
 
-The reference release is 1.2.0. The rewrite targets 1.3.0; development builds use
-1.3.0-dev. Changelogs use the next numbered release, without a date until
-release, and English/Chinese sections must stay synchronized.
+- Never print, commit or replace credentials. Every CLI test isolates `HOME`
+  and `MARKITAI_HOME`, plus Windows user state when applicable.
+- Use repository fixtures, authored `.local/` samples and reference fixtures.
+  Do not read personal folders or real `~/.markitai`, or send user identity
+  information in test requests. Live-provider tests need explicitly scoped test
+  credentials and authorization.
+- Start long tasks with tool background/session mode, never `cmd &`.
+- Clean only regenerable idle caches; retain evidence and cited artifacts.
+
+## Validation
+
+Every commit requires a fresh round and both checks below, with tracked bytes
+and modes unchanged during verification. Check existing `.local/` records before
+choosing the round; the local `run_checked_gate.py` wrapper supplies isolation.
+
+```sh
+/Users/example-user/.local/bin/python3.13 .local/integration-round36/run-gate2.py rNNN
+sh docs/validation/drivers/windows-check-round38/check-windows.sh clippy -- -D warnings
+```
+
+- For pdf-inspector changes, rsync to `.local/pdf-backlog-r1/vendor-copy`, touch
+  each source file, run its own suite and match the exact 21 failed names in
+  `.local/pdf-backlog-r1/failures-r129.txt`. Do not accept stale Cargo results.
+- UI changes preserve the reference webapp design. Run `npm ci` and
+  `node build.mjs`, and commit generated `dist/` with the change.
+- Retrieve full CI logs with `gh api repos/Ynewtime/markitai-rust/actions/jobs/<id>/logs
+  --allow-escape-sequences`, never truncated `gh run view --log`. Verify the exact
+  commit, attempt and expected jobs. Do not restart a watcher or dispatch another
+  run merely because an observation timed out.
+
+## Implementation and documentation
+
+- Core code stays independent of Python/Node/Go runtimes. Bindings call Rust in
+  process; unsupported capabilities return explicit errors.
+- Keep user guides concise and current. Put applicable limits in the relevant
+  topic guide, and public changes in the changelog; avoid duplicated work logs.
+- Keep `CHANGELOG.md` and `CHANGELOG.zh.md` synchronized under undated `[1.3.0]`.

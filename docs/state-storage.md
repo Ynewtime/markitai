@@ -12,8 +12,7 @@ On a controlled interruption or fatal coordinator error, admitted but unsent
 items restore their previous status, target, output, error and attempt diagnostics.
 After an abrupt process kill, unfinished reservations follow ordinary resume.
 The native conversion API and language bindings do not acquire recovery state.
-See [output ownership](output-ownership.md) for the separate publication protocol
-and [the control center](CONTROL.md) for the current validation status.
+See [output ownership](output-ownership.md) for the separate publication protocol.
 
 ## Files and run scope
 

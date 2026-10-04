@@ -120,7 +120,7 @@ The table describes available backends, rather than promising every format
 has equal fidelity on every platform. Windows x64 CI and Windows ARM64/Linux
 VMs have run native Rust tests and installed-package checks. Results apply to
 the commit and package recorded in each run; physical Intel Macs remain
-untested. Consult [current status](STATUS.md), [native CI](ci.md) and
+untested. Consult [native CI](ci.md) for validation scope and
 [formats](formats.md) for reader gaps.
 
 | Capability | macOS | Linux x86-64 | Windows x64 / ARM64 |

@@ -1,8 +1,8 @@
 # Persistent document LLM cache
 
-Status: implemented and covered by the round-four Rust integration checks.
-Contract reviewed against reference `ba374322f884b0e720b45466cc1196f4574a3da5`;
-release artifact verification is tracked in `CONTROL.md`.
+Historical design and round-four validation record. Contract reviewed against
+reference `ba374322f884b0e720b45466cc1196f4574a3da5`. Current cache behavior is
+documented in [cache](../cache.md).
 
 Repeated document enhancement should reuse a successful result across processes
 before spending a model request. The initial implementation covers non-pure

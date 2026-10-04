@@ -1,10 +1,8 @@
 # Validation records
 
-最新交付：[交付 R48](delivery-round48.md)（1.3.0 最终发布候选；rc1 为 [R47](delivery-round47.md)），发布前检查见
-[发布验收](release-acceptance-r51.md)与[真实 LLM 验证](llm-real-providers-r51.md)。其前的两轮改动与语料对照见并行改进 [R49](parallel-round49.md) 与
-[R50](parallel-round50.md)，更早的见 [R47](parallel-round47.md) 与 [R48](parallel-round48.md)；上一次交付为 [R46](delivery-round46.md)。
-冻结性能见[性能记录](performance-round36.md)（`all-r14`，release r22）。当前状态与剩余事项见 [STATUS](../STATUS.md) 与
-[剩余工作](../remaining-work.md)。
+本目录是历史验证记录，结论仅适用于各自记录的源码、产物、环境与样本，
+不代表当前版本的交付或发布状态。历史交付见 [R48](delivery-round48.md)、
+[验收记录](release-acceptance-r51.md)与[性能记录](performance-round36.md)。
 
 An implementation checkpoint is reproducible only when it records the command,
 source revision, test inputs, build profile, and platform. Passing new unit
@@ -150,7 +148,7 @@ files. This isolates the exercised configuration paths; it is not an OS sandbox.
 - The [first round-five checkpoint](round5-first.md), artifacts and measurements
   remain historical evidence. Its extra parity pass was not evidence of better
   extraction quality; later review found and corrected two structural defects.
-- The [performance plan](../STATUS.md#性能与体积) covers profile selection,
+- The [performance plan](https://github.com/Ynewtime/markitai-rust/blob/6cf3a1a6a130df3bfe7cae3b203f40498c3e54d2/docs/STATUS.md#性能与体积) covers profile selection,
   complete binding costs, retained binary code/data and sustained memory checks.
 
 ## Round-six build-profile evidence

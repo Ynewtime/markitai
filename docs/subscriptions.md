@@ -201,8 +201,7 @@ Native fixture tests exercise all three runtime protocols, cleanup and failure
 accounting on supported platforms, including Windows command shims. Separate
 official-runtime checks establish only their recorded version, initialization
 or signed-out behavior. They do not establish a real login, model entitlement,
-authenticated inference or billing. Current platform evidence is recorded in
-[STATUS](STATUS.md).
+authenticated inference or billing.
 
 The restricted `chatgpt/gpt-5.5` adapter targets official Codex 0.159.0; its
 [contract](subscription-chatgpt.md) describes its model allowlist and aggregate

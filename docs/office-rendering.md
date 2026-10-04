@@ -177,6 +177,3 @@ macOS ARM64, Windows ARM64 and Linux x86-64. That does not establish every
 legacy import, matching fonts or pixel-identical output across platforms.
 LibreOffice versions and installed fonts affect layout; use a digital source's
 native text for searchable content and inspect page images when layout matters.
-The default-font compatibility policy and active-output scan correction are part
-of the current development source. No stable release is implied; current source
-and artifact evidence belongs in [STATUS](STATUS.md).

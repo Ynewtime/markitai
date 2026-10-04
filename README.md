@@ -8,7 +8,7 @@ bindings need their respective language runtime.
 
 This is **1.3.0-dev**, the Rust rewrite of reference release 1.2.0, available
 for local verification. Stable 1.3.0 is not published. See the
-[changelog](CHANGELOG.md), [current status](docs/STATUS.md) and
+[changelog](CHANGELOG.md) and
 [compatibility contracts](docs/compatibility.md).
 
 ## Install

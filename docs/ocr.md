@@ -268,5 +268,5 @@ still receives the ordinary no-text warning.
 - Model files are additional installed disk space, separate from the CLI binary.
 
 Measured quality and performance have specific source, platform and corpus
-boundaries; see [STATUS](STATUS.md). They do not establish every language,
+boundaries. They do not establish every language,
 full-document fidelity or equal performance across platforms.

@@ -35,7 +35,7 @@ Windows ZIP 含直接可执行的 `markitai.exe`、`mkai.exe`、`markitai-mcp.ex
 MCP 别名直接启动 stdio 服务，支持自己的 `--help` 和 `--version`。
 OCR 模型不随归档提供；按[本地 OCR](ocr.md)提前准备。
 离线入口是根目录 `llms.txt`、`llms-full.txt` 及精选 `docs/` 指南；
-其他专题链接需要完整仓库。当前验收范围见[状态](STATUS.md)。
+其他专题链接需要完整仓库。
 
 ## 参数帮助与移除提示
 
@@ -181,5 +181,5 @@ Numbers 支持表格及目录包，完整画布、截图与 OCR 仍未支持。
 
 ## 开发验证
 
-参考[开发指南](development.md)与[当前状态](STATUS.md)。测试同时隔离
+参考[开发指南](development.md)。测试同时隔离
 `HOME` 和 `MARKITAI_HOME`，只用项目夹具或自拟样本，不读取真实用户配置或凭据。
