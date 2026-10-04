@@ -4,7 +4,8 @@ import struct
 import tempfile
 import unittest
 
-from executable_identity import executable_info, executable_arch, verify_target_executable
+from executable_identity import (executable_info, executable_arch, verify_target_executable,
+                                 windows_imports, verify_windows_cli_runtime)
 
 
 def pe(machine=0x8664, offset=128, sections=1, optional_size=240, flags=0x22, magic=0x20B, subsystem=3):
@@ -18,6 +19,23 @@ def pe(machine=0x8664, offset=128, sections=1, optional_size=240, flags=0x22, ma
         if optional_size >= 70:
             struct.pack_into("<H", data, offset + 24, magic)
             struct.pack_into("<H", data, offset + 24 + 68, subsystem)
+    return data
+
+
+def importing_pe(normal=b"KERNEL32.dll", delay=b"USER32.dll", machine=0x8664):
+    data = pe(machine=machine)
+    data.extend(bytes(2048 - len(data)))
+    optional = 128 + 24
+    struct.pack_into("<Q", data, optional + 24, 0x140000000)
+    struct.pack_into("<I", data, optional + 60, 512)
+    struct.pack_into("<I", data, optional + 108, 16)
+    struct.pack_into("<IIII", data, optional + 240 + 8, 1536, 0x1000, 1536, 512)
+    struct.pack_into("<II", data, optional + 112 + 8, 0x1000, 40)
+    struct.pack_into("<II", data, optional + 112 + 13 * 8, 0x1080, 64)
+    struct.pack_into("<I", data, 512 + 12, 0x1200)
+    struct.pack_into("<II", data, 512 + 128, 1, 0x1300)
+    data[1024:1024 + len(normal) + 1] = normal + b"\0"
+    data[1280:1280 + len(delay) + 1] = delay + b"\0"
     return data
 
 
@@ -79,6 +97,58 @@ class ExecutableIdentityTests(unittest.TestCase):
             self.skipTest(f"This host cannot create a test symlink: {error}")
         with self.assertRaisesRegex(RuntimeError, "non-symlink"):
             executable_info(self.path)
+
+    def test_normal_and_delay_imports_checked_on_both_windows_architectures(self):
+        for machine, target in [(0x8664, "x86_64-pc-windows-msvc"), (0xAA64, "aarch64-pc-windows-msvc")]:
+            info = verify_windows_cli_runtime(self.write(importing_pe(machine=machine)), target)
+            self.assertEqual(info["imports"], ["kernel32.dll"])
+            self.assertEqual(info["delay_imports"], ["user32.dll"])
+            for key in ["normal", "delay"]:
+                for dll in [b"VCRUNTIME140.dll", b"MSVCP140_ATOMIC_WAIT.dll", b"ucrtbased.dll", b"CONCRT140.dll"]:
+                    with self.subTest(key=key, dll=dll):
+                        with self.assertRaisesRegex(RuntimeError, "non-system CRT"):
+                            verify_windows_cli_runtime(self.write(importing_pe(machine=machine, **{key: dll})), target)
+
+    def test_system_ucrt_is_allowed_but_non_windows_target_is_rejected(self):
+        self.write(importing_pe(normal=b"api-ms-win-crt-runtime-l1-1-0.dll", delay=b"ucrtbase.dll"))
+        verify_windows_cli_runtime(self.path, "x86_64-pc-windows-msvc")
+        self.write(importing_pe(normal=b"WINSPOOL.DRV", delay=b"msvcp_win.dll"))
+        info = verify_windows_cli_runtime(self.path, "x86_64-pc-windows-msvc")
+        self.assertEqual(info["imports"], ["winspool.drv"])
+        self.assertEqual(info["delay_imports"], ["msvcp_win.dll"])
+        with self.assertRaisesRegex(RuntimeError, "MSVC target"):
+            verify_windows_cli_runtime(self.path, "x86_64-unknown-linux-gnu")
+
+    def test_legacy_delay_virtual_address_is_resolved(self):
+        data = importing_pe(delay=b"VCRUNTIME140.dll")
+        struct.pack_into("<Q", data, 152 + 24, 0x400000)
+        struct.pack_into("<II", data, 640, 0, 0x401300)
+        self.assertEqual(windows_imports(self.write(data))["delay_imports"], ["vcruntime140.dll"])
+
+    def test_malformed_tables_cannot_certify_missing_crt(self):
+        for kind in ["missing-terminator", "unmapped-name", "virtual-only", "huge-directory",
+                     "reserved-delay-flags", "bad-directory-count", "path-name", "unterminated-name"]:
+            data = importing_pe()
+            if kind == "missing-terminator":
+                struct.pack_into("<I", data, 152 + 112 + 8 + 4, 20)
+            elif kind == "unmapped-name":
+                struct.pack_into("<I", data, 512 + 12, 0xFFFFFFFF)
+            elif kind == "virtual-only":
+                struct.pack_into("<I", data, 392 + 8, 4096)
+                struct.pack_into("<I", data, 512 + 12, 0x1800)
+            elif kind == "huge-directory":
+                struct.pack_into("<I", data, 152 + 112 + 8 + 4, 0xFFFFFFFF)
+            elif kind == "reserved-delay-flags":
+                struct.pack_into("<I", data, 640, 3)
+            elif kind == "bad-directory-count":
+                struct.pack_into("<I", data, 152 + 108, 17)
+            elif kind == "path-name":
+                data[1024:1034] = b"../bad.dll"
+            else:
+                data[1024:1285] = b"x" * 261
+            with self.subTest(kind=kind):
+                with self.assertRaises(RuntimeError):
+                    windows_imports(self.write(data))
 
 
 if __name__ == "__main__":

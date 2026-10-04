@@ -27,8 +27,39 @@ from pricing_attribution import pricing_files
 from codex_attribution import codex_files
 from license_overlay import upstream_files
 from portable_attribution import portable_files
-from executable_identity import verify_target_executable
+from executable_identity import WINDOWS_TARGETS, verify_target_executable, verify_windows_cli_runtime
 from cli_documentation import cli_documentation, validate_documentation
+
+
+def windows_cli_build(root, target, environment):
+    """Isolate the static CRT to CLI target artifacts, never binding/host builds.
+
+    Explicit --target prevents these flags from reaching host proc-macros.
+    Preserve Cargo's encoded-over-plain environment flag precedence and append
+    our CRT choice last. No environment values are added to package evidence.
+    """
+    if target not in WINDOWS_TARGETS:
+        raise ValueError("Static CLI CRT requires a supported Windows MSVC target")
+    cli_environment = environment.copy()
+    base = Path(environment.get("CARGO_TARGET_DIR", root / "target"))
+    if not base.is_absolute():
+        base = root / base
+    directory = base / "cli-static-crt"
+    if "CARGO_ENCODED_RUSTFLAGS" in environment:
+        encoded = environment["CARGO_ENCODED_RUSTFLAGS"]
+        flags = encoded.split("\x1f") if encoded else []
+    else:
+        # Cargo splits RUSTFLAGS on whitespace, without shell quote processing.
+        target_flags = "CARGO_TARGET_" + target.upper().replace("-", "_") + "_RUSTFLAGS"
+        flags = environment.get("RUSTFLAGS", environment.get(
+            target_flags, environment.get("CARGO_BUILD_RUSTFLAGS", ""))).split()
+    cli_environment.pop("RUSTFLAGS", None)
+    cli_environment["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join([*flags, "-Ctarget-feature=+crt-static"])
+    cli_environment["CARGO_TARGET_DIR"] = str(directory)
+    cli_environment.pop("CARGO_BUILD_TARGET", None)
+    command = ["cargo", "build", "--release", "--locked", "-p", "markitai-cli", "--bins",
+               "--target", target, "--target-dir", str(directory)]
+    return command, cli_environment, directory / target / "release"
 
 
 def identity(path):
@@ -550,27 +581,39 @@ def main():
                     if line.startswith("host: "))
         if host != args.expected_host:
             raise RuntimeError(f"Expected {args.expected_host}, rustc reports {host}")
-        run("build", ["cargo", "build", "--workspace", "--release", "--locked"])
+        # Windows extensions retain their normal CRT policy. Build standalone
+        # CLIs separately so +crt-static cannot affect DLLs or proc-macros.
+        workspace_build = ["cargo", "build", "--workspace", "--release", "--locked"]
+        if host in WINDOWS_TARGETS:
+            workspace_build.extend(["--exclude", "markitai-cli"])
+        run("build", workspace_build)
+        cli_release = release
+        if host in WINDOWS_TARGETS:
+            command, cli_environment, cli_release = windows_cli_build(root, host, environment)
+            run("build-cli-static-crt", command, env=cli_environment)
+            record["cli_build"] = {"target": host, "crt": "static", "release_directory": str(cli_release)}
         record["source_after_workspace_build"] = snapshot()
         if record["source_before"] != record["source_after_workspace_build"]:
             raise RuntimeError("Source bytes changed during the workspace build")
         extension = ".exe" if sys.platform == "win32" else ""
-        binary = release / ("markitai" + extension)
+        binary = cli_release / ("markitai" + extension)
         record["cli_executable"] = {**identity(binary), **verify_target_executable(binary, host)}
-        alternate = release / ("mkai" + extension)
+        alternate = cli_release / ("mkai" + extension)
         verify_target_executable(alternate, host)
         version = run("version", [binary, "--version"]).strip().split()[-1]
 
         cli_licenses = cli_attribution(root, licenses)
         cli_docs = cli_documentation(root)
         archive = output / f"markitai-{version}-{host}.zip"
-        write_cli_zip(binary, release / ("mkai" + extension), archive, cli_licenses, os.name == "nt", cli_docs)
+        write_cli_zip(binary, alternate, archive, cli_licenses, os.name == "nt", cli_docs)
         artifact(archive)
         extracted = work / "CLI 安装 with spaces"
         record["cli_zip"] = extract_cli_zip(archive, extracted, binary, alternate, cli_licenses, os.name == "nt", cli_docs)
         if os.name == "nt":
-            for name in ["markitai.exe", "mkai.exe", "markitai-mcp.exe"]:
-                verify_target_executable(extracted / name, host)
+            record["windows_cli_runtime"] = {
+                name: verify_windows_cli_runtime(extracted / name, host)
+                for name in ["markitai.exe", "mkai.exe", "markitai-mcp.exe"]
+            }
         alias_version = run("zip-alias-version", [extracted / ("mkai" + extension), "--version"], cwd=extracted).strip()
         if alias_version.split()[-1:] != [version]:
             raise RuntimeError("Archived mkai reported a different version")

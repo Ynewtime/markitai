@@ -73,8 +73,7 @@ prefixes of the routing table ([LLM providers](llm.md#openai-compatible-prefixes
 each card naming its documented host (vLLM: "Server address required"). A
 provider's page shows the documented endpoint and key variable of a built-in
 provider and asks for what it needs: an API key (marked optional for LM Studio and
-vLLM, absent for Ollama; its placeholder names the provider's variable, such as
-`env:GROQ_API_KEY`), a base URL for Azure, OpenAI-compatible endpoints and vLLM,
+vLLM, absent for Ollama), a base URL for Azure, OpenAI-compatible endpoints and vLLM,
 an optional custom base (prefilled hint: the documented endpoint). It loads the
 catalogue through the provider's `/models` (automatically for Ollama and LM
 Studio) and opens the model picker: search, Select visible, Vision and Configured
@@ -84,7 +83,12 @@ document no OpenAI-compatible model list, so their page opens the manual entry
 directly. A hand-typed ID gets the page's prefix unless it already has it, so an
 ID with slashes of its own (`meta-llama/…` on Together AI, `google/…` on
 OpenRouter) still routes to that provider. Test turns the button into ✓ or a
-warning and reports in a notification.
+warning and reports in a notification. API key fields accept literal keys;
+`env:` references belong in the server configuration, not browser requests.
+Environment and saved-provider cards use server-issued connection IDs, allowing
+model discovery without returning the key to the browser. These credentials stay
+bound to their configured endpoint: changing the address requires a replacement
+key or explicitly removing the saved key.
 
 The header holds the brand and version, Docs and GitHub (a footer band on
 phones) and three icon buttons: Appearance (language EN/中 and theme
@@ -127,8 +131,11 @@ failed archive download are reported the same way.
   from. A `stale_revision` or `config_changed` refusal reloads the lists but keeps
   the draft and its revision; "Use current revision" adopts the new one and the
   next submit uses it. Other refusals (for example `settings_read_only`) stay
-  plain errors. Editing a saved provider shows its stored references; unchanged
-  fields are not sent, a field emptied on purpose is sent as `null` (cleared).
+  plain errors. Editing a saved provider never fills the key field with a stored
+  key or environment reference. Leaving it blank retains the server's key;
+  "Remove the saved API key" explicitly clears it. Unchanged fields are omitted.
+  An endpoint change with a retained server key is rejected, including when
+  linked model deployments have their own credential overrides.
 - **Session restore**: the rows of jobs created in this tab are kept in
   `sessionStorage` (`markitai.session`); after a reload each job is asked for
   again. A job the service no longer knows is dropped; an unreachable service
@@ -158,6 +165,11 @@ produced any more; the rule stays as a guard).
 
 ## Access token
 
+By default, all API requests require the access token, including requests from
+this computer. Open the link printed by `markitai serve`, rather than entering
+only the host and port. Static page assets can load without a token, but jobs,
+settings and results remain protected.
+
 The launch link carries the token in its fragment (`#token=`; `?token=` is
 accepted). The page removes it from the address bar at once and keeps it for the
 tab in `sessionStorage` (`markitai.service-token`), with a memory fallback. No
@@ -177,7 +189,8 @@ URL the page requests or shows carries it:
 - Download links (rows, Files, Download .md, file links inside the rendered
   document) point at the plain `/api/` path. With a token, a click or a
   middle-click fetches the file with the header and saves it as a Blob, so a
-  refusal is reported; without one (a loopback visitor) the link works as is.
+  refusal is reported. Plain download links work without a token only when the
+  server was explicitly started with `--no-auth`.
 - Download all (.zip), which can be larger than memory, is left to the browser:
   with a token the page first asks `POST /api/download-tickets` for a
   single-use ticket and opens the returned `?ticket=` URL, valid for one GET of
@@ -186,7 +199,14 @@ URL the page requests or shows carries it:
 
 A 401 shows "Not authorized · reload the page with the access token link · Enter
 token"; Enter token opens a small dialog that stores a typed token for the tab.
-Loopback visitors need no token.
+After a server restart that generates a new token, reopen its new launch link
+or use Enter token. `--no-auth` explicitly disables API token enforcement; only
+direct loopback clients without forwarding headers receive the additional trust
+needed for settings and URL jobs. A loopback connection through a reverse proxy
+is not an authentication mechanism. For mutations, an Origin must match the
+request Host's hostname and effective port, or an operator-configured
+`--allowed-host`; another localhost port is not automatically allowed. See
+[serve boundaries](serve.md#network-and-file-boundaries).
 
 ## Language, appearance and stored values
 
@@ -201,21 +221,25 @@ silently re-enable a remote service), `markitai.pdf.custom-header-footer` and
 `markitai.notify-denied` (a refused desktop-notification permission, which is
 then never asked again). A finished job raises a system notification only while
 the tab is hidden and permission was granted; permission is asked on the first
-submission, never on load. No credential is stored by the page.
+submission, never on load. Provider API keys are not retained in browser storage;
+the service access token is held for the tab as described above.
 
 ## Differences from the reference
 
 - Cloudflare URL rendering and Cloudflare file conversion are shown but disabled
-  ("not supported by this server yet"); the Rust core returns explicit errors for
-  them. The fetch strategy help describes the Rust behaviour (Auto: a direct
-  request, then the local browser).
+  in the current workbench selector. This is a workbench limitation: the Rust
+  core and CLI implement both services with configured Cloudflare credentials;
+  see [remote services](fetch.md#remote-services) and the
+  [file backend](fetch.md#the-cloudflare-file-backend). The workbench's Auto help
+  describes direct fetching followed by the local browser; a fresh visit does
+  not remember or silently enable a remote-service choice.
 - A request that asks for LLM processing while no model is routable is refused by
   the service (422 `llm_unavailable`) instead of silently converting without the
   model; the page then reloads the capabilities.
 - The Folder tool, Stop remaining, upload progress and cancellation, the Files
   tab, the Base | LLM switch, the token dialog, offline detection, the pricing
   coverage in the cost cell's tooltip (`$0.012300 · all recorded requests
-  priced`, `Price unknown · …`) and the amber line for a failed last attempt are
+  priced`, `Price unknown · …`) and the replayable failed-attempt notice are
   additions. Model discovery that fails still leaves manual model entry.
 - Provider groups exist only as the service reports them (environment, saved,
   common, compatible); the reference's local-CLI and OAuth groups do not occur,

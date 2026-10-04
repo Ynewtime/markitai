@@ -206,7 +206,14 @@ without sending provider requests. The adapter and CLI tests run Rust stand-ins
 for all three runtimes (`subscription/fake_runtime.rs`): the test binary plays
 the runtime whose home holds a scenario file, so they need no interpreter and
 run on Windows; the Windows tests also start them through `.cmd` shims. The
-Windows paths are type-checked on macOS and have not yet run on a Windows host. Round 32 optimized CLI and installed dynamic/static bindings pass at `dc0343b`;
+Windows paths were only type-checked on macOS at that Round 32 checkpoint.
+Subsequent native Windows ARM64 workspace tests and Windows x64 hosted CI have
+run; the latter completed for source `846ecdc`, as recorded in the
+[2026-10-04 checkpoint](validation/development-checkpoint-20261004.md). That
+establishes native execution of the fixture-based suite, not login or real
+subscription inference. Current source `83984c9` requires its own hosted results
+and final package acceptance; see [STATUS](STATUS.md) and [CONTROL](CONTROL.md).
+Round 32 optimized CLI and installed dynamic/static bindings passed at `dc0343b`;
 see [delivery evidence](validation/integration-round32.md). Completed-item resume
 preserves terminal diagnostics independently of the old minimal success aggregate.
 

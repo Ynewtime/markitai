@@ -1,9 +1,12 @@
 """Counterexamples for cross-target CLI packaging; nothing is built."""
 from pathlib import Path
+import json
+import os
 import struct
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from package_cli_target import executable_arch, macho_minimum, main, workspace_version, validate_target
 
@@ -84,6 +87,46 @@ class TargetPackagingTests(unittest.TestCase):
                 main(["--target", target, "--output", str(self.root / "out")])
             self.assertIn(message, str(raised.exception))
         self.assertFalse((self.root / "out").exists())
+
+    def test_windows_standalone_build_uses_static_cli_target_and_isolated_environment(self):
+        host = "aarch64-pc-windows-msvc"
+        output = self.root / "standalone-output"
+        calls = []
+        root = Path(__file__).resolve().parents[1]
+
+        def check_output(command, **kwargs):
+            if command[0] == "rustc":
+                return f"host: {host}\n"
+            if command[1] == "ls-files":
+                return b""
+            return "" if command[1] == "status" else "authored-source-revision"
+
+        def run(command, **kwargs):
+            calls.append((command, kwargs["env"].copy()))
+            if command[0] == "rustc":
+                kwargs["stdout"].write(f"host: {host}\n".encode())
+            return subprocess.CompletedProcess(command, 0)
+
+        with (patch("package_cli_target.sys.platform", "win32"),
+              patch.dict(os.environ, {"HOME": str(self.root), "CARGO_TARGET_DIR": "target with spaces",
+                                      "CARGO_ENCODED_RUSTFLAGS": "-Cdebuginfo=1"}, clear=True),
+              patch("package_cli_target.subprocess.check_output", side_effect=check_output),
+              patch("package_cli_target.subprocess.run", side_effect=run),
+              patch("package_cli_target.identity", return_value={}),
+              patch("package_cli_target.verify_target_executable", side_effect=RuntimeError("stop before execution")) as verify):
+            with self.assertRaisesRegex(RuntimeError, "stop before execution"):
+                main(["--target", host, "--output", str(output)])
+        builds = [(command, env) for command, env in calls if command[0] == "cargo"]
+        self.assertEqual(len(builds), 1)
+        command, child = builds[0]
+        self.assertEqual(command[command.index("--target") + 1], host)
+        self.assertEqual(child["CARGO_ENCODED_RUSTFLAGS"], "-Cdebuginfo=1\x1f-Ctarget-feature=+crt-static")
+        self.assertEqual(calls[0][1]["CARGO_ENCODED_RUSTFLAGS"], "-Cdebuginfo=1")
+        release = root / "target with spaces/cli-static-crt" / host / "release"
+        verify.assert_called_once_with(release / "markitai.exe", host)
+        record = json.loads((output / "record.json").read_text())
+        self.assertEqual(record["cli_build"]["release_directory"], str(release))
+        self.assertEqual(record["status"], "failed")
 
 
 if __name__ == "__main__":

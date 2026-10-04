@@ -19,7 +19,7 @@ import zipfile
 
 from ci_packages import (npm_command, source_snapshot, stage_node_licenses, supplement_wheel_licenses,
                          verify_node_licenses, write_cli_zip, extract_cli_zip, doctor_probe, mcp_probe, identity, package_attribution,
-                         write_single_binary_tar, extract_single_binary_tar)
+                         write_single_binary_tar, extract_single_binary_tar, windows_cli_build, main)
 from cli_documentation import DOCUMENTATION_PATHS
 
 
@@ -28,6 +28,89 @@ class PackageValidationTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
+
+
+    def test_windows_cli_crt_flags_preserve_cargo_precedence_without_changing_bindings(self):
+        for target in ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"]:
+            target_key = "CARGO_TARGET_" + target.upper().replace("-", "_") + "_RUSTFLAGS"
+            cases = [
+                ({}, []),
+                ({"RUSTFLAGS": "-C debuginfo=1  -Ctarget-feature=-crt-static"},
+                 ["-C", "debuginfo=1", "-Ctarget-feature=-crt-static"]),
+                ({"RUSTFLAGS": "ignored", "CARGO_ENCODED_RUSTFLAGS": "--cfg\x1ffeature=\"with spaces\""},
+                 ["--cfg", 'feature="with spaces"']),
+                ({"RUSTFLAGS": "ignored", "CARGO_ENCODED_RUSTFLAGS": ""}, []),
+                ({target_key: "-C debuginfo=1", "CARGO_BUILD_RUSTFLAGS": "ignored"}, ["-C", "debuginfo=1"]),
+                ({"CARGO_BUILD_RUSTFLAGS": "-C debuginfo=1"}, ["-C", "debuginfo=1"]),
+            ]
+            for overrides, expected in cases:
+                with self.subTest(target=target, overrides=overrides):
+                    original = {"HOME": str(self.root), "CARGO_BUILD_TARGET": "foreign", **overrides}
+                    before = original.copy()
+                    command, child, release = windows_cli_build(self.root, target, original)
+                    self.assertEqual(original, before)
+                    self.assertIsNot(child, original)
+                    self.assertEqual(child["CARGO_ENCODED_RUSTFLAGS"].split("\x1f"),
+                                     [*expected, "-Ctarget-feature=+crt-static"])
+                    self.assertNotIn("RUSTFLAGS", child)
+                    self.assertNotIn("CARGO_BUILD_TARGET", child)
+                    self.assertEqual(command[command.index("--target") + 1], target)
+                    self.assertEqual(command[command.index("--target-dir") + 1], child["CARGO_TARGET_DIR"])
+                    self.assertEqual(release, self.root / "target/cli-static-crt" / target / "release")
+                    self.assertIn("--bins", command)
+                    self.assertEqual(command[command.index("-p") + 1], "markitai-cli")
+
+    def test_windows_cli_target_directory_keeps_custom_cache_separate(self):
+        for cache in ["relative cache", str(self.root / "absolute cache")]:
+            command, child, release = windows_cli_build(
+                self.root, "aarch64-pc-windows-msvc", {"CARGO_TARGET_DIR": cache})
+            base = Path(cache) if Path(cache).is_absolute() else self.root / cache
+            self.assertEqual(release, base / "cli-static-crt/aarch64-pc-windows-msvc/release")
+            self.assertEqual(child["CARGO_TARGET_DIR"], str(base / "cli-static-crt"))
+        with self.assertRaisesRegex(ValueError, "Windows MSVC"):
+            windows_cli_build(self.root, "x86_64-unknown-linux-gnu", {})
+
+    def test_native_packaging_builds_bindings_with_original_flags_and_packages_static_cli(self):
+        host = "x86_64-pc-windows-msvc"
+        output = self.root / "native-output"
+        calls = []
+        root = Path(__file__).resolve().parents[1]
+
+        def check_output(command, **kwargs):
+            if command[1] == "ls-files":
+                return b""
+            return "" if command[1] == "status" else "authored-source-revision"
+
+        def run(command, **kwargs):
+            calls.append((command, kwargs["env"].copy()))
+            if command[0] == "rustc":
+                kwargs["stdout"].write(f"host: {host}\n".encode())
+            return subprocess.CompletedProcess(command, 0)
+
+        # Stop at the first executable inspection: no compiler, executable or
+        # binding installer is actually run by this routing regression.
+        with (patch("ci_packages.sys.argv", ["ci_packages.py", "--expected-host", host, "--output", str(output)]),
+              patch("ci_packages.sys.platform", "win32"),
+              patch.dict(os.environ, {"HOME": str(self.root), "RUSTFLAGS": "-Cdebuginfo=1"}, clear=True),
+              patch("ci_packages.subprocess.check_output", side_effect=check_output),
+              patch("ci_packages.subprocess.run", side_effect=run),
+              patch("ci_packages.package_attribution", return_value={}),
+              patch("ci_packages.identity", return_value={}),
+              patch("ci_packages.print"),
+              patch("ci_packages.verify_target_executable", side_effect=RuntimeError("stop before execution")) as verify):
+            self.assertEqual(main(), 1)
+        builds = [(command, env) for command, env in calls if command[0] == "cargo"]
+        self.assertEqual(len(builds), 2)
+        binding_command, binding_environment = builds[0]
+        self.assertEqual(binding_command[-2:], ["--exclude", "markitai-cli"])
+        self.assertEqual(binding_environment["RUSTFLAGS"], "-Cdebuginfo=1")
+        self.assertNotIn("CARGO_ENCODED_RUSTFLAGS", binding_environment)
+        cli_command, cli_environment = builds[1]
+        self.assertEqual(cli_command[cli_command.index("--target") + 1], host)
+        self.assertEqual(cli_environment["CARGO_ENCODED_RUSTFLAGS"],
+                         "-Cdebuginfo=1\x1f-Ctarget-feature=+crt-static")
+        verify.assert_called_once_with(root / "target/cli-static-crt" / host / "release/markitai.exe", host)
+        self.assertEqual(json.loads((output / "evidence.json").read_text())["error"], "stop before execution")
 
 
     def zip_inputs(self):

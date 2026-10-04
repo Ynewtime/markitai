@@ -120,6 +120,8 @@
 
 ### Fixed
 
+- Windows CLI packaging uses a separate static-CRT build while native bindings retain their own build environment. Both packaging routes inspect ordinary and delay-load DLL imports in all three extracted CLI executables and reject redistributable CRT dependencies; native clean-install acceptance remains a separate release requirement.
+
 - Bind service-held LLM credentials to their configured provider and endpoint, reject client environment references, and preserve literal/cleared credential behavior across saves and restarts. The workbench uses connection IDs and explicit key clearing, preserves detected-model references, and focuses the credential editor. Model discovery honours configured environment endpoints consistently with conversion.
 - Require the service token for local as well as remote API requests; launch links carry the token fragment. Mutation Origins must match the request host and port unless explicitly allowed. Canonical IPv4 loopback and forwarded requests follow the same trust policy.
 - Bound aggregate Office/EPUB metadata text allocation and element counts without truncating accepted mixed text; handle binding JSON serialization failures without panicking and reject non-UTF-8 physical output directories before publication. Python configuration panics become ordinary RuntimeError exceptions.

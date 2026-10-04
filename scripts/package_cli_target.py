@@ -2,7 +2,9 @@
 
 Unix targets retain the single-binary tar and relative aliases. Windows targets
 require their own native host, produce a ZIP with three real EXE entries, and
-verify PE architecture before exercising the installed CLI and MCP protocol.
+build the CLI with a static CRT in a dedicated target directory. They verify
+PE architecture and runtime imports before exercising the installed CLI and MCP
+protocol.
 Every package carries complete portable-engine attribution. Executed probes
 use isolated HOME/state and report dependency readiness without installing it.
 
@@ -23,10 +25,10 @@ import tempfile
 
 from ci_packages import (cli_attribution, doctor_probe, extract_cli_zip, extract_single_binary_tar,
                          identity, mcp_probe, package_attribution, source_snapshot, write_cli_zip,
-                         write_single_binary_tar)
+                         write_single_binary_tar, windows_cli_build)
 from cli_documentation import cli_documentation
 from executable_identity import (MACHO, ELF, WINDOWS_TARGETS, executable_arch,
-                                 verify_target_executable)
+                                 verify_target_executable, verify_windows_cli_runtime)
 
 
 def validate_target(target, host, host_platform):
@@ -137,11 +139,12 @@ def main(argv=None):
             ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd=root)
         return source_snapshot(root, [os.fsdecode(name) for name in names.split(b"\0") if name])
 
-    def run(name, command, cwd=root):
+    def run(name, command, cwd=root, env=None):
         command = [str(value) for value in command]
         log = output / "logs" / f"{len(record['steps']):02}-{name}.log"
         with log.open("wb") as stream:
-            result = subprocess.run(command, cwd=cwd, env=environment, stdout=stream, stderr=subprocess.STDOUT)
+            result = subprocess.run(command, cwd=cwd, env=environment if env is None else env,
+                                    stdout=stream, stderr=subprocess.STDOUT)
         record["steps"].append({"name": name, "command": command, "cwd": str(cwd),
                                 "exit_code": result.returncode, "log": str(log.relative_to(output)),
                                 "log_identity": identity(log)})
@@ -158,13 +161,19 @@ def main(argv=None):
             raise RuntimeError("Target packaging requires a clean source checkout")
         record["source_before"] = snapshot()
         record["compiler"] = run("compiler", ["rustc", "-vV"])
-        run("build", ["cargo", "build", "--release", "--locked", "-p", "markitai-cli", "--bins", "--target", args.target])
+        release = target_dir / args.target / "release"
+        if windows:
+            command, cli_environment, release = windows_cli_build(root, args.target, environment)
+            run("build", command, env=cli_environment)
+            record["cli_build"] = {"target": args.target, "crt": "static", "release_directory": str(release)}
+        else:
+            run("build", ["cargo", "build", "--release", "--locked", "-p", "markitai-cli", "--bins", "--target", args.target])
         record["source_after_build"] = snapshot()
         if record["source_before"] != record["source_after_build"]:
             raise RuntimeError("Source bytes changed during the build")
 
         extension = ".exe" if windows else ""
-        binary = target_dir / args.target / "release" / ("markitai" + extension)
+        binary = release / ("markitai" + extension)
         executable = verify_target_executable(binary, args.target)
         version = workspace_version((root / "Cargo.toml").read_text(encoding="utf-8"))
         record["executable"] = {**identity(binary), **executable, "version": version}
@@ -180,13 +189,15 @@ def main(argv=None):
         cli_docs = cli_documentation(root)
         unpacked = work / "CLI 安装 with spaces"
         if windows:
-            alternate = target_dir / args.target / "release" / "mkai.exe"
+            alternate = release / "mkai.exe"
             verify_target_executable(alternate, args.target)
             archive = output / f"markitai-{version}-{args.target}.zip"
             write_cli_zip(binary, alternate, archive, cli_licenses, True, cli_docs)
             record["cli_zip"] = extract_cli_zip(archive, unpacked, binary, alternate, cli_licenses, True, cli_docs)
-            for name in ["markitai.exe", "mkai.exe", "markitai-mcp.exe"]:
-                verify_target_executable(unpacked / name, args.target)
+            record["windows_cli_runtime"] = {
+                name: verify_windows_cli_runtime(unpacked / name, args.target)
+                for name in ["markitai.exe", "mkai.exe", "markitai-mcp.exe"]
+            }
         else:
             archive = output / f"markitai-{version}-{args.target}-single-binary.tar.gz"
             write_single_binary_tar(binary, archive, cli_licenses, cli_docs)
