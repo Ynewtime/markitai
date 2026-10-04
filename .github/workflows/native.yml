@@ -58,6 +58,15 @@ jobs:
           cache: false
       - name: Install Rust components
         run: rustup toolchain install ${{ env.RUSTUP_TOOLCHAIN }} --profile minimal --component rustfmt --component clippy
+      # Dependency artifacts only: workspace/vendor code must rebuild after checkout.
+      # The action also handles the nested static-CRT target directory.
+      - name: Restore Cargo dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: native-v1-${{ matrix.os }}-${{ runner.arch }}-${{ matrix.lane }}-py313-crt-split
+          cache-bin: false
+          cache-workspace-crates: false
+          cache-on-failure: false
       - name: Formatting, native tests, lint and harness tests
         if: matrix.lane == 'checks'
         run: python scripts/check.py
@@ -87,7 +96,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      - name: Install minimum Rust toolchain
+        run: rustup toolchain install 1.92.0 --profile minimal
+      - name: Restore minimum-toolchain dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: native-v1-minimum-rust
+          cache-bin: false
+          cache-workspace-crates: false
+          cache-on-failure: false
       - name: Check the declared minimum toolchain
-        run: |
-          rustup toolchain install 1.92.0 --profile minimal
-          cargo check --locked -p markitai-core -p markitai-cli -p markitai-ffi
+        run: cargo check --locked -p markitai-core -p markitai-cli -p markitai-ffi

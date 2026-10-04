@@ -29,6 +29,16 @@ Results apply to their recorded commit and target. This round keeps
 `1.3.0-dev` for local verification from `main`; no Release, tag or publishing
 step is part of these drivers.
 
+The workflow caches third-party Cargo dependencies separately by runner and
+validation lane; compiler and dependency changes affect cache keys. First-party
+and vendored build artifacts rebuild from source. Windows builds one optimized CLI and copies it to the three executable names;
+all installed entry points remain tested. Package stages report elapsed
+time and log size every 30 seconds, preserve full logs, and add a timing summary
+to Actions. Build stages have a 75-minute limit, other stages 15 minutes, within
+a shared 110-minute package budget. Silent linking alone is not a failure.
+Actual cache benefit depends on the runner and cache availability; compare real
+stage times before claiming a speedup.
+
 ## Running package acceptance
 
 From a clean committed checkout, with Rust, Node/npm, Python with venv/pip,
@@ -48,7 +58,8 @@ Python/Node process. The target directory must be the repository's `target`,
 because the Go source binding currently names `target/release` in its linker
 directives. Build commands use `--locked`; dependency downloads are still allowed.
 
-The script builds the release workspace, executes an extracted CLI archive,
+The script builds release libraries and CLI without an unused Python prebuild,
+executes an extracted CLI archive,
 packs and installs Node into a private consumer directory, and builds and
 installs Python into a fresh venv. It then runs the actual binding tests.
 Windows invokes npm's JavaScript CLI through `node.exe`, avoiding batch-file

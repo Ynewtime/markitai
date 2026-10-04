@@ -189,7 +189,9 @@ def main(argv=None):
         cli_docs = cli_documentation(root)
         unpacked = work / "CLI 安装 with spaces"
         if windows:
-            alternate = release / "mkai.exe"
+            # All three Windows launchers share one optimized executable;
+            # argv[0] selects MCP mode and ordinary mkai retains CLI behavior.
+            alternate = binary
             verify_target_executable(alternate, args.target)
             archive = output / f"markitai-{version}-{args.target}.zip"
             write_cli_zip(binary, alternate, archive, cli_licenses, True, cli_docs)

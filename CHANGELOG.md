@@ -95,6 +95,8 @@
 
 ### Changed
 
+- Cache CI dependencies, avoid an unused Python prebuild and duplicate Windows CLI compilation, and expose bounded package-stage progress, timeout cleanup diagnostics and timing summaries while retaining optimized builds and installed-package checks.
+
 - Simplify user, developer and Agent guides, correct outdated platform and security descriptions, and remove superseded planning documents and stale code comments; retain history in Git.
 
 - Document the limits of exact OCR transcription for code, JSON and configuration: readable text or a successful conversion does not guarantee quotes, braces or ASCII symbols match the image; selecting Chinese explicitly does not remove this limitation. This is guidance, not an OCR recognition fix.

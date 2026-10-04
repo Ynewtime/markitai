@@ -119,6 +119,8 @@ class TargetPackagingTests(unittest.TestCase):
         builds = [(command, env) for command, env in calls if command[0] == "cargo"]
         self.assertEqual(len(builds), 1)
         command, child = builds[0]
+        self.assertNotIn("--bins", command)
+        self.assertEqual(command[command.index("--bin") + 1], "markitai")
         self.assertEqual(command[command.index("--target") + 1], host)
         self.assertEqual(child["CARGO_ENCODED_RUSTFLAGS"], "-Cdebuginfo=1\x1f-Ctarget-feature=+crt-static")
         self.assertEqual(calls[0][1]["CARGO_ENCODED_RUSTFLAGS"], "-Cdebuginfo=1")

@@ -24,6 +24,7 @@ import tempfile
 import time
 import zipfile
 
+from ci_process import run_logged, write_summary
 from pricing_attribution import pricing_files
 from codex_attribution import codex_files
 from license_overlay import upstream_files
@@ -58,7 +59,7 @@ def windows_cli_build(root, target, environment):
     cli_environment["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join([*flags, "-Ctarget-feature=+crt-static"])
     cli_environment["CARGO_TARGET_DIR"] = str(directory)
     cli_environment.pop("CARGO_BUILD_TARGET", None)
-    command = ["cargo", "build", "--release", "--locked", "-p", "markitai-cli", "--bins",
+    command = ["cargo", "build", "--release", "--locked", "-p", "markitai-cli", "--bin", "markitai",
                "--target", target, "--target-dir", str(directory)]
     return command, cli_environment, directory / target / "release"
 
@@ -531,8 +532,10 @@ def main():
     if target.resolve() != (root / "target").resolve():
         raise SystemExit("Native package validation currently requires CARGO_TARGET_DIR=target for Go/cgo")
     release = target / "release"
+    deadline = time.monotonic() + 110 * 60
     record = {
         "schema": 1,
+        "time_budget_seconds": 110 * 60,
         "status": "running",
         "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "platform": platform.platform(),
@@ -569,26 +572,32 @@ def main():
             print(line, flush=True)
 
         progress("started", started_at=started_at)
+        exit_code = None
+        error_type = None
         try:
-            with log.open("wb") as stream:
-                result = subprocess.run(command, cwd=cwd, env=env or environment,
-                                        stdout=stream, stderr=subprocess.STDOUT)
+            # Compilers retain their optimization profile. Silence is not a hang:
+            # link-time optimization can legitimately write no output for minutes.
+            limit = 75 * 60 if name in {"build", "build-cli-static-crt", "python-wheel"} else 15 * 60
+            result = run_logged(command, cwd=cwd, env=env or environment, log=log,
+                                timeout=min(limit, max(.1, deadline - time.monotonic())), progress=progress)
+            exit_code = result.returncode
         except BaseException as error:
-            progress("completed", started_at=started_at,
-                     completed_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                     duration_seconds=time.monotonic() - started, exit_code=None,
-                     error_type=type(error).__name__)
+            error_type = type(error).__name__
             raise
-        completed_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        duration = time.monotonic() - started
-        progress("completed", started_at=started_at, completed_at=completed_at,
-                 duration_seconds=duration, exit_code=result.returncode)
-        step = {"name": name, "command": command, "cwd": str(cwd),
-                "exit_code": result.returncode, "log": str(log.relative_to(output)),
-                "log_identity": identity(log), "started_at": started_at,
-                "completed_at": completed_at, "duration_seconds": duration}
-        record["steps"].append(step)
-        if result.returncode:
+        finally:
+            completed_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            duration = time.monotonic() - started
+            step = {"name": name, "command": command, "cwd": str(cwd),
+                    "exit_code": exit_code, "log": str(log.relative_to(output)),
+                    "log_identity": identity(log) if log.exists() else None,
+                    "started_at": started_at, "completed_at": completed_at,
+                    "duration_seconds": duration}
+            if error_type:
+                step["error_type"] = error_type
+            record["steps"].append(step)
+            progress("completed", started_at=started_at, completed_at=completed_at,
+                     duration_seconds=duration, exit_code=exit_code, error_type=error_type)
+        if exit_code:
             raise RuntimeError(f"{name} failed; inspect {log}")
         return log.read_text(encoding="utf-8", errors="replace")
 
@@ -610,7 +619,10 @@ def main():
             raise RuntimeError(f"Expected {args.expected_host}, rustc reports {host}")
         # Windows extensions retain their normal CRT policy. Build standalone
         # CLIs separately so +crt-static cannot affect DLLs or proc-macros.
-        workspace_build = ["cargo", "build", "--workspace", "--release", "--locked"]
+        # Only maturin's wheel is installed and accepted below; the workspace
+        # Python library would be an unused prebuild before maturin's build.
+        workspace_build = ["cargo", "build", "--workspace", "--release", "--locked",
+                           "--exclude", "markitai-python"]
         if host in WINDOWS_TARGETS:
             workspace_build.extend(["--exclude", "markitai-cli"])
         run("build", workspace_build)
@@ -625,7 +637,9 @@ def main():
         extension = ".exe" if sys.platform == "win32" else ""
         binary = cli_release / ("markitai" + extension)
         record["cli_executable"] = {**identity(binary), **verify_target_executable(binary, host)}
-        alternate = cli_release / ("mkai" + extension)
+        # Windows ZIP entries are ordinary copies selected by argv[0]. Build
+        # the shared CLI once instead of repeating whole-program optimization.
+        alternate = binary if host in WINDOWS_TARGETS else cli_release / "mkai"
         verify_target_executable(alternate, host)
         version = run("version", [binary, "--version"]).strip().split()[-1]
 
@@ -822,6 +836,8 @@ print(json.dumps({'module': markitai.__file__, 'prefix': sys.prefix, 'licenses':
                 record["source_after_error"] = str(error)
         record["finished_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         (output / "evidence.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
+        write_summary(record, summary)
     print(json.dumps({"status": record["status"], "evidence": str(output / "evidence.json")}))
     return 0 if record["status"] == "passed" else 1
 

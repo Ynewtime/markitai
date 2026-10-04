@@ -57,7 +57,8 @@ class PackageValidationTests(unittest.TestCase):
                     self.assertEqual(command[command.index("--target") + 1], target)
                     self.assertEqual(command[command.index("--target-dir") + 1], child["CARGO_TARGET_DIR"])
                     self.assertEqual(release, self.root / "target/cli-static-crt" / target / "release")
-                    self.assertIn("--bins", command)
+                    self.assertNotIn("--bins", command)
+                    self.assertEqual(command[command.index("--bin") + 1], "markitai")
                     self.assertEqual(command[command.index("-p") + 1], "markitai-cli")
 
     def test_windows_cli_target_directory_keeps_custom_cache_separate(self):
@@ -84,7 +85,9 @@ class PackageValidationTests(unittest.TestCase):
         def run(command, **kwargs):
             calls.append((command, kwargs["env"].copy()))
             if command[0] == "rustc":
-                kwargs["stdout"].write(f"host: {host}\n".encode())
+                kwargs["log"].write_text(f"host: {host}\n")
+            else:
+                kwargs["log"].write_bytes(b"")
             return subprocess.CompletedProcess(command, 0)
 
         # Stop at the first executable inspection: no compiler, executable or
@@ -93,7 +96,7 @@ class PackageValidationTests(unittest.TestCase):
               patch("ci_packages.sys.platform", "win32"),
               patch.dict(os.environ, {"HOME": str(self.root), "USERPROFILE": str(self.root), "RUSTFLAGS": "-Cdebuginfo=1"}, clear=True),
               patch("ci_packages.subprocess.check_output", side_effect=check_output),
-              patch("ci_packages.subprocess.run", side_effect=run),
+              patch("ci_packages.run_logged", side_effect=run),
               patch("ci_packages.package_attribution", return_value={}),
               patch("ci_packages.identity", return_value={}),
               patch("ci_packages.print"),
@@ -102,7 +105,7 @@ class PackageValidationTests(unittest.TestCase):
         builds = [(command, env) for command, env in calls if command[0] == "cargo"]
         self.assertEqual(len(builds), 2)
         binding_command, binding_environment = builds[0]
-        self.assertEqual(binding_command[-2:], ["--exclude", "markitai-cli"])
+        self.assertEqual(binding_command[-4:], ["--exclude", "markitai-python", "--exclude", "markitai-cli"])
         self.assertEqual(binding_environment["RUSTFLAGS"], "-Cdebuginfo=1")
         self.assertNotIn("CARGO_ENCODED_RUSTFLAGS", binding_environment)
         cli_command, cli_environment = builds[1]
@@ -132,6 +135,17 @@ class PackageValidationTests(unittest.TestCase):
         self.assertEqual(set(record["attribution"]), set(licenses))
         with self.assertRaises(FileExistsError):
             extract_cli_zip(archive, installed, binary, alternate, licenses, True)
+
+    def test_windows_zip_can_use_one_binary_for_all_three_launchers(self):
+        binary, _, licenses = self.zip_inputs()
+        archive = self.root / "single-cli.zip"
+        write_cli_zip(binary, binary, archive, licenses, True)
+        installed = self.root / "single-cli-installed"
+        record = extract_cli_zip(archive, installed, binary, binary, licenses, True)
+        for name in ["markitai.exe", "mkai.exe", "markitai-mcp.exe"]:
+            self.assertFalse((installed / name).is_symlink())
+            self.assertEqual(identity(installed / name), identity(binary))
+        self.assertEqual(record["mcp_alias"]["kind"], "executable_copy")
 
     def test_zip_missing_duplicate_changed_link_and_extra_payloads_are_rejected_before_extraction(self):
         binary, alternate, licenses = self.zip_inputs()
